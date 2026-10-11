@@ -53,12 +53,15 @@ Related pages: [Model Catalog](./models.md) · [Operator Runbook](./operations.m
 
 ### AWS services
 
+AWS mode only: [Local mode](#local-mode-no-aws) replaces each of them with a
+local component.
+
 | Service | Required? | Used for |
 |---|---|---|
 | **Amazon Bedrock** | Yes | All LLM calls (chunking, extraction, gleaning, community reports, answer generation), embeddings, and reranking. Enable model access for the model IDs you configure. |
 | **Amazon Neptune** | Yes | The knowledge graph (entities, relationships, communities) and multi-hop traversal at query time. |
 | **Amazon OpenSearch** | Yes | Vector + BM25 lexical indices (text units, entities, community reports, relationships, claims). |
-| **Amazon S3** | Yes | Pipeline cache sync; optional embedding-cache persistence; document storage. |
+| **Amazon S3** | Only for `--s3-sync`, `indexing.opensearch.persist_embedding_cache` or `s3://` paths | Stage-cache sync, embedding-cache persistence, and `s3://` evaluation datasets and outputs. The CDK pipeline also stages the corpus in S3. |
 | **Amazon DynamoDB** | Only for incremental indexing | Document-status registry that diffs the corpus by content hash. |
 
 ### Required models
@@ -96,8 +99,8 @@ them. Choose one of three ways to run it:
   Gremlin Server, OpenSearch and SQLite), or only the stores with Bedrock
   models; see [Local mode](#local-mode-no-aws) below.
 
-- **Bring your own services.** If Neptune, OpenSearch, S3 (and optionally
-  DynamoDB) are already running, just record their endpoints in `config.yaml`
+- **Bring your own services.** If Neptune and OpenSearch (and, when you use
+  them, S3 and DynamoDB) are already running, just record their endpoints in `config.yaml`
   (§2.1 below) and skip ahead. Make sure Bedrock model access is enabled for the
   model IDs you configure.
 - **Provision everything with the bundled CDK app.** The repo ships an optional,
@@ -105,31 +108,18 @@ them. Choose one of three ways to run it:
   whole stack in one command — networking (VPC + endpoints), the Neptune cluster,
   the OpenSearch domain, the DynamoDB doc-status table, the S3 cache bucket, an
   ECS Fargate data plane, a Step Functions ingestion pipeline, and CloudWatch
-  observability, plus an optional region-pinned Bedrock Guardrail:
-
-  ```bash
-  cd iac
-  python -m venv .venv && . .venv/bin/activate
-  pip install -r requirements.txt
-
-  cdk synth              # preview — no AWS changes, no cost
-  cdk bootstrap          # once per account/region
-  cdk deploy --all       # creates billable resources (Neptune + OpenSearch are hourly)
-  ```
-
-  When the deploy finishes, copy the Neptune / OpenSearch / S3 endpoints from the
-  CloudFormation outputs into your `config.yaml` (the endpoints are bare
-  hostnames). Neptune and OpenSearch are VPC-only, so run the CLIs inside the
-  VPC, for example as a task of the deployed task definition; the stack's own
-  task already receives the endpoints as env vars. `cdk destroy --all` tears the
-  `dev` profile back down. See [`iac/README.md`](../iac/README.md) for every
-  stack, all `-c key=value` knobs (VPC reuse, instance sizing, CMK, deletion
-  protection, cdk-nag), and the production-hardening checklist.
+  observability, plus an optional region-pinned Bedrock Guardrail.
+  [`iac/README.md`](../iac/README.md) has the deploy commands
+  ([Usage](../iac/README.md#usage)), every `-c key=value` option and the
+  production-hardening checklist. Neptune and OpenSearch are VPC-only, so the
+  CLIs run inside the VPC as a task of the deployed task definition, which
+  receives the endpoints as environment variables
+  ([After deploy](../iac/README.md#after-deploy)).
 
 ### Install
 
 ```bash
-git clone <repository-url>
+git clone https://github.com/awslabs/unified-kg-rag-on-aws.git
 cd unified-kg-rag-on-aws
 
 # uv (recommended)
@@ -197,12 +187,35 @@ uv run run-rag --config-path docker/config.local.yaml --query "..."
 docker compose -f docker/compose.local.yaml down -v
 ```
 
+`down -v` deletes the stores' data but not the SQLite registry
+(`.unified-kg-rag/doc-status.sqlite3` at the repository root with
+`docker/config.local.yaml`). Before the next ingestion into fresh stores,
+delete that file or set `indexing.reset: true`; otherwise the incremental run
+stops before writing anything (see the Gremlin Server note at the end of this
+section).
+
+On Linux, `uv sync --extra local` installs the CUDA build of PyTorch that the
+lockfile pins (several GB) for the cross-encoder, GPU or not. To get the CPU
+build instead, install the extra through uv's pip interface:
+
+```bash
+uv sync
+uv pip install --torch-backend cpu -e '.[local]'
+```
+
+`uv run` keeps these packages; a later plain `uv sync` removes them, and
+`uv sync --extra local` brings back the locked CUDA build.
+
 `backend: local` (set in [`docker/config.local.yaml`](../docker/config.local.yaml),
-or `--backend local` on `run-ingestion`, `run-rag`, `run-eval` and
-`run-prompt-tuning`) fills in these providers for every key the config leaves
-unset. Each role is chosen under `providers:` (documented in
-`config-template.yaml`), so roles can be mixed, for example local stores with
-Bedrock models:
+or `--backend local`, see [Provider flags](#provider-flags)) fills in these
+providers for every key the config leaves unset. A key the file sets always
+wins over the preset: a config that sets `providers.<role>.kind`, an
+`aws.neptune` or `aws.opensearch` connection key (`port`, `use_iam`,
+`use_ssl`, ...) or an embedding or rerank model id keeps that value under
+`backend: local`. `config-template.yaml` leaves these keys commented out, so a
+copy of it switches with `backend: local` alone. Each role is chosen under
+`providers:`, so roles can be mixed, for example local stores with Bedrock
+models:
 
 | Role | `providers.<role>.kind` | Local default |
 |---|---|---|
@@ -253,6 +266,23 @@ Expected differences from AWS mode:
   what the model can generate.
 - LLM judges in `run-eval` (`langchain`, `ragas`) run on the local model and
   score less reliably; the deterministic evaluators are unaffected.
+
+#### Provider flags
+
+`run-ingestion`, `run-rag`, `run-eval` and `run-prompt-tuning` take these
+flags. Each one overrides its key of the loaded config, a key the file sets
+included; an omitted flag leaves the config as it is.
+
+| Flag | Sets |
+|---|---|
+| `--backend {aws,local}` | `backend`. The preset still fills in only the keys the config leaves unset |
+| `--llm-provider KIND` | `providers.llm.kind`: `bedrock`, `openai_compatible` or `ollama` |
+| `--llm-model MODEL` | `providers.llm.default_model_id` (non-Bedrock language models) |
+| `--embedding-provider KIND` | `providers.embedding.kind`: `bedrock`, `openai_compatible` or `ollama` |
+| `--embedding-model MODEL` | `providers.embedding.model_id` (non-Bedrock embeddings) |
+| `--embedding-dimension N` | `providers.embedding.dimension` (non-Bedrock embeddings) |
+| `--rerank-provider KIND` | `providers.rerank.kind`: `bedrock`, `cross_encoder` or `none` |
+| `--model-base-url URL` | `providers.llm.base_url` and `providers.embedding.base_url` |
 
 #### Local stores with Bedrock models
 
@@ -677,7 +707,7 @@ becomes an OpenTelemetry trace that any OTLP-capable backend (Jaeger, Grafana
 Tempo, an OpenTelemetry Collector, ...) can show. It needs the `otel` extra:
 
 ```bash
-uv sync --extra otel          # or: pip install "unified-kg-rag-on-aws[otel]"
+uv sync --extra otel          # or: pip install -e '.[otel]'
 ```
 
 Enabling tracing without the extra fails at start-up with a
@@ -711,9 +741,8 @@ only; a standard `OTEL_EXPORTER_OTLP_*` variable wins over the vendor one.
 | `langfuse` | `LANGFUSE_HOST` (e.g. `http://localhost:3000`; the exporter posts to `<host>/api/public/otel/v1/traces`). Required: there is no default host. HTTP only; gRPC fails at start-up. | `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` (required), sent as a Basic `Authorization` header with `x-langfuse-ingestion-version: 4`. |
 | `phoenix` | `PHOENIX_COLLECTOR_ENDPOINT` (default `http://localhost:6006`, or `:4317` with `OTEL_EXPORTER_OTLP_PROTOCOL=grpc`). | `PHOENIX_API_KEY`, when the server needs one, as a Bearer `authorization` header. |
 
-The start-up log names the backend, the endpoint (without credentials), the
-timeout and the header *names*; key values are never logged. Spans keep their
-`gen_ai.*` and `kg_rag.*` attributes and gain the vendor's names on export:
+Spans keep their `gen_ai.*` and `kg_rag.*` attributes and gain the vendor's
+names on export:
 Langfuse `langfuse.observation.type` (`generation` for model calls,
 `embedding`, `retriever` for retrieval and rerank, `span` otherwise) and, with
 `capture_content`, `langfuse.observation.input`/`output`; Phoenix
@@ -750,11 +779,10 @@ spans and exported as given, so pass an opaque id, not an e-mail address.
 Log records written while a span is active carry its `trace_id` and `span_id`,
 so a log line can be found from its trace and the other way round.
 
-**What is never captured.** Spans carry counts, ids, model names, timings and
-token usage. Query text, retrieved passages and model output are recorded only
-with `capture_content: true` (and then only on model spans, after
-`redact_patterns`). Treat a trace backend that receives captured content like
-`DEBUG` logs: it holds user and corpus data.
+**Privacy and export limits.** Spans carry no query text, passages or model
+output unless `capture_content: true`. What is exported, how credentials are
+handled, and what an unreachable collector costs are in the runbook's
+[Export limits, private VPCs and privacy](./operations.md#export-limits-private-vpcs-and-privacy).
 
 Known limits: the streamed answer of `stream` / `astream` is traced as its own
 trace (retrieval and context building are in the `kg_rag.query` trace), and
@@ -793,6 +821,7 @@ OpenSearch + Neptune.
 | `--metrics-sink` | `none` | `none`, or `cloudwatch` (emits CloudWatch EMF — Embedded Metric Format — metrics to stdout as dimensionless series; `pipeline_id` is recorded as a log property, not a dimension, so runs add no new metric series) |
 | `--retire-source-scope SCOPE` | — | Incremental runs: treat every registry record of the former source scope `SCOPE` (in this run's index suffix) as deleted, removing its exclusive content. Repeatable; added to `indexing.retire_source_scopes`. Fails when `SCOPE` is the run's own scope. See §5 Deletion scope. |
 | `--config-path` | — | Path to `config.yaml` |
+| `--backend`, `--llm-provider`, ... | — | Provider selection; see [Provider flags](#provider-flags) |
 
 ### The 12 pipeline stages
 
@@ -923,7 +952,7 @@ documents as failed so the next run translates them again (§5).
 | `--conversation-id` | — | Continue an existing conversation |
 | `--use-memory` | off | Enable conversation memory (auto in interactive) |
 | `--suffix` | — (`default`) | [Index suffix](#index-suffix) to query; must match the corpus's `processing.document_parsing.index_value` |
-| `--enable-thinking` | off | Enable model step-by-step reasoning |
+| `--enable-thinking` | off | Enable model step-by-step reasoning; a no-op for models that always reason (Claude 4.7+ / 5.x, OpenAI GPT), whose depth `aws.bedrock.default_effort` / `fast_effort` set |
 | `--search-strategy` | `auto` | `auto`, `drift`, `global`, `local`, `simple`, `mix`, `hybrid`, `naive` |
 | `--search-type` | `hybrid` | `hybrid`, `lexical`, `vector` |
 | `--top-k` | `10` | Max search results |
@@ -933,6 +962,7 @@ documents as failed so the next run translates them again (§5).
 | `--output-format` | `text` | `text` or `json` |
 | `--verbose`, `-v` | off | Show query-processing info, sources, metrics |
 | `--config-path` | — | Path to `config.yaml` |
+| `--backend`, `--llm-provider`, ... | — | Provider selection; see [Provider flags](#provider-flags) |
 
 ### Search strategies — when to use which
 
@@ -1161,11 +1191,8 @@ naming the other local source directories with records in its index suffix
 options. It deletes nothing. Set `source_scope` per corpus to silence it when
 the directories are separate corpora.
 
-Registries written before the source scope was part of the key are keyed by
-index suffix and relative path only. The first run after an upgrade adopts
-each such record whose scope is the run's (or that has no scope) under the new
-key, keeping its content hash and lineage, so nothing is re-extracted or
-deleted; records of other scopes are left for their own runs to adopt.
+A registry written by a pre-release build is migrated on its first run; see
+[CHANGELOG: Upgrading from pre-release builds](../CHANGELOG.md#upgrading-from-pre-release-builds).
 
 ### Failed documents
 
@@ -1184,10 +1211,11 @@ content starts the count again) or raising the limit retries it.
 
 ### Document size limit
 
-The registry stores each document's artifact ids (text units, entities,
-relationships, claims, communities, reports) in one DynamoDB item, and an item
+The DynamoDB registry stores each document's artifact ids (text units,
+entities, relationships, claims, communities, reports) in one item, and an item
 is limited to 400 KB, roughly 10,000 ids. A document that produces more fails
 the indexing stage with an error naming the file; split it into smaller files.
+The SQLite registry of local mode has no such limit.
 
 ### Cross-run merge
 
@@ -1219,7 +1247,7 @@ chunks counts as a failed removal (its registry row is kept for a retry).
 | `--eval-data-path` | **required** | JSON file of questions + ground truths: a local path or an `s3://bucket/key` URI |
 | `--outputs-directory` | `evaluation.outputs_directory` | Where to save results: a local directory or an `s3://bucket/prefix/` URI |
 | `--suffix` | — (`default`) | [Index suffix](#index-suffix) to evaluate against |
-| `--enable-thinking` | off | Model reasoning |
+| `--enable-thinking` | off | Model reasoning, as for `run-rag` (a no-op for models that always reason) |
 | `--search-strategy` | `auto` | Strategy used to answer each question |
 | `--search-type` | `hybrid` | Search method |
 | `--top-k` | `10` | Max results |
@@ -1227,6 +1255,7 @@ chunks counts as a failed removal (its registry row is kept for a retry).
 | `--max-failure-rate` | `1.0` | Exit non-zero when the fraction of queries whose answer generation failed, or the fraction of a metric's attempted values that failed (`metric_outcomes`; skipped values do not count), exceeds this (0.0-1.0). A run where every query, or every attempt of a metric, failed always exits non-zero |
 | `--verbose`, `-v` | off | Debug logging |
 | `--config-path` | — | Path to `config.yaml` |
+| `--backend`, `--llm-provider`, ... | — | Provider selection; see [Provider flags](#provider-flags) |
 
 ### Evaluators
 
@@ -1483,6 +1512,7 @@ persona / entity types) via Bedrock, and writes a domain-adapted
 | `--output` | `tuned_prompts.yaml` | Output YAML path |
 | `--max-docs` | `20` | Max documents to sample |
 | `--config-path` | — | Path to `config.yaml` |
+| `--backend`, `--llm-provider`, ... | — | Provider selection; see [Provider flags](#provider-flags) |
 
 ```bash
 run-prompt-tuning --source-directory ./source --output tuned_prompts.yaml --config-path config.yaml
@@ -1608,36 +1638,8 @@ on).
 
 ### Common errors
 
-The [Operator Runbook](./operations.md) covers re-ingestion, failed documents,
-cache prefixes and the start-up endpoint check in more depth.
-
-
-- **`--source-directory is required`** — pass it (or set
-  `$GRAPHRAG_SOURCE_DIRECTORY`); metadata-only ops (`--verify-metadata` /
-  `--repair-metadata`) instead need `--pipeline-id`.
-- **`--s3-bucket-name must be specified for S3 sync`** — `--s3-sync` requires
-  `--s3-bucket-name`.
-- **`--pipeline-id is required for --resume-from-stage`** — resuming needs the
-  prior run's pipeline ID.
-- **`Invalid stage names provided`** — use the exact stage names from §3 (the
-  CLI prints the valid set).
-- **`Skipping N '.md' file(s) ... unsupported file type`** (and, when no
-  file is left, `No supported source files found in '<dir>'`) — install the
-  `unstructured` extra (`uv sync --extra unstructured`, Python 3.11+) to parse
-  `.md`/`.html`, or convert those documents to a supported format.
-- **`No indices found for suffix '<suffix>'`** — `run-rag`/`run-eval` queried
-  a suffix nothing was ingested under: ingestion has not run yet, or
-  `--suffix` does not match the `processing.document_parsing.index_value` the
-  corpus was ingested with (both default to `default`).
-- **OpenSearch auth failures with `use_iam: false`** — ensure `.env` has
-  `OPENSEARCH_USERNAME` / `OPENSEARCH_PASSWORD`.
-- **LightRAG `mix`/`hybrid` returns nothing** — confirm the relationships index
-  was built during ingestion and that keyword extraction produced keywords (very
-  short queries fall back to the raw query only under
-  `raw_query_fallback_max_len`).
-- **Pipeline failed mid-run** — re-run with `--pipeline-id <id>` to resume from
-  the failed/incomplete stage; use `--verify-metadata` to check for corruption,
-  `--repair-metadata` to attempt a fix, or `--force-rebuild` to start clean.
+[Operator Runbook: Common errors](./operations.md#common-errors) lists the
+messages the CLIs report, what they mean and the fix, for AWS and local mode.
 
 ### Large / multilingual / heterogeneous corpora
 
@@ -1746,8 +1748,12 @@ Both constructors accept injected backends (`providers`, `retriever_builders`,
 - **Reranking is regional.** The rerank models are not offered in every
   Bedrock region (see [Required models](#required-models)). Without reranking,
   results are ranked by fusion only.
-- **Bedrock only.** Model calls go to Amazon Bedrock. Other providers need a
-  custom model factory ([Design Doc §15](./design.md#15-extension-guide)).
+- **Three model providers ship.** Amazon Bedrock (the default), Ollama and
+  OpenAI-compatible servers for language models and embeddings, and Bedrock or
+  a sentence-transformers cross-encoder for reranking
+  ([Local mode](#local-mode-no-aws)). Other providers need a builder
+  registered with `register_provider`
+  ([Design Doc §15](./design.md#15-extension-guide)).
 - **Two store backends ship.** Neptune (or a TinkerPop Gremlin Server for
   local development) and OpenSearch. Other stores need custom adapters.
 - **No serving layer.** The package provides CLIs and a Python library; it has
@@ -1762,8 +1768,8 @@ Both constructors accept injected backends (`providers`, `retriever_builders`,
   relationship keeps the description a changed or deleted document
   contributed, and delta runs append communities instead of re-clustering the
   whole graph; only a full rebuild (`indexing.reset: true`) refreshes both.
-  Each run scans the whole doc-status table, and one document's artifact ids
-  must fit one 400 KB DynamoDB item.
+  Each run scans the whole doc-status table, and with the DynamoDB registry
+  one document's artifact ids must fit one 400 KB item.
 - **Concurrent runs are not supported.** Do not run two ingestions at once
   against the same index suffix (a full reindex's alias swap and old-index
   cleanup can delete the other run's index) or the same doc-status table

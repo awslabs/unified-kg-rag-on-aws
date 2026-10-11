@@ -60,7 +60,7 @@ See the [User Guide §4](./docs/user-guide.md#4-querying-run-rag) for per-strate
 
 | Path | Graph and vector stores | Models | Start here |
 |---|---|---|---|
-| **Local mode** (development, no AWS) | Gremlin Server and OpenSearch in containers ([`docker/compose.local.yaml`](./docker/compose.local.yaml)), SQLite for incremental indexing | Ollama (or any OpenAI-compatible server), or Amazon Bedrock | `uv sync --extra local`, `docker compose -f docker/compose.local.yaml --profile models up -d --wait`, then pass `--config-path docker/config.local.yaml` ([Local mode](./docs/user-guide.md#local-mode-no-aws)) |
+| **Local mode** (development, no AWS) | Gremlin Server and OpenSearch in containers ([`docker/compose.local.yaml`](./docker/compose.local.yaml)), SQLite for incremental indexing | Ollama (or any OpenAI-compatible server), or Amazon Bedrock | Follow [Local mode](./docs/user-guide.md#local-mode-no-aws): start the containers, pull the two Ollama models, then pass `--config-path docker/config.local.yaml` |
 | **Existing AWS resources** | Your Neptune cluster and OpenSearch domain (plus an S3 bucket, and DynamoDB for incremental indexing) | Amazon Bedrock | Copy `config-template.yaml` to `config.yaml` and set the endpoints |
 | **Bundled CDK stack** | Created by [`iac/`](./iac/README.md), with a Fargate data plane and a Step Functions ingestion pipeline | Amazon Bedrock | [Deploy on AWS](#deploy-on-aws-optional), then [`iac/README.md` After deploy](./iac/README.md#after-deploy) |
 
@@ -71,8 +71,10 @@ lives in memory, and small local models extract weaker graphs.
 
 ### Prerequisites
 
-- Python 3.10–3.12 and [uv](https://docs.astral.sh/uv/) (`pip` also works).
-- AWS credentials with access to Amazon Bedrock (model access enabled for the [required models](./docs/user-guide.md#required-models)) and, unless you use the local stores, an Amazon Neptune cluster, an Amazon OpenSearch Service domain, an S3 bucket, and, for incremental indexing only, DynamoDB. The framework connects to existing services; to create them, see [Deploy on AWS](#deploy-on-aws-optional).
+- Every path: Python 3.10–3.12 and [uv](https://docs.astral.sh/uv/) (`pip` also works).
+- Local mode: Docker with Compose. No AWS account is needed unless you keep Bedrock for the models.
+- Existing AWS resources: AWS credentials with access to Amazon Bedrock (model access enabled for the [required models](./docs/user-guide.md#required-models)), an Amazon Neptune cluster and an Amazon OpenSearch Service domain. DynamoDB is needed only for incremental indexing, and an S3 bucket only for stage-cache sync (`--s3-sync`) or a persisted embedding cache. The framework connects to existing services and never creates them.
+- Bundled CDK stack: the CDK CLI and Node.js listed in [`iac/README.md` Prerequisites](./iac/README.md#prerequisites), and Docker to push the image.
 
 ### Install and configure
 
@@ -112,14 +114,7 @@ The graph-aware evaluator reports entity and relationship coverage (recall) agai
 
 The [`iac/`](./iac/README.md) AWS CDK app provisions the whole stack: a VPC with endpoints, Neptune, OpenSearch, the DynamoDB document-status table, an S3 cache bucket, an ECS Fargate data plane, a Step Functions ingestion pipeline, CloudWatch dashboards and alarms, and an optional Bedrock Guardrail.
 
-```bash
-cd iac && python -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt
-cdk synth          # preview only: no AWS changes, no cost
-cdk bootstrap      # once per account and region
-cdk deploy --all   # creates billable resources
-```
-
-The stores are reachable only from inside the VPC, so the deployed Fargate task runs the CLIs; it receives the endpoints as environment variables. [`iac/README.md` After deploy](./iac/README.md#after-deploy) has the commands to push the image, start an ingestion and run a query task.
+[`iac/README.md` Usage](./iac/README.md#usage) has the `cdk synth` (preview, no AWS changes), `cdk bootstrap` and `cdk deploy --all` commands and every `-c key=value` option. The stores are reachable only from inside the VPC, so the deployed Fargate task runs the CLIs; it receives the endpoints as environment variables. [`iac/README.md` After deploy](./iac/README.md#after-deploy) has the commands to push the image, start an ingestion and run a query task.
 
 > **Cost and teardown.** Neptune and OpenSearch bill hourly, and `public` network mode adds NAT gateways. The default `dev` environment tears down with `cdk destroy --all`; non-dev environments default to retaining stateful stores with deletion protection on. Review the hardening options (`use_cmk`, `deletion_protection`, Multi-AZ sizing, `vpc_flow_logs`) in [`iac/README.md`](./iac/README.md) before production use.
 

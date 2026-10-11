@@ -32,7 +32,7 @@
 `unified-kg-rag-on-aws`는 Microsoft GraphRAG와 LightRAG 방법론을 AWS 네이티브 스택(Bedrock + Neptune + OpenSearch + S3 + DynamoDB) 위에 다시 구현한 라이브러리입니다. 핵심 설계 원칙은 다음과 같습니다.
 
 - **두 방법론, 하나의 인프라**: GraphRAG(커뮤니티 요약)와 LightRAG(이중 레벨 키워드)는 수집, 인덱싱, 캐싱, 다국어, 하이브리드 검색 인프라를 함께 쓰고 **검색 알고리즘 레이어만 바꿉니다**.
-- **일반화 우선**: 하드코딩, 정규 표현식 휴리스틱, 과적합을 피합니다. 의미 판단은 LLM이나 권위 있는 데이터에 맡기고, 토큰 수는 Bedrock `count_tokens` API로 세며, 임계값과 가중치는 설정으로 정합니다.
+- **일반화 우선**: 하드코딩, 정규 표현식 휴리스틱, 과적합을 피합니다. 의미 판단은 LLM이나 권위 있는 데이터에 맡기고, 토큰 수는 모델이 받으면 Bedrock `count_tokens` API로, 아니면 문자 체계를 고려한 추정치로 세며, 임계값과 가중치는 설정으로 정합니다.
 - **헥사고날 경계**: 도메인과 알고리즘 코드는 추상 포트에 의존하고, 구체적인 AWS 어댑터는 그 뒤에 둡니다.
 - **레지스트리 기반 확장**: 검색 전략과 렌더러는 데코레이터 레지스트리로 등록하므로 디스패치 코드를 고치지 않고 확장할 수 있습니다. 평가기는 메서드 하나(`EvaluationManager._resolve_evaluator_class`)에서 `EvaluatorType`별 클래스로 연결하므로, 새 평가기는 그곳에 분기 하나를 추가합니다.
 
@@ -73,7 +73,9 @@ unified_kg_rag/
 │                       #   ModelFactoryPort — ports/__init__이 포트 카탈로그)
 ├─ adapters/            # 구체적인 기술 바인딩
 │  ├─ aws/              #   Bedrock, Neptune, OpenSearch, DynamoDB, S3 클라이언트
+│  ├─ local/            #   Ollama/OpenAI 호환 모델, 크로스 인코더, SQLite 레지스트리
 │  ├─ llm/              #   공급자 중립 체인 조립, 일시적 오류 재시도, 토큰 추정
+│  ├─ observability/    #   OpenTelemetry 트레이서, 내보내기, LangChain 콜백
 │  ├─ storage/          #   Neptune/OpenSearch 인덱서 (쓰기 측 포트 구현)
 │  ├─ retrievers/       #   Neptune/OpenSearch 리트리버
 │  ├─ search_strategies/#   simple/local/global/drift + lightrag(mix/hybrid/naive)
@@ -81,14 +83,18 @@ unified_kg_rag/
 │  ├─ ingestion/        #   LLM/IO 결합: chunker, *_extractor, loader, parser,
 │  │                    #   translator, gleaner, community_detector
 │  ├─ renderers/        #   그래프 시각화 렌더러
-│  └─ evaluators/       #   평가기 베이스 + langchain/ragas 평가기 (LLM을 쓰지 않는 graph_aware,
+│  ├─ evaluators/       #   평가기 베이스 + langchain/ragas 평가기 (LLM을 쓰지 않는 graph_aware,
 │                       #   retrieval, answer_match 평가기는 evaluation/에 있음)
+│  ├─ providers.py      #   Providers: 실행마다 쓰는 모델·저장소 공급자 묶음
+│  └─ provider_registry.py # @register_provider: 역할과 kind별 빌더
 ├─ application/         # 오케스트레이션 + 진입점
 │  ├─ cli/              #   run-ingestion/rag/eval/visualization/prompt-tuning
 │  ├─ ingestion/        #   DataIngestionPipeline + pipeline_stages
 │  ├─ storage/          #   IndexingManager (인덱서 fan-out)
 │  ├─ retrieval/        #   rag_chain (GraphRAGChain, RAGInput/Output)
-│  └─ prompts/          #   PromptTuner (LLM 기반 코퍼스 프로파일링)
+│  ├─ prompts/          #   PromptTuner (LLM 기반 코퍼스 프로파일링)
+│  ├─ bootstrap.py      #   build_providers: composition root
+│  └─ observability.py  #   configure_observability: 추적 백엔드 설치
 ├─ shared/              # 공통 커널 (config, logging, exceptions, metrics,
 │                       #   cache/pipeline manager, utils)
 ├─ evaluation/          # 실제 로직 패키지: evaluation_manager / graph_aware /
@@ -136,20 +142,19 @@ class LocalSearchStrategy(BaseSearchStrategy): ...
 - **검색 전략**: `domain/retrieval/strategy_registry.py` — `@register_strategy(...)`가 클래스, 필요한 역할, 질의 입력을 `SearchStrategy` enum에 등록합니다.
 - **평가기**: `EvaluationManager._resolve_evaluator_class` — `EvaluatorType`마다 명시적 분기 하나로 평가기 클래스를 반환합니다(지연 로딩, 사용할 때 import). 데코레이터 레지스트리가 아니므로 새 평가기는 enum 멤버와 분기를 추가합니다.
 - **렌더러**: `adapters/renderers/base.py` — `@register_renderer("name")`.
+- **공급자**: `adapters/provider_registry.py` — `@register_provider(ProviderRole.X, "kind")`가 역할(LLM, 임베딩, 재순위화, 토큰 카운터, 그래프·벡터 인덱서와 리트리버, 문서 상태 레지스트리)마다 `providers.<역할>.kind`로 고를 빌더를 등록합니다.
 
 이 패턴은 기존 `ParserFactory._loader_configs`(선언적 파서 등록)와 같은 생각에서 나왔습니다.
 
-> 쓰기 경로 참고: 레지스트리는 **읽기, 평가, 렌더링, 파싱** 경로에 적용됩니다.
-> 쓰기 경로의 `IndexingManager`는 레지스트리를 순회하지 않고 의도적으로 **고정된
-> 두 백엔드**(Neptune + OpenSearch)를 조합합니다. 이 두 저장소(그래프 DB + 벡터/어휘
-> 검색)는 런타임에 바꾸는 선택지가 아니라 프레임워크를 구성하는 요소이고, 백엔드별
-> fan-out(엔티티를 두 저장소에 모두 쓰기, 엣지보다 엔티티를 먼저 쓰는 단계 구분,
-> 고아 엣지 연쇄 삭제)은 임의의 디스패치가 아니라 의도된 도메인 지식이기 때문입니다.
-> 그래서 새 검색 전략이나 렌더러는 등록만으로(평가기는
-> `_resolve_evaluator_class`의 분기 하나로) 추가하지만, 쓰기 측 저장소를 바꾸려면
-> `GraphIndexer` / `VectorIndexer` 포트를 구현해 주입합니다
-> (`IndexingManager(vector_indexer=…, graph_indexer=…)`). 읽기 경로는 이미
-> `RetrieverRole` → 빌더 맵으로 일반화되어 있습니다.
+> 쓰기 경로 참고: `IndexingManager`는 백엔드 목록을 순회하지 않고 항상 **두 저장소
+> 역할**, 즉 그래프 저장소와 벡터/어휘 저장소에 씁니다. 두 역할은 프레임워크를 구성하는
+> 요소이고, 역할별 fan-out(엔티티를 두 저장소에 모두 쓰기, 엣지보다 엔티티를 먼저 쓰는
+> 단계 구분, 고아 엣지 연쇄 삭제)은 임의의 디스패치가 아니라 의도된 도메인 지식이기
+> 때문입니다. 각 역할을 맡을 백엔드는 열려 있습니다. `providers.graph.kind` /
+> `providers.vector.kind`가 등록된 빌더(Neptune 또는 Gremlin Server, OpenSearch)를
+> 고르거나, `GraphIndexer` / `VectorIndexer`를 주입합니다
+> (`IndexingManager(vector_indexer=…, graph_indexer=…)`). 읽기 경로도 `RetrieverRole`
+> → 빌더 맵으로 같은 방식을 씁니다.
 
 ### 2.4 의존성 규칙 검증 상태
 
@@ -265,7 +270,7 @@ flowchart LR
    **한계**: 공유 산출물의 설명에는 변경되거나 삭제된 문서가 기여한 문장이 남습니다. 이를 지우려면 남은 출처로 설명을 다시 요약해야 하고, 영향받는 산출물마다 LLM을 호출해야 하므로 전체 재구축(`indexing.reset`) 전까지 그대로 둡니다. 공유 커뮤니티와 그 리포트도 마찬가지입니다(아래 참고).
 6. **레지스트리 갱신**(커밋): `PENDING` 레코드를 한 번의 일괄 쓰기로 `DocStatusRecord`로 바꿉니다. 각 레코드에는 문서의 `DocumentLineage`(문서별 산출물 id + 접미사), 실행 범위, 상대 경로가 들어갑니다. 번역, 그래프 추출, 추가 추출, 주장 추출 중 어느 것이든 텍스트 단위 하나에서라도 실패한 문서는 (기록된 산출물의 계보와 함께) `FAILED`로 기록합니다. `diff`는 해시가 같아도 `FAILED` 레코드를 changed로 분류하므로, 다음 실행이 그 문서를 정리하고 다시 추출합니다. 레코드는 같은 내용의 연속 실패 횟수(`failure_count`)를 세며, `indexing.max_document_failures`에 이르면 `detect_delta`가 그 문서를 unchanged로 분류합니다. 그래서 매번 같은 이유로 실패하는 문서를 실행마다 다시 추출하지 않습니다.
 
-`indexing.reset`이면 diff를 건너뜁니다. 저장소와 실행 네임스페이스의 레지스트리 레코드를 비우고(테이블을 공유하는 다른 네임스페이스의 레코드는 남김. 범위가 생기기 전에 기록된 범위 없는 레코드는 키가 `file_path`에 대한 비우는 네임스페이스의 이전 방식 키이면 지우므로 같은 접미사의 다른 네임스페이스 레코드는 남음. `file_path`가 없어 네임스페이스를 알 수 없는 초기 릴리스의 레코드는 `suffix`가 비우는 접미사 중 하나이면 지움. 남겨 두면 그 접미사의 모든 네임스페이스에서 생존 문서로 취급되어 해당 엔티티가 다시는 삭제되지 않음) 모든 문서를 `PENDING`으로 선기록(2단계)한 뒤 전체 인덱싱 경로로 코퍼스 전체를 다시 구축하고, 모든 문서를 다시 기록합니다(재구축의 쓰기가 델타 커밋과 같은 실패 기준을 통과할 때만).
+`indexing.reset`이면 diff를 건너뜁니다. 저장소와 실행 네임스페이스의 레지스트리 레코드를 비우고(테이블을 공유하는 다른 네임스페이스의 레코드는 남김. 범위가 생기기 전에 기록된 레코드는 [Upgrading from pre-release builds](../CHANGELOG.md#upgrading-from-pre-release-builds) 참고) 모든 문서를 `PENDING`으로 선기록(2단계)한 뒤 전체 인덱싱 경로로 코퍼스 전체를 다시 구축하고, 모든 문서를 다시 기록합니다(재구축의 쓰기가 델타 커밋과 같은 실패 기준을 통과할 때만).
 
 **중단 복구(선기록 프로토콜)**: 레지스트리는 저장소와 원자적으로 갱신되지 않으므로, 실행은 두 쓰기 사이 어디에서든 멈출 수 있습니다(태스크 강제 종료, 저장소 장애, 실패 기준 미달). 프로토콜이 지키는 불변식은 하나입니다. 레지스트리가 설명할 수 없는 것이 저장소에 생기기 전에, 레지스트리가 먼저 그것을 기록합니다. 선기록 레코드(2단계)는 제거와 upsert보다 먼저 쓰고, 삭제된 문서의 행은 산출물을 지운 뒤에만 지우며, 커밋은 문서의 쓰기가 끝난 뒤에만 `PENDING` 레코드를 바꿉니다. 2단계 이후 어디에서 멈추든 끝나지 않은 문서는 `PENDING`으로 남고, 다음 실행이 이를 복구합니다.
 
@@ -370,7 +375,7 @@ Neptune 그래프 확장은 `local`과 `drift`에 포함되어 있고, `mix`/`hy
 - **HybridScorer**(`adapters/retrieval/hybrid_scorer.py`): 소스별 결과를 RRF(`rrf_k`)나 가중 융합으로 합치고, 다양성 필터링(`diversity_lambda`)과 Bedrock 재순위화를 적용합니다. 가중치와 방식은 `config.search.fusion`/`hybrid`에서 정합니다. 재순위화는 `search.reranking.enabled`일 때만 동작하며, `compress_documents`는 `top_n`을 문서 수에 맞게 잠시 바꿨다가 되돌립니다. 초기화에 실패하면 재순위화 모델을 끈 상태(`None`)로 동작합니다.
   - **IAM 주의 사항**: Rerank API는 `bedrock:Rerank` 권한을 `InvokeModel`과 다른 형태의 리소스에 대해 검사하므로, foundation model이나 inference profile ARN으로 범위를 좁힌 statement로는 거부됩니다. IaC 태스크 역할은 별도 statement에서 `bedrock:Rerank`를 `Resource: "*"`로 허용합니다(`iac/stacks/compute_stack.py`의 `ComputeStack._build_task_role`). 이 권한이 없으면 스코어러는 ERROR 수준으로 `Reranking failed: ...`를 기록하고 재순위화하지 않은 융합 결과를 반환합니다.
 - **TokenManager**(`adapters/retrieval/token_manager.py`): 모델 한도 안에서 컨텍스트를 최적화합니다. 섹션 유형별 우선순위 배수(`PRIORITY_MULTIPLIERS`: TEXT 1.3 / ENTITY 1.2 / RELATIONSHIP 1.1 / CLAIM 1.1 / COMMUNITY 1.0 / GENERAL 0.8)로 가중치를 주고, 우선순위가 높은 순서대로 예산 안에 드는 섹션을 고릅니다. `SectionType.CLAIM`은 질의 시점의 주장 주입(§6.1)을 토큰 예산에 포함하는 데 쓰는 유형입니다. 체인은 이 선택 결과(`OptimizedContext`)를 상태로 유지하고 이것으로 `RAGOutput.sources`를 만듭니다. 그래서 sources에는 답변 모델이 실제로 본 섹션만 검색 순위 순서로 들어갑니다. 예산 때문에 빠진 섹션은 보고하지 않고, 예산에 맞춰 잘린 섹션은 잘린 텍스트와 `metadata.truncated: true`를 함께 보고합니다. 각 출처의 메타데이터는 `truncated` / `source_id` / `document_ids` / `chunk_id` / `section_type` / `score`를 유지하고 `*_embedding` 벡터는 뺍니다. 컨텍스트가 비어 답변 단계를 바로 끝내면 `sources`도 비어 있습니다.
-- **토큰 계산**(`adapters/aws/token_counter.py`): Bedrock `count_tokens` API를 유일한 기준으로 씁니다. 실패했을 때만 문자 체계를 고려한 추정치로 대신합니다(서드파티 토크나이저는 쓰지 않습니다). 일시적이지 않은 실패(예: `AccessDeniedException`, 또는 메시지가 모델이 이 작업을 지원하지 않는다고 말하는 `ValidationException`)가 나면 그 모델을 프로세스 전체에서 미지원으로 표시해 이후 계산에서 API를 건너뜁니다. 스로틀링, 타임아웃, 입력 문제로 생긴 `ValidationException`은 표시하지 않습니다. 비어 있거나 공백뿐인 텍스트는 API를 호출하지 않습니다. 임베딩 모델과 재순위화 모델용 카운터는 클라이언트 없이 만들어 API를 호출하지 않으며(API가 이 모델을 받지 않음), CountTokens가 거부하는 언어 모델(Claude 4.7+/5.x, OpenAI GPT)은 기능 플래그(`supports_count_tokens`)로 API를 건너뜁니다. 잘라 내기는 문자 비율로 후보 길이를 추정하고 API로 검증하는 수렴 루프를 씁니다.
+- **토큰 계산**(`adapters/aws/token_counter.py`, `adapters/local/token_counter.py`): 기본 설정에서는 모든 토큰 수가 문자 체계를 고려한 추정치(`adapters/llm/token_estimate.py`)입니다. CountTokens는 기본 Claude 5.x 모델과 모든 임베딩·재순위화 모델을 받지 않으므로 이들의 카운터는 API를 건너뜁니다(아래 참고). API를 받는 언어 모델은 Bedrock `count_tokens` API로 세고, 실패하면 추정치로 대신합니다. 로컬 언어 모델은 추정치를 쓰거나, `providers.llm.tokenizer: tiktoken`(`[local]` extra)이면 BPE 인코딩으로 셉니다. 일시적이지 않은 실패(예: `AccessDeniedException`, 또는 메시지가 모델이 이 작업을 지원하지 않는다고 말하는 `ValidationException`)가 나면 그 모델을 프로세스 전체에서 미지원으로 표시해 이후 계산에서 API를 건너뜁니다. 스로틀링, 타임아웃, 입력 문제로 생긴 `ValidationException`은 표시하지 않습니다. 비어 있거나 공백뿐인 텍스트는 API를 호출하지 않습니다. 임베딩 모델과 재순위화 모델용 카운터는 클라이언트 없이 만들어 API를 호출하지 않으며(API가 이 모델을 받지 않음), CountTokens가 거부하는 언어 모델(Claude 4.7+/5.x, OpenAI GPT)은 기능 플래그(`supports_count_tokens`)로 API를 건너뜁니다. 잘라 내기는 문자 비율로 후보 길이를 추정하고 카운터로 검증하는 수렴 루프를 씁니다.
 
 ---
 
@@ -497,18 +502,19 @@ CLI: `run-eval --eval-data-path <json> [--search-strategy ...]`.
 | `TokenCounterPort` (`ports/model_factory.py`, `Protocol`) | `count_tokens()` / `truncate_to_token_limit()` | `BedrockTokenCounter`(`LocalTokenCounter`: 추정치 또는 tiktoken. LLM kind를 따름) | `Providers(token_counter_factory=...)` |
 | `VectorIndexer` / `GraphIndexer` (`ports/indexer.py`, ABC) | `index_*` / `upsert_*` / `delete_by_id` | `OpenSearchIndexer` / `NeptuneIndexer`(`gremlin`: 같은 어댑터로 Gremlin Server 사용) | `Providers(vector_indexer_factory=..., graph_indexer_factory=...)`, `DataIngestionPipeline(..., vector_indexer=..., graph_indexer=...)` 또는 `IndexingManager(vector_indexer=..., graph_indexer=...)` |
 | 리트리버(역할별 빌더) | `BaseGraphRAGRetriever.aretrieve` | `OpenSearchRetriever` / `NeptuneRetriever` | `Providers(retriever_builders=...)` 또는 `GraphRAGChain(retriever_builders={RetrieverRole.GRAPH: lambda: MyGraphRetriever(...)})` |
-| `DocStatusPort` (`ports/doc_status.py`, `Protocol`) | `get` / `put` / `delete` / `list_all` / `diff` (`get_many` / `put_many`는 선택. 없으면 레코드를 하나씩 읽고 씀. `record_fits` / `add_lineage_overflow` / `get_lineage_overflow` / `delete_lineage_overflow`도 선택. 없으면 레코드 크기 한도와 초과분이 없음) | `DynamoDBDocStatusStore`(`SQLiteDocStatusStore`) | `Providers(doc_status=...)` 또는 `DataIngestionPipeline(..., doc_status=...)`(어느 쪽이든 증분 인덱싱이 켜짐). 구조를 맞추고 `tests/integration/test_doc_status_conformance.py`를 통과해야 함 |
+| `DocStatusPort` (`ports/doc_status.py`, `Protocol`) | `get` / `get_many` / `put` / `put_many` / `delete` / `list_all` / `diff`와 `record_fits` / `add_lineage_overflow` / `get_lineage_overflow` / `delete_lineage_overflow`. 모두 직접 호출합니다. `DocStatusPort`를 상속하면 `get` / `put` / `delete` / `list_all` / `diff`를 뺀 나머지는 기본 구현(호출마다 레코드 하나, 크기 한도 없음, 초과분 없음)을 물려받습니다 | `DynamoDBDocStatusStore`(`SQLiteDocStatusStore`) | `Providers(doc_status=...)` 또는 `DataIngestionPipeline(..., doc_status=...)`(어느 쪽이든 증분 인덱싱이 켜짐). 구조를 맞추고 `tests/integration/test_doc_status_conformance.py`를 통과해야 함 |
 
 모델 팩토리와 문서 상태 포트는 `runtime_checkable` `Protocol`이므로 커스텀
-클래스는 **메서드 형태만** 맞으면 되고, import할 베이스 클래스가 없습니다. 예시(로컬
-LLM 공급자):
+클래스는 **메서드 형태만** 맞으면 되고, import할 베이스 클래스가 없습니다. Ollama와
+OpenAI 호환 서버는 기본 제공되므로(`providers.llm.kind`), 커스텀 팩토리는 그 밖의
+경우에 씁니다. 예시:
 
 ```python
-class OllamaModelFactory:                 # 구조적으로 LLMFactoryPort
-    def get_model(self, model_id, **kwargs): ...   # LangChain 모델 반환
-    def get_model_info(self, model_id): ...        # ModelInfo | None 반환
+class MyLLMFactory:                       # 구조적으로 LLMFactoryPort
+    def get_model(self, model_id, **kwargs): ...   # LangChain 채팅 모델 반환
+    def get_model_info(self, model_id): ...        # LanguageModelInfo 반환
 
-chain = GraphRAGChain(config=cfg, model_factory=OllamaModelFactory())
+chain = GraphRAGChain(config=cfg, model_factory=MyLLMFactory())
 ```
 
 **묶음 하나가 모든 구성 요소에 전달됩니다.** `Providers`(`adapters/providers.py`)는
@@ -533,7 +539,7 @@ root는 `application/bootstrap.py`(`build_providers`)로, 설정된 kind를 확�
 ```python
 providers = Providers(
     cfg,
-    llm_factory=OllamaModelFactory(),
+    llm_factory=MyLLMFactory(),
     embedding_factory=MyEmbeddingFactory(),
     # 재순위화는 기본으로 켜져 있어(search.reranking.enabled) 그대로 두면 Bedrock을
     # 호출합니다. 팩토리를 넘기거나 search.reranking.enabled: false로 끄세요.

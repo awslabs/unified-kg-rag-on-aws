@@ -214,7 +214,7 @@ cdk.context.json
 # Security-scan output (ASH) — local artifacts, not for the published repo
 .ash/
 
-# Local-only test corpus backup (customer data, never commit)
+# Local-only copies of non-public test corpora (never commit)
 .test-corpus-backup/
 
 # Local-only publishing runbook — not part of the published project

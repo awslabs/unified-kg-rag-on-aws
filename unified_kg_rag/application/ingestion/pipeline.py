@@ -74,6 +74,18 @@ T = TypeVar("T", bound=BaseModel)
 
 
 class DataIngestionPipeline:
+    """The ingestion pipeline: documents in, an indexed knowledge graph out.
+
+    Runs the stages of ``STAGE_CLASSES`` in order (parse, load, chunk,
+    translate, extract, glean, resolve, claims, analyze, communities, index),
+    skipping those ``pipeline_config.stages_enabled`` or a config section
+    (``CONFIG_ENABLED``) turns off. Each stage's output is cached under the
+    run's pipeline id in ``pipeline_config.local_directory`` (and synced to S3
+    with ``s3_sync_enabled``), so a re-run with the same pipeline id resumes
+    after the last stage whose cached output is still valid. With the doc-status registry on, only new and
+    changed documents are indexed (see ``IncrementalIndexer``).
+    """
+
     # Run order; kept in PipelineStageType's declaration order (tested).
     STAGE_CLASSES = {
         PipelineStageType.DOCUMENT_PARSING: DocumentParsingStage,
@@ -306,6 +318,24 @@ class DataIngestionPipeline:
         pipeline_id: str | None = None,
         resume_from_stage: str | None = None,
     ) -> PipelineContext:
+        """Run the pipeline over ``source_directory`` and return its context.
+
+        Args:
+            source_directory: The corpus root.
+            pipeline_id: The run to resume (its cache and metadata); a new id
+                is generated when neither this nor ``pipeline_config`` sets
+                one.
+            resume_from_stage: Stage name to restart from; ``None`` resumes
+                after the last completed stage.
+
+        Returns:
+            The run's context. A failed stage is reported there (``status``
+            ``FAILED`` and its stage result), not raised.
+
+        Raises:
+            PipelineExecutionError: The run could not be set up or crashed
+                outside a stage (for example a missing source directory).
+        """
         # The root span of an ingestion trace: stages, batches and model calls
         # nest under it. A failure leaving the block is recorded on it.
         with observability.span(

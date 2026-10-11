@@ -48,8 +48,8 @@ def import_optional(module: str, kind: str) -> Any:
     except ImportError as e:
         raise ConfigurationError(
             f"Provider kind '{kind}' needs '{module}', which is not installed. "
-            "Install the local extra: uv sync --extra local (or pip install "
-            "'unified-kg-rag-on-aws[local]')."
+            "Install the local extra: uv sync --extra local (or pip install -e "
+            "'.[local]' in a source checkout)."
         ) from e
 
 

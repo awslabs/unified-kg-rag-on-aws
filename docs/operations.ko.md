@@ -99,33 +99,9 @@ CDK 스택에서 `start-execution` 한 번은 네 단계를 차례로 실행하�
   그래프·벡터 데이터를 지웁니다.
 - 테넌트나 코퍼스 버전마다 인덱스 접미사와 설정 파일을 따로 둡니다.
 
-소스 범위가 생기기 전에 기록된 레지스트리를 업그레이드할 때: 범위의 첫 실행은
-파일이 아직 코퍼스에 있는 이전 방식 레코드를 다시 추출하지 않고 넘겨받습니다.
-그러나 범위가 없는 레코드는 삭제 대상으로 보지 않으므로, 업그레이드 전에
-코퍼스에서 지운 파일의 레코드는 넘겨받지도 지우지도 않고, 그 산출물도 저장소에
-남습니다. 이를 지우려면 `indexing.reset: true`로 한 번 실행합니다. 재구축은
-해당 네임스페이스의 레코드뿐 아니라, 키가 `file_path`에 대한 그 네임스페이스의
-이전 방식 키인 범위 없는 레코드와 비우는 접미사의 범위도 `file_path`도 없는
-레코드(초기 릴리스)를 지웁니다. 같은 접미사의 다른 네임스페이스 레코드는 남습니다. 해당 레지스트리
-항목(`registry_scope` 속성이 없고 파일이 없는 항목)을 직접 지우면 레지스트리만
-정리되고, 산출물은 재구축 전까지 남습니다. 그 전까지 이런 레코드는 다른 문서를
-제거할 때 키로 네임스페이스를 알 수 있으면 그 네임스페이스에서만 자신이 나열한
-산출물을 남깁니다. `file_path`를 저장했고 키가 실행 네임스페이스나 레지스트리의
-범위가 가리키는 네임스페이스의 이전 방식 키인 경우입니다. 그 밖의 범위 없는
-레코드(`file_path`가 없는 초기 릴리스의 레코드, 아직 어떤 범위도 가리키지 않는
-네임스페이스의 레코드, 직접 API가 범위 없이 또는 호출자 지정 `doc_id`로 기록한
-레코드)는 접미사의 모든 네임스페이스에서 산출물을 남기므로, 그사이
-다른 `indexing.additional_suffix`에서 삭제한 문서의 엔티티가 남을 수 있고 이는
-재구축이 지웁니다. 다만 직접 API가 범위 없이 `file_path`와 함께 호출자 지정
-`doc_id`(어느 네임스페이스의 이전 방식 키도 아닌 값)로 기록한 레코드는 어떤
-재구축에도 남습니다. 재구축은 이 레코드가 어느 네임스페이스에 속하는지 알 수
-없어 지우지 않고, 레코드는 계속 접미사의 모든 네임스페이스에서 자신이 나열한
-산출물을 남깁니다. 이런 레코드는 문서 상태 저장소로 직접 지웁니다. 재구축이
-레코드가 나열한 산출물도 비우도록 재구축 실행 전에 지우는 것이 좋습니다.
-`list_all()`로 찾고(`scope`가 없고 직접 지정한 `doc_id`인 레코드),
-`delete_lineage_overflow([doc_id, ...])`를 호출한 뒤 각 레코드에 `delete(doc_id)`를
-호출합니다. 저장소는 `unified_kg_rag.adapters.aws`의
-`DynamoDBDocStatusStore(config)` 또는 `doc_status`로 넘긴 저장소입니다.
+정식 릴리스 전 빌드가 기록한 레지스트리를 업그레이드할 때는
+[CHANGELOG: Upgrading from pre-release builds](../CHANGELOG.md#upgrading-from-pre-release-builds)를
+참고하세요.
 
 증분 실행이 갱신하지 않는 것도 있습니다. 여러 문서가 공유하는 엔티티나 관계는
 바뀌거나 삭제된 문서가 보탠 설명을 그대로 유지하고, 델타 실행은 그래프 전체를
@@ -478,8 +454,14 @@ LangSmith로 업로드합니다.
 | `DocStatusRegistryError` | 문서 상태 레지스트리 테이블이 없거나, 접근할 수 없거나, 스로틀링됨 | 테이블을 만들거나 `aws.dynamodb.table_name`을 고치고, 메시지에 나온 DynamoDB 권한을 부여한 뒤 같은 `--pipeline-id`로 재개 |
 | `Incremental indexing is enabled but no document delta was computed` | 레지스트리 비교 없이 인덱싱 단계가 실행됨(`continue_on_error`로 로딩 단계 실패 뒤 진행) | 레지스트리에 접근할 수 있게 한 뒤 `document_loading`부터 다시 실행 |
 | `CacheSyncError` | S3 단계 캐시 다운로드나 업로드가 실패함 | 버킷 권한과 `aws.s3.encryption`을 확인한 뒤 같은 `--pipeline-id`로 재개 |
-| `Pipeline failed at stage(s): ...` | 단계가 실패해 CLI가 1로 종료함 | 해당 단계 로그를 확인해 고친 뒤 같은 `--pipeline-id`로 재개 |
+| `Pipeline failed at stage(s): ...` | 단계가 실패해 CLI가 1로 종료함 | 해당 단계 로그를 확인해 고친 뒤 같은 `--pipeline-id`로 재개. `--verify-metadata`로 실행 메타데이터를 확인하고, `--repair-metadata`로 복구를 시도하거나 `--force-rebuild`로 처음부터 시작 |
+| `--source-directory is required for pipeline execution` | `--source-directory`도 `$GRAPHRAG_SOURCE_DIRECTORY`도 없음 | 플래그를 넘김. `--verify-metadata` / `--repair-metadata`에는 대신 `--pipeline-id`가 필요 |
+| `--s3-bucket-name must be specified for S3 sync` | 버킷 없이 `--s3-sync`를 지정함 | `--s3-bucket-name`을 넘김 |
+| `--pipeline-id is required for --resume-from-stage` | 재개하려면 이전 실행이 필요함 | 그 실행의 `--pipeline-id`를 넘김 |
+| `Invalid stage names provided: ...` | `--enabled-stages`에 없는 단계 이름이 있음 | CLI가 출력하는 목록의 이름을 사용 |
+| `The doc-status registry lists indexed documents of this namespace whose entities the graph store does not hold` | 레지스트리에 기록된 내용을 그래프가 잃음(Gremlin Server 재시작, `docker compose ... down -v`, 복원하거나 교체한 그래프) | `indexing.reset: true`로 다시 실행하거나 해당 네임스페이스의 레지스트리 레코드를 삭제(로컬 모드에서는 SQLite 파일) |
+| 로그에 `Connection refused`와 함께 `... processed N inputs but produced 0 outputs`(로컬 모드) | `providers.llm.base_url` / `providers.embedding.base_url`에서 Ollama나 OpenAI 호환 서버에 연결할 수 없음 | 서버를 띄우고(`docker compose -f docker/compose.local.yaml --profile models up -d --wait`), `base_url`(또는 `--model-base-url`)을 확인하고, 모델을 내려받음 |
 | `observability.enabled is true but OpenTelemetry is not installed` | 추적을 켰지만 `otel` extra가 설치되지 않음 | `uv sync --extra otel`을 실행하거나 `observability.enabled: false` 설정 |
 | 프라이빗 VPC에서 Bedrock 호출이 멈춤 | VPC 엔드포인트가 처리하지 않는 리전으로 Bedrock을 호출함 | `aws.bedrock.region_name`을 비우거나 VPC 리전과 같게 설정 |
-
-다른 메시지와 해결 방법은 [사용자 가이드](./user-guide.ko.md) §10에 있습니다.
+| `use_iam: false`에서 OpenSearch 인증 실패 | 기본 인증 자격 증명이 없음 | `OPENSEARCH_USERNAME` / `OPENSEARCH_PASSWORD` 설정(예: `.env`) |
+| LightRAG `mix` / `hybrid` 결과가 없음 | 관계 인덱스가 없거나 키워드 추출이 키워드를 만들지 못함 | 수집에서 관계 인덱스를 만들었는지 확인. 아주 짧은 질의는 `raw_query_fallback_max_len` 이하일 때만 원래 질의를 씀 |
