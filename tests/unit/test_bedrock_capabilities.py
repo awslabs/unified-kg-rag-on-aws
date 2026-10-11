@@ -17,6 +17,7 @@ from typing import Any
 import pytest
 from botocore.exceptions import ClientError, NoCredentialsError
 
+from tests.fixtures.fakes.boto import FakeBotoSession
 from unified_kg_rag.adapters.aws import bedrock as bedrock_mod
 from unified_kg_rag.adapters.aws.bedrock import (
     BedrockCrossRegionModelHelper,
@@ -45,28 +46,14 @@ pytestmark = pytest.mark.unit
 # --- fake boto session ----------------------------------------------------
 
 
-class _FakeSession:
-    profile_name = "default"
-
-    def __init__(self) -> None:
-        self.clients_requested: list[str] = []
-
-    def client(self, service_name: str, **kwargs: Any) -> Any:
-        self.clients_requested.append(service_name)
-        return object()  # opaque stub; capability logic never calls it
-
-    def get_credentials(self) -> Any:
-        return None  # no assume-role short-circuit path
-
-
 def _lang_factory(config: Config | None = None) -> BedrockLanguageModelFactory:
     cfg = config or Config()
-    return BedrockLanguageModelFactory(cfg, boto_session=_FakeSession())
+    return BedrockLanguageModelFactory(cfg, boto_session=FakeBotoSession())
 
 
 def _embed_factory(config: Config | None = None) -> BedrockEmbeddingModelFactory:
     cfg = config or Config()
-    return BedrockEmbeddingModelFactory(cfg, boto_session=_FakeSession())
+    return BedrockEmbeddingModelFactory(cfg, boto_session=FakeBotoSession())
 
 
 # --- get_model_info / model-info tables ----------------------------------
@@ -495,7 +482,7 @@ def test_inference_profiles_fetched_once_per_region() -> None:
 
 def test_get_cross_region_model_id_falls_back_on_error(mocker) -> None:
     # If the bedrock client blows up, the helper logs and returns the plain id.
-    session = _FakeSession()
+    session = FakeBotoSession()
     mocker.patch.object(
         bedrock_mod,
         "get_assumed_role_boto_session",
@@ -507,7 +494,7 @@ def test_get_cross_region_model_id_falls_back_on_error(mocker) -> None:
     assert out == LanguageModelId.CLAUDE_V4_SONNET.value
 
 
-class _RaisingBedrockSession(_FakeSession):
+class _RaisingBedrockSession(FakeBotoSession):
     """Session whose bedrock client fails list_inference_profiles with ``exc``."""
 
     def __init__(self, exc: Exception) -> None:
@@ -567,12 +554,12 @@ def test_get_cross_region_model_id_falls_back_on_access_denied() -> None:
 
 
 def test_assumed_role_session_returns_input_when_arn_none() -> None:
-    session = _FakeSession()
+    session = FakeBotoSession()
     assert get_assumed_role_boto_session(session, assumed_role_arn=None) is session
 
 
 def test_assumed_role_session_calls_assume_role(mocker) -> None:
-    session = _FakeSession()
+    session = FakeBotoSession()
     new_session = object()
     spy = mocker.patch.object(bedrock_mod, "assume_role", return_value=new_session)
     out = get_assumed_role_boto_session(
@@ -596,7 +583,7 @@ def test_embedding_counter_skips_count_tokens_api(mocker) -> None:
 
 
 def test_rerank_factory_opens_no_runtime_client_for_counting(mocker) -> None:
-    session = _FakeSession()
+    session = FakeBotoSession()
     factory = BedrockRerankModelFactory(Config(), boto_session=session)
     spy = mocker.patch.object(bedrock_mod, "BedrockTokenCounter")
     mocker.patch.object(bedrock_mod, "BedrockRerankWrapper")

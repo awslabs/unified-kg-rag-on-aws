@@ -19,6 +19,7 @@ import pytest
 import yaml
 from pydantic import BaseModel, ValidationError
 
+from tests.fixtures.fakes.boto import FakeBotoSession
 from unified_kg_rag.adapters.aws import bedrock as bedrock_mod
 from unified_kg_rag.adapters.aws import bedrock_models
 from unified_kg_rag.adapters.aws.bedrock import (
@@ -257,16 +258,6 @@ def test_claude_4_5_entries_require_an_inference_profile() -> None:
 # --- factory ---------------------------------------------------------------
 
 
-class _FakeSession:
-    profile_name = "default"
-
-    def client(self, service_name: str, **kwargs: Any) -> Any:
-        return object()
-
-    def get_credentials(self) -> Any:
-        return None
-
-
 def _capture_model_classes(mocker: Any) -> dict[str, Any]:
     captured: dict[str, Any] = {}
 
@@ -292,7 +283,7 @@ def test_unknown_model_gets_a_plain_converse_request(mocker: Any) -> None:
         return_value="amazon.nova-pro-v1:0",
     )
     captured = _capture_model_classes(mocker)
-    factory = BedrockLanguageModelFactory(Config(), boto_session=_FakeSession())  # type: ignore[arg-type]
+    factory = BedrockLanguageModelFactory(Config(), boto_session=FakeBotoSession())  # type: ignore[arg-type]
     factory.get_model("amazon.nova-pro-v1:0", enable_thinking=True)
     assert captured["model_class"] == "converse"
     assert captured["model_id"] == "amazon.nova-pro-v1:0"
@@ -302,7 +293,7 @@ def test_unknown_model_gets_a_plain_converse_request(mocker: Any) -> None:
 
 def test_profile_id_is_invoked_as_is_through_converse(mocker: Any) -> None:
     captured = _capture_model_classes(mocker)
-    factory = BedrockLanguageModelFactory(Config(), boto_session=_FakeSession())  # type: ignore[arg-type]
+    factory = BedrockLanguageModelFactory(Config(), boto_session=FakeBotoSession())  # type: ignore[arg-type]
     factory.get_model("us.anthropic.claude-sonnet-5-5")
     assert captured["model_class"] == "converse"
     assert captured["model_id"] == "us.anthropic.claude-sonnet-5-5"
@@ -310,7 +301,7 @@ def test_profile_id_is_invoked_as_is_through_converse(mocker: Any) -> None:
 
 def test_cross_region_helper_keeps_a_profile_id() -> None:
     resolved = BedrockCrossRegionModelHelper.get_cross_region_model_id(
-        _FakeSession(),  # type: ignore[arg-type]
+        FakeBotoSession(),  # type: ignore[arg-type]
         "eu.anthropic.claude-sonnet-5-5",
         "us-west-2",
     )
@@ -325,5 +316,5 @@ def test_factory_applies_model_overrides(mocker: Any) -> None:
             }
         }
     )
-    factory = BedrockLanguageModelFactory(config, boto_session=_FakeSession())  # type: ignore[arg-type]
+    factory = BedrockLanguageModelFactory(config, boto_session=FakeBotoSession())  # type: ignore[arg-type]
     assert factory.get_model_info("amazon.nova-pro-v1:0").max_output_tokens == 5000

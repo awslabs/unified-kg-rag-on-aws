@@ -17,9 +17,9 @@ import inspect
 from typing import Any
 
 import pytest
-from langchain_core.runnables import RunnableLambda
 
 import unified_kg_rag.adapters.search_strategies  # noqa: F401  (registers strategies)
+from tests.fixtures.fakes.chat_models import ScriptedLLMFactory
 from unified_kg_rag.adapters.retrieval.token_manager import (
     EMPTY_CONTEXT_PLACEHOLDER,
     OptimizedContext,
@@ -226,14 +226,6 @@ def test_sources_empty_when_model_saw_no_context(config: Config) -> None:
 # --------------------------------------------------------------------------- #
 
 
-class _FakeModelFactory:
-    def get_model(self, model_id: Any, **kwargs: Any) -> Any:
-        return RunnableLambda(lambda _prompt_value: _CANNED_ANSWER)
-
-    def get_model_info(self, model_id: Any) -> Any:
-        return None
-
-
 class _FakeRetriever:
     def __init__(self, results: list[RetrievalResult]) -> None:
         self._results = results
@@ -249,7 +241,7 @@ async def test_full_chain_sources_are_budgeted_selection_without_vectors(
     retriever = _FakeRetriever(hits)
     chain = _chain(
         config,
-        model_factory=_FakeModelFactory(),
+        model_factory=ScriptedLLMFactory(lambda _system, _human: _CANNED_ANSWER),
         retriever_builders={
             RetrieverRole.DOCUMENT: lambda: retriever,
             RetrieverRole.GRAPH: lambda: retriever,

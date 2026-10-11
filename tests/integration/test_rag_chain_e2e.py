@@ -13,12 +13,10 @@ exercise lived in the real-AWS (CI-skipped) test.
 
 from __future__ import annotations
 
-from typing import Any
-
 import pytest
-from langchain_core.runnables import RunnableLambda
 
 import unified_kg_rag.adapters.search_strategies  # noqa: F401  (registers strategies)
+from tests.fixtures.fakes.chat_models import ScriptedLLMFactory
 from unified_kg_rag.application.retrieval.rag_chain import (
     NO_CONTEXT_ANSWER,
     ChainMode,
@@ -41,21 +39,6 @@ from unified_kg_rag.evaluation import EvaluationManager
 pytestmark = pytest.mark.integration
 
 _CANNED_ANSWER = "Vendor supplies Buyer with parts under the agreement."
-
-
-class _FakeModelFactory:
-    """ModelFactoryPort: get_model returns a canned-answer Runnable.
-
-    Every LLM step in the chain (here only answer generation, since query
-    processing is disabled and the strategy is explicit) resolves through this,
-    so no Bedrock client is ever used.
-    """
-
-    def get_model(self, model_id: Any, **kwargs: Any) -> Any:
-        return RunnableLambda(lambda _prompt_value: _CANNED_ANSWER)
-
-    def get_model_info(self, model_id: Any) -> Any:
-        return None
 
 
 class _FakeRetriever:
@@ -89,7 +72,7 @@ def _make_chain(
     chain = GraphRAGChain(
         config=config,
         mode=mode,
-        model_factory=_FakeModelFactory(),
+        model_factory=ScriptedLLMFactory(lambda _system, _human: _CANNED_ANSWER),
         retriever_builders={
             RetrieverRole.DOCUMENT: lambda: doc_retriever,
             RetrieverRole.GRAPH: lambda: graph_retriever,
@@ -211,7 +194,7 @@ async def test_evaluation_attributes_graph_sources_via_chain_store(
     store = _LineageStore()
     chain = GraphRAGChain(
         config=config,
-        model_factory=_FakeModelFactory(),
+        model_factory=ScriptedLLMFactory(lambda _system, _human: _CANNED_ANSWER),
         retriever_builders={RetrieverRole.DOCUMENT: lambda: store},
     )
     chain.token_manager.count_tokens = lambda text: len((text or "").split())
