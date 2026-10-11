@@ -26,8 +26,6 @@ def _full_record() -> DocStatusRecord:
         status=DocStatus.PROCESSED,
         suffix="default",
         file_path="/x/y.txt",
-        content_summary="summary",
-        content_length=42,
         entity_ids=["e1", "e2"],
         relationship_ids=["r1"],
         text_unit_ids=["t1", "t2", "t3"],
@@ -107,3 +105,13 @@ def test_failure_count_round_trips_and_defaults_to_zero() -> None:
     # A record written before the attribute existed reads as never failed.
     del item["failure_count"]
     assert DynamoDBDocStatusStore._deserialize(item).failure_count == 0
+
+
+def test_record_with_removed_content_attributes_still_loads() -> None:
+    # Records written while DocStatusRecord had content_summary/content_length.
+    item = DynamoDBDocStatusStore._serialize(_full_record())
+    item["content_summary"] = {"S": "summary"}
+    item["content_length"] = {"N": "42"}
+    assert DynamoDBDocStatusStore._deserialize(item) == _full_record()
+    stored_json = _full_record().model_dump() | {"content_length": 42}
+    assert DocStatusRecord.model_validate(stored_json) == _full_record()

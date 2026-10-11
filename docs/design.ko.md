@@ -166,7 +166,7 @@ class LocalSearchStrategy(BaseSearchStrategy): ...
 - `Entity`(`name`, `description`, `type`, `text_unit_ids`, `community_ids`, `rank`, `frequency`, `confidence`, 임베딩 필드)
 - `Relationship`(`source_id`/`target_id`, `description`, `weight`, `text_unit_ids`, `description_embedding`)
 - `Community` / `CommunityReport`, `TextUnit`, `Covariate`(주장)
-- `DocStatus`(상태 머신: PENDING→PARSING→PROCESSING→PROCESSED|FAILED), `DocStatusRecord`(콘텐츠 해시 + 산출물 계보 + 접미사), `DocumentDelta`(new/changed/unchanged/deleted), `DocumentLineage`(문서별 산출물 귀속)
+- `DocStatus`(PENDING 선기록 → PROCESSED|FAILED), `DocStatusRecord`(콘텐츠 해시 + 산출물 계보 + 접미사), `DocumentDelta`(new/changed/unchanged/deleted), `DocumentLineage`(문서별 산출물 귀속)
 - `SearchQuery`/`SearchResult`/`RetrievalResult`, `SearchStrategy`/`SearchType`/`RetrieverRole`
 
 **Rank(MS GraphRAG와 동등)**: 엔티티의 `rank`는 degree(관계로 이어진 서로 다른 엔티티 수)이고, 관계의 `rank`는 두 끝점 degree의 합입니다(`domain/ingestion/graph_rank.py`). 전체 빌드에서는 그래프 해석이 값을 정하고, 증분 병합은 쓰는 엔티티와 관계마다 저장된 그래프의 이웃(`GraphIndexer.read_neighbor_ids`)과 델타의 관계를 합쳐 다시 계산합니다. 델타가 쓰지 않는 저장된 엔티티는 다음 전체 빌드까지 rank를 유지하며, 삭제된 문서가 그 간선을 없앤 경우도 마찬가지입니다.

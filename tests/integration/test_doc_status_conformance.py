@@ -92,8 +92,6 @@ def test_round_trip_keeps_every_field(store: DocStatusPort) -> None:
         suffix="tenant-a",
         scope="ns|corpus-a",
         file_path="docs/d1.txt",
-        content_summary="Vendor ships to Buyer",
-        content_length=42,
         entity_ids=["e1", "e2"],
         relationship_ids=["r1"],
         text_unit_ids=["t1"],

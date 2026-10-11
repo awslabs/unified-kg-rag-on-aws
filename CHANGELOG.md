@@ -568,6 +568,15 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   `--top-k` and `--retrieval-multiplier` below 1 now fail at parse time (#212).
 
 ### Removed
+- **Breaking** for code that builds `Document`s: the page-element model
+  (`ElementContent`, `ElementType`, `DocumentElement`, `Document.elements`,
+  `Page.elements` / `raw_data` / `height` / `width`) and
+  `Document.detected_language`. No loader filled them; parsed JSON written
+  with them still loads. `DocumentContent.html` / `markdown` stay (the chunker
+  reads them for `content_type`) (#PR).
+- `DocStatusRecord.content_summary` and `content_length`, which nothing
+  wrote, and the `DocStatus.PARSING` / `PROCESSING` states, which no run
+  set. Records stored with the two attributes still load (#PR).
 - **Breaking:** the renamed-key shim. `search.llm_retry`,
   `aws.bedrock.effort`, `processing.max_retries`,
   `indexing.neptune.max_retries` and `evaluation.ragas_max_retries` (renamed

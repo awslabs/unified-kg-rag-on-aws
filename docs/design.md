@@ -166,7 +166,7 @@ The `domain/models/` package contains pure Pydantic models with no infrastructur
 - `Entity` (`name`, `description`, `type`, `text_unit_ids`, `community_ids`, `rank`, `frequency`, `confidence`, embedding fields)
 - `Relationship` (`source_id`/`target_id`, `description`, `weight`, `text_unit_ids`, `description_embedding`)
 - `Community` / `CommunityReport`, `TextUnit`, `Covariate` (claim)
-- `DocStatus` (state machine: PENDING→PARSING→PROCESSING→PROCESSED|FAILED), `DocStatusRecord` (content hash + artifact lineage + suffix), `DocumentDelta` (new/changed/unchanged/deleted), `DocumentLineage` (per-document artifact attribution)
+- `DocStatus` (PENDING write-ahead record → PROCESSED|FAILED), `DocStatusRecord` (content hash + artifact lineage + suffix), `DocumentDelta` (new/changed/unchanged/deleted), `DocumentLineage` (per-document artifact attribution)
 - `SearchQuery`/`SearchResult`/`RetrievalResult`, `SearchStrategy`/`SearchType`/`RetrieverRole`
 
 **Rank (MS GraphRAG parity)**: an entity's `rank` is its degree (the number of distinct entities it is related to) and a relationship's `rank` the sum of its endpoints' degrees (`domain/ingestion/graph_rank.py`). Graph resolution sets them for a full build; an incremental merge recomputes them for every entity and relationship it writes, over the stored graph's neighbours (`GraphIndexer.read_neighbor_ids`) plus the delta's relationships. A stored entity the delta does not write keeps its rank until the next full build, including when a removed document dropped one of its edges.

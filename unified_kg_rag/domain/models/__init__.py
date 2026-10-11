@@ -32,10 +32,7 @@ from .document import (
     Document,
     DocumentContent,
     DocumentDelta,
-    DocumentElement,
     DocumentLineage,
-    ElementContent,
-    ElementType,
     Page,
 )
 from .entity import Entity, RejectedEntity
@@ -90,10 +87,7 @@ __all__ = [
     "Document",
     "DocumentContent",
     "DocumentDelta",
-    "DocumentElement",
     "DocumentLineage",
-    "ElementContent",
-    "ElementType",
     "EmbeddingModelId",
     "Entity",
     "EvaluationGroundTruth",
