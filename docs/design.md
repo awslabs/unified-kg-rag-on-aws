@@ -30,7 +30,7 @@ This document is a **design reference for contributors and advanced users**, cov
 `unified-kg-rag-on-aws` is a library that reimplements the Microsoft GraphRAG and LightRAG methodologies on top of an AWS-native stack (Bedrock + Neptune + OpenSearch + S3 + DynamoDB). The core design principles are as follows.
 
 - **Two methodologies, one infrastructure**: GraphRAG (community-summary) and LightRAG (dual-level keyword) share the same ingestion, indexing, caching, multilingual, and hybrid-search infrastructure, and **only the retrieval algorithm layer is swapped**.
-- **Generalization first**: We avoid hardcoding, regex heuristics, and overfitting. Semantic judgments are delegated to the LLM or to authoritative data, token counting uses the Bedrock `count_tokens` API, and thresholds/weights are config-driven.
+- **Generalization first**: We avoid hardcoding, regex heuristics, and overfitting. Semantic judgments are delegated to the LLM or to authoritative data, token counting uses the Bedrock `count_tokens` API where the model accepts it and a script-aware estimate otherwise, and thresholds/weights are config-driven.
 - **Hexagonal boundaries**: Domain/algorithm code depends on abstract ports, with concrete AWS adapters placed behind them.
 - **Registry-based extension**: Search strategies and renderers are registered via decorator registries, so they can be extended without modifying dispatch code. Evaluators are mapped from `EvaluatorType` in one method (`EvaluationManager._resolve_evaluator_class`), so a new evaluator adds one branch there.
 
@@ -71,7 +71,9 @@ unified_kg_rag/
 │                       #   ModelFactoryPort — ports/__init__ is the port catalog)
 ├─ adapters/            # concrete technology bindings
 │  ├─ aws/              #   Bedrock, Neptune, OpenSearch, DynamoDB, S3 clients
+│  ├─ local/            #   Ollama/OpenAI-compatible models, cross-encoder, SQLite registry
 │  ├─ llm/              #   provider-neutral chain assembly, transient retry, token estimate
+│  ├─ observability/    #   OpenTelemetry tracer, exporters, LangChain callback
 │  ├─ storage/          #   Neptune/OpenSearch indexers (write-side port implementations)
 │  ├─ retrievers/       #   Neptune/OpenSearch retrievers
 │  ├─ search_strategies/#   simple/local/global/drift + lightrag(mix/hybrid/naive)
@@ -79,14 +81,18 @@ unified_kg_rag/
 │  ├─ ingestion/        #   LLM/IO coupled: chunker, *_extractor, loader, parser,
 │  │                    #   translator, gleaner, community_detector
 │  ├─ renderers/        #   graph visualization renderers
-│  └─ evaluators/       #   evaluator bases + langchain/ragas evaluators (the LLM-free graph_aware,
+│  ├─ evaluators/       #   evaluator bases + langchain/ragas evaluators (the LLM-free graph_aware,
 │                       #   retrieval and answer_match evaluators live in evaluation/)
+│  ├─ providers.py      #   Providers: the per-run bundle of model and store providers
+│  └─ provider_registry.py # @register_provider: builders keyed by role and kind
 ├─ application/         # orchestration + entry points
 │  ├─ cli/              #   run-ingestion/rag/eval/visualization/prompt-tuning
 │  ├─ ingestion/        #   DataIngestionPipeline + pipeline_stages
 │  ├─ storage/          #   IndexingManager (indexer fan-out)
 │  ├─ retrieval/        #   rag_chain (GraphRAGChain, RAGInput/Output)
-│  └─ prompts/          #   PromptTuner (LLM-based corpus profiling)
+│  ├─ prompts/          #   PromptTuner (LLM-based corpus profiling)
+│  ├─ bootstrap.py      #   build_providers: the composition root
+│  └─ observability.py  #   configure_observability: installs the tracing backend
 ├─ shared/              # cross-cutting kernel (config, logging, exceptions, metrics,
 │                       #   cache/pipeline manager, utils)
 ├─ evaluation/          # real logic package: evaluation_manager / graph_aware /
@@ -135,21 +141,20 @@ class LocalSearchStrategy(BaseSearchStrategy): ...
 - **Search strategies**: `domain/retrieval/strategy_registry.py` — `@register_strategy(...)` registers a class, its required roles, and its query inputs against the `SearchStrategy` enum.
 - **Evaluators**: `EvaluationManager._resolve_evaluator_class` — one explicit branch per `EvaluatorType` → evaluator class (lazy, import-on-use). Not a decorator registry: a new evaluator adds an enum member and a branch.
 - **Renderers**: `adapters/renderers/base.py` — `@register_renderer("name")`.
+- **Providers**: `adapters/provider_registry.py` — `@register_provider(ProviderRole.X, "kind")` registers the builder that `providers.<role>.kind` selects for each role (LLM, embedding, rerank, token counter, graph and vector indexer and retriever, doc-status registry).
 
 This pattern follows the same philosophy as the existing `ParserFactory._loader_configs` (declarative parser registration).
 
-> Write-path note: the registries cover the **read / evaluation / render / parse**
-> paths. On the write path, `IndexingManager` deliberately composes **two fixed
-> backends** (Neptune + OpenSearch) rather than iterating a registry — those two
-> stores (graph DB + vector/lexical search) are constitutive of the framework,
-> not runtime-swappable choices, and the per-backend fan-out (entities to both
-> stores, entities-before-edges phasing, the orphan-edge cascade) is deliberate
-> domain knowledge rather than arbitrary dispatch. So a new search strategy or
-> renderer is added by registration alone (an evaluator by one branch in
-> `_resolve_evaluator_class`), while replacing a
-> write-side store means implementing the `GraphIndexer` / `VectorIndexer` port
-> and injecting it (`IndexingManager(vector_indexer=…, graph_indexer=…)`). The
-> read path is already generalized through the `RetrieverRole` → builder map.
+> Write-path note: `IndexingManager` always writes to **two store roles**, a
+> graph store and a vector/lexical store, rather than iterating a list of
+> backends: both are constitutive of the framework, and the per-role fan-out
+> (entities to both stores, entities-before-edges phasing, the orphan-edge
+> cascade) is deliberate domain knowledge rather than arbitrary dispatch. Which
+> backend fills each role is open: `providers.graph.kind` / `providers.vector.kind`
+> select a registered builder (Neptune or Gremlin Server, OpenSearch), or a
+> `GraphIndexer` / `VectorIndexer` is injected
+> (`IndexingManager(vector_indexer=…, graph_indexer=…)`). The read path does the
+> same through the `RetrieverRole` → builder map.
 
 ### 2.4 Dependency Rule Verification Status
 
@@ -260,12 +265,12 @@ The names are `IncrementalIndexer` methods (`application/ingestion/incremental.p
 2. **Write-ahead** (`IncrementalIndexer.write_ahead`): Before any store write, every new and changed document is recorded `PENDING` under its current key and the run's scope, with the content hash `"pending"` (`PENDING_CONTENT_HASH`, which no document hashes to) and the union of its stored lineage and the lineage this run is about to write. The records go out in one batched write (`DocStatusPort.put_many`, DynamoDB `BatchWriteItem`), after one batched read of the stored records (`get_many`), which the commit reuses for failure counting. A union over the registry's item limit (`DocStatusPort.record_fits`; DynamoDB 400 KB), as for a large document whose old and new lineage each fit, keeps the stored lineage in the record and the other planned ids in lineage overflow (`add_lineage_overflow`; in DynamoDB, items `<doc_id>#pending#<n>` of the same table marked `record_kind` `lineage_overflow`, which `get`, `get_many`, `list_all` and `diff` never return). A document whose own lineage cannot fit one record fails the run here, before anything is written. See *Crash recovery* below.
 3. **Stale cleanup** (`IncrementalIndexer.remove_changed_and_deleted`): Before the delta is written, removes the existing artifacts of changed documents (so entities that disappear after re-extraction do not linger in the graph) and of deleted documents (step 5) that no *surviving* document references. The removal is planned once over changed + deleted, so an artifact that only a changed and a deleted document reference is removed too; planning the two sets separately would treat each as a survivor of the other and leave it behind with no text units.
 4. **Delta upsert** (`IncrementalIndexer.commit`): With `indexing.cross_run_merge` (default on), `IndexingManager.merge_with_existing_graph` first reads back the existing entities/relationships the delta touches, per index suffix, and merges the delta into them (merge semantics below), so an entity shared with unchanged documents keeps their descriptions and `text_unit_ids`. A delta item that merged into a stored one under another id (a name-variant or fuzzy entity match, or an edge whose endpoint was remapped) is recorded in the lineage by the stored id (and added to the `PENDING` record before the write), and the delta's community members and claim subjects/objects are pointed at the stored id too. `IndexingManager.index_delta` then writes the result as is: Neptune uses a Gremlin `coalesce(unfold, addV)` idempotent upsert; OpenSearch upserts by id into the live alias index. The relationship vector index is updated the same way.
-5. **Deletion propagation** (in step 3's removal): Removes only the *exclusive* artifacts of deleted documents via `delete_by_id` (preserving shared entities), then their registry records. Targets the text-unit, entity, and relationship indices alike. Entities and relationships shared with surviving documents of the same index namespace (read from each record's scope; a record without a scope belongs to a namespace only when it stores its `file_path` and its key is that namespace's legacy key, for the run's namespace or one a scope in the registry names; any other, such as a record of the initial release, of a namespace no scope names yet, or of the direct API without a scope, counts as a survivor of every namespace of its suffix) are kept but stripped of the removed documents' text units, with `frequency`/weight recomputed, in Neptune and OpenSearch alike (`IndexingManager.remove_text_units_from_shared`, which rewrites every shared item it reads back from Neptune, so a retry also repairs an OpenSearch copy an interrupted or failed strip did not reach; OpenSearch updates `text_unit_ids` and `weight` in place, `VectorIndexer.update_entity_lineage`/`update_relationship_lineage`, instead of re-embedding unchanged text); changed documents get the same treatment before their re-extraction is merged back in. If any removal fails, the deleted documents' registry records are kept for a retry and the indexing stage fails, so the run (and the `IndexingFailures` alarm) reports it: before the commit when the delta has changed documents (committing would replace their lineage and orphan the stale artifacts), after it otherwise.
+5. **Deletion propagation** (in step 3's removal): Removes only the *exclusive* artifacts of deleted documents via `delete_by_id` (preserving shared entities), then their registry records. Targets the text-unit, entity, and relationship indices alike. Entities and relationships shared with surviving documents of the same index namespace (read from each record's scope; a record without a scope that its key does not tie to one namespace counts as a survivor of every namespace of its suffix) are kept but stripped of the removed documents' text units, with `frequency`/weight recomputed, in Neptune and OpenSearch alike (`IndexingManager.remove_text_units_from_shared`, which rewrites every shared item it reads back from Neptune, so a retry also repairs an OpenSearch copy an interrupted or failed strip did not reach; OpenSearch updates `text_unit_ids` and `weight` in place, `VectorIndexer.update_entity_lineage`/`update_relationship_lineage`, instead of re-embedding unchanged text); changed documents get the same treatment before their re-extraction is merged back in. If any removal fails, the deleted documents' registry records are kept for a retry and the indexing stage fails, so the run (and the `IndexingFailures` alarm) reports it: before the commit when the delta has changed documents (committing would replace their lineage and orphan the stale artifacts), after it otherwise.
 
    **Limitation**: a shared artifact's description keeps the text a changed or deleted document contributed. Removing it would mean re-summarizing the description from the remaining sources, an LLM call per affected artifact, so it is left until a full rebuild (`indexing.reset`). The same holds for shared communities and their reports (below).
 6. **Registry update** (commit): Replaces the `PENDING` records, in one batched write, with `DocStatusRecord`s carrying each document's `DocumentLineage` (per-document artifact ids + suffix), the run's scope and the relative path. A document that translation, graph extraction, gleaning or claim extraction failed on for any of its text units is recorded `FAILED` (with the lineage of what was written), and `diff` classifies a `FAILED` record as changed even when its hash is unchanged, so the next run prunes and re-extracts it. The record counts consecutive failures of the same content (`failure_count`); after `indexing.max_document_failures` of them `detect_delta` classifies the document unchanged instead, so a deterministic failure is not re-extracted on every run.
 
-`indexing.reset` skips the diff: the stores and the registry records of the run's namespace are cleared (other namespaces sharing the table keep theirs; a record written before scopes existed, which has no scope, is cleared when its key is a cleared namespace's legacy key for its `file_path`, so the records of another namespace on the same suffix stay, or, when it has no `file_path` (the initial release) and so names no namespace, when its `suffix` is one of the cleared suffixes; kept, such a record would count as a survivor of every namespace of its suffix and its entities would never be deleted again), every document is recorded `PENDING` (step 2), the whole corpus is rebuilt with the full-index path, and every document is recorded again (only when the rebuild's writes pass the same failure gate as a delta commit).
+`indexing.reset` skips the diff: the stores and the registry records of the run's namespace are cleared (other namespaces sharing the table keep theirs; for records written before scopes existed, see [Upgrading from pre-release builds](../CHANGELOG.md#upgrading-from-pre-release-builds)), every document is recorded `PENDING` (step 2), the whole corpus is rebuilt with the full-index path, and every document is recorded again (only when the rebuild's writes pass the same failure gate as a delta commit).
 
 **Crash recovery (write-ahead protocol)**: the registry is not updated atomically with the stores, so a run can stop between any two writes (a killed task, a store outage, a failed gate). The protocol keeps one invariant: before the stores hold anything the registry cannot account for, the registry already lists it. Write-ahead records (step 2) precede the removal and the upsert, the deleted documents' rows are deleted only after their artifacts are, and the commit replaces a `PENDING` record only after the document's writes landed. A run that stops anywhere after step 2 leaves each unfinished document `PENDING`, and the next run repairs it:
 
@@ -370,7 +375,7 @@ Per-source behavior:
 - **HybridScorer** (`adapters/retrieval/hybrid_scorer.py`): Combines per-source results via RRF (`rrf_k`) or weighted fusion, diversity filtering (`diversity_lambda`), and Bedrock reranking. Weights/method come from `config.search.fusion`/`hybrid`. Reranking is only active when `search.reranking.enabled`, and `compress_documents` temporarily adjusts `top_n` to the document count before restoring it. On initialization failure, the reranker degrades to disabled (`None`).
   - **IAM caveat**: the Rerank API authorizes `bedrock:Rerank` against a different resource shape than `InvokeModel`, so a statement scoped to foundation-model or inference-profile ARNs denies it. The IaC task role grants `bedrock:Rerank` on `Resource: "*"` in its own statement (`ComputeStack._build_task_role` in `iac/stacks/compute_stack.py`). Without it the scorer logs `Reranking failed: ...` at ERROR and returns the fused results unreranked.
 - **TokenManager** (`adapters/retrieval/token_manager.py`): Optimizes context within model limits. Weights by per-section-type priority multiplier (`PRIORITY_MULTIPLIERS`: TEXT 1.3 / ENTITY 1.2 / RELATIONSHIP 1.1 / CLAIM 1.1 / COMMUNITY 1.0 / GENERAL 0.8) and selects sections within budget in descending priority order. `SectionType.CLAIM` is the type used to fold query-time claims injection (§6.1) into the token budget. The chain keeps this selection (`OptimizedContext`) in state and builds `RAGOutput.sources` from it, so sources list only what the answer model saw, in retrieval-rank order: sections cut for budget are not reported, a section truncated to fit carries its truncated text and `metadata.truncated: true`, and each source's metadata keeps `truncated` / `source_id` / `document_ids` / `chunk_id` / `section_type` / `score` with `*_embedding` vectors removed. When the answer step short-circuits on an empty context, `sources` is empty.
-- **Token counting** (`adapters/aws/token_counter.py`): The Bedrock `count_tokens` API is the single source of truth. It degrades to a script-aware estimate only on failure (no third-party tokenizer). A non-transient failure (e.g. `AccessDeniedException`, or a `ValidationException` whose message says the model does not support the operation) marks the model unsupported process-wide so later counts skip the API; throttling, timeouts, and input-level `ValidationException`s do not. Blank or whitespace-only text never calls the API. Embedding and rerank counters are built without a client, so they never call the API (it does not accept those models); language models that CountTokens rejects (Claude 4.7+/5.x, OpenAI GPT) skip it by capability flag (`supports_count_tokens`). Truncation uses a convergence loop that estimates candidates by char ratio and validates them via the API.
+- **Token counting** (`adapters/aws/token_counter.py`, `adapters/local/token_counter.py`): With the defaults every count is the script-aware estimate (`adapters/llm/token_estimate.py`): CountTokens rejects the default Claude 5.x models and all embedding and rerank models, so their counters skip it (see below). A language model that accepts it is counted with the Bedrock `count_tokens` API, falling back to the estimate on failure. Local language models use the estimate, or a BPE encoding with `providers.llm.tokenizer: tiktoken` (`[local]` extra). A non-transient failure (e.g. `AccessDeniedException`, or a `ValidationException` whose message says the model does not support the operation) marks the model unsupported process-wide so later counts skip the API; throttling, timeouts, and input-level `ValidationException`s do not. Blank or whitespace-only text never calls the API. Embedding and rerank counters are built without a client, so they never call the API (it does not accept those models); language models that CountTokens rejects (Claude 4.7+/5.x, OpenAI GPT) skip it by capability flag (`supports_count_tokens`). Truncation uses a convergence loop that estimates candidates by char ratio and validates them with the counter.
 
 ---
 
@@ -498,18 +503,19 @@ subclassing or editing dispatch code. The ports, their default
 | `TokenCounterPort` (`ports/model_factory.py`, `Protocol`) | `count_tokens()` / `truncate_to_token_limit()` | `BedrockTokenCounter` (`LocalTokenCounter`: estimate or tiktoken; follows the LLM kind) | `Providers(token_counter_factory=...)` |
 | `VectorIndexer` / `GraphIndexer` (`ports/indexer.py`, ABC) | `index_*` / `upsert_*` / `delete_by_id` | `OpenSearchIndexer` / `NeptuneIndexer` (`gremlin`: the same adapter on Gremlin Server) | `Providers(vector_indexer_factory=..., graph_indexer_factory=...)`, `DataIngestionPipeline(..., vector_indexer=..., graph_indexer=...)` or `IndexingManager(vector_indexer=..., graph_indexer=...)` |
 | retriever (role-keyed builder) | `BaseGraphRAGRetriever.aretrieve` | `OpenSearchRetriever` / `NeptuneRetriever` | `Providers(retriever_builders=...)` or `GraphRAGChain(retriever_builders={RetrieverRole.GRAPH: lambda: MyGraphRetriever(...)})` |
-| `DocStatusPort` (`ports/doc_status.py`, `Protocol`) | `get` / `put` / `delete` / `list_all` / `diff` (`get_many` / `put_many` optional: without them each record is read or written on its own; `record_fits` / `add_lineage_overflow` / `get_lineage_overflow` / `delete_lineage_overflow` optional: without them a record has no size limit and no overflow) | `DynamoDBDocStatusStore` (`SQLiteDocStatusStore`) | `Providers(doc_status=...)` or `DataIngestionPipeline(..., doc_status=...)` (either turns incremental indexing on); conform structurally and pass `tests/integration/test_doc_status_conformance.py` |
+| `DocStatusPort` (`ports/doc_status.py`, `Protocol`) | `get` / `get_many` / `put` / `put_many` / `delete` / `list_all` / `diff` and `record_fits` / `add_lineage_overflow` / `get_lineage_overflow` / `delete_lineage_overflow`, all called directly. Subclassing `DocStatusPort` inherits defaults for all but `get` / `put` / `delete` / `list_all` / `diff` (one record per call, no size limit, no overflow) | `DynamoDBDocStatusStore` (`SQLiteDocStatusStore`) | `Providers(doc_status=...)` or `DataIngestionPipeline(..., doc_status=...)` (either turns incremental indexing on); conform structurally and pass `tests/integration/test_doc_status_conformance.py` |
 
 Because the model-factory and doc-status ports are `runtime_checkable`
 `Protocol`s, a custom class only needs the right **method shapes** — no base
-class to import. Example (a local LLM provider):
+class to import. Ollama and OpenAI-compatible servers are built in
+(`providers.llm.kind`); a custom factory covers anything else, for example:
 
 ```python
-class OllamaModelFactory:                 # structurally an LLMFactoryPort
-    def get_model(self, model_id, **kwargs): ...   # returns a LangChain model
-    def get_model_info(self, model_id): ...        # returns ModelInfo | None
+class MyLLMFactory:                       # structurally an LLMFactoryPort
+    def get_model(self, model_id, **kwargs): ...   # returns a LangChain chat model
+    def get_model_info(self, model_id): ...        # returns a LanguageModelInfo
 
-chain = GraphRAGChain(config=cfg, model_factory=OllamaModelFactory())
+chain = GraphRAGChain(config=cfg, model_factory=MyLLMFactory())
 ```
 
 **One bundle, every component.** `Providers` (`adapters/providers.py`) is a
@@ -539,7 +545,7 @@ injected or configured provider reaches all of them:
 ```python
 providers = Providers(
     cfg,
-    llm_factory=OllamaModelFactory(),
+    llm_factory=MyLLMFactory(),
     embedding_factory=MyEmbeddingFactory(),
     # Reranking is on by default (search.reranking.enabled) and would otherwise
     # call Bedrock; pass a factory or set search.reranking.enabled: false.
