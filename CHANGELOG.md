@@ -541,6 +541,10 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   keyword prompt already writes its keywords in the target language, so both
   calls read the user's question and run concurrently, removing one sequential
   LLM round trip from translated `mix`/`hybrid` queries (#PR).
+- `run-rag` and `run-eval` define their shared query flags (`--suffix`,
+  `--enable-thinking`, `--search-strategy`, `--search-type`, `--top-k`,
+  `--retrieval-multiplier`) once, in `application/cli/query_args.py`;
+  `--top-k` and `--retrieval-multiplier` below 1 now fail at parse time (#PR).
 
 ### Deprecated
 - `search.llm_retry`; use `aws.bedrock.transient_retry` (#120).
