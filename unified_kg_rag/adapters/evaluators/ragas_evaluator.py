@@ -21,7 +21,6 @@ from ragas.metrics import (
 )
 from ragas.run_config import RunConfig
 
-from unified_kg_rag.adapters.aws.bedrock_models import get_language_model_info
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.models import (
     Config,
@@ -98,8 +97,8 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
         # provider bundle (EvaluationManager passes the chain's).
         self.providers = Providers.resolve(config, providers, boto_session)
         self.boto_session = self.providers.boto_session
-        eval_model_info = get_language_model_info(
-            config.evaluation.evaluation_model_id, config.aws.bedrock.model_overrides
+        eval_model_info = self.providers.llm_model_info(
+            config.evaluation.evaluation_model_id
         )
         self._token_counter = self.providers.token_counter(
             config.evaluation.evaluation_model_id,
@@ -140,9 +139,7 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
         # ragas sets ``llm.temperature`` on every judge call (and never resets
         # it when the original was None). Claude 4.7+/5 reject sampling params,
         # so langchain-aws drops it with a warning per call — bypass it instead.
-        model_info = get_language_model_info(
-            model_id, self.config.aws.bedrock.model_overrides
-        )
+        model_info = self.providers.llm_model_info(model_id)
         self.ragas_llm = LangchainLLMWrapper(
             self.llm, bypass_temperature=not model_info.supports_sampling_params
         )

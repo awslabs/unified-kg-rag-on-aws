@@ -8,7 +8,8 @@ from typing import TYPE_CHECKING, Any
 
 import boto3
 
-from unified_kg_rag.adapters.aws import BedrockEmbeddingModelFactory, OpenSearchClient
+from unified_kg_rag.adapters.aws import OpenSearchClient
+from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.models import (
     Claim,
     CommunityReport,
@@ -45,14 +46,10 @@ class OpenSearchIndexer(VectorIndexer):
             profile_name=self.config.aws.profile_name
         )
         self.opensearch_client = OpenSearchClient(config, self.boto_session)
-        # Embedding provider via the port; defaults to Bedrock when not injected.
+        # Embedding provider via the port; when not injected, the one
+        # config.providers selects (Bedrock by default).
         self.embedding_factory: EmbeddingFactoryPort = (
-            embedding_factory
-            or BedrockEmbeddingModelFactory(
-                config,
-                self.boto_session,
-                self.config.aws.bedrock_region,
-            )
+            embedding_factory or Providers(config, self.boto_session).embedding_factory
         )
         self._embedding_dimension = self._resolve_embedding_dimension()
         self.embedding_model = self.embedding_factory.get_model(

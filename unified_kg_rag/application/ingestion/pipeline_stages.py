@@ -375,7 +375,7 @@ class DocumentLoadingStage(PipelineStage):
         # DynamoDB one is enabled, diff against it, stash the delta/fingerprints
         # for the IndexingStage, and process only new/changed documents.
         delta_skipped = 0
-        if self._doc_status is not None or self.config.aws.dynamodb.enabled:
+        if self._doc_status is not None or self.config.doc_status_enabled:
             documents, delta_skipped = self._apply_incremental_filter(
                 documents, context
             )
@@ -485,8 +485,9 @@ class DocumentLoadingStage(PipelineStage):
             raise DocStatusRegistryError(
                 f"Doc-status registry: could not diff the corpus against the "
                 f"registry ({type(e).__name__}: {e}). Incremental indexing needs "
-                "the registry; fix it and re-run, or set aws.dynamodb.enabled: "
-                "false to run without it."
+                "the registry; fix it and re-run, or turn incremental indexing off "
+                "(aws.dynamodb.enabled / providers.doc_status.enabled: false) to "
+                "run without it."
             ) from e
         context.incremental_delta = delta
         context.incremental_fingerprints = fingerprints
@@ -583,11 +584,9 @@ class DocumentLoadingStage(PipelineStage):
     def _build_doc_status_store(self) -> "DocStatusPort":
         if self._doc_status is not None:
             return self._doc_status
-        # Fallback: construct the default DynamoDB adapter (e.g. when the stage
-        # is used standalone in tests without injection).
-        from unified_kg_rag.adapters.aws import DynamoDBDocStatusStore
-
-        return DynamoDBDocStatusStore(self.config, boto_session=self.boto_session)
+        # Fallback when the stage is used standalone (no pipeline injection):
+        # the registry config.providers selects.
+        return self.providers.doc_status
 
 
 class DocumentParsingStage(PipelineStage):
@@ -1472,9 +1471,7 @@ class IndexingStage(PipelineStage):
     def _build_doc_status_store(self) -> "DocStatusPort":
         if self._doc_status is not None:
             return self._doc_status
-        from unified_kg_rag.adapters.aws import DynamoDBDocStatusStore
-
-        return DynamoDBDocStatusStore(self.config, boto_session=self.boto_session)
+        return self.providers.doc_status
 
     def _reset_suffixes(self, text_units: list[TextUnit]) -> set[str]:
         """The item suffixes whose stores a reset clears.
@@ -1599,7 +1596,7 @@ class IndexingStage(PipelineStage):
             # "unchanged" (skipping them despite the graph having been wiped) and
             # leave rows for docs no longer in the corpus. Only relevant when the
             # registry is in use (incremental mode).
-            if self._doc_status is not None or self.config.aws.dynamodb.enabled:
+            if self._doc_status is not None or self.config.doc_status_enabled:
                 self._clear_doc_status_registry(
                     self._reset_namespaces(context, text_units),
                     self._reset_suffixes(text_units),
@@ -1627,7 +1624,7 @@ class IndexingStage(PipelineStage):
         if (
             context.incremental_delta is None
             and not self.config.indexing.reset
-            and (self._doc_status is not None or self.config.aws.dynamodb.enabled)
+            and (self._doc_status is not None or self.config.doc_status_enabled)
         ):
             # Incremental indexing is on but no delta reached this stage (the
             # loading stage failed under continue_on_error, or the run was

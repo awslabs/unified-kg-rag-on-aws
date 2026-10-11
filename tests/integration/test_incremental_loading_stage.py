@@ -12,6 +12,7 @@ import pytest
 from moto import mock_aws
 
 from unified_kg_rag.adapters.aws import DynamoDBDocStatusStore
+from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.application.ingestion.pipeline_stages import DocumentLoadingStage
 from unified_kg_rag.domain.ingestion.delta_detector import (
     compute_content_hash,
@@ -76,7 +77,8 @@ def _stage(config: Config, session: boto3.Session) -> DocumentLoadingStage:
     stage = DocumentLoadingStage.__new__(DocumentLoadingStage)
     stage.config = config  # type: ignore[attr-defined]
     stage.boto_session = session  # type: ignore[attr-defined]
-    # No injected port -> the stage builds the default DynamoDB adapter itself.
+    stage.providers = Providers(config, boto_session=session)  # type: ignore[attr-defined]
+    # No injected port -> the stage takes the bundle's (DynamoDB) registry.
     stage._doc_status = None  # type: ignore[attr-defined]
     stage.loader = SimpleNamespace(source_directory=Path("/"))  # type: ignore[attr-defined]
     return stage

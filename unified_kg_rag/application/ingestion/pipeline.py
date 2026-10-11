@@ -13,6 +13,7 @@ from structlog.contextvars import bind_contextvars, reset_contextvars
 from unified_kg_rag.adapters.aws import S3CacheManager
 from unified_kg_rag.adapters.ingestion.parser import ParserFactory
 from unified_kg_rag.adapters.providers import Providers
+from unified_kg_rag.application.bootstrap import build_providers
 from unified_kg_rag.application.ingestion.pipeline_stages import (
     ClaimExtractionStage,
     ClaimResolutionStage,
@@ -145,13 +146,14 @@ class DataIngestionPipeline:
         """Build the stages; every backend may be injected.
 
         Args:
-            providers: LLM/embedding/rerank/token-counter bundle (Bedrock
-                defaults when omitted).
+            providers: Model and store provider bundle (built from
+                ``config.providers`` when omitted; see
+                ``application.bootstrap.build_providers``).
             doc_status: Document-status registry for incremental indexing.
                 Passing one turns incremental indexing on; otherwise it follows
-                ``aws.dynamodb.enabled`` with the DynamoDB store.
-            vector_indexer: Document-index writer (default OpenSearch).
-            graph_indexer: Graph writer (default Neptune).
+                ``config.doc_status_enabled`` with the bundle's registry.
+            vector_indexer: Document-index writer (default: the bundle's).
+            graph_indexer: Graph writer (default: the bundle's).
         """
         self.config = config
         # Before any stage builds a model, so the factories attach the tracing
@@ -179,7 +181,11 @@ class DataIngestionPipeline:
         # LLM/embedding factories) built here or injected, and passed to every
         # stage, so an injected factory reaches every LLM/embedding adapter
         # and the default Bedrock clients are created once per pipeline.
-        self.providers = Providers.resolve(config, providers, boto_session)
+        self.providers = (
+            providers
+            if providers is not None
+            else build_providers(config, boto_session)
+        )
         self.boto_session = self.providers.boto_session
 
         self._initialize_managers()
@@ -236,11 +242,9 @@ class DataIngestionPipeline:
         """
         if self._doc_status is not None:
             return self._doc_status
-        if not self.config.aws.dynamodb.enabled:
+        if not self.config.doc_status_enabled:
             return None
-        from unified_kg_rag.adapters.aws import DynamoDBDocStatusStore
-
-        return DynamoDBDocStatusStore(self.config, boto_session=self.boto_session)
+        return self.providers.doc_status
 
     def _initialize_stages(
         self,
@@ -462,11 +466,12 @@ class DataIngestionPipeline:
         retired = self.config.indexing.retire_source_scopes
         if not retired:
             return
-        if self._doc_status is None and not self.config.aws.dynamodb.enabled:
+        if self._doc_status is None and not self.config.doc_status_enabled:
             raise ConfigurationError(
                 "indexing.retire_source_scopes / --retire-source-scope needs "
-                "incremental indexing (aws.dynamodb.enabled: true): the "
-                "retired records live in the doc-status registry"
+                "incremental indexing (aws.dynamodb.enabled: true, or "
+                "providers.doc_status.enabled: true): the retired records live "
+                "in the doc-status registry"
             )
         parsing = self.config.processing.document_parsing
         validate_retired_scopes(

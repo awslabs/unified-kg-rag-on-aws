@@ -10,7 +10,6 @@ from pydantic import BaseModel, Field
 from unified_kg_rag.adapters.aws.bedrock_models import (
     LanguageModelInfo,
     effective_max_output_tokens,
-    get_language_model_info,
 )
 from unified_kg_rag.adapters.aws.token_counter import is_count_tokens_known_unsupported
 from unified_kg_rag.adapters.providers import Providers
@@ -106,9 +105,7 @@ class TokenManager(MetricsMixin):
 
         answer_model_id = config.search.answer_generation_model_id
         self._enable_1m_context = config.aws.bedrock.enable_1m_context
-        answer_model_info = get_language_model_info(
-            answer_model_id, config.aws.bedrock.model_overrides
-        )
+        answer_model_info = providers.llm_model_info(answer_model_id)
         self._token_counter = providers.token_counter(
             answer_model_id,
             cache_maxsize=self.config.token_count_cache_size,

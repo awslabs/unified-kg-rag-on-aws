@@ -23,7 +23,7 @@ pytestmark = pytest.mark.unit
 def indexer(mocker) -> OpenSearchIndexer:
     mocker.patch("unified_kg_rag.adapters.storage.opensearch_indexer.OpenSearchClient")
     factory = mocker.patch(
-        "unified_kg_rag.adapters.storage.opensearch_indexer.BedrockEmbeddingModelFactory"
+        "unified_kg_rag.adapters.providers.BedrockEmbeddingModelFactory"
     )
     factory.return_value.get_model_info.return_value = MagicMock(dimensions=4)
     factory.return_value.get_model.return_value = MagicMock()

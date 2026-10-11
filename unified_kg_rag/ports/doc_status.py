@@ -7,9 +7,11 @@ content hash, processing status, and which graph artifacts (entities,
 relationships, text units, communities) they produced — so a re-run can compute
 a delta (new / changed / deleted) and merge instead of re-indexing everything.
 
-The production adapter (M2) will be DynamoDB (``unified_kg_rag.adapters.aws.dynamodb``);
-today only the in-memory fake (``tests/fixtures/fakes``) exists. Both conform to
-this Protocol structurally.
+Adapters: DynamoDB (``unified_kg_rag.adapters.aws.dynamodb``) and SQLite for
+local mode (``unified_kg_rag.adapters.local.sqlite_doc_status``); tests use the
+in-memory fake (``tests/fixtures/fakes``). All conform to this Protocol
+structurally and pass one conformance suite
+(``tests/integration/test_doc_status_conformance.py``).
 """
 
 from __future__ import annotations

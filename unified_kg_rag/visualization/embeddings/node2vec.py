@@ -7,7 +7,7 @@ import networkx as nx
 import numpy as np
 from pydantic import BaseModel, Field
 
-from unified_kg_rag.adapters.aws import BedrockEmbeddingModelFactory
+from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.models import Config, model_id_value
 from unified_kg_rag.ports.model_factory import EmbeddingFactoryPort
 from unified_kg_rag.shared import EmbeddingModelError, get_logger
@@ -40,10 +40,9 @@ class BedrockNodeEmbedder:
             profile_name=self.config.aws.profile_name
         )
 
-        embedding_factory = embedding_factory or BedrockEmbeddingModelFactory(
-            config=self.config,
-            boto_session=self.boto_session,
-            region_name=self.config.aws.bedrock_region,
+        embedding_factory = (
+            embedding_factory
+            or Providers(self.config, self.boto_session).embedding_factory
         )
 
         embedding_model_id = self.viz_config.embeddings.get(

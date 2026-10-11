@@ -8,16 +8,19 @@ application code import ports from here and never import a concrete backend.
 
 Catalog:
 - ``DocStatusPort`` — document-status registry for incremental indexing
-  (adapter: ``adapters.aws.dynamodb``; in-memory fake in tests).
+  (adapters: ``adapters.aws.dynamodb``, ``adapters.local.sqlite_doc_status``;
+  in-memory fake in tests).
 - ``BaseIndexer`` / ``GraphIndexer`` / ``VectorIndexer`` — write-side store
   contracts (adapters: ``adapters.storage``). ``IndexingStats`` is the shared
   result record.
 - ``ModelFactoryPort`` (+ ``LLMFactoryPort`` / ``EmbeddingFactoryPort`` /
   ``RerankFactoryPort`` aliases) — the LLM/Embedding/Rerank provider boundary
-  (``Protocol``; the Bedrock factories in ``adapters.aws.bedrock`` conform
-  structurally). Annotate against these for provider-agnostic call sites.
+  (``Protocol``; the Bedrock factories in ``adapters.aws.bedrock`` and the
+  local ones in ``adapters.local`` conform structurally). Annotate against
+  these for provider-agnostic call sites.
 - ``TokenCounterPort`` — token counting/truncation for one model (``Protocol``;
-  ``adapters.aws.token_counter.BedrockTokenCounter`` conforms structurally).
+  ``adapters.aws.token_counter.BedrockTokenCounter`` and
+  ``adapters.local.token_counter.LocalTokenCounter`` conform structurally).
 - ``CachePort`` — the stage-result persistence boundary (``Protocol``; the
   filesystem ``CacheManager`` in ``shared.cache_manager`` conforms structurally).
 
