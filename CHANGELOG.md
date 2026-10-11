@@ -257,26 +257,26 @@ Library API (Python callers and custom backends).
   the integrity check built its cache keys before the corpus fingerprint was
   known, so it reported every stage missing and prompted, which crashed
   without a terminal. Prompts now fail with a clear message without a
-  terminal unless `--yes` is passed, including `--repair-metadata` (#PR).
+  terminal unless `--yes` is passed, including `--repair-metadata` (#223).
 - Retrying a failed Step Functions execution with the same `pipeline_id`
   resumes at the failed stage: an earlier attempt's failed stage result is no
   longer merged into the retry (it failed every phase), and the phases no
   longer pass `--resume-from-stage`, which re-ran each window's LLM stages;
-  each phase skips the stages of its window that completed (#PR).
+  each phase skips the stages of its window that completed (#223).
 - `--force-rebuild` writes the recomputed stage outputs to the cache instead
-  of leaving the previous ones in place (#PR).
+  of leaving the previous ones in place (#223).
 - With `--continue-on-error`, documents whose translation, extraction,
   resolution, analysis or community stage crashed are recorded `FAILED`, not
   `PROCESSED` with a partial graph that the next run skipped as unchanged;
   when parsing, loading or chunking crashed, indexing does not run, where a
-  parsing crash used to remove every stored document as deleted (#PR).
+  parsing crash used to remove every stored document as deleted (#223).
 - `--resume-from-stage` is case-insensitive as documented, and an unknown
   stage name is a usage error listing the valid stages instead of a silent
-  no-op; a missing `--config-path` file is a usage error too (#PR).
+  no-op; a missing `--config-path` file is a usage error too (#223).
 - Generated pipeline ids carry a random suffix, so runs started in the same
   second no longer share a cache directory; `--verify-metadata` reports an
   unknown pipeline id as not found; each phase of a phased run emits only the
-  metrics of the stages it ran, so dashboard sums no longer over-count (#PR).
+  metrics of the stages it ran, so dashboard sums no longer over-count (#223).
 - `run-rag` starts again: it passed `enable_thinking` to `GraphRAGChain`, which no
   longer accepts unknown keywords (the flag reaches `RAGInput`) (#222).
 - Answer matching keeps a dash next to a lone letter ("Type-A" no longer
