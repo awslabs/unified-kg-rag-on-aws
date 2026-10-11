@@ -632,6 +632,11 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   warning. **Breaking** for configs that set them (#PR).
 - The deprecated `SearchQuery.metadata["lightrag_mode"]` alias; LightRAG reads
   only `search_strategy` (#123, #PR).
+- `GraphRAGChain._build_graph_retriever` and `_build_document_retriever`, a
+  second override layer on top of the provider bundle's retriever builders: a
+  role resolves to the injected `retriever_builders` entry, else
+  `Providers.build_retriever`. **Breaking** for subclasses that overrode them;
+  inject `retriever_builders` instead (#PR).
 
 ### Fixed
 - `interactive_graph.html` centres the layout and scales it to a fixed canvas

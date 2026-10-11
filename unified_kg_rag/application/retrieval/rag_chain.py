@@ -893,12 +893,6 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             self._strategy_cache[cache_key] = strategy
             return strategy
 
-    def _build_graph_retriever(self) -> BaseGraphRAGRetriever:
-        return self.providers.build_retriever(RetrieverRole.GRAPH)
-
-    def _build_document_retriever(self) -> BaseGraphRAGRetriever:
-        return self.providers.build_retriever(RetrieverRole.DOCUMENT)
-
     def _get_retriever(self, role: RetrieverRole) -> BaseGraphRAGRetriever:
         cache_key = (role, self._cache_loop())
         with self._cache_lock:
@@ -909,20 +903,13 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             return retriever
 
     def _build_retriever(self, role: RetrieverRole) -> BaseGraphRAGRetriever:
-        # Role -> adapter builder. The defaults come from the provider bundle
-        # (the stores config.providers selects); injected retriever_builders
-        # take precedence (the backend seam), so a custom store is wired
-        # without subclassing or editing any strategy.
-        builders: dict[RetrieverRole, Callable[[], BaseGraphRAGRetriever]] = {
-            RetrieverRole.GRAPH: self._build_graph_retriever,
-            RetrieverRole.DOCUMENT: self._build_document_retriever,
-            **self._retriever_builders_override,
-        }
-        builder = builders.get(role)
-        if builder is None:
-            raise ValueError(f"No retriever bound to role: '{role}'")
-
-        return builder()
+        # Injected retriever_builders take precedence (the backend seam), so a
+        # custom store is wired without subclassing or editing any strategy;
+        # the rest are the stores config.providers selects.
+        builder = self._retriever_builders_override.get(role)
+        if builder is not None:
+            return builder()
+        return self.providers.build_retriever(role)
 
     def _cache_loop(self) -> asyncio.AbstractEventLoop | None:
         """Return the cache key for the running loop (``None`` outside one).
