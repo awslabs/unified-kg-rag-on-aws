@@ -153,7 +153,7 @@ class LocalSearchStrategy(BaseSearchStrategy): ...
 
 ### 2.4 의존성 규칙 검증 상태
 
-`domain/`은 런타임에 `adapters`/`application`을 import하지 않으며 `ports/`도 마찬가지입니다. 컴파일 타임에만 해당하는 예외가 하나 있습니다. `domain/retrieval/strategy_registry.py`는 레지스트리가 전략 하위 클래스를 저장하므로 `TYPE_CHECKING` 아래에서 `adapters.retrieval.base.BaseSearchStrategy`를 참조합니다. 순수한 전략·리트리버 포트를 분리하면 이 타입 수준 참조도 없어지지만, 의도적인 경계로 남겨 둡니다(이 문서 끝의 "의도적 설계 경계" 참고).
+`domain/`은 런타임에 `ports`/`adapters`/`application` 모듈을 import하지 않고, `ports/`와 `shared/`는 다른 레이어를 import하지 않으며, `adapters/`는 `application`, `evaluation`, `visualization` 모듈을 import하지 않습니다. `evaluation/`은 체인(`application.retrieval`, `application.bootstrap`)을 통해서만 애플리케이션 레이어에 닿습니다. `tests/unit/test_domain_purity.py`가 `TYPE_CHECKING` import까지 포함해 이 규칙을 검사합니다. 컴파일 타임에만 해당하는 예외가 두 개 있고, 테스트는 둘 다 `TYPE_CHECKING` 아래에 있는지 확인합니다. `domain/retrieval/strategy_registry.py`는 레지스트리가 전략 하위 클래스를 저장하므로 `adapters.retrieval.base.BaseSearchStrategy`를 참조하고, `domain/ingestion/delta_detector.py`는 매개변수 타입으로 `DocStatusPort`를 씁니다(포트 모듈이 도메인 모델을 import하므로 런타임 import는 순환이 됩니다). 순수한 전략·리트리버 포트를 분리하면 첫 번째 타입 수준 참조도 없어지지만, 의도적인 경계로 남겨 둡니다(이 문서 끝의 "의도적 설계 경계" 참고).
 
 코드는 실제 레이어 위치(`application.retrieval.rag_chain`, `application.storage.indexing_manager`, `application.ingestion.pipeline`, `adapters.*` / `domain.*` 모듈)에서 import합니다. `evaluation/`과 `visualization/`은 실제 로직 패키지입니다(§2의 레이아웃 참고).
 

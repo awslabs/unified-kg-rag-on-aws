@@ -184,6 +184,17 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   (#157).
 
 ### Changed
+- `tests/unit/test_domain_purity.py` enforces the layer rule of design.md
+  §2.0 on every import (domain, ports and shared import no other layer,
+  adapters no application/evaluation/visualization, evaluation the
+  application layer only through the chain), with the two type-only
+  exceptions checked to stay under `TYPE_CHECKING`. `delta_detector` imports
+  `DocStatusPort` for annotations only (#PR).
+- **Breaking** (import path): `HierarchicalCommunity` moved from
+  `adapters.ingestion.community_detector` to `domain.models` (#PR).
+- `merge_descriptions` moved from `domain.ingestion.merge.merger` to
+  `domain.ingestion.descriptions`, which breaks the merger ↔ base_resolver
+  import cycle (#PR).
 - **Breaking:** `providers.llm.max_retries` and `providers.embedding.max_retries`
   (retries after the first try, default 2) are renamed `max_attempts` (total
   attempts, default 3), like every other attempt count in the config. The old
