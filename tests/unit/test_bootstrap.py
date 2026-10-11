@@ -464,6 +464,17 @@ def test_local_cli_pipeline_chain_and_stores_load_no_aws_sdk(tmp_path) -> None:
         "pipeline.providers.build_doc_status()\n"
         "for role in RetrieverRole:\n"
         "    chain.providers.build_retriever(role)\n"
+        # Community detection runs Leiden, whose graspologic wrapper would
+        # import boto3 (gensim -> smart_open.s3).
+        "import networkx as nx\n"
+        "from unified_kg_rag.adapters.ingestion.community_detector import "
+        "CommunityDetector\n"
+        "config.graph.community_detection.report_generation.enabled = False\n"
+        "graph = nx.Graph([('a', 'b'), ('b', 'c'), ('a', 'c'), ('c', 'd'), "
+        "('d', 'e'), ('e', 'f'), ('d', 'f')])\n"
+        "detector = CommunityDetector(config, show_progress=False)\n"
+        "detector(graph)\n"
+        "assert detector.all_communities, 'no communities detected'\n"
         "aws = ('boto3', 'botocore', 'langchain_aws')\n"
         "print(json.dumps(sorted({m.split('.')[0] for m in sys.modules} & set(aws))))\n"
     )

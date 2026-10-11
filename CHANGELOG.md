@@ -269,6 +269,11 @@ Library API (Python callers and custom backends).
   framework's retry, `providers.llm.max_attempts` /
   `providers.embedding.max_attempts` attempts. OpenAI-compatible servers keep
   the OpenAI client's own retries, with no second layer (#PR).
+- A local ingestion run no longer imports the AWS SDK at community detection:
+  Leiden now calls `graspologic-native` directly, as `graspologic` does,
+  instead of importing `graspologic`, whose package import loads boto3
+  (through gensim and smart_open) and takes about 10 s. Partitions are
+  unchanged (#PR).
 - Re-running `run-ingestion` with an existing `--pipeline-id` resumes again:
   the integrity check built its cache keys before the corpus fingerprint was
   known, so it reported every stage missing and prompted, which crashed

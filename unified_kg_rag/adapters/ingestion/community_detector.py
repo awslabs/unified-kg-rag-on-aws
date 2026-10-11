@@ -68,6 +68,66 @@ def _canonical_graph(graph: nx.Graph) -> nx.Graph:
     return canonical
 
 
+def leiden(
+    graph: nx.Graph,
+    *,
+    resolution: float = 1.0,
+    random_seed: int | None = None,
+    trials: int = 1,
+    extra_forced_iterations: int = 0,
+) -> dict[Any, int]:
+    """Leiden partition of ``graph``: node -> community label.
+
+    Same algorithm, arguments and result as ``graspologic.partition.leiden``
+    on an undirected networkx graph (modularity, randomness 0.001, edge
+    ``weight`` defaulting to 1.0); isolated nodes are not in the result. It
+    calls ``graspologic_native`` directly because importing any graspologic
+    module runs ``graspologic/__init__``, which takes ~10 s and imports boto3
+    through gensim and smart_open.
+
+    Raises:
+        ValueError: An argument is out of range, ``graph`` is directed or a
+            multigraph, or two nodes have the same ``str``.
+    """
+    if graph.is_directed() or graph.is_multigraph():
+        raise ValueError("Leiden supports only undirected non-multi graphs")
+    if resolution <= 0:
+        raise ValueError("resolution must be a positive float")
+    if random_seed is not None and random_seed <= 0:
+        raise ValueError("random_seed must be a positive integer")
+    if trials < 1:
+        raise ValueError("trials must be a positive integer")
+    if extra_forced_iterations < 0:
+        raise ValueError("extra_forced_iterations must be a non-negative integer")
+
+    import graspologic_native
+
+    # The native module takes string node ids; map them back afterwards.
+    originals: dict[str, Any] = {}
+
+    def node_key(node: Any) -> str:
+        key = str(node)
+        if originals.setdefault(key, node) != node:
+            raise ValueError(f"Two distinct nodes share the string id {key!r}")
+        return key
+
+    edges = [
+        (node_key(source), node_key(target), float(weight))
+        for source, target, weight in graph.edges(data="weight", default=1.0)
+    ]
+    _quality, partition = graspologic_native.leiden(
+        edges=edges,
+        starting_communities=None,
+        resolution=resolution,
+        randomness=0.001,
+        iterations=extra_forced_iterations + 1,
+        use_modularity=True,
+        seed=random_seed,
+        trials=trials,
+    )
+    return {originals[key]: label for key, label in partition.items()}
+
+
 def _modularity(graph: nx.Graph, partition: list[set[str]]) -> float:
     """Modularity of ``partition``; ``0.0`` for a graph without edges.
 
@@ -274,9 +334,6 @@ class CommunityDetector(BaseProcessor):
             )
             return [{node} for node in target_graph.nodes()]
 
-        # Deferred: importing graspologic costs ~10 s per process (numba/umap).
-        from graspologic.partition import leiden
-
         try:
             config = self.community_detection_config
 
@@ -366,7 +423,6 @@ class CommunityDetector(BaseProcessor):
             self.community_detection_config.auto_resolution_candidates
         )
         canonical = _canonical_graph(graph)
-        from graspologic.partition import leiden
 
         for resolution in resolution_candidates:
             try:

@@ -38,6 +38,9 @@ dependencies = [
     "datasets>=4.0.0",
     "datasketch>=2.0.0",
     "graspologic>=3.4.1",
+    # Leiden is called here directly: importing graspologic loads its embed
+    # stack (and boto3 through gensim/smart_open).
+    "graspologic-native>=1.2.1",
     # Pinned below 3.8: that release added the `discard()` step and routes
     # `Cardinality.single` property writes through it, which Neptune (engine
     # 1.4.7.0, TinkerPop 3.6/3.7) rejects with
@@ -233,6 +236,7 @@ show_error_codes = true
 module = [
     "gremlin_python.*",
     "datasketch.*",
+    "graspologic_native",
     "networkx.*",
     "pandas.*",
     "pyvis.*",
