@@ -30,10 +30,10 @@ from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.application.ingestion.incremental import (
     clear_registry_namespaces,
     context_lineages,
+    dedup_preferences,
     documents_with_failed_units,
     filter_to_delta,
     index_delta,
-    indexed_documents,
     reset_namespaces,
     reset_suffixes,
     run_incremental_indexer,
@@ -383,16 +383,18 @@ class DocumentLoadingStage(PipelineStage):
 
         incremental = self._doc_status is not None or self.config.doc_status_enabled
         if self.config.processing.deduplicate:
-            keep = None
+            keep = avoid = None
             if incremental and not self.config.indexing.reset:
-                keep = indexed_documents(
+                keep, avoid = dedup_preferences(
                     documents,
                     context,
                     self.config,
                     self._build_doc_status_store,
                     self.loader.source_directory,
                 )
-            documents = self.loader.deduplicate_documents(documents, keep=keep)
+            documents = self.loader.deduplicate_documents(
+                documents, keep=keep, avoid=avoid
+            )
 
         # Incremental indexing: when a doc-status registry is injected or the
         # DynamoDB one is enabled, diff against it, stash the delta/fingerprints

@@ -259,6 +259,9 @@ Library API (Python callers and custom backends).
   merges into the corrected item instead of producing a second entity or
   edge with the same id, and graph resolution merges items that share an id,
   so Neptune no longer gets two vertices or parallel edges for one id (#PR).
+- Incremental deduplication prefers only documents indexed successfully: a
+  near-copy of a document that failed indexing is kept instead of it, so the
+  content is indexed even when the failed copy used up its retries (#PR).
 - Parsing: the LLM XML parser keeps `&`, `<`, repeated siblings and
   sections with a missing closing tag; truncated responses fail instead of
   parsing as partial successes (#165, #174, #182, #213).

@@ -381,6 +381,11 @@ def test_dedup_keeps_the_preferred_copy(tmp_path: Path) -> None:
         docs, keep=lambda d: d.document_id == "id-original"
     )
     assert [d.document_id for d in kept] == ["id-original"]
+    # An avoided document (its indexing failed) loses to its copy.
+    kept = loader.deduplicate_documents(
+        docs, avoid=lambda d: d.document_id == "id-copy"
+    )
+    assert [d.document_id for d in kept] == ["id-original"]
 
 
 # --------------------------------------------------------------------------- #

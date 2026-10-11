@@ -1165,19 +1165,23 @@ def run_registry_scope(
     )
 
 
-def indexed_documents(
+def dedup_preferences(
     documents: list[Document],
     context: PipelineContext,
     config: Config,
     doc_status: Callable[[], DocStatusPort],
     source_directory: Path,
-) -> Callable[[Document], bool]:
-    """Which of ``documents`` the registry already holds (dedup preference).
+) -> tuple[Callable[[Document], bool], Callable[[Document], bool]]:
+    """Which near-duplicate to keep: ``(indexed, failed)`` predicates.
 
     The incremental diff treats a dropped document as deleted, so a new
-    near-copy that happened to be kept would delete the indexed original
-    and index itself instead. A document the registry already holds (under
-    its key or its legacy key) is therefore kept over one it does not.
+    near-copy that happened to be kept would delete the indexed original and
+    index itself instead. A document the registry holds as PROCESSED (under
+    its key or its legacy key) is therefore kept over one it does not, and one
+    it holds as FAILED gives way to any other: a FAILED document may have used
+    up its retries (``indexing.max_document_failures``), so keeping it over
+    its copy would leave neither indexed. A PENDING record (an interrupted
+    run) is neither.
     """
     _, _, source_scope, _ = run_registry_scope(
         config, source_directory, context.failed_source_files
@@ -1196,7 +1200,19 @@ def indexed_documents(
             f"Doc-status registry: could not read it to deduplicate the "
             f"corpus ({type(e).__name__}: {e})"
         ) from e
-    return lambda doc: any(key in stored for key in keys[id(doc)])
+
+    def has_status(status: DocStatus) -> Callable[[Document], bool]:
+        def check(document: Document) -> bool:
+            return any(
+                key in stored and stored[key].status is status
+                for key in keys[id(document)]
+            )
+
+        return check
+
+    indexed = has_status(DocStatus.PROCESSED)
+    failed = has_status(DocStatus.FAILED)
+    return indexed, lambda document: failed(document) and not indexed(document)
 
 
 def filter_to_delta(
