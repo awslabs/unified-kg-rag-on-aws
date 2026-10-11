@@ -286,25 +286,25 @@ Library API (Python callers and custom backends).
   from the OpenAI-compatible and Ollama clients) instead of failing the item
   on the first one; they take the classifier from the LLM factory
   (`is_transient_error`), and a factory without one gets these network and
-  server errors retried (#PR).
+  server errors retried (#221).
 - Local mode imports no boto3 or botocore: the CLIs, the ingestion
   pipeline, the query chain and the local stores import the S3 sync and
   transfer helpers, SigV4 signing and the AWS session only when a run uses
-  them (#PR).
+  them (#221).
 - Two full rebuilds within one second no longer reuse the live OpenSearch
   index: the replacement index was created under the live index's name, so
   it was written into the live index and kept the previous build's
   documents (and an emptied type was not emptied). Index names carry
   milliseconds, a taken name is moved forward, and a full rebuild refuses to
   write into an index that already exists; indices named by earlier builds
-  are still reaped (#PR).
+  are still reaped (#221).
 - The check that the graph still holds the registry's documents probes
   indexed documents that list entities, reading past entity-less ones (up to
   1,000 records), so a corpus starting with 20 entity-less pages no longer
-  lets a wiped graph pass as intact (#PR).
+  lets a wiped graph pass as intact (#221).
 - `--backend aws` over a `backend: local` config file no longer keeps the
   local preset's providers and connection keys under the `aws` label: values
-  equal to the local preset's return to the AWS defaults (#PR).
+  equal to the local preset's return to the AWS defaults (#221).
 - Parsing: the LLM XML parser keeps `&`, `<`, repeated siblings and
   sections with a missing closing tag; truncated responses fail instead of
   parsing as partial successes (#165, #174, #182, #213).
