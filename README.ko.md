@@ -84,7 +84,7 @@ uv sync                                 # 또는: pip install -e .
 cp config-template.yaml config.yaml     # Bedrock 리전과 서비스 엔드포인트 입력
 ```
 
-OpenSearch가 IAM 대신 사용자 이름/비밀번호 인증을 쓴다면(`aws.opensearch.use_iam: false`) `.env-template`을 `.env`로 복사하고 자격 증명을 입력하세요. Markdown과 HTML을 파싱하려면 선택 extra인 `unstructured`가 필요합니다(Python 3.11 이상: `uv sync --extra unstructured`). PDF, TXT, CSV, JSON은 별도 설치 없이 처리합니다.
+OpenSearch가 IAM 대신 사용자 이름/비밀번호 인증을 쓴다면(`aws.opensearch.use_iam: false`) `.env-template`을 CLI를 실행할 디렉터리에 `.env`로 복사하고 자격 증명을 입력하세요. Markdown과 HTML을 파싱하려면 선택 extra인 `unstructured`가 필요합니다(Python 3.11 이상: `uv sync --extra unstructured`). PDF, TXT, CSV, JSON은 별도 설치 없이 처리합니다.
 
 ### 수집, 질의, 평가
 

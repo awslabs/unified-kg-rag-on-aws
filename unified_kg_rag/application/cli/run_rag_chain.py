@@ -12,7 +12,6 @@ from pathlib import Path
 from typing import Any
 
 import nest_asyncio
-from dotenv import load_dotenv
 from rich.markup import escape
 from rich.panel import Panel
 
@@ -34,13 +33,13 @@ from unified_kg_rag.application.retrieval.rag_chain import (
 )
 from unified_kg_rag.domain.models import Constants, SearchStrategy
 from unified_kg_rag.shared import get_config, get_logger, setup_logging
+from unified_kg_rag.shared.config import load_cli_dotenv
 from unified_kg_rag.shared.utils import event_loop
 from unified_kg_rag.shared.utils.display import console, display_ascii_art
 
 ROOT_DIRECTORY = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT_DIRECTORY))
 
-load_dotenv()
 nest_asyncio.apply()
 logger = get_logger(__name__)
 
@@ -597,6 +596,7 @@ async def async_main(args: argparse.Namespace) -> int:
 
 
 def main() -> None:
+    load_cli_dotenv()
     # Parse (and let argparse exit on --help or bad arguments) before the event
     # loop starts.
     args = CommandLineInterface().parse_args()

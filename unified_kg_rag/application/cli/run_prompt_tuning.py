@@ -24,6 +24,7 @@ from unified_kg_rag.application.cli.provider_args import (
 from unified_kg_rag.application.prompts.tuner import PromptTuner
 from unified_kg_rag.domain.models import Config
 from unified_kg_rag.shared import get_config, get_logger, setup_logging
+from unified_kg_rag.shared.config import load_cli_dotenv
 from unified_kg_rag.shared.utils import event_loop
 from unified_kg_rag.shared.utils.cache_keys import is_excluded_source_path
 
@@ -102,6 +103,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> int:
+    load_cli_dotenv()
     args = _build_parser().parse_args()
     try:
         config = apply_provider_arguments(get_config(args.config_path), args)

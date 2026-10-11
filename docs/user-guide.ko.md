@@ -664,9 +664,12 @@ LLM 단계는 Bedrock I/O가 병목이므로 동시성을 CPU 수보다 훨씬 �
 > 경고는 `setup_logging`이 남기므로, 이 함수를 호출하지 않는 라이브러리 코드에서는
 > 나오지 않습니다.
 
-CLI는 python-dotenv로 `.env` 파일도 읽습니다. 환경에 이미 설정된 변수가 `.env`보다
-우선합니다. `.env`는 현재 디렉터리가 아니라 패키지 위치에서 위쪽으로 올라가며
-찾으므로, 소스 체크아웃에서는 저장소 루트에 두세요.
+CLI는 python-dotenv로 `.env` 파일도 읽습니다. 현재 작업 디렉터리의 `./.env`만 읽고
+상위 디렉터리의 파일은 찾지 않습니다(그러지 않으면 `AWS_PROFILE`을 설정한 `~/.env`가
+모르는 사이에 계정을 바꿀 수 있음). 환경에 이미 설정된 변수가 `.env`보다 우선합니다.
+패키지를 가져오는 것만으로는 `.env`를 읽지 않으며 `os.environ`을 바꾸지 않습니다.
+Python 코드에서 `.env`가 필요하면 직접 읽으세요(예: `get_config()` 전에
+`dotenv.load_dotenv()`).
 
 CDK compute 스택은 `AWS_REGION`, `BEDROCK_REGION`,
 `NEPTUNE_ENDPOINT`, `OPENSEARCH_ENDPOINT`, `OPENSEARCH_NUMBER_OF_REPLICAS`(다중 노드

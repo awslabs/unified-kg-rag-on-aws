@@ -43,11 +43,33 @@ def warn_unknown_keys(data: Any, model: type[BaseModel], prefix: str = "") -> No
             warn_unknown_keys(value, nested, f"{path}.")
 
 
+DOTENV_FILENAME = ".env"
+
+
+def load_cli_dotenv(directory: Path | None = None) -> Path | None:
+    """Load ``.env`` from the current directory into ``os.environ`` (CLIs only).
+
+    Only the file in ``directory`` (default: the current working directory)
+    is read, never one found by walking up parent directories: a ``.env`` in
+    the home directory setting ``AWS_PROFILE`` would otherwise silently switch
+    accounts. A variable already set in the environment is never overridden.
+    Importing the package loads no ``.env``; library users load their own.
+
+    Returns:
+        The file loaded, or ``None`` when there is none.
+    """
+    path = (directory or Path.cwd()) / DOTENV_FILENAME
+    if not path.is_file():
+        return None
+    load_dotenv(path, override=False)
+    _logger.debug("Loaded environment variables from '%s'", path)
+    return path
+
+
 class ConfigLoader:
     def __init__(self, config_path: Path | None = None) -> None:
         self.config_path = Path(config_path) if config_path else None
         self._config: Config | None = None
-        load_dotenv()
 
         # Debug, not print: a module-level ConfigLoader() runs this on every
         # import, and a bare print() to stdout corrupts `run-rag --output-format

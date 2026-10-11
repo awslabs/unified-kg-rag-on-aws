@@ -690,10 +690,12 @@ wins.
 > The warning comes from `setup_logging`, so library code that does not call it
 > gets none.
 
-The CLIs also load a `.env` file with python-dotenv. A variable already set in
-the environment wins over `.env`. The file is searched for from the package's
-location upward, not from the current directory, so in a source checkout put it
-at the repository root.
+The CLIs also load a `.env` file with python-dotenv: only `./.env` in the
+current working directory, never one in a parent directory (a `~/.env` setting
+`AWS_PROFILE` would otherwise switch accounts unnoticed). A variable already
+set in the environment wins over `.env`. Importing the package loads no `.env`
+and never changes `os.environ`; a Python caller that wants one loads it itself
+(for example `dotenv.load_dotenv()` before `get_config()`).
 
 The CDK compute stack injects `AWS_REGION`, `BEDROCK_REGION`,
 `NEPTUNE_ENDPOINT`, `OPENSEARCH_ENDPOINT`, `OPENSEARCH_NUMBER_OF_REPLICAS`

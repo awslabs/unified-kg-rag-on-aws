@@ -303,6 +303,10 @@ Library API (Python callers and custom backends).
   and now logs a WARNING; use `--interactive` (or one library process) for
   multi-turn. `--interactive --mode search` is rejected instead of silently
   generating answers (#PR).
+- Importing the package no longer loads a `.env` file into `os.environ`.
+  The CLIs load only `./.env` in the working directory, never one found in a
+  parent directory (a `~/.env` with `AWS_PROFILE` could switch accounts), and
+  never override a variable already set (#PR).
 - An incremental run that skips unchanged documents no longer replaces
   `visualization_data.json` with a graph of its delta only: it skips the
   export and the render and logs how to visualize the whole graph (a full

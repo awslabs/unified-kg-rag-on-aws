@@ -45,6 +45,7 @@ from unified_kg_rag.shared import (
     get_logger,
     setup_logging,
 )
+from unified_kg_rag.shared.config import load_cli_dotenv
 from unified_kg_rag.shared.utils import event_loop
 from unified_kg_rag.shared.utils.display import console, display_ascii_art
 
@@ -392,6 +393,7 @@ class EvaluationRunner:
 
 
 def main() -> None:
+    load_cli_dotenv()
     try:
         cli = CommandLineInterface()
         args = cli.parse_args()

@@ -85,7 +85,7 @@ uv sync                                 # or: pip install -e .
 cp config-template.yaml config.yaml     # then set your Bedrock region and service endpoints
 ```
 
-If OpenSearch uses username/password instead of IAM (`aws.opensearch.use_iam: false`), copy `.env-template` to `.env` and fill in the credentials. Parsing Markdown and HTML needs the optional `unstructured` extra (Python 3.11+: `uv sync --extra unstructured`); PDF, TXT, CSV, and JSON work out of the box.
+If OpenSearch uses username/password instead of IAM (`aws.opensearch.use_iam: false`), copy `.env-template` to `.env` in the directory you run the CLIs from and fill in the credentials. Parsing Markdown and HTML needs the optional `unstructured` extra (Python 3.11+: `uv sync --extra unstructured`); PDF, TXT, CSV, and JSON work out of the box.
 
 ### Ingest, query, evaluate
 
