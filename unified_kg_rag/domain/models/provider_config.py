@@ -49,7 +49,7 @@ class Backend(str, Enum):
     LOCAL = "local"
 
 
-class _EndpointConfig(BaseModel):
+class EndpointConfig(BaseModel):
     base_url: str | None = Field(
         default=None,
         min_length=1,
@@ -75,11 +75,14 @@ class _EndpointConfig(BaseModel):
     max_retries: int = Field(
         default=2,
         ge=0,
-        description="Client-side retries per request to the model server.",
+        description=(
+            "Client-side retries per request (OpenAI-compatible servers; the "
+            "Ollama client does not retry)."
+        ),
     )
 
 
-class LLMProviderConfig(_EndpointConfig):
+class LLMProviderConfig(EndpointConfig):
     kind: ProviderKind = Field(
         default=BEDROCK,
         description="Language-model provider: bedrock | openai_compatible | ollama.",
@@ -141,7 +144,7 @@ class LLMProviderConfig(_EndpointConfig):
     )
 
 
-class EmbeddingProviderConfig(_EndpointConfig):
+class EmbeddingProviderConfig(EndpointConfig):
     kind: ProviderKind = Field(
         default=BEDROCK,
         description="Embedding provider: bedrock | openai_compatible | ollama.",

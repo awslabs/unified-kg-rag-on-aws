@@ -116,6 +116,18 @@ otel = [
     "opentelemetry-sdk>=1.30.0",
     "opentelemetry-exporter-otlp>=1.30.0",
 ]
+# Optional: local mode (`backend: local` / `providers.*.kind`). OpenAI-compatible
+# servers (vLLM, llama.cpp, LM Studio) and Ollama for the LLM and embeddings,
+# tiktoken for `providers.llm.tokenizer: tiktoken`, and a sentence-transformers
+# cross-encoder for `providers.rerank.kind: cross_encoder` (pulls in PyTorch;
+# without it reranking is skipped with a warning). The core package imports
+# none of these; the local adapters load them only when their kind is selected.
+local = [
+    "langchain-ollama>=1.0.0,<2.0.0",
+    "langchain-openai>=1.1.14,<2.0.0",
+    "sentence-transformers>=5.1.0",
+    "tiktoken>=0.12.0",
+]
 
 [tool.uv]
 # Ragas pulls in this package transitively; earlier releases allow SSRF through
@@ -293,6 +305,9 @@ dev = [
     "black>=25.9.0",
     "hypothesis>=6.165.2",
     "isort>=5.12.0",
+    # The Ollama adapters of the [local] extra, for their offline tests (the
+    # rest of the extra is heavy; the cross-encoder tests fake it).
+    "langchain-ollama>=1.0.0,<2.0.0",
     "moto[dynamodb,s3]>=5.2.2",
     "mypy>=2.3.0",
     # In-memory span exporter for the observability tests (the [otel] extra
