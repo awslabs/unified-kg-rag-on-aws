@@ -266,7 +266,7 @@ Library API (Python callers and custom backends).
   the packages only it pulled in (gensim, matplotlib, seaborn, statsmodels,
   POT, hyppo and others), and the license check no longer needs an LGPL
   exception for gensim. `botocore` and `langsmith`, imported directly but
-  previously only transitive, are now declared (#PR).
+  previously only transitive, are now declared (#226).
 
 ### Fixed
 - Attaching, rotating or toggling a Bedrock guardrail under the default
@@ -278,22 +278,22 @@ Library API (Python callers and custom backends).
   fixing, gleaning, claim extraction, description summarization, entity
   grounding, community reports) no longer move them. Default configurations
   keep their keys; a configuration with a switched-off block whose other
-  fields differ from the defaults re-keys once (#PR).
+  fields differ from the defaults re-keys once (#226).
 - Answer matching normalizes text with many dashes in linear time: each dash
   re-scanned the text before it, so a 70 KB answer with 4,000 dashes took
   seconds. "Type A" now normalizes like "Type-A" (one token, `typea`)
   instead of dropping the "A" as an article and matching "Type B"; a lone
   lowercase letter after a space is still read as an article or a word
-  (#PR).
+  (#226).
 - `backend: local` sets its 22,000-token retrieval context budget only for a
   non-Bedrock LLM left at the default 32,768-token window. With
   `providers.llm.kind: bedrock` or an explicit `context_window_size` the
   regular default (30,000, clamped to the model's window) applies instead of
-  capping a larger model at the small local one's budget (#PR).
+  capping a larger model at the small local one's budget (#226).
 - A follow-up rewrite that opens with an apology or refusal and asks the user
   to clarify ("I'm sorry, could you clarify which contract?") is discarded
   like any other refusal; the question mark no longer lets it replace the
-  user's query (#PR).
+  user's query (#226).
 - Queries on Ollama retry a transient error (HTTP 408/429/5xx, dropped
   connection, timeout) instead of failing on the first one: the Ollama client
   never retries, so query chains and Ollama embedding calls now get the
