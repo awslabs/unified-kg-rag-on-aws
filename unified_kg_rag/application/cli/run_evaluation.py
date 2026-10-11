@@ -206,10 +206,10 @@ class EvaluationRunner:
         if is_s3_uri(eval_data_path):
             return
         if eval_data_path and not Path(eval_data_path).exists():
-            console.print(
-                f"[red]Error: Evaluation data file not found: '{eval_data_path}'[/red]"
+            # The same input error as a dataset that fails validation (exit 2).
+            raise InvalidDatasetError(
+                f"evaluation dataset '{eval_data_path}' not found"
             )
-            sys.exit(1)
 
     @staticmethod
     def _print_summary(

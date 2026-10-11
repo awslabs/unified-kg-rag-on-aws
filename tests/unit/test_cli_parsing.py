@@ -339,13 +339,28 @@ def test_eval_parser_rejects_bad_strategy() -> None:
         )
 
 
-def test_eval_runner_missing_file_exits(config, mocker, tmp_path) -> None:
+def test_eval_runner_missing_file_is_an_invalid_dataset(
+    config, mocker, tmp_path
+) -> None:
     mocker.patch.object(run_evaluation, "get_config", return_value=config)
     missing = tmp_path / "does-not-exist.json"
     args = _eval_parser().parse_args(["--eval-data-path", str(missing)])
-    with pytest.raises(SystemExit) as exc:
+    with pytest.raises(run_evaluation.InvalidDatasetError, match="not found"):
         run_evaluation.EvaluationRunner(args, rag_chain=object())
-    assert exc.value.code == 1
+
+
+def test_run_eval_missing_dataset_exits_2(config, mocker, tmp_path, capsys) -> None:
+    # A missing dataset is the same input error as an invalid one.
+    mocker.patch.object(run_evaluation, "get_config", return_value=config)
+    mocker.patch.object(run_evaluation, "missing_endpoints_error", return_value=None)
+    mocker.patch.object(run_evaluation, "GraphRAGChain", return_value=AsyncMock())
+    missing = tmp_path / "does-not-exist.json"
+    mocker.patch.object(sys, "argv", ["run-eval", "--eval-data-path", str(missing)])
+    with pytest.raises(SystemExit) as exc:
+        run_evaluation.main()
+    assert exc.value.code == 2
+    out = capsys.readouterr().out
+    assert "invalid evaluation dataset" in out and "unexpected" not in out
 
 
 def test_eval_runner_existing_file_ok(config, mocker, tmp_path) -> None:

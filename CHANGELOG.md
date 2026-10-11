@@ -269,6 +269,9 @@ Library API (Python callers and custom backends).
   previously only transitive, are now declared (#226).
 
 ### Fixed
+- `run-eval --eval-data-path` naming a file that does not exist exits 2 with
+  `Error: invalid evaluation dataset: ...`, as the user guide documents and
+  as an unreadable or invalid dataset does; it exited 1 (#PR).
 - A configuration file with a value of the wrong type, invalid YAML or a
   missing `--config-path` file no longer makes `run-ingestion`, `run-rag` or
   `run-eval` print "An unexpected error occurred" with a traceback. All five
