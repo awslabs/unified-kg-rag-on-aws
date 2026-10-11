@@ -30,8 +30,11 @@ aws:
         max_output_tokens: 10000
 ```
 
-Embedding and rerank model ids work differently: they are a closed list, and
-`model_overrides` does not apply to them. `embedding_model_id` accepts
+Embedding and rerank model ids work differently: with the Bedrock providers
+(the default `providers.embedding.kind` / `providers.rerank.kind`) they are a
+closed list, and `model_overrides` does not apply to them. With a local
+provider any model name is accepted (see the user guide's
+[Local mode](./user-guide.md#local-mode-no-aws)). `embedding_model_id` accepts
 `amazon.titan-embed-text-v2:0`, `amazon.titan-embed-text-v1`,
 `cohere.embed-v4:0`, `cohere.embed-english-v3` or
 `cohere.embed-multilingual-v3`; `rerank_model_id` accepts

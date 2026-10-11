@@ -60,13 +60,13 @@ flowchart LR
 
 | 방식 | 그래프·벡터 저장소 | 모델 | 시작 방법 |
 |---|---|---|---|
-| **로컬 저장소**(개발용) | 컨테이너로 띄운 Gremlin Server와 OpenSearch([`docker/compose.local.yaml`](./docker/compose.local.yaml)) | Amazon Bedrock | `docker compose -f docker/compose.local.yaml up -d --wait`를 실행한 뒤 `--config-path docker/config.local.yaml`을 넘깁니다 |
+| **로컬 모드**(개발용, AWS 불필요) | 컨테이너로 띄운 Gremlin Server와 OpenSearch([`docker/compose.local.yaml`](./docker/compose.local.yaml)), 증분 인덱싱용 SQLite | Ollama(또는 OpenAI 호환 서버)나 Amazon Bedrock | `uv sync --extra local`, `docker compose -f docker/compose.local.yaml --profile models up -d --wait`를 실행한 뒤 `--config-path docker/config.local.yaml`을 넘깁니다([로컬 모드](./docs/user-guide.ko.md#로컬-모드-aws-없이)) |
 | **기존 AWS 리소스** | 사용 중인 Neptune 클러스터와 OpenSearch 도메인(그리고 S3 버킷, 증분 인덱싱을 쓰면 DynamoDB) | Amazon Bedrock | `config-template.yaml`을 `config.yaml`로 복사하고 엔드포인트를 입력합니다 |
 | **번들 CDK 스택** | [`iac/`](./iac/README.md)가 Fargate 데이터 플레인, Step Functions 수집 파이프라인과 함께 생성 | Amazon Bedrock | [AWS에 배포](#aws에-배포선택)를 진행한 뒤 [`iac/README.md`의 After deploy](./iac/README.md#after-deploy)를 따릅니다 |
 
-어느 방식이든 Amazon Bedrock을 호출하므로 먼저 [필요한 모델](./docs/user-guide.ko.md)의
-액세스를 활성화하세요. 로컬 저장소는 개발 전용입니다. 보안 강화가 되어 있지 않고 그래프를
-메모리에만 보관합니다.
+AWS 방식은 Amazon Bedrock을 호출하므로 먼저 [필요한 모델](./docs/user-guide.ko.md)의
+액세스를 활성화하세요. 로컬 모드는 개발과 평가 전용입니다. 저장소는 보안 강화가 되어 있지
+않고 그래프를 메모리에만 보관하며, 작은 로컬 모델은 그래프를 더 약하게 추출합니다.
 
 ### 사전 요구사항
 
