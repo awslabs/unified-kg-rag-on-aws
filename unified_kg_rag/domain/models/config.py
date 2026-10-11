@@ -21,6 +21,13 @@ from pydantic import (
 )
 
 from .evaluation import EvaluationMetricType, EvaluatorType
+from .provider_config import (
+    BEDROCK,
+    GREMLIN,
+    Backend,
+    ProvidersConfig,
+    apply_backend_preset,
+)
 from .retrieval import FusionMethod, SearchStrategy, validate_path_segment
 
 # Stdlib logger: shared.logging imports this module, so get_logger would cycle.
@@ -236,6 +243,46 @@ def _apply_model_tiers(model: BaseModel, tiers: dict[str, str]) -> BaseModel:
     return copied
 
 
+def _resolve_role_models(
+    model: BaseModel,
+    roles: dict[str, tuple[str | None, type[Enum] | None]],
+    errors: list[str],
+    path: str = "",
+) -> BaseModel:
+    """Copy of ``model`` with its embedding/rerank model ids resolved.
+
+    ``roles`` maps a role to ``(default, catalog)``: an id the config did not
+    set takes ``default`` (when not None), and an id outside ``catalog`` (when
+    not None) is reported in ``errors``. Walks nested sections recursively.
+    """
+    updates: dict[str, Any] = {}
+    for name, field in type(model).model_fields.items():
+        value = getattr(model, name)
+        extra = field.json_schema_extra
+        role = extra.get(_MODEL_ROLE_KEY) if isinstance(extra, dict) else None
+        if isinstance(role, str) and role in roles:
+            default, catalog = roles[role]
+            if default is not None and name not in model.model_fields_set:
+                if value != default:
+                    updates[name] = value = default
+            if catalog is not None and not isinstance(value, catalog):
+                errors.append(
+                    f"{path}{name}: '{value}' is not a Bedrock {role} model; "
+                    f"expected one of {[m.value for m in catalog]} (or select "
+                    f"another providers.{role}.kind)"
+                )
+        elif isinstance(value, BaseModel):
+            resolved = _resolve_role_models(value, roles, errors, f"{path}{name}.")
+            if resolved is not value:
+                updates[name] = resolved
+    if not updates:
+        return model
+    copied = model.model_copy()
+    # As in _apply_model_tiers: inherited values stay out of model_fields_set.
+    copied.__dict__.update(updates)
+    return copied
+
+
 class ModelPurpose(str, Enum):
     """Why a language model is being created, so per-path policies can differ.
 
@@ -263,6 +310,48 @@ class RerankModelId(str, Enum):
     AMAZON_RERANK_V1 = "amazon.rerank-v1:0"
     COHERE_RERANK_V3_5 = "cohere.rerank-v3-5:0"
     # NOTE: add new models here
+
+
+def model_id_value(model_id: Any) -> str:
+    """The bare id string of a model-id config value (enum member or str)."""
+    return str(model_id.value) if isinstance(model_id, Enum) else str(model_id)
+
+
+def _known_member(enum_cls: type[Enum]) -> Callable[[Any], Any]:
+    """Coerce a string naming a member of ``enum_cls`` to that member."""
+
+    def coerce(value: Any) -> Any:
+        if isinstance(value, enum_cls):
+            return value
+        if isinstance(value, Enum):
+            value = value.value
+        if isinstance(value, str):
+            value = value.strip()
+            try:
+                return enum_cls(value)
+            except ValueError:
+                return value
+        return value
+
+    return coerce
+
+
+# Embedding/rerank model ids: a catalog member when the id is one, else the
+# bare string. A non-Bedrock provider serves any model name; for Bedrock the
+# Config validator still requires a catalog member (the closed lists above).
+EmbeddingModelRef = Annotated[
+    EmbeddingModelId | Annotated[str, StringConstraints(min_length=1)],
+    Field(union_mode="left_to_right"),
+    BeforeValidator(_known_member(EmbeddingModelId)),
+]
+RerankModelRef = Annotated[
+    RerankModelId | Annotated[str, StringConstraints(min_length=1)],
+    Field(union_mode="left_to_right"),
+    BeforeValidator(_known_member(RerankModelId)),
+]
+# json_schema_extra key marking a field as an embedding/rerank model id, so the
+# Config validator can find every one of them (see _resolve_role_models).
+_MODEL_ROLE_KEY = "model_role"
 
 
 class GuardrailConfig(BaseModel):
@@ -1514,13 +1603,16 @@ class OpenSearchIndexingConfig(BaseModel):
         default_factory=lambda: {"en": "english", "ko": "nori"},
         description="Maps a language code to its OpenSearch text analyzer; extend without code changes",
     )
-    embedding_model_id: EmbeddingModelId = Field(
+    embedding_model_id: EmbeddingModelRef = Field(
         default=EmbeddingModelId.TITAN_EMBED_V2,
         description=(
-            "Embedding model for vector generation. One of the EmbeddingModelId "
-            "values; unlike language-model ids, other ids are rejected because "
-            "the vector dimension must be known for the index mapping."
+            "Embedding model for vector generation. With the bedrock embedding "
+            "provider, one of the EmbeddingModelId values (other ids are "
+            "rejected because the vector dimension must be known for the index "
+            "mapping); with another provider, any model name, defaulting to "
+            "providers.embedding.model_id."
         ),
+        json_schema_extra={_MODEL_ROLE_KEY: "embedding"},
     )
     embedding_dimension: int | None = Field(
         default=None,
@@ -1747,12 +1839,14 @@ class RerankingConfig(BaseModel):
         default=True,
         description="Enable reranking of search results for improved relevance",
     )
-    rerank_model_id: RerankModelId = Field(
+    rerank_model_id: RerankModelRef = Field(
         default=RerankModelId.COHERE_RERANK_V3_5,
         description=(
-            "Bedrock reranking model. One of the RerankModelId values; other "
-            "ids are rejected."
+            "Reranking model. With the bedrock rerank provider, one of the "
+            "RerankModelId values (other ids are rejected); with another "
+            "provider, any model name, defaulting to providers.rerank.model_id."
         ),
+        json_schema_extra={_MODEL_ROLE_KEY: "rerank"},
     )
     top_k: int = Field(
         default=100,
@@ -2688,11 +2782,14 @@ class EvaluationConfig(BaseModel):
         default="outputs/evaluation",
         description="Directory to save evaluation results",
     )
-    embedding_model_id: EmbeddingModelId = Field(
+    embedding_model_id: EmbeddingModelRef = Field(
         default=EmbeddingModelId.TITAN_EMBED_V2,
         description=(
-            "Embedding model for evaluation. One of the EmbeddingModelId values."
+            "Embedding model for evaluation. One of the EmbeddingModelId values "
+            "with the bedrock embedding provider; with another provider, any "
+            "model name, defaulting to providers.embedding.model_id."
         ),
+        json_schema_extra={_MODEL_ROLE_KEY: "embedding"},
     )
     evaluation_model_id: BedrockModelId = role_model_field(
         "default",
@@ -2881,6 +2978,19 @@ def _migrate_legacy_key(
 
 
 class Config(BaseModel):
+    backend: Backend = Field(
+        default=Backend.AWS,
+        description=(
+            "Provider preset. 'aws' (default): Bedrock, Neptune, OpenSearch and "
+            "DynamoDB. 'local': fills in local providers (Ollama, a cross-encoder "
+            "reranker, Gremlin Server, a local OpenSearch, SQLite) for every "
+            "providers/aws.neptune/aws.opensearch key the config leaves unset."
+        ),
+    )
+    providers: ProvidersConfig = Field(
+        default_factory=ProvidersConfig,
+        description="Per-role provider selection (models, stores, registry)",
+    )
     aws: AWSConfig = Field(
         default_factory=AWSConfig, description="AWS services configuration"
     )
@@ -2933,13 +3043,38 @@ class Config(BaseModel):
             data = _migrate_legacy_key(data, old, new, convert)
         return data
 
+    @model_validator(mode="before")
+    @classmethod
+    def _apply_backend_preset(cls, data: Any) -> Any:
+        """Fill in the ``backend`` preset under the keys the config sets."""
+        if not isinstance(data, dict):
+            return data
+        return apply_backend_preset(data)
+
     @model_validator(mode="after")
     def _inherit_tier_models(self) -> "Config":
-        """Point every role-model field the user did not set at its tier model."""
-        tiers = {
-            "default": self.aws.bedrock.default_model_id,
-            "fast": self.aws.bedrock.fast_model_id,
-        }
+        """Point every role-model field the user did not set at its tier model.
+
+        The tier models are ``aws.bedrock.default_model_id`` /
+        ``fast_model_id``, or ``providers.llm.default_model_id`` /
+        ``fast_model_id`` when the language models do not come from Bedrock.
+        """
+        llm = self.providers.llm
+        if llm.kind == BEDROCK:
+            tiers = {
+                "default": self.aws.bedrock.default_model_id,
+                "fast": self.aws.bedrock.fast_model_id,
+            }
+        else:
+            if llm.default_model_id is None:
+                raise ValueError(
+                    "providers.llm.default_model_id is required when "
+                    f"providers.llm.kind is '{llm.kind}'"
+                )
+            tiers = {
+                "default": llm.default_model_id,
+                "fast": llm.fast_model_id or llm.default_model_id,
+            }
         for name in type(self).model_fields:
             section = getattr(self, name)
             if isinstance(section, BaseModel):
@@ -2947,6 +3082,60 @@ class Config(BaseModel):
                 if resolved is not section:
                     self.__dict__[name] = resolved
         return self
+
+    @model_validator(mode="after")
+    def _resolve_provider_models(self) -> "Config":
+        """Default and validate every embedding/rerank model id by provider.
+
+        A Bedrock provider takes only catalog members (the vector dimension
+        and rerank limits come from the catalog); another provider takes any
+        name, and an id the config leaves unset follows the provider's
+        ``model_id``.
+        """
+        providers = self.providers
+        errors: list[str] = []
+        roles: dict[str, tuple[str | None, type[Enum] | None]] = {}
+        if providers.embedding.kind == BEDROCK:
+            roles["embedding"] = (None, EmbeddingModelId)
+        elif providers.embedding.model_id is None or (
+            providers.embedding.dimension is None
+        ):
+            errors.append(
+                "providers.embedding.model_id and providers.embedding.dimension "
+                "are required when providers.embedding.kind is "
+                f"'{providers.embedding.kind}'"
+            )
+            roles["embedding"] = (None, None)
+        else:
+            roles["embedding"] = (providers.embedding.model_id, None)
+        if providers.rerank.kind == BEDROCK:
+            roles["rerank"] = (None, RerankModelId)
+        else:
+            roles["rerank"] = (providers.rerank.model_id, None)
+        if providers.graph.kind == GREMLIN and self.aws.neptune.use_iam:
+            errors.append(
+                "providers.graph.kind 'gremlin' needs aws.neptune.use_iam: false "
+                "(SigV4 signing is Neptune-only)"
+            )
+        for name in type(self).model_fields:
+            section = getattr(self, name)
+            if isinstance(section, BaseModel):
+                resolved = _resolve_role_models(section, roles, errors, f"{name}.")
+                if resolved is not section:
+                    self.__dict__[name] = resolved
+        if errors:
+            raise ValueError("; ".join(errors))
+        return self
+
+    @property
+    def doc_status_enabled(self) -> bool:
+        """Whether incremental indexing (the doc-status registry) is on.
+
+        ``providers.doc_status.enabled`` when set, else ``aws.dynamodb.enabled``
+        (the original switch, so existing configs keep their behaviour).
+        """
+        enabled = self.providers.doc_status.enabled
+        return self.aws.dynamodb.enabled if enabled is None else enabled
 
 
 class PipelineConfig(BaseModel):

@@ -410,7 +410,10 @@ def _language_model_defaults(model: BaseModel, path: str = "") -> dict[str, Any]
     for name in type(model).model_fields:
         value = getattr(model, name)
         here = f"{path}.{name}" if path else name
-        if name.endswith("_model_id") and here.split(".")[0] != "aws":
+        if name.endswith("_model_id") and here.split(".")[0] not in (
+            "aws",
+            "providers",
+        ):
             if "embedding" not in name and "rerank" not in name:
                 found[here] = value
         elif isinstance(value, BaseModel):

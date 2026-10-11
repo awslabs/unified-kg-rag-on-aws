@@ -33,6 +33,7 @@ from unified_kg_rag.domain.models import (
     EvaluationSummary,
     EvaluatorType,
     RetrieverRole,
+    model_id_value,
 )
 from unified_kg_rag.shared import EvaluationException, get_logger
 from unified_kg_rag.shared.utils.langchain import BATCH_ITEM_FAILED, BatchProcessor
@@ -851,7 +852,7 @@ class EvaluationManager:
                     evaluation.evaluation_model_id if uses_judge else None
                 ),
                 "evaluation_embedding": (
-                    evaluation.embedding_model_id.value
+                    model_id_value(evaluation.embedding_model_id)
                     if EvaluatorType.RAGAS in enabled
                     else None
                 ),

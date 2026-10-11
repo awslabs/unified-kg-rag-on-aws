@@ -17,6 +17,7 @@ from unified_kg_rag.domain.models import (
     Entity,
     Relationship,
     TextUnit,
+    model_id_value,
 )
 from unified_kg_rag.ports.indexer import IndexingStats, VectorIndexer
 from unified_kg_rag.ports.model_factory import EmbeddingFactoryPort
@@ -91,7 +92,7 @@ class OpenSearchIndexer(VectorIndexer):
         return S3EmbeddingCache(
             bucket_name=bucket,
             key=self.opensearch_config.embedding_cache_s3_key,
-            model_id=self.opensearch_config.embedding_model_id.value,
+            model_id=model_id_value(self.opensearch_config.embedding_model_id),
             dimension=self._embedding_dimension,
             boto_session=self.boto_session,
             encryption=self.config.aws.s3.encryption,
@@ -103,7 +104,7 @@ class OpenSearchIndexer(VectorIndexer):
         )
         if not model_info:
             raise ValueError(
-                f"Unsupported model: '{self.opensearch_config.embedding_model_id.value}'"
+                f"Unsupported model: '{model_id_value(self.opensearch_config.embedding_model_id)}'"
             )
 
         if (dim := self.opensearch_config.embedding_dimension) is not None:
@@ -114,7 +115,7 @@ class OpenSearchIndexer(VectorIndexer):
             if not is_supported:
                 raise ValueError(
                     f"Dimension {dim} not supported by "
-                    f"'{self.opensearch_config.embedding_model_id.value}'. "
+                    f"'{model_id_value(self.opensearch_config.embedding_model_id)}'. "
                     f"Supported: '{supported}'"
                 )
             return dim

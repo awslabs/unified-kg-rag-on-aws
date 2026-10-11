@@ -8,7 +8,7 @@ import numpy as np
 from pydantic import BaseModel, Field
 
 from unified_kg_rag.adapters.aws import BedrockEmbeddingModelFactory
-from unified_kg_rag.domain.models import Config
+from unified_kg_rag.domain.models import Config, model_id_value
 from unified_kg_rag.ports.model_factory import EmbeddingFactoryPort
 from unified_kg_rag.shared import EmbeddingModelError, get_logger
 
@@ -66,7 +66,7 @@ class BedrockNodeEmbedder:
         )
         logger.info(
             "Initialized BedrockNodeEmbedder with model '%s' and dimension %s",
-            embedding_model_id.value,
+            model_id_value(embedding_model_id),
             self.dimensions,
         )
 
