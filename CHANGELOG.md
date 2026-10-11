@@ -195,6 +195,13 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   to keep the previous behaviour, or render on demand with
   `run-visualization`. `GraphVisualizationManager.run()` no longer re-checks
   the flag, so a caller that builds the manager directly gets its output (#210).
+- **Behaviour change:** `processing.chunking.content_type` defaults to
+  `text`, and `markdown`/`html` pre-split a document at headers only when it
+  has that body (built from typed document elements). The built-in file
+  loaders produce plain text only, yet the old `markdown` default ran it
+  through the Markdown header splitter, which dropped blank lines and
+  indentation and made any line starting with `#` a heading. Chunk boundaries
+  of plain-text corpora change, so the chunking stage re-runs (#PR).
 - `indexing.opensearch.embedding_model_id`, `evaluation.embedding_model_id`
   and `search.reranking.rerank_model_id` accept any model name when a
   non-Bedrock provider serves the role; with the Bedrock providers (the
@@ -768,6 +775,15 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   guard also reads the OpenAI-compatible `finish_reason` and Ollama
   `done_reason` (`"length"`), not only Bedrock's `stopReason`/`stop_reason`
   (`"max_tokens"`) (#PR).
+- The intelligent chunker no longer returns chunks far above
+  `max_chunk_size`. An answer that keeps a pre-chunk whole (no boundaries,
+  `single_chunk`, only line 1, or out-of-range lines) is now split by size like
+  every other answer, and a failed boundary call splits its pre-chunks by size
+  instead of keeping them whole (#PR).
+- Intelligent chunking sends the pre-chunks of all documents to the boundary
+  model in one batch instead of one batch per document, so a corpus of short
+  documents no longer runs one call at a time, and the chunking stats logged
+  at the end cover the whole stage instead of its last document (#PR).
 - With `entity_grounding` enabled, the check whether a gleaned
   relationship's endpoint name occurs in its unit (#202) now accepts common
   spelling variants and no longer accepts partial words. Both sides drop

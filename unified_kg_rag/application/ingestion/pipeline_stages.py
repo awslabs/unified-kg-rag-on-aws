@@ -803,11 +803,10 @@ class TextChunkingStage(PipelineStage):
         logger.info("TEXT CHUNKING STAGE - STARTED")
         logger.info("=" * 60)
 
-        text_units = []
-        for doc in context.documents:
-            chunks = self.chunker.chunk_documents([doc])
-            text_units.extend(chunks)
-
+        # One call for the whole corpus: the intelligent chunker batches its
+        # boundary-model calls across documents, and the logged stats cover
+        # the stage rather than its last document.
+        text_units = self.chunker.chunk_documents(context.documents)
         context.text_units = text_units
         total_chunks = len(text_units)
         doc_count = len(context.documents)

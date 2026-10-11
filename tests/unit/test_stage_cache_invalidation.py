@@ -267,21 +267,22 @@ class TestFingerprintScope:
     _RELEASED_DEFAULT_FINGERPRINTS = {
         PipelineStageType.DOCUMENT_PARSING: "1035b7a62512",
         PipelineStageType.DOCUMENT_LOADING: "ac616352a4e7",
-        # The fast tier's default model moved to Claude Haiku 5.5, so every
-        # stage from chunking on (each has a fast-tier role upstream) re-keys.
-        PipelineStageType.TEXT_CHUNKING: "7d24d450ee75",
-        PipelineStageType.TRANSLATION: "5abcca511058",
-        PipelineStageType.GRAPH_EXTRACTION: "5cecc719e0a7",
+        # The fast tier's default model moved to Claude Haiku 5.5, and the
+        # chunking content_type default became "text", so every stage from
+        # chunking on re-keys.
+        PipelineStageType.TEXT_CHUNKING: "727dee084af2",
+        PipelineStageType.TRANSLATION: "0db84d95651c",
+        PipelineStageType.GRAPH_EXTRACTION: "8efc8861dd06",
         # The score-based gleaning knobs were removed, so gleaning and every
         # later stage re-key once.
-        PipelineStageType.GLEANING: "143abce24b73",
-        PipelineStageType.GRAPH_RESOLUTION: "5490fd77687c",
-        PipelineStageType.CLAIM_EXTRACTION: "7dba3f43bab0",
-        PipelineStageType.CLAIM_RESOLUTION: "7dba3f43bab0",
+        PipelineStageType.GLEANING: "82ece6329622",
+        PipelineStageType.GRAPH_RESOLUTION: "5e9f846cfb84",
+        PipelineStageType.CLAIM_EXTRACTION: "a33b8a26ff07",
+        PipelineStageType.CLAIM_RESOLUTION: "a33b8a26ff07",
         # graph.analysis is no longer an input (it shapes nothing a later
         # stage reads), so graph analysis shares claim resolution's inputs.
-        PipelineStageType.GRAPH_ANALYSIS: "7dba3f43bab0",
-        PipelineStageType.COMMUNITY_DETECTION: "3ee224943382",
+        PipelineStageType.GRAPH_ANALYSIS: "a33b8a26ff07",
+        PipelineStageType.COMMUNITY_DETECTION: "6cc3882cf718",
     }
 
     def test_default_config_fingerprints_are_unchanged(self) -> None:
