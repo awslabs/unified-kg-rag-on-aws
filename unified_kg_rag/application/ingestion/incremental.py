@@ -192,10 +192,14 @@ class _SuffixRemoval(BaseModel):
     removed_text_unit_ids: list[str] = Field(default_factory=list)
 
 
-# Indexed documents, and entities of them, probed in the graph store before
-# a delta run writes (IncrementalIndexer.check_graph_holds_registry).
+# Indexed documents with entities, and entities of them, probed in the graph
+# store before a delta run writes (IncrementalIndexer.check_graph_holds_registry),
+# and how many stored records it reads at most to find them (in batches of
+# _PROBE_DOCUMENTS), so a corpus that starts with entity-less pages is still
+# probed.
 _PROBE_DOCUMENTS = 20
 _PROBE_ENTITIES = 100
+_PROBE_SCAN_LIMIT = 1000
 
 _EXTRACTION_FAILED = "extraction failed on some text units"
 _WRITE_FAILED = "writing some of its artifacts to the stores failed"
@@ -393,12 +397,23 @@ class IncrementalIndexer:
         unchanged and they would never be indexed again. Probes the entities
         of a few indexed documents of the run's namespace; when the graph
         holds none of them, raises :class:`DataProcessingError`.
+
+        The probed documents are ``PROCESSED`` records that list entities:
+        records are read in batches until some are found (up to
+        ``_PROBE_SCAN_LIMIT`` records), so entity-less documents first in the
+        corpus (cover pages, say) cannot leave the check with nothing to probe.
         """
-        stored = [*delta.unchanged, *delta.changed][:_PROBE_DOCUMENTS]
+        stored = [*delta.unchanged, *delta.changed][:_PROBE_SCAN_LIMIT]
         ids_by_suffix: dict[str, list[str]] = defaultdict(list)
-        for record in self.doc_status.get_many(stored).values():
-            if record.status is DocStatus.PROCESSED:
-                ids_by_suffix[record.suffix].extend(record.entity_ids)
+        probed = 0
+        for start in range(0, len(stored), _PROBE_DOCUMENTS):
+            batch = stored[start : start + _PROBE_DOCUMENTS]
+            for record in self.doc_status.get_many(batch).values():
+                if record.status is DocStatus.PROCESSED and record.entity_ids:
+                    ids_by_suffix[record.suffix].extend(record.entity_ids)
+                    probed += 1
+            if probed >= _PROBE_DOCUMENTS:
+                break
         probes = {
             suffix: sorted(set(ids))[:_PROBE_ENTITIES]
             for suffix, ids in ids_by_suffix.items()

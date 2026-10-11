@@ -295,6 +295,10 @@ Library API (Python callers and custom backends).
   milliseconds, a taken name is moved forward, and a full rebuild refuses to
   write into an index that already exists; indices named by earlier builds
   are still reaped (#PR).
+- The check that the graph still holds the registry's documents probes
+  indexed documents that list entities, reading past entity-less ones (up to
+  1,000 records), so a corpus starting with 20 entity-less pages no longer
+  lets a wiped graph pass as intact (#PR).
 - Parsing: the LLM XML parser keeps `&`, `<`, repeated siblings and
   sections with a missing closing tag; truncated responses fail instead of
   parsing as partial successes (#165, #174, #182, #213).

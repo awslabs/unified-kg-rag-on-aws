@@ -441,6 +441,31 @@ def test_a_graph_that_lost_the_registrys_documents_fails_fast(harness) -> None:
         inc.check_graph_holds_registry(delta)
 
 
+def test_the_graph_probe_reads_past_documents_without_entities(
+    harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Entity-less documents (cover pages) first in the corpus: the probe must
+    # still reach a document with entities and see that the graph lost it.
+    monkeypatch.setattr(
+        "unified_kg_rag.application.ingestion.incremental._PROBE_DOCUMENTS", 2
+    )
+    inc, store, graph, _ = harness
+    blanks = [_doc(f"/blank{i}.txt", f"cover {i}") for i in range(5)]
+    parties = _doc("/parties.txt", "Vendor meets Buyer.")
+    _commit(inc, blanks, [], [])
+    tus, ents = _artifacts_for(parties, ["e-vendor"])
+    _commit(inc, [parties], tus, ents)
+    delta, _ = detect_delta([*blanks, parties, _doc("/new.txt", "y")], store)
+    first = [*delta.unchanged, *delta.changed][:2]
+    assert not any(r.entity_ids for r in store.get_many(first).values())
+
+    inc.check_graph_holds_registry(delta)
+
+    graph.clear(["default"])
+    with pytest.raises(DataProcessingError, match="indexing.reset"):
+        inc.check_graph_holds_registry(delta)
+
+
 def test_the_graph_probe_skips_a_registry_without_indexed_documents(harness) -> None:
     inc, store, _, _ = harness
     inc.check_graph_holds_registry(detect_delta([_doc("/a.txt", "x")], store)[0])
