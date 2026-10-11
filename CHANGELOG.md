@@ -171,6 +171,13 @@ Library API (Python callers and custom backends).
 - Records the direct API wrote without a scope under a caller's own `doc_id`
   survive every reset; remove them through the doc-status store
   (`list_all()`, then `delete_lineage_overflow` and `delete`) (#200).
+- Hidden files and files under a hidden or `__pycache__` subdirectory of the
+  corpus (any path component below the root starting with `.`, such as
+  `docs/.drafts/`) are no longer parsed (#213). The first incremental run
+  after upgrading classifies such files indexed by an earlier build as
+  deleted and removes their artifacts and registry records. Rename them
+  before upgrading to keep them (they are then indexed under their new
+  paths).
 - Roles with a custom IAM policy need `dynamodb:BatchGetItem` and
   `dynamodb:BatchWriteItem` on the registry table (#191, #194).
 
