@@ -263,6 +263,16 @@ Library API (Python callers and custom backends).
   (#158). Development tools live in the `dev` dependency group (#119).
 
 ### Fixed
+- Attaching, rotating or toggling a Bedrock guardrail under the default
+  `apply_to: query` no longer re-keys the stage caches or re-extracts the
+  whole corpus on the next incremental run: ingestion runs unguarded then, so
+  the guardrail counts toward the cache keys and the extraction fingerprint
+  only with `apply_to: all` (and its `trace` flag never does). Likewise the
+  settings of a block switched off with `enabled: false` (translation,
+  fixing, gleaning, claim extraction, description summarization, entity
+  grounding, community reports) no longer move them. Default configurations
+  keep their keys; a configuration with a switched-off block whose other
+  fields differ from the defaults re-keys once (#PR).
 - Queries on Ollama retry a transient error (HTTP 408/429/5xx, dropped
   connection, timeout) instead of failing on the first one: the Ollama client
   never retries, so query chains and Ollama embedding calls now get the

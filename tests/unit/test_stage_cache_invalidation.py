@@ -334,6 +334,31 @@ class TestFingerprintScope:
         key = stage_cache_key(config, PipelineStageType.DOCUMENT_LOADING, "documents")
         assert key == f"documents-{expected}"
 
+    def test_guardrail_is_an_input_only_while_it_guards_ingestion(self) -> None:
+        def fingerprint(**guardrail: object) -> str:
+            config = Config.model_validate(
+                {"aws": {"bedrock": {"guardrail": guardrail}}}
+            )
+            return stage_input_fingerprint(
+                config, PipelineStageType.COMMUNITY_DETECTION
+            )
+
+        baseline = fingerprint()
+        assert fingerprint(identifier="gr-1", version="2", trace=True) == baseline
+        assert fingerprint(identifier="gr-1", apply_to="all") != baseline
+
+    def test_disabled_claim_extraction_settings_are_not_inputs(self) -> None:
+        changed = Config()
+        changed.processing.claim_extraction.max_entities_per_prompt = 5
+        stage = PipelineStageType.CLAIM_EXTRACTION
+        assert stage_input_fingerprint(changed, stage) == stage_input_fingerprint(
+            Config(), stage
+        )
+        changed.processing.claim_extraction.enabled = True
+        assert stage_input_fingerprint(changed, stage) != stage_input_fingerprint(
+            Config(), stage
+        )
+
     @pytest.mark.parametrize(
         "path, value",
         [
