@@ -104,36 +104,8 @@ removed. Therefore:
 - index each tenant or corpus version under its own index suffix, with its own
   config file.
 
-Upgrading a registry written before source scopes existed: the first run of a
-scope adopts each legacy record whose file is still in the corpus, without
-re-extracting it. A record without a scope is never treated as deleted,
-though, so the record of a file removed from the corpus before the upgrade is
-never adopted or deleted, and its artifacts stay in the stores. To clear them,
-run once with `indexing.reset: true`: besides the namespace's own records, a
-reset deletes every record without a scope whose key is the namespace's
-legacy key for its `file_path`, and every record without a scope or
-`file_path` (the initial release) on the suffixes it clears. Records of
-another namespace on the same suffix stay. Deleting those registry items (they have
-no `registry_scope` attribute and their file is gone) only cleans the
-registry; their artifacts stay until a reset. Until then, such a record keeps
-the artifacts it lists in other documents' removals only within its own
-namespace when its key names it: it stores its `file_path` and its key is
-the legacy key of the run's namespace or of one a scope in the registry
-names. Any other record without a scope (one of the initial release, with
-no `file_path`; one of a namespace no scope names yet; one the direct API
-wrote without a scope or under a caller's own `doc_id`) keeps them in every
-namespace of its suffix, so a document of another
-`indexing.additional_suffix` deleted meanwhile can leave entities behind
-that the reset then clears. One kind of record outlives every reset: a record
-the direct API wrote without a scope but with a `file_path`, under a caller's
-own `doc_id` (not the legacy key of any namespace). A reset cannot tell which
-namespace it belongs to, so it keeps the record, and the record keeps
-retaining the ids it lists in every namespace of its suffix. Remove such
-records through the doc-status store, preferably before the reset run so the
-reset also clears what they listed: find them with `list_all()` (no `scope`,
-your own `doc_id`), then call `delete_lineage_overflow([doc_id, ...])` and
-`delete(doc_id)` for each (`DynamoDBDocStatusStore(config)` from
-`unified_kg_rag.adapters.aws`, or the store you passed as `doc_status`).
+Upgrading a registry written by a pre-release build: see
+[CHANGELOG: Upgrading from pre-release builds](../CHANGELOG.md#upgrading-from-pre-release-builds).
 
 What incremental runs do not refresh: a shared entity or relationship keeps
 the description text a changed or deleted document contributed, and delta
@@ -502,9 +474,14 @@ content to LangSmith independently of this setting.
 | `DocStatusRegistryError` | The doc-status registry table is missing, not accessible, or throttled | Create the table or fix `aws.dynamodb.table_name`, grant the DynamoDB permissions named in the message, then resume with the same `--pipeline-id` |
 | `Incremental indexing is enabled but no document delta was computed` | The indexing stage ran without a registry diff (the loading stage failed under `continue_on_error`) | Re-run from `document_loading` once the registry is reachable |
 | `CacheSyncError` | The S3 stage-cache download or upload failed | Check bucket permissions and `aws.s3.encryption`, then resume with the same `--pipeline-id` |
-| `Pipeline failed at stage(s): ...` | A stage failed; the CLI exits 1 | Read the stage's log lines, fix, resume with the same `--pipeline-id` |
+| `Pipeline failed at stage(s): ...` | A stage failed; the CLI exits 1 | Read the stage's log lines, fix, resume with the same `--pipeline-id`. `--verify-metadata` checks the run's metadata, `--repair-metadata` tries to fix it, `--force-rebuild` starts clean |
+| `--source-directory is required for pipeline execution` | No `--source-directory` and no `$GRAPHRAG_SOURCE_DIRECTORY` | Pass it; `--verify-metadata` / `--repair-metadata` need `--pipeline-id` instead |
+| `--s3-bucket-name must be specified for S3 sync` | `--s3-sync` without a bucket | Pass `--s3-bucket-name` |
+| `--pipeline-id is required for --resume-from-stage` | Resuming needs the earlier run | Pass that run's `--pipeline-id` |
+| `Invalid stage names provided: ...` | `--enabled-stages` names an unknown stage | Use a name from the list the CLI prints |
+| `The doc-status registry lists indexed documents of this namespace whose entities the graph store does not hold` | The graph lost what the registry records (a restarted Gremlin Server, `docker compose ... down -v`, a restored or replaced graph) | Re-run with `indexing.reset: true`, or delete the namespace's registry records (local mode: the SQLite file) |
+| `... processed N inputs but produced 0 outputs`, with `Connection refused` in the log (local mode) | Ollama or the OpenAI-compatible server is not reachable at `providers.llm.base_url` / `providers.embedding.base_url` | Start it (`docker compose -f docker/compose.local.yaml --profile models up -d --wait`), check `base_url` (or `--model-base-url`), and pull the models |
 | `observability.enabled is true but OpenTelemetry is not installed` | Tracing is on but the `otel` extra is missing | `uv sync --extra otel`, or set `observability.enabled: false` |
 | Bedrock calls hang in a private VPC | Bedrock is called in a region the VPC endpoint does not serve | Keep `aws.bedrock.region_name` unset or equal to the VPC's region |
-
-More messages and their fixes are in the
-[User Guide §10](./user-guide.md#10-operations--troubleshooting).
+| OpenSearch authentication fails with `use_iam: false` | No basic-auth credentials | Set `OPENSEARCH_USERNAME` / `OPENSEARCH_PASSWORD` (for example in `.env`) |
+| LightRAG `mix` / `hybrid` returns nothing | No relationship index, or keyword extraction produced no keywords | Check that ingestion built the relationships index; very short queries fall back to the raw query only under `raw_query_fallback_max_len` |
