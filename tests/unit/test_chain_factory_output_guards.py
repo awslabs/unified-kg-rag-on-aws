@@ -5,9 +5,10 @@
 A response that stopped at its output-token limit is cut mid-answer; parsing
 it would silently keep whatever came before the cut (e.g. entities without
 the ``<relationships>`` section). The chain fails such a response before the
-parser runs. The fake model reports the stop reason the way langchain-aws
+parser runs. The fake model reports the stop reason the way each integration
 does: ``response_metadata["stopReason"]`` (Converse) or ``["stop_reason"]``
-(InvokeModel).
+(InvokeModel) ``== "max_tokens"``, ``["finish_reason"]`` (OpenAI-compatible)
+or ``["done_reason"]`` (Ollama) ``== "length"``.
 
 The output fixer repairs a malformed answer; it must know the expected
 top-level tags and must not be asked to repair an empty answer.
@@ -124,7 +125,13 @@ def _chain(text: str, metadata: dict[str, Any], parser: Any = None) -> Any:
 
 
 @pytest.mark.parametrize(
-    "metadata", [{"stopReason": "max_tokens"}, {"stop_reason": "max_tokens"}]
+    "metadata",
+    [
+        {"stopReason": "max_tokens"},
+        {"stop_reason": "max_tokens"},
+        {"finish_reason": "length"},
+        {"done_reason": "length"},
+    ],
 )
 def test_truncated_response_fails_before_parsing(metadata, caplog) -> None:
     _RecordingParser.calls = 0
@@ -133,7 +140,8 @@ def test_truncated_response_fails_before_parsing(metadata, caplog) -> None:
         chain.invoke(_INPUT)
     assert _RecordingParser.calls == 0
     assert "GraphExtractionPrompt" in caplog.text
-    assert "max_tokens" in caplog.text
+    ((key, value),) = metadata.items()
+    assert f"{key}={value}" in caplog.text
 
 
 async def test_truncated_response_fails_async() -> None:
@@ -143,7 +151,14 @@ async def test_truncated_response_fails_async() -> None:
 
 
 @pytest.mark.parametrize(
-    "metadata", [{"stopReason": "end_turn"}, {"stop_reason": "end_turn"}, {}]
+    "metadata",
+    [
+        {"stopReason": "end_turn"},
+        {"stop_reason": "end_turn"},
+        {"finish_reason": "stop"},
+        {"done_reason": "stop"},
+        {},
+    ],
 )
 def test_complete_response_parses(metadata) -> None:
     out = _chain(_COMPLETE, metadata).invoke(_INPUT)

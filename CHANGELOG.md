@@ -763,6 +763,11 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   correct lxml recovery for not having them, and fell back to a result keyed
   `relationship`, which the extractor never reads. Only the expected
   top-level tags now count as sections (#PR).
+- In local mode a response cut at its output-token limit now fails its item
+  like on Bedrock instead of being parsed as a partial success. The truncation
+  guard also reads the OpenAI-compatible `finish_reason` and Ollama
+  `done_reason` (`"length"`), not only Bedrock's `stopReason`/`stop_reason`
+  (`"max_tokens"`) (#PR).
 - With `entity_grounding` enabled, the check whether a gleaned
   relationship's endpoint name occurs in its unit (#202) now accepts common
   spelling variants and no longer accepts partial words. Both sides drop
