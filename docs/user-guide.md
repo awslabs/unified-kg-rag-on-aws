@@ -958,10 +958,10 @@ documents as failed so the next run translates them again (§5).
 | Flag | Default | Meaning |
 |---|---|---|
 | `--query`, `-q` | — | Single query — provide this or `--interactive` (exactly one is required) |
-| `--interactive`, `-i` | off | Interactive chat (auto-enables memory) |
-| `--mode` | `rag` | `rag` (full generation) or `search` (retrieval only) |
-| `--conversation-id` | — | Continue an existing conversation |
-| `--use-memory` | off | Enable conversation memory (auto in interactive) |
+| `--interactive`, `-i` | off | Interactive chat (auto-enables memory; always `rag` mode) |
+| `--mode` | `rag` | `rag` (full generation) or `search` (retrieval only, single `--query` only) |
+| `--conversation-id` | — | Name the conversation; its memory lasts while the process runs (see [conversation memory](#interactive-mode--conversation-memory)) |
+| `--use-memory` | off | Enable conversation memory, kept in the process (auto in interactive) |
 | `--suffix` | — (`default`) | [Index suffix](#index-suffix) to query; must match the corpus's `processing.document_parsing.index_value` |
 | `--enable-thinking` | off | Enable model step-by-step reasoning; a no-op for models that always reason (Claude 4.7+ / 5.x, OpenAI GPT), whose depth `aws.bedrock.default_effort` / `fast_effort` set |
 | `--search-strategy` | `auto` | `auto`, `drift`, `global`, `local`, `simple`, `mix`, `hybrid`, `naive` |
@@ -1090,7 +1090,7 @@ the filterable keys. The schema is defined in
 
 ```bash
 run-rag --interactive --config-path config.yaml
-# or continue a named session:
+# or name the session (its id appears in logs and JSON output):
 run-rag --interactive --conversation-id my-session --config-path config.yaml
 ```
 
@@ -1103,8 +1103,15 @@ Interactive mode auto-enables memory. In-session commands:
 - `show-config` — show the active configuration
 - `quit` / `exit` — end
 
-For single-shot multi-turn from the CLI, reuse the same `--conversation-id` with
-`--use-memory`. Memory limits are under the `memory` config section.
+Conversation memory is held in the process (`MemoryManager` keeps it in
+memory, nothing is written to disk or a store): it carries over between the
+turns of one interactive session, or between `GraphRAGChain` calls of one
+Python process that reuse a `conversation_id` with `use_memory=True`. Separate
+`run-rag --query` invocations do not share it: each starts with no history,
+so `--use-memory` and `--conversation-id` have no effect on a single query
+(`run-rag` logs a WARNING when they are combined with `--query`). Use
+`--interactive` for multi-turn from the CLI. Memory limits are under the
+`memory` config section.
 
 Before retrieval, a follow-up is rewritten from the history as a standalone
 question (one `search.query_rewrite_model_id` call per turn that has history;

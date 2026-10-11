@@ -182,6 +182,46 @@ async def test_rag_runner_leaves_the_target_language_to_the_chain(
     assert rag_input.target_language is None
 
 
+@pytest.mark.parametrize(
+    "flags",
+    [["--use-memory"], ["--conversation-id", "s1"]],
+    ids=["use-memory", "conversation-id"],
+)
+async def test_rag_runner_warns_that_a_single_query_has_no_memory(
+    store_config, mocker, flags: list[str]
+) -> None:
+    # Memory lives in the process: a single --query never sees an earlier
+    # run's turns, whatever --conversation-id says.
+    mocker.patch.object(run_rag_chain, "get_config", return_value=store_config)
+    mocker.patch.object(run_rag_chain, "display_ascii_art")
+    mocker.patch.object(
+        run_rag_chain, "create_rag_chain", return_value=mocker.AsyncMock()
+    )
+    warning = mocker.patch.object(run_rag_chain.logger, "warning")
+    runner = run_rag_chain.RAGChainRunner(
+        _rag_parser().parse_args(["-q", "hi", *flags])
+    )
+    mocker.patch.object(runner, "_run_query", return_value={"success": True})
+    mocker.patch.object(runner, "_print_result")
+
+    await runner.run()
+
+    assert any(
+        "no effect on a single --query" in str(call.args[0])
+        for call in warning.call_args_list
+    )
+
+
+def test_rag_cli_rejects_search_mode_with_interactive(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Interactive mode always generates; --mode search was silently ignored.
+    monkeypatch.setattr(sys, "argv", ["run-rag", "--interactive", "--mode", "search"])
+    with pytest.raises(SystemExit) as exc:
+        run_rag_chain.CommandLineInterface().parse_args()
+    assert exc.value.code == 2
+
+
 async def test_rag_runner_error_fallback_is_not_success(config, mocker) -> None:
     # Under ignore_errors the chain returns DEFAULT_ERROR_MESSAGE with
     # metadata.error instead of raising; the CLI must not call that success.

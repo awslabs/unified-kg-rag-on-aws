@@ -90,22 +90,28 @@ class CommandLineInterface:
             "--interactive",
             "-i",
             action="store_true",
-            help="Launch interactive chat mode for continuous conversation",
+            help="Launch interactive chat mode for continuous conversation "
+            "(always 'rag' mode, memory on)",
         )
         parser.add_argument(
             "--mode",
             default=ChainMode.RAG.value,
             choices=[cm.value for cm in ChainMode],
-            help="Set the execution mode: 'rag' for full generation, 'search' for retrieval only",
+            help="Set the execution mode: 'rag' for full generation, 'search' for "
+            "retrieval only (a single --query only; --interactive always generates)",
         )
         parser.add_argument(
             "--conversation-id",
-            help="Continue an existing conversation using the specified conversation ID",
+            help="Name the conversation. Memory is kept in this process only: it "
+            "carries over between --interactive turns, not between separate "
+            "run-rag invocations",
         )
         parser.add_argument(
             "--use-memory",
             action="store_true",
-            help="Enable conversation memory (auto-enabled in interactive mode)",
+            help="Enable conversation memory, kept in this process only "
+            "(auto-enabled in interactive mode; a single --query starts with no "
+            "history)",
         )
         add_query_arguments(parser)
         parser.add_argument(
@@ -142,6 +148,11 @@ class CommandLineInterface:
         args = self.parser.parse_args()
         if not args.interactive and not args.query:
             self.parser.error("either --query or --interactive is required")
+        if args.interactive and args.mode != ChainMode.RAG.value:
+            self.parser.error(
+                f"--mode {args.mode} is not supported with --interactive, which "
+                "always generates answers; use --query for retrieval-only output"
+            )
         return args
 
 
@@ -202,6 +213,14 @@ class RAGChainRunner:
             if self.args.interactive:
                 await self._interactive_mode()
             else:
+                if self.args.use_memory or self.args.conversation_id:
+                    logger.warning(
+                        "--use-memory / --conversation-id have no effect on a "
+                        "single --query: conversation memory is kept in the "
+                        "process only, so this query starts with no history "
+                        "and its turn is not kept for a later run-rag. Use "
+                        "--interactive for multi-turn conversations."
+                    )
                 rag_input = self._rag_input(
                     self.args.query,
                     conversation_id=self.args.conversation_id,

@@ -915,10 +915,10 @@ processing:
 | 플래그 | 기본값 | 의미 |
 |---|---|---|
 | `--query`, `-q` | — | 단일 질의. 이 플래그와 `--interactive` 중 정확히 하나가 필요합니다. |
-| `--interactive`, `-i` | off | 대화형 채팅(메모리 자동 활성화) |
-| `--mode` | `rag` | `rag`(답변 생성까지) 또는 `search`(검색만) |
-| `--conversation-id` | — | 기존 대화 이어 가기 |
-| `--use-memory` | off | 대화 메모리 활성화(대화형 모드에서는 자동) |
+| `--interactive`, `-i` | off | 대화형 채팅(메모리 자동 활성화, 항상 `rag` 모드) |
+| `--mode` | `rag` | `rag`(답변 생성까지) 또는 `search`(검색만. 단일 `--query`에서만) |
+| `--conversation-id` | — | 대화 이름 지정. 메모리는 프로세스가 실행되는 동안만 유지([대화 메모리](#대화형-모드와-대화-메모리) 참고) |
+| `--use-memory` | off | 프로세스 안에 두는 대화 메모리 활성화(대화형 모드에서는 자동) |
 | `--suffix` | —(`default`) | 질의할 [인덱스 접미사](#인덱스-접미사). 코퍼스의 `processing.document_parsing.index_value`와 같아야 합니다. |
 | `--enable-thinking` | off | 모델의 단계별 추론 활성화. 항상 추론하는 모델(Claude 4.7+ / 5.x, OpenAI GPT)에는 효과가 없으며, 이런 모델의 추론 강도는 `aws.bedrock.default_effort` / `fast_effort`로 정합니다 |
 | `--search-strategy` | `auto` | `auto`, `drift`, `global`, `local`, `simple`, `mix`, `hybrid`, `naive` |
@@ -1040,7 +1040,7 @@ OpenSearch에서 `attr_<key>`는 문서 속성입니다. 문서의 `filters` 메
 
 ```bash
 run-rag --interactive --config-path config.yaml
-# or continue a named session:
+# or name the session (its id appears in logs and JSON output):
 run-rag --interactive --conversation-id my-session --config-path config.yaml
 ```
 
@@ -1054,8 +1054,13 @@ run-rag --interactive --conversation-id my-session --config-path config.yaml
 - `show-config` — 현재 설정 표시
 - `quit` / `exit` — 종료
 
-CLI에서 한 번씩 실행하며 여러 턴을 이어 가려면 같은 `--conversation-id`와
-`--use-memory`를 함께 쓰세요. 메모리 한도는 `memory` 설정 섹션에 있습니다.
+대화 메모리는 프로세스 안에만 있습니다(`MemoryManager`가 메모리에 들고 있으며 디스크나
+저장소에 쓰지 않음). 한 대화형 세션의 턴 사이, 또는 한 Python 프로세스에서 같은
+`conversation_id`와 `use_memory=True`로 `GraphRAGChain`을 여러 번 호출할 때 이어집니다.
+`run-rag --query`를 따로 실행하면 공유하지 않습니다. 실행마다 기록 없이 시작하므로 단일
+질의에서 `--use-memory`와 `--conversation-id`는 효과가 없습니다(`--query`와 함께 쓰면
+`run-rag`가 WARNING 로그를 남김). CLI에서 여러 턴을 이어 가려면 `--interactive`를
+쓰세요. 메모리 한도는 `memory` 설정 섹션에 있습니다.
 
 검색 전에는 후속 질문을 대화 이력으로 독립된 질문으로 다시 씁니다(이력이 있는 턴마다
 `search.query_rewrite_model_id` 호출 한 번, 프롬프트 재정의 키 `query_rewrite`). 그래서
