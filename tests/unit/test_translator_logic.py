@@ -43,7 +43,6 @@ class _FakeChain:
 def _make_translator(
     mocker, *, target=LanguageCode.EN, additional=None, transform=None
 ) -> tuple[TextUnitTranslator, _FakeChain]:
-    mocker.patch.object(tr_module.boto3, "Session")
     mocker.patch.object(bedrock_module, "BedrockLanguageModelFactory")
     fake_chain = _FakeChain(transform=transform)
     mocker.patch.object(tr_module, "setup_chain", return_value=fake_chain)

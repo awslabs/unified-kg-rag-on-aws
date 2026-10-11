@@ -5,7 +5,6 @@ from collections.abc import Coroutine
 from datetime import datetime
 from typing import Any
 
-import boto3
 from langchain_classic.evaluation import load_evaluator
 from langchain_classic.evaluation.schema import EvaluatorType as LCEvaluatorType
 from langchain_core.language_models import BaseLanguageModel
@@ -97,7 +96,6 @@ class LangChainEvaluator(BaseGraphRAGEvaluator):
     def __init__(
         self,
         config: Config,
-        boto_session: boto3.Session | None = None,
         *,
         providers: Providers | None = None,
         **kwargs: Any,
@@ -106,7 +104,7 @@ class LangChainEvaluator(BaseGraphRAGEvaluator):
         self.evaluators: dict[EvaluationMetricType, Any] = {}
         # The judge LLM comes from the shared provider bundle
         # (EvaluationManager passes the chain's).
-        self.providers = Providers.resolve(config, providers, boto_session)
+        self.providers = Providers.resolve(config, providers)
         super().__init__(
             config=config,
             evaluator_type=EvaluatorType.LANGCHAIN,

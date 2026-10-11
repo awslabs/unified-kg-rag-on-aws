@@ -123,7 +123,6 @@ def _manager(
         graph_analyzer=GraphAnalyzer(config, graph=_graph()),
         community_detector=_FakeCommunityDetector(),  # type: ignore[arg-type]
         outputs_dir=tmp_path / "viz",
-        boto_session=object(),  # type: ignore[arg-type]
         embedder=embedder,  # type: ignore[arg-type]
     )
 

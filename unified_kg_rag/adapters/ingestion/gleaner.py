@@ -5,7 +5,6 @@ from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
 
-import boto3
 from pydantic import BaseModel, Field
 
 from unified_kg_rag.adapters.llm.chain_factory import (
@@ -255,13 +254,12 @@ class GraphGleaner(BaseProcessor):
     def __init__(
         self,
         config: Config,
-        boto_session: boto3.Session | None = None,
         show_progress: bool = True,
         *,
         providers: Providers | None = None,
     ) -> None:
         super().__init__(config)
-        self.providers = Providers.resolve(config, providers, boto_session)
+        self.providers = Providers.resolve(config, providers)
         self.gleaning_config = self.config.processing.gleaning
         self.ignore_errors = self.config.processing.ignore_errors
         self.show_progress = show_progress

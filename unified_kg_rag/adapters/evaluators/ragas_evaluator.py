@@ -4,7 +4,6 @@ import asyncio
 from datetime import datetime
 from typing import Any, ClassVar, cast
 
-import boto3
 import pandas as pd
 from datasets import Dataset
 from langchain_core.embeddings import Embeddings
@@ -83,7 +82,6 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
     def __init__(
         self,
         config: Config,
-        boto_session: boto3.Session | None = None,
         embedding_factory: EmbeddingFactoryPort | None = None,
         *,
         providers: Providers | None = None,
@@ -95,7 +93,7 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
         self._embedding_factory = embedding_factory
         # Judge LLM, embeddings and token counter come from the shared
         # provider bundle (EvaluationManager passes the chain's).
-        self.providers = Providers.resolve(config, providers, boto_session)
+        self.providers = Providers.resolve(config, providers)
         eval_model_info = self.providers.llm_model_info(
             config.evaluation.evaluation_model_id
         )

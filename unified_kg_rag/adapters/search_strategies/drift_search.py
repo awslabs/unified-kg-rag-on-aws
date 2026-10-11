@@ -4,7 +4,6 @@ import asyncio
 import time
 from typing import Any
 
-import boto3
 from langchain_core.output_parsers import (
     CommaSeparatedListOutputParser,
     StrOutputParser,
@@ -53,10 +52,9 @@ class DriftSearchStrategy(BaseSearchStrategy):
         self,
         config: Config,
         retrievers: dict[str, BaseGraphRAGRetriever],
-        boto_session: boto3.Session | None = None,
         **kwargs: Any,
     ):
-        super().__init__(config, retrievers, boto_session, **kwargs)
+        super().__init__(config, retrievers, **kwargs)
         self.drift_config = self.config.search.drift_search
         self.ignore_errors = config.processing.ignore_errors
         # Keyword expansion / query refinement must produce terms in the corpus

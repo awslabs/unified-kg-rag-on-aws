@@ -47,7 +47,6 @@ def processor(config: Config) -> BaseProcessor:
 @pytest.fixture
 def extractor(config: Config, mocker) -> GraphExtractor:
     """A real GraphExtractor with all AWS/Bedrock wiring stubbed out."""
-    mocker.patch.object(ge_module, "boto3")
     mocker.patch.object(bedrock_module, "BedrockLanguageModelFactory")
     mocker.patch.object(ge_module, "create_robust_xml_output_parser")
     mocker.patch.object(ge_module, "setup_chain")

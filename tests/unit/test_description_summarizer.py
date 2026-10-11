@@ -34,7 +34,6 @@ LONG_DESCRIPTION = "fact " * 1000
 @pytest.fixture
 def summarizer(config: Config, mocker) -> DescriptionSummarizer:
     """A real DescriptionSummarizer with all AWS/Bedrock wiring stubbed out."""
-    mocker.patch.object(ds_module, "boto3")
     mocker.patch.object(bedrock_module, "BedrockLanguageModelFactory")
     mocker.patch.object(ds_module, "setup_chain")
     return DescriptionSummarizer(config)

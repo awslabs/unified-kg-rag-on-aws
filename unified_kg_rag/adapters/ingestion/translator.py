@@ -3,7 +3,6 @@
 import time
 from typing import Any
 
-import boto3
 from langchain_core.output_parsers import StrOutputParser
 from pydantic import BaseModel, Field
 
@@ -64,7 +63,6 @@ class TextUnitTranslator:
     def __init__(
         self,
         config: Config,
-        boto_session: boto3.Session | None = None,
         show_progress: bool = True,
         *,
         providers: Providers | None = None,
@@ -83,7 +81,7 @@ class TextUnitTranslator:
                 ]
             )
         )
-        self.providers = Providers.resolve(config, providers, boto_session)
+        self.providers = Providers.resolve(config, providers)
         self.ignore_errors = config.processing.ignore_errors
         self.show_progress = show_progress
         self.stats: TranslationStats | None = None

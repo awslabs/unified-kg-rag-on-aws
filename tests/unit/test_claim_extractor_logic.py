@@ -30,7 +30,6 @@ pytestmark = pytest.mark.unit
 
 @pytest.fixture
 def extractor(config: Config, mocker) -> ClaimExtractor:
-    mocker.patch.object(ce_module, "boto3")
     mocker.patch.object(bedrock_module, "BedrockLanguageModelFactory")
     mocker.patch.object(ce_module, "create_robust_xml_output_parser")
     mocker.patch.object(ce_module, "setup_chain")

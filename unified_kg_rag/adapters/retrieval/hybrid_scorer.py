@@ -34,7 +34,6 @@ class HybridScorer(MetricsMixin):
     def __init__(
         self,
         config: Config,
-        boto_session: Any | None = None,
         rerank_factory: RerankFactoryPort | None = None,
         *,
         providers: Providers | None = None,
@@ -42,7 +41,6 @@ class HybridScorer(MetricsMixin):
     ) -> None:
         super().__init__(**kwargs)
         self.config = config
-        self.boto_session = boto_session
         self.fusion_config = config.search.fusion
         # Injected rerank provider (port). Otherwise it comes from the shared
         # provider bundle (Bedrock by default), and only when reranking is on.
@@ -60,7 +58,7 @@ class HybridScorer(MetricsMixin):
 
             if self.rerank_factory is None:
                 self.rerank_factory = Providers.resolve(
-                    self.config, self._providers, self.boto_session
+                    self.config, self._providers
                 ).rerank_factory
 
             self.rerank_model = self.rerank_factory.get_model(

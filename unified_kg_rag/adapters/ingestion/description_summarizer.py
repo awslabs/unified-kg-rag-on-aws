@@ -23,7 +23,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import boto3
 from langchain_core.output_parsers import StrOutputParser
 
 from unified_kg_rag.adapters.llm.chain_factory import setup_chain
@@ -53,7 +52,6 @@ class DescriptionSummarizer:
     def __init__(
         self,
         config: Config,
-        boto_session: boto3.Session | None = None,
         *,
         providers: Providers | None = None,
     ) -> None:
@@ -62,7 +60,7 @@ class DescriptionSummarizer:
             self.config.processing.graph_extraction.description_summarization
         )
         self.target_language = self.config.processing.translation.target_language.value
-        self.providers = Providers.resolve(config, providers, boto_session)
+        self.providers = Providers.resolve(config, providers)
         self.factory = self.providers.llm_factory
         self.batch_processor = BatchProcessor.from_processing(
             self.config.processing,

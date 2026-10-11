@@ -120,14 +120,9 @@ class Providers:
         self._lock = threading.RLock()
 
     @classmethod
-    def resolve(
-        cls,
-        config: Config,
-        providers: Providers | None = None,
-        boto_session: boto3.Session | None = None,
-    ) -> Providers:
-        """The given bundle, or a default one over ``boto_session``."""
-        return providers if providers is not None else cls(config, boto_session)
+    def resolve(cls, config: Config, providers: Providers | None = None) -> Providers:
+        """The given bundle, or a default one built from ``config``."""
+        return providers if providers is not None else cls(config)
 
     def kind(self, role: ProviderRole) -> str:
         """The provider kind the config selects for ``role``."""

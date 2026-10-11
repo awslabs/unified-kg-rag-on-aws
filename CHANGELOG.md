@@ -129,10 +129,16 @@ Library API (Python callers and custom backends).
   `model_factory=` and `retriever_builders=` cannot be combined with
   `providers=` (set them on the `Providers` bundle); `IndexingStage` takes
   its indexers from the bundle (#216).
-- The AWS session is created lazily; stages and adapters no longer take or
-  expose `boto_session` (read `providers.boto_session`).
-  `OpenSearchIndexer`, `OpenSearchRetriever` and `BedrockNodeEmbedder`
-  require `embedding_factory=` (#216).
+- The AWS session is created lazily. Only `Providers`, `build_providers`,
+  `DataIngestionPipeline` and `GraphRAGChain` take `boto_session`; the
+  ingestion stages, search strategies, evaluators, `HybridScorer` (now
+  `HybridScorer(config, rerank_factory=None, *, providers=None)`),
+  `TokenManager`, `PromptTuner` and the visualization manager no longer do
+  (read `providers.boto_session`), and `Providers.resolve` takes no session.
+  `GraphRAGChain` no longer accepts unknown keyword arguments, so a
+  misspelled one raises `TypeError`. `OpenSearchIndexer`,
+  `OpenSearchRetriever` and `BedrockNodeEmbedder` require
+  `embedding_factory=` (#216, #PR).
 - Custom model factories: `get_model_info` must return a
   `LanguageModelInfo`; opt into the chain-level retry with
   `is_transient_error(exc)` and `transient_retry` (#216).

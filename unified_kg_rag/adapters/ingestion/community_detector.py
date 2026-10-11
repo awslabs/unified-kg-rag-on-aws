@@ -6,7 +6,6 @@ from collections import defaultdict
 from datetime import datetime
 from typing import Any
 
-import boto3
 import networkx as nx
 
 from unified_kg_rag.adapters.llm.chain_factory import (
@@ -85,13 +84,12 @@ class CommunityDetector(BaseProcessor):
     def __init__(
         self,
         config: Config,
-        boto_session: boto3.Session | None = None,
         show_progress: bool = True,
         *,
         providers: Providers | None = None,
     ) -> None:
         super().__init__(config)
-        self.providers = Providers.resolve(config, providers, boto_session)
+        self.providers = Providers.resolve(config, providers)
         self.community_detection_config = self.config.graph.community_detection
         self.ignore_errors = self.config.processing.ignore_errors
 

@@ -4,7 +4,6 @@ import asyncio
 from abc import ABC, abstractmethod
 from typing import Any
 
-import boto3
 from langchain_core.callbacks import CallbackManagerForRetrieverRun
 from langchain_core.documents import Document
 from langchain_core.retrievers import BaseRetriever
@@ -160,7 +159,6 @@ class BaseSearchStrategy(MetricsMixin, ABC):
         self,
         config: Config,
         retrievers: dict[str, BaseGraphRAGRetriever],
-        boto_session: boto3.Session | None = None,
         *,
         providers: Providers | None = None,
         **kwargs: Any,
@@ -173,8 +171,8 @@ class BaseSearchStrategy(MetricsMixin, ABC):
         # Session and model providers come from the orchestrator's shared
         # bundle (GraphRAGChain passes its own), so an injected provider reaches
         # the strategy's LLM chains, scorer and token counter alike. Without
-        # one, a default bundle is built over ``boto_session``.
-        self.providers = Providers.resolve(config, providers, boto_session)
+        # one, a default bundle is built from ``config``.
+        self.providers = Providers.resolve(config, providers)
         self.hybrid_scorer = HybridScorer(self.config, providers=self.providers)
         self.token_manager = TokenManager(self.config, providers=self.providers)
 

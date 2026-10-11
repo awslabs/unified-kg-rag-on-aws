@@ -10,9 +10,8 @@ import weakref
 from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Iterator
 from contextlib import AbstractContextManager
 from enum import Enum
-from typing import Any, ClassVar, TypeVar
+from typing import TYPE_CHECKING, Any, ClassVar, TypeVar
 
-import boto3
 from langchain_core.output_parsers import (
     BaseOutputParser,
     CommaSeparatedListOutputParser,
@@ -97,6 +96,9 @@ from unified_kg_rag.shared.utils import (
     strip_embedding_fields,
     text_digest,
 )
+
+if TYPE_CHECKING:
+    import boto3
 
 logger = get_logger(__name__)
 
@@ -281,7 +283,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
     def __init__(
         self,
         config: Config,
-        boto_session: boto3.Session | None = None,
+        boto_session: "boto3.Session | None" = None,
         mode: ChainMode = ChainMode.RAG,
         *,
         model_factory: LLMFactoryPort | None = None,
@@ -290,7 +292,6 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         retriever_builders: (
             dict[RetrieverRole, Callable[[], BaseGraphRAGRetriever]] | None
         ) = None,
-        **kwargs: Any,
     ) -> None:
         super().__init__()
         self.config = config
@@ -1733,7 +1734,7 @@ def _iterate_async_generator(
 
 async def create_rag_chain(
     config: Config,
-    boto_session: boto3.Session | None = None,
+    boto_session: "boto3.Session | None" = None,
     mode: ChainMode = ChainMode.RAG,
     **kwargs: Any,
 ) -> GraphRAGChain:

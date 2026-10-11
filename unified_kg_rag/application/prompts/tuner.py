@@ -18,7 +18,6 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-import boto3
 from langchain_core.output_parsers import StrOutputParser
 
 from unified_kg_rag.adapters.ingestion.graph_extractor import GraphExtractor
@@ -94,12 +93,11 @@ class PromptTuner:
     def __init__(
         self,
         config: Config,
-        boto_session: boto3.Session | None = None,
         *,
         providers: Providers | None = None,
     ) -> None:
         self.config = config
-        self.providers = Providers.resolve(config, providers, boto_session)
+        self.providers = Providers.resolve(config, providers)
         self.factory = self.providers.llm_factory
 
     def sample_corpus(self, texts: list[str]) -> str:

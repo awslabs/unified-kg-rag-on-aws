@@ -6,7 +6,6 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Any
 
-import boto3
 from langchain_text_splitters import (
     HTMLHeaderTextSplitter,
     MarkdownHeaderTextSplitter,
@@ -686,14 +685,13 @@ class IntelligentTextChunker(BaseChunker):
     def __init__(
         self,
         config: Config,
-        boto_session: boto3.Session | None = None,
         show_progress: bool = True,
         *,
         providers: Providers | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(config, show_progress=show_progress)
-        self.providers = Providers.resolve(config, providers, boto_session)
+        self.providers = Providers.resolve(config, providers)
 
         self.factory = self.providers.llm_factory
         self.batch_processor = BatchProcessor.from_processing(
@@ -1133,7 +1131,6 @@ class ChunkerFactory:
     def create_chunker(
         config: Config,
         chunker_type: ChunkingStrategy = ChunkingStrategy.INTELLIGENT,
-        boto_session: boto3.Session | None = None,
         show_progress: bool = True,
         **kwargs: Any,
     ) -> BaseChunker:
@@ -1141,5 +1138,5 @@ class ChunkerFactory:
         if chunker_type == ChunkingStrategy.SIMPLE:
             return SimpleTextChunker(config, show_progress, **kwargs)
         if chunker_type == ChunkingStrategy.INTELLIGENT:
-            return IntelligentTextChunker(config, boto_session, show_progress, **kwargs)
+            return IntelligentTextChunker(config, show_progress, **kwargs)
         raise DataProcessingError(f"Unknown chunker type: '{chunker_type}'")

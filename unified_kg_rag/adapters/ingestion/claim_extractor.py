@@ -5,7 +5,6 @@ from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 
-import boto3
 from pydantic import BaseModel
 
 from unified_kg_rag.adapters.llm.chain_factory import (
@@ -102,13 +101,12 @@ class ClaimExtractor(BaseProcessor):
     def __init__(
         self,
         config: Config,
-        boto_session: boto3.Session | None = None,
         show_progress: bool = True,
         *,
         providers: Providers | None = None,
     ):
         super().__init__(config)
-        self.providers = Providers.resolve(config, providers, boto_session)
+        self.providers = Providers.resolve(config, providers)
         self.claim_extraction_config = self.config.processing.claim_extraction
         self.ignore_errors = self.config.processing.ignore_errors
         self.show_progress = show_progress
