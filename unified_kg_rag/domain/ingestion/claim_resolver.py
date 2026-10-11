@@ -79,9 +79,12 @@ def resolve_single_claim(
     ``names_by_key`` / ``ids_by_key`` map an ``entity_key`` to the entity's
     name and id; ``fuzzy_matcher`` holds the entity names as candidates.
     """
-    subject_name = resolve_entity_reference(
-        claim.subject_name, names_by_key, fuzzy_matcher
+    resolved_subject_name = resolve_entity_reference(
+        claim.subject_name,
+        names_by_key,
+        fuzzy_matcher,
     )
+
     # A claim is anchored to its SUBJECT entity. The object may legitimately be a
     # literal value (a date, amount, status, ...) rather than an extracted
     # entity — claim types like PERFORMANCE/ATTRIBUTE/FINANCIAL/TEMPORAL routinely
@@ -89,7 +92,7 @@ def resolve_single_claim(
     # extraction. So we only require the subject to resolve; if the object does
     # not resolve to an entity we keep the claim with object_id=None and the
     # original object text preserved as a literal value.
-    if subject_name is None:
+    if resolved_subject_name is None:
         logger.debug("Dropping claim: subject not an entity: '%s'", claim.subject_name)
         return None
 
@@ -98,8 +101,8 @@ def resolve_single_claim(
     )
     return claim.model_copy(
         update={
-            "subject_id": ids_by_key[entity_key(subject_name)],
-            "subject_name": subject_name,
+            "subject_id": ids_by_key[entity_key(resolved_subject_name)],
+            "subject_name": resolved_subject_name,
             "object_id": ids_by_key[entity_key(object_name)] if object_name else None,
             "object_name": object_name or claim.object_name,
         }

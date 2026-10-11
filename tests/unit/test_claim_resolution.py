@@ -1,12 +1,10 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Unit tests for claim->entity resolution (AWS-free, pure functions).
+"""Unit tests for claim->entity resolution (AWS-free, pure task function).
 
-A claim is anchored to its SUBJECT entity; the OBJECT may be a literal value
-(date/amount/status), so it must not be required to resolve to an entity.
-Fuzzy matches go through the guarded ``find_all_matches``, so an identifier
-that differs ("PO 1003" vs "PO 1002") never rewrites a claim onto another
-entity.
+Regression cover for the over-dropping bug: a claim is anchored to its SUBJECT
+entity; the OBJECT may be a literal value (date/amount/status), so it must not be
+required to resolve to an entity.
 """
 
 from __future__ import annotations
@@ -56,6 +54,7 @@ def test_both_entities_resolve_to_ids() -> None:
 
 
 def test_unresolvable_subject_drops_claim() -> None:
+    # No anchor entity for the subject -> claim cannot attach to the graph.
     resolved = _resolve(_claim("nonexistent-person-xyz", "acme"), ["acme"])
     assert resolved is None
 
