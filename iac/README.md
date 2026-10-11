@@ -399,9 +399,45 @@ aws logs tail /graphrag/tasks --region "$REGION" --since 30m
 
 The command override must name the CLI explicitly (`run-rag ...`). The answer
 is written to the task's log stream (`app/app/<task id>` in
-`/graphrag/tasks`). `run-eval` reads its dataset from a local
-path, and the image holds none, so evaluate from a machine inside the VPC or
-from an image that includes the dataset.
+`/graphrag/tasks`).
+
+### 5. Evaluate from inside the VPC
+
+`run-eval` runs the same way. The image holds no dataset and the task's disk is
+discarded on exit, so pass `s3://` paths for both: the dataset is downloaded
+before the run and the result files are uploaded when it ends. Keep them in
+the cache bucket, which the task role can already read and write (and which
+the `private`-mode S3 endpoint allows), under a prefix other than the two
+expiring ones, for example `eval/`. Reuse the variables from step 4:
+
+```bash
+aws s3 cp ./eval_data.json "s3://$CACHE_BUCKET/eval/eval_data.json" --region "$REGION"
+
+OVERRIDES=$(jq -nc \
+  --arg data "s3://$CACHE_BUCKET/eval/eval_data.json" \
+  --arg out "s3://$CACHE_BUCKET/eval/results/run-001/" \
+  '{containerOverrides:[{name:"app",command:["run-eval","--config-path","/app/config.yaml","--eval-data-path",$data,"--outputs-directory",$out,"--search-strategy","auto"]}]}')
+
+TASK_ARN=$(aws ecs run-task --region "$REGION" --cluster "$CLUSTER" \
+  --launch-type FARGATE --task-definition "$TASK_DEFINITION" \
+  --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SECURITY_GROUPS],assignPublicIp=DISABLED}" \
+  --overrides "$OVERRIDES" \
+  --query 'tasks[0].taskArn' --output text)
+
+aws ecs wait tasks-stopped --region "$REGION" --cluster "$CLUSTER" --tasks "$TASK_ARN"
+aws ecs describe-tasks --region "$REGION" --cluster "$CLUSTER" --tasks "$TASK_ARN" \
+  --query 'tasks[0].containers[0].exitCode' --output text
+aws s3 ls "s3://$CACHE_BUCKET/eval/results/run-001/" --region "$REGION"
+```
+
+The container's exit code is `run-eval`'s: `1` when the failure budget
+(`--max-failure-rate`) is exceeded, the dataset cannot be downloaded, or any
+result file fails to upload; the summary and errors are in the task's log
+stream. Uploads use the same `aws.s3.encryption` setting as the cache, so
+with `use_cmk=true` the results are encrypted with the CMK. To read a dataset
+from another bucket, deploy with `-c corpus_bucket_name=<bucket>`, which grants
+the task role read access and, in `private` mode, allows the bucket through the
+S3 endpoint; results still go to the cache bucket.
 
 Operational procedures (re-ingesting, failed documents, alarms, caches) are in
 the [Operator Runbook](../docs/operations.md).

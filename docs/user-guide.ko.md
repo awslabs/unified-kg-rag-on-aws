@@ -996,8 +996,8 @@ DynamoDB 항목 하나에 저장하며, 항목 크기 한도는 400KB(ID 약 10,
 
 | 플래그 | 기본값 | 의미 |
 |---|---|---|
-| `--eval-data-path` | **필수** | 질문과 정답이 담긴 JSON 파일 |
-| `--outputs-directory` | `evaluation.outputs_directory` | 결과 저장 위치 |
+| `--eval-data-path` | **필수** | 질문과 정답이 담긴 JSON 파일. 로컬 경로 또는 `s3://bucket/key` URI |
+| `--outputs-directory` | `evaluation.outputs_directory` | 결과 저장 위치. 로컬 디렉터리 또는 `s3://bucket/prefix/` URI |
 | `--suffix` | —(`default`) | 평가 대상 [인덱스 접미사](#인덱스-접미사) |
 | `--enable-thinking` | off | 모델 추론 |
 | `--search-strategy` | `auto` | 각 질문에 답할 때 쓰는 전략 |
@@ -1123,7 +1123,19 @@ run-eval --eval-data-path my_eval_data.json --outputs-directory ./results --conf
 
 run-eval --eval-data-path my_eval_data.json \
   --search-strategy global --search-type vector --config-path config.yaml
+
+run-eval --eval-data-path s3://my-bucket/eval/my_eval_data.json \
+  --outputs-directory s3://my-bucket/eval/results/ --config-path config.yaml
 ```
+
+두 경로 모두 `s3://` URI를 받으므로 `run-eval`도 CDK 스택에서 일회성 태스크로
+실행할 수 있습니다([After deploy](../iac/README.md#5-evaluate-from-inside-the-vpc)).
+`s3://` 데이터셋은 실행 전에 임시 파일로 내려받습니다. 출력 디렉터리가 `s3://`이면
+결과 파일을 임시 디렉터리에 쓴 뒤 실행이 끝날 때 해당 접두사 아래로 올리며, 캐시
+업로드와 같은 `aws.s3.encryption` SSE 설정을 적용합니다. 업로드가 하나라도 실패하면
+`run-eval`은 0이 아닌 코드로 끝나고 로컬 파일을 남깁니다(경로를 출력함). S3 호출은
+`aws.profile_name`과 `aws.region_name`을 사용합니다. 실행 주체에는 데이터셋에 대한
+`s3:GetObject`와 출력 접두사에 대한 `s3:PutObject` 권한이 필요합니다.
 
 결과는 출력 디렉터리에 `evaluation_{results,reports,summary}_<timestamp>.json`으로
 씁니다. 답변한 질의가 모두 같은 전략을 썼다면 파일 이름은
