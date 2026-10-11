@@ -22,7 +22,8 @@ def test_store_name_appends_the_additional_suffix() -> None:
 
 def test_store_name_timestamp_comes_last() -> None:
     name = store_name("entities", "v2", "smoke", timestamp=True)
-    assert re.fullmatch(r"entities-v2-smoke-\d{14}", name)
+    # Millisecond resolution: YYYYmmddHHMMSSfff.
+    assert re.fullmatch(r"entities-v2-smoke-\d{17}", name)
 
 
 def test_graph_label_capitalizes_the_prefix() -> None:

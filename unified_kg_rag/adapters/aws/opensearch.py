@@ -582,10 +582,20 @@ class OpenSearchClient:
         return success_count, failures + retry_results
 
     @_handle_opensearch_errors
-    def create_index(self, index: str, body: dict[str, Any]) -> None:
-        if not self.client.indices.exists(index=index):
-            self.client.indices.create(index=index, body=body)
-            logger.info("Created index: '%s'", index)
+    def create_index(
+        self, index: str, body: dict[str, Any], *, exist_ok: bool = True
+    ) -> None:
+        """Create ``index``; an existing one is kept, or raises unless ``exist_ok``.
+
+        A full rebuild passes ``exist_ok=False``: writing its replacement into
+        an index that already exists (the live one) would mix the builds.
+        """
+        if self.client.indices.exists(index=index):
+            if exist_ok:
+                return
+            raise ValueError(f"Index '{index}' already exists")
+        self.client.indices.create(index=index, body=body)
+        logger.info("Created index: '%s'", index)
 
     @_handle_opensearch_errors
     def create_search_pipeline(self, pipeline_id: str, body: dict[str, Any]) -> None:

@@ -288,6 +288,13 @@ Library API (Python callers and custom backends).
   pipeline, the query chain and the local stores import the S3 sync and
   transfer helpers, SigV4 signing and the AWS session only when a run uses
   them (#PR).
+- Two full rebuilds within one second no longer reuse the live OpenSearch
+  index: the replacement index was created under the live index's name, so
+  it was written into the live index and kept the previous build's
+  documents (and an emptied type was not emptied). Index names carry
+  milliseconds, a taken name is moved forward, and a full rebuild refuses to
+  write into an index that already exists; indices named by earlier builds
+  are still reaped (#PR).
 - Parsing: the LLM XML parser keeps `&`, `<`, repeated siblings and
   sections with a missing closing tag; truncated responses fail instead of
   parsing as partial successes (#165, #174, #182, #213).

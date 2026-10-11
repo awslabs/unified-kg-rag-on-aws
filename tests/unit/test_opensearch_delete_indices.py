@@ -96,3 +96,17 @@ def test_a_failed_batch_does_not_stop_the_rest_and_is_reported() -> None:
     assert names[20] in message and "(+10 more)" in message
     assert names[0] not in message and names[40] not in message
     assert "cluster unavailable" in message
+
+
+def test_create_index_keeps_an_existing_index_unless_told_not_to() -> None:
+    client, backing = _client()
+    backing.indices.exists.return_value = True
+
+    client.create_index("graphrag-entities-default-20260101120000000", {})
+    backing.indices.create.assert_not_called()
+
+    with pytest.raises(AWSServiceError, match="already exists"):
+        client.create_index(
+            "graphrag-entities-default-20260101120000000", {}, exist_ok=False
+        )
+    backing.indices.create.assert_not_called()

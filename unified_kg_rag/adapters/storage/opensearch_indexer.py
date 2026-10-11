@@ -654,9 +654,7 @@ class OpenSearchIndexer(VectorIndexer):
             try:
                 if not index_name:
                     # First-ever write for this alias: create one index + alias.
-                    index_name = self._get_name(
-                        alias_prefix, suffix, add_timestamp=True
-                    )
+                    index_name = self._new_index_name(alias_name, alias_prefix, suffix)
                     self.opensearch_client.create_index(index_name, mapping_func())
                     self.opensearch_client.update_alias(alias_name, index_name)
 
@@ -721,10 +719,13 @@ class OpenSearchIndexer(VectorIndexer):
 
         for suffix, chunk_items in self._group_items_by_suffix(items, suffixes).items():
             alias_name = self._get_name(alias_prefix, suffix)
-            index_name = self._get_name(alias_prefix, suffix, add_timestamp=True)
+            index_name = ""
 
             try:
-                self.opensearch_client.create_index(index_name, mapping_func())
+                index_name = self._new_index_name(alias_name, alias_prefix, suffix)
+                self.opensearch_client.create_index(
+                    index_name, mapping_func(), exist_ok=False
+                )
 
                 embeddings = self._generate_embeddings(
                     chunk_items, embedding_field_extractors
@@ -772,7 +773,8 @@ class OpenSearchIndexer(VectorIndexer):
                     max(1, len(chunk_items)),
                     ids=[item.id for item in chunk_items],
                 )
-                self._drop_unswapped_index(alias_name, index_name)
+                if index_name:
+                    self._drop_unswapped_index(alias_name, index_name)
 
         if total_stats.failed_items > 0:
             logger.warning(
@@ -793,13 +795,42 @@ class OpenSearchIndexer(VectorIndexer):
 
     @staticmethod
     def _index_timestamp(alias_name: str, index_name: str) -> str | None:
-        """Timestamp of ``<alias>-<YYYYmmddHHMMSS>``, or ``None`` if not that shape.
+        """Timestamp of ``<alias>-<YYYYmmddHHMMSSfff>``, or ``None`` if not that shape.
 
-        Requiring the 14-digit timestamp keeps ``<alias>-*`` from matching a
-        sibling alias's indices (e.g. suffix ``default-2`` under ``default``).
+        Requiring the 17-digit timestamp (or the 14-digit one of indices built
+        before millisecond names) keeps ``<alias>-*`` from matching a sibling
+        alias's indices (e.g. suffix ``default-2`` under ``default``). The two
+        widths compare as strings in build order: a 14-digit name sorts before
+        every 17-digit name of the same second.
         """
-        match = re.fullmatch(rf"{re.escape(alias_name)}-(\d{{14}})", index_name)
+        match = re.fullmatch(
+            rf"{re.escape(alias_name)}-(\d{{17}}|\d{{14}})", index_name
+        )
         return match.group(1) if match else None
+
+    @staticmethod
+    def _timestamp_ms(timestamp: str) -> int:
+        return int(timestamp) * 1000 if len(timestamp) == 14 else int(timestamp)
+
+    def _new_index_name(self, alias_name: str, alias_prefix: str, suffix: str) -> str:
+        """A timestamped index name for ``alias_name`` that no index has yet.
+
+        Two builds in the same millisecond (or under a pinned clock) would
+        otherwise get the live index's name, and the replacement would be
+        written into it. A taken name moves forward a millisecond at a time
+        until it is free, so it still sorts after the index it collided with
+        and the stale-index reaper removes that one after the swap.
+        """
+        name = self._get_name(alias_prefix, suffix, add_timestamp=True)
+        taken = set(self.opensearch_client.get_aliases_by_index(f"{alias_name}-*"))
+        timestamp = self._index_timestamp(alias_name, name)
+        if timestamp is None:
+            return name
+        millis = self._timestamp_ms(timestamp)
+        while name in taken:
+            millis += 1
+            name = f"{alias_name}-{millis:017d}"
+        return name
 
     def _reap_stale_indices(self, alias_name: str, live_index: str) -> None:
         """Delete this alias's older timestamped indices after a successful swap.
@@ -840,9 +871,9 @@ class OpenSearchIndexer(VectorIndexer):
     def _drop_unswapped_index(self, alias_name: str, index_name: str) -> None:
         """Delete a new index the alias was not swapped onto.
 
-        Skipped if the alias already points at ``index_name`` (a same-second
-        rebuild reuses the live index's name), so the live index is never
-        deleted on a failed run. Best-effort: a failure is logged, not raised.
+        Skipped if the alias already points at ``index_name`` (a new name that
+        turned out to be taken), so the live index is never deleted on a
+        failed run. Best-effort: a failure is logged, not raised.
         """
         try:
             if index_name in self.opensearch_client.get_indices_by_alias(alias_name):

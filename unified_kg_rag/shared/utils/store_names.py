@@ -22,13 +22,16 @@ def store_name(
 
     ``suffix`` defaults to ``Constants.DEFAULT_SUFFIX``; ``additional_suffix``
     is ``indexing.additional_suffix``. ``timestamp`` names a concrete
-    OpenSearch index behind an alias.
+    OpenSearch index behind an alias, to the millisecond
+    (``YYYYmmddHHMMSSfff``); the indexer moves a name that is already
+    taken (``OpenSearchIndexer._new_index_name``).
     """
     name = f"{base}-{suffix or Constants.DEFAULT_SUFFIX.value}"
     if additional_suffix:
         name = f"{name}-{additional_suffix}"
     if timestamp:
-        name = f"{name}-{datetime.now():%Y%m%d%H%M%S}"
+        now = datetime.now()
+        name = f"{name}-{now:%Y%m%d%H%M%S}{now.microsecond // 1000:03d}"
     return name
 
 
