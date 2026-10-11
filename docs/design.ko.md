@@ -292,7 +292,7 @@ flowchart LR
 flowchart TD
     input["RAGInput: query, search_strategy, suffix, filters"] --> memory["Conversation memory (use_memory): a follow-up is rewritten as a standalone question"]
     memory --> resolve["Resolve strategy (auto: LLM router over search.auto_routable_strategies)"]
-    resolve --> qp["Query processing: translation, then entities or dual-level keywords as the strategy declares"]
+    resolve --> qp["Query processing: translation alongside entities or dual-level keywords, as the strategy declares"]
     qp --> graphrag
     qp --> lightrag
     subgraph graphrag["GraphRAG strategies"]

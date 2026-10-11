@@ -537,6 +537,10 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   retrieval alongside its candidate-entity lookup and graph expansion, and the
   primer's follow-up searches together (deduplicated in follow-up order)
   (#PR).
+- LightRAG keyword extraction no longer waits for the query translation: the
+  keyword prompt already writes its keywords in the target language, so both
+  calls read the user's question and run concurrently, removing one sequential
+  LLM round trip from translated `mix`/`hybrid` queries (#PR).
 
 ### Deprecated
 - `search.llm_retry`; use `aws.bedrock.transient_retry` (#120).

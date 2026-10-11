@@ -558,10 +558,10 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
                     {"query": question, "target_language": target_language},
                     config,
                 )
-            # Keyword extraction runs on the final (possibly translated) query.
-            # When translation is skipped that is the original query, so it can
-            # run concurrently with entity extraction instead of after it.
-            if needs_keywords and skip_translation:
+            # The keyword prompt writes its keywords in the target language
+            # itself, so it reads the untranslated question and runs alongside
+            # the translation instead of after it.
+            if needs_keywords:
                 tasks["keywords"] = self._extract_dual_keywords(
                     question, target_language, config
                 )
@@ -618,10 +618,6 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
                     # ignore_errors, so an exception here must propagate.
                     raise keyword_data
                 hl_keywords, ll_keywords = keyword_data
-            elif needs_keywords:
-                hl_keywords, ll_keywords = await self._extract_dual_keywords(
-                    final_query, target_language, config
-                )
 
             return ProcessedQuery(
                 original_query=original_query,

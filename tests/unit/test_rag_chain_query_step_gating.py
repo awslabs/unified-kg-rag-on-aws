@@ -165,7 +165,9 @@ async def test_mix_hybrid_still_extract_keywords(
     assert processed.ll_keywords == ["Vendor"]
 
 
-async def test_keywords_use_translated_query_when_translating(config: Config) -> None:
+async def test_keywords_run_alongside_translation(config: Config) -> None:
+    # The keyword prompt writes target-language keywords itself, so it does
+    # not wait for the translation: both read the user's question.
     config.processing.translation.source_language = "ja"
     config.processing.translation.target_language = "en"
     factory = _FakeFactory(translation="What does the Vendor owe the Buyer?")
@@ -175,8 +177,9 @@ async def test_keywords_use_translated_query_when_translating(config: Config) ->
     )
     keyword_inputs = [i for cls, i in factory.calls if cls is KeywordsExtractionPrompt]
     assert keyword_inputs == [
-        {"query": "What does the Vendor owe the Buyer?", "target_language": "English"}
+        {"query": "ベンダーは何を負うか", "target_language": "English"}
     ]
+    assert processed.final_query == "What does the Vendor owe the Buyer?"
     assert processed.ll_keywords == ["Vendor"]
 
 
