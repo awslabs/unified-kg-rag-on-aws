@@ -520,31 +520,31 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   `ProcessedQuery.standalone_query` records it and `original_query` keeps the
   user's text. Follow-ups such as "what about its price?" were searched
   verbatim before, and the history reached only the post-retrieval context
-  builder (#PR).
+  builder (#212).
 - Global search reranks once: the candidate reports were fused and reranked,
   then re-sorted by indexed `rank` (discarding the rerank order), then fused
   and reranked again with their text units. The candidates are no longer
   reranked; without `use_dynamic_selection` they are selected by retrieval
   score with `rank` and `rating` as tie-breaks, and the fusion with their text
   units reranks the selection. `GlobalSearchStrategy._parse_map_points` is
-  removed (use `_parse_map_payload`) (#PR).
+  removed (use `_parse_map_payload`) (#212).
 - DRIFT no longer requests query-side entity extraction (saving that LLM call
   per query): the extracted entities only shrank each iteration's candidate
   entity lookup (twice the entity count instead of `top_k`). Every iteration
   now looks candidates up from its own query text. Conversation entities reach
-  only strategies that read an entity focus (local) (#PR).
+  only strategies that read an entity focus (local) (#212).
 - DRIFT runs independent calls concurrently: each iteration's document
   retrieval alongside its candidate-entity lookup and graph expansion, and the
   primer's follow-up searches together (deduplicated in follow-up order)
-  (#PR).
+  (#212).
 - LightRAG keyword extraction no longer waits for the query translation: the
   keyword prompt already writes its keywords in the target language, so both
   calls read the user's question and run concurrently, removing one sequential
-  LLM round trip from translated `mix`/`hybrid` queries (#PR).
+  LLM round trip from translated `mix`/`hybrid` queries (#212).
 - `run-rag` and `run-eval` define their shared query flags (`--suffix`,
   `--enable-thinking`, `--search-strategy`, `--search-type`, `--top-k`,
   `--retrieval-multiplier`) once, in `application/cli/query_args.py`;
-  `--top-k` and `--retrieval-multiplier` below 1 now fail at parse time (#PR).
+  `--top-k` and `--retrieval-multiplier` below 1 now fail at parse time (#212).
 
 ### Deprecated
 - `search.llm_retry`; use `aws.bedrock.transient_retry` (#120).
@@ -627,22 +627,22 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   `MemoryManager.add_message` (use `load_context` and `add_turn`),
   `GraphRAGChatMessageHistory.get_context_summary` and `add_messages`, and the
   `MessageRole` and `ConversationContext` models, which nothing outside the
-  memory read. **Breaking** for code that used them (#PR).
+  memory read. **Breaking** for code that used them (#212).
 - The post-retrieval context-building LLM call (`ContextBuildingPrompt`),
   `search.context_building_model_id` and `custom_prompts.context_building_*`:
   it used the history only to interpret the query, which the standalone
   rewrite now does before retrieval, so the answer model reads the budgeted
   retrieval context directly. The old keys are ignored with an unknown-key
-  warning. **Breaking** for configs that set them (#PR).
+  warning. **Breaking** for configs that set them (#212).
 - The deprecated `SearchQuery.metadata["lightrag_mode"]` alias; LightRAG reads
   only `search_strategy` (#123, #PR).
 - `GraphRAGChain._build_graph_retriever` and `_build_document_retriever`, a
   second override layer on top of the provider bundle's retriever builders: a
   role resolves to the injected `retriever_builders` entry, else
   `Providers.build_retriever`. **Breaking** for subclasses that overrode them;
-  inject `retriever_builders` instead (#PR).
+  inject `retriever_builders` instead (#212).
 - `domain.retrieval.strategy_registry.registered_strategies`, which only tests
-  called; use `get_strategy_spec` per `SearchStrategy` (#PR).
+  called; use `get_strategy_spec` per `SearchStrategy` (#212).
 
 ### Fixed
 - `interactive_graph.html` centres the layout and scales it to a fixed canvas
@@ -1785,46 +1785,46 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
 - Conversation memory added the five alphabetically first entities of the
   whole conversation to every follow-up's entity focus, so later turns kept
   retrieving around old entities. It now keeps the most recently mentioned
-  ones, newest first (#PR).
+  ones, newest first (#212).
 - Community report hits put their title and summary into the context twice:
   `full_content` already opens with both, and the retriever appended them
   again. DRIFT's 200-character report excerpts then showed mostly the title
-  and rating. A report hit's content is now its `full_content` alone (#PR).
+  and rating. A report hit's content is now its `full_content` alone (#212).
 - Concurrent sub-queries of one search embedded the same query text once each:
   the embedding cache was filled only after the call returned. They now share
-  one in-flight embedding call per text (#PR).
+  one in-flight embedding call per text (#212).
 - Neptune graph expansion silently kept only the first 10 seed entities
   (`NeptuneRetriever.SEED_NODE_LIMIT`), dropping the rest of the candidates
   local search and DRIFT passed. Explicit seed ids are all expanded, and
   name-matched seeds follow `top_k * retrieval_multiplier`. Also removes an
-  unreachable hybrid-query branch (#PR).
+  unreachable hybrid-query branch (#212).
 - Global search's map step sent the selected communities' text units to the
   map LLM as community reports, and counted them toward
   `map_reduce_min_results`. Only community reports are mapped now; the text
-  units pass through after the synthesized item (#PR).
+  units pass through after the synthesized item (#212).
 - DRIFT keyword expansion received the first results of the whole search, the
   seed community reports, so it expanded from report titles. It now receives
   entity names from the newest iteration's results first
-  (`search.drift_search.n_entities` of them) (#PR).
+  (`search.drift_search.n_entities` of them) (#212).
 - Query-side prompts (entity extraction, translation, keyword extraction and
   the conversation entity extraction) received the target language as
   `LanguageCode.EN`, the enum's string form, while DRIFT and global search
   passed the bare code (`en`). Every retrieval prompt now gets the language
   name (`English`, `Korean`, ...); a `RAGInput.target_language` that is not a
-  supported code is passed as given (#PR).
+  supported code is passed as given (#212).
 - The token budgeter treated a 0.0 retrieval score as missing (`score or
-  0.5`), so the lowest-scored sections were ranked as mid-priority (#PR).
+  0.5`), so the lowest-scored sections were ranked as mid-priority (#212).
 - LightRAG `mix`/`hybrid` linked chunks lost their weighted-polling selection
   order when fetched by id (index order, score 0); they keep it now, as local
-  search's text units do (#PR).
+  search's text units do (#212).
 - Local search fetched every text unit linked to the expanded entities and
   then kept only the text quota; it now fetches the best-supported ones up to
   that quota. `search.local_search.entity_frequency_threshold` now drops the
   over-frequent entities from the context as documented; they were only left
-  out of the text-unit fan-out (#PR).
+  out of the text-unit fan-out (#212).
 - `RAGInput` and `SearchQuery` accepted `top_k: 0`, `retrieval_multiplier: 0`
   and a negative `max_tokens`, which ran a query that could return nothing.
-  All three must now be at least 1 (#PR).
+  All three must now be at least 1 (#212).
 - Tracing: a query that failed under `processing.ignore_errors` left its
   `kg_rag.query` span UNSET; it now records the exception and ends with ERROR
   status. The streamed answer's model call, which runs after the query span
