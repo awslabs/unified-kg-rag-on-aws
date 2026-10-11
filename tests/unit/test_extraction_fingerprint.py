@@ -22,8 +22,12 @@ from unified_kg_rag.domain.models import (
     DocStatusRecord,
     Document,
     LanguageCode,
+    PipelineStageType,
 )
-from unified_kg_rag.shared.utils.cache_keys import extraction_fingerprint
+from unified_kg_rag.shared.utils.cache_keys import (
+    extraction_fingerprint,
+    stage_input_fingerprint,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -126,7 +130,6 @@ def test_a_guardrail_that_guards_ingestion_moves_it() -> None:
     "block, field, value",
     [
         ("processing.translation", "translation_model_id", "amazon.nova-pro"),
-        ("processing.translation", "target_language", LanguageCode.KO),
         ("processing.gleaning", "max_rounds", 1),
         ("fixing", "fixing_model_id", "amazon.nova-pro"),
         (
@@ -150,6 +153,29 @@ def test_settings_of_a_disabled_block_do_not_move_it(
     before = extraction_fingerprint(enabled)
     _set(f"{block}.{field}", value)(enabled)
     assert extraction_fingerprint(enabled) != before
+
+
+@pytest.mark.parametrize(
+    "field, value",
+    [
+        # Extraction, gleaning, claim and description prompts write in it.
+        ("target_language", LanguageCode.KO),
+        # The indexer picks the chunk analyzer and translated-text fields
+        # from the languages.
+        ("source_language", LanguageCode.KO),
+        ("additional_target_languages", [LanguageCode.JA]),
+    ],
+)
+def test_languages_count_while_translation_is_off(field: str, value: object) -> None:
+    config = Config()
+    config.processing.translation.enabled = False
+    before = extraction_fingerprint(config)
+    indexing_before = stage_input_fingerprint(config, PipelineStageType.INDEXING)
+    _set(f"processing.translation.{field}", value)(config)
+    assert extraction_fingerprint(config) != before
+    assert (
+        stage_input_fingerprint(config, PipelineStageType.INDEXING) != indexing_before
+    )
 
 
 def test_grounding_settings_count_only_while_grounding_is_on() -> None:

@@ -278,13 +278,30 @@ Library API (Python callers and custom backends).
   fixing, gleaning, claim extraction, description summarization, entity
   grounding, community reports) no longer move them. Default configurations
   keep their keys; a configuration with a switched-off block whose other
-  fields differ from the defaults re-keys once (#226).
+  fields differ from the defaults re-keys once, and so does one with a
+  query-only guardrail identifier set (as the CDK stack injects through
+  `BEDROCK_GUARDRAIL_IDENTIFIER`): with incremental indexing its first run
+  after the upgrade re-extracts the corpus once (#226).
+- With translation switched off, changing `processing.translation`'s
+  `target_language`, `source_language` or `additional_target_languages`
+  re-keys the stage caches and the extraction fingerprint again, so the
+  graph is re-extracted instead of kept stale: extraction, gleaning, claim
+  and description prompts still write in the target language and the
+  OpenSearch indexer picks its analyzers and translated-text fields from
+  the languages whatever `enabled` says. Likewise
+  `report_generation.max_entities_per_report` still keys community
+  detection with reports off, since it caps the entity names each community
+  lists. Only the settings a switched-off block alone reads (such as the
+  translation model) stay out of the keys (#228).
 - Answer matching normalizes text with many dashes in linear time: each dash
   re-scanned the text before it, so a 70 KB answer with 4,000 dashes took
-  seconds. "Type A" now normalizes like "Type-A" (one token, `typea`)
-  instead of dropping the "A" as an article and matching "Type B"; a lone
-  lowercase letter after a space is still read as an article or a word
-  (#226).
+  seconds (#226).
+- Answer matching no longer glues a lone capital letter to the word before
+  it, which made "Yes I agree" normalize to `yesi agree` and "Vitamin A"
+  differ from "vitamin a": a spaced lone letter is again a word or an
+  article in either case. A dash next to a lone letter still joins it in
+  either case ("Type-A" and "type-a" are both `typea`), while "Type A" is
+  read like "Type" plus the article "a" (#228).
 - `backend: local` sets its 22,000-token retrieval context budget only for a
   non-Bedrock LLM left at the default 32,768-token window. With
   `providers.llm.kind: bedrock` or an explicit `context_window_size` the

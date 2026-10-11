@@ -127,23 +127,33 @@ class TestPhraseInText:
 
 
 class TestLoneLetters:
-    @pytest.mark.parametrize("text", ["Type-A", "Type A", "TypeA", "type-a"])
-    def test_spaced_and_dashed_forms_are_one_token(self, text: str) -> None:
+    @pytest.mark.parametrize("text", ["Type-A", "TypeA", "type-a", "TYPE-a"])
+    def test_dashed_forms_are_one_token_in_either_case(self, text: str) -> None:
         assert tokenize(text) == ["typea"]
 
     @pytest.mark.parametrize(
         ("phrase", "text", "expected"),
         [
-            ("Type A", "Type-A is used", True),
-            ("Type-A", "Type A is used", True),
-            ("Type A", "Type B is used", False),
+            ("Type-A", "type-a is used", True),
+            ("type-a", "Type-A is used", True),
+            ("Type-A", "Type-B is used", False),
             ("Plan B", "switch to plan B.", True),
             ("vendor", "the contract a vendor signed", True),
             ("C++", "written in C++ and C#", True),
+            # A space before a lone capital is not deleted: the letter is a
+            # word (or an article) of its own, as in lowercase text.
+            ("yes", "Yes I agree with that", True),
+            ("Vitamin A", "low vitamin a levels", True),
+            ("Plan B", "they chose plan b", True),
+            ("Vendor", "the Vendor I contacted", True),
         ],
     )
     def test_matching(self, phrase: str, text: str, expected: bool) -> None:
         assert phrase_in_text(phrase, text) is expected
+
+    def test_a_spaced_lone_capital_stays_its_own_word(self) -> None:
+        assert tokenize("Yes I agree") == ["yes", "i", "agree"]
+        assert tokenize("Vitamin A") == tokenize("vitamin a")
 
     def test_many_dashes_normalize_in_linear_time(self) -> None:
         # Each dash once sliced the whole text: 4,000 dashes in 70 KB took

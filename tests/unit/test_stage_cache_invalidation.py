@@ -347,6 +347,36 @@ class TestFingerprintScope:
         assert fingerprint(identifier="gr-1", version="2", trace=True) == baseline
         assert fingerprint(identifier="gr-1", apply_to="all") != baseline
 
+    def test_target_language_keys_extraction_with_translation_off(self) -> None:
+        def fingerprint(**translation: object) -> str:
+            config = Config.model_validate(
+                {"processing": {"translation": {"enabled": False, **translation}}}
+            )
+            return stage_input_fingerprint(config, PipelineStageType.GRAPH_EXTRACTION)
+
+        assert fingerprint(target_language="ko") != fingerprint()
+        # The translation model is only the (skipped) translator's.
+        assert fingerprint(translation_model_id="amazon.nova-pro") == fingerprint()
+
+    def test_report_entity_cap_shapes_communities_with_reports_off(self) -> None:
+        def fingerprint(**reports: object) -> str:
+            config = Config.model_validate(
+                {
+                    "graph": {
+                        "community_detection": {
+                            "report_generation": {"enabled": False, **reports}
+                        }
+                    }
+                }
+            )
+            return stage_input_fingerprint(
+                config, PipelineStageType.COMMUNITY_DETECTION
+            )
+
+        # Community objects list at most this many entity names.
+        assert fingerprint(max_entities_per_report=5) != fingerprint()
+        assert fingerprint(content_length="long") == fingerprint()
+
     def test_disabled_claim_extraction_settings_are_not_inputs(self) -> None:
         changed = Config()
         changed.processing.claim_extraction.max_entities_per_prompt = 5
