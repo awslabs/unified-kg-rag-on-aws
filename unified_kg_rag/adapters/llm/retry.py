@@ -2,10 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """Bounded exponential-backoff retry of transient backend errors.
 
-The caller says which errors are transient (``is_transient``; for Bedrock,
-``adapters.aws.bedrock_retry.is_transient_bedrock_error``), so validation,
-access-denied and other client errors fail fast. The bounds come from one
-policy, ``aws.bedrock.transient_retry``.
+The caller says which errors are transient (``is_transient``): the language
+model factory's ``is_transient_error`` (``transient_error_predicate``), so
+validation, access-denied and other client errors fail fast. The bounds come
+from one policy, ``aws.bedrock.transient_retry``.
 """
 
 from __future__ import annotations
@@ -28,6 +28,52 @@ _sleep = time.sleep
 T = TypeVar("T")
 
 TransientErrorPredicate = Callable[[BaseException], bool]
+
+# HTTP statuses that resolve on their own: request timeout, rate limit, 5xx.
+_TRANSIENT_HTTP_STATUSES = frozenset({408, 429})
+# Transport-level failures of the HTTP clients the local providers use, matched
+# by class name so this module imports none of them: httpx's TransportError
+# (connect/read/write/pool timeouts, refused or dropped connections) and the
+# OpenAI client's APIConnectionError (and its APITimeoutError subclass).
+_TRANSPORT_ERROR_NAMES = frozenset({"TransportError", "APIConnectionError"})
+
+
+def _http_status(exc: BaseException) -> int | None:
+    status = getattr(exc, "status_code", None)
+    if status is None:
+        status = getattr(getattr(exc, "response", None), "status_code", None)
+    return status if isinstance(status, int) else None
+
+
+def looks_transient(exc: BaseException) -> bool:
+    """Whether ``exc`` looks like a failure a new attempt can get past.
+
+    Network errors and timeouts (the built-in ones, httpx's and the OpenAI
+    client's), and HTTP 408/429/5xx responses — read from ``status_code``
+    (``openai.APIStatusError``, ``ollama.ResponseError``) or
+    ``response.status_code`` (``httpx.HTTPStatusError``). Any other error,
+    including a 4xx such as an unknown model, fails fast.
+    """
+    if isinstance(exc, ConnectionError | TimeoutError):
+        return True
+    status = _http_status(exc)
+    if status is not None:
+        return status in _TRANSIENT_HTTP_STATUSES or 500 <= status < 600
+    return any(cls.__name__ in _TRANSPORT_ERROR_NAMES for cls in type(exc).__mro__)
+
+
+def transient_error_predicate(factory: object) -> TransientErrorPredicate:
+    """The transient-error classifier of a language-model ``factory``.
+
+    The factory's ``is_transient_error`` when it defines one (the Bedrock
+    factory classifies botocore errors, the local ones call
+    :func:`looks_transient`), else :func:`looks_transient`, so a custom
+    backend's network failures are retried without naming its error types.
+    """
+    predicate: TransientErrorPredicate | None = getattr(
+        factory, "is_transient_error", None
+    )
+    return predicate if predicate is not None else looks_transient
 
 
 def _error_code(exc: BaseException) -> str:

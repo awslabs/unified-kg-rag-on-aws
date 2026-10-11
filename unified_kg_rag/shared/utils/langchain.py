@@ -148,8 +148,9 @@ class BatchProcessor(BaseModel):
     )
     is_transient_error: Callable[[BaseException], bool] | None = Field(
         default=None,
-        description="Classifies backend errors worth retrying (e.g. "
-        "adapters.aws.bedrock_retry.is_transient_bedrock_error); other errors "
+        description="Classifies backend errors worth retrying (the ingestion "
+        "stages pass the LLM factory's, adapters.llm.retry."
+        "transient_error_predicate); other errors "
         "fail fast. Output-parse failures and call timeouts are always retried. "
         "None retries every error, for callers that span several backends.",
     )

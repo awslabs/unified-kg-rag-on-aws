@@ -8,11 +8,11 @@ from typing import Any
 import boto3
 from pydantic import BaseModel, Field
 
-from unified_kg_rag.adapters.aws.bedrock_retry import is_transient_bedrock_error
 from unified_kg_rag.adapters.llm.chain_factory import (
     create_robust_xml_output_parser,
     setup_chain,
 )
+from unified_kg_rag.adapters.llm.retry import transient_error_predicate
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.ingestion.base_processor import BaseProcessor
 from unified_kg_rag.domain.ingestion.entity_grounding import is_grounded
@@ -134,7 +134,8 @@ class GraphExtractor(BaseProcessor):
         self.ignore_errors = self.config.processing.ignore_errors
         self.factory = self.providers.llm_factory
         self.batch_processor = BatchProcessor.from_processing(
-            self.config.processing, is_transient_error=is_transient_bedrock_error
+            self.config.processing,
+            is_transient_error=transient_error_predicate(self.factory),
         )
 
         robust_xml_output_parser = create_robust_xml_output_parser(

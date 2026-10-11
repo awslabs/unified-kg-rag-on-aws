@@ -7,8 +7,8 @@ import boto3
 from langchain_core.output_parsers import StrOutputParser
 from pydantic import BaseModel, Field
 
-from unified_kg_rag.adapters.aws.bedrock_retry import is_transient_bedrock_error
 from unified_kg_rag.adapters.llm.chain_factory import setup_chain
+from unified_kg_rag.adapters.llm.retry import transient_error_predicate
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.models import Config, LanguageCode, ModelPurpose, TextUnit
 from unified_kg_rag.domain.prompts import TextTranslationPrompt
@@ -90,7 +90,8 @@ class TextUnitTranslator:
 
         self.factory = self.providers.llm_factory
         self.batch_processor = BatchProcessor.from_processing(
-            self.config.processing, is_transient_error=is_transient_bedrock_error
+            self.config.processing,
+            is_transient_error=transient_error_predicate(self.factory),
         )
 
         self.translator = setup_chain(

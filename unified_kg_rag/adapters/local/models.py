@@ -23,6 +23,7 @@ from typing import Any, ClassVar
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.language_models.chat_models import BaseChatModel
 
+from unified_kg_rag.adapters.llm.retry import looks_transient
 from unified_kg_rag.domain.models import Config, ModelPurpose
 from unified_kg_rag.domain.models.provider_config import (
     EndpointConfig,
@@ -106,6 +107,17 @@ class _LocalLanguageModelFactory:
         self.config = config
         self.settings: LLMProviderConfig = config.providers.llm
         self.transport = transport
+
+    @staticmethod
+    def is_transient_error(exc: BaseException) -> bool:
+        """Whether ``exc`` is worth a retry (the ingestion batch retries).
+
+        Connect/read timeouts and dropped connections (httpx, the OpenAI
+        client) and HTTP 408/429/5xx (``openai.APIStatusError``,
+        ``ollama.ResponseError``). The Ollama client never retries on its own,
+        so these retries are the only ones a local ingestion run gets.
+        """
+        return looks_transient(exc)
 
     def get_model_info(self, model_id: str) -> LanguageModelInfo:
         """Capability record of every model on this server (from config)."""

@@ -284,10 +284,13 @@ class ModelFactoryPort(Protocol[ModelIdT, ModelT, InfoT]):
     ``ModelFactoryPort[str, ChatModel, LanguageModelInfo]`` and get static
     checking, while the concrete narrow factories still conform.
 
-    A language-model factory whose models raise transient errors worth a
-    chain-level retry also defines ``is_transient_error(exc) -> bool`` (the
-    Bedrock factory does); ``setup_chain`` then retries query chains under
-    ``aws.bedrock.transient_retry``.
+    A language-model factory may also define ``is_transient_error(exc) ->
+    bool``, the classifier of its errors worth a retry (the Bedrock factory
+    names botocore's, the local ones network errors and HTTP 408/429/5xx). The
+    ingestion stages' batch retries use it, and without it fall back to
+    ``adapters.llm.retry.looks_transient``. A factory that also defines
+    ``transient_retry`` (the Bedrock one) gets a chain-level retry of query
+    chains from ``setup_chain`` under that policy.
     """
 
     def get_model(self, model_id: ModelIdT, **kwargs: Any) -> ModelT: ...

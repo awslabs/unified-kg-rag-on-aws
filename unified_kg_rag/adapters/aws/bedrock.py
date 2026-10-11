@@ -624,10 +624,9 @@ class BedrockLanguageModelFactory(
     def _get_boto_service_name(self) -> str:
         return "bedrock-runtime"
 
-    @staticmethod
-    def is_transient_error(exc: BaseException) -> bool:
-        """Whether ``exc`` is worth a retry (query chains, ``setup_chain``)."""
-        return is_transient_bedrock_error(exc)
+    # Whether an error is worth a retry: the ingestion batch retries and the
+    # query-chain retry of ``setup_chain``.
+    is_transient_error = staticmethod(is_transient_bedrock_error)
 
     @property
     def transient_retry(self) -> TransientRetryConfig:

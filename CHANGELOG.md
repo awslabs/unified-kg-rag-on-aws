@@ -272,6 +272,12 @@ Library API (Python callers and custom backends).
 - Clearing a Neptune label stops after a bounded number of delete requests
   and raises instead of looping when the requests keep reporting full
   batches (#220).
+- Local mode: the ingestion stages retry the local model servers' transient
+  failures (connect and read timeouts, dropped connections, HTTP 408/429/5xx
+  from the OpenAI-compatible and Ollama clients) instead of failing the item
+  on the first one; they take the classifier from the LLM factory
+  (`is_transient_error`), and a factory without one gets these network and
+  server errors retried (#PR).
 - Parsing: the LLM XML parser keeps `&`, `<`, repeated siblings and
   sections with a missing closing tag; truncated responses fail instead of
   parsing as partial successes (#165, #174, #182, #213).
