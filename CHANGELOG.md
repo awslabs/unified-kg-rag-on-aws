@@ -333,11 +333,6 @@ Library API (Python callers and custom backends).
   authorized against the listed models). The README documents both, and
   its cross-region guardrail example now sets `network_mode=public`, which
   a `bedrock_region` other than the deploy region requires (#227).
-- An incremental run that an artifact stage stops before indexing (every
-  text unit of a document failing extraction, without `--continue-on-error`)
-  records its new and changed documents FAILED, so
-  `indexing.max_document_failures` ends the retries of a document that always
-  fails; before, nothing was recorded and every run retried it (#227).
 - `run-prompt-tuning` no longer puts up to 200 characters of model output in
   the ERROR it logs when the corpus profile is not JSON: the message carries
   the output's length and digest, and the output itself is logged at DEBUG,

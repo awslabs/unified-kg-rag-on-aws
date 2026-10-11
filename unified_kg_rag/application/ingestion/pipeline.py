@@ -15,9 +15,6 @@ from structlog.contextvars import bind_contextvars, reset_contextvars
 from unified_kg_rag.adapters.ingestion.parser import ParserFactory
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.application.bootstrap import build_providers
-from unified_kg_rag.application.ingestion.incremental import (
-    record_stopped_run_failed,
-)
 from unified_kg_rag.application.ingestion.pipeline_stages import (
     ClaimExtractionStage,
     ClaimResolutionStage,
@@ -855,7 +852,6 @@ class DataIngestionPipeline:
                         "Pipeline execution stopped due to stage failure: '%s'",
                         stage.name,
                     )
-                    self._record_stopped_run_failed(stage, context)
                     break
 
     def _start_index(self, start_stage_name: str | None) -> int:
@@ -962,47 +958,6 @@ class DataIngestionPipeline:
                 stage.name,
                 len(units),
             )
-
-    def _record_stopped_run_failed(
-        self, stage: PipelineStage, context: PipelineContext
-    ) -> None:
-        """Record the delta's documents FAILED when an artifact stage stops
-        the run, so ``indexing.max_document_failures`` also bounds documents
-        that always crash a stage (see ``record_stopped_run_failed``).
-
-        Best-effort: the run has already failed, and a registry that cannot
-        be written only leaves the records as they were.
-        """
-        if (
-            self.name_to_type_map.get(stage.name) not in self.ARTIFACT_STAGES
-            or context.incremental_delta is None
-            or self.config.indexing.reset
-            or not self.providers.doc_status_enabled
-        ):
-            return
-        try:
-            record_stopped_run_failed(
-                self._doc_status_store(),
-                context,
-                context.translated_units or context.text_units or [],
-                stage.name,
-            )
-        except Exception as e:  # noqa: BLE001 - the run already failed
-            logger.error(
-                "Could not record the documents of failed stage '%s' in the "
-                "doc-status registry: %s",
-                stage.name,
-                e,
-            )
-
-    def _doc_status_store(self) -> DocStatusPort:
-        """The registry the stages were given, or a new one (a phased run
-        whose window holds neither the loading nor the indexing stage)."""
-        for stage in self.stages:
-            if isinstance(stage, DocumentLoadingStage | IndexingStage):
-                if stage._doc_status is not None:
-                    return stage._doc_status
-        return self.providers.build_doc_status()
 
     def _run_stage(
         self, stage: PipelineStage, context: PipelineContext
