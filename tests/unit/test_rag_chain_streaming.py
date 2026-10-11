@@ -28,7 +28,6 @@ from unified_kg_rag.application.retrieval.rag_chain import (
 )
 from unified_kg_rag.domain.models import (
     Config,
-    MessageRole,
     RetrievalResult,
     RetrieverRole,
     SearchQuery,
@@ -90,21 +89,16 @@ class _FakeRetriever:
         ]
 
 
-class _FakeMemory:
-    def load_memory_variables(self, _inputs: dict[str, Any]) -> dict[str, Any]:
-        return {"history": "", "relevant_entities": []}
-
-
 class _RecordingMemoryManager:
     def __init__(self) -> None:
-        self.messages: list[tuple[str, MessageRole, str]] = []
+        self.messages: list[tuple[str, str, str]] = []
 
-    async def get_langchain_memory(self, conv_id: str, **_: Any) -> _FakeMemory:
-        return _FakeMemory()
+    async def load_context(self, conv_id: str) -> tuple[str, list[str]]:
+        return "", []
 
     async def add_turn(self, conv_id: str, user: str, assistant: str, **_: Any) -> None:
-        self.messages.append((conv_id, MessageRole.USER, user))
-        self.messages.append((conv_id, MessageRole.ASSISTANT, assistant))
+        self.messages.append((conv_id, "user", user))
+        self.messages.append((conv_id, "assistant", assistant))
 
 
 def _make_chain(
@@ -193,8 +187,8 @@ async def test_astream_saves_full_answer_to_memory(config: Config) -> None:
 
     assert "".join(chunks) == _ANSWER
     assert memory.messages == [
-        ("conv-stream-1", MessageRole.USER, "What does Vendor supply to Buyer?"),
-        ("conv-stream-1", MessageRole.ASSISTANT, _ANSWER),
+        ("conv-stream-1", "user", "What does Vendor supply to Buyer?"),
+        ("conv-stream-1", "assistant", _ANSWER),
     ]
 
 

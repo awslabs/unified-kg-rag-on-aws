@@ -5,9 +5,8 @@
 ``GraphRAGChatMessageHistory.__init__`` obtains a boto3 Session and a
 ``BedrockLanguageModelFactory`` (through its ``Providers`` bundle) and builds an
 entity-extraction chain. All three are
-patched out so the message buffering, entity-context tracking, trimming, the
-LangChain ``GraphRAGConversationBufferMemory`` glue, and the async
-``MemoryManager`` capacity/eviction logic can be exercised without AWS or a
+patched out so the message buffering, entity-context tracking, trimming, and the
+async ``MemoryManager`` capacity/eviction logic can be exercised without AWS or a
 network.
 """
 
@@ -20,7 +19,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 
 from unified_kg_rag.adapters import providers as providers_module
 from unified_kg_rag.adapters.retrieval import memory_manager as mm
-from unified_kg_rag.domain.models import Config, MessageRole
+from unified_kg_rag.domain.models import Config
 
 pytestmark = pytest.mark.unit
 
@@ -62,12 +61,6 @@ def test_add_message_buffers_and_updates_timestamp(patched_history) -> None:
     assert history.updated_at >= before
 
 
-def test_add_messages_appends_all(patched_history) -> None:
-    history = patched_history()
-    history.add_messages([HumanMessage(content="a"), AIMessage(content="b")])
-    assert [m.content for m in history.messages] == ["a", "b"]
-
-
 def test_add_message_trims_to_max(patched_history) -> None:
     history = patched_history(max_messages=3)
     for i in range(5):
@@ -80,9 +73,17 @@ def test_human_message_populates_entity_context(patched_history) -> None:
     history = patched_history()
     history.add_message(HumanMessage(content="Tell me about Alice and Bob"))
     assert history.get_relevant_entities() == ["Alice", "Bob"]
-    summary = history.get_context_summary()
-    assert "Alice" in summary and "Bob" in summary
-    assert "Focused on" in summary
+
+
+def test_relevant_entities_are_the_most_recent(patched_history) -> None:
+    # Entities are kept newest first, so a follow-up focuses on what was just
+    # discussed, not on whichever names sort first alphabetically.
+    history = patched_history(n_entities=3)
+    history.record_entities(["Alpha", "Beta"])
+    history.record_entities(["Zulu", "Alpha"])
+    assert history.get_relevant_entities() == ["Zulu", "Alpha", "Beta"]
+    history.record_entities(["Yankee", "Xray"])
+    assert history.get_relevant_entities() == ["Yankee", "Xray", "Zulu"]
 
 
 def test_ai_message_does_not_trigger_extraction(patched_history) -> None:
@@ -108,12 +109,10 @@ def test_entity_extraction_failure_is_swallowed(patched_history) -> None:
     assert history.get_relevant_entities() == []
 
 
-def test_n_entities_limits_focused_and_relevant(patched_history) -> None:
+def test_n_entities_limits_relevant(patched_history) -> None:
     patched_history.extractor.invoke.return_value = ["A", "B", "C", "D", "E", "F"]
     history = patched_history(n_entities=2)
     history.add_message(HumanMessage(content="many entities"))
-    # focused_entities capped at n_entities.
-    assert len(history._context.focused_entities) == 2
     assert history.get_relevant_entities() == ["A", "B"]
 
 
@@ -123,92 +122,13 @@ def test_clear_resets_messages_and_context(patched_history) -> None:
     history.clear()
     assert history.messages == []
     assert history.get_relevant_entities() == []
-    assert history.get_context_summary() == "New Conversation"
 
 
-def test_get_context_summary_empty_is_new_conversation(patched_history) -> None:
-    history = patched_history()
-    assert history.get_context_summary() == "New Conversation"
-
-
-# --- GraphRAGConversationBufferMemory ------------------------------------
-
-
-def test_buffer_returns_formatted_string_by_default(patched_history) -> None:
-    history = patched_history()
-    history.add_messages([HumanMessage(content="hi"), AIMessage(content="hello")])
-    memory = mm.GraphRAGConversationBufferMemory(chat_memory=history)
-    buf = memory.buffer
-    assert isinstance(buf, str)
-    assert "Human: hi" in buf
-    assert "AI: hello" in buf
-
-
-def test_buffer_returns_messages_when_return_messages(patched_history) -> None:
+def test_buffer_string_formats_the_conversation(patched_history) -> None:
     history = patched_history()
     history.add_message(HumanMessage(content="hi"))
-    memory = mm.GraphRAGConversationBufferMemory(
-        chat_memory=history, return_messages=True
-    )
-    assert memory.buffer == [HumanMessage(content="hi")]
-
-
-def test_memory_variables_include_entity_context_keys(patched_history) -> None:
-    history = patched_history()
-    memory = mm.GraphRAGConversationBufferMemory(chat_memory=history)
-    assert memory.memory_variables == [
-        "history",
-        "relevant_entities",
-        "conversation_context",
-    ]
-
-
-def test_memory_variables_omit_entity_context_when_disabled(patched_history) -> None:
-    history = patched_history()
-    memory = mm.GraphRAGConversationBufferMemory(
-        chat_memory=history, include_entity_context=False
-    )
-    assert memory.memory_variables == ["history"]
-
-
-def test_load_memory_variables_populates_entities(patched_history) -> None:
-    history = patched_history()
-    history.add_message(HumanMessage(content="about Alice and Bob"))
-    memory = mm.GraphRAGConversationBufferMemory(chat_memory=history)
-    mem = memory.load_memory_variables({})
-    assert mem["relevant_entities"] == ["Alice", "Bob"]
-    assert "Alice" in mem["conversation_context"]
-    assert "history" in mem
-
-
-def test_save_context_adds_human_and_ai_messages(patched_history) -> None:
-    history = patched_history()
-    memory = mm.GraphRAGConversationBufferMemory(chat_memory=history)
-    memory.save_context({"input": "q"}, {"output": "a"})
-    kinds = [type(m).__name__ for m in history.messages]
-    assert kinds == ["HumanMessage", "AIMessage"]
-
-
-def test_memory_clear_delegates_to_history(patched_history) -> None:
-    history = patched_history()
-    history.add_message(HumanMessage(content="x"))
-    memory = mm.GraphRAGConversationBufferMemory(chat_memory=history)
-    memory.clear()
-    assert history.messages == []
-
-
-def test_get_input_prefers_input_then_query() -> None:
-    assert mm.GraphRAGConversationBufferMemory._get_input({"input": "i"}) == "i"
-    assert mm.GraphRAGConversationBufferMemory._get_input({"query": "q"}) == "q"
-    # Falls back to str(dict) when neither present.
-    assert "k" in mm.GraphRAGConversationBufferMemory._get_input({"k": "v"})
-
-
-def test_get_output_prefers_output_answer_text() -> None:
-    g = mm.GraphRAGConversationBufferMemory
-    assert g._get_output({"output": "o"}) == "o"
-    assert g._get_output({"answer": "a"}) == "a"
-    assert g._get_output({"text": "t"}) == "t"
+    history.add_message(AIMessage(content="hello"))
+    assert history.get_buffer_string() == "Human: hi\nAI: hello"
 
 
 # --- MemoryManager (async) -----------------------------------------------
@@ -267,22 +187,6 @@ async def test_get_or_create_memory_expires_idle_conversations(
     assert manager._memories["fresh"] is fresh
 
 
-def test_add_message_maps_roles(patched_history) -> None:
-    import asyncio
-
-    manager = mm.MemoryManager(config=Config())
-
-    async def scenario():
-        await manager.add_message("c1", MessageRole.USER, "u")
-        await manager.add_message("c1", MessageRole.ASSISTANT, "a")
-        await manager.add_message("c1", MessageRole.SYSTEM, "s")
-        history = await manager.get_or_create_memory("c1")
-        return [type(m).__name__ for m in history.messages]
-
-    kinds = asyncio.run(scenario())
-    assert kinds == ["HumanMessage", "AIMessage", "SystemMessage"]
-
-
 def test_cleanup_oldest_no_op_for_nonpositive(patched_history) -> None:
     import asyncio
 
@@ -296,13 +200,14 @@ def test_cleanup_oldest_no_op_for_nonpositive(patched_history) -> None:
     assert asyncio.run(scenario()) == ["a"]
 
 
-def test_get_langchain_memory_wraps_history(patched_history) -> None:
-    import asyncio
-
+async def test_load_context_returns_history_and_entities(patched_history) -> None:
     manager = mm.MemoryManager(config=Config())
-    memory = asyncio.run(manager.get_langchain_memory("c1", return_messages=True))
-    assert isinstance(memory, mm.GraphRAGConversationBufferMemory)
-    assert memory.return_messages is True
+    await manager.add_turn("c1", "about Vendor", "an answer", entities=["Vendor"])
+
+    history, entities = await manager.load_context("c1")
+
+    assert history == "Human: about Vendor\nAI: an answer"
+    assert entities == ["Vendor"]
 
 
 def test_get_memory_manager_is_singleton(patched_history, mocker) -> None:
@@ -333,15 +238,13 @@ def test_conversations_share_one_entity_extractor(patched_history, mocker) -> No
     assert setup.call_count == 1  # type: ignore[attr-defined]
 
 
-def test_add_message_with_known_entities_skips_the_llm(patched_history) -> None:
+def test_add_turn_with_known_entities_skips_the_llm(patched_history) -> None:
     import asyncio
 
     manager = mm.MemoryManager(config=Config())
 
     async def scenario():
-        await manager.add_message(
-            "c1", MessageRole.USER, "about Vendor", entities=["Vendor", " "]
-        )
+        await manager.add_turn("c1", "about Vendor", "a", entities=["Vendor", " "])
         return await manager.get_or_create_memory("c1")
 
     history = asyncio.run(scenario())

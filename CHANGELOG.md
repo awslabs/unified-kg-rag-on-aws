@@ -590,6 +590,12 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   `DocumentElement.coordinates`/`base64_encoding`. Cached stage outputs and
   exported data that still carry them load unchanged (the keys are ignored)
   (#169).
+- `GraphRAGConversationBufferMemory` (a deprecated `langchain_classic` memory
+  used only to read the history), `MemoryManager.get_langchain_memory` and
+  `MemoryManager.add_message` (use `load_context` and `add_turn`),
+  `GraphRAGChatMessageHistory.get_context_summary` and `add_messages`, and the
+  `MessageRole` and `ConversationContext` models, which nothing outside the
+  memory read. **Breaking** for code that used them (#PR).
 
 ### Fixed
 - `interactive_graph.html` centres the layout and scales it to a fixed canvas
@@ -1729,6 +1735,10 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   passed as "no keywords" even with `ignore_errors: false`; these now raise
   `LanguageModelError` (or degrade to no keywords when errors are ignored)
   (#160).
+- Conversation memory added the five alphabetically first entities of the
+  whole conversation to every follow-up's entity focus, so later turns kept
+  retrieving around old entities. It now keeps the most recently mentioned
+  ones, newest first (#PR).
 
 ### Security
 - The task role drops the unused `neptune-db:GetEngineStatus`,

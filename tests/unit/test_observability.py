@@ -449,7 +449,7 @@ class _FakeModelFactory:
 
 
 class _FakeMemoryManager:
-    async def get_langchain_memory(self, conv_id: str, **_: Any) -> Any:
+    async def load_context(self, conv_id: str) -> tuple[str, list[str]]:
         raise AssertionError("memory is off in these queries")
 
     async def add_turn(self, *args: Any, **kwargs: Any) -> None:

@@ -23,7 +23,6 @@ from .config import (
     S3EncryptionType,
     model_id_value,
 )
-from .conversation import ConversationContext, MessageRole
 from .covariate import Claim, Covariate
 from .document import (
     PENDING_CONTENT_HASH,
@@ -85,7 +84,6 @@ __all__ = [
     "Config",
     "Constants",
     "Covariate",
-    "ConversationContext",
     "DocStatus",
     "DocStatusRecord",
     "Document",
@@ -111,7 +109,6 @@ __all__ = [
     "LanguageModelId",
     "LoggingConfig",
     "ModelPurpose",
-    "MessageRole",
     "Named",
     "ObservabilityBackend",
     "ObservabilityConfig",

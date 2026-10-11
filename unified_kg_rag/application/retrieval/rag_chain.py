@@ -736,9 +736,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             state["relevant_entities"] = []
             return state
 
-        memory = await self.memory_manager.get_langchain_memory(cid)
-        memory_variables = memory.load_memory_variables(state)
-        state.update(memory_variables)
+        history, entities = await self.memory_manager.load_context(cid)
+        state["history"] = history
+        state["relevant_entities"] = entities
         return state
 
     async def _search_step(
