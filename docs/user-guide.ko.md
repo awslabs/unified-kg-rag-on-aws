@@ -548,7 +548,7 @@ LLM 단계는 Bedrock I/O가 병목이므로 동시성을 CPU 수보다 훨씬 �
 | `search.global_search.reduce_with_llm` | `false` | `true`이면 reduce LLM이 묶은 핵심 내용을 먼저 요약하고 답변 모델이 이를 다시 씁니다(LLM 호출 1회 추가). `false`이면 핵심 내용을 답변 모델에 바로 넘깁니다. |
 | `search.global_search.reserve_report_slots` | `true` | 융합 슬롯 `max_communities`개를 커뮤니티 리포트용으로 예약하고, 텍스트 단위는 `text_unit_slots`개로 제한합니다. `false`이면 리포트와 청크를 한 번의 `top_k` 기준으로 자릅니다. |
 | `search.global_search.text_unit_slots` | `null` | 예약한 리포트 슬롯과 함께 두는 텍스트 단위 슬롯 수입니다. `null`이면 질의의 `top_k`입니다. |
-| `search.local_search.entity_frequency_threshold` | `20` | 그래프 확장으로 얻은 엔티티 중 이보다 많은 텍스트 단위에 나오는 것(너무 일반적인 것)을 버립니다. |
+| `search.local_search.entity_frequency_threshold` | `20` | 그래프 확장으로 얻은 엔티티 중 이보다 많은 텍스트 단위에 나오는 것(너무 일반적인 것)을 버립니다. 질의가 직접 찾은 엔티티는 항상 남깁니다. |
 | `search.local_search.include_bridge_relationships` | `true` | 확장된 엔티티에 연결된 관계도 가져오며, 검색된 두 엔티티를 잇는 간선(다중 홉 연결)을 먼저 둡니다. 관계 인덱스가 필요합니다. `false`이면 관계 벡터 질의만 씁니다. |
 | `search.drift_search.max_iterations` | `3` | DRIFT 반복 횟수 상한입니다. |
 | `search.drift_search.enable_primer` | `false` | MS GraphRAG의 primer → follow-up 흐름을 씁니다(처음에 LLM 호출 1회 추가). |

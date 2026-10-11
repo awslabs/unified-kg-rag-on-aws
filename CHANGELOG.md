@@ -251,6 +251,9 @@ Library API (Python callers and custom backends).
   high-degree neighbours no longer push the query's own seed entities out of
   the cut; the seeds are always kept and the neighbourhood gets its own
   `top_k * retrieval_multiplier` slots (#PR).
+- Local search: the entity frequency filter no longer drops the query's own
+  matched entities, so a hub-heavy graph cannot leave the context with no
+  entities; only expanded entities above the threshold are dropped (#PR).
 - Evaluation: `answer_match` no longer counts a different number or name as
   a match; judge failures are recorded per query instead of discarding the
   run; non-zero exit codes on failed scoring (#158, #210).

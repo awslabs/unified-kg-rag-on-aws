@@ -574,7 +574,7 @@ LLM stages are Bedrock-I/O-bound, so concurrency can far exceed the CPU count.
 | `search.global_search.reduce_with_llm` | `false` | `true` = a reduce LLM summarizes the packed key points before the answer model rewrites them (one extra LLM call). `false` passes the points straight to the answer model. |
 | `search.global_search.reserve_report_slots` | `true` | Reserve `max_communities` fusion slots for community reports and cap their text units at `text_unit_slots`. `false` = one flat `top_k` cut over reports and chunks. |
 | `search.global_search.text_unit_slots` | `null` | Text-unit slots next to the reserved report slots; `null` = the query's `top_k`. |
-| `search.local_search.entity_frequency_threshold` | `20` | Drop graph-expanded entities that appear in more text units than this (too generic). |
+| `search.local_search.entity_frequency_threshold` | `20` | Drop graph-expanded entities that appear in more text units than this (too generic). The query's own matched entities are always kept. |
 | `search.local_search.include_bridge_relationships` | `true` | Also fetch relationships incident to the expanded entities, edges between two retrieved entities first (multi-hop bridges). Needs the relationship index. `false` = relationship vector query only. |
 | `search.drift_search.max_iterations` | `3` | DRIFT iteration budget. |
 | `search.drift_search.enable_primer` | `false` | MS GraphRAG primer → follow-up flow (one extra LLM call up front). |

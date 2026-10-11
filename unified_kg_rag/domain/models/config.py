@@ -2056,7 +2056,9 @@ class LocalSearchConfig(BaseModel):
         default=20,
         ge=1,
         description="Drop graph-expanded entities appearing in more than this "
-        "many text units (too generic to be discriminative for local search).",
+        "many text units (too generic to be discriminative for local search) "
+        "from the context and the text-unit fan-out. The query's own matched "
+        "(seed) entities are always kept.",
     )
     type_quota: LocalSearchQuotaConfig = Field(
         default_factory=LocalSearchQuotaConfig,

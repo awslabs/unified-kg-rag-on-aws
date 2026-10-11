@@ -763,7 +763,8 @@ search:
 
   local_search:
     # Drop graph-expanded entities appearing in more than this many text units
-    # (too generic to be discriminative for local search).
+    # (too generic to be discriminative for local search). The query's own
+    # matched (seed) entities are always kept.
     entity_frequency_threshold: 20
     # Also fetch the relationships incident to the graph-expanded entities,
     # edges between two retrieved entities first (needs the relationship
