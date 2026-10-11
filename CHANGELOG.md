@@ -411,7 +411,7 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   (search strategies drawn inside `domain/`, LightRAG graph expansion shown
   as always on, incremental merges by name only); the Mermaid diagrams in the
   Design Doc replace them. `CLAUDE.md` now points to Design Doc §15 for
-  extension recipes instead of repeating them (#PR).
+  extension recipes instead of repeating them (#205).
 
 ### Deprecated
 - `search.llm_retry`; use `aws.bedrock.transient_retry` (#120).
