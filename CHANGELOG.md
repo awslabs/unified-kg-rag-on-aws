@@ -254,12 +254,12 @@ Library API (Python callers and custom backends).
 
 ### Fixed
 - `run-rag` starts again: it passed `enable_thinking` to `GraphRAGChain`, which no
-  longer accepts unknown keywords (the flag reaches `RAGInput`) (#PR).
+  longer accepts unknown keywords (the flag reaches `RAGInput`) (#222).
 - Answer matching keeps a dash next to a lone letter ("Type-A" no longer
   matches "Type-B"); the follow-up rewrite's refusal guard no longer discards
   rewritten questions that start with "I can't…" or "Sorry, …" and catches
   curly-apostrophe refusals; `DataIngestionPipeline`, the chunkers and the
-  LangChain/RAGAS evaluators reject a `boto_session` they would have ignored (#PR).
+  LangChain/RAGAS evaluators reject a `boto_session` they would have ignored (#222).
 - Incremental indexing: shared artifacts are stripped instead of deleted or
   left citing removed text units; interrupted runs are repaired on the next
   run; resets and deletions no longer touch other index namespaces or
