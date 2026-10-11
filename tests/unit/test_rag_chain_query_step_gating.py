@@ -175,9 +175,30 @@ async def test_keywords_use_translated_query_when_translating(config: Config) ->
     )
     keyword_inputs = [i for cls, i in factory.calls if cls is KeywordsExtractionPrompt]
     assert keyword_inputs == [
-        {"query": "What does the Vendor owe the Buyer?", "target_language": "en"}
+        {"query": "What does the Vendor owe the Buyer?", "target_language": "English"}
     ]
     assert processed.ll_keywords == ["Vendor"]
+
+
+@pytest.mark.parametrize(
+    ("requested", "expected"),
+    [(None, "English"), ("ko", "Korean"), ("JA", "Japanese"), ("Klingon", "Klingon")],
+)
+async def test_prompts_get_language_names_not_codes(
+    same_language_config: Config, requested: str | None, expected: str
+) -> None:
+    # A LanguageCode formats as "LanguageCode.EN" in a prompt template.
+    factory = _FakeFactory(translation="translated")
+    chain = _chain_with(same_language_config, factory)
+    await chain._process_query_step(
+        {
+            "query": "q",
+            "target_language": requested,
+            "resolved_strategy": SearchStrategy.LOCAL,
+        }
+    )
+    languages = {inputs["target_language"] for _, inputs in factory.calls}
+    assert languages == {expected}
 
 
 async def test_keyword_failure_propagates_without_ignore_errors(

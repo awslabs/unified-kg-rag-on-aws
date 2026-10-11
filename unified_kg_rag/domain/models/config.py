@@ -83,6 +83,36 @@ class LanguageCode(str, Enum):
     ZH = "zh"
 
 
+_LANGUAGE_NAMES: dict[LanguageCode, str] = {
+    LanguageCode.DE: "German",
+    LanguageCode.EN: "English",
+    LanguageCode.ES: "Spanish",
+    LanguageCode.FR: "French",
+    LanguageCode.IT: "Italian",
+    LanguageCode.JA: "Japanese",
+    LanguageCode.KO: "Korean",
+    LanguageCode.PT: "Portuguese",
+    LanguageCode.RU: "Russian",
+    LanguageCode.ZH: "Chinese",
+}
+
+
+def language_name(language: str) -> str:
+    """The language as prompts name it: ``"ko"`` -> ``"Korean"``.
+
+    A ``LanguageCode`` formats as ``LanguageCode.KO`` in a prompt template and
+    a bare code is easy to misread, so prompts get the English name. Text that
+    is not a supported code (e.g. a caller's ``"Brazilian Portuguese"``) is
+    returned as given.
+    """
+    if isinstance(language, LanguageCode):
+        return _LANGUAGE_NAMES[language]
+    try:
+        return _LANGUAGE_NAMES[LanguageCode(language.strip().lower())]
+    except ValueError:
+        return language
+
+
 class ResolutionMethod(str, Enum):
     MINHASH = "minhash"
     SEQUENCE_MATCHER = "sequence_matcher"

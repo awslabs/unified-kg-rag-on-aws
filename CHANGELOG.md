@@ -1790,6 +1790,12 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   seed community reports, so it expanded from report titles. It now receives
   entity names from the newest iteration's results first
   (`search.drift_search.n_entities` of them) (#PR).
+- Query-side prompts (entity extraction, translation, keyword extraction and
+  the conversation entity extraction) received the target language as
+  `LanguageCode.EN`, the enum's string form, while DRIFT and global search
+  passed the bare code (`en`). Every retrieval prompt now gets the language
+  name (`English`, `Korean`, ...); a `RAGInput.target_language` that is not a
+  supported code is passed as given (#PR).
 
 ### Security
 - The task role drops the unused `neptune-db:GetEngineStatus`,

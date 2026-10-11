@@ -15,7 +15,7 @@ from langchain_core.runnables import Runnable
 
 from unified_kg_rag.adapters.aws.chain_factory import setup_chain
 from unified_kg_rag.adapters.providers import Providers
-from unified_kg_rag.domain.models import Config
+from unified_kg_rag.domain.models import Config, language_name
 from unified_kg_rag.domain.prompts import EntityExtractionPrompt
 from unified_kg_rag.shared import get_config, get_logger
 
@@ -107,7 +107,9 @@ class GraphRAGChatMessageHistory(BaseChatMessageHistory):
             result = self.entity_extractor.invoke(
                 {
                     "query": message.content,
-                    "target_language": self.config.processing.translation.target_language,
+                    "target_language": language_name(
+                        self.config.processing.translation.target_language
+                    ),
                 }
             )
             # CommaSeparatedListOutputParser yields a list[str]; the previous

@@ -24,6 +24,7 @@ from unified_kg_rag.domain.models import (
     SearchQuery,
     SearchResult,
     SearchStrategy,
+    language_name,
 )
 from unified_kg_rag.domain.prompts import (
     ConvergenceAssessmentPrompt,
@@ -60,7 +61,9 @@ class DriftSearchStrategy(BaseSearchStrategy):
         self.ignore_errors = config.processing.ignore_errors
         # Keyword expansion / query refinement must produce terms in the corpus
         # language so they hit the language-analyzed index (not English-biased).
-        self.target_language = config.processing.translation.target_language.value
+        self.target_language = language_name(
+            config.processing.translation.target_language
+        )
 
         factory = self.providers.llm_factory
 

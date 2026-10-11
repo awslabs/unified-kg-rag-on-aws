@@ -21,6 +21,7 @@ from .config import (
     RerankModelId,
     ResolutionMethod,
     S3EncryptionType,
+    language_name,
     model_id_value,
 )
 from .covariate import Claim, Covariate
@@ -106,6 +107,7 @@ __all__ = [
     "FusionMethod",
     "Identified",
     "LanguageCode",
+    "language_name",
     "LanguageModelId",
     "LoggingConfig",
     "ModelPurpose",

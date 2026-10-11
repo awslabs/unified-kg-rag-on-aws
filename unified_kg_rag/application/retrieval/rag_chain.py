@@ -66,6 +66,7 @@ from unified_kg_rag.domain.models import (
     SearchResult,
     SearchStrategy,
     SearchType,
+    language_name,
 )
 from unified_kg_rag.domain.models.config import SearchConfig
 from unified_kg_rag.domain.prompts import (
@@ -522,7 +523,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
 
         try:
             requested_language = inputs.get("target_language")
-            target_language = (
+            target_language = language_name(
                 requested_language or self.config.processing.translation.target_language
             )
 
@@ -687,7 +688,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
     async def _extract_dual_keywords(
         self,
         query: str,
-        target_language: Any,
+        target_language: str,
         config: RunnableConfig | None = None,
     ) -> tuple[list[str], list[str]]:
         """Extract LightRAG high/low-level keywords as two lists.
