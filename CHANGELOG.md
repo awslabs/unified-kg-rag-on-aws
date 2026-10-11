@@ -580,6 +580,10 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   `--top-k` and `--retrieval-multiplier` below 1 now fail at parse time (#212).
 
 ### Removed
+- **Breaking** (import path): `unified_kg_rag.ports.CachePort`
+  (`ports/cache.py`). It had one implementation, no injection point, and
+  `S3CacheManager` did not conform to it; the pipeline uses
+  `shared.cache_manager.CacheManager` directly (#PR).
 - Fields and helpers that were never set or only tests read:
   `CommunityReport.summary_embedding` / `full_content_embedding` (always
   null; the indexer embeds the report itself), `PipelineStageResult.cache_path`,

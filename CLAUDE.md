@@ -19,7 +19,7 @@ ports → domain`, with `shared` as a cross-cutting kernel any layer may use.
   imports every domain module in a clean interpreter and checks
   `sys.modules`).
 - **`ports/`**: the abstract interfaces the domain depends on — `DocStatusPort`,
-  `CachePort`, `ModelFactoryPort`/`TokenCounterPort` (`Protocol`s) and the
+  `ModelFactoryPort`/`TokenCounterPort` (`Protocol`s) and the
   write-side indexer ABCs `BaseIndexer`/`GraphIndexer`/`VectorIndexer`
   (+ `IndexingStats`). `ports/__init__` is the port catalog. The
   retrieval/evaluation abstract bases are *adapter bases* (they construct infra

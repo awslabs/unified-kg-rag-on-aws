@@ -21,8 +21,6 @@ Catalog:
 - ``TokenCounterPort`` — token counting/truncation for one model (``Protocol``;
   ``adapters.aws.token_counter.BedrockTokenCounter`` and
   ``adapters.local.token_counter.LocalTokenCounter`` conform structurally).
-- ``CachePort`` — the stage-result persistence boundary (``Protocol``; the
-  filesystem ``CacheManager`` in ``shared.cache_manager`` conforms structurally).
 
 Two further contracts are abstract *adapter bases* rather than pure ports —
 they construct infrastructure in ``__init__`` (HybridScorer/TokenManager) — so
@@ -33,7 +31,6 @@ imported from there directly. Listed here only as a pointer:
 - ``BaseGraphRAGEvaluator`` (``adapters.evaluators.base``).
 """
 
-from unified_kg_rag.ports.cache import CachePort
 from unified_kg_rag.ports.doc_status import DocStatusPort
 from unified_kg_rag.ports.indexer import (
     BaseIndexer,
@@ -51,7 +48,6 @@ from unified_kg_rag.ports.model_factory import (
 
 __all__ = [
     "BaseIndexer",
-    "CachePort",
     "DocStatusPort",
     "EmbeddingFactoryPort",
     "GraphIndexer",
