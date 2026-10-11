@@ -15,6 +15,7 @@ import argparse
 
 from unified_kg_rag.application.bootstrap import with_provider_overrides
 from unified_kg_rag.domain.models import Backend, Config
+from unified_kg_rag.shared.config import resolve_relative_paths
 
 
 def add_provider_arguments(parser: argparse.ArgumentParser) -> None:
@@ -73,8 +74,13 @@ def add_provider_arguments(parser: argparse.ArgumentParser) -> None:
 
 
 def apply_provider_arguments(config: Config, args: argparse.Namespace) -> Config:
-    """``config`` with the provider flags in ``args`` applied."""
-    return with_provider_overrides(
+    """``config`` with the provider flags in ``args`` applied.
+
+    A relative SQLite registry path the flags bring in (``--backend local``
+    over a config file of another backend) is resolved against the config
+    file's directory, like one the file sets.
+    """
+    updated = with_provider_overrides(
         config,
         backend=getattr(args, "backend", None),
         llm_kind=getattr(args, "llm_provider", None),
@@ -85,3 +91,7 @@ def apply_provider_arguments(config: Config, args: argparse.Namespace) -> Config
         rerank_kind=getattr(args, "rerank_provider", None),
         base_url=getattr(args, "model_base_url", None),
     )
+    config_path = getattr(args, "config_path", None)
+    if updated is not config and config_path:
+        resolve_relative_paths(updated, config_path)
+    return updated

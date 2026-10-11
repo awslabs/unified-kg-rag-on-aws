@@ -334,7 +334,7 @@ Neptune graph expansion is part of `local` and `drift`; for `mix`/`hybrid` it is
 - **local**: Entity-centric — candidate entities → Neptune graph expansion → frequency filter → text-unit combination, enriched with a **community-report section** and a **relationship section** (like MS GraphRAG local search, which assembles entities + their community reports + in-network relationships + text units). `_retrieve_community_reports` and `_retrieve_relationships` query those indices with the entity focus (falling back to the raw query); the relationship section is gated on `build_relationship_vector_index` so a GraphRAG-only deployment that skips the relationship vector index issues no relationship lookup. If claim extraction is enabled, it **injects claims (covariates) into the context** like MS GraphRAG (`_retrieve_claims` queries the claims index separately and adds them as `all_results["claims"]`, folded into the token budget at `SectionType.CLAIM` priority). The default claims-off path performs no additional lookups at all. The community-report, relationship and claim lookups run concurrently with the entity → expansion → text-unit chain. With `search.local_search.include_bridge_relationships` (default on, needs the relationship index), the relationships incident to the expanded entities are fetched as well (`_fetch_incident_relationships`, shared with LightRAG's incident expansion), edges whose both endpoints were retrieved first — MS GraphRAG local's in-network relationships, which carry the hops of a multi-hop chain that the relationship vector query rarely matches.
 - **global**: Community report search → selection by retrieval score, ties broken by indexed rank/rating (per-report LLM relevance scoring is opt-in via `use_dynamic_selection`, default off because the map step already rates the reports for the query) → fusion with the selected communities' text units, reserving `max_communities` slots for the reports and `text_unit_slots` (default `top_k`) for the chunks (`reserve_report_slots`) → **map-reduce synthesis** (see §6.1.1 below).
 - **drift**: Iterative query evolution (community seeding → iteration 0 searches with the original query → later iterations refine the query / expand keywords from what was found → stop on low unique-result gain or `max_iterations`; an LLM convergence check is opt-in via `search.drift_search.enable_llm_convergence`). The accumulated results are fused with the same per-section-type quota as local search (`search.local_search.type_quota`), reranking text chunks only. Optionally (`search.drift_search.enable_primer`, default off) runs MS GraphRAG's **primer → follow-up** flow instead: a HyDE primer drafts a hypothetical answer from the seed community reports and decomposes the query into `primer_follow_ups` specific sub-queries, each run as its own search iteration (`_primer_search`/`_run_primer`), rather than carrying one mutating query forward. Falls back to the iterative loop if the primer yields no follow-ups, and skips the primer entirely when no candidate communities were found (there is nothing to ground it in). The hypothetical answer only steers the follow-up queries; it is never added to the answer context or the reported sources, because it is an LLM guess rather than retrieved evidence.
-- **auto**: LLM routing via `StrategySelectionPrompt` among `search.auto_routable_strategies` (default local, mix, global, drift; simple is left out); the prompt's strategy guide is built from that list, so it describes exactly the strategies the router may pick. The response is parsed by word token, first routable name wins; unrecognised output falls back to local.
+- **auto**: LLM routing via `StrategySelectionPrompt` among `search.auto_routable_strategies` (default local, mix, global, drift; simple is left out); the prompt's strategy guide is built from that list, so it describes exactly the strategies the router may pick. The response is parsed by word token, first routable name wins; unrecognised output, or a failed routing call under `processing.ignore_errors`, falls back to local, or to the first routable strategy when local is not routable.
 
 #### 6.1.1 Global search map-reduce (`global_search.py`)
 
@@ -593,7 +593,9 @@ and `providers.llm.kind: my_server` selects it (a non-Bedrock LLM kind also
 needs a token-counter builder for the same kind, or
 `Providers(token_counter_factory=...)`). `backend: local` is a config preset
 (`domain/models/provider_config.py`), not a code path: it only fills in
-`providers`, `aws.neptune` and `aws.opensearch` keys the config leaves unset.
+`providers`, `aws.neptune` and `aws.opensearch` keys, and the retrieval
+context budget (`search.token_manager.max_context_tokens`), that the config
+leaves unset.
 Model ids are strings; embedding and rerank ids are validated against the
 Bedrock catalog only while the Bedrock provider serves that role.
 
@@ -610,8 +612,11 @@ Bedrock catalog only while the Bedrock provider serves that role.
 The in-memory fakes in `tests/fixtures/fakes/` (e.g. `FakeGraphStore`,
 `FakeVectorStore`) are working reference implementations of the indexer ports —
 the whole ingestion+indexing pipeline runs against them with no AWS
-(`DataIngestionPipeline(cfg, pipeline_config, providers=..., doc_status=...,
-vector_indexer=..., graph_indexer=...)`, exercised in
+(`DataIngestionPipeline(cfg, pipeline_config, providers=Providers(cfg,
+llm_factory=..., embedding_factory=..., doc_status=FakeDocStatusStore(),
+vector_indexer_factory=lambda: vectors, graph_indexer_factory=lambda: graph))`,
+or without a bundle `DataIngestionPipeline(cfg, pipeline_config,
+doc_status=..., vector_indexer=..., graph_indexer=...)`, exercised in
 `tests/integration/test_ingestion_stages.py`). They are
 the recommended starting point for a custom store. Besides the AWS adapters the
 framework ships the local ones in-tree (`adapters/local/`: OpenAI-compatible

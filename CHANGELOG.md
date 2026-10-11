@@ -75,6 +75,9 @@ Defaults. Set the old value explicitly to keep the previous behaviour.
   that ingestion still writes (`graph.visualization.export_data`, default
   `true`: graph and communities, no model call; `run-visualization` computes
   a spring layout and centrality) (#210, #PR).
+- `backend: local` sets `search.token_manager.max_context_tokens` to 22000,
+  what the default local model's 32,768-token window accepts beside its
+  output reservation (30000 was clamped, with a WARNING, on every query) (#224).
 - Entity resolution merges only names equal after normalization, legal-form
   removal and dense-script spacing. Similarity matching is opt-in
   (`processing.fuzzy_entity_resolution: true`), and
@@ -146,7 +149,10 @@ Library API (Python callers and custom backends).
   (#156). Subclasses that overrode `GraphRAGChain._build_graph_retriever` /
   `_build_document_retriever` inject `retriever_builders` instead (#212).
 - Custom doc-status stores implement every `DocStatusPort` method
-  (`get_many`, `put_many`, `record_fits`, lineage overflow) (#214).
+  (`get_many`, `put_many`, `record_fits`, lineage overflow) (#214), and
+  `diff` takes `extraction_fingerprint` and stores
+  `DocStatusRecord.extraction_fingerprint`; a store whose `diff` does not
+  take it is diffed by content only, with a WARNING (#224).
 - Custom indexers: full-build `index_*` methods take a keyword-only
   `suffixes`; `get_stats` / `get_entity_count` are gone (#169, #214);
   `IndexingManager.index_delta` no longer merges with the stored graph
@@ -187,6 +193,10 @@ Library API (Python callers and custom backends).
   deleted and removes their artifacts and registry records. Rename them
   before upgrading to keep them (they are then indexed under their new
   paths).
+- Records written before records carried an extraction fingerprint are
+  compared by content only, so upgrading re-extracts nothing; run once with
+  `indexing.reset: true` to bring them under the current settings. The
+  SQLite registry gains the column on first open (#224).
 - Roles with a custom IAM policy need `dynamodb:BatchGetItem` and
   `dynamodb:BatchWriteItem` on the registry table (#191, #194).
 
@@ -284,6 +294,43 @@ Library API (Python callers and custom backends).
   rewritten questions that start with "I can't…" or "Sorry, …" and catches
   curly-apostrophe refusals; `DataIngestionPipeline`, the chunkers and the
   LangChain/RAGAS evaluators reject a `boto_session` they would have ignored (#222).
+- Incremental indexing follows the extraction settings, not only the
+  content: each doc-status record stores a fingerprint of the settings it was
+  extracted with (parsing through graph resolution: models, prompts such as a
+  tuned `custom_prompts` set, `entity_types`, chunking, translation, gleaning,
+  resolution), and a run with other settings re-extracts the unchanged
+  documents (one WARNING gives their count). Before, unchanged documents kept
+  their old extraction even with `--force-rebuild` (#224).
+- `run-rag` documents conversation memory as what it is, in-process: a single
+  `--query` with `--use-memory` or `--conversation-id` starts with no history
+  and now logs a WARNING; use `--interactive` (or one library process) for
+  multi-turn. `--interactive --mode search` is rejected instead of silently
+  generating answers (#224).
+- Importing the package no longer loads a `.env` file into `os.environ`.
+  The CLIs load only `./.env` in the working directory, never one found in a
+  parent directory (a `~/.env` with `AWS_PROFILE` could switch accounts), and
+  never override a variable already set (#224).
+- AUTO routing falls back to `local` only when it is routable; with
+  `search.auto_routable_strategies` excluding it, a failed or unparseable
+  routing call uses the first routable strategy (#224).
+- `--backend local` over a config file of another backend resolves the
+  relative SQLite registry path against the config file, not the working
+  directory (#224).
+- An `s3://` source scope with and without a trailing slash is one corpus: a
+  run whose spelling the registry does not hold, but the other one, keys its
+  documents by the stored spelling instead of re-indexing the corpus beside
+  the stored copy, and `--retire-source-scope` reaches either spelling (#224).
+- IaC: `-c bedrock_model_arns=arn:...,arn:...` is accepted as a
+  comma-separated list; a misspelled boolean (`use_cmk=ture`), a zero or
+  out-of-range count, timeout or retention, and a CPU/memory pair Fargate
+  does not offer fail synth with an error naming the key, instead of reading
+  as `false` or failing at deploy (#224).
+- An incremental run that skips unchanged documents no longer replaces
+  `visualization_data.json` with a graph of its delta only: it skips the
+  export and the render and logs how to visualize the whole graph (a full
+  build, then `run-visualization`). The default export gives every node its
+  level-0 `community_id`, so `run-visualization` colors communities instead
+  of drawing every node grey (#224).
 - Incremental indexing: shared artifacts are stripped instead of deleted or
   left citing removed text units; interrupted runs are repaired on the next
   run; resets and deletions no longer touch other index namespaces or

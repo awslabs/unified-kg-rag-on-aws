@@ -1,0 +1,187 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+"""Incremental runs follow the extraction settings, not only the content.
+
+Two whole-pipeline runs over one registry (AWS-free): a document whose content
+did not change is re-extracted when the settings it was extracted with
+(here a tuned extraction prompt) changed, and not when they did not. An
+incremental run that skips unchanged documents does not export a
+visualization of its partial graph.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from unittest.mock import MagicMock
+
+import pytest
+
+from tests.fixtures.fakes.chat_models import ScriptedLLMFactory
+from tests.fixtures.fakes.doc_status import FakeDocStatusStore
+from tests.fixtures.fakes.embeddings import HashingEmbeddingFactory
+from tests.fixtures.fakes.stores import FakeGraphStore, FakeVectorStore
+from tests.integration.test_ingestion_stages import _config, _respond
+from unified_kg_rag.adapters.providers import Providers
+from unified_kg_rag.application.ingestion import pipeline_stages as ps
+from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
+from unified_kg_rag.domain.ingestion.visualization_data import (
+    VISUALIZATION_DATA_FILENAME,
+)
+from unified_kg_rag.domain.models import (
+    Config,
+    DocStatusRecord,
+    PipelineConfig,
+    PipelineContext,
+    PipelineStageStatus,
+    PipelineStageType,
+)
+from unified_kg_rag.shared.utils.cache_keys import extraction_fingerprint
+
+pytestmark = pytest.mark.integration
+
+_TUNED = "TUNED-PERSONA"
+
+
+class _Harness:
+    def __init__(self, tmp_path: Path) -> None:
+        self.tmp_path = tmp_path
+        self.source = tmp_path / "corpus"
+        self.source.mkdir()
+        (self.source / "contract.txt").write_text("Vendor supplies widgets to Buyer.")
+        (self.source / "logistics.txt").write_text("Depot stores widgets for Vendor.")
+        self.store = FakeDocStatusStore()
+        self.graph = FakeGraphStore()
+        self.extractions: list[str] = []
+
+    def _respond(self, system: str, human: str) -> str:
+        if "knowledge graph extraction expert" in system:
+            self.extractions.append("tuned" if _TUNED in system else "builtin")
+        return _respond(system, human)
+
+    def run(self, config: Config, pipeline_id: str) -> PipelineContext:
+        vectors = FakeVectorStore(config.indexing.opensearch)
+        providers = Providers(
+            config,
+            boto_session=MagicMock(),
+            llm_factory=ScriptedLLMFactory(self._respond),
+            embedding_factory=HashingEmbeddingFactory(),
+            doc_status=self.store,
+            vector_indexer_factory=lambda: vectors,
+            graph_indexer_factory=lambda: self.graph,
+        )
+        pipeline = DataIngestionPipeline(
+            config,
+            PipelineConfig(
+                stages_enabled=dict.fromkeys(PipelineStageType, True),
+                local_directory=self.tmp_path / "cache",
+            ),
+            source_directory=self.source,
+            providers=providers,
+        )
+        for stage in pipeline.stages:
+            if isinstance(stage, ps.GraphResolutionStage):
+                stage.resolver.entity_resolver.use_process_pool = False
+                stage.resolver.relationship_resolver.use_process_pool = False
+        context = pipeline.run(self.source, pipeline_id=pipeline_id)
+        assert context.status is PipelineStageStatus.COMPLETED
+        return context
+
+
+def _base_config() -> Config:
+    config = _config()
+    config.processing.gleaning.enabled = False
+    config.processing.claim_extraction.enabled = False
+    return config
+
+
+def _tuned(config: Config) -> Config:
+    tuned = config.model_copy(deep=True)
+    # A persona line ahead of the built-in system prompt, as prompt tuning
+    # writes one.
+    from unified_kg_rag.domain.prompts.graph_extraction import (
+        GraphExtractionPrompt,
+    )
+
+    tuned.custom_prompts.graph_extraction_system = "\n".join(
+        (
+            _TUNED,
+            GraphExtractionPrompt.system_preamble,
+            GraphExtractionPrompt.output_rules,
+        )
+    )
+    return tuned
+
+
+def _fingerprints(store: FakeDocStatusStore) -> set[str | None]:
+    return {record.extraction_fingerprint for record in store.list_all()}
+
+
+def test_changed_extraction_settings_reextract_unchanged_documents(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    harness = _Harness(tmp_path)
+    builtin = _base_config()
+    harness.run(builtin, "first")
+    assert harness.extractions == ["builtin", "builtin"]
+    assert _fingerprints(harness.store) == {extraction_fingerprint(builtin)}
+
+    tuned = _tuned(builtin)
+    harness.extractions.clear()
+    with caplog.at_level("WARNING"):
+        harness.run(tuned, "tuned")
+    assert harness.extractions == ["tuned", "tuned"]
+    assert "Re-extracting 2 documents" in caplog.text
+    assert _fingerprints(harness.store) == {extraction_fingerprint(tuned)}
+
+    # The same settings again: nothing to re-extract.
+    harness.extractions.clear()
+    harness.run(tuned, "tuned-again")
+    assert harness.extractions == []
+
+
+def test_records_without_a_fingerprint_are_not_reextracted(tmp_path: Path) -> None:
+    harness = _Harness(tmp_path)
+    builtin = _base_config()
+    harness.run(builtin, "first")
+    # As written before records carried a fingerprint.
+    harness.store.put_many(
+        [
+            DocStatusRecord.model_validate(
+                {**record.model_dump(), "extraction_fingerprint": None}
+            )
+            for record in harness.store.list_all()
+        ]
+    )
+
+    harness.extractions.clear()
+    harness.run(_tuned(builtin), "tuned")
+    assert harness.extractions == []
+
+
+def _visualization_file(tmp_path: Path, pipeline_id: str) -> Path:
+    return (
+        tmp_path
+        / "cache"
+        / pipeline_id
+        / "visualization"
+        / (VISUALIZATION_DATA_FILENAME)
+    )
+
+
+def test_incremental_run_with_unchanged_documents_exports_no_partial_graph(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    harness = _Harness(tmp_path)
+    config = _base_config()
+    harness.run(config, "full")
+    full = json.loads(_visualization_file(tmp_path, "full").read_text())
+    assert len(full["nodes"]) == 3
+    # Every node carries its level-0 community, which the renderers color by.
+    assert all(node["attributes"].get("community_id") for node in full["nodes"])
+
+    (harness.source / "third.txt").write_text("Depot ships widgets to Buyer.")
+    with caplog.at_level("INFO"):
+        harness.run(config, "delta")
+    assert not _visualization_file(tmp_path, "delta").exists()
+    assert "Visualization skipped" in caplog.text

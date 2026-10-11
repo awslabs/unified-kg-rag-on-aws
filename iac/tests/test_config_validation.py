@@ -1,0 +1,88 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+"""Context values are validated with errors that name the key (no synth)."""
+
+from __future__ import annotations
+
+from typing import Any
+
+import aws_cdk as cdk
+import pytest
+
+from iac.config import DeploymentConfig
+
+
+def _config(context: dict[str, Any]) -> DeploymentConfig:
+    return DeploymentConfig.from_context(cdk.App(context=context))
+
+
+def test_bedrock_model_arns_accepts_a_comma_separated_cli_string() -> None:
+    # `-c bedrock_model_arns=a,b` arrives as one string.
+    arns = (
+        "arn:aws:bedrock:us-west-2::foundation-model/model-a, "
+        "arn:aws:bedrock:us-west-2::foundation-model/model-b"
+    )
+    config = _config({"bedrock_model_arns": arns})
+    assert config.bedrock_model_arns == [
+        "arn:aws:bedrock:us-west-2::foundation-model/model-a",
+        "arn:aws:bedrock:us-west-2::foundation-model/model-b",
+    ]
+    listed = _config({"bedrock_model_arns": ["arn:aws:bedrock:::x"]})
+    assert listed.bedrock_model_arns == ["arn:aws:bedrock:::x"]
+    assert _config({}).bedrock_model_arns is None
+
+
+def test_bedrock_model_arns_rejects_a_value_that_is_not_an_arn() -> None:
+    with pytest.raises(ValueError, match="bedrock_model_arns: not an ARN: model-a"):
+        _config({"bedrock_model_arns": "model-a"})
+
+
+@pytest.mark.parametrize("key", ["use_cmk", "deletion_protection", "removal_destroy"])
+def test_a_misspelled_boolean_is_rejected_not_read_as_false(key: str) -> None:
+    with pytest.raises(ValueError, match=f"{key} must be a boolean"):
+        _config({key: "ture"})
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [("true", True), ("Yes", True), ("1", True), ("off", False), (False, False)],
+)
+def test_booleans_accept_the_usual_spellings(value: Any, expected: bool) -> None:
+    assert _config({"use_cmk": value}).use_cmk is expected
+
+
+@pytest.mark.parametrize(
+    ("key", "value", "message"),
+    [
+        ("sfn_timeout_hours", "0", "sfn_timeout_hours must be at least 1"),
+        ("backup_retention_days", "0", "backup_retention_days must be at least 1"),
+        ("backup_retention_days", "36", "backup_retention_days must be at most 35"),
+        ("opensearch_count", "0", "opensearch_count must be at least 1"),
+        ("neptune_instances", "0", "neptune_instances must be at least 1"),
+        ("opensearch_volume_gib", "abc", "opensearch_volume_gib must be an integer"),
+    ],
+)
+def test_out_of_range_numbers_are_rejected(key: str, value: str, message: str) -> None:
+    with pytest.raises(ValueError, match=message):
+        _config({key: value})
+
+
+@pytest.mark.parametrize(
+    ("cpu", "memory", "message"),
+    [
+        ("1000", "2048", "fargate_cpu must be one of"),
+        ("2048", "2048", "fargate_memory 2048 is not valid with fargate_cpu 2048"),
+        ("512", "8192", "fargate_memory 8192 is not valid with fargate_cpu 512"),
+    ],
+)
+def test_invalid_fargate_sizes_are_rejected(
+    cpu: str, memory: str, message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        _config({"fargate_cpu": cpu, "fargate_memory": memory})
+
+
+def test_valid_fargate_sizes_pass() -> None:
+    config = _config({"fargate_cpu": "4096", "fargate_memory": "16384"})
+    assert (config.fargate_cpu, config.fargate_memory) == (4096, 16384)
+    assert (_config({}).fargate_cpu, _config({}).fargate_memory) == (2048, 8192)

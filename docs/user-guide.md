@@ -230,7 +230,11 @@ models:
   optionally `fast_model_id`) replaces the two Bedrock tiers for every role;
   a role's own `*_model_id` still wins. `providers.llm.context_window_size`
   and `max_output_tokens` describe the model (Bedrock models take theirs from
-  the catalog), and the window is sent to Ollama as `num_ctx`. An
+  the catalog), and the window is sent to Ollama as `num_ctx`. The preset
+  also sets `search.token_manager.max_context_tokens` to 22000, what the
+  default 32,768-token window accepts beside the 8,192-token output
+  reservation (the AWS default of 30000 would be clamped on every query);
+  raise it with the window when you run a larger model. An
   OpenAI-compatible server (vLLM, llama.cpp server, LM Studio) takes
   `base_url` (its `/v1` root) and, if it needs one, `api_key`.
 - **Embeddings.** `providers.embedding.model_id` and `dimension` are required
@@ -690,10 +694,12 @@ wins.
 > The warning comes from `setup_logging`, so library code that does not call it
 > gets none.
 
-The CLIs also load a `.env` file with python-dotenv. A variable already set in
-the environment wins over `.env`. The file is searched for from the package's
-location upward, not from the current directory, so in a source checkout put it
-at the repository root.
+The CLIs also load a `.env` file with python-dotenv: only `./.env` in the
+current working directory, never one in a parent directory (a `~/.env` setting
+`AWS_PROFILE` would otherwise switch accounts unnoticed). A variable already
+set in the environment wins over `.env`. Importing the package loads no `.env`
+and never changes `os.environ`; a Python caller that wants one loads it itself
+(for example `dotenv.load_dotenv()` before `get_config()`).
 
 The CDK compute stack injects `AWS_REGION`, `BEDROCK_REGION`,
 `NEPTUNE_ENDPOINT`, `OPENSEARCH_ENDPOINT`, `OPENSEARCH_NUMBER_OF_REPLICAS`
@@ -958,10 +964,10 @@ documents as failed so the next run translates them again (§5).
 | Flag | Default | Meaning |
 |---|---|---|
 | `--query`, `-q` | — | Single query — provide this or `--interactive` (exactly one is required) |
-| `--interactive`, `-i` | off | Interactive chat (auto-enables memory) |
-| `--mode` | `rag` | `rag` (full generation) or `search` (retrieval only) |
-| `--conversation-id` | — | Continue an existing conversation |
-| `--use-memory` | off | Enable conversation memory (auto in interactive) |
+| `--interactive`, `-i` | off | Interactive chat (auto-enables memory; always `rag` mode) |
+| `--mode` | `rag` | `rag` (full generation) or `search` (retrieval only, single `--query` only) |
+| `--conversation-id` | — | Name the conversation; its memory lasts while the process runs (see [conversation memory](#interactive-mode--conversation-memory)) |
+| `--use-memory` | off | Enable conversation memory, kept in the process (auto in interactive) |
 | `--suffix` | — (`default`) | [Index suffix](#index-suffix) to query; must match the corpus's `processing.document_parsing.index_value` |
 | `--enable-thinking` | off | Enable model step-by-step reasoning; a no-op for models that always reason (Claude 4.7+ / 5.x, OpenAI GPT), whose depth `aws.bedrock.default_effort` / `fast_effort` set |
 | `--search-strategy` | `auto` | `auto`, `drift`, `global`, `local`, `simple`, `mix`, `hybrid`, `naive` |
@@ -1090,7 +1096,7 @@ the filterable keys. The schema is defined in
 
 ```bash
 run-rag --interactive --config-path config.yaml
-# or continue a named session:
+# or name the session (its id appears in logs and JSON output):
 run-rag --interactive --conversation-id my-session --config-path config.yaml
 ```
 
@@ -1103,8 +1109,15 @@ Interactive mode auto-enables memory. In-session commands:
 - `show-config` — show the active configuration
 - `quit` / `exit` — end
 
-For single-shot multi-turn from the CLI, reuse the same `--conversation-id` with
-`--use-memory`. Memory limits are under the `memory` config section.
+Conversation memory is held in the process (`MemoryManager` keeps it in
+memory, nothing is written to disk or a store): it carries over between the
+turns of one interactive session, or between `GraphRAGChain` calls of one
+Python process that reuse a `conversation_id` with `use_memory=True`. Separate
+`run-rag --query` invocations do not share it: each starts with no history,
+so `--use-memory` and `--conversation-id` have no effect on a single query
+(`run-rag` logs a WARNING when they are combined with `--query`). Use
+`--interactive` for multi-turn from the CLI. Memory limits are under the
+`memory` config section.
 
 Before retrieval, a follow-up is rewritten from the history as a standalone
 question (one `search.query_rewrite_model_id` call per turn that has history;
@@ -1152,6 +1165,15 @@ SQLite file instead (`providers.doc_status.kind: sqlite`, switched on by
   **exclusive** artifacts (entities/relationships seen only in that document,
   tracked via per-document lineage in the registry) are deleted; artifacts
   shared with surviving documents are kept.
+- **Change the extraction settings** (a tuned `custom_prompts` set,
+  `entity_types`, an extraction, gleaning or chunking model, chunk sizes,
+  translation, resolution): each record stores a fingerprint of the settings
+  its document was extracted with, so the next run re-extracts every
+  unchanged document whose fingerprint differs and logs a WARNING with their
+  count. Records written before records carried a fingerprint are compared by
+  content only (no surprise full re-extraction on upgrade); a reset
+  (`indexing.reset: true`) re-extracts them. Edits to the built-in prompt
+  templates (code) are not seen: reset after editing one.
 
 ### Deletion scope
 
@@ -1460,7 +1482,13 @@ visualization-data JSON. It does **not** re-run ingestion or touch AWS.
 
 The community-detection stage of `run-ingestion` writes
 `visualization_data.json` into `graph.visualization.outputs_directory` on
-every run. By default (`graph.visualization.export_data: true`) it holds the
+every run whose graph covers the whole corpus: a full build, a reset, or an
+incremental run in which every document is new or changed. An incremental run
+that skips unchanged documents holds only its delta in memory, so it neither
+exports nor renders (it logs an INFO line instead) and an earlier file in a
+fixed `outputs_directory` is left as it was. To visualize the whole graph after
+incremental runs, run one full build (`indexing.reset: true`) and point
+`run-visualization` at the file it writes. By default (`graph.visualization.export_data: true`) it holds the
 graph and the community hierarchy only: writing it is one pass over the graph,
 with no embedding or model call, and `run-visualization` computes a seeded
 spring layout from the graph topology and the configured centrality metrics
@@ -1474,7 +1502,8 @@ enabled `visualization_data.json` is uploaded with the cache (the sync copies
 `.json` files only; re-render the HTML locally with `run-visualization`). That
 file is the `--data-path` input. The interactive graph keeps only the top
 `interactive.max_nodes` nodes by degree (default 2000) so large graphs still
-render in a browser. It holds the graph nodes/edges, the community hierarchy
+render in a browser. It holds the graph nodes/edges (each node with its
+level-0 `community_id`, which the renderers color by), the community hierarchy
 and, when rendered at ingestion, the computed `layout` and centrality; vector
 attributes (`embedding`,
 `*_embedding`) are omitted to keep the file small.
@@ -1752,8 +1781,13 @@ finally:
 - Importing the package configures no logging handler; call
   `unified_kg_rag.shared.setup_logging(config)` to get the CLI's logging.
 
-Both constructors accept injected backends (`providers`, `retriever_builders`,
-`doc_status`, `vector_indexer`, `graph_indexer`); see
+Both constructors accept injected backends through a `providers=` bundle
+(`Providers(config, llm_factory=..., doc_status=..., vector_indexer_factory=...,
+graph_indexer_factory=..., retriever_builders=...)`). Without a bundle,
+`DataIngestionPipeline` also takes `doc_status`, `vector_indexer` and
+`graph_indexer`, and `GraphRAGChain` takes `model_factory` and
+`retriever_builders`; passing one of these together with `providers=` raises
+`ValueError`. `GraphRAGChain(memory_manager=...)` combines with either. See
 [Design Doc §15](./design.md#15-extension-guide).
 
 ---

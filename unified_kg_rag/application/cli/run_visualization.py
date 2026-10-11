@@ -33,6 +33,7 @@ from unified_kg_rag.domain.ingestion.graph_analyzer import (
 )
 from unified_kg_rag.domain.models import Community, HierarchicalCommunity
 from unified_kg_rag.shared import get_config, get_logger, setup_logging
+from unified_kg_rag.shared.config import load_cli_dotenv
 
 logger = get_logger(__name__)
 
@@ -202,6 +203,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> int:
+    load_cli_dotenv()
     args = _build_parser().parse_args()
     try:
         config = get_config(args.config_path)

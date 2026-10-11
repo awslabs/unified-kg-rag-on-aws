@@ -72,6 +72,7 @@ from unified_kg_rag.shared import (
     PipelineStageError,
     get_logger,
 )
+from unified_kg_rag.shared.utils.cache_keys import extraction_fingerprint
 from unified_kg_rag.shared.utils.document_identity import (
     DEFAULT_NAMESPACE,
     RELATIVE_PATH_KEY,
@@ -372,6 +373,7 @@ class IncrementalIndexer:
         indexing_manager: IndexingManager,
         suffix: str = "default",
         scope: str | None = None,
+        extraction_fingerprint: str | None = None,
     ) -> None:
         self.doc_status = doc_status
         self.indexing_manager = indexing_manager
@@ -379,6 +381,9 @@ class IncrementalIndexer:
         # Registry scope (delta_detector.registry_scope) the delta is computed
         # in and recorded under; None diffs against the whole registry.
         self.scope = scope
+        # The run's extraction settings (cache_keys.extraction_fingerprint),
+        # recorded on every committed document; None records none.
+        self.extraction_fingerprint = extraction_fingerprint
         # Write-ahead state of the current run (see write_ahead): the records
         # stored before it (with an interrupted run's lineage overflow), the
         # PENDING records written, the ids held in lineage overflow for them,
@@ -1103,6 +1108,7 @@ class IncrementalIndexer:
                 status=DocStatus.FAILED if failed else DocStatus.PROCESSED,
                 error_info=error_info,
                 failure_count=failure_count,
+                extraction_fingerprint=self.extraction_fingerprint,
                 suffix=lineage.suffix,
                 scope=(
                     self.scope
@@ -1259,6 +1265,8 @@ def filter_to_delta(
     )
     for document in documents:
         assign_registry_source(document, source_scope)
+    extraction = extraction_fingerprint(config)
+    context.incremental_extraction_fingerprint = extraction
     if config.indexing.reset:
         # A reset clears the stores and the registry before indexing, so
         # every document is new: diffing against the registry here would
@@ -1295,6 +1303,7 @@ def filter_to_delta(
                 },
             },
             retired_scopes=retired,
+            extraction_fingerprint=extraction,
         )
     except (DocStatusRegistryError, ConfigurationError):
         raise
@@ -1306,6 +1315,24 @@ def filter_to_delta(
             "(aws.dynamodb.enabled / providers.doc_status.enabled: false) to "
             "run without it."
         ) from e
+    stored_spelling = _stored_spelling(source_scope, namespace, scope, delta)
+    if stored_spelling is not None:
+        # The corpus was indexed under another spelling of its source (an
+        # s3:// URI with or without a trailing slash): diffing under this
+        # one would index every document again beside the stored copies and
+        # never delete those. Key the run by the stored spelling instead.
+        logger.warning(
+            "The registry holds this corpus under the source scope %r, another "
+            "spelling of %r; using the stored spelling (set "
+            "processing.document_parsing.source_scope to it to skip this check)",
+            stored_spelling,
+            source_scope,
+        )
+        respelled = config.model_copy(deep=True)
+        respelled.processing.document_parsing.source_scope = stored_spelling
+        return filter_to_delta(
+            documents, context, respelled, doc_status, source_directory
+        )
     context.incremental_delta = delta
     context.incremental_fingerprints = fingerprints
     context.incremental_scope = scope
@@ -1323,6 +1350,26 @@ def filter_to_delta(
         len(delta.deleted),
     )
     return to_process, skipped
+
+
+def _stored_spelling(
+    source_scope: str, namespace: str, scope: str, delta: DocumentDelta
+) -> str | None:
+    """Another spelling of ``source_scope`` the registry holds this
+    namespace's records under, when it holds none under ``scope`` itself
+    (see :func:`normalize_source_scope`)."""
+    if scope in delta.stored_scopes:
+        return None
+    prefix = f"{namespace}|"
+    own = normalize_source_scope(source_scope)
+    spellings = sorted(
+        stored[len(prefix) :]
+        for stored in delta.stored_scopes
+        if stored.startswith(prefix)
+        and stored[len(prefix) :] != source_scope
+        and normalize_source_scope(stored[len(prefix) :]) == own
+    )
+    return spellings[0] if spellings else None
 
 
 def _warn_about_other_local_scopes(
@@ -1528,6 +1575,7 @@ def run_incremental_indexer(
         indexing_manager,
         suffix=suffix,
         scope=context.incremental_scope,
+        extraction_fingerprint=context.incremental_extraction_fingerprint,
     )
 
 

@@ -12,7 +12,6 @@ from pathlib import Path
 from typing import Any
 
 import nest_asyncio
-from dotenv import load_dotenv
 from rich.markup import escape
 from rich.panel import Panel
 
@@ -34,13 +33,13 @@ from unified_kg_rag.application.retrieval.rag_chain import (
 )
 from unified_kg_rag.domain.models import Constants, SearchStrategy
 from unified_kg_rag.shared import get_config, get_logger, setup_logging
+from unified_kg_rag.shared.config import load_cli_dotenv
 from unified_kg_rag.shared.utils import event_loop
 from unified_kg_rag.shared.utils.display import console, display_ascii_art
 
 ROOT_DIRECTORY = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT_DIRECTORY))
 
-load_dotenv()
 nest_asyncio.apply()
 logger = get_logger(__name__)
 
@@ -90,22 +89,28 @@ class CommandLineInterface:
             "--interactive",
             "-i",
             action="store_true",
-            help="Launch interactive chat mode for continuous conversation",
+            help="Launch interactive chat mode for continuous conversation "
+            "(always 'rag' mode, memory on)",
         )
         parser.add_argument(
             "--mode",
             default=ChainMode.RAG.value,
             choices=[cm.value for cm in ChainMode],
-            help="Set the execution mode: 'rag' for full generation, 'search' for retrieval only",
+            help="Set the execution mode: 'rag' for full generation, 'search' for "
+            "retrieval only (a single --query only; --interactive always generates)",
         )
         parser.add_argument(
             "--conversation-id",
-            help="Continue an existing conversation using the specified conversation ID",
+            help="Name the conversation. Memory is kept in this process only: it "
+            "carries over between --interactive turns, not between separate "
+            "run-rag invocations",
         )
         parser.add_argument(
             "--use-memory",
             action="store_true",
-            help="Enable conversation memory (auto-enabled in interactive mode)",
+            help="Enable conversation memory, kept in this process only "
+            "(auto-enabled in interactive mode; a single --query starts with no "
+            "history)",
         )
         add_query_arguments(parser)
         parser.add_argument(
@@ -142,6 +147,11 @@ class CommandLineInterface:
         args = self.parser.parse_args()
         if not args.interactive and not args.query:
             self.parser.error("either --query or --interactive is required")
+        if args.interactive and args.mode != ChainMode.RAG.value:
+            self.parser.error(
+                f"--mode {args.mode} is not supported with --interactive, which "
+                "always generates answers; use --query for retrieval-only output"
+            )
         return args
 
 
@@ -202,6 +212,14 @@ class RAGChainRunner:
             if self.args.interactive:
                 await self._interactive_mode()
             else:
+                if self.args.use_memory or self.args.conversation_id:
+                    logger.warning(
+                        "--use-memory / --conversation-id have no effect on a "
+                        "single --query: conversation memory is kept in the "
+                        "process only, so this query starts with no history "
+                        "and its turn is not kept for a later run-rag. Use "
+                        "--interactive for multi-turn conversations."
+                    )
                 rag_input = self._rag_input(
                     self.args.query,
                     conversation_id=self.args.conversation_id,
@@ -578,6 +596,7 @@ async def async_main(args: argparse.Namespace) -> int:
 
 
 def main() -> None:
+    load_cli_dotenv()
     # Parse (and let argparse exit on --help or bad arguments) before the event
     # loop starts.
     args = CommandLineInterface().parse_args()

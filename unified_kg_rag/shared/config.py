@@ -43,11 +43,52 @@ def warn_unknown_keys(data: Any, model: type[BaseModel], prefix: str = "") -> No
             warn_unknown_keys(value, nested, f"{path}.")
 
 
+DOTENV_FILENAME = ".env"
+
+
+def resolve_relative_paths(config: Config, config_path: str | Path) -> None:
+    """Resolve a relative SQLite registry path against ``config_path``'s directory.
+
+    The registry must be the same file on every run against the same
+    stores; relative to the working directory, a run started elsewhere would
+    silently use an empty registry. Applies when the registry is SQLite, so a
+    caller that switches the config to it afterwards (``--backend local``
+    over an ``aws`` config file) calls this again.
+    """
+    doc_status = config.providers.doc_status
+    path = Path(doc_status.sqlite_path)
+    if (
+        doc_status.kind == SQLITE
+        and doc_status.sqlite_path != ":memory:"
+        and not path.is_absolute()
+    ):
+        doc_status.sqlite_path = str((Path(config_path).parent / path).resolve())
+
+
+def load_cli_dotenv(directory: Path | None = None) -> Path | None:
+    """Load ``.env`` from the current directory into ``os.environ`` (CLIs only).
+
+    Only the file in ``directory`` (default: the current working directory)
+    is read, never one found by walking up parent directories: a ``.env`` in
+    the home directory setting ``AWS_PROFILE`` would otherwise silently switch
+    accounts. A variable already set in the environment is never overridden.
+    Importing the package loads no ``.env``; library users load their own.
+
+    Returns:
+        The file loaded, or ``None`` when there is none.
+    """
+    path = (directory or Path.cwd()) / DOTENV_FILENAME
+    if not path.is_file():
+        return None
+    load_dotenv(path, override=False)
+    _logger.debug("Loaded environment variables from '%s'", path)
+    return path
+
+
 class ConfigLoader:
     def __init__(self, config_path: Path | None = None) -> None:
         self.config_path = Path(config_path) if config_path else None
         self._config: Config | None = None
-        load_dotenv()
 
         # Debug, not print: a module-level ConfigLoader() runs this on every
         # import, and a bare print() to stdout corrupts `run-rag --output-format
@@ -92,22 +133,10 @@ class ConfigLoader:
             raise ValueError(f"Configuration validation error: {e}") from e
 
     def _resolve_relative_paths(self) -> None:
-        """Resolve a relative SQLite registry path against the config file's directory.
-
-        The registry must be the same file on every run against the same
-        stores; relative to the working directory, a run started elsewhere
-        would silently use an empty registry.
-        """
-        if self._config is None or self.config_path is None:
-            return
-        doc_status = self._config.providers.doc_status
-        path = Path(doc_status.sqlite_path)
-        if (
-            doc_status.kind == SQLITE
-            and doc_status.sqlite_path != ":memory:"
-            and not path.is_absolute()
-        ):
-            doc_status.sqlite_path = str((self.config_path.parent / path).resolve())
+        """Resolve a relative SQLite registry path against the config file's
+        directory (see :func:`resolve_relative_paths`)."""
+        if self._config is not None and self.config_path is not None:
+            resolve_relative_paths(self._config, self.config_path)
 
     def _apply_environment_overrides(self) -> None:
         if self._config is None:

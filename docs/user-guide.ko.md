@@ -224,7 +224,10 @@ uv pip install --torch-backend cpu -e '.[local]'
   `fast_model_id`도)가 모든 역할의 Bedrock 계층 모델 두 개를 대신합니다. 역할별
   `*_model_id`를 지정하면 그 값이 우선합니다. `providers.llm.context_window_size`와
   `max_output_tokens`로 모델 한도를 알려 줍니다(Bedrock 모델은 카탈로그 값을 씁니다).
-  컨텍스트 창은 Ollama에 `num_ctx`로 전달됩니다. OpenAI 호환 서버(vLLM, llama.cpp
+  컨텍스트 창은 Ollama에 `num_ctx`로 전달됩니다. 프리셋은
+  `search.token_manager.max_context_tokens`도 22000으로 설정합니다. 기본 32,768토큰
+  창이 8,192토큰 출력 예약과 함께 받을 수 있는 값이며, AWS 기본값 30000이면 질의마다
+  잘립니다. 더 큰 모델을 쓰면 창과 함께 올리세요. OpenAI 호환 서버(vLLM, llama.cpp
   server, LM Studio)에는 `base_url`(`/v1` 루트)과, 필요하면 `api_key`를 지정합니다.
 - **임베딩.** Bedrock이 아닌 공급자에서는 `providers.embedding.model_id`와 `dimension`이
   필수입니다. 차원은 OpenSearch 매핑에 고정되므로 둘 중 하나를 바꾸면 전체를 다시
@@ -664,9 +667,12 @@ LLM 단계는 Bedrock I/O가 병목이므로 동시성을 CPU 수보다 훨씬 �
 > 경고는 `setup_logging`이 남기므로, 이 함수를 호출하지 않는 라이브러리 코드에서는
 > 나오지 않습니다.
 
-CLI는 python-dotenv로 `.env` 파일도 읽습니다. 환경에 이미 설정된 변수가 `.env`보다
-우선합니다. `.env`는 현재 디렉터리가 아니라 패키지 위치에서 위쪽으로 올라가며
-찾으므로, 소스 체크아웃에서는 저장소 루트에 두세요.
+CLI는 python-dotenv로 `.env` 파일도 읽습니다. 현재 작업 디렉터리의 `./.env`만 읽고
+상위 디렉터리의 파일은 찾지 않습니다(그러지 않으면 `AWS_PROFILE`을 설정한 `~/.env`가
+모르는 사이에 계정을 바꿀 수 있음). 환경에 이미 설정된 변수가 `.env`보다 우선합니다.
+패키지를 가져오는 것만으로는 `.env`를 읽지 않으며 `os.environ`을 바꾸지 않습니다.
+Python 코드에서 `.env`가 필요하면 직접 읽으세요(예: `get_config()` 전에
+`dotenv.load_dotenv()`).
 
 CDK compute 스택은 `AWS_REGION`, `BEDROCK_REGION`,
 `NEPTUNE_ENDPOINT`, `OPENSEARCH_ENDPOINT`, `OPENSEARCH_NUMBER_OF_REPLICAS`(다중 노드
@@ -915,10 +921,10 @@ processing:
 | 플래그 | 기본값 | 의미 |
 |---|---|---|
 | `--query`, `-q` | — | 단일 질의. 이 플래그와 `--interactive` 중 정확히 하나가 필요합니다. |
-| `--interactive`, `-i` | off | 대화형 채팅(메모리 자동 활성화) |
-| `--mode` | `rag` | `rag`(답변 생성까지) 또는 `search`(검색만) |
-| `--conversation-id` | — | 기존 대화 이어 가기 |
-| `--use-memory` | off | 대화 메모리 활성화(대화형 모드에서는 자동) |
+| `--interactive`, `-i` | off | 대화형 채팅(메모리 자동 활성화, 항상 `rag` 모드) |
+| `--mode` | `rag` | `rag`(답변 생성까지) 또는 `search`(검색만. 단일 `--query`에서만) |
+| `--conversation-id` | — | 대화 이름 지정. 메모리는 프로세스가 실행되는 동안만 유지([대화 메모리](#대화형-모드와-대화-메모리) 참고) |
+| `--use-memory` | off | 프로세스 안에 두는 대화 메모리 활성화(대화형 모드에서는 자동) |
 | `--suffix` | —(`default`) | 질의할 [인덱스 접미사](#인덱스-접미사). 코퍼스의 `processing.document_parsing.index_value`와 같아야 합니다. |
 | `--enable-thinking` | off | 모델의 단계별 추론 활성화. 항상 추론하는 모델(Claude 4.7+ / 5.x, OpenAI GPT)에는 효과가 없으며, 이런 모델의 추론 강도는 `aws.bedrock.default_effort` / `fast_effort`로 정합니다 |
 | `--search-strategy` | `auto` | `auto`, `drift`, `global`, `local`, `simple`, `mix`, `hybrid`, `naive` |
@@ -1040,7 +1046,7 @@ OpenSearch에서 `attr_<key>`는 문서 속성입니다. 문서의 `filters` 메
 
 ```bash
 run-rag --interactive --config-path config.yaml
-# or continue a named session:
+# or name the session (its id appears in logs and JSON output):
 run-rag --interactive --conversation-id my-session --config-path config.yaml
 ```
 
@@ -1054,8 +1060,13 @@ run-rag --interactive --conversation-id my-session --config-path config.yaml
 - `show-config` — 현재 설정 표시
 - `quit` / `exit` — 종료
 
-CLI에서 한 번씩 실행하며 여러 턴을 이어 가려면 같은 `--conversation-id`와
-`--use-memory`를 함께 쓰세요. 메모리 한도는 `memory` 설정 섹션에 있습니다.
+대화 메모리는 프로세스 안에만 있습니다(`MemoryManager`가 메모리에 들고 있으며 디스크나
+저장소에 쓰지 않음). 한 대화형 세션의 턴 사이, 또는 한 Python 프로세스에서 같은
+`conversation_id`와 `use_memory=True`로 `GraphRAGChain`을 여러 번 호출할 때 이어집니다.
+`run-rag --query`를 따로 실행하면 공유하지 않습니다. 실행마다 기록 없이 시작하므로 단일
+질의에서 `--use-memory`와 `--conversation-id`는 효과가 없습니다(`--query`와 함께 쓰면
+`run-rag`가 WARNING 로그를 남김). CLI에서 여러 턴을 이어 가려면 `--interactive`를
+쓰세요. 메모리 한도는 `memory` 설정 섹션에 있습니다.
 
 검색 전에는 후속 질문을 대화 이력으로 독립된 질문으로 다시 씁니다(이력이 있는 턴마다
 `search.query_rewrite_model_id` 호출 한 번, 프롬프트 재정의 키 `query_rewrite`). 그래서
@@ -1098,6 +1109,13 @@ aws:
 - **문서 삭제:** 소스 디렉터리에서 파일을 지우고 다시 실행합니다. 그 문서에만 있는
   **전용** 산출물(그 문서에서만 나온 엔티티와 관계. 레지스트리의 문서별 계보로
   추적)을 삭제하고, 남은 문서와 공유하는 산출물은 유지합니다.
+- **추출 설정 변경**(튜닝한 `custom_prompts`, `entity_types`, 추출·글리닝·청킹 모델,
+  청크 크기, 번역, 해소 설정): 각 레코드는 그 문서를 추출할 때 쓴 설정의 지문을
+  저장합니다. 다음 실행은 지문이 다른 미변경 문서를 모두 다시 추출하고 그 수를
+  WARNING 로그로 남깁니다. 레코드에 지문이 없던 시기에 쓴 레코드는 콘텐츠로만
+  비교하므로 업그레이드 직후 예상치 못한 전체 재추출은 없으며, 초기화
+  (`indexing.reset: true`)로 다시 추출합니다. 내장 프롬프트 템플릿(코드)을 고친 것은
+  감지하지 못하므로 고친 뒤에는 초기화하세요.
 
 ### 삭제 범위
 
@@ -1376,8 +1394,13 @@ run-eval --eval-data-path s3://my-bucket/eval/my_eval_data.json \
 이미 내보낸 시각화 데이터 JSON으로 그림을 그리는 **독립** 렌더러입니다. 수집을 다시
 실행하거나 AWS에 접근하지 **않습니다**.
 
-`run-ingestion`의 커뮤니티 탐지 단계는 실행할 때마다 `visualization_data.json`을
-`graph.visualization.outputs_directory`에 씁니다. 기본값(`graph.visualization.export_data:
+`run-ingestion`의 커뮤니티 탐지 단계는 그래프가 코퍼스 전체를 담는 실행(전체 빌드,
+초기화, 모든 문서가 새 문서이거나 변경된 증분 실행)마다 `visualization_data.json`을
+`graph.visualization.outputs_directory`에 씁니다. 변경되지 않은 문서를 건너뛴 증분
+실행은 메모리에 델타만 들고 있으므로 내보내지도 렌더링하지도 않고 INFO 로그만 남기며,
+고정한 `outputs_directory`에 있던 이전 파일은 그대로 둡니다. 증분 실행 뒤 전체 그래프를
+보려면 전체 빌드(`indexing.reset: true`)를 한 번 실행하고 그 실행이 쓴 파일을
+`run-visualization`에 넘기세요. 기본값(`graph.visualization.export_data:
 true`)에서는 그래프와 커뮤니티 계층만 담습니다. 그래프를 한 번 훑어 쓰므로 임베딩이나
 모델 호출이 없고, `run-visualization`이 렌더링할 때 그래프 토폴로지로 시드를 고정한
 spring 레이아웃과 설정한 중심성 지표를 계산합니다. `graph.visualization.enabled`가
@@ -1388,7 +1411,7 @@ spring 레이아웃과 설정한 중심성 지표를 계산합니다. `graph.vis
 `.json` 파일만 복사하므로 HTML은 로컬에서 `run-visualization`으로 다시 렌더링하세요).
 이 파일이 `--data-path` 입력입니다. 대화형 그래프는 큰 그래프도 브라우저에서 렌더링할 수
 있도록 차수 기준 상위 `interactive.max_nodes`개 노드(기본 2000)만 남깁니다. 파일에는
-그래프 노드와 간선, 커뮤니티 계층과, 수집 중에 렌더링했다면 계산된 `layout`과 중심성이
+그래프 노드와 간선(노드마다 렌더러가 색을 정하는 레벨 0 `community_id` 포함), 커뮤니티 계층과, 수집 중에 렌더링했다면 계산된 `layout`과 중심성이
 들어 있으며, 파일 크기를
 줄이려고 벡터 속성(`embedding`, `*_embedding`)은 뺍니다.
 
@@ -1655,8 +1678,13 @@ finally:
 - 패키지를 import해도 로깅 핸들러는 설정하지 않습니다. CLI와 같은 로깅을 쓰려면
   `unified_kg_rag.shared.setup_logging(config)`를 호출하세요.
 
-두 생성자 모두 백엔드 주입(`providers`, `retriever_builders`, `doc_status`,
-`vector_indexer`, `graph_indexer`)을 받습니다.
+두 생성자 모두 `providers=` 번들로 백엔드를 주입받습니다
+(`Providers(config, llm_factory=..., doc_status=..., vector_indexer_factory=...,
+graph_indexer_factory=..., retriever_builders=...)`). 번들 없이 쓸 때
+`DataIngestionPipeline`은 `doc_status`, `vector_indexer`, `graph_indexer`도 받고,
+`GraphRAGChain`은 `model_factory`, `retriever_builders`를 받습니다. 이 중 하나를
+`providers=`와 함께 넘기면 `ValueError`가 납니다. `GraphRAGChain(memory_manager=...)`는
+어느 쪽과도 함께 쓸 수 있습니다.
 [설계 문서 §15](./design.ko.md#15-확장-가이드)를 참고하세요.
 
 ---

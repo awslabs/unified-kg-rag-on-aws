@@ -253,6 +253,65 @@ def corpus_manifest_fingerprint(
     return compute_hash("\n".join(entries), length=FINGERPRINT_LENGTH)
 
 
+# Through graph resolution, the stages whose settings shape what each
+# document contributes to the graph (its text units, entities and
+# relationships).
+_EXTRACTION_THROUGH = PipelineStageType.GRAPH_RESOLUTION
+
+# Inputs of those stages that do not change what a document produces: the
+# corpus location and naming (the registry key already holds the document's
+# identity), and switches that only change which documents run or whether a
+# failure stops the run.
+_EXTRACTION_NON_OUTPUT_PATHS = frozenset(
+    {"processing.ignore_errors", "processing.deduplicate"}
+)
+_EXTRACTION_NON_OUTPUT_SUBFIELDS: dict[str, frozenset[str]] = {
+    "processing.document_parsing": frozenset(
+        {"source_directory", "target_directory", "index_value", "source_scope"}
+    ),
+}
+
+
+def _projection(
+    config: Config,
+    paths: Iterable[str],
+    drop_subfields: dict[str, frozenset[str]],
+) -> list[tuple[str, Any]]:
+    projection: list[tuple[str, Any]] = []
+    for path in paths:
+        value = _canonicalize(_resolve_path(config, path))
+        if path in drop_subfields and isinstance(value, dict):
+            value = {k: v for k, v in value.items() if k not in drop_subfields[path]}
+        if path in _OMIT_WHEN_DEFAULT and value == _OMIT_WHEN_DEFAULT[path]:
+            continue
+        projection.append((path, value))
+    return projection
+
+
+def extraction_fingerprint(config: Config) -> str:
+    """Fingerprint the settings that determine a document's extracted artifacts.
+
+    The output-determining inputs of every stage from parsing through graph
+    resolution (models, prompts, entity types, chunking, translation,
+    gleaning, resolution), the same paths the stage cache keys use, minus the
+    corpus location and the switches that do not change a document's output
+    (see ``_EXTRACTION_NON_OUTPUT_PATHS``). Recorded on each document's
+    doc-status record by an incremental run, so a later run with other
+    settings re-extracts documents whose content did not change.
+
+    Like the cache keys, it does not see edits to the built-in prompt
+    templates (code), only ``custom_prompts`` overrides.
+    """
+    paths = [
+        path
+        for path in _input_paths_through(_EXTRACTION_THROUGH)
+        if path not in _EXTRACTION_NON_OUTPUT_PATHS
+    ]
+    projection = _projection(config, paths, _EXTRACTION_NON_OUTPUT_SUBFIELDS)
+    payload = json.dumps(projection, sort_keys=True, default=str)
+    return compute_hash(payload, length=FINGERPRINT_LENGTH)
+
+
 def stage_input_fingerprint(
     config: Config,
     stage_type: PipelineStageType,
@@ -277,16 +336,9 @@ def stage_input_fingerprint(
         >>> len(fp)
         12
     """
-    projection: list[tuple[str, Any]] = []
-    for path in _input_paths_through(stage_type):
-        value = _canonicalize(_resolve_path(config, path))
-        if path in _NON_OUTPUT_SUBFIELDS and isinstance(value, dict):
-            value = {
-                k: v for k, v in value.items() if k not in _NON_OUTPUT_SUBFIELDS[path]
-            }
-        if path in _OMIT_WHEN_DEFAULT and value == _OMIT_WHEN_DEFAULT[path]:
-            continue
-        projection.append((path, value))
+    projection = _projection(
+        config, _input_paths_through(stage_type), _NON_OUTPUT_SUBFIELDS
+    )
     if corpus_fingerprint is not None:
         projection.append(("corpus_manifest", corpus_fingerprint))
     payload = json.dumps(projection, sort_keys=True, default=str)

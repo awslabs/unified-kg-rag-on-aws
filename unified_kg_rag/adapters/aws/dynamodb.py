@@ -512,11 +512,13 @@ class DynamoDBDocStatusStore:
 
     def _scan_fingerprints(
         self,
-    ) -> dict[str, tuple[str, str | None, bool, bool]]:
-        """Scan only ``{doc_id: (content_hash, scope, failed, pending)}``.
+    ) -> dict[str, tuple[str, str | None, bool, bool, str | None]]:
+        """Scan only ``{doc_id: (content_hash, scope, failed, pending,
+        extraction_fingerprint)}``.
 
-        ``diff`` needs just the partition key, the content hash, the scope and
-        whether the record is FAILED or PENDING,
+        ``diff`` needs just the partition key, the content hash, the scope,
+        whether the record is FAILED or PENDING and its extraction
+        fingerprint,
         so this uses a ``ProjectionExpression`` to fetch those attributes instead
         of deserializing the full ``DocStatusRecord`` (content hash + six
         artifact-id lists) for every row. (A full ``scan`` is still required
@@ -524,17 +526,20 @@ class DynamoDBDocStatusStore:
         The lineage-overflow parts it passes are noted by owner
         (``_scanned_overflow``).
         """
-        fingerprints: dict[str, tuple[str, str | None, bool, bool]] = {}
+        fingerprints: dict[str, tuple[str, str | None, bool, bool, str | None]] = {}
         overflow: dict[str, set[str]] = {}
         paginator = self.client.get_paginator("scan")
         for page in paginator.paginate(
             TableName=self.table_name,
             # Attribute-name placeholders keep the projection clear of
             # DynamoDB reserved words.
-            ProjectionExpression="#pk, #hash, #scope, #status, #kind, #owner",
+            ProjectionExpression=(
+                "#pk, #hash, #scope, #status, #kind, #owner, #extraction"
+            ),
             ExpressionAttributeNames={
                 "#pk": _PARTITION_KEY,
                 "#hash": "content_hash",
+                "#extraction": "extraction_fingerprint",
                 "#scope": _SCOPE_ATTRIBUTE,
                 "#status": "status",
                 "#kind": _RECORD_KIND_ATTRIBUTE,
@@ -557,17 +562,25 @@ class DynamoDBDocStatusStore:
                         scope,
                         status == DocStatus.FAILED.value,
                         status == DocStatus.PENDING.value,
+                        item.get("extraction_fingerprint", {}).get("S"),
                     )
         self._scanned_overflow = overflow
         return fingerprints
 
-    def diff(self, incoming: dict[str, str], scope: str | None = None) -> DocumentDelta:
+    def diff(
+        self,
+        incoming: dict[str, str],
+        scope: str | None = None,
+        extraction_fingerprint: str | None = None,
+    ) -> DocumentDelta:
         """Classify ``{doc_id: content_hash}`` against persisted state.
 
         Mirrors ``FakeDocStatusStore.diff`` exactly so the production and test
         implementations stay behaviourally identical: with ``scope``, only
         stored records of that scope can be classified deleted. A FAILED
-        record is ``changed`` even with an unchanged hash, so it is retried.
+        record is ``changed`` even with an unchanged hash, so it is retried;
+        so is a record whose extraction fingerprint is set and differs from
+        ``extraction_fingerprint`` (see ``DocStatusPort.diff``).
         """
         with self._registry_errors("scan the records"):
             stored = self._scan_fingerprints()
@@ -577,17 +590,22 @@ class DynamoDBDocStatusStore:
                 delta.new.append(doc_id)
             elif stored[doc_id][0] != content_hash or stored[doc_id][2]:
                 delta.changed.append(doc_id)
+            elif extraction_fingerprint is not None and (
+                stored[doc_id][4] not in (None, extraction_fingerprint)
+            ):
+                delta.changed.append(doc_id)
+                delta.settings_changed.append(doc_id)
             else:
                 delta.unchanged.append(doc_id)
         incoming_ids = set(incoming)
         delta.deleted = [
             doc_id
-            for doc_id, (_, stored_scope, _, _) in stored.items()
+            for doc_id, (_, stored_scope, _, _, _) in stored.items()
             if doc_id not in incoming_ids and (scope is None or stored_scope == scope)
         ]
         # Already projected for the deletion filter: reporting it is free.
         delta.stored_scopes = sorted(
-            {s for _, s, _, _ in stored.values() if s is not None}
+            {s for _, s, _, _, _ in stored.values() if s is not None}
         )
         # Overflow is only read with a PENDING record: next to any other
         # record, or none, it is left over (see DocumentDelta).
@@ -636,6 +654,7 @@ class DynamoDBDocStatusStore:
         for attr in (
             "file_path",
             "error_info",
+            "extraction_fingerprint",
             "created_at",
             "updated_at",
         ):
@@ -671,6 +690,7 @@ class DynamoDBDocStatusStore:
             claim_ids=_str_set("claim_ids"),
             community_report_ids=_str_set("community_report_ids"),
             error_info=_str("error_info"),
+            extraction_fingerprint=_str("extraction_fingerprint"),
             failure_count=(
                 int(failure_count_cell["N"])
                 if failure_count_cell and "N" in failure_count_cell

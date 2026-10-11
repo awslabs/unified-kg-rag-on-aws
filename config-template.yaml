@@ -174,7 +174,8 @@ aws:
 # Provider preset. "aws" (default): Bedrock, Neptune, OpenSearch, DynamoDB.
 # "local" fills in local providers for every key under providers, aws.neptune
 # and aws.opensearch that this file leaves unset: Ollama models, a cross-encoder
-# reranker, Gremlin Server, a local OpenSearch and a SQLite registry (see the
+# reranker, Gremlin Server, a local OpenSearch and a SQLite registry, plus a
+# retrieval context budget the local model's window accepts (see the
 # user guide's "Local mode" and docker/config.local.yaml). A key this file sets
 # always wins over the preset, so the providers section and the Neptune and
 # OpenSearch connection keys are commented out here; uncomment a key only to
@@ -823,8 +824,10 @@ search:
     # (~785K) never binds, so nothing is ever trimmed. Always clamped to what
     # the answer model accepts. null derives it from the model's window minus
     # the answer request's output reservation (its max_tokens, see
-    # aws.bedrock.default_max_output_tokens) and the headroom below.
-    max_context_tokens: 30000
+    # aws.bedrock.default_max_output_tokens) and the headroom below. Commented
+    # out because backend "local" sets 22000 (what the local model's 32768
+    # window accepts); uncomment it to change it.
+    # max_context_tokens: 30000
     # Share of the window held back for the system prompt, question, history,
     # and token-estimation error when deriving the budget above.
     context_window_headroom_ratio: 0.1

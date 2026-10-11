@@ -52,7 +52,8 @@ _SCHEMA = (
         content_hash TEXT NOT NULL,
         status TEXT NOT NULL,
         scope TEXT,
-        record TEXT NOT NULL
+        record TEXT NOT NULL,
+        extraction_fingerprint TEXT
     )
     """,
     """
@@ -64,6 +65,19 @@ _SCHEMA = (
     )
     """,
 )
+
+# Columns added after the table shipped: a database created before them gets
+# them on open, NULL for its existing rows (which then read as the record's
+# default, e.g. no extraction fingerprint).
+_ADDED_COLUMNS = {"extraction_fingerprint": "TEXT"}
+
+
+def _add_missing_columns(connection: sqlite3.Connection) -> None:
+    existing = {row[1] for row in connection.execute("PRAGMA table_info(doc_status)")}
+    for name, kind in _ADDED_COLUMNS.items():
+        if name not in existing:
+            connection.execute(f"ALTER TABLE doc_status ADD COLUMN {name} {kind}")
+
 
 # SQLite's default limit on bound parameters per statement is 999 on older
 # builds; stay under it when reading many keys.
@@ -101,6 +115,7 @@ class SQLiteDocStatusStore:
                     connection.execute("PRAGMA journal_mode=WAL")
                     for statement in _SCHEMA:
                         connection.execute(statement)
+                    _add_missing_columns(connection)
                 self._connection = connection
             return self._connection
 
@@ -166,8 +181,8 @@ class SQLiteDocStatusStore:
             return
         with self._transaction("write records") as connection:
             connection.executemany(
-                "INSERT OR REPLACE INTO doc_status "
-                "(doc_id, content_hash, status, scope, record) VALUES (?, ?, ?, ?, ?)",
+                "INSERT OR REPLACE INTO doc_status (doc_id, content_hash, status, "
+                "scope, record, extraction_fingerprint) VALUES (?, ?, ?, ?, ?, ?)",
                 [
                     (
                         record.doc_id,
@@ -175,6 +190,7 @@ class SQLiteDocStatusStore:
                         record.status.value,
                         record.scope,
                         record.model_dump_json(),
+                        record.extraction_fingerprint,
                     )
                     for record in latest.values()
                 ],
@@ -253,17 +269,23 @@ class SQLiteDocStatusStore:
 
     # --- diff --------------------------------------------------------------
 
-    def diff(self, incoming: dict[str, str], scope: str | None = None) -> DocumentDelta:
+    def diff(
+        self,
+        incoming: dict[str, str],
+        scope: str | None = None,
+        extraction_fingerprint: str | None = None,
+    ) -> DocumentDelta:
         """Classify ``{doc_id: content_hash}`` against the stored records.
 
         Same partition as ``FakeDocStatusStore.diff``: with ``scope``, only
-        stored records of that scope can be deleted; a FAILED record is
-        changed even with an unchanged hash.
+        stored records of that scope can be deleted; a FAILED record, or one
+        whose extraction fingerprint is set and differs from
+        ``extraction_fingerprint``, is changed even with an unchanged hash.
         """
         with self._lock, self._registry_errors("read the records"):
             rows = self.connection.execute(
-                "SELECT doc_id, content_hash, status, scope FROM doc_status "
-                "ORDER BY rowid"
+                "SELECT doc_id, content_hash, status, scope, extraction_fingerprint "
+                "FROM doc_status ORDER BY rowid"
             ).fetchall()
             overflow_owners = [
                 row[0]
@@ -272,8 +294,8 @@ class SQLiteDocStatusStore:
                 ).fetchall()
             ]
         stored = {
-            doc_id: (content_hash, status, stored_scope)
-            for doc_id, content_hash, status, stored_scope in rows
+            doc_id: (content_hash, status, stored_scope, stored_extraction)
+            for doc_id, content_hash, status, stored_scope, stored_extraction in rows
         }
         delta = DocumentDelta()
         for doc_id, content_hash in incoming.items():
@@ -282,16 +304,21 @@ class SQLiteDocStatusStore:
                 delta.new.append(doc_id)
             elif existing[0] != content_hash or existing[1] == DocStatus.FAILED.value:
                 delta.changed.append(doc_id)
+            elif extraction_fingerprint is not None and (
+                existing[3] not in (None, extraction_fingerprint)
+            ):
+                delta.changed.append(doc_id)
+                delta.settings_changed.append(doc_id)
             else:
                 delta.unchanged.append(doc_id)
         incoming_ids = set(incoming)
         delta.deleted = [
             doc_id
-            for doc_id, (_, _, stored_scope) in stored.items()
+            for doc_id, (_, _, stored_scope, _) in stored.items()
             if doc_id not in incoming_ids and (scope is None or stored_scope == scope)
         ]
         delta.stored_scopes = sorted(
-            {s for _, _, s in stored.values() if s is not None}
+            {s for _, _, s, _ in stored.values() if s is not None}
         )
         delta.orphan_overflow = sorted(
             owner

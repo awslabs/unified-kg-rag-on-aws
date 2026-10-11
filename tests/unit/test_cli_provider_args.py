@@ -97,3 +97,27 @@ def test_rag_runner_applies_the_flags(tmp_path: Path) -> None:
     runner = run_rag_chain.RAGChainRunner(args)
     assert runner.config.backend is Backend.LOCAL
     assert runner.config.logging.log_to_file is False
+
+
+def test_backend_local_flag_resolves_the_registry_against_the_config_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # An aws config file switched to local by the flag: the SQLite registry
+    # path the preset brings in is relative, and must not follow the working
+    # directory (a run started elsewhere would read an empty registry).
+    from unified_kg_rag.shared import get_config
+
+    config_dir = tmp_path / "project"
+    config_dir.mkdir()
+    path = config_dir / "config.yaml"
+    path.write_text("logging:\n  log_to_file: false\n", encoding="utf-8")
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    args = argparse.Namespace(backend="local", config_path=str(path))
+
+    config = apply_provider_arguments(get_config(path), args)
+
+    sqlite_path = Path(config.providers.doc_status.sqlite_path)
+    assert sqlite_path.is_absolute()
+    assert sqlite_path.is_relative_to(config_dir.resolve())

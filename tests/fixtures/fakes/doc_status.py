@@ -110,7 +110,12 @@ class FakeDocStatusStore:
     def list_all(self) -> list[DocStatusRecord]:
         return list(self._records.values())
 
-    def diff(self, incoming: dict[str, str], scope: str | None = None) -> DocumentDelta:
+    def diff(
+        self,
+        incoming: dict[str, str],
+        scope: str | None = None,
+        extraction_fingerprint: str | None = None,
+    ) -> DocumentDelta:
         delta = DocumentDelta()
         for doc_id, content_hash in incoming.items():
             existing = self._records.get(doc_id)
@@ -121,6 +126,11 @@ class FakeDocStatusStore:
                 or existing.status is DocStatus.FAILED
             ):
                 delta.changed.append(doc_id)
+            elif extraction_fingerprint is not None and (
+                existing.extraction_fingerprint not in (None, extraction_fingerprint)
+            ):
+                delta.changed.append(doc_id)
+                delta.settings_changed.append(doc_id)
             else:
                 delta.unchanged.append(doc_id)
         incoming_ids = set(incoming)

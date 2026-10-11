@@ -112,7 +112,12 @@ class DocStatusPort(Protocol):
         """Return every stored record (used to diff against the new corpus)."""
         ...
 
-    def diff(self, incoming: dict[str, str], scope: str | None = None) -> DocumentDelta:
+    def diff(
+        self,
+        incoming: dict[str, str],
+        scope: str | None = None,
+        extraction_fingerprint: str | None = None,
+    ) -> DocumentDelta:
         """Classify ``{doc_id: content_hash}`` against stored state.
 
         Returns the new / changed / unchanged / deleted partition driving an
@@ -123,6 +128,13 @@ class DocStatusPort(Protocol):
         ``doc_id``), so an incoming id never matches another scope's record.
         ``scope=None`` considers every stored record. A stored ``FAILED``
         record is ``changed`` even when its hash matches, so it is retried.
+
+        With ``extraction_fingerprint`` (the run's extraction settings, see
+        ``DocStatusRecord.extraction_fingerprint``), a stored record whose
+        fingerprint is set and differs is ``changed`` too, and also listed in
+        ``DocumentDelta.settings_changed`` when its hash and status alone
+        would read unchanged. A record without a fingerprint (written before
+        the field existed) is compared by hash and status only.
 
         An adapter should also report the distinct scopes of the records it
         read in ``DocumentDelta.stored_scopes`` (the scan already reads them);

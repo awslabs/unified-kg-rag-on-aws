@@ -334,3 +334,24 @@ def test_shipped_local_config_sets_only_what_differs_from_the_preset() -> None:
             for k in ("endpoint", "port", "use_ssl", "verify_certs", "allow_anonymous")
         ),
     }
+
+
+def test_local_preset_context_budget_fits_the_local_model_window() -> None:
+    # The AWS default budget (30,000) is over what the default local model's
+    # 32,768-token window accepts beside its output reservation, so every
+    # local query was clamped with a WARNING.
+    config = Config(backend="local")
+    llm = config.providers.llm
+    token_manager = config.search.token_manager
+    ceiling = int(
+        (llm.context_window_size - llm.max_output_tokens)
+        * (1.0 - token_manager.context_window_headroom_ratio)
+    )
+    assert token_manager.max_context_tokens is not None
+    assert token_manager.max_context_tokens <= ceiling
+    # A value the file sets wins over the preset.
+    explicit = Config(
+        backend="local", search={"token_manager": {"max_context_tokens": 12000}}
+    )
+    assert explicit.search.token_manager.max_context_tokens == 12000
+    assert Config().search.token_manager.max_context_tokens == 30_000

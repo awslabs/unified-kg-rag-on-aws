@@ -272,6 +272,7 @@ class ProvidersConfig(BaseModel):
 
 
 _OLLAMA_URL = "http://localhost:11434"
+LOCAL_MAX_CONTEXT_TOKENS = 22_000
 
 # What `backend: local` fills in, under whatever the config sets itself. The
 # stores match docker/compose.local.yaml; the models are small multilingual
@@ -312,6 +313,11 @@ LOCAL_PRESET: dict[str, Any] = {
             "allow_anonymous": True,
         },
     },
+    # The retrieval context budget the default local model accepts: its
+    # 32,768-token window (providers.llm.context_window_size) minus the
+    # 8,192-token output reservation, less the 10% headroom. The AWS default
+    # (30,000) is over it and was clamped, with a WARNING, on every query.
+    "search": {"token_manager": {"max_context_tokens": LOCAL_MAX_CONTEXT_TOKENS}},
 }
 
 

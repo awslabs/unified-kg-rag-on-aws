@@ -70,7 +70,16 @@ too) after changing anything that is baked into the stored data:
 - `processing.translation.source_language` or the language analyzers (they
   change the text-unit mapping);
 - to refresh descriptions and communities that incremental runs keep (see
-  [Incremental runs](#incremental-runs)).
+  [Incremental runs](#incremental-runs));
+- the extraction settings (prompts, `entity_types`, extraction or chunking
+  models, chunk sizes...) when the registry holds records written before
+  records carried an extraction fingerprint, or after editing a built-in
+  prompt template (code). Otherwise an incremental run re-extracts the
+  unchanged documents whose stored fingerprint differs from the current
+  settings on its own and logs how many (see
+  [User Guide §5](./user-guide.md#workflows)); records without a fingerprint
+  are compared by content only, so they keep their old extraction until a
+  reset.
 
 Set `indexing.reset` back to `false` afterwards; otherwise every run rebuilds.
 
@@ -86,9 +95,12 @@ run's [index suffix](./user-guide.md#index-suffix) and its source scope
 (`processing.document_parsing.source_scope`, by default the resolved source
 directory; the container entrypoint sets it to the `s3://` source URI), and
 both are part of each document's registry key, so two corpora on one suffix
-never share a record even for files with the same relative path. A file
-missing from the source is treated as deleted, and its exclusive artifacts are
-removed. Therefore:
+never share a record even for files with the same relative path. An `s3://`
+URI with and without a trailing slash (`s3://bucket/corpus/`,
+`s3://bucket/corpus`) is one scope: a run whose spelling the registry does
+not hold, but the other one, uses the stored spelling and logs a WARNING. A
+file missing from the source is treated as deleted, and its exclusive
+artifacts are removed. Therefore:
 
 - keep the same source directory (or a fixed `source_scope`) for a corpus.
   Moving a corpus with the default scope changes the scope; the old scope's

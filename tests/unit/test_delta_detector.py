@@ -230,8 +230,15 @@ class _PortSubclassStore(DocStatusPort):
     def list_all(self) -> list[DocStatusRecord]:
         return self.inner.list_all()
 
-    def diff(self, incoming: dict[str, str], scope: str | None = None):
-        return self.inner.diff(incoming, scope=scope)
+    def diff(
+        self,
+        incoming: dict[str, str],
+        scope: str | None = None,
+        extraction_fingerprint: str | None = None,
+    ):
+        return self.inner.diff(
+            incoming, scope=scope, extraction_fingerprint=extraction_fingerprint
+        )
 
 
 def test_port_default_get_many_loops_get_and_skips_unknown_ids() -> None:

@@ -357,6 +357,7 @@ class DocumentLoadingStage(PipelineStage):
         context.incremental_delta = None
         context.incremental_fingerprints = {}
         context.incremental_scope = None
+        context.incremental_extraction_fingerprint = None
         context.incremental_retired_scopes = []
 
         failed_files: list[str] = []
@@ -1157,7 +1158,12 @@ class CommunityDetectionStage(PipelineStage):
         path = outputs_dir / VISUALIZATION_DATA_FILENAME
         try:
             data = graph_data(
-                context.knowledge_graph, self.detector.export_community_data()
+                context.knowledge_graph,
+                self.detector.export_community_data(),
+                {
+                    str(node): str(community)
+                    for node, community in self.detector.node_to_community_l0.items()
+                },
             )
             outputs_dir.mkdir(parents=True, exist_ok=True)
             path.write_text(json.dumps(data, default=str), encoding="utf-8")
@@ -1252,7 +1258,22 @@ class CommunityDetectionStage(PipelineStage):
             community_objects, failed_community_ids
         )
 
-        if self.config.graph.visualization.enabled and context.knowledge_graph:
+        viz = self.config.graph.visualization
+        delta = context.incremental_delta
+        if (viz.enabled or viz.export_data) and delta is not None and delta.unchanged:
+            # An incremental run's graph holds only the delta's documents:
+            # rendering or exporting it would replace the full graph's
+            # visualization with a fragment.
+            logger.info(
+                "Visualization skipped: this incremental run's graph holds only "
+                "its %d new or changed documents, not the %d unchanged ones. "
+                "To visualize the whole graph, run a full build "
+                "(indexing.reset: true) and then run-visualization on its "
+                "visualization_data.json.",
+                len(delta.to_process),
+                len(delta.unchanged),
+            )
+        elif self.config.graph.visualization.enabled and context.knowledge_graph:
             try:
                 # Imported on use: rendering is opt-in, and the visualization
                 # package loads umap and scikit-learn (seconds of import time).

@@ -71,3 +71,29 @@ def test_default_routable_set_and_fast_router_model() -> None:
         SearchStrategy.DRIFT,
     ]
     assert search.strategy_selection_model_id == LanguageModelId.CLAUDE_V5_5_HAIKU
+
+
+def test_unknown_defaults_to_the_first_routable_when_local_is_excluded() -> None:
+    # A configuration without LOCAL (its stores may not be provisioned) must
+    # never be routed to it.
+    routable = (SearchStrategy.MIX, SearchStrategy.GLOBAL)
+    assert parse("banana", routable) == SearchStrategy.MIX
+
+
+async def test_router_failure_falls_back_to_a_routable_strategy() -> None:
+    from unified_kg_rag.domain.models import Config
+
+    config = Config()
+    config.search.auto_routable_strategies = [SearchStrategy.GLOBAL]
+    chain = GraphRAGChain.__new__(GraphRAGChain)
+    chain.config = config
+    chain.ignore_errors = True
+
+    def _failing_router(*_args: object, **_kwargs: object) -> object:
+        raise RuntimeError("router down")
+
+    chain._get_chain_for_prompt = _failing_router  # type: ignore[method-assign]
+    state = await chain._resolve_strategy(
+        {"search_strategy": SearchStrategy.AUTO, "query": "q"}
+    )
+    assert state["resolved_strategy"] == SearchStrategy.GLOBAL

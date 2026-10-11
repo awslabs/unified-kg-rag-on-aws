@@ -533,13 +533,20 @@ class _StaleDiffStore(FakeDocStatusStore):
         self.diffs = 0
         self._snapshot: dict[str, DocStatusRecord] | None = None
 
-    def diff(self, incoming: dict[str, str], scope: str | None = None):
+    def diff(
+        self,
+        incoming: dict[str, str],
+        scope: str | None = None,
+        extraction_fingerprint: str | None = None,
+    ):
         self.diffs += 1
         if self._snapshot is None:
             self._snapshot = dict(self._records)
         current, self._records = self._records, self._snapshot
         try:
-            return super().diff(incoming, scope=scope)
+            return super().diff(
+                incoming, scope=scope, extraction_fingerprint=extraction_fingerprint
+            )
         finally:
             self._records = current
 
@@ -730,18 +737,30 @@ def test_validate_retired_scopes_rejects_the_own_source_scope(own) -> None:
         validate_retired_scopes(["/corpora/old", own], "/corpora/new", "default")
 
 
-def test_validate_retired_scopes_normalizes_paths_and_keeps_uris() -> None:
+def test_validate_retired_scopes_normalizes_paths_and_s3_uris() -> None:
+    # An s3:// URI loses its trailing slash like a path (aws s3 sync reads
+    # both spellings as one folder); other URIs and names are kept.
     assert validate_retired_scopes(
-        ["/corpora/old/", "/corpora/old", "s3://bucket/old/", "corpus-a"],
+        [
+            "/corpora/old/",
+            "/corpora/old",
+            "s3://bucket/old/",
+            "s3://bucket/old",
+            "https://host/old/",
+            "corpus-a",
+        ],
         "s3://bucket/new/",
         "tenant-a",
     ) == [
         "tenant-a|/corpora/old",
-        "tenant-a|s3://bucket/old/",
+        "tenant-a|s3://bucket/old",
+        "tenant-a|https://host/old/",
         "tenant-a|corpus-a",
     ]
     with pytest.raises(ConfigurationError, match="own source scope"):
         validate_retired_scopes(["s3://bucket/new/"], "s3://bucket/new/", "t")
+    with pytest.raises(ConfigurationError, match="own source scope"):
+        validate_retired_scopes(["s3://bucket/new"], "s3://bucket/new/", "t")
     with pytest.raises(ConfigurationError, match="empty"):
         validate_retired_scopes(["  "], "/corpora/new", "default")
 

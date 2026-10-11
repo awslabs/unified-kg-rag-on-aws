@@ -52,6 +52,8 @@ derived) to avoid replace-on-rename conflicts.
 > (which churn every deploy-region stack's exports):
 >
 > ```bash
+> # 0) once: bootstrap bedrock_region too (cdk bootstrap covers one region)
+> cdk bootstrap aws://<account>/us-west-2
 > # 1) create the guardrail in bedrock_region, note its id from the output
 > cdk deploy GraphRagGuardrail -c bedrock_region=us-west-2 …
 > # 2) pass that id so compute injects BEDROCK_GUARDRAIL_IDENTIFIER
@@ -108,11 +110,12 @@ Prep (parse/load/chunk/translate) → GraphBuild (extract/glean/resolve/claims)
 | `opensearch_master_instance` | `m6g.large.search` | dedicated master node type, used only when `opensearch_count > 1`. 8 GiB Graviton, which AWS sizes for up to 10 nodes / 10K shards on OpenSearch 2.13; raise it for larger domains |
 | `opensearch_count` | `1` (dev) / `2` (non-dev) | OpenSearch data node count (`>1` ⇒ 3 dedicated masters + zone awareness = 5 nodes; dev runs a single node for cost) |
 | `opensearch_volume_gib` | `50` | GP3 volume per OpenSearch data node; the free-storage alarm fires at 40% free |
-| `backup_retention_days` | `7` | Neptune automated backup retention (see [Backup and restore](../docs/operations.md#backup-and-restore)) |
-| `fargate_cpu` | `2048` | Fargate task vCPU units (in-task ProcessPool extractors scale with vCPU) |
-| `fargate_memory` | `8192` | Fargate task memory (MiB) |
+| `doc_status_table` | `graphrag-doc-status` (dev) / `<env>-graphrag-doc-status` (non-dev) | DynamoDB doc-status (incremental-indexing registry) table name, injected into the task as `GRAPHRAG_DOC_STATUS_TABLE`. Changing it on a deployed environment creates a new, empty registry table |
+| `backup_retention_days` | `7` | Neptune automated backup retention, 1-35 days (see [Backup and restore](../docs/operations.md#backup-and-restore)) |
+| `fargate_cpu` | `2048` | Fargate task vCPU units (in-task ProcessPool extractors scale with vCPU): `256`, `512`, `1024`, `2048`, `4096`, `8192` or `16384` |
+| `fargate_memory` | `8192` | Fargate task memory (MiB); must be a size Fargate offers for `fargate_cpu` (with `2048`: 4096-16384 in 1024 steps), else synth fails naming the valid range |
 | `image_tag` | `latest` | container image tag the task pulls; pin a version tag to make ECR tags immutable. The ECR lifecycle keeps this tag and the 10 newest images, so pin a tag rather than a digest |
-| `sfn_timeout_hours` | `6` | ingestion state machine timeout for a whole run; a run that hits it is `TIMED_OUT` (alarmed) |
+| `sfn_timeout_hours` | `6` | ingestion state machine timeout for a whole run (at least 1); a run that hits it is `TIMED_OUT` (alarmed) |
 | `create_guardrail` | `true` | `GraphRagGuardrail` creates and keeps a baseline PII/prompt-attack guardrail in `bedrock_region` (retained on stack deletion unless `removal_destroy`). `false` = bring your own guardrail; nothing is created |
 | `guardrail_identifier` | _(none)_ | guardrail id the compute task **uses**, injected as `BEDROCK_GUARDRAIL_IDENTIFIER`. The created guardrail's id is **not** injected automatically: pass the `GuardrailIdentifier` output of `GraphRagGuardrail` here (two-step flow above), or an external id with `create_guardrail=false`. Unset = no guardrail on the task |
 | `guardrail_version` | _(none)_ | published guardrail version the task applies, injected as `BEDROCK_GUARDRAIL_VERSION`. Unset = `DRAFT`, which changes whenever the guardrail is edited; publish a version and pin it outside dev |
@@ -120,12 +123,17 @@ Prep (parse/load/chunk/translate) → GraphBuild (extract/glean/resolve/claims)
 | `vpc_flow_logs` | `false` (dev) / `true` (non-dev) | enable VPC flow logs (created VPC only) |
 | `flow_log_retention_days` | `731` | flow-log log group retention; must be a CloudWatch Logs retention value (e.g. `30`, `90`, `365`, `731`) |
 | `deletion_protection` | `false` (dev) / `true` (non-dev) | deletion protection on the Neptune cluster and the DynamoDB doc-status table (blocks a direct delete API/console call). OpenSearch domains have no deletion-protection setting; outside dev the domain is only kept by `removal_destroy=false` (CloudFormation `Retain`), which does not stop a direct `DeleteDomain` call |
-| `bedrock_model_arns` | _(none)_ | scope Bedrock IAM to specific model ARNs (list) |
+| `bedrock_model_arns` | _(none)_ | scope Bedrock IAM to specific model ARNs: a list in `cdk.json`, or a comma-separated string with `-c bedrock_model_arns=arn:...,arn:...` |
 | `alarm_email` | _(none)_ | subscribe an email to the pipeline alarm topic |
 | `enable_cdk_nag` | `false` | run cdk-nag AwsSolutions (Well-Architected) checks at synth |
 | `owner` | `aws-proserve` | `owner` tag applied to every resource |
 | `cost_center` | `unified-kg-rag-on-aws` | `cost-center` tag applied to every resource |
 | `removal_destroy` | `true` (dev) / `false` (non-dev) | `DESTROY` vs `RETAIN` on stack deletion for the stateful stores, the KMS keys, the guardrail, the OpenSearch domain log groups, and the fixed-name ECR repository (emptied first) and log groups (`/<prefix>/tasks`, `/<prefix>/pipeline`). Retained fixed-name resources make the next deploy fail on the duplicate name, so delete them by hand after a `cdk destroy` with `removal_destroy=false` |
+
+Boolean keys take `true`/`false` (also `yes`/`no`, `on`/`off`, `1`/`0`); any
+other value fails synth instead of reading as `false`. Counts and sizes must be
+positive integers (`opensearch_count`, `neptune_instances`, `sfn_timeout_hours`,
+`backup_retention_days`, ...); synth names the key of a value out of range.
 
 > Every resource is tagged `project=unified-kg-rag-on-aws`, `env=<env_name>`,
 > `managed-by=cdk`, `owner`, and `cost-center` for cost allocation and ownership.
@@ -259,7 +267,10 @@ cdk synth -c vpc_id=vpc-0abc... -c cache_bucket_name=my-cache -c network_mode=pr
 cdk synth -c network_mode=public
 
 # Deploy (creates billable resources)
-cdk bootstrap            # once per account/region
+cdk bootstrap            # once per account/region; with a bedrock_region other
+                         # than the deploy region, also
+                         # cdk bootstrap aws://<account>/<bedrock_region>
+                         # (the guardrail stack deploys there)
 cdk deploy --all
 ```
 

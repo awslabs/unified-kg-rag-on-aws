@@ -14,6 +14,12 @@ corpora written to one namespace never share an entry. ``content_hash`` is
 computed over the aggregated document text so a content edit is detected even
 when the path is unchanged.
 
+A document whose content is unchanged is still re-extracted when the settings
+that shaped its artifacts changed: the run passes its extraction fingerprint
+(models, prompts, entity types, chunking...) to the diff, which compares it
+with the one each record stored when the document was last extracted. A record
+written before records carried one is compared by content only.
+
 Deletion is scoped: a run only classifies registry documents of its own scope
 (index namespace + corpus source, see :func:`registry_scope`) as deleted, and
 never a corpus file that merely failed to parse this run.
@@ -34,6 +40,7 @@ local source directories of the run's namespace so the run can warn.
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -218,6 +225,7 @@ def detect_delta(
     max_failures: int | None = None,
     legacy_doc_ids: Mapping[str, str] | None = None,
     retired_scopes: Iterable[str] = (),
+    extraction_fingerprint: str | None = None,
 ) -> tuple[DocumentDelta, dict[str, str]]:
     """Classify ``documents`` against the persisted registry.
 
@@ -244,6 +252,11 @@ def detect_delta(
             of which is classified deleted this run (see
             :func:`retire_source_scopes`). Needs a ``scope``, which it must
             not contain.
+        extraction_fingerprint: The run's extraction settings fingerprint
+            (``DocStatusRecord.extraction_fingerprint``). A document whose
+            record stored another one is classified changed, so it is
+            re-extracted with the current settings; a record without one is
+            compared by content only. ``None`` compares by content only.
 
     Returns:
         The :class:`DocumentDelta` plus the ``{doc_id: content_hash}``
@@ -263,9 +276,9 @@ def detect_delta(
     fingerprints = fingerprint_documents(documents)
     adopted: dict[str, DocStatusRecord] = {}
     if scope is None:
-        delta = doc_status.diff(fingerprints)
+        delta = _diff(doc_status, fingerprints, None, extraction_fingerprint)
     elif not legacy_doc_ids:
-        delta = doc_status.diff(fingerprints, scope=scope)
+        delta = _diff(doc_status, fingerprints, scope, extraction_fingerprint)
     else:
         # The legacy keys and the failed files' keys ride along in the diff,
         # so its one scan also tells which of them are stored: only those are
@@ -275,14 +288,28 @@ def detect_delta(
             fingerprints,
             scope,
             [*legacy_doc_ids.values(), *failed_doc_ids],
+            extraction_fingerprint,
         )
         _, adopted = _adopt_legacy_records(
-            doc_status, delta, legacy_doc_ids, scope, fingerprints, stored
+            doc_status,
+            delta,
+            legacy_doc_ids,
+            scope,
+            fingerprints,
+            stored,
+            extraction_fingerprint,
         )
     if retired:
         retire_source_scopes(doc_status, delta, retired, own_scope=scope)
     if max_failures is not None and delta.changed:
-        _stop_retrying_exhausted(delta, doc_status, fingerprints, max_failures, adopted)
+        _stop_retrying_exhausted(
+            delta,
+            doc_status,
+            fingerprints,
+            max_failures,
+            adopted,
+            extraction_fingerprint,
+        )
     failed = set(failed_doc_ids) - set(fingerprints)
     if failed:
         delta.deleted = [doc_id for doc_id in delta.deleted if doc_id not in failed]
@@ -300,7 +327,61 @@ def detect_delta(
         len(delta.deleted),
         len(delta.failed),
     )
+    if delta.settings_changed:
+        logger.warning(
+            "Re-extracting %d documents with unchanged content because the "
+            "extraction settings (models, prompts, entity types, chunking...) "
+            "changed since they were indexed",
+            len(delta.settings_changed),
+        )
     return delta, fingerprints
+
+
+# Registry types already warned about lacking ``extraction_fingerprint``.
+_WARNED_NO_FINGERPRINT: set[type] = set()
+
+
+def _diff(
+    doc_status: DocStatusPort,
+    incoming: dict[str, str],
+    scope: str | None,
+    extraction_fingerprint: str | None,
+) -> DocumentDelta:
+    """``doc_status.diff``, with the extraction fingerprint when the store
+    takes one.
+
+    A registry written against the port before ``diff`` took
+    ``extraction_fingerprint`` is diffed by content only (with one WARNING),
+    rather than failing every incremental run.
+    """
+    if extraction_fingerprint is None:
+        return doc_status.diff(incoming, scope=scope)
+    if _takes_extraction_fingerprint(doc_status):
+        return doc_status.diff(
+            incoming, scope=scope, extraction_fingerprint=extraction_fingerprint
+        )
+    store_type = type(doc_status)
+    if store_type not in _WARNED_NO_FINGERPRINT:
+        _WARNED_NO_FINGERPRINT.add(store_type)
+        logger.warning(
+            "%s.diff takes no extraction_fingerprint: documents are diffed by "
+            "content only, so a change of the extraction settings does not "
+            "re-extract unchanged documents (see DocStatusPort.diff)",
+            store_type.__name__,
+        )
+    return doc_status.diff(incoming, scope=scope)
+
+
+def _takes_extraction_fingerprint(doc_status: DocStatusPort) -> bool:
+    try:
+        parameters = inspect.signature(doc_status.diff).parameters.values()
+    except (TypeError, ValueError):
+        return True
+    return any(
+        parameter.name == "extraction_fingerprint"
+        or parameter.kind is inspect.Parameter.VAR_KEYWORD
+        for parameter in parameters
+    )
 
 
 # Content hash of a probe in ``_diff_with_probes``: no stored record has it.
@@ -312,6 +393,7 @@ def _diff_with_probes(
     fingerprints: dict[str, str],
     scope: str,
     probe_ids: Iterable[str],
+    extraction_fingerprint: str | None = None,
 ) -> tuple[DocumentDelta, set[str]]:
     """Diff ``fingerprints`` and report which ``probe_ids`` are stored.
 
@@ -321,10 +403,13 @@ def _diff_with_probes(
     keys need: a legacy key or a failed file of this run is not deleted.
     """
     probes = {doc_id: _PROBE_HASH for doc_id in probe_ids if doc_id not in fingerprints}
-    delta = doc_status.diff({**probes, **fingerprints}, scope=scope)
+    delta = _diff(doc_status, {**probes, **fingerprints}, scope, extraction_fingerprint)
     stored = (set(delta.changed) | set(delta.unchanged)) & probes.keys()
     delta.new = [doc_id for doc_id in delta.new if doc_id not in probes]
     delta.changed = [doc_id for doc_id in delta.changed if doc_id not in probes]
+    delta.settings_changed = [
+        doc_id for doc_id in delta.settings_changed if doc_id not in probes
+    ]
     delta.unchanged = [doc_id for doc_id in delta.unchanged if doc_id not in probes]
     return delta, stored
 
@@ -336,6 +421,7 @@ def adopt_legacy_records(
     scope: str,
     fingerprints: Mapping[str, str],
     stored_ids: set[str] | None = None,
+    extraction_fingerprint: str | None = None,
 ) -> int:
     """Re-key this scope's legacy-keyed records to the current ``doc_id``.
 
@@ -363,12 +449,21 @@ def adopt_legacy_records(
             known to be stored (see :func:`_diff_with_probes`). Only those are
             read, in one batch (:meth:`DocStatusPort.get_many`). ``None``
             reads every legacy key and every failed file's current key.
+        extraction_fingerprint: The run's extraction fingerprint; an adopted
+            record that stored another one is classified changed (see
+            :func:`detect_delta`).
 
     Returns:
         The number of legacy keys adopted or deleted.
     """
     count, _ = _adopt_legacy_records(
-        doc_status, delta, legacy_doc_ids, scope, fingerprints, stored_ids
+        doc_status,
+        delta,
+        legacy_doc_ids,
+        scope,
+        fingerprints,
+        stored_ids,
+        extraction_fingerprint,
     )
     return count
 
@@ -380,6 +475,7 @@ def _adopt_legacy_records(
     scope: str,
     fingerprints: Mapping[str, str],
     stored_ids: set[str] | None,
+    extraction_fingerprint: str | None = None,
 ) -> tuple[int, dict[str, DocStatusRecord]]:
     """:func:`adopt_legacy_records`; also returns ``{doc_id: record}`` of the
     records it wrote (the adopted ones, under their new key)."""
@@ -405,7 +501,7 @@ def _adopt_legacy_records(
         stored = set(failed) & stored_ids
     keep = current | stored
     written = _rekey(doc_status, candidates, scope, keep=keep)
-    _classify_adopted(delta, written, fingerprints)
+    _classify_adopted(delta, written, fingerprints, extraction_fingerprint)
     legacy_ids = set(legacy_doc_ids.values()) - set(fingerprints)
     delta.deleted = [doc_id for doc_id in delta.deleted if doc_id not in legacy_ids]
     if candidates:
@@ -423,6 +519,7 @@ def _classify_adopted(
     delta: DocumentDelta,
     written: Mapping[str, DocStatusRecord],
     fingerprints: Mapping[str, str],
+    extraction_fingerprint: str | None = None,
 ) -> None:
     """Move documents whose record was just written from ``new`` to
     ``unchanged`` or ``changed``, the way the diff classifies a record.
@@ -437,12 +534,25 @@ def _classify_adopted(
     for doc_id in sorted(moved):
         record = written[doc_id]
         if (
-            record.content_hash == fingerprints[doc_id]
-            and record.status is not DocStatus.FAILED
+            record.content_hash != fingerprints[doc_id]
+            or record.status is DocStatus.FAILED
         ):
-            delta.unchanged.append(doc_id)
-        else:
             delta.changed.append(doc_id)
+        elif _settings_changed(record, extraction_fingerprint):
+            delta.changed.append(doc_id)
+            delta.settings_changed.append(doc_id)
+        else:
+            delta.unchanged.append(doc_id)
+
+
+def _settings_changed(
+    record: DocStatusRecord, extraction_fingerprint: str | None
+) -> bool:
+    """Whether ``record`` was extracted with other settings than the run's
+    (unknown for a record without a fingerprint: not changed)."""
+    return extraction_fingerprint is not None and (
+        record.extraction_fingerprint not in (None, extraction_fingerprint)
+    )
 
 
 def validate_retired_scopes(
@@ -623,8 +733,12 @@ def _stop_retrying_exhausted(
     fingerprints: dict[str, str],
     max_failures: int,
     written: Mapping[str, DocStatusRecord] | None = None,
+    extraction_fingerprint: str | None = None,
 ) -> None:
     """Move changed documents that used up their retries to ``unchanged``.
+
+    A document whose extraction settings changed since it failed is retried
+    (its earlier failures were with other settings).
 
     ``written`` holds the records this run just wrote (adopted legacy
     records), used as they are instead of read back from a store that may
@@ -644,6 +758,7 @@ def _stop_retrying_exhausted(
             and record.status is DocStatus.FAILED
             and record.content_hash == fingerprints[doc_id]
             and record.failure_count >= max_failures
+            and not _settings_changed(record, extraction_fingerprint)
         ):
             exhausted.append(doc_id)
             labels.append(record.file_path or doc_id)
