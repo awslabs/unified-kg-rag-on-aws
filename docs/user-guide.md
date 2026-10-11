@@ -1152,6 +1152,15 @@ SQLite file instead (`providers.doc_status.kind: sqlite`, switched on by
   **exclusive** artifacts (entities/relationships seen only in that document,
   tracked via per-document lineage in the registry) are deleted; artifacts
   shared with surviving documents are kept.
+- **Change the extraction settings** (a tuned `custom_prompts` set,
+  `entity_types`, an extraction, gleaning or chunking model, chunk sizes,
+  translation, resolution): each record stores a fingerprint of the settings
+  its document was extracted with, so the next run re-extracts every
+  unchanged document whose fingerprint differs and logs a WARNING with their
+  count. Records written before records carried a fingerprint are compared by
+  content only (no surprise full re-extraction on upgrade); a reset
+  (`indexing.reset: true`) re-extracts them. Edits to the built-in prompt
+  templates (code) are not seen: reset after editing one.
 
 ### Deletion scope
 

@@ -533,13 +533,20 @@ class _StaleDiffStore(FakeDocStatusStore):
         self.diffs = 0
         self._snapshot: dict[str, DocStatusRecord] | None = None
 
-    def diff(self, incoming: dict[str, str], scope: str | None = None):
+    def diff(
+        self,
+        incoming: dict[str, str],
+        scope: str | None = None,
+        extraction_fingerprint: str | None = None,
+    ):
         self.diffs += 1
         if self._snapshot is None:
             self._snapshot = dict(self._records)
         current, self._records = self._records, self._snapshot
         try:
-            return super().diff(incoming, scope=scope)
+            return super().diff(
+                incoming, scope=scope, extraction_fingerprint=extraction_fingerprint
+            )
         finally:
             self._records = current
 

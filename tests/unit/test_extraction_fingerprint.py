@@ -1,0 +1,207 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+"""The extraction fingerprint recorded per document, and the delta it drives."""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+
+import pytest
+
+from tests.fixtures.fakes.doc_status import FakeDocStatusStore
+from unified_kg_rag.domain.ingestion.delta_detector import (
+    compute_content_hash,
+    detect_delta,
+    document_doc_id,
+    legacy_doc_id,
+    registry_scope,
+)
+from unified_kg_rag.domain.models import (
+    Config,
+    DocStatus,
+    DocStatusRecord,
+    Document,
+)
+from unified_kg_rag.shared.utils.cache_keys import extraction_fingerprint
+
+pytestmark = pytest.mark.unit
+
+
+def _set(path: str, value: object) -> Callable[[Config], None]:
+    def apply(config: Config) -> None:
+        *parents, leaf = path.split(".")
+        node: object = config
+        for name in parents:
+            node = getattr(node, name)
+        setattr(node, leaf, value)
+
+    return apply
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        _set("custom_prompts.graph_extraction_system", "tuned {input_text}"),
+        _set("processing.graph_extraction.entity_types", ["PRODUCT: goods"]),
+        _set("processing.graph_extraction.extraction_model_id", "amazon.nova-pro"),
+        _set("processing.chunking.max_chunk_size", 4000),
+        _set("processing.gleaning.max_rounds", 1),
+        _set("processing.similarity_threshold", 0.5),
+        _set("processing.translation.enabled", False),
+    ],
+)
+def test_changes_with_the_extraction_settings(
+    change: Callable[[Config], None],
+) -> None:
+    config = Config()
+    before = extraction_fingerprint(config)
+    change(config)
+    assert extraction_fingerprint(config) != before
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        # Where the corpus lives and how it is named is the document's
+        # identity, not its extraction.
+        _set("processing.document_parsing.source_directory", "/elsewhere"),
+        _set("processing.document_parsing.source_scope", "s3://bucket/corpus"),
+        _set("processing.document_parsing.index_value", "tenant"),
+        _set("processing.ignore_errors", True),
+        _set("processing.deduplicate", True),
+        # Later stages do not shape a document's entities.
+        _set("custom_prompts.community_report_system", "tuned"),
+        _set("custom_prompts.claim_extraction_system", "tuned"),
+        _set("indexing.max_failure_rate", 0.5),
+    ],
+)
+def test_ignores_settings_that_do_not_shape_a_documents_artifacts(
+    change: Callable[[Config], None],
+) -> None:
+    config = Config()
+    before = extraction_fingerprint(config)
+    change(config)
+    assert extraction_fingerprint(config) == before
+
+
+def test_is_stable_for_an_equal_configuration() -> None:
+    assert extraction_fingerprint(Config()) == extraction_fingerprint(Config())
+
+
+def _doc(path: str, text: str) -> Document:
+    return Document(
+        page_content=text,
+        document_id="x",
+        file_name=path.rsplit("/", 1)[-1],
+        file_path=path,
+        file_type="txt",
+        total_pages=1,
+    )
+
+
+def _record(document: Document, **fields: object) -> DocStatusRecord:
+    return DocStatusRecord.model_validate(
+        {
+            "doc_id": document_doc_id(document),
+            "content_hash": compute_content_hash(document),
+            "status": DocStatus.PROCESSED,
+            **fields,
+        }
+    )
+
+
+def test_delta_reextracts_documents_of_other_settings_and_logs_once(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    store = FakeDocStatusStore()
+    stale, current, legacy = (
+        _doc("/stale.txt", "a"),
+        _doc("/current.txt", "b"),
+        _doc("/legacy.txt", "c"),
+    )
+    store.put_many(
+        [
+            _record(stale, extraction_fingerprint="old"),
+            _record(current, extraction_fingerprint="new"),
+            _record(legacy),
+        ]
+    )
+
+    with caplog.at_level("WARNING"):
+        delta, _ = detect_delta(
+            [stale, current, legacy], store, extraction_fingerprint="new"
+        )
+
+    assert delta.changed == delta.settings_changed == [document_doc_id(stale)]
+    assert sorted(delta.unchanged) == sorted(
+        [document_doc_id(current), document_doc_id(legacy)]
+    )
+    assert caplog.text.count("Re-extracting 1 documents") == 1
+
+
+def test_settings_change_retries_a_document_that_used_up_its_retries() -> None:
+    store = FakeDocStatusStore()
+    exhausted = _doc("/a.txt", "a")
+    store.put(
+        _record(
+            exhausted,
+            status=DocStatus.FAILED,
+            failure_count=3,
+            extraction_fingerprint="old",
+        )
+    )
+
+    held, _ = detect_delta([exhausted], store, max_failures=3)
+    assert held.unchanged == [document_doc_id(exhausted)]
+
+    retried, _ = detect_delta(
+        [exhausted], store, max_failures=3, extraction_fingerprint="new"
+    )
+    assert retried.changed == [document_doc_id(exhausted)]
+
+
+class _ContentOnlyStore(FakeDocStatusStore):
+    """A registry written against the port before diff took a fingerprint."""
+
+    def diff(  # type: ignore[override]
+        self, incoming: dict[str, str], scope: str | None = None
+    ):
+        return super().diff(incoming, scope=scope)
+
+
+def test_store_without_fingerprint_support_is_diffed_by_content(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    store = _ContentOnlyStore()
+    document = _doc("/a.txt", "a")
+    store.put(_record(document, extraction_fingerprint="old"))
+
+    with caplog.at_level("WARNING"):
+        delta, _ = detect_delta([document], store, extraction_fingerprint="new")
+
+    assert delta.unchanged == [document_doc_id(document)]
+    assert "takes no extraction_fingerprint" in caplog.text
+
+
+def test_adopted_legacy_record_of_other_settings_reads_changed() -> None:
+    store = FakeDocStatusStore()
+    document = _doc("/a.txt", "a")
+    document.metadata["registry_source"] = "/corpus"
+    scope = registry_scope("default", "/corpus")
+    # Keyed without the source scope, as before scopes joined the key.
+    store.put(
+        _record(document, extraction_fingerprint="old").model_copy(
+            update={"doc_id": legacy_doc_id(document), "scope": scope}
+        )
+    )
+
+    delta, _ = detect_delta(
+        [document],
+        store,
+        scope=scope,
+        legacy_doc_ids={document_doc_id(document): legacy_doc_id(document)},
+        extraction_fingerprint="new",
+    )
+
+    assert delta.changed == delta.settings_changed == [document_doc_id(document)]
+    assert store.get(document_doc_id(document)) is not None

@@ -142,6 +142,15 @@ class DocStatusRecord(BaseModel):
         description="Consecutive runs that recorded this content FAILED; 0 once "
         "processed. A record written before the field existed reads as 0",
     )
+    extraction_fingerprint: str | None = Field(
+        default=None,
+        description="Fingerprint of the settings that determined the document's "
+        "artifacts (parsing through graph resolution: models, prompts, entity "
+        "types, chunking...) when it was last extracted. A diff given the run's "
+        "fingerprint classifies a document whose stored fingerprint differs as "
+        "changed. None marks a record written before the field existed: it is "
+        "never re-extracted for a settings change (a reset re-extracts it)",
+    )
     created_at: str | None = Field(
         default=None, description="ISO timestamp when first registered"
     )
@@ -208,6 +217,12 @@ class DocumentDelta(BaseModel):
         "(records without a scope left out), sorted. Informational: it never "
         "changes the partition. A store that does not report it leaves it "
         "empty",
+    )
+    settings_changed: list[str] = Field(
+        default_factory=list,
+        description="The ``changed`` doc ids whose content and status alone "
+        "would read unchanged: their stored extraction fingerprint differs "
+        "from the run's, so they are re-extracted with the current settings",
     )
     orphan_overflow: list[str] = Field(
         default_factory=list,

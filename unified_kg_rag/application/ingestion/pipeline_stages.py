@@ -357,6 +357,7 @@ class DocumentLoadingStage(PipelineStage):
         context.incremental_delta = None
         context.incremental_fingerprints = {}
         context.incremental_scope = None
+        context.incremental_extraction_fingerprint = None
         context.incremental_retired_scopes = []
 
         failed_files: list[str] = []

@@ -70,7 +70,16 @@ too) after changing anything that is baked into the stored data:
 - `processing.translation.source_language` or the language analyzers (they
   change the text-unit mapping);
 - to refresh descriptions and communities that incremental runs keep (see
-  [Incremental runs](#incremental-runs)).
+  [Incremental runs](#incremental-runs));
+- the extraction settings (prompts, `entity_types`, extraction or chunking
+  models, chunk sizes...) when the registry holds records written before
+  records carried an extraction fingerprint, or after editing a built-in
+  prompt template (code). Otherwise an incremental run re-extracts the
+  unchanged documents whose stored fingerprint differs from the current
+  settings on its own and logs how many (see
+  [User Guide §5](./user-guide.md#workflows)); records without a fingerprint
+  are compared by content only, so they keep their old extraction until a
+  reset.
 
 Set `indexing.reset` back to `false` afterwards; otherwise every run rebuilds.
 

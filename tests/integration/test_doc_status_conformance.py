@@ -11,6 +11,7 @@ tests drive whole interrupted incremental runs through each store.
 
 from __future__ import annotations
 
+import sqlite3
 from collections.abc import Callable, Iterator
 from pathlib import Path
 
@@ -99,6 +100,7 @@ def test_round_trip_keeps_every_field(store: DocStatusPort) -> None:
         claim_ids=["c1"],
         community_report_ids=["cr1"],
         error_info=None,
+        extraction_fingerprint="x1",
         updated_at="2026-01-01T00:00:00",
     )
     store.put(record)
@@ -182,6 +184,65 @@ def test_diff_partitions_like_the_reference(store: DocStatusPort) -> None:
     # A record without a scope is never deleted by a scoped run.
     assert scoped.deleted == ["gone"]
     assert sorted(store.diff(incoming).deleted) == ["gone", "legacy", "other"]
+
+
+def test_diff_reextracts_records_of_other_extraction_settings(
+    store: DocStatusPort,
+) -> None:
+    reference = FakeDocStatusStore()
+    for target in (store, reference):
+        target.put_many(
+            [
+                _record(
+                    "current",
+                    "h1",
+                    status=DocStatus.PROCESSED,
+                    scope="s",
+                    extraction_fingerprint="x-new",
+                ),
+                _record(
+                    "stale",
+                    "h2",
+                    status=DocStatus.PROCESSED,
+                    scope="s",
+                    extraction_fingerprint="x-old",
+                ),
+                # Written before records carried a fingerprint.
+                _record("legacy", "h3", status=DocStatus.PROCESSED, scope="s"),
+                _record(
+                    "edited",
+                    "h4",
+                    status=DocStatus.PROCESSED,
+                    scope="s",
+                    extraction_fingerprint="x-old",
+                ),
+                _record(
+                    "retry",
+                    "h5",
+                    status=DocStatus.FAILED,
+                    scope="s",
+                    extraction_fingerprint="x-old",
+                ),
+            ]
+        )
+    incoming = {
+        "current": "h1",
+        "stale": "h2",
+        "legacy": "h3",
+        "edited": "h4-new",
+        "retry": "h5",
+    }
+
+    got = store.diff(incoming, scope="s", extraction_fingerprint="x-new")
+    want = reference.diff(incoming, scope="s", extraction_fingerprint="x-new")
+    assert sorted(got.changed) == sorted(want.changed) == ["edited", "retry", "stale"]
+    assert sorted(got.unchanged) == sorted(want.unchanged) == ["current", "legacy"]
+    # Only the documents that read changed because of the settings alone.
+    assert got.settings_changed == want.settings_changed == ["stale"]
+    # Without a fingerprint the diff compares content and status only.
+    plain = store.diff(incoming, scope="s")
+    assert sorted(plain.unchanged) == ["current", "legacy", "stale"]
+    assert plain.settings_changed == []
 
 
 def test_diff_of_an_empty_registry_marks_everything_new(store: DocStatusPort) -> None:
@@ -325,6 +386,34 @@ def test_sqlite_registry_persists_across_instances(tmp_path: Path) -> None:
     assert second.diff({"d1": "h1"}, scope="s").unchanged == ["d1"]
     assert set(second.get_lineage_overflow(["d1"])) == {"d1"}
     second.close()
+
+
+def test_sqlite_database_without_the_fingerprint_column_is_upgraded(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "old.sqlite3"
+    record = _record("d1", "h1", status=DocStatus.PROCESSED, scope="s")
+    connection = sqlite3.connect(path)
+    # The table as the first release created it.
+    connection.execute(
+        "CREATE TABLE doc_status (doc_id TEXT PRIMARY KEY, content_hash TEXT "
+        "NOT NULL, status TEXT NOT NULL, scope TEXT, record TEXT NOT NULL)"
+    )
+    connection.execute(
+        "INSERT INTO doc_status VALUES (?, ?, ?, ?, ?)",
+        ("d1", "h1", "processed", "s", record.model_dump_json()),
+    )
+    connection.commit()
+    connection.close()
+
+    store = SQLiteDocStatusStore(Config(), path)
+    # The existing record has no fingerprint: compared by content only.
+    delta = store.diff({"d1": "h1"}, scope="s", extraction_fingerprint="x1")
+    assert delta.unchanged == ["d1"]
+    store.put(record.model_copy(update={"extraction_fingerprint": "x1"}))
+    delta = store.diff({"d1": "h1"}, scope="s", extraction_fingerprint="x2")
+    assert delta.settings_changed == ["d1"]
+    store.close()
 
 
 def test_sqlite_path_defaults_to_config(tmp_path: Path) -> None:

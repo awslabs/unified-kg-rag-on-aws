@@ -37,7 +37,12 @@ pytestmark = pytest.mark.unit
 
 
 class _FailingRegistry(FakeDocStatusStore):
-    def diff(self, incoming: dict[str, str], scope: str | None = None):
+    def diff(
+        self,
+        incoming: dict[str, str],
+        scope: str | None = None,
+        extraction_fingerprint: str | None = None,
+    ):
         raise RuntimeError("registry offline")
 
 

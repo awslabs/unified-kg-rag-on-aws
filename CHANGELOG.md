@@ -146,7 +146,10 @@ Library API (Python callers and custom backends).
   (#156). Subclasses that overrode `GraphRAGChain._build_graph_retriever` /
   `_build_document_retriever` inject `retriever_builders` instead (#212).
 - Custom doc-status stores implement every `DocStatusPort` method
-  (`get_many`, `put_many`, `record_fits`, lineage overflow) (#214).
+  (`get_many`, `put_many`, `record_fits`, lineage overflow) (#214), and
+  `diff` takes `extraction_fingerprint` and stores
+  `DocStatusRecord.extraction_fingerprint`; a store whose `diff` does not
+  take it is diffed by content only, with a WARNING (#PR).
 - Custom indexers: full-build `index_*` methods take a keyword-only
   `suffixes`; `get_stats` / `get_entity_count` are gone (#169, #214);
   `IndexingManager.index_delta` no longer merges with the stored graph
@@ -187,6 +190,10 @@ Library API (Python callers and custom backends).
   deleted and removes their artifacts and registry records. Rename them
   before upgrading to keep them (they are then indexed under their new
   paths).
+- Records written before records carried an extraction fingerprint are
+  compared by content only, so upgrading re-extracts nothing; run once with
+  `indexing.reset: true` to bring them under the current settings. The
+  SQLite registry gains the column on first open (#PR).
 - Roles with a custom IAM policy need `dynamodb:BatchGetItem` and
   `dynamodb:BatchWriteItem` on the registry table (#191, #194).
 
@@ -284,6 +291,13 @@ Library API (Python callers and custom backends).
   rewritten questions that start with "I can't…" or "Sorry, …" and catches
   curly-apostrophe refusals; `DataIngestionPipeline`, the chunkers and the
   LangChain/RAGAS evaluators reject a `boto_session` they would have ignored (#222).
+- Incremental indexing follows the extraction settings, not only the
+  content: each doc-status record stores a fingerprint of the settings it was
+  extracted with (parsing through graph resolution: models, prompts such as a
+  tuned `custom_prompts` set, `entity_types`, chunking, translation, gleaning,
+  resolution), and a run with other settings re-extracts the unchanged
+  documents (one WARNING gives their count). Before, unchanged documents kept
+  their old extraction even with `--force-rebuild` (#PR).
 - Incremental indexing: shared artifacts are stripped instead of deleted or
   left citing removed text units; interrupted runs are repaired on the next
   run; resets and deletions no longer touch other index namespaces or

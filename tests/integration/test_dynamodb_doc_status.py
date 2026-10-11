@@ -82,8 +82,8 @@ def test_scan_fingerprints_returns_doc_id_and_hash_only(
     ddb_store: DynamoDBDocStatusStore,
 ) -> None:
     # The projection-scan helper backing diff() returns just {doc_id: (hash,
-    # scope, failed, pending)}, even for records carrying full artifact-id
-    # lineage.
+    # scope, failed, pending, extraction fingerprint)}, even for records
+    # carrying full artifact-id lineage.
     ddb_store.put(
         DocStatusRecord(
             doc_id="d1",
@@ -95,10 +95,19 @@ def test_scan_fingerprints_returns_doc_id_and_hash_only(
     )
     ddb_store.put(DocStatusRecord(doc_id="d2", content_hash="h2", status="processed"))
     ddb_store.put(DocStatusRecord(doc_id="d3", content_hash="h3", status="failed"))
+    ddb_store.put(
+        DocStatusRecord(
+            doc_id="d4",
+            content_hash="h4",
+            status="processed",
+            extraction_fingerprint="x1",
+        )
+    )
     assert ddb_store._scan_fingerprints() == {
-        "d1": ("h1", None, False, True),
-        "d2": ("h2", None, False, False),
-        "d3": ("h3", None, True, False),
+        "d1": ("h1", None, False, True, None),
+        "d2": ("h2", None, False, False, None),
+        "d3": ("h3", None, True, False, None),
+        "d4": ("h4", None, False, False, "x1"),
     }
 
 

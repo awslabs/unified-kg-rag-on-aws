@@ -217,6 +217,12 @@ class PipelineContext(BaseModel):
         description="Registry scope (index namespace + corpus source) the delta "
         "was computed in; recorded on every committed document.",
     )
+    incremental_extraction_fingerprint: str | None = Field(
+        default=None,
+        description="Fingerprint of the run's extraction settings the delta "
+        "was computed with; recorded on every committed document so a later "
+        "run with other settings re-extracts it.",
+    )
     incremental_retired_scopes: list[str] | None = Field(
         default=None,
         description="The indexing.retire_source_scopes values the delta "
