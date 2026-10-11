@@ -165,8 +165,21 @@ class TestTranslateTextUnits:
         # All three languages applied to each unit.
         assert set(units[0].translated_texts) == {"en", "ko", "ja"}
         assert units[0].translated_texts["ja"] == "[ja] Hello world"
-        # One call per unit and language.
-        assert len(fake.calls) == 6
+        # The source language (en) keeps the text without a model call; one
+        # call per unit and other language.
+        assert units[0].translated_texts["en"] == "Hello world"
+        assert len(fake.calls) == 4
+
+    def test_repeated_language_is_translated_once(self, mocker) -> None:
+        tr, fake = _make_translator(
+            mocker,
+            target=LanguageCode.KO,
+            additional=[LanguageCode.KO, LanguageCode.JA, LanguageCode.JA],
+        )
+        tr.translate_text_units(_units())
+        assert [lang.value for lang in tr.all_target_languages] == ["ko", "ja"]
+        assert len(fake.calls) == 4
+        assert tr.stats.num_total_units == 4
 
     def test_stats_total_counts_units_times_languages(self, mocker) -> None:
         tr, _ = _make_translator(

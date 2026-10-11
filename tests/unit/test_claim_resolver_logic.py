@@ -4,7 +4,7 @@
 
 Covers the class-level resolve pipeline, entity-name-map construction, claim
 grouping/dedup, and the merge helpers — complements test_claim_resolution.py,
-which already covers `resolve_single_claim_task` and the FuzzyMatcher guard.
+which already covers `resolve_single_claim` and the FuzzyMatcher guard.
 """
 
 from __future__ import annotations
@@ -23,8 +23,7 @@ pytestmark = pytest.mark.unit
 
 
 def _resolver() -> ClaimResolver:
-    # Thread pool (not process pool) keeps the task picklable-free and in-process.
-    return ClaimResolver(Config(), max_workers=2, use_process_pool=False)
+    return ClaimResolver(Config())
 
 
 def _claim(

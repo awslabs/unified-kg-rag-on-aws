@@ -630,27 +630,22 @@ class BaseChunker(ABC):
         # CountTokens API does not accept embedding models.
         return estimate_token_count(text)
 
-    def _extract_document_content(self, doc: Document) -> str | None:
-        try:
-            if not doc.content:
-                return None
-            content_type = self.config.processing.chunking.content_type
+    def _document_body(self, doc: Document) -> tuple[str | None, str]:
+        """The body to chunk and its format (``"text"``, ``"markdown"``, ``"html"``).
 
-            primary_content = getattr(doc.content, content_type, None)
-            if isinstance(primary_content, str) and primary_content:
-                return primary_content
-
-            fallback_content = getattr(doc.content, "text", None)
-            if isinstance(fallback_content, str) and fallback_content:
-                return fallback_content
-
-            return None
-
-        except Exception as e:
-            logger.warning(
-                "Failed to extract document content from '%s': %s", doc.file_name, e
-            )
-            return None
+        ``content_type`` selects the document's markdown or HTML body when its
+        parser produced one; every document has a plain-text body, which is
+        used otherwise. The format decides whether pre-chunks follow headers,
+        so plain text is never run through a header splitter.
+        """
+        if not doc.content:
+            return None, "text"
+        content_type = self.chunking_config.content_type
+        body = getattr(doc.content, content_type, None)
+        if isinstance(body, str) and body:
+            return body, content_type
+        text = doc.content.text
+        return (text, "text") if text else (None, "text")
 
 
 class SimpleTextChunker(BaseChunker):
@@ -662,7 +657,7 @@ class SimpleTextChunker(BaseChunker):
 
     def _chunk_single_document(self, doc: Document) -> list[TextUnit]:
         try:
-            content = self._extract_document_content(doc)
+            content, _ = self._document_body(doc)
             if not content:
                 return []
 
@@ -700,7 +695,6 @@ class IntelligentTextChunker(BaseChunker):
         super().__init__(config, show_progress=show_progress)
         self.providers = Providers.resolve(config, providers, boto_session)
         self.boto_session = self.providers.boto_session
-        self.ignore_errors = self.config.processing.ignore_errors
 
         self.factory = self.providers.llm_factory
         self.batch_processor = BatchProcessor(
@@ -729,23 +723,53 @@ class IntelligentTextChunker(BaseChunker):
         self.line_boundary_processor = LineBasedBoundaryProcessor(
             max_line_miss_rate=self.chunking_config.max_marker_miss_rate,
         )
+        # Pre-chunks and boundary answers per document of the running
+        # chunk_documents call (keyed by id(document)).
+        self._planned: dict[int, tuple[list[str], dict[int, Any]]] = {}
         logger.debug(
             "Initialized IntelligentTextChunker with model %s",
             self.chunking_config.chunking_model_id,
         )
 
+    def chunk_documents(self, documents: list[Document]) -> list[TextUnit]:
+        """Chunk ``documents`` with one boundary-model batch for all of them.
+
+        The pre-chunks of every document that need the model are requested
+        together, so a corpus of short documents does not run one model call
+        at a time; the documents are then assembled one by one.
+        """
+        planned: dict[int, list[str]] = {}
+        for doc in documents:
+            if not doc.is_error and doc.content:
+                planned[id(doc)] = self._pre_chunks_of(doc)
+        responses = self._request_boundaries(list(planned.values()), "all documents")
+        self._planned = {
+            key: (pre_chunks, response)
+            for (key, pre_chunks), response in zip(
+                planned.items(), responses, strict=True
+            )
+        }
+        try:
+            return super().chunk_documents(documents)
+        finally:
+            self._planned = {}
+
+    def _pre_chunks_of(self, doc: Document) -> list[str]:
+        content, content_format = self._document_body(doc)
+        return self._create_pre_chunks(content, content_format) if content else []
+
     def _chunk_single_document(self, doc: Document) -> list[TextUnit]:
         try:
-            content = self._extract_document_content(doc)
-            if not content:
-                return []
-
-            pre_chunks = self._create_pre_chunks(content)
+            plan = self._planned.get(id(doc))
+            pre_chunks, responses = (
+                plan if plan is not None else (self._pre_chunks_of(doc), None)
+            )
             if not pre_chunks:
-                logger.warning("No pre-chunks created for document '%s'", doc.file_name)
                 return []
 
-            final_chunks_info = self._process_pre_chunks(pre_chunks, doc.file_name)
+            final_chunks_info = self._process_pre_chunks(
+                pre_chunks, doc.file_name, responses
+            )
 
             chunks = [text for _, text, _ in final_chunks_info]
 
@@ -768,69 +792,90 @@ class IntelligentTextChunker(BaseChunker):
                 f"Failed to chunk single document '{doc.file_name}': {e}"
             ) from e
 
-    def _process_pre_chunks(
-        self, pre_chunks: list[str], doc_name: str
-    ) -> list[tuple[str, str, int]]:
-        try:
-            logger.debug(
-                "Processing %s pre-chunks for document '%s'", len(pre_chunks), doc_name
-            )
-            self.stats.num_pre_chunks_processed = (
-                self.stats.num_pre_chunks_processed or 0
-            ) + len(pre_chunks)
-            # Any split of a pre-chunk shorter than 2 * min_chunk_size leaves at
-            # least one piece under min_chunk_size, and merge_small_chunks folds
-            # it back, so the result is the pre-chunk itself: skip the LLM call
-            # (unless it is oversized and must be split anyway).
-            processor = self.chunk_processor
-            needs_llm = [
-                i
-                for i, pre_chunk in enumerate(pre_chunks)
-                if len(pre_chunk) >= 2 * processor.min_chunk_size
-                or len(pre_chunk) > processor.max_chunk_size
-            ]
-            llm_results = (
-                self._get_boundary_results([pre_chunks[i] for i in needs_llm], doc_name)
-                if needs_llm
-                else []
-            )
-            response_of = dict(zip(needs_llm, llm_results, strict=True))
+    def _needs_llm(self, pre_chunk: str) -> bool:
+        """Whether a pre-chunk is worth a boundary call.
 
-            final_chunks: list[tuple[str, str, int]] = []
-            for i, pre_chunk in enumerate(pre_chunks):
-                if i not in response_of:
-                    final_chunks.append(("unsplit", pre_chunk, i + 1))
-                    continue
-                llm_response = response_of[i]
-                chunks = self._get_chunks_from_response(pre_chunk, llm_response)
-                if chunks:
-                    final_chunks.extend([("llm", chunk, i + 1) for chunk in chunks])
-                else:
-                    self._handle_llm_failure(pre_chunk, i, final_chunks)
-            return final_chunks
-        except Exception as e:
-            logger.error("Failed to process pre-chunks for '%s': %s", doc_name, e)
-            return [("fallback", chunk, i + 1) for i, chunk in enumerate(pre_chunks)]
+        Any split of a pre-chunk shorter than 2 * min_chunk_size leaves at
+        least one piece under min_chunk_size, and merge_small_chunks folds it
+        back, so the result is the pre-chunk itself (unless it is oversized
+        and must be split anyway).
+        """
+        processor = self.chunk_processor
+        return (
+            len(pre_chunk) >= 2 * processor.min_chunk_size
+            or len(pre_chunk) > processor.max_chunk_size
+        )
 
-    def _get_boundary_results(
-        self, pre_chunks: list[str], doc_name: str
-    ) -> list[dict[str, Any] | None]:
+    def _request_boundaries(
+        self, pre_chunk_lists: list[list[str]], label: str
+    ) -> list[dict[int, Any]]:
+        """Boundary answers for each list's pre-chunks that need the model.
+
+        One batch call covers every list. A list's answers map a pre-chunk's
+        index to the parsed response, or None when the call failed (the
+        pre-chunk is then split by size).
+        """
+        requests = [
+            (n, i)
+            for n, pre_chunks in enumerate(pre_chunk_lists)
+            for i, pre_chunk in enumerate(pre_chunks)
+            if self._needs_llm(pre_chunk)
+        ]
+        answers: list[dict[int, Any]] = [{} for _ in pre_chunk_lists]
+        if not requests:
+            return answers
         try:
             results = self.batch_processor.execute_with_fallback(
-                items_to_process=pre_chunks,
+                items_to_process=[pre_chunk_lists[n][i] for n, i in requests],
                 prepare_inputs_func=self._create_chain_inputs,
                 sequential_func=self.chunker.invoke,
-                task_name=f"Processing boundaries for '{doc_name}'",
+                task_name=f"Processing boundaries for {label}",
                 run_config=self.config.processing.model_dump(),
                 show_progress=self.show_progress,
             )
         except Exception as e:
-            if not self.ignore_errors:
-                raise
+            logger.error("Failed to get boundary results for %s: %s", label, e)
+            results = [None] * len(requests)
+        for (n, i), result in zip(requests, results, strict=True):
+            answers[n][i] = None if result is BATCH_ITEM_FAILED else result
+        return answers
 
-            logger.error("Failed to get boundary results for '%s': %s", doc_name, e)
-            return [None] * len(pre_chunks)
-        return [None if r is BATCH_ITEM_FAILED else r for r in results]
+    def _process_pre_chunks(
+        self,
+        pre_chunks: list[str],
+        doc_name: str,
+        responses: dict[int, Any] | None = None,
+    ) -> list[tuple[str, str, int]]:
+        """Chunk one document's pre-chunks, keeping each under max_chunk_size.
+
+        ``responses`` are the boundary answers by pre-chunk index (see
+        :meth:`_request_boundaries`); requested here when not given.
+        """
+        logger.debug(
+            "Processing %s pre-chunks for document '%s'", len(pre_chunks), doc_name
+        )
+        self.stats.num_pre_chunks_processed = (
+            self.stats.num_pre_chunks_processed or 0
+        ) + len(pre_chunks)
+        if responses is None:
+            responses = self._request_boundaries([pre_chunks], f"'{doc_name}'")[0]
+
+        final_chunks: list[tuple[str, str, int]] = []
+        for i, pre_chunk in enumerate(pre_chunks):
+            if i not in responses:
+                final_chunks.append(("unsplit", pre_chunk, i + 1))
+                continue
+            chunks = self._get_chunks_from_response(pre_chunk, responses[i])
+            if chunks:
+                # Every answer shape (no boundaries, single_chunk, only line
+                # 1, out-of-range lines) can leave a piece over the limit.
+                final_chunks.extend(
+                    ("llm", chunk, i + 1)
+                    for chunk in self._split_large_line_chunks(chunks)
+                )
+            else:
+                self._handle_llm_failure(pre_chunk, i, final_chunks)
+        return final_chunks
 
     def _get_chunks_from_response(
         self, pre_chunk: str, llm_response: dict[str, Any] | None
@@ -946,22 +991,22 @@ class IntelligentTextChunker(BaseChunker):
                     chunks.append(final_chunk)
 
             # Line-boundary slices are disjoint: allow no overlap between them.
-            merged_chunks = self.chunk_processor.merge_small_chunks(
+            return self.chunk_processor.merge_small_chunks(
                 chunks, source=text, overlap=0
             )
-
-            return self._split_large_line_chunks(merged_chunks)
 
         except Exception as e:
             logger.debug("Failed to extract chunks from line indices: %s", e)
             return [text] if text.strip() else []
 
-    def _create_pre_chunks(self, content: str) -> list[str]:
+    def _create_pre_chunks(
+        self, content: str, content_format: str = "text"
+    ) -> list[str]:
+        """Split a body into pre-chunks, at headers for markdown and HTML."""
         try:
-            content_type = self.config.processing.chunking.content_type
-            if content_type in ["markdown", "html"]:
-                logger.debug("Creating structured pre-chunks for %s", content_type)
-                return self._create_structured_pre_chunks(content, content_type)
+            if content_format in ("markdown", "html"):
+                logger.debug("Creating structured pre-chunks for %s", content_format)
+                return self._create_structured_pre_chunks(content, content_format)
             return self.pre_splitter.split_text(content)
         except Exception as e:
             logger.warning("Failed to create pre-chunks: %s", e)

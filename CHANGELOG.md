@@ -195,6 +195,13 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   to keep the previous behaviour, or render on demand with
   `run-visualization`. `GraphVisualizationManager.run()` no longer re-checks
   the flag, so a caller that builds the manager directly gets its output (#210).
+- **Behaviour change:** `processing.chunking.content_type` defaults to
+  `text`, and `markdown`/`html` pre-split a document at headers only when it
+  has that body (built from typed document elements). The built-in file
+  loaders produce plain text only, yet the old `markdown` default ran it
+  through the Markdown header splitter, which dropped blank lines and
+  indentation and made any line starting with `#` a heading. Chunk boundaries
+  of plain-text corpora change, so the chunking stage re-runs (#213).
 - `indexing.opensearch.embedding_model_id`, `evaluation.embedding_model_id`
   and `search.reranking.rerank_model_id` accept any model name when a
   non-Bedrock provider serves the role; with the Bedrock providers (the
@@ -730,6 +737,76 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
 - The ECR lifecycle rule (keep 10 images, any tag) could expire the image the
   task definition runs; the deployed `image_tag` is now exempt. IAM ARNs use
   the stack partition instead of a hardcoded `arn:aws:` (#211).
+- Claim resolution no longer rewrites a claim onto a different entity. A
+  subject or object resolves by its `entity_key`, then through the guarded
+  fuzzy match entity grouping uses (spelling and legal-form variants match;
+  differing identifier tokens or head characters never do), else the object
+  stays a literal value. The abbreviation, token-Jaccard and partial-match
+  tiers that turned "PO 1003 -> Vendor B" into "PO 1002 -> Vendor A" are
+  removed with `FuzzyMatcher.find_best_match` and its
+  `include_partial_matching` option. Claims resolve in this process, in
+  input order, instead of shipping the matcher to a process pool per claim
+  (10,000 claims against 5,000 entities: 1.8 s, from over 10 minutes), so
+  the merged claim of a group no longer depends on completion order (#213).
+- Gleaning and claim extraction no longer copy the whole graph to a worker
+  process per text unit to prepare its prompt. Each stage indexes entities and
+  relationships by the text units they cite once (per gleaning round), and
+  parsing a gleaning answer resolves names, corrections and endpoints through
+  that index instead of scanning the graph per unit (one round over 1,000 units
+  and 10,000 entities: 0.2 s, from 173 s). `GraphGleaner` and `ClaimExtractor`
+  drop their `max_workers` and `use_process_pool` arguments. Merged text-unit
+  lists keep first-seen order instead of set order (#213).
+- Gleaning no longer overwrites or duplicates descriptions and no longer
+  inflates relationship weights. The refinement prompt lists names only, so an
+  `ENTITY_CORRECTION` or `RELATIONSHIP_CORRECTION` description is merged into
+  the current one (`merge_descriptions`) instead of replacing text the model
+  never saw. The round's merge combines descriptions with the same
+  line-deduplicating rule as every other path instead of a `"; "` join, and an
+  edge a unit restates adds no strength for a text unit it already cites
+  (each re-proposal used to add 1.0) (#213).
+- An extraction answer whose last section lacks its closing tag (a missing
+  `</relationships>`) no longer loses that section. The XML parser counted the
+  section's inner `<relationship>` elements as top-level sections, rejected the
+  correct lxml recovery for not having them, and fell back to a result keyed
+  `relationship`, which the extractor never reads. Only the expected
+  top-level tags now count as sections (#213).
+- In local mode a response cut at its output-token limit now fails its item
+  like on Bedrock instead of being parsed as a partial success. The truncation
+  guard also reads the OpenAI-compatible `finish_reason` and Ollama
+  `done_reason` (`"length"`), not only Bedrock's `stopReason`/`stop_reason`
+  (`"max_tokens"`) (#213).
+- The intelligent chunker no longer returns chunks far above
+  `max_chunk_size`. An answer that keeps a pre-chunk whole (no boundaries,
+  `single_chunk`, only line 1, or out-of-range lines) is now split by size like
+  every other answer, and a failed boundary call splits its pre-chunks by size
+  instead of keeping them whole (#213).
+- Intelligent chunking sends the pre-chunks of all documents to the boundary
+  model in one batch instead of one batch per document, so a corpus of short
+  documents no longer runs one call at a time, and the chunking stats logged
+  at the end cover the whole stage instead of its last document (#213).
+- Files under a hidden directory (`.drafts/note.txt`) are no longer parsed
+  while left out of the corpus fingerprint, so editing them no longer resumes
+  stale stage output. Discovery, the document loader, `run-prompt-tuning` and
+  the fingerprint share one rule: a path component below the corpus root that
+  starts with `.` or is `__pycache__` excludes the file (a hidden corpus root
+  itself is fine) (#213).
+- Translation translates each target language once (a language repeated in
+  `target_language` / `additional_target_languages` was translated and
+  counted twice) and no longer calls the model to "translate" text into its
+  own `source_language`: that language keeps the original text (#213).
+- With `processing.deduplicate` and incremental indexing on, a new near-copy
+  of an indexed document no longer replaces it: deduplication keeps the
+  document the doc-status registry already holds, where it used to keep
+  whichever copy came first and the diff then deleted the indexed original.
+  Documents load in file order instead of completion order, so the copy kept
+  no longer varies between runs, and the Jaccard check of a candidate pair runs
+  in-process instead of sending every document's MinHash to a worker per
+  pair (#213).
+- `entity_confidence_threshold` no longer leaves stub entities without a
+  description or a relationship: an entity materialized only for relationships
+  that the filter removed (they named a filtered entity) is dropped with them.
+  Merged extraction entities list their text units in first-seen order instead
+  of set order (#213).
 - With `entity_grounding` enabled, the check whether a gleaned
   relationship's endpoint name occurs in its unit (#202) now accepts common
   spelling variants and no longer accepts partial words. Both sides drop

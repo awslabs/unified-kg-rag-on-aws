@@ -16,10 +16,11 @@ import pytest
 import unified_kg_rag.adapters.ingestion.gleaner as gleaner_module
 from unified_kg_rag.adapters import providers as providers_module
 from unified_kg_rag.adapters.ingestion.gleaner import (
+    GleaningIndex,
     GraphGleaner,
     format_entities_with_limit_task,
 )
-from unified_kg_rag.domain.models import Config, Entity, Relationship
+from unified_kg_rag.domain.models import Config, Entity, Relationship, TextUnit
 
 pytestmark = pytest.mark.unit
 
@@ -106,6 +107,22 @@ class TestUpdateRelationshipsAfterMerge:
         )
         assert len(out) == 2
 
+    def test_reproposed_edge_adds_no_weight_or_duplicate_text(self) -> None:
+        # The unit already cites the edge: its answer restating it is not a
+        # second instance, so the strength and description stay as they were.
+        stored = _rel(
+            "r1", "e1", "e2", weight=0.8, description="a", text_unit_ids=["t1"]
+        )
+        again = _rel(
+            "r2", "e1", "e2", weight=1.0, description="a", text_unit_ids=["t1"]
+        )
+        out = GraphGleaner._update_relationships_after_merge(
+            [stored, again], unique_entity_ids={"e1", "e2"}, id_remap={}
+        )
+        assert out[0].weight == 0.8
+        assert out[0].text_unit_ids == ["t1"]
+        assert out[0].description == "a"
+
 
 # --------------------------------------------------------------------------- #
 # _merge_duplicate_entities
@@ -130,6 +147,68 @@ class TestMergeDuplicateEntities:
         unique, _ = GraphGleaner._merge_duplicate_entities(ents)
         assert len(unique) == 1
         assert unique[0].type == "person"  # lowercased, most frequent
+
+    def test_duplicate_descriptions_and_units_merged_once(self) -> None:
+        ents = [
+            Entity(id="e1", name="A", description="d", text_unit_ids=["t2", "t1"]),
+            Entity(id="e2", name="a", description="d", text_unit_ids=["t1", "t3"]),
+        ]
+        unique, _ = GraphGleaner._merge_duplicate_entities(ents)
+        assert unique[0].description == "d"
+        assert unique[0].text_unit_ids == ["t2", "t1", "t3"]
+
+
+class TestCorrectionDescriptions:
+    """The prompt lists names only, so a correction's description is merged."""
+
+    UNIT = TextUnit(id="t1", text="x")
+
+    def test_entity_correction_description_is_appended(self, gleaner) -> None:
+        entity = Entity(id="e1", name="Acme", description="Supplier of parts.")
+        issue = {
+            "issue_type": "ENTITY_CORRECTION",
+            "details": {"name": "Acme", "description": "Based in Springfield."},
+        }
+        gleaner._process_issue(issue, self.UNIT, GleaningIndex([entity], []), [], [])
+        assert entity.description == "Supplier of parts.\nBased in Springfield."
+
+    def test_relationship_correction_description_is_appended(self, gleaner) -> None:
+        rel = Relationship(
+            id="r1",
+            source_id="e1",
+            target_id="e2",
+            source_name="Acme",
+            target_name="Depot",
+            type="SHIPS_TO",
+            description="Ships weekly.",
+        )
+        issue = {
+            "issue_type": "RELATIONSHIP_CORRECTION",
+            "details": {"source": "Acme", "target": "Depot", "description": "By rail."},
+        }
+        gleaner._process_issue(issue, self.UNIT, GleaningIndex([], [rel]), [], [])
+        assert rel.description == "Ships weekly.\nBy rail."
+
+
+class TestGleaningIndex:
+    UNIT = TextUnit(id="t1", text="x")
+
+    def test_renamed_entity_is_found_under_its_new_name(self, gleaner) -> None:
+        entity = Entity(id="e1", name="Acme", type="PERSON")
+        index = GleaningIndex([entity], [])
+        rename = {
+            "issue_type": "ENTITY_CORRECTION",
+            "details": {"name": "Acme", "corrected_name": "Acme Corp"},
+        }
+        retype = {
+            "issue_type": "ENTITY_CORRECTION",
+            "details": {"name": "Acme Corp", "corrected_type": "ORGANIZATION"},
+        }
+        gleaner._process_issue(rename, self.UNIT, index, [], [])
+        gleaner._process_issue(retype, self.UNIT, index, [], [])
+        assert (entity.name, entity.type) == ("Acme Corp", "ORGANIZATION")
+        assert index.entity_named("Acme") is None
+        assert index.entity_ids == {"acme corp": "e1"}
 
 
 # --------------------------------------------------------------------------- #
@@ -159,7 +238,6 @@ class TestFormatEntitiesWithLimit:
 # --------------------------------------------------------------------------- #
 # Gleaner provenance grounding (hallucination guard on gleaner-added items)
 # --------------------------------------------------------------------------- #
-from unified_kg_rag.domain.models import TextUnit  # noqa: E402
 
 
 class TestGleanerGrounding:
@@ -179,7 +257,7 @@ class TestGleanerGrounding:
         gleaner._process_issue(
             self._missing_entity_issue("A fabricated clause never in the text."),
             self.UNIT,
-            [],
+            GleaningIndex([], []),
             new_e,
             new_r,
         )
@@ -191,7 +269,7 @@ class TestGleanerGrounding:
         gleaner._process_issue(
             self._missing_entity_issue("Alice works at Acme Corp in Seattle."),
             self.UNIT,
-            [],
+            GleaningIndex([], []),
             new_e,
             new_r,
         )
@@ -206,7 +284,7 @@ class TestGleanerGrounding:
                 "The Warranty Period from the Provisional Acceptance Date."
             ),
             self.UNIT,
-            [],
+            GleaningIndex([], []),
             new_e,
             new_r,
         )
@@ -218,7 +296,7 @@ class TestGleanerGrounding:
         gleaner._process_issue(
             self._missing_entity_issue("Alice works at Acme Corp in Seattle."),
             self.UNIT,
-            [],
+            GleaningIndex([], []),
             new_e,
             new_r,
         )

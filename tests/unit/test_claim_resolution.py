@@ -12,8 +12,9 @@ from __future__ import annotations
 import pytest
 
 from unified_kg_rag.domain.ingestion.base_resolver import FuzzyMatcher
-from unified_kg_rag.domain.ingestion.claim_resolver import resolve_single_claim_task
-from unified_kg_rag.domain.models import Claim
+from unified_kg_rag.domain.ingestion.claim_resolver import resolve_single_claim
+from unified_kg_rag.domain.models import Claim, ResolutionMethod
+from unified_kg_rag.shared.utils import entity_key
 
 pytestmark = pytest.mark.unit
 
@@ -30,20 +31,15 @@ def _claim(subject: str, obj: str) -> Claim:
     )
 
 
-def _maps(entities: dict[str, str]):
-    # entities: normalized_name -> id ; also build name maps + matcher.
-    name_to_id = dict(entities)
-    name_to_original = {n: n for n in entities}
-    matcher = FuzzyMatcher(candidates=list(entities))
-    return name_to_id, name_to_original, matcher
+def _resolve(claim: Claim, names: list[str], method: str = ResolutionMethod.MINHASH):
+    names_by_key = {entity_key(n): n for n in names}
+    ids_by_key = {entity_key(n): f"e-{n}" for n in names}
+    matcher = FuzzyMatcher(names, resolution_method=method, similarity_threshold=0.6)
+    return resolve_single_claim(claim, names_by_key, ids_by_key, matcher)
 
 
 def test_object_literal_value_is_kept_with_no_object_id() -> None:
-    # Subject 'alice' is an entity; object '$100k revenue' is a literal value.
-    name_to_id, name_to_orig, matcher = _maps({"alice": "e-alice"})
-    resolved = resolve_single_claim_task(
-        _claim("alice", "$100k revenue"), name_to_id, name_to_orig, matcher
-    )
+    resolved = _resolve(_claim("alice", "$100k revenue"), ["alice"])
     assert resolved is not None  # not dropped
     assert resolved.subject_id == "e-alice"
     assert resolved.object_id is None  # literal value, no entity
@@ -51,10 +47,7 @@ def test_object_literal_value_is_kept_with_no_object_id() -> None:
 
 
 def test_both_entities_resolve_to_ids() -> None:
-    name_to_id, name_to_orig, matcher = _maps({"alice": "e-alice", "acme": "e-acme"})
-    resolved = resolve_single_claim_task(
-        _claim("alice", "acme"), name_to_id, name_to_orig, matcher
-    )
+    resolved = _resolve(_claim("alice", "acme"), ["alice", "acme"])
     assert resolved is not None
     assert resolved.subject_id == "e-alice"
     assert resolved.object_id == "e-acme"
@@ -62,32 +55,48 @@ def test_both_entities_resolve_to_ids() -> None:
 
 def test_unresolvable_subject_drops_claim() -> None:
     # No anchor entity for the subject -> claim cannot attach to the graph.
-    name_to_id, name_to_orig, matcher = _maps({"acme": "e-acme"})
-    resolved = resolve_single_claim_task(
-        _claim("nonexistent-person-xyz", "acme"), name_to_id, name_to_orig, matcher
-    )
+    resolved = _resolve(_claim("nonexistent-person-xyz", "acme"), ["acme"])
     assert resolved is None
 
 
-class TestAbbreviationLocaleGuard:
-    """Acronym/caps abbreviation generation is a Latin/cased-script notion;
-    non-Latin (CJK, etc.) input must not yield garbage acronyms."""
+def test_spelling_variant_resolves_through_compact_key() -> None:
+    resolved = _resolve(_claim("(주)가나다상사", "acme"), ["가나다 상사", "acme"])
+    assert resolved is not None
+    assert resolved.subject_name == "가나다 상사"
 
-    def test_latin_multiword_yields_acronym(self) -> None:
-        abbrevs = FuzzyMatcher._generate_abbreviations("Amazon Web Services")
-        assert "AWS" in abbrevs
 
-    def test_latin_caps_extracted(self) -> None:
-        abbrevs = FuzzyMatcher._generate_abbreviations("eXtensible Markup Language")
-        # caps-extraction picks up embedded capitals
-        assert any(a.isupper() and len(a) > 1 for a in abbrevs)
+@pytest.mark.parametrize(
+    "method", [ResolutionMethod.MINHASH, ResolutionMethod.SEQUENCE_MATCHER]
+)
+def test_differing_identifiers_are_not_rewritten_onto_another_entity(method) -> None:
+    # "PO 1003 -> Vendor B" must not become "PO 1002 -> Vendor A": the
+    # shared prefix dominates the similarity, the identifier tells them apart.
+    resolved = _resolve(
+        _claim("Purchase Order 1003", "Vendor B"),
+        ["Purchase Order 1002", "Vendor A"],
+        method,
+    )
+    assert resolved is None  # no subject entity
 
-    def test_cjk_input_yields_no_abbreviations(self) -> None:
-        # Korean multi-"word" name: no ASCII letters -> no acronym noise.
-        assert FuzzyMatcher._generate_abbreviations("아마존 웹 서비스") == set()
-        assert FuzzyMatcher._generate_abbreviations("한국어 엔티티 이름") == set()
 
-    def test_mixed_script_still_uses_latin_letters(self) -> None:
-        # Mixed input has ASCII letters -> guard lets it through.
-        abbrevs = FuzzyMatcher._generate_abbreviations("AWS 클라우드")
-        assert "AWS" in abbrevs
+@pytest.mark.parametrize(
+    "method", [ResolutionMethod.MINHASH, ResolutionMethod.SEQUENCE_MATCHER]
+)
+def test_literal_value_is_not_matched_to_a_similar_entity(method) -> None:
+    resolved = _resolve(
+        _claim("Purchase Order 1002", "USD 1,500"),
+        ["Purchase Order 1002", "USD 1,000"],
+        method,
+    )
+    assert resolved is not None
+    assert resolved.object_id is None
+    assert resolved.object_name == "USD 1,500"
+
+
+def test_equal_scores_break_ties_on_the_name() -> None:
+    # Both candidates are compact-key variants of the reference (score 1.0).
+    names = ["Gamma Lab Inc", "Gamma Lab Ltd"]
+    resolved = _resolve(_claim("Gamma Lab", "x"), names)
+    reversed_order = _resolve(_claim("Gamma Lab", "x"), names[::-1])
+    assert resolved is not None and reversed_order is not None
+    assert resolved.subject_name == reversed_order.subject_name == "Gamma Lab Inc"

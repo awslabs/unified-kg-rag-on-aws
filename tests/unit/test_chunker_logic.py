@@ -338,8 +338,6 @@ class TestStructuredSplitter:
 # --------------------------------------------------------------------------- #
 @pytest.fixture
 def simple_chunker(config: Config) -> SimpleTextChunker:
-    # Use 'text' content so we control the input regardless of default markdown.
-    config.processing.chunking.content_type = "text"
     # Small sizes so a short test document actually splits.
     config.processing.chunking.min_chunk_size = 20
     config.processing.chunking.max_chunk_size = 200
@@ -560,7 +558,6 @@ class TestChunkerFactory:
 # --------------------------------------------------------------------------- #
 @pytest.fixture
 def intelligent_chunker(config: Config, _patch_bedrock) -> IntelligentTextChunker:
-    config.processing.chunking.content_type = "text"
     config.processing.chunking.min_chunk_size = 10
     config.processing.chunking.max_chunk_size = 400
     config.processing.chunking.chunk_overlap = 0
@@ -672,9 +669,8 @@ class TestIntelligentChunkerHelpers:
         assert out == ["a b c d e f"]
 
     def test_create_pre_chunks_markdown(self, intelligent_chunker) -> None:
-        intelligent_chunker.config.processing.chunking.content_type = "markdown"
         out = intelligent_chunker._create_pre_chunks(
-            "# Title\nbody text one\n## Sub\nbody text two"
+            "# Title\nbody text one\n## Sub\nbody text two", "markdown"
         )
         joined = "\n".join(out)
         assert "body text one" in joined and "body text two" in joined
@@ -716,8 +712,8 @@ class TestIntelligentChunkerPipeline:
     def test_process_pre_chunks_exception_falls_back(
         self, intelligent_chunker, mocker
     ) -> None:
-        # batch_processor raises with ignore_errors -> _get_boundary_results
-        # returns [None]*n, so every pre-chunk takes the fallback branch.
+        # batch_processor raises -> every answer is None, so every pre-chunk
+        # takes the size-based fallback.
         fake_bp = mocker.Mock()
         fake_bp.execute_with_fallback.side_effect = RuntimeError("boom")
         intelligent_chunker.batch_processor = fake_bp
@@ -748,6 +744,53 @@ class TestIntelligentChunkerPipeline:
         assert len(sent) == 1 and "alpha beta" in sent[0]["numbered_text"]
         assert out[0] == ("unsplit", "tiny", 1)
         assert all(method == "llm" and src == 2 for method, _, src in out[1:])
+
+    @pytest.mark.parametrize(
+        "answer",
+        [
+            {},
+            {"chunk_boundaries": []},
+            {"chunk_boundaries": {"single_chunk": "true"}},
+            {"chunk_boundaries": [1]},
+        ],
+    )
+    def test_llm_chunks_never_exceed_max_chunk_size(
+        self, intelligent_chunker, mocker, answer
+    ) -> None:
+        # An answer that keeps the pre-chunk whole must still respect the cap.
+        intelligent_chunker.chunker.invoke = mocker.Mock(return_value=answer)
+        pre_chunk = "\n".join(f"line {i} of a long section" for i in range(60))
+        assert len(pre_chunk) > 400
+        out = intelligent_chunker._process_pre_chunks([pre_chunk], "f.txt")
+        assert out and all(len(text) <= 400 for _, text, _ in out)
+
+    def test_documents_share_one_boundary_batch(self, intelligent_chunker, mocker):
+        batch = mocker.Mock()
+        batch.execute_with_fallback.side_effect = lambda items_to_process, **kw: [
+            {"chunk_boundaries": [2]} for _ in items_to_process
+        ]
+        intelligent_chunker.batch_processor = batch
+        text = "alpha beta gamma delta\nepsilon zeta eta theta iota kappa lambda"
+        docs = [_doc(text), _doc(text.upper())]
+        docs[1].document_id = "doc2"
+        units = intelligent_chunker.chunk_documents(docs)
+        assert batch.execute_with_fallback.call_count == 1
+        assert (
+            len(batch.execute_with_fallback.call_args.kwargs["items_to_process"]) == 2
+        )
+        assert {u.document_ids[0] for u in units} == {"doc1", "doc2"}
+        # The stats cover the whole call, not its last document.
+        assert intelligent_chunker.stats.num_successful_documents == 2
+        assert intelligent_chunker.stats.num_pre_chunks_processed == 2
+
+    def test_plain_text_is_not_header_split(self, intelligent_chunker, mocker) -> None:
+        # content_type "markdown" on a document without a markdown body: the
+        # text is chunked as text, so blank lines and "#" lines stay as written.
+        intelligent_chunker.config.processing.chunking.content_type = "markdown"
+        intelligent_chunker.chunker.invoke = mocker.Mock(return_value={})
+        text = "# not a heading, a comment line\n\n    indented line kept\nlast"
+        units = intelligent_chunker.chunk_documents([_doc(text)])
+        assert [u.text for u in units] == [text]
 
     def test_merge_structured_chunks_oversized_split(
         self, intelligent_chunker, mocker

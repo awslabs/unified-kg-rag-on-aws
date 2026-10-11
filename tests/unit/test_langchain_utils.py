@@ -559,8 +559,29 @@ class TestRobustXMLOutputParser:
         assert "root" in out
 
     def test_detect_xml_sections(self) -> None:
-        sections = RobustXMLOutputParser._detect_xml_sections("<a>1</a> noise <b>2</b>")
+        parser = RobustXMLOutputParser()
+        sections = parser._detect_xml_sections("<a>1</a> noise <b>2</b>")
         assert sections == {"a", "b"}
+
+    def test_detect_xml_sections_counts_only_expected_top_level_tags(self) -> None:
+        parser = RobustXMLOutputParser(tags=["entities", "relationships"])
+        text = "<entities><entity>x</entity></entities><relationships><relationship>"
+        assert parser._detect_xml_sections(text) == {"entities", "relationships"}
+
+    def test_unclosed_last_section_keeps_its_records(self) -> None:
+        # The model forgot </relationships>: the inner <relationship> tags
+        # are not sections, so the lxml recovery (which closes the section)
+        # is accepted and the extractor still reads "relationships".
+        parser = RobustXMLOutputParser(tags=["entities", "relationships"])
+        out = parser.parse(
+            "<entities><entity><name>A</name></entity>"
+            "<entity><name>B</name></entity></entities>\n"
+            "<relationships>"
+            "<relationship><source>A</source><target>B</target></relationship>"
+            "<relationship><source>B</source><target>A</target></relationship>"
+        )
+        assert set(out) == {"entities", "relationships"}
+        assert len(out["relationships"]["relationship"]) == 2
 
     def test_sections_preserved_true_when_no_sections(self) -> None:
         assert RobustXMLOutputParser._sections_preserved(set(), {}) is True

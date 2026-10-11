@@ -194,6 +194,21 @@ def _file_digest(path: Path) -> str:
     return digest.hexdigest()
 
 
+def is_excluded_source_path(path: Path, root: Path) -> bool:
+    """Whether a file found under the corpus ``root`` is outside the corpus.
+
+    Any component of its path below ``root`` that starts with ``.`` (a hidden
+    file, ``.git``, a hidden directory) or is ``__pycache__`` excludes it.
+    Discovery, the document loader and the corpus fingerprint share this rule,
+    so a file is parsed exactly when it counts toward the fingerprint.
+    """
+    try:
+        parts = path.relative_to(root).parts
+    except ValueError:
+        parts = path.parts
+    return any(part.startswith(".") or part == "__pycache__" for part in parts)
+
+
 def corpus_manifest_fingerprint(
     source_directory: str | Path,
     extensions: Iterable[str],
@@ -227,7 +242,7 @@ def corpus_manifest_fingerprint(
             if (
                 not path.is_file()
                 or path.suffix.lower() not in suffixes
-                or any(part.startswith(".") for part in relative.parts)
+                or is_excluded_source_path(path, root)
                 or any(path.resolve().is_relative_to(d) for d in excluded)
             ):
                 continue

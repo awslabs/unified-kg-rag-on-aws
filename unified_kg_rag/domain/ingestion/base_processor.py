@@ -1,7 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 from collections import defaultdict
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from datetime import datetime
 from typing import Any, TypeVar
 
@@ -15,6 +15,7 @@ from unified_kg_rag.shared.utils import (
 )
 
 T = TypeVar("T")
+_Cited = TypeVar("_Cited", Entity, Relationship)
 logger = get_logger(__name__)
 
 
@@ -363,18 +364,16 @@ class BaseProcessor:
         return list(merged_items_map.values())
 
 
-def check_entity_relevance_task(entity: Entity, unit_id: str) -> tuple[Entity, bool]:
-    """An entity is relevant to a text unit iff it was extracted from it.
+def group_by_text_unit(items: Iterable[_Cited]) -> dict[str, list[_Cited]]:
+    """Index entities or relationships by the text units they cite.
 
-    Uses the authoritative ``text_unit_ids`` lineage recorded during extraction
-    rather than re-deriving relevance from token overlap — which is exact,
-    language-agnostic, and free of brittle substring/Jaccard heuristics.
+    An item is relevant to a text unit iff it was extracted from it: the
+    authoritative ``text_unit_ids`` lineage, exact and language-agnostic,
+    rather than a token-overlap heuristic. Built once, so finding a unit's
+    items is a lookup instead of a scan of the graph.
     """
-    return entity, unit_id in (entity.text_unit_ids or [])
-
-
-def check_relationship_relevance_task(
-    rel: Relationship, unit_id: str
-) -> tuple[Relationship, bool]:
-    """A relationship is relevant to a text unit iff it was extracted from it."""
-    return rel, unit_id in (rel.text_unit_ids or [])
+    by_unit: dict[str, list[_Cited]] = {}
+    for item in items:
+        for unit_id in dict.fromkeys(item.text_unit_ids or []):
+            by_unit.setdefault(unit_id, []).append(item)
+    return by_unit

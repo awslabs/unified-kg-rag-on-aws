@@ -18,6 +18,7 @@ import pytest
 from langchain_core.documents import Document
 from langchain_core.messages import HumanMessage
 
+from unified_kg_rag.adapters.aws.chain_factory import setup_chain
 from unified_kg_rag.adapters.aws.token_counter import estimate_token_count
 from unified_kg_rag.adapters.local.embeddings import (
     OllamaEmbeddingFactory,
@@ -40,6 +41,7 @@ from unified_kg_rag.adapters.local.token_counter import (
     local_token_counter_factory,
 )
 from unified_kg_rag.domain.models import Config, ModelPurpose
+from unified_kg_rag.domain.prompts import GraphExtractionPrompt
 from unified_kg_rag.ports import (
     EmbeddingFactoryPort,
     LLMFactoryPort,
@@ -47,6 +49,8 @@ from unified_kg_rag.ports import (
     TokenCounterPort,
 )
 from unified_kg_rag.shared import ConfigurationError, EmbeddingModelError
+from unified_kg_rag.shared.exceptions import LLMOutputTruncatedError
+from unified_kg_rag.shared.utils.langchain import RobustXMLOutputParser
 
 pytestmark = pytest.mark.unit
 
@@ -81,8 +85,12 @@ def _config(kind: str, **llm: Any) -> Config:
 class FakeServer:
     """Records requests and answers like an OpenAI-compatible or Ollama server."""
 
-    def __init__(self, reply: str = "Vendor ships to Buyer.") -> None:
+    def __init__(
+        self, reply: str = "Vendor ships to Buyer.", stop: str = "stop"
+    ) -> None:
         self.reply = reply
+        # finish_reason / done_reason; "length" = cut at the output limit.
+        self.stop = stop
         self.requests: list[tuple[str, dict[str, Any]]] = []
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
@@ -129,7 +137,7 @@ class FakeServer:
                 {
                     "index": 0,
                     "message": {"role": "assistant", "content": self.reply},
-                    "finish_reason": "stop",
+                    "finish_reason": self.stop,
                 }
             ],
             "usage": {"prompt_tokens": 5, "completion_tokens": 4, "total_tokens": 9},
@@ -141,7 +149,7 @@ class FakeServer:
             "created_at": "2026-01-01T00:00:00Z",
             "message": {"role": "assistant", "content": self.reply},
             "done": True,
-            "done_reason": "stop",
+            "done_reason": self.stop,
             "prompt_eval_count": 5,
             "eval_count": 4,
         }
@@ -217,6 +225,37 @@ def test_ollama_chat_round_trip_sends_the_context_window() -> None:
     assert body["options"]["num_ctx"] == 16384
     assert body["options"]["num_predict"] == 300
     assert body["options"]["temperature"] == 0.0
+
+
+@pytest.mark.parametrize(
+    ("kind", "factory_cls"),
+    [
+        ("openai_compatible", OpenAICompatibleLanguageModelFactory),
+        ("ollama", OllamaLanguageModelFactory),
+    ],
+)
+def test_response_cut_at_the_output_limit_fails_the_chain(kind, factory_cls) -> None:
+    # Both servers report a cut answer as "length", not Bedrock's
+    # "max_tokens"; the partial answer must not be parsed as a success.
+    server = FakeServer(reply="<entities><entity><name>Vendor", stop="length")
+    factory = factory_cls(_config(kind), transport=httpx.MockTransport(server))
+    chain = setup_chain(
+        factory=factory,
+        model_id="synthetic-chat",
+        prompt_class=GraphExtractionPrompt,
+        parser=RobustXMLOutputParser(),
+        model_purpose=ModelPurpose.INGESTION,
+    )
+    with pytest.raises(LLMOutputTruncatedError):
+        chain.invoke(
+            {
+                "input_text": "Vendor ships parts to Buyer.",
+                "max_entities_per_chunk": 10,
+                "max_relationships_per_chunk": 10,
+                "entity_types": "ORG",
+                "target_language": "en",
+            }
+        )
 
 
 def test_model_info_comes_from_config() -> None:

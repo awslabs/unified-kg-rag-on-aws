@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 import fnmatch
 import time
+from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from functools import partial
 from pathlib import Path
@@ -12,6 +13,7 @@ from unified_kg_rag.adapters.ingestion.parser import ParserFactory
 from unified_kg_rag.domain.models import Config, Document
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.utils import compute_hash, default_max_workers
+from unified_kg_rag.shared.utils.cache_keys import is_excluded_source_path
 from unified_kg_rag.shared.utils.concurrency import ContextThreadPoolExecutor
 
 logger = get_logger(__name__)
@@ -29,22 +31,9 @@ def compute_minhash(
         return None
 
     minhash = MinHash(num_perm=num_permutations)
-    for shingle in shingles:
-        minhash.update(shingle.encode("utf8"))
+    minhash.update_batch([shingle.encode("utf8") for shingle in shingles])
 
     return doc_index, minhash
-
-
-def compute_jaccard_similarity(
-    pair: tuple[int, int], minhashes: dict[int, MinHash]
-) -> tuple[int, int, float] | None:
-    idx1, idx2 = pair
-    minhash1 = minhashes.get(idx1)
-    minhash2 = minhashes.get(idx2)
-
-    if minhash1 and minhash2:
-        return idx1, idx2, minhash1.jaccard(minhash2)
-    return None
 
 
 class DirectoryLoader:
@@ -53,7 +42,9 @@ class DirectoryLoader:
     # package is installed; .tsv was advertised here but the parser has no .tsv
     # loader, so a .tsv file passed the filter then failed to parse — dropped.
     DEFAULT_SUPPORTED_EXTENSIONS = {".csv", ".json", ".txt"}
-    DEFAULT_EXCLUDE_PATTERNS = {"**/.*", "**/*.pyc", "**/__pycache__/**"}
+    # Hidden paths and __pycache__ are always excluded
+    # (is_excluded_source_path); these patterns exclude more on top.
+    DEFAULT_EXCLUDE_PATTERNS: frozenset[str] = frozenset()
 
     def __init__(
         self,
@@ -166,7 +157,10 @@ class DirectoryLoader:
         )
 
     def _is_excluded(self, path: Path) -> bool:
-        """Match exclude patterns against the path relative to the source root.
+        """Whether ``path`` is outside the corpus or matches an exclude pattern.
+
+        Hidden paths follow the rule discovery and the corpus fingerprint use
+        (:func:`is_excluded_source_path`).
 
         Matching the absolute path let a pattern such as ``**/.*`` fire on a
         hidden *ancestor* of the source directory (a corpus under
@@ -174,6 +168,8 @@ class DirectoryLoader:
         tested both bare (``drafts/*``) and with a leading ``/`` so ``**/``
         patterns also cover top-level entries (``**/.*`` matches ``.env``).
         """
+        if is_excluded_source_path(path, self.source_directory):
+            return True
         try:
             relative = path.relative_to(self.source_directory).as_posix()
         except ValueError:
@@ -188,16 +184,19 @@ class DirectoryLoader:
     def _load_files_concurrently(
         self, file_paths: list[Path]
     ) -> tuple[list[Document], list[Path]]:
+        """Load every file; documents come back in ``file_paths`` order.
+
+        Completion order would make which copy deduplication keeps, and the
+        order of everything downstream, vary from run to run.
+        """
         documents, failed_paths = [], []
 
         with ContextThreadPoolExecutor(max_workers=self.max_workers) as executor:
-            future_to_path = {
-                executor.submit(self._load_and_enrich_single, path): path
+            futures = [
+                (path, executor.submit(self._load_and_enrich_single, path))
                 for path in file_paths
-            }
-
-            for future in as_completed(future_to_path):
-                path = future_to_path[future]
+            ]
+            for path, future in futures:
                 try:
                     if doc := future.result():
                         documents.append(doc)
@@ -233,11 +232,24 @@ class DirectoryLoader:
             )
         return Document.from_json_file(file_path)
 
-    def deduplicate_documents(self, documents: list[Document]) -> list[Document]:
-        """MinHash near-duplicate removal for documents loaded elsewhere."""
-        return self._deduplicate_documents(documents)
+    def deduplicate_documents(
+        self,
+        documents: list[Document],
+        keep: Callable[[Document], bool] | None = None,
+    ) -> list[Document]:
+        """MinHash near-duplicate removal for documents loaded elsewhere.
 
-    def _deduplicate_documents(self, documents: list[Document]) -> list[Document]:
+        Of two near-duplicates the earlier one is kept, except that a document
+        ``keep`` accepts wins over one it rejects (an incremental run keeps
+        the already-indexed copy). The survivors keep their input order.
+        """
+        return self._deduplicate_documents(documents, keep)
+
+    def _deduplicate_documents(
+        self,
+        documents: list[Document],
+        keep: Callable[[Document], bool] | None = None,
+    ) -> list[Document]:
         if len(documents) < 2:
             return documents
 
@@ -248,7 +260,12 @@ class DirectoryLoader:
             logger.warning("No MinHashes computed, skipping deduplication")
             return documents
 
-        duplicate_indices = self._find_duplicate_indices(minhashes)
+        # Rank = keep order: accepted documents first, then input order.
+        order = sorted(
+            range(len(documents)), key=lambda i: not (keep and keep(documents[i]))
+        )
+        rank = {doc_index: position for position, doc_index in enumerate(order)}
+        duplicate_indices = self._find_duplicate_indices(minhashes, rank)
         if not duplicate_indices:
             logger.info("No duplicates found")
             return documents
@@ -311,49 +328,29 @@ class DirectoryLoader:
         logger.debug("Computed MinHashes for %s documents", len(minhashes))
         return minhashes
 
-    def _find_duplicate_indices(self, minhashes: dict[int, MinHash]) -> set[int]:
+    def _find_duplicate_indices(
+        self, minhashes: dict[int, MinHash], rank: dict[int, int]
+    ) -> set[int]:
+        """Indices to drop: of each near-duplicate pair, the later-ranked one.
+
+        The Jaccard check runs here: it is a comparison of two short
+        signatures, cheaper than handing them to a worker process.
+        """
         lsh = MinHashLSH(
             threshold=self.similarity_threshold, num_perm=self.minhash_permutations
         )
-
         for doc_idx, minhash in minhashes.items():
             lsh.insert(doc_idx, minhash)
 
-        candidate_pairs = set()
-        for doc_idx in minhashes:
-            duplicates = lsh.query(minhashes[doc_idx])
-            for dup_idx in duplicates:
-                if isinstance(dup_idx, int) and doc_idx < dup_idx:
-                    candidate_pairs.add(tuple(sorted((doc_idx, dup_idx))))
-
-        if not candidate_pairs:
-            return set()
-
-        logger.debug(
-            "Found %s candidate pairs for similarity check", len(candidate_pairs)
-        )
-
         duplicate_indices = set()
-        similarity_func = partial(compute_jaccard_similarity, minhashes=minhashes)
-
-        with ProcessPoolExecutor(max_workers=self.max_workers) as executor:
-            future_to_pair = {
-                executor.submit(similarity_func, pair): pair for pair in candidate_pairs
-            }
-
-            for future in as_completed(future_to_pair):
-                try:
-                    if result := future.result():
-                        _, j, sim = result
-                        if sim >= self.similarity_threshold:
-                            duplicate_indices.add(j)
-                except Exception as e:
-                    logger.warning(
-                        "Similarity computation failed for pair %s: %s",
-                        future_to_pair[future],
-                        e,
-                    )
-
+        for doc_idx, minhash in minhashes.items():
+            for other in lsh.query(minhash):
+                if (
+                    isinstance(other, int)
+                    and rank[doc_idx] < rank[other]
+                    and minhash.jaccard(minhashes[other]) >= self.similarity_threshold
+                ):
+                    duplicate_indices.add(other)
         return duplicate_indices
 
     def _compute_dir_hash(self, files: list[Path]) -> str:

@@ -25,6 +25,7 @@ from unified_kg_rag.application.prompts.tuner import PromptTuner
 from unified_kg_rag.domain.models import Config
 from unified_kg_rag.shared import get_config, get_logger, setup_logging
 from unified_kg_rag.shared.utils import event_loop
+from unified_kg_rag.shared.utils.cache_keys import is_excluded_source_path
 
 logger = get_logger(__name__)
 
@@ -43,7 +44,11 @@ def load_corpus_texts(
     texts: list[str] = []
     for path in sorted(source_dir.rglob("*")):
         suffix = path.suffix.lower()
-        if not path.is_file() or suffix not in supported:
+        if (
+            not path.is_file()
+            or suffix not in supported
+            or is_excluded_source_path(path, source_dir)
+        ):
             continue
         try:
             if suffix in _TEXT_SUFFIXES:

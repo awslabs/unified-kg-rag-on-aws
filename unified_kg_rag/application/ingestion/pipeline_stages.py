@@ -63,6 +63,7 @@ from unified_kg_rag.shared import (
     get_logger,
     observability,
 )
+from unified_kg_rag.shared.utils.cache_keys import is_excluded_source_path
 
 if TYPE_CHECKING:
     from unified_kg_rag.application.ingestion.incremental import IncrementalIndexer
@@ -335,7 +336,9 @@ class DocumentLoadingStage(PipelineStage):
             # Without parsing, the directory holds pre-parsed Document JSON; any
             # other file would only fail Document.from_json_file.
             supported_extensions=None if parse_files else {".json"},
-            deduplicate=self.config.processing.deduplicate,
+            # Deduplication runs in this stage, after document identity is
+            # assigned, so an incremental run can prefer indexed documents.
+            deduplicate=False,
             parse_files=parse_files,
         )
         # Injected by the pipeline (built once at the orchestration layer) when
@@ -368,8 +371,6 @@ class DocumentLoadingStage(PipelineStage):
                 input_count,
                 PipelineStageType.DOCUMENT_PARSING.value,
             )
-            if self.loader.deduplicate:
-                documents = self.loader.deduplicate_documents(documents)
         else:
             discovered_files = self.loader.discover_files()
             input_count = len(discovered_files)
@@ -383,11 +384,15 @@ class DocumentLoadingStage(PipelineStage):
             failed_files = self.loader.failed_files
             context.failed_source_files = list(failed_files)
 
+        incremental = self._doc_status is not None or self.config.doc_status_enabled
+        if self.config.processing.deduplicate:
+            documents = self._deduplicate(documents, context, incremental)
+
         # Incremental indexing: when a doc-status registry is injected or the
         # DynamoDB one is enabled, diff against it, stash the delta/fingerprints
         # for the IndexingStage, and process only new/changed documents.
         delta_skipped = 0
-        if self._doc_status is not None or self.config.doc_status_enabled:
+        if incremental:
             documents, delta_skipped = self._apply_incremental_filter(
                 documents, context
             )
@@ -412,6 +417,45 @@ class DocumentLoadingStage(PipelineStage):
         logger.info("=" * 60)
 
         return input_count, output_count, metrics
+
+    def _deduplicate(
+        self, documents: list[Document], context: PipelineContext, incremental: bool
+    ) -> list[Document]:
+        """Drop near-duplicate documents, keeping indexed ones in incremental mode.
+
+        The incremental diff treats a dropped document as deleted, so a new
+        near-copy that happened to be kept would delete the indexed original
+        and index itself instead. A document the registry already holds (under
+        its key or its legacy key) is therefore kept over one it does not.
+        """
+        if not incremental or self.config.indexing.reset:
+            return self.loader.deduplicate_documents(documents)
+
+        from unified_kg_rag.domain.ingestion.delta_detector import (
+            assign_registry_source,
+            legacy_doc_id,
+        )
+
+        _, _, source_scope, _ = self._registry_scope(context)
+        keys: dict[int, tuple[str, str]] = {}
+        for document in documents:
+            assign_registry_source(document, source_scope)
+            keys[id(document)] = (
+                document_doc_id(document),
+                legacy_doc_id(document),
+            )
+        try:
+            stored = self._build_doc_status_store().get_many(
+                {key for pair in keys.values() for key in pair}
+            )
+        except Exception as e:
+            raise DocStatusRegistryError(
+                f"Doc-status registry: could not read it to deduplicate the "
+                f"corpus ({type(e).__name__}: {e})"
+            ) from e
+        return self.loader.deduplicate_documents(
+            documents, keep=lambda doc: any(key in stored for key in keys[id(doc)])
+        )
 
     @staticmethod
     def _parsing_completed(context: PipelineContext) -> bool:
@@ -726,7 +770,7 @@ class DocumentParsingStage(PipelineStage):
         for file_path in self.source_directory.rglob("*"):
             if (
                 not file_path.is_file()
-                or self._should_exclude_file(file_path)
+                or is_excluded_source_path(file_path, self.source_directory)
                 or any(file_path.resolve().is_relative_to(d) for d in owned_dirs)
             ):
                 continue
@@ -751,16 +795,6 @@ class DocumentParsingStage(PipelineStage):
                 remedy,
             )
         return sorted(files)
-
-    @staticmethod
-    def _should_exclude_file(file_path: Path) -> bool:
-        exclude_patterns = {".*", "*.pyc", "__pycache__"}
-
-        for pattern in exclude_patterns:
-            if file_path.match(pattern):
-                return True
-
-        return False
 
     def _save_parsed_document(
         self, document: Document, original_path: Path, output_directory: Path
@@ -803,11 +837,10 @@ class TextChunkingStage(PipelineStage):
         logger.info("TEXT CHUNKING STAGE - STARTED")
         logger.info("=" * 60)
 
-        text_units = []
-        for doc in context.documents:
-            chunks = self.chunker.chunk_documents([doc])
-            text_units.extend(chunks)
-
+        # One call for the whole corpus: the intelligent chunker batches its
+        # boundary-model calls across documents, and the logged stats cover
+        # the stage rather than its last document.
+        text_units = self.chunker.chunk_documents(context.documents)
         context.text_units = text_units
         total_chunks = len(text_units)
         doc_count = len(context.documents)

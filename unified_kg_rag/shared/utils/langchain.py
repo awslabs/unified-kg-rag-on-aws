@@ -794,11 +794,19 @@ class RobustXMLOutputParser(XMLOutputParser):
             llm_output=text,
         )
 
-    @staticmethod
-    def _detect_xml_sections(text: str) -> set[str]:
-        pattern = r"<([a-zA-Z0-9_]+)>.*?</\1>"
-        matches = re.findall(pattern, text, re.DOTALL)
-        return set(matches)
+    def _detect_xml_sections(self, text: str) -> set[str]:
+        """The sections of ``text`` a parse result must keep to be accepted.
+
+        With expected top-level ``tags``, only those count, closed or not: a
+        nested element (``<relationship>`` inside ``<relationships>``) is not
+        a section, and an expected last section the model left unclosed is
+        still one. Without ``tags``, every closed element counts.
+        """
+        if self.tags:
+            return {
+                tag for tag in self.tags if re.search(rf"<{re.escape(tag)}[\s/>]", text)
+            }
+        return set(re.findall(r"<([a-zA-Z0-9_]+)>.*?</\1>", text, re.DOTALL))
 
     @staticmethod
     def _sections_preserved(

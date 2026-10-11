@@ -154,15 +154,25 @@ class DelimitedChatPromptTemplate(ChatPromptTemplate):
         return await super().aformat_messages(**self._neutralised(kwargs))
 
 
-# Stop reason of a response cut at its output-token limit, under the key
-# langchain-aws reports it: Converse ``stopReason``, InvokeModel ``stop_reason``.
-_TRUNCATED_STOP_REASON = "max_tokens"
+# How each provider's LangChain integration marks a response cut at its
+# output-token limit: response-metadata key -> value. langchain-aws: Converse
+# ``stopReason`` / InvokeModel ``stop_reason``; langchain-openai (any
+# OpenAI-compatible server) ``finish_reason``; langchain-ollama ``done_reason``.
+_TRUNCATION_MARKERS = {
+    "stopReason": "max_tokens",
+    "stop_reason": "max_tokens",
+    "finish_reason": "length",
+    "done_reason": "length",
+}
 
 
-def _stop_reason(message: Any) -> str | None:
+def _truncation_reason(message: Any) -> str | None:
+    """``key=value`` of the metadata marking ``message`` as cut, else None."""
     metadata = getattr(message, "response_metadata", None) or {}
-    reason = metadata.get("stopReason") or metadata.get("stop_reason")
-    return str(reason) if reason else None
+    for key, value in _TRUNCATION_MARKERS.items():
+        if metadata.get(key) == value:
+            return f"{key}={value}"
+    return None
 
 
 class TruncationGuard(Runnable[Any, Any]):
@@ -184,19 +194,18 @@ class TruncationGuard(Runnable[Any, Any]):
         self.model_id = model_id
         self.purpose = purpose
 
-    def _warn(self) -> None:
+    def _warn(self, reason: str) -> None:
         logger.warning(
-            "'%s' response (%s, model '%s') stopped at the output token limit "
-            "(stop reason %s)",
+            "'%s' response (%s, model '%s') stopped at the output token limit " "(%s)",
             self.prompt_name,
             self.purpose.value,
             self.model_id,
-            _TRUNCATED_STOP_REASON,
+            reason,
         )
 
     def _check(self, message: Any) -> Any:
-        if _stop_reason(message) == _TRUNCATED_STOP_REASON:
-            self._warn()
+        if reason := _truncation_reason(message):
+            self._warn(reason)
             raise LLMOutputTruncatedError(
                 f"'{self.prompt_name}' response from model '{self.model_id}' "
                 f"was cut at the output token limit"
@@ -219,12 +228,12 @@ class TruncationGuard(Runnable[Any, Any]):
         config: RunnableConfig | None = None,
         **kwargs: Any,
     ) -> Iterator[Any]:
-        truncated = False
+        reason = None
         for chunk in input:
-            truncated = truncated or _stop_reason(chunk) == _TRUNCATED_STOP_REASON
+            reason = reason or _truncation_reason(chunk)
             yield chunk
-        if truncated:
-            self._warn()
+        if reason:
+            self._warn(reason)
 
     async def atransform(
         self,
@@ -232,12 +241,12 @@ class TruncationGuard(Runnable[Any, Any]):
         config: RunnableConfig | None = None,
         **kwargs: Any,
     ) -> AsyncIterator[Any]:
-        truncated = False
+        reason = None
         async for chunk in input:
-            truncated = truncated or _stop_reason(chunk) == _TRUNCATED_STOP_REASON
+            reason = reason or _truncation_reason(chunk)
             yield chunk
-        if truncated:
-            self._warn()
+        if reason:
+            self._warn(reason)
 
 
 class TransientRetryRunnable(Runnable[Any, Any]):

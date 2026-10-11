@@ -20,8 +20,8 @@ from unified_kg_rag.adapters import providers as providers_module
 from unified_kg_rag.adapters.ingestion.claim_extractor import (
     ClaimExtractionStats,
     ClaimExtractor,
-    _prepare_claim_input_task,
     format_entities_with_limit_task,
+    prepare_claim_input,
 )
 from unified_kg_rag.domain.models import Claim, Config, Entity, TextUnit
 
@@ -36,7 +36,7 @@ def extractor(config: Config, mocker) -> ClaimExtractor:
     mocker.patch.object(ce_module, "setup_chain")
     # Thread pool (not process pool) so patched module globals are inherited and
     # no real subprocess/AWS work happens.
-    return ClaimExtractor(config, use_process_pool=False, show_progress=False)
+    return ClaimExtractor(config, show_progress=False)
 
 
 @pytest.fixture
@@ -282,41 +282,37 @@ class TestFormatEntitiesWithLimit:
 
 
 # --------------------------------------------------------------------------- #
-# _prepare_claim_input_task (module-level, AWS-free)
+# prepare_claim_input (module-level, AWS-free)
 # --------------------------------------------------------------------------- #
-class TestPrepareClaimInputTask:
+class TestPrepareClaimInput:
     def test_plain_text_no_entities(self) -> None:
         unit = TextUnit(id="t1", text="raw text")
-        out = _prepare_claim_input_task(
+        out = prepare_claim_input(
             unit, [], {"max_entities_per_prompt": 0, "target_language": "en"}
         )
         assert out == {"input_text": "raw text", "entity_specs": ""}
 
     def test_translated_text_preferred(self) -> None:
         unit = TextUnit(id="t1", text="original", translated_texts={"en": "translated"})
-        out = _prepare_claim_input_task(
+        out = prepare_claim_input(
             unit, [], {"max_entities_per_prompt": 0, "target_language": "en"}
         )
         assert out["input_text"] == "translated"
 
     def test_translated_text_missing_target_falls_back_to_text(self) -> None:
         unit = TextUnit(id="t1", text="original", translated_texts={"fr": "francais"})
-        out = _prepare_claim_input_task(
+        out = prepare_claim_input(
             unit, [], {"max_entities_per_prompt": 0, "target_language": "en"}
         )
         assert out["input_text"] == "original"
 
-    def test_relevant_entities_included(self) -> None:
+    def test_unit_entities_listed(self) -> None:
         unit = TextUnit(id="t1", text="body")
-        entities = [
-            Entity(id="e1", name="Acme", text_unit_ids=["t1"]),
-            Entity(id="e2", name="Other", text_unit_ids=["t9"]),
-        ]
-        out = _prepare_claim_input_task(
+        entities = [Entity(id="e1", name="Acme", text_unit_ids=["t1"])]
+        out = prepare_claim_input(
             unit, entities, {"max_entities_per_prompt": 5, "target_language": "en"}
         )
-        assert "Acme" in out["entity_specs"]
-        assert "Other" not in out["entity_specs"]
+        assert out["entity_specs"] == "Acme"
 
 
 # --------------------------------------------------------------------------- #

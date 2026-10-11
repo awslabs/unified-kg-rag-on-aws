@@ -17,6 +17,7 @@ from unified_kg_rag.domain.models import (
     PipelineStageStatus,
 )
 from unified_kg_rag.shared import PipelineStageError
+from unified_kg_rag.shared.utils.cache_keys import corpus_manifest_fingerprint
 
 pytestmark = pytest.mark.unit
 
@@ -52,6 +53,29 @@ def test_skipped_extensions_are_warned_once_each(
     assert "2 " in md and "uv sync --extra unstructured" in md
     docx = next(w for w in warnings if "'.docx'" in w)
     assert "unstructured" not in docx
+
+
+def test_files_under_hidden_directories_are_neither_parsed_nor_fingerprinted(
+    tmp_path: Path,
+) -> None:
+    # One rule for discovery and the corpus fingerprint: a file under a hidden
+    # directory used to be parsed while its edits never changed the cache key.
+    (tmp_path / "keep.txt").write_text("Vendor ships goods to Buyer.")
+    (tmp_path / ".drafts").mkdir()
+    hidden = tmp_path / ".drafts" / "note.txt"
+    hidden.write_text("Draft text.")
+
+    assert [f.name for f in _stage(tmp_path)._discover_files()] == ["keep.txt"]
+    before = corpus_manifest_fingerprint(tmp_path, [".txt"])
+    hidden.write_text("Edited draft text.")
+    assert corpus_manifest_fingerprint(tmp_path, [".txt"]) == before
+
+
+def test_hidden_corpus_root_is_not_excluded(tmp_path: Path) -> None:
+    root = tmp_path / ".cache" / "corpus"
+    root.mkdir(parents=True)
+    (root / "keep.txt").write_text("Vendor ships goods to Buyer.")
+    assert [f.name for f in _stage(root)._discover_files()] == ["keep.txt"]
 
 
 def test_first_stage_with_no_parseable_files_names_the_source_directory(

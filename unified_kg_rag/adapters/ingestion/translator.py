@@ -72,12 +72,17 @@ class TextUnitTranslator:
         self.config = config
         self.translation_config = config.processing.translation
         self.target_language = self.translation_config.target_language
-        self.additional_target_languages = (
-            self.translation_config.additional_target_languages or []
+        self.source_language = self.translation_config.source_language
+        # Target first, each language once (a repeated one would be
+        # translated, and counted, twice).
+        self.all_target_languages = list(
+            dict.fromkeys(
+                [
+                    self.target_language,
+                    *(self.translation_config.additional_target_languages or []),
+                ]
+            )
         )
-        self.all_target_languages = [
-            self.target_language
-        ] + self.additional_target_languages
         self.providers = Providers.resolve(config, providers, boto_session)
         self.boto_session = self.providers.boto_session
         self.ignore_errors = config.processing.ignore_errors
@@ -126,6 +131,18 @@ class TextUnitTranslator:
     def _translate_text_units_batch(
         self, text_units: list[TextUnit], target_language: LanguageCode
     ) -> None:
+        if target_language == self.source_language:
+            # Already in that language: the text is its own translation, kept
+            # under the language like any other so readers need no special case.
+            for text_unit in text_units:
+                text_unit.translated_texts = {
+                    **(text_unit.translated_texts or {}),
+                    target_language.value: text_unit.text,
+                }
+            if self.stats:
+                self.stats.num_successful_translations += len(text_units)
+            return
+
         texts_to_translate = [unit.text for unit in text_units]
 
         try:
