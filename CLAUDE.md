@@ -26,10 +26,12 @@ ports → domain`, with `shared` as a cross-cutting kernel any layer may use.
   in `__init__`): `ports/__init__` names them but does not export them; import
   them from `adapters.retrieval.base` / `adapters.evaluators.base`.
 - **`adapters/`**: concrete technology bindings — `aws/` (Bedrock, Neptune,
-  OpenSearch, DynamoDB, S3), `storage/` (indexers), `retrievers/`,
+  OpenSearch, DynamoDB, S3), `local/` (Ollama/OpenAI-compatible, SQLite),
+  `llm/` (provider-neutral chain assembly, retry, token estimate),
+  `storage/` (indexers), `retrievers/`,
   `search_strategies/`, `retrieval/` (base + hybrid scorer + token/memory
   managers), `ingestion/` (LLM/IO-coupled chunker/extractor/loader/parser/
-  translator), `renderers/`, `evaluators/`.
+  translator), `renderers/`, `evaluators/` (incl. the evaluator bases).
 - **`application/`**: orchestration + entry points — `cli/` (pyproject scripts
   resolve to `unified_kg_rag.application.cli.*`), `ingestion/` (pipeline + stages),
   `storage/indexing_manager`, `retrieval/rag_chain`.
