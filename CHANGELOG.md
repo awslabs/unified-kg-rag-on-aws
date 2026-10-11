@@ -310,6 +310,9 @@ Library API (Python callers and custom backends).
 - AUTO routing falls back to `local` only when it is routable; with
   `search.auto_routable_strategies` excluding it, a failed or unparseable
   routing call uses the first routable strategy (#PR).
+- `--backend local` over a config file of another backend resolves the
+  relative SQLite registry path against the config file, not the working
+  directory (#PR).
 - An incremental run that skips unchanged documents no longer replaces
   `visualization_data.json` with a graph of its delta only: it skips the
   export and the render and logs how to visualize the whole graph (a full

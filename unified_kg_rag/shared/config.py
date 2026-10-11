@@ -46,6 +46,25 @@ def warn_unknown_keys(data: Any, model: type[BaseModel], prefix: str = "") -> No
 DOTENV_FILENAME = ".env"
 
 
+def resolve_relative_paths(config: Config, config_path: str | Path) -> None:
+    """Resolve a relative SQLite registry path against ``config_path``'s directory.
+
+    The registry must be the same file on every run against the same
+    stores; relative to the working directory, a run started elsewhere would
+    silently use an empty registry. Applies when the registry is SQLite, so a
+    caller that switches the config to it afterwards (``--backend local``
+    over an ``aws`` config file) calls this again.
+    """
+    doc_status = config.providers.doc_status
+    path = Path(doc_status.sqlite_path)
+    if (
+        doc_status.kind == SQLITE
+        and doc_status.sqlite_path != ":memory:"
+        and not path.is_absolute()
+    ):
+        doc_status.sqlite_path = str((Path(config_path).parent / path).resolve())
+
+
 def load_cli_dotenv(directory: Path | None = None) -> Path | None:
     """Load ``.env`` from the current directory into ``os.environ`` (CLIs only).
 
@@ -114,22 +133,10 @@ class ConfigLoader:
             raise ValueError(f"Configuration validation error: {e}") from e
 
     def _resolve_relative_paths(self) -> None:
-        """Resolve a relative SQLite registry path against the config file's directory.
-
-        The registry must be the same file on every run against the same
-        stores; relative to the working directory, a run started elsewhere
-        would silently use an empty registry.
-        """
-        if self._config is None or self.config_path is None:
-            return
-        doc_status = self._config.providers.doc_status
-        path = Path(doc_status.sqlite_path)
-        if (
-            doc_status.kind == SQLITE
-            and doc_status.sqlite_path != ":memory:"
-            and not path.is_absolute()
-        ):
-            doc_status.sqlite_path = str((self.config_path.parent / path).resolve())
+        """Resolve a relative SQLite registry path against the config file's
+        directory (see :func:`resolve_relative_paths`)."""
+        if self._config is not None and self.config_path is not None:
+            resolve_relative_paths(self._config, self.config_path)
 
     def _apply_environment_overrides(self) -> None:
         if self._config is None:
