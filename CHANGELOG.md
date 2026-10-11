@@ -261,6 +261,8 @@ Library API (Python callers and custom backends).
   entity-extraction LLM call (for DRIFT and global search too); the rewrite
   resolves references instead and reads a bounded history (earlier answers
   cut to 1,000 characters) (#PR).
+- An empty or refusing follow-up rewrite no longer replaces the user's
+  question; the query is used as is (#PR).
 - Evaluation: `answer_match` no longer counts a different number or name as
   a match; judge failures are recorded per query instead of discarding the
   run; non-zero exit codes on failed scoring (#158, #210).

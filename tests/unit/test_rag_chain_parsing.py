@@ -323,6 +323,33 @@ async def test_rewrite_resolves_a_follow_up_from_history(config: Config) -> None
     ]
 
 
+@pytest.mark.parametrize(
+    ("output", "expected"),
+    [
+        ("   ", None),
+        ("I'm sorry, but I can't rewrite that.", None),
+        ("I cannot help with that request.", None),
+        (
+            "Standalone question: What is the Widget's price?",
+            "What is the Widget's price?",
+        ),
+        ("Standalone question:", None),
+        # Only the opening counts: a question about a refusal is kept.
+        (
+            "Why did the Vendor say it cannot ship?",
+            "Why did the Vendor say it cannot ship?",
+        ),
+    ],
+)
+async def test_unusable_rewrite_keeps_the_query(
+    config: Config, output: str, expected: str | None
+) -> None:
+    chain = GraphRAGChain(config=config)
+    chain._get_chain_for_prompt = lambda *a, **k: _FakeRewriter(output)  # type: ignore[assignment]
+
+    assert await chain._rewrite_query_step(_ctx_state("earlier turn")) == expected
+
+
 async def test_rewrite_failure_degrades_under_ignore_errors(config: Config) -> None:
     chain = GraphRAGChain(config=config)
 

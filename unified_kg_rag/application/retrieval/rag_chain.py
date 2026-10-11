@@ -783,7 +783,38 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
                 raise
             logger.warning("Follow-up rewrite failed; using the query as is: %s", e)
             return None
-        return str(rewritten).strip() or None
+        return self._usable_rewrite(str(rewritten))
+
+    # Openings of a model refusal or meta-reply rather than a rewritten question.
+    _REWRITE_REFUSALS: ClassVar[tuple[str, ...]] = (
+        "i'm sorry",
+        "i am sorry",
+        "sorry,",
+        "i cannot",
+        "i can't",
+        "i can not",
+        "i'm unable",
+        "i am unable",
+        "as an ai",
+    )
+
+    @classmethod
+    def _usable_rewrite(cls, rewritten: str) -> str | None:
+        """The rewrite, or None (keep the query as is) when it is unusable.
+
+        An empty reply or a refusal would replace the user's question for
+        routing, retrieval and the answer, so the original query is kept.
+        """
+        text = rewritten.strip()
+        prefix = "standalone question:"
+        if text.lower().startswith(prefix):
+            text = text[len(prefix) :].strip()
+        if not text:
+            return None
+        if text.lower().startswith(cls._REWRITE_REFUSALS):
+            logger.warning("Follow-up rewrite was a refusal; using the query as is")
+            return None
+        return text
 
     @staticmethod
     def _question(state: dict[str, Any]) -> str:
