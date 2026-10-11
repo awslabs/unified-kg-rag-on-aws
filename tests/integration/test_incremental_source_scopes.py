@@ -84,6 +84,8 @@ class _Model:
 
     def _extraction(self, text: str) -> str:
         self.extractions[text.strip()] += 1
+        if "UNREADABLE" in text:
+            return "Sorry, I cannot help with that."
         names = [name for name in _NAMES if name in text]
         entities = "".join(
             f"<entity><name>{n}</name><type>ORGANIZATION</type>"
@@ -153,7 +155,12 @@ class ScopeStack:
             graph_indexer_factory=lambda: self.graph,
         )
 
-    def run(self, source: Path, built_for: Path | None = None) -> PipelineContext:
+    def run(
+        self,
+        source: Path,
+        built_for: Path | None = None,
+        expect: PipelineStageStatus = PipelineStageStatus.COMPLETED,
+    ) -> PipelineContext:
         """Run over ``source``; ``built_for`` is the constructor's directory."""
         self.model.extractions.clear()
         pipeline = DataIngestionPipeline(
@@ -173,7 +180,7 @@ class ScopeStack:
             if self.keep_open and isinstance(stage, ps.IndexingStage):
                 stage.close = lambda: None  # type: ignore[method-assign]
         context = pipeline.run(source, pipeline_id=f"p{uuid.uuid4().hex[:8]}")
-        assert context.status is PipelineStageStatus.COMPLETED
+        assert context.status is expect
         return context
 
     def entity_names(self) -> set[str]:
@@ -620,3 +627,30 @@ def test_run_reads_and_scopes_the_directory_it_is_given(registry, tmp_path) -> N
     assert stack.texts() == {B_TEXT}
     assert _scope_of(context) == _scope_of(reference.run(source_b))
     assert {r.scope for r in registry.list_all()} == {_scope_of(context)}
+
+
+def test_a_document_that_always_fails_its_stage_stops_being_retried(
+    registry, tmp_path
+) -> None:
+    # Every unit of the document fails extraction, so the stage fails and the
+    # run stops before indexing. The document is still recorded FAILED, so
+    # indexing.max_document_failures ends the retries.
+    stack = ScopeStack(registry, tmp_path)
+    stack.config.indexing.max_document_failures = 2
+    source = write_corpus(tmp_path / "src", {"bad.txt": "UNREADABLE Vendor."})
+
+    for count in (1, 2):
+        context = stack.run(source, expect=PipelineStageStatus.FAILED)
+        failed = {r.stage_name for r in context.stage_results if r.status == "failed"}
+        assert "graph_extraction" in failed
+        (record,) = registry.list_all()
+        assert record.status == "failed"
+        assert record.failure_count == count
+        assert record.scope == _scope_of(context)
+        assert record.file_path == "bad.txt"
+
+    context = stack.run(source)
+    assert not stack.model.extractions
+    assert context.incremental_delta.unchanged == [record.doc_id]
+    (record,) = registry.list_all()
+    assert record.failure_count == 2

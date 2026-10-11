@@ -376,10 +376,13 @@ def test_execute_pipeline_stages_stops_on_failure(mocker) -> None:
     )
     # Stop after the first failure.
     mocker.patch.object(pipe, "_should_stop_pipeline", return_value=True)
+    record = mocker.patch.object(pipe, "_record_stopped_run_failed")
     ctx = _ctx_with_results([])
 
     DataIngestionPipeline._execute_pipeline_stages(pipe, ctx, start_stage_name=None)
     assert executed == ["a"]
+    # The stopping stage's documents are recorded in the registry.
+    record.assert_called_once_with(pipe.stages[0], ctx)
 
 
 # --- _get_stage_metric ---------------------------------------------------

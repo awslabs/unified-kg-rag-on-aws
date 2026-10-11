@@ -176,6 +176,15 @@ loading or chunking crashed in a
 `--continue-on-error` run, the indexing stage does not run at all, so the
 stores and the registry keep their previous state.
 
+When one of those artifact stages fails without `--continue-on-error` (for
+example every text unit of a document fails extraction), the run stops before
+indexing and records every new and changed document of the run `FAILED`, with
+the lineage it already had: nothing was written for them, and the next run
+removes what is still indexed for a changed document when it processes it
+again. A document that still has a `PENDING` record from an interrupted run
+keeps it. Resuming the same `--pipeline-id` into the same failure counts once.
+A reset run (`indexing.reset`) records nothing.
+
 - After `indexing.max_document_failures` (default `3`) consecutive failures
   with unchanged content, the document is no longer retried. It stays
   `FAILED`, keeps what it indexed, and each run logs a WARNING naming the file.
