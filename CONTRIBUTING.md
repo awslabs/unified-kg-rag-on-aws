@@ -93,8 +93,8 @@ uv run pytest -m "not aws" --cov=unified_kg_rag         # with coverage, as CI m
 ```
 
 CI fails below the coverage threshold set by `--cov-fail-under` in `quality.yml`. It also runs the suite on Python
-3.10, checks the optional parsers, runs the local-store smoke test, builds the container image, and synthesizes
-`iac/` with cdk-nag. If you change
+3.10, checks the optional parsers, runs the local-store smoke test, builds and runs the container image, checks
+dependency licenses (`.github/scripts/check_licenses.py`), and synthesizes `iac/` with cdk-nag. If you change
 `iac/`, also run `cd iac && cdk synth -c enable_cdk_nag=true` (see [`iac/README.md`](./iac/README.md)).
 
 ### Tests
