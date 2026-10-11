@@ -184,6 +184,10 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   (#157).
 
 ### Changed
+- **Breaking:** `providers.llm.max_retries` and `providers.embedding.max_retries`
+  (retries after the first try, default 2) are renamed `max_attempts` (total
+  attempts, default 3), like every other attempt count in the config. The old
+  key is reported as unknown and ignored (#PR).
 - The incremental-registry steps of the document_loading and indexing stages
   (run scope, dedup preference, delta filter, reset namespaces and registry
   clearing, delta indexing) live in `application/ingestion/incremental.py`

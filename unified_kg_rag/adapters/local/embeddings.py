@@ -165,7 +165,8 @@ class OpenAICompatibleEmbeddingFactory(_LocalEmbeddingFactory):
             base_url=self.settings.base_url,
             api_key=api_key_value(self.settings),
             timeout=self.settings.timeout_seconds,
-            max_retries=self.settings.max_retries,
+            # The OpenAI client counts retries after the first attempt.
+            max_retries=self.settings.max_attempts - 1,
             # Send text, not tiktoken ids: only OpenAI's own servers accept
             # pre-tokenized input, and the estimate already truncated it.
             check_embedding_ctx_length=False,

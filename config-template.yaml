@@ -187,7 +187,7 @@ providers:
     base_url: null
     api_key: null
     timeout_seconds: 300.0
-    max_retries: 2
+    max_attempts: 3  # per request, including the first (openai_compatible)
     # Non-Bedrock only: the tier models (they replace aws.bedrock.*_model_id;
     # default_model_id is required, fast_model_id null = default_model_id).
     default_model_id: null
@@ -207,7 +207,7 @@ providers:
     base_url: null
     api_key: null
     timeout_seconds: 300.0
-    max_retries: 2
+    max_attempts: 3  # per request, including the first (openai_compatible)
     # Non-Bedrock only, both required: the model (default of
     # indexing.opensearch.embedding_model_id and evaluation.embedding_model_id)
     # and its vector dimension.

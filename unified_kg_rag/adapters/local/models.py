@@ -189,7 +189,8 @@ class OpenAICompatibleLanguageModelFactory(_LocalLanguageModelFactory):
             temperature=temperature,
             max_tokens=max_tokens,
             timeout=self.settings.timeout_seconds,
-            max_retries=self.settings.max_retries,
+            # The OpenAI client counts retries after the first attempt.
+            max_retries=self.settings.max_attempts - 1,
             callbacks=callbacks,
             **extra,
         )
