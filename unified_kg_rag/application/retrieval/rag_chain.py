@@ -818,6 +818,14 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         "i am unable",
         "as an ai",
     )
+    # A request for clarification aimed back at the user: after a refusal
+    # opening it is a meta-reply even though it ends with a question mark.
+    _CLARIFICATION_REQUEST: ClassVar[re.Pattern[str]] = re.compile(
+        r"\b(?:could|can|would) you (?:please )?(?:clarify|specify|confirm)"
+        r"|\bplease (?:clarify|specify)"
+        r"|\b(?:what|which)\b[^?]*\b(?:do|did) you (?:mean|refer)"
+        r"|\bare you referring\b"
+    )
 
     @classmethod
     def _usable_rewrite(cls, rewritten: str) -> str | None:
@@ -834,9 +842,12 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             return None
         # A refusal opens with an apology or an inability and asks nothing; a
         # rewritten question may start the same way ("I can't find …; where
-        # is it?") but ends with a question mark.
+        # is it?") but ends with a question mark, unless the question asks
+        # the user to clarify ("I'm sorry, could you clarify which contract?").
         opening = text.lower().replace("\u2019", "'")
-        if opening.startswith(cls._REWRITE_REFUSALS) and not text.endswith("?"):
+        if opening.startswith(cls._REWRITE_REFUSALS) and (
+            not text.endswith("?") or cls._CLARIFICATION_REQUEST.search(opening)
+        ):
             logger.warning("Follow-up rewrite was a refusal; using the query as is")
             return None
         return text

@@ -21,6 +21,7 @@ from unified_kg_rag.domain.models import (
     DocStatus,
     DocStatusRecord,
     Document,
+    LanguageCode,
 )
 from unified_kg_rag.shared.utils.cache_keys import extraction_fingerprint
 
@@ -82,6 +83,82 @@ def test_ignores_settings_that_do_not_shape_a_documents_artifacts(
     before = extraction_fingerprint(config)
     change(config)
     assert extraction_fingerprint(config) == before
+
+
+def _guardrail(**fields: object) -> Config:
+    return Config.model_validate({"aws": {"bedrock": {"guardrail": fields}}})
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"identifier": "gr-query"},
+        {"identifier": "gr-query", "version": "3"},
+        {"identifier": "gr-query", "trace": True},
+        # No identifier: nothing is guarded whatever the scope.
+        {"apply_to": "all"},
+    ],
+)
+def test_a_guardrail_that_skips_ingestion_does_not_move_it(
+    fields: dict[str, object],
+) -> None:
+    assert extraction_fingerprint(_guardrail(**fields)) == extraction_fingerprint(
+        Config()
+    )
+
+
+def test_a_guardrail_that_guards_ingestion_moves_it() -> None:
+    guarded = extraction_fingerprint(_guardrail(identifier="gr-1", apply_to="all"))
+    assert guarded != extraction_fingerprint(Config())
+    assert guarded != extraction_fingerprint(
+        _guardrail(identifier="gr-2", apply_to="all")
+    )
+    assert guarded != extraction_fingerprint(
+        _guardrail(identifier="gr-1", version="2", apply_to="all")
+    )
+    # Trace details do not change what the guarded model returns.
+    assert guarded == extraction_fingerprint(
+        _guardrail(identifier="gr-1", apply_to="all", trace=True)
+    )
+
+
+@pytest.mark.parametrize(
+    "block, field, value",
+    [
+        ("processing.translation", "translation_model_id", "amazon.nova-pro"),
+        ("processing.translation", "target_language", LanguageCode.KO),
+        ("processing.gleaning", "max_rounds", 1),
+        ("fixing", "fixing_model_id", "amazon.nova-pro"),
+        (
+            "processing.graph_extraction.description_summarization",
+            "max_summary_tokens",
+            64,
+        ),
+    ],
+)
+def test_settings_of_a_disabled_block_do_not_move_it(
+    block: str, field: str, value: object
+) -> None:
+    disabled = Config()
+    _set(f"{block}.enabled", False)(disabled)
+    before = extraction_fingerprint(disabled)
+    _set(f"{block}.{field}", value)(disabled)
+    assert extraction_fingerprint(disabled) == before
+
+    # Switched on, the same field shapes the output again.
+    enabled = Config()
+    before = extraction_fingerprint(enabled)
+    _set(f"{block}.{field}", value)(enabled)
+    assert extraction_fingerprint(enabled) != before
+
+
+def test_grounding_settings_count_only_while_grounding_is_on() -> None:
+    config = Config()
+    before = extraction_fingerprint(config)
+    _set("processing.graph_extraction.entity_grounding.penalty_factor", 0.1)(config)
+    assert extraction_fingerprint(config) == before
+    _set("processing.graph_extraction.entity_grounding.enabled", True)(config)
+    assert extraction_fingerprint(config) != before
 
 
 def test_is_stable_for_an_equal_configuration() -> None:

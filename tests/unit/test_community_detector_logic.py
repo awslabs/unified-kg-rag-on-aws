@@ -12,7 +12,8 @@ call (graspologic_native) is real CPU on tiny hand-built graphs.
 
 from __future__ import annotations
 
-import warnings
+import hashlib
+import json
 from typing import Any
 
 import networkx as nx
@@ -1135,29 +1136,75 @@ class TestLeidenWrapper:
         weighted.add_node("isolated")
         return [nx.karate_club_graph(), nx.les_miserables_graph(), weighted]
 
+    @staticmethod
+    def _digest(partition: dict[Any, int]) -> str:
+        items = sorted((str(node), community) for node, community in partition.items())
+        return hashlib.sha256(json.dumps(items).encode()).hexdigest()[:16]
+
+    # Partitions graspologic 3.4.4's `graspologic.partition.leiden` returned
+    # for `_graphs()` (with graspologic-native 1.3.1), as (digest, community
+    # count) per graph. graspologic is no longer a dependency; to re-derive
+    # after a graspologic-native upgrade, run its `leiden` on the same graphs
+    # in `uv run --with graspologic==3.4.4 python` and digest with `_digest`.
     @pytest.mark.parametrize(
-        ("seed", "resolution", "trials", "extra_forced_iterations"),
-        [(42, 1.0, 3, 2), (7, 0.5, 1, 0), (42, 2.0, 1, 0)],
+        ("seed", "resolution", "trials", "extra_forced_iterations", "expected"),
+        [
+            (
+                42,
+                1.0,
+                3,
+                2,
+                [
+                    ("9b0954f127422cc3", 4),
+                    ("699a421c8434288d", 6),
+                    ("a362f866d3f0b520", 3),
+                ],
+            ),
+            (
+                7,
+                0.5,
+                1,
+                0,
+                [
+                    ("b7a68274e202b9a9", 2),
+                    ("a856d93415e99619", 4),
+                    ("eece1ceeed9f4c4c", 3),
+                ],
+            ),
+            (
+                42,
+                2.0,
+                1,
+                0,
+                [
+                    ("a5269f37847ba28d", 7),
+                    ("8a882e41764e41b5", 11),
+                    ("8bb5a1046c021f4d", 18),
+                ],
+            ),
+        ],
     )
     def test_partitions_match_graspologic(
-        self, seed: int, resolution: float, trials: int, extra_forced_iterations: int
+        self,
+        seed: int,
+        resolution: float,
+        trials: int,
+        extra_forced_iterations: int,
+        expected: list[tuple[str, int]],
     ) -> None:
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            from graspologic.partition import leiden as graspologic_leiden
-
-        for graph in self._graphs():
-            canonical = _canonical_graph(graph)
-            kwargs: dict[str, Any] = {
-                "resolution": resolution,
-                "random_seed": seed,
-                "trials": trials,
-                "extra_forced_iterations": extra_forced_iterations,
-            }
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore")
-                expected = graspologic_leiden(canonical, **kwargs)
-            assert leiden(canonical, **kwargs) == expected
+        kwargs: dict[str, Any] = {
+            "resolution": resolution,
+            "random_seed": seed,
+            "trials": trials,
+            "extra_forced_iterations": extra_forced_iterations,
+        }
+        partitions = [
+            leiden(_canonical_graph(graph), **kwargs) for graph in self._graphs()
+        ]
+        assert [
+            (self._digest(partition), len(set(partition.values())))
+            for partition in partitions
+        ] == expected
 
     def test_isolated_nodes_are_left_out(self) -> None:
         graph = _two_triangle_graph()

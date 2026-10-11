@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+import time
+
 import pytest
 
 from unified_kg_rag.evaluation.text_matching import (
@@ -122,3 +124,33 @@ class TestPhraseInText:
         assert is_spaceless_script("서울")
         assert not is_spaceless_script("서울 특별시")
         assert not is_spaceless_script("Acme")
+
+
+class TestLoneLetters:
+    @pytest.mark.parametrize("text", ["Type-A", "Type A", "TypeA", "type-a"])
+    def test_spaced_and_dashed_forms_are_one_token(self, text: str) -> None:
+        assert tokenize(text) == ["typea"]
+
+    @pytest.mark.parametrize(
+        ("phrase", "text", "expected"),
+        [
+            ("Type A", "Type-A is used", True),
+            ("Type-A", "Type A is used", True),
+            ("Type A", "Type B is used", False),
+            ("Plan B", "switch to plan B.", True),
+            ("vendor", "the contract a vendor signed", True),
+            ("C++", "written in C++ and C#", True),
+        ],
+    )
+    def test_matching(self, phrase: str, text: str, expected: bool) -> None:
+        assert phrase_in_text(phrase, text) is expected
+
+    def test_many_dashes_normalize_in_linear_time(self) -> None:
+        # Each dash once sliced the whole text: 4,000 dashes in 70 KB took
+        # seconds. Linear, it takes milliseconds; the bound only catches a
+        # quadratic regression.
+        text = "word-" * 4_000 + "x" * 50_000
+        started = time.perf_counter()
+        tokens = tokenize(text)
+        assert time.perf_counter() - started < 1.0
+        assert tokens.count("word") == 4_000

@@ -27,7 +27,6 @@ UNLABELED = {"UNKNOWN", ""}
 
 # name (or name prefix ending in "-") -> reason
 ALLOWED = {
-    "gensim": "LGPL-2.1, unmodified dynamic dependency of graspologic",
     "certifi": "MPL-2.0 (weak, file-level copyleft), unmodified",
     "orjson": "MPL-2.0 AND (Apache-2.0 OR MIT), unmodified",
     "tqdm": "MPL-2.0 AND MIT, unmodified",

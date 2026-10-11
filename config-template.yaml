@@ -826,7 +826,8 @@ search:
     # the answer request's output reservation (its max_tokens, see
     # aws.bedrock.default_max_output_tokens) and the headroom below. Commented
     # out because backend "local" sets 22000 (what the local model's 32768
-    # window accepts); uncomment it to change it.
+    # window accepts) unless providers.llm sets context_window_size or
+    # kind: bedrock; uncomment it to change it.
     # max_context_tokens: 30000
     # Share of the window held back for the system prompt, question, history,
     # and token-estimation error when deriving the budget above.

@@ -25,7 +25,9 @@ Only output-determining paths are listed. Throughput knobs
 (``max_concurrency``, ``chunk_concurrency``, ``batch_size``, ``max_attempts``)
 are deliberately excluded: they change how long a stage takes, not what it
 produces, and including them would discard an expensive cache on a tuning
-change.
+change. For the same reason a Bedrock guardrail counts only while it guards
+ingestion models (``apply_to: all``), and a block switched off with
+``enabled: false`` counts as the default block, whatever its other fields say.
 
 The corpus itself is an input too: the source path alone says nothing about
 what the files contain, so with a fixed ``pipeline_id`` an edited, added, or
@@ -42,6 +44,7 @@ Bump the ``pipeline_id`` or use ``--force-rebuild`` after editing a template.
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
 from collections.abc import Callable, Iterable
@@ -51,8 +54,8 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from unified_kg_rag.domain.models import Config, PipelineStageType
-from unified_kg_rag.domain.models.config import BedrockConfig
+from unified_kg_rag.domain.models import Config, ModelPurpose, PipelineStageType
+from unified_kg_rag.domain.models.config import BedrockConfig, GuardrailConfig
 
 from .common import compute_hash
 
@@ -77,6 +80,7 @@ _STAGE_INPUT_PATHS: dict[PipelineStageType, tuple[str, ...]] = {
         "aws.bedrock.fast_effort",
         "aws.bedrock.ingestion_effort",
         "aws.bedrock.enable_1m_context",
+        # Only while it guards ingestion models (see _ingestion_guardrail).
         "aws.bedrock.guardrail",
         # The per-request output cap truncates long generations, and per-model
         # overrides change a model's capabilities (output cap, effort support).
@@ -124,11 +128,28 @@ _STAGE_INPUT_PATHS: dict[PipelineStageType, tuple[str, ...]] = {
 }
 
 
+def _ingestion_guardrail(config: Config) -> GuardrailConfig:
+    """The guardrail as ingestion models see it.
+
+    Under the default ``apply_to: query`` (or with no identifier) ingestion
+    runs unguarded, so attaching, rotating or toggling a query guardrail must
+    not re-key the stage caches or re-extract the corpus: it projects as the
+    default (absent) guardrail. When it does guard ingestion, its identifier,
+    version and scope shape the output; ``trace`` only adds trace details to
+    the response, so it is pinned to its default.
+    """
+    guardrail = config.aws.bedrock.guardrail
+    if not guardrail.applies_to(ModelPurpose.INGESTION):
+        return GuardrailConfig()
+    return guardrail.model_copy(update={"trace": GuardrailConfig().trace})
+
+
 # Paths fingerprinted by a derived value instead of the raw attribute.
 # "aws.bedrock.effort" (the deprecated name of default_effort) stands for the
 # default tier's effort, so an unchanged configuration keeps its cache key.
 _DERIVED_PATHS: dict[str, Callable[[Config], Any]] = {
     "aws.bedrock.effort": lambda config: config.aws.bedrock.default_effort,
+    "aws.bedrock.guardrail": _ingestion_guardrail,
 }
 
 
@@ -272,6 +293,29 @@ _EXTRACTION_NON_OUTPUT_SUBFIELDS: dict[str, frozenset[str]] = {
 }
 
 
+@functools.cache
+def _default_config() -> Config:
+    return Config()
+
+
+def _neutralize_disabled(value: Any, default: Any) -> Any:
+    """Project a switched-off settings block as the default block.
+
+    A block with ``enabled: false`` (fixing, translation, gleaning, claim
+    extraction, description summarization, entity grounding, community
+    detection or reports) produces no output, so its other fields (model id,
+    languages, limits) must not move a fingerprint. It is replaced by the
+    default configuration's block, switched off, so a default configuration
+    keeps its released fingerprints.
+    """
+    if not isinstance(value, dict):
+        return value
+    if value.get("enabled") is False and isinstance(default, dict):
+        return {**default, "enabled": False}
+    defaults = default if isinstance(default, dict) else {}
+    return {k: _neutralize_disabled(v, defaults.get(k)) for k, v in value.items()}
+
+
 def _projection(
     config: Config,
     paths: Iterable[str],
@@ -279,7 +323,10 @@ def _projection(
 ) -> list[tuple[str, Any]]:
     projection: list[tuple[str, Any]] = []
     for path in paths:
-        value = _canonicalize(_resolve_path(config, path))
+        value = _neutralize_disabled(
+            _canonicalize(_resolve_path(config, path)),
+            _canonicalize(_resolve_path(_default_config(), path)),
+        )
         if path in drop_subfields and isinstance(value, dict):
             value = {k: v for k, v in value.items() if k not in drop_subfields[path]}
         if path in _OMIT_WHEN_DEFAULT and value == _OMIT_WHEN_DEFAULT[path]:
@@ -295,7 +342,8 @@ def extraction_fingerprint(config: Config) -> str:
     resolution (models, prompts, entity types, chunking, translation,
     gleaning, resolution), the same paths the stage cache keys use, minus the
     corpus location and the switches that do not change a document's output
-    (see ``_EXTRACTION_NON_OUTPUT_PATHS``). Recorded on each document's
+    (see ``_EXTRACTION_NON_OUTPUT_PATHS``), a guardrail that does not guard
+    ingestion, and the settings of switched-off blocks. Recorded on each document's
     doc-status record by an incremental run, so a later run with other
     settings re-extracts documents whose content did not change.
 
