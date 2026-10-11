@@ -287,7 +287,7 @@ AWS 모드와 다른 점:
 Server(메모리 기반 TinkerGraph), 단일 노드 OpenSearch 2.13, 그리고 `models` 프로필에서
 Ollama를 실행합니다. OpenSearch는 보안 플러그인을 끄고 `analysis-nori` 플러그인을
 설치합니다(한국어 매핑이 `nori`를 쓰며, Amazon OpenSearch Service에는 기본으로 들어
-있습니다). 모델은 자동으로 내려받지 않습니다. `docker/config.local.yaml`은
+있습니다). 모델은 자동으로 내려받지 않습니다. `backend: local` 프리셋은
 `aws.neptune.use_ssl: false`, `use_iam: false`(SigV4 없는 `ws://`)와
 `aws.opensearch.allow_anonymous: true`, `use_ssl: false`(인증 없는 `http://`)로
 프레임워크를 이 컨테이너에 연결합니다.

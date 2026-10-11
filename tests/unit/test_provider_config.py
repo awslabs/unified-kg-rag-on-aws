@@ -16,7 +16,7 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
-from tests.fixtures.config_template import uncommented_template
+from tests.fixtures.config_template import commented_key_paths, uncommented_template
 from unified_kg_rag.domain.models import (
     Backend,
     Config,
@@ -309,3 +309,28 @@ def test_shipped_local_config_selects_local_mode() -> None:
     assert config.providers.doc_status.kind == "sqlite"
     assert config.doc_status_enabled is True
     assert config.aws.neptune.use_iam is False
+
+
+def test_shipped_local_config_sets_only_what_differs_from_the_preset() -> None:
+    # Its commented-out keys show the preset's values: uncommenting them
+    # changes nothing, and the file itself repeats none of the preset.
+    text = (_ROOT / "docker/config.local.yaml").read_text("utf-8")
+    raw = yaml.safe_load(text)
+    uncommented = uncommented_template(text)
+    assert Config(**uncommented) == Config(**raw)
+    # Only the registry is set: incremental indexing is off in the preset.
+    assert set(raw) == {"backend", "providers", "logging"}
+    assert set(raw["providers"]) == {"doc_status"}
+    assert set(raw["providers"]["doc_status"]) == {"enabled", "sqlite_path"}
+    shown = set(commented_key_paths(text))
+    assert shown == {
+        "providers.llm.default_model_id",
+        "providers.embedding.model_id",
+        "providers.embedding.dimension",
+        "providers.rerank.model_id",
+        *(f"aws.neptune.{k}" for k in ("endpoint", "port", "use_ssl", "use_iam")),
+        *(
+            f"aws.opensearch.{k}"
+            for k in ("endpoint", "port", "use_ssl", "verify_certs", "allow_anonymous")
+        ),
+    }

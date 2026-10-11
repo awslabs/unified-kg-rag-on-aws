@@ -298,7 +298,7 @@ Gremlin Server (in-memory TinkerGraph), a single-node OpenSearch 2.13 with
 the security plugin disabled and the `analysis-nori` plugin installed (the
 Korean mappings use `nori`; Amazon OpenSearch Service ships it built in), and,
 under the `models` profile, Ollama. No model is pulled automatically.
-`docker/config.local.yaml` points the framework at them with
+The `backend: local` preset points the framework at them with
 `aws.neptune.use_ssl: false` and `use_iam: false` (plain `ws://`, no SigV4)
 and `aws.opensearch.allow_anonymous: true` with `use_ssl: false` (plain
 `http://`, no auth).
