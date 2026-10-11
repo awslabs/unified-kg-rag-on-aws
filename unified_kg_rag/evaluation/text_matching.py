@@ -45,10 +45,6 @@ def _is_punctuation(ch: str) -> bool:
 
 
 _WORD_CHAR = re.compile(r"\w")
-# A space between an ASCII word and a lone capital letter ending a word: the
-# "A" of "Type A" or "Plan B", folded like "Type-A" into one token. A capital
-# starting a symbol ("C++", "C#") or an abbreviation ("U.S.") is not one.
-_SPACED_LONE_CAPITAL = re.compile(r"(?<=[A-Za-z0-9]) (?=[A-Z](?![\w+#]|\.\w))")
 
 
 def _is_lone_letter(text: str, index: int, step: int) -> bool:
@@ -92,19 +88,18 @@ def normalize_answer(text: str) -> str:
     digits ("1.5" from "15"), a percent sign after a number ("3.5%" from
     "3.5") and a trailing "+"/"#" ("C++", "C#"). A dash between two words or
     numbers becomes a space, so "1990-1995" is two numbers and "5-year"
-    equals "5 year"; next to a lone letter it is deleted instead, and so is
-    the space before a lone capital ending a word, so "Type-A", "Type A" and
-    "TypeA" are one token that does not match "Type B". A lowercase lone
-    letter after a space ("a vendor") is left alone, as an article or a
-    word. Thousands separators are deleted, so "1,000" equals
-    "1000". Scores are therefore not comparable with leaderboard numbers
+    equals "5 year"; next to a lone letter of either case it is deleted
+    instead, so "Type-A", "type-a" and "TypeA" are one token that does not
+    match "Type-B". A space is never deleted: a lone letter after one ("a
+    vendor", "Vitamin A", "Yes I agree") is read as an article or a word,
+    so "Type A" loses its "A" like any article. Thousands separators are
+    deleted, so "1,000" equals "1000". Scores are therefore not comparable with leaderboard numbers
     computed by the official script.
 
     A text consisting only of articles ("A", "The") keeps them rather than
     normalizing to an empty string.
     """
-    text = _SPACED_LONE_CAPITAL.sub("", unicodedata.normalize("NFKC", text))
-    text = text.lower()
+    text = unicodedata.normalize("NFKC", text).lower()
     text = _THOUSANDS_SEPARATOR.sub("", text)
     text = _JOINING_DASH.sub(_split_or_join_dash, text)
     text = _LEADING_MINUS.sub("-", text)
