@@ -1560,13 +1560,14 @@ class NeptuneIndexingConfig(BaseModel):
     entity_importance_source: Literal["rank", "degree", "none"] = Field(
         default="rank",
         description=(
-            "Graph-expansion relevance is the mean of an entity's importance and "
-            "its proximity to the seeds. 'rank' uses the indexed entity `rank`, "
+            "Graph-expansion relevance orders entities by distance from the "
+            "seeds first (seeds always first) and by this importance among "
+            "entities at the same distance. 'rank' uses the indexed entity `rank`, "
             "'degree' counts the entity's edges at query time (MS GraphRAG ranks "
             "entities by degree), and each is normalized by the largest value in "
             "the same result. 'none' gives every entity a neutral 0.5, the "
             "previous behaviour (it read an `importance` property that entity "
-            "vertices never store), so expansion ranks by proximity alone."
+            "vertices never store), so expansion ranks by distance alone."
         ),
     )
     traversal_fetch_multiplier: int = Field(
@@ -1575,9 +1576,9 @@ class NeptuneIndexingConfig(BaseModel):
         description=(
             "Graph expansion fetches top_k * retrieval_multiplier * this many "
             "entities besides the seeds, split evenly across the seeds, ranks "
-            "them with the seeds by relevance, then keeps the top "
-            "top_k * retrieval_multiplier. 1 = no over-fetch: every traversed "
-            "entity is kept, with no cut after ranking."
+            "them by relevance, then keeps every seed plus the top "
+            "top_k * retrieval_multiplier of the others. 1 = no over-fetch: "
+            "every traversed entity is kept, with no cut after ranking."
         ),
     )
 
@@ -2055,7 +2056,9 @@ class LocalSearchConfig(BaseModel):
         default=20,
         ge=1,
         description="Drop graph-expanded entities appearing in more than this "
-        "many text units (too generic to be discriminative for local search).",
+        "many text units (too generic to be discriminative for local search) "
+        "from the context and the text-unit fan-out. The query's own matched "
+        "(seed) entities are always kept.",
     )
     type_quota: LocalSearchQuotaConfig = Field(
         default_factory=LocalSearchQuotaConfig,

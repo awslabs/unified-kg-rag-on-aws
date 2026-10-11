@@ -524,8 +524,8 @@ LLM 단계는 Bedrock I/O가 병목이므로 동시성을 CPU 수보다 훨씬 �
 | `indexing.neptune.max_attempts` | `4` | 첫 시도를 포함한 Neptune 쓰기당 시도 횟수입니다. 실패하면 `retry_delay_seconds`(`2`)에서 시작하는 지터 포함 지수 백오프로 재시도합니다. 단, 재시도로 해결되지 않는 오류(잘못된 쿼리, 액세스 거부, 잘못된 파라미터)는 첫 시도에서 실패합니다. `1`이면 재시도하지 않습니다. |
 | `indexing.neptune.max_hops` | `3` | 검색 시점의 이웃 확장 깊이입니다. |
 | `indexing.neptune.property_max_length` | `4000` | Neptune 속성 값당 최대 문자 수입니다. 다시 요약되지 않는 가장 긴 설명보다 크게 두세요(요약은 600토큰, 약 2,400자를 넘으면 실행). 다시 수집해야 반영됩니다. |
-| `indexing.neptune.entity_importance_source` | `"rank"` | 그래프 확장 관련도에 쓰는 엔티티 중요도입니다. `rank`(인덱싱된 엔티티 rank, 즉 degree), `degree`(질의 시점의 간선 수), `none`(모든 엔티티에 중립값 0.5) 중 하나입니다. |
-| `indexing.neptune.traversal_fetch_multiplier` | `3` | 그래프 확장이 결과 폭의 이 배수만큼 가져와 순위를 매긴 뒤 자릅니다. `1`이면 순회 순서대로 자릅니다. |
+| `indexing.neptune.entity_importance_source` | `"rank"` | 그래프 확장 관련도에 쓰는 엔티티 중요도입니다. 시드와의 거리가 먼저이고(시드가 항상 앞) 중요도는 같은 거리의 엔티티 사이에서만 순서를 정합니다. `rank`(인덱싱된 엔티티 rank, 즉 degree), `degree`(질의 시점의 간선 수), `none`(모든 엔티티에 중립값 0.5) 중 하나입니다. |
+| `indexing.neptune.traversal_fetch_multiplier` | `3` | 그래프 확장이 결과 폭의 이 배수만큼 가져와 순위를 매긴 뒤 시드는 모두 두고 나머지를 결과 폭만큼 남깁니다. `1`이면 순회 순서대로 자릅니다. |
 
 ### 2.6 `search` — 검색, 융합, 재순위화, 전략별 설정
 
@@ -548,7 +548,7 @@ LLM 단계는 Bedrock I/O가 병목이므로 동시성을 CPU 수보다 훨씬 �
 | `search.global_search.reduce_with_llm` | `false` | `true`이면 reduce LLM이 묶은 핵심 내용을 먼저 요약하고 답변 모델이 이를 다시 씁니다(LLM 호출 1회 추가). `false`이면 핵심 내용을 답변 모델에 바로 넘깁니다. |
 | `search.global_search.reserve_report_slots` | `true` | 융합 슬롯 `max_communities`개를 커뮤니티 리포트용으로 예약하고, 텍스트 단위는 `text_unit_slots`개로 제한합니다. `false`이면 리포트와 청크를 한 번의 `top_k` 기준으로 자릅니다. |
 | `search.global_search.text_unit_slots` | `null` | 예약한 리포트 슬롯과 함께 두는 텍스트 단위 슬롯 수입니다. `null`이면 질의의 `top_k`입니다. |
-| `search.local_search.entity_frequency_threshold` | `20` | 그래프 확장으로 얻은 엔티티 중 이보다 많은 텍스트 단위에 나오는 것(너무 일반적인 것)을 버립니다. |
+| `search.local_search.entity_frequency_threshold` | `20` | 그래프 확장으로 얻은 엔티티 중 이보다 많은 텍스트 단위에 나오는 것(너무 일반적인 것)을 버립니다. 질의가 직접 찾은 엔티티는 항상 남깁니다. |
 | `search.local_search.include_bridge_relationships` | `true` | 확장된 엔티티에 연결된 관계도 가져오며, 검색된 두 엔티티를 잇는 간선(다중 홉 연결)을 먼저 둡니다. 관계 인덱스가 필요합니다. `false`이면 관계 벡터 질의만 씁니다. |
 | `search.drift_search.max_iterations` | `3` | DRIFT 반복 횟수 상한입니다. |
 | `search.drift_search.enable_primer` | `false` | MS GraphRAG의 primer → follow-up 흐름을 씁니다(처음에 LLM 호출 1회 추가). |
@@ -1047,13 +1047,14 @@ run-rag --interactive --conversation-id my-session --config-path config.yaml
 CLI에서 한 번씩 실행하며 여러 턴을 이어 가려면 같은 `--conversation-id`와
 `--use-memory`를 함께 쓰세요. 메모리 한도는 `memory` 설정 섹션에 있습니다.
 
-메모리는 턴 사이의 엔티티도 추적합니다. 사용자 메시지마다 LLM 호출
-(`search.entity_extraction_model_id`)이 메시지에 나온 엔티티를 추출하고, 가장 최근에
-언급된 엔티티 다섯 개를 다음 질의의 엔티티 초점에 더합니다. 검색 전에는 후속 질문을
-대화 이력으로 독립된 질문으로 다시 씁니다(이력이 있는 턴마다
+검색 전에는 후속 질문을 대화 이력으로 독립된 질문으로 다시 씁니다(이력이 있는 턴마다
 `search.query_rewrite_model_id` 호출 한 번, 프롬프트 재정의 키 `query_rewrite`). 그래서
 "그 회사의 공급업체는?" 같은 후속 질문도 앞선 턴의 엔티티 이름이 들어간 질문으로
-라우팅, 검색, 답변됩니다.
+라우팅, 검색, 답변됩니다. 재작성은 최근 `memory.max_messages_per_conversation`개
+메시지를 읽고, 앞선 답변은 각각 앞 1,000자까지만 씁니다. `use_memory`로 이력을 찾으면
+`enable_query_processing`을 꺼도 재작성은 실행됩니다. 이 플래그는 번역과 엔티티·키워드
+추출을 끄는 설정이고, 재작성 없이는 후속 질문으로 쓸 만한 결과를 찾지 못하기
+때문입니다. 메모리는 이 외에 턴마다 LLM을 추가로 호출하지 않습니다.
 
 ---
 

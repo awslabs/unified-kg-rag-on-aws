@@ -353,17 +353,18 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
             hops,
         )
 
-        # Over-fetch, then let `_process_traversal_results` rank and cut to
-        # top_k * retrieval_multiplier. The fetch budget is split evenly across
+        # Over-fetch, then let `_process_traversal_results` rank and cut the
+        # non-seed entities to top_k * retrieval_multiplier. The fetch budget is split evenly across
         # the seeds and spent inside a per-seed local(), because a limit()
         # inside repeat() counts every traverser of the whole traversal: one
         # global cap let the first seeds' neighbourhoods use it up and left the
         # other seeds with none. Within a seed, local(both().limit(n)) caps how
         # many neighbours any one node contributes per hop (max_results_per_hop)
         # so a hub cannot fan out unbounded. The seeds come back through the
-        # identity() branch (path length 1, proximity 1.0); repeat().emit()
-        # emits from the first hop on, never the seed itself, and the expansion
-        # excludes the seeds so it spends its budget on new entities. Both
+        # identity() branch (path length 1, the top relevance band, never cut);
+        # repeat().emit() emits from the first hop on, never the seed itself,
+        # and the expansion excludes the seeds so it spends its budget on new
+        # entities. Both
         # shapes stay Neptune-friendly: repeat().times().emit() and
         # union(identity(), ...). An emit() before repeat() is not optimized by
         # Neptune and times out.
@@ -372,6 +373,9 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
             * query.retrieval_multiplier
             * self._neptune_config.traversal_fetch_multiplier
         )
+        # No per-seed floor is needed: ceil() gives every seed at least one and
+        # the seeds together still fetch >= fetch_limit candidates for the
+        # top_k * retrieval_multiplier expansion slots the cut keeps.
         per_seed_limit = math.ceil(fetch_limit / len(seed_ids))
         traversal = (
             g.V()
@@ -549,8 +553,10 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
             )
 
         # Entity expansion runs per seed, so a node two seeds reach arrives once
-        # per seed; keep the copy with the best score (its shortest path).
+        # per seed; keep the copy with the best score (its shortest path, since
+        # the score orders by distance first).
         best: dict[Any, RetrievalResult] = {}
+        seed_ids: set[Any] = set()
         for item in traversal_results:
             node_data = self._node_data(item)
             node_id = node_data.get("id")
@@ -565,6 +571,9 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
                 importance_key=importance_key,
                 max_importance=max_importance,
             )
+            if len(item.get("path") or []) <= 1:
+                # The identity() branch: a seed, not something reached from one.
+                seed_ids.add(node_id)
             kept = best.get(node_id)
             if kept is None or (result.score or 0.0) > (kept.score or 0.0):
                 best[node_id] = result
@@ -572,7 +581,9 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
         results = sorted(best.values(), key=lambda x: x.score or 0.0, reverse=True)
         if self._neptune_config.traversal_fetch_multiplier > 1:
             results = self._cut_entities(
-                results, query.top_k * query.retrieval_multiplier
+                results,
+                query.top_k * query.retrieval_multiplier,
+                seed_ids={str(s) for s in seed_ids},
             )
         return results
 
@@ -597,20 +608,29 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
 
     @staticmethod
     def _cut_entities(
-        ranked: list[RetrievalResult], limit: int
+        ranked: list[RetrievalResult],
+        limit: int,
+        seed_ids: set[str] | frozenset[str] = frozenset(),
     ) -> list[RetrievalResult]:
-        """Keep the ``limit`` best-ranked entities; community results pass through.
+        """Keep the seeds plus the ``limit`` best-ranked other entities.
 
         The entity traversal over-fetches (``traversal_fetch_multiplier``) so the
         cut happens here, after relevance ranking, instead of in emit order.
+        Seeds are never cut and do not use up the ``limit``: they are what the
+        query matched, and counting them would leave the expansion no room
+        whenever the caller passes ``limit`` or more seeds (local search passes
+        ``top_k`` without an entity focus). Community results pass through.
         """
         kept: list[RetrievalResult] = []
-        entities = 0
+        expanded = 0
         for result in ranked:
-            if result.retriever_type == SectionType.ENTITY.value:
-                if entities >= limit:
+            if (
+                result.retriever_type == SectionType.ENTITY.value
+                and result.source not in seed_ids
+            ):
+                if expanded >= limit:
                     continue
-                entities += 1
+                expanded += 1
             kept.append(result)
         return kept
 
@@ -678,22 +698,25 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
         importance_key: str | None = None,
         max_importance: float = 0.0,
     ) -> float:
-        """Mean of the node's importance and its proximity to the seeds, in [0, 1].
+        """Relevance in (0, 1]: distance to the seeds first, importance second.
 
-        ``proximity = 1 / path length`` (1.0 for a seed, 0.5 one hop out), so
-        nearer nodes rank first and importance breaks ties among equally near
-        ones. An entity's importance is its ``importance_key`` value (indexed
-        ``rank`` or projected ``degree``) relative to the largest one in the
-        same result, neutral 0.5 when absent; a community's is its size
-        relative to the largest community in the same result, so no
-        corpus-size constant is needed. Without an ``importance_key`` the
-        legacy ``importance`` property is read (entity vertices never store it,
-        so this is the neutral 0.5). The two terms are weighted equally because
-        neither has a measured reason to dominate. (A query-text term was
-        dropped: graph expansion passes the whole question, which never occurs
-        inside a node name.)
+        A node ``n`` hops from the seeds (path length ``L = n + 1``) scores in
+        the band ``(1 / (L + 1), 1 / L]`` -- a seed in ``[0.75, 1]``, one hop
+        out in ``[0.42, 0.5]`` -- and its importance places it inside the band.
+        So every nearer node outranks every farther one and importance only
+        orders nodes at the same distance: a one-hop hub can never displace a
+        seed the query matched. (Averaging the two terms, as before, let a
+        high-degree neighbour outrank a low-degree seed.) An entity's
+        importance is its ``importance_key`` value (indexed ``rank`` or
+        projected ``degree``) relative to the largest one in the same result,
+        neutral 0.5 when absent; a community's is its size relative to the
+        largest community in the same result, so no corpus-size constant is
+        needed. Without an ``importance_key`` the legacy ``importance``
+        property is read (entity vertices never store it, so this is the
+        neutral 0.5). (A query-text term was dropped: graph expansion passes
+        the whole question, which never occurs inside a node name.)
         """
-        proximity = 1.0 / (len(path) or 1)
+        length = len(path) or 1
         if is_community:
             size = float(node.get("size") or 0)
             importance = size / max_community_size if max_community_size > 0 else 0.0
@@ -705,7 +728,10 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
         else:
             importance = float(node.get("importance", 0.5))
         importance = min(max(importance, 0.0), 1.0)
-        return (importance + proximity) / 2.0
+        near, far = 1.0 / length, 1.0 / (length + 1)
+        # (1 + importance) / 2 keeps the band's lower edge open, so the most
+        # important node one hop farther out never ties the least important one.
+        return far + (near - far) * (1.0 + importance) / 2.0
 
     def _record_metrics(
         self, result_count: int, entity_count: int, community_count: int

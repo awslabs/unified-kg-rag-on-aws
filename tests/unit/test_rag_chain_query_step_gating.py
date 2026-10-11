@@ -277,21 +277,15 @@ async def test_entity_focus_order_is_deterministic(config: Config) -> None:
                 final_query="q",
                 entities=["Vendor", "Buyer", "Warehouse", "Vendor"],
             ),
-            "relevant_entities": ["Carrier", "Buyer"],
         }
     )
-    assert captured["query"].entity_focus == [
-        "Vendor",
-        "Buyer",
-        "Warehouse",
-        "Carrier",
-    ]
+    assert captured["query"].entity_focus == ["Vendor", "Buyer", "Warehouse"]
 
 
 async def test_no_entity_focus_for_strategies_that_do_not_read_it(
     config: Config,
 ) -> None:
-    # Conversation entities reach only a strategy that declares the input.
+    # Extracted entities reach only a strategy that declares the input.
     chain = GraphRAGChain(config=config, mode=ChainMode.SEARCH)
     captured: dict[str, Any] = {}
 
@@ -304,8 +298,9 @@ async def test_no_entity_focus_for_strategies_that_do_not_read_it(
     await chain._search_step(
         {
             "resolved_strategy": SearchStrategy.DRIFT,
-            "processed_query": ProcessedQuery(original_query="q", final_query="q"),
-            "relevant_entities": ["Carrier"],
+            "processed_query": ProcessedQuery(
+                original_query="q", final_query="q", entities=["Carrier"]
+            ),
         }
     )
     assert captured["query"].entity_focus == []

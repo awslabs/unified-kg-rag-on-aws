@@ -330,6 +330,58 @@ async def test_generic_entities_are_dropped_from_the_context(config: Config) -> 
     assert fetch.filters["id"] == ["specific-t0", "specific-t1"]
 
 
+class _GraphWithSeedHub(FakeRetriever):
+    """Graph expansion: a generic seed, a generic neighbour and a specific one."""
+
+    def __init__(self, units: dict[str, int]) -> None:
+        super().__init__("graph")
+        self.units = units
+
+    async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
+        self.calls.append(query)
+        return [
+            RetrievalResult(
+                content=name,
+                score=1.0,
+                source=name,
+                retriever_type="entity",
+                metadata={
+                    "id": name,
+                    "text_unit_ids": [f"{name}-t{i}" for i in range(count)],
+                },
+            )
+            for name, count in self.units.items()
+        ]
+
+
+@pytest.mark.parametrize(
+    ("units", "expected"),
+    [
+        # A seed above the threshold stays; an expanded hub above it goes.
+        ({"SEED": 5, "hub": 5, "specific": 2}, ["SEED", "specific"]),
+        # Only generic entities: the seed still keeps the context non-empty.
+        ({"SEED": 9, "hub": 9}, ["SEED"]),
+    ],
+)
+async def test_frequency_filter_keeps_the_seeds(
+    config: Config, units: dict[str, int], expected: list[str]
+) -> None:
+    config.search.local_search.entity_frequency_threshold = 3
+    strategy, os_r, _ = _make_strategy(config)
+    seed_id = f"{config.indexing.opensearch.entities_index_prefix}-1"
+    units = {seed_id if k == "SEED" else k: v for k, v in units.items()}
+    expected = [seed_id if k == "SEED" else k for k in expected]
+    strategy.retrievers[RetrieverRole.GRAPH.value] = _GraphWithSeedHub(units)
+
+    result = await strategy.asearch(_query())
+
+    entities = [r.source for r in result.results if r.retriever_type == "entity"]
+    assert entities == expected
+    (fetch,) = [q for q in os_r.calls if q.filters and "id" in q.filters]
+    assert fetch.filters is not None
+    assert {tid.rsplit("-t", 1)[0] for tid in fetch.filters["id"]} == set(expected)
+
+
 async def test_text_unit_fetch_is_capped_at_the_text_quota(config: Config) -> None:
     # Fusion keeps at most the text quota of the linked units, so fetching
     # more only paid for hits that were thrown away.

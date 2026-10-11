@@ -525,12 +525,13 @@ root는 `application/bootstrap.py`(`build_providers`)로, 설정된 kind를 확�
 명시적으로 넘기므로, 주입하거나 설정한 공급자가 다음 구성 요소 모두에 적용됩니다.
 
 - `GraphRAGChain`: 체인 자체의 프롬프트, 모든 검색 전략(global map/reduce와 DRIFT
-  체인 포함), 하이브리드 스코어러의 재순위화 모델, 두 토큰 매니저, 대화 메모리, 기본
-  OpenSearch 리트리버의 임베딩. 대화 메모리는 기본적으로 프로세스 전체에서 공유하므로
-  요청마다 체인을 새로 만들어도 대화 기록이 남으며, 첫 체인의 설정과 공급자로 만들어집니다.
+  체인 포함), 하이브리드 스코어러의 재순위화 모델, 두 토큰 매니저, 기본
+  OpenSearch 리트리버의 임베딩. 대화 메모리는 자체 모델이 없고(후속 질문 재작성은 체인의
+  프롬프트입니다) 기본적으로 프로세스 전체에서 공유하므로 요청마다 체인을 새로 만들어도
+  대화 기록이 남으며, 첫 체인의 설정으로 만들어집니다.
   메모리 설정이 다른 체인을 나중에 만들어도 공유 매니저를 그대로 쓰고 경고를 한 번
   기록합니다. 체인의 대화를 분리하려면
-  `GraphRAGChain(memory_manager=MemoryManager(cfg, providers=...))`를 넘기세요.
+  `GraphRAGChain(memory_manager=MemoryManager(cfg))`를 넘기세요.
 - `DataIngestionPipeline`: 청커, 번역기, 그래프·주장 추출, 추가 추출, 설명 요약,
   커뮤니티 리포트, 기본 OpenSearch 인덱서의 임베딩, 시각화 임베더.
 - `EvaluationManager`: LangChain과 RAGAS 판정 모델(LLM, 임베딩, 토큰 카운터). 기본적으로

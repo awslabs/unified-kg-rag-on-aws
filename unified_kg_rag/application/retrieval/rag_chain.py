@@ -202,7 +202,9 @@ class RAGInput(BaseModel):
     )
     enable_query_processing: bool = Field(
         default=True,
-        description="Whether to enable query processing (translation, entity extraction)",
+        description="Whether to enable query processing (translation, entity "
+        "and keyword extraction). The follow-up rewrite is not part of it: it "
+        "runs whenever use_memory finds conversation history.",
     )
     target_language: str | None = Field(
         default=None, description="Target language for translation"
@@ -303,6 +305,12 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
                 "or on the Providers bundle (llm_factory=, retriever_builders=), "
                 "not both."
             )
+        if providers is not None and boto_session is not None:
+            raise ValueError(
+                "Pass boto_session either to GraphRAGChain or on the Providers "
+                "bundle (Providers(config, boto_session=...)), not both: the "
+                "bundle's session is the one every component uses."
+            )
         # Composition root (hexagonal): ONE provider bundle — session plus
         # LLM/embedding/rerank/token-counter factories — built here (or
         # injected) and passed explicitly to every component the chain builds
@@ -320,10 +328,10 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         self.ignore_errors = self.config.processing.ignore_errors
         # Conversation memory is process-wide by default, so history survives
         # across chain instances (e.g. a chain per request); the first chain's
-        # config and providers create it. Inject a MemoryManager to isolate a
-        # chain's conversations.
+        # config creates it. Inject a MemoryManager to isolate a chain's
+        # conversations.
         self.memory_manager: MemoryManager = memory_manager or get_memory_manager(
-            config, self.providers
+            config
         )
         self.token_manager = TokenManager(self.config, providers=self.providers)
         self.factory: LLMFactoryPort = self.providers.llm_factory
@@ -753,12 +761,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
     async def _load_memory_step(self, state: dict[str, Any]) -> dict[str, Any]:
         if not state.get("use_memory") or not (cid := state.get("conversation_id")):
             state["history"] = ""
-            state["relevant_entities"] = []
             return state
 
-        history, entities = await self.memory_manager.load_context(cid)
-        state["history"] = history
-        state["relevant_entities"] = entities
+        state["history"] = await self.memory_manager.load_history(cid)
         return state
 
     async def _rewrite_query_step(
@@ -784,7 +789,38 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
                 raise
             logger.warning("Follow-up rewrite failed; using the query as is: %s", e)
             return None
-        return str(rewritten).strip() or None
+        return self._usable_rewrite(str(rewritten))
+
+    # Openings of a model refusal or meta-reply rather than a rewritten question.
+    _REWRITE_REFUSALS: ClassVar[tuple[str, ...]] = (
+        "i'm sorry",
+        "i am sorry",
+        "sorry,",
+        "i cannot",
+        "i can't",
+        "i can not",
+        "i'm unable",
+        "i am unable",
+        "as an ai",
+    )
+
+    @classmethod
+    def _usable_rewrite(cls, rewritten: str) -> str | None:
+        """The rewrite, or None (keep the query as is) when it is unusable.
+
+        An empty reply or a refusal would replace the user's question for
+        routing, retrieval and the answer, so the original query is kept.
+        """
+        text = rewritten.strip()
+        prefix = "standalone question:"
+        if text.lower().startswith(prefix):
+            text = text[len(prefix) :].strip()
+        if not text:
+            return None
+        if text.lower().startswith(cls._REWRITE_REFUSALS):
+            logger.warning("Follow-up rewrite was a refusal; using the query as is")
+            return None
+        return text
 
     @staticmethod
     def _question(state: dict[str, Any]) -> str:
@@ -808,9 +844,10 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         processed: ProcessedQuery = state["processed_query"]
         # Ordered dedupe (not set()) so the joined entity query, and hence its
         # embedding, is reproducible across processes. Only a strategy that
-        # reads an entity focus gets one (conversation entities included).
+        # reads an entity focus gets one. Earlier turns reach it through the
+        # standalone rewrite, which names what a follow-up refers to.
         entity_focus = (
-            list(dict.fromkeys(processed.entities + state.get("relevant_entities", [])))
+            list(dict.fromkeys(processed.entities))
             if self._needs_query_entities(state)
             else []
         )
@@ -1360,9 +1397,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             output: RAGOutput | dict[str, Any] = await self.chain.ainvoke(
                 input_dict, config
             )
-            await self._save_memory(
-                output, query_processing=rag_input.enable_query_processing
-            )
+            await self._save_memory(output)
             if isinstance(output, RAGOutput):
                 return output
             if self.mode == ChainMode.SEARCH:
@@ -1425,9 +1460,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         input_dict["start_time"] = time.time()
         return rag_input, input_dict
 
-    async def _save_memory(
-        self, output: RAGOutput | dict | None, *, query_processing: bool = False
-    ) -> None:
+    async def _save_memory(self, output: RAGOutput | dict | None) -> None:
         if not isinstance(output, RAGOutput) or not output.conversation_id:
             return
 
@@ -1435,11 +1468,8 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             query = (
                 output.processed_query.original_query if output.processed_query else ""
             )
-            # Reuse the query step's extraction (same prompt and model), when
-            # it ran, instead of a second entity-extraction LLM call.
-            entities = self._query_step_entities(output) if query_processing else None
             await self.memory_manager.add_turn(
-                output.conversation_id, query, output.answer, entities=entities
+                output.conversation_id, query, output.answer
             )
         except Exception as e:
             logger.error(
@@ -1447,23 +1477,6 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
                 output.conversation_id,
                 e,
             )
-
-    @staticmethod
-    def _query_step_entities(output: RAGOutput) -> list[str] | None:
-        """The entities the query step extracted, or None when it did not run.
-
-        Extraction is gated on the resolved strategy declaring
-        ``QueryInput.ENTITIES``; otherwise ``processed_query.entities`` is
-        empty because nothing was extracted, not because there were none.
-        """
-        try:
-            strategy = SearchStrategy(output.search_results.search_strategy)
-            spec = get_strategy_spec(strategy)
-        except (KeyError, ValueError):
-            return None
-        if QueryInput.ENTITIES not in spec.query_inputs:
-            return None
-        return list(output.processed_query.entities)
 
     # Streaming yields answer TEXT chunks (str), not RAGOutput: callers of a
     # streamed answer want tokens as they arrive. Sources/metadata stay on the
@@ -1576,10 +1589,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             return
 
         state["answer"] = "".join(chunks)
-        await self._save_memory(
-            self._format_output_step(state),
-            query_processing=rag_input.enable_query_processing,
-        )
+        await self._save_memory(self._format_output_step(state))
 
 
 _T = TypeVar("_T")

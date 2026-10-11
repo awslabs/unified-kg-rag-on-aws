@@ -215,30 +215,13 @@ def test_model_factory_shorthand_reaches_strategies(no_bedrock) -> None:
     assert fake.model_ids  # global's map/reduce chains
 
 
-def test_injected_llm_factory_reaches_conversation_memory(no_bedrock) -> None:
-    config = Config()
-    providers = _fake_providers(config)
-    chain = GraphRAGChain(config=config, providers=providers)
-
-    # The first chain creates the shared memory from its config and providers.
-    assert isinstance(chain.memory_manager, MemoryManager)
-    assert chain.memory_manager.providers is providers
-    history = asyncio.run(chain.memory_manager.get_or_create_memory("c-1"))
-    assert history.entity_extractor is not None
-    assert str(config.search.entity_extraction_model_id) in (
-        providers.llm_factory.model_ids  # type: ignore[attr-defined]
-    )
-
-
 def test_default_chains_share_conversation_history(no_bedrock) -> None:
     config = Config()
     first = GraphRAGChain(config=config, providers=_fake_providers(config))
     second = GraphRAGChain(config=config, providers=_fake_providers(config))
 
     async def scenario() -> list[str]:
-        await first.memory_manager.add_turn(
-            "conv-1", "about Vendor", "an answer", entities=["Vendor"]
-        )
+        await first.memory_manager.add_turn("conv-1", "about Vendor", "an answer")
         history = await second.memory_manager.get_or_create_memory("conv-1")
         return [str(m.content) for m in history.messages]
 
@@ -250,7 +233,7 @@ def test_default_chains_share_conversation_history(no_bedrock) -> None:
 def test_injected_memory_manager_isolates_a_chain(no_bedrock) -> None:
     config = Config()
     shared = GraphRAGChain(config=config, providers=_fake_providers(config))
-    isolated_manager = MemoryManager(config, providers=_fake_providers(config))
+    isolated_manager = MemoryManager(config)
     isolated = GraphRAGChain(
         config=config,
         providers=_fake_providers(config),
@@ -258,9 +241,7 @@ def test_injected_memory_manager_isolates_a_chain(no_bedrock) -> None:
     )
 
     async def scenario() -> list[str]:
-        await shared.memory_manager.add_turn(
-            "conv-1", "about Vendor", "an answer", entities=["Vendor"]
-        )
+        await shared.memory_manager.add_turn("conv-1", "about Vendor", "an answer")
         history = await isolated.memory_manager.get_or_create_memory("conv-1")
         return [str(m.content) for m in history.messages]
 
@@ -296,6 +277,18 @@ def test_providers_and_model_factory_are_exclusive() -> None:
         )
 
 
+def test_providers_and_boto_session_are_exclusive() -> None:
+    # The bundle's session is the one every component uses, so a separate
+    # boto_session would be silently ignored.
+    config = Config()
+    with pytest.raises(ValueError, match="boto_session either to GraphRAGChain"):
+        GraphRAGChain(
+            config=config,
+            boto_session=MagicMock(),
+            providers=_fake_providers(config),
+        )
+
+
 def test_strategy_without_providers_still_constructs(mocker) -> None:
     # Backward compatibility: direct construction builds a default bundle.
     from unified_kg_rag.adapters.search_strategies import LocalSearchStrategy
@@ -304,54 +297,6 @@ def test_strategy_without_providers_still_constructs(mocker) -> None:
     session = MagicMock()
     strategy = LocalSearchStrategy(config=Config(), retrievers={}, boto_session=session)
     assert strategy.providers.boto_session is session
-
-
-@pytest.mark.parametrize(
-    ("strategy", "expected"),
-    [(SearchStrategy.LOCAL, ["Vendor"]), (SearchStrategy.SIMPLE, None)],
-)
-async def test_memory_save_reuses_query_step_entities(
-    strategy: SearchStrategy, expected: list[str] | None
-) -> None:
-    from unified_kg_rag.application.retrieval.rag_chain import (
-        ProcessedQuery,
-        RAGOutput,
-    )
-    from unified_kg_rag.domain.models import SearchQuery, SearchResult
-
-    config = Config()
-    chain = GraphRAGChain(config=config, providers=_fake_providers(config))
-    calls: list[dict[str, Any]] = []
-
-    class _Recorder:
-        async def add_turn(
-            self, conv_id: str, user: str, assistant: str, **kw: Any
-        ) -> None:
-            calls.append({"user": user, "assistant": assistant, **kw})
-
-    chain.memory_manager = _Recorder()  # type: ignore[assignment]
-    output = RAGOutput(
-        answer="a",
-        sources=[],
-        search_results=SearchResult(
-            query=SearchQuery(query="q"),
-            results=[],
-            total_results=0,
-            search_strategy=strategy.value,
-            processing_time=0.0,
-        ),
-        conversation_id="c-1",
-        processed_query=ProcessedQuery(
-            original_query="q", final_query="q", entities=["Vendor"]
-        ),
-    )
-
-    await chain._save_memory(output, query_processing=True)
-    await chain._save_memory(output)  # query processing off: never reused
-
-    assert [(c["user"], c["assistant"]) for c in calls] == [("q", "a")] * 2
-    assert calls[0]["entities"] == expected
-    assert calls[1]["entities"] is None
 
 
 def test_default_token_counter_takes_the_models_estimate_multiplier(mocker) -> None:

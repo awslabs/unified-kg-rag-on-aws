@@ -550,8 +550,8 @@ LLM stages are Bedrock-I/O-bound, so concurrency can far exceed the CPU count.
 | `indexing.neptune.max_attempts` | `4` | Attempts per Neptune write, including the first. Failures are retried with jittered exponential backoff from `retry_delay_seconds` (`2`), except errors a retry cannot fix (malformed query, access denied, bad parameter), which fail on the first attempt. `1` disables the retry. |
 | `indexing.neptune.max_hops` | `3` | Neighbour-expansion depth at retrieval time. |
 | `indexing.neptune.property_max_length` | `4000` | Character cap per Neptune property value. Keep it above the longest description that is not re-summarized (summarization triggers above 600 tokens, ~2,400 characters). Takes effect on re-ingestion. |
-| `indexing.neptune.entity_importance_source` | `"rank"` | Entity importance in graph-expansion relevance: `rank` (indexed entity rank, its degree), `degree` (edge count at query time) or `none` (neutral 0.5 for every entity). |
-| `indexing.neptune.traversal_fetch_multiplier` | `3` | Graph expansion fetches this many times the result width, ranks, then cuts. `1` = cut in traversal order. |
+| `indexing.neptune.entity_importance_source` | `"rank"` | Entity importance in graph-expansion relevance (orders entities at the same distance from the seeds; nearer entities, seeds first, always rank higher): `rank` (indexed entity rank, its degree), `degree` (edge count at query time) or `none` (neutral 0.5 for every entity). |
+| `indexing.neptune.traversal_fetch_multiplier` | `3` | Graph expansion fetches this many times the result width, ranks, then keeps the seeds plus the best result-width others. `1` = cut in traversal order. |
 
 ### 2.6 `search` — retrieval, fusion, reranking, per-strategy knobs
 
@@ -574,7 +574,7 @@ LLM stages are Bedrock-I/O-bound, so concurrency can far exceed the CPU count.
 | `search.global_search.reduce_with_llm` | `false` | `true` = a reduce LLM summarizes the packed key points before the answer model rewrites them (one extra LLM call). `false` passes the points straight to the answer model. |
 | `search.global_search.reserve_report_slots` | `true` | Reserve `max_communities` fusion slots for community reports and cap their text units at `text_unit_slots`. `false` = one flat `top_k` cut over reports and chunks. |
 | `search.global_search.text_unit_slots` | `null` | Text-unit slots next to the reserved report slots; `null` = the query's `top_k`. |
-| `search.local_search.entity_frequency_threshold` | `20` | Drop graph-expanded entities that appear in more text units than this (too generic). |
+| `search.local_search.entity_frequency_threshold` | `20` | Drop graph-expanded entities that appear in more text units than this (too generic). The query's own matched entities are always kept. |
 | `search.local_search.include_bridge_relationships` | `true` | Also fetch relationships incident to the expanded entities, edges between two retrieved entities first (multi-hop bridges). Needs the relationship index. `false` = relationship vector query only. |
 | `search.drift_search.max_iterations` | `3` | DRIFT iteration budget. |
 | `search.drift_search.enable_primer` | `false` | MS GraphRAG primer → follow-up flow (one extra LLM call up front). |
@@ -1095,14 +1095,16 @@ Interactive mode auto-enables memory. In-session commands:
 For single-shot multi-turn from the CLI, reuse the same `--conversation-id` with
 `--use-memory`. Memory limits are under the `memory` config section.
 
-Memory also tracks entities across turns: after each user message an LLM call
-(`search.entity_extraction_model_id`) extracts the entities it mentions, and the
-five most recently mentioned ones are added to the next query's entity focus.
 Before retrieval, a follow-up is rewritten from the history as a standalone
 question (one `search.query_rewrite_model_id` call per turn that has history;
 prompt override key `query_rewrite`), so "what about its suppliers?" is routed,
 searched and answered as a question that names the entity from the earlier
-turn.
+turn. The rewrite reads the last `memory.max_messages_per_conversation`
+messages, each earlier answer cut to its first 1,000 characters. It runs
+whenever `use_memory` finds history, also with `enable_query_processing`
+off: that flag covers translation and entity/keyword extraction, while
+without the rewrite a follow-up would retrieve nothing useful. Memory adds no
+other LLM call per turn.
 
 ---
 

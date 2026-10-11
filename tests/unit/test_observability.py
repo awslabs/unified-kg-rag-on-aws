@@ -450,7 +450,7 @@ class _FakeModelFactory:
 
 
 class _FakeMemoryManager:
-    async def load_context(self, conv_id: str) -> tuple[str, list[str]]:
+    async def load_history(self, conv_id: str) -> str:
         raise AssertionError("memory is off in these queries")
 
     async def add_turn(self, *args: Any, **kwargs: Any) -> None:

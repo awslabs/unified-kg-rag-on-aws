@@ -146,6 +146,18 @@ def test_filter_entities_drops_above_threshold() -> None:
     assert [n.source for n in kept] == ["ok"]
 
 
+def test_filter_entities_exempts_the_seeds() -> None:
+    hot = {"text_unit_ids": ["t1", "t2", "t3", "t4"]}
+    nodes = [
+        _result("seed", metadata={"id": "seed", **hot}),
+        _result("hub", metadata={"id": "hub", **hot}),
+    ]
+    kept = LocalSearchStrategy._filter_entities(
+        nodes, frequency_threshold=3, seed_ids={"seed"}
+    )
+    assert [n.source for n in kept] == ["seed"]
+
+
 def test_filter_entities_boundary_equal_to_threshold_kept() -> None:
     nodes = [_result("edge", metadata={"text_unit_ids": ["t1", "t2", "t3"]})]
     kept = LocalSearchStrategy._filter_entities(nodes, frequency_threshold=3)

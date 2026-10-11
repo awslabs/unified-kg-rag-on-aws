@@ -146,6 +146,7 @@ class LocalSearchStrategy(BaseSearchStrategy):
         filtered_entity_nodes = self._filter_entities(
             expanded_entity_nodes,
             frequency_threshold=self.config.search.local_search.entity_frequency_threshold,
+            seed_ids=set(candidate_entity_ids),
         )
 
         expanded_entity_ids = self._get_ids(filtered_entity_nodes, "id")
@@ -380,6 +381,10 @@ class LocalSearchStrategy(BaseSearchStrategy):
         )
 
     @staticmethod
+    def _entity_id(node: RetrievalResult) -> str:
+        return str((node.metadata or {}).get("id") or node.source or "")
+
+    @staticmethod
     def _text_unit_count(node: RetrievalResult) -> int:
         # Neptune's `_clean_property_map` unwraps any
         # single-element value_map list into a bare scalar, so an entity that
@@ -399,13 +404,20 @@ class LocalSearchStrategy(BaseSearchStrategy):
         cls,
         expanded_entity_nodes: list[RetrievalResult],
         frequency_threshold: int,
+        seed_ids: set[str] | frozenset[str] = frozenset(),
     ) -> list[RetrievalResult]:
-        # Too generic to be discriminative: dropped from the context as well
-        # as from the text-unit fan-out.
+        """Drop expanded entities in more than ``frequency_threshold`` text units.
+
+        Too generic to be discriminative: they leave the context as well as
+        the text-unit fan-out. The seeds (``seed_ids``, the entities the query
+        matched) are exempt -- the query asked about them, however common --
+        so a hub-heavy graph cannot filter the context down to no entities.
+        """
         filtered_nodes = [
             node
             for node in expanded_entity_nodes
-            if cls._text_unit_count(node) <= frequency_threshold
+            if cls._entity_id(node) in seed_ids
+            or cls._text_unit_count(node) <= frequency_threshold
         ]
 
         original_count = len(expanded_entity_nodes)

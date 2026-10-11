@@ -319,10 +319,18 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             pending = asyncio.ensure_future(self._store_embedding(query_text))
             self._pending_embeddings[query_text] = pending
             pending.add_done_callback(
-                lambda _: self._pending_embeddings.pop(query_text, None)
+                lambda done: self._settle_embedding(query_text, done)
             )
         # Shielded: one waiter's cancellation must not cancel the others' call.
         return await asyncio.shield(pending)
+
+    def _settle_embedding(self, query_text: str, done: asyncio.Future) -> None:
+        self._pending_embeddings.pop(query_text, None)
+        # Mark a failure as retrieved: when every waiter was cancelled nobody
+        # awaits the shared call, and asyncio would log "Task exception was
+        # never retrieved". Waiters still awaiting it get the error as usual.
+        if not done.cancelled():
+            done.exception()
 
     async def _store_embedding(self, query_text: str) -> list[float]:
         vector: list[float] = await self._embedding_model.aembed_query(query_text)
