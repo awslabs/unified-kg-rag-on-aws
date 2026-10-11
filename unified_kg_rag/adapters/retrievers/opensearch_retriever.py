@@ -88,6 +88,9 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             self._opensearch_config.embedding_model_id
         )
         self._query_embedding_cache: OrderedDict[str, list[float]] = OrderedDict()
+        # One embedding call per text in flight: concurrent sub-queries of one
+        # search share it instead of each missing the cache.
+        self._pending_embeddings: dict[str, asyncio.Future[list[float]]] = {}
         self._field_mappings = self._initialize_field_mappings()
         self._index_filter_fields = self._initialize_index_filter_fields()
 
@@ -315,7 +318,19 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         if cached is not None:
             cache.move_to_end(query_text)
             return cached
+        pending = self._pending_embeddings.get(query_text)
+        if pending is None:
+            pending = asyncio.ensure_future(self._store_embedding(query_text))
+            self._pending_embeddings[query_text] = pending
+            pending.add_done_callback(
+                lambda _: self._pending_embeddings.pop(query_text, None)
+            )
+        # Shielded: one waiter's cancellation must not cancel the others' call.
+        return await asyncio.shield(pending)
+
+    async def _store_embedding(self, query_text: str) -> list[float]:
         vector: list[float] = await self._embedding_model.aembed_query(query_text)
+        cache = self._query_embedding_cache
         cache[query_text] = vector
         if len(cache) > self.QUERY_EMBEDDING_CACHE_SIZE:
             cache.popitem(last=False)
@@ -470,9 +485,7 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         queries = []
 
         lexical_query = self._build_lexical_query(query, lexical_fields)
-        if lexical_query.get("match_all") and filters:
-            queries.append({"bool": {"must": lexical_query, "filter": filters}})
-        elif lexical_fields:
+        if lexical_fields:
             if filters:
                 queries.append({"bool": {"must": [lexical_query], "filter": filters}})
             else:
@@ -726,13 +739,16 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             content_parts.append(f"Description: {description}")
 
         if full_content := source.get("full_content"):
+            # A community report's full_content opens with its title and
+            # summary (CommunityReport.render_full_content): repeating them
+            # spent the context budget twice, and a character cut kept only
+            # the repeats.
             content_parts.append(full_content)
-
-        if name := source.get("name"):
-            content_parts.append(f"Title: {name}")
-
-        if summary := source.get("summary"):
-            content_parts.append(f"Summary: {summary}")
+        else:
+            if name := source.get("name"):
+                content_parts.append(f"Title: {name}")
+            if summary := source.get("summary"):
+                content_parts.append(f"Summary: {summary}")
 
         if (text := source.get("text")) and not source.get(translated_key):
             content_parts.append(text)

@@ -457,6 +457,33 @@ class BaseSearchStrategy(MetricsMixin, ABC):
         deduped.sort(key=_order, reverse=True)
         return deduped
 
+    @staticmethod
+    def _restore_rank(
+        results: list[RetrievalResult], ranked_ids: list[str]
+    ) -> list[RetrievalResult]:
+        """``results`` of a fetch by id, in ``ranked_ids`` order.
+
+        A fetch by id (``query=""``, LEXICAL, pure id filter) comes back in
+        index order with no meaningful relevance score (typically 0.0), which
+        would throw away the order the ids were selected in (graph support in
+        local search, weighted polling in LightRAG). Re-impose it, and project
+        it into ``score`` as a normalized descending value so the shared fusion
+        and per-type-quota path (which sorts by score) preserves it instead of
+        tie-breaking arbitrarily.
+        """
+        if not results or not ranked_ids:
+            return results
+        rank_of = {unit_id: i for i, unit_id in enumerate(ranked_ids)}
+        fallback = len(ranked_ids)
+        ordered = sorted(results, key=lambda r: rank_of.get(str(r.source), fallback))
+        total = len(ordered)
+        rescored: list[RetrievalResult] = []
+        for position, result in enumerate(ordered):
+            scored = result.model_copy()
+            scored.score = (total - position) / total
+            rescored.append(scored)
+        return rescored
+
     def search(
         self, query: SearchQuery, config: RunnableConfig | None = None
     ) -> SearchResult:

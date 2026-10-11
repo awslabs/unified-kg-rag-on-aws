@@ -277,6 +277,20 @@ def test_eval_parser_defaults() -> None:
     assert args.outputs_directory is None
 
 
+@pytest.mark.parametrize("flag", ["--top-k", "--retrieval-multiplier"])
+@pytest.mark.parametrize("parser", [_rag_parser, _eval_parser])
+def test_query_width_flags_must_be_positive(parser, flag: str) -> None:
+    # Both CLIs share the query flags; a zero width fails at parse time
+    # instead of deep in the chain.
+    required = ["--query", "q"] if parser is _rag_parser else ["--eval-data-path", "d"]
+    with pytest.raises(SystemExit):
+        parser().parse_args([*required, flag, "0"])
+    assert (
+        getattr(parser().parse_args([*required, flag, "3"]), flag[2:].replace("-", "_"))
+        == 3
+    )
+
+
 def test_eval_parser_rejects_bad_strategy() -> None:
     with pytest.raises(SystemExit):
         _eval_parser().parse_args(

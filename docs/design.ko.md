@@ -286,15 +286,15 @@ flowchart LR
 
 ## 6. 검색: 두 방법론
 
-`application/retrieval/rag_chain.py`의 `GraphRAGChain`(LCEL Runnable)이 전략 결정 → 질의 처리(번역, 엔티티·키워드 추출) → 메모리 → 검색 → (RAG) 컨텍스트 구성과 답변 생성을 수행합니다. 방법론은 `RAGInput.search_strategy`로 고릅니다.
+`application/retrieval/rag_chain.py`의 `GraphRAGChain`(LCEL Runnable)이 메모리(대화 이력이 있는 후속 질문을 독립된 질문으로 다시 씀, `QueryRewritePrompt`) → 전략 결정 → 질의 처리(번역, 엔티티·키워드 추출) → 검색 → (RAG) 컨텍스트 구성과 답변 생성을 수행합니다. 라우팅, 검색, 답변 모두 다시 쓴 질문을 사용합니다. 방법론은 `RAGInput.search_strategy`로 고릅니다.
 
 ```mermaid
 flowchart TD
-    input["RAGInput: query, search_strategy, suffix, filters"] --> resolve["Resolve strategy (auto: LLM router over search.auto_routable_strategies)"]
-    resolve --> qp["Query processing: translation, then entities or dual-level keywords as the strategy declares"]
-    qp --> memory["Conversation memory (use_memory)"]
-    memory --> graphrag
-    memory --> lightrag
+    input["RAGInput: query, search_strategy, suffix, filters"] --> memory["Conversation memory (use_memory): a follow-up is rewritten as a standalone question"]
+    memory --> resolve["Resolve strategy (auto: LLM router over search.auto_routable_strategies)"]
+    resolve --> qp["Query processing: translation alongside entities or dual-level keywords, as the strategy declares"]
+    qp --> graphrag
+    qp --> lightrag
     subgraph graphrag["GraphRAG strategies"]
         simple["simple: OpenSearch vector + BM25"]
         local["local: entities, Neptune expansion, text units, reports, relationships, claims"]
@@ -311,7 +311,7 @@ flowchart TD
     fuse --> mode{"ChainMode"}
     mode -- SEARCH --> results["Fused retrieval results"]
     mode -- RAG --> budget["TokenManager: per-section token budget"]
-    budget --> answer["Context building + answer generation"]
+    budget --> answer["Answer generation"]
     answer --> output["RAGOutput: answer + sources the model saw"]
 ```
 
@@ -321,20 +321,20 @@ Neptune 그래프 확장은 `local`과 `drift`에 포함되어 있고, `mix`/`hy
 
 - **simple**: 그래프 없이 OpenSearch만 쓰는 벡터·어휘 검색입니다. 주장 추출을 켜면 주장 인덱스도 자동으로 검색 대상에 들어가고, 끄면 `_apply_claim_gate`가 주장 인덱스를 명시적으로 빼므로 주장을 끈 실행은 그 인덱스를 조회하지 않습니다.
 - **local**: 엔티티 중심입니다. 후보 엔티티 → Neptune 그래프 확장 → 빈도 필터 → 텍스트 단위 결합에 **커뮤니티 리포트 섹션**과 **관계 섹션**을 더합니다(엔티티 + 그 커뮤니티 리포트 + 네트워크 안의 관계 + 텍스트 단위를 조립하는 MS GraphRAG local search와 같은 구성). `_retrieve_community_reports`와 `_retrieve_relationships`는 엔티티 포커스로(없으면 원본 질의로) 해당 인덱스를 조회합니다. 관계 섹션은 `build_relationship_vector_index`가 켜져 있을 때만 동작하므로, 관계 벡터 인덱스를 만들지 않는 GraphRAG 전용 배포에서는 관계를 조회하지 않습니다. 주장 추출을 켜면 MS GraphRAG처럼 **주장(covariate)을 컨텍스트에 넣습니다**(`_retrieve_claims`가 주장 인덱스를 따로 조회해 `all_results["claims"]`로 추가하고, `SectionType.CLAIM` 우선순위로 토큰 예산에 포함). 주장을 끈 기본 경로는 추가 조회를 전혀 하지 않습니다. 커뮤니티 리포트, 관계, 주장 조회는 엔티티 → 확장 → 텍스트 단위 체인과 동시에 실행합니다. `search.local_search.include_bridge_relationships`(기본값 켜짐, 관계 인덱스 필요)를 켜면 확장된 엔티티에 연결된 관계도 가져오며(`_fetch_incident_relationships`, LightRAG의 연결 관계 확장과 공용), 양 끝점이 모두 검색된 엣지를 앞에 둡니다. MS GraphRAG local의 네트워크 안 관계에 해당하며, 관계 벡터 질의로는 잘 잡히지 않는 다중 홉 연결 고리를 담습니다.
-- **global**: 커뮤니티 리포트 검색 → 색인된 rank/rating 기준 선택(리포트별 LLM 관련성 채점은 `use_dynamic_selection`으로 켜는 선택 사항이며, map 단계가 이미 질의 기준으로 리포트를 평가하므로 기본값은 꺼짐) → 선택된 커뮤니티의 텍스트 단위와 융합(리포트에 `max_communities`개, 청크에 `text_unit_slots`개(기본값 `top_k`) 자리를 예약, `reserve_report_slots`) → **map-reduce 합성**(아래 §6.1.1 참고).
+- **global**: 커뮤니티 리포트 검색 → 검색 점수 기준 선택, 동점이면 색인된 rank/rating 순(리포트별 LLM 관련성 채점은 `use_dynamic_selection`으로 켜는 선택 사항이며, map 단계가 이미 질의 기준으로 리포트를 평가하므로 기본값은 꺼짐) → 선택된 커뮤니티의 텍스트 단위와 융합(리포트에 `max_communities`개, 청크에 `text_unit_slots`개(기본값 `top_k`) 자리를 예약, `reserve_report_slots`) → **map-reduce 합성**(아래 §6.1.1 참고).
 - **drift**: 반복적으로 질의를 발전시킵니다(커뮤니티 시드 → 0번째 반복은 원본 질의로 검색 → 이후 반복은 찾은 결과로 질의를 다듬거나 키워드를 확장 → 새로 얻는 고유 결과가 적거나 `max_iterations`에 이르면 종료. LLM 수렴 판정은 `search.drift_search.enable_llm_convergence`로 켜는 선택 사항). 누적 결과는 local search와 같은 섹션 유형별 할당량(`search.local_search.type_quota`)으로 융합하고, 텍스트 청크만 재순위화합니다. 선택적으로(`search.drift_search.enable_primer`, 기본값 꺼짐) MS GraphRAG의 **primer → follow-up** 흐름으로 실행할 수 있습니다. HyDE primer가 시드 커뮤니티 리포트로 가상의 답변을 쓰고 질의를 `primer_follow_ups`개의 구체적인 하위 질의로 나누며, 질의 하나를 계속 바꿔 가는 대신 하위 질의마다 검색 반복을 한 번씩 실행합니다(`_primer_search` / `_run_primer`). primer가 follow-up을 만들지 못하면 반복 루프로 돌아가고, 후보 커뮤니티를 찾지 못하면 근거로 삼을 것이 없으므로 primer를 아예 건너뜁니다. 가상 답변은 follow-up 질의를 이끄는 데만 쓰고, 검색된 근거가 아니라 LLM의 추측이므로 답변 컨텍스트나 보고하는 출처에는 넣지 않습니다.
 - **auto**: `StrategySelectionPrompt`로 `search.auto_routable_strategies`(기본값 local, mix, global, drift이며 simple은 제외) 중에서 LLM이 고릅니다. 프롬프트의 전략 설명도 이 목록으로 만들므로, 라우터가 고를 수 있는 전략만 정확히 설명합니다. 응답은 단어 토큰 단위로 파싱해 처음 나온 라우팅 가능 이름을 쓰고, 알아볼 수 없는 출력이면 local로 대체합니다.
 
 #### 6.1.1 Global search map-reduce (`global_search.py`)
 
-`enable_map_reduce`가 켜져 있고 결과가 `map_reduce_min_results`개 이상이면 MS GraphRAG의 표준 map-reduce를 따릅니다. 결과가 `map_reduce_min_results`개보다 적으면 검색 결과를 **그대로 통과**시키고 합성 단계를 전혀 실행하지 않습니다. 커뮤니티 리포트 몇 개를 요약하는 데 map-reduce까지 필요하지 않기 때문입니다.
+`enable_map_reduce`가 켜져 있고 결과에 커뮤니티 리포트가 `map_reduce_min_results`개 이상이면 MS GraphRAG의 표준 map-reduce를 따릅니다. 결과가 `map_reduce_min_results`개보다 적으면 검색 결과를 **그대로 통과**시키고 합성 단계를 전혀 실행하지 않습니다. 커뮤니티 리포트 몇 개를 요약하는 데 map-reduce까지 필요하지 않기 때문입니다.
 
-1. **MAP** — 커뮤니티 리포트를 `map_batch_size`개씩(기본값 5, MS GraphRAG의 12K 토큰 map 컨텍스트와 비슷한 규모) 묶고, 배치마다 `GlobalMapPrompt`로 LLM에 핵심 포인트를 뽑고 질의 관련성을 **0-100**으로 채점하게 합니다. 배치는 `BatchProcessor`로 동시에 실행하며, 항목별로 실패해도 나머지는 계속 처리합니다.
+1. **MAP** — 커뮤니티 리포트만(융합된 텍스트 단위는 합성 항목 뒤에 그대로 통과) `map_batch_size`개씩(기본값 5, MS GraphRAG의 12K 토큰 map 컨텍스트와 비슷한 규모) 묶고, 배치마다 `GlobalMapPrompt`로 LLM에 핵심 포인트를 뽑고 질의 관련성을 **0-100**으로 채점하게 합니다. 배치는 `BatchProcessor`로 동시에 실행하며, 항목별로 실패해도 나머지는 계속 처리합니다.
 2. **FILTER+RANK** — `map_relevance_threshold` 이하인 포인트를 버리고 점수 내림차순으로 정렬합니다(`_filter_and_rank_points`).
 3. **PACK** — 상위 포인트를 `max_map_reduce_tokens` 토큰 예산까지 채웁니다(`token_manager.count_tokens` 기준, `_pack_points_within_budget`).
 4. **REDUCE** — 기본값(`reduce_with_llm: false`)에서는 채운 포인트를 관련성 표기와 함께 `synthesized_key_points` `RetrievalResult` 하나로 결과 앞에 붙이고, 합성은 답변 모델이 직접 합니다. 별도의 reduce LLM은 호출을 하나 늘릴 뿐 아니라, 두 번째 재작성 과정에서 사실을 빠뜨리거나 요약에 그 사실이 없다고 단정할 수 있었습니다. `reduce_with_llm: true`이면 `MapReduceSummaryPrompt`가 채운 포인트로 먼저 요약을 합성해(`_reduce_from_points`) `synthesized_summary`로 앞에 붙입니다. 두 경우 모두 `metadata.synthesized` 표시가 붙습니다. 답변 모델은 이를 컨텍스트로 읽지만, 검색된 근거가 아니라 LLM 출력이므로 `RAGOutput.sources`에는 넣지 않습니다.
 
-견고성: map 응답이 코드 펜스나 설명 문장에 감싸여 와도 `_parse_map_points`가 JSON을 뽑아내며, map 호출이 실패했거나 파싱할 수 없는 출력을 낸 배치는 *미평가*로 추적합니다. 임계값을 넘는 포인트는 없지만 평가되지 않은 리포트가 있으면 `_concat_reduce`가 대체 경로로 동작합니다. 대상은 미평가 리포트뿐이며(모든 배치가 실패했으면 전체), `reduce_with_llm`이 요약하지 않는 한 그대로 통과합니다. 그래서 global search는 완전히 실패하거나, 아무도 판단하지 않은 리포트를 두고 데이터가 없다고 답하지 않고 답변을 냅니다. map 단계가 *모든* 배치를 평가했지만 모든 포인트가 `map_relevance_threshold` 이하라면, 리포트가 질의와 관련 없다고 판단된 것입니다. 이때 global search는 결과를 반환하지 않고(검색 메타데이터에 `map_reduce_no_relevant_points`로 표시) MS GraphRAG의 no-data 응답과 같이 동작하며, 체인의 빈 컨텍스트 가드가 걸러진 리포트로 답을 합성하지 않고 "답할 수 없음"을 반환합니다. `MapReduceSummaryPrompt`도 reduce 단계가 주어진 포인트만 쓰고, 그것으로 질의에 답할 수 없으면 그렇다고 밝히도록 지시합니다.
+견고성: map 응답이 코드 펜스나 설명 문장에 감싸여 와도 `_parse_map_payload`가 JSON을 뽑아내며, map 호출이 실패했거나 파싱할 수 없는 출력을 낸 배치는 *미평가*로 추적합니다. 임계값을 넘는 포인트는 없지만 평가되지 않은 리포트가 있으면 `_concat_reduce`가 대체 경로로 동작합니다. 대상은 미평가 리포트뿐이며(모든 배치가 실패했으면 전체), `reduce_with_llm`이 요약하지 않는 한 그대로 통과합니다. 그래서 global search는 완전히 실패하거나, 아무도 판단하지 않은 리포트를 두고 데이터가 없다고 답하지 않고 답변을 냅니다. map 단계가 *모든* 배치를 평가했지만 모든 포인트가 `map_relevance_threshold` 이하라면, 리포트가 질의와 관련 없다고 판단된 것입니다. 이때 global search는 결과를 반환하지 않고(검색 메타데이터에 `map_reduce_no_relevant_points`로 표시) MS GraphRAG의 no-data 응답과 같이 동작하며, 체인의 빈 컨텍스트 가드가 걸러진 리포트로 답을 합성하지 않고 "답할 수 없음"을 반환합니다. `MapReduceSummaryPrompt`도 reduce 단계가 주어진 포인트만 쓰고, 그것으로 질의에 답할 수 없으면 그렇다고 밝히도록 지시합니다.
 
 ### 6.2 LightRAG 방법론 (`lightrag_search.py`)
 

@@ -230,27 +230,23 @@ def test_injected_llm_factory_reaches_conversation_memory(no_bedrock) -> None:
 
 
 def test_default_chains_share_conversation_history(no_bedrock) -> None:
-    from unified_kg_rag.domain.models import MessageRole
-
     config = Config()
     first = GraphRAGChain(config=config, providers=_fake_providers(config))
     second = GraphRAGChain(config=config, providers=_fake_providers(config))
 
     async def scenario() -> list[str]:
-        await first.memory_manager.add_message(
-            "conv-1", MessageRole.USER, "about Vendor", entities=["Vendor"]
+        await first.memory_manager.add_turn(
+            "conv-1", "about Vendor", "an answer", entities=["Vendor"]
         )
         history = await second.memory_manager.get_or_create_memory("conv-1")
         return [str(m.content) for m in history.messages]
 
     # A chain built per request still sees the earlier request's turn.
     assert second.memory_manager is first.memory_manager
-    assert asyncio.run(scenario()) == ["about Vendor"]
+    assert asyncio.run(scenario()) == ["about Vendor", "an answer"]
 
 
 def test_injected_memory_manager_isolates_a_chain(no_bedrock) -> None:
-    from unified_kg_rag.domain.models import MessageRole
-
     config = Config()
     shared = GraphRAGChain(config=config, providers=_fake_providers(config))
     isolated_manager = MemoryManager(config, providers=_fake_providers(config))
@@ -261,8 +257,8 @@ def test_injected_memory_manager_isolates_a_chain(no_bedrock) -> None:
     )
 
     async def scenario() -> list[str]:
-        await shared.memory_manager.add_message(
-            "conv-1", MessageRole.USER, "about Vendor", entities=["Vendor"]
+        await shared.memory_manager.add_turn(
+            "conv-1", "about Vendor", "an answer", entities=["Vendor"]
         )
         history = await isolated.memory_manager.get_or_create_memory("conv-1")
         return [str(m.content) for m in history.messages]

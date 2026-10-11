@@ -389,8 +389,8 @@ WARNING을 남기고 버리므로, 파일을 고치거나 업그레이드한 뒤
 
 | 계층 | 역할(`*_model_id` 키) |
 | --- | --- |
-| `default` | `fixing.fixing_model_id`, `processing.graph_extraction.extraction_model_id`, `processing.gleaning.graph_refinement_model_id`, `processing.claim_extraction.extraction_model_id`, `graph.community_detection.report_generation.report_generation_model_id`, `search.{entity_extraction,context_building,answer_generation}_model_id`, `evaluation.evaluation_model_id` |
-| `fast` | `processing.chunking.chunking_model_id`, `processing.translation.translation_model_id`, `processing.graph_extraction.description_summarization.summary_model_id`, `search.{translation,strategy_selection}_model_id`, `search.global_search.{community_relevance,map_reduce,map}_model_id`, `search.drift_search.{query_refinement,keyword_expansion,convergence_assessment,primer}_model_id` |
+| `default` | `fixing.fixing_model_id`, `processing.graph_extraction.extraction_model_id`, `processing.gleaning.graph_refinement_model_id`, `processing.claim_extraction.extraction_model_id`, `graph.community_detection.report_generation.report_generation_model_id`, `search.{entity_extraction,answer_generation}_model_id`, `evaluation.evaluation_model_id` |
+| `fast` | `processing.chunking.chunking_model_id`, `processing.translation.translation_model_id`, `processing.graph_extraction.description_summarization.summary_model_id`, `search.{translation,strategy_selection,query_rewrite}_model_id`, `search.global_search.{community_relevance,map_reduce,map}_model_id`, `search.drift_search.{query_refinement,keyword_expansion,convergence_assessment,primer}_model_id` |
 
 ```yaml
 aws:
@@ -1025,9 +1025,12 @@ CLI에서 한 번씩 실행하며 여러 턴을 이어 가려면 같은 `--conve
 `--use-memory`를 함께 쓰세요. 메모리 한도는 `memory` 설정 섹션에 있습니다.
 
 메모리는 턴 사이의 엔티티도 추적합니다. 사용자 메시지마다 LLM 호출
-(`search.entity_extraction_model_id`)이 메시지에 나온 엔티티를 추출하고, 앞선 턴의
-엔티티 중 관련도가 가장 높은 것을 다음 질의의 엔티티 초점에 더합니다. 그래서 "그
-회사의 공급업체는?" 같은 후속 질문도 앞선 턴에서 언급한 엔티티를 중심으로 검색합니다.
+(`search.entity_extraction_model_id`)이 메시지에 나온 엔티티를 추출하고, 가장 최근에
+언급된 엔티티 다섯 개를 다음 질의의 엔티티 초점에 더합니다. 검색 전에는 후속 질문을
+대화 이력으로 독립된 질문으로 다시 씁니다(이력이 있는 턴마다
+`search.query_rewrite_model_id` 호출 한 번, 프롬프트 재정의 키 `query_rewrite`). 그래서
+"그 회사의 공급업체는?" 같은 후속 질문도 앞선 턴의 엔티티 이름이 들어간 질문으로
+라우팅, 검색, 답변됩니다.
 
 ---
 
@@ -1467,7 +1470,7 @@ custom_prompts:
 
 재정의할 수 있는 키(각각 `_system` + `_human`): `graph_extraction`,
 `description_summarization`, `claim_extraction`, `graph_refinement`,
-`community_report`, `answer_generation`, `context_building`,
+`community_report`, `answer_generation`, `query_rewrite`,
 `entity_extraction`, `keyword_expansion`, `query_refinement`,
 `drift_primer`(`enable_primer`를 켰을 때의 DRIFT primer),
 `strategy_selection`, `keywords_extraction`(LightRAG 이중 레벨),

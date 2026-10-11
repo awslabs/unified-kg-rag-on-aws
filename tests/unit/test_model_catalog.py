@@ -67,8 +67,8 @@ def _reset_warnings() -> Any:
 def test_every_role_field_declares_a_tier_and_ships_its_default() -> None:
     roles = _role_fields(Config())
     tiers = [tier for tier, _ in roles.values()]
-    assert tiers.count("default") == 9
-    assert tiers.count("fast") == 12
+    assert tiers.count("default") == 8
+    assert tiers.count("fast") == 13
     for path, (tier, value) in roles.items():
         assert value == (DEFAULT_MODEL_ID if tier == "default" else FAST_MODEL_ID), path
 
@@ -95,7 +95,7 @@ def test_explicit_role_value_wins_over_its_tier() -> None:
         search={"answer_generation_model_id": "anthropic.claude-opus-5"},
     )
     assert config.search.answer_generation_model_id == "anthropic.claude-opus-5"
-    assert config.search.context_building_model_id == "openai.gpt-6-sol"
+    assert config.search.entity_extraction_model_id == "openai.gpt-6-sol"
 
 
 def test_reused_section_keeps_following_the_tier() -> None:

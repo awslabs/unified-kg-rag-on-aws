@@ -28,7 +28,6 @@ from unified_kg_rag.application.retrieval.rag_chain import (
 )
 from unified_kg_rag.domain.models import (
     Config,
-    MessageRole,
     RetrievalResult,
     RetrieverRole,
     SearchQuery,
@@ -90,21 +89,16 @@ class _FakeRetriever:
         ]
 
 
-class _FakeMemory:
-    def load_memory_variables(self, _inputs: dict[str, Any]) -> dict[str, Any]:
-        return {"history": "", "relevant_entities": []}
-
-
 class _RecordingMemoryManager:
     def __init__(self) -> None:
-        self.messages: list[tuple[str, MessageRole, str]] = []
+        self.messages: list[tuple[str, str, str]] = []
 
-    async def get_langchain_memory(self, conv_id: str, **_: Any) -> _FakeMemory:
-        return _FakeMemory()
+    async def load_context(self, conv_id: str) -> tuple[str, list[str]]:
+        return "", []
 
     async def add_turn(self, conv_id: str, user: str, assistant: str, **_: Any) -> None:
-        self.messages.append((conv_id, MessageRole.USER, user))
-        self.messages.append((conv_id, MessageRole.ASSISTANT, assistant))
+        self.messages.append((conv_id, "user", user))
+        self.messages.append((conv_id, "assistant", assistant))
 
 
 def _make_chain(
@@ -193,8 +187,8 @@ async def test_astream_saves_full_answer_to_memory(config: Config) -> None:
 
     assert "".join(chunks) == _ANSWER
     assert memory.messages == [
-        ("conv-stream-1", MessageRole.USER, "What does Vendor supply to Buyer?"),
-        ("conv-stream-1", MessageRole.ASSISTANT, _ANSWER),
+        ("conv-stream-1", "user", "What does Vendor supply to Buyer?"),
+        ("conv-stream-1", "assistant", _ANSWER),
     ]
 
 
@@ -313,3 +307,33 @@ def test_sync_stream_binds_and_releases_the_query_id(config: Config) -> None:
     retriever = chain._retriever_builders_override[RetrieverRole.DOCUMENT]()
     assert "".join(chain.stream(_input())) == _ANSWER
     assert "query_id" in retriever.log_contexts[0]
+
+
+async def test_streamed_answer_run_carries_the_session_and_user(config: Config) -> None:
+    # The streamed answer's model span lands in a trace of its own, after the
+    # query span has ended; its run metadata names the session and user so the
+    # tracing callback can still group it.
+    from langchain_core.callbacks import AsyncCallbackHandler
+
+    class _Metadata(AsyncCallbackHandler):
+        def __init__(self) -> None:
+            self.seen: list[dict] = []
+
+        async def on_chat_model_start(self, serialized, messages, **kwargs) -> None:
+            self.seen.append(kwargs.get("metadata") or {})
+
+    chain, _, _ = _make_chain(config)
+    handler = _Metadata()
+    chunks = [
+        c
+        async for c in chain.astream(
+            _input(conversation_id="conv-9", user_id="user-3"),
+            {"callbacks": [handler], "metadata": {"caller": "x"}},
+        )
+    ]
+
+    assert "".join(chunks) == _ANSWER
+    answer = handler.seen[-1]
+    assert answer["session_id"] == "conv-9"
+    assert answer["user_id"] == "user-3"
+    assert answer["caller"] == "x"

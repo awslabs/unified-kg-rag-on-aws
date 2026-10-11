@@ -547,6 +547,14 @@ async def test_entity_traversal_returns_the_seeds_and_expands_each_one(
     )
 
 
+async def test_entity_traversal_keeps_every_seed(retriever, config) -> None:
+    # A fixed cap of 10 silently dropped the seeds a caller passed beyond it
+    # (local search and DRIFT pass up to top_k candidate ids).
+    seeds = [f"e{i}" for i in range(15)]
+    text = await _entity_traversal_text(retriever, seeds, SearchQuery(query="x"))
+    assert "'e14'" in text
+
+
 @pytest.mark.parametrize(("multiplier", "per_seed"), [(1, 4), (3, 12)])
 async def test_entity_traversal_budget_scales_with_fetch_multiplier(
     retriever, config, multiplier, per_seed
@@ -628,6 +636,22 @@ async def test_text_seeds_rank_by_a_stored_property(
     by_steps = [args for name, args in calls if name == "by"]
     assert by_steps and by_steps[0][0] == prop
     assert not any(name == "has" and args[0] == "importance" for name, args in calls)
+
+
+async def test_name_matched_seeds_follow_the_requested_width(retriever) -> None:
+    calls: list[tuple] = []
+
+    class _G:
+        def V(self):
+            return RecordingTraversal(calls)
+
+    async def _execute(traversal):
+        return []
+
+    object.__setattr__(retriever, "_execute_traversal", _execute)
+    query = SearchQuery(query="vendor", top_k=12, retrieval_multiplier=2)
+    await retriever._find_seeds_by_type(_G(), query, is_community=False)
+    assert ("limit", (24,)) in [(name, tuple(args)) for name, args in calls]
 
 
 # --------------------------------------------------------------------------- #

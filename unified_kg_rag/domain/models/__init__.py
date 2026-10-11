@@ -21,9 +21,9 @@ from .config import (
     RerankModelId,
     ResolutionMethod,
     S3EncryptionType,
+    language_name,
     model_id_value,
 )
-from .conversation import ConversationContext, MessageRole
 from .covariate import Claim, Covariate
 from .document import (
     PENDING_CONTENT_HASH,
@@ -85,7 +85,6 @@ __all__ = [
     "Config",
     "Constants",
     "Covariate",
-    "ConversationContext",
     "DocStatus",
     "DocStatusRecord",
     "Document",
@@ -108,10 +107,10 @@ __all__ = [
     "FusionMethod",
     "Identified",
     "LanguageCode",
+    "language_name",
     "LanguageModelId",
     "LoggingConfig",
     "ModelPurpose",
-    "MessageRole",
     "Named",
     "ObservabilityBackend",
     "ObservabilityConfig",

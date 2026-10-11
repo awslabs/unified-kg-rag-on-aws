@@ -73,7 +73,6 @@ class _StubRetriever:
 def _bare_strategy(
     *,
     retrievers: dict | None = None,
-    entity_focus_multiplier: int = 2,
     ignore_errors: bool = False,
     enable_query_refinement: bool = True,
     enable_keyword_extraction: bool = True,
@@ -95,7 +94,6 @@ def _bare_strategy(
         enable_llm_convergence=enable_llm_convergence,
         improvement_threshold=0.05,
     )
-    strat.entity_focus_multiplier = entity_focus_multiplier
     strat.ignore_errors = ignore_errors
     strat.target_language = "en"
     strat.retrievers = retrievers or {}
@@ -285,16 +283,16 @@ async def test_find_candidate_entities_prefers_metadata_id_over_source() -> None
             _result("y", source="src-2", metadata={}),  # falls back to source
         ]
     )
-    strat = _bare_strategy(
-        retrievers={"document": retriever}, entity_focus_multiplier=3
-    )
-    query = SearchQuery(query="q", entity_focus=["Alice", "Bob"])
+    strat = _bare_strategy(retrievers={"document": retriever})
+    # An entity focus no longer narrows the lookup: the iteration's query text
+    # finds top_k candidates.
+    query = SearchQuery(query="q", top_k=8, entity_focus=["Alice"])
     out = await strat._find_candidate_entities_for_iteration(query)
     assert out == ["meta-1", "src-2"]
     sent = retriever.last_query
     assert sent is not None
     assert sent.index_prefixes == ["entities"]
-    assert sent.top_k == 6  # 2 focus * multiplier 3
+    assert sent.top_k == 8
     assert sent.retrieval_multiplier == 1
 
 
@@ -360,6 +358,31 @@ async def test_execute_search_iteration_merges_graph_and_document(mocker) -> Non
     assert graph_sent.filters["id"] == ["e1"]
     assert graph_sent.entity_focus == []
     assert document_sent.top_k == 7
+
+
+async def test_document_retrieval_does_not_wait_for_the_candidate_lookup() -> None:
+    import asyncio
+
+    started: list[str] = []
+    lookup_may_finish = asyncio.Event()
+
+    class _Document(_StubRetriever):
+        async def aretrieve(self, query: SearchQuery):
+            if query.index_prefixes == ["entities"]:
+                started.append("lookup")
+                await asyncio.wait_for(lookup_may_finish.wait(), timeout=1)
+                return [_result("e", source="e1")]
+            started.append("document")
+            lookup_may_finish.set()
+            return [_result("d1")]
+
+    graph = _StubRetriever([_result("g1")])
+    strat = _bare_strategy(retrievers={"graph": graph, "document": _Document()})
+
+    out = await strat._execute_search_iteration(SearchQuery(query="q"))
+
+    assert started == ["lookup", "document"]
+    assert [r.content for r in out] == ["g1", "d1"]
 
 
 async def test_execute_search_iteration_tolerates_retriever_exception(mocker) -> None:
@@ -428,11 +451,40 @@ async def test_evolve_query_applies_refinement_and_expansion() -> None:
     strat.keyword_expander = _AChain(["k1", "k2"])
     query = SearchQuery(query="start")
     results = [_result("r", metadata={"name": "Alice"})]
-    out = await strat._evolve_query(query, "original", results, 1)
+    out = await strat._evolve_query(query, "original", results, 1, ["Alice"])
     assert out.query == "refined query"  # stripped
     assert out.optional_keywords == ["k1", "k2"]
-    # The keyword expander receives the top-n entity names.
+    # The keyword expander receives the given entity names.
     assert strat.keyword_expander.calls[0]["entities"] == ["Alice"]
+
+
+def test_recent_entity_names_skip_reports_and_put_the_newest_first() -> None:
+    # Seed community reports came first in the results, so the expander was
+    # fed report titles instead of entities.
+    strat = _bare_strategy(n_entities=3)
+
+    def _typed_named(name: str, retriever_type: str) -> RetrievalResult:
+        return RetrievalResult(
+            content=name,
+            score=0.5,
+            source=name,
+            retriever_type=retriever_type,
+            metadata={"name": name},
+        )
+
+    first = [
+        _typed_named("Report title", "community"),
+        _typed_named("Vendor", "entity"),
+    ]
+    second = [_typed_named("Buyer", "entity"), _typed_named("Vendor", "entity")]
+    third = [_typed_named("Invoice", "entity"), _typed_named("Carrier", "entity")]
+
+    assert strat._recent_entity_names([first, second]) == ["Buyer", "Vendor"]
+    assert strat._recent_entity_names([first, second, third]) == [
+        "Invoice",
+        "Carrier",
+        "Buyer",
+    ]
 
 
 async def test_evolve_query_blank_refinement_keeps_original() -> None:
@@ -578,6 +630,39 @@ async def test_primer_search_runs_one_iteration_per_follow_up() -> None:
     assert len(all_results) == 2
 
 
+async def test_primer_follow_ups_run_concurrently_and_dedupe_in_order() -> None:
+    import asyncio
+
+    strat = _primer_strategy(
+        primer_value='{"follow_up_queries": ["fa", "fb"], "score": 0.2}'
+    )
+    started: list[str] = []
+    release = asyncio.Event()
+
+    async def _fake_iteration(q: SearchQuery):
+        started.append(q.query)
+        if len(started) == 2:
+            release.set()
+        # Each follow-up waits until both have started: sequential runs would
+        # never get past the first one.
+        await asyncio.wait_for(release.wait(), timeout=1)
+        return [_result("shared hit"), _result(f"hit for {q.query}")]
+
+    strat._execute_search_iteration = _fake_iteration  # type: ignore[method-assign]
+    all_results: list = []
+    metrics: list[dict] = []
+    await strat._primer_search(
+        SearchQuery(query="orig"), [_result("seed")], all_results, set(), metrics
+    )
+
+    assert [r.content for r in all_results] == [
+        "shared hit",
+        "hit for fa",
+        "hit for fb",
+    ]
+    assert [m["unique_new"] for m in metrics] == [2, 1]
+
+
 async def test_primer_search_keeps_intermediate_answer_out_of_results() -> None:
     # The primer's HyDE intermediate_answer is an LLM guess, not evidence: it
     # must not enter all_results (which become answer context and sources).
@@ -650,7 +735,7 @@ async def test_iterative_search_uses_original_query_on_first_iteration() -> None
         searched.append(q.query)
         return [_result(f"new-{len(searched)}-{i}") for i in range(5)]
 
-    async def _fake_evolve(q, original, results, iteration, config=None):
+    async def _fake_evolve(q, original, results, iteration, names, config=None):
         evolved_at.append(iteration)
         out = q.model_copy(deep=True)
         out.query = f"refined-{iteration}"

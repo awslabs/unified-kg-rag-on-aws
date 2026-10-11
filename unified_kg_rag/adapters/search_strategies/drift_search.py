@@ -24,6 +24,7 @@ from unified_kg_rag.domain.models import (
     SearchQuery,
     SearchResult,
     SearchStrategy,
+    language_name,
 )
 from unified_kg_rag.domain.prompts import (
     ConvergenceAssessmentPrompt,
@@ -31,10 +32,7 @@ from unified_kg_rag.domain.prompts import (
     KeywordExpansionPrompt,
     QueryRefinementPrompt,
 )
-from unified_kg_rag.domain.retrieval.strategy_registry import (
-    QueryInput,
-    register_strategy,
-)
+from unified_kg_rag.domain.retrieval.strategy_registry import register_strategy
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.utils import (
     compute_hash,
@@ -46,23 +44,26 @@ from unified_kg_rag.shared.utils import (
 logger = get_logger(__name__)
 
 
-@register_strategy(SearchStrategy.DRIFT, query_inputs=frozenset({QueryInput.ENTITIES}))
+# No query-side entity extraction: each iteration seeds graph expansion from
+# its own (original, refined or follow-up) query text, which the extracted
+# entities of the original question could only narrow.
+@register_strategy(SearchStrategy.DRIFT)
 class DriftSearchStrategy(BaseSearchStrategy):
     def __init__(
         self,
         config: Config,
         retrievers: dict[str, BaseGraphRAGRetriever],
         boto_session: boto3.Session | None = None,
-        entity_focus_multiplier: int = 2,
         **kwargs: Any,
     ):
         super().__init__(config, retrievers, boto_session, **kwargs)
         self.drift_config = self.config.search.drift_search
-        self.entity_focus_multiplier = entity_focus_multiplier
         self.ignore_errors = config.processing.ignore_errors
         # Keyword expansion / query refinement must produce terms in the corpus
         # language so they hit the language-analyzed index (not English-biased).
-        self.target_language = config.processing.translation.target_language.value
+        self.target_language = language_name(
+            config.processing.translation.target_language
+        )
 
         factory = self.providers.llm_factory
 
@@ -192,6 +193,8 @@ class DriftSearchStrategy(BaseSearchStrategy):
     ) -> None:
         """Original DRIFT loop: carry one mutating query forward each iteration."""
         current_query = query.model_copy(deep=True)
+        # Each iteration's new results, to expand keywords from the newest.
+        iteration_results_log: list[list[RetrievalResult]] = []
         for iteration in range(self.drift_config.max_iterations):
             if await self._should_stop(iteration, metrics, query.query, config=config):
                 logger.info("Convergence achieved at iteration %s", iteration)
@@ -202,7 +205,12 @@ class DriftSearchStrategy(BaseSearchStrategy):
             # user's wording. Later iterations refine it from what was found.
             if iteration > 0:
                 current_query = await self._evolve_query(
-                    current_query, query.query, all_results, iteration, config=config
+                    current_query,
+                    query.query,
+                    all_results,
+                    iteration,
+                    self._recent_entity_names(iteration_results_log),
+                    config=config,
                 )
             logger.info(
                 "Iteration %s: query %s, %s optional keywords",
@@ -222,6 +230,7 @@ class DriftSearchStrategy(BaseSearchStrategy):
 
             self._update_seen_content(unique_new, seen_hashes)
             all_results.extend(unique_new)
+            iteration_results_log.append(unique_new)
 
             metrics.append(
                 {
@@ -285,15 +294,23 @@ class DriftSearchStrategy(BaseSearchStrategy):
             )
             return
 
-        for iteration, follow_up in enumerate(
-            follow_ups[: self.drift_config.max_iterations]
-        ):
+        follow_ups = follow_ups[: self.drift_config.max_iterations]
+        follow_up_queries = []
+        for iteration, follow_up in enumerate(follow_ups):
             follow_up_query = query.model_copy(deep=True)
             follow_up_query.query = follow_up
+            follow_up_queries.append(follow_up_query)
             logger.info("Primer follow-up %s: %s", iteration, text_digest(follow_up))
             logger.debug("Primer follow-up %s: '%s'", iteration, follow_up)
 
-            iteration_results = await self._execute_search_iteration(follow_up_query)
+        # The follow-ups are independent searches: run them together, then
+        # dedupe in follow-up order.
+        all_iteration_results = await asyncio.gather(
+            *(self._execute_search_iteration(q) for q in follow_up_queries)
+        )
+        for iteration, (follow_up, iteration_results) in enumerate(
+            zip(follow_ups, all_iteration_results, strict=True)
+        ):
             unique_new = self._filter_unique_results(iteration_results, seen_hashes)
             self._update_seen_content(unique_new, seen_hashes)
             all_results.extend(unique_new)
@@ -440,6 +457,7 @@ class DriftSearchStrategy(BaseSearchStrategy):
         original_query: str,
         results: list[RetrievalResult],
         iteration: int,
+        entity_names: list[str] | None = None,
         max_keywords: int = 20,
         *,
         config: RunnableConfig | None = None,
@@ -460,15 +478,10 @@ class DriftSearchStrategy(BaseSearchStrategy):
             )
 
         if self.drift_config.enable_keyword_extraction:
-            entities = [
-                r.metadata.get("name")
-                for r in results[: self.drift_config.n_entities]
-                if r.metadata
-            ]
             tasks["expansion"] = self.keyword_expander.ainvoke(
                 {
                     "query": original_query,
-                    "entities": entities,
+                    "entities": entity_names or [],
                     "topics": [],
                     "max_keywords": max_keywords,
                     "target_language": self.target_language,
@@ -519,6 +532,24 @@ class DriftSearchStrategy(BaseSearchStrategy):
 
         return evolved_query
 
+    def _recent_entity_names(
+        self, iteration_results_log: list[list[RetrievalResult]]
+    ) -> list[str]:
+        """Names of the entities found, newest iteration first.
+
+        Keyword expansion grows the query from what the last iterations found;
+        the first results overall are the seed community reports, whose titles
+        are not entities.
+        """
+        names = (
+            str(result.metadata["name"])
+            for batch in reversed(iteration_results_log)
+            for result in batch
+            if result.retriever_type == SectionType.ENTITY.value
+            and result.metadata.get("name")
+        )
+        return list(dict.fromkeys(names))[: self.drift_config.n_entities]
+
     def _summarize_results(self, results: list[RetrievalResult]) -> str:
         if not results:
             return "No information gathered yet. Start by exploring broad topics related to the original query."
@@ -543,20 +574,11 @@ class DriftSearchStrategy(BaseSearchStrategy):
         self, query: SearchQuery
     ) -> list[RetrievalResult]:
         tasks = []
-        candidate_entity_ids = await self._find_candidate_entities_for_iteration(query)
+        if self.graph_retriever:
+            tasks.append(self._graph_results_for_iteration(self.graph_retriever, query))
 
-        if self.graph_retriever and candidate_entity_ids:
-            graph_query = query.model_copy(deep=True)
-            graph_query.query = ""
-            graph_query.entity_focus = []
-            graph_query.filters = (graph_query.filters or {}).copy()
-            graph_query.filters["id"] = candidate_entity_ids
-            tasks.append(
-                self._safe_aretrieve(
-                    self.graph_retriever, graph_query, "DRIFT graph retrieval"
-                )
-            )
-
+        # Independent of the candidate lookup, so it runs alongside the
+        # lookup -> graph expansion chain instead of after it.
         if self.document_retriever:
             document_query = query.model_copy(deep=True)
             document_query.top_k = query.top_k
@@ -574,27 +596,33 @@ class DriftSearchStrategy(BaseSearchStrategy):
         results_lists = await asyncio.gather(*tasks)
         return [item for result_list in results_lists for item in result_list]
 
+    async def _graph_results_for_iteration(
+        self, graph_retriever: BaseGraphRAGRetriever, query: SearchQuery
+    ) -> list[RetrievalResult]:
+        """Candidate entities for the iteration's query, expanded in the graph."""
+        candidate_entity_ids = await self._find_candidate_entities_for_iteration(query)
+        if not candidate_entity_ids:
+            return []
+        graph_query = query.model_copy(deep=True)
+        graph_query.query = ""
+        graph_query.entity_focus = []
+        graph_query.filters = (graph_query.filters or {}).copy()
+        graph_query.filters["id"] = candidate_entity_ids
+        return await self._safe_aretrieve(
+            graph_retriever, graph_query, "DRIFT graph retrieval"
+        )
+
     async def _find_candidate_entities_for_iteration(
         self, query: SearchQuery
     ) -> list[str]:
-        if not self.document_retriever:
-            return []
-
-        # Size the candidate set from the extracted entity focus; when nothing
-        # was extracted, fall back to the iteration's own query text (the
-        # original or follow-up question) with top_k candidates, as local
-        # search does, instead of asking for 0 and seeding no graph expansion.
-        if query.entity_focus:
-            n_candidates = len(query.entity_focus) * self.entity_focus_multiplier
-        elif query.query:
-            n_candidates = query.top_k
-        else:
+        # The iteration's own query text (the original, refined or follow-up
+        # question) finds top_k candidate entities.
+        if not self.document_retriever or not query.query:
             return []
         entity_search_query = query.model_copy(deep=True)
         entity_search_query.index_prefixes = [
             self.config.indexing.opensearch.entities_index_prefix
         ]
-        entity_search_query.top_k = n_candidates
         entity_search_query.retrieval_multiplier = 1
 
         results = await self._safe_aretrieve(

@@ -83,6 +83,36 @@ class LanguageCode(str, Enum):
     ZH = "zh"
 
 
+_LANGUAGE_NAMES: dict[LanguageCode, str] = {
+    LanguageCode.DE: "German",
+    LanguageCode.EN: "English",
+    LanguageCode.ES: "Spanish",
+    LanguageCode.FR: "French",
+    LanguageCode.IT: "Italian",
+    LanguageCode.JA: "Japanese",
+    LanguageCode.KO: "Korean",
+    LanguageCode.PT: "Portuguese",
+    LanguageCode.RU: "Russian",
+    LanguageCode.ZH: "Chinese",
+}
+
+
+def language_name(language: str) -> str:
+    """The language as prompts name it: ``"ko"`` -> ``"Korean"``.
+
+    A ``LanguageCode`` formats as ``LanguageCode.KO`` in a prompt template and
+    a bare code is easy to misread, so prompts get the English name. Text that
+    is not a supported code (e.g. a caller's ``"Brazilian Portuguese"``) is
+    returned as given.
+    """
+    if isinstance(language, LanguageCode):
+        return _LANGUAGE_NAMES[language]
+    try:
+        return _LANGUAGE_NAMES[LanguageCode(language.strip().lower())]
+    except ValueError:
+        return language
+
+
 class ResolutionMethod(str, Enum):
     MINHASH = "minhash"
     SEQUENCE_MATCHER = "sequence_matcher"
@@ -1891,7 +1921,7 @@ class GlobalSearchConfig(BaseModel):
             "cost of max_communities extra LLM calls per query (MS GraphRAG's "
             "dynamic community selection is also off by default). Useful mainly "
             "with enable_map_reduce=false; when off, communities are ranked by "
-            "their indexed rank and rating."
+            "their retrieval score, ties broken by indexed rank and rating."
         ),
     )
     enable_map_reduce: bool = Field(
@@ -2100,7 +2130,8 @@ class DriftSearchConfig(BaseModel):
     n_entities: int = Field(
         default=5,
         ge=1,
-        description="Number of top entities to extract for keyword expansion",
+        description="Entity names passed to keyword expansion, from the "
+        "newest iteration's results first",
     )
     convergence_threshold: float = Field(
         default=0.8,
@@ -2345,9 +2376,13 @@ class SearchConfig(BaseModel):
             "index. Every strategy stays selectable explicitly."
         ),
     )
-    context_building_model_id: BedrockModelId = role_model_field(
-        "default",
-        description="Language model identifier used for building and structuring contextual information",
+    query_rewrite_model_id: BedrockModelId = role_model_field(
+        "fast",
+        description=(
+            "Language model identifier used for rewriting a follow-up message "
+            "as a standalone question from the conversation history, before "
+            "retrieval (memory queries with history only)"
+        ),
     )
     answer_generation_model_id: BedrockModelId = role_model_field(
         "default",
@@ -2595,14 +2630,6 @@ class CustomPromptConfig(BaseModel):
         default=None,
         description="Custom human prompt for generating answers from knowledge graph",
     )
-    context_building_system: str | None = Field(
-        default=None,
-        description="Custom system prompt for building context from knowledge graph",
-    )
-    context_building_human: str | None = Field(
-        default=None,
-        description="Custom human prompt for building context from knowledge graph",
-    )
     entity_extraction_system: str | None = Field(
         default=None,
         description="Custom system prompt for extracting named entities from user queries",
@@ -2650,6 +2677,16 @@ class CustomPromptConfig(BaseModel):
     query_refinement_human: str | None = Field(
         default=None,
         description="Custom human prompt for refining queries based on intermediate results",
+    )
+    query_rewrite_system: str | None = Field(
+        default=None,
+        description="Custom system prompt for rewriting a follow-up message as a "
+        "standalone question from the conversation history",
+    )
+    query_rewrite_human: str | None = Field(
+        default=None,
+        description="Custom human prompt for rewriting a follow-up message as a "
+        "standalone question from the conversation history",
     )
     strategy_selection_system: str | None = Field(
         default=None,
@@ -2735,7 +2772,6 @@ _REQUIRED_PROMPT_VARIABLES: dict[str, frozenset[str]] = {
     "answer_generation": frozenset({"query", "context"}),
     "claim_extraction": frozenset({"input_text"}),
     "community_report": frozenset({"entities", "relationships"}),
-    "context_building": frozenset({"query", "search_results"}),
     "corpus_profile": frozenset({"corpus_sample"}),
     "description_summarization": frozenset({"descriptions"}),
     "drift_primer": frozenset({"query", "community_reports"}),
@@ -2746,6 +2782,7 @@ _REQUIRED_PROMPT_VARIABLES: dict[str, frozenset[str]] = {
     "keyword_expansion": frozenset({"query"}),
     "keywords_extraction": frozenset({"query"}),
     "query_refinement": frozenset({"original_query", "results_summary"}),
+    "query_rewrite": frozenset({"query", "conversation_history"}),
     "strategy_selection": frozenset({"query", "strategies"}),
 }
 

@@ -7,17 +7,15 @@ from datetime import datetime, timedelta
 from typing import Any
 
 import boto3
-from langchain_classic.memory.chat_memory import BaseChatMemory
 from langchain_core.chat_history import BaseChatMessageHistory
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langchain_core.messages.utils import get_buffer_string
 from langchain_core.output_parsers import CommaSeparatedListOutputParser
 from langchain_core.runnables import Runnable
-from pydantic import Field
 
 from unified_kg_rag.adapters.aws.chain_factory import setup_chain
 from unified_kg_rag.adapters.providers import Providers
-from unified_kg_rag.domain.models import Config, ConversationContext, MessageRole
+from unified_kg_rag.domain.models import Config, language_name
 from unified_kg_rag.domain.prompts import EntityExtractionPrompt
 from unified_kg_rag.shared import get_config, get_logger
 
@@ -56,7 +54,8 @@ class GraphRAGChatMessageHistory(BaseChatMessageHistory):
         self.ttl = timedelta(hours=ttl_hours)
         self.n_entities = n_entities
         self._messages: list[BaseMessage] = []
-        self._context = ConversationContext()
+        # The n_entities most recently mentioned entities, newest first.
+        self._recent_entities: list[str] = []
         self.updated_at = datetime.now()
 
         # MemoryManager passes one shared extractor to every conversation.
@@ -78,7 +77,7 @@ class GraphRAGChatMessageHistory(BaseChatMessageHistory):
 
         Split out so an async caller can hold its lock for just the cheap state
         mutation and run _update_context (a blocking Bedrock invoke) off the
-        event loop, outside the lock. See MemoryManager.add_message.
+        event loop, outside the lock. See MemoryManager.add_turn.
         """
         self._messages.append(message)
         if len(self._messages) > self.max_messages:
@@ -89,13 +88,9 @@ class GraphRAGChatMessageHistory(BaseChatMessageHistory):
         """Public wrapper for the blocking entity-extraction step."""
         self._update_context(message)
 
-    def add_messages(self, messages: Sequence[BaseMessage]) -> None:
-        for message in messages:
-            self.add_message(message)
-
     def clear(self) -> None:
         self._messages.clear()
-        self._context = ConversationContext()
+        self._recent_entities = []
         self.updated_at = datetime.now()
 
     # LangChain's BaseChatMessageHistory types `messages` as a writeable
@@ -112,7 +107,9 @@ class GraphRAGChatMessageHistory(BaseChatMessageHistory):
             result = self.entity_extractor.invoke(
                 {
                     "query": message.content,
-                    "target_language": self.config.processing.translation.target_language,
+                    "target_language": language_name(
+                        self.config.processing.translation.target_language
+                    ),
                 }
             )
             # CommaSeparatedListOutputParser yields a list[str]; the previous
@@ -133,113 +130,22 @@ class GraphRAGChatMessageHistory(BaseChatMessageHistory):
             )
 
     def record_entities(self, entities: Sequence[Any]) -> None:
-        """Merge entity names already extracted for a user message."""
-        entity_names = [
-            str(entity).strip() for entity in entities if str(entity).strip()
-        ]
-        if entity_names:
-            current_entities = set(self._context.mentioned_entities)
-            current_entities.update(entity_names)
-            self._context.mentioned_entities = sorted(current_entities)
-            self._context.focused_entities = entity_names[: self.n_entities]
+        """Record the entity names already extracted for a user message.
 
-    def get_context_summary(self) -> str:
-        parts = []
-
-        if self._context.mentioned_entities:
-            entities_str = ", ".join(
-                self._context.mentioned_entities[: self.n_entities]
-            )
-            parts.append(f"Mentioned: {entities_str}")
-
-        if self._context.focused_entities:
-            parts.append(f"Focused on: {', '.join(self._context.focused_entities)}")
-
-        return " | ".join(parts) or "New Conversation"
+        The newest message's entities come first (in extraction order), ahead
+        of earlier ones, so a follow-up is focused on what was just discussed.
+        """
+        names = [str(entity).strip() for entity in entities if str(entity).strip()]
+        merged = dict.fromkeys(names + self._recent_entities)
+        self._recent_entities = list(merged)[: self.n_entities]
 
     def get_relevant_entities(self) -> list[str]:
-        return self._context.mentioned_entities[: self.n_entities]
+        """The most recently mentioned entities, newest first."""
+        return list(self._recent_entities)
 
-
-class GraphRAGConversationBufferMemory(BaseChatMemory):
-    chat_memory: GraphRAGChatMessageHistory = Field(
-        default_factory=lambda: GraphRAGChatMessageHistory(
-            config=get_config(), conversation_id="default"
-        ),
-        description="The underlying chat message history that stores conversation messages and extracts entities",
-    )
-    return_messages: bool = Field(
-        default=False,
-        description="Whether to return messages as BaseMessage objects or as a formatted string",
-    )
-    include_entity_context: bool = Field(
-        default=True,
-        description="Whether to include entity context (relevant entities and conversation summary) in memory variables",
-    )
-    human_prefix: str = Field(
-        default="Human",
-        description="Prefix to use for human messages when formatting as string",
-    )
-    ai_prefix: str = Field(
-        default="AI",
-        description="Prefix to use for AI messages when formatting as string",
-    )
-    memory_key: str = Field(
-        default="history",
-        description="The key name to use for the conversation history in memory variables",
-    )
-
-    @property
-    def buffer(self) -> list[BaseMessage] | str:
-        messages = self.chat_memory.messages
-        return (
-            messages
-            if self.return_messages
-            else get_buffer_string(
-                messages,
-                human_prefix=self.human_prefix,
-                ai_prefix=self.ai_prefix,
-            )
-        )
-
-    @property
-    def memory_variables(self) -> list[str]:
-        base = [self.memory_key]
-        if self.include_entity_context:
-            base.extend(["relevant_entities", "conversation_context"])
-        return base
-
-    def load_memory_variables(self, inputs: dict[str, Any]) -> dict[str, Any]:
-        mem_vars: dict[str, Any] = {self.memory_key: self.buffer}
-
-        if self.include_entity_context:
-            mem_vars["relevant_entities"] = self.chat_memory.get_relevant_entities()
-            mem_vars["conversation_context"] = self.chat_memory.get_context_summary()
-
-        return mem_vars
-
-    def save_context(self, inputs: dict[str, Any], outputs: dict[str, Any]) -> None:
-        input_str = self._get_input(inputs)
-        output_str = self._get_output(outputs)
-        self.chat_memory.add_messages(
-            [HumanMessage(content=input_str), AIMessage(content=output_str)]
-        )
-
-    def clear(self) -> None:
-        self.chat_memory.clear()
-
-    @staticmethod
-    def _get_input(inputs: dict[str, Any]) -> str:
-        return str(inputs.get("input") or inputs.get("query") or inputs)
-
-    @staticmethod
-    def _get_output(outputs: dict[str, Any]) -> str:
-        return str(
-            outputs.get("output")
-            or outputs.get("answer")
-            or outputs.get("text")
-            or outputs
-        )
+    def get_buffer_string(self) -> str:
+        """The conversation so far as ``Human: ...`` / ``AI: ...`` lines."""
+        return get_buffer_string(self._messages)
 
 
 class MemoryManager:
@@ -289,49 +195,11 @@ class MemoryManager:
             self._memories[conv_id] = memory
             return memory
 
-    async def get_langchain_memory(
-        self, conv_id: str, **kwargs: Any
-    ) -> GraphRAGConversationBufferMemory:
-        history = await self.get_or_create_memory(conv_id)
-        return GraphRAGConversationBufferMemory(chat_memory=history, **kwargs)
-
-    async def add_message(
-        self,
-        conv_id: str,
-        role: MessageRole,
-        content: str,
-        *,
-        entities: Sequence[str] | None = None,
-    ) -> None:
-        """Append a message; for a user message, update the entity context.
-
-        ``entities`` are the names already extracted from this user message
-        (the chain's query step extracts them with the same prompt); when given,
-        they are recorded directly instead of paying a second LLM call.
-        """
+    async def load_context(self, conv_id: str) -> tuple[str, list[str]]:
+        """The conversation's history text and its most recent entities."""
         memory = await self.get_or_create_memory(conv_id)
-        message_map = {
-            MessageRole.USER: HumanMessage,
-            MessageRole.ASSISTANT: AIMessage,
-            MessageRole.SYSTEM: SystemMessage,
-        }
-        message = message_map.get(role, SystemMessage)(content=content)
-
-        # Hold the lock only for the cheap append/trim state mutation. The
-        # entity-extraction step is a blocking Bedrock LLM invoke (~1-3s); doing
-        # it under the lock (and on the event-loop thread) serialized every
-        # concurrent query sharing this manager (e.g. under abatch). Run it off
-        # the loop, outside the lock. It only mutates ConversationContext, which
-        # is read via get_context_summary at the start of the next turn.
         with self._lock:
-            memory.append_message(message)
-
-        if not isinstance(message, HumanMessage):
-            return
-        if entities is not None:
-            memory.record_entities(entities)
-        else:
-            await asyncio.to_thread(memory.update_context, message)
+            return memory.get_buffer_string(), memory.get_relevant_entities()
 
     async def add_turn(
         self,
@@ -346,7 +214,9 @@ class MemoryManager:
         Two ``add_message`` calls let a concurrent turn on the same
         conversation land between them (user, user, answer, answer). Both
         messages are appended under one lock hold; the user message's entity
-        context is updated afterwards, as in ``add_message``.
+        context is updated afterwards, outside the lock: entity extraction is
+        a blocking LLM call (~1-3s), so it runs off the event loop and does
+        not serialize concurrent queries sharing this manager.
         """
         memory = await self.get_or_create_memory(conv_id)
         user_message = HumanMessage(content=user_content)

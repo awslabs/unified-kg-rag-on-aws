@@ -38,7 +38,7 @@ def _community(i: int, *, content: str | None = None) -> RetrievalResult:
         content=content or f"community report {i}",
         score=0.5,
         source=f"c{i}",
-        retriever_type="graph",
+        retriever_type="community",
         metadata={"community_id": f"cid-{i}"},
     )
 
@@ -180,6 +180,35 @@ async def test_map_phase_batches_reports_per_call() -> None:
     assert "cid-0" not in second["reports"] and "cid-1" not in second["reports"]
 
 
+async def test_map_step_rates_only_reports_and_keeps_text_units() -> None:
+    # Text units fused next to the reports are not community reports: mapping
+    # them sent chunks to the map LLM as "reports". They pass through instead.
+    strat = _strategy(map_batch_size=10, map_outputs=[_map_payload(("point", 80))])
+    chunk = RetrievalResult(
+        content="chunk text", score=0.4, source="t0", retriever_type="text"
+    )
+    results = [*_communities(2), chunk]
+
+    out = await strat._apply_map_reduce(results, SearchQuery(query="q"))
+
+    (map_input,) = strat.map_rater.batch_inputs
+    assert "chunk text" not in map_input["reports"]
+    assert [r.source for r in out] == ["synthesized_key_points", "c0", "c1", "t0"]
+
+
+async def test_map_step_counts_only_reports_against_the_minimum() -> None:
+    strat = _strategy(map_reduce_min_results=2, map_outputs=[_map_payload(("p", 80))])
+    chunks = [
+        RetrievalResult(
+            content=f"t{i}", score=0.4, source=f"t{i}", retriever_type="text"
+        )
+        for i in range(3)
+    ]
+    results = [_community(0), *chunks]
+    assert await strat._apply_map_reduce(results, SearchQuery(query="q")) == results
+    assert strat.map_rater.batch_inputs == []
+
+
 # --------------------------------------------------------------------------- #
 # FILTER + RANK
 # --------------------------------------------------------------------------- #
@@ -290,20 +319,20 @@ async def test_apply_map_reduce_full_pipeline_prepends_synthesis() -> None:
 # --------------------------------------------------------------------------- #
 
 
-def test_parse_map_points_handles_garbage() -> None:
-    assert GlobalSearchStrategy._parse_map_points("not json at all") == []
-    assert GlobalSearchStrategy._parse_map_points("") == []
+def test_parse_map_payload_handles_garbage() -> None:
+    assert GlobalSearchStrategy._parse_map_payload("not json at all") is None
+    assert GlobalSearchStrategy._parse_map_payload("") is None
 
 
-def test_parse_map_points_strips_code_fence() -> None:
+def test_parse_map_payload_strips_code_fence() -> None:
     raw = "```json\n" + _map_payload(("fenced", 70)) + "\n```"
-    points = GlobalSearchStrategy._parse_map_points(raw)
+    points = GlobalSearchStrategy._parse_map_payload(raw) or []
     assert [(p.description, p.score) for p in points] == [("fenced", 70)]
 
 
-def test_parse_map_points_clamps_scores() -> None:
+def test_parse_map_payload_clamps_scores() -> None:
     raw = _map_payload(("over", 250), ("under", -5))
-    points = GlobalSearchStrategy._parse_map_points(raw)
+    points = GlobalSearchStrategy._parse_map_payload(raw) or []
     assert {p.description: p.score for p in points} == {"over": 100, "under": 0}
 
 
@@ -391,7 +420,7 @@ async def test_asearch_all_filtered_yields_empty_result_with_flag() -> None:
         map_outputs=[_map_payload(("low", 5)), _map_payload(("low", 5))],
     )
     communities = _communities(2)
-    strat._retrieve_and_fuse_communities = AsyncMock(  # type: ignore[method-assign]
+    strat._retrieve_community_reports = AsyncMock(  # type: ignore[method-assign]
         return_value=communities
     )
     strat._select_relevant_communities = AsyncMock(  # type: ignore[method-assign]

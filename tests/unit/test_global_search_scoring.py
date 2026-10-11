@@ -46,7 +46,10 @@ def _strategy(*, threshold: float, score_text: str) -> GlobalSearchStrategy:
 def _communities(n: int) -> list[RetrievalResult]:
     return [
         RetrievalResult(
-            content=f"community {i}", score=0.5, source=f"c{i}", retriever_type="graph"
+            content=f"community {i}",
+            score=0.5,
+            source=f"c{i}",
+            retriever_type="community",
         )
         for i in range(n)
     ]
@@ -94,16 +97,28 @@ def _communities_with_rank(ranks: list[float]) -> list[RetrievalResult]:
             content=f"community {i}",
             score=0.5,
             source=f"c{i}",
-            retriever_type="graph",
+            retriever_type="community",
             metadata={"rank": r},
         )
         for i, r in enumerate(ranks)
     ]
 
 
+async def test_static_selection_keeps_the_most_relevant_reports() -> None:
+    # The retrieval score (relevance to the query) decides; graph-importance
+    # rank only breaks ties, so a central but off-topic report is not kept
+    # over the one the query matched.
+    strat = _strategy_static(max_communities=1)
+    query = SearchQuery(query="q", retrieval_multiplier=1)
+    central, relevant = _communities_with_rank([9.0, 1.0])
+    relevant = relevant.model_copy(update={"score": 0.9})
+    kept = await strat._select_relevant_communities([central, relevant], query)
+    assert [c.source for c in kept] == ["c1"]
+
+
 async def test_static_selection_keeps_highest_rank_communities() -> None:
-    # use_dynamic_selection=False: select by community-report `rank` (graph
-    # importance) instead of arbitrary retrieval order, capped at max_communities.
+    # use_dynamic_selection=False: equal retrieval scores fall to the
+    # community-report `rank` (graph importance), capped at max_communities.
     strat = _strategy_static(max_communities=2)
     query = SearchQuery(query="q", retrieval_multiplier=1)
     # ranks deliberately out of order; top-2 by rank are c2(9.0) and c0(5.0).
@@ -119,7 +134,7 @@ async def test_static_selection_missing_rank_sorts_last() -> None:
     ranked = _communities_with_rank([3.0])
     unranked = [
         RetrievalResult(
-            content="no-rank", score=0.5, source="cX", retriever_type="graph"
+            content="no-rank", score=0.5, source="cX", retriever_type="community"
         )
     ]
     kept = await strat._select_relevant_communities(ranked + unranked, query)
@@ -137,14 +152,14 @@ async def test_static_selection_breaks_rank_ties_by_rating() -> None:
             content="low rating",
             score=0.5,
             source="c_low",
-            retriever_type="graph",
+            retriever_type="community",
             metadata={"rank": 5.0, "rating": 2.0},
         ),
         RetrievalResult(
             content="high rating",
             score=0.5,
             source="c_high",
-            retriever_type="graph",
+            retriever_type="community",
             metadata={"rank": 5.0, "rating": 9.0},
         ),
     ]

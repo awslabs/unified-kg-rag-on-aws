@@ -25,13 +25,14 @@ from unified_kg_rag.application.cli.provider_args import (
     add_provider_arguments,
     apply_provider_arguments,
 )
+from unified_kg_rag.application.cli.query_args import add_query_arguments
 from unified_kg_rag.application.retrieval.rag_chain import (
     ChainMode,
     GraphRAGChain,
     RAGInput,
     create_rag_chain,
 )
-from unified_kg_rag.domain.models import Constants, SearchStrategy, SearchType
+from unified_kg_rag.domain.models import Constants, SearchStrategy
 from unified_kg_rag.shared import get_config, get_logger, setup_logging
 from unified_kg_rag.shared.utils import event_loop
 from unified_kg_rag.shared.utils.display import console, display_ascii_art
@@ -106,44 +107,7 @@ class CommandLineInterface:
             action="store_true",
             help="Enable conversation memory (auto-enabled in interactive mode)",
         )
-        parser.add_argument(
-            "--suffix",
-            help="Suffix for multi-tenant or versioned indices",
-        )
-        parser.add_argument(
-            "--enable-thinking",
-            action="store_true",
-            help=(
-                "Enable thinking mode for language model reasoning and step-by-step "
-                "problem solving. No-op for models that always reason (Claude 4.7+ / "
-                "5.x, OpenAI GPT); tune their depth with aws.bedrock.default_effort "
-                "/ fast_effort in the config"
-            ),
-        )
-        parser.add_argument(
-            "--search-strategy",
-            default="auto",
-            choices=[ss.value for ss in SearchStrategy],
-            help="Choose the search strategy",
-        )
-        parser.add_argument(
-            "--search-type",
-            default="hybrid",
-            choices=[st.value for st in SearchType],
-            help="Specify the search method",
-        )
-        parser.add_argument(
-            "--top-k",
-            type=int,
-            default=10,
-            help="Set the maximum number of search results",
-        )
-        parser.add_argument(
-            "--retrieval-multiplier",
-            type=int,
-            default=1,
-            help="Set the retrieval multiplier for increasing search depth",
-        )
+        add_query_arguments(parser)
         parser.add_argument(
             "--disable-query-processing",
             action="store_true",
@@ -238,17 +202,10 @@ class RAGChainRunner:
             if self.args.interactive:
                 await self._interactive_mode()
             else:
-                rag_input = RAGInput(
-                    query=self.args.query,
-                    suffix=self.args.suffix,
-                    enable_thinking=self.args.enable_thinking,
-                    search_strategy=self.args.search_strategy,
-                    search_type=SearchType(self.args.search_type),
+                rag_input = self._rag_input(
+                    self.args.query,
                     conversation_id=self.args.conversation_id,
                     use_memory=self.args.use_memory,
-                    enable_query_processing=not self.args.disable_query_processing,
-                    top_k=self.args.top_k,
-                    retrieval_multiplier=self.args.retrieval_multiplier,
                     filters=self._parse_filters(self.args.filters),
                 )
 
@@ -309,12 +266,8 @@ class RAGChainRunner:
                     else:
                         handler(state=state, args=cmd_args)
                     continue
-                rag_input = RAGInput(
-                    query=raw_input,
-                    suffix=self.args.suffix,
-                    enable_thinking=self.args.enable_thinking,
-                    search_strategy=self.args.search_strategy,
-                    search_type=self.args.search_type,
+                rag_input = self._rag_input(
+                    raw_input,
                     conversation_id=(
                         str(state["conversation_id"])
                         if state["conversation_id"] is not None
@@ -324,9 +277,6 @@ class RAGChainRunner:
                     filters=(
                         state["filters"] if isinstance(state["filters"], dict) else None
                     ),
-                    top_k=self.args.top_k,
-                    retrieval_multiplier=self.args.retrieval_multiplier,
-                    enable_query_processing=not self.args.disable_query_processing,
                 )
                 if self.rag_chain:
                     self.rag_chain.mode = ChainMode.RAG
@@ -348,6 +298,29 @@ class RAGChainRunner:
                 logger.error(
                     "Unexpected error in interactive mode: %s", e, exc_info=True
                 )
+
+    def _rag_input(
+        self,
+        query: str,
+        *,
+        conversation_id: str | None,
+        use_memory: bool,
+        filters: dict[str, Any] | None,
+    ) -> RAGInput:
+        """A query with the command line's search settings."""
+        return RAGInput(
+            query=query,
+            suffix=self.args.suffix,
+            enable_thinking=self.args.enable_thinking,
+            search_strategy=self.args.search_strategy,
+            search_type=self.args.search_type,
+            conversation_id=conversation_id,
+            use_memory=use_memory,
+            filters=filters,
+            top_k=self.args.top_k,
+            retrieval_multiplier=self.args.retrieval_multiplier,
+            enable_query_processing=not self.args.disable_query_processing,
+        )
 
     async def _run_query(self, rag_input: RAGInput) -> dict[str, Any]:
         if not self.rag_chain:
@@ -383,11 +356,9 @@ class RAGChainRunner:
                 "conversation_id": rag_input.conversation_id,
             }
 
-    def _display_run_info(self) -> None:
-        config_lines = [
-            "[bold blue]RAG Configuration[/bold blue]",
-            "[bold]Current Configuration[/bold]",
-            f"[dim]Execution Mode:[/dim] {self.args.mode}",  # 모드 정보 표시
+    def _settings_lines(self) -> list[str]:
+        """The search settings, as the run banner and show-config print them."""
+        return [
             f"[dim]Search Strategy:[/dim] {self.args.search_strategy}",
             f"[dim]Search Type:[/dim] {self.args.search_type}",
             f"[dim]Top K Results:[/dim] {self.args.top_k}",
@@ -396,6 +367,14 @@ class RAGChainRunner:
             f"[dim]Query Processing:[/dim] {not self.args.disable_query_processing}",
             f"[dim]Verbose Output:[/dim] {self.args.verbose}",
             self._get_suffix_display(),
+        ]
+
+    def _display_run_info(self) -> None:
+        config_lines = [
+            "[bold blue]RAG Configuration[/bold blue]",
+            "[bold]Current Configuration[/bold]",
+            f"[dim]Execution Mode:[/dim] {self.args.mode}",
+            *self._settings_lines(),
         ]
 
         if self.args.filters:
@@ -565,14 +544,7 @@ class RAGChainRunner:
         config_lines = [
             "[bold]Current Configuration:[/bold]",
             "[dim]Execution Mode:[/dim] rag (Interactive mode)",
-            f"[dim]Search Strategy:[/dim] {self.args.search_strategy}",
-            f"[dim]Search Type:[/dim] {self.args.search_type}",
-            f"[dim]Top K Results:[/dim] {self.args.top_k}",
-            f"[dim]Retrieval Multiplier:[/dim] {self.args.retrieval_multiplier}",
-            f"[dim]Use Memory:[/dim] {self.args.use_memory or self.args.interactive}",
-            f"[dim]Query Processing:[/dim] {not self.args.disable_query_processing}",
-            f"[dim]Verbose Output:[/dim] {self.args.verbose}",
-            self._get_suffix_display(),
+            *self._settings_lines(),
         ]
 
         if state["filters"]:

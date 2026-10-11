@@ -407,8 +407,8 @@ own `*_model_id` key still wins over its tier:
 
 | Tier | Roles (`*_model_id` keys) |
 | --- | --- |
-| `default` | `fixing.fixing_model_id`, `processing.graph_extraction.extraction_model_id`, `processing.gleaning.graph_refinement_model_id`, `processing.claim_extraction.extraction_model_id`, `graph.community_detection.report_generation.report_generation_model_id`, `search.{entity_extraction,context_building,answer_generation}_model_id`, `evaluation.evaluation_model_id` |
-| `fast` | `processing.chunking.chunking_model_id`, `processing.translation.translation_model_id`, `processing.graph_extraction.description_summarization.summary_model_id`, `search.{translation,strategy_selection}_model_id`, `search.global_search.{community_relevance,map_reduce,map}_model_id`, `search.drift_search.{query_refinement,keyword_expansion,convergence_assessment,primer}_model_id` |
+| `default` | `fixing.fixing_model_id`, `processing.graph_extraction.extraction_model_id`, `processing.gleaning.graph_refinement_model_id`, `processing.claim_extraction.extraction_model_id`, `graph.community_detection.report_generation.report_generation_model_id`, `search.{entity_extraction,answer_generation}_model_id`, `evaluation.evaluation_model_id` |
+| `fast` | `processing.chunking.chunking_model_id`, `processing.translation.translation_model_id`, `processing.graph_extraction.description_summarization.summary_model_id`, `search.{translation,strategy_selection,query_rewrite}_model_id`, `search.global_search.{community_relevance,map_reduce,map}_model_id`, `search.drift_search.{query_refinement,keyword_expansion,convergence_assessment,primer}_model_id` |
 
 ```yaml
 aws:
@@ -1068,9 +1068,12 @@ For single-shot multi-turn from the CLI, reuse the same `--conversation-id` with
 
 Memory also tracks entities across turns: after each user message an LLM call
 (`search.entity_extraction_model_id`) extracts the entities it mentions, and the
-most relevant ones from earlier turns are added to the next query's entity focus.
-A follow-up such as "what about its suppliers?" therefore still retrieves around
-the entity named in an earlier turn.
+five most recently mentioned ones are added to the next query's entity focus.
+Before retrieval, a follow-up is rewritten from the history as a standalone
+question (one `search.query_rewrite_model_id` call per turn that has history;
+prompt override key `query_rewrite`), so "what about its suppliers?" is routed,
+searched and answered as a question that names the entity from the earlier
+turn.
 
 ---
 
@@ -1545,7 +1548,7 @@ custom_prompts:
 
 Available override keys (each `_system` + `_human`): `graph_extraction`,
 `description_summarization`, `claim_extraction`, `graph_refinement`,
-`community_report`, `answer_generation`, `context_building`,
+`community_report`, `answer_generation`, `query_rewrite`,
 `entity_extraction`, `keyword_expansion`, `query_refinement`,
 `drift_primer` (DRIFT primer, when `enable_primer` is set),
 `strategy_selection`, `keywords_extraction` (LightRAG dual-level),

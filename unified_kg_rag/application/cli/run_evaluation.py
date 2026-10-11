@@ -30,12 +30,12 @@ from unified_kg_rag.application.cli.provider_args import (
     add_provider_arguments,
     apply_provider_arguments,
 )
+from unified_kg_rag.application.cli.query_args import add_query_arguments
 from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain
 from unified_kg_rag.domain.models import (
     EvaluationGroundTruth,
     EvaluationSummary,
     SearchStrategy,
-    SearchType,
 )
 from unified_kg_rag.evaluation import EvaluationManager
 from unified_kg_rag.shared import (
@@ -139,39 +139,7 @@ class CommandLineInterface:
                 "a failed upload exits non-zero)."
             ),
         )
-        parser.add_argument(
-            "--suffix",
-            help="Suffix for multi-tenant or versioned indices",
-        )
-        parser.add_argument(
-            "--enable-thinking",
-            action="store_true",
-            help="Enable thinking mode for language model reasoning and step-by-step problem solving",
-        )
-        parser.add_argument(
-            "--search-strategy",
-            default="auto",
-            choices=[ss.value for ss in SearchStrategy],
-            help="Choose the search strategy",
-        )
-        parser.add_argument(
-            "--search-type",
-            default="hybrid",
-            choices=[st.value for st in SearchType],
-            help="Specify the search method",
-        )
-        parser.add_argument(
-            "--top-k",
-            type=int,
-            default=10,
-            help="Set the maximum number of search results",
-        )
-        parser.add_argument(
-            "--retrieval-multiplier",
-            type=int,
-            default=1,
-            help="Set the retrieval multiplier for increasing search depth",
-        )
+        add_query_arguments(parser)
         parser.add_argument(
             "--max-failure-rate",
             type=_failure_rate,

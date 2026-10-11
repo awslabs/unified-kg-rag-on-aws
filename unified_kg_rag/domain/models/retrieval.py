@@ -98,9 +98,12 @@ class SearchQuery(BaseModel):
     search_type: SearchType = Field(
         default=SearchType.HYBRID, description="Search strategy type to use"
     )
-    top_k: int = Field(default=10, description="Maximum number of results to return")
+    top_k: int = Field(
+        default=10, ge=1, description="Maximum number of results to return"
+    )
     retrieval_multiplier: int = Field(
         default=1,
+        ge=1,
         description="Multiplier for retrieval operations to increase search depth",
     )
     label_prefixes: str | list[str] | None = Field(
@@ -120,6 +123,7 @@ class SearchQuery(BaseModel):
     )
     max_tokens: int | None = Field(
         default=None,
+        ge=1,
         description="Retrieval context budget in tokens, capped at "
         "search.token_manager.max_context_tokens",
     )

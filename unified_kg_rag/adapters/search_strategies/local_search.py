@@ -156,7 +156,10 @@ class LocalSearchStrategy(BaseSearchStrategy):
             "..." if len(expanded_entity_ids) > 5 else "",
         )
 
-        text_unit_ids = self._rank_text_unit_ids(filtered_entity_nodes)
+        # Fusion keeps at most the text quota of them: fetch no more.
+        text_unit_ids = self._rank_text_unit_ids(filtered_entity_nodes)[
+            : self._per_type_quota(query.top_k)[SectionType.TEXT.value]
+        ]
         logger.debug(
             "Found %s text units: '%s%s'",
             len(text_unit_ids),
@@ -173,7 +176,7 @@ class LocalSearchStrategy(BaseSearchStrategy):
                 query, list(dict.fromkeys(candidate_entity_ids + expanded_entity_ids))
             ),
         )
-        all_results = {"graph_entities": expanded_entity_nodes, **text_units}
+        all_results = {"graph_entities": filtered_entity_nodes, **text_units}
         if bridge_relationships:
             all_results["bridge_relationships"] = bridge_relationships
         stats = {
@@ -397,11 +400,13 @@ class LocalSearchStrategy(BaseSearchStrategy):
         expanded_entity_nodes: list[RetrievalResult],
         frequency_threshold: int,
     ) -> list[RetrievalResult]:
-        filtered_nodes = []
-        for node in expanded_entity_nodes:
-            text_unit_count = cls._text_unit_count(node)
-            if 0 < text_unit_count <= frequency_threshold or text_unit_count == 0:
-                filtered_nodes.append(node)
+        # Too generic to be discriminative: dropped from the context as well
+        # as from the text-unit fan-out.
+        filtered_nodes = [
+            node
+            for node in expanded_entity_nodes
+            if cls._text_unit_count(node) <= frequency_threshold
+        ]
 
         original_count = len(expanded_entity_nodes)
         filtered_count = len(filtered_nodes)
@@ -438,31 +443,6 @@ class LocalSearchStrategy(BaseSearchStrategy):
         if not results:
             return {}
         return {"text_units": self._restore_rank(results, text_unit_ids)}
-
-    @staticmethod
-    def _restore_rank(
-        results: list[RetrievalResult], ranked_ids: list[str]
-    ) -> list[RetrievalResult]:
-        # This lookup is an ID-batch FETCH (`query=""`,
-        # LEXICAL, pure id filter), so OpenSearch returns the batch in index
-        # order with no meaningful relevance score (typically 0.0). That would
-        # throw away the graph-support ranking
-        # computed in `_rank_text_unit_ids`. Re-impose it here, and project it
-        # into `score` as a normalized descending value so the shared fusion /
-        # per-type-quota path (which sorts by score) preserves it instead of
-        # tie-breaking arbitrarily.
-        if not results or not ranked_ids:
-            return results
-        rank_of = {unit_id: i for i, unit_id in enumerate(ranked_ids)}
-        fallback = len(ranked_ids)
-        ordered = sorted(results, key=lambda r: rank_of.get(str(r.source), fallback))
-        total = len(ordered)
-        rescored: list[RetrievalResult] = []
-        for position, result in enumerate(ordered):
-            scored = result.model_copy()
-            scored.score = (total - position) / total
-            rescored.append(scored)
-        return rescored
 
     def _record_search_metrics(
         self,

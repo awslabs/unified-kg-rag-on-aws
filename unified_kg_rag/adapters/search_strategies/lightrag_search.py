@@ -147,8 +147,7 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
 
     The same class serves three modes, distinguished by the resolved
     :class:`SearchStrategy` passed via ``query.metadata['search_strategy']``
-    (the chain sets it; ``query.metadata['lightrag_mode']`` is still read for
-    direct callers; default ``mix``):
+    (the chain sets it; default ``mix``):
 
     - ``naive``: vector chunk retrieval only (no graph).
     - ``hybrid``: ll->entities + hl->relationships + one-hop cross-type
@@ -179,9 +178,7 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
         return max(self._lightrag_config.chunk_stream_top_k, top_k)
 
     def _mode(self, query: SearchQuery) -> str:
-        metadata = query.metadata
-        mode = metadata.get("search_strategy") or metadata.get("lightrag_mode")
-        return str(mode or SearchStrategy.MIX.value)
+        return str(query.metadata.get("search_strategy") or SearchStrategy.MIX.value)
 
     def _apply_keyword_fallback(self, query: SearchQuery) -> SearchQuery:
         """Force the raw query as a low-level keyword when both lists are empty.
@@ -575,7 +572,9 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
         results = await self._safe_aretrieve(
             self.document_retriever, search_query, "Linked chunk retrieval"
         )
-        return {"lightrag_linked_chunks": results} if results else {}
+        if not results:
+            return {}
+        return {"lightrag_linked_chunks": self._restore_rank(results, chunk_ids)}
 
     @staticmethod
     def _relationship_endpoint_ids(
