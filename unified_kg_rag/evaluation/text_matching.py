@@ -44,18 +44,39 @@ def _is_punctuation(ch: str) -> bool:
     return ch in _ASCII_PUNCTUATION or unicodedata.category(ch).startswith("P")
 
 
+_WORD_CHAR = re.compile(r"\w")
+# A space between an ASCII word and a lone capital letter ending a word: the
+# "A" of "Type A" or "Plan B", folded like "Type-A" into one token. A capital
+# starting a symbol ("C++", "C#") or an abbreviation ("U.S.") is not one.
+_SPACED_LONE_CAPITAL = re.compile(r"(?<=[A-Za-z0-9]) (?=[A-Z](?![\w+#]|\.\w))")
+
+
+def _is_lone_letter(text: str, index: int, step: int) -> bool:
+    """Whether ``text[index]`` is a letter forming a one-character word.
+
+    ``step`` is the direction away from the dash (-1 left, +1 right); the
+    word is one character long when the next character in that direction is
+    not a word character (or the text ends).
+    """
+    if not 0 <= index < len(text) or not text[index].isalpha():
+        return False
+    beyond = index + step
+    return not (0 <= beyond < len(text) and _WORD_CHAR.match(text[beyond]))
+
+
 def _split_or_join_dash(match: re.Match[str]) -> str:
     """A dash between words is a space, except next to a lone letter.
 
     "1990-1995" and "5-year" split into separate tokens, but "Type-A" and
     "A-1" stay one token: split, the lone "a" would be dropped as an article
-    and "Type-A" would match "Type-B".
+    and "Type-A" would match "Type-B". Only the characters next to the dash
+    are inspected, so the pass stays linear in the text length.
     """
-    left = re.search(r"\w+$", match.string[: match.start()])
-    right = re.match(r"\w+", match.string[match.end() :])
-    for token in (left.group(0) if left else "", right.group(0) if right else ""):
-        if len(token) == 1 and token.isalpha():
-            return ""
+    text = match.string
+    if _is_lone_letter(text, match.start() - 1, -1) or _is_lone_letter(
+        text, match.end(), 1
+    ):
+        return ""
     return " "
 
 
@@ -71,14 +92,19 @@ def normalize_answer(text: str) -> str:
     digits ("1.5" from "15"), a percent sign after a number ("3.5%" from
     "3.5") and a trailing "+"/"#" ("C++", "C#"). A dash between two words or
     numbers becomes a space, so "1990-1995" is two numbers and "5-year"
-    equals "5 year". Thousands separators are deleted, so "1,000" equals
+    equals "5 year"; next to a lone letter it is deleted instead, and so is
+    the space before a lone capital ending a word, so "Type-A", "Type A" and
+    "TypeA" are one token that does not match "Type B". A lowercase lone
+    letter after a space ("a vendor") is left alone, as an article or a
+    word. Thousands separators are deleted, so "1,000" equals
     "1000". Scores are therefore not comparable with leaderboard numbers
     computed by the official script.
 
     A text consisting only of articles ("A", "The") keeps them rather than
     normalizing to an empty string.
     """
-    text = unicodedata.normalize("NFKC", text).lower()
+    text = _SPACED_LONE_CAPITAL.sub("", unicodedata.normalize("NFKC", text))
+    text = text.lower()
     text = _THOUSANDS_SEPARATOR.sub("", text)
     text = _JOINING_DASH.sub(_split_or_join_dash, text)
     text = _LEADING_MINUS.sub("-", text)

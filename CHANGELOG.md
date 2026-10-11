@@ -273,6 +273,12 @@ Library API (Python callers and custom backends).
   grounding, community reports) no longer move them. Default configurations
   keep their keys; a configuration with a switched-off block whose other
   fields differ from the defaults re-keys once (#PR).
+- Answer matching normalizes text with many dashes in linear time: each dash
+  re-scanned the text before it, so a 70 KB answer with 4,000 dashes took
+  seconds. "Type A" now normalizes like "Type-A" (one token, `typea`)
+  instead of dropping the "A" as an article and matching "Type B"; a lone
+  lowercase letter after a space is still read as an article or a word
+  (#PR).
 - Queries on Ollama retry a transient error (HTTP 408/429/5xx, dropped
   connection, timeout) instead of failing on the first one: the Ollama client
   never retries, so query chains and Ollama embedding calls now get the
