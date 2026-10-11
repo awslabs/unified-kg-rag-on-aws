@@ -14,19 +14,32 @@ GenAI ``embeddings`` span when tracing is enabled, as on Bedrock.
 from __future__ import annotations
 
 import importlib
-from typing import Any, ClassVar
+from collections.abc import Awaitable, Callable
+from typing import Any, ClassVar, TypeVar
 
 from langchain_core.embeddings import Embeddings
 
+from unified_kg_rag.adapters.llm.retry import (
+    acall_with_transient_retry,
+    call_with_transient_retry,
+    looks_transient,
+)
 from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
-from unified_kg_rag.adapters.local.models import api_key_value, import_optional
+from unified_kg_rag.adapters.local.models import (
+    api_key_value,
+    import_optional,
+    local_transient_retry,
+)
 from unified_kg_rag.domain.models import Config, model_id_value
+from unified_kg_rag.domain.models.config import TransientRetryConfig
 from unified_kg_rag.domain.models.provider_config import EmbeddingProviderConfig
 from unified_kg_rag.ports.model_factory import EmbeddingModelInfo
 from unified_kg_rag.shared import EmbeddingModelError, get_logger
 from unified_kg_rag.shared.genai import embedding_span
 
 logger = get_logger(__name__)
+
+T = TypeVar("T")
 
 
 def truncate_to_estimate(text: str, max_tokens: int) -> str:
@@ -45,7 +58,12 @@ def truncate_to_estimate(text: str, max_tokens: int) -> str:
 
 
 class TracedEmbeddings(Embeddings):
-    """Wraps a LangChain ``Embeddings`` with input truncation and a span."""
+    """Wraps a LangChain ``Embeddings`` with input truncation and a span.
+
+    With a ``retry`` policy each embed call is retried on transient errors
+    (:func:`looks_transient`); the factories pass one only for a client that
+    does not retry on its own (Ollama).
+    """
 
     def __init__(
         self,
@@ -54,11 +72,33 @@ class TracedEmbeddings(Embeddings):
         model_id: str,
         provider_name: str,
         max_input_tokens: int,
+        retry: TransientRetryConfig | None = None,
     ) -> None:
         self.inner = inner
         self.model_id = model_id
         self.provider_name = provider_name
         self.max_input_tokens = max_input_tokens
+        self.retry = retry
+
+    def _call(self, func: Callable[[], T]) -> T:
+        if self.retry is None:
+            return func()
+        return call_with_transient_retry(
+            func,
+            is_transient=looks_transient,
+            operation=f"embed:{self.model_id}",
+            policy=self.retry,
+        )
+
+    async def _acall(self, func: Callable[[], Awaitable[T]]) -> T:
+        if self.retry is None:
+            return await func()
+        return await acall_with_transient_retry(
+            func,
+            is_transient=looks_transient,
+            operation=f"embed:{self.model_id}",
+            policy=self.retry,
+        )
 
     def _prepare(self, texts: list[str]) -> list[str]:
         return [truncate_to_estimate(text, self.max_input_tokens) for text in texts]
@@ -76,29 +116,32 @@ class TracedEmbeddings(Embeddings):
             return []
         prepared = self._prepare(texts)
         with self._span(prepared):
-            return self.inner.embed_documents(prepared)
+            return self._call(lambda: self.inner.embed_documents(prepared))
 
     def embed_query(self, text: str) -> list[float]:
         prepared = self._prepare([text])
         with self._span(prepared):
-            return self.inner.embed_query(prepared[0])
+            return self._call(lambda: self.inner.embed_query(prepared[0]))
 
     async def aembed_documents(self, texts: list[str]) -> list[list[float]]:
         if not texts:
             return []
         prepared = self._prepare(texts)
         with self._span(prepared):
-            return await self.inner.aembed_documents(prepared)
+            return await self._acall(lambda: self.inner.aembed_documents(prepared))
 
     async def aembed_query(self, text: str) -> list[float]:
         prepared = self._prepare([text])
         with self._span(prepared):
-            return await self.inner.aembed_query(prepared[0])
+            return await self._acall(lambda: self.inner.aembed_query(prepared[0]))
 
 
 class _LocalEmbeddingFactory:
     provider_name: ClassVar[str]
     kind: ClassVar[str]
+    # Whether the factory retries transient errors itself; False when the
+    # provider's client already does (OpenAI), so the attempts do not multiply.
+    retries_transient_errors: ClassVar[bool] = False
 
     def __init__(self, config: Config, *, transport: Any = None) -> None:
         """Args:
@@ -132,6 +175,11 @@ class _LocalEmbeddingFactory:
             model_id=name,
             provider_name=self.provider_name,
             max_input_tokens=self.settings.max_input_tokens,
+            retry=(
+                local_transient_retry(self.settings)
+                if self.retries_transient_errors
+                else None
+            ),
         )
 
     def _build(self, model_id: str) -> Embeddings:
@@ -139,7 +187,11 @@ class _LocalEmbeddingFactory:
 
 
 class OpenAICompatibleEmbeddingFactory(_LocalEmbeddingFactory):
-    """Embeddings from an OpenAI-compatible ``/v1/embeddings`` endpoint."""
+    """Embeddings from an OpenAI-compatible ``/v1/embeddings`` endpoint.
+
+    Transient errors are retried by the OpenAI client
+    (``providers.embedding.max_attempts``).
+    """
 
     provider_name = "openai"
     kind = "openai_compatible"
@@ -172,10 +224,15 @@ class OpenAICompatibleEmbeddingFactory(_LocalEmbeddingFactory):
 
 
 class OllamaEmbeddingFactory(_LocalEmbeddingFactory):
-    """Embeddings from an Ollama server (``/api/embed``)."""
+    """Embeddings from an Ollama server (``/api/embed``).
+
+    The Ollama client never retries, so each embed call is retried here on
+    transient errors (``providers.embedding.max_attempts`` attempts).
+    """
 
     provider_name = "ollama"
     kind = "ollama"
+    retries_transient_errors = True
 
     def _build(self, model_id: str) -> Embeddings:
         module = import_optional("langchain_ollama", self.kind)

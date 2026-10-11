@@ -263,6 +263,12 @@ Library API (Python callers and custom backends).
   (#158). Development tools live in the `dev` dependency group (#119).
 
 ### Fixed
+- Queries on Ollama retry a transient error (HTTP 408/429/5xx, dropped
+  connection, timeout) instead of failing on the first one: the Ollama client
+  never retries, so query chains and Ollama embedding calls now get the
+  framework's retry, `providers.llm.max_attempts` /
+  `providers.embedding.max_attempts` attempts. OpenAI-compatible servers keep
+  the OpenAI client's own retries, with no second layer (#PR).
 - Re-running `run-ingestion` with an existing `--pipeline-id` resumes again:
   the integrity check built its cache keys before the corpus fingerprint was
   known, so it reported every stage missing and prompted, which crashed

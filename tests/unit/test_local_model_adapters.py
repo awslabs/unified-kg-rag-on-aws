@@ -17,8 +17,13 @@ import httpx
 import pytest
 from langchain_core.documents import Document
 from langchain_core.messages import HumanMessage
+from langchain_core.output_parsers import StrOutputParser
 
-from unified_kg_rag.adapters.llm.chain_factory import setup_chain
+from unified_kg_rag.adapters.llm import retry as retry_module
+from unified_kg_rag.adapters.llm.chain_factory import (
+    TransientRetryRunnable,
+    setup_chain,
+)
 from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
 from unified_kg_rag.adapters.local.embeddings import (
     OllamaEmbeddingFactory,
@@ -41,7 +46,7 @@ from unified_kg_rag.adapters.local.token_counter import (
     local_token_counter_factory,
 )
 from unified_kg_rag.domain.models import Config, ModelPurpose
-from unified_kg_rag.domain.prompts import GraphExtractionPrompt
+from unified_kg_rag.domain.prompts import AnswerGenerationPrompt, GraphExtractionPrompt
 from unified_kg_rag.ports import (
     EmbeddingFactoryPort,
     LLMFactoryPort,
@@ -160,6 +165,32 @@ def _vector(i: int) -> list[float]:
     return [float(i + 1)] + [0.0] * (DIM - 1)
 
 
+class FailingServer(FakeServer):
+    """Answers the first ``failures`` requests with ``status``, then normally."""
+
+    def __init__(self, status: int, failures: int = 1) -> None:
+        super().__init__()
+        self.status = status
+        self.failures = failures
+        self.calls = 0
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        self.calls += 1
+        if self.calls <= self.failures:
+            # retry-after-ms keeps the OpenAI client's own backoff short.
+            return httpx.Response(
+                self.status,
+                json={"error": "synthetic failure"},
+                headers={"retry-after-ms": "1"},
+            )
+        return super().__call__(request)
+
+
+@pytest.fixture
+def no_backoff(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(retry_module, "backoff_delay", lambda *args: 0.0)
+
+
 # --- language models --------------------------------------------------------
 
 
@@ -225,6 +256,97 @@ def test_ollama_chat_round_trip_sends_the_context_window() -> None:
     assert body["options"]["num_ctx"] == 16384
     assert body["options"]["num_predict"] == 300
     assert body["options"]["temperature"] == 0.0
+
+
+_ANSWER_INPUT = {"query": "Who ships?", "context": "Vendor ships to Buyer."}
+
+
+def _query_chain(factory: Any, purpose: ModelPurpose = ModelPurpose.QUERY) -> Any:
+    return setup_chain(
+        factory=factory,
+        model_id="synthetic-chat",
+        prompt_class=AnswerGenerationPrompt,
+        parser=StrOutputParser(),
+        model_purpose=purpose,
+    )
+
+
+@pytest.mark.usefixtures("no_backoff")
+async def test_ollama_query_chain_retries_a_transient_error() -> None:
+    server = FailingServer(503)
+    factory = OllamaLanguageModelFactory(
+        _config("ollama"), transport=httpx.MockTransport(server)
+    )
+    chain = _query_chain(factory)
+
+    assert isinstance(chain, TransientRetryRunnable)
+    assert chain.retry.max_attempts == 3
+    assert await chain.ainvoke(_ANSWER_INPUT) == server.reply
+    assert server.calls == 2
+
+
+@pytest.mark.usefixtures("no_backoff")
+def test_ollama_query_chain_retries_a_transient_error_sync() -> None:
+    server = FailingServer(503)
+    factory = OllamaLanguageModelFactory(
+        _config("ollama"), transport=httpx.MockTransport(server)
+    )
+    assert _query_chain(factory).invoke(_ANSWER_INPUT) == server.reply
+    assert server.calls == 2
+
+
+@pytest.mark.usefixtures("no_backoff")
+async def test_ollama_query_chain_does_not_retry_a_client_error() -> None:
+    server = FailingServer(400)
+    factory = OllamaLanguageModelFactory(
+        _config("ollama"), transport=httpx.MockTransport(server)
+    )
+    with pytest.raises(Exception, match="synthetic failure"):
+        await _query_chain(factory).ainvoke(_ANSWER_INPUT)
+    assert server.calls == 1
+
+
+@pytest.mark.usefixtures("no_backoff")
+async def test_ollama_query_retry_follows_max_attempts() -> None:
+    server = FailingServer(503, failures=10)
+    factory = OllamaLanguageModelFactory(
+        _config("ollama", max_attempts=2), transport=httpx.MockTransport(server)
+    )
+    with pytest.raises(Exception, match="synthetic failure"):
+        await _query_chain(factory).ainvoke(_ANSWER_INPUT)
+    assert server.calls == 2
+    # max_attempts 1 turns the retry off.
+    off = OllamaLanguageModelFactory(_config("ollama", max_attempts=1))
+    assert not isinstance(_query_chain(off), TransientRetryRunnable)
+
+
+def test_ollama_ingestion_chain_keeps_the_batch_retry_only() -> None:
+    factory = OllamaLanguageModelFactory(_config("ollama"))
+    chain = _query_chain(factory, ModelPurpose.INGESTION)
+    assert not isinstance(chain, TransientRetryRunnable)
+
+
+async def test_openai_compatible_query_is_retried_by_its_client_only() -> None:
+    # The OpenAI client retries (max_attempts - 1 retries), so the chain gets
+    # no second retry layer that would multiply the attempts.
+    server = FailingServer(503, failures=10)
+    factory = OpenAICompatibleLanguageModelFactory(
+        _config("openai_compatible", max_attempts=2),
+        transport=httpx.MockTransport(server),
+    )
+    chain = _query_chain(factory)
+
+    assert not isinstance(chain, TransientRetryRunnable)
+    with pytest.raises(Exception, match="synthetic failure"):
+        await chain.ainvoke(_ANSWER_INPUT)
+    assert server.calls == 2
+
+    recovering = FailingServer(503)
+    factory = OpenAICompatibleLanguageModelFactory(
+        _config("openai_compatible"), transport=httpx.MockTransport(recovering)
+    )
+    assert await _query_chain(factory).ainvoke(_ANSWER_INPUT) == recovering.reply
+    assert recovering.calls == 2
 
 
 @pytest.mark.parametrize(
@@ -355,6 +477,39 @@ async def test_embeddings_async() -> None:
     assert len(await model.aembed_query("Vendor")) == DIM
     assert len(await model.aembed_documents(["a", "b"])) == 2
     assert await model.aembed_documents([]) == []
+
+
+@pytest.mark.usefixtures("no_backoff")
+async def test_ollama_embeddings_retry_a_transient_error() -> None:
+    server = FailingServer(503)
+    factory = OllamaEmbeddingFactory(
+        _config("ollama"), transport=httpx.MockTransport(server)
+    )
+    assert len(await factory.get_model("synthetic-embed").aembed_query("a")) == DIM
+    assert server.calls == 2
+
+    server = FailingServer(503)
+    factory = OllamaEmbeddingFactory(
+        _config("ollama"), transport=httpx.MockTransport(server)
+    )
+    assert len(factory.get_model("synthetic-embed").embed_documents(["a"])) == 1
+    assert server.calls == 2
+
+
+@pytest.mark.usefixtures("no_backoff")
+def test_ollama_embeddings_do_not_retry_a_client_error() -> None:
+    server = FailingServer(400)
+    factory = OllamaEmbeddingFactory(
+        _config("ollama"), transport=httpx.MockTransport(server)
+    )
+    with pytest.raises(Exception, match="synthetic failure"):
+        factory.get_model("synthetic-embed").embed_query("a")
+    assert server.calls == 1
+
+
+def test_openai_compatible_embeddings_leave_retries_to_the_client() -> None:
+    factory = OpenAICompatibleEmbeddingFactory(_config("openai_compatible"))
+    assert factory.get_model("synthetic-embed").retry is None
 
 
 def test_embedding_dimension_mismatch_fails() -> None:
