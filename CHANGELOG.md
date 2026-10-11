@@ -1754,6 +1754,18 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   whole conversation to every follow-up's entity focus, so later turns kept
   retrieving around old entities. It now keeps the most recently mentioned
   ones, newest first (#PR).
+- Community report hits put their title and summary into the context twice:
+  `full_content` already opens with both, and the retriever appended them
+  again. DRIFT's 200-character report excerpts then showed mostly the title
+  and rating. A report hit's content is now its `full_content` alone (#PR).
+- Concurrent sub-queries of one search embedded the same query text once each:
+  the embedding cache was filled only after the call returned. They now share
+  one in-flight embedding call per text (#PR).
+- Neptune graph expansion silently kept only the first 10 seed entities
+  (`NeptuneRetriever.SEED_NODE_LIMIT`), dropping the rest of the candidates
+  local search and DRIFT passed. Explicit seed ids are all expanded, and
+  name-matched seeds follow `top_k * retrieval_multiplier`. Also removes an
+  unreachable hybrid-query branch (#PR).
 
 ### Security
 - The task role drops the unused `neptune-db:GetEngineStatus`,

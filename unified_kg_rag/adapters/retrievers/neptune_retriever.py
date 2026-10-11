@@ -37,7 +37,6 @@ logger = get_logger(__name__)
 
 
 class NeptuneRetriever(BaseGraphRAGRetriever):
-    SEED_NODE_LIMIT: ClassVar[int] = 10
     DEFAULT_MAX_HOPS: ClassVar[int] = 3
 
     def __init__(
@@ -207,10 +206,11 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
         filters, exempt = self._scope_filters_to_labels({label: kind}, query.filters)
         traversal = self._apply_filters(traversal, filters, exempt)
 
+        # As many name-matched seeds as the query asks for results.
         traversal = (
             traversal.order()
             .by(order_by_prop, Order.desc)
-            .limit(self.SEED_NODE_LIMIT)
+            .limit(query.top_k * query.retrieval_multiplier)
             .valueMap(True)
         )
 
@@ -335,7 +335,9 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
     async def _traverse_from_entities(
         self, g: GraphTraversalSource, seeds: list[dict[str, Any]], query: SearchQuery
     ) -> list[dict[str, Any]]:
-        seed_ids = [s["id"] for s in seeds if "id" in s][: self.SEED_NODE_LIMIT]
+        # Every seed: the caller chose them (an id filter) or the seed lookup
+        # already bounded them; a fixed cap here dropped seeds silently.
+        seed_ids = [s["id"] for s in seeds if "id" in s]
         if not seed_ids:
             return []
 

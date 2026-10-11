@@ -476,6 +476,20 @@ def test_extract_content_dedups_parts(retriever) -> None:
     assert "Summary: a summary" in content
 
 
+def test_extract_content_report_is_its_full_content_once(retriever) -> None:
+    # full_content already opens with the title and summary; repeating them
+    # spent the budget twice and DRIFT's character cut kept only the repeats.
+    full = "# Vendor network\n\nVendor supplies Buyer.\n\n## Parts\nWeekly."
+    content = retriever._extract_content(
+        {
+            "name": "Vendor network",
+            "summary": "Vendor supplies Buyer.",
+            "full_content": full,
+        }
+    )
+    assert content == full
+
+
 def test_extract_content_translated_suppresses_raw_text(retriever, config) -> None:
     lang = config.processing.translation.target_language.value
     content = retriever._extract_content(
@@ -552,6 +566,7 @@ async def test_query_embeddings_are_cached_per_text(retriever) -> None:
     embedder = _CountingEmbedder()
     object.__setattr__(retriever, "_embedding_model", embedder)
     object.__setattr__(retriever, "_query_embedding_cache", OrderedDict())
+    object.__setattr__(retriever, "_pending_embeddings", {})
 
     fields = ["text_embedding"]
     first = await retriever._get_query_vector("Vendor Buyer", SearchType.HYBRID, fields)
@@ -563,6 +578,37 @@ async def test_query_embeddings_are_cached_per_text(retriever) -> None:
     assert embedder.calls == ["Vendor Buyer", "Invoice"]
 
 
+async def test_concurrent_sub_queries_share_one_embedding_call(retriever) -> None:
+    # Sub-queries of one search run concurrently: all but the first used to
+    # miss the cache (filled only after the await) and embed again.
+    import asyncio
+    from collections import OrderedDict
+
+    from unified_kg_rag.domain.models import SearchType
+
+    class _SlowEmbedder(_CountingEmbedder):
+        async def aembed_query(self, text: str) -> list[float]:
+            await asyncio.sleep(0.01)
+            return await super().aembed_query(text)
+
+    embedder = _SlowEmbedder()
+    object.__setattr__(retriever, "_embedding_model", embedder)
+    object.__setattr__(retriever, "_query_embedding_cache", OrderedDict())
+    object.__setattr__(retriever, "_pending_embeddings", {})
+
+    fields = ["text_embedding"]
+    vectors = await asyncio.gather(
+        *(
+            retriever._get_query_vector("Vendor", SearchType.HYBRID, fields)
+            for _ in range(4)
+        )
+    )
+
+    assert embedder.calls == ["Vendor"]
+    assert all(v == vectors[0] for v in vectors)
+    assert retriever._pending_embeddings == {}
+
+
 async def test_query_embedding_cache_is_bounded(retriever, monkeypatch) -> None:
     from collections import OrderedDict
 
@@ -571,6 +617,7 @@ async def test_query_embedding_cache_is_bounded(retriever, monkeypatch) -> None:
     embedder = _CountingEmbedder()
     object.__setattr__(retriever, "_embedding_model", embedder)
     object.__setattr__(retriever, "_query_embedding_cache", OrderedDict())
+    object.__setattr__(retriever, "_pending_embeddings", {})
     monkeypatch.setattr(OpenSearchRetriever, "QUERY_EMBEDDING_CACHE_SIZE", 2)
 
     fields = ["text_embedding"]
