@@ -247,6 +247,10 @@ Library API (Python callers and custom backends).
   descriptions; claims no longer resolve onto a different entity; CJK names
   with a different head character no longer merge; communities no longer
   duplicate singletons across levels (#201-#203, #213, #214).
+- Claims: when no extracted claim resolves to an entity, or claim resolution
+  does not run, no claim is indexed; the unresolved claims (no subject or
+  object id) no longer reach the graph, the claims index or the document
+  lineage (#PR).
 - Parsing: the LLM XML parser keeps `&`, `<`, repeated siblings and
   sections with a missing closing tag; truncated responses fail instead of
   parsing as partial successes (#165, #174, #182, #213).
