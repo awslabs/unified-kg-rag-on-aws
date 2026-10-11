@@ -204,7 +204,7 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   of plain-text corpora change, so the chunking stage re-runs (#213).
 - Adopting registry records stored under a legacy key writes them under
   their new keys in one batched write (`DocStatusPort.put_many`) instead of
-  one request per record (#PR).
+  one request per record (#214).
 - **Breaking:** entity resolution no longer merges names that are only
   similar by default. Names merge when they are equal after normalization,
   legal-form removal ("Acme Inc" / "Acme") and dense-script spacing; the new
@@ -216,7 +216,7 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   delta names against the stored names with the same rule, so a full build
   and an incremental build group the same names, and a merged group takes the
   name cited by the most text units instead of the first one seen. Stage
-  caches from graph resolution on re-key once (#PR).
+  caches from graph resolution on re-key once (#214).
 - `indexing.opensearch.embedding_model_id`, `evaluation.embedding_model_id`
   and `search.reranking.rerank_model_id` accept any model name when a
   non-Bedrock provider serves the role; with the Bedrock providers (the
@@ -591,19 +591,19 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
 - **Breaking** for custom doc-status stores: the fallbacks for a store
   without `get_many`, `put_many`, `record_fits` or the lineage-overflow
   methods. Every `DocStatusPort` method is called directly; a store that
-  subclasses the Protocol inherits its defaults (#PR).
+  subclasses the Protocol inherits its defaults (#214).
 - **Breaking:** `IncrementalIndexer.plan`, `prune_changed` and
   `remove_deleted`, which only tests called. Use `detect_delta` and
   `remove_changed_and_deleted` (one removal plan over changed and deleted
-  documents) (#PR).
+  documents) (#214).
 - `merge_communities`, `merge_community_reports` and `DeltaMergeResult`
   from `domain.ingestion.merge`: nothing called them, since content-derived
-  community ids let a delta run upsert its communities and reports (#PR).
+  community ids let a delta run upsert its communities and reports (#214).
 - `graph.community_detection.report_generation.include_statistics` and
   `include_key_entities`: they only reached the report prompt as the text
-  "True"/"False" and changed nothing (#PR).
+  "True"/"False" and changed nothing (#214).
 - `indexing.cross_run_fuzzy_merge`: the incremental merge follows
-  `processing.fuzzy_entity_resolution`, the full build's setting (#PR).
+  `processing.fuzzy_entity_resolution`, the full build's setting (#214).
 - Gleaning config keys `convergence_threshold`, `quality_threshold`,
   `min_improvement_threshold`, `quality_completeness_weight`,
   `initial_quality_entity_scale`, `initial_quality_relationship_scale` and
@@ -843,7 +843,7 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   The findings count per `content_length` has one source
   (`REPORT_FINDINGS`: short 5-7, medium 7-10, long 10-15) for the prompt,
   the output-token floor and the config description, which named paragraph
-  counts. A report rank of 0 is indexed as 0, not 1 (#PR).
+  counts. A report rank of 0 is indexed as 0, not 1 (#214).
 - Neptune writes: a relationship edge or a community's `MemberOf` edges whose
   drop failed are no longer re-added next to the old ones (duplicates); they
   count as failed writes, so the documents are retried. Relationship edges
@@ -852,7 +852,7 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   without recounting the label and sleeping 0.5 s per batch.
   `find_incident_relationship_ids` batches its ids and raises on a failed
   read instead of returning none, which left orphaned relationship documents
-  in OpenSearch; the removal then fails and is retried (#PR).
+  in OpenSearch; the removal then fails and is retried (#214).
 - **Behaviour change:** a relative `providers.doc_status.sqlite_path` is
   resolved against the config file's directory instead of the working
   directory, so a run started elsewhere no longer opens a new, empty registry;
@@ -861,16 +861,16 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   An incremental run whose registry lists indexed documents of its namespace
   that the graph store no longer holds (an in-memory Gremlin Server
   restarted) now fails before writing anything and asks for
-  `indexing.reset: true`, instead of treating them as unchanged (#PR).
+  `indexing.reset: true`, instead of treating them as unchanged (#214).
 - A delta entity that merged into a stored one under another id no longer
   rewrites (and re-summarizes) every edge of the stored entity: its incident
   edges are still read to find matches, but only the edges a delta edge
-  became or merged into are written (#PR).
+  became or merged into are written (#214).
 - Removing a changed or deleted document's text units from the entities and
   relationships it shares with other documents no longer re-embeds them: the
   OpenSearch copies get a partial update of `text_unit_ids` (and `weight`)
   through the new `VectorIndexer.update_entity_lineage` /
-  `update_relationship_lineage` (default: re-upsert) (#PR).
+  `update_relationship_lineage` (default: re-upsert) (#214).
 - **Behaviour change:** entity and relationship `rank` are now computed (MS
   GraphRAG parity): an entity's rank is its degree and a relationship's the
   sum of its endpoints' degrees. They stayed 1, so degree-first ordering and
@@ -879,29 +879,29 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   recomputes them for the items it writes over the stored graph
   (`GraphIndexer.read_neighbor_ids`, default `{}`), and a stored entity the
   delta does not write keeps its rank until the next full build. A rank of 0
-  is indexed as 0, not 1 (#PR).
+  is indexed as 0, not 1 (#214).
 - Community detection no longer copies a cluster that Leiden leaves on its
   own (often an isolated one) to every coarser level as a parent identical to
   its only child; such parents were embedded, indexed and returned once per
   level. The cluster keeps its level and joins the first coarser community
-  that merges it, so the single-child report reuse is removed (#PR).
+  that merges it, so the single-child report reuse is removed (#214).
 - A full rebuild now replaces an index type that comes out empty: with no
   claims, community reports or communities in run 2, OpenSearch swaps the
   alias onto an empty index and Neptune clears the label instead of serving
   run 1's data. **Breaking** for custom indexers: the full-build `index_*`
   methods of `VectorIndexer` and `index_entities`/`index_communities` of
   `GraphIndexer` take a keyword-only `suffixes` argument naming the suffixes
-  they replace even without items (#PR).
+  they replace even without items (#214).
 - An incremental commit whose entities or relationships merged into stored
   ones under another id now points the delta's communities
   (`entity_ids`/`relationship_ids`, deduplicated) and claims
   (`subject_id`/`object_id`) at the kept ids; they referenced ids that were
-  never written (#PR).
+  never written (#214).
 - Relationships of another type or in the other direction between the same
   two entities no longer collapse into one community-graph edge (the last one
   inserted). The edge sums their weights and lists every relationship, so
   Leiden weights do not depend on input order, `Community.relationship_ids`
-  keeps them all and the report prompt receives each one (#PR).
+  keeps them all and the report prompt receives each one (#214).
 - With `entity_grounding` enabled, the check whether a gleaned
   relationship's endpoint name occurs in its unit (#202) now accepts common
   spelling variants and no longer accepts partial words. Both sides drop
