@@ -2,17 +2,15 @@
 # SPDX-License-Identifier: Apache-2.0
 import time
 from collections import defaultdict
-from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel
 
 from unified_kg_rag.domain.ingestion.base_resolver import BaseResolver, FuzzyMatcher
-from unified_kg_rag.domain.models import Claim, Config, Entity
+from unified_kg_rag.domain.models import Claim, Entity
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.utils import entity_key
-from unified_kg_rag.shared.utils.concurrency import ContextThreadPoolExecutor
 
 # See graph_resolver: log progress every N items instead of pulling tqdm
 # (a terminal-UI dependency) into the technology-agnostic domain layer.
@@ -43,47 +41,47 @@ def claim_identity_suffix(start_date: str | None, end_date: str | None) -> str:
     return f":{start}:{end}" if start or end else ""
 
 
-def resolve_entity_reference_task(
+def resolve_entity_reference(
     entity_reference: str,
-    normalized_name_to_id: dict[str, str],
-    normalized_name_to_original_name: dict[str, str],
+    names_by_key: dict[str, str],
     fuzzy_matcher: FuzzyMatcher,
 ) -> str | None:
-    if not entity_reference or not entity_reference.strip():
+    """Return the name of the entity ``entity_reference`` denotes, else None.
+
+    Tried in order: the same ``entity_key``, then the guarded fuzzy match of
+    :meth:`FuzzyMatcher.find_all_matches` (spelling and legal-form variants
+    share a ``compact_name_key`` and score 1.0; a candidate whose identifier
+    tokens or head character differ is never returned), the best score
+    winning. The guards matter as much here as in entity grouping: "PO 1003"
+    must not become "PO 1002", and a literal value must stay a literal value.
+    """
+    key = entity_key(entity_reference)
+    if not key:
         return None
-
-    normalized_reference = entity_key(entity_reference)
-    if normalized_reference in normalized_name_to_id:
-        return normalized_name_to_original_name[normalized_reference]
-
-    match_result = fuzzy_matcher.find_best_match(entity_reference)
-    if match_result:
-        matched_name, _ = match_result
-        if matched_name in fuzzy_matcher.candidates:
-            return matched_name
-
-    return None
+    if key in names_by_key:
+        return names_by_key[key]
+    matches = fuzzy_matcher.find_all_matches(entity_reference)
+    if not matches:
+        return None
+    # Equal scores break on the name, so the choice does not depend on the
+    # order the LSH returns candidates in.
+    return min(matches, key=lambda match: (-match[1], match[0]))[0]
 
 
-def resolve_single_claim_task(
+def resolve_single_claim(
     claim: Claim,
-    normalized_name_to_id: dict[str, str],
-    normalized_name_to_original_name: dict[str, str],
+    names_by_key: dict[str, str],
+    ids_by_key: dict[str, str],
     fuzzy_matcher: FuzzyMatcher,
 ) -> Claim | None:
-    resolved_subject_name = resolve_entity_reference_task(
-        claim.subject_name,
-        normalized_name_to_id,
-        normalized_name_to_original_name,
-        fuzzy_matcher,
-    )
-    resolved_object_name = resolve_entity_reference_task(
-        claim.object_name,
-        normalized_name_to_id,
-        normalized_name_to_original_name,
-        fuzzy_matcher,
-    )
+    """Point a claim's subject (required) and object (optional) at entities.
 
+    ``names_by_key`` / ``ids_by_key`` map an ``entity_key`` to the entity's
+    name and id; ``fuzzy_matcher`` holds the entity names as candidates.
+    """
+    subject_name = resolve_entity_reference(
+        claim.subject_name, names_by_key, fuzzy_matcher
+    )
     # A claim is anchored to its SUBJECT entity. The object may legitimately be a
     # literal value (a date, amount, status, ...) rather than an extracted
     # entity — claim types like PERFORMANCE/ATTRIBUTE/FINANCIAL/TEMPORAL routinely
@@ -91,28 +89,19 @@ def resolve_single_claim_task(
     # extraction. So we only require the subject to resolve; if the object does
     # not resolve to an entity we keep the claim with object_id=None and the
     # original object text preserved as a literal value.
-    if resolved_subject_name is None:
+    if subject_name is None:
         logger.debug("Dropping claim: subject not an entity: '%s'", claim.subject_name)
         return None
 
-    subject_id = normalized_name_to_id.get(entity_key(resolved_subject_name))
-    if subject_id is None:
-        return None
-
-    if resolved_object_name is not None:
-        object_id = normalized_name_to_id.get(entity_key(resolved_object_name))
-        object_name = resolved_object_name
-    else:
-        # Object is a literal value: preserve the original text, no entity id.
-        object_id = None
-        object_name = claim.object_name
-
+    object_name = resolve_entity_reference(
+        claim.object_name, names_by_key, fuzzy_matcher
+    )
     return claim.model_copy(
         update={
-            "subject_id": subject_id,
-            "subject_name": resolved_subject_name,
-            "object_id": object_id,
-            "object_name": object_name,
+            "subject_id": ids_by_key[entity_key(subject_name)],
+            "subject_name": subject_name,
+            "object_id": ids_by_key[entity_key(object_name)] if object_name else None,
+            "object_name": object_name or claim.object_name,
         }
     )
 
@@ -134,16 +123,6 @@ class ClaimResolutionStats(BaseModel):
 
 
 class ClaimResolver(BaseResolver):
-    def __init__(
-        self,
-        config: Config,
-        max_workers: int | None = None,
-        use_process_pool: bool = True,
-    ) -> None:
-        super().__init__(
-            config, max_workers=max_workers, use_process_pool=use_process_pool
-        )
-
     def resolve(
         self, claims: list[Claim], entities: list[Entity], *args: Any, **kwargs: Any
     ) -> tuple[list[Claim], ClaimResolutionStats]:
@@ -165,27 +144,21 @@ class ClaimResolver(BaseResolver):
         method = self.config.processing.resolution_method.value
         logger.info("Using resolution method: '%s'", method)
 
-        normalized_name_to_id: dict[str, str] = {}
-        normalized_name_to_original_name: dict[str, str] = {}
-
+        names_by_key: dict[str, str] = {}
+        ids_by_key: dict[str, str] = {}
         for entity in entities:
-            normalized_name = entity_key(entity.name)
-            if normalized_name:
-                normalized_name_to_id[normalized_name] = entity.id
-                normalized_name_to_original_name[normalized_name] = entity.name
+            key = entity_key(entity.name)
+            if key:
+                names_by_key[key] = entity.name
+                ids_by_key[key] = entity.id
 
-        logger.info(
-            "Created normalized entity map with %s entries.", len(normalized_name_to_id)
+        logger.info("Created normalized entity map with %s entries.", len(ids_by_key))
+
+        fuzzy_matcher = self._create_fuzzy_matcher(
+            candidate_texts=list(names_by_key.values())
         )
-
-        entity_names = list(normalized_name_to_original_name.values())
-        fuzzy_matcher = self._create_fuzzy_matcher(candidate_texts=entity_names)
-
         resolved_claims = self._resolve_all_claims(
-            claims,
-            normalized_name_to_id,
-            normalized_name_to_original_name,
-            fuzzy_matcher,
+            claims, names_by_key, ids_by_key, fuzzy_matcher
         )
 
         claim_groups = self._group_similar_claims(resolved_claims)
@@ -210,53 +183,33 @@ class ClaimResolver(BaseResolver):
     def _resolve_all_claims(
         self,
         claims: list[Claim],
-        normalized_name_to_id: dict[str, str],
-        normalized_name_to_original_name: dict[str, str],
+        names_by_key: dict[str, str],
+        ids_by_key: dict[str, str],
         fuzzy_matcher: FuzzyMatcher,
     ) -> list[Claim]:
-        if not claims:
-            return []
+        """Resolve every claim in input order, in this process.
 
+        A lookup is a dict hit or one guarded fuzzy query, so a worker pool
+        costs more than it saves (each task would ship the matcher and the
+        entity maps). Input order also fixes which claim of a group is the
+        merge's primary.
+        """
         resolved_claims = []
-        executor_class = (
-            ProcessPoolExecutor if self.use_process_pool else ContextThreadPoolExecutor
-        )
+        total = len(claims)
+        for done, claim in enumerate(claims, start=1):
+            if self.show_progress and done % _RESOLVE_PROGRESS_EVERY == 0:
+                logger.info("  ...resolved %s/%s claims", done, total)
+            resolved_claim = resolve_single_claim(
+                claim, names_by_key, ids_by_key, fuzzy_matcher
+            )
+            if resolved_claim:
+                resolved_claims.append(resolved_claim)
 
-        with executor_class(max_workers=self.max_workers) as executor:
-            future_to_claim = {
-                executor.submit(
-                    resolve_single_claim_task,
-                    claim,
-                    normalized_name_to_id,
-                    normalized_name_to_original_name,
-                    fuzzy_matcher,
-                ): claim
-                for claim in claims
-            }
-
-            unresolved_count = 0
-            total = len(claims)
-            for done, future in enumerate(as_completed(future_to_claim), start=1):
-                if self.show_progress and done % _RESOLVE_PROGRESS_EVERY == 0:
-                    logger.info("  ...resolved %s/%s claims", done, total)
-                original_claim = future_to_claim[future]
-                try:
-                    resolved_claim = future.result()
-                    if resolved_claim:
-                        resolved_claims.append(resolved_claim)
-                    else:
-                        unresolved_count += 1
-                except Exception as e:
-                    logger.error("Error resolving claim '%s': %s", original_claim.id, e)
-                    unresolved_count += 1
-
-            if unresolved_count > 0:
-                logger.warning(
-                    "Failed to resolve %s out of %s claims",
-                    unresolved_count,
-                    len(claims),
-                )
-
+        unresolved_count = total - len(resolved_claims)
+        if unresolved_count > 0:
+            logger.warning(
+                "Failed to resolve %s out of %s claims", unresolved_count, total
+            )
         return resolved_claims
 
     @staticmethod

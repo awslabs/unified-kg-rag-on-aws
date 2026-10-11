@@ -730,6 +730,17 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
 - The ECR lifecycle rule (keep 10 images, any tag) could expire the image the
   task definition runs; the deployed `image_tag` is now exempt. IAM ARNs use
   the stack partition instead of a hardcoded `arn:aws:` (#211).
+- Claim resolution no longer rewrites a claim onto a different entity. A
+  subject or object resolves by its `entity_key`, then through the guarded
+  fuzzy match entity grouping uses (spelling and legal-form variants match;
+  differing identifier tokens or head characters never do), else the object
+  stays a literal value. The abbreviation, token-Jaccard and partial-match
+  tiers that turned "PO 1003 -> Vendor B" into "PO 1002 -> Vendor A" are
+  removed with `FuzzyMatcher.find_best_match` and its
+  `include_partial_matching` option. Claims resolve in this process, in
+  input order, instead of shipping the matcher to a process pool per claim
+  (10,000 claims against 5,000 entities: 1.8 s, from over 10 minutes), so
+  the merged claim of a group no longer depends on completion order (#PR).
 - With `entity_grounding` enabled, the check whether a gleaned
   relationship's endpoint name occurs in its unit (#202) now accepts common
   spelling variants and no longer accepts partial words. Both sides drop
