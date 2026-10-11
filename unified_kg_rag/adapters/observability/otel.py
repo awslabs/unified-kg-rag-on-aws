@@ -310,18 +310,21 @@ def _sdk_tracer_provider(
 
 def _otlp_exporter(config: ObservabilityConfig, settings: ExportSettings) -> Any:
     """The OTLP span exporter for the resolved protocol and settings."""
+    # Typed as Any: the exporters' overloads take precise keyword types that a
+    # settings mapping cannot express (checked only when the extra is installed).
+    kwargs: dict[str, Any] = settings.exporter_kwargs()
     try:
         if settings.protocol == "grpc":
             from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (
                 OTLPSpanExporter as GrpcExporter,
             )
 
-            return GrpcExporter(**settings.exporter_kwargs())
+            return GrpcExporter(**kwargs)
         from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
             OTLPSpanExporter as HttpExporter,
         )
 
-        return HttpExporter(**settings.exporter_kwargs())
+        return HttpExporter(**kwargs)
     except ImportError as e:
         raise ConfigurationError(
             f"observability.backend '{config.backend.value}' needs the OTLP "

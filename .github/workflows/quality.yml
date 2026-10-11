@@ -51,7 +51,7 @@ jobs:
 
       - name: Sync dependencies
         # --locked: fail if uv.lock is stale relative to pyproject.toml.
-        run: uv sync --locked
+        run: uv sync --locked --extra otel
 
       - name: Ruff (lint)
         run: uv run ruff check unified_kg_rag tests iac
