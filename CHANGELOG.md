@@ -313,6 +313,10 @@ Library API (Python callers and custom backends).
 - `--backend local` over a config file of another backend resolves the
   relative SQLite registry path against the config file, not the working
   directory (#PR).
+- An `s3://` source scope with and without a trailing slash is one corpus: a
+  run whose spelling the registry does not hold, but the other one, keys its
+  documents by the stored spelling instead of re-indexing the corpus beside
+  the stored copy, and `--retire-source-scope` reaches either spelling (#PR).
 - An incremental run that skips unchanged documents no longer replaces
   `visualization_data.json` with a graph of its delta only: it skips the
   export and the render and logs how to visualize the whole graph (a full

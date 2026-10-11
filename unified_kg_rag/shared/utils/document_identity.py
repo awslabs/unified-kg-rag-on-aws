@@ -53,6 +53,7 @@ _ID_HASH_LENGTH = 32
 
 # ``scheme://`` at the start of a source scope (``s3://bucket/prefix/``).
 _URI_SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*://")
+_S3_URI = re.compile(r"^s3://", re.IGNORECASE)
 
 
 def normalize_source_path(file_path: str | Path) -> str:
@@ -130,13 +131,21 @@ def is_local_path_scope(source_scope: str) -> bool:
 
 
 def normalize_source_scope(source_scope: str) -> str:
-    """``source_scope`` as the registry stores it.
+    """``source_scope`` in the form two spellings of one corpus compare equal.
 
     A local path loses trailing and repeated slashes (the pipeline stores the
-    resolved directory, which has neither); a URI or a name is kept as is,
-    since a trailing slash can be part of an ``s3://`` prefix.
+    resolved directory, which has neither). An ``s3://`` URI loses its
+    trailing slashes: ``aws s3 sync`` (the container entrypoint) reads
+    ``s3://bucket/corpus`` and ``s3://bucket/corpus/`` as the same folder.
+    Any other URI or a name is kept as is.
+
+    Records keep the spelling their run used (it is part of their key), so
+    this is for comparing scopes, not for keying them.
     """
     scope = source_scope.strip()
+    if _S3_URI.match(scope):
+        stripped = scope.rstrip("/")
+        return stripped if len(stripped) > len("s3://") else scope
     if scope.startswith("/") and not _URI_SCHEME.match(scope):
         return PurePosixPath(scope).as_posix()
     return scope

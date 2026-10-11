@@ -95,9 +95,12 @@ run's [index suffix](./user-guide.md#index-suffix) and its source scope
 (`processing.document_parsing.source_scope`, by default the resolved source
 directory; the container entrypoint sets it to the `s3://` source URI), and
 both are part of each document's registry key, so two corpora on one suffix
-never share a record even for files with the same relative path. A file
-missing from the source is treated as deleted, and its exclusive artifacts are
-removed. Therefore:
+never share a record even for files with the same relative path. An `s3://`
+URI with and without a trailing slash (`s3://bucket/corpus/`,
+`s3://bucket/corpus`) is one scope: a run whose spelling the registry does
+not hold, but the other one, uses the stored spelling and logs a WARNING. A
+file missing from the source is treated as deleted, and its exclusive
+artifacts are removed. Therefore:
 
 - keep the same source directory (or a fixed `source_scope`) for a corpus.
   Moving a corpus with the default scope changes the scope; the old scope's

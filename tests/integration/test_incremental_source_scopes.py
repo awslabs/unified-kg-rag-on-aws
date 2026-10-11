@@ -551,3 +551,54 @@ def test_a_configured_scope_with_a_trailing_slash_can_be_retired(
     assert {r.scope for r in registry.list_all()} == {_scope_of(context)}
     assert stack.texts() == {DEPOT_TEXT}
     assert stack.entity_names() == {"Depot"}
+
+
+@pytest.mark.parametrize(
+    ("first_spelling", "second_spelling"),
+    [
+        ("s3://bucket/corpus/", "s3://bucket/corpus"),
+        ("s3://bucket/corpus", "s3://bucket/corpus/"),
+    ],
+    ids=["slash-then-none", "none-then-slash"],
+)
+def test_both_spellings_of_an_s3_scope_are_one_corpus(
+    registry, tmp_path, first_spelling, second_spelling
+) -> None:
+    # aws s3 sync reads both spellings as one folder: a run with the other
+    # spelling must neither re-extract the corpus beside its stored copy nor
+    # lose track of the stored records (deletion included).
+    stack = ScopeStack(registry, tmp_path)
+    parsing = stack.config.processing.document_parsing
+    source = write_corpus(
+        tmp_path / "src", {"contract.txt": A_TEXT, "depot.txt": DEPOT_TEXT}
+    )
+    parsing.source_scope = first_spelling
+    first = stack.run(source)
+
+    parsing.source_scope = second_spelling
+    write_corpus(source, {"contract.txt": A_TEXT})
+    context = stack.run(source)
+
+    delta = context.incremental_delta
+    assert delta.new == delta.changed == []
+    assert len(delta.unchanged) == 1 and len(delta.deleted) == 1
+    assert not stack.model.extractions
+    assert _scope_of(context) == _scope_of(first)
+    assert {r.scope for r in registry.list_all()} == {_scope_of(first)}
+    assert stack.texts() == {A_TEXT}
+
+
+def test_retiring_an_s3_scope_reaches_either_spelling(registry, tmp_path) -> None:
+    stack = ScopeStack(registry, tmp_path)
+    parsing = stack.config.processing.document_parsing
+    source = write_corpus(tmp_path / "src", {"contract.txt": A_TEXT})
+    parsing.source_scope = "s3://bucket/old/"
+    stack.run(source)
+
+    parsing.source_scope = "s3://bucket/new"
+    stack.config.indexing.retire_source_scopes = ["s3://bucket/old"]
+    write_corpus(source, {"depot.txt": DEPOT_TEXT})
+    context = stack.run(source)
+
+    assert len(context.incremental_delta.deleted) == 1
+    assert stack.texts() == {DEPOT_TEXT}

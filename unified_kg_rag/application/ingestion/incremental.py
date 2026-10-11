@@ -1315,6 +1315,24 @@ def filter_to_delta(
             "(aws.dynamodb.enabled / providers.doc_status.enabled: false) to "
             "run without it."
         ) from e
+    stored_spelling = _stored_spelling(source_scope, namespace, scope, delta)
+    if stored_spelling is not None:
+        # The corpus was indexed under another spelling of its source (an
+        # s3:// URI with or without a trailing slash): diffing under this
+        # one would index every document again beside the stored copies and
+        # never delete those. Key the run by the stored spelling instead.
+        logger.warning(
+            "The registry holds this corpus under the source scope %r, another "
+            "spelling of %r; using the stored spelling (set "
+            "processing.document_parsing.source_scope to it to skip this check)",
+            stored_spelling,
+            source_scope,
+        )
+        respelled = config.model_copy(deep=True)
+        respelled.processing.document_parsing.source_scope = stored_spelling
+        return filter_to_delta(
+            documents, context, respelled, doc_status, source_directory
+        )
     context.incremental_delta = delta
     context.incremental_fingerprints = fingerprints
     context.incremental_scope = scope
@@ -1332,6 +1350,26 @@ def filter_to_delta(
         len(delta.deleted),
     )
     return to_process, skipped
+
+
+def _stored_spelling(
+    source_scope: str, namespace: str, scope: str, delta: DocumentDelta
+) -> str | None:
+    """Another spelling of ``source_scope`` the registry holds this
+    namespace's records under, when it holds none under ``scope`` itself
+    (see :func:`normalize_source_scope`)."""
+    if scope in delta.stored_scopes:
+        return None
+    prefix = f"{namespace}|"
+    own = normalize_source_scope(source_scope)
+    spellings = sorted(
+        stored[len(prefix) :]
+        for stored in delta.stored_scopes
+        if stored.startswith(prefix)
+        and stored[len(prefix) :] != source_scope
+        and normalize_source_scope(stored[len(prefix) :]) == own
+    )
+    return spellings[0] if spellings else None
 
 
 def _warn_about_other_local_scopes(
