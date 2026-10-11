@@ -4,11 +4,14 @@
 
 Two whole-pipeline runs over one registry (AWS-free): a document whose content
 did not change is re-extracted when the settings it was extracted with
-(here a tuned extraction prompt) changed, and not when they did not.
+(here a tuned extraction prompt) changed, and not when they did not. An
+incremental run that skips unchanged documents does not export a
+visualization of its partial graph.
 """
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -22,6 +25,9 @@ from tests.integration.test_ingestion_stages import _config, _respond
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.application.ingestion import pipeline_stages as ps
 from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
+from unified_kg_rag.domain.ingestion.visualization_data import (
+    VISUALIZATION_DATA_FILENAME,
+)
 from unified_kg_rag.domain.models import (
     Config,
     DocStatusRecord,
@@ -151,3 +157,31 @@ def test_records_without_a_fingerprint_are_not_reextracted(tmp_path: Path) -> No
     harness.extractions.clear()
     harness.run(_tuned(builtin), "tuned")
     assert harness.extractions == []
+
+
+def _visualization_file(tmp_path: Path, pipeline_id: str) -> Path:
+    return (
+        tmp_path
+        / "cache"
+        / pipeline_id
+        / "visualization"
+        / (VISUALIZATION_DATA_FILENAME)
+    )
+
+
+def test_incremental_run_with_unchanged_documents_exports_no_partial_graph(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    harness = _Harness(tmp_path)
+    config = _base_config()
+    harness.run(config, "full")
+    full = json.loads(_visualization_file(tmp_path, "full").read_text())
+    assert len(full["nodes"]) == 3
+    # Every node carries its level-0 community, which the renderers color by.
+    assert all(node["attributes"].get("community_id") for node in full["nodes"])
+
+    (harness.source / "third.txt").write_text("Depot ships widgets to Buyer.")
+    with caplog.at_level("INFO"):
+        harness.run(config, "delta")
+    assert not _visualization_file(tmp_path, "delta").exists()
+    assert "Visualization skipped" in caplog.text

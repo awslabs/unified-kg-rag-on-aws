@@ -1383,8 +1383,13 @@ run-eval --eval-data-path s3://my-bucket/eval/my_eval_data.json \
 이미 내보낸 시각화 데이터 JSON으로 그림을 그리는 **독립** 렌더러입니다. 수집을 다시
 실행하거나 AWS에 접근하지 **않습니다**.
 
-`run-ingestion`의 커뮤니티 탐지 단계는 실행할 때마다 `visualization_data.json`을
-`graph.visualization.outputs_directory`에 씁니다. 기본값(`graph.visualization.export_data:
+`run-ingestion`의 커뮤니티 탐지 단계는 그래프가 코퍼스 전체를 담는 실행(전체 빌드,
+초기화, 모든 문서가 새 문서이거나 변경된 증분 실행)마다 `visualization_data.json`을
+`graph.visualization.outputs_directory`에 씁니다. 변경되지 않은 문서를 건너뛴 증분
+실행은 메모리에 델타만 들고 있으므로 내보내지도 렌더링하지도 않고 INFO 로그만 남기며,
+고정한 `outputs_directory`에 있던 이전 파일은 그대로 둡니다. 증분 실행 뒤 전체 그래프를
+보려면 전체 빌드(`indexing.reset: true`)를 한 번 실행하고 그 실행이 쓴 파일을
+`run-visualization`에 넘기세요. 기본값(`graph.visualization.export_data:
 true`)에서는 그래프와 커뮤니티 계층만 담습니다. 그래프를 한 번 훑어 쓰므로 임베딩이나
 모델 호출이 없고, `run-visualization`이 렌더링할 때 그래프 토폴로지로 시드를 고정한
 spring 레이아웃과 설정한 중심성 지표를 계산합니다. `graph.visualization.enabled`가
@@ -1395,7 +1400,7 @@ spring 레이아웃과 설정한 중심성 지표를 계산합니다. `graph.vis
 `.json` 파일만 복사하므로 HTML은 로컬에서 `run-visualization`으로 다시 렌더링하세요).
 이 파일이 `--data-path` 입력입니다. 대화형 그래프는 큰 그래프도 브라우저에서 렌더링할 수
 있도록 차수 기준 상위 `interactive.max_nodes`개 노드(기본 2000)만 남깁니다. 파일에는
-그래프 노드와 간선, 커뮤니티 계층과, 수집 중에 렌더링했다면 계산된 `layout`과 중심성이
+그래프 노드와 간선(노드마다 렌더러가 색을 정하는 레벨 0 `community_id` 포함), 커뮤니티 계층과, 수집 중에 렌더링했다면 계산된 `layout`과 중심성이
 들어 있으며, 파일 크기를
 줄이려고 벡터 속성(`embedding`, `*_embedding`)은 뺍니다.
 

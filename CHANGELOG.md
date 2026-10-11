@@ -298,6 +298,12 @@ Library API (Python callers and custom backends).
   resolution), and a run with other settings re-extracts the unchanged
   documents (one WARNING gives their count). Before, unchanged documents kept
   their old extraction even with `--force-rebuild` (#PR).
+- An incremental run that skips unchanged documents no longer replaces
+  `visualization_data.json` with a graph of its delta only: it skips the
+  export and the render and logs how to visualize the whole graph (a full
+  build, then `run-visualization`). The default export gives every node its
+  level-0 `community_id`, so `run-visualization` colors communities instead
+  of drawing every node grey (#PR).
 - Incremental indexing: shared artifacts are stripped instead of deleted or
   left citing removed text units; interrupted runs are repaired on the next
   run; resets and deletions no longer touch other index namespaces or

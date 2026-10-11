@@ -1469,7 +1469,13 @@ visualization-data JSON. It does **not** re-run ingestion or touch AWS.
 
 The community-detection stage of `run-ingestion` writes
 `visualization_data.json` into `graph.visualization.outputs_directory` on
-every run. By default (`graph.visualization.export_data: true`) it holds the
+every run whose graph covers the whole corpus: a full build, a reset, or an
+incremental run in which every document is new or changed. An incremental run
+that skips unchanged documents holds only its delta in memory, so it neither
+exports nor renders (it logs an INFO line instead) and an earlier file in a
+fixed `outputs_directory` is left as it was. To visualize the whole graph after
+incremental runs, run one full build (`indexing.reset: true`) and point
+`run-visualization` at the file it writes. By default (`graph.visualization.export_data: true`) it holds the
 graph and the community hierarchy only: writing it is one pass over the graph,
 with no embedding or model call, and `run-visualization` computes a seeded
 spring layout from the graph topology and the configured centrality metrics
@@ -1483,7 +1489,8 @@ enabled `visualization_data.json` is uploaded with the cache (the sync copies
 `.json` files only; re-render the HTML locally with `run-visualization`). That
 file is the `--data-path` input. The interactive graph keeps only the top
 `interactive.max_nodes` nodes by degree (default 2000) so large graphs still
-render in a browser. It holds the graph nodes/edges, the community hierarchy
+render in a browser. It holds the graph nodes/edges (each node with its
+level-0 `community_id`, which the renderers color by), the community hierarchy
 and, when rendered at ingestion, the computed `layout` and centrality; vector
 attributes (`embedding`,
 `*_embedding`) are omitted to keep the file small.

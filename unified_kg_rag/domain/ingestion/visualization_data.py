@@ -40,13 +40,30 @@ def strip_heavy_attributes(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     ]
 
 
-def graph_data(graph: nx.Graph, communities: dict[str, Any]) -> dict[str, Any]:
+def graph_data(
+    graph: nx.Graph,
+    communities: dict[str, Any],
+    node_communities: dict[str, str] | None = None,
+) -> dict[str, Any]:
     """Nodes, edges and ``communities`` (``export_community_data`` output),
-    without a layout or centrality."""
+    without a layout or centrality.
+
+    ``node_communities`` (``{node id: level-0 community id}``) is written into
+    each node's ``community_id`` attribute, which the renderers color by; the
+    graph itself is not modified.
+    """
+    node_communities = node_communities or {}
+
+    def _node_attributes(node_id: Any, attrs: dict[str, Any]) -> dict[str, Any]:
+        community = node_communities.get(str(node_id))
+        if community is None:
+            return attrs
+        return {**attrs, "community_id": community}
+
     return {
         "nodes": strip_heavy_attributes(
             [
-                {"id": str(node_id), "attributes": attrs}
+                {"id": str(node_id), "attributes": _node_attributes(node_id, attrs)}
                 for node_id, attrs in graph.nodes(data=True)
             ]
         ),
