@@ -281,6 +281,10 @@ Library API (Python callers and custom backends).
   (`1990-1995` is two numbers, `5-year` = `5 year`); a yes/no gold reads the
   first yes/no that answers the question, past Markdown headings,
   abbreviations and "there is no ..." (#PR).
+- RAGAS: a failed run marks only its own metrics failed. A failure in the
+  run for rows without a reference no longer drops their skipped reference
+  metrics, and a failed `context_precision` run (or the run beside it) keeps
+  the scores of the other (#PR).
 - CLIs and config: an empty config loads the defaults; `custom_prompts`
   overrides are validated at load; `run-rag` exits cleanly on usage errors;
   importing the package no longer configures logging (#158, #178).
