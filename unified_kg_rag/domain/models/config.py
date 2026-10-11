@@ -1921,7 +1921,7 @@ class GlobalSearchConfig(BaseModel):
             "cost of max_communities extra LLM calls per query (MS GraphRAG's "
             "dynamic community selection is also off by default). Useful mainly "
             "with enable_map_reduce=false; when off, communities are ranked by "
-            "their indexed rank and rating."
+            "their retrieval score, ties broken by indexed rank and rating."
         ),
     )
     enable_map_reduce: bool = Field(
