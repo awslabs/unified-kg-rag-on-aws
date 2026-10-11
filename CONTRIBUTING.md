@@ -93,9 +93,14 @@ uv run pytest -m "not aws" --cov=unified_kg_rag         # with coverage, as CI m
 ```
 
 CI fails below the coverage threshold set by `--cov-fail-under` in `quality.yml`. It also runs the suite on Python
-3.10, checks the optional parsers, runs the local-store smoke test, builds and runs the container image, checks
-dependency licenses (`.github/scripts/check_licenses.py`), and synthesizes `iac/` with cdk-nag. If you change
-`iac/`, also run `cd iac && cdk synth -c enable_cdk_nag=true` (see [`iac/README.md`](./iac/README.md)).
+3.10, checks the optional parsers, runs the local-store smoke test, builds and runs the container image, and
+synthesizes `iac/` with cdk-nag. If you change `iac/`, also run `cd iac && cdk synth -c enable_cdk_nag=true` (see
+[`iac/README.md`](./iac/README.md)).
+
+When a pull request changes `pyproject.toml` or `uv.lock`, the
+[`licenses`](./.github/workflows/licenses.yml) workflow also syncs every extra and fails on a copyleft,
+source-available or unlabeled license among the runtime dependencies. Reviewed exceptions are listed, each with its
+reason, in `.github/scripts/check_licenses.py`; add one only after reviewing the license.
 
 ### Tests
 
@@ -128,8 +133,9 @@ than an edit to dispatch code.
 
 ### Documentation
 
-- User-facing documentation is in English. `README.md`, `docs/user-guide.md` and `docs/design.md` have Korean
-  translations (`*.ko.md`).
+- User-facing documentation is in English. `README.md` and `docs/user-guide.md`, `docs/design.md`,
+  `docs/operations.md` and `docs/models.md` have Korean translations (`*.ko.md`); `docs/glossary.ko.md` fixes the
+  Korean terms.
 - **EN/KO sync rule:** a change to a document that has a `.ko.md` twin updates both files in the same pull request. If
   you cannot write the Korean text, say so in the pull request description and add this note at the top of the
   `.ko.md` file so readers know it lags: `> 이 번역은 영문판보다 늦을 수 있습니다. 최신 내용은 영문판을 확인하세요.`
