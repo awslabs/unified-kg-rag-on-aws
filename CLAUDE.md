@@ -52,22 +52,15 @@ ports → domain`, with `shared` as a cross-cutting kernel any layer may use.
 See `docs/design.md` §2 for the full layer map and dependency rule.
 
 ### Adding things
-- **New search strategy**: subclass `BaseSearchStrategy`, decorate with
-  `@register_strategy(SearchStrategy.X, required_roles=(...))`, export from
-  `adapters/search_strategies/__init__.py`. No edits to `rag_chain` needed.
-- **New storage/LLM backend**: implement the relevant port and inject it —
-  `IndexingManager(vector_indexer=…, graph_indexer=…)`,
-  `GraphRAGChain(model_factory=…, retriever_builders=…)`,
-  `*(embedding_factory=…)`. Defaults stay Bedrock/Neptune/OpenSearch; don't
-  hardcode a backend into a manager's `__init__`. (See design.md §15 "Custom
-  backends".)
-- **New parser / file format**: `ParserFactory.register_loader(".ext", Loader)`
-  with any LangChain `BaseLoader` subclass — auto-discovered and parseable, no
-  factory edit.
-- **New evaluator**: subclass `BaseGraphRAGEvaluator`, add a branch in
-  `EvaluationManager._resolve_evaluator_class`, add an `EvaluatorType` enum.
-- **New config section**: add a Pydantic `BaseModel`, attach it to its parent
-  via `Field(default_factory=...)`, document it in `config-template.yaml`.
+Recipes for new strategies, backends, evaluators, renderers, parsers and
+config sections live in one place: `docs/design.md` §15 "Extension Guide"
+(read it before extending; update it, not this file, when a recipe changes).
+The two rules to keep in mind:
+- Extend through the registries and the one evaluator type map, never new
+  `if/elif` dispatch.
+- Inject backends through constructors (`Providers`, `vector_indexer=`/
+  `graph_indexer=`, `retriever_builders=`, `doc_status=`); never hardcode a
+  backend into a manager's `__init__`.
 
 ## Capabilities & CLIs
 
@@ -91,9 +84,7 @@ See `docs/design.md` §2 for the full layer map and dependency rule.
   ground-truth `expected_entities`/`expected_relationships`; precision/F1
   intentionally not emitted — see the evaluator docstring), `retrieval`
   (hit@k/recall@k/MRR against `reference_sources`) and `answer_match` (exact
-  match/token F1 against `answer` + `metadata.answer_aliases`). Add an
-  evaluator by subclassing `BaseGraphRAGEvaluator` + a branch in
-  `EvaluationManager._resolve_evaluator_class`.
+  match/token F1 against `answer` + `metadata.answer_aliases`).
 - **Visualization**: renderers register via `@register_renderer`
   (`visualization/renderers/`); the manager and the standalone CLI drive them
   through one registry + `RenderContext`.

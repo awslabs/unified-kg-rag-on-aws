@@ -406,6 +406,12 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   on different suffixes with separate doc-status tables are fine. The CDK
   state machine does not block an overlapping execution and the stack has
   no schedule or trigger that starts one (#197).
+- Documentation: removed the unreferenced hexagonal-architecture, retrieval
+  and incremental-indexing diagram images, which no longer matched the code
+  (search strategies drawn inside `domain/`, LightRAG graph expansion shown
+  as always on, incremental merges by name only); the Mermaid diagrams in the
+  Design Doc replace them. `CLAUDE.md` now points to Design Doc §15 for
+  extension recipes instead of repeating them (#205).
 
 ### Deprecated
 - `search.llm_retry`; use `aws.bedrock.transient_retry` (#120).
