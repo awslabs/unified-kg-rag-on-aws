@@ -8,6 +8,7 @@ import unicodedata
 import uuid
 import weakref
 from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Iterator
+from contextlib import AbstractContextManager
 from enum import Enum
 from typing import Any, ClassVar, TypeVar
 
@@ -179,6 +180,12 @@ class RAGInput(BaseModel):
     )
     conversation_id: str | None = Field(
         default=None, description="Unique identifier for the conversation session"
+    )
+    user_id: str | None = Field(
+        default=None,
+        description="Optional end-user id, recorded only on trace spans "
+        "(user.id) when observability is enabled; pass an opaque id, not an "
+        "e-mail address or name",
     )
     use_memory: bool = Field(
         default=False, description="Whether to use conversation memory"
@@ -1283,12 +1290,23 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         rag_input, input_dict = self._prepare_invoke(input)
         # The root span of a query trace: the strategy, retrieval, fusion,
         # rerank, context build and model calls nest under it.
-        with observability.span(
-            "kg_rag.query", self._query_span_attributes(rag_input)
-        ) as span:
+        with (
+            self._identity(rag_input),
+            observability.span(
+                "kg_rag.query", self._query_span_attributes(rag_input)
+            ) as span,
+        ):
             result = await self._ainvoke(rag_input, input_dict, config)
             span.set_attributes(self._query_outcome_attributes(result))
             return result
+
+    @staticmethod
+    def _identity(rag_input: RAGInput) -> AbstractContextManager[None]:
+        """Tag the query's spans with ``session.id`` (the conversation id) and
+        ``user.id``."""
+        return observability.bind_identity(
+            session_id=rag_input.conversation_id, user_id=rag_input.user_id
+        )
 
     def _query_span_attributes(self, rag_input: RAGInput) -> dict[str, Any]:
         """Query-span attributes: the request's settings, never its text."""
@@ -1501,8 +1519,11 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             try:
                 # Only the steps before the first yield are traced here, for the
                 # same reason; the streamed answer call gets its own model span.
-                with observability.span(
-                    "kg_rag.query", self._query_span_attributes(rag_input)
+                with (
+                    self._identity(rag_input),
+                    observability.span(
+                        "kg_rag.query", self._query_span_attributes(rag_input)
+                    ),
                 ):
                     state: dict[str, Any] = await self._stream_context_chain.ainvoke(
                         input_dict, config

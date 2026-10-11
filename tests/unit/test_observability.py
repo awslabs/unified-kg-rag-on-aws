@@ -490,6 +490,44 @@ async def test_query_span_tree_carries_counts_and_ids_not_content(
             assert "What does Vendor supply" not in str(value)
 
 
+async def test_query_spans_carry_the_conversation_as_session_and_the_user(
+    tracing: Tracing,
+) -> None:
+    exporter = tracing()
+    config = Config()
+    config.search.reranking.enabled = False
+    chain = GraphRAGChain(
+        config=config,
+        model_factory=_FakeModelFactory(),
+        memory_manager=_FakeMemoryManager(),  # type: ignore[arg-type]
+        retriever_builders={
+            RetrieverRole.DOCUMENT: _FakeRetriever,  # type: ignore[dict-item]
+            RetrieverRole.GRAPH: _FakeRetriever,  # type: ignore[dict-item]
+        },
+    )
+    chain.token_manager.count_tokens = lambda text: len((text or "").split())
+    try:
+        await chain.ainvoke(
+            RAGInput(
+                query="What does Vendor supply?",
+                search_strategy=SearchStrategy.SIMPLE,
+                enable_query_processing=False,
+                conversation_id="conv-42",
+                user_id="user-7",
+            )
+        )
+    finally:
+        await chain.aclose()
+    spans = exporter.get_finished_spans()
+    assert {s.name for s in spans} >= {"kg_rag.query", "kg_rag.retrieve"}
+    for span in spans:
+        assert _attrs(span)["session.id"] == "conv-42", span.name
+        assert _attrs(span)["user.id"] == "user-7", span.name
+    assert _attrs(_one(exporter, "kg_rag.query"))["gen_ai.conversation.id"] == (
+        "conv-42"
+    )
+
+
 # --- GenAI callback handler ---------------------------------------------------------
 
 

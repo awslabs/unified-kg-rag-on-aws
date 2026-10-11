@@ -15,6 +15,10 @@ Attribute keys: keyword arguments are namespaced as ``kg_rag.<name>``
 ``gen_ai.*`` semantic conventions. Values are str/bool/int/float or sequences
 of them; ``None`` values are dropped by the backend.
 
+Session and user: inside :func:`bind_identity` every span opened here also
+carries ``session.id`` / ``user.id``, the names Langfuse and Phoenix
+(OpenInference) group traces by.
+
 Spans carry counts, ids and timings only. Text content (prompts, completions,
 retrieved passages) is recorded only through :func:`content_policy`, which is
 off unless ``observability.capture_content`` is set.
@@ -26,8 +30,9 @@ import contextlib
 import os
 import re
 import threading
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from contextlib import AbstractContextManager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -39,7 +44,10 @@ __all__ = [
     "ContentPolicy",
     "ContextThreadPoolExecutor",
     "SpanHandle",
+    "SESSION_ID",
+    "USER_ID",
     "TracerBackend",
+    "bind_identity",
     "content_policy",
     "current_trace_ids",
     "install",
@@ -53,6 +61,15 @@ __all__ = [
 
 REDACTED = "[REDACTED]"
 _NAMESPACE = "kg_rag."
+# Session and user attribute names (OpenTelemetry semantic conventions; also
+# what Langfuse and OpenInference read).
+SESSION_ID = "session.id"
+USER_ID = "user.id"
+
+_IDENTITY: ContextVar[Mapping[str, str] | None] = ContextVar(
+    "kg_rag_trace_identity", default=None
+)
+_NULL_SCOPE: AbstractContextManager[None] = contextlib.nullcontext()
 
 
 class SpanHandle(Protocol):
@@ -207,6 +224,43 @@ def _merge(attributes: Mapping[str, Any] | None, kwargs: dict[str, Any]) -> dict
     return merged
 
 
+def _with_identity(attributes: dict[str, Any]) -> dict[str, Any]:
+    identity = _IDENTITY.get()
+    if identity:
+        return {**identity, **attributes}
+    return attributes
+
+
+@contextlib.contextmanager
+def _identity_scope(identity: Mapping[str, str]) -> Iterator[None]:
+    token = _IDENTITY.set(identity)
+    try:
+        yield
+    finally:
+        _IDENTITY.reset(token)
+
+
+def bind_identity(
+    session_id: str | None = None, user_id: str | None = None
+) -> AbstractContextManager[None]:
+    """Tag every span opened inside the block with the session and user ids.
+
+    The ids are recorded as ``session.id`` and ``user.id`` on each span (not
+    only the root), so a backend that reads them from any span of a trace
+    groups it under that session and user. The binding lives in a
+    ``contextvars`` context, like the active span. A no-op when tracing is off
+    or both ids are empty.
+    """
+    if _active_backend() is None or not (session_id or user_id):
+        return _NULL_SCOPE
+    identity: dict[str, str] = {}
+    if session_id:
+        identity[SESSION_ID] = session_id
+    if user_id:
+        identity[USER_ID] = user_id
+    return _identity_scope(identity)
+
+
 def span(
     name: str, attributes: Mapping[str, Any] | None = None, **kwargs: Any
 ) -> AbstractContextManager[SpanHandle]:
@@ -221,7 +275,7 @@ def span(
     backend = _active_backend()
     if backend is None:
         return _NOOP_CONTEXT
-    return backend.use_span(name, _merge(attributes, kwargs))
+    return backend.use_span(name, _with_identity(_merge(attributes, kwargs)))
 
 
 def start_span(
@@ -235,7 +289,7 @@ def start_span(
     backend = _active_backend()
     if backend is None:
         return NOOP_SPAN
-    return backend.start_span(name, _merge(attributes, kwargs))
+    return backend.start_span(name, _with_identity(_merge(attributes, kwargs)))
 
 
 def set_attributes(attributes: Mapping[str, Any] | None = None, **kwargs: Any) -> None:
