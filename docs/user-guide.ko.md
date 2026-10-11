@@ -334,10 +334,13 @@ WARNING을 남기고 버리므로, 파일을 고치거나 업그레이드한 뒤
 
 첫 릴리스 전에 이름이 바뀐 키(`search.llm_retry`, `aws.bedrock.effort`,
 `processing.max_retries`, `indexing.neptune.max_retries`,
-`evaluation.ragas_max_retries`)는 읽지 않으며 알 수 없는 키로 보고됩니다.
+`evaluation.ragas_max_retries`, `providers.llm.max_retries`,
+`providers.embedding.max_retries`)는 읽지 않으며 알 수 없는 키로 보고됩니다.
 `aws.bedrock.transient_retry`, `aws.bedrock.default_effort`,
 `processing.max_attempts`, `indexing.neptune.max_attempts`,
-`evaluation.ragas_max_attempts`를 사용하세요.
+`evaluation.ragas_max_attempts`, `providers.llm.max_attempts`,
+`providers.embedding.max_attempts`를 사용하세요(기존 `max_retries: N`은
+`max_attempts: N+1`입니다).
 
 `max_attempts` 키는 모두 첫 시도를 포함한 총 시도 횟수이며, `1`이면 재시도하지
 않습니다.

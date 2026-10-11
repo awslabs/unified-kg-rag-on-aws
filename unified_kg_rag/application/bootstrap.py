@@ -4,13 +4,11 @@
 
 ``build_providers`` checks that every role ``config.providers`` selects has a
 registered builder (failing before any model is paid for) and returns the
-``Providers`` bundle that the CLIs pass to ``GraphRAGChain``,
-``DataIngestionPipeline`` and ``EvaluationManager``; those hand it on to every
-stage, strategy, scorer, token manager, memory manager, evaluator and store
-they build. Code that constructs an orchestrator without a bundle gets the
-same config-driven defaults (``Providers`` resolves each role through the
-same registry), so the bundle is a single place to inject overrides rather
-than a requirement.
+``Providers`` bundle. ``GraphRAGChain``, ``DataIngestionPipeline`` and
+``EvaluationManager`` call it when they are not given a bundle
+(``providers=``) and hand the bundle on to every stage, strategy, scorer,
+token manager, evaluator and store they build, so an injected bundle is the
+single place to override a role.
 
 ``with_provider_overrides`` applies the CLI provider flags (``--backend``,
 ``--llm-provider`` ...) to a loaded config, re-running the ``backend`` preset

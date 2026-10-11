@@ -205,7 +205,7 @@ class LocalSearchStrategy(BaseSearchStrategy): ...
 | 11 | 커뮤니티 탐지 | `community_detector.py` | 계층적 Leiden, 커뮤니티 리포트 생성(degree 정렬 + 토큰 예산 내 채우기) |
 | 12 | 인덱싱 | `application/storage/indexing_manager.py` | OpenSearch + Neptune. 전체 빌드는 실행의 접미사마다 모든 인덱스 유형을 교체하고, 실행에 없는 유형은 비웁니다 |
 
-> 단계 순서는 `DataIngestionPipeline.STAGE_CLASSES`(`application/ingestion/pipeline.py`) 한 곳에서 정합니다. Bedrock이 필요한 단계는 `DataIngestionPipeline.BOTO_REQUIRED_STAGES`에 선언합니다. **그래프 해석(7)도 이 집합에 속하는데**, 병합된 설명을 LLM으로 다시 요약하기 때문입니다.
+> 단계 순서는 `DataIngestionPipeline.STAGE_CLASSES`(`application/ingestion/pipeline.py`) 한 곳에서 정합니다. 모든 단계는 실행의 공급자 묶음(`Providers`)에서 모델과 저장소를 받습니다. **그래프 해석(7)도 LLM을 호출하는데**, 병합된 설명을 다시 요약하기 때문입니다.
 
 **병합된 설명의 재요약(7단계)**: 그래프 해석은 같은 엔티티·관계의 설명을 단순히 이어 붙여 병합하므로, 여러 청크에 등장하는 엔티티의 설명은 끝없이 길어집니다. `DescriptionSummarizer`(`GraphResolutionStage`에서 실행)는 토큰 예산을 넘은 설명만 저렴한 LLM으로 하나의 일관된 설명으로 다시 요약합니다(MS GraphRAG `summarize_descriptions` / LightRAG `_handle_entity_relation_summary`와 동등, `DescriptionSummarizationConfig`로 제어). 임베딩과 프롬프트가 비대해지는 것을 막기 위한 장치입니다.
 
@@ -285,7 +285,7 @@ flowchart LR
 
 **문서 식별**(`shared/utils/document_identity.py`): 문서 버전의 `document_id`(텍스트 단위 id가 여기서 파생됩니다)는 코퍼스 루트 기준 상대 경로와 전체 텍스트를 해시한 값입니다. 파싱과 로딩 단계가 루트를 기준으로 이 값을 다시 계산하므로(`delta_detector.assign_document_identity`), 같은 코퍼스는 어디에 체크아웃하거나 동기화해도 같은 id를 얻고, 다른 폴더의 같은 이름 파일은 충돌하지 않습니다. 레지스트리 `doc_id`(1단계)도 같은 상대 경로 규칙을 따릅니다. 어느 규칙이든 바꾸면 id가 바뀌므로 다시 인덱싱해야 합니다.
 
-**병합 규칙**(`domain/ingestion/merge/merger.py`, MS GraphRAG `update/*`에서 이식): 엔티티는 id로 병합하고, id가 다르면 식별 키(`entity_key`)로 병합합니다. 설명은 줄 단위로 중복 없이 합치고, `text_unit_ids`와 `community_ids`는 합집합, `frequency`는 텍스트 단위 수, confidence와 rank는 최댓값, 속성은 합집합(같은 키는 델타 값 우선)이며, 기존 id를 보존하고 remap을 남깁니다. 관계는 id로 병합하고, id가 다르면 (source, target, type)으로 병합합니다(설명과 속성 규칙은 같고, weight는 근거가 되는 고유 텍스트 단위 수). 커뮤니티는 id offset을 두고 덧붙입니다. id를 먼저 비교하므로, 추가 추출의 보정으로 이름·유형·방향이 바뀐 저장 항목(id는 여전히 옛 형태에서 파생됨)이 나중에 옛 형태로 들어오는 델타를 받아들이는 단일 항목으로 유지됩니다. 모든 규칙은 멱등이므로 같은 델타를 다시 적용해도 아무것도 바뀌지 않습니다. 실행 간 병합은 인덱스 접미사별로 실행하며, 저장된 항목은 Neptune 쓰기 인코딩의 정확한 역변환인 `neptune_codec`으로 읽어 옵니다.
+**병합 규칙**(`domain/ingestion/merge/merger.py`, MS GraphRAG `update/*`에서 이식): 엔티티는 id로 병합하고, id가 다르면 식별 키(`entity_key`)로 병합합니다. 설명은 줄 단위로 중복 없이 합치고, `text_unit_ids`와 `community_ids`는 합집합, `frequency`는 텍스트 단위 수, confidence와 rank는 최댓값, 속성은 합집합(같은 키는 델타 값 우선)이며, 기존 id를 보존하고 remap을 남깁니다. 관계는 id로 병합하고, id가 다르면 (source, target, type)으로 병합합니다(설명과 속성 규칙은 같고, weight는 근거 텍스트 단위별로 추출된 강도의 합입니다. 이 값을 엣지의 `attributes.text_unit_weights`에 두므로 델타는 자기 텍스트 단위의 항목만 바꾸고, 결과는 합집합에 대한 전체 구축과 같습니다. 전체 구축의 추출기와 해석기도 같은 규칙을 쓰며, MS GraphRAG의 인스턴스 강도 합산을 따릅니다). 커뮤니티는 id offset을 두고 덧붙입니다. id를 먼저 비교하므로, 추가 추출의 보정으로 이름·유형·방향이 바뀐 저장 항목(id는 여전히 옛 형태에서 파생됨)이 나중에 옛 형태로 들어오는 델타를 받아들이는 단일 항목으로 유지됩니다. 모든 규칙은 멱등이므로 같은 델타를 다시 적용해도 아무것도 바뀌지 않습니다. 실행 간 병합은 인덱스 접미사별로 실행하며, 저장된 항목은 Neptune 쓰기 인코딩의 정확한 역변환인 `neptune_codec`으로 읽어 옵니다.
 
 **델타 실행의 커뮤니티**: 델타 실행은 델타 서브그래프만 클러스터링합니다(MS GraphRAG의 업데이트 경로도 다시 클러스터링하지 않고 덧붙입니다). 그래서 커뮤니티 id는 **콘텐츠에서 파생**합니다. 레벨과 정렬된 구성원 엔티티 id의 해시이며(`community_detector.community_content_id`), 위치 기반 `L{level}_C{i}` 레이블은 `short_id`/`name`으로만 남습니다. 델타 커뮤니티는 구성원이 완전히 같지 않은 한 코퍼스의 어떤 커뮤니티와도 다른 id를 얻습니다(완전히 같으면 upsert가 같은 커뮤니티를 다시 씁니다). 그래서 델타의 커뮤니티와 리포트(id가 커뮤니티 id의 해시)는 전체 코퍼스의 `L0_C0…`를 덮어쓰지 않고 기존 것 옆에 추가됩니다. 따라서 upsert 경로에서는 다시 읽어 오거나 id offset으로 병합할 필요가 없습니다. 변경되거나 삭제된 문서의 엔티티를 포함하던 코퍼스 커뮤니티는 그 문서에만 속할 때만 계보를 따라 지웁니다. 공유 커뮤니티는 전체 재구축 전까지 변경 전 리포트를 유지하며, 그래프 전체를 다시 분할하는 경로도 전체 재구축뿐입니다. Leiden 분할은 시드를 고정해도 노드와 엣지의 삽입 순서에 따라 달라지므로, 탐지기는 분할 전에 노드와 엣지를 정렬합니다(`_canonical_graph`). 그래서 같은 그래프에서는 항상 같은 커뮤니티와 id가 나옵니다. 델타 실행마다 전체 그래프에서 다시 탐지하는 방식은 채택하지 않았습니다. 델타 실행마다 모든 커뮤니티 리포트를 다시 생성해야 하고(리포트마다 LLM 호출), 그러면 증분 인덱싱을 하는 의미가 없어지기 때문입니다.
 
@@ -460,7 +460,7 @@ CLI: `run-eval --eval-data-path <json> [--search-strategy ...]`.
 
 - **포트 기반 fake 어댑터**(`fixtures/fakes/`): GraphStore/VectorStore/DocStatus의 인메모리 구현으로 실제 AWS 없이 도메인 로직을 검증합니다(헥사고날 아키텍처가 테스트에 주는 이점).
 - **moto**: DynamoDB/S3 어댑터를 boto3 인터페이스에 대해 검증합니다.
-- 계층: 단위(모델, 레지스트리, 병합, 이중 키워드, 평가, 토큰 카운터, clause 예산, 계보 관련성), 속성(hypothesis: 해시 결정성, diff 분할 완전성, 병합 법칙), 통합(증분 추가·변경·삭제 주기), 회귀.
+- 계층: 단위(모델, 레지스트리, 병합, 이중 키워드, 평가, 토큰 카운터, clause 예산, 계보 관련성), 속성(hypothesis: 병합 법칙과 증분·전체 구축 수렴, 중단된 실행, 융합 단조성, MinHash·토큰 추정 동등성, 해시 길이. `DocStatusPort.diff` 분할은 `tests/integration/test_doc_status_conformance.py`가 모든 레지스트리에 대해 검사), 통합(증분 추가·변경·삭제 주기), 회귀.
 - 마커: `unit`, `integration`, `property`, `aws`(실제 AWS, CI에서 제외), `slow`. `asyncio_mode = "auto"`.
 
 실행: `uv run pytest -m "not aws" --cov=unified_kg_rag`.

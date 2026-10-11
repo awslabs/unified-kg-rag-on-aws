@@ -161,7 +161,10 @@ Library API (Python callers and custom backends).
   extractor (#218); the
   `Document` page-element model and `Document.detected_language` (#216);
   `OptimizedContext.quality_score` and other unused parameters and
-  test-only methods (#169).
+  test-only methods (#169); `DocStatus.PARSING` / `PROCESSING`,
+  `DocStatusRecord.content_summary` / `content_length` and
+  `application.cli.run_evaluation.exceeds_failure_budget` (#216); and
+  `domain.retrieval.strategy_registry.registered_strategies` (#212).
 - `BatchProcessor(max_retries=)` is `max_attempts=` (#151);
   `execute_with_fallback` no longer takes `batch_func` (sync) or
   `run_config` (#174, #216); `create_robust_xml_output_parser` requires

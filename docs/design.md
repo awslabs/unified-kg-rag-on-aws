@@ -205,7 +205,7 @@ The `DataIngestionPipeline` in `application/ingestion/pipeline.py` runs 12 stage
 | 11 | Community detection | `community_detector.py` | hierarchical Leiden, community report generation (degree-sort + token-budget pack) |
 | 12 | Indexing | `application/storage/indexing_manager.py` | OpenSearch + Neptune; a full build replaces every index type of the run's suffixes, emptying one the run has nothing of |
 
-> The stage order is single-sourced in `DataIngestionPipeline.STAGE_CLASSES` (`application/ingestion/pipeline.py`). Stages that require Bedrock are declared in `DataIngestionPipeline.BOTO_REQUIRED_STAGES`; **graph resolution (7) is in this set** because it re-summarizes merged descriptions with an LLM.
+> The stage order is single-sourced in `DataIngestionPipeline.STAGE_CLASSES` (`application/ingestion/pipeline.py`). Every stage gets its models and stores from the run's provider bundle (`Providers`); **graph resolution (7) calls the LLM too**, because it re-summarizes merged descriptions.
 
 **Merged-description re-summarization (stage 7)**: Graph resolution merges descriptions of the same entity/relationship by simple concatenation, so the description of a popular entity that appears in many chunks grows without bound. `DescriptionSummarizer` (run in `GraphResolutionStage`) re-summarizes only descriptions that exceed a token budget into a single coherent description using a cheap LLM (parity with MS GraphRAG `summarize_descriptions` / LightRAG `_handle_entity_relation_summary`, controlled by `DescriptionSummarizationConfig`). The goal is to prevent embedding/prompt bloat.
 
@@ -460,7 +460,7 @@ The nested Pydantic tree in `domain/models/config.py` (root `Config`), loaded by
 
 - **Port-based fake adapters** (`fixtures/fakes/`): In-memory implementations of GraphStore/VectorStore/DocStatus verify domain logic without real AWS (the test-side benefit of hexagonal architecture).
 - **moto**: Verifies the DynamoDB/S3 adapters against the boto3 surface.
-- Layers: unit (models/registry/merge/dual-keyword/evaluation/token-counter/clause budget/lineage relevance), property (hypothesis: hashing determinism, diff partition completeness, merge laws), integration (incremental add/change/delete cycles), regression.
+- Layers: unit (models/registry/merge/dual-keyword/evaluation/token-counter/clause budget/lineage relevance), property (hypothesis: merge laws and incremental-vs-full-build convergence, interrupted runs, fusion monotonicity, MinHash and token-estimate equivalence, hash length; the `DocStatusPort.diff` partition is checked against every registry in `tests/integration/test_doc_status_conformance.py`), integration (incremental add/change/delete cycles), regression.
 - Markers: `unit`, `integration`, `property`, `aws` (real AWS, excluded in CI), `slow`. `asyncio_mode = "auto"`.
 
 Run: `uv run pytest -m "not aws" --cov=unified_kg_rag`.

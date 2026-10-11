@@ -354,10 +354,13 @@ check the log after editing the file or upgrading.
 
 Keys renamed before the first release (`search.llm_retry`,
 `aws.bedrock.effort`, `processing.max_retries`, `indexing.neptune.max_retries`,
-`evaluation.ragas_max_retries`) are not read; each is reported as an unknown
+`evaluation.ragas_max_retries`, `providers.llm.max_retries`,
+`providers.embedding.max_retries`) are not read; each is reported as an unknown
 key. Use `aws.bedrock.transient_retry`, `aws.bedrock.default_effort`,
-`processing.max_attempts`, `indexing.neptune.max_attempts` and
-`evaluation.ragas_max_attempts`.
+`processing.max_attempts`, `indexing.neptune.max_attempts`,
+`evaluation.ragas_max_attempts`, `providers.llm.max_attempts` and
+`providers.embedding.max_attempts` (a former `max_retries: N` is
+`max_attempts: N+1`).
 
 Every `max_attempts` key counts total attempts, including the first; `1`
 disables the retry.
