@@ -659,7 +659,9 @@ and a literal brace is written `{{` / `}}` (§9.B).
 
 These variables override the config file (and the built-in defaults) when set.
 Values are converted to the field's type (`true`/`1`/`yes`/`on` count as true
-for booleans) but are not re-validated.
+for booleans) and checked against the field's constraints, as the same value in
+the file would be (`LOG_LEVEL` in any case). An invalid value is a usage error:
+the CLI prints one line naming the variable and exits 2.
 
 | Variable | Overrides | Notes |
 |---|---|---|
@@ -1189,6 +1191,9 @@ SQLite file instead (`providers.doc_status.kind: sqlite`, switched on by
   `indexing.reset: true` to re-embed the corpus. An index built before it
   recorded the model is checked by its dimension only: reset after changing
   the model of such an index.
+  Queries are checked the same way: `run-rag` and `run-eval` with another
+  embedding model or dimension than the index was built with fail with a
+  `ConfigurationError` instead of answering from empty search results.
 
 ### Deletion scope
 

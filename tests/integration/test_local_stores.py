@@ -866,3 +866,53 @@ def test_local_mode_ingests_and_answers_through_the_registry(
         vectors.clear([_SUFFIX])
         graph.close()
         vectors.close()
+
+
+def test_query_with_another_embedding_model_is_refused(local_config: Config) -> None:
+    # An index built with one embedding model must not answer queries embedded
+    # with another as a successful empty (or wrongly ranked) search.
+    config = local_config.model_copy(deep=True)
+    config.indexing.additional_suffix = f"em{uuid.uuid4().hex[:8]}"
+    indexer = OpenSearchIndexer(config, embedding_factory=HashingEmbeddingFactory())
+    query = SearchQuery(
+        query="Vendor widgets",
+        suffix=_SUFFIX,
+        index_prefixes=[config.indexing.opensearch.text_units_index_prefix],
+    )
+
+    async def retrieve(query_config: Config, factory, *, skip_check: bool = False):
+        retriever = OpenSearchRetriever(
+            query_config,
+            opensearch_client=OpenSearchClient(query_config),
+            embedding_factory=factory,
+        )
+        if skip_check:  # As if the index recorded nothing: OpenSearch's 400.
+            retriever._embedding_checked_aliases.add(
+                retriever._get_name(query.index_prefixes[0], _SUFFIX)
+            )
+        try:
+            return await retriever.aretrieve(query)
+        finally:
+            await retriever.aclose()
+
+    try:
+        assert indexer.index_text_units(_text_units()).failed_items == 0
+        assert asyncio.run(retrieve(config, HashingEmbeddingFactory()))
+
+        other_model = config.model_copy(deep=True)
+        other_model.indexing.opensearch.embedding_model_id = "another-model"
+        with pytest.raises(ConfigurationError, match="'another-model'"):
+            asyncio.run(retrieve(other_model, HashingEmbeddingFactory()))
+
+        with pytest.raises(ConfigurationError, match=r"dimension 64.*dimension 32"):
+            asyncio.run(retrieve(config, HashingEmbeddingFactory(dimensions=32)))
+
+        with pytest.raises(ConfigurationError, match="invalid dimension: 32"):
+            asyncio.run(
+                retrieve(
+                    config, HashingEmbeddingFactory(dimensions=32), skip_check=True
+                )
+            )
+    finally:
+        indexer.clear([_SUFFIX])
+        indexer.close()

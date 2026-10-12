@@ -96,3 +96,100 @@ def test_validation_error_names_the_key_but_not_the_value(tmp_path: Path) -> Non
     assert "processing.max_attempts" in message
     assert "s3cr3t-value" not in message
     assert "\n" not in message
+
+
+def _assert_one_line_usage_error(cli: str, captured: pytest.CaptureResult[str]) -> str:
+    lines = [line for line in captured.err.splitlines() if line.strip()]
+    assert len(lines) == 1, captured.err
+    assert lines[0].startswith(f"{cli}: error: ")
+    assert "Traceback" not in captured.err + captured.out
+    return lines[0]
+
+
+@pytest.mark.parametrize("cli", list(_CLIS))
+def test_non_utf8_config_file_is_a_usage_error(
+    cli: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_bytes(b"logging:\n  level: \xff\xfe\n")
+
+    assert _run(cli, config_path, monkeypatch) == 2
+
+    line = _assert_one_line_usage_error(cli, capsys.readouterr())
+    assert "not valid UTF-8" in line
+
+
+@pytest.mark.parametrize("cli", list(_CLIS))
+def test_unreadable_config_file_is_a_usage_error(
+    cli: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("backend: local\n", encoding="utf-8")
+    real_open = open
+
+    def deny(file, *args, **kwargs):
+        if Path(file) == config_path:
+            raise PermissionError(13, "Permission denied", str(file))
+        return real_open(file, *args, **kwargs)
+
+    monkeypatch.setattr("builtins.open", deny)
+
+    assert _run(cli, config_path, monkeypatch) == 2
+
+    line = _assert_one_line_usage_error(cli, capsys.readouterr())
+    assert "Cannot read configuration file" in line and "Permission denied" in line
+
+
+_BAD_ENVIRONMENT = {
+    "LOG_LEVEL": "garbage",
+    "OPENSEARCH_NUMBER_OF_REPLICAS": "abc",
+    "LOG_FORMAT": "xml",
+}
+
+
+@pytest.mark.parametrize("variable", list(_BAD_ENVIRONMENT))
+@pytest.mark.parametrize("cli", list(_CLIS))
+def test_invalid_environment_override_names_the_variable(
+    cli: str,
+    variable: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("backend: local\n", encoding="utf-8")
+    monkeypatch.setenv(variable, _BAD_ENVIRONMENT[variable])
+
+    assert _run(cli, config_path, monkeypatch) == 2
+
+    line = _assert_one_line_usage_error(cli, capsys.readouterr())
+    assert f"environment variable {variable}" in line
+    assert str(config_path) not in line
+    assert _BAD_ENVIRONMENT[variable] not in line
+
+
+def test_log_level_from_the_environment_is_case_insensitive(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LOG_LEVEL", "debug")
+    assert ConfigLoader().load_config().logging.level == "DEBUG"
+
+
+def test_invalid_environment_override_is_not_cached(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A shared loader that failed once must not hand out the half-applied
+    # config on the next call.
+    monkeypatch.setenv("LOG_LEVEL", "s3cr3t-value")
+    loader = ConfigLoader()
+    for _ in range(2):
+        with pytest.raises(ConfigurationError) as exc:
+            loader.load_config()
+        assert "LOG_LEVEL" in str(exc.value)
+        assert "s3cr3t-value" not in str(exc.value)

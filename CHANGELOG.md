@@ -371,6 +371,32 @@ Library API (Python callers and custom backends).
   vectors (or rejected every write on the dimension). Each OpenSearch index
   now records its embedding model and dimension in its mapping's `_meta`;
   indices built before are checked by their dimension only (#231).
+- A query against indices built with another embedding model or dimension
+  fails with a `ConfigurationError` naming both models (`run-rag` exits 1,
+  `run-eval` counts the query as failed). It reported success with an empty
+  answer: OpenSearch's "Query vector has invalid dimension" rejection was
+  treated as a transient error and degraded to 0 results, and a model of the
+  same dimension ranked by unrelated vectors. The retriever checks the
+  model and dimension each index records once per index, and treats that
+  rejection as the same error (#232).
+- With `indexing.opensearch.embedding_dimension` set below the embedding
+  model's largest (for example 512 for Titan Embed V2), queries now embed
+  with that dimension, as ingestion does. They embedded with the model's
+  default, so every vector and hybrid search of such an index came back
+  empty (#232).
+- A `GraphRAGChain` reused across event loops no longer stalls a query while
+  it closes the retrievers of the previous loop: the query waited up to 30
+  seconds for a slow (for example Neptune websocket) close. The close runs on
+  a background thread, and `close()`/`aclose()` of the chain wait for it
+  (#232).
+- An invalid environment override is a usage error naming the variable
+  (`<cli>: error: Invalid environment variable LOG_LEVEL ...`, exit code 2)
+  instead of being blamed on the configuration file or accepted: overrides
+  are now checked against the field's constraints, so `LOG_LEVEL=garbage`,
+  `LOG_FORMAT=xml` or an empty `AWS_REGION` is rejected (`LOG_LEVEL` still
+  accepts any case), and `OPENSEARCH_NUMBER_OF_REPLICAS=abc` no longer ends
+  with a traceback. A configuration file that is not UTF-8 or cannot be read
+  (permission denied) is the same one-line usage error (#232).
 - IaC: a zone-aware OpenSearch domain spans as many AZs as it has data
   nodes, up to 3 and up to the VPC's AZs, so `opensearch_count=3` with
   `max_azs=3` uses three zones instead of two; on an existing domain the

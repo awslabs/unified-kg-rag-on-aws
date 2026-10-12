@@ -25,7 +25,12 @@ from unified_kg_rag.domain.models import (
     SearchType,
 )
 from unified_kg_rag.domain.retrieval.mixins import MetricsMixin
-from unified_kg_rag.shared import IndexNotFoundError, get_logger, observability
+from unified_kg_rag.shared import (
+    ConfigurationError,
+    IndexNotFoundError,
+    get_logger,
+    observability,
+)
 from unified_kg_rag.shared.utils.store_names import graph_label, store_name
 
 logger = get_logger(__name__)
@@ -60,11 +65,13 @@ def is_fatal_retrieval_error(exc: BaseException) -> bool:
     endpoint/config) or a connection failure: returning ``[]`` for these turns a
     real failure into a misleading "no results". Everything else (timeouts,
     throttling, a single malformed query) is treated as transient and the caller
-    may degrade to an empty result list. ``ConnectionError`` is always fatal.
+    may degrade to an empty result list. ``ConnectionError``, a missing suffix
+    (``IndexNotFoundError``) and a ``ConfigurationError`` (such as a query
+    embedding model the index was not built with) are always fatal.
     The repo's adapters wrap backend failures in ``AWSServiceError`` carrying the
     original message, so the markers are matched against the message text.
     """
-    if isinstance(exc, ConnectionError | IndexNotFoundError):
+    if isinstance(exc, ConnectionError | IndexNotFoundError | ConfigurationError):
         return True
     message = str(exc).lower()
     return any(marker in message for marker in _FATAL_ERROR_MARKERS)

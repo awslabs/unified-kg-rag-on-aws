@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import asyncio
 import gc
+import threading
+import time
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -111,7 +113,9 @@ def test_loop_change_closes_evicted_retrievers() -> None:
         _run_on_fresh_loop(chain.ainvoke({"query": "q"}))  # type: ignore[arg-type]
 
     # Every loop got its own retriever; each evicted one was closed (its loop
-    # is gone, so synchronously), and identity is not fooled by id reuse.
+    # is gone, so synchronously, in the background), and identity is not
+    # fooled by id reuse.
+    rag_chain_module._join_background_closes()
     assert len(built) == 5
     assert [r.closed for r in built] == [1, 1, 1, 1, 0]
     chain.close()
@@ -140,9 +144,39 @@ def test_evicted_retriever_whose_close_drives_a_loop_is_closed() -> None:
 
     # Evicted inside the next query's running loop, their blocking close
     # still runs to completion (on a worker thread).
+    rag_chain_module._join_background_closes()
     assert [r.closed for r in built] == [1, 1, 0]
     chain.close()
     assert built[-1].closed == 1
+
+
+class _SlowClosingRetriever(_Retriever):
+    """Closes like a Neptune client whose websocket close hangs."""
+
+    release = threading.Event()
+
+    def close(self) -> None:
+        assert self.release.wait(timeout=10)
+        super().close()
+
+
+def test_evicting_a_slowly_closing_retriever_does_not_stall_the_query() -> None:
+    # Regression: the eviction on the query path joined the close thread for
+    # up to 30 s, so a slow Neptune close stalled the next query.
+    _SlowClosingRetriever.release.clear()
+    chain, built = _chain(_SlowClosingRetriever)
+    try:
+        _run_on_fresh_loop(chain.ainvoke({"query": "q"}))  # type: ignore[arg-type]
+        started = time.monotonic()
+        _run_on_fresh_loop(chain.ainvoke({"query": "q"}))  # type: ignore[arg-type]
+        assert time.monotonic() - started < 2
+        assert built[0].closed == 0  # still closing in the background
+    finally:
+        _SlowClosingRetriever.release.set()
+        chain.close()
+
+    # Chain close waits for the background close.
+    assert [r.closed for r in built] == [1, 1]
 
 
 async def test_aclose_closes_retrievers_of_a_closed_loop_off_the_loop() -> None:

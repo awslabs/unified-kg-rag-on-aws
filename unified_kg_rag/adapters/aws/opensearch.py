@@ -751,6 +751,15 @@ class OpenSearchClient:
         return bool(await self.async_client.indices.exists(index=index))
 
     @_handle_async_opensearch_errors
+    async def aget_mappings(self, index: str) -> dict[str, dict[str, Any]]:
+        """The ``mappings`` of each index ``index`` (a name or alias) names."""
+        response = await self.async_client.indices.get_mapping(index=index)
+        return {
+            name: dict((body or {}).get("mappings") or {})
+            for name, body in dict(response).items()
+        }
+
+    @_handle_async_opensearch_errors
     async def asearch(self, **kwargs: Any) -> dict[str, Any]:
         result = await self.async_client.search(**kwargs)
         return dict(result)

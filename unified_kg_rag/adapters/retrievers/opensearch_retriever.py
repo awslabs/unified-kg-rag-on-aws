@@ -12,6 +12,11 @@ from unified_kg_rag.adapters.retrieval.base import (
     is_fatal_retrieval_error,
 )
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
+from unified_kg_rag.adapters.storage.embedding_settings import (
+    configured_embedding_model,
+    resolve_embedding_dimension,
+    stored_embedding_settings,
+)
 from unified_kg_rag.adapters.storage.filter_schema import (
     FilterFields,
     opensearch_filter_fields,
@@ -26,7 +31,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.domain.retrieval.index_prefixes import configured_index_prefixes
 from unified_kg_rag.ports.model_factory import EmbeddingFactoryPort
-from unified_kg_rag.shared import IndexNotFoundError, get_logger
+from unified_kg_rag.shared import ConfigurationError, IndexNotFoundError, get_logger
 from unified_kg_rag.shared.utils import (
     EMBEDDING_FIELD_SUFFIX,
     strip_embedding_fields,
@@ -35,6 +40,24 @@ from unified_kg_rag.shared.utils import (
 from unified_kg_rag.shared.utils.scripts import has_dense_script
 
 logger = get_logger(__name__)
+
+# OpenSearch's kNN rejection of a query vector of another dimension than the
+# index's (a 400 whose text the client error wrapper keeps only on its cause).
+_INVALID_DIMENSION_MARKER = "query vector has invalid dimension"
+
+
+def _invalid_dimension_error(exc: BaseException) -> str | None:
+    """OpenSearch's invalid-dimension reason in ``exc`` or its causes, if any."""
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        text = str(current)
+        start = text.lower().find(_INVALID_DIMENSION_MARKER)
+        if start >= 0:
+            return text[start:].split('"', 1)[0].rstrip(" .,'")
+        current = current.__cause__ or current.__context__
+    return None
 
 
 class OpenSearchRetriever(BaseGraphRAGRetriever):
@@ -70,9 +93,18 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             "max_result_window", 10000
         )
         self._embedding_factory = embedding_factory
-        self._embedding_model = self._embedding_factory.get_model(
-            self._opensearch_config.embedding_model_id
+        # Queries embed with the model and dimension the indexer embeds with
+        # (OpenSearchIndexer), so their vectors are comparable.
+        self._embedding_model_id = configured_embedding_model(self._opensearch_config)
+        self._embedding_dimension = resolve_embedding_dimension(
+            embedding_factory, self._opensearch_config
         )
+        self._embedding_model = self._embedding_factory.get_model(
+            self._opensearch_config.embedding_model_id,
+            dimensions=self._embedding_dimension,
+        )
+        # Aliases whose indices were checked to hold this model's embeddings.
+        self._embedding_checked_aliases: set[str] = set()
         self._query_embedding_cache: OrderedDict[str, list[float]] = OrderedDict()
         # One embedding call per text in flight: concurrent sub-queries of one
         # search share it instead of each missing the cache.
@@ -177,6 +209,8 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             query_vector = await self._get_query_vector(
                 query.query, search_type, ["any"]
             )
+            if query_vector is not None:
+                await self._check_embedding_settings(index_prefixes, query.suffix)
 
             safe_batch_size = self._calculate_safe_batch_size(query.filters)
             large_filters = self._find_all_large_filter_lists(
@@ -329,6 +363,75 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         if len(cache) > self.QUERY_EMBEDDING_CACHE_SIZE:
             cache.popitem(last=False)
         return vector
+
+    async def _check_embedding_settings(
+        self, index_prefixes: list[str], suffix: str | None
+    ) -> None:
+        """Raise when an index to search holds another model's embeddings.
+
+        A kNN search of a query vector of another dimension fails on every
+        index, and one of another model of the same dimension ranks by
+        unrelated vectors; either way the answer would come back empty or
+        wrong while the query reports success. Each alias is checked once per
+        retriever, against the model and dimension its indices record in
+        ``_meta`` (indexes built before they did are checked by their
+        ``knn_vector`` dimension alone). A missing or unreadable index is left
+        to the search itself.
+
+        Raises:
+            ConfigurationError: An index was built with another embedding
+                model or dimension than the query embeds with.
+        """
+        aliases = [
+            alias
+            for prefix in index_prefixes
+            if prefix in self._field_mappings
+            and (alias := self._get_name(prefix, suffix))
+            not in self._embedding_checked_aliases
+        ]
+        if not aliases:
+            return
+        for alias, mappings in zip(
+            aliases,
+            await asyncio.gather(*(self._index_mappings(alias) for alias in aliases)),
+            strict=True,
+        ):
+            if mappings is None:
+                continue
+            for index_name, index_mappings in mappings.items():
+                self._raise_on_embedding_mismatch(index_name, index_mappings)
+            self._embedding_checked_aliases.add(alias)
+
+    async def _index_mappings(self, alias: str) -> dict[str, dict[str, Any]] | None:
+        try:
+            mappings: dict[str, dict[str, Any]] = (
+                await self._opensearch_client.aget_mappings(alias)
+            )
+        except Exception as e:  # noqa: BLE001 - the search reports real failures
+            if is_fatal_retrieval_error(e):
+                raise
+            logger.debug("Could not read the mappings of %s: %s", alias, e)
+            return None
+        return mappings
+
+    def _raise_on_embedding_mismatch(
+        self, index_name: str, mappings: dict[str, Any]
+    ) -> None:
+        stored_model, stored_dimensions = stored_embedding_settings(mappings)
+        model, dimension = self._embedding_model_id, self._embedding_dimension
+        if stored_dimensions <= {dimension} and stored_model in (None, model):
+            return
+        stored = f"model '{stored_model}'" if stored_model else "an unrecorded model"
+        shown_dimensions = ", ".join(str(d) for d in sorted(stored_dimensions))
+        raise ConfigurationError(
+            f"The OpenSearch index '{index_name}' holds embeddings of {stored} "
+            f"(dimension {shown_dimensions or 'unknown'}), but queries embed with "
+            f"'{model}' (dimension {dimension}), so its vector search would fail "
+            "or rank by unrelated vectors. Query with the embedding model and "
+            "dimension the corpus was ingested with "
+            "(indexing.opensearch.embedding_model_id / embedding_dimension), or "
+            "re-ingest the corpus with this model (indexing.reset: true)."
+        )
 
     @staticmethod
     def _is_search_type_supported(
@@ -647,6 +750,15 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             if is_fatal_retrieval_error(e):
                 logger.error("Fatal search error on indices %s: %s", aliases, e)
                 raise
+            if reason := _invalid_dimension_error(e):
+                raise ConfigurationError(
+                    f"OpenSearch rejected the query vector on {', '.join(aliases)}: "
+                    f"{reason}. The index was built with another embedding model "
+                    f"or dimension than queries embed with ('{self._embedding_model_id}', "
+                    f"dimension {self._embedding_dimension}). Query with the "
+                    "embedding settings the corpus was ingested with, or re-ingest "
+                    "it with this model (indexing.reset: true)."
+                ) from e
             if is_index_not_found(e):
                 await self._require_ingested_suffix(suffix, e)
                 # A missing alias is a config/index mismatch (the index was
