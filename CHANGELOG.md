@@ -329,7 +329,7 @@ Library API (Python callers and custom backends).
   and its open connection for every event loop they were used on, which grew
   by one client and two file descriptors per `asyncio.run`. Their async
   clients open no keep-alive connections, so each connection closes on its
-  own loop, and the clients of closed loops are dropped (#).
+  own loop, and the clients of closed loops are dropped (#229).
 - IaC: a zone-aware OpenSearch domain spans as many AZs as it has data
   nodes, up to 3 and up to the VPC's AZs, so `opensearch_count=3` with
   `max_azs=3` uses three zones instead of two; on an existing domain the
