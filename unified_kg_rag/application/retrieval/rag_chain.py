@@ -1028,6 +1028,10 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         worker thread: a client's blocking close may drive its own event loop
         (gremlinpython's transport calls ``run_until_complete``), which raises
         inside a running loop and would leave the connection open.
+
+        ``wait=False`` (eviction on the query path) returns without waiting
+        for the closes: they run on a daemon thread, so a slow close does not
+        stall the query; chain close waits for them.
         """
         if not retrievers:
             return
@@ -1050,17 +1054,12 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
                 except Exception as e:  # noqa: BLE001 - teardown must never raise
                     logger.debug("Error closing retrievers on their loop: %s", e)
             return
-        if current is None:
+        if current is None and wait:
             _close_retrievers(retrievers)
             return
-        worker = threading.Thread(
-            target=_close_retrievers,
-            args=(retrievers,),
-            name="kg-rag-retriever-close",
-            daemon=True,
-        )
-        worker.start()
-        worker.join(timeout=_TEARDOWN_TIMEOUT_SECONDS)
+        worker = _close_in_background(retrievers)
+        if wait:
+            worker.join(timeout=_TEARDOWN_TIMEOUT_SECONDS)
 
     async def aclose(self) -> None:
         """Close every cached retriever's backing client (best-effort).
@@ -1096,6 +1095,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             else:
                 # Their loop is gone: the blocking closes run off this loop.
                 await asyncio.to_thread(_close_retrievers, retrievers)
+        await asyncio.to_thread(_join_background_closes)
         runner = getattr(self, "_loop_runner", None)
         if runner is not None:
             await asyncio.to_thread(runner.stop)
@@ -1650,6 +1650,39 @@ def _close_retrievers(retrievers: list[BaseGraphRAGRetriever]) -> None:
             logger.debug("Error closing retriever %r: %s", retriever, e)
 
 
+# Retriever closes running on daemon threads (see _close_in_background).
+_BACKGROUND_CLOSES: set[threading.Thread] = set()
+_BACKGROUND_CLOSES_LOCK = threading.Lock()
+
+
+def _close_in_background(retrievers: list[BaseGraphRAGRetriever]) -> threading.Thread:
+    """Start the synchronous closes of ``retrievers`` on a daemon thread."""
+
+    def run() -> None:
+        try:
+            _close_retrievers(retrievers)
+        finally:
+            with _BACKGROUND_CLOSES_LOCK:
+                _BACKGROUND_CLOSES.discard(threading.current_thread())
+
+    worker = threading.Thread(target=run, name="kg-rag-retriever-close", daemon=True)
+    with _BACKGROUND_CLOSES_LOCK:
+        _BACKGROUND_CLOSES.add(worker)
+    worker.start()
+    return worker
+
+
+def _join_background_closes(timeout: float = _TEARDOWN_TIMEOUT_SECONDS) -> None:
+    """Wait, up to ``timeout`` in all, for the background closes to finish."""
+    deadline = time.monotonic() + timeout
+    with _BACKGROUND_CLOSES_LOCK:
+        workers = list(_BACKGROUND_CLOSES)
+    for worker in workers:
+        if worker is threading.current_thread():
+            continue
+        worker.join(timeout=max(0.0, deadline - time.monotonic()))
+
+
 async def _aclose_retrievers(retrievers: list[BaseGraphRAGRetriever]) -> None:
     for retriever in retrievers:
         aclose = getattr(retriever, "aclose", None)
@@ -1693,6 +1726,7 @@ def _release_cached_resources(
     """
     for loop, retrievers in _take_cached(retriever_cache, strategy_cache, lock).items():
         GraphRAGChain._release_retrievers(retrievers, loop, wait=True)
+    _join_background_closes()
     if runner is not None:
         runner.stop()
 

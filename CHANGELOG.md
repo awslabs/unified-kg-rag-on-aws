@@ -384,6 +384,11 @@ Library API (Python callers and custom backends).
   with that dimension, as ingestion does. They embedded with the model's
   default, so every vector and hybrid search of such an index came back
   empty (#PR).
+- A `GraphRAGChain` reused across event loops no longer stalls a query while
+  it closes the retrievers of the previous loop: the query waited up to 30
+  seconds for a slow (for example Neptune websocket) close. The close runs on
+  a background thread, and `close()`/`aclose()` of the chain wait for it
+  (#PR).
 - IaC: a zone-aware OpenSearch domain spans as many AZs as it has data
   nodes, up to 3 and up to the VPC's AZs, so `opensearch_count=3` with
   `max_azs=3` uses three zones instead of two; on an existing domain the
