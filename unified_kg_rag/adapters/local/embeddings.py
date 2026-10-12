@@ -30,6 +30,7 @@ from unified_kg_rag.adapters.local.models import (
     import_optional,
     local_transient_retry,
     ollama_async_client_kwargs,
+    openai_http_async_client,
     per_loop_async_client,
 )
 from unified_kg_rag.domain.models import Config, model_id_value
@@ -200,14 +201,14 @@ class OpenAICompatibleEmbeddingFactory(_LocalEmbeddingFactory):
 
     def _build(self, model_id: str) -> Embeddings:
         module = import_optional("langchain_openai", self.kind)
-        extra: dict[str, Any] = {}
+        timeout = self.settings.timeout_seconds
+        extra: dict[str, Any] = {
+            # One async client per event loop (see openai_http_async_client).
+            "http_async_client": openai_http_async_client(timeout, self.transport)
+        }
         if self.transport is not None:
             httpx = importlib.import_module("httpx")
-            timeout = self.settings.timeout_seconds
             extra["http_client"] = httpx.Client(
-                transport=self.transport, timeout=timeout
-            )
-            extra["http_async_client"] = httpx.AsyncClient(
                 transport=self.transport, timeout=timeout
             )
         embeddings: Embeddings = module.OpenAIEmbeddings(
