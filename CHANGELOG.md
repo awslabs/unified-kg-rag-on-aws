@@ -404,7 +404,7 @@ Library API (Python callers and custom backends).
   the documents into the live indices, whose text fields keep the analyzers
   they were built with: a newly translated language was mapped as a keyword
   (`translated_text_ja`), a new corpus language kept the old analyzer. The
-  check compares the live mapping's text fields with the run's (#PR).
+  check compares the live mapping's text fields with the run's (#233).
 - An incremental run on a suffix last indexed with the doc-status registry
   off (the `backend: local` preset and flag-only runs default to off) stops
   before any write with a `ConfigurationError` that asks for
@@ -414,7 +414,7 @@ Library API (Python callers and custom backends).
   now records in its `_meta` whether the registry tracks it. An index built
   before it recorded its settings is not checked for languages or the
   registry, and is given the run's embedding settings when its dimension
-  and text fields match, so later runs check its model (#PR).
+  and text fields match, so later runs check its model (#233).
 - A run with `indexing.reset: true` that reuses the pipeline id of an
   incremental run (a fixed `--pipeline-id`) rebuilds the stores from the
   whole corpus. It resumed at the indexing stage from the previous run's
@@ -422,7 +422,7 @@ Library API (Python callers and custom backends).
   only the delta's documents; the unchanged ones were missing until the next
   run. `indexing.reset` is now an input of the document-loading stage cache
   key (only when set, so existing caches keep their keys), not of the
-  extraction fingerprint (#PR).
+  extraction fingerprint (#233).
 - IaC: a zone-aware OpenSearch domain spans as many AZs as it has data
   nodes, up to 3 and up to the VPC's AZs, so `opensearch_count=3` with
   `max_azs=3` uses three zones instead of two; on an existing domain the
