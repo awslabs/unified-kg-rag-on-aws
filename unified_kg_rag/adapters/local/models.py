@@ -18,6 +18,7 @@ provider never needs them.
 from __future__ import annotations
 
 import asyncio
+import functools
 import importlib
 import threading
 from collections.abc import Callable
@@ -59,39 +60,41 @@ def import_optional(module: str, kind: str) -> Any:
 
 
 # httpx's default connection limit; only keep-alive is turned off.
-_OLLAMA_MAX_CONNECTIONS = 100
+_MAX_CONNECTIONS = 100
 
 
-def ollama_async_client_kwargs() -> dict[str, Any]:
-    """``async_client_kwargs`` for an Ollama model: no keep-alive connections.
+def _no_keepalive_limits() -> Any:
+    """``httpx.Limits`` that keep no idle connection for reuse.
 
     A pooled keep-alive connection belongs to the event loop that opened it,
     and nothing closes it once that loop is closed (``asyncio.run`` closes its
     loop, not the clients used on it): every loop would leave a client and its
     sockets behind. Without keep-alive each connection closes on its own loop
     when its response is read, so a loop's client holds no socket afterwards.
-    Ollama answers far slower than a connection opens.
+    A model answers far slower than a connection opens.
     """
     httpx = importlib.import_module("httpx")
-    return {
-        "limits": httpx.Limits(
-            max_connections=_OLLAMA_MAX_CONNECTIONS, max_keepalive_connections=0
-        )
-    }
+    return httpx.Limits(max_connections=_MAX_CONNECTIONS, max_keepalive_connections=0)
+
+
+def ollama_async_client_kwargs() -> dict[str, Any]:
+    """``async_client_kwargs`` for an Ollama model: no keep-alive connections."""
+    return {"limits": _no_keepalive_limits()}
 
 
 class PerLoopAsyncClient:
-    """Stands in for an Ollama ``AsyncClient``, with one client per event loop.
+    """Stands in for an async HTTP client, with one client per event loop.
 
     ``ChatOllama`` and ``OllamaEmbeddings`` build one async client at
-    construction, and its connections belong to the event loop that opened
-    them, so the same model used again from another loop (a second
-    ``asyncio.run``, or the sync API's loop and then the caller's) fails with
-    "Event loop is closed". The models are built once and reused, as the
-    query chains are; this proxy gives every running loop its own client,
-    built by ``build``, and drops the clients of closed loops whenever a
-    client is looked up. The clients are built without keep-alive
-    (``ollama_async_client_kwargs``), so a dropped client holds no socket.
+    construction, and the OpenAI models keep one too; the
+    connections belong to the event loop that opened them, so the same model
+    used again from another loop (a second ``asyncio.run``, or the sync API's
+    loop and then the caller's) fails with "Event loop is closed". The models
+    are built once and reused, as the query chains are; this proxy gives
+    every running loop its own client, built by ``build``, and drops the
+    clients of closed loops whenever a client is looked up. The clients are
+    built without keep-alive (``_no_keepalive_limits``), so a dropped client
+    holds no socket.
     """
 
     def __init__(self, build: Callable[[], Any]) -> None:
@@ -123,6 +126,57 @@ def per_loop_async_client(model: Any, rebuild: Callable[[], Any]) -> Any:
     """
     model._async_client = PerLoopAsyncClient(lambda: rebuild()._async_client)
     return model
+
+
+@functools.cache
+def _per_loop_httpx_client_class() -> type:
+    import httpx
+
+    class PerLoopHttpxAsyncClient(httpx.AsyncClient):
+        """An ``httpx.AsyncClient`` that sends through the loop's own client.
+
+        The OpenAI client takes an ``httpx.AsyncClient`` (``http_async_client``)
+        and sends every request through its ``send``; this one hands each
+        request to the running loop's client (``PerLoopAsyncClient``).
+        """
+
+        def __init__(self, clients: PerLoopAsyncClient, **kwargs: Any) -> None:
+            super().__init__(**kwargs)
+            self._per_loop = clients
+
+        async def send(self, request: httpx.Request, **kwargs: Any) -> Any:
+            return await self._per_loop.send(request, **kwargs)
+
+    return PerLoopHttpxAsyncClient
+
+
+def openai_http_async_client(timeout: float, transport: Any = None) -> Any:
+    """``http_async_client`` for ``ChatOpenAI`` / ``OpenAIEmbeddings``.
+
+    Without one, a chat model uses langchain-openai's process-wide async
+    client and an embedding model one of its own, kept across event loops:
+    the first call on every later loop meets a keep-alive connection of the
+    closed one, fails with "Event loop is closed" and the OpenAI client sends
+    it again (billed twice, and failed with ``max_attempts: 1``). This client
+    sends through one client per event loop, without keep-alive, as for
+    Ollama.
+
+    ``transport`` (tests: ``httpx.MockTransport``) opens no connection, so a
+    plain client on it is returned.
+    """
+    httpx = importlib.import_module("httpx")
+    if transport is not None:
+        return httpx.AsyncClient(transport=transport, timeout=timeout)
+
+    def build() -> Any:
+        # The OpenAI client's own defaults, but for keep-alive.
+        return httpx.AsyncClient(
+            timeout=timeout, limits=_no_keepalive_limits(), follow_redirects=True
+        )
+
+    return _per_loop_httpx_client_class()(
+        PerLoopAsyncClient(build), timeout=timeout, follow_redirects=True
+    )
 
 
 def api_key_value(endpoint: EndpointConfig) -> str:
@@ -264,14 +318,13 @@ class OpenAICompatibleLanguageModelFactory(_LocalLanguageModelFactory):
         self, model_id: str, max_tokens: int, temperature: float, callbacks: Any
     ) -> BaseChatModel:
         module = import_optional("langchain_openai", self.kind)
-        extra: dict[str, Any] = {}
+        timeout = self.settings.timeout_seconds
+        extra: dict[str, Any] = {
+            "http_async_client": openai_http_async_client(timeout, self.transport)
+        }
         if self.transport is not None:
             httpx = importlib.import_module("httpx")
-            timeout = self.settings.timeout_seconds
             extra["http_client"] = httpx.Client(
-                transport=self.transport, timeout=timeout
-            )
-            extra["http_async_client"] = httpx.AsyncClient(
                 transport=self.transport, timeout=timeout
             )
         model: BaseChatModel = module.ChatOpenAI(

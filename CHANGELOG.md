@@ -357,6 +357,20 @@ Library API (Python callers and custom backends).
   by one client and two file descriptors per `asyncio.run`. Their async
   clients open no keep-alive connections, so each connection closes on its
   own loop, and the clients of closed loops are dropped (#229).
+- Local mode: an OpenAI-compatible chat or embedding model sends one request
+  per call from successive event loops. langchain-openai shared one async
+  HTTP client across loops, so the first call on each new loop hit a pooled
+  connection of the closed previous loop ("Event loop is closed") and was
+  sent again: a paid endpoint billed it twice, and with `max_attempts: 1` it
+  failed with `APIConnectionError`. These models now get one async client per
+  loop without keep-alive connections, as the Ollama models do (#231).
+- An incremental run after a change of the embedding model or dimension
+  stops in the indexing stage, before any write, with a `ConfigurationError`
+  that asks for `indexing.reset: true`. It re-embedded only the new and
+  changed documents, so the live indices mixed the old and new models'
+  vectors (or rejected every write on the dimension). Each OpenSearch index
+  now records its embedding model and dimension in its mapping's `_meta`;
+  indices built before are checked by their dimension only (#231).
 - IaC: a zone-aware OpenSearch domain spans as many AZs as it has data
   nodes, up to 3 and up to the VPC's AZs, so `opensearch_count=3` with
   `max_azs=3` uses three zones instead of two; on an existing domain the

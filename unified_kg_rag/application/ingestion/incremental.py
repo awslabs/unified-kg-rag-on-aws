@@ -1643,12 +1643,16 @@ def index_delta(
         community_reports,
         claims,
     )
+    # Checked before any write: the live vectors must come from the model
+    # this run embeds with (unchanged documents are not re-embedded), and
+    # the graph must still hold the registry's documents.
+    indexing_manager.opensearch_indexer.check_embedding_settings(incremental.suffix)
+    incremental.check_graph_holds_registry(delta)
     # Write ahead before any store write: the new and changed docs are
     # recorded PENDING with their stored + planned lineage, so a run
     # interrupted from here on is repaired by the next one (the docs
     # read as changed, or as deleted when gone, and every artifact this
     # run may write is found by their lineage).
-    incremental.check_graph_holds_registry(delta)
     incremental.write_ahead(delta, lineages)
 
     # Drop the stale artifacts of changed and deleted docs in ONE removal

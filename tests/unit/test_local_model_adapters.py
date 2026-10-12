@@ -844,3 +844,41 @@ def test_successive_event_loops_leave_no_ollama_clients_or_sockets() -> None:
         assert len(chat._async_client._clients) <= 1
         assert len(embeddings.inner._async_client._clients) <= 1
         assert after - before < runs
+
+
+@pytest.mark.skipif(not _FD_DIR.is_dir(), reason="needs /proc/self/fd")
+@pytest.mark.parametrize("max_attempts", [1, 3])
+def test_successive_event_loops_send_one_openai_request_per_call(
+    max_attempts: int,
+) -> None:
+    # langchain-openai shares one async HTTP client (and its keep-alive
+    # pool) across event loops: the first call on every new loop hit a
+    # connection of the closed previous loop, failed with "Event loop is
+    # closed" and was retried, so each call sent two requests, and with
+    # max_attempts 1 it failed with APIConnectionError.
+    runs = 30
+    fake = FakeServer()
+    with _HTTPFakeServer(fake) as server:
+        config = _http_config("openai_compatible", server.url)
+        config.providers.llm.max_attempts = max_attempts
+        config.providers.embedding.max_attempts = max_attempts
+        chat = OpenAICompatibleLanguageModelFactory(config).get_model("synthetic-chat")
+        embeddings = OpenAICompatibleEmbeddingFactory(config).get_model(
+            "synthetic-embed", dimensions=DIM
+        )
+
+        async def query() -> None:
+            reply = await chat.ainvoke([HumanMessage(content="Who ships?")])
+            assert reply.content == "Vendor ships to Buyer."
+            assert len(await embeddings.aembed_query("Vendor")) == DIM
+
+        asyncio.run(query())
+        before = _open_fds()
+        for _ in range(runs):
+            asyncio.run(query())
+        after = _open_fds()
+
+        paths = [path for path, _ in fake.requests]
+        assert paths.count("/v1/chat/completions") == runs + 1
+        assert paths.count("/v1/embeddings") == runs + 1
+        assert after - before < runs
