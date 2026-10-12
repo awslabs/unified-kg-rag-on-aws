@@ -271,31 +271,31 @@ Library API (Python callers and custom backends).
 ### Fixed
 - `run-eval --eval-data-path` naming a file that does not exist exits 2 with
   `Error: invalid evaluation dataset: ...`, as the user guide documents and
-  as an unreadable or invalid dataset does; it exited 1 (#).
+  as an unreadable or invalid dataset does; it exited 1 (#230).
 - A configuration file with a value of the wrong type, invalid YAML or a
   missing `--config-path` file no longer makes `run-ingestion`, `run-rag` or
   `run-eval` print "An unexpected error occurred" with a traceback. All five
   CLIs treat it as a usage error: one `<cli>: error: ...` line and exit code
   2 (`run-prompt-tuning` and `run-visualization` exited 1). A validation
   error now fits on one line, naming each invalid key without echoing its
-  value (#).
+  value (#230).
 - A `local` query against a missing index (for example a wrong `--suffix`)
   no longer also logs "_GatheringFuture exception was never retrieved" with
   a second traceback: the community-report, relationship and claim sections
-  that fail alongside the entity chain have their error consumed (#).
+  that fail alongside the entity chain have their error consumed (#230).
 - A `GraphRAGChain` reused across event loops (one `asyncio.run` per query)
   closes the retrievers of each finished loop again: their synchronous close
   ran inside the next query's running loop, where the Neptune (Gremlin)
   client's close fails with "Cannot run the event loop while another loop is
   running", so every loop left a websocket and its threads open (15 queries
   grew a process from 5 to over 40 threads). The close now runs on a worker
-  thread (#).
+  thread (#230).
 - Switching `processing.claim_extraction` on, or changing its model, limits
   or claim prompts while it is on, now re-extracts an incrementally indexed
   corpus: the extraction fingerprint stopped at graph resolution, so such a
   run reported 0 changed documents and indexed no claims, without a warning.
   With claim extraction off the fingerprint is unchanged, so default
-  configurations are not re-extracted on upgrade (#).
+  configurations are not re-extracted on upgrade (#230).
 - Attaching, rotating or toggling a Bedrock guardrail under the default
   `apply_to: query` no longer re-keys the stage caches or re-extracts the
   whole corpus on the next incremental run: ingestion runs unguarded then, so
