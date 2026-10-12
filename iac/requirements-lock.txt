@@ -50,7 +50,7 @@ python-dateutil==2.9.0.post0
     # via jsii
 six==1.17.0
     # via python-dateutil
-typeguard==2.13.3
+typeguard==4.6.0
     # via
     #   cdk-nag
     #   jsii
