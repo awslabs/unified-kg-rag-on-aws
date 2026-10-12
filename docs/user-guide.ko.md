@@ -333,7 +333,9 @@ cp config-template.yaml config.yaml
 3. **환경 변수**(§2.10): 마지막에 적용되어 앞의 두 단계를 모두 덮어씁니다.
 
 YAML 값은 파일을 읽을 때 검증합니다. 타입이 틀리거나 지원하지 않는 값이면
-`Configuration validation error: ...`와 함께 CLI가 멈춥니다. 알 수 없는 키(오타나
+잘못된 키를 밝힌 `Configuration validation error: ...`와 함께 CLI가 멈춥니다. 이
+경우와 올바른 YAML이 아닌 파일, 존재하지 않는 `--config-path` 파일은 사용법 오류로
+처리되어 모든 CLI가 오류 한 줄을 출력하고 종료 코드 2로 끝납니다. 알 수 없는 키(오타나
 새 릴리스에서 제거된 키)는 실행을 멈추지 않습니다. `Unknown config key '<path>' is ignored`
 WARNING을 남기고 버리므로, 파일을 고치거나 업그레이드한 뒤에는 로그를 확인하세요.
 

@@ -29,6 +29,12 @@ from unified_kg_rag.shared.utils import text_digest
 logger = get_logger(__name__)
 
 
+def _consume_outcome(future: asyncio.Future[Any]) -> None:
+    """Mark an abandoned future's exception as retrieved."""
+    if not future.cancelled():
+        future.exception()
+
+
 @register_strategy(SearchStrategy.LOCAL, query_inputs=frozenset({QueryInput.ENTITIES}))
 class LocalSearchStrategy(BaseSearchStrategy):
     def __init__(
@@ -68,6 +74,10 @@ class LocalSearchStrategy(BaseSearchStrategy):
             all_results, chain_stats = await self._retrieve_entity_chain(query)
         except BaseException:
             side_sections.cancel()
+            # A side section may already have failed (a missing index fails
+            # them all): consume its outcome so it is not logged later as
+            # "exception was never retrieved"; the chain's error is raised.
+            side_sections.add_done_callback(_consume_outcome)
             raise
         community_reports, relationships, claims = await side_sections
 

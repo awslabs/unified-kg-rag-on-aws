@@ -1023,7 +1023,11 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
 
         Retrievers bound to a loop that is still running on another thread are
         closed there with their awaited ``aclose``; otherwise (no loop, or the
-        loop is gone) their synchronous ``close`` releases what it can.
+        loop is gone) their synchronous ``close`` releases what it can. Called
+        with a loop running in this thread, the synchronous closes run on a
+        worker thread: a client's blocking close may drive its own event loop
+        (gremlinpython's transport calls ``run_until_complete``), which raises
+        inside a running loop and would leave the connection open.
         """
         if not retrievers:
             return
@@ -1046,13 +1050,17 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
                 except Exception as e:  # noqa: BLE001 - teardown must never raise
                     logger.debug("Error closing retrievers on their loop: %s", e)
             return
-        for retriever in retrievers:
-            close = getattr(retriever, "close", None)
-            if close is not None:
-                try:
-                    close()
-                except Exception as e:  # noqa: BLE001 - teardown must never raise
-                    logger.debug("Error closing retriever %r: %s", retriever, e)
+        if current is None:
+            _close_retrievers(retrievers)
+            return
+        worker = threading.Thread(
+            target=_close_retrievers,
+            args=(retrievers,),
+            name="kg-rag-retriever-close",
+            daemon=True,
+        )
+        worker.start()
+        worker.join(timeout=_TEARDOWN_TIMEOUT_SECONDS)
 
     async def aclose(self) -> None:
         """Close every cached retriever's backing client (best-effort).
@@ -1086,7 +1094,8 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
                 except Exception as e:  # noqa: BLE001 - teardown must never raise
                     logger.debug("Error closing retrievers on their loop: %s", e)
             else:
-                self._release_retrievers(retrievers, None, wait=False)
+                # Their loop is gone: the blocking closes run off this loop.
+                await asyncio.to_thread(_close_retrievers, retrievers)
         runner = getattr(self, "_loop_runner", None)
         if runner is not None:
             await asyncio.to_thread(runner.stop)
@@ -1627,6 +1636,18 @@ _T = TypeVar("_T")
 
 # Upper bound on waiting for retrievers to close on another thread's loop.
 _TEARDOWN_TIMEOUT_SECONDS = 30.0
+
+
+def _close_retrievers(retrievers: list[BaseGraphRAGRetriever]) -> None:
+    """Call each retriever's synchronous ``close`` (best-effort, never raises)."""
+    for retriever in retrievers:
+        close = getattr(retriever, "close", None)
+        if close is None:
+            continue
+        try:
+            close()
+        except Exception as e:  # noqa: BLE001 - teardown must never raise
+            logger.debug("Error closing retriever %r: %s", retriever, e)
 
 
 async def _aclose_retrievers(retrievers: list[BaseGraphRAGRetriever]) -> None:

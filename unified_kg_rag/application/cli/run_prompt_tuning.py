@@ -16,6 +16,10 @@ from pathlib import Path
 import yaml
 
 from unified_kg_rag.adapters.ingestion.parser import ParserFactory
+from unified_kg_rag.application.cli.config_args import (
+    config_path_arg,
+    exit_on_config_error,
+)
 from unified_kg_rag.application.cli.help_text import doc_epilog
 from unified_kg_rag.application.cli.provider_args import (
     add_provider_arguments,
@@ -96,7 +100,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--max-docs", type=int, default=20, help="Max documents to sample"
     )
     parser.add_argument(
-        "--config-path", type=str, default=None, help="Config YAML path"
+        "--config-path", type=config_path_arg, default=None, help="Config YAML path"
     )
     add_provider_arguments(parser)
     return parser
@@ -106,7 +110,8 @@ def main() -> int:
     load_cli_dotenv()
     args = _build_parser().parse_args()
     try:
-        config = apply_provider_arguments(get_config(args.config_path), args)
+        with exit_on_config_error():
+            config = apply_provider_arguments(get_config(args.config_path), args)
         setup_logging(config)
 
         texts = load_corpus_texts(args.source_directory, args.max_docs, config)
