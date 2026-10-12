@@ -325,19 +325,21 @@ Library API (Python callers and custom backends).
   Ollama chat and embedding models kept one async HTTP client, bound to the
   first loop, and failed later calls with "Event loop is closed"; they now
   get one client per loop (#227).
+- Local mode: the Ollama chat and embedding models no longer keep a client
+  and its open connection for every event loop they were used on, which grew
+  by one client and two file descriptors per `asyncio.run`. Their async
+  clients open no keep-alive connections, so each connection closes on its
+  own loop, and the clients of closed loops are dropped (#229).
 - IaC: a zone-aware OpenSearch domain spans as many AZs as it has data
   nodes, up to 3 and up to the VPC's AZs, so `opensearch_count=3` with
-  `max_azs=3` uses three zones instead of two. `bedrock_model_arns` that
+  `max_azs=3` uses three zones instead of two; on an existing domain the
+  first deploy is a blue/green deployment (see the IaC README).
+  `bedrock_model_arns` that
   list only foundation models keep the inference-profile grants, so models
   offered only through a profile stay callable (the profile call is still
   authorized against the listed models). The README documents both, and
   its cross-region guardrail example now sets `network_mode=public`, which
   a `bedrock_region` other than the deploy region requires (#227).
-- An incremental run that an artifact stage stops before indexing (every
-  text unit of a document failing extraction, without `--continue-on-error`)
-  records its new and changed documents FAILED, so
-  `indexing.max_document_failures` ends the retries of a document that always
-  fails; before, nothing was recorded and every run retried it (#227).
 - `run-prompt-tuning` no longer puts up to 200 characters of model output in
   the ERROR it logs when the corpus profile is not JSON: the message carries
   the output's length and digest, and the output itself is logged at DEBUG,

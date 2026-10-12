@@ -29,6 +29,7 @@ from unified_kg_rag.adapters.local.models import (
     api_key_value,
     import_optional,
     local_transient_retry,
+    ollama_async_client_kwargs,
     per_loop_async_client,
 )
 from unified_kg_rag.domain.models import Config, model_id_value
@@ -246,6 +247,7 @@ class OllamaEmbeddingFactory(_LocalEmbeddingFactory):
                 model=model_id,
                 base_url=self.settings.base_url,
                 client_kwargs=client_kwargs,
+                async_client_kwargs=ollama_async_client_kwargs(),
             )
             return built
 

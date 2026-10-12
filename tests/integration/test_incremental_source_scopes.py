@@ -629,28 +629,29 @@ def test_run_reads_and_scopes_the_directory_it_is_given(registry, tmp_path) -> N
     assert {r.scope for r in registry.list_all()} == {_scope_of(context)}
 
 
-def test_a_document_that_always_fails_its_stage_stops_being_retried(
+def test_runs_a_stage_stops_before_indexing_keep_retrying_the_delta(
     registry, tmp_path
 ) -> None:
-    # Every unit of the document fails extraction, so the stage fails and the
-    # run stops before indexing. The document is still recorded FAILED, so
-    # indexing.max_document_failures ends the retries.
+    # A stage that stops the run before indexing cannot tell one bad document
+    # from a systemic failure (throttling, an outage, expired credentials), so
+    # it records nothing: however many such runs, under whichever pipeline
+    # ids, the new and changed documents are diffed and processed again, and a
+    # changed document keeps its indexed content and its old content hash.
     stack = ScopeStack(registry, tmp_path)
-    stack.config.indexing.max_document_failures = 2
-    source = write_corpus(tmp_path / "src", {"bad.txt": "UNREADABLE Vendor."})
+    source = write_corpus(tmp_path / "src", {"good.txt": A_TEXT})
+    stack.run(source)
+    (indexed,) = registry.list_all()
 
-    for count in (1, 2):
+    (source / "good.txt").write_text("UNREADABLE Vendor.", encoding="utf-8")
+    (source / "new.txt").write_text("UNREADABLE Buyer.", encoding="utf-8")
+    runs = stack.config.indexing.max_document_failures + 1
+    for _ in range(runs):
         context = stack.run(source, expect=PipelineStageStatus.FAILED)
         failed = {r.stage_name for r in context.stage_results if r.status == "failed"}
         assert "graph_extraction" in failed
-        (record,) = registry.list_all()
-        assert record.status == "failed"
-        assert record.failure_count == count
-        assert record.scope == _scope_of(context)
-        assert record.file_path == "bad.txt"
-
-    context = stack.run(source)
-    assert not stack.model.extractions
-    assert context.incremental_delta.unchanged == [record.doc_id]
-    (record,) = registry.list_all()
-    assert record.failure_count == 2
+        delta = context.incremental_delta
+        assert delta.changed == [indexed.doc_id]
+        assert len(delta.new) == 1
+        assert stack.model.extractions
+        assert registry.list_all() == [indexed]
+    assert stack.texts() == {A_TEXT}

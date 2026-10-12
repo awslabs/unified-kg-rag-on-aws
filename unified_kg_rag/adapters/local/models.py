@@ -20,7 +20,6 @@ from __future__ import annotations
 import asyncio
 import importlib
 import threading
-import weakref
 from collections.abc import Callable
 from typing import Any, ClassVar
 
@@ -59,28 +58,52 @@ def import_optional(module: str, kind: str) -> Any:
         ) from e
 
 
+# httpx's default connection limit; only keep-alive is turned off.
+_OLLAMA_MAX_CONNECTIONS = 100
+
+
+def ollama_async_client_kwargs() -> dict[str, Any]:
+    """``async_client_kwargs`` for an Ollama model: no keep-alive connections.
+
+    A pooled keep-alive connection belongs to the event loop that opened it,
+    and nothing closes it once that loop is closed (``asyncio.run`` closes its
+    loop, not the clients used on it): every loop would leave a client and its
+    sockets behind. Without keep-alive each connection closes on its own loop
+    when its response is read, so a loop's client holds no socket afterwards.
+    Ollama answers far slower than a connection opens.
+    """
+    httpx = importlib.import_module("httpx")
+    return {
+        "limits": httpx.Limits(
+            max_connections=_OLLAMA_MAX_CONNECTIONS, max_keepalive_connections=0
+        )
+    }
+
+
 class PerLoopAsyncClient:
     """Stands in for an Ollama ``AsyncClient``, with one client per event loop.
 
     ``ChatOllama`` and ``OllamaEmbeddings`` build one async client at
-    construction. Its httpx connection pool belongs to the first event loop
-    that uses it, so the same model used again from another loop (a second
+    construction, and its connections belong to the event loop that opened
+    them, so the same model used again from another loop (a second
     ``asyncio.run``, or the sync API's loop and then the caller's) fails with
     "Event loop is closed". The models are built once and reused, as the
     query chains are; this proxy gives every running loop its own client,
-    built by ``build``, and drops it with the loop.
+    built by ``build``, and drops the clients of closed loops whenever a
+    client is looked up. The clients are built without keep-alive
+    (``ollama_async_client_kwargs``), so a dropped client holds no socket.
     """
 
     def __init__(self, build: Callable[[], Any]) -> None:
         self._build = build
-        self._clients: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, Any] = (
-            weakref.WeakKeyDictionary()
-        )
+        self._clients: dict[asyncio.AbstractEventLoop, Any] = {}
         self._lock = threading.Lock()
 
     def _current(self) -> Any:
         loop = asyncio.get_running_loop()
         with self._lock:
+            for closed in [other for other in self._clients if other.is_closed()]:
+                del self._clients[closed]
             client = self._clients.get(loop)
             if client is None:
                 client = self._clients[loop] = self._build()
@@ -93,8 +116,9 @@ class PerLoopAsyncClient:
 def per_loop_async_client(model: Any, rebuild: Callable[[], Any]) -> Any:
     """Give ``model`` (an Ollama LangChain model) a per-loop async client.
 
-    ``rebuild`` returns a new model with the same settings; its async client
-    is the one for a new loop, so the client is built exactly as the library
+    ``rebuild`` returns a new model with the same settings, built with
+    ``async_client_kwargs=ollama_async_client_kwargs()``; its async client is
+    the one for a new loop, so the client is built exactly as the library
     builds it (host, auth from the URL, client kwargs).
     """
     model._async_client = PerLoopAsyncClient(lambda: rebuild()._async_client)
@@ -301,6 +325,7 @@ class OllamaLanguageModelFactory(_LocalLanguageModelFactory):
                 num_predict=max_tokens,
                 num_ctx=self.settings.context_window_size,
                 client_kwargs=client_kwargs,
+                async_client_kwargs=ollama_async_client_kwargs(),
                 callbacks=callbacks,
             )
             return chat
