@@ -397,6 +397,23 @@ Library API (Python callers and custom backends).
   accepts any case), and `OPENSEARCH_NUMBER_OF_REPLICAS=abc` no longer ends
   with a traceback. A configuration file that is not UTF-8 or cannot be read
   (permission denied) is the same one-line usage error (#232).
+- An incremental run after a change of the corpus or translation languages
+  (or `language_analyzers`) stops before any write with a
+  `ConfigurationError` that asks for `indexing.reset: true`. It re-extracted
+  the documents into the live indices, whose text fields keep the analyzers
+  they were built with: a newly translated language was mapped as a keyword
+  (`translated_text_ja`), a new corpus language kept the old analyzer. The
+  check compares the live mapping's text fields with the run's (#PR).
+- An incremental run on a suffix last indexed with the doc-status registry
+  off (the `backend: local` preset and flag-only runs default to off) stops
+  before any write with a `ConfigurationError` that asks for
+  `indexing.reset: true`. The registry-off run replaced the indices without
+  recording their documents, and the next incremental run trusted the stale
+  registry ("1 new, 10 unchanged"), so documents went missing. Each index
+  now records in its `_meta` whether the registry tracks it. An index built
+  before it recorded its settings is not checked for languages or the
+  registry, and is given the run's embedding settings when its dimension
+  and text fields match, so later runs check its model (#PR).
 - A run with `indexing.reset: true` that reuses the pipeline id of an
   incremental run (a fixed `--pipeline-id`) rebuilds the stores from the
   whole corpus. It resumed at the indexing stage from the previous run's

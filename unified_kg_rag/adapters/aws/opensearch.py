@@ -710,6 +710,11 @@ class OpenSearchClient:
         return dict((response.get(index_name) or {}).get("mappings") or {})
 
     @_handle_opensearch_errors
+    def put_index_meta(self, index_name: str, meta: dict[str, Any]) -> None:
+        """Replace the mapping ``_meta`` of ``index_name`` (fields unchanged)."""
+        self.client.indices.put_mapping(index=index_name, body={"_meta": meta})
+
+    @_handle_opensearch_errors
     def get_index_name_by_alias(self, alias_name: str) -> str | None:
         indices = self.get_indices_by_alias(alias_name)
         return indices[0] if indices else None

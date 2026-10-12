@@ -1453,6 +1453,11 @@ class IndexingStage(PipelineStage):
                 )
                 incremental.write_ahead(context.incremental_delta, lineages)
                 rebuild = (incremental, lineages)
+            # A build the registry does not record must not be updated
+            # incrementally later (see VectorIndexer.check_index_settings).
+            self.indexing_manager.opensearch_indexer.set_doc_status_tracking(
+                rebuild is not None
+            )
             indexing_results = self.indexing_manager.index_all_data(
                 text_units=text_units,
                 entities=entities,

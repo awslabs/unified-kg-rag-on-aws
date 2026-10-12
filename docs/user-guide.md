@@ -1194,6 +1194,23 @@ SQLite file instead (`providers.doc_status.kind: sqlite`, switched on by
   Queries are checked the same way: `run-rag` and `run-eval` with another
   embedding model or dimension than the index was built with fail with a
   `ConfigurationError` instead of answering from empty search results.
+- **Change the corpus or translation languages**
+  (`processing.translation` `source_language`, `target_language`,
+  `additional_target_languages`, or `indexing.opensearch.language_analyzers`):
+  the text fields of a live OpenSearch index keep the analyzers it was built
+  with, and a newly translated language would be mapped as a keyword. The
+  indexing stage stops, before any write, when the live text fields do not
+  match the run's languages: re-run once with `indexing.reset: true`. Dropping
+  a language does not stop it.
+- **Index a suffix with the registry off** (the `backend: local` preset and
+  flag-only runs leave it off): such a run replaces the indices without
+  recording their documents, so the registry no longer describes them. Each
+  index records whether the registry tracks it, and a later incremental run
+  on that suffix stops before any write: re-run once with
+  `indexing.reset: true` and the registry on, or keep the registry off for
+  that suffix. Indices built before they recorded their settings are not
+  checked for languages or the registry; an incremental run whose dimension
+  and text fields match gives them this run's embedding settings.
 
 ### Deletion scope
 
