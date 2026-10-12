@@ -373,6 +373,17 @@ class VectorIndexer(BaseIndexer):
     def upsert_relationships(self, relationships: list[Relationship]) -> IndexingStats:
         """Upsert relationship vectors by id into the live index (delta)."""
 
+    def check_embedding_settings(self, suffix: str | None = None) -> None:
+        """Raise before an incremental write when the live vectors of
+        ``suffix`` come from another embedding model or dimension.
+
+        An incremental run embeds only its new and changed documents, so the
+        stored vectors must come from the model it embeds with. Raises
+        :class:`~unified_kg_rag.shared.ConfigurationError` on a mismatch.
+        Default does nothing (a backend that records no embedding settings).
+        """
+        return None
+
     def update_entity_lineage(self, entities: list[Entity]) -> IndexingStats:
         """Rewrite stored entities' ``text_unit_ids`` (text-unit removal).
 

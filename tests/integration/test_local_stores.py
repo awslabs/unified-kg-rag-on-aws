@@ -56,7 +56,7 @@ from unified_kg_rag.domain.models import (
     TextUnit,
 )
 from unified_kg_rag.domain.models.config import LanguageCode
-from unified_kg_rag.shared import IndexNotFoundError, get_config
+from unified_kg_rag.shared import ConfigurationError, IndexNotFoundError, get_config
 
 pytestmark = [
     pytest.mark.integration,
@@ -652,6 +652,33 @@ def test_clear_of_a_namespace_never_indexed_succeeds(local_config: Config) -> No
         assert indexer.clear([_SUFFIX])
     finally:
         indexer.close()
+
+
+def test_incremental_write_refuses_another_embedding_model(
+    local_config: Config,
+) -> None:
+    # The index records the model and dimension in its mapping's _meta; a
+    # run embedding with another one must not write into it.
+    config = local_config.model_copy(deep=True)
+    config.indexing.additional_suffix = f"emb{uuid.uuid4().hex[:8]}"
+    other_model = config.model_copy(deep=True)
+    other_model.indexing.opensearch.embedding_model_id = "synthetic-embed-2"
+    indexer = OpenSearchIndexer(config, embedding_factory=HashingEmbeddingFactory())
+    changed = [
+        OpenSearchIndexer(other_model, embedding_factory=HashingEmbeddingFactory()),
+        OpenSearchIndexer(config, embedding_factory=HashingEmbeddingFactory(32)),
+    ]
+    try:
+        assert indexer.upsert_entities(_entities()).failed_items == 0
+        indexer.check_embedding_settings(_SUFFIX)
+        for other in changed:
+            with pytest.raises(ConfigurationError, match="indexing.reset: true"):
+                other.check_embedding_settings(_SUFFIX)
+    finally:
+        indexer.clear([_SUFFIX])
+        indexer.close()
+        for other in changed:
+            other.close()
 
 
 def test_query_of_a_never_ingested_suffix_raises_index_not_found(

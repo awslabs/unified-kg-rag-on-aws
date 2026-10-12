@@ -19,7 +19,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.ports.indexer import IndexingStats, VectorIndexer
 from unified_kg_rag.ports.model_factory import EmbeddingFactoryPort
-from unified_kg_rag.shared import get_logger
+from unified_kg_rag.shared import ConfigurationError, get_logger
 from unified_kg_rag.shared.utils.common import compute_hash
 from unified_kg_rag.shared.utils.concurrency import ContextThreadPoolExecutor
 
@@ -34,6 +34,10 @@ logger = get_logger(__name__)
 # embedding calls are IO-bound).
 _EMBED_BATCH_SIZE = 50
 _EMBED_WORKERS = 8
+
+# Keys of the embedding settings an index records in its mapping's _meta.
+_META_MODEL = "embedding_model_id"
+_META_DIMENSION = "embedding_dimension"
 
 
 class OpenSearchIndexer(VectorIndexer):
@@ -125,6 +129,73 @@ class OpenSearchIndexer(VectorIndexer):
         """Release the underlying OpenSearch client's connections (best-effort)."""
         self.opensearch_client.close()
 
+    def _index_prefixes(self) -> list[str]:
+        return [
+            self.opensearch_config.text_units_index_prefix,
+            self.opensearch_config.entities_index_prefix,
+            self.opensearch_config.community_reports_index_prefix,
+            self.opensearch_config.relationships_index_prefix,
+            self.opensearch_config.claims_index_prefix,
+        ]
+
+    def _embedding_meta(self) -> dict[str, Any]:
+        """What every index records of the embeddings it holds (``_meta``)."""
+        return {
+            _META_MODEL: model_id_value(self.opensearch_config.embedding_model_id),
+            _META_DIMENSION: self._embedding_dimension,
+        }
+
+    def check_embedding_settings(self, suffix: str | None = None) -> None:
+        """Raise when the live indices of ``suffix`` hold other embeddings.
+
+        Each index records the embedding model and dimension it was built
+        with in its mapping's ``_meta``; an index built before it did is
+        checked by the dimension of its ``knn_vector`` fields alone. An
+        incremental run only embeds its new and changed documents, so writing
+        into an index of another model or dimension would mix two models'
+        vectors (or fail every write on the dimension), while queries embed
+        with the configured model.
+
+        Raises:
+            ConfigurationError: An index of ``suffix`` was built with another
+                embedding model or dimension.
+        """
+        expected = self._embedding_meta()
+        for prefix in self._index_prefixes():
+            index_name = self.opensearch_client.get_index_name_by_alias(
+                self._get_name(prefix, suffix)
+            )
+            if not index_name:
+                continue
+            mappings = self.opensearch_client.get_index_mappings(index_name)
+            meta = mappings.get("_meta") or {}
+            dimensions = {
+                field.get("dimension")
+                for field in (mappings.get("properties") or {}).values()
+                if isinstance(field, dict) and field.get("type") == "knn_vector"
+            }
+            stored_model = meta.get(_META_MODEL)
+            if dimensions <= {expected[_META_DIMENSION]} and stored_model in (
+                None,
+                expected[_META_MODEL],
+            ):
+                continue
+            stored = (
+                f"model '{stored_model}'" if stored_model else "an unrecorded model"
+            )
+            stored_dimensions = ", ".join(
+                str(d) for d in sorted(d for d in dimensions if isinstance(d, int))
+            )
+            raise ConfigurationError(
+                f"The OpenSearch index '{index_name}' holds embeddings of {stored} "
+                f"(dimension {stored_dimensions or 'unknown'}), but this run embeds with "
+                f"'{expected[_META_MODEL]}' (dimension {expected[_META_DIMENSION]}). "
+                "An incremental run embeds only new and changed documents, so the "
+                "index would mix the two. Re-run once with indexing.reset: true "
+                "to re-embed the whole corpus, or restore the previous embedding "
+                "model and dimension."
+            )
+
     def clear(self, suffixes: list[str]) -> bool:
         if not suffixes:
             return True
@@ -133,17 +204,9 @@ class OpenSearchIndexer(VectorIndexer):
         # UnboundLocalError if building the alias list itself fails.
         aliases_to_delete: list[str] = []
         try:
-            prefixes = [
-                self.opensearch_config.text_units_index_prefix,
-                self.opensearch_config.entities_index_prefix,
-                self.opensearch_config.community_reports_index_prefix,
-                self.opensearch_config.relationships_index_prefix,
-                self.opensearch_config.claims_index_prefix,
-            ]
-
             aliases_to_delete = [
                 self._get_name(prefix, suffix)
-                for prefix in prefixes
+                for prefix in self._index_prefixes()
                 for suffix in suffixes
             ]
 
@@ -1095,6 +1158,8 @@ class OpenSearchIndexer(VectorIndexer):
                 ),
             },
             "mappings": {
+                # Read back by check_embedding_settings.
+                "_meta": self._embedding_meta(),
                 "dynamic_templates": [
                     {
                         "strings_as_keywords": {

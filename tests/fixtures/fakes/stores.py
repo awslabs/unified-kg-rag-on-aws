@@ -280,6 +280,10 @@ class FakeVectorStore(_Recorder):
         self.data.clear()
         return True
 
+    def check_embedding_settings(self, suffix: str | None = None) -> None:
+        # Holds no vectors, so any embedding settings match.
+        return None
+
     def initialize(self) -> bool:
         return True
 

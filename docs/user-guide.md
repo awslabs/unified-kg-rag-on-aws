@@ -1179,6 +1179,16 @@ SQLite file instead (`providers.doc_status.kind: sqlite`, switched on by
   content only (no surprise full re-extraction on upgrade); a reset
   (`indexing.reset: true`) re-extracts them. Edits to the built-in prompt
   templates (code) are not seen: reset after editing one.
+- **Change the embedding model or its dimension**
+  (`indexing.opensearch.embedding_model_id` / `embedding_dimension`, or
+  `providers.embedding.model_id` / `dimension` in local mode): an
+  incremental run embeds only its new and changed documents, so it would
+  mix two models' vectors in one index. Each OpenSearch index records the
+  model and dimension it was built with, and the indexing stage stops,
+  before any write, when they differ from the run's. Re-run once with
+  `indexing.reset: true` to re-embed the corpus. An index built before it
+  recorded the model is checked by its dimension only: reset after changing
+  the model of such an index.
 
 ### Deletion scope
 
@@ -1858,7 +1868,9 @@ graph_indexer_factory=..., retriever_builders=...)`). Without a bundle,
   [Operator Runbook: Concurrent runs](./operations.md#concurrent-runs).
 - **Markdown and HTML** need the optional `unstructured` extra (Python 3.11+),
   which the container image leaves out by default.
-- **Changing the embedding model** (or its dimension) requires a reindex.
+- **Changing the embedding model** (or its dimension) requires a reindex
+  (`indexing.reset: true`); an incremental run refuses to write into
+  indices of another model (see [Workflows](#workflows)).
 
 ---
 

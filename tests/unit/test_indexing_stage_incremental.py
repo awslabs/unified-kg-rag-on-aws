@@ -40,7 +40,7 @@ from unified_kg_rag.domain.models import (
     TextUnit,
 )
 from unified_kg_rag.ports.indexer import IndexingStats
-from unified_kg_rag.shared import PipelineStageError
+from unified_kg_rag.shared import ConfigurationError, PipelineStageError
 
 pytestmark = pytest.mark.unit
 
@@ -58,6 +58,10 @@ class _RecordingManager:
         # The graph still holds what the registry lists.
         self.neptune_indexer = SimpleNamespace(
             read_entities=lambda ids, suffix=None: ids
+        )
+        # The vector store holds the configured model's embeddings.
+        self.opensearch_indexer = SimpleNamespace(
+            check_embedding_settings=lambda suffix=None: None
         )
 
     def index_all_data(self, **kwargs: Any) -> dict[str, IndexingStats]:
@@ -215,6 +219,31 @@ def test_suffix_is_taken_from_first_text_unit(mocker) -> None:
         for name, ids_by_suffix in manager.calls
         if name == "delete_documents"
     )
+
+
+def test_embedding_mismatch_stops_the_run_before_any_write(mocker) -> None:
+    store = FakeDocStatusStore()
+    _seed_registry(store, suffix="tenant1")
+    before = store.list_all()
+    manager = _RecordingManager()
+    checked: list[str | None] = []
+
+    def mismatch(suffix: str | None = None) -> None:
+        checked.append(suffix)
+        raise ConfigurationError("embedded with another model")
+
+    manager.opensearch_indexer = SimpleNamespace(check_embedding_settings=mismatch)
+    stage = _stage(mocker, store, manager)
+    text_units, entities = _delta_inputs(attributes={"index": "tenant1"})
+    ctx = _context(_full_delta(), [_document("run-changed", _CHANGED)])
+
+    with pytest.raises(ConfigurationError, match="another model"):
+        _run(stage, ctx, text_units, entities)
+
+    # Checked on the run's suffix; nothing written to the stores or registry.
+    assert checked == ["tenant1"]
+    assert manager.calls == []
+    assert store.list_all() == before
 
 
 def test_suffix_defaults_when_there_are_no_text_units(mocker) -> None:

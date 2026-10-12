@@ -704,6 +704,12 @@ class OpenSearchClient:
         logger.info("Deleted indices: %s", indices_str)
 
     @_handle_opensearch_errors
+    def get_index_mappings(self, index_name: str) -> dict[str, Any]:
+        """The ``mappings`` of ``index_name`` (its fields and ``_meta``)."""
+        response = self.client.indices.get_mapping(index=index_name)
+        return dict((response.get(index_name) or {}).get("mappings") or {})
+
+    @_handle_opensearch_errors
     def get_index_name_by_alias(self, alias_name: str) -> str | None:
         indices = self.get_indices_by_alias(alias_name)
         return indices[0] if indices else None
