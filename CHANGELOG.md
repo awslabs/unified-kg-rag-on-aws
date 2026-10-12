@@ -389,6 +389,14 @@ Library API (Python callers and custom backends).
   seconds for a slow (for example Neptune websocket) close. The close runs on
   a background thread, and `close()`/`aclose()` of the chain wait for it
   (#PR).
+- An invalid environment override is a usage error naming the variable
+  (`<cli>: error: Invalid environment variable LOG_LEVEL ...`, exit code 2)
+  instead of being blamed on the configuration file or accepted: overrides
+  are now checked against the field's constraints, so `LOG_LEVEL=garbage`,
+  `LOG_FORMAT=xml` or an empty `AWS_REGION` is rejected (`LOG_LEVEL` still
+  accepts any case), and `OPENSEARCH_NUMBER_OF_REPLICAS=abc` no longer ends
+  with a traceback. A configuration file that is not UTF-8 or cannot be read
+  (permission denied) is the same one-line usage error (#PR).
 - IaC: a zone-aware OpenSearch domain spans as many AZs as it has data
   nodes, up to 3 and up to the VPC's AZs, so `opensearch_count=3` with
   `max_azs=3` uses three zones instead of two; on an existing domain the

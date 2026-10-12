@@ -4,11 +4,11 @@ import logging
 import os
 import types
 from pathlib import Path
-from typing import Any, Union, get_args, get_origin
+from typing import Annotated, Any, Union, get_args, get_origin
 
 import yaml
 from dotenv import load_dotenv
-from pydantic import BaseModel, SecretStr, ValidationError
+from pydantic import BaseModel, SecretStr, TypeAdapter, ValidationError
 
 from unified_kg_rag.domain.models import Config
 from unified_kg_rag.domain.models.provider_config import SQLITE
@@ -116,6 +116,23 @@ class ConfigLoader:
         try:
             with open(self.config_path, encoding="utf-8") as file:
                 config_data = yaml.safe_load(file) or {}
+        except UnicodeDecodeError as e:
+            raise ConfigurationError(
+                f"Configuration file '{self.config_path}' is not valid UTF-8 "
+                f"(byte offset {e.start})"
+            ) from e
+        except OSError as e:
+            raise ConfigurationError(
+                f"Cannot read configuration file '{self.config_path}': "
+                f"{e.strerror or e}"
+            ) from e
+        except yaml.YAMLError as e:
+            # One line: the YAML error names the file, line and column.
+            raise ConfigurationError(
+                f"Invalid YAML in configuration file: {' '.join(str(e).split())}"
+            ) from e
+
+        try:
             if not isinstance(config_data, dict):
                 raise ConfigurationError(
                     f"Configuration file '{self.config_path}' must be a YAML "
@@ -124,20 +141,14 @@ class ConfigLoader:
 
             warn_unknown_keys(config_data, Config)
             self._config = Config(**config_data)
-            self._apply_environment_overrides()
-            self._resolve_relative_paths()
-            return self._config
-
-        except yaml.YAMLError as e:
-            # One line: the YAML error names the file, line and column.
-            raise ConfigurationError(
-                f"Invalid YAML in configuration file: {' '.join(str(e).split())}"
-            ) from e
         except ValidationError as e:
             raise ConfigurationError(
                 f"Configuration validation error: {validation_summary(e)} "
                 f"(in '{self.config_path}')"
             ) from e
+        self._apply_environment_overrides()
+        self._resolve_relative_paths()
+        return self._config
 
     def _resolve_relative_paths(self) -> None:
         """Resolve a relative SQLite registry path against the config file's
@@ -146,6 +157,18 @@ class ConfigLoader:
             resolve_relative_paths(self._config, self.config_path)
 
     def _apply_environment_overrides(self) -> None:
+        """Apply the environment overrides; on an invalid one, forget the config.
+
+        Raises:
+            ConfigurationError: An environment variable holds an invalid value.
+        """
+        try:
+            self._apply_environment_overrides_unchecked()
+        except ConfigurationError:
+            self._config = None  # Not cached half-applied: the next load fails too.
+            raise
+
+    def _apply_environment_overrides_unchecked(self) -> None:
         if self._config is None:
             return
         env_overrides = {
@@ -197,10 +220,34 @@ class ConfigLoader:
 
         for env_var, config_path in env_overrides.items():
             env_value = os.getenv(env_var)
-            if env_value is not None:
+            if env_value is None:
+                continue
+            if env_var == "LOG_LEVEL":
+                env_value = env_value.upper()  # logging accepts any case
+            try:
                 self._set_nested_config_value(config_path, env_value)
+            except (ValueError, ValidationError) as e:
+                # The value is left out: it may be a secret.
+                reason = (
+                    "; ".join(
+                        detail["msg"]
+                        for detail in e.errors(include_url=False, include_input=False)
+                    )
+                    if isinstance(e, ValidationError)
+                    else "not a valid number"
+                )
+                raise ConfigurationError(
+                    f"Invalid environment variable {env_var} "
+                    f"(overrides {'.'.join(config_path)}): {reason}"
+                ) from e
 
     def _set_nested_config_value(self, path_tuple: tuple[str, ...], value: str) -> None:
+        """Set the field at ``path_tuple`` from the environment value ``value``.
+
+        Raises:
+            ValueError: ``value`` is not a number for a numeric setting.
+            ValidationError: ``value`` breaks the field's constraints.
+        """
         if self._config is None:
             return
 
@@ -242,6 +289,12 @@ class ConfigLoader:
         if is_mapping:
             current[final_key] = parsed_value
         else:
+            # Checked against the field's type and constraints (the models do
+            # not validate assignment), as the same value in the file would be.
+            field = type(current).model_fields[final_key]
+            TypeAdapter(Annotated[field.annotation, field]).validate_python(
+                parsed_value
+            )
             setattr(current, final_key, parsed_value)
 
     def reload_config(self) -> Config:

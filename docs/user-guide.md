@@ -659,7 +659,9 @@ and a literal brace is written `{{` / `}}` (§9.B).
 
 These variables override the config file (and the built-in defaults) when set.
 Values are converted to the field's type (`true`/`1`/`yes`/`on` count as true
-for booleans) but are not re-validated.
+for booleans) and checked against the field's constraints, as the same value in
+the file would be (`LOG_LEVEL` in any case). An invalid value is a usage error:
+the CLI prints one line naming the variable and exits 2.
 
 | Variable | Overrides | Notes |
 |---|---|---|
