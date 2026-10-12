@@ -295,7 +295,8 @@ Library API (Python callers and custom backends).
   corpus: the extraction fingerprint stopped at graph resolution, so such a
   run reported 0 changed documents and indexed no claims, without a warning.
   With claim extraction off the fingerprint is unchanged, so default
-  configurations are not re-extracted on upgrade (#230).
+  configurations are not re-extracted on upgrade; a deployment already
+  running with claim extraction on re-extracts its corpus once (#230).
 - Attaching, rotating or toggling a Bedrock guardrail under the default
   `apply_to: query` no longer re-keys the stage caches or re-extracts the
   whole corpus on the next incremental run: ingestion runs unguarded then, so
