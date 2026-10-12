@@ -59,9 +59,10 @@ class _RecordingManager:
         self.neptune_indexer = SimpleNamespace(
             read_entities=lambda ids, suffix=None: ids
         )
-        # The vector store holds the configured model's embeddings.
+        # The live indices were built for this run's settings.
         self.opensearch_indexer = SimpleNamespace(
-            check_embedding_settings=lambda suffix=None: None
+            check_index_settings=lambda suffix=None: None,
+            set_doc_status_tracking=lambda tracked: None,
         )
 
     def index_all_data(self, **kwargs: Any) -> dict[str, IndexingStats]:
@@ -232,7 +233,7 @@ def test_embedding_mismatch_stops_the_run_before_any_write(mocker) -> None:
         checked.append(suffix)
         raise ConfigurationError("embedded with another model")
 
-    manager.opensearch_indexer = SimpleNamespace(check_embedding_settings=mismatch)
+    manager.opensearch_indexer = SimpleNamespace(check_index_settings=mismatch)
     stage = _stage(mocker, store, manager)
     text_units, entities = _delta_inputs(attributes={"index": "tenant1"})
     ctx = _context(_full_delta(), [_document("run-changed", _CHANGED)])

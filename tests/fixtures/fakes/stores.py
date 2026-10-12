@@ -280,8 +280,11 @@ class FakeVectorStore(_Recorder):
         self.data.clear()
         return True
 
-    def check_embedding_settings(self, suffix: str | None = None) -> None:
-        # Holds no vectors, so any embedding settings match.
+    def check_index_settings(self, suffix: str | None = None) -> None:
+        # Records no index settings, so any run's match.
+        return None
+
+    def set_doc_status_tracking(self, tracked: bool) -> None:
         return None
 
     def initialize(self) -> bool:

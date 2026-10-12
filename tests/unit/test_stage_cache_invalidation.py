@@ -328,6 +328,22 @@ class TestFingerprintScope:
         assert fingerprint({"ingestion_effort": None}) == baseline
         assert fingerprint({"ingestion_effort": "medium"}) != baseline
 
+    def test_reset_re_keys_the_loading_stage_and_every_later_one(self) -> None:
+        # An incremental run caches only its delta documents; a reset run
+        # resumed under the same pipeline id must reload the whole corpus
+        # instead of rebuilding the stores from that delta.
+        reset = Config()
+        reset.indexing.reset = True
+        assert stage_input_fingerprint(
+            reset, PipelineStageType.DOCUMENT_PARSING
+        ) == stage_input_fingerprint(Config(), PipelineStageType.DOCUMENT_PARSING)
+        for stage in list(PipelineStageType)[
+            list(PipelineStageType).index(PipelineStageType.DOCUMENT_LOADING) :
+        ]:
+            assert stage_input_fingerprint(reset, stage) != (
+                stage_input_fingerprint(Config(), stage)
+            ), stage
+
     def test_key_is_the_attribute_plus_the_fingerprint(self) -> None:
         config = Config()
         expected = stage_input_fingerprint(config, PipelineStageType.DOCUMENT_LOADING)

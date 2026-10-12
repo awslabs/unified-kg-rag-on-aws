@@ -670,14 +670,66 @@ def test_incremental_write_refuses_another_embedding_model(
     ]
     try:
         assert indexer.upsert_entities(_entities()).failed_items == 0
-        indexer.check_embedding_settings(_SUFFIX)
+        indexer.check_index_settings(_SUFFIX)
         for other in changed:
             with pytest.raises(ConfigurationError, match="indexing.reset: true"):
-                other.check_embedding_settings(_SUFFIX)
+                other.check_index_settings(_SUFFIX)
     finally:
         indexer.clear([_SUFFIX])
         indexer.close()
         for other in changed:
+            other.close()
+
+
+def test_incremental_write_refuses_other_languages_or_an_untracked_build(
+    local_config: Config,
+) -> None:
+    # The real server's mapping echoes each text field's analyzer, and a
+    # field it does not map yet would be mapped as a keyword on first write.
+    config = local_config.model_copy(deep=True)
+    config.indexing.additional_suffix = f"lang{uuid.uuid4().hex[:8]}"
+    with_ja = config.model_copy(deep=True)
+    with_ja.processing.translation.additional_target_languages = [LanguageCode.JA]
+    korean = config.model_copy(deep=True)
+    korean.processing.translation.source_language = LanguageCode.KO
+    indexer = OpenSearchIndexer(config, embedding_factory=HashingEmbeddingFactory())
+    others = [
+        OpenSearchIndexer(c, embedding_factory=HashingEmbeddingFactory())
+        for c in (with_ja, korean)
+    ]
+    try:
+        assert indexer.upsert_text_units(_text_units()).failed_items == 0
+        indexer.check_index_settings(_SUFFIX)
+        for other, message in zip(
+            others,
+            ["'translated_text_ja' is not mapped", "'text' uses 'english'"],
+            strict=True,
+        ):
+            with pytest.raises(ConfigurationError, match=message):
+                other.check_index_settings(_SUFFIX)
+
+        # A full build by a run with the registry off is not updated
+        # incrementally; a pre-#231 index (no _meta) is given this run's.
+        indexer.set_doc_status_tracking(False)
+        assert indexer.index_text_units(_text_units()).failed_items == 0
+        with pytest.raises(ConfigurationError, match="registry off"):
+            indexer.check_index_settings(_SUFFIX)
+        client = indexer.opensearch_client
+        index_name = client.get_index_name_by_alias(
+            indexer._get_name(
+                config.indexing.opensearch.text_units_index_prefix, _SUFFIX
+            )
+        )
+        assert index_name
+        client.put_index_meta(index_name, {})
+        indexer.check_index_settings(_SUFFIX)
+        assert client.get_index_mappings(index_name)["_meta"] == (
+            indexer._embedding_meta()
+        )
+    finally:
+        indexer.clear([_SUFFIX])
+        indexer.close()
+        for other in others:
             other.close()
 
 

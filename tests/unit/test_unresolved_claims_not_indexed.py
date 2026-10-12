@@ -15,6 +15,7 @@ from typing import Any
 
 import pytest
 
+from tests.fixtures.fakes.stores import FakeVectorStore
 from unified_kg_rag.application.ingestion import pipeline_stages as ps
 from unified_kg_rag.domain.ingestion.claim_resolver import ClaimResolutionStats
 from unified_kg_rag.domain.models import (
@@ -71,6 +72,7 @@ def _context(**fields: Any) -> PipelineContext:
 class _RecordingManager:
     def __init__(self) -> None:
         self.calls: list[dict[str, Any]] = []
+        self.opensearch_indexer = FakeVectorStore()
 
     def initialize(self) -> bool:
         return True

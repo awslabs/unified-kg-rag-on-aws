@@ -373,15 +373,24 @@ class VectorIndexer(BaseIndexer):
     def upsert_relationships(self, relationships: list[Relationship]) -> IndexingStats:
         """Upsert relationship vectors by id into the live index (delta)."""
 
-    def check_embedding_settings(self, suffix: str | None = None) -> None:
-        """Raise before an incremental write when the live vectors of
-        ``suffix`` come from another embedding model or dimension.
+    def check_index_settings(self, suffix: str | None = None) -> None:
+        """Raise before an incremental write when the live indices of
+        ``suffix`` were built for other settings.
 
-        An incremental run embeds only its new and changed documents, so the
-        stored vectors must come from the model it embeds with. Raises
+        An incremental run writes only its new and changed documents, so the
+        live indices must hold vectors of the model it embeds with, map their
+        text fields for its languages, and have been built by a run that
+        recorded their documents in the doc-status registry. Raises
         :class:`~unified_kg_rag.shared.ConfigurationError` on a mismatch.
-        Default does nothing (a backend that records no embedding settings).
+        Default does nothing (a backend that records no index settings).
         """
+        return None
+
+    def set_doc_status_tracking(self, tracked: bool) -> None:
+        """Record whether the doc-status registry tracks the documents of the
+        indices a full build creates from now on (``check_index_settings``
+        refuses incremental writes into an untracked one). Default does
+        nothing."""
         return None
 
     def update_entity_lineage(self, entities: list[Entity]) -> IndexingStats:

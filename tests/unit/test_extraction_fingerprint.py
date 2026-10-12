@@ -74,6 +74,8 @@ def test_changes_with_the_extraction_settings(
         _set("processing.document_parsing.index_value", "tenant"),
         _set("processing.ignore_errors", True),
         _set("processing.deduplicate", True),
+        # A reset only loads the whole corpus instead of the delta.
+        _set("indexing.reset", True),
         # Later stages do not shape a document's entities.
         _set("custom_prompts.community_report_system", "tuned"),
         _set("custom_prompts.claim_extraction_system", "tuned"),

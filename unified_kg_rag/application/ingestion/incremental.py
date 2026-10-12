@@ -1643,10 +1643,11 @@ def index_delta(
         community_reports,
         claims,
     )
-    # Checked before any write: the live vectors must come from the model
-    # this run embeds with (unchanged documents are not re-embedded), and
-    # the graph must still hold the registry's documents.
-    indexing_manager.opensearch_indexer.check_embedding_settings(incremental.suffix)
+    # Checked before any write: the live indices must have been built for
+    # this run's embedding model and languages by a run that kept the
+    # registry (unchanged documents are not rewritten), and the graph must
+    # still hold the registry's documents.
+    indexing_manager.opensearch_indexer.check_index_settings(incremental.suffix)
     incremental.check_graph_holds_registry(delta)
     # Write ahead before any store write: the new and changed docs are
     # recorded PENDING with their stored + planned lineage, so a run
