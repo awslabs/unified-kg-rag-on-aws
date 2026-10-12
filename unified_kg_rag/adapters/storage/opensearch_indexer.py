@@ -7,6 +7,11 @@ from collections.abc import Callable, Collection
 from typing import TYPE_CHECKING, Any
 
 from unified_kg_rag.adapters.aws.opensearch import OpenSearchClient
+from unified_kg_rag.adapters.storage.embedding_settings import (
+    META_DIMENSION,
+    META_MODEL,
+    resolve_embedding_dimension,
+)
 from unified_kg_rag.domain.models import (
     Claim,
     CommunityReport,
@@ -35,9 +40,6 @@ logger = get_logger(__name__)
 _EMBED_BATCH_SIZE = 50
 _EMBED_WORKERS = 8
 
-# Keys of the embedding settings an index records in its mapping's _meta.
-_META_MODEL = "embedding_model_id"
-_META_DIMENSION = "embedding_dimension"
 # Whether the doc-status registry tracks the index's documents: False when
 # a run with the registry off built it (see check_index_settings).
 _META_DOC_STATUS = "doc_status_registry"
@@ -105,31 +107,8 @@ class OpenSearchIndexer(VectorIndexer):
         )
 
     def _resolve_embedding_dimension(self) -> int:
-        model_info = self.embedding_factory.get_model_info(
-            self.opensearch_config.embedding_model_id
-        )
-        if not model_info:
-            raise ValueError(
-                f"Unsupported model: '{model_id_value(self.opensearch_config.embedding_model_id)}'"
-            )
-
-        if (dim := self.opensearch_config.embedding_dimension) is not None:
-            supported = model_info.dimensions
-            is_supported = (isinstance(supported, list) and dim in supported) or (
-                isinstance(supported, int) and dim == supported
-            )
-            if not is_supported:
-                raise ValueError(
-                    f"Dimension {dim} not supported by "
-                    f"'{model_id_value(self.opensearch_config.embedding_model_id)}'. "
-                    f"Supported: '{supported}'"
-                )
-            return dim
-
-        return (
-            model_info.dimensions[-1]
-            if isinstance(model_info.dimensions, list)
-            else model_info.dimensions or 1024
+        return resolve_embedding_dimension(
+            self.embedding_factory, self.opensearch_config
         )
 
     def close(self) -> None:
@@ -148,8 +127,8 @@ class OpenSearchIndexer(VectorIndexer):
     def _embedding_meta(self) -> dict[str, Any]:
         """What every index records of the embeddings it holds (``_meta``)."""
         return {
-            _META_MODEL: model_id_value(self.opensearch_config.embedding_model_id),
-            _META_DIMENSION: self._embedding_dimension,
+            META_MODEL: model_id_value(self.opensearch_config.embedding_model_id),
+            META_DIMENSION: self._embedding_dimension,
         }
 
     def set_doc_status_tracking(self, tracked: bool) -> None:
@@ -239,10 +218,10 @@ class OpenSearchIndexer(VectorIndexer):
                 for field in properties.values()
                 if isinstance(field, dict) and field.get("type") == "knn_vector"
             }
-            stored_model = meta.get(_META_MODEL)
-            if not dimensions <= {expected[_META_DIMENSION]} or stored_model not in (
+            stored_model = meta.get(META_MODEL)
+            if not dimensions <= {expected[META_DIMENSION]} or stored_model not in (
                 None,
-                expected[_META_MODEL],
+                expected[META_MODEL],
             ):
                 stored = (
                     f"model '{stored_model}'" if stored_model else "an unrecorded model"
@@ -253,8 +232,8 @@ class OpenSearchIndexer(VectorIndexer):
                 raise ConfigurationError(
                     f"The OpenSearch index '{index_name}' holds embeddings of "
                     f"{stored} (dimension {stored_dimensions or 'unknown'}), but "
-                    f"this run embeds with '{expected[_META_MODEL]}' (dimension "
-                    f"{expected[_META_DIMENSION]}). An incremental run embeds only "
+                    f"this run embeds with '{expected[META_MODEL]}' (dimension "
+                    f"{expected[META_DIMENSION]}). An incremental run embeds only "
                     "new and changed documents, so the index would mix the two. "
                     "Re-run once with indexing.reset: true to re-embed the whole "
                     "corpus, or restore the previous embedding model and dimension."
