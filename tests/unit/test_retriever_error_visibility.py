@@ -29,8 +29,16 @@ from unified_kg_rag.adapters.aws.opensearch import is_index_not_found
 from unified_kg_rag.adapters.retrieval.base import is_fatal_retrieval_error
 from unified_kg_rag.adapters.retrievers.neptune_retriever import NeptuneRetriever
 from unified_kg_rag.adapters.retrievers.opensearch_retriever import OpenSearchRetriever
-from unified_kg_rag.domain.models import Config, Constants, SearchQuery
-from unified_kg_rag.shared import AWSServiceError, IndexNotFoundError
+from unified_kg_rag.adapters.storage.embedding_settings import (
+    configured_embedding_model,
+)
+from unified_kg_rag.domain.models import Config, Constants, SearchQuery, SearchType
+from unified_kg_rag.domain.models.config import EmbeddingModelId
+from unified_kg_rag.shared import (
+    AWSServiceError,
+    ConfigurationError,
+    IndexNotFoundError,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -83,6 +91,13 @@ def _opensearch_retriever(config: Config) -> OpenSearchRetriever:
     object.__setattr__(inst, "_field_mappings", inst._initialize_field_mappings())
     object.__setattr__(inst, "_record_timing", lambda *a, **k: None)
     object.__setattr__(inst, "_record_metric", lambda *a, **k: None)
+    object.__setattr__(
+        inst,
+        "_embedding_model_id",
+        configured_embedding_model(config.indexing.opensearch),
+    )
+    object.__setattr__(inst, "_embedding_dimension", _QUERY_DIMENSION)
+    object.__setattr__(inst, "_embedding_checked_aliases", set())
     return inst
 
 
@@ -114,6 +129,9 @@ async def test_opensearch_retriever_degrades_on_transient(config: Config) -> Non
     assert results == []
 
 
+_QUERY_DIMENSION = 8
+
+
 def _set_asearch_raising(
     retriever: OpenSearchRetriever, exc: Exception, existing: set[str] | None = None
 ) -> None:
@@ -121,7 +139,7 @@ def _set_asearch_raising(
     # (``_opensearch_client.asearch``) raise — this is the path that previously
     # swallowed fatal errors inside ``_execute_search`` and returned [].
     async def _vec(*_args, **_kwargs):
-        return [0.0] * 8
+        return [0.0] * _QUERY_DIMENSION
 
     async def _asearch(*_args, **_kwargs):
         raise exc
@@ -133,10 +151,23 @@ def _set_asearch_raising(
 
 
 class _MockSearchClient:
-    def __init__(self, asearch, existing: set[str] | None = None) -> None:
+    def __init__(
+        self,
+        asearch,
+        existing: set[str] | None = None,
+        mappings: dict[str, dict] | None = None,
+    ) -> None:
         self.asearch = asearch
         self.existing = existing  # None = every index exists
         self.exists_calls: list[str] = []
+        self.mappings = mappings or {}  # alias -> mappings of its one index
+        self.mapping_calls: list[str] = []
+
+    async def aget_mappings(self, index: str) -> dict[str, dict]:
+        self.mapping_calls.append(index)
+        if index not in self.mappings:
+            raise _INDEX_NOT_FOUND
+        return {f"{index}-20260101": self.mappings[index]}
 
     async def aindex_exists(self, index: str) -> bool:
         self.exists_calls.append(index)
@@ -466,3 +497,201 @@ async def test_missing_optional_index_of_an_ingested_corpus_degrades(
 
     assert results == []
     assert retriever._opensearch_client.exists_calls == [text_units]
+
+
+# --- query embedding settings vs the index's ------------------------------
+
+
+def test_configuration_error_is_fatal() -> None:
+    assert is_fatal_retrieval_error(ConfigurationError("bad config")) is True
+
+
+def _knn_mappings(
+    dimension: int, model: str | None = None, recorded_dimension: int | None = None
+) -> dict:
+    mappings: dict = {
+        "properties": {
+            "text": {"type": "text"},
+            "text_embedding": {"type": "knn_vector", "dimension": dimension},
+        }
+    }
+    meta = {}
+    if model is not None:
+        meta["embedding_model_id"] = model
+    if recorded_dimension is not None:
+        meta["embedding_dimension"] = recorded_dimension
+    if meta:
+        mappings["_meta"] = meta
+    return mappings
+
+
+def _retriever_over(
+    config: Config, mappings: dict, search_error: Exception | None = None
+) -> OpenSearchRetriever:
+    """A retriever whose text-units alias has ``mappings``; searches hit once."""
+    retriever = _opensearch_retriever(config)
+    alias = retriever._get_name(
+        config.indexing.opensearch.text_units_index_prefix, None
+    )
+    hit = {"_index": alias, "_id": "t1", "_score": 1.0, "_source": {"text": "hi"}}
+
+    async def _asearch(*_args, **_kwargs):
+        if search_error is not None:
+            raise search_error
+        return {"hits": {"hits": [hit]}}
+
+    async def _vec(_text, search_type, _fields):
+        if search_type is SearchType.LEXICAL:
+            return None
+        return [0.0] * _QUERY_DIMENSION
+
+    object.__setattr__(retriever, "_get_query_vector", _vec)
+    object.__setattr__(
+        retriever,
+        "_opensearch_client",
+        _MockSearchClient(_asearch, mappings={alias: mappings}),
+    )
+    return retriever
+
+
+def _text_units_query(
+    config: Config, search_type: SearchType = SearchType.HYBRID
+) -> SearchQuery:
+    prefix = config.indexing.opensearch.text_units_index_prefix
+    return SearchQuery(query="hello", index_prefixes=[prefix], search_type=search_type)
+
+
+async def test_index_of_another_embedding_model_is_refused(config: Config) -> None:
+    # Same dimension, another model: the search would "succeed" and rank by
+    # unrelated vectors.
+    model = configured_embedding_model(config.indexing.opensearch)
+    retriever = _retriever_over(
+        config, _knn_mappings(_QUERY_DIMENSION, "other-model", _QUERY_DIMENSION)
+    )
+
+    with pytest.raises(ConfigurationError) as exc:
+        await retriever.aretrieve(_text_units_query(config))
+
+    message = str(exc.value)
+    assert "'other-model'" in message and f"'{model}'" in message
+    assert is_fatal_retrieval_error(exc.value)
+
+
+async def test_index_of_another_dimension_is_refused_without_meta(
+    config: Config,
+) -> None:
+    # An index built before _meta was recorded is checked by its kNN dimension.
+    retriever = _retriever_over(config, _knn_mappings(512))
+
+    with pytest.raises(ConfigurationError, match=r"dimension 512.*dimension 8"):
+        await retriever.aretrieve(_text_units_query(config))
+
+
+async def test_matching_index_is_searched_and_checked_once(config: Config) -> None:
+    model = configured_embedding_model(config.indexing.opensearch)
+    retriever = _retriever_over(
+        config, _knn_mappings(_QUERY_DIMENSION, model, _QUERY_DIMENSION)
+    )
+
+    for _ in range(2):
+        results = await retriever.aretrieve(_text_units_query(config))
+        assert [r.source for r in results] == ["t1"]
+
+    assert len(retriever._opensearch_client.mapping_calls) == 1
+
+
+async def test_enum_model_id_matches_the_recorded_string(config: Config) -> None:
+    # The config holds an EmbeddingModelId member; the index records its value.
+    config.indexing.opensearch.embedding_model_id = EmbeddingModelId.TITAN_EMBED_V2
+    retriever = _retriever_over(
+        config,
+        _knn_mappings(
+            _QUERY_DIMENSION, EmbeddingModelId.TITAN_EMBED_V2.value, _QUERY_DIMENSION
+        ),
+    )
+
+    assert len(await retriever.aretrieve(_text_units_query(config))) == 1
+
+
+async def test_lexical_search_does_not_check_embeddings(config: Config) -> None:
+    retriever = _retriever_over(config, _knn_mappings(512, "other-model", 512))
+
+    results = await retriever.aretrieve(_text_units_query(config, SearchType.LEXICAL))
+
+    assert len(results) == 1
+    assert retriever._opensearch_client.mapping_calls == []
+
+
+async def test_unreadable_mappings_leave_the_check_to_the_search(
+    config: Config,
+) -> None:
+    retriever = _retriever_over(config, _knn_mappings(_QUERY_DIMENSION))
+    retriever._opensearch_client.mappings = {}  # every get_mapping 404s
+
+    assert len(await retriever.aretrieve(_text_units_query(config))) == 1
+
+
+_INVALID_DIMENSION_BODY = {
+    "error": {
+        "root_cause": [
+            {
+                "type": "query_shard_exception",
+                "reason": "failed to create query: Query vector has invalid "
+                "dimension: 8. Dimension should be: 512",
+            }
+        ],
+        "type": "search_phase_execution_exception",
+        "reason": "all shards failed",
+    },
+    "status": 400,
+}
+
+
+async def test_invalid_dimension_rejection_is_a_fatal_configuration_error(
+    config: Config,
+) -> None:
+    # The client error wrapper keeps only "status=400, info=None" for the async
+    # client; the reason survives on the cause.
+    raw = _server_error(AsyncHttpConnection, 400, _INVALID_DIMENSION_BODY)
+    wrapped = AWSServiceError("Async transport error in 'asearch': status=400")
+    wrapped.__cause__ = raw
+    retriever = _retriever_over(config, {}, search_error=wrapped)
+    retriever._opensearch_client.mappings = {}
+
+    with pytest.raises(ConfigurationError) as exc:
+        await retriever.aretrieve(_text_units_query(config))
+
+    message = str(exc.value)
+    assert "Query vector has invalid dimension: 8. Dimension should be: 512" in message
+    assert "embedding" in message
+
+
+class _RecordingEmbeddingFactory:
+    """Model info like Titan Embed V2's: several supported dimensions."""
+
+    def __init__(self) -> None:
+        self.requests: list[dict] = []
+
+    def get_model_info(self, model_id):
+        return type("Info", (), {"dimensions": [256, 512, 1024]})()
+
+    def get_model(self, model_id, **kwargs):
+        self.requests.append(kwargs)
+        return object()
+
+
+@pytest.mark.parametrize(("configured", "expected"), [(512, 512), (None, 1024)])
+def test_queries_embed_with_the_indexed_dimension(
+    config: Config, configured: int | None, expected: int
+) -> None:
+    # The indexer embeds with indexing.opensearch.embedding_dimension; queries
+    # embedded at the model's default instead fail every kNN search.
+    config.indexing.opensearch.embedding_dimension = configured
+    factory = _RecordingEmbeddingFactory()
+
+    retriever = OpenSearchRetriever(
+        config, opensearch_client=object(), embedding_factory=factory
+    )
+
+    assert factory.requests == [{"dimensions": expected}]
+    assert retriever._embedding_dimension == expected

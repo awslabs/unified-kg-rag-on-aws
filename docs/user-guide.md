@@ -1189,6 +1189,9 @@ SQLite file instead (`providers.doc_status.kind: sqlite`, switched on by
   `indexing.reset: true` to re-embed the corpus. An index built before it
   recorded the model is checked by its dimension only: reset after changing
   the model of such an index.
+  Queries are checked the same way: `run-rag` and `run-eval` with another
+  embedding model or dimension than the index was built with fail with a
+  `ConfigurationError` instead of answering from empty search results.
 
 ### Deletion scope
 
