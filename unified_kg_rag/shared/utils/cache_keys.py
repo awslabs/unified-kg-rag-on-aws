@@ -88,7 +88,9 @@ _STAGE_INPUT_PATHS: dict[PipelineStageType, tuple[str, ...]] = {
         "aws.bedrock.default_max_output_tokens",
         "aws.bedrock.model_overrides",
     ),
-    PipelineStageType.DOCUMENT_LOADING: ("processing.deduplicate",),
+    # A reset loads the whole corpus where an incremental run loads only its
+    # new and changed documents, so the two runs' outputs differ from here on.
+    PipelineStageType.DOCUMENT_LOADING: ("processing.deduplicate", "indexing.reset"),
     PipelineStageType.TEXT_CHUNKING: ("processing.chunking",),
     PipelineStageType.TRANSLATION: ("processing.translation",),
     PipelineStageType.GRAPH_EXTRACTION: (
@@ -185,7 +187,7 @@ _OMIT_WHEN_DEFAULT: dict[str, Any] = {
         "aws.bedrock.default_max_output_tokens",
         "aws.bedrock.model_overrides",
     )
-}
+} | {"indexing.reset": False}
 
 
 # Fields inside a fingerprinted subtree that do not shape stage output and are
@@ -298,7 +300,7 @@ _EXTRACTION_SWITCHED_STAGES: dict[PipelineStageType, Callable[[Config], bool]] =
 # identity), and switches that only change which documents run or whether a
 # failure stops the run.
 _EXTRACTION_NON_OUTPUT_PATHS = frozenset(
-    {"processing.ignore_errors", "processing.deduplicate"}
+    {"processing.ignore_errors", "processing.deduplicate", "indexing.reset"}
 )
 _EXTRACTION_NON_OUTPUT_SUBFIELDS: dict[str, frozenset[str]] = {
     "processing.document_parsing": frozenset(

@@ -397,6 +397,14 @@ Library API (Python callers and custom backends).
   accepts any case), and `OPENSEARCH_NUMBER_OF_REPLICAS=abc` no longer ends
   with a traceback. A configuration file that is not UTF-8 or cannot be read
   (permission denied) is the same one-line usage error (#232).
+- A run with `indexing.reset: true` that reuses the pipeline id of an
+  incremental run (a fixed `--pipeline-id`) rebuilds the stores from the
+  whole corpus. It resumed at the indexing stage from the previous run's
+  cached delta, so the reset cleared the stores and the registry and indexed
+  only the delta's documents; the unchanged ones were missing until the next
+  run. `indexing.reset` is now an input of the document-loading stage cache
+  key (only when set, so existing caches keep their keys), not of the
+  extraction fingerprint (#PR).
 - IaC: a zone-aware OpenSearch domain spans as many AZs as it has data
   nodes, up to 3 and up to the VPC's AZs, so `opensearch_count=3` with
   `max_azs=3` uses three zones instead of two; on an existing domain the

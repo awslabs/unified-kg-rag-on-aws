@@ -380,6 +380,36 @@ def test_determine_resume_strategy_rewinds_to_first_unbacked_stage(
     assert completed == ["document_loading"]
 
 
+def test_reset_run_resumes_from_loading_not_from_the_cached_delta(
+    tmp_path,
+) -> None:
+    # An incremental run under this pipeline id cached only its delta
+    # documents and the artifacts extracted from them. A reset run with the
+    # same id must reload the whole corpus: resuming at indexing would clear
+    # the stores and rebuild them from the delta alone.
+    cache = _StubCacheManager(tmp_path)
+    state = PipelineStateManager(cache)
+    ctx = _context(
+        "pid",
+        [
+            _stage_result("document_loading", "completed"),
+            _stage_result("text_chunking", "completed"),
+            _stage_result("indexing", "completed"),
+        ],
+    )
+    state.save_pipeline_metadata(ctx)
+    cache.store[_key("documents", "document_loading")] = []
+    cache.store[_key("text_units", "text_chunking")] = []
+    reset = Config()
+    reset.indexing.reset = True
+
+    start, completed = PipelineResumeManager(state, reset).determine_resume_strategy(
+        "pid"
+    )
+    assert start == "document_loading"
+    assert completed == []
+
+
 def test_determine_resume_strategy_explicit_stage(tmp_path) -> None:
     cache = _StubCacheManager(tmp_path)
     state = PipelineStateManager(cache)
