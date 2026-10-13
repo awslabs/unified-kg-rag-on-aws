@@ -361,7 +361,7 @@ Library API (Python callers and custom backends).
   its vertex or edge up by `id` first, which scanned the whole in-memory
   graph: a full build of 10,000 entities and their communities takes about
   20 s instead of 60 s, and 5,000 relationship writes about 5 s instead of
-  28 s. Restart the stack (`down` and `up`) to pick it up (#PR).
+  28 s. Restart the stack (`down` and `up`) to pick it up (#265).
 
 ### Fixed
 - Queries that waited on a failed Neptune connection attempt each raise a
@@ -396,17 +396,17 @@ Library API (Python callers and custom backends).
   create that had already taken effect was rejected with
   `resource_already_exists_exception`, failing the indexing stage; a resent
   delete got `index_not_found_exception`, so `indexing.reset` reported the
-  clear as failed. Both now count as done (#PR).
+  clear as failed. Both now count as done (#265).
 - `answer_match` reads Korean `아닙니다`, Chinese `没有` and English `Nope`
   as a "no" answer; such an answer had no polarity and scored 0.0 against a
   `no` gold. "No" joined to the next word by a non-breaking hyphen
   (`No‑cap clause`) is no longer read as the answer, as the ASCII hyphen
-  already was not (#PR).
+  already was not (#265).
 - `langchain-aws` is required at 1.8.1 or later (was 1.7.0), the first
   release that reports a prompt longer than the model's context as
   `BedrockContextOverflowError`. On an older install Bedrock's
   `ValidationException` reached the retrievers unwrapped, so such a prompt
-  still failed the whole query (#PR).
+  still failed the whole query (#265).
 - Ingestion reconnects after a Neptune restart or failover. Its write retries
   reused the pooled websockets the server had closed, which gremlinpython
   never reopens, so every write failed every attempt until the process
