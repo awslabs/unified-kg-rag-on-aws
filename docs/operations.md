@@ -196,12 +196,17 @@ artifact type's writes still fail, the indexing stage fails and the documents
 are not recorded, so the next run retries them. Below that rate the run
 succeeds and only the documents that own a failed artifact are recorded
 `FAILED`; a failure the backend reports without an item id marks every
-document of the run `FAILED`. On the CDK stack, a failed phase publishes one
-message with the execution id and the error to the SNS topic, and three
-alarms report the problems it cannot see:
+document of the run `FAILED`. On the CDK stack, a failed phase publishes a
+message with the execution id and the error to the SNS topic, and four alarms
+report problems to the same topic. `PipelineFailures` also fires for a failed
+phase, so such a failure arrives twice, the second time without context; the
+alarm stays because it also covers failures the message cannot report (an
+error the phase's handler cannot catch, such as a start input without
+`pipeline_id`, or a publish that fails after its retries):
 
 | Alarm | Fires when |
 |---|---|
+| `PipelineFailures` | A Step Functions execution failed |
 | `PipelineTimedOutOrAborted` | An execution hit the state machine timeout or was stopped |
 | `IndexingFailures` | Indexing reported failed items, even in a succeeded execution |
 | `ExtractionFailures` | Extraction, gleaning or claim extraction failed on some units |

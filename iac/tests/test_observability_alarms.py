@@ -59,14 +59,15 @@ def test_timed_out_and_aborted_runs_alarm() -> None:
     assert metrics == {"ExecutionsTimedOut", "ExecutionsAborted"}
 
 
-def test_failed_executions_are_reported_once() -> None:
-    # A failed phase is published by the state machine's Catch; an alarm on
-    # ExecutionsFailed would notify the same topic a second time.
-    for name, alarm in _alarms().items():
-        assert alarm.get("MetricName") != "ExecutionsFailed", name
-        for metric in alarm.get("Metrics", []):
-            stat = metric.get("MetricStat", {}).get("Metric", {})
-            assert stat.get("MetricName") != "ExecutionsFailed", name
+def test_failed_executions_alarm() -> None:
+    # The phase Catch publishes most failures with context, but it cannot catch
+    # States.DataLimitExceeded or States.Runtime and its publish can fail, so
+    # failed executions also alarm (a caught failure notifies twice).
+    alarm = _alarms()["PipelineFailures"]
+    assert alarm["MetricName"] == "ExecutionsFailed"
+    assert alarm["Namespace"] == "AWS/States"
+    assert (alarm["Threshold"], alarm["EvaluationPeriods"]) == (1, 1)
+    assert len(alarm["AlarmActions"]) == 1
 
 
 def test_store_alarms_watch_the_paths_the_app_uses() -> None:

@@ -267,10 +267,6 @@ Library API (Python callers and custom backends).
   computes its own) and which took minutes on a graph of tens of thousands
   of entities; its `centrality_stats` metrics are gone. It also no longer
   caches a copy of graph resolution's entities and relationships (#248).
-- CDK: a failed ingestion phase notifies the alarm topic once. The
-  `PipelineFailures` alarm is removed; the state machine's failure message
-  (execution id and error) already covers it, and `PipelineTimedOutOrAborted`
-  still reports runs that never reach a phase's error handler (#251).
 - CDK: the OpenSearch domain publishes only its application logs. The slow
   search and index logs stayed empty (the app sets no slow-log thresholds),
   so their two log groups are removed; the domain is updated in place
@@ -900,6 +896,13 @@ Library API (Python callers and custom backends).
   error without a `Cause` no longer fails the SNS publish; the Neptune
   Gremlin-errors alarm needs errors in 3 consecutive minutes, so retried
   write conflicts during parallel writes do not page (#219).
+- IaC: the pipeline-failure notification retries its SNS publish on a
+  throttled or transient error, which ended the run with no message. The
+  `PipelineFailures` alarm on failed executions stays: a phase's error
+  handler cannot catch `States.DataLimitExceeded` or `States.Runtime` (such
+  as a start input without the fields a phase reads), so a failed phase
+  still notifies twice, once with the execution id and error and once from
+  the alarm without them (#PR).
 - Used as a library (no `setup_logging`), the package's log records reach
   the host application's handlers as the plain message, with the structured
   fields as record attributes; a host `logging.basicConfig` printed every

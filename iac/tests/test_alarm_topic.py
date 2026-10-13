@@ -134,6 +134,11 @@ def test_phases_retry_only_task_start_errors(template: Template) -> None:
             "ResultPath": "$.error",
             "Next": "NotifyFailure",
         }
+    # A throttled or transient publish is retried; otherwise the run would
+    # fail without its notification.
+    (publish_retry,) = states["NotifyFailure"]["Retry"]
+    assert publish_retry["ErrorEquals"] == ["States.TaskFailed"]
+    assert publish_retry["MaxAttempts"] >= 2
     message = states["NotifyFailure"]["Parameters"]["Message"]
     assert message["execution_id.$"] == "$$.Execution.Id"
     # The whole error object: a States.TaskFailed or States.Timeout error may
