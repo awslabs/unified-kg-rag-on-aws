@@ -368,6 +368,11 @@ Library API (Python callers and custom backends).
   the previous run's delta and extraction fingerprint, so the changed stages
   ran only on that delta's documents and the next run with a new pipeline id
   re-extracted the whole corpus (#256).
+- Rerunning a completed incremental pipeline id with the doc-status
+  registry since turned off restarts at `document_loading` and builds the
+  index in full. It restored the previous run's delta, so indexing wrote
+  `PENDING`/`PROCESSED` records to the registry the user had disabled
+  (#PR).
 - Deleting a document under a non-default index suffix
   (`processing.document_parsing.index_value`) strips its text units from the
   claims it shared with other documents in that suffix's claims index. The

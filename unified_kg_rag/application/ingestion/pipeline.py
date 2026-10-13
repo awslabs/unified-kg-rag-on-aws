@@ -790,8 +790,11 @@ class DataIngestionPipeline:
         fingerprint: the stages that rerun (a newly enabled stage, or one
         whose inputs changed) see only that delta's documents, and the
         commit records the old fingerprint, so the next run re-extracts
-        every document. Rerunning document_loading diffs the corpus with
-        this run's fingerprint; document_parsing stays cached.
+        every document. The same holds when the doc-status registry was
+        turned off since: the restored delta would write records to the
+        registry the user disabled. Rerunning document_loading diffs the
+        corpus with this run's settings (or skips the diff without a
+        registry); document_parsing stays cached.
         """
         loading = PipelineStageType.DOCUMENT_LOADING.value
         canonical_order = [st.value for st in self.STAGE_CLASSES]
@@ -803,11 +806,18 @@ class DataIngestionPipeline:
             return start_stage_name, completed_stages
         metadata = self.state_manager.load_pipeline_metadata(pipeline_id)
         recorded = metadata.get("incremental_extraction_fingerprint")
-        if recorded is None or recorded == extraction_fingerprint(self.config):
+        if recorded is None:
+            return start_stage_name, completed_stages
+        if not self.providers.doc_status_enabled:
+            reason = "the doc-status registry was disabled"
+        elif recorded != extraction_fingerprint(self.config):
+            reason = "the extraction settings changed"
+        else:
             return start_stage_name, completed_stages
         logger.warning(
-            "The extraction settings changed since this pipeline computed its "
-            "incremental delta; resuming from '%s' instead of '%s'",
+            "%s since this pipeline computed its incremental delta; resuming "
+            "from '%s' instead of '%s'",
+            reason.capitalize(),
             loading,
             start_stage_name,
         )
