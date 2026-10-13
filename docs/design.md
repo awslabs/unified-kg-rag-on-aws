@@ -509,6 +509,15 @@ subclassing or editing dispatch code. The ports, their default
 | retriever (role-keyed builder) | `BaseGraphRAGRetriever.aretrieve` | `OpenSearchRetriever` / `NeptuneRetriever` | `Providers(retriever_builders=...)` or `GraphRAGChain(retriever_builders={RetrieverRole.GRAPH: lambda: MyGraphRetriever(...)})` |
 | `DocStatusPort` (`ports/doc_status.py`, `Protocol`) | `get` / `get_many` / `put` / `put_many` / `delete` / `list_all` / `diff` and `record_fits` / `add_lineage_overflow` / `get_lineage_overflow` / `delete_lineage_overflow`, all called directly. Subclassing `DocStatusPort` inherits defaults for all but `get` / `put` / `delete` / `list_all` / `diff` (one record per call, no size limit, no overflow) | `DynamoDBDocStatusStore` (`SQLiteDocStatusStore`) | `Providers(doc_status=...)` or `DataIngestionPipeline(..., doc_status=...)` (either turns incremental indexing on); conform structurally and pass `tests/integration/test_doc_status_conformance.py` |
 
+**Errors from a custom retriever or backend** are classified by type, never
+by message (`adapters/store_errors.is_fatal_retrieval_error`). To fail the
+query instead of answering from no context, raise a `ConnectionError` or
+`ConfigurationError` subclass: the typed store errors in `shared/exceptions.py`
+(`StoreConnectionError`, `StoreTimeoutError`, `StoreConfigurationError`,
+`StoreAccessDeniedError`, `StoreRequestRejectedError`) cover the usual cases.
+Any other exception, such as `AWSServiceError("access denied ...")`, degrades
+only the section that raised it.
+
 Because the model-factory and doc-status ports are `runtime_checkable`
 `Protocol`s, a custom class only needs the right **method shapes** — no base
 class to import. Ollama and OpenAI-compatible servers are built in

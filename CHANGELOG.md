@@ -164,6 +164,14 @@ Library API (Python callers and custom backends).
   `diff` takes `extraction_fingerprint` and stores
   `DocStatusRecord.extraction_fingerprint`; a store whose `diff` does not
   take it is diffed by content only, with a WARNING (#224).
+- Retrieval errors are classified by type only; the message markers are gone
+  (#261). A custom retriever or backend whose error must fail the query
+  rather than degrade it to no results raises a `ConnectionError` or
+  `ConfigurationError` subclass, such as the typed store errors in
+  `shared/exceptions.py` (`StoreConnectionError`, `StoreTimeoutError`,
+  `StoreConfigurationError`, `StoreAccessDeniedError`,
+  `StoreRequestRejectedError`). An `AWSServiceError("access denied ...")` or
+  `RuntimeError("AccessDeniedException ...")` now degrades the section.
 - Custom indexers: full-build `index_*` methods take a keyword-only
   `suffixes`; `get_stats` / `get_entity_count` are gone (#169, #214);
   `IndexingManager.index_delta` no longer merges with the stored graph
@@ -399,7 +407,7 @@ Library API (Python callers and custom backends).
   answer only when punctuation (other than `/`, or `:`/`)` after `예`) or
   the line end follows them, so `No: it does not.`, `**No**: ...` and
   `No (see Clause 5).` still answer; every other polarity word answers
-  wherever it stands, and a word next to `/` is skipped (#255).
+  wherever it stands, and a word next to `/` is skipped (#255, #259).
 - Description re-summarization sizes one call's input to the summary
   model's context window (half of what it leaves beside
   `max_summary_tokens`, 1,000 to 12,000 tokens). A fixed 12,000-token input
@@ -431,9 +439,10 @@ Library API (Python callers and custom backends).
   clauses per query and a `multi_match` makes one per term per field, so
   about 1,100 words (or 1,100 Han characters) failed with a misleading
   "Check the query filters" `ConfigurationError` and about 600 words
-  degraded to no lexical hits. The lexical side now searches the first 100
-  words (150 characters of Hangul, Han or Kana text); the vector side still
-  embeds the whole question (#258).
+  degraded to no lexical hits. The lexical side now searches only the
+  first terms of a long question (150 since #260, which counts a word or a
+  Hangul, Han or Kana character as one term); the vector side still embeds
+  the whole question (#258).
 - A question of more than about 10 words no longer fails its lexical search
   on a large index. Typo tolerance (`fuzziness: AUTO`) expands every term
   into up to 50 index terms per field, so on an index of 100,000 distinct
@@ -572,9 +581,11 @@ Library API (Python callers and custom backends).
 - An OpenSearch or Neptune that cannot be reached (connection refused, DNS
   or TLS failure) fails the query with `StoreConnectionError` instead of
   reading as "no results": every strategy abstained and `run-eval` reported
-  a 100% success rate against a store that was down. A timeout, throttling
-  or a 5xx still degrades the one sub-search. OpenSearch errors now log the
-  server's reason instead of `info=None` (#249).
+  a 100% success rate against a store that was down. Since #261 a store
+  timeout, or throttling or a 502/503/504 that outlasts the client's
+  retries, fails the query too; a single HTTP 500 still degrades the one
+  sub-search. OpenSearch errors now log the server's reason instead of
+  `info=None` (#249).
 - Chunking and translation no longer hide bugs in their own code: six
   catch-alls around pure chunking steps (logged at DEBUG) returned the input
   or an empty list, and translation's input preparation returned `[]` on an

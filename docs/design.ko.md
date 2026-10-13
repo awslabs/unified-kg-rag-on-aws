@@ -508,6 +508,14 @@ CLI: `run-eval --eval-data-path <json> [--search-strategy ...]`.
 | 리트리버(역할별 빌더) | `BaseGraphRAGRetriever.aretrieve` | `OpenSearchRetriever` / `NeptuneRetriever` | `Providers(retriever_builders=...)` 또는 `GraphRAGChain(retriever_builders={RetrieverRole.GRAPH: lambda: MyGraphRetriever(...)})` |
 | `DocStatusPort` (`ports/doc_status.py`, `Protocol`) | `get` / `get_many` / `put` / `put_many` / `delete` / `list_all` / `diff`와 `record_fits` / `add_lineage_overflow` / `get_lineage_overflow` / `delete_lineage_overflow`. 모두 직접 호출합니다. `DocStatusPort`를 상속하면 `get` / `put` / `delete` / `list_all` / `diff`를 뺀 나머지는 기본 구현(호출마다 레코드 하나, 크기 한도 없음, 초과분 없음)을 물려받습니다 | `DynamoDBDocStatusStore`(`SQLiteDocStatusStore`) | `Providers(doc_status=...)` 또는 `DataIngestionPipeline(..., doc_status=...)`(어느 쪽이든 증분 인덱싱이 켜짐). 구조를 맞추고 `tests/integration/test_doc_status_conformance.py`를 통과해야 함 |
 
+**커스텀 리트리버나 백엔드의 오류**는 메시지가 아니라 타입으로만 분류합니다
+(`adapters/store_errors.is_fatal_retrieval_error`). 컨텍스트 없이 답하지 않고 질의를
+실패시키려면 `ConnectionError`나 `ConfigurationError`의 하위 클래스를 발생시킵니다.
+일반적인 경우는 `shared/exceptions.py`의 타입별 저장소 오류(`StoreConnectionError`,
+`StoreTimeoutError`, `StoreConfigurationError`, `StoreAccessDeniedError`,
+`StoreRequestRejectedError`)로 처리할 수 있습니다. 그 밖의 예외는
+`AWSServiceError("access denied ...")`라도 해당 섹션만 결과 없음으로 처리합니다.
+
 모델 팩토리와 문서 상태 포트는 `runtime_checkable` `Protocol`이므로 커스텀
 클래스는 **메서드 형태만** 맞으면 되고, import할 베이스 클래스가 없습니다. Ollama와
 OpenAI 호환 서버는 기본 제공되므로(`providers.llm.kind`), 커스텀 팩토리는 그 밖의
