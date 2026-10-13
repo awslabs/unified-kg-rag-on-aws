@@ -13,7 +13,10 @@ from unified_kg_rag.adapters.llm.chain_factory import (
 )
 from unified_kg_rag.adapters.llm.retry import transient_error_predicate
 from unified_kg_rag.adapters.providers import Providers
-from unified_kg_rag.domain.ingestion.base_processor import BaseProcessor
+from unified_kg_rag.domain.ingestion.base_processor import (
+    BaseProcessor,
+    union_document_filters,
+)
 from unified_kg_rag.domain.ingestion.entity_grounding import is_grounded
 from unified_kg_rag.domain.ingestion.relationship_endpoints import (
     cite_relationship_endpoints,
@@ -457,6 +460,7 @@ class GraphExtractor(BaseProcessor):
                 current if current is not None else 0.0,
                 new if new is not None else 0.0,
             ),
+            "attributes": union_document_filters,
         }
 
         merged = self._merge_items(
@@ -466,9 +470,9 @@ class GraphExtractor(BaseProcessor):
             frequency_fields=["type"],
             log_message_formatter=lambda e: f"Entity '{e.name}' merged {{count}} instances",
         )
-        # Set frequency from text-unit support so full-build entities carry a
-        # ranking signal (previously only the incremental merger set frequency,
-        # leaving it None for full runs and degrading report/search ranking).
+        # frequency = number of supporting text units, the rule every merge
+        # path applies (resolver, incremental merger), so the field agrees
+        # across build paths. Ranking does not read it: rank is the degree.
         for entity in merged:
             entity.frequency = len(entity.text_unit_ids or [])
         return merged
@@ -490,6 +494,7 @@ class GraphExtractor(BaseProcessor):
             )
             + (new if isinstance(new, (int | float)) else 0.0),
             "description": self._merge_description,
+            "attributes": union_document_filters,
         }
 
         merged = self._merge_items(

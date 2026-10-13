@@ -224,6 +224,46 @@ class TestMergeEntities:
         merged = extractor._merge_entities([e1, e2])
         assert merged[0].confidence == 0.9  # max, not 0.6 mean
 
+    @pytest.mark.parametrize("reverse", [False, True])
+    def test_document_filters_are_unioned(self, extractor, reverse) -> None:
+        # The entity cites a research and a finance chunk: it must match a
+        # filter on either, whichever instance the merge keeps.
+        e1 = Entity(
+            id="e1",
+            name="Acme",
+            text_unit_ids=["t1"],
+            attributes={"filters": {"category": "research", "year": 2024}},
+        )
+        e2 = Entity(
+            id="e1",
+            name="Acme",
+            text_unit_ids=["t2"],
+            attributes={"filters": {"category": "finance", "year": 2024}},
+        )
+        entities = [e2, e1] if reverse else [e1, e2]
+        (merged,) = extractor._merge_entities(entities)
+        assert merged.attributes["filters"] == {
+            "category": ["finance", "research"],
+            "year": 2024,
+        }
+
+    def test_relationship_document_filters_are_unioned(self, extractor) -> None:
+        r1 = Relationship(
+            id="r1",
+            source_id="a",
+            target_id="b",
+            text_unit_ids=["t1"],
+            attributes={"filters": {"category": "research"}},
+        )
+        r2 = r1.model_copy(
+            update={
+                "text_unit_ids": ["t2"],
+                "attributes": {"filters": {"category": "finance"}},
+            }
+        )
+        (merged,) = extractor._merge_relationships([r1, r2])
+        assert merged.attributes["filters"] == {"category": ["finance", "research"]}
+
     def test_distinct_ids_not_merged(self, extractor) -> None:
         e1 = Entity(id="e1", name="Alice", type="PERSON", text_unit_ids=["t1"])
         e2 = Entity(id="e2", name="Bob", type="PERSON", text_unit_ids=["t1"])

@@ -519,7 +519,7 @@ LLM stages are Bedrock-I/O-bound, so concurrency can far exceed the CPU count.
 | `processing.graph_extraction.max_entities_per_chunk` | `50` | Cap on entities per chunk (relationships: `max_relationships_per_chunk`, also `50`). |
 | `processing.graph_extraction.entity_confidence_threshold` | `0.0` | Drop entities below this confidence; `0.0` keeps all. |
 | `processing.graph_extraction.description_summarization.enabled` | `true` | Re-summarize merged descriptions longer than `force_summary_threshold_tokens` (`600`) with an LLM. |
-| `processing.graph_extraction.entity_grounding.enabled` | `false` | Hallucination guard: drop (or, with `action: "penalize"`, down-weight) entities and relationships whose verbatim `source_text` span is absent from the chunk; `penalize` still drops an ungrounded relationship naming an entity the chunk did not extract (punctuation ignored; Han/Hangul/Kana spans are compared by character bigrams, so a Korean particle change still counts as present). Also gates gleaning additions: a gleaned relationship naming an entity rejected for its chunk is dropped, and one naming an entity the chunk does not list is kept only when the chunk contains the name. |
+| `processing.graph_extraction.entity_grounding.enabled` | `false` | Hallucination guard: drop (or, with `action: "penalize"`, down-weight) entities and relationships whose verbatim `source_text` span is absent from the chunk; `penalize` still drops an ungrounded relationship naming an entity the chunk did not extract (punctuation ignored; Han/Hangul/Kana spans are compared by character bigrams, so a Korean particle change still counts as present). Also applies to gleaning additions (under `penalize` they are down-weighted, not dropped, on the same rules): a gleaned relationship naming an entity rejected for its chunk is dropped, and one naming an entity the chunk does not list is kept only when the chunk contains the name. |
 | `processing.gleaning.enabled` | `true` | Extra extraction passes that catch missed entities and relationships. |
 | `processing.gleaning.max_rounds` | `3` | Gleaning rounds per text unit. A later round re-sends only the units whose previous answer added a new entity or relationship, so a unit stops as soon as an answer adds nothing new. `1` matches MS GraphRAG's default. |
 | `processing.claim_extraction.enabled` | `false` | Extract claims (one extra LLM call per text unit). When on, `local` search injects matching claims and `simple` search sweeps the claims index. |
@@ -529,6 +529,8 @@ LLM stages are Bedrock-I/O-bound, so concurrency can far exceed the CPU count.
 | Key | Default | What it does / when to change |
 |---|---|---|
 | `graph.community_detection.enabled` | `true` | Leiden clustering plus community-report generation. Required by GraphRAG `global`/`drift`. Set `false` for a lighter LightRAG-only ingestion. |
+| `graph.community_detection.resolution` | `1.0` | Leiden resolution: higher gives more, smaller communities (and more report LLM calls); lower gives fewer, larger ones. |
+| `graph.community_detection.random_state` | `42` | Leiden seed, a positive integer. The same graph and seed give the same communities. |
 | `graph.community_detection.auto_resolution` | `false` | `true` sweeps `auto_resolution_candidates` at every level and keeps the most modular resolution; otherwise `resolution` (`1.0`) is used. |
 | `graph.community_detection.auto_resolution_max_nodes` | `10000` | Above this node count the sweep is skipped and `resolution` is used. |
 | `graph.community_detection.max_levels` | `5` | Maximum community hierarchy depth. |
@@ -1049,7 +1051,7 @@ run-rag --query "..." --mode search --output-format json --config-path config.ya
 run-rag --query "..." --verbose --config-path config.yaml
 
 # Attribute filters
-run-rag --query "..." --filters attr_category:research type:PERSON --config-path config.yaml
+run-rag --query "..." --filters attr_category:research type:person --config-path config.yaml
 ```
 
 Filters compile to `term`/`terms`/`range` clauses on OpenSearch and `has`
@@ -1068,13 +1070,17 @@ steps on Neptune. Each store accepts the fields its indexer writes:
 On OpenSearch, `attr_<key>` is a document attribute: entry `<key>` of a
 document's `filters` metadata is indexed as `attr_<key>`. On Neptune entity
 vertices, `attr_<key>` holds the entity's own extracted attributes (for example
-`attr_role`). Use exact-match fields (keyword or
+`attr_role`). An entity or relationship extracted from several documents
+carries every one of their values for a `filters` key (as a list), so it
+matches a filter on any of them. Entity and claim `type` and claim `status`
+are stored lowercase and `term` matches exactly, so filter on the lowercase
+value (`type:person`, not `type:PERSON`). Use exact-match fields (keyword or
 numeric) for precise filtering; a `term` filter on an analyzed text field such
 as `description` matches single lowercase tokens. A range filter takes
 `{"gte": ..., "lte": ...}` through the Python API.
 
 Each filter applies only to the stores that declare its field, so
-`type:PERSON` narrows entities, claims, and Neptune entities and leaves text
+`type:person` narrows entities, claims, and Neptune entities and leaves text
 units unfiltered. The two stores treat `attr_<key>` differently:
 
 - OpenSearch applies `attr_<key>` and `attributes.<path>` strictly on text

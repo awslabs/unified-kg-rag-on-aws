@@ -687,8 +687,7 @@ class S3EncryptionConfig(BaseModel):
         description=(
             "S3 server-side encryption for cache uploads: BUCKET_DEFAULT (send no "
             "header; the bucket's default encryption, e.g. its KMS CMK, applies), "
-            "AES256 (force SSE-S3) or aws:kms (force SSE-KMS with kms_key_id). "
-            "NONE is a legacy alias of BUCKET_DEFAULT."
+            "AES256 (force SSE-S3) or aws:kms (force SSE-KMS with kms_key_id)."
         ),
     )
     kms_key_id: str | None = Field(
@@ -1001,7 +1000,8 @@ class EntityGroundingConfig(BaseModel):
         "confidence threshold can filter it without hard deletion. An "
         "ungrounded relationship is likewise dropped, or kept at its weight "
         "times penalty_factor; 'penalize' still drops one naming an entity its "
-        "chunk did not extract, which it would otherwise make cite the chunk.",
+        "chunk did not extract, which it would otherwise make cite the chunk. "
+        "Gleaning additions follow the same action.",
     )
     penalty_factor: float = Field(
         default=0.5,
@@ -1358,10 +1358,14 @@ class CommunityDetectionConfig(BaseModel):
         default=1.0,
         gt=0.0,
         le=10.0,
-        description="Community detection resolution parameter (higher = fewer communities)",
+        description="Leiden modularity resolution: higher gives more, smaller "
+        "communities; lower gives fewer, larger ones.",
     )
     random_state: int = Field(
-        default=42, description="Random seed for reproducible results"
+        default=42,
+        ge=1,
+        description="Leiden random seed (a positive integer; the native Leiden "
+        "rejects 0). The same graph and seed give the same communities.",
     )
     max_levels: int = Field(default=5, ge=1, description="Maximum hierarchy levels")
     trials: int = Field(

@@ -128,6 +128,12 @@ def leiden(
     return {originals[key]: label for key, label in partition.items()}
 
 
+def _community_sort_key(nodes: set[Any]) -> str:
+    """Order communities by their smallest member's string id (members are
+    disjoint, so the key is unique within a partition)."""
+    return min(str(node) for node in nodes)
+
+
 def _modularity(graph: nx.Graph, partition: list[set[str]]) -> float:
     """Modularity of ``partition``; ``0.0`` for a graph without edges.
 
@@ -238,17 +244,7 @@ class CommunityDetector(BaseProcessor):
         )
 
     def analyze_hierarchy(self) -> None:
-        try:
-            base_partition = self._get_base_partition()
-        except ValueError as e:
-            logger.error("Failed to detect base communities: %s", e)
-            return
-
-        if not base_partition:
-            logger.error(
-                "Failed to detect base communities - aborting hierarchy analysis"
-            )
-            return
+        base_partition = self._get_base_partition()
 
         self.base_modularity = _modularity(self.graph, base_partition)
 
@@ -271,77 +267,76 @@ class CommunityDetector(BaseProcessor):
         for level in range(1, max_levels):
             logger.info("Creating level %s communities...", level)
 
-            try:
-                cluster_graph = self._create_cluster_graph(
-                    current_partition, current_graph
-                )
+            cluster_graph = self._create_cluster_graph(current_partition, current_graph)
 
-                if cluster_graph.number_of_nodes() < 2:
-                    logger.info(
-                        "Cluster graph has only %s nodes, stopping hierarchy at level %s",
-                        cluster_graph.number_of_nodes(),
-                        level - 1,
-                    )
-                    break
-
+            if cluster_graph.number_of_nodes() < 2:
                 logger.info(
-                    "Created cluster graph with %s nodes and %s edges",
+                    "Cluster graph has only %s nodes, stopping hierarchy at level %s",
                     cluster_graph.number_of_nodes(),
-                    cluster_graph.number_of_edges(),
-                )
-
-                next_partition = self._get_base_partition(cluster_graph)
-
-                if (
-                    next_partition
-                    and 1 < len(next_partition) < cluster_graph.number_of_nodes()
-                ):
-                    logger.info(
-                        "Selected partition with %s communities for level %s",
-                        len(next_partition),
-                        level,
-                    )
-                else:
-                    logger.info(
-                        "No meaningful partition found at level %s, stopping hierarchy construction",
-                        level,
-                    )
-                    break
-
-                partitions.append(next_partition)
-                current_partition = next_partition
-                # Coarsen the cluster graph we just built next, so deeper levels
-                # aggregate over the previous level rather than the entity graph.
-                current_graph = cluster_graph
-
-            except Exception as e:
-                logger.error(
-                    "Failed to create cluster graph for level %s: %s", level, e
+                    level - 1,
                 )
                 break
+
+            logger.info(
+                "Created cluster graph with %s nodes and %s edges",
+                cluster_graph.number_of_nodes(),
+                cluster_graph.number_of_edges(),
+            )
+
+            next_partition = self._get_base_partition(cluster_graph)
+
+            if (
+                next_partition
+                and 1 < len(next_partition) < cluster_graph.number_of_nodes()
+            ):
+                logger.info(
+                    "Selected partition with %s communities for level %s",
+                    len(next_partition),
+                    level,
+                )
+            else:
+                logger.info(
+                    "No meaningful partition found at level %s, stopping hierarchy construction",
+                    level,
+                )
+                break
+
+            partitions.append(next_partition)
+            current_partition = next_partition
+            # Coarsen the cluster graph we just built next, so deeper levels
+            # aggregate over the previous level rather than the entity graph.
+            current_graph = cluster_graph
 
         logger.info("Hierarchy construction completed with %s levels", len(partitions))
         self._process_hierarchical_partitions(partitions)
 
-    def _get_base_partition(
-        self, graph: nx.Graph | None = None
-    ) -> list[set[str]] | None:
-        target_graph = graph or self.graph
+    def _get_base_partition(self, graph: nx.Graph | None = None) -> list[set[Any]]:
+        """Partition ``graph`` (the entity graph by default) into communities.
 
-        if not target_graph or target_graph.number_of_edges() == 0:
+        The communities come back in canonical order (see
+        ``_partition_dict_to_communities``), because the next level's cluster
+        graph numbers its nodes by position in this list.
+
+        Raises:
+            GraphError: Leiden failed. Silently falling back would truncate the
+                hierarchy or leave no communities to report on.
+        """
+        target_graph = graph if graph is not None else self.graph
+
+        if target_graph.number_of_edges() == 0:
             logger.warning(
                 "Graph has no edges. Treating each node as a separate community."
             )
-            return [{node} for node in target_graph.nodes()]
+            return [{node} for node in sorted(target_graph.nodes(), key=str)]
+
+        config = self.community_detection_config
+
+        if config.auto_resolution:
+            resolution = self._find_optimal_resolution(target_graph)
+        else:
+            resolution = config.resolution
 
         try:
-            config = self.community_detection_config
-
-            if config.auto_resolution:
-                resolution = self._find_optimal_resolution(target_graph)
-            else:
-                resolution = config.resolution
-
             partition_dict = leiden(
                 _canonical_graph(target_graph),
                 resolution=resolution,
@@ -349,21 +344,21 @@ class CommunityDetector(BaseProcessor):
                 trials=config.trials,
                 extra_forced_iterations=config.extra_forced_iterations,
             )
+        except Exception as e:
+            raise GraphError(
+                f"Leiden partitioning failed on a graph with "
+                f"{target_graph.number_of_nodes()} nodes and "
+                f"{target_graph.number_of_edges()} edges: {e}"
+            ) from e
 
-            communities = self._partition_dict_to_communities(
-                partition_dict, target_graph
+        communities = self._partition_dict_to_communities(partition_dict, target_graph)
+
+        if config.min_community_size > 1:
+            communities = self._merge_small_communities(
+                communities, target_graph, config.min_community_size
             )
 
-            if config.min_community_size > 1:
-                communities = self._merge_small_communities(
-                    dict(communities), target_graph, config.min_community_size
-                )
-
-            return list(communities.values())
-
-        except Exception as e:
-            logger.error("Error during Leiden partitioning: %s", e)
-            return None
+        return sorted(communities.values(), key=_community_sort_key)
 
     def _collect_community_text_unit_ids(self, node_ids: Any) -> list[str]:
         """Union the source text-unit ids of a community's member entities.
@@ -383,22 +378,28 @@ class CommunityDetector(BaseProcessor):
 
     @staticmethod
     def _partition_dict_to_communities(
-        partition_dict: dict[str, int],
+        partition_dict: dict[Any, int],
         graph: nx.Graph | None = None,
-    ) -> dict[int, set[str]]:
-        communities: dict[int, set[str]] = defaultdict(set)
+    ) -> dict[int, set[Any]]:
+        """Group a node -> label map into communities, numbered canonically.
+
+        ``graspologic_native`` returns a Rust ``HashMap``, whose iteration
+        order (and so the labels' first-seen order) changes from process to
+        process. The communities are renumbered by their smallest member, so
+        the small-community merge and the next level's cluster-graph node
+        numbers do not depend on that order.
+        """
+        groups: dict[int, set[Any]] = defaultdict(set)
         for node, label in partition_dict.items():
-            communities[label].add(node)
+            groups[label].add(node)
+        ordered = sorted(groups.values(), key=_community_sort_key)
         if graph is not None:
             # Leiden leaves isolated nodes out of its result; each becomes its
             # own community so the partition covers the graph (modularity
             # rejects anything less).
-            next_label = max(communities.keys()) + 1 if communities else 0
             missing = [node for node in graph.nodes() if node not in partition_dict]
-            for node in sorted(missing, key=str):
-                communities[next_label] = {node}
-                next_label += 1
-        return dict(communities)
+            ordered.extend({node} for node in sorted(missing, key=str))
+        return dict(enumerate(ordered))
 
     def _find_optimal_resolution(self, graph: nx.Graph) -> float:
         best_resolution = self.community_detection_config.resolution
@@ -495,7 +496,11 @@ class CommunityDetector(BaseProcessor):
                                 neighbor_counts[neighbor_comm] += 1
 
                 if neighbor_counts:
-                    target_comm = max(neighbor_counts, key=lambda x: neighbor_counts[x])
+                    # Ties go to the lowest (canonical) label, not to whichever
+                    # neighbor a set iteration happened to reach first.
+                    target_comm = max(
+                        neighbor_counts, key=lambda x: (neighbor_counts[x], -x)
+                    )
                     communities[target_comm].update(nodes)
                     for node in nodes:
                         node_to_comm[node] = target_comm

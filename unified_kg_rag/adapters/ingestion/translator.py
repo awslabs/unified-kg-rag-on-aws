@@ -179,13 +179,7 @@ class TextUnitTranslator:
     def _create_chain_inputs(
         texts: list[str], target_language: LanguageCode
     ) -> list[dict[str, Any]]:
-        try:
-            return [
-                {"text": text, "target_language": target_language} for text in texts
-            ]
-        except Exception as e:
-            logger.error("Failed to create translation inputs: %s", e)
-            return []
+        return [{"text": text, "target_language": target_language} for text in texts]
 
     def _apply_translation_result(
         self, text_unit: TextUnit, result: str | None, target_language: LanguageCode
@@ -194,20 +188,13 @@ class TextUnitTranslator:
             self._record_failure(text_unit)
             return
 
-        try:
-            if text_unit.translated_texts is None:
-                text_unit.translated_texts = {}
+        if text_unit.translated_texts is None:
+            text_unit.translated_texts = {}
+        text_unit.translated_texts[target_language.value] = result.strip()
 
-            text_unit.translated_texts[target_language.value] = result.strip()
-
-            if self.stats:
-                self.stats.num_translated += 1
-                self.stats.num_successful_translations += 1
-        except Exception as e:
-            logger.error(
-                "Failed to apply translation for text unit '%s': %s", text_unit.id, e
-            )
-            self._record_failure(text_unit)
+        if self.stats:
+            self.stats.num_translated += 1
+            self.stats.num_successful_translations += 1
 
     def _record_failure(self, text_unit: TextUnit) -> None:
         if self.stats is None:

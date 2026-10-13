@@ -156,6 +156,14 @@ class TestMergeDuplicateEntities:
         assert unique[0].description == "d"
         assert unique[0].text_unit_ids == ["t2", "t1", "t3"]
 
+    def test_document_filters_are_unioned(self) -> None:
+        ents = [
+            Entity(id="e1", name="A", attributes={"filters": {"category": "x"}}),
+            Entity(id="e2", name="a", attributes={"filters": {"category": "y"}}),
+        ]
+        unique, _ = GraphGleaner._merge_duplicate_entities(ents)
+        assert unique[0].attributes == {"filters": {"category": ["x", "y"]}}
+
 
 class TestCorrectionDescriptions:
     """The prompt lists names only, so a correction's description is merged."""

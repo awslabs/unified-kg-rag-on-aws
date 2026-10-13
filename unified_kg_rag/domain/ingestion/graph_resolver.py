@@ -9,6 +9,7 @@ from typing import Any, TypeVar
 
 from pydantic import BaseModel, Field
 
+from unified_kg_rag.domain.ingestion.base_processor import union_document_filters
 from unified_kg_rag.domain.ingestion.base_resolver import (
     BaseResolver,
     FuzzyMatcher,
@@ -17,6 +18,7 @@ from unified_kg_rag.domain.ingestion.base_resolver import (
 from unified_kg_rag.domain.ingestion.graph_rank import with_graph_ranks
 from unified_kg_rag.domain.ingestion.relationship_endpoints import (
     cite_relationship_endpoints,
+    sync_relationship_endpoint_names,
 )
 from unified_kg_rag.domain.ingestion.relationship_weights import (
     apply_text_unit_weights,
@@ -24,7 +26,7 @@ from unified_kg_rag.domain.ingestion.relationship_weights import (
     text_unit_weights,
 )
 from unified_kg_rag.domain.models import Config, Entity, Relationship
-from unified_kg_rag.shared import get_logger
+from unified_kg_rag.shared import GraphError, get_logger
 from unified_kg_rag.shared.utils.concurrency import ContextThreadPoolExecutor
 
 logger = get_logger(__name__)
@@ -63,6 +65,17 @@ def _join_groups_sharing_ids(groups: list[list[_ItemT]]) -> list[list[_ItemT]]:
     if len(joined) < len(groups):
         logger.info("Joined %s groups that shared an id", len(groups) - len(joined))
     return list(joined.values())
+
+
+def _merged_attributes(
+    attribute_maps: list[dict[str, Any] | None],
+) -> dict[str, Any]:
+    """Union the attribute maps (later wins), document ``filters`` unioned."""
+    present = [attrs for attrs in attribute_maps if attrs]
+    merged = BaseResolver._merge_attributes(present)
+    for attrs in present:
+        merged = union_document_filters(merged, attrs) or merged
+    return merged
 
 
 # Emit a progress log line every N completed items in the resolver's parallel
@@ -358,11 +371,21 @@ class EntityResolver(BaseResolver):
                 if self.show_progress and done % _RESOLVE_PROGRESS_EVERY == 0:
                     logger.info("  ...resolved %s/%s entities", done, total)
                 try:
-                    yield original_name, future.result()
+                    name_matches = future.result()
                 except Exception as e:
+                    # A lost name falls back to exact matching only, so its
+                    # variants stay duplicate entities: fail the stage unless
+                    # the run tolerates per-item errors.
+                    if not self.config.processing.ignore_errors:
+                        raise GraphError(
+                            f"Fuzzy matching failed for entity {original_name!r}: "
+                            f"{e!r}"
+                        ) from e
                     logger.warning(
                         "Failed to find matches for entity '%s': %s", original_name, e
                     )
+                    continue
+                yield original_name, name_matches
 
     @staticmethod
     def _best_supported_name(entities: list[Entity]) -> str:
@@ -411,9 +434,7 @@ class EntityResolver(BaseResolver):
             # typically None in a full build), so frequency is a real signal.
             frequency=len(merged_text_unit_ids),
             confidence=merged_confidence,
-            attributes=self._merge_attributes(
-                [e.attributes for e in entities if e.attributes]
-            ),
+            attributes=_merged_attributes([e.attributes for e in entities]),
             # Keep the earliest known creation time; leave it None (truthfully
             # unknown) rather than fabricating wall-clock time when no member
             # carries one, so the merge stays a pure, reproducible function of
@@ -546,9 +567,7 @@ class RelationshipResolver(BaseResolver):
             ),
             description_embedding=primary_rel.description_embedding,
             text_unit_ids=merged_text_unit_ids,
-            attributes=self._merge_attributes(
-                [r.attributes for r in relationships if r.attributes]
-            ),
+            attributes=_merged_attributes([r.attributes for r in relationships]),
             # See _merge_entities: leave created_at None when unknown so the
             # merge is a pure function of its inputs.
             created_at=min(
@@ -598,6 +617,9 @@ class GraphResolver:
             resolved_relationships,
             relationship_stats,
         ) = self.relationship_resolver.resolve(relationships, entity_mapping)
+        # A relationship re-pointed at a merged entity's id still names the
+        # entity it was extracted with ("Acme" for "Acme Inc").
+        sync_relationship_endpoint_names(resolved_relationships, resolved_entities)
         resolved_entities, resolved_relationships = with_graph_ranks(
             resolved_entities, resolved_relationships
         )

@@ -99,6 +99,13 @@ class TestMergeSmallChunks:
     def test_empty_returns_empty(self) -> None:
         assert self._proc().merge_small_chunks([]) == []
 
+    def test_internal_error_propagates(self, mocker) -> None:
+        # Pure code: a bug must surface, not silently return the input.
+        proc = self._proc()
+        mocker.patch.object(proc, "_locate_spans", side_effect=RuntimeError("bug"))
+        with pytest.raises(RuntimeError, match="bug"):
+            proc.merge_small_chunks(["aaaaa", "bbbbb"], source="aaaaa bbbbb")
+
     def test_small_chunks_merged_when_within_max(self) -> None:
         proc = self._proc(min_size=10, max_size=100)
         # Two 5-char chunks (< min 10) merge; without a source they are joined

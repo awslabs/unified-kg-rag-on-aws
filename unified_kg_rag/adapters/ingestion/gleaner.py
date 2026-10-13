@@ -16,7 +16,9 @@ from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.ingestion.base_processor import (
     BaseProcessor,
     coerce_llm_text,
+    format_entities_with_limit_task,
     group_by_text_unit,
+    union_document_filters,
 )
 from unified_kg_rag.domain.ingestion.descriptions import merge_descriptions
 from unified_kg_rag.domain.ingestion.entity_grounding import (
@@ -25,6 +27,7 @@ from unified_kg_rag.domain.ingestion.entity_grounding import (
 )
 from unified_kg_rag.domain.ingestion.relationship_endpoints import (
     cite_relationship_endpoints,
+    sync_relationship_endpoint_names,
 )
 from unified_kg_rag.domain.ingestion.relationship_weights import (
     apply_text_unit_weights,
@@ -48,25 +51,6 @@ from unified_kg_rag.shared.utils import (
 from unified_kg_rag.shared.utils.langchain import BATCH_ITEM_FAILED, BatchProcessor
 
 logger = get_logger(__name__)
-
-
-def format_entities_with_limit_task(entities: list[Entity], max_entities: int) -> str:
-    if len(entities) <= max_entities:
-        return "\n".join(e.name for e in entities)
-
-    sorted_entities = sorted(
-        entities,
-        key=lambda e: (
-            bool(e.description and e.description.strip()),
-            len(e.text_unit_ids or []),
-        ),
-        reverse=True,
-    )
-    selected_entities = sorted_entities[:max_entities]
-    entity_list = "\n".join(e.name for e in selected_entities)
-    if len(entities) > max_entities:
-        entity_list += f"\n... and {len(entities) - max_entities} more entities"
-    return entity_list
 
 
 def format_relationships_with_limit_task(
@@ -513,7 +497,15 @@ class GraphGleaner(BaseProcessor):
         # Runs after every correction and the merge, so it sees the final id ->
         # name mapping for the round; an ENTITY_CORRECTION rename or a merge that
         # re-pointed an edge would otherwise leave the edge naming the old entity.
-        cls._sync_relationship_endpoint_names(merged_relationships, merged_entities)
+        resynced = sync_relationship_endpoint_names(
+            merged_relationships, merged_entities
+        )
+        if resynced:
+            logger.debug(
+                "Resynced endpoint names on %s relationships after entity "
+                "corrections/merges",
+                resynced,
+            )
         return merged_entities, merged_relationships
 
     def _perform_llm_refinement(
@@ -646,6 +638,7 @@ class GraphGleaner(BaseProcessor):
                 issues = ensure_list(issues_data)
 
             rejected_keys: set[str] = set()
+            penalized: list[Relationship] = []
 
             for issue in issues:
                 self._process_issue(
@@ -655,8 +648,12 @@ class GraphGleaner(BaseProcessor):
                     new_entities,
                     new_relationships,
                     rejected_keys=rejected_keys,
+                    penalized_relationships=penalized,
                 )
 
+            new_relationships += self._keep_penalized_relationships(
+                penalized, unit, index
+            )
             new_relationships = self._drop_unsupported_relationships(
                 new_relationships, unit, index.entities_for(unit.id), rejected_keys
             )
@@ -689,34 +686,49 @@ class GraphGleaner(BaseProcessor):
         new_relationships: list[Relationship],
         *,
         rejected_keys: set[str] | None = None,
+        penalized_relationships: list[Relationship] | None = None,
     ) -> None:
         """Apply one refinement issue to the round's additions.
 
-        The name key of a MISSING_ENTITY the grounding check rejects is added
-        to ``rejected_keys``, so a relationship naming it can be dropped (see
-        :meth:`_drop_unsupported_relationships`). A MISSING_ENTITY below
+        An issue whose ``text_evidence`` the grounding check does not find in
+        the chunk follows ``entity_grounding.action`` as at extraction. Under
+        ``drop`` (and for a correction under either action) it is ignored,
+        and the name key of a rejected MISSING_ENTITY is added to
+        ``rejected_keys``, so a relationship naming it can be dropped (see
+        :meth:`_drop_unsupported_relationships`). Under ``penalize`` a
+        MISSING_ENTITY is added with its confidence times ``penalty_factor``,
+        and a MISSING_RELATIONSHIP goes to ``penalized_relationships`` with
+        its weight times ``penalty_factor`` (see
+        :meth:`_keep_penalized_relationships`). A MISSING_ENTITY below
         ``entity_confidence_threshold``, or one the threshold removed from
         this unit at extraction, is dropped as extraction's filter would drop
         it, and its key is held for the unit like a filtered entity's.
         """
         details = issue.get("details", {})
         issue_type = issue.get("issue_type", "").upper()
+        grounding = self.extraction_config.entity_grounding
+        penalize = False
 
         # The refinement prompt requires a <text_evidence> exact quote per issue
         # (sibling of <details>). When grounding is enabled, reject additions
         # whose evidence is not actually in the chunk — the same hallucination
         # guard applied at first-pass extraction, now for gleaner-introduced
         # entities/relationships.
-        if self.extraction_config.entity_grounding.enabled:
+        if grounding.enabled:
             text_evidence = issue.get("text_evidence")
             chunk_text = self.get_text_for_processing(unit)
-            grounding = self.extraction_config.entity_grounding
-            if not is_grounded(
+            grounded = is_grounded(
                 text_evidence if isinstance(text_evidence, str) else None,
                 chunk_text,
                 min_span_tokens=grounding.min_span_tokens,
                 min_overlap_ratio=grounding.min_overlap_ratio,
-            ):
+            )
+            penalize = (
+                not grounded
+                and grounding.action == "penalize"
+                and issue_type in ("MISSING_ENTITY", "MISSING_RELATIONSHIP")
+            )
+            if not grounded and not penalize:
                 logger.info(
                     "Dropping ungrounded gleaner %s in chunk '%s' — text_evidence "
                     "not found (likely hallucinated)",
@@ -735,6 +747,9 @@ class GraphGleaner(BaseProcessor):
 
         if issue_type == "MISSING_ENTITY":
             entity = self.parse_entity_data(details, unit)
+            if entity and penalize:
+                base = entity.confidence if entity.confidence is not None else 1.0
+                entity.confidence = base * grounding.penalty_factor
             if entity and self._below_confidence_threshold(entity, unit):
                 return
             if entity:
@@ -746,7 +761,11 @@ class GraphGleaner(BaseProcessor):
             rel = self.parse_relationship_data(details, unit, index.entity_ids)
             if rel:
                 (rel.attributes or {}).pop("_source_text", None)
-                new_relationships.append(rel)
+                if penalize and penalized_relationships is not None:
+                    rel.weight = (rel.weight or 1.0) * grounding.penalty_factor
+                    penalized_relationships.append(rel)
+                else:
+                    new_relationships.append(rel)
         elif issue_type == "ENTITY_CORRECTION":
             self._apply_entity_correction(details, index, unit)
         elif issue_type == "RELATIONSHIP_CORRECTION":
@@ -760,6 +779,35 @@ class GraphGleaner(BaseProcessor):
                 issue_type or "<missing>",
                 unit.short_id,
             )
+
+    @staticmethod
+    def _keep_penalized_relationships(
+        relationships: list[Relationship], unit: TextUnit, index: GleaningIndex
+    ) -> list[Relationship]:
+        """The penalized (ungrounded) relationships whose endpoints cite ``unit``.
+
+        Extraction's ``penalize`` rule: an ungrounded relationship is kept
+        only when the chunk lists both endpoints, since keeping one would make
+        an endpoint the chunk did not list cite it (see
+        ``GraphExtractor._apply_relationship_grounding``). Checked after every
+        issue of the response, so the order of the issues does not matter.
+        """
+        if not relationships:
+            return []
+        listed = {entity.id for entity in index.entities_for(unit.id)}
+        kept: list[Relationship] = []
+        for rel in relationships:
+            if {rel.source_id, rel.target_id} <= listed:
+                kept.append(rel)
+                continue
+            logger.info(
+                "Dropping ungrounded gleaned relationship '%s -> %s' — it names "
+                "an entity chunk '%s' does not list",
+                rel.source_name,
+                rel.target_name,
+                unit.short_id,
+            )
+        return kept
 
     def _drop_unsupported_relationships(
         self,
@@ -1099,6 +1147,9 @@ class GraphGleaner(BaseProcessor):
                         + (entity.text_unit_ids or [])
                     )
                 )
+                master_entity.attributes = union_document_filters(
+                    master_entity.attributes, entity.attributes
+                )
 
         for key, entity in entities_map.items():
             if type_counts[key]:
@@ -1157,6 +1208,9 @@ class GraphGleaner(BaseProcessor):
                     existing_rel.description = merge_descriptions(
                         (existing_rel.description, rel.description)
                     )
+                    existing_rel.attributes = union_document_filters(
+                        existing_rel.attributes, rel.attributes
+                    )
                     # A gleaned edge adds the strength of each text unit it
                     # newly cites. One the edge already cites keeps its stored
                     # strength: the model re-stating an edge it was shown is
@@ -1196,35 +1250,6 @@ class GraphGleaner(BaseProcessor):
             )
 
         return final_relationships
-
-    @staticmethod
-    def _sync_relationship_endpoint_names(
-        relationships: list[Relationship], entities: list[Entity]
-    ) -> None:
-        """Rewrite each edge's endpoint names from the final entity id -> name map.
-
-        ``source_name`` / ``target_name`` are denormalised copies of the entity
-        names, and the refinement prompt and the indexers read those copies
-        rather than resolving the id. An ENTITY_CORRECTION renames an entity in
-        place and keeps its id, and a merge re-points an edge at the surviving
-        entity's id; neither touches the copies, so once both have run the names
-        are re-derived from the ids the edge references.
-        """
-        name_by_id = {entity.id: entity.name for entity in entities}
-        resynced = 0
-        for rel in relationships:
-            source_name = name_by_id.get(rel.source_id, rel.source_name)
-            target_name = name_by_id.get(rel.target_id, rel.target_name)
-            if (source_name, target_name) != (rel.source_name, rel.target_name):
-                rel.source_name, rel.target_name = source_name, target_name
-                resynced += 1
-
-        if resynced > 0:
-            logger.debug(
-                "Resynced endpoint names on %s relationships after entity "
-                "corrections/merges",
-                resynced,
-            )
 
     @staticmethod
     def _log_completion_summary(stats: GleaningStats, units_still_gaining: int) -> None:

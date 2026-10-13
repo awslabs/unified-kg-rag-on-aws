@@ -16,6 +16,7 @@ from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.ingestion.base_processor import (
     BaseProcessor,
     coerce_llm_text,
+    format_entities_with_limit_task,
     group_by_text_unit,
 )
 from unified_kg_rag.domain.ingestion.claim_resolver import claim_identity_suffix
@@ -30,30 +31,6 @@ from unified_kg_rag.shared.utils import (
 from unified_kg_rag.shared.utils.langchain import BATCH_ITEM_FAILED, BatchProcessor
 
 logger = get_logger(__name__)
-
-
-def format_entities_with_limit_task(entities: list[Entity], max_entities: int) -> str:
-    if not entities:
-        return ""
-
-    if len(entities) <= max_entities:
-        return "\n".join([e.name for e in entities])
-
-    sorted_entities = sorted(
-        entities,
-        key=lambda e: (
-            bool(e.description and e.description.strip()),
-            len(e.text_unit_ids or []),
-        ),
-        reverse=True,
-    )
-    selected_entities = sorted_entities[:max_entities]
-    entity_list = "\n".join([e.name for e in selected_entities])
-
-    if len(entities) > max_entities:
-        entity_list += f"\n... and {len(entities) - max_entities} more entities"
-
-    return entity_list
 
 
 def prepare_claim_input(
@@ -234,14 +211,9 @@ class ClaimExtractor(BaseProcessor):
     ) -> list[Claim]:
         all_claims = []
 
-        if len(text_units) != len(extraction_results):
-            logger.warning(
-                "Mismatch in text units (%s) and extraction results (%s). Some results may have been lost during processing. Proceeding with available results.",
-                len(text_units),
-                len(extraction_results),
-            )
-
-        for text_unit, result in zip(text_units, extraction_results, strict=False):
+        # The batch processor returns one result per item (BATCH_ITEM_FAILED for
+        # a failed one), so a length mismatch is a bug, not lost results.
+        for text_unit, result in zip(text_units, extraction_results, strict=True):
             if result and result is not BATCH_ITEM_FAILED:
                 try:
                     claims = self._parse_extraction_result(result, text_unit)

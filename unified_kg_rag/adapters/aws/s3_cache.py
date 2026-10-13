@@ -23,7 +23,7 @@ logger = get_logger(__name__)
 def sse_extra_args(encryption_conf: S3EncryptionConfig) -> dict[str, str]:
     """Per-object SSE upload args for the configured encryption type.
 
-    BUCKET_DEFAULT (and the legacy NONE) send no header so the bucket's
+    BUCKET_DEFAULT sends no header so the bucket's
     default encryption applies. Sending ``ServerSideEncryption=AES256``
     would silently override a bucket whose default is a KMS CMK. Every S3
     upload of pipeline data uses these args.
