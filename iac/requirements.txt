@@ -1,9 +1,0 @@
-# aws-cdk-lib must never drop below 2.253.0, the release that fixed the inverted
-# CodeBuild S3LoggingOptions.encrypted flag (GHSA-464c-974j-9xm6). This stack
-# defines no CodeBuild project, so it was never exposed — the floor is kept so the
-# constraint cannot resolve backwards into the affected range. Dependabot may
-# raise it further; keep aws-cdk.aws-neptune-alpha on the same minor release.
-aws-cdk-lib>=2.272.0,<3.0.0
-aws-cdk.aws-neptune-alpha>=2.272.0a0
-constructs>=10.8.1,<11.0.0
-cdk-nag>=2.38.2,<3.0.0

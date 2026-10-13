@@ -182,12 +182,12 @@ OpenSearch나 Neptune에 쓰는 데 실패하면 그 문서는 `FAILED`로 기�
 넘으면 인덱싱 단계가 실패하고 문서를 기록하지 않으므로, 다음 실행이 다시
 시도합니다. 그 이하이면 실행은 성공하고, 실패한 산출물을 가진 문서만 `FAILED`로
 기록됩니다. 백엔드가 항목 ID 없이 보고한 실패가 있으면 그 실행의 모든 문서를
-`FAILED`로 기록합니다. CDK 스택에서는 다음 네 경보가 SNS 토픽으로 문제를
+`FAILED`로 기록합니다. CDK 스택에서는 단계가 실패하면 실행 ID와 오류를 담은
+메시지 하나를 SNS 토픽에 게시하고, 그 메시지로 알 수 없는 문제는 다음 세 경보가
 알립니다.
 
 | 경보 | 발생 조건 |
 |---|---|
-| `PipelineFailures` | Step Functions 실행이 실패함 |
 | `PipelineTimedOutOrAborted` | 실행이 상태 머신 제한 시간을 넘겼거나 중지됨 |
 | `IndexingFailures` | 실행이 성공했더라도 인덱싱에서 실패한 항목이 있음 |
 | `ExtractionFailures` | 추출, gleaning, 주장 추출이 일부 텍스트 단위에서 실패함 |

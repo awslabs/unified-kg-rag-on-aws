@@ -7,7 +7,8 @@ The application emits Embedded Metric Format (EMF) records under the
 (see unified_kg_rag/shared/metrics.py). The alarms and widgets query the
 dimensionless aggregate series the sink always publishes. This stack surfaces
 those plus Step Functions execution health on a dashboard, and alarms on
-pipeline failures -> the orchestration SNS topic.
+timed-out or aborted runs, dropped artifacts and store health -> the
+orchestration SNS topic (a failed phase is reported by the state machine).
 """
 
 from __future__ import annotations
@@ -39,21 +40,12 @@ class ObservabilityStack(Stack):
         self.storage = storage
         sm = orchestration.state_machine
 
-        # Alarm: any Step Functions execution failure -> SNS.
-        failed_alarm = cw.Alarm(
-            self,
-            "PipelineFailures",
-            metric=sm.metric_failed(),
-            threshold=1,
-            evaluation_periods=1,
-            comparison_operator=cw.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
-            alarm_description="unified-kg-rag-on-aws ingestion pipeline had a failed execution",
-        )
-        failed_alarm.add_alarm_action(cw_actions.SnsAction(orchestration.alarm_topic))
-
+        # A failed phase is already reported once, with its error, by the
+        # state machine's Catch -> NotifyFailure publish to the same topic, so
+        # there is no alarm on failed executions (it would page twice).
         # Alarm: a run that hit the state machine timeout or was stopped never
-        # reaches a phase Catch, so neither the failure notification nor the
-        # alarm above sees it. FILL keeps a missing series from blanking the sum.
+        # reaches a phase Catch, so the failure notification does not see it.
+        # FILL keeps a missing series from blanking the sum.
         stopped_alarm = cw.Alarm(
             self,
             "PipelineTimedOutOrAborted",
@@ -75,7 +67,7 @@ class ObservabilityStack(Stack):
         # Alarm: any indexing failures -> SNS. A SUCCEEDED Step Functions run can
         # still have silently dropped artifacts (extracted > 0 but indexed == 0,
         # e.g. a backend write that erred per-item while the run continued). The
-        # SFN-failure alarm above does not catch that; this EMF metric does.
+        # failure notification does not catch that; this EMF metric does.
         index_failed_alarm = cw.Alarm(
             self,
             "IndexingFailures",
@@ -99,7 +91,7 @@ class ObservabilityStack(Stack):
 
         # Alarm: per-chunk extraction failures -> SNS. A chunk whose LLM call
         # fails every retry is dropped and the run still SUCCEEDS with a partial
-        # graph; neither alarm above sees that. Sums the three EMF failure
+        # graph; nothing above sees that. Sums the three EMF failure
         # counters (FILL keeps a missing metric from blanking the sum).
         extraction_failed_alarm = cw.Alarm(
             self,
@@ -133,8 +125,8 @@ class ObservabilityStack(Stack):
             cw_actions.SnsAction(orchestration.alarm_topic)
         )
 
-        # Store-health alarms: the SFN/indexing alarms above only fire when a
-        # pipeline RUN fails. These surface data-store degradation (red cluster,
+        # Store-health alarms: the run alarms above only fire when a pipeline
+        # RUN goes wrong. These surface data-store degradation (red cluster,
         # disk pressure, memory pressure, DDB throttling) that would otherwise be
         # invisible until the next run breaks. All route to the same SNS topic.
         self._add_store_health_alarms(orchestration)

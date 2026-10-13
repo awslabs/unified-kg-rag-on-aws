@@ -263,6 +263,19 @@ Library API (Python callers and custom backends).
   computes its own) and which took minutes on a graph of tens of thousands
   of entities; its `centrality_stats` metrics are gone. It also no longer
   caches a copy of graph resolution's entities and relationships (#248).
+- CDK: a failed ingestion phase notifies the alarm topic once. The
+  `PipelineFailures` alarm is removed; the state machine's failure message
+  (execution id and error) already covers it, and `PipelineTimedOutOrAborted`
+  still reports runs that never reach a phase's error handler (#251).
+- CDK: the OpenSearch domain publishes only its application logs. The slow
+  search and index logs stayed empty (the app sets no slow-log thresholds),
+  so their two log groups are removed; the domain is updated in place
+  (#251).
+- CDK: in `network_mode=private` (the default) the created VPC no longer has
+  public subnets, an internet gateway or `0.0.0.0/0` routes, which the
+  isolated data plane never used. The public range stays reserved, so the
+  `app` subnets keep their CIDRs and an update of a deployed stack removes
+  only those resources (#251).
 - Retrieval: AUTO routes among `local`/`mix`/`global`/`drift` with the fast
   model; `mix`/`hybrid` retrievals, DRIFT steps and keyword extraction run
   concurrently; global search answers from ranked map points without a
@@ -297,10 +310,16 @@ Library API (Python callers and custom backends).
   previously only transitive, are now declared (#226).
 - Dependencies: pydantic 2.14, langchain-core 1.6.10, langchain-aws 1.8.1,
   langchain-openai 1.7, langsmith 0.14, datasets 5.1, tiktoken 0.14,
-  pypdf 6.20, tenacity 9.2 and boto3 1.43.110 in `uv.lock`; aws-cdk-lib and
+  pypdf 6.20, tenacity 9.2 and boto3 1.43.112 in `uv.lock`; aws-cdk-lib and
   aws-cdk.aws-neptune-alpha 2.273 in the CDK lock. typeguard stays at 2.13.3
   and aws-cdk-cloud-assembly-schema below 55, the versions jsii and
-  aws-cdk-lib pin (#241).
+  aws-cdk-lib pin (#241, #PR).
+- `iac/` is a uv project of its own (`iac/pyproject.toml`, `iac/uv.lock`,
+  outside the root lock): install it with `cd iac && uv sync`.
+  `iac/requirements.txt` and `iac/requirements-lock.txt` are gone. Dependabot
+  updates the CDK lock through `uv lock`, so a transitive bump the pinned
+  aws-cdk-lib cannot admit no longer opens a pull request that fails to
+  install (#251).
 
 ### Fixed
 - `ragas` evaluation counts each retrieved context once per batch. With
@@ -444,6 +463,9 @@ Library API (Python callers and custom backends).
   `graph.community_detection.random_state: 0`, which Leiden rejects, fails
   config validation. The `resolution` description had its direction
   inverted: higher gives more, smaller communities (#250).
+- Importing `unified_kg_rag.application.cli.run_rag_chain` no longer puts
+  `unified_kg_rag/application` at the front of `sys.path`, where its
+  subpackages could shadow top-level modules of the same name (#251).
 - `run-eval --eval-data-path` naming a file that does not exist exits 2 with
   `Error: invalid evaluation dataset: ...`, as the user guide documents and
   as an unreadable or invalid dataset does; it exited 1 (#230).

@@ -108,8 +108,6 @@ class ComputeStack(Stack):
 
         self.task_role = self._build_task_role(storage)
         self.task_definition = self._build_task_definition(networking, storage)
-        self.security_groups = [networking.service_sg]
-        self.subnets = networking.app_subnets
 
         # Let the task role use the shared CMK for the resources encrypted with
         # it (S3 cache, DynamoDB), so reads/writes can decrypt.

@@ -202,6 +202,9 @@ class StorageStack(Stack):
             kms_key=self.kms_key,
             backup_retention=Duration.days(self.config.backup_retention_days),
             deletion_protection=self.config.deletion_protection,
+            # engine_version is deliberately unset: deployed clusters run the
+            # default of their creation time, so a pin would change the engine
+            # of every cluster not already on it (iac/README.md).
             auto_minor_version_upgrade=True,
             removal_policy=self.removal_policy,
         )
@@ -250,11 +253,11 @@ class StorageStack(Stack):
                 ),
             ),
             zone_awareness=zone_awareness,
-            logging=opensearch.LoggingOptions(
-                slow_search_log_enabled=True,
-                slow_index_log_enabled=True,
-                app_log_enabled=True,
-            ),
+            # Application (error) logs only. Slow logs record nothing until an
+            # index sets slow-log thresholds, which default to disabled and
+            # which the app does not set, so publishing them only created two
+            # log groups that stayed empty.
+            logging=opensearch.LoggingOptions(app_log_enabled=True),
             ebs=opensearch.EbsOptions(
                 volume_size=self.config.opensearch_volume_gib,
                 volume_type=ec2.EbsDeviceVolumeType.GP3,
@@ -267,22 +270,18 @@ class StorageStack(Stack):
             tls_security_policy=opensearch.TLSSecurityPolicy.TLS_1_2,
             removal_policy=self.removal_policy,
         )
-        # The domain creates these log groups itself with CDK's default
-        # RETAIN; give them the stack's policy so a removal_destroy teardown
-        # deletes them like the other log groups.
-        for log_group in (
-            domain.app_log_group,
-            domain.slow_index_log_group,
-            domain.slow_search_log_group,
-        ):
-            assert log_group is not None  # enabled in `logging` above
-            log_group.apply_removal_policy(self.removal_policy)
-            if self.kms_key is not None:
-                # The domain construct offers no key option for the log groups
-                # it creates, so set it on the CloudFormation resource.
-                cfn_log_group = log_group.node.default_child
-                assert isinstance(cfn_log_group, logs.CfnLogGroup)
-                cfn_log_group.kms_key_id = self.kms_key.key_arn
+        # The domain creates its log group itself with CDK's default RETAIN;
+        # give it the stack's policy so a removal_destroy teardown deletes it
+        # like the other log groups.
+        log_group = domain.app_log_group
+        assert log_group is not None  # enabled in `logging` above
+        log_group.apply_removal_policy(self.removal_policy)
+        if self.kms_key is not None:
+            # The domain construct offers no key option for the log group it
+            # creates, so set it on the CloudFormation resource.
+            cfn_log_group = log_group.node.default_child
+            assert isinstance(cfn_log_group, logs.CfnLogGroup)
+            cfn_log_group.kms_key_id = self.kms_key.key_arn
         # Resource-scoped access policy (added post-construction so it can
         # reference the domain's own ARN). Network access is already restricted
         # to the VPC + service SG; this requires IAM-signed requests AND scopes
@@ -290,11 +289,13 @@ class StorageStack(Stack):
         # AccountRootPrincipal — scoping it to the Fargate task role would create
         # a cross-stack circular dependency (the role lives in the compute stack
         # which depends on this one); the IAM caller still needs es:ESHttp* on
-        # the role, which is granted there. To keep this from being an
-        # account-wide grant at the IAM layer (any account principal holding
-        # es:ESHttp* would otherwise be authorized), the statement is additionally
-        # conditioned on the request originating from THIS VPC — so only
-        # in-VPC, IAM-signed, resource-scoped callers are allowed.
+        # the role, which is granted there. The aws:SourceVpc condition narrows
+        # only what THIS statement grants: within one account IAM allows a
+        # request when either the identity policy or the resource policy does,
+        # so a principal whose own policy allows es:ESHttp* on the domain is
+        # authorized regardless of it. What keeps callers outside the VPC out
+        # is the network boundary above (a VPC-only domain behind the service
+        # SG), not this condition.
         domain.add_access_policies(
             iam.PolicyStatement(
                 effect=iam.Effect.ALLOW,

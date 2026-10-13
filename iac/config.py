@@ -262,10 +262,6 @@ class DeploymentConfig:
     def create_vpc(self) -> bool:
         return not self.vpc_id
 
-    @property
-    def create_cache_bucket(self) -> bool:
-        return not self.cache_bucket_name
-
     def cache_bucket(self, account: str, region: str) -> str:
         """Cache bucket name: the reused bucket, else the one storage creates.
 

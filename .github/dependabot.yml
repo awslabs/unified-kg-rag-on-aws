@@ -1,10 +1,7 @@
 # Dependabot version updates. Security *alerts* are already enabled on the
-# repository and have been driving the fix(deps) history, but alerts only fire
-# for dependencies whose version is pinned: everything in uv.lock is, while
-# iac/requirements.txt declares ranges only, so its packages reach the
-# dependency graph with no version and are never matched against an advisory.
-# Scheduled version updates cover that gap and keep the SHA-pinned workflow
-# actions moving, which no other path can do.
+# repository and drive the fix(deps) history; scheduled version updates keep
+# both uv locks current and move the SHA-pinned workflow actions, which no
+# other path can do.
 version: 2
 
 updates:
@@ -39,29 +36,17 @@ updates:
       # Neptune's engine supports TinkerPop 3.8.
       - dependency-name: "gremlinpython"
         versions: [">=3.8.0"]
-      # Repeated from the /iac entry on purpose: this ecosystem also picks up
-      # iac/requirements.txt (it proposed the cdk-nag 3.0 and constructs bumps
-      # against that file), so an ignore only on /iac would not stop it.
-      - dependency-name: "cdk-nag"
-        versions: [">=3.0.0"]
 
-      # Both repeated from the /iac entry for the same reason as cdk-nag. jsii
-      # (pulled in by aws-cdk-lib) pins typeguard==2.13.3, and aws-cdk-lib pins
-      # aws-cdk-cloud-assembly-schema below 55, so these bumps cannot resolve.
-      # Drop both when the newest aws-cdk-lib/jsii admit them.
-      - dependency-name: "typeguard"
-        versions: [">=3.0.0"]
-      - dependency-name: "aws-cdk-cloud-assembly-schema"
-        versions: [">=55.0.0"]
-
-  # CDK app. Kept out of the root lock on purpose: it is deployment tooling that
-  # ships nothing and shares no runtime with the package, so keeping it separate
-  # avoids coupling the app's resolution to the CDK dependency tree (notably
-  # aws-cdk.aws-neptune-alpha's exact `typeguard` pin). The cost of that
-  # separation is that these ranges are unpinned and therefore invisible to
-  # security alerts; `increase-if-necessary` lets Dependabot raise a floor when
-  # -- and only when -- the existing range cannot admit the fixed version.
-  - package-ecosystem: "pip"
+  # CDK app (iac/pyproject.toml, iac/uv.lock). A separate uv project, kept out
+  # of the root lock on purpose: it is deployment tooling that ships nothing and
+  # shares no runtime with the package, so keeping it separate avoids coupling
+  # the app's resolution to the CDK dependency tree (notably jsii's exact
+  # `typeguard` pin). Updates go through `uv lock`, so a transitive bump that
+  # the pinned aws-cdk-lib cannot admit fails to resolve instead of opening a
+  # PR that cannot install. The root entry above does not touch these files:
+  # Dependabot's uv parser and lock updater read only the `uv.lock` at the
+  # entry's own directory, and iac/ holds no requirements files.
+  - package-ecosystem: "uv"
     directory: "/iac"
     versioning-strategy: "increase-if-necessary"
     schedule:

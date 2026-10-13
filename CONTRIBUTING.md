@@ -94,8 +94,8 @@ uv run --extra otel pytest -m "not aws" --cov=unified_kg_rag  # with coverage, a
 
 CI fails below the coverage threshold set by `--cov-fail-under` in `quality.yml`. It also runs the suite on Python
 3.10, checks the optional parsers, runs the local-store smoke test, builds and runs the container image, and
-synthesizes `iac/` with cdk-nag. If you change `iac/`, also run `cd iac && cdk synth -c enable_cdk_nag=true` (see
-[`iac/README.md`](./iac/README.md)).
+synthesizes `iac/` with cdk-nag. `iac/` is a separate uv project; if you change it, also run
+`cd iac && uv sync && uv run cdk synth -c enable_cdk_nag=true && uv run pytest` (see [`iac/README.md`](./iac/README.md)).
 
 When a pull request changes `pyproject.toml` or `uv.lock`, the
 [`licenses`](./.github/workflows/licenses.yml) workflow also syncs every extra and fails on a copyleft,

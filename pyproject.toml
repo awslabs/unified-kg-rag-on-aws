@@ -274,7 +274,7 @@ markers = [
     "integration: Integration tests",
     "property: Property-based tests (hypothesis)",
     "aws: Tests requiring real AWS services (skipped by default)",
-    "slow: Slow tests",
+    "slow: Tests that take over 5 s (deselect with -m \"not slow\" for a quick run)",
 ]
 # Silence only known third-party deprecations so new ones (including our own)
 # stay visible. gremlin_python: camelCase step aliases kept for Neptune's

@@ -18,7 +18,7 @@ can coexist in one account/region. Every resource also carries an `env` tag.
 | `GraphRagStorage` | Neptune cluster (IAM auth), OpenSearch domain (VPC, encrypted), DynamoDB doc-status table, S3 cache bucket |
 | `GraphRagCompute` | ECR repo (lifecycle keeps the 10 newest images and never expires the deployed `image_tag`), ECS cluster, Fargate task definition + least-privilege task role (S3 cache read + put, no delete). Injects `OPENSEARCH_NUMBER_OF_REPLICAS` = 1 on a multi-node domain (0 on a single node) |
 | `GraphRagOrchestration` | Step Functions state machine — 4 resumable phases on Fargate, retried only when ECS cannot start the task (a phase that exits non-zero is not rerun), one JSON failure notification (execution id, error, cause) + SNS alarm topic. The topic is encrypted with its own customer-managed key whose policy lets CloudWatch alarms publish (the AWS-managed `alias/aws/sns` key cannot, so alarm notifications would be dropped) |
-| `GraphRagObservability` | CloudWatch dashboard + alarms: pipeline failed, timed out or aborted, silent indexing-failure and extraction-failure (EMF), and store health (OpenSearch cluster-red / free-storage / JVM pressure, DynamoDB write throttling, Neptune CPU / memory / Gremlin server errors sustained for 3 consecutive minutes, so retried write conflicts during parallel writes do not page) → SNS. Synth warns if `alarm_email` is unset (alarms would have no subscriber) |
+| `GraphRagObservability` | CloudWatch dashboard + alarms: pipeline timed out or aborted (a failed phase is already reported by the orchestration failure notification, so failed executions have no alarm), silent indexing-failure and extraction-failure (EMF), and store health (OpenSearch cluster-red / free-storage / JVM pressure, DynamoDB write throttling, Neptune CPU / memory / Gremlin server errors sustained for 3 consecutive minutes, so retried write conflicts during parallel writes do not page) → SNS. Synth warns if `alarm_email` is unset (alarms would have no subscriber) |
 | `GraphRagSecurity` | Shared customer-managed KMS key (optional, `use_cmk`) |
 | `GraphRagGuardrail` | Bedrock Guardrail, **pinned to `bedrock_region`** (creates and keeps a baseline PII/prompt-attack guardrail; empty with `create_guardrail=false`). It anonymizes email, phone and card numbers but not `NAME`: names are corpus content, and anonymizing them on the query path puts `{NAME}` in answers and removes entity-search seeds. The app applies the guardrail's `DRAFT` version unless `guardrail_version` is set |
 
@@ -147,6 +147,15 @@ positive integers (`opensearch_count`, `neptune_instances`, `sfn_timeout_hours`,
 > Every resource is tagged `project=unified-kg-rag-on-aws`, `env=<env_name>`,
 > `managed-by=cdk`, `owner`, and `cost-center` for cost allocation and ownership.
 
+> **The Neptune engine version is not pinned.** A new cluster starts on the
+> engine version Neptune defaults to at creation, so clusters deployed at
+> different times run different versions. Adding a pin now would make the next
+> deploy of every cluster not already on it change its engine: an upgrade with
+> downtime, or a downgrade that Neptune rejects. The client is pinned instead:
+> `gremlinpython` stays below 3.8 until Neptune's engine supports TinkerPop 3.8
+> (see `pyproject.toml`). To fix a version for a new deployment, set
+> `engine_version` in `storage_stack.py` before its first deploy.
+
 ### Well-Architected
 
 The stacks apply WAF defaults out of the box — least-privilege IAM
@@ -154,7 +163,7 @@ The stacks apply WAF defaults out of the box — least-privilege IAM
 domain-scoped `es:ESHttp*`), encryption in transit + at rest, Graviton instances,
 S3 cache
 lifecycle (checkpoint prefixes only) + access logs, Step Functions X-Ray tracing + execution logging,
-CloudWatch dashboard + failure alarm, and an SSL-only alarm topic. Production
+CloudWatch dashboard + failure notifications and alarms, and an SSL-only alarm topic. Production
 hardening is opt-in via the flags above. Validate with:
 
 ```bash
@@ -169,8 +178,10 @@ no account, so account ids stay `<AWS::AccountId>` tokens; the IaC test
 as a real deploy renders them. Accepted findings are
 documented in `iac/nag_suppressions.py`: `AwsSolutions-IAM5` is suppressed per
 role for the listed wildcards only (`appliesTo`), so a new wildcard fails the
-synth, and the OpenSearch HA findings (OS4/OS7) are accepted only for a
-single-node domain.
+synth, the OpenSearch HA findings (OS4/OS7) are accepted only for a
+single-node domain, and OS9 only for the slow logs, which record nothing
+without index slow-log thresholds (the app sets none); the domain publishes
+its application logs.
 
 > **A few Bedrock read actions use `Resource: "*"` by necessity**, not oversight:
 > `bedrock:Rerank` (authorizes against a different resource shape than
@@ -212,10 +223,13 @@ flowchart LR
   OpenSearch domain run in the `app` subnets and share one security group that
   allows Neptune (8182) and OpenSearch (443) traffic between its members, so
   both stores are reachable only from inside the VPC.
-- In `private` mode (default) the `app` subnets have no route to the internet.
-  The task reaches AWS services only through the interface endpoints and the
-  S3/DynamoDB gateway endpoints shown, so Bedrock calls must go to the deploy
-  region (leave `bedrock_region` at the deploy region). In `public` mode the
+- In `private` mode (default) the `app` subnets have no route to the internet,
+  and the created VPC has no public subnet or internet gateway (the public
+  subnets' address range stays reserved, so the `app` subnets get the same
+  CIDRs in both modes). The task reaches AWS services only through the
+  interface endpoints and the S3/DynamoDB gateway endpoints shown, so Bedrock
+  calls must go to the deploy region (leave `bedrock_region` at the deploy
+  region). In `public` mode the
   `app` subnets route through one NAT gateway per AZ, no interface endpoints are
   created, and Bedrock may be in another region.
 - Step Functions runs the four ingestion phases as separate Fargate tasks of
@@ -251,11 +265,13 @@ default `dev` environment.
 
 ## Prerequisites
 
-- Python 3.10+ (CI synthesizes with 3.12).
-- Node.js 20+ and the AWS CDK CLI v2, 2.1143.0 or later
-  (`npm install -g aws-cdk@2.1143.0` is the version CI pins). An older CLI
-  can reject the cloud assembly that the `aws-cdk-lib` release in
-  `requirements.txt` produces; check with `cdk --version`.
+- [uv](https://docs.astral.sh/uv/) and Python 3.12+ (uv downloads a matching
+  Python when none is installed). `iac/` is a uv project of its own, separate
+  from the root package: `iac/uv.lock` pins the CDK libraries.
+- Node.js on a supported LTS line (22 or 24; CI uses 24) and the AWS CDK CLI
+  v2, 2.1143.0 or later (`npm install -g aws-cdk@2.1143.0` is the version CI
+  pins). An older CLI can reject the cloud assembly that the `aws-cdk-lib`
+  release in `uv.lock` produces; check with `cdk --version`.
 - For `cdk bootstrap`/`cdk deploy`: AWS credentials for the target account
   and region. To push the app image after deploy: Docker.
 
@@ -263,8 +279,8 @@ default `dev` environment.
 
 ```bash
 cd iac
-python -m venv .venv && . .venv/bin/activate
-pip install -r requirements.txt
+uv sync --locked          # installs exactly what iac/uv.lock pins
+. .venv/bin/activate      # or prefix each command below with `uv run`
 
 # Synthesize (no AWS changes)
 cdk synth

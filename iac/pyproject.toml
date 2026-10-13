@@ -1,0 +1,37 @@
+# CDK app (deployment tooling). A uv project of its own, deliberately NOT a
+# member of the root project or its lock: it ships nothing and shares no
+# runtime with the package, so keeping it separate stops the CDK dependency tree
+# (notably jsii's exact `typeguard` pin) from constraining the app's resolution.
+# Install with `uv sync --project iac` (or `uv sync` inside iac/); uv.lock pins
+# the resolution, so a new upstream release cannot change a synth between runs.
+[project]
+name = "unified-kg-rag-on-aws-iac"
+version = "0.0.0"
+description = "AWS CDK app that deploys unified-kg-rag-on-aws."
+requires-python = ">=3.12"
+dependencies = [
+    # aws-cdk-lib must never drop below 2.253.0, the release that fixed the
+    # inverted CodeBuild S3LoggingOptions.encrypted flag (GHSA-464c-974j-9xm6).
+    # This stack defines no CodeBuild project, so it was never exposed: the floor
+    # is kept so the constraint cannot resolve backwards into the affected range.
+    # Dependabot may raise it further; keep aws-cdk.aws-neptune-alpha on the
+    # same minor release (the alpha module pins an exact aws-cdk-lib version).
+    "aws-cdk-lib>=2.272.0,<3.0.0",
+    "aws-cdk.aws-neptune-alpha>=2.272.0a0",
+    "constructs>=10.8.1,<11.0.0",
+    # cdk-nag 3.0 no longer exports NagSuppressions (nag_suppressions.py).
+    "cdk-nag>=2.38.2,<3.0.0",
+]
+
+[dependency-groups]
+dev = ["pytest>=9.1.1"]
+
+[tool.uv]
+# An application, not a distribution: install the dependencies only.
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# The tests import the `iac` package; put the repo root on sys.path.
+pythonpath = [".."]
+addopts = "--tb=short --strict-markers"

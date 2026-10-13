@@ -139,6 +139,7 @@ def _big_id() -> str:
     return document_doc_id(document("/c/big.txt", R0["/c/big.txt"]))
 
 
+@pytest.mark.slow
 @pytest.mark.timeout(600)
 def test_large_document_write_ahead_spills_and_recovers(
     ddb_store: DynamoDBDocStatusStore,
@@ -264,8 +265,16 @@ def _put_part(store: DynamoDBDocStatusStore, doc_id: str, part: int) -> None:
     )
 
 
-@pytest.mark.parametrize("scan", [None, "diff", "list_all"])
-@pytest.mark.parametrize("parts", [[1], [1, 2], [0, 2], [9]])
+@pytest.mark.parametrize(
+    ("scan", "parts"),
+    [
+        (scan, parts)
+        for scan in (None, "diff", "list_all")
+        for parts in ([1], [1, 2], [0, 2], [9])
+        # Only a scan finds a part after a whole probe round's gap.
+        if scan is not None or max(parts) < 8
+    ],
+)
 def test_deleting_overflow_removes_parts_after_a_gap(
     ddb_store: DynamoDBDocStatusStore, scan: str | None, parts: list[int]
 ) -> None:
@@ -282,8 +291,6 @@ def test_deleting_overflow_removes_parts_after_a_gap(
         assert store.diff({}).orphan_overflow == ["d", "other"]
     elif scan == "list_all":
         store.list_all()
-    elif max(parts) >= 8:
-        pytest.skip("only a scan finds a part after a whole probe round's gap")
 
     store.delete_lineage_overflow(["d"])
 

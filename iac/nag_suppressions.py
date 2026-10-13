@@ -63,6 +63,14 @@ def apply(stacks: dict[str, Any], config: DeploymentConfig) -> None:
             "VPC + service security group, and the access policy requires "
             "IAM-signed (es:ESHttp*) requests.",
         },
+        {
+            "id": "AwsSolutions-OS9",
+            "appliesTo": ["LogExport::SEARCH_SLOW_LOGS", "LogExport::INDEX_SLOW_LOGS"],
+            "reason": "Slow logs record nothing until an index sets slow-log "
+            "thresholds, which default to disabled and which the app does not "
+            "set, so publishing them would only create empty log groups. "
+            "Application (error) logs are published.",
+        },
         # CDK custom-resource Lambda roles are framework generated; their
         # managed policy is not under our control.
         {

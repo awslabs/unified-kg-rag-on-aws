@@ -91,8 +91,8 @@ def test_every_log_group_uses_cmk_only_when_enabled(use_cmk: bool) -> None:
         .find_resources("AWS::Logs::LogGroup")
         .items()
     }
-    # Flow logs, the task and pipeline groups, and three OpenSearch groups.
-    assert len(log_groups) == 6, sorted(log_groups)
+    # Flow logs, the task and pipeline groups, and the OpenSearch app logs.
+    assert len(log_groups) == 4, sorted(log_groups)
     for name, resource in log_groups.items():
         key = resource["Properties"].get("KmsKeyId")
         if use_cmk:

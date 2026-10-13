@@ -29,7 +29,7 @@ jobs:
       matrix:
         python-version: ["3.11", "3.12"]
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           python-version: ${{ matrix.python-version }}
@@ -52,7 +52,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install uv
         uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
@@ -84,14 +84,14 @@ jobs:
 
       - name: pytest + coverage
         # The `aws` marker gates tests needing real AWS services; excluded in CI.
-        # This one run also covers the property and integration suites. The
-        # coverage floor sits just under the measured level (~93%) so new
-        # untested code cannot silently regress it; ratchet it up as it grows.
+        # This one run also covers the property and integration suites. Keep
+        # the coverage floor just under the measured level so new untested
+        # code cannot silently regress it; ratchet it up as coverage grows.
         run: >-
           uv run pytest -m "not aws"
           --cov=unified_kg_rag --cov-report=term-missing
           --cov-report=xml:coverage.xml --junitxml=report.xml
-          --cov-fail-under=92
+          --cov-fail-under=93
 
       - name: Upload coverage + test report
         # Surface coverage.xml / report.xml as artifacts for inspection on each run.
@@ -112,7 +112,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install uv
         uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
@@ -155,7 +155,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install uv
         uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
@@ -180,46 +180,36 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v5
+      - name: Install uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           python-version: "3.12"
-          cache: pip
-          cache-dependency-path: iac/requirements-lock.txt
 
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v4
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: "20"
+          node-version: "24"
 
       - name: Install AWS CDK CLI
         run: npm install -g aws-cdk@2.1143.0
 
       - name: Install IaC dependencies
-        # requirements.txt declares the ranges; requirements-lock.txt pins the
-        # resolution so a new upstream release cannot change CI between runs.
-        # Regenerate after editing the ranges:
-        #   uv pip compile iac/requirements.txt --python-version 3.12 \
-        #     --python-platform x86_64-unknown-linux-gnu -o iac/requirements-lock.txt
-        run: >-
-          pip install -r iac/requirements.txt -c iac/requirements-lock.txt
-          pytest==9.1.1
+        # iac/ is its own uv project, outside the root lock; --locked fails if
+        # iac/uv.lock is stale relative to iac/pyproject.toml.
+        run: uv sync --locked --project iac
 
       - name: cdk synth with cdk-nag (fails on any unsuppressed finding)
         working-directory: iac
-        env:
-          PYTHONPATH: ${{ github.workspace }}
-        run: cdk synth --all -c enable_cdk_nag=true -q
+        run: uv run --no-sync cdk synth --all -c enable_cdk_nag=true -q
 
       - name: cdk synth with cdk-nag, production-hardened flags
         # The README's zero-findings claim covers the hardened shape too: CMK,
         # flow logs, Multi-AZ Neptune, zone-aware OpenSearch (no OS4/OS7
         # suppression applies when opensearch_count > 1), retained storage.
         working-directory: iac
-        env:
-          PYTHONPATH: ${{ github.workspace }}
         run: >-
-          cdk synth --all -q
+          uv run --no-sync cdk synth --all -q
           -c enable_cdk_nag=true
           -c use_cmk=true
           -c vpc_flow_logs=true
@@ -230,9 +220,7 @@ jobs:
 
       - name: IaC assertion tests
         working-directory: iac
-        env:
-          PYTHONPATH: ${{ github.workspace }}
-        run: python -m pytest tests -q
+        run: uv run --no-sync pytest -q
 
   docker:
     # Build the data-plane image (no push) so a Dockerfile that no longer builds,
@@ -241,10 +229,17 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Build the image
-        run: docker build -f docker/Dockerfile -t unified-kg-rag:ci .
+        # The base image pulls from public.ecr.aws, which rate-limits anonymous
+        # pulls (429); retry so a transient registry error does not fail the job.
+        run: |
+          for attempt in 1 2 3 4 5; do
+            docker build -f docker/Dockerfile -t unified-kg-rag:ci . && exit 0
+            if [ "$attempt" -lt 5 ]; then sleep $((attempt * 20)); fi
+          done
+          exit 1
 
       - name: Run the image
         # The default command (run-ingestion --help) goes through the
