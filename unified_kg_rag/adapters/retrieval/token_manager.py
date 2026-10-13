@@ -265,8 +265,14 @@ class TokenManager:
             )
 
         all_sections = self._create_context_sections(retrieval_results)
+        # Each section type present gets a header in the context string
+        # (build_context_string); it is paid from the same budget.
+        available_tokens -= sum(
+            self.count_tokens(self._section_header(section_type))
+            for section_type in {s.section_type for s in all_sections}
+        )
         selected_sections = self._select_optimal_sections(
-            all_sections, available_tokens
+            all_sections, max(available_tokens, 0)
         )
 
         total_tokens = sum(section.token_count for section in selected_sections)
@@ -286,7 +292,14 @@ class TokenManager:
     def _create_context_sections(
         self, results: list[RetrievalResult]
     ) -> list[ContextSection]:
-        counts = self.count_tokens_many([result.content for result in results])
+        # A section is counted as build_context_string renders it, with its
+        # "[source_id] " prefix, so the context stays within the budget.
+        counts = self.count_tokens_many(
+            [
+                self._section_line(result.source or f"result_{index}", result.content)
+                for index, result in enumerate(results)
+            ]
+        )
         return [
             self._create_context_section(result, index, token_count=count)
             for index, (result, count) in enumerate(zip(results, counts, strict=True))
@@ -295,6 +308,7 @@ class TokenManager:
     def _create_context_section(
         self, result: RetrievalResult, index: int, token_count: int | None = None
     ) -> ContextSection:
+        source_id = result.source or f"result_{index}"
         section_type_str = result.retriever_type or SectionType.GENERAL.value
         try:
             section_type = SectionType(section_type_str.lower())
@@ -312,13 +326,13 @@ class TokenManager:
         return ContextSection(
             content=result.content,
             token_count=(
-                self.count_tokens(result.content)
+                self.count_tokens(self._section_line(source_id, result.content))
                 if token_count is None
                 else token_count
             ),
             priority=priority,
             section_type=section_type,
-            source_id=result.source or f"result_{index}",
+            source_id=source_id,
             metadata=result.metadata or {},
             result_index=index,
         )
@@ -507,8 +521,10 @@ class TokenManager:
             or section.token_count <= 0
         ):
             return None
-        chars_per_token = len(section.content) / section.token_count
-        keep_chars = int(max_tokens * chars_per_token)
+        # token_count covers the rendered line, "[source_id] " prefix included.
+        prefix_chars = len(self._section_line(section.source_id, "-")) - 1
+        chars_per_token = (prefix_chars + len(section.content)) / section.token_count
+        keep_chars = int(max_tokens * chars_per_token) - prefix_chars
         if keep_chars <= 0:
             return None
         head = section.content[:keep_chars]
@@ -528,8 +544,26 @@ class TokenManager:
             }
         )
 
+    _SECTION_LABELS: ClassVar[dict[SectionType, str]] = {
+        SectionType.TEXT: "Document Chunks",
+        SectionType.ENTITY: "Knowledge Graph — Entities",
+        SectionType.RELATIONSHIP: "Knowledge Graph — Relationships",
+        SectionType.CLAIM: "Claims",
+        SectionType.COMMUNITY: "Community Reports",
+        SectionType.GENERAL: "Other Context",
+    }
+
+    @classmethod
+    def _section_header(cls, section_type: SectionType) -> str:
+        return f"##### {cls._SECTION_LABELS[section_type]}"
+
     @staticmethod
-    def build_context_string(optimized_context: OptimizedContext) -> str:
+    def _section_line(source_id: str, content: str) -> str:
+        """How build_context_string renders one section ("" for no content)."""
+        return f"[{source_id}] {content}" if content else ""
+
+    @classmethod
+    def build_context_string(cls, optimized_context: OptimizedContext) -> str:
         # Group sections by type under labeled
         # headers (mirrors LightRAG's Entities/Relationships/Chunks blocks and MS's
         # sectioned tables) instead of a flat per-item "Source Type/Priority" dump.
@@ -538,33 +572,17 @@ class TokenManager:
         if not optimized_context.sections:
             return EMPTY_CONTEXT_PLACEHOLDER
 
-        order = [
-            SectionType.TEXT,
-            SectionType.ENTITY,
-            SectionType.RELATIONSHIP,
-            SectionType.CLAIM,
-            SectionType.COMMUNITY,
-            SectionType.GENERAL,
-        ]
-        labels = {
-            SectionType.TEXT: "Document Chunks",
-            SectionType.ENTITY: "Knowledge Graph — Entities",
-            SectionType.RELATIONSHIP: "Knowledge Graph — Relationships",
-            SectionType.CLAIM: "Claims",
-            SectionType.COMMUNITY: "Community Reports",
-            SectionType.GENERAL: "Other Context",
-        }
         grouped: dict[SectionType, list[ContextSection]] = {}
         for s in optimized_context.sections:
             grouped.setdefault(s.section_type, []).append(s)
 
         blocks: list[str] = []
-        for stype in order:
+        for stype in cls._SECTION_LABELS:
             items = grouped.get(stype)
             if not items:
                 continue
-            lines = [f"##### {labels[stype]}"]
+            lines = [cls._section_header(stype)]
             for s in items:
-                lines.append(f"[{s.source_id}] {s.content}")
+                lines.append(cls._section_line(s.source_id, s.content))
             blocks.append("\n".join(lines))
         return "\n\n".join(blocks).strip()

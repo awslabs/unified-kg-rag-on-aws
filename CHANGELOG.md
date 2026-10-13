@@ -369,6 +369,11 @@ Library API (Python callers and custom backends).
   claims read back carried no suffix, so the update went to the default
   suffix's index: the claim kept the deleted text units, and a claim with the
   same id there was overwritten (#256).
+- The answer context stays within `max_tokens` (and the context budget).
+  Each section's `[source_id]` prefix and each section type's header were
+  not counted, so an explicit 600-token budget rendered up to 690 tokens.
+  Sections are now counted as rendered, and the headers of the types present
+  come off the budget (#PR).
 - A long question no longer fails its lexical search. Lucene allows 1,024
   clauses per query and a `multi_match` makes one per term per field, so
   about 1,100 words (or 1,100 Han characters) failed with a misleading
