@@ -23,6 +23,7 @@ from unified_kg_rag.adapters.aws.bedrock import (
     BedrockRerankModelFactory,
 )
 from unified_kg_rag.adapters.aws.dynamodb import DynamoDBDocStatusStore
+from unified_kg_rag.adapters.aws.opensearch import OpenSearchClient
 from unified_kg_rag.adapters.aws.token_counter import BedrockTokenCounter
 from unified_kg_rag.adapters.local.embeddings import (
     OllamaEmbeddingFactory,
@@ -38,6 +39,7 @@ from unified_kg_rag.adapters.local.rerank import (
 )
 from unified_kg_rag.adapters.local.sqlite_doc_status import SQLiteDocStatusStore
 from unified_kg_rag.adapters.local.token_counter import LocalTokenCounter
+from unified_kg_rag.adapters.storage.search_engine import SearchEngineClient
 from unified_kg_rag.ports import (
     DocStatusPort,
     GraphIndexer,
@@ -83,6 +85,7 @@ PAIRS = [
     (BedrockRerankModelFactory, ModelFactoryPort),
     (LocalTokenCounter, TokenCounterPort),
     (BedrockTokenCounter, TokenCounterPort),
+    (OpenSearchClient, SearchEngineClient),
 ]
 
 
