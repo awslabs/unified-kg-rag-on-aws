@@ -399,6 +399,12 @@ Library API (Python callers and custom backends).
   a 100% success rate against a store that was down. A timeout, throttling
   or a 5xx still degrades the one sub-search. OpenSearch errors now log the
   server's reason instead of `info=None` (#249).
+- Chunking and translation no longer hide bugs in their own code: six
+  catch-alls around pure chunking steps (logged at DEBUG) returned the input
+  or an empty list, and translation's input preparation returned `[]` on an
+  error, which later failed in an unrelated `zip`. Claim extraction raises
+  on a result count that does not match its text units instead of warning
+  and attributing claims by position (#PR).
 - `entity_grounding.action: penalize` applies to gleaning additions too: an
   entity or relationship gleaning proposed with evidence not found in the
   chunk was dropped as under `drop`. It is now kept at its confidence (or

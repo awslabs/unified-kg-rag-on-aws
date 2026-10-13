@@ -211,14 +211,9 @@ class ClaimExtractor(BaseProcessor):
     ) -> list[Claim]:
         all_claims = []
 
-        if len(text_units) != len(extraction_results):
-            logger.warning(
-                "Mismatch in text units (%s) and extraction results (%s). Some results may have been lost during processing. Proceeding with available results.",
-                len(text_units),
-                len(extraction_results),
-            )
-
-        for text_unit, result in zip(text_units, extraction_results, strict=False):
+        # The batch processor returns one result per item (BATCH_ITEM_FAILED for
+        # a failed one), so a length mismatch is a bug, not lost results.
+        for text_unit, result in zip(text_units, extraction_results, strict=True):
             if result and result is not BATCH_ITEM_FAILED:
                 try:
                     claims = self._parse_extraction_result(result, text_unit)

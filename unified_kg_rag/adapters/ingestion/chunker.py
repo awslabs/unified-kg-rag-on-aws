@@ -278,31 +278,26 @@ class LineBasedBoundaryProcessor:
     def convert_line_numbers_to_indices(
         lines: list[str], line_numbers: list[int]
     ) -> tuple[list[int], int]:
-        try:
-            if not line_numbers:
-                return [], 0
+        if not line_numbers:
+            return [], 0
 
-            chunk_indices, missed_count = [], 0
-            cumulative_length = 0
+        chunk_indices, missed_count = [], 0
+        cumulative_length = 0
 
-            for i, line in enumerate(lines):
-                line_num = i + 1
+        for i, line in enumerate(lines):
+            line_num = i + 1
 
-                if line_num in line_numbers:
-                    chunk_indices.append(cumulative_length)
+            if line_num in line_numbers:
+                chunk_indices.append(cumulative_length)
 
-                cumulative_length += len(line)
-                if i < len(lines) - 1:
-                    cumulative_length += 1
+            cumulative_length += len(line)
+            if i < len(lines) - 1:
+                cumulative_length += 1
 
-            max_line_num = len(lines)
-            missed_count = sum(1 for num in line_numbers if num > max_line_num)
+        max_line_num = len(lines)
+        missed_count = sum(1 for num in line_numbers if num > max_line_num)
 
-            return sorted(set(chunk_indices)), missed_count
-
-        except Exception as e:
-            logger.debug("Failed to convert line numbers to indices: %s", e)
-            return [], len(line_numbers)
+        return sorted(set(chunk_indices)), missed_count
 
     def validate_error_rate(self, missed_count: int, total_line_numbers: int) -> bool:
         if total_line_numbers == 0:
@@ -361,42 +356,38 @@ class ChunkProcessor:
             return []
 
         max_overlap = self.chunk_overlap if overlap is None else overlap
-        try:
-            spans = self._locate_spans(chunks, source, max_overlap) if source else None
+        spans = self._locate_spans(chunks, source, max_overlap) if source else None
 
-            def joined(first: int, last: int) -> str:
-                if spans is not None and source is not None:
-                    return source[spans[first][0] : spans[last][1]]
-                text = chunks[first]
-                for k in range(first + 1, last + 1):
-                    text = self._join_pair(text, chunks[k], max_overlap)
-                return text
+        def joined(first: int, last: int) -> str:
+            if spans is not None and source is not None:
+                return source[spans[first][0] : spans[last][1]]
+            text = chunks[first]
+            for k in range(first + 1, last + 1):
+                text = self._join_pair(text, chunks[k], max_overlap)
+            return text
 
-            groups: list[tuple[int, int]] = []
-            i = 0
-            while i < len(chunks):
-                last = i
-                current = chunks[i]
-                while last + 1 < len(chunks) and len(current) < self.min_chunk_size:
-                    candidate = joined(i, last + 1)
-                    if len(candidate) > self.max_chunk_size:
-                        break
-                    current = candidate
-                    last += 1
-                groups.append((i, last))
-                i = last + 1
+        groups: list[tuple[int, int]] = []
+        i = 0
+        while i < len(chunks):
+            last = i
+            current = chunks[i]
+            while last + 1 < len(chunks) and len(current) < self.min_chunk_size:
+                candidate = joined(i, last + 1)
+                if len(candidate) > self.max_chunk_size:
+                    break
+                current = candidate
+                last += 1
+            groups.append((i, last))
+            i = last + 1
 
-            if len(groups) > 1:
-                tail_first, tail_last = groups[-1]
-                if len(joined(tail_first, tail_last)) < self.min_chunk_size:
-                    prev_first = groups[-2][0]
-                    if len(joined(prev_first, tail_last)) <= self.max_chunk_size:
-                        groups[-2:] = [(prev_first, tail_last)]
+        if len(groups) > 1:
+            tail_first, tail_last = groups[-1]
+            if len(joined(tail_first, tail_last)) < self.min_chunk_size:
+                prev_first = groups[-2][0]
+                if len(joined(prev_first, tail_last)) <= self.max_chunk_size:
+                    groups[-2:] = [(prev_first, tail_last)]
 
-            return [joined(first, last) for first, last in groups]
-        except Exception as e:
-            logger.debug("Failed to merge small chunks: %s", e)
-            return chunks
+        return [joined(first, last) for first, last in groups]
 
     def _locate_spans(
         self, chunks: list[str], source: str, max_overlap: int
@@ -912,22 +903,17 @@ class IntelligentTextChunker(BaseChunker):
         if not self.fallback_splitter:
             return chunks
 
-        try:
-            final_chunks = []
-            max_size = self.chunking_config.max_chunk_size
+        final_chunks = []
+        max_size = self.chunking_config.max_chunk_size
 
-            for chunk in chunks:
-                if len(chunk) > max_size:
-                    split_chunks = self.fallback_splitter.split_text(chunk)
-                    final_chunks.extend(split_chunks)
-                else:
-                    final_chunks.append(chunk)
+        for chunk in chunks:
+            if len(chunk) > max_size:
+                split_chunks = self.fallback_splitter.split_text(chunk)
+                final_chunks.extend(split_chunks)
+            else:
+                final_chunks.append(chunk)
 
-            return final_chunks
-
-        except Exception as e:
-            logger.debug("Failed to split large line chunks: %s", e)
-            return chunks
+        return final_chunks
 
     def _chunk_with_llm_boundaries(
         self, text: str, response: dict[str, Any]
@@ -973,33 +959,26 @@ class IntelligentTextChunker(BaseChunker):
     def _extract_chunks_from_line_indices(
         self, text: str, indices: list[int]
     ) -> list[str]:
-        try:
-            if not indices:
-                return [text] if text.strip() else []
-
-            chunks = []
-            start_pos = 0
-
-            for end_pos in sorted(set(indices)):
-                if end_pos > start_pos:
-                    chunk = text[start_pos:end_pos].strip()
-                    if chunk:
-                        chunks.append(chunk)
-                start_pos = end_pos
-
-            if start_pos < len(text):
-                final_chunk = text[start_pos:].strip()
-                if final_chunk:
-                    chunks.append(final_chunk)
-
-            # Line-boundary slices are disjoint: allow no overlap between them.
-            return self.chunk_processor.merge_small_chunks(
-                chunks, source=text, overlap=0
-            )
-
-        except Exception as e:
-            logger.debug("Failed to extract chunks from line indices: %s", e)
+        if not indices:
             return [text] if text.strip() else []
+
+        chunks = []
+        start_pos = 0
+
+        for end_pos in sorted(set(indices)):
+            if end_pos > start_pos:
+                chunk = text[start_pos:end_pos].strip()
+                if chunk:
+                    chunks.append(chunk)
+            start_pos = end_pos
+
+        if start_pos < len(text):
+            final_chunk = text[start_pos:].strip()
+            if final_chunk:
+                chunks.append(final_chunk)
+
+        # Line-boundary slices are disjoint: allow no overlap between them.
+        return self.chunk_processor.merge_small_chunks(chunks, source=text, overlap=0)
 
     def _create_pre_chunks(
         self, content: str, content_format: str = "text"
@@ -1066,42 +1045,34 @@ class IntelligentTextChunker(BaseChunker):
         return content, i
 
     def _create_fallback_chunks(self, pre_chunk: str) -> list[str]:
-        try:
-            chunks = (
-                self.fallback_splitter.split_text(pre_chunk)
-                if self.fallback_splitter
-                else [pre_chunk]
-            )
-            return self.chunk_processor.merge_small_chunks(chunks, source=pre_chunk)
-        except Exception as e:
-            logger.debug("Failed to create fallback chunks: %s", e)
-            return [pre_chunk]
+        chunks = (
+            self.fallback_splitter.split_text(pre_chunk)
+            if self.fallback_splitter
+            else [pre_chunk]
+        )
+        return self.chunk_processor.merge_small_chunks(chunks, source=pre_chunk)
 
     def _create_chain_inputs(self, chunks: list[str]) -> list[dict[str, Any]]:
-        try:
-            config = self.config.processing.chunking
-            inputs = []
+        config = self.config.processing.chunking
+        inputs = []
 
-            for chunk in chunks:
-                lines = chunk.split("\n")
-                numbered_lines = []
-                for i, line in enumerate(lines, 1):
-                    numbered_lines.append(f"{i}: {line}")
+        for chunk in chunks:
+            lines = chunk.split("\n")
+            numbered_lines = []
+            for i, line in enumerate(lines, 1):
+                numbered_lines.append(f"{i}: {line}")
 
-                numbered_text = "\n".join(numbered_lines)
+            numbered_text = "\n".join(numbered_lines)
 
-                inputs.append(
-                    {
-                        "numbered_text": numbered_text,
-                        "min_chunk_size": config.min_chunk_size,
-                        "max_chunk_size": config.max_chunk_size,
-                    }
-                )
+            inputs.append(
+                {
+                    "numbered_text": numbered_text,
+                    "min_chunk_size": config.min_chunk_size,
+                    "max_chunk_size": config.max_chunk_size,
+                }
+            )
 
-            return inputs
-        except Exception as e:
-            logger.debug("Failed to create chain inputs: %s", e)
-            return []
+        return inputs
 
     @staticmethod
     def _get_structured_splitter(

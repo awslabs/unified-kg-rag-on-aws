@@ -357,14 +357,15 @@ class TestProcessExtractionResults:
         assert len(claims) == 1
         assert extractor.stats.num_successful_extractions == 1
 
-    def test_length_mismatch_warns_and_zips_available(self, extractor) -> None:
-        # 2 units but 1 result -> strict=False zip stops at the shorter list.
+    def test_length_mismatch_raises(self, extractor) -> None:
+        # The batch processor returns one result per unit; fewer results is a
+        # bug that would attribute claims to the wrong units, not lost data.
         units = [TextUnit(id="t1", text="x"), TextUnit(id="t2", text="y")]
         results = [
             {"claims": {"claim": {"subject": "A", "object": "B", "claim_type": "X"}}}
         ]
-        claims = extractor._process_extraction_results(units, results)
-        assert len(claims) == 1
+        with pytest.raises(ValueError):
+            extractor._process_extraction_results(units, results)
 
     def test_parse_failure_counts_failure(self, extractor, mocker) -> None:
         units = [TextUnit(id="t1", text="x")]
