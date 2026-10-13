@@ -1287,9 +1287,12 @@ A registry written by a pre-release build is migrated on its first run; see
 ### Failed documents
 
 A document is recorded `FAILED` when translation, graph extraction, gleaning or
-claim extraction failed on any of its text units, when a community covering
-one of its text units got no report, or when writing one of its artifacts to
-the stores failed. Report and write failures are tolerated up to
+claim extraction failed on any of its text units, when a base-level
+community covering one of its text units got no report, or when writing one
+of its artifacts to the stores failed. A failed parent-level report is logged
+as a WARNING and counted in the stage's `reports_failed` metric, but marks no
+document `FAILED`: a parent covers many documents, and retrying them all for
+one report would re-extract most of the corpus. Report and write failures are tolerated up to
 `indexing.max_failure_rate` of the communities or of one artifact type's
 writes; above it the stage fails and nothing is recorded. The next run treats it as
 changed even if the file did not change: it removes what the failed run wrote

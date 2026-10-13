@@ -603,3 +603,36 @@ def test_community_stage_without_report_failures_records_none(mocker) -> None:
     stage._execute_core(ctx)
 
     assert ctx.failed_text_unit_ids == {"community_detection": []}
+
+
+# --- CommunityDetectionStage._check_report_failures --------------------
+
+
+def test_only_a_failed_base_level_report_marks_its_documents_failed() -> None:
+    # A parent report spans every child's text units: recording them would
+    # re-extract most of the corpus next run for one missing report.
+    from unified_kg_rag.application.ingestion.pipeline_stages import (
+        CommunityDetectionStage,
+    )
+    from unified_kg_rag.domain.models import Community
+
+    def community(cid: str, level: str, units: list[str]) -> Community:
+        return Community(
+            id=cid,
+            name=cid,
+            level=level,
+            parent="",
+            children=[],
+            text_unit_ids=units,
+        )
+
+    stage = CommunityDetectionStage.__new__(CommunityDetectionStage)
+    stage.config = Config()
+    stage.config.indexing.max_failure_rate = 1.0
+    communities = [
+        community("leaf-a", "0", ["u1"]),
+        community("leaf-b", "0", ["u2"]),
+        community("root", "1", ["u1", "u2"]),
+    ]
+    assert stage._check_report_failures(communities, ["root"]) == []
+    assert stage._check_report_failures(communities, ["root", "leaf-b"]) == ["u2"]

@@ -340,6 +340,11 @@ Library API (Python callers and custom backends).
   diversity cut ran once across all result types before the per-type quota,
   so over-quota entities took slots the quota then dropped and text kept 16
   of its 20; each type is now diversified within its own quota (#247).
+- A failed parent-level community report no longer records every document
+  under it `FAILED`, which made the next incremental run re-extract most of
+  the corpus for one report. Only a base-level report failure marks its
+  documents; parent failures are logged and counted in `reports_failed`
+  (#PR).
 - Changing `indexing.additional_suffix` or `document_parsing.source_scope`
   for a reused `--pipeline-id` recomputes the documents (from parsing and
   loading respectively) instead of restoring the old ones, which carried
