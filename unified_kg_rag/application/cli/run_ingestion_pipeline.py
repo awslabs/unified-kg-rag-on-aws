@@ -7,6 +7,7 @@ from datetime import datetime
 from importlib.metadata import version
 from pathlib import Path
 
+from rich.markup import escape
 from rich.panel import Panel
 from rich.prompt import Confirm
 
@@ -415,8 +416,8 @@ class IngestionPipelineRunner:
                 pipeline_id=self.args.pipeline_id,
                 resume_from_stage=self.args.resume_from_stage,
             )
-        except PipelineExecutionError as e:
-            console.print(f"\n[red]Pipeline execution failed: {e}[/red]")
+        except PipelineExecutionError:
+            # main() prints the error itself, after these suggestions.
             if self.args.pipeline_id:
                 console.print("\n[yellow]Recovery suggestions:[/yellow]")
                 console.print("1. Check logs for specific error details.")
@@ -538,7 +539,10 @@ def main() -> None:
     except KeyboardInterrupt:
         console.print("\n[yellow]Pipeline interrupted by user.[/yellow]")
         sys.exit(130)
-    except PipelineExecutionError:
+    except PipelineExecutionError as e:
+        # A failed stage, a failed metadata check or a refused prompt: say
+        # which before exiting non-zero.
+        console.print(f"\n[red]Error: {escape(str(e))}[/red]")
         sys.exit(1)
     except Exception as e:
         console.print(f"\n[red]An unexpected error occurred: {e}[/red]")

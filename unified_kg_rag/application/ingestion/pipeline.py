@@ -500,11 +500,17 @@ class DataIngestionPipeline:
 
             self._execute_pipeline(context, start_stage_name)
 
-            logger.info(
-                "Pipeline execution completed successfully - ID: '%s', Status: '%s'",
-                context.pipeline_id,
-                context.status,
-            )
+            if context.status == PipelineStageStatus.FAILED:
+                logger.warning(
+                    "Pipeline run finished with failed stages - ID: '%s'",
+                    context.pipeline_id,
+                )
+            else:
+                logger.info(
+                    "Pipeline run completed - ID: '%s', Status: '%s'",
+                    context.pipeline_id,
+                    context.status.value,
+                )
             return context
 
         except Exception as e:

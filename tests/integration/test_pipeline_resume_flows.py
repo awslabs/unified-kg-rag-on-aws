@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import io
 import json
+import logging
 import shutil
 import sys
 from pathlib import Path
@@ -436,3 +437,28 @@ def test_a_stage_that_crashed_then_succeeds_commits_its_documents(
     crash["on"] = False
     assert harness.run("--pipeline-id", "p1", "--yes") == 0
     assert {r.status for r in harness.registry.list_all()} == {DocStatus.PROCESSED}
+
+
+def test_a_failed_run_says_which_stage_failed(
+    harness: _Harness,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    def execute(stage, context):  # type: ignore[no-untyped-def]
+        raise RuntimeError("throttled beyond retries")
+
+    monkeypatch.setattr(ps.GraphExtractionStage, "execute", execute)
+    caplog.set_level(logging.INFO)
+    assert harness.run() == 1
+    assert "Error: Pipeline failed at stage(s): graph_extraction" in (
+        capsys.readouterr().out
+    )
+    assert not any(
+        "Pipeline execution completed successfully" in r.getMessage()
+        for r in caplog.records
+    )
+    assert any(
+        r.levelname == "WARNING" and "finished with failed stages" in r.getMessage()
+        for r in caplog.records
+    )
