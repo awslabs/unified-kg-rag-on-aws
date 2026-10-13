@@ -241,7 +241,7 @@ Library API (Python callers and custom backends).
 ### Changed
 - `unified_kg_rag.visualization` exports only `GraphVisualizationManager`;
   import the renderers from `unified_kg_rag.adapters.renderers` and the
-  embedder and reducer from `unified_kg_rag.visualization.embeddings` (#PR).
+  embedder and reducer from `unified_kg_rag.visualization.embeddings` (#246).
 - Retrieval: AUTO routes among `local`/`mix`/`global`/`drift` with the fast
   model; `mix`/`hybrid` retrievals, DRIFT steps and keyword extraction run
   concurrently; global search answers from ranked map points without a
@@ -285,27 +285,27 @@ Library API (Python callers and custom backends).
 - `ragas` evaluation counts each retrieved context once per batch. With
   `context_precision` selected, the count-capped selection walked the
   contexts again, which repeated every CountTokens call once a batch had more
-  than 1,024 contexts (#PR).
+  than 1,024 contexts (#246).
 - A failed UMAP reduction of the visualization layout now falls back to
   the seeded spring layout and records `"layout_degraded": true`, as the user
   guide documents; it silently returned a PCA layout marked as not degraded
-  (#PR).
+  (#246).
 - `run-visualization` and ingestion-time rendering compute the spring
   layout only for the nodes the interactive page draws (the top
   `graph.visualization.interactive.max_nodes` by degree). A large graph was
   laid out whole first: about 3.5 minutes of an 8,000-node render went to
   nodes that were then dropped. Graphs within the cap get the same layout as
-  before (#PR).
+  before (#246).
 - `retrieval` matches a source by its file-name stem only when the
   reference has no extension: `Report-A.pdf` no longer matches a source
   `Report-A.docx`, and a version suffix such as `.v2` is part of the name, so
   `notes.v1` does not match `notes.v2`. `docs/Report-A.pdf`, `report-a.pdf`
-  and `report-a` still match `Report-A.pdf` (#PR).
+  and `report-a` still match `Report-A.pdf` (#246).
 - `answer_match` scores a Korean, Chinese or Japanese yes/no gold (`예`,
   `네`, `아니요`, `아니오`, `是`, `对`, `否`, `不是`, `はい`, `いいえ`) by the
   answer's polarity, as it already did for `yes`/`no`. Such a gold was
   matched as a substring, so `예` scored 1.0 against `아니요, ... 예외 ...`
-  (#PR).
+  (#246).
 - `run-eval --eval-data-path` naming a file that does not exist exits 2 with
   `Error: invalid evaluation dataset: ...`, as the user guide documents and
   as an unreadable or invalid dataset does; it exited 1 (#230).
