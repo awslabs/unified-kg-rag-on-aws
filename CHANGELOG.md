@@ -400,7 +400,7 @@ Library API (Python callers and custom backends).
   Yes, ...`, `no "cap"`, ``no `cap` `` and `네 **가지**` the word starts a
   noun phrase, so a later `Yes` answers; since #259 the `**` or quote read
   as the answering punctuation. Other punctuation before a word still reads
-  as an answer (`no (explicit) cap`, `no $500 cap`) (#PR).
+  as an answer (`no (explicit) cap`, `no $500 cap`) (#262).
 - The `answer_match` evaluator no longer reads `(예: …)` ("for example") as
   a yes, or the options in `Yes/No: No` and `(네/아니요): 아니요` as the
   answer. `no`, `네` and `예`, which also mean "no X", "four" and "e.g.",
