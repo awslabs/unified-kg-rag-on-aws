@@ -188,8 +188,10 @@ Library API (Python callers and custom backends).
   `OptimizedContext.quality_score` and other unused parameters and
   test-only methods (#169); `DocStatus.PARSING` / `PROCESSING`,
   `DocStatusRecord.content_summary` / `content_length` and
-  `application.cli.run_evaluation.exceeds_failure_budget` (#216); and
-  `domain.retrieval.strategy_registry.registered_strategies` (#212).
+  `application.cli.run_evaluation.exceeds_failure_budget` (#216);
+  `domain.retrieval.strategy_registry.registered_strategies` (#212); and
+  `NeptuneClient.delete_vertices_in_batches` (the indexer's `clear` deletes
+  a label in retried batches itself) (#263).
 - `BaseSearchStrategy.search` (a sync wrapper with no caller; use
   `asearch`) and the unused `timeout` parameter of
   `BaseSearchStrategy._safe_aretrieve` are removed (#249).
