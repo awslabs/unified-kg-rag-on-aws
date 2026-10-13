@@ -233,10 +233,14 @@ jobs:
 
       - name: Build the image
         # The base image pulls from public.ecr.aws, which rate-limits anonymous
-        # pulls (429); retry so a transient registry error does not fail the job.
+        # pulls (429); retry only that, so a broken Dockerfile fails at once.
         run: |
+          set -o pipefail
           for attempt in 1 2 3 4 5; do
-            docker build -f docker/Dockerfile -t unified-kg-rag:ci . && exit 0
+            if docker build -f docker/Dockerfile -t unified-kg-rag:ci . 2>&1 | tee "$RUNNER_TEMP/build.log"; then
+              exit 0
+            fi
+            grep -qiE '429|toomanyrequests' "$RUNNER_TEMP/build.log" || exit 1
             if [ "$attempt" -lt 5 ]; then sleep $((attempt * 20)); fi
           done
           exit 1
