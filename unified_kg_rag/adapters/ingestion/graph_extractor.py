@@ -470,9 +470,9 @@ class GraphExtractor(BaseProcessor):
             frequency_fields=["type"],
             log_message_formatter=lambda e: f"Entity '{e.name}' merged {{count}} instances",
         )
-        # Set frequency from text-unit support so full-build entities carry a
-        # ranking signal (previously only the incremental merger set frequency,
-        # leaving it None for full runs and degrading report/search ranking).
+        # frequency = number of supporting text units, the rule every merge
+        # path applies (resolver, incremental merger), so the field agrees
+        # across build paths. Ranking does not read it: rank is the degree.
         for entity in merged:
             entity.frequency = len(entity.text_unit_ids or [])
         return merged

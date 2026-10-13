@@ -59,6 +59,30 @@ def union_document_filters(
     return {**(current or {}), key: union}
 
 
+def format_entities_with_limit_task(entities: list[Entity], max_entities: int) -> str:
+    """Newline-separated entity names for a prompt, at most ``max_entities``.
+
+    Over the limit, entities with a description and then those cited by more
+    text units come first, and a line counts the omitted ones.
+    """
+    if len(entities) <= max_entities:
+        return "\n".join(e.name for e in entities)
+
+    sorted_entities = sorted(
+        entities,
+        key=lambda e: (
+            bool(e.description and e.description.strip()),
+            len(e.text_unit_ids or []),
+        ),
+        reverse=True,
+    )
+    selected_entities = sorted_entities[:max_entities]
+    entity_list = "\n".join(e.name for e in selected_entities)
+    if len(entities) > max_entities:
+        entity_list += f"\n... and {len(entities) - max_entities} more entities"
+    return entity_list
+
+
 def coerce_llm_text(value: Any, *, join: bool = False) -> str:
     """Coerce an LLM-parsed field to one stripped string.
 

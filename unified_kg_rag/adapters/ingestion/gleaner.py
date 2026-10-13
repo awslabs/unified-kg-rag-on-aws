@@ -16,6 +16,7 @@ from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.ingestion.base_processor import (
     BaseProcessor,
     coerce_llm_text,
+    format_entities_with_limit_task,
     group_by_text_unit,
     union_document_filters,
 )
@@ -50,25 +51,6 @@ from unified_kg_rag.shared.utils import (
 from unified_kg_rag.shared.utils.langchain import BATCH_ITEM_FAILED, BatchProcessor
 
 logger = get_logger(__name__)
-
-
-def format_entities_with_limit_task(entities: list[Entity], max_entities: int) -> str:
-    if len(entities) <= max_entities:
-        return "\n".join(e.name for e in entities)
-
-    sorted_entities = sorted(
-        entities,
-        key=lambda e: (
-            bool(e.description and e.description.strip()),
-            len(e.text_unit_ids or []),
-        ),
-        reverse=True,
-    )
-    selected_entities = sorted_entities[:max_entities]
-    entity_list = "\n".join(e.name for e in selected_entities)
-    if len(entities) > max_entities:
-        entity_list += f"\n... and {len(entities) - max_entities} more entities"
-    return entity_list
 
 
 def format_relationships_with_limit_task(
