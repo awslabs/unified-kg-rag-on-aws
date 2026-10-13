@@ -87,10 +87,17 @@ _STAGE_INPUT_PATHS: dict[PipelineStageType, tuple[str, ...]] = {
         # overrides change a model's capabilities (output cap, effort support).
         "aws.bedrock.default_max_output_tokens",
         "aws.bedrock.model_overrides",
+        # Part of every document's identity (its registry namespace).
+        "indexing.additional_suffix",
     ),
     # A reset loads the whole corpus where an incremental run loads only its
     # new and changed documents, so the two runs' outputs differ from here on.
-    PipelineStageType.DOCUMENT_LOADING: ("processing.deduplicate", "indexing.reset"),
+    # The source scope names the registry records the run diffs against.
+    PipelineStageType.DOCUMENT_LOADING: (
+        "processing.deduplicate",
+        "indexing.reset",
+        "processing.document_parsing.source_scope",
+    ),
     PipelineStageType.TEXT_CHUNKING: ("processing.chunking",),
     PipelineStageType.TRANSLATION: ("processing.translation",),
     PipelineStageType.GRAPH_EXTRACTION: (
@@ -187,12 +194,16 @@ _OMIT_WHEN_DEFAULT: dict[str, Any] = {
         "aws.bedrock.default_max_output_tokens",
         "aws.bedrock.model_overrides",
     )
-} | {"indexing.reset": False}
+} | {
+    "indexing.reset": False,
+    "indexing.additional_suffix": None,
+    "processing.document_parsing.source_scope": None,
+}
 
 
-# Fields inside a fingerprinted subtree that do not shape stage output and are
-# dropped from it: ``source_scope`` only scopes incremental deletion in the
-# registry (and the corpus itself is fingerprinted by its manifest).
+# Fields inside a fingerprinted subtree that are dropped from it:
+# ``source_scope`` is fingerprinted from the loading stage on (its own path),
+# not with the parsing settings, whose output it does not change.
 _NON_OUTPUT_SUBFIELDS: dict[str, frozenset[str]] = {
     "processing.document_parsing": frozenset({"source_scope"}),
 }
@@ -300,7 +311,13 @@ _EXTRACTION_SWITCHED_STAGES: dict[PipelineStageType, Callable[[Config], bool]] =
 # identity), and switches that only change which documents run or whether a
 # failure stops the run.
 _EXTRACTION_NON_OUTPUT_PATHS = frozenset(
-    {"processing.ignore_errors", "processing.deduplicate", "indexing.reset"}
+    {
+        "processing.ignore_errors",
+        "processing.deduplicate",
+        "indexing.reset",
+        "indexing.additional_suffix",
+        "processing.document_parsing.source_scope",
+    }
 )
 _EXTRACTION_NON_OUTPUT_SUBFIELDS: dict[str, frozenset[str]] = {
     "processing.document_parsing": frozenset(

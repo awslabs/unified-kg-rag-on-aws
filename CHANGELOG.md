@@ -340,6 +340,11 @@ Library API (Python callers and custom backends).
   diversity cut ran once across all result types before the per-type quota,
   so over-quota entities took slots the quota then dropped and text kept 16
   of its 20; each type is now diversified within its own quota (#247).
+- Changing `indexing.additional_suffix` or `document_parsing.source_scope`
+  for a reused `--pipeline-id` recomputes the documents (from parsing and
+  loading respectively) instead of restoring the old ones, which carried
+  the previous registry namespace or scope into the run's delta. The stage
+  cache keys of a configuration that sets neither are unchanged (#PR).
 - Switching gleaning or claim extraction on for an existing `--pipeline-id`
   runs the stage: the resume starts at the first enabled stage that has not
   completed in the pipeline. It started after the last recorded stage, so
