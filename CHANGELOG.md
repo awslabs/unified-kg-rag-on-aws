@@ -899,7 +899,7 @@ Library API (Python callers and custom backends).
   handler cannot catch `States.DataLimitExceeded` or `States.Runtime` (such
   as a start input without the fields a phase reads), so a failed phase
   still notifies twice, once with the execution id and error and once from
-  the alarm without them (#PR).
+  the alarm without them (#254).
 - Used as a library (no `setup_logging`), the package's log records reach
   the host application's handlers as the plain message, with the structured
   fields as record attributes; a host `logging.basicConfig` printed every
