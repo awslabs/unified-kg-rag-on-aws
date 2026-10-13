@@ -342,6 +342,11 @@ Library API (Python callers and custom backends).
   answer. A polarity word other than `yes` answers only when sentence
   punctuation, a dash or the line end follows it, and a word next to `/` is
   skipped (#255).
+- Description re-summarization sizes one call's input to the summary
+  model's context window (half of what it leaves beside
+  `max_summary_tokens`, 1,000 to 12,000 tokens). A fixed 12,000-token input
+  overflowed a small local model's window; the default models keep the
+  12,000-token budget (#PR).
 - An automatic resume of an incremental run (same `--pipeline-id`) whose
   extraction settings changed, such as a stage switched on since the last
   run or another extraction model, restarts at `document_loading`. It kept

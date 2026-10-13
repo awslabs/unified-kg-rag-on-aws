@@ -24,6 +24,7 @@ and every non-description field is left untouched.
 
 from __future__ import annotations
 
+from functools import cached_property
 from typing import TYPE_CHECKING
 
 from langchain_core.output_parsers import StrOutputParser
@@ -42,11 +43,15 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
-# Input budget of one summarization call (the descriptions, not the prompt).
-# A longer description is summarized in budget-sized groups first.
+# Input budget of one summarization call (the descriptions, not the prompt),
+# at most: a summary model with a smaller context window gets half of what
+# the window leaves beside the summary (the rest covers the prompt and the
+# token estimate's error), never less than _MIN_INPUT_TOKENS. A longer
+# description is summarized in budget-sized groups first.
 MAX_INPUT_TOKENS = 12_000
+_MIN_INPUT_TOKENS = 1_000
 # Map rounds before the final call. Each round shrinks a description by about
-# MAX_INPUT_TOKENS / max_summary_tokens, so two rounds already cover millions
+# the input budget / max_summary_tokens, so two rounds already cover millions
 # of tokens; the cap only bounds a model that will not shorten its input.
 _MAX_MAP_ROUNDS = 4
 
@@ -54,10 +59,10 @@ _MAX_MAP_ROUNDS = 4
 class DescriptionSummarizer:
     """Re-summarize entity/relationship descriptions that exceed a token budget.
 
-    Built lazily-chain-free: the LLM chain is assembled in ``__init__`` via the
-    shared ``setup_chain`` helper (same pattern as ``GraphExtractor`` /
-    ``GraphGleaner``), and the LLM fan-out runs through ``BatchProcessor`` for
-    consistency with the rest of the ingestion pipeline.
+    The LLM chain is built once in ``__init__`` with the shared
+    ``setup_chain`` helper (as ``GraphExtractor`` and ``GraphGleaner`` do), and
+    the calls fan out through ``BatchProcessor`` like the rest of the
+    ingestion pipeline.
     """
 
     def __init__(
@@ -90,6 +95,20 @@ class DescriptionSummarizer:
         self.token_counter = self.providers.token_counter(
             self.summarization_config.summary_model_id, api_supported=False
         )
+
+    @cached_property
+    def max_input_tokens(self) -> int:
+        """One call's input budget for the summary model (see
+        ``MAX_INPUT_TOKENS``).
+
+        ``setup_chain`` has already read the model's info, so an unknown
+        model has failed by now.
+        """
+        window = self.factory.get_model_info(
+            self.summarization_config.summary_model_id
+        ).effective_context_window()
+        available = (window - self.summarization_config.max_summary_tokens) // 2
+        return min(MAX_INPUT_TOKENS, max(_MIN_INPUT_TOKENS, available))
 
     def _exceeds_threshold(self, description: str | None) -> bool:
         if not description:
@@ -158,7 +177,7 @@ class DescriptionSummarizer:
     ) -> list[str | None]:
         """Summarize each over-threshold item; keep order, degrade safely.
 
-        A description that fits ``MAX_INPUT_TOKENS`` gets one call. A longer
+        A description that fits ``max_input_tokens`` gets one call. A longer
         one is first split into groups of whole lines within the budget, each
         group is summarized, and the newline join of the group summaries
         replaces it, until it fits one call. Returns one entry per input: the
@@ -184,7 +203,7 @@ class DescriptionSummarizer:
                 "Summarizing %s descriptions over the %s-token input budget in "
                 "%s groups",
                 len(split),
-                MAX_INPUT_TOKENS,
+                self.max_input_tokens,
                 sum(len(parts) for parts in split.values()),
             )
             flat = [(index, part) for index, parts in split.items() for part in parts]
@@ -221,14 +240,14 @@ class DescriptionSummarizer:
         group can count a few tokens more than the sum); a single line over
         the budget is a group of its own.
         """
-        if self.token_counter.count_tokens(description) <= MAX_INPUT_TOKENS:
+        if self.token_counter.count_tokens(description) <= self.max_input_tokens:
             return [description]
         groups: list[str] = []
         lines: list[str] = []
         used = 0
         for line in description.split("\n"):
             tokens = self.token_counter.count_tokens(line)
-            if lines and used + tokens > MAX_INPUT_TOKENS:
+            if lines and used + tokens > self.max_input_tokens:
                 groups.append("\n".join(lines))
                 lines, used = [], 0
             lines.append(line)
