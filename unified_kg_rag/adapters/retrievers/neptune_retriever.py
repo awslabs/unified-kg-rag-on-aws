@@ -4,6 +4,8 @@ import asyncio
 import math
 import time
 import weakref
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from gremlin_python.process.graph_traversal import (
@@ -53,22 +55,40 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
         self._max_hops = self._neptune_config.max_hops
         self._max_results_per_hop = self._neptune_config.max_results_per_hop
         # At most one traversal per pooled connection runs in a worker thread;
-        # the rest wait here, on the loop. Otherwise each waits inside
-        # gremlinpython's blocking pool.get() while holding a default-executor
-        # thread, and the Bedrock calls LangChain runs on that executor queue
-        # behind them. One semaphore per loop (a semaphore is loop-bound).
+        # the rest wait here, on the loop, rather than inside gremlinpython's
+        # blocking pool.get(). One semaphore per loop (a semaphore is
+        # loop-bound).
         self._pool_size = neptune_pool_size(config)
         self._traversal_slots: weakref.WeakKeyDictionary[
             asyncio.AbstractEventLoop, asyncio.Semaphore
         ] = weakref.WeakKeyDictionary()
+        # Traversals (and the blocking connection handshake) run on threads of
+        # their own, never on the loop's default executor: a traversal that
+        # does hang then holds one of these, not a thread the model calls,
+        # reranking and every other strategy need. Created on first use.
+        self._executor: ThreadPoolExecutor | None = None
+
+    def _traversal_executor(self) -> ThreadPoolExecutor:
+        if self._executor is None:
+            self._executor = ThreadPoolExecutor(
+                max_workers=self._pool_size, thread_name_prefix="neptune-retriever"
+            )
+        return self._executor
+
+    def _shutdown_executor(self) -> None:
+        executor, self._executor = self._executor, None
+        if executor is not None:
+            executor.shutdown(wait=False, cancel_futures=True)
 
     def close(self) -> None:
         """Close the underlying Neptune websocket + thread pool (best-effort)."""
         self._neptune_client.close()
+        self._shutdown_executor()
 
     async def aclose(self) -> None:
         """Async teardown: the blocking Neptune close runs off the loop thread."""
         await asyncio.to_thread(self._neptune_client.close)
+        self._shutdown_executor()
 
     async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
         start_time = time.time()
@@ -78,7 +98,6 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
             query.search_type.value,
         )
 
-        g: GraphTraversalSource | None = None
         try:
             seed_ids = self._seed_ids(query)
             if not seed_ids:
@@ -88,13 +107,7 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
                     text_digest(query.query),
                 )
                 return []
-            # Opening the connection is blocking: gremlinpython drives its
-            # websocket handshake with run_until_complete on a private loop,
-            # which fails on a thread that already runs one (the old code
-            # only worked because the CLIs apply nest_asyncio).
-            g = await asyncio.to_thread(lambda: self._neptune_client.g)
-
-            traversal_results = await self._traverse_from_entities(g, seed_ids, query)
+            traversal_results = await self._traverse_from_entities(seed_ids, query)
             results = self._process_traversal_results(traversal_results, query)
 
             processing_time = time.time() - start_time
@@ -117,10 +130,7 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
                 )
                 return []
             if isinstance(error, StoreConnectionError):
-                # The connection is unusable (lost, or a request that never
-                # got an answer): drop it, so the next query reconnects.
-                if g is not None:
-                    await asyncio.to_thread(self._neptune_client.reset, g)
+                # `_execute_traversal` has dropped the connection already.
                 logger.error("Neptune retrieval failed: %s", error)
             else:
                 # A broken configuration is not "no results".
@@ -241,7 +251,7 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
         return traversal
 
     async def _traverse_from_entities(
-        self, g: GraphTraversalSource, seed_ids: list[Any], query: SearchQuery
+        self, seed_ids: list[Any], query: SearchQuery
     ) -> list[dict[str, Any]]:
         # Every seed the caller chose; a fixed cap here dropped seeds silently.
         # max_hops is validated (>= 1) by NeptuneIndexingConfig.
@@ -280,37 +290,38 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
         # the seeds together still fetch >= fetch_limit candidates for the
         # top_k * retrieval_multiplier expansion slots the cut keeps.
         per_seed_limit = math.ceil(fetch_limit / len(seed_ids))
-        traversal = (
-            g.V()
-            .hasLabel(entity_label)
-            .has("id", P.within(seed_ids))
-            .union(
-                __.identity(),
-                __.local(
-                    __.repeat(
-                        __.local(
-                            __.both()
-                            .hasLabel(entity_label)
-                            .limit(self._max_results_per_hop)
-                        )
-                        .has("id", P.without(seed_ids))
-                        .dedup()
-                        .limit(per_seed_limit)
-                    )
-                    .times(hops)
-                    .emit()
-                ),
-            )
-        )
         filters, exempt = self._scope_filters_to_labels(
             {entity_label: "entity"}, query.filters
         )
-        traversal = self._apply_filters(traversal, filters, exempt)
-        traversal = self._with_projection(
-            traversal,
-            with_degree=self._neptune_config.entity_importance_source == "degree",
-        )
-        return await self._execute_traversal(traversal)
+        with_degree = self._neptune_config.entity_importance_source == "degree"
+
+        def build(g: GraphTraversalSource) -> Traversal:
+            traversal = (
+                g.V()
+                .hasLabel(entity_label)
+                .has("id", P.within(seed_ids))
+                .union(
+                    __.identity(),
+                    __.local(
+                        __.repeat(
+                            __.local(
+                                __.both()
+                                .hasLabel(entity_label)
+                                .limit(self._max_results_per_hop)
+                            )
+                            .has("id", P.without(seed_ids))
+                            .dedup()
+                            .limit(per_seed_limit)
+                        )
+                        .times(hops)
+                        .emit()
+                    ),
+                )
+            )
+            traversal = self._apply_filters(traversal, filters, exempt)
+            return self._with_projection(traversal, with_degree=with_degree)
+
+        return await self._execute_traversal(build)
 
     @staticmethod
     def _with_projection(
@@ -329,27 +340,43 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
             projected = projected.by(__.bothE().count())
         return projected
 
-    async def _execute_traversal(self, traversal: Traversal) -> list[Any]:
+    async def _execute_traversal(
+        self, build: Callable[[GraphTraversalSource], Traversal]
+    ) -> list[Any]:
+        """Run the traversal ``build`` makes from the client's current source.
+
+        The traversal is built in the worker thread, from the source of the
+        moment, so a query never sends on a connection another query dropped
+        meanwhile (``reset`` closes it and empties its pool). On an unusable
+        connection the source the request used is dropped, so the next query
+        reconnects.
+        """
         loop = asyncio.get_running_loop()
         slots = self._traversal_slots.get(loop)
         if slots is None:
             slots = self._traversal_slots.setdefault(
                 loop, asyncio.Semaphore(self._pool_size)
             )
+        used: list[GraphTraversalSource] = []
+
+        def run() -> list[Any]:
+            # Opening the connection is blocking: gremlinpython drives its
+            # websocket handshake with run_until_complete on a private loop,
+            # which fails on a thread that already runs one.
+            g = self._neptune_client.g
+            used.append(g)
+            return list(build(g).to_list())
+
         # Each request is bounded by store_timeout_seconds, but not the wait
-        # for a pooled connection: after a lost connection gremlinpython's
-        # pool can stay empty and to_list() block for good in pool.get(). The
-        # timeout becomes a StoreTimeoutError, on which aretrieve resets the
-        # connection.
+        # for a pooled connection, which can block in gremlinpython's
+        # pool.get(). This bound frees the slot, not the thread: the reset
+        # below closes the connection, which wakes a thread blocked on its
+        # pool (NeptuneClient.reset).
         timeout = 2 * self._config.search.store_timeout_seconds
         try:
-            # to_list() is a BLOCKING Gremlin round trip; running it directly in
-            # this coroutine would block the event loop and serialize the seed
-            # lookups that callers fan out via asyncio.gather. Offload it to a
-            # worker thread so the gather actually overlaps.
             async with slots:
                 result: list[Any] = await asyncio.wait_for(
-                    asyncio.to_thread(traversal.to_list), timeout
+                    loop.run_in_executor(self._traversal_executor(), run), timeout
                 )
             return result
         except Exception as e:
@@ -358,6 +385,8 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
             # here turned a broken Neptune into a silent "no seed nodes found".
             error = self._request_error(e)
             if is_fatal_retrieval_error(error):
+                if isinstance(error, StoreConnectionError) and used:
+                    await asyncio.to_thread(self._neptune_client.reset, used[0])
                 if error is e:
                     raise
                 raise error from e

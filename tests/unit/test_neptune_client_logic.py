@@ -305,7 +305,7 @@ def test_callers_waiting_on_a_failed_attempt_share_its_failure(mocker) -> None:
     assert len(attempts) == 1
     # A caller arriving after the failure tries again.
     with pytest.raises(StoreConnectionError):
-        client.connection
+        client.g
     assert len(attempts) == 2
 
 
@@ -420,3 +420,46 @@ def test_another_handshake_failure_is_raised_as_is(mocker) -> None:
     with pytest.raises(aiohttp.WSServerHandshakeError) as caught:
         transport.connect("wss://db.example.com:8182/gremlin")
     assert caught.value.status == 500
+
+
+def test_reset_wakes_requests_waiting_for_a_pooled_connection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Regression: gremlinpython's close() empties the pool, and a request
+    # already waiting in pool.get() (no timeout) held its thread for good:
+    # after a few outages the executor running the traversals had no thread
+    # left and every query hung.
+    import threading
+    import time
+
+    from gremlin_python.driver.driver_remote_connection import DriverRemoteConnection
+
+    connection = DriverRemoteConnection("ws://127.0.0.1:9/gremlin", "g", pool_size=1)
+    monkeypatch.setattr(NeptuneClient, "_create_connection", lambda self: connection)
+    client = _client(_config_with_neptune(endpoint="localhost", use_iam=False))
+    g = client.g
+    connection._client._pool.get_nowait()  # its one connection is in use
+    errors: list[Exception] = []
+
+    def _query() -> None:
+        try:
+            g.V().limit(1).to_list()
+        except Exception as e:  # noqa: BLE001 - asserted below
+            errors.append(e)
+
+    # More waiters than the pool has connections.
+    threads = [threading.Thread(target=_query, daemon=True) for _ in range(3)]
+    for thread in threads:
+        thread.start()
+    time.sleep(0.2)
+    client.reset(g)
+    for thread in threads:
+        thread.join(5)
+
+    assert not any(thread.is_alive() for thread in threads)
+    assert len(errors) == 3
+    assert all(neptune_mod.is_connection_lost(e) for e in errors)
+
+
+def test_a_request_on_a_closed_client_is_a_lost_connection() -> None:
+    assert neptune_mod.is_connection_lost(Exception("Client is closed"))

@@ -401,13 +401,13 @@ async def _entity_traversal_text(retriever, seed_ids: list[str], query) -> str:
     """The Gremlin text `_traverse_from_entities` sends, projection left out."""
     captured: list = []
 
-    async def _capture(traversal):
-        captured.append(traversal)
+    async def _capture(build):
+        captured.append(build(Graph().traversal()))
         return []
 
     object.__setattr__(retriever, "_with_projection", lambda t, **_: t)
     object.__setattr__(retriever, "_execute_traversal", _capture)
-    await retriever._traverse_from_entities(Graph().traversal(), seed_ids, query)
+    await retriever._traverse_from_entities(seed_ids, query)
     return Translator("g").translate(captured[0].bytecode)
 
 
@@ -495,7 +495,10 @@ async def test_traversals_beyond_the_pool_wait_on_the_loop(config: Config) -> No
     config.indexing.neptune.index_concurrency = 1
     retriever = NeptuneRetriever(config=config, neptune_client=MagicMock())
     results = await asyncio.gather(
-        *(retriever._execute_traversal(_SlowTraversal()) for _ in range(12))  # type: ignore[arg-type]
+        *(
+            retriever._execute_traversal(lambda g: _SlowTraversal())  # type: ignore[arg-type,return-value]
+            for _ in range(12)
+        )
     )
     assert results == [[1]] * 12
     assert _SlowTraversal.max_active == 3

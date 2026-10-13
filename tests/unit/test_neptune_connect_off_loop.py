@@ -71,13 +71,8 @@ def retriever(mocker) -> NeptuneRetriever:
     config.aws.neptune.endpoint = "neptune.example.invalid"
     config.aws.neptune.use_iam = False
     client = NeptuneClient(config=config, boto_session=MagicMock())
-    instance = NeptuneRetriever(config=config, neptune_client=client)
-
-    async def no_rows(g: Any, seed_ids: list, query: SearchQuery) -> list:
-        return []
-
-    mocker.patch.object(instance, "_traverse_from_entities", side_effect=no_rows)
-    return instance
+    # `traversal` is a MagicMock: every traversal built from it yields no rows.
+    return NeptuneRetriever(config=config, neptune_client=client)
 
 
 _SEEDED = SearchQuery(query="Vendor", filters={"id": ["e1"]})

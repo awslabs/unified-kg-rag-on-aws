@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
 import math
+import sys
 import time
 from typing import Any
 
@@ -35,6 +36,18 @@ from unified_kg_rag.shared.utils import parse_llm_json, safe_float_parse, text_d
 from unified_kg_rag.shared.utils.langchain import BatchProcessor
 
 logger = get_logger(__name__)
+
+
+def _is_bad_request(exc: BaseException) -> bool:
+    """Whether ``exc`` is an OpenAI-compatible server's HTTP 400.
+
+    vLLM and llama.cpp report a prompt longer than the model's context as a
+    plain 400, which LangChain does not map to ``ContextOverflowError``. In
+    the map step that 400 leaves the batch unrated, as an overflow does; a
+    400 every request gets still fails the query at the answer call.
+    """
+    openai = sys.modules.get("openai")
+    return openai is not None and isinstance(exc, openai.BadRequestError)
 
 
 class _MapPoint:
@@ -498,7 +511,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             try:
                 return str(self.map_rater.invoke(single_input, config))
             except Exception as e:
-                if is_fatal_retrieval_error(e):
+                if is_fatal_retrieval_error(e) and not _is_bad_request(e):
                     fatal_errors.append(e)
                 raise
 

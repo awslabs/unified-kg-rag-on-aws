@@ -363,7 +363,30 @@ Library API (Python callers and custom backends).
   20 s instead of 60 s, and 5,000 relationship writes about 5 s instead of
   28 s. Restart the stack (`down` and `up`) to pick it up (#265).
 
+### Removed
+- `NeptuneClient.connection`, which nothing in the package used; use
+  `NeptuneClient.g` (#266).
+
 ### Fixed
+- A Neptune connection lost under concurrent queries no longer leaks
+  threads. A query took the traversal source before waiting for a pool
+  slot, so after another query reset the connection it sent on the closed
+  one and blocked in gremlinpython's `pool.get()` for good; the timeout
+  freed the slot but not the thread, and after a few outages the loop's
+  default executor had no thread left: every strategy hung, and `aclose()`
+  and the process exit with them. The traversal is now built in its worker
+  from the current source, closing a connection wakes the requests waiting
+  on its pool (they fail as a lost connection), and traversals run on
+  threads the retriever owns (#266).
+- A query embedding call that still fails after the client's retries (a
+  5xx from a crashed Ollama runner or dead vLLM engine, a persistent Bedrock
+  `InternalServerException`) fails the query with `EmbeddingModelError`.
+  It was read as transient, so every vector section, and the lexical half
+  of hybrid with it, came back empty and the query answered "could not find
+  relevant information" with no error (#266).
+- A global-search map batch over the context of a vLLM or llama.cpp model is
+  left unrated, as on Bedrock and OpenAI: those servers report it as a plain
+  HTTP 400, which failed the whole query (#266).
 - Queries that waited on a failed Neptune connection attempt each raise a
   copy of its error; re-raising the one shared error grew its traceback by
   every waiter's frames and kept them in memory (#264).
@@ -376,8 +399,8 @@ Library API (Python callers and custom backends).
 - A short OpenSearch throttling burst no longer fails a query: opensearch-py
   retried a 429/502/503/504 back to back, so a burst of a few milliseconds
   used up `search.store_max_attempts`. Query requests now back off between
-  attempts (0.5 s, doubling, at most 4 s) and still fail once the attempts
-  run out (#264).
+  attempts (0.25-0.5 s, then 0.5-1 s, doubling up to 2-4 s) and still fail
+  once the attempts run out (#264).
 - A query no longer hangs when gremlinpython's connection pool stays empty
   after a lost Neptune connection: a graph traversal that does not finish
   within twice `search.store_timeout_seconds` fails the query with
