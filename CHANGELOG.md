@@ -466,6 +466,11 @@ Library API (Python callers and custom backends).
 - Importing `unified_kg_rag.application.cli.run_rag_chain` no longer puts
   `unified_kg_rag/application` at the front of `sys.path`, where its
   subpackages could shadow top-level modules of the same name (#251).
+- OpenSearch indexing embeds and bulk-writes each artifact type 400 items at
+  a time instead of embedding the whole type before one bulk call. Memory no
+  longer grows with the corpus (about 75 KB per entity before, several
+  gigabytes at 50,000 entities with up to six types indexed concurrently), and
+  the index is refreshed once per type as before (#PR).
 - A changed `search.hybrid.lexical_weight` or `vector_weight` now takes
   effect: `run-ingestion` writes the OpenSearch hybrid search pipeline on
   every run. Before, it was created only when absent, so the weights of the

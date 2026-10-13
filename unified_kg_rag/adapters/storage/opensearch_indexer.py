@@ -40,6 +40,10 @@ logger = get_logger(__name__)
 # embedding calls are IO-bound).
 _EMBED_BATCH_SIZE = 50
 _EMBED_WORKERS = 8
+# Items embedded and bulk-written at a time: one round of the concurrent
+# embedding requests. Holding a whole item type's vectors as float lists
+# before one bulk call took gigabytes on a large corpus.
+_WRITE_SLICE_SIZE = _EMBED_BATCH_SIZE * _EMBED_WORKERS
 
 # Whether the doc-status registry tracks the index's documents: False when
 # a run with the registry off built it (see check_index_settings).
@@ -835,20 +839,14 @@ class OpenSearchIndexer(VectorIndexer):
                     self.opensearch_client.create_index(index_name, mapping)
                     self.opensearch_client.update_alias(alias_name, index_name)
 
-                embeddings = self._generate_embeddings(
-                    chunk_items, embedding_field_extractors
-                )
-                docs, failed_ids = self._prepare_documents(
-                    chunk_items, embeddings, prepare_doc_func
-                )
-                if failed_ids:
-                    total_stats.add_error(
-                        f"Failed to prepare {len(failed_ids)} documents",
-                        len(failed_ids),
-                        ids=failed_ids,
+                total_stats.merge(
+                    self._embed_and_write(
+                        index_name,
+                        chunk_items,
+                        embedding_field_extractors,
+                        prepare_doc_func,
                     )
-                if docs:
-                    total_stats.merge(self._perform_indexing(index_name, docs))
+                )
             except Exception as e:
                 logger.error(
                     "Failed to upsert %s (suffix=%s): %s", item_type_name, suffix, e
@@ -904,36 +902,20 @@ class OpenSearchIndexer(VectorIndexer):
                     index_name, mapping_func(), exist_ok=False
                 )
 
-                embeddings = self._generate_embeddings(
-                    chunk_items, embedding_field_extractors
+                written = self._embed_and_write(
+                    index_name,
+                    chunk_items,
+                    embedding_field_extractors,
+                    prepare_doc_func,
                 )
-                docs, failed_ids = self._prepare_documents(
-                    chunk_items, embeddings, prepare_doc_func
-                )
-
-                if failed_ids:
-                    total_stats.add_error(
-                        f"Failed to prepare {len(failed_ids)} documents",
-                        len(failed_ids),
-                        ids=failed_ids,
-                    )
+                total_stats.merge(written)
 
                 # Swap onto the new index when it holds something, or when the
                 # rebuild has nothing of this type for the suffix.
-                swap = not chunk_items
-                if docs:
-                    indexing_stats = self._perform_indexing(index_name, docs)
-                    total_stats.merge(indexing_stats)
-                    swap = indexing_stats.successful_items > 0
-
-                swapped = False
-                if swap:
+                if not chunk_items or written.successful_items > 0:
                     self.opensearch_client.update_alias(
                         alias_name, index_name, remove_pattern=f"{alias_name}-*"
                     )
-                    swapped = True
-
-                if swapped:
                     self._reap_stale_indices(alias_name, index_name)
                 else:
                     # Nothing was written, so the alias stays on the previous
@@ -969,6 +951,34 @@ class OpenSearchIndexer(VectorIndexer):
 
         self._flush_embedding_cache()
         return total_stats
+
+    def _embed_and_write(
+        self,
+        index_name: str,
+        items: list[Any],
+        embedding_field_extractors: list[Callable[[Any], str]],
+        prepare_doc_func: Callable[[Any, tuple[list[float], ...]], dict[str, Any]],
+    ) -> IndexingStats:
+        """Embed ``items`` and bulk-write them into ``index_name``, a slice at a
+        time, so only one slice's vectors are held at once. The index is
+        refreshed once, after the last slice."""
+        stats = IndexingStats()
+        for start in range(0, len(items), _WRITE_SLICE_SIZE):
+            chunk = items[start : start + _WRITE_SLICE_SIZE]
+            embeddings = self._generate_embeddings(chunk, embedding_field_extractors)
+            docs, failed_ids = self._prepare_documents(
+                chunk, embeddings, prepare_doc_func
+            )
+            if failed_ids:
+                stats.add_error(
+                    f"Failed to prepare {len(failed_ids)} documents",
+                    len(failed_ids),
+                    ids=failed_ids,
+                )
+            if docs:
+                last = start + _WRITE_SLICE_SIZE >= len(items)
+                stats.merge(self._perform_indexing(index_name, docs, refresh=last))
+        return stats
 
     @staticmethod
     def _index_timestamp(alias_name: str, index_name: str) -> str | None:
@@ -1216,7 +1226,7 @@ class OpenSearchIndexer(VectorIndexer):
         return docs, failed_ids
 
     def _perform_indexing(
-        self, index_name: str, documents: list[dict[str, Any]]
+        self, index_name: str, documents: list[dict[str, Any]], refresh: bool = True
     ) -> IndexingStats:
         start_time = time.time()
         stats = IndexingStats(total_items=len(documents))
@@ -1225,7 +1235,7 @@ class OpenSearchIndexer(VectorIndexer):
             response = self.opensearch_client.bulk_index(
                 index_name,
                 documents,
-                refresh=self.opensearch_config.refresh_after_batch,
+                refresh=refresh and self.opensearch_config.refresh_after_batch,
             )
 
             if not response.get("errors"):

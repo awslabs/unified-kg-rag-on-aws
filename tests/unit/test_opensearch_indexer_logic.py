@@ -549,3 +549,49 @@ def test_initialize_rewrites_the_hybrid_pipeline_with_the_configured_weights(
     (processor,) = body["phase_results_processors"]
     combination = processor["normalization-processor"]["combination"]
     assert combination["parameters"]["weights"] == [0.2, 0.8]
+
+
+# --------------------------------------------------------------------------- #
+# Embedding + bulk writes in slices
+# --------------------------------------------------------------------------- #
+
+
+def test_upsert_embeds_and_writes_one_slice_at_a_time(indexer, mocker) -> None:
+    # Embedding a whole item type before one bulk call held every vector at
+    # once (gigabytes on a large corpus): each slice is embedded and written
+    # before the next is embedded.
+    from unified_kg_rag.adapters.storage import opensearch_indexer as module
+
+    slice_size = module._WRITE_SLICE_SIZE
+    indexer._s3_embedding_cache = None
+    indexer.opensearch_client = mocker.MagicMock()
+    indexer.opensearch_client.get_index_name_by_alias.return_value = "idx"
+    indexer.opensearch_client.bulk_index.return_value = {"errors": False}
+    events: list[tuple[str, int]] = []
+    mocker.patch.object(
+        indexer,
+        "_generate_embeddings",
+        side_effect=lambda items, extractors: events.append(("embed", len(items)))
+        or [([0.1],) for _ in items],
+    )
+    indexer.opensearch_client.bulk_index.side_effect = lambda index, docs, refresh: (
+        events.append(("write", len(docs))) or {"errors": False}
+    )
+    units = [TextUnit(id=f"t{i}", text=f"text {i}") for i in range(slice_size * 2 + 1)]
+
+    stats = indexer.upsert_text_units(units)
+
+    assert events == [
+        ("embed", slice_size),
+        ("write", slice_size),
+        ("embed", slice_size),
+        ("write", slice_size),
+        ("embed", 1),
+        ("write", 1),
+    ]
+    assert stats.successful_items == len(units)
+    # Refreshed once, after the last slice.
+    refreshes = [
+        c.kwargs["refresh"] for c in indexer.opensearch_client.bulk_index.call_args_list
+    ]
+    assert refreshes == [False, False, True]
