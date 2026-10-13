@@ -773,6 +773,18 @@ def test_visualization_parser_multiple_renderers() -> None:
     assert args.renderers == ["interactive", "static"]
 
 
+def test_visualization_parser_rejects_unknown_renderer(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Validated only after loading the data and computing centrality before.
+    with pytest.raises(SystemExit) as excinfo:
+        run_visualization._build_parser().parse_args(
+            ["--data-path", "g.json", "--renderers", "interactive", "bogus"]
+        )
+    assert excinfo.value.code == 2
+    assert "invalid choice: 'bogus'" in capsys.readouterr().err
+
+
 def test_visualization_hierarchy_entries_from_dict() -> None:
     data = {"communities": {"hierarchy": [{"community_id": "c1"}]}}
     assert run_visualization._hierarchy_entries(data) == [{"community_id": "c1"}]

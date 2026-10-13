@@ -323,6 +323,9 @@ Library API (Python callers and custom backends).
   install (#251).
 
 ### Fixed
+- `run-visualization` rejects an unknown `--renderers` name while parsing
+  its arguments (exit code 2), instead of after loading the data and
+  computing centrality (#PR).
 - Used as a library without `setup_logging`, the package no longer raises
   `KeyError` on every log call when the host binds a field named like a
   `LogRecord` attribute (`name`, `process`, `msg`, ...) with

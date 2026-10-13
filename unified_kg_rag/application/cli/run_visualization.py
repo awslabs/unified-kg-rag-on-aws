@@ -198,6 +198,9 @@ def _build_parser() -> argparse.ArgumentParser:
         "--renderers",
         nargs="+",
         default=list(registered_renderers()),
+        # Rejected here, before the data is loaded and centrality computed.
+        choices=registered_renderers(),
+        metavar="RENDERER",
         help=f"Renderers to run. Available: {', '.join(registered_renderers())}",
     )
     parser.add_argument(
