@@ -251,11 +251,13 @@ default `dev` environment.
 
 ## Prerequisites
 
-- Python 3.10+ (CI synthesizes with 3.12).
+- [uv](https://docs.astral.sh/uv/) and Python 3.12+ (uv downloads a matching
+  Python when none is installed). `iac/` is a uv project of its own, separate
+  from the root package: `iac/uv.lock` pins the CDK libraries.
 - Node.js 20+ and the AWS CDK CLI v2, 2.1143.0 or later
   (`npm install -g aws-cdk@2.1143.0` is the version CI pins). An older CLI
   can reject the cloud assembly that the `aws-cdk-lib` release in
-  `requirements.txt` produces; check with `cdk --version`.
+  `uv.lock` produces; check with `cdk --version`.
 - For `cdk bootstrap`/`cdk deploy`: AWS credentials for the target account
   and region. To push the app image after deploy: Docker.
 
@@ -263,8 +265,8 @@ default `dev` environment.
 
 ```bash
 cd iac
-python -m venv .venv && . .venv/bin/activate
-pip install -r requirements.txt
+uv sync --locked          # installs exactly what iac/uv.lock pins
+. .venv/bin/activate      # or prefix each command below with `uv run`
 
 # Synthesize (no AWS changes)
 cdk synth

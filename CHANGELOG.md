@@ -301,6 +301,12 @@ Library API (Python callers and custom backends).
   aws-cdk.aws-neptune-alpha 2.273 in the CDK lock. typeguard stays at 2.13.3
   and aws-cdk-cloud-assembly-schema below 55, the versions jsii and
   aws-cdk-lib pin (#241).
+- `iac/` is a uv project of its own (`iac/pyproject.toml`, `iac/uv.lock`,
+  outside the root lock): install it with `cd iac && uv sync`.
+  `iac/requirements.txt` and `iac/requirements-lock.txt` are gone. Dependabot
+  updates the CDK lock through `uv lock`, so a transitive bump the pinned
+  aws-cdk-lib cannot admit no longer opens a pull request that fails to
+  install (#PR).
 
 ### Fixed
 - `ragas` evaluation counts each retrieved context once per batch. With

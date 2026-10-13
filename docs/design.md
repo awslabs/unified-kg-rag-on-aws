@@ -474,7 +474,7 @@ Run: `uv run pytest -m "not aws" --cov=unified_kg_rag`.
 ## 14. CI/CD and Security
 
 - **CI** (`.github/workflows/`): the `quality` workflow runs on pull requests and pushes to `main` — ruff/black/isort/mypy + pytest with the coverage gate (one `-m "not aws"` run covering the unit, property and integration suites), the suite on the oldest supported Python (3.10), the optional-parser security checks, and `cdk synth` with cdk-nag plus the IaC assertion tests. The `security` workflow runs a non-blocking, report-only ASH scan on pushes to `main`.
-- **Dependabot** (`.github/dependabot.yml`): weekly version updates for the `uv` lock (`/`), the IaC `pip` requirements (`/iac`), and the SHA-pinned GitHub Actions. Known-breaking bumps are held back with an `ignore` entry that records the reason.
+- **Dependabot** (`.github/dependabot.yml`): weekly version updates for the `uv` lock (`/`), the IaC `uv` lock (`/iac`, a separate uv project), and the SHA-pinned GitHub Actions. Known-breaking bumps are held back with an `ignore` entry that records the reason.
 - **pre-commit** (`.pre-commit-config.yaml`): Mirrors the CI gates. `pre-commit install`.
 - **Security hardening**: Content hashes use SHA-256 exclusively (CWE-327-safe). Dependency-scan CVEs are addressed through the Dependabot pull requests above. Tokens are injected via environment/config (no hardcoding in code).
 
