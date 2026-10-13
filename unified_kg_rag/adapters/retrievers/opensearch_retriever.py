@@ -1,6 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
+import itertools
 import re
 import time
 from collections import OrderedDict
@@ -683,36 +684,20 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         return max(list_lengths, default=0)
 
     def _calculate_safe_batch_size(self, filters: dict[str, Any] | None) -> int:
-        if not filters:
+        """Terms per list filter per request: ``terms_batch_size``, or less.
+
+        The clause budget (``max_total_clauses - reserved_clauses``) is split
+        across the list filters; a share below ``terms_batch_size`` lowers the
+        batch, but nothing raises it above the configured size.
+        """
+        list_filter_count = sum(
+            1 for v in (filters or {}).values() if isinstance(v, list) and v
+        )
+        if not list_filter_count:
             return self._terms_batch_size
-
-        list_filters = [
-            (k, v) for k, v in filters.items() if isinstance(v, list) and len(v) > 0
-        ]
-        if not list_filters:
-            return self._terms_batch_size
-
-        list_filter_count = len(list_filters)
-        total_terms = sum(len(v) for _, v in list_filters)
-
         available_clauses = self._max_total_clauses - self._reserved_clauses
         safe_size = available_clauses // list_filter_count
-
-        min_batch_size = max(1, available_clauses // max(list_filter_count, 1) // 2)
-
-        final_size = max(min_batch_size, min(safe_size, self._terms_batch_size))
-
-        logger.debug(
-            "Batch size calculation: %s list filters, total_terms=%s, available_clauses=%s, safe_size=%s, min_batch_size=%s, final_size=%s",
-            list_filter_count,
-            total_terms,
-            available_clauses,
-            safe_size,
-            min_batch_size,
-            final_size,
-        )
-
-        return final_size
+        return max(1, min(safe_size, self._terms_batch_size))
 
     @staticmethod
     def _find_all_large_filter_lists(
@@ -745,21 +730,24 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                 values[i : i + batch_size] for i in range(0, len(values), batch_size)
             ]
 
-        max_batches = max(len(batches) for batches in filter_batches.values())
+        # The filters are ANDed, so every batch of one filter must meet every
+        # batch of the others: pairing batch i with batch i missed a match whose
+        # values fell in batches of different positions.
+        combinations = list(itertools.product(*filter_batches.values()))
 
         logger.info(
             "Executing multi-batched retrieval: %s large filters, %s batches, batch_size=%s (filter sizes: %s)",
             len(large_filters),
-            max_batches,
+            len(combinations),
             batch_size,
             ", ".join(f"{k}={len(v)}" for k, v in large_filters.items()),
         )
 
-        for batch_idx in range(max_batches):
-            batch_filters = {**(query.filters or {})}
-            for key, batches in filter_batches.items():
-                actual_batch_idx = min(batch_idx, len(batches) - 1)
-                batch_filters[key] = batches[actual_batch_idx]
+        for combination in combinations:
+            batch_filters = {
+                **(query.filters or {}),
+                **dict(zip(filter_batches, combination, strict=True)),
+            }
 
             batch_query = query.model_copy(update={"filters": batch_filters})
 
@@ -777,7 +765,7 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         logger.debug(
             "Multi-batched retrieval completed: %s unique results from %s batches",
             len(all_results),
-            max_batches,
+            len(combinations),
         )
         return all_results
 

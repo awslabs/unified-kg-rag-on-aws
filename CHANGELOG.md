@@ -374,6 +374,11 @@ Library API (Python callers and custom backends).
   deletions. It failed graph extraction ("produced 0 outputs"), so the
   deletions were never applied and every later run failed the same way. A
   full build, or a run in which a text unit failed, still fails (#248).
+- OpenSearch terms-filter batching: a `terms_batch_size` below the clause
+  budget's share is honoured instead of being raised (50 became 150), and a
+  query with two or more over-long list filters searches every combination
+  of their batches; batch i of one filter was paired only with batch i of
+  the other, so matches across batches were missed (#PR).
 - A search OpenSearch rejects with HTTP 400 (a filter value of another type
   than its field, a `hybrid_search_pipeline_name` that does not exist) fails
   with a `ConfigurationError` naming the server's reason. It degraded like a
