@@ -46,7 +46,7 @@ def _doc(path: str) -> Document:
     )
 
 
-def _claim(path: str) -> Claim:
+def _claim(path: str, suffix: str = "default") -> Claim:
     return Claim(
         id=_CLAIM_ID,
         subject_id="e-vendor",
@@ -58,24 +58,36 @@ def _claim(path: str) -> Claim:
         description=f"Vendor supplies Buyer per {path}.",
         source_text=f"source {path}",
         text_unit_ids=[f"tu-{path}"],
+        attributes={"index": suffix},
     )
 
 
-def _extract(paths: list[str]):
+def _extract(paths: list[str], suffix: str = "default"):
+    attributes = {"index": suffix}
     units = [
-        TextUnit(id=f"tu-{p}", text=f"Vendor supplies Buyer ({p})", document_ids=[p])
+        TextUnit(
+            id=f"tu-{p}",
+            text=f"Vendor supplies Buyer ({p})",
+            document_ids=[p],
+            attributes=attributes,
+        )
         for p in paths
     ]
     entities = [
-        Entity(id=f"e-{n.lower()}", name=n, text_unit_ids=[u.id for u in units])
+        Entity(
+            id=f"e-{n.lower()}",
+            name=n,
+            text_unit_ids=[u.id for u in units],
+            attributes=attributes,
+        )
         for n in ("Vendor", "Buyer")
     ]
-    return units, entities, [_claim(p) for p in paths]
+    return units, entities, [_claim(p, suffix) for p in paths]
 
 
-def _run(store, manager, corpus: list[str]) -> None:
+def _run(store, manager, corpus: list[str], suffix: str = "default") -> None:
     # A fresh indexer per run, as each ingestion run builds one.
-    inc = IncrementalIndexer(store, manager)
+    inc = IncrementalIndexer(store, manager, suffix=suffix)
     docs = [_doc(p) for p in corpus]
     delta, fingerprints = detect_delta(docs, store)
     inc.write_ahead(delta, [])
@@ -83,8 +95,10 @@ def _run(store, manager, corpus: list[str]) -> None:
     todo = [d for d in docs if document_doc_id(d) in set(delta.to_process)]
     if not todo:
         return
-    units, entities, claims = _extract([d.file_path for d in todo])
-    lineages = build_document_lineage(todo, units, entities, [], [], claims)
+    units, entities, claims = _extract([d.file_path for d in todo], suffix)
+    lineages = build_document_lineage(
+        todo, units, entities, [], [], claims, suffix=suffix
+    )
     inc.write_ahead(delta, lineages)
     inc.commit(
         lineages=lineages,
@@ -121,16 +135,21 @@ def test_adding_a_document_merges_its_claim_into_the_stored_one(stores) -> None:
     assert stored.source_text == full.source_text
 
 
+@pytest.mark.parametrize("suffix", ["default", "acme"])
 def test_deleting_a_document_strips_its_text_units_from_a_shared_claim(
-    stores,
+    stores, suffix: str
 ) -> None:
+    # Under a non-default suffix (document_parsing.index_value) the claim
+    # read back must be written back to that suffix's index, not the
+    # default one.
     store, manager, vector = stores
-    _run(store, manager, ["a.txt"])
-    _run(store, manager, ["a.txt", "b.txt"])
-    _run(store, manager, ["a.txt"])
+    _run(store, manager, ["a.txt"], suffix)
+    _run(store, manager, ["a.txt", "b.txt"], suffix)
+    _run(store, manager, ["a.txt"], suffix)
 
     (stored,) = vector.data["claims"].values()
     assert stored.text_unit_ids == ["tu-a.txt"]
+    assert stored.attributes == {"index": suffix}
 
 
 def test_cross_run_merge_off_overwrites_the_stored_claim(stores) -> None:

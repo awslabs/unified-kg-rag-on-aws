@@ -342,6 +342,12 @@ Library API (Python callers and custom backends).
   answer. A polarity word other than `yes` answers only when sentence
   punctuation, a dash or the line end follows it, and a word next to `/` is
   skipped (#255).
+- Deleting a document under a non-default index suffix
+  (`processing.document_parsing.index_value`) strips its text units from the
+  claims it shared with other documents in that suffix's claims index. The
+  claims read back carried no suffix, so the update went to the default
+  suffix's index: the claim kept the deleted text units, and a claim with the
+  same id there was overwritten (#PR).
 - `ragas` evaluation counts each retrieved context once per batch. With
   `context_precision` selected, the count-capped selection walked the
   contexts again, which repeated every CountTokens call once a batch had more

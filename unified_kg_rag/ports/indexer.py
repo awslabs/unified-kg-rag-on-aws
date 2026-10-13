@@ -396,8 +396,12 @@ class VectorIndexer(BaseIndexer):
     def read_claims(self, ids: list[str], suffix: str | None = None) -> list[Claim]:
         """Read stored claims by id for the cross-run claim merge.
 
-        Scoped to ``suffix``'s index. Must return the fields the merge folds
-        in (description, source text, ``text_unit_ids``, status). Default
+        Scoped to ``suffix``'s index (``None``: the default suffix). Must
+        return the fields the merge folds in (description, source text,
+        ``text_unit_ids``, status), each claim carrying ``suffix`` in its
+        ``attributes`` (``Constants.INDEX``) so that writing it back
+        (``update_claim_lineage``, which groups by ``get_suffix``) targets
+        the index it was read from. Default
         returns ``[]`` (no read-back: the upsert overwrites); adapters that
         override it raise when a read fails, since ``[]`` means nothing is
         stored.
@@ -408,6 +412,9 @@ class VectorIndexer(BaseIndexer):
         self, ids: list[str], suffix: str | None = None
     ) -> dict[str, str]:
         """Stored descriptions of entities by id, in full.
+
+        Scoped to ``suffix``'s index (``None``: the default suffix): an id
+        stored only under another suffix is absent from the result.
 
         The cross-run merge reads entities back from the graph store, which
         may cap property length (``indexing.neptune.property_max_length``);

@@ -651,8 +651,13 @@ class OpenSearchIndexer(VectorIndexer):
         """Read stored claims by id from ``suffix``'s live claims index.
 
         A claim indexed before claims stored their ``text_unit_ids`` reads
-        back without them. Raises when the read fails.
+        back without them. The stored document does not hold the claim's
+        ``attributes``, so each claim is tagged with ``suffix`` (the index
+        it was read from): a write of the claim, e.g. the
+        ``update_claim_lineage`` of a document deletion, goes back to that
+        index rather than the default one. Raises when the read fails.
         """
+        attributes = {Constants.INDEX.value: suffix} if suffix else {}
         return [
             Claim.model_validate(
                 {
@@ -666,6 +671,7 @@ class OpenSearchIndexer(VectorIndexer):
                     "description": source.get("description") or None,
                     "source_text": source.get("source_text") or None,
                     "text_unit_ids": list(source.get("text_unit_ids") or []),
+                    "attributes": dict(attributes),
                 }
             )
             for source in self._read_sources(

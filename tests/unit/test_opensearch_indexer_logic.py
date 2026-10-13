@@ -656,6 +656,43 @@ def test_read_claims_reads_by_id_from_the_suffix_alias(indexer, mocker) -> None:
     assert claims[1].text_unit_ids == []
 
 
+def test_read_claims_lineage_update_goes_back_to_the_read_suffix(
+    indexer, mocker
+) -> None:
+    # The claims index does not store attributes: a claim read from a
+    # non-default suffix must still be updated in that suffix's index.
+    client = mocker.MagicMock()
+    indexer.opensearch_client = client
+    client.get_index_name_by_alias.side_effect = lambda alias: alias + "-1"
+    client.search.return_value = {
+        "hits": {
+            "hits": [
+                {
+                    "_id": "c1",
+                    "_source": {
+                        "id": "c1",
+                        "subject_id": "s",
+                        "type": "SUPPLY",
+                        "text_unit_ids": ["tu-1", "tu-2"],
+                    },
+                }
+            ]
+        }
+    }
+    client.bulk_update.return_value = {"items": []}
+
+    claims = indexer.read_claims(["c1"], suffix="acme")
+    indexer.update_claim_lineage(
+        [c.model_copy(update={"text_unit_ids": ["tu-2"]}) for c in claims]
+    )
+
+    prefix = indexer.opensearch_config.claims_index_prefix
+    assert claims[0].attributes == {"index": "acme"}
+    assert client.bulk_update.call_args.args[0] == (
+        indexer._get_name(prefix, "acme") + "-1"
+    )
+
+
 def test_read_claims_without_a_live_index_reads_nothing(indexer, mocker) -> None:
     indexer.opensearch_client = mocker.MagicMock()
     indexer.opensearch_client.get_index_name_by_alias.return_value = None
