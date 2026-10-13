@@ -855,6 +855,14 @@ search:
       claim: 0.07
       general: 0.10
 
+  # How long a query waits for one OpenSearch or Neptune request (and for
+  # opening a Neptune connection), and how many attempts an OpenSearch query
+  # request gets on a timeout or a 429/502/503/504. A store that does not
+  # answer fails the query instead of answering from no context. Ingestion
+  # keeps its own, longer limits.
+  store_timeout_seconds: 30
+  store_max_attempts: 3
+
 # Memory Configuration
 memory:
   max_conversations: 100

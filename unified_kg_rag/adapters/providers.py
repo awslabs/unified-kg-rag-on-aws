@@ -381,6 +381,7 @@ def _neptune_graph_retriever(providers: Providers) -> BaseGraphRAGRetriever:
             boto_session=_signing_session(
                 providers, providers.config.aws.neptune.use_iam
             ),
+            timeout_seconds=providers.config.search.store_timeout_seconds,
         ),
     )
 

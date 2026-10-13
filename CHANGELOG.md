@@ -364,6 +364,28 @@ Library API (Python callers and custom backends).
   claims read back carried no suffix, so the update went to the default
   suffix's index: the claim kept the deleted text units, and a claim with the
   same id there was overwritten (#256).
+- A query whose OpenSearch search is denied (HTTP 401/403, such as a
+  fine-grained access control role without `indices:data/read/search`)
+  fails with `ConfigurationError`. The 403 body names no permission keyword,
+  so the query answered "could not find relevant information" and reported
+  success. A Neptune that refuses the websocket (HTTP 401/403) fails the same
+  way (#PR).
+- Queries no longer hang on a store that stops answering. The query-side
+  OpenSearch client waits `search.store_timeout_seconds` (30) per request in
+  `search.store_max_attempts` (3) attempts instead of the indexing client's
+  180 s in 6, and Neptune connects, reads and writes within the same
+  timeout; it had none, so a query (and the process exit) blocked forever.
+  A request still unanswered fails the query with `StoreConnectionError`; it
+  answered from no context and reported success (#PR).
+- A Neptune connection the server closed (a restart or failover) is
+  dropped and the next query reconnects; every later query failed with
+  `Connection was already closed.` until the process restarted. Every pooled
+  websocket is now signed when it opens, so with IAM auth one first used more
+  than five minutes after the connection was built is no longer refused.
+  Every failed connection probe read as a connection failure; a throttled or
+  failed probe request is now transient like any other, a timed-out one is
+  reported as such, and only a refused or lost connection is a
+  `StoreConnectionError` (#PR).
 - `ragas` evaluation counts each retrieved context once per batch. With
   `context_precision` selected, the count-capped selection walked the
   contexts again, which repeated every CountTokens call once a batch had more

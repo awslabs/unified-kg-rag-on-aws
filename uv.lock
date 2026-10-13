@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.10, <3.13"
 resolution-markers = [
     "python_full_version >= '3.12' and sys_platform == 'win32'",
@@ -4883,6 +4883,7 @@ wheels = [
 name = "unified-kg-rag-on-aws"
 source = { editable = "." }
 dependencies = [
+    { name = "aiohttp" },
     { name = "aws-assume-role-lib" },
     { name = "bokeh" },
     { name = "boto3" },
@@ -4962,6 +4963,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "aiohttp", specifier = ">=3.9.0,<4.0.0" },
     { name = "aws-assume-role-lib", specifier = ">=2.10.0" },
     { name = "bokeh", specifier = ">=3.9.2" },
     { name = "boto3", specifier = ">=1.43.66" },

@@ -8,7 +8,7 @@ from collections import OrderedDict
 from collections.abc import Coroutine
 from typing import Any, ClassVar
 
-from opensearchpy.exceptions import AuthorizationException, RequestError, TransportError
+from opensearchpy.exceptions import ConnectionTimeout, RequestError, TransportError
 
 from unified_kg_rag.adapters.aws.opensearch import (
     OpenSearchClient,
@@ -39,7 +39,12 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.domain.retrieval.index_prefixes import configured_index_prefixes
 from unified_kg_rag.ports.model_factory import EmbeddingFactoryPort
-from unified_kg_rag.shared import ConfigurationError, IndexNotFoundError, get_logger
+from unified_kg_rag.shared import (
+    ConfigurationError,
+    IndexNotFoundError,
+    StoreConnectionError,
+    get_logger,
+)
 from unified_kg_rag.shared.utils import (
     EMBEDDING_FIELD_SUFFIX,
     strip_embedding_fields,
@@ -70,17 +75,30 @@ def _invalid_dimension_error(exc: BaseException) -> str | None:
     return None
 
 
-def _is_authorization_error(exc: BaseException) -> bool:
-    """Whether ``exc`` or one of its causes is an HTTP 403 from OpenSearch."""
+def _is_authorization_error(
+    exc: BaseException, statuses: tuple[int, ...] = (403,)
+) -> bool:
+    """Whether ``exc`` or one of its causes is an HTTP 403 (or ``statuses``)."""
     seen: set[int] = set()
     current: BaseException | None = exc
     while current is not None and id(current) not in seen:
         seen.add(id(current))
-        if isinstance(current, AuthorizationException) or (
-            isinstance(current, TransportError) and current.status_code == 403
-        ):
+        if isinstance(current, TransportError) and current.status_code in statuses:
             return True
-        if "status=403" in str(current):  # the client error wrapper's message
+        # The client error wrapper's message.
+        if any(f"status={status}" in str(current) for status in statuses):
+            return True
+        current = current.__cause__ or current.__context__
+    return False
+
+
+def _is_timeout(exc: BaseException) -> bool:
+    """Whether ``exc`` or one of its causes is a request that timed out."""
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, ConnectionTimeout):
             return True
         current = current.__cause__ or current.__context__
     return False
@@ -462,11 +480,22 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                         e,
                     )
                 return None
+            if _is_timeout(e):
+                raise self._unanswered_error(alias) from e
             if is_fatal_retrieval_error(e):
                 raise
             logger.debug("Could not read the mappings of %s: %s", alias, e)
             return None
         return mappings
+
+    def _unanswered_error(self, target: str) -> StoreConnectionError:
+        """The error a request OpenSearch never answered fails the query with."""
+        search = self._config.search
+        return StoreConnectionError(
+            f"OpenSearch did not answer a request on {target} within "
+            f"{search.store_timeout_seconds} s in {search.store_max_attempts} "
+            "attempt(s) (search.store_timeout_seconds, search.store_max_attempts)"
+        )
 
     def _raise_on_embedding_mismatch(
         self, index_name: str, mappings: dict[str, Any]
@@ -785,6 +814,18 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             hits = response.get("hits", {}).get("hits", [])
             return [self._parse_hit(hit) for hit in hits]
         except Exception as e:
+            shown = ", ".join(aliases)
+            if _is_authorization_error(e, (401, 403)):
+                # Read before the generic check: a 403 body names no fatal
+                # marker, so a role without search rights answered every query
+                # from no context.
+                raise ConfigurationError(
+                    f"OpenSearch denied the search on {shown}: {e}. Grant the "
+                    "query role indices:data/read/search on these indices, or "
+                    "check its credentials."
+                ) from e
+            if _is_timeout(e):
+                raise self._unanswered_error(shown) from e
             # A fatal error (auth/config/connection) must propagate so the
             # caller surfaces it, rather than masquerading as "0 results".
             # Transient/per-index errors degrade to an empty list.

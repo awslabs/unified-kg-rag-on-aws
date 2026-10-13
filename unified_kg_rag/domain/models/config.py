@@ -2439,6 +2439,25 @@ class SearchConfig(BaseModel):
     token_manager: TokenManagerConfig = Field(
         default_factory=TokenManagerConfig, description="Token management configuration"
     )
+    store_timeout_seconds: float = Field(
+        default=30.0,
+        gt=0,
+        description=(
+            "Seconds a query waits for one OpenSearch or Neptune request (and "
+            "for opening a Neptune connection) before giving up on it. A store "
+            "that does not answer fails the query instead of answering from "
+            "no context. Ingestion keeps its own, longer limits."
+        ),
+    )
+    store_max_attempts: int = Field(
+        default=3,
+        ge=1,
+        description=(
+            "Attempts of one OpenSearch query request that timed out or got a "
+            "429/502/503/504, including the first. Neptune query requests are "
+            "not retried."
+        ),
+    )
 
 
 class MemoryConfig(BaseModel):

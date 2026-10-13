@@ -53,7 +53,6 @@ _FATAL_ERROR_MARKERS: tuple[str, ...] = (
     "expired token",
     "invalidclienttoken",
     "failed to connect",
-    "failed to establish connection",
 )
 
 
@@ -62,10 +61,11 @@ def is_fatal_retrieval_error(exc: BaseException) -> bool:
 
     Fatal = a clearly non-recoverable misconfiguration (auth/credentials/
     endpoint/config) or a connection failure: returning ``[]`` for these turns a
-    real failure into a misleading "no results". Everything else (timeouts,
-    throttling, a single malformed query) is treated as transient and the caller
-    may degrade to an empty result list. ``ConnectionError`` (the store
-    clients raise ``StoreConnectionError`` for a store they cannot reach), a
+    real failure into a misleading "no results". Everything else (throttling,
+    a single malformed query) is treated as transient and the caller may
+    degrade to an empty result list. ``ConnectionError`` (the retrievers raise
+    ``StoreConnectionError`` for a store they cannot reach, whose connection
+    was lost, or that did not answer within ``search.store_timeout_seconds``), a
     missing suffix (``IndexNotFoundError``) and a ``ConfigurationError`` (such
     as a query embedding model the index was not built with, or a request the
     store rejects as invalid) are always fatal. Other failures arrive as an
