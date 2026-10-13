@@ -399,6 +399,15 @@ Library API (Python callers and custom backends).
   a 100% success rate against a store that was down. A timeout, throttling
   or a 5xx still degrades the one sub-search. OpenSearch errors now log the
   server's reason instead of `info=None` (#249).
+- An entity or relationship merged from text units of documents with
+  different `filters` metadata carries every document's value (a list for a
+  key with several), in extraction, gleaning, graph resolution and the
+  incremental merge. It kept the filters of whichever instance the merge
+  happened to keep, so an `attr_<key>` filter on another of its documents
+  missed it depending on input order. Takes effect on the next
+  (re-)extraction of the affected documents. The user guide's filter example
+  used `type:PERSON`, which matches nothing because types are stored
+  lowercase; it now shows `type:person` (#PR).
 - Description re-summarization no longer sends a whole merged description
   to the model in one call however long it is (a popular entity reached
   ~100k input tokens): a description over 12,000 tokens is summarized

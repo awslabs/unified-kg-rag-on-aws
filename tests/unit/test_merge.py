@@ -119,6 +119,14 @@ class TestMergeEntities:
             "region": "north",
         }
 
+    def test_document_filters_are_unioned(self) -> None:
+        # As in a full build: the merged entity cites both documents, so it
+        # matches either document's filter value.
+        old = [_entity("e1", "Vendor", attributes={"filters": {"category": "a"}})]
+        delta = [_entity("e1", "Vendor", attributes={"filters": {"category": "b"}})]
+        merged, _ = merge_entities(old, delta)
+        assert merged[0].attributes == {"filters": {"category": ["a", "b"]}}
+
     def test_attributes_of_an_old_entity_without_any_come_from_the_delta(
         self,
     ) -> None:

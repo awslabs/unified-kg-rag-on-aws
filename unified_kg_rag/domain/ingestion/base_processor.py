@@ -6,7 +6,13 @@ from datetime import datetime
 from typing import Any, TypeVar
 
 from unified_kg_rag.domain.ingestion.descriptions import merge_descriptions
-from unified_kg_rag.domain.models import Config, Entity, Relationship, TextUnit
+from unified_kg_rag.domain.models import (
+    Config,
+    Constants,
+    Entity,
+    Relationship,
+    TextUnit,
+)
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.utils import (
     clean_display_name,
@@ -17,6 +23,40 @@ from unified_kg_rag.shared.utils import (
 T = TypeVar("T")
 _Cited = TypeVar("_Cited", Entity, Relationship)
 logger = get_logger(__name__)
+
+
+def union_document_filters(
+    current: dict[str, Any] | None, new: dict[str, Any] | None
+) -> dict[str, Any] | None:
+    """``current`` attributes with ``new``'s document ``filters`` unioned in.
+
+    An item merged from several text units cites every one of them, so it
+    belongs under each of their documents' filter values: a key with several
+    distinct values holds them as a sorted list (an OpenSearch ``term``
+    matches any element), one value stays a scalar. Every other attribute is
+    left as ``current`` has it. Without this the merged item kept the filters
+    of whichever instance the merge happened to keep.
+    """
+    key = Constants.FILTERS.value
+    new_filters = (new or {}).get(key)
+    if not isinstance(new_filters, dict) or not new_filters:
+        return current
+    current_filters = (current or {}).get(key)
+    values: dict[str, list[Any]] = {}
+    for filters in (current_filters, new_filters):
+        if not isinstance(filters, dict):
+            continue
+        for name, value in filters.items():
+            merged = values.setdefault(name, [])
+            for item in value if isinstance(value, list) else [value]:
+                if item is not None and item not in merged:
+                    merged.append(item)
+    union = {
+        name: merged[0] if len(merged) == 1 else sorted(merged, key=str)
+        for name, merged in values.items()
+        if merged
+    }
+    return {**(current or {}), key: union}
 
 
 def coerce_llm_text(value: Any, *, join: bool = False) -> str:

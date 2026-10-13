@@ -263,6 +263,29 @@ def test_resolve_graph_renames_edges_onto_the_merged_entity(
     assert rels[0].source_name == "Acme"
 
 
+def test_resolve_graph_unions_document_filters(resolver: GraphResolver) -> None:
+    entities = [
+        _ent(
+            "acme-inc",
+            "Acme Inc",
+            text_unit_ids=["t1", "t2"],
+            attributes={"filters": {"category": "research"}, "index": "a"},
+        ),
+        _ent(
+            "acme",
+            "Acme",
+            text_unit_ids=["t3"],
+            attributes={"filters": {"category": "finance"}, "index": "a"},
+        ),
+    ]
+    result, _ = resolver.resolve_graph(entities, [])
+    (entity,) = result["entities"]
+    assert entity.attributes == {
+        "filters": {"category": ["finance", "research"]},
+        "index": "a",
+    }
+
+
 def _fuzzy_pool_resolver(*, ignore_errors: bool) -> GraphResolver:
     config = Config()
     config.processing.fuzzy_entity_resolution = True

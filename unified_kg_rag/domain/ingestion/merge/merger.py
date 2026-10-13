@@ -13,6 +13,7 @@ from __future__ import annotations
 from collections.abc import Collection
 from typing import Any
 
+from unified_kg_rag.domain.ingestion.base_processor import union_document_filters
 from unified_kg_rag.domain.ingestion.base_resolver import (
     FuzzyMatcher,
     entity_types_compatible,
@@ -45,13 +46,14 @@ def _merge_attributes(
 ) -> dict[str, Any] | None:
     """Union two attribute maps, the newer value winning on a shared key.
 
-    Same rule as the full-build resolver's ``_merge_attributes``. Attributes
-    carry the index suffix the item is written under, so dropping them would
-    move a merged item into the default suffix.
+    Same rule as the full-build resolver's ``_merge_attributes``, document
+    ``filters`` unioned (``union_document_filters``). Attributes carry the
+    index suffix the item is written under, so dropping them would move a
+    merged item into the default suffix.
     """
     if not old and not new:
         return None
-    return {**(old or {}), **(new or {})}
+    return union_document_filters({**(old or {}), **(new or {})}, old)
 
 
 def _merge_entity_fields(surviving: Entity, incoming: Entity) -> None:

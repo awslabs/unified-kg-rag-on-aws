@@ -17,6 +17,7 @@ from unified_kg_rag.domain.ingestion.base_processor import (
     BaseProcessor,
     coerce_llm_text,
     group_by_text_unit,
+    union_document_filters,
 )
 from unified_kg_rag.domain.ingestion.descriptions import merge_descriptions
 from unified_kg_rag.domain.ingestion.entity_grounding import (
@@ -1108,6 +1109,9 @@ class GraphGleaner(BaseProcessor):
                         + (entity.text_unit_ids or [])
                     )
                 )
+                master_entity.attributes = union_document_filters(
+                    master_entity.attributes, entity.attributes
+                )
 
         for key, entity in entities_map.items():
             if type_counts[key]:
@@ -1165,6 +1169,9 @@ class GraphGleaner(BaseProcessor):
                     existing_rel = relationships_map[key]
                     existing_rel.description = merge_descriptions(
                         (existing_rel.description, rel.description)
+                    )
+                    existing_rel.attributes = union_document_filters(
+                        existing_rel.attributes, rel.attributes
                     )
                     # A gleaned edge adds the strength of each text unit it
                     # newly cites. One the edge already cites keeps its stored

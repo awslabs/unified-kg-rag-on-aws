@@ -1004,7 +1004,7 @@ run-rag --query "..." --mode search --output-format json --config-path config.ya
 run-rag --query "..." --verbose --config-path config.yaml
 
 # Attribute filters
-run-rag --query "..." --filters attr_category:research type:PERSON --config-path config.yaml
+run-rag --query "..." --filters attr_category:research type:person --config-path config.yaml
 ```
 
 필터는 OpenSearch에서는 `term`/`terms`/`range` 절로, Neptune에서는 `has` 단계로
@@ -1022,12 +1022,16 @@ run-rag --query "..." --filters attr_category:research type:PERSON --config-path
 
 OpenSearch에서 `attr_<key>`는 문서 속성입니다. 문서의 `filters` 메타데이터 항목
 `<key>`가 `attr_<key>`로 인덱싱됩니다. Neptune 엔티티 정점에서 `attr_<key>`는
-엔티티 자체에서 추출한 속성입니다(예: `attr_role`). 정확히 필터링하려면 정확 일치
+엔티티 자체에서 추출한 속성입니다(예: `attr_role`). 여러 문서에서 추출한 엔티티나 관계는
+`filters` 키마다 그 문서들의 값을 모두(목록으로) 가지므로 그중 어느 값으로 필터링해도
+일치합니다. 엔티티와 주장의 `type`, 주장의 `status`는 소문자로 저장되고 `term`은
+정확히 일치해야 하므로 소문자 값으로 필터링하세요(`type:PERSON`이 아니라
+`type:person`). 정확히 필터링하려면 정확 일치
 필드(keyword 또는 숫자)를 쓰세요. `description`처럼 분석되는 텍스트 필드에 `term`
 필터를 걸면 소문자 토큰 하나와만 일치합니다. 범위 필터는 Python API에서
 `{"gte": ..., "lte": ...}` 형태로 넘깁니다.
 
-필터는 해당 필드를 선언한 저장소에만 적용됩니다. 예를 들어 `type:PERSON`은 엔티티,
+필터는 해당 필드를 선언한 저장소에만 적용됩니다. 예를 들어 `type:person`은 엔티티,
 주장, Neptune 엔티티를 좁히고 텍스트 단위는 필터링하지 않습니다. 두 저장소는
 `attr_<key>`를 다르게 다룹니다.
 

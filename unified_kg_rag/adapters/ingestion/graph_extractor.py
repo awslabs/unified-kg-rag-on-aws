@@ -13,7 +13,10 @@ from unified_kg_rag.adapters.llm.chain_factory import (
 )
 from unified_kg_rag.adapters.llm.retry import transient_error_predicate
 from unified_kg_rag.adapters.providers import Providers
-from unified_kg_rag.domain.ingestion.base_processor import BaseProcessor
+from unified_kg_rag.domain.ingestion.base_processor import (
+    BaseProcessor,
+    union_document_filters,
+)
 from unified_kg_rag.domain.ingestion.entity_grounding import is_grounded
 from unified_kg_rag.domain.ingestion.relationship_endpoints import (
     cite_relationship_endpoints,
@@ -457,6 +460,7 @@ class GraphExtractor(BaseProcessor):
                 current if current is not None else 0.0,
                 new if new is not None else 0.0,
             ),
+            "attributes": union_document_filters,
         }
 
         merged = self._merge_items(
@@ -490,6 +494,7 @@ class GraphExtractor(BaseProcessor):
             )
             + (new if isinstance(new, (int | float)) else 0.0),
             "description": self._merge_description,
+            "attributes": union_document_filters,
         }
 
         merged = self._merge_items(

@@ -1051,7 +1051,7 @@ run-rag --query "..." --mode search --output-format json --config-path config.ya
 run-rag --query "..." --verbose --config-path config.yaml
 
 # Attribute filters
-run-rag --query "..." --filters attr_category:research type:PERSON --config-path config.yaml
+run-rag --query "..." --filters attr_category:research type:person --config-path config.yaml
 ```
 
 Filters compile to `term`/`terms`/`range` clauses on OpenSearch and `has`
@@ -1070,13 +1070,17 @@ steps on Neptune. Each store accepts the fields its indexer writes:
 On OpenSearch, `attr_<key>` is a document attribute: entry `<key>` of a
 document's `filters` metadata is indexed as `attr_<key>`. On Neptune entity
 vertices, `attr_<key>` holds the entity's own extracted attributes (for example
-`attr_role`). Use exact-match fields (keyword or
+`attr_role`). An entity or relationship extracted from several documents
+carries every one of their values for a `filters` key (as a list), so it
+matches a filter on any of them. Entity and claim `type` and claim `status`
+are stored lowercase and `term` matches exactly, so filter on the lowercase
+value (`type:person`, not `type:PERSON`). Use exact-match fields (keyword or
 numeric) for precise filtering; a `term` filter on an analyzed text field such
 as `description` matches single lowercase tokens. A range filter takes
 `{"gte": ..., "lte": ...}` through the Python API.
 
 Each filter applies only to the stores that declare its field, so
-`type:PERSON` narrows entities, claims, and Neptune entities and leaves text
+`type:person` narrows entities, claims, and Neptune entities and leaves text
 units unfiltered. The two stores treat `attr_<key>` differently:
 
 - OpenSearch applies `attr_<key>` and `attributes.<path>` strictly on text
