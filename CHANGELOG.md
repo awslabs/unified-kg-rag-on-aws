@@ -323,6 +323,11 @@ Library API (Python callers and custom backends).
   install (#251).
 
 ### Fixed
+- The `answer_match` evaluator no longer reads `(예: …)` ("for example") as
+  a yes, or the options in `Yes/No: No` and `(네/아니요): 아니요` as the
+  answer. A polarity word other than `yes` answers only when sentence
+  punctuation, a dash or the line end follows it, and a word next to `/` is
+  skipped (#PR).
 - `ragas` evaluation counts each retrieved context once per batch. With
   `context_precision` selected, the count-capped selection walked the
   contexts again, which repeated every CountTokens call once a batch had more
