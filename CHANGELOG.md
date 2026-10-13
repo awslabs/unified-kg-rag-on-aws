@@ -263,6 +263,10 @@ Library API (Python callers and custom backends).
   computes its own) and which took minutes on a graph of tens of thousands
   of entities; its `centrality_stats` metrics are gone. It also no longer
   caches a copy of graph resolution's entities and relationships (#248).
+- CDK: a failed ingestion phase notifies the alarm topic once. The
+  `PipelineFailures` alarm is removed; the state machine's failure message
+  (execution id and error) already covers it, and `PipelineTimedOutOrAborted`
+  still reports runs that never reach a phase's error handler (#PR).
 - CDK: the OpenSearch domain publishes only its application logs. The slow
   search and index logs stayed empty (the app sets no slow-log thresholds),
   so their two log groups are removed; the domain is updated in place

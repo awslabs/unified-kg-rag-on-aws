@@ -18,7 +18,7 @@ can coexist in one account/region. Every resource also carries an `env` tag.
 | `GraphRagStorage` | Neptune cluster (IAM auth), OpenSearch domain (VPC, encrypted), DynamoDB doc-status table, S3 cache bucket |
 | `GraphRagCompute` | ECR repo (lifecycle keeps the 10 newest images and never expires the deployed `image_tag`), ECS cluster, Fargate task definition + least-privilege task role (S3 cache read + put, no delete). Injects `OPENSEARCH_NUMBER_OF_REPLICAS` = 1 on a multi-node domain (0 on a single node) |
 | `GraphRagOrchestration` | Step Functions state machine — 4 resumable phases on Fargate, retried only when ECS cannot start the task (a phase that exits non-zero is not rerun), one JSON failure notification (execution id, error, cause) + SNS alarm topic. The topic is encrypted with its own customer-managed key whose policy lets CloudWatch alarms publish (the AWS-managed `alias/aws/sns` key cannot, so alarm notifications would be dropped) |
-| `GraphRagObservability` | CloudWatch dashboard + alarms: pipeline failed, timed out or aborted, silent indexing-failure and extraction-failure (EMF), and store health (OpenSearch cluster-red / free-storage / JVM pressure, DynamoDB write throttling, Neptune CPU / memory / Gremlin server errors sustained for 3 consecutive minutes, so retried write conflicts during parallel writes do not page) → SNS. Synth warns if `alarm_email` is unset (alarms would have no subscriber) |
+| `GraphRagObservability` | CloudWatch dashboard + alarms: pipeline timed out or aborted (a failed phase is already reported by the orchestration failure notification, so failed executions have no alarm), silent indexing-failure and extraction-failure (EMF), and store health (OpenSearch cluster-red / free-storage / JVM pressure, DynamoDB write throttling, Neptune CPU / memory / Gremlin server errors sustained for 3 consecutive minutes, so retried write conflicts during parallel writes do not page) → SNS. Synth warns if `alarm_email` is unset (alarms would have no subscriber) |
 | `GraphRagSecurity` | Shared customer-managed KMS key (optional, `use_cmk`) |
 | `GraphRagGuardrail` | Bedrock Guardrail, **pinned to `bedrock_region`** (creates and keeps a baseline PII/prompt-attack guardrail; empty with `create_guardrail=false`). It anonymizes email, phone and card numbers but not `NAME`: names are corpus content, and anonymizing them on the query path puts `{NAME}` in answers and removes entity-search seeds. The app applies the guardrail's `DRAFT` version unless `guardrail_version` is set |
 
@@ -154,7 +154,7 @@ The stacks apply WAF defaults out of the box — least-privilege IAM
 domain-scoped `es:ESHttp*`), encryption in transit + at rest, Graviton instances,
 S3 cache
 lifecycle (checkpoint prefixes only) + access logs, Step Functions X-Ray tracing + execution logging,
-CloudWatch dashboard + failure alarm, and an SSL-only alarm topic. Production
+CloudWatch dashboard + failure notifications and alarms, and an SSL-only alarm topic. Production
 hardening is opt-in via the flags above. Validate with:
 
 ```bash
