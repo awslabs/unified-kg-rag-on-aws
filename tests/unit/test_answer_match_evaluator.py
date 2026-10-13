@@ -127,6 +127,11 @@ class TestNormalization:
             ('He said "no".', "no", 1.0),
             ("\u201cNo\u201d, it is not.", "no", 1.0),
             ("| Question | Answer |\n|---|---|\n| Warranty? | **No** |", "no", 1.0),
+            ("Nope, the Buyer pays.", "no", 1.0),
+            # a hyphen joins "no" to the next word, the non-breaking one too
+            ("No-cap clause. Yes, it applies.", "yes", 1.0),
+            ("No\u2011cap clause. Yes, it applies.", "yes", 1.0),
+            ("No\u2010cap clause. Yes, it applies.", "yes", 1.0),
             # known limit: other punctuation before a word still reads as "no"
             ("There is no (explicit) cap; yes, it may.", "no", 1.0),
         ],
@@ -176,6 +181,12 @@ class TestNormalization:
             ("根据合同第3条，是。", "是", 1.0),
             ("合同规定：是", "是", 1.0),
             ("不是。卖方不承担运费。", "否", 1.0),
+            ("아닙니다. 상한이 없습니다.", "아니요", 1.0),
+            ("아닙니다. 상한이 없습니다.", "예", 0.0),
+            ("没有，合同里没有上限。", "否", 1.0),
+            ("没有，合同里没有上限。", "是", 0.0),
+            # inside a longer word "没有" is no answer ("有没有": whether)
+            ("合同有没有上限？是的，有。", "是", 1.0),
             ("否则，买方可以终止合同。", "否", 0.0),
             ("倉庫にはいります。", "はい", 0.0),
             # "아니요"/"아니오" have no second meaning: any punctuation answers

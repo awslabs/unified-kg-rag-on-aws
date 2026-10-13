@@ -1451,8 +1451,9 @@ set `enabled_evaluators: [answer_match, retrieval, graph_aware]`.
   spacing next to CJK letters is ignored (`3억 원` = `3억원`,
   `가나다 상사` = `가나다상사`). A single-word CJK gold is matched as a
   substring, but not inside a longer number or Latin word (`2년` does not
-  match `12년`). A yes/no gold (`yes`/`no`; Korean `예`/`네`/`아니요`/`아니오`;
-  Chinese `是`/`对`/`否`/`不是`; Japanese `はい`/`いいえ`) is scored by the
+  match `12년`). A yes/no gold (`yes`/`no`/`nope`; Korean
+  `예`/`네`/`아니요`/`아니오`/`아닙니다`; Chinese `是`/`对`/`否`/`不是`/`没有`;
+  Japanese `はい`/`いいえ`) is scored by the
   answer's polarity, as in HotpotQA, since almost any long answer contains
   the word "no" (or `예` in `예외`): the first whole yes/no word that answers
   the question, skipping Markdown headings, a word next to `/` (the options

@@ -391,6 +391,11 @@ Library API (Python callers and custom backends).
   `resource_already_exists_exception`, failing the indexing stage; a resent
   delete got `index_not_found_exception`, so `indexing.reset` reported the
   clear as failed. Both now count as done (#PR).
+- `answer_match` reads Korean `아닙니다`, Chinese `没有` and English `Nope`
+  as a "no" answer; such an answer had no polarity and scored 0.0 against a
+  `no` gold. "No" joined to the next word by a non-breaking hyphen
+  (`No‑cap clause`) is no longer read as the answer, as the ASCII hyphen
+  already was not (#PR).
 - `langchain-aws` is required at 1.8.1 or later (was 1.7.0), the first
   release that reports a prompt longer than the model's context as
   `BedrockContextOverflowError`. On an older install Bedrock's
