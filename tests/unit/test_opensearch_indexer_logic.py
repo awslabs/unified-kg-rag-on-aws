@@ -175,12 +175,12 @@ def test_text_unit_embedding_text_falls_back_to_text(indexer) -> None:
 
 
 def test_index_community_reports_prepare_doc_via_closure(indexer, mocker) -> None:
-    # index_community_reports defines prepare_doc inline; capture it through
+    # Capture the doc builder index_community_reports hands to
     # _index_item_type to test the doc shape it produces.
     captured = {}
 
-    def fake_index_item_type(**kwargs):
-        captured["prepare"] = kwargs["prepare_doc_func"]
+    def fake_index_item_type(items, spec, suffixes=()):
+        captured["prepare"] = spec.prepare_doc
         return IndexingStats()
 
     mocker.patch.object(indexer, "_index_item_type", side_effect=fake_index_item_type)
