@@ -839,8 +839,7 @@ OpenSearch + Neptune.
 | `--pipeline-id` | `$GRAPHRAG_PIPELINE_ID` | Existing run to resume/inspect. If the flag is omitted it falls back to the `GRAPHRAG_PIPELINE_ID` environment variable. The id names the run's cache directory and S3 prefix, so it accepts letters, digits, `.`, `_` and `-` only: up to 128 characters, starting with a letter or digit, with no `..`. |
 | `--resume-from-stage` | — | Stage to resume from, by name, case-insensitive (requires `--pipeline-id`); an unknown name is a usage error (exit 2) |
 | `--verify-metadata` | off | Verify pipeline metadata integrity (needs `--pipeline-id`); exits non-zero when it is corrupt or the run is not found |
-| `--repair-metadata` | off | Attempt metadata repair (needs `--pipeline-id`); asks for confirmation, and exits non-zero when the repair fails |
-| `--yes`, `-y` | off | Answer yes to confirmation prompts (continuing after a failed integrity check, `--repair-metadata`). Without a terminal on stdin a prompt cannot be asked, so the run fails unless `--yes` is passed |
+| `--yes`, `-y` | off | Answer yes to confirmation prompts (continuing after a failed integrity check). Without a terminal on stdin a prompt cannot be asked, so the run fails unless `--yes` is passed |
 | `--continue-on-error` | off | Keep going when a stage errors. The documents a crashed extraction, resolution or community stage left without artifacts are recorded FAILED, so the next incremental run re-processes them |
 | `--enabled-stages` | all | Comma-separated stage list to run |
 | `--metrics-sink` | `none` | `none`, or `cloudwatch` (emits CloudWatch EMF — Embedded Metric Format — metrics to stdout as dimensionless series; `pipeline_id` is recorded as a log property, not a dimension, so runs add no new metric series). A run emits the metrics of the stages it executed, so the phases of a phased run do not repeat each other's counts |

@@ -1375,33 +1375,6 @@ class DataIngestionPipeline:
         logger.info("=" * 60)
         logger.info(summary)
 
-    def repair_pipeline_metadata(self, pipeline_id: str) -> bool:
-        """Repair the on-disk metadata for ``pipeline_id``.
-
-        Loads the existing metadata, reconstructs a :class:`PipelineContext`, and
-        re-persists it (which re-merges stage results into canonical order). Takes
-        a pipeline_id — symmetric with :meth:`verify_pipeline_metadata` — so the
-        CLI does not have to hand-build a context.
-        """
-        logger.info("Attempting to repair pipeline metadata for: %s", pipeline_id)
-
-        try:
-            metadata = self.state_manager.load_pipeline_metadata(pipeline_id)
-            context = self.state_manager.create_context_from_metadata(metadata)
-            result = self.state_manager.repair_pipeline_metadata(context)
-            if result:
-                logger.info("Pipeline metadata repair successful for: %s", pipeline_id)
-            else:
-                logger.warning("Pipeline metadata repair failed for: %s", pipeline_id)
-            return result
-        except Exception as e:
-            logger.error(
-                "Error during pipeline metadata repair for %s: %s",
-                pipeline_id,
-                e,
-            )
-            return False
-
     def verify_pipeline_metadata(self, pipeline_id: str) -> bool:
         logger.info("Verifying pipeline metadata for: %s", pipeline_id)
 

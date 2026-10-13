@@ -68,6 +68,10 @@ ignored, so check the start-up warnings after upgrading.
   `InvalidFilterError` (#123).
 - IaC: `create_guardrail` decides whether the stack owns a guardrail; bring
   your own with `-c create_guardrail=false` (#103).
+- `run-ingestion --repair-metadata` is removed. It loaded the metadata it
+  was meant to repair, so on a corrupt file it failed like
+  `--verify-metadata` and never repaired anything; use `--verify-metadata`
+  and, for a corrupt run, `--force-rebuild` or a new `--pipeline-id` (#PR).
 
 Defaults. Set the old value explicitly to keep the previous behaviour.
 - `graph.visualization.enabled` defaults to `false`; set it to `true` or
@@ -585,7 +589,7 @@ Library API (Python callers and custom backends).
   the integrity check built its cache keys before the corpus fingerprint was
   known, so it reported every stage missing and prompted, which crashed
   without a terminal. Prompts now fail with a clear message without a
-  terminal unless `--yes` is passed, including `--repair-metadata` (#223).
+  terminal unless `--yes` is passed (#223).
 - Retrying a failed Step Functions execution with the same `pipeline_id`
   resumes at the failed stage: an earlier attempt's failed stage result is no
   longer merged into the retry (it failed every phase), and the phases no

@@ -151,17 +151,12 @@ class CommandLineInterface:
             help="Verify the integrity and consistency of pipeline metadata files",
         )
         parser.add_argument(
-            "--repair-metadata",
-            action="store_true",
-            help="Attempt automatic repair of corrupted or inconsistent metadata files",
-        )
-        parser.add_argument(
             "--yes",
             "-y",
             action="store_true",
             help="Answer yes to confirmation prompts (continuing after a failed "
-            "integrity check, --repair-metadata). Without it, a prompt that "
-            "cannot be asked because stdin is not a terminal fails the run",
+            "integrity check). Without it, a prompt that cannot be asked "
+            "because stdin is not a terminal fails the run",
         )
         parser.add_argument(
             "--continue-on-error",
@@ -226,9 +221,7 @@ class IngestionPipelineRunner:
         self._validate_args()
 
     def _validate_args(self) -> None:
-        metadata_only = self.args.verify_metadata or self.args.repair_metadata
-
-        if not metadata_only and not self.args.source_directory:
+        if not self.args.verify_metadata and not self.args.source_directory:
             console.print(
                 "[red]Error: --source-directory is required for pipeline execution.[/red]"
             )
@@ -270,7 +263,7 @@ class IngestionPipelineRunner:
             )
             sys.exit(1)
 
-        if metadata_only and not self.args.pipeline_id:
+        if self.args.verify_metadata and not self.args.pipeline_id:
             console.print(
                 "[red]Error: --pipeline-id is required for metadata operations.[/red]"
             )
@@ -385,58 +378,31 @@ class IngestionPipelineRunner:
         if not self.pipeline:
             raise ValueError("Pipeline not initialized")
 
-        if not (self.args.verify_metadata or self.args.repair_metadata):
+        if not self.args.verify_metadata:
             return False
 
-        if self.args.verify_metadata:
+        console.print(
+            f"\n[yellow]Verifying metadata for pipeline: '{self.args.pipeline_id}'[/yellow]"
+        )
+        if not self.pipeline.state_manager.pipeline_exists(self.args.pipeline_id):
             console.print(
-                f"\n[yellow]Verifying metadata for pipeline: '{self.args.pipeline_id}'[/yellow]"
+                f"[red]✗ No metadata found for pipeline "
+                f"'{self.args.pipeline_id}' under "
+                f"'{self.args.cache_directory}'[/red]"
             )
-            if not self.pipeline.state_manager.pipeline_exists(self.args.pipeline_id):
-                console.print(
-                    f"[red]✗ No metadata found for pipeline "
-                    f"'{self.args.pipeline_id}' under "
-                    f"'{self.args.cache_directory}'[/red]"
-                )
-                raise PipelineExecutionError(
-                    f"Pipeline '{self.args.pipeline_id}' not found"
-                )
-            if self.pipeline.verify_pipeline_metadata(self.args.pipeline_id):
-                console.print("[green]✓ Metadata file is valid[/green]")
-            else:
-                console.print("[red]✗ Metadata file is corrupted or invalid[/red]")
-                if not self.args.repair_metadata:
-                    # Raise so main() exits non-zero: a scripted check must see
-                    # the corruption, not a success exit code.
-                    raise PipelineExecutionError(
-                        f"Metadata for pipeline '{self.args.pipeline_id}' is "
-                        "corrupted or invalid"
-                    )
-
-        if self.args.repair_metadata:
-            console.print(
-                f"\n[yellow]Attempting to repair metadata for pipeline: {self.args.pipeline_id}[/yellow]"
+            raise PipelineExecutionError(
+                f"Pipeline '{self.args.pipeline_id}' not found"
             )
-            if not self._confirm("This may overwrite existing metadata. Continue?"):
-                console.print("[yellow]Repair operation cancelled.[/yellow]")
-                return True
-
-            try:
-                repaired = self.pipeline.repair_pipeline_metadata(self.args.pipeline_id)
-            except Exception as e:
-                console.print(f"[red]Error during repair: {e}[/red]")
-                raise PipelineExecutionError(
-                    f"Metadata repair failed for pipeline '{self.args.pipeline_id}'"
-                ) from e
-            if not repaired:
-                console.print("[red]✗ Failed to repair metadata file[/red]")
-                raise PipelineExecutionError(
-                    f"Metadata repair failed for pipeline '{self.args.pipeline_id}'"
-                )
-            console.print("[green]✓ Metadata file repaired successfully[/green]")
-            return True
-
-        return self.args.verify_metadata and not self.args.repair_metadata
+        if not self.pipeline.verify_pipeline_metadata(self.args.pipeline_id):
+            console.print("[red]✗ Metadata file is corrupted or invalid[/red]")
+            # Raise so main() exits non-zero: a scripted check must see the
+            # corruption, not a success exit code.
+            raise PipelineExecutionError(
+                f"Metadata for pipeline '{self.args.pipeline_id}' is "
+                "corrupted or invalid"
+            )
+        console.print("[green]✓ Metadata file is valid[/green]")
+        return True
 
     def _execute_pipeline(self) -> PipelineContext:
         if not self.pipeline:
@@ -493,7 +459,7 @@ class IngestionPipelineRunner:
 
     def _require_indexing_endpoints(self, pipeline_config: PipelineConfig) -> None:
         # Fail before the paid LLM stages rather than at the indexing stage.
-        if self.args.verify_metadata or self.args.repair_metadata:
+        if self.args.verify_metadata:
             return
         if not pipeline_config.stages_enabled.get(PipelineStageType.INDEXING):
             return
