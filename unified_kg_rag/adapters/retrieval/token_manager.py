@@ -11,7 +11,6 @@ from unified_kg_rag.adapters.aws.token_counter import is_count_tokens_known_unsu
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.models import Config, RetrievalResult
 from unified_kg_rag.domain.prompts import AnswerGenerationPrompt
-from unified_kg_rag.domain.retrieval.mixins import MetricsMixin
 from unified_kg_rag.ports.model_factory import (
     LanguageModelInfo,
     effective_max_output_tokens,
@@ -79,7 +78,7 @@ class OptimizedContext(BaseModel):
     )
 
 
-class TokenManager(MetricsMixin):
+class TokenManager:
     MIN_DERIVED_CONTEXT_TOKENS: ClassVar[int] = 1024
     # Held back from the configured/derived budget for the answer prompt's own
     # text. Not taken from a caller's explicit per-query budget, which already
@@ -273,10 +272,6 @@ class TokenManager(MetricsMixin):
         total_tokens = sum(section.token_count for section in selected_sections)
         sections_included = len(selected_sections)
         sections_excluded = len(all_sections) - sections_included
-
-        self._record_optimization_metrics(
-            total_tokens, sections_included, sections_excluded
-        )
 
         return (
             OptimizedContext(
@@ -532,16 +527,6 @@ class TokenManager(MetricsMixin):
                 "metadata": {**section.metadata, "truncated": True},
             }
         )
-
-    def _record_optimization_metrics(
-        self,
-        total_tokens: int,
-        sections_included: int,
-        sections_excluded: int,
-    ) -> None:
-        self._record_metric("optimization_tokens", total_tokens)
-        self._record_metric("sections_included", sections_included)
-        self._record_metric("sections_excluded", sections_excluded)
 
     @staticmethod
     def build_context_string(optimized_context: OptimizedContext) -> str:

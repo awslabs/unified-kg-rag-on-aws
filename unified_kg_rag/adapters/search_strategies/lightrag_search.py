@@ -285,8 +285,6 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
         )
 
         processing_time = time.time() - start_time
-        self._record_timing("processing_time", processing_time)
-        self._record_metric("retrieved_count", len(final_results))
 
         logger.info(
             "LightRAG search completed - %d results in %.3fs",

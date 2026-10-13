@@ -64,7 +64,7 @@ unified_kg_rag/
 │  ├─ ingestion/        #   pure algorithms: delta_detector, graph_analyzer/
 │  │  └─ merge/         #   builder/resolver, claim_resolver, merge/merger
 │                       #   (IncrementalIndexer is orchestration, so it lives in application/)
-│  ├─ retrieval/        #   strategy_registry, MetricsMixin
+│  ├─ retrieval/        #   strategy_registry, index_prefixes
 │  └─ prompts/          #   version-controlled prompt templates
 ├─ ports/               # abstract interfaces the domain depends on (DocStatusPort,
 │                       #   BaseIndexer/GraphIndexer/VectorIndexer,

@@ -10,7 +10,6 @@ from langchain_core.documents import Document
 
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.models import Config, FusionMethod, RetrievalResult
-from unified_kg_rag.domain.retrieval.mixins import MetricsMixin
 from unified_kg_rag.ports.model_factory import RerankFactoryPort
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.utils import compute_hash
@@ -30,7 +29,7 @@ def _with_top_n(model: Any, top_n: int) -> Any:
     return clone
 
 
-class HybridScorer(MetricsMixin):
+class HybridScorer:
     def __init__(
         self,
         config: Config,
@@ -151,9 +150,6 @@ class HybridScorer(MetricsMixin):
             final_results = combined_results[:top_k]
 
         processing_time = time.time() - start_time
-        self._record_timing("processing_time", processing_time)
-        self._record_metric("initial_fused_count", len(combined_results))
-        self._record_metric("final_fused_count", len(final_results))
 
         logger.info(
             "Fusion completed: %s -> %s results in %.3fs",
@@ -200,7 +196,6 @@ class HybridScorer(MetricsMixin):
             logger.debug(
                 "Diversity filtering removed %s similar results", filtered_count
             )
-        self._record_metric("diversity_filtered_count", filtered_count)
         return kept
 
     @staticmethod
@@ -574,8 +569,6 @@ class HybridScorer(MetricsMixin):
                         reranked_results.append(reranked_result)
 
             processing_time = time.time() - start_time
-            self._record_timing("processing_time", processing_time)
-            self._record_metric("reranked_count", len(reranked_results))
 
             if not reranked_results:
                 # The rerank model returned nothing usable (empty output, or all

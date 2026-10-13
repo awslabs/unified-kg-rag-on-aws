@@ -103,9 +103,6 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
             traversal_results = await self._traverse_from_entities(g, seed_ids, query)
             results = self._process_traversal_results(traversal_results, query)
 
-            self._record_metric("retrieved_count", len(results))
-            self._record_metric("seed_entity_count", len(seed_ids))
-
             processing_time = time.time() - start_time
             logger.info(
                 "Neptune retrieval completed - retrieved: %s results (%.2fs)",
@@ -116,7 +113,6 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
             return results
 
         except Exception as e:
-            self._record_metric("error_count", 1)
             # Re-raise clearly-fatal errors (auth/credentials/endpoint/
             # connection) so a broken configuration is not silently reported as
             # "no results"; degrade to an empty list only on transient failures.
@@ -130,8 +126,6 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
                 exc_info=True,
             )
             return []
-        finally:
-            self._record_timing("total_retrieval", time.time() - start_time)
 
     @staticmethod
     def _seed_ids(query: SearchQuery) -> list[Any]:

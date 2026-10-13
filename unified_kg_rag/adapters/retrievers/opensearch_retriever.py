@@ -284,7 +284,6 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             final_results = all_results[: query.top_k * query.retrieval_multiplier]
 
             processing_time = time.time() - start_time
-            self._record_timing("retrieval_time", processing_time)
 
             logger.info(
                 "OpenSearch retrieval completed - retrieved: %s results (%.2fs)",

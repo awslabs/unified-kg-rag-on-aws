@@ -76,8 +76,6 @@ def _retriever(config: Config, client: _FakeOpenSearchClient) -> OpenSearchRetri
         inst, "_index_filter_fields", inst._initialize_index_filter_fields()
     )
     object.__setattr__(inst, "_opensearch_client", client)
-    object.__setattr__(inst, "_record_timing", lambda *a, **k: None)
-    object.__setattr__(inst, "_record_metric", lambda *a, **k: None)
     return inst
 
 

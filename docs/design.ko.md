@@ -66,7 +66,7 @@ unified_kg_rag/
 │  ├─ ingestion/        #   순수 알고리즘: delta_detector, graph_analyzer/
 │  │  └─ merge/         #   builder/resolver, claim_resolver, merge/merger
 │                       #   (IncrementalIndexer는 오케스트레이션이므로 application/에 있음)
-│  ├─ retrieval/        #   strategy_registry, MetricsMixin
+│  ├─ retrieval/        #   strategy_registry, index_prefixes
 │  └─ prompts/          #   버전 관리되는 프롬프트 템플릿
 ├─ ports/               # 도메인이 의존하는 추상 인터페이스 (DocStatusPort,
 │                       #   BaseIndexer/GraphIndexer/VectorIndexer,

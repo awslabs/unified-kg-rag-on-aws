@@ -180,13 +180,6 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             final_results = final_results[: query.top_k]
         processing_time = time.time() - start_time
 
-        self._record_search_metrics(
-            processing_time,
-            len(retrieved_communities),
-            len(selected_communities),
-            len(final_results),
-        )
-
         logger.info(
             "Search completed - retrieved: %s results (%.3fs)",
             len(final_results),
@@ -711,18 +704,6 @@ class GlobalSearchStrategy(BaseSearchStrategy):
 
             logger.error("Map-reduce synthesis failed: %s", e)
             return results
-
-    def _record_search_metrics(
-        self,
-        processing_time: float,
-        retrieved_count: int,
-        selected_count: int,
-        final_count: int,
-    ) -> None:
-        self._record_timing("processing_time", processing_time)
-        self._record_metric("retrieved_count", retrieved_count)
-        self._record_metric("selected_count", selected_count)
-        self._record_metric("final_count", final_count)
 
     def _was_map_reduce_applied(self, final_results: list[RetrievalResult]) -> bool:
         if not self.global_search_config.enable_map_reduce:

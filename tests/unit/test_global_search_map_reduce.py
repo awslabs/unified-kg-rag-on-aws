@@ -428,7 +428,6 @@ async def test_asearch_all_filtered_yields_empty_result_with_flag() -> None:
     strat._augment_and_rerank_communities = AsyncMock(  # type: ignore[method-assign]
         return_value=communities
     )
-    strat._record_search_metrics = lambda *a, **k: None  # type: ignore[method-assign]
 
     result = await strat.asearch(SearchQuery(query="q"))
 

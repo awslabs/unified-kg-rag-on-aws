@@ -335,25 +335,6 @@ async def test_retrieve_documents_swallows_retriever_error() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# _record_search_metrics
-# --------------------------------------------------------------------------- #
-
-
-def test_record_search_metrics_populates_metrics() -> None:
-    strat = _bare_strategy()
-    strat._metrics = {"timings": {}, "metrics": {}}
-    strat._record_search_metrics(
-        1.5, retrieved_count=7, entity_count=3, text_unit_count=9
-    )
-    assert strat._metrics["timings"]["processing_time"] == 1.5
-    assert strat._metrics["metrics"] == {
-        "retrieved_count": 7,
-        "entity_count": 3,
-        "text_unit_count": 9,
-    }
-
-
-# --------------------------------------------------------------------------- #
 # _rank_text_unit_ids / _restore_rank  (chunk candidates must be ranked)
 # --------------------------------------------------------------------------- #
 

@@ -24,7 +24,6 @@ from unified_kg_rag.domain.models import (
     SearchResult,
     SearchType,
 )
-from unified_kg_rag.domain.retrieval.mixins import MetricsMixin
 from unified_kg_rag.shared import (
     ConfigurationError,
     IndexNotFoundError,
@@ -99,10 +98,9 @@ def _retrieval_attributes(results: list[RetrievalResult]) -> dict[str, Any]:
     return attributes
 
 
-class BaseGraphRAGRetriever(BaseRetriever, MetricsMixin, ABC):
+class BaseGraphRAGRetriever(BaseRetriever, ABC):
     def __init__(self, config: Config, **kwargs: Any) -> None:
         BaseRetriever.__init__(self, **kwargs)
-        MetricsMixin.__init__(self, **kwargs)
         self._config = config
 
     def _get_relevant_documents(
@@ -153,15 +151,13 @@ class BaseGraphRAGRetriever(BaseRetriever, MetricsMixin, ABC):
         return graph_label(prefix, suffix, self._config.indexing.additional_suffix)
 
 
-class BaseSearchStrategy(MetricsMixin, ABC):
+class BaseSearchStrategy(ABC):
     """A search algorithm over role-keyed retrievers.
 
     ``GraphRAGChain`` builds one instance per strategy and event loop and
     reuses it for every query, including concurrent ones. Subclasses must
     therefore keep per-query state local to ``asearch`` (and what it calls)
-    and treat instance attributes as read-only after ``__init__``. The
-    ``MetricsMixin`` counters are the one exception: they are last-run
-    diagnostics, never part of a ``SearchResult``.
+    and treat instance attributes as read-only after ``__init__``.
     """
 
     def __init__(
