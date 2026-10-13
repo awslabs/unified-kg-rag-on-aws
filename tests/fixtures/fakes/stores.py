@@ -21,8 +21,22 @@ from unified_kg_rag.adapters.storage.neptune_codec import (
     relationship_label,
     relationship_properties,
 )
-from unified_kg_rag.domain.models import Config, Constants
+from unified_kg_rag.domain.models import Claim, Config, Constants
 from unified_kg_rag.ports.indexer import BaseIndexer, IndexingStats
+
+# The claim fields the OpenSearch claims index stores (``_prepare_claim_doc``).
+_STORED_CLAIM_FIELDS = {
+    "id",
+    "subject_id",
+    "subject_name",
+    "object_id",
+    "object_name",
+    "type",
+    "status",
+    "description",
+    "source_text",
+    "text_unit_ids",
+}
 
 
 class _Recorder:
@@ -346,12 +360,16 @@ class FakeVectorStore(_Recorder):
     def _update(
         self, collection: str, items: list[Any], fields: tuple[str, ...]
     ) -> IndexingStats:
-        """Partial update: only stored documents, only ``fields``."""
+        """Partial update: only ``fields`` of stored documents in the item's
+        suffix (an item tagged with another suffix finds no document)."""
         stats = IndexingStats(total_items=len(items))
         bucket = self.data.setdefault(collection, {})
         for item in items:
-            if item.id in bucket:
-                bucket[item.id] = bucket[item.id].model_copy(
+            stored = bucket.get(item.id)
+            if stored is not None and BaseIndexer.get_suffix(
+                stored
+            ) == BaseIndexer.get_suffix(item):
+                bucket[item.id] = stored.model_copy(
                     update={name: getattr(item, name) for name in fields}
                 )
             stats.add_success()
@@ -361,10 +379,17 @@ class FakeVectorStore(_Recorder):
         return self._update("entities", entities, ("text_unit_ids",))
 
     def read_claims(self, ids: list[str], suffix: str | None = None) -> list[Any]:
+        # Like the OpenSearch claims index: only the stored fields come back,
+        # tagged with the suffix they were read from (the port's contract).
         bucket = self.data.get("claims", {})
         wanted = suffix or Constants.DEFAULT_SUFFIX.value
         return [
-            bucket[i].model_copy(deep=True)
+            Claim.model_validate(
+                {
+                    **bucket[i].model_dump(include=_STORED_CLAIM_FIELDS),
+                    "attributes": ({Constants.INDEX.value: suffix} if suffix else {}),
+                }
+            )
             for i in ids
             if i in bucket and BaseIndexer.get_suffix(bucket[i]) == wanted
         ]
@@ -372,19 +397,24 @@ class FakeVectorStore(_Recorder):
     def read_entity_descriptions(
         self, ids: list[str], suffix: str | None = None
     ) -> dict[str, str]:
-        return self._descriptions("entities", ids)
+        return self._descriptions("entities", ids, suffix)
 
     def read_relationship_descriptions(
         self, ids: list[str], suffix: str | None = None
     ) -> dict[str, str]:
-        return self._descriptions("relationships", ids)
+        return self._descriptions("relationships", ids, suffix)
 
-    def _descriptions(self, collection: str, ids: list[str]) -> dict[str, str]:
+    def _descriptions(
+        self, collection: str, ids: list[str], suffix: str | None
+    ) -> dict[str, str]:
         bucket = self.data.get(collection, {})
+        wanted = suffix or Constants.DEFAULT_SUFFIX.value
         return {
             i: bucket[i].description
             for i in ids
-            if i in bucket and bucket[i].description
+            if i in bucket
+            and bucket[i].description
+            and BaseIndexer.get_suffix(bucket[i]) == wanted
         }
 
     def update_claim_lineage(self, claims: list[Any]) -> IndexingStats:

@@ -318,7 +318,11 @@ so restarting Gremlin Server empties it while the SQLite registry keeps its
 records. An incremental run then stops before writing anything and asks for
 `indexing.reset: true` (or deleting the registry), instead of treating the
 lost documents as unchanged. A list property written when a vertex is created keeps duplicate values
-(Neptune stores them once). Nothing in the compose file is hardened; it binds
+(Neptune stores them once). TinkerGraph indexes no property, so every
+relationship write, which looks its edge up by id first so that a retry does
+not duplicate it, scans the graph's edges: writing relationships slows down as
+the graph grows (8,000 edges took about 19 seconds in one measurement, twice
+a plain insert). Use it for development-sized corpora. Nothing in the compose file is hardened; it binds
 to `127.0.0.1` only.
 
 ---
@@ -903,7 +907,11 @@ run; with `--resume-from-stage` you re-run from a chosen stage onward, otherwise
 the pipeline resumes at the first failed or incomplete stage (with
 `--enabled-stages`, the first such stage in that set); a stage switched on
 since the pipeline last ran (gleaning or claim extraction, say) counts as
-incomplete. Before resuming, the CLI
+incomplete. With incremental indexing, an automatic resume whose extraction
+settings differ from those its delta was computed with (a stage switched on,
+another model or prompt) restarts at `document_loading`, so the delta and the
+fingerprint recorded on the committed documents follow the new settings
+(`document_parsing` stays cached). Before resuming, the CLI
 checks that every completed stage's output is still cached under the current
 inputs; when it is not (the corpus or config changed), it lists the stages and
 asks before going on, and the resume recomputes them. Without a terminal, pass

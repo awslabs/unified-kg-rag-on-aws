@@ -342,6 +342,23 @@ Library API (Python callers and custom backends).
   answer. A polarity word other than `yes` answers only when sentence
   punctuation, a dash or the line end follows it, and a word next to `/` is
   skipped (#255).
+- Description re-summarization sizes one call's input to the summary
+  model's context window (half of what it leaves beside
+  `max_summary_tokens`, 1,000 to 12,000 tokens). A fixed 12,000-token input
+  overflowed a small local model's window; the default models keep the
+  12,000-token budget (#256).
+- An automatic resume of an incremental run (same `--pipeline-id`) whose
+  extraction settings changed, such as a stage switched on since the last
+  run or another extraction model, restarts at `document_loading`. It kept
+  the previous run's delta and extraction fingerprint, so the changed stages
+  ran only on that delta's documents and the next run with a new pipeline id
+  re-extracted the whole corpus (#256).
+- Deleting a document under a non-default index suffix
+  (`processing.document_parsing.index_value`) strips its text units from the
+  claims it shared with other documents in that suffix's claims index. The
+  claims read back carried no suffix, so the update went to the default
+  suffix's index: the claim kept the deleted text units, and a claim with the
+  same id there was overwritten (#256).
 - `ragas` evaluation counts each retrieved context once per batch. With
   `context_precision` selected, the count-capped selection walked the
   contexts again, which repeated every CountTokens call once a batch had more

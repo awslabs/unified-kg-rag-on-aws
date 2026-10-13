@@ -21,6 +21,7 @@ from unified_kg_rag.adapters.ingestion.description_summarizer import (
 from unified_kg_rag.domain.models import Config, Entity, Relationship
 from unified_kg_rag.domain.models.config import DescriptionSummarizationConfig
 from unified_kg_rag.domain.prompts import DescriptionSummarizationPrompt
+from unified_kg_rag.ports.model_factory import LanguageModelInfo
 from unified_kg_rag.shared.utils.langchain import BATCH_ITEM_FAILED
 
 pytestmark = pytest.mark.unit
@@ -34,7 +35,10 @@ LONG_DESCRIPTION = "fact " * 1000
 @pytest.fixture
 def summarizer(config: Config, mocker) -> DescriptionSummarizer:
     """A real DescriptionSummarizer with all AWS/Bedrock wiring stubbed out."""
-    mocker.patch.object(bedrock_module, "BedrockLanguageModelFactory")
+    factory = mocker.patch.object(bedrock_module, "BedrockLanguageModelFactory")
+    factory.return_value.get_model_info.return_value = LanguageModelInfo(
+        context_window_size=200_000, max_output_tokens=8_192
+    )
     mocker.patch.object(ds_module, "setup_chain")
     return DescriptionSummarizer(config)
 
@@ -298,3 +302,34 @@ class TestMapReduce:
         out = summarizer.summarize_entities(ents)
         assert out[0].description == description
         assert out[1].description == "summary"
+
+
+class TestInputBudget:
+    @pytest.mark.parametrize(
+        ("window", "budget"),
+        [
+            (1_000_000, ds_module.MAX_INPUT_TOKENS),
+            # Half of what an 8K window leaves beside the 256-token summary.
+            (8_192, (8_192 - 256) // 2),
+            (1_500, 1_000),
+        ],
+    )
+    def test_budget_follows_the_summary_model_window(
+        self, config: Config, mocker, window: int, budget: int
+    ) -> None:
+        # A 12K-token call overflows a small local model's window.
+        factory = mocker.patch.object(bedrock_module, "BedrockLanguageModelFactory")
+        factory.return_value.get_model_info.return_value = LanguageModelInfo(
+            context_window_size=window, max_output_tokens=1_024
+        )
+        mocker.patch.object(ds_module, "setup_chain")
+
+        summarizer = DescriptionSummarizer(config)
+
+        assert summarizer.max_input_tokens == budget
+        description = "\n".join(f"Vendor supplies part {i}." for i in range(4_000))
+        count = summarizer.token_counter.count_tokens
+        assert all(
+            sum(count(line) for line in group.split("\n")) <= budget
+            for group in summarizer._pack(description)
+        )

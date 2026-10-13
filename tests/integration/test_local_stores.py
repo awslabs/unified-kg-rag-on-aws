@@ -45,6 +45,7 @@ from unified_kg_rag.adapters.aws.opensearch import OpenSearchClient, is_index_no
 from unified_kg_rag.adapters.retrievers import NeptuneRetriever, OpenSearchRetriever
 from unified_kg_rag.adapters.storage import NeptuneIndexer, OpenSearchIndexer
 from unified_kg_rag.domain.models import (
+    Claim,
     Community,
     CommunityReport,
     Config,
@@ -403,6 +404,112 @@ def test_vector_round_trip(local_config: Config, vector_indexer) -> None:
     stats = vector_indexer.delete_by_id(["e-depot"], entities_prefix, _SUFFIX)
     assert stats.failed_items == 0
     assert _vector_entity_count(vector_indexer) == 2
+
+
+def test_vector_reads_and_updates_stay_in_a_non_default_suffix(
+    local_config: Config,
+) -> None:
+    # document_parsing.index_value puts a run's artifacts under its own
+    # suffix. A claim read back from there (the stored document holds no
+    # attributes) must be updated there, not in the default suffix's index
+    # where another claim may have the same id.
+    config = local_config.model_copy(deep=True)
+    config.indexing.additional_suffix = f"sfx{uuid.uuid4().hex[:8]}"
+    tenant = "tenant-a"
+    indexer = OpenSearchIndexer(config, embedding_factory=HashingEmbeddingFactory())
+    prefixes = config.indexing.opensearch
+    pipeline_id = f"{config.indexing.additional_suffix}-pipeline"
+
+    def claim(suffix: str, text_unit_ids: list[str]) -> Claim:
+        return Claim(
+            id="c-supply",
+            subject_id="e-vendor",
+            subject_name="Vendor",
+            object_id="e-buyer",
+            object_name="Buyer",
+            type="SUPPLY",
+            status="TRUE",
+            description=f"Vendor supplies Buyer ({suffix})",
+            text_unit_ids=text_unit_ids,
+            attributes={"index": suffix},
+        )
+
+    def stored(prefix: str, suffix: str, doc_id: str) -> dict:
+        alias = indexer._get_name(prefix, suffix)
+        return indexer.opensearch_client.client.get(index=alias, id=doc_id)["_source"]
+
+    try:
+        assert indexer.upsert_claims([claim(tenant, ["t1", "t2"])]).failed_items == 0
+        assert indexer.upsert_claims([claim(_SUFFIX, ["t9"])]).failed_items == 0
+
+        (read,) = indexer.read_claims(["c-supply"], suffix=tenant)
+        assert read.text_unit_ids == ["t1", "t2"]
+        stripped = read.model_copy(update={"text_unit_ids": ["t2"]})
+        stats = indexer.update_claim_lineage([stripped])
+        assert (stats.successful_items, stats.failed_items) == (1, 0)
+        claims_prefix = prefixes.claims_index_prefix
+        assert stored(claims_prefix, tenant, "c-supply")["text_unit_ids"] == ["t2"]
+        assert stored(claims_prefix, _SUFFIX, "c-supply")["text_unit_ids"] == ["t9"]
+
+        relationships = [
+            r.model_copy(update={"attributes": {"index": tenant}})
+            for r in _relationships()
+        ]
+        assert indexer.upsert_relationships(relationships).failed_items == 0
+        assert indexer.read_relationship_descriptions(
+            ["r-supplies", "r-missing"], suffix=tenant
+        ) == {"r-supplies": "Vendor supplies widgets to Buyer"}
+        # Another suffix holds no such relationship (its alias does not exist).
+        assert indexer.read_relationship_descriptions(["r-supplies"]) == {}
+
+        report = CommunityReport(
+            id="cr1",
+            community_id="c1",
+            name="Widget supply",
+            summary="Vendor supplies widgets to Buyer.",
+            full_content="Vendor and Buyer form the widget supply.",
+            attributes={"index": tenant},
+        )
+        revised = report.model_copy(update={"summary": "Vendor ships to Buyer."})
+        for written in (report, revised):
+            assert indexer.upsert_community_reports([written]).failed_items == 0
+        reports_prefix = prefixes.community_reports_index_prefix
+        alias = indexer._get_name(reports_prefix, tenant)
+        os_client = indexer.opensearch_client.client
+        os_client.indices.refresh(index=alias)
+        assert os_client.count(index=alias)["count"] == 1
+        assert stored(reports_prefix, tenant, "cr1")["summary"] == (
+            "Vendor ships to Buyer."
+        )
+
+        weights = [0.3, 0.7]
+        indexer.opensearch_client.put_search_pipeline(
+            pipeline_id,
+            {
+                "phase_results_processors": [
+                    {
+                        "normalization-processor": {
+                            "normalization": {"technique": "min_max"},
+                            "combination": {
+                                "technique": "arithmetic_mean",
+                                "parameters": {"weights": weights},
+                            },
+                        }
+                    }
+                ]
+            },
+        )
+        written_pipeline = os_client.search_pipeline.get(id=pipeline_id)[pipeline_id]
+        (processor,) = written_pipeline["phase_results_processors"]
+        combination = processor["normalization-processor"]["combination"]
+        assert combination["parameters"]["weights"] == weights
+    finally:
+        indexer.clear([tenant, _SUFFIX])
+        try:
+            indexer.opensearch_client.client.search_pipeline.delete(id=pipeline_id)
+        except NotFoundError:
+            pass
+        indexer.close()
 
 
 def _korean_lexical_hits(config: Config, *texts: str) -> list[set[str]]:

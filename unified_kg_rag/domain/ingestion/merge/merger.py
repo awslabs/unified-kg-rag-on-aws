@@ -331,7 +331,10 @@ def remove_text_units(
     ``text_unit_ids``. Frequency and weight follow the same rules as the merge
     (frequency = number of supporting text units, weight = sum of the remaining
     per-text-unit strengths). Descriptions are left as they are:
-    removing a document's contribution would need an LLM re-summary.
+    removing a document's contribution would need an LLM re-summary. So are
+    the attributes: the document ``filters`` values the merge unioned in
+    (``union_document_filters``) stay on the shared item until a full
+    rebuild.
     """
     removed = set(text_unit_ids)
     updated_entities: list[Entity] = []
@@ -364,9 +367,14 @@ def merge_claims(old: list[Claim], delta: list[Claim]) -> list[Claim]:
     A claim's id derives from its subject, object, type and dates, not from
     its document, so the same claim extracted from another document has the
     stored claim's id. As in the full-build ``ClaimResolver`` merge, the
-    descriptions and source texts are unioned (stored first), the text units
-    are the sorted union and the status is the stored one when it has one.
-    Every other field is the delta's. Returns the delta claims, merged.
+    descriptions and source texts are unioned (stored first) and the text
+    units are the sorted union. The status is the stored one when it has
+    one. ``ClaimResolver`` takes the most common status of a group (the first
+    on a tie), which for one stored and one delta claim is the same rule; the
+    stored claim keeps no per-status counts, though, so over three or more
+    documents the two can differ (stored ``SUSPECTED`` stays when two later
+    documents say ``TRUE``). Every other field is the delta's. Returns the
+    delta claims, merged.
     """
     stored = {claim.id: claim for claim in old}
     merged: list[Claim] = []

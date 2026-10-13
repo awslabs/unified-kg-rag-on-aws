@@ -1224,7 +1224,8 @@ class CommunityDetectionStage(PipelineStage):
                 f"({failure_rate:.0%} > {max_failure_rate:.0%} tolerated by "
                 f"indexing.max_failure_rate). Check the report model errors above."
             )
-        failed = [c for c in communities if c.id in set(failed_community_ids)]
+        failed_ids = set(failed_community_ids)
+        failed = [c for c in communities if c.id in failed_ids]
         parents = [c.id for c in failed if str(c.level) != "0"]
         if parents:
             logger.warning(
