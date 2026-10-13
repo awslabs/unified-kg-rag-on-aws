@@ -18,6 +18,7 @@ import threading
 import weakref
 from collections.abc import Iterator
 
+import httpx
 import pytest
 from botocore.exceptions import (
     ClientError,
@@ -125,6 +126,117 @@ def test_fatal_errors_are_classified_by_type(exc: Exception) -> None:
 )
 def test_other_errors_are_transient(exc: Exception) -> None:
     assert is_fatal_retrieval_error(exc) is False
+
+
+# --- local model servers ----------------------------------------------------
+#
+# Regression: an OpenAI-compatible or Ollama server that refused every call (a
+# bad key, an unknown model, a refused port) degraded each section to no
+# results, so every strategy answered "could not find" and the logs blamed
+# OpenSearch. The errors are the clients' real types, built without a network.
+
+_MODEL_REQUEST = httpx.Request("POST", "http://model-server.test/v1/embeddings")
+
+
+def _openai_status(name: str, status: int) -> Exception:
+    openai = pytest.importorskip("openai")
+    response = httpx.Response(status, request=_MODEL_REQUEST)
+    cls = getattr(openai, name)
+    error: Exception = cls("synthetic", response=response, body=None)
+    return error
+
+
+@pytest.mark.parametrize(
+    ("name", "status", "fatal"),
+    [
+        ("AuthenticationError", 401, True),
+        ("PermissionDeniedError", 403, True),
+        ("NotFoundError", 404, True),
+        ("BadRequestError", 400, True),
+        ("RateLimitError", 429, False),
+        ("InternalServerError", 500, False),
+        ("APIStatusError", 408, False),
+        ("APIStatusError", 503, False),
+    ],
+)
+def test_openai_status_errors_are_fatal_unless_transient(
+    name: str, status: int, fatal: bool
+) -> None:
+    assert is_fatal_retrieval_error(_openai_status(name, status)) is fatal
+
+
+def test_an_unreachable_openai_server_is_fatal() -> None:
+    openai = pytest.importorskip("openai")
+    assert is_fatal_retrieval_error(openai.APIConnectionError(request=_MODEL_REQUEST))
+    assert is_fatal_retrieval_error(openai.APITimeoutError(request=_MODEL_REQUEST))
+
+
+@pytest.mark.parametrize(
+    ("status", "fatal"),
+    [(404, True), (401, True), (429, False), (500, False), (-1, False)],
+)
+def test_ollama_response_errors_are_fatal_unless_transient(
+    status: int, fatal: bool
+) -> None:
+    ollama = pytest.importorskip("ollama")
+    error = ollama.ResponseError("model 'synthetic' not found", status_code=status)
+    assert is_fatal_retrieval_error(error) is fatal
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        httpx.ConnectError("refused", request=_MODEL_REQUEST),
+        httpx.ReadTimeout("timed out", request=_MODEL_REQUEST),
+    ],
+    ids=lambda exc: type(exc).__name__,
+)
+def test_httpx_transport_errors_are_fatal(exc: Exception) -> None:
+    assert is_fatal_retrieval_error(exc)
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        # Same class names as the model clients', other libraries.
+        TransportError(500, "search_phase_execution_exception", "failed"),
+        GremlinServerError({"code": 500, "message": "failed", "attributes": {}}),
+    ],
+    ids=lambda exc: type(exc).__module__,
+)
+def test_store_errors_of_similar_names_are_not_provider_errors(
+    exc: Exception,
+) -> None:
+    assert is_fatal_retrieval_error(exc) is False
+
+
+def test_a_context_overflow_is_not_fatal() -> None:
+    """Only the one prompt is too long: a global map batch is left unrated."""
+    from langchain_aws.chat_models.bedrock_converse import (
+        BedrockContextOverflowError,
+    )
+
+    overflow = BedrockContextOverflowError(
+        {
+            "Error": {
+                "Code": "ValidationException",
+                "Message": "Input is too long for requested model.",
+            }
+        },
+        "Converse",
+    )
+    assert is_fatal_retrieval_error(overflow) is False
+    # Any other ValidationException (an invalid model id) still fails.
+    assert is_fatal_retrieval_error(_client_error("ValidationException")) is True
+
+
+def test_an_openai_context_overflow_is_not_fatal() -> None:
+    base = pytest.importorskip("langchain_openai.chat_models.base")
+    overflow_cls = base.OpenAIContextOverflowError
+
+    response = httpx.Response(400, request=_MODEL_REQUEST)
+    overflow = overflow_cls("too long", response=response, body=None)
+    assert is_fatal_retrieval_error(overflow) is False
 
 
 # --- unreachable stores, against real clients ------------------------------

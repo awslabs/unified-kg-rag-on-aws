@@ -356,6 +356,14 @@ Library API (Python callers and custom backends).
   of retrying a quota that does not recover within minutes (#257).
 
 ### Fixed
+- A local model server that refuses or cannot serve a query (an
+  OpenAI-compatible or Ollama 401/403/404/400, a refused port, a timeout
+  after the client's retries) fails the query instead of every strategy
+  answering "could not find" while the log blamed OpenSearch (#PR).
+- A global-search map batch longer than the model's context is left unrated
+  and the other batches still answer; Bedrock reports it as a
+  `ValidationException`, which failed the whole query. Bedrock's
+  `ModelTimeoutException` (HTTP 408) is retried as transient (#PR).
 - Ingestion reconnects after a Neptune restart or failover. Its write retries
   reused the pooled websockets the server had closed, which gremlinpython
   never reopens, so every write failed every attempt until the process

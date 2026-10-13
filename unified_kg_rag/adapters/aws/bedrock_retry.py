@@ -6,8 +6,8 @@ botocore's ``standard``/``adaptive`` retry modes only retry throttling, a fixed
 set of 5xx codes, and connection-level errors. Bedrock surfaces several
 transient model-side failures outside that set — most notably
 ``ModelErrorException`` (HTTP 424, "The system encountered an unexpected
-error") and ``ModelNotReadyException`` — which botocore raises on the first
-occurrence. :func:`is_transient_bedrock_error` names exactly those failures, for
+error"), ``ModelNotReadyException`` and ``ModelTimeoutException`` (HTTP 408,
+the model took too long) — which botocore raises on the first occurrence. :func:`is_transient_bedrock_error` names exactly those failures, for
 the bounded backoff of ``adapters.llm.retry`` and the batch processor's
 retries, leaving validation, access-denied and other client errors to fail
 fast.
@@ -25,6 +25,7 @@ TRANSIENT_BEDROCK_ERROR_CODES: frozenset[str] = frozenset(
     {
         "ModelErrorException",
         "ModelNotReadyException",
+        "ModelTimeoutException",
         "ServiceUnavailableException",
         "InternalServerException",
         "ThrottlingException",

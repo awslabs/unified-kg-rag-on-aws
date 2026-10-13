@@ -273,6 +273,11 @@ Expected differences from AWS mode:
 - LLM judges in `run-eval` (`langchain`, `ragas`) run on the local model and
   score less reliably; the deterministic evaluators are unaffected.
 
+As with Bedrock, a model server that refuses a query's calls (a wrong key or
+model name, HTTP 4xx) or cannot be reached after the client's retries fails the
+query with the client's error rather than answering "could not find"; see
+[Common errors](./operations.md#common-errors).
+
 #### Provider flags
 
 `run-ingestion`, `run-rag`, `run-eval` and `run-prompt-tuning` take these
