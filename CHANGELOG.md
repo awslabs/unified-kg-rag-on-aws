@@ -469,23 +469,23 @@ Library API (Python callers and custom backends).
 - On an incremental run, a new relationship whose endpoint merged into a
   stored entity under another name (for example `Acme Inc` into `ACME, Inc.`)
   now carries the stored entity's name in `source_name`/`target_name`, as a
-  full build does; it kept the extracted name (#PR).
+  full build does; it kept the extracted name (#252).
 - The incremental cross-run merge no longer writes a description cut at
   `indexing.neptune.property_max_length` to OpenSearch. It read stored
   entities and relationships back from Neptune, which caps property values,
   so a long description lost its tail in OpenSearch on the next merge; a
   capped description is now read from OpenSearch, which stores it in full
-  (#PR).
+  (#252).
 - A failed Neptune delete batch is counted as one failure per id in it, with
   the ids, instead of a single failure with none, so the failure rate and the
-  logs of a document removal reflect what was not deleted (#PR).
+  logs of a document removal reflect what was not deleted (#252).
 - A Neptune relationship write that is retried after a lost response no
   longer adds a second parallel edge with the same id: the edge write looks
-  the edge up first (`fold().coalesce(unfold(), addE(...))`) (#PR).
+  the edge up first (`fold().coalesce(unfold(), addE(...))`) (#252).
 - An incremental run that only deletes documents (nothing new or changed to
   extract) now checks the live OpenSearch indices of its configured
   `document_parsing.index_value` before writing; it checked the `default`
-  namespace's indices instead (#PR).
+  namespace's indices instead (#252).
 - Incremental runs merge a claim that another document already stored instead
   of overwriting it. A claim's id does not depend on its document, so adding a
   document that states the same claim replaced its description, source text
@@ -493,22 +493,22 @@ Library API (Python callers and custom backends).
   left the claim citing it. Claims now merge as in a full build (read back
   from the OpenSearch claims index, which stores their `text_unit_ids`), and a
   removed document's text units are stripped from claims shared with
-  surviving documents (#PR).
+  surviving documents (#252).
 - OpenSearch indexing embeds and bulk-writes each artifact type 400 items at
   a time instead of embedding the whole type before one bulk call. Memory no
   longer grows with the corpus (about 75 KB per entity before, several
   gigabytes at 50,000 entities with up to six types indexed concurrently), and
-  the index is refreshed once per type as before (#PR).
+  the index is refreshed once per type as before (#252).
 - A changed `search.hybrid.lexical_weight` or `vector_weight` now takes
   effect: `run-ingestion` writes the OpenSearch hybrid search pipeline on
   every run. Before, it was created only when absent, so the weights of the
-  first run on a domain stayed in force (#PR).
+  first run on a domain stayed in force (#252).
 - With `indexing.opensearch.persist_embedding_cache`, an embedding-cache
   object that exists but cannot be read (throttling, access denied, a network
   error) is no longer treated as empty: the run embeds without it and does not
   overwrite it. Before, its first flush replaced the object with only this
   run's vectors, dropping every other model's and dimension's entries, and the
-  next runs re-embedded the corpus (#PR).
+  next runs re-embedded the corpus (#252).
 - `run-eval --eval-data-path` naming a file that does not exist exits 2 with
   `Error: invalid evaluation dataset: ...`, as the user guide documents and
   as an unreadable or invalid dataset does; it exited 1 (#230).
