@@ -114,11 +114,10 @@ def test_disallows_empty_output_without_delta() -> None:
     assert stage._allows_empty_output(ctx) is False
 
 
-def test_disallows_empty_output_when_delta_has_docs() -> None:
+def _delta_context_with_a_document() -> PipelineContext:
     from unified_kg_rag.domain.models import Document
     from unified_kg_rag.domain.models.document import DocumentDelta
 
-    stage = _make_stage(PipelineStageType.GRAPH_EXTRACTION)
     ctx = _context()
     ctx.incremental_delta = DocumentDelta()
     ctx.documents = [
@@ -131,6 +130,34 @@ def test_disallows_empty_output_when_delta_has_docs() -> None:
             total_pages=1,
         )
     ]
+    return ctx
+
+
+def test_disallows_empty_output_of_a_corpus_stage_when_delta_has_docs() -> None:
+    stage = _make_stage(PipelineStageType.TEXT_CHUNKING)
+    assert stage._allows_empty_output(_delta_context_with_a_document()) is False
+
+
+@pytest.mark.parametrize(
+    "stage_type",
+    [
+        PipelineStageType.GRAPH_EXTRACTION,
+        PipelineStageType.GRAPH_RESOLUTION,
+        PipelineStageType.GRAPH_ANALYSIS,
+        PipelineStageType.COMMUNITY_DETECTION,
+    ],
+)
+def test_an_incremental_delta_may_hold_no_entity(stage_type) -> None:
+    # The delta's documents may name nothing, unless a unit failed (an
+    # unreachable model extracts nothing too) or the run is a full build.
+    stage = _make_stage(stage_type)
+    ctx = _delta_context_with_a_document()
+    assert stage._allows_empty_output(ctx) is True
+    ctx.failed_text_unit_ids = {"graph_extraction": ["u1"]}
+    assert stage._allows_empty_output(ctx) is False
+    ctx.failed_text_unit_ids = {"graph_extraction": []}
+    assert stage._allows_empty_output(ctx) is True
+    stage.config.indexing.reset = True
     assert stage._allows_empty_output(ctx) is False
 
 

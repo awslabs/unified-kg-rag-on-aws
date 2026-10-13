@@ -340,6 +340,11 @@ Library API (Python callers and custom backends).
   diversity cut ran once across all result types before the per-type quota,
   so over-quota entities took slots the quota then dropped and text kept 16
   of its 20; each type is now diversified within its own quota (#247).
+- An incremental run whose new and changed documents name no entity (an
+  edit that removed the last one) commits them and applies the run's
+  deletions. It failed graph extraction ("produced 0 outputs"), so the
+  deletions were never applied and every later run failed the same way. A
+  full build, or a run in which a text unit failed, still fails (#PR).
 - `run-eval --eval-data-path` naming a file that does not exist exits 2 with
   `Error: invalid evaluation dataset: ...`, as the user guide documents and
   as an unreadable or invalid dataset does; it exited 1 (#230).

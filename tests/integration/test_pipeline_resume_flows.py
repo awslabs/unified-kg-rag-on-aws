@@ -307,3 +307,24 @@ def test_a_failed_phased_run_resumes_at_the_failed_stage(
         harness.sink.emitted[-1]
     ]
     assert all("total_entities_extracted" not in m for m in harness.sink.emitted)
+
+
+def test_a_delta_whose_documents_name_no_entity_still_commits(
+    harness: _Harness,
+) -> None:
+    # The only changed document no longer names an entity and the other one
+    # is deleted: the run commits both instead of failing graph extraction
+    # ("produced 0 outputs"), which would leave the deletion unapplied and
+    # fail every later run the same way.
+    assert harness.run() == 0
+    assert harness.graph.ids("entities")
+    (harness.source / "contract.txt").write_text("Nothing notable is written here.")
+    (harness.source / "logistics.txt").unlink()
+
+    assert harness.run() == 0
+    records = harness.registry.list_all()
+    assert [Path(r.file_path).name for r in records] == ["contract.txt"]
+    assert {r.status for r in records} == {DocStatus.PROCESSED}
+    assert not harness.graph.ids("entities")
+    # The next run finds nothing to do.
+    assert harness.run() == 0

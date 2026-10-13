@@ -123,6 +123,17 @@ class PipelineStage(ABC):
         PipelineStageType.TRANSLATION,
     }
 
+    # The stages that build the graph from the extracted entities.
+    GRAPH_STAGES = {
+        PipelineStageType.CLAIM_EXTRACTION,
+        PipelineStageType.CLAIM_RESOLUTION,
+        PipelineStageType.COMMUNITY_DETECTION,
+        PipelineStageType.GLEANING,
+        PipelineStageType.GRAPH_ANALYSIS,
+        PipelineStageType.GRAPH_EXTRACTION,
+        PipelineStageType.GRAPH_RESOLUTION,
+    }
+
     OPTIONAL_OUTPUT_STAGES = {
         PipelineStageType.CLAIM_EXTRACTION,
         PipelineStageType.CLAIM_RESOLUTION,
@@ -235,8 +246,25 @@ class PipelineStage(ABC):
         delta is a no-op run. In that case every document-processing stage
         receives empty input, which is valid rather than a failure, so the
         must-have-input / critical-output checks are skipped pipeline-wide.
+
+        Likewise the new and changed documents of an incremental delta may
+        name no entity at all (an edit that removed the last one). The graph
+        stages then produce, or receive, nothing; the documents are still
+        committed (with an empty lineage) and the delta's deletions applied.
+        Failing here would stop every later run at the same documents. The
+        check stays when a text unit failed (an unreachable model also
+        extracts nothing) and for a full build, where a corpus without a
+        single entity points at a broken model or prompt.
         """
-        return context.incremental_delta is not None and not context.documents
+        if context.incremental_delta is None:
+            return False
+        if not context.documents:
+            return True
+        return (
+            self.stage_type in self.GRAPH_STAGES
+            and not self.config.indexing.reset
+            and not any(context.failed_text_unit_ids.values())
+        )
 
     def _empty_input_hint(self) -> str:
         return "Check that the previous stage completed successfully."
