@@ -14,9 +14,12 @@ GraphRAG ``summarize_descriptions`` and LightRAG
 functions) because it needs Bedrock/LangChain, which the domain layer forbids.
 
 Only descriptions whose estimated token count exceeds the configured threshold
-are sent to the LLM — cheap entities skip it entirely. On any LLM failure the
-original concatenated description is kept (graceful degradation), and every
-non-description field is left untouched.
+are sent to the LLM — cheap entities skip it entirely. A description longer
+than one call's input budget is summarized map-reduce, as both references do:
+its lines are packed into budget-sized groups, each group is summarized, and
+the joined summaries are summarized again until they fit one call. On any LLM
+failure the original concatenated description is kept (graceful degradation),
+and every non-description field is left untouched.
 """
 
 from __future__ import annotations
@@ -38,6 +41,14 @@ if TYPE_CHECKING:
     from unified_kg_rag.domain.models.config import DescriptionSummarizationConfig
 
 logger = get_logger(__name__)
+
+# Input budget of one summarization call (the descriptions, not the prompt).
+# A longer description is summarized in budget-sized groups first.
+MAX_INPUT_TOKENS = 12_000
+# Map rounds before the final call. Each round shrinks a description by about
+# MAX_INPUT_TOKENS / max_summary_tokens, so two rounds already cover millions
+# of tokens; the cap only bounds a model that will not shorten its input.
+_MAX_MAP_ROUNDS = 4
 
 
 class DescriptionSummarizer:
@@ -73,6 +84,11 @@ class DescriptionSummarizer:
             prompt_class=DescriptionSummarizationPrompt,
             parser=StrOutputParser(),
             custom_prompts=self.config.custom_prompts,
+        )
+        # Local estimate (scaled for the model) rather than the CountTokens
+        # API: packing counts every line of every over-long description.
+        self.token_counter = self.providers.token_counter(
+            self.summarization_config.summary_model_id, api_supported=False
         )
 
     def _exceeds_threshold(self, description: str | None) -> bool:
@@ -140,18 +156,94 @@ class DescriptionSummarizer:
     def _summarize_many(
         self, names: list[str], descriptions: list[str]
     ) -> list[str | None]:
-        """Run the LLM over each over-threshold item; keep order, degrade safely.
+        """Summarize each over-threshold item; keep order, degrade safely.
 
-        Returns one entry per input: the summary string, or ``None`` when the
-        LLM failed for that item (the caller then keeps the concatenated text).
+        A description that fits ``MAX_INPUT_TOKENS`` gets one call. A longer
+        one is first split into groups of whole lines within the budget, each
+        group is summarized, and the newline join of the group summaries
+        replaces it, until it fits one call. Returns one entry per input: the
+        summary string, or ``None`` when any of its calls failed (the caller
+        then keeps the concatenated text).
         """
-        inputs = self._build_inputs(names, descriptions)
         logger.info(
             "Summarizing %s over-threshold descriptions (threshold %s tokens)",
-            len(inputs),
+            len(names),
             self.summarization_config.force_summary_threshold_tokens,
         )
+        current: list[str | None] = list(descriptions)
+        for _ in range(_MAX_MAP_ROUNDS):
+            groups = {
+                index: self._pack(text)
+                for index, text in enumerate(current)
+                if text is not None
+            }
+            split = {index: parts for index, parts in groups.items() if len(parts) > 1}
+            if not split:
+                break
+            logger.info(
+                "Summarizing %s descriptions over the %s-token input budget in "
+                "%s groups",
+                len(split),
+                MAX_INPUT_TOKENS,
+                sum(len(parts) for parts in split.values()),
+            )
+            flat = [(index, part) for index, parts in split.items() for part in parts]
+            partials = self._invoke_all(
+                [names[index] for index, _ in flat], [part for _, part in flat]
+            )
+            reduced: dict[int, list[str] | None] = {index: [] for index in split}
+            for (index, _), partial in zip(flat, partials, strict=True):
+                collected = reduced[index]
+                if collected is None:
+                    continue
+                if partial is None:
+                    reduced[index] = None
+                else:
+                    collected.append(partial)
+            for index, collected in reduced.items():
+                current[index] = None if collected is None else "\n".join(collected)
 
+        pending = [index for index, text in enumerate(current) if text is not None]
+        finals = self._invoke_all(
+            [names[index] for index in pending],
+            [current[index] or "" for index in pending],
+        )
+        summaries: list[str | None] = [None] * len(names)
+        for index, summary in zip(pending, finals, strict=True):
+            summaries[index] = summary
+        return summaries
+
+    def _pack(self, description: str) -> list[str]:
+        """Split ``description`` into groups of whole lines within the budget.
+
+        A description within the budget is one group, unchanged. Otherwise
+        lines are packed in order while their summed counts fit (a joined
+        group can count a few tokens more than the sum); a single line over
+        the budget is a group of its own.
+        """
+        if self.token_counter.count_tokens(description) <= MAX_INPUT_TOKENS:
+            return [description]
+        groups: list[str] = []
+        lines: list[str] = []
+        used = 0
+        for line in description.split("\n"):
+            tokens = self.token_counter.count_tokens(line)
+            if lines and used + tokens > MAX_INPUT_TOKENS:
+                groups.append("\n".join(lines))
+                lines, used = [], 0
+            lines.append(line)
+            used += tokens
+        if lines:
+            groups.append("\n".join(lines))
+        return groups
+
+    def _invoke_all(
+        self, names: list[str], descriptions: list[str]
+    ) -> list[str | None]:
+        """One summarization call per item; ``None`` for an item that failed."""
+        if not names:
+            return []
+        inputs = self._build_inputs(names, descriptions)
         try:
             results = self.batch_processor.execute_with_fallback(
                 items_to_process=inputs,

@@ -224,3 +224,77 @@ class TestSummarizeRelationships:
 
     def test_empty_input(self, summarizer) -> None:
         assert summarizer.summarize_relationships([]) == []
+
+
+# --------------------------------------------------------------------------- #
+# Map-reduce over the input budget
+# --------------------------------------------------------------------------- #
+class TestMapReduce:
+    @staticmethod
+    def _huge_description() -> str:
+        # ~3x the per-call input budget, one fragment per line as merging
+        # writes them.
+        return "\n".join(
+            f"Vendor supplies widgets under purchase order {i} for the Buyer."
+            for i in range(3 * ds_module.MAX_INPUT_TOKENS // 10)
+        )
+
+    def test_over_budget_description_is_summarized_in_groups(
+        self, summarizer, mocker
+    ) -> None:
+        invoke = mocker.Mock(side_effect=lambda inp: f"summary of {inp['entity_name']}")
+        summarizer.summarizer.invoke = invoke
+        description = self._huge_description()
+        assert (
+            summarizer.token_counter.count_tokens(description)
+            > 2 * ds_module.MAX_INPUT_TOKENS
+        )
+        ents = [Entity(id="e1", name="Vendor", description=description)]
+
+        out = summarizer.summarize_entities(ents)
+
+        sent = [call.args[0]["descriptions"] for call in invoke.call_args_list]
+        # Several group calls plus the final one, each within the budget
+        # (counted line by line, as packing counts).
+        assert len(sent) >= 4
+        count = summarizer.token_counter.count_tokens
+        assert all(
+            sum(count(line) for line in text.split("\n")) <= ds_module.MAX_INPUT_TOKENS
+            for text in sent
+        )
+        # The groups (summarized concurrently) cover every line once.
+        group_lines = [line for text in sent[:-1] for line in text.split("\n")]
+        assert sorted(group_lines) == sorted(description.split("\n"))
+        assert out[0].description == "summary of Vendor"
+
+    def test_within_budget_description_is_one_unchanged_call(
+        self, summarizer, mocker
+    ) -> None:
+        invoke = mocker.Mock(return_value="summary")
+        summarizer.summarizer.invoke = invoke
+        summarizer.summarize_entities(
+            [Entity(id="e1", name="Alice", description=LONG_DESCRIPTION)]
+        )
+        (call,) = invoke.call_args_list
+        assert (
+            call.args[0] == summarizer._build_inputs(["Alice"], [LONG_DESCRIPTION])[0]
+        )
+
+    def test_failed_group_keeps_the_concatenation(self, summarizer, mocker) -> None:
+        def run(items_to_process, **kwargs):
+            # The first group's call fails every attempt.
+            return [
+                BATCH_ITEM_FAILED if "order 1 " in item["descriptions"] else "summary"
+                for item in items_to_process
+            ]
+
+        summarizer.batch_processor = mocker.Mock()
+        summarizer.batch_processor.execute_with_fallback.side_effect = run
+        description = self._huge_description()
+        ents = [
+            Entity(id="e1", name="Vendor", description=description),
+            Entity(id="e2", name="Alice", description=LONG_DESCRIPTION),
+        ]
+        out = summarizer.summarize_entities(ents)
+        assert out[0].description == description
+        assert out[1].description == "summary"

@@ -399,6 +399,11 @@ Library API (Python callers and custom backends).
   a 100% success rate against a store that was down. A timeout, throttling
   or a 5xx still degrades the one sub-search. OpenSearch errors now log the
   server's reason instead of `info=None` (#249).
+- Description re-summarization no longer sends a whole merged description
+  to the model in one call however long it is (a popular entity reached
+  ~100k input tokens): a description over 12,000 tokens is summarized
+  map-reduce in budget-sized groups of its lines, as LightRAG does. A
+  description within the budget is summarized exactly as before (#PR).
 - Graph resolution renames a relationship's `source_name`/`target_name` to
   the entity its endpoint merged into: an edge extracted as "Acme" kept that
   name after "Acme" merged into "Acme Inc", and the stale name reached
