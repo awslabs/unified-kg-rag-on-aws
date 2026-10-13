@@ -791,6 +791,29 @@ async def test_neptune_fatal_traversal_error_surfaces_from_aretrieve(
         await retriever.aretrieve(_SEEDED)
 
 
+async def test_a_traversal_blocked_on_the_pool_fails_and_resets(
+    config: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Regression: after a lost connection gremlinpython's pool could stay
+    # empty and to_list() block in pool.get() for good, hanging the query.
+    release = threading.Event()
+
+    def _blocked_to_list(self) -> list:
+        release.wait()
+        return []
+
+    monkeypatch.setattr(GraphTraversal, "to_list", _blocked_to_list)
+    config.search.store_timeout_seconds = 0.1
+    client = _ClientWithLocalGraph()
+    retriever = _neptune_retriever(config, client)
+    try:
+        with pytest.raises(StoreTimeoutError):
+            await asyncio.wait_for(retriever.aretrieve(_SEEDED), 5)
+    finally:
+        release.set()
+    assert client.resets
+
+
 async def test_neptune_transient_traversal_error_degrades_from_aretrieve(
     config: Config, monkeypatch: pytest.MonkeyPatch
 ) -> None:

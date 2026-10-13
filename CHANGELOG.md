@@ -356,6 +356,10 @@ Library API (Python callers and custom backends).
   of retrying a quota that does not recover within minutes (#257).
 
 ### Fixed
+- A query no longer hangs when gremlinpython's connection pool stays empty
+  after a lost Neptune connection: a graph traversal that does not finish
+  within twice `search.store_timeout_seconds` fails the query with
+  `StoreTimeoutError` and the connection is replaced (#PR).
 - A local model server that refuses or cannot serve a query (an
   OpenAI-compatible or Ollama 401/403/404/400, a refused port, a timeout
   after the client's retries) fails the query instead of every strategy
