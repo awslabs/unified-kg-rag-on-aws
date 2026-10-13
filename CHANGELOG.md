@@ -365,7 +365,7 @@ Library API (Python callers and custom backends).
 
 ### Removed
 - `NeptuneClient.connection`, which nothing in the package used; use
-  `NeptuneClient.g` (#PR).
+  `NeptuneClient.g` (#266).
 
 ### Fixed
 - A Neptune connection lost under concurrent queries no longer leaks
@@ -377,16 +377,16 @@ Library API (Python callers and custom backends).
   and the process exit with them. The traversal is now built in its worker
   from the current source, closing a connection wakes the requests waiting
   on its pool (they fail as a lost connection), and traversals run on
-  threads the retriever owns (#PR).
+  threads the retriever owns (#266).
 - A query embedding call that still fails after the client's retries (a
   5xx from a crashed Ollama runner or dead vLLM engine, a persistent Bedrock
   `InternalServerException`) fails the query with `EmbeddingModelError`.
   It was read as transient, so every vector section, and the lexical half
   of hybrid with it, came back empty and the query answered "could not find
-  relevant information" with no error (#PR).
+  relevant information" with no error (#266).
 - A global-search map batch over the context of a vLLM or llama.cpp model is
   left unrated, as on Bedrock and OpenAI: those servers report it as a plain
-  HTTP 400, which failed the whole query (#PR).
+  HTTP 400, which failed the whole query (#266).
 - Queries that waited on a failed Neptune connection attempt each raise a
   copy of its error; re-raising the one shared error grew its traceback by
   every waiter's frames and kept them in memory (#264).
