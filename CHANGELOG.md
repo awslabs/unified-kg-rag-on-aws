@@ -194,7 +194,7 @@ Library API (Python callers and custom backends).
   a label in retried batches itself) (#263); `NeptuneClient.connection`
   (use `NeptuneClient.g`) (#266); and `BaseParser.parse_files`,
   `ParsingStats` and `GraphAnalyzer.centrality_cache`, which nothing used
-  (#PR).
+  (#267).
 - `BaseSearchStrategy.search` (a sync wrapper with no caller; use
   `asearch`) and the unused `timeout` parameter of
   `BaseSearchStrategy._safe_aretrieve` are removed (#249).
@@ -390,20 +390,20 @@ Library API (Python callers and custom backends).
   the server does not support, a model id it does not know) fails the query
   with that error. It left every batch unrated and answered from the raw
   reports; with `providers.llm.fast_model_id` set the answer call runs on
-  another model, so nothing failed (#PR).
+  another model, so nothing failed (#267).
 - A query degraded under `processing.ignore_errors` records `error.type` on
   its `kg_rag.query` span, as a query that raised does; the span had the
-  ERROR status only (#PR).
+  ERROR status only (#267).
 - `run-eval --outputs-directory` is recorded as the run's
   `configuration.outputs_directory` in the evaluation summary, which named
-  the config default instead (#PR).
+  the config default instead (#267).
 - A query whose Neptune write was in flight when another query dropped the
   connection fails as a lost connection instead of waiting forever.
   gremlinpython's `close()` shuts its executor down, so the read the write
   would have started was never scheduled; the retriever's worker thread was
   lost for good (after `pool_size` such races every graph expansion hung)
   and the process exit hung joining it. The indexer's requests, which have
-  no timeout, are freed the same way (#PR).
+  no timeout, are freed the same way (#267).
 - Queries that waited on a failed Neptune connection attempt each raise a
   copy of its error; re-raising the one shared error grew its traceback by
   every waiter's frames and kept them in memory (#264).
