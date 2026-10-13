@@ -1874,6 +1874,10 @@ finally:
   without `close()`/`aclose()` they stay open until garbage collection.
 - Importing the package configures no logging handler; call
   `unified_kg_rag.shared.setup_logging(config)` to get the CLI's logging.
+  Without it the package's records reach your handlers with the plain
+  message, and structured fields (including values you bind with
+  `structlog.contextvars`) become record attributes; a field named like a
+  `LogRecord` attribute (`name`, `process`, `msg`, ...) gets a trailing `_`.
 
 Both constructors accept injected backends through a `providers=` bundle
 (`Providers(config, llm_factory=..., doc_status=..., vector_indexer_factory=...,

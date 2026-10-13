@@ -1752,7 +1752,10 @@ finally:
 - 만든 객체는 항상 닫으세요. 두 클래스 모두 처음 사용할 때 연결을 열며,
   `close()`/`aclose()`를 호출하지 않으면 가비지 컬렉션 때까지 연결이 열려 있습니다.
 - 패키지를 import해도 로깅 핸들러는 설정하지 않습니다. CLI와 같은 로깅을 쓰려면
-  `unified_kg_rag.shared.setup_logging(config)`를 호출하세요.
+  `unified_kg_rag.shared.setup_logging(config)`를 호출하세요. 호출하지 않으면 패키지의
+  레코드는 일반 메시지로 호스트 핸들러에 전달되고, 구조화 필드(`structlog.contextvars`로
+  바인딩한 값 포함)는 레코드 속성이 됩니다. `LogRecord` 속성과 이름이 같은
+  필드(`name`, `process`, `msg` 등)에는 끝에 `_`가 붙습니다.
 
 두 생성자 모두 `providers=` 번들로 백엔드를 주입받습니다
 (`Providers(config, llm_factory=..., doc_status=..., vector_indexer_factory=...,

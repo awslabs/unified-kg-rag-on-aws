@@ -207,6 +207,23 @@ def test_library_mode_records_carry_the_message_and_fields(
     assert record.pipeline_id == "p-1"  # type: ignore[attr-defined]
 
 
+def test_library_mode_renames_fields_named_like_record_attributes(
+    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A host binding ``name`` (or ``process``, ``module``, ``msg``, ...) with
+    # structlog.contextvars made makeRecord raise KeyError on every log call.
+    monkeypatch.setattr(LoggingSetup, "_handlers", [])
+    name = "unified_kg_rag.test_library_mode_reserved"
+    with caplog.at_level(logging.INFO, logger=name):
+        with bound_contextvars(name="host-job", process="etl", msg="m"):
+            get_logger(name).info("lib says %s", "hi")
+    (record,) = [r for r in caplog.records if r.name == name]
+    assert record.getMessage() == "lib says hi"
+    assert record.name_ == "host-job"  # type: ignore[attr-defined]
+    assert record.process_ == "etl"  # type: ignore[attr-defined]
+    assert record.msg_ == "m"  # type: ignore[attr-defined]
+
+
 def test_relative_log_file_path_resolves_against_cwd(
     stream: io.StringIO, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

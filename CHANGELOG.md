@@ -323,6 +323,10 @@ Library API (Python callers and custom backends).
   install (#251).
 
 ### Fixed
+- Used as a library without `setup_logging`, the package no longer raises
+  `KeyError` on every log call when the host binds a field named like a
+  `LogRecord` attribute (`name`, `process`, `msg`, ...) with
+  `structlog.contextvars`; the field is passed with a trailing `_` (#PR).
 - An embedding-based visualization layout embeds only the nodes the
   interactive page draws (the top `graph.visualization.interactive.max_nodes`
   by degree), as the spring layout already did. Every node was embedded with
