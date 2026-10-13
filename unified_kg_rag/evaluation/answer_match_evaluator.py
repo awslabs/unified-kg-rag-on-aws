@@ -14,9 +14,11 @@ v1.1 script, so scores are not leaderboard-comparable), then:
   as a whole-word phrase (``text_matching.phrase_in_text``: Korean particles
   tolerated, substring match for single-word CJK phrases). Long-form RAG
   answers rarely equal a short gold span, so this is the headline
-  deterministic answer metric. A "yes"/"no" gold is instead compared with the
-  first "yes"/"no" that answers the question (not a heading, not the
-  determiner in "there is no clause").
+  deterministic answer metric. A yes/no gold ("yes"/"no", Korean
+  "예"/"네"/"아니요"/"아니오", Chinese "是"/"对"/"否"/"不是", Japanese
+  "はい"/"いいえ") is instead compared with the polarity of the first yes/no
+  word that answers the question (not a heading, not the determiner in
+  "there is no clause", not part of a longer word such as "예외").
 - ``exact_match``: 1.0 if the normalized strings are equal.
 - ``token_f1``: harmonic mean of token precision/recall over whitespace tokens
   (multiset overlap).
@@ -68,11 +70,35 @@ def exact_match(prediction: str, reference: str) -> float:
     return float(normalize_answer(prediction) == normalize_answer(reference))
 
 
-_POLARITY = frozenset({"yes", "no"})
-_POLARITY_WORD = re.compile(r"(?<![\w-])(yes|no)(?![\w-])")
-# "no" answers a question only when punctuation or the line end follows it
-# ("No, it may not.", "..., no."); before a word it is a determiner ("there
-# is no clause").
+# Yes/no answer words, by language, mapped to their polarity. A short
+# polarity gold ("예", "是") would match inside unrelated words as a CJK
+# substring ("예를 들어", "这是"), so it is never phrase-matched.
+_POLARITY = {
+    "yes": "yes",
+    "no": "no",
+    "예": "yes",
+    "네": "yes",
+    "아니요": "no",
+    "아니오": "no",
+    "是": "yes",
+    "是的": "yes",
+    "对": "yes",
+    "对的": "yes",
+    "否": "no",
+    "不是": "no",
+    "不是的": "no",
+    "はい": "yes",
+    "いいえ": "no",
+}
+_POLARITY_WORD = re.compile(
+    r"(?<![\w-])("
+    + "|".join(sorted(map(re.escape, _POLARITY), key=len, reverse=True))
+    + r")(?![\w-])"
+)
+# Except for "yes", a polarity word answers a question only when punctuation
+# or the line end follows it ("No, it may not.", "네, 맞습니다."); before a
+# word, "no" is a determiner ("there is no clause") and "네" the numeral four
+# ("네 가지").
 _ANSWERING_NO = re.compile(r"\s*(?:$|[^\w\s])")
 # "No." before a number abbreviates "number" ("Clause No. 5").
 _NUMBER_ABBREVIATION = re.compile(r"\.\s*\d")
@@ -80,12 +106,13 @@ _MARKDOWN_HEADING = re.compile(r"\s*#{1,6}(?:\s|$)")
 
 
 def _leading_polarity(prediction: str) -> str | None:
-    """The first "yes"/"no" in the prediction that answers the question.
+    """The polarity ("yes"/"no") of the first yes/no word that answers.
 
-    Markdown heading lines are skipped, a "no" followed by a word ("there is
-    no evidence") is a determiner, not an answer, and "No." before a number
-    is the abbreviation. The search runs over whole lines, so an
-    abbreviation such as "U.S." cannot cut the answer short.
+    Markdown heading lines are skipped, a polarity word other than "yes"
+    followed by a word ("there is no evidence") is not an answer, and "No."
+    before a number is the abbreviation. Words are matched whole, so "예" in
+    "예외" or "是" in "这是" is not one. The search runs over whole lines, so
+    an abbreviation such as "U.S." cannot cut the answer short.
     """
     text = unicodedata.normalize("NFKC", prediction).lower()
     for line in text.splitlines():
@@ -94,20 +121,20 @@ def _leading_polarity(prediction: str) -> str | None:
         for match in _POLARITY_WORD.finditer(line):
             word = match.group(1)
             if word == "yes":
-                return word
+                return _POLARITY[word]
             rest = line[match.end() :]
             if _ANSWERING_NO.match(rest) and not _NUMBER_ABBREVIATION.match(rest):
-                return word
+                return _POLARITY[word]
     return None
 
 
 def answer_contains(prediction: str, reference: str) -> float:
     # A yes/no gold appears in almost any long answer ("no" in "there is no
-    # ..."), so it is scored by the answer's leading polarity instead, as
-    # HotpotQA does for its comparison questions.
+    # ...", "예" in "예외"), so it is scored by the answer's leading polarity
+    # instead, as HotpotQA does for its comparison questions.
     gold = normalize_answer(reference)
     if gold in _POLARITY:
-        return float(_leading_polarity(prediction) == gold)
+        return float(_leading_polarity(prediction) == _POLARITY[gold])
     return float(phrase_in_text(reference, prediction))
 
 

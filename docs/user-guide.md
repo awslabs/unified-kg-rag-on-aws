@@ -1418,10 +1418,14 @@ set `enabled_evaluators: [answer_match, retrieval, graph_aware]`.
   spacing next to CJK letters is ignored (`3억 원` = `3억원`,
   `가나다 상사` = `가나다상사`). A single-word CJK gold is matched as a
   substring, but not inside a longer number or Latin word (`2년` does not
-  match `12년`). A `yes`/`no` gold is scored by the answer's polarity, as in
-  HotpotQA, since almost any long answer contains the word "no": the first
-  `yes`/`no` that answers the question, skipping Markdown headings and a `no`
-  followed by a word (`there is no clause`) or a number (`No. 5`). SQuAD-style `exact_match` and
+  match `12년`). A yes/no gold (`yes`/`no`; Korean `예`/`네`/`아니요`/`아니오`;
+  Chinese `是`/`对`/`否`/`不是`; Japanese `はい`/`いいえ`) is scored by the
+  answer's polarity, as in HotpotQA, since almost any long answer contains
+  the word "no" (or `예` in `예외`): the first whole yes/no word that answers
+  the question, skipping Markdown headings and a word other than `yes`
+  followed by a word (`there is no clause`, `네 가지`) or `no` followed by a
+  number (`No. 5`). So `네, 맞습니다` answers yes but `네 맞습니다` is not
+  read as an answer. SQuAD-style `exact_match` and
   `token_f1` are also emitted. Text is NFKC-normalized, then lowercased,
   punctuation deleted, English articles dropped and whitespace collapsed, as
   in the SQuAD v1.1 script, except that Unicode punctuation is deleted too and

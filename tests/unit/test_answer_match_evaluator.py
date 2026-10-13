@@ -108,6 +108,34 @@ class TestNormalization:
     ) -> None:
         assert answer_contains(prediction, reference) == expected
 
+    @pytest.mark.parametrize(
+        ("prediction", "reference", "expected"),
+        [
+            # the gold word appears, but the answer is the opposite polarity
+            ("아니요, 계약서에는 예외 조항은 없습니다.", "예", 0.0),
+            ("아니요, 계약서에는 예외 조항은 없습니다.", "아니요", 1.0),
+            ("예, 해지할 수 있습니다.", "예", 1.0),
+            ("네, 맞습니다.", "예", 1.0),
+            ("아니요, 없습니다.", "아니오", 1.0),
+            # inside a longer word, or "네" the numeral, it is no answer
+            ("예를 들어 계약서에는 그런 조항이 없습니다.", "예", 0.0),
+            ("네트워크 장비 공급 계약입니다.", "네", 0.0),
+            ("네 가지 경우가 있습니다. 아니요.", "네", 0.0),
+            ("아니요라고 할 수 없습니다. 예, 맞습니다.", "아니요", 0.0),
+            ("不是，没有这样的条款。", "是", 0.0),
+            ("是的，买方可以终止。", "是", 1.0),
+            ("这是一个条款。", "否", 0.0),
+            ("不是的，没有。", "否", 1.0),
+            ("いいえ、ありません。", "はい", 0.0),
+            ("はい、あります。", "はい", 1.0),
+            ("いいえ、ありません。", "いいえ", 1.0),
+        ],
+    )
+    def test_cjk_yes_no_gold_scored_by_leading_polarity(
+        self, prediction: str, reference: str, expected: float
+    ) -> None:
+        assert answer_contains(prediction, reference) == expected
+
     def test_korean_number_with_a_unit_is_contained(self) -> None:
         assert answer_contains("계약은 2024년에 체결되었다", "2024") == 1.0
         assert answer_contains("계약 금액은 3억 원이다", "3") == 0.0

@@ -279,6 +279,11 @@ Library API (Python callers and custom backends).
   aws-cdk-lib pin (#241).
 
 ### Fixed
+- `answer_match` scores a Korean, Chinese or Japanese yes/no gold (`예`,
+  `네`, `아니요`, `아니오`, `是`, `对`, `否`, `不是`, `はい`, `いいえ`) by the
+  answer's polarity, as it already did for `yes`/`no`. Such a gold was
+  matched as a substring, so `예` scored 1.0 against `아니요, ... 예외 ...`
+  (#PR).
 - `run-eval --eval-data-path` naming a file that does not exist exits 2 with
   `Error: invalid evaluation dataset: ...`, as the user guide documents and
   as an unreadable or invalid dataset does; it exited 1 (#230).
