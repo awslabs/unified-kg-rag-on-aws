@@ -239,6 +239,9 @@ Library API (Python callers and custom backends).
   `guardrail_version` (#211).
 
 ### Changed
+- `unified_kg_rag.visualization` exports only `GraphVisualizationManager`;
+  import the renderers from `unified_kg_rag.adapters.renderers` and the
+  embedder and reducer from `unified_kg_rag.visualization.embeddings` (#PR).
 - Retrieval: AUTO routes among `local`/`mix`/`global`/`drift` with the fast
   model; `mix`/`hybrid` retrievals, DRIFT steps and keyword extraction run
   concurrently; global search answers from ranked map points without a

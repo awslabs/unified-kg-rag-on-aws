@@ -46,14 +46,7 @@ logger = get_logger(__name__)
 
 class RagasEvaluator(BaseGraphRAGEvaluator):
     BUFFER_TOKENS: ClassVar[int] = 128
-    METRIC_MAPPING = {
-        EvaluationMetricType.ANSWER_CORRECTNESS: "answer_correctness",
-        EvaluationMetricType.ANSWER_RELEVANCY: "answer_relevancy",
-        EvaluationMetricType.CONTEXT_PRECISION: "context_precision",
-        EvaluationMetricType.CONTEXT_RECALL: "context_recall",
-        EvaluationMetricType.FAITHFULNESS: "faithfulness",
-    }
-
+    # Each metric's score column in the RAGAS frame is its ``name``.
     RAGAS_METRICS = {
         EvaluationMetricType.ANSWER_CORRECTNESS: answer_correctness,
         EvaluationMetricType.ANSWER_RELEVANCY: answer_relevancy,
@@ -77,7 +70,9 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
     COUNT_CAPPED_METRICS: ClassVar[frozenset[EvaluationMetricType]] = frozenset(
         {EvaluationMetricType.CONTEXT_PRECISION}
     )
-    _SCORE_COLUMNS: ClassVar[frozenset[str]] = frozenset(METRIC_MAPPING.values())
+    _SCORE_COLUMNS: ClassVar[frozenset[str]] = frozenset(
+        m.name for m in RAGAS_METRICS.values()
+    )
 
     def __init__(
         self,
@@ -230,7 +225,8 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
             metrics = []
             failed: dict[str, str] = {}
             skipped: dict[str, str] = {}
-            for metric_type, metric_name in self.METRIC_MAPPING.items():
+            for metric_type, metric in self.RAGAS_METRICS.items():
+                metric_name = metric.name
                 if metric_type not in self.config.evaluation.ragas_metrics:
                     continue
                 if metric_type in self.REFERENCE_METRICS and not has_reference:
@@ -460,7 +456,7 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
 
     def validate_config(self) -> bool:
         unsupported_metrics = set(self.config.evaluation.ragas_metrics) - set(
-            self.METRIC_MAPPING
+            self.RAGAS_METRICS
         )
         if unsupported_metrics:
             logger.error("Unsupported Ragas metrics: '%s'", unsupported_metrics)
