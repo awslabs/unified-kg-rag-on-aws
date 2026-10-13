@@ -367,6 +367,9 @@ Library API (Python callers and custom backends).
 - Concurrent queries of an unreachable Neptune wait for one connection
   attempt instead of each making its own in turn: 16 queries took 16 times
   `search.store_timeout_seconds` and held as many executor threads (#PR).
+- Local search keeps the seed entities the entities index found, and the
+  text units they cite, when graph expansion degrades; it answered from
+  neither (#PR).
 - An error that names a field such as `author` no longer fails the query:
   retrieval errors are classified by type, not by matching words such as
   "auth" or "endpoint" in their message (#PR).

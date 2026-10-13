@@ -185,9 +185,16 @@ async def test_local_graph_expansion_reraises_fatal(config: Config) -> None:
         await strategy.asearch(SearchQuery(query="q", entity_focus=["Vendor"]))
 
 
-async def test_local_graph_expansion_degrades_on_transient(config: Config) -> None:
+async def test_local_graph_expansion_degrades_to_the_seed_entities(
+    config: Config,
+) -> None:
+    # Regression: a failed expansion dropped the seeds the entities index found
+    # and, with them, every text unit they cite.
+    document = _OkRetriever()
     strategy = _strategy(
-        config, SearchStrategy.LOCAL, _OkRetriever(), _RaisingRetriever(_TRANSIENT)
+        config, SearchStrategy.LOCAL, document, _RaisingRetriever(_TRANSIENT)
     )
     result = await strategy.asearch(SearchQuery(query="q", entity_focus=["Vendor"]))
-    assert result.metadata["expanded_entity_count"] == 0
+    assert result.metadata["expanded_entity_count"] == 1
+    assert result.metadata["text_unit_count"] == 1
+    assert any((q.filters or {}).get("id") == ["chunk-1"] for q in document.calls)
