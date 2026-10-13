@@ -196,10 +196,21 @@ class CacheManager:
             )
 
     def get_cache_stats(self, pipeline_id: str | None = None) -> CacheStats:
+        """This manager's hits and misses, with the pipeline's entry counts.
+
+        Without ``pipeline_id`` the live counters are returned as they are.
+        With one, the entry counts and sizes come from that pipeline's cache
+        index, and the hit and miss counts are the ones this manager recorded
+        (one manager serves one run).
+        """
         if not pipeline_id:
             return self.stats
 
-        stats = CacheStats()
+        stats = CacheStats(
+            hit_count=self.stats.hit_count,
+            miss_count=self.stats.miss_count,
+            stage_stats={k: dict(v) for k, v in self.stats.stage_stats.items()},
+        )
         index = self.load_cache_index(pipeline_id)
         stats.total_entries = len(index.entries)
         stats.total_size_bytes = sum(

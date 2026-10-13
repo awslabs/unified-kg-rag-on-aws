@@ -345,6 +345,8 @@ Library API (Python callers and custom backends).
   diversity cut ran once across all result types before the per-type quota,
   so over-quota entities took slots the quota then dropped and text kept 16
   of its 20; each type is now diversified within its own quota (#247).
+- The ingestion summary's "Cache Hit Rate" and the `cache_hit_rate` metric
+  report the run's stage-cache hits; they read 0% on every run (#PR).
 - A failed parent-level community report no longer records every document
   under it `FAILED`, which made the next incremental run re-extract most of
   the corpus for one report. Only a base-level report failure marks its
