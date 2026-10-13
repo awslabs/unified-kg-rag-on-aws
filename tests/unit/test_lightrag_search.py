@@ -1101,6 +1101,9 @@ class TestEndpointsBecomeCandidates:
         await strategy.asearch(_query(SearchStrategy.MIX, hl_keywords=["theme"]))
         assert captured["sources"]["lightrag_endpoint_entities"]
         assert neptune_r.calls == []
+        # Every emitted bucket has a default fusion weight, so weighted fusion
+        # does not warn about an unconfigured bucket on each query.
+        assert set(captured["sources"]) <= set(Config().search.fusion.fusion_weights)
 
 
 class TestHybridHasAChunkStream:

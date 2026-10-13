@@ -1861,22 +1861,31 @@ class FusionConfig(BaseModel):
         default_factory=lambda: {
             "graph_entities": 1.0,
             "text_units": 1.0,
+            "relationships": 1.0,
+            "bridge_relationships": 1.0,
+            "community_reports": 1.0,
+            "claims": 1.0,
             "lightrag_entities": 1.0,
             "lightrag_relationships": 1.0,
+            "lightrag_endpoint_entities": 1.0,
+            "lightrag_incident_relationships": 1.0,
             "lightrag_chunks": 1.0,
+            "lightrag_linked_chunks": 1.0,
             "opensearch_all": 1.0,
             "opensearch_community_reports": 1.0,
-            "opensearch_candidate_community_reports": 1.0,
             "results": 1.0,
         },
         description=(
             "Per-source-bucket weights, applied by both fusion methods: RRF "
             "scales each bucket's 1/(rrf_k + rank) term and weighted fusion "
-            "scales its scores. Keys are the retrieval source buckets "
-            "emitted by the search strategies (graph_entities, text_units, "
-            "lightrag_entities/relationships/chunks, opensearch_all, the "
-            "global-search community-report buckets, and drift's 'results'). A "
-            "bucket without a key defaults to 1.0."
+            "scales its scores. Keys are the source buckets the search "
+            "strategies emit: local (graph_entities, text_units, relationships, "
+            "bridge_relationships, community_reports, claims), LightRAG "
+            "(lightrag_entities, lightrag_relationships, "
+            "lightrag_endpoint_entities, lightrag_incident_relationships, "
+            "lightrag_chunks, lightrag_linked_chunks), simple (opensearch_all), "
+            "global (opensearch_community_reports, text_units) and drift "
+            "(results). A bucket without a key defaults to 1.0."
         ),
     )
 
