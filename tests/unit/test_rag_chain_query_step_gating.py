@@ -264,9 +264,15 @@ async def test_entity_focus_order_is_deterministic(config: Config) -> None:
     captured: dict[str, Any] = {}
 
     class _Strategy:
-        async def asearch(self, query: Any, config=None) -> str:
+        async def asearch(self, query: Any, config=None) -> SearchResult:
             captured["query"] = query
-            return "result"
+            return SearchResult(
+                query=query,
+                results=[],
+                total_results=0,
+                search_strategy="fake",
+                processing_time=0.0,
+            )
 
     chain._get_strategy_instance = lambda _s: _Strategy()  # type: ignore[assignment]
     await chain._search_step(
@@ -290,9 +296,15 @@ async def test_no_entity_focus_for_strategies_that_do_not_read_it(
     captured: dict[str, Any] = {}
 
     class _Strategy:
-        async def asearch(self, query: Any, config=None) -> str:
+        async def asearch(self, query: Any, config=None) -> SearchResult:
             captured["query"] = query
-            return "result"
+            return SearchResult(
+                query=query,
+                results=[],
+                total_results=0,
+                search_strategy="fake",
+                processing_time=0.0,
+            )
 
     chain._get_strategy_instance = lambda _s: _Strategy()  # type: ignore[assignment]
     await chain._search_step(

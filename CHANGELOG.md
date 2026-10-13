@@ -372,6 +372,11 @@ Library API (Python callers and custom backends).
   unrated reports again. That error is an HTTP 400 too, so it was read as a
   refused request and failed the query; a level with at most
   `map_batch_size` reports is one batch (#PR).
+- A global-search map or reduce call that fails under
+  `processing.ignore_errors` is recorded: the result metadata (and the
+  `RAGOutput` metadata) carries `degraded_error` with the error's type name
+  and the `kg_rag.strategy` span carries it as `error.type`. The degraded
+  answer had no marker (#PR).
 - A Neptune connection lost under concurrent queries no longer leaks
   threads. A query took the traversal source before waiting for a pool
   slot, so after another query reset the connection it sent on the closed

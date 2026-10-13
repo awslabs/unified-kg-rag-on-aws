@@ -13,7 +13,13 @@ from unified_kg_rag.application.retrieval.rag_chain import (
     GraphRAGChain,
     ProcessedQuery,
 )
-from unified_kg_rag.domain.models import Config, SearchQuery, SearchStrategy, SearchType
+from unified_kg_rag.domain.models import (
+    Config,
+    SearchQuery,
+    SearchResult,
+    SearchStrategy,
+    SearchType,
+)
 from unified_kg_rag.domain.retrieval.strategy_registry import (
     QueryInput,
     get_strategy_spec,
@@ -199,7 +205,13 @@ class TestSearchStepThreading:
         class _Strategy:
             async def asearch(self, query: SearchQuery, config=None):
                 captured["query"] = query
-                return "result"
+                return SearchResult(
+                    query=query,
+                    results=[],
+                    total_results=0,
+                    search_strategy="fake",
+                    processing_time=0.0,
+                )
 
         monkeypatch.setattr(chain, "_get_strategy_instance", lambda _s: _Strategy())
         state = {
@@ -225,7 +237,13 @@ class TestSearchStepThreading:
         class _Strategy:
             async def asearch(self, query: SearchQuery, config=None):
                 captured["query"] = query
-                return "result"
+                return SearchResult(
+                    query=query,
+                    results=[],
+                    total_results=0,
+                    search_strategy="fake",
+                    processing_time=0.0,
+                )
 
         monkeypatch.setattr(chain, "_get_strategy_instance", lambda _s: _Strategy())
         state = {

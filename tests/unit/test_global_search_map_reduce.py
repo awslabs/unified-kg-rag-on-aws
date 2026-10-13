@@ -438,6 +438,53 @@ async def test_asearch_all_filtered_yields_empty_result_with_flag() -> None:
     assert result.metadata["map_reduce_applied"] is False
 
 
+@pytest.mark.parametrize("failing", ["map", "reduce"])
+async def test_asearch_marks_a_map_reduce_failure_ignore_errors_degraded(
+    failing: str,
+) -> None:
+    # Regression: with ignore_errors on, a failed map or reduce call degraded
+    # the answer with no marker on the result (nor error.type on the span).
+    strat = _strategy(
+        ignore_errors=True,
+        map_batch_size=1,
+        reduce_with_llm=True,
+        map_outputs=[_map_payload(("p", 50))] * 2,
+    )
+    if failing == "map":
+        strat._run_map_phase = AsyncMock(  # type: ignore[method-assign]
+            side_effect=TimeoutError("map down")
+        )
+    else:
+        strat.map_reducer.ainvoke = AsyncMock(side_effect=TimeoutError("down"))
+    communities = _communities(2)
+    for step in (
+        "_retrieve_community_reports",
+        "_select_relevant_communities",
+        "_augment_and_rerank_communities",
+    ):
+        setattr(strat, step, AsyncMock(return_value=communities))
+
+    result = await strat.asearch(SearchQuery(query="q"))
+
+    assert result.results
+    assert result.metadata["degraded_error"] == "TimeoutError"
+
+
+async def test_asearch_without_a_failure_has_no_degraded_marker() -> None:
+    strat = _strategy(map_batch_size=1, map_outputs=[_map_payload(("p", 50))] * 2)
+    communities = _communities(2)
+    for step in (
+        "_retrieve_community_reports",
+        "_select_relevant_communities",
+        "_augment_and_rerank_communities",
+    ):
+        setattr(strat, step, AsyncMock(return_value=communities))
+
+    result = await strat.asearch(SearchQuery(query="q"))
+
+    assert "degraded_error" not in result.metadata
+
+
 # --------------------------------------------------------------------------- #
 # Default (reduce_with_llm=False): packed points go to the answer model as-is
 # --------------------------------------------------------------------------- #
