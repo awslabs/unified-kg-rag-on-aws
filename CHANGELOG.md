@@ -263,6 +263,11 @@ Library API (Python callers and custom backends).
   computes its own) and which took minutes on a graph of tens of thousands
   of entities; its `centrality_stats` metrics are gone. It also no longer
   caches a copy of graph resolution's entities and relationships (#248).
+- CDK: in `network_mode=private` (the default) the created VPC no longer has
+  public subnets, an internet gateway or `0.0.0.0/0` routes, which the
+  isolated data plane never used. The public range stays reserved, so the
+  `app` subnets keep their CIDRs and an update of a deployed stack removes
+  only those resources (#PR).
 - Retrieval: AUTO routes among `local`/`mix`/`global`/`drift` with the fast
   model; `mix`/`hybrid` retrievals, DRIFT steps and keyword extraction run
   concurrently; global search answers from ranked map points without a

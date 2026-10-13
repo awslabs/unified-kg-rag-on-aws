@@ -3,9 +3,10 @@
 """Networking: VPC (reuse or create), subnets, security groups, VPC endpoints.
 
 Two modes (config.network_mode):
-  - "private" (default): isolated subnets with NO NAT gateway. The data plane
-    reaches AWS services only through VPC endpoints (Bedrock, S3, DynamoDB,
-    ECR, CloudWatch Logs, STS). No internet egress.
+  - "private" (default): isolated subnets with NO NAT gateway, and no public
+    subnet or internet gateway. The data plane reaches AWS services only
+    through VPC endpoints (Bedrock, S3, DynamoDB, ECR, CloudWatch Logs, STS).
+    No internet egress.
   - "public": private subnets WITH NAT egress (simpler; allows arbitrary
     outbound, e.g. pulling public packages at runtime).
 
@@ -97,8 +98,14 @@ class NetworkingStack(Stack):
             # No NAT gateways in private mode (cost + no-egress guarantee).
             nat_gateways=0 if self.config.is_private else self.config.max_azs,
             subnet_configuration=[
+                # Reserved (address space kept, no subnet created) in private
+                # mode: CDK allocates CIDRs in this list's order, so dropping the
+                # group would shift the app subnets' CIDRs and replace them.
                 ec2.SubnetConfiguration(
-                    name="public", subnet_type=ec2.SubnetType.PUBLIC, cidr_mask=24
+                    name="public",
+                    subnet_type=ec2.SubnetType.PUBLIC,
+                    cidr_mask=24,
+                    reserved=self.config.is_private,
                 ),
                 ec2.SubnetConfiguration(
                     name="app", subnet_type=subnet_type, cidr_mask=22

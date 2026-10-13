@@ -48,6 +48,42 @@ def test_public_mode_creates_only_free_gateway_endpoints() -> None:
     }
 
 
+def _subnets(stack: NetworkingStack) -> dict[str, dict[str, Any]]:
+    subnets = Template.from_stack(stack).find_resources("AWS::EC2::Subnet")
+    return {logical_id: s["Properties"] for logical_id, s in subnets.items()}
+
+
+def test_private_mode_creates_no_internet_path() -> None:
+    template = Template.from_stack(_network({}))
+    template.resource_count_is("AWS::EC2::InternetGateway", 0)
+    template.resource_count_is("AWS::EC2::NatGateway", 0)
+    routes = template.find_resources("AWS::EC2::Route")
+    assert not [
+        r
+        for r in routes.values()
+        if r["Properties"].get("DestinationCidrBlock") == "0.0.0.0/0"
+    ]
+    assert all(
+        not s.get("MapPublicIpOnLaunch") for s in _subnets(_network({})).values()
+    )
+
+
+def test_app_subnets_keep_their_cidrs_in_both_modes() -> None:
+    # The public /24s stay reserved in private mode, so the app subnets of an
+    # existing deployment keep their CIDRs and logical ids (a changed CIDR
+    # replaces the subnet, and with it every store placed in it).
+    for context in ({}, {"network_mode": "public"}):
+        app = {
+            logical_id: s["CidrBlock"]
+            for logical_id, s in _subnets(_network(context)).items()
+            if logical_id.startswith("Vpcapp")
+        }
+        assert app == {
+            "VpcappSubnet1SubnetAE489B2F": "10.0.4.0/22",
+            "VpcappSubnet2Subnet2449FB56": "10.0.8.0/22",
+        }
+
+
 def test_flow_log_retention_is_configurable() -> None:
     stack = _network({"vpc_flow_logs": "true", "flow_log_retention_days": "90"})
     template = Template.from_stack(stack)

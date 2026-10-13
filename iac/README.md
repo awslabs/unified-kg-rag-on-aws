@@ -212,10 +212,13 @@ flowchart LR
   OpenSearch domain run in the `app` subnets and share one security group that
   allows Neptune (8182) and OpenSearch (443) traffic between its members, so
   both stores are reachable only from inside the VPC.
-- In `private` mode (default) the `app` subnets have no route to the internet.
-  The task reaches AWS services only through the interface endpoints and the
-  S3/DynamoDB gateway endpoints shown, so Bedrock calls must go to the deploy
-  region (leave `bedrock_region` at the deploy region). In `public` mode the
+- In `private` mode (default) the `app` subnets have no route to the internet,
+  and the created VPC has no public subnet or internet gateway (the public
+  subnets' address range stays reserved, so the `app` subnets get the same
+  CIDRs in both modes). The task reaches AWS services only through the
+  interface endpoints and the S3/DynamoDB gateway endpoints shown, so Bedrock
+  calls must go to the deploy region (leave `bedrock_region` at the deploy
+  region). In `public` mode the
   `app` subnets route through one NAT gateway per AZ, no interface endpoints are
   created, and Bedrock may be in another region.
 - Step Functions runs the four ingestion phases as separate Fargate tasks of
