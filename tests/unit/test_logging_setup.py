@@ -167,6 +167,7 @@ def test_importing_the_package_leaves_host_logging_alone(tmp_path: Path) -> None
         "logging.getLogger().setLevel(logging.ERROR)\n"
         "import unified_kg_rag.application.cli.run_evaluation\n"
         "from unified_kg_rag.shared import get_logger\n"
+        "host.setFormatter(logging.Formatter('%(levelname)s %(name)s %(message)s'))\n"
         "get_logger('unified_kg_rag.host_test').error('lib says %s', 'hi')\n"
         "root = logging.getLogger()\n"
         "assert root.handlers == [host], root.handlers\n"
@@ -182,10 +183,28 @@ def test_importing_the_package_leaves_host_logging_alone(tmp_path: Path) -> None
         timeout=120,
     )
     assert completed.returncode == 0, completed.stderr
-    assert "lib says hi" in completed.stdout
+    # The host's formatter renders the plain message, not an event-dict repr.
+    assert completed.stdout.splitlines() == [
+        "ERROR unified_kg_rag.host_test lib says hi"
+    ]
     assert list(tmp_path.iterdir()) == []
     after = set(package_logs.glob("*")) if package_logs.exists() else set()
     assert after == before
+
+
+def test_library_mode_records_carry_the_message_and_fields(
+    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Without setup_logging a host formatter sees the plain message; the
+    # structured fields are record attributes, not a dict repr in the message.
+    monkeypatch.setattr(LoggingSetup, "_handlers", [])
+    name = "unified_kg_rag.test_library_mode"
+    with caplog.at_level(logging.INFO, logger=name):
+        with bound_contextvars(pipeline_id="p-1"):
+            get_logger(name).warning("lib says %s", "hi")
+    (record,) = [r for r in caplog.records if r.name == name]
+    assert record.getMessage() == "lib says hi"
+    assert record.pipeline_id == "p-1"  # type: ignore[attr-defined]
 
 
 def test_relative_log_file_path_resolves_against_cwd(

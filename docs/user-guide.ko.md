@@ -589,7 +589,7 @@ LLM 단계는 Bedrock I/O가 병목이므로 동시성을 CPU 수보다 훨씬 �
 | `cache.ttl_seconds` | `86400` | 캐시 항목 TTL입니다. `null`이면 만료하지 않습니다. |
 | `logging.level` | `"INFO"` | `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL` 중 하나입니다. |
 | `logging.log_format` | `"structured"` | `structured` 또는 `plain`입니다. |
-| `logging.log_to_file` | `true` | CLI가 로그를 `log_file_path`(`logs/log.txt`, 실제 파일 이름은 `log_YYYYMMDD.txt`)에도 씁니다. 상대 경로는 작업 디렉터리 기준입니다. 패키지를 라이브러리로 import하면 핸들러나 파일을 설정하지 않으며, 호스트 애플리케이션의 로깅 설정을 따릅니다. |
+| `logging.log_to_file` | `true` | CLI가 로그를 `log_file_path`(`logs/log.txt`, 실제 파일 이름은 `log_YYYYMMDD.txt`)에도 씁니다. 상대 경로는 작업 디렉터리 기준입니다. 패키지를 라이브러리로 import하면 핸들러나 파일을 설정하지 않으며, 호스트 애플리케이션의 로깅 설정을 따릅니다. 호스트의 포매터에는 메시지 본문만 나오고, 구조화 필드(`logger`, `level`, `pipeline_id`, `trace_id` 등)는 로그 레코드의 속성으로 들어갑니다. |
 | `logging.library_levels` | `{langchain_aws: WARNING, botocore: WARNING, urllib3: WARNING, opentelemetry: ERROR}` | 로그가 많은 라이브러리의 로거별 수준입니다. 이 키를 지정하면 기본 맵 전체가 대체됩니다. |
 
 **로그에 남는 내용.** `INFO` 이상에서 패키지는 사용자 텍스트와 코퍼스 텍스트 대신

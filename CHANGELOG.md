@@ -666,6 +666,10 @@ Library API (Python callers and custom backends).
   error without a `Cause` no longer fails the SNS publish; the Neptune
   Gremlin-errors alarm needs errors in 3 consecutive minutes, so retried
   write conflicts during parallel writes do not page (#219).
+- Used as a library (no `setup_logging`), the package's log records reach
+  the host application's handlers as the plain message, with the structured
+  fields as record attributes; a host `logging.basicConfig` printed every
+  record as a dict repr (#PR).
 
 ### Security
 - Prompts delimit corpus and retrieved text as data, and inputs cannot close
