@@ -473,7 +473,7 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                 # A search-only principal may not read mappings; the search
                 # itself still runs, and reports its own errors.
                 self._embedding_checked_aliases.add(alias)
-                if not getattr(self, "_embedding_check_denied_logged", False):
+                if not self._embedding_check_denied_logged:
                     self._embedding_check_denied_logged = True
                     logger.warning(
                         "Not allowed to read the mappings of %s (%s), so queries "

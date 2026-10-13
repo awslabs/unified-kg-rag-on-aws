@@ -139,8 +139,6 @@ async def test_local_search_adds_bridge_section_for_expanded_entities(
 
     await strategy.asearch(SearchQuery(query="q", entity_focus=["Vendor"]))
 
-    # Every emitted bucket has a default fusion weight (no per-query warning).
-    assert set(captured) <= set(Config().search.fusion.fusion_weights)
     assert [r.source for r in captured["bridge_relationships"]] == [
         "r-bridge",
         "r-out",

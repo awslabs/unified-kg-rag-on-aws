@@ -334,14 +334,6 @@ class HybridScorer:
         weights = self.fusion_config.fusion_weights
 
         for name, results in result_map.items():
-            if name not in weights:
-                logger.warning(
-                    "Weighted fusion: source bucket '%s' has no configured weight "
-                    "in fusion_weights (%s); defaulting to 1.0. Configure a weight "
-                    "for this bucket or use RRF fusion to avoid silent equal weighting.",
-                    name,
-                    sorted(weights),
-                )
             weight = weights.get(name, 1.0)
             for result in self._once_per_bucket(results):
                 key = self._get_result_key(result)

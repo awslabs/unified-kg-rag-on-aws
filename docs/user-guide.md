@@ -580,7 +580,7 @@ LLM stages are Bedrock-I/O-bound, so concurrency can far exceed the CPU count.
 | `search.hybrid.lexical_weight` | `0.5` | Lexical weight in the OpenSearch hybrid pipeline (vector: `vector_weight`, also `0.5`). `run-ingestion` writes the pipeline (`indexing.opensearch.hybrid_search_pipeline_name`) on every run, so a change takes effect from the next ingestion run, not at query time. One pipeline serves every namespace on the domain that uses its name: give a configuration with other weights its own pipeline name. |
 | `search.fusion.method` | `"rrf"` | `rrf` (reciprocal rank fusion) or `weighted`. |
 | `search.fusion.rrf_k` | `60` | RRF constant `k`. |
-| `search.fusion.fusion_weights` | `1.0` per bucket | Per-source-bucket weights; they scale each bucket's contribution under both `rrf` and `weighted`. |
+| `search.fusion.fusion_weights` | `{}` (every bucket `1.0`) | Per-source-bucket weights; they scale each bucket's contribution under both `rrf` and `weighted`. The template lists the bucket names. |
 | `search.fusion.diversity_lambda` | `0.5` | MMR trade-off: `1.0` = pure relevance, `0.0` = maximum diversity. |
 | `search.reranking.enabled` | `true` | Rerank fused results with `rerank_model_id` (`cohere.rerank-v3-5:0`). |
 | `search.reranking.top_k` | `100` | Candidates sent to the reranker. |

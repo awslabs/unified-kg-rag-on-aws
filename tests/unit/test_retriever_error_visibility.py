@@ -417,6 +417,7 @@ def _opensearch_retriever(config: Config) -> OpenSearchRetriever:
     )
     object.__setattr__(inst, "_embedding_dimension", _QUERY_DIMENSION)
     object.__setattr__(inst, "_embedding_checked_aliases", set())
+    object.__setattr__(inst, "_embedding_check_denied_logged", False)
     return inst
 
 

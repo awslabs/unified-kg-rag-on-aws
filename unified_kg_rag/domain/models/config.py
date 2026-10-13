@@ -1847,23 +1847,7 @@ class FusionConfig(BaseModel):
         ),
     )
     fusion_weights: dict[str, float] = Field(
-        default_factory=lambda: {
-            "graph_entities": 1.0,
-            "text_units": 1.0,
-            "relationships": 1.0,
-            "bridge_relationships": 1.0,
-            "community_reports": 1.0,
-            "claims": 1.0,
-            "lightrag_entities": 1.0,
-            "lightrag_relationships": 1.0,
-            "lightrag_endpoint_entities": 1.0,
-            "lightrag_incident_relationships": 1.0,
-            "lightrag_chunks": 1.0,
-            "lightrag_linked_chunks": 1.0,
-            "opensearch_all": 1.0,
-            "opensearch_community_reports": 1.0,
-            "results": 1.0,
-        },
+        default_factory=dict,
         description=(
             "Per-source-bucket weights, applied by both fusion methods: RRF "
             "scales each bucket's 1/(rrf_k + rank) term and weighted fusion "
@@ -1874,7 +1858,7 @@ class FusionConfig(BaseModel):
             "lightrag_endpoint_entities, lightrag_incident_relationships, "
             "lightrag_chunks, lightrag_linked_chunks), simple (opensearch_all), "
             "global (opensearch_community_reports, text_units) and drift "
-            "(results). A bucket without a key defaults to 1.0."
+            "(results). A bucket without a key weighs 1.0 (the default: none)."
         ),
     )
 

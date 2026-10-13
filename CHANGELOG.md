@@ -262,6 +262,9 @@ Library API (Python callers and custom backends).
   `guardrail_version` (#211).
 
 ### Changed
+- `search.fusion.fusion_weights` defaults to `{}`: every bucket weighs 1.0,
+  as the 15 listed 1.0 entries did, and weighted fusion no longer warns
+  about a bucket without a weight on every query (#PR).
 - `unified_kg_rag.visualization` exports only `GraphVisualizationManager`;
   import the renderers from `unified_kg_rag.adapters.renderers` and the
   embedder and reducer from `unified_kg_rag.visualization.embeddings` (#246).
