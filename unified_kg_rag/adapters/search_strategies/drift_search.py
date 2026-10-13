@@ -647,9 +647,7 @@ class DriftSearchStrategy(BaseSearchStrategy):
         for result in results:
             by_type.setdefault(result.retriever_type, []).append(result)
         ranked = {
-            section_type: iter(
-                sorted(group, key=lambda r: r.score or 0.0, reverse=True)
-            )
+            section_type: iter(sorted(group, key=lambda r: r.score, reverse=True))
             for section_type, group in by_type.items()
         }
         return [next(ranked[result.retriever_type]) for result in results]

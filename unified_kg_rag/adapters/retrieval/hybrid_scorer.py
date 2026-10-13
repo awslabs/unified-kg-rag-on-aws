@@ -136,7 +136,7 @@ class HybridScorer(MetricsMixin):
                     to_rerank = self._apply_bedrock_reranking(to_rerank, query)
                 combined_results = kept + to_rerank
 
-        combined_results.sort(key=lambda x: x.score or 0.0, reverse=True)
+        combined_results.sort(key=lambda x: x.score, reverse=True)
         # A single cross-type [:top_k] cut lets one type (usually entities, with many
         # near-tie RRF scores) crowd out text chunks — which is where LightRAG/GraphRAG
         # multi-hop answers actually live. When per_type_quota is given, guarantee each
@@ -256,7 +256,7 @@ class HybridScorer(MetricsMixin):
             if len(selected) >= budget:
                 break
             selected.append(r)
-        selected.sort(key=lambda x: x.score or 0.0, reverse=True)
+        selected.sort(key=lambda x: x.score, reverse=True)
         return selected
 
     @staticmethod
@@ -271,21 +271,8 @@ class HybridScorer(MetricsMixin):
         # but the normalization itself must not leak into the caller's list.
         copies = [r.model_copy() for r in results]
 
-        min_score = float("inf")
-        max_score = float("-inf")
-        has_score = False
-
-        for r in copies:
-            if r.score is not None:
-                has_score = True
-                min_score = min(min_score, r.score)
-                max_score = max(max_score, r.score)
-
-        if not has_score:
-            for r in copies:
-                r.score = 0.5
-            return copies
-
+        min_score = min(r.score for r in copies)
+        max_score = max(r.score for r in copies)
         score_range = max_score - min_score
 
         for result in copies:
@@ -320,7 +307,7 @@ class HybridScorer(MetricsMixin):
         native_norm: dict[str, float] = {}
         for results in buckets.values():
             for r in self._normalize_scores(results):
-                native_norm[self._get_result_key(r)] = r.score or 0.0
+                native_norm[self._get_result_key(r)] = r.score
 
         for name, results in buckets.items():
             weight = weights.get(name, 1.0)
@@ -363,7 +350,7 @@ class HybridScorer(MetricsMixin):
             weight = weights.get(name, 1.0)
             for result in self._once_per_bucket(results):
                 key = self._get_result_key(result)
-                scores[key] += (result.score or 0.0) * weight
+                scores[key] += result.score * weight
                 if key not in objects:
                     objects[key] = result.model_copy()
 
@@ -447,7 +434,7 @@ class HybridScorer(MetricsMixin):
         target_count = top_k * retrieval_multiplier
         # Sort a copy: the caller still holds `results` (the post-fusion list),
         # and an in-place sort here would reorder it as a side effect.
-        results = sorted(results, key=lambda x: x.score or 0.0, reverse=True)
+        results = sorted(results, key=lambda x: x.score, reverse=True)
 
         # A cut at least as wide as the candidate set removes nothing: MMR would
         # only permute the list, and every caller re-sorts by score afterwards.
@@ -470,7 +457,7 @@ class HybridScorer(MetricsMixin):
         # MMR then keeps whatever is least like rank 1, i.e. off-topic results.
         # All-equal scores carry no relevance signal, so they map to 1.0 and the
         # ordering falls to the diversity term alone.
-        raw_scores = [r.score or 0.0 for r in results]
+        raw_scores = [r.score for r in results]
         max_score = raw_scores[0]
         min_score = raw_scores[-1]
         score_range = max_score - min_score
@@ -532,7 +519,7 @@ class HybridScorer(MetricsMixin):
                     metadata={
                         "key": key,
                         "source": result.source or "",
-                        "original_score": result.score or 0.0,
+                        "original_score": result.score,
                     },
                 )
                 documents.append(doc)
@@ -614,9 +601,3 @@ class HybridScorer(MetricsMixin):
         except Exception as e:
             logger.error("Reranking failed: %s", e)
             return results
-
-    @staticmethod
-    def _jaccard(words1: set[str], words2: set[str]) -> float:
-        """Jaccard similarity of two word sets (shared by MMR diversity)."""
-        union = len(words1 | words2)
-        return len(words1 & words2) / union if union > 0 else 0.0

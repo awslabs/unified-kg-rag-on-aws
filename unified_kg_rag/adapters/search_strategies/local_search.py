@@ -2,17 +2,15 @@
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
 import time
-from typing import Any
+from typing import Any, ClassVar
 
 from langchain_core.runnables import RunnableConfig
 
 from unified_kg_rag.adapters.retrieval.base import (
-    BaseGraphRAGRetriever,
     BaseSearchStrategy,
 )
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
 from unified_kg_rag.domain.models import (
-    Config,
     RetrievalResult,
     SearchQuery,
     SearchResult,
@@ -37,15 +35,8 @@ def _consume_outcome(future: asyncio.Future[Any]) -> None:
 
 @register_strategy(SearchStrategy.LOCAL, query_inputs=frozenset({QueryInput.ENTITIES}))
 class LocalSearchStrategy(BaseSearchStrategy):
-    def __init__(
-        self,
-        config: Config,
-        retrievers: dict[str, BaseGraphRAGRetriever],
-        entity_focus_multiplier: int = 2,
-        **kwargs: Any,
-    ):
-        super().__init__(config, retrievers, **kwargs)
-        self.entity_focus_multiplier = entity_focus_multiplier
+    # Entities-index candidates fetched per focus entity.
+    ENTITY_CANDIDATES_PER_FOCUS: ClassVar[int] = 2
 
     async def asearch(
         self, query: SearchQuery, config: RunnableConfig | None = None
@@ -206,7 +197,7 @@ class LocalSearchStrategy(BaseSearchStrategy):
         # still seeds graph expansion instead of returning no chunks at all.
         if query.entity_focus:
             entity_query = " ".join(query.entity_focus)
-            n_candidates = len(query.entity_focus) * self.entity_focus_multiplier
+            n_candidates = len(query.entity_focus) * self.ENTITY_CANDIDATES_PER_FOCUS
         else:
             entity_query = query.query
             n_candidates = query.top_k
@@ -376,7 +367,7 @@ class LocalSearchStrategy(BaseSearchStrategy):
                 ids = [ids]
             if not isinstance(ids, list):
                 continue
-            score = node.score or 0.0
+            score = node.score
             for raw_id in ids:
                 unit_id = str(raw_id)
                 hit_count[unit_id] = hit_count.get(unit_id, 0) + 1
