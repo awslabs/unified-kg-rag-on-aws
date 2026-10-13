@@ -1478,10 +1478,10 @@ spring 레이아웃과 설정한 중심성 지표를 계산합니다. `graph.vis
 
 레이아웃과 오류 처리 방식은 다음과 같습니다.
 
-- `embedding_method: "none"`은 spring 레이아웃을 쓰며 Bedrock 임베딩 클라이언트를
+- `embedding_method: "none"`은 spring 레이아웃을 쓰며 임베딩 클라이언트를
   만들지 않습니다.
-- `embedding_method: "description"`은 노드마다 `name: description`을 Bedrock으로
-  임베딩하고 `layout_method`로 차원을 줄입니다. 임베딩이 실패하면
+- `embedding_method: "description"`은 노드마다 `name: description`을 임베딩
+  공급자(`providers.embedding`, 기본값 Bedrock)로 임베딩하고 `layout_method`로 차원을 줄입니다. 임베딩이 실패하면
   `processing.ignore_errors`가 `false`일 때 시각화 단계가 실패합니다(수집 자체는
   계속하며 실패를 로그에 남김). `ignore_errors: true`이면 ERROR를 남기고 토폴로지만
   쓰는 spring 레이아웃으로 대체하며, `visualization_data.json`에

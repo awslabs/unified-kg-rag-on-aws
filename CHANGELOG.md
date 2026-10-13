@@ -279,6 +279,12 @@ Library API (Python callers and custom backends).
   aws-cdk-lib pin (#241).
 
 ### Fixed
+- `run-visualization` and ingestion-time rendering compute the spring
+  layout only for the nodes the interactive page draws (the top
+  `graph.visualization.interactive.max_nodes` by degree). A large graph was
+  laid out whole first: about 3.5 minutes of an 8,000-node render went to
+  nodes that were then dropped. Graphs within the cap get the same layout as
+  before (#PR).
 - `retrieval` matches a source by its file-name stem only when the
   reference has no extension: `Report-A.pdf` no longer matches a source
   `Report-A.docx`, and a version suffix such as `.v2` is part of the name, so

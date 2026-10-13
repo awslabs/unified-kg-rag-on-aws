@@ -150,6 +150,22 @@ class TestRunVisualization:
         assert set(context.layout) == {"e1", "e2", "e3"}
         assert context.centrality["e2"].degree == 1.0
 
+    def test_data_only_export_lays_out_only_the_drawn_nodes(
+        self, tmp_path: Path, config: Config
+    ) -> None:
+        from unified_kg_rag.domain.ingestion.visualization_data import graph_data
+
+        graph = nx.star_graph(5)
+        path = tmp_path / "data.json"
+        path.write_text(
+            json.dumps(graph_data(graph, {"hierarchy": []})), encoding="utf-8"
+        )
+        config.graph.visualization.interactive = {"max_nodes": 3}
+        context = load_render_context(path)
+        cli_module._fill_missing_analysis(context, config)
+        # The hub (degree 5) and two leaves: the nodes the page draws.
+        assert len(context.layout) == 3 and "0" in context.layout
+
 
 class TestRendererRegistry:
     def test_builtin_renderers_registered(self) -> None:

@@ -227,3 +227,24 @@ def test_failed_reduction_marks_layout_degraded_and_is_deterministic(
         assert manager.layout_degraded is True
     assert set(layouts[0]) == {"e1", "e2", "e3"}
     assert layouts[0] == layouts[1]  # seeded, not np.random
+
+
+def test_spring_layout_covers_only_the_drawn_nodes(
+    config: Config, tmp_path: Path, mocker
+) -> None:
+    # A spring layout is quadratic in nodes: the interactive page draws only
+    # the top max_nodes by degree, so only those are laid out.
+    config.graph.visualization.interactive = {"max_nodes": 2}
+    spring = mocker.spy(nx, "spring_layout")
+    layout = _manager(config, tmp_path)._generate_layout()
+    assert spring.call_args.args[0].number_of_nodes() == 2
+    assert "e2" in layout and len(layout) == 2
+
+
+def test_spring_layout_of_a_graph_within_the_cap_is_unchanged(
+    config: Config, tmp_path: Path
+) -> None:
+    expected = {
+        str(k): v.tolist() for k, v in nx.spring_layout(_graph(), seed=42).items()
+    }
+    assert _manager(config, tmp_path)._generate_layout() == expected
