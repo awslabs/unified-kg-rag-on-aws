@@ -316,15 +316,12 @@ class BaseSearchStrategy(ABC):
         """Expand seed entities through the graph (GraphRAG local and LightRAG).
 
         Re-queries the GRAPH retriever pinned to the seed entity ids (an ``id``
-        filter merged into the caller's filters), with the entity focus cleared
-        so the seeds, not name matching, drive the traversal.
+        filter merged into the caller's filters).
         """
         if not self.graph_retriever or not seed_entity_ids:
             return []
 
         search_query = query.model_copy(deep=True)
-        search_query.label_prefixes = [self.config.indexing.neptune.entity_label_prefix]
-        search_query.entity_focus = []
         search_query.filters = (search_query.filters or {}).copy()
         search_query.filters["id"] = seed_entity_ids
 

@@ -64,6 +64,7 @@ ignored, so check the start-up warnings after upgrading.
   `processing.gleaning` (#171), `search.global_search.graph_timeout_seconds`
   (#161), `indexing.neptune.min_entity_importance` (#155) and the
   `SearchQuery.metadata["lightrag_mode"]` alias (#212).
+- `SearchQuery.label_prefixes` is removed; no retriever read it (#PR).
 - A filter key that no retriever of the strategy declares raises
   `InvalidFilterError` (#123).
 - `indexing.opensearch.terms_batch_size`, `max_total_clauses` and

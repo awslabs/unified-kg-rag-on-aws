@@ -268,14 +268,12 @@ def test_graph_round_trip(local_config: Config, graph_indexer) -> None:
 
     # Seeded by id, as every search strategy calls it. The indexers are
     # synchronous; retrieval runs on its own event loop.
-    labels = local_config.indexing.neptune
     (by_seed_id,) = asyncio.run(
         _graph_retrieve(
             local_config,
             SearchQuery(
                 query="",
                 suffix=_SUFFIX,
-                label_prefixes=labels.entity_label_prefix,
                 filters={"id": ["e-vendor"]},
             ),
         )
@@ -336,7 +334,6 @@ def test_graph_expansion_returns_every_seed_and_its_neighbourhood(
                     query="",
                     suffix=_SUFFIX,
                     top_k=8,
-                    label_prefixes=config.indexing.neptune.entity_label_prefix,
                     filters={"id": seeds},
                 ),
             )

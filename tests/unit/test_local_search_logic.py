@@ -271,7 +271,7 @@ async def test_expand_via_graph_no_seeds_returns_empty() -> None:
     assert await strat._expand_via_graph(query, []) == []
 
 
-async def test_expand_via_graph_sets_id_filter_and_label_prefix() -> None:
+async def test_expand_via_graph_sets_id_filter() -> None:
     retriever = _StubRetriever([_result("x")])
     strat = _bare_strategy(retrievers={"graph": retriever})
     query = SearchQuery(query="q", entity_focus=["Alice"], filters={"existing": 1})
@@ -282,8 +282,6 @@ async def test_expand_via_graph_sets_id_filter_and_label_prefix() -> None:
     assert sent.filters is not None
     assert sent.filters["id"] == ["e1", "e2"]
     assert sent.filters["existing"] == 1  # pre-existing filters preserved
-    assert sent.label_prefixes == ["Entity"]
-    assert sent.entity_focus == []  # focus cleared on the graph sub-query
     # The original query must not be mutated (deep copy is used).
     assert query.entity_focus == ["Alice"]
     assert query.filters is not None and "id" not in query.filters

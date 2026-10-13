@@ -106,10 +106,6 @@ class SearchQuery(BaseModel):
         ge=1,
         description="Multiplier for retrieval operations to increase search depth",
     )
-    label_prefixes: str | list[str] | None = Field(
-        default=None,
-        description="Target node types for Neptune search (entity, community)",
-    )
     index_prefixes: str | list[str] | None = Field(
         default=None,
         description="Target OpenSearch index aliases (text_units, entities, community_reports)",
