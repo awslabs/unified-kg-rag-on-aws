@@ -384,6 +384,11 @@ Library API (Python callers and custom backends).
 - A global-search map batch over the context of a vLLM or llama.cpp model is
   left unrated, as on Bedrock and OpenAI: those servers report it as a plain
   HTTP 400, which failed the whole query (#266).
+- A global-search map step whose every call gets an HTTP 400 (a parameter
+  the server does not support, a model id it does not know) fails the query
+  with that error. It left every batch unrated and answered from the raw
+  reports; with `providers.llm.fast_model_id` set the answer call runs on
+  another model, so nothing failed (#PR).
 - A query whose Neptune write was in flight when another query dropped the
   connection fails as a lost connection instead of waiting forever.
   gremlinpython's `close()` shuts its executor down, so the read the write
