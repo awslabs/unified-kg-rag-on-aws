@@ -270,7 +270,7 @@ Library API (Python callers and custom backends).
 ### Changed
 - A custom vector indexer's `read_claims` no longer has to tag each claim
   with the index it was read from; `IndexingManager` tags the claims it
-  writes back after a deletion (#PR).
+  writes back after a deletion (#259).
 - `search.fusion.fusion_weights` defaults to `{}`: every bucket weighs 1.0,
   as the 15 listed 1.0 entries did, and weighted fusion no longer warns
   about a bucket without a weight on every query (#258).
@@ -375,7 +375,7 @@ Library API (Python callers and custom backends).
   registry since turned off restarts at `document_loading` and builds the
   index in full. It restored the previous run's delta, so indexing wrote
   `PENDING`/`PROCESSED` records to the registry the user had disabled
-  (#PR).
+  (#259).
 - Deleting a document under a non-default index suffix
   (`processing.document_parsing.index_value`) strips its text units from the
   claims it shared with other documents in that suffix's claims index. The
