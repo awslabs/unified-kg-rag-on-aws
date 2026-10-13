@@ -78,10 +78,11 @@ Defaults. Set the old value explicitly to keep the previous behaviour.
   render on demand with `run-visualization` from the `visualization_data.json`
   that ingestion still writes (`graph.visualization.export_data`, default
   `true`: graph and communities, no model call; `run-visualization` computes
-  a spring layout and centrality) (#210, #PR).
-- `backend: local` sets `search.token_manager.max_context_tokens` to 22000,
-  what the default local model's 32,768-token window accepts beside its
-  output reservation (30000 was clamped, with a WARNING, on every query) (#224).
+  a spring layout and centrality) (#210, #219).
+- `backend: local` sets `search.token_manager.max_context_tokens` to 22000
+  when the LLM is not Bedrock and sets no `context_window_size`: what the
+  default local model's 32,768-token window accepts beside its output
+  reservation (30000 was clamped, with a WARNING, on every query) (#224, #226).
 - Entity resolution merges only names equal after normalization, legal-form
   removal and dense-script spacing. Similarity matching is opt-in
   (`processing.fuzzy_entity_resolution: true`), and
@@ -145,7 +146,7 @@ Library API (Python callers and custom backends).
   `GraphRAGChain` no longer accepts unknown keyword arguments, so a
   misspelled one raises `TypeError`. `OpenSearchIndexer`,
   `OpenSearchRetriever` and `BedrockNodeEmbedder` require
-  `embedding_factory=` (#216, #PR).
+  `embedding_factory=` (#216, #221).
 - Custom model factories: `get_model_info` must return a
   `LanguageModelInfo`; opt into the chain-level retry with
   `is_transient_error(exc)` and `transient_retry` (#216).
@@ -232,7 +233,7 @@ Library API (Python callers and custom backends).
   usage, log/trace correlation, `session.id` / `user.id`
   (`RAGInput.user_id`), opt-in content capture with `redact_patterns`
   applied at capture and again at export, and `export_timeout_seconds`
-  (#207, #208, #211, #PR).
+  (#207, #208, #211, #219).
 - Incremental-indexing controls: `indexing.max_document_failures` (#175),
   `indexing.retire_source_scopes` / `--retire-source-scope` (#192) and
   `processing.document_parsing.source_scope` (#134).
@@ -267,10 +268,6 @@ Library API (Python callers and custom backends).
   computes its own) and which took minutes on a graph of tens of thousands
   of entities; its `centrality_stats` metrics are gone. It also no longer
   caches a copy of graph resolution's entities and relationships (#248).
-- CDK: a failed ingestion phase notifies the alarm topic once. The
-  `PipelineFailures` alarm is removed; the state machine's failure message
-  (execution id and error) already covers it, and `PipelineTimedOutOrAborted`
-  still reports runs that never reach a phase's error handler (#251).
 - CDK: the OpenSearch domain publishes only its application logs. The slow
   search and index logs stayed empty (the app sets no slow-log thresholds),
   so their two log groups are removed; the domain is updated in place
@@ -317,7 +314,7 @@ Library API (Python callers and custom backends).
   pypdf 6.20, tenacity 9.2 and boto3 1.43.112 in `uv.lock`; aws-cdk-lib and
   aws-cdk.aws-neptune-alpha 2.273 in the CDK lock. typeguard stays at 2.13.3
   and aws-cdk-cloud-assembly-schema below 55, the versions jsii and
-  aws-cdk-lib pin (#241, #PR).
+  aws-cdk-lib pin (#241, #251).
 - `iac/` is a uv project of its own (`iac/pyproject.toml`, `iac/uv.lock`,
   outside the root lock): install it with `cd iac && uv sync`.
   `iac/requirements.txt` and `iac/requirements-lock.txt` are gone. Dependabot
@@ -724,10 +721,6 @@ Library API (Python callers and custom backends).
   instead of importing `graspologic`, whose package import loads boto3
   (through gensim and smart_open) and takes about 10 s. Partitions are
   unchanged (#225).
-- The check that the graph still holds the registry's documents reads past
-  any number of entity-less records, still in batches, instead of stopping
-  after 1,000: a corpus starting with more than 1,000 entity-less pages no
-  longer lets a wiped graph pass as intact (#225).
 - Re-running `run-ingestion` with an existing `--pipeline-id` resumes again:
   the integrity check built its cache keys before the corpus fingerprint was
   known, so it reported every stage missing and prompted, which crashed
@@ -842,9 +835,9 @@ Library API (Python callers and custom backends).
   write into an index that already exists; indices named by earlier builds
   are still reaped (#221).
 - The check that the graph still holds the registry's documents probes
-  indexed documents that list entities, reading past entity-less ones (up to
-  1,000 records), so a corpus starting with 20 entity-less pages no longer
-  lets a wiped graph pass as intact (#221).
+  indexed documents that list entities, reading past entity-less ones, so a
+  corpus starting with entity-less pages no longer lets a wiped graph pass as
+  intact (#221, #225).
 - `--backend aws` over a `backend: local` config file no longer keeps the
   local preset's providers and connection keys under the `aws` label: values
   equal to the local preset's return to the AWS defaults (#221).
@@ -900,6 +893,13 @@ Library API (Python callers and custom backends).
   error without a `Cause` no longer fails the SNS publish; the Neptune
   Gremlin-errors alarm needs errors in 3 consecutive minutes, so retried
   write conflicts during parallel writes do not page (#219).
+- IaC: the pipeline-failure notification retries its SNS publish on a
+  throttled or transient error, which ended the run with no message. The
+  `PipelineFailures` alarm on failed executions stays: a phase's error
+  handler cannot catch `States.DataLimitExceeded` or `States.Runtime` (such
+  as a start input without the fields a phase reads), so a failed phase
+  still notifies twice, once with the execution id and error and once from
+  the alarm without them (#254).
 - Used as a library (no `setup_logging`), the package's log records reach
   the host application's handlers as the plain message, with the structured
   fields as record attributes; a host `logging.basicConfig` printed every

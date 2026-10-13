@@ -7,8 +7,8 @@ The application emits Embedded Metric Format (EMF) records under the
 (see unified_kg_rag/shared/metrics.py). The alarms and widgets query the
 dimensionless aggregate series the sink always publishes. This stack surfaces
 those plus Step Functions execution health on a dashboard, and alarms on
-timed-out or aborted runs, dropped artifacts and store health -> the
-orchestration SNS topic (a failed phase is reported by the state machine).
+failed, timed-out or aborted runs, dropped artifacts and store health -> the
+orchestration SNS topic.
 """
 
 from __future__ import annotations
@@ -40,12 +40,27 @@ class ObservabilityStack(Stack):
         self.storage = storage
         sm = orchestration.state_machine
 
-        # A failed phase is already reported once, with its error, by the
-        # state machine's Catch -> NotifyFailure publish to the same topic, so
-        # there is no alarm on failed executions (it would page twice).
+        # Alarm: any failed Step Functions execution -> SNS. A failed phase is
+        # also published, with its error, by the state machine's Catch, so such
+        # a failure notifies twice (once with context, once without). The alarm
+        # stays because the Catch cannot see every failure: States.ALL does not
+        # catch States.DataLimitExceeded or States.Runtime (e.g. a start input
+        # without the fields a phase reads), and the publish itself can fail.
+        failed_alarm = cw.Alarm(
+            self,
+            "PipelineFailures",
+            metric=sm.metric_failed(),
+            threshold=1,
+            evaluation_periods=1,
+            comparison_operator=cw.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+            alarm_description="unified-kg-rag-on-aws ingestion pipeline had a failed execution",
+        )
+        failed_alarm.add_alarm_action(cw_actions.SnsAction(orchestration.alarm_topic))
+
         # Alarm: a run that hit the state machine timeout or was stopped never
-        # reaches a phase Catch, so the failure notification does not see it.
-        # FILL keeps a missing series from blanking the sum.
+        # reaches a phase Catch and does not count as failed, so neither the
+        # failure notification nor the alarm above sees it. FILL keeps a
+        # missing series from blanking the sum.
         stopped_alarm = cw.Alarm(
             self,
             "PipelineTimedOutOrAborted",

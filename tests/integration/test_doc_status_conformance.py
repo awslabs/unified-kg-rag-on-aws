@@ -295,9 +295,13 @@ _ids = st.text(alphabet="abcdefghij", min_size=1, max_size=4)
 _corpus = st.dictionaries(_ids, st.text(min_size=1, max_size=8), max_size=10)
 
 # One store per test, emptied at the start of every example; the store fixture
-# is function-scoped, which is safe here because each example resets it.
+# is function-scoped, which is safe here because each example resets it. No
+# deadline: an example is moto or SQLite I/O, which overruns the 200 ms default
+# on a loaded machine (the ci profile already drops it; local runs did not).
 _per_store = settings(
-    max_examples=25, suppress_health_check=[HealthCheck.function_scoped_fixture]
+    max_examples=25,
+    deadline=None,
+    suppress_health_check=[HealthCheck.function_scoped_fixture],
 )
 
 

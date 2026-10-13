@@ -17,7 +17,8 @@ only the failed stage onward:
 
 A phase is retried only when ECS fails to start its task (a container that
 exits non-zero is a pipeline failure, and rerunning it repeats the same work);
-any failure is caught and published once to an SNS topic. The state machine input carries only ``source_directory`` (an s3:// URI
+a phase's error is caught and published, with the execution id, to an SNS
+topic. The state machine input carries only ``source_directory`` (an s3:// URI
 the container entrypoint syncs locally) and ``pipeline_id``. There is no
 full-vs-incremental switch: a run is incremental when ``aws.dynamodb`` is
 enabled in the baked-in config, and the same phases run either way.
@@ -153,7 +154,7 @@ class OrchestrationStack(Stack):
         # stopped ECS task, with its exit code and the phase's command). The
         # error is rendered whole: a path to an absent Cause would fail the
         # publish itself.
-        self.notify_failure = tasks.SnsPublish(
+        publish = tasks.SnsPublish(
             self,
             "NotifyFailure",
             topic=self.alarm_topic,
@@ -168,7 +169,19 @@ class OrchestrationStack(Stack):
                 }
             ),
             result_path=sfn.JsonPath.DISCARD,
-        ).next(sfn.Fail(self, "PipelineFailed", cause="An ingestion phase failed"))
+        )
+        # A throttled or transient publish error would otherwise fail the run
+        # without its notification (the PipelineFailures alarm still fires).
+        # States.TaskFailed matches every task error except States.Timeout.
+        publish.add_retry(
+            errors=["States.TaskFailed"],
+            interval=Duration.seconds(2),
+            max_attempts=3,
+            backoff_rate=2.0,
+        )
+        self.notify_failure = publish.next(
+            sfn.Fail(self, "PipelineFailed", cause="An ingestion phase failed")
+        )
 
         definition = self._build_definition()
         self.state_machine = sfn.StateMachine(
