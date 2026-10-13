@@ -310,10 +310,10 @@ Library API (Python callers and custom backends).
   previously only transitive, are now declared (#226).
 - Dependencies: pydantic 2.14, langchain-core 1.6.10, langchain-aws 1.8.1,
   langchain-openai 1.7, langsmith 0.14, datasets 5.1, tiktoken 0.14,
-  pypdf 6.20, tenacity 9.2 and boto3 1.43.110 in `uv.lock`; aws-cdk-lib and
+  pypdf 6.20, tenacity 9.2 and boto3 1.43.112 in `uv.lock`; aws-cdk-lib and
   aws-cdk.aws-neptune-alpha 2.273 in the CDK lock. typeguard stays at 2.13.3
   and aws-cdk-cloud-assembly-schema below 55, the versions jsii and
-  aws-cdk-lib pin (#241).
+  aws-cdk-lib pin (#241, #PR).
 - `iac/` is a uv project of its own (`iac/pyproject.toml`, `iac/uv.lock`,
   outside the root lock): install it with `cd iac && uv sync`.
   `iac/requirements.txt` and `iac/requirements-lock.txt` are gone. Dependabot
