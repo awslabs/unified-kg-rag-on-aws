@@ -15,8 +15,10 @@ import asyncio
 import json
 import socket
 import threading
+import time
 import weakref
 from collections.abc import Iterator
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import httpx
 import pytest
@@ -334,6 +336,77 @@ async def test_opensearch_timeout_is_a_store_timeout(silent_port: int) -> None:
         await search.client.close()
 
     assert is_fatal_retrieval_error(exc.value)
+
+
+class _ThrottlingOpenSearch:
+    """A local HTTP server answering searches 429 for ``burst`` seconds."""
+
+    def __init__(self, burst: float) -> None:
+        self.burst = burst
+        self.started: float | None = None
+        self.requests: list[float] = []
+        owner = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(self) -> None:  # noqa: N802 - http.server API
+                self.rfile.read(int(self.headers.get("Content-Length") or 0))
+                now = time.monotonic()
+                owner.started = owner.started or now
+                owner.requests.append(now)
+                if now - owner.started < owner.burst:
+                    status, body = 429, {
+                        "error": {"type": "es_rejected_execution_exception"},
+                        "status": 429,
+                    }
+                else:
+                    status, body = 200, {"hits": {"total": {"value": 0}, "hits": []}}
+                data = json.dumps(body).encode()
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+            do_GET = do_POST
+
+            def log_message(self, *_args: object) -> None:
+                pass
+
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.port: int = self.server.server_address[1]
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def close(self) -> None:
+        self.server.shutdown()
+        self.server.server_close()
+
+
+async def _search_throttled(config: Config, server: _ThrottlingOpenSearch) -> None:
+    client = OpenSearchClient(_local_opensearch_config(config, server.port))
+    try:
+        await client.asearch(index="any", body={"query": {"match_all": {}}})
+    finally:
+        await client.aclose()
+        server.close()
+
+
+async def test_a_short_429_burst_is_waited_out(config: Config) -> None:
+    # Regression: opensearch-py retried back to back, so a 429 burst of a few
+    # milliseconds used up every attempt and failed the query.
+    server = _ThrottlingOpenSearch(burst=0.2)
+    await _search_throttled(config, server)
+    assert len(server.requests) >= 2
+    assert server.requests[1] - server.requests[0] >= 0.2
+
+
+async def test_a_persistent_429_fails_after_store_max_attempts(
+    config: Config,
+) -> None:
+    config.search.store_max_attempts = 3
+    server = _ThrottlingOpenSearch(burst=60)
+    with pytest.raises(StoreConnectionError, match="status=429"):
+        await _search_throttled(config, server)
+    assert len(server.requests) == 3
 
 
 async def test_unreachable_opensearch_fails_the_retrieval(
