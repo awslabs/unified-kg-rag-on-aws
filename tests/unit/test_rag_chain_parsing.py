@@ -455,3 +455,18 @@ async def test_resolve_strategy_auto_falls_back_to_local_on_error(
     state = {"search_strategy": SearchStrategy.AUTO, "query": "q"}
     out = await chain._resolve_strategy(state)
     assert out["resolved_strategy"] == SearchStrategy.LOCAL
+
+
+async def test_resolve_strategy_auto_raises_on_router_error_by_default(
+    config: Config, mocker
+) -> None:
+    # processing.ignore_errors defaults to False: a failed router must surface,
+    # not silently answer with the fallback strategy.
+    chain = GraphRAGChain(config=config)
+    assert chain.ignore_errors is False
+    mocker.patch.object(
+        chain, "_get_chain_for_prompt", side_effect=RuntimeError("no bedrock")
+    )
+    state = {"search_strategy": SearchStrategy.AUTO, "query": "q"}
+    with pytest.raises(RuntimeError, match="no bedrock"):
+        await chain._resolve_strategy(state)

@@ -175,6 +175,21 @@ def test_sources_follow_retrieval_rank_not_section_type_order(
     assert out.sources[0]["metadata"]["document_ids"] == []
     assert out.sources[0]["metadata"]["chunk_id"] is None
 
+    # Interleaved types: the selection groups them (both chunks, then the
+    # entity), so only a rank-order report keeps the entity in the middle.
+    interleaved = [
+        _text_result(0, words=10, score=0.9),
+        results[0].model_copy(update={"score": 0.85}),
+        _text_result(2, words=10, score=0.8),
+    ]
+    optimized, out = _run_context_and_format(chain, _state(interleaved, 4000))
+    assert [s.source_id for s in optimized.sections] == [
+        "chunk-0",
+        "chunk-2",
+        "entity-1",
+    ]
+    assert [s["source"] for s in out.sources] == ["chunk-0", "entity-1", "chunk-2"]
+
 
 def test_sources_exclude_synthesized_results(config: Config) -> None:
     # The global map-reduce summary is in the answer context but is LLM output,

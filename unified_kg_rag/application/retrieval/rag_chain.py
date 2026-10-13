@@ -685,17 +685,24 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             and QueryInput.DUAL_KEYWORDS in get_strategy_spec(strategy).query_inputs
         )
 
-    # Phrases that signal the model returned commentary about the request rather
-    # than a translation of it (seen when the query is already in the target
-    # language). Matched case-insensitively against the start of the response.
-    _TRANSLATION_REFUSAL_MARKERS: ClassVar[tuple[str, ...]] = (
-        "i appreciate",
-        "i notice",
+    # Openings of a model refusal or meta-reply rather than the requested text
+    # (a rewritten question, a translation). Matched case-insensitively.
+    _REFUSAL_OPENINGS: ClassVar[tuple[str, ...]] = (
         "i'm sorry",
         "i am sorry",
+        "sorry,",
         "i cannot",
         "i can't",
+        "i can not",
+        "i'm unable",
+        "i am unable",
         "as an ai",
+    )
+    # A translation request also draws commentary about the input (seen when
+    # the query is already in the target language).
+    _TRANSLATION_REFUSAL_MARKERS: ClassVar[tuple[str, ...]] = _REFUSAL_OPENINGS + (
+        "i appreciate",
+        "i notice",
         "it appears",
         "the text you",
         "there is no text",
@@ -810,18 +817,6 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             return None
         return self._usable_rewrite(str(rewritten))
 
-    # Openings of a model refusal or meta-reply rather than a rewritten question.
-    _REWRITE_REFUSALS: ClassVar[tuple[str, ...]] = (
-        "i'm sorry",
-        "i am sorry",
-        "sorry,",
-        "i cannot",
-        "i can't",
-        "i can not",
-        "i'm unable",
-        "i am unable",
-        "as an ai",
-    )
     # A request for clarification aimed back at the user: after a refusal
     # opening it is a meta-reply even though it ends with a question mark.
     _CLARIFICATION_REQUEST: ClassVar[re.Pattern[str]] = re.compile(
@@ -849,7 +844,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         # is it?") but ends with a question mark, unless the question asks
         # the user to clarify ("I'm sorry, could you clarify which contract?").
         opening = text.lower().replace("\u2019", "'")
-        if opening.startswith(cls._REWRITE_REFUSALS) and (
+        if opening.startswith(cls._REFUSAL_OPENINGS) and (
             not text.endswith("?") or cls._CLARIFICATION_REQUEST.search(opening)
         ):
             logger.warning("Follow-up rewrite was a refusal; using the query as is")
@@ -1248,7 +1243,6 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         retriever-supplied metadata of the same name.
         """
         metadata = strip_embedding_fields(result.metadata or {})
-        metadata.pop("truncated", None)
         raw_doc_ids = metadata.get("document_ids") or metadata.get("document_id")
         document_ids = (
             [str(d) for d in raw_doc_ids]
@@ -1447,12 +1441,10 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             output: RAGOutput | dict[str, Any] = await self.chain.ainvoke(
                 input_dict, config
             )
+            # RAG mode ends in _format_output_step (a RAGOutput); SEARCH mode
+            # in _format_search_output_step (a dict). Both are returned as is.
             await self._save_memory(output)
-            if isinstance(output, RAGOutput):
-                return output
-            if self.mode == ChainMode.SEARCH:
-                return output
-            return RAGOutput(**output)
+            return output
         except Exception as e:
             if not self.ignore_errors:
                 raise
