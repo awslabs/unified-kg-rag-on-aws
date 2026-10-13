@@ -84,9 +84,13 @@ def test_opensearch_log_groups_follow_removal_destroy(
     config = DeploymentConfig.from_context(app)
     networking = NetworkingStack(app, "Net", config=config, env=_ENV)
     storage = StorageStack(app, "Store", config=config, networking=networking, env=_ENV)
-    log_groups = Template.from_stack(storage).find_resources("AWS::Logs::LogGroup")
-    # App, slow-index and slow-search logs of the OpenSearch domain.
-    assert len(log_groups) == 3, sorted(log_groups)
+    template = Template.from_stack(storage)
+    log_groups = template.find_resources("AWS::Logs::LogGroup")
+    # Only the OpenSearch application logs: slow logs stay empty without
+    # index thresholds, which the app does not set.
+    assert len(log_groups) == 1, sorted(log_groups)
+    (domain,) = template.find_resources("AWS::OpenSearchService::Domain").values()
+    assert set(domain["Properties"]["LogPublishingOptions"]) == {"ES_APPLICATION_LOGS"}
     for logical_id, resource in log_groups.items():
         assert resource["DeletionPolicy"] == policy, logical_id
         assert resource["UpdateReplacePolicy"] == policy, logical_id

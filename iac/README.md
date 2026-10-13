@@ -169,8 +169,10 @@ no account, so account ids stay `<AWS::AccountId>` tokens; the IaC test
 as a real deploy renders them. Accepted findings are
 documented in `iac/nag_suppressions.py`: `AwsSolutions-IAM5` is suppressed per
 role for the listed wildcards only (`appliesTo`), so a new wildcard fails the
-synth, and the OpenSearch HA findings (OS4/OS7) are accepted only for a
-single-node domain.
+synth, the OpenSearch HA findings (OS4/OS7) are accepted only for a
+single-node domain, and OS9 only for the slow logs, which record nothing
+without index slow-log thresholds (the app sets none); the domain publishes
+its application logs.
 
 > **A few Bedrock read actions use `Resource: "*"` by necessity**, not oversight:
 > `bedrock:Rerank` (authorizes against a different resource shape than

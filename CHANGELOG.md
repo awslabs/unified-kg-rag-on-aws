@@ -263,6 +263,10 @@ Library API (Python callers and custom backends).
   computes its own) and which took minutes on a graph of tens of thousands
   of entities; its `centrality_stats` metrics are gone. It also no longer
   caches a copy of graph resolution's entities and relationships (#248).
+- CDK: the OpenSearch domain publishes only its application logs. The slow
+  search and index logs stayed empty (the app sets no slow-log thresholds),
+  so their two log groups are removed; the domain is updated in place
+  (#PR).
 - CDK: in `network_mode=private` (the default) the created VPC no longer has
   public subnets, an internet gateway or `0.0.0.0/0` routes, which the
   isolated data plane never used. The public range stays reserved, so the

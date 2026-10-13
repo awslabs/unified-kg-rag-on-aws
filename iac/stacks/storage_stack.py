@@ -250,11 +250,11 @@ class StorageStack(Stack):
                 ),
             ),
             zone_awareness=zone_awareness,
-            logging=opensearch.LoggingOptions(
-                slow_search_log_enabled=True,
-                slow_index_log_enabled=True,
-                app_log_enabled=True,
-            ),
+            # Application (error) logs only. Slow logs record nothing until an
+            # index sets slow-log thresholds, which default to disabled and
+            # which the app does not set, so publishing them only created two
+            # log groups that stayed empty.
+            logging=opensearch.LoggingOptions(app_log_enabled=True),
             ebs=opensearch.EbsOptions(
                 volume_size=self.config.opensearch_volume_gib,
                 volume_type=ec2.EbsDeviceVolumeType.GP3,
@@ -267,22 +267,18 @@ class StorageStack(Stack):
             tls_security_policy=opensearch.TLSSecurityPolicy.TLS_1_2,
             removal_policy=self.removal_policy,
         )
-        # The domain creates these log groups itself with CDK's default
-        # RETAIN; give them the stack's policy so a removal_destroy teardown
-        # deletes them like the other log groups.
-        for log_group in (
-            domain.app_log_group,
-            domain.slow_index_log_group,
-            domain.slow_search_log_group,
-        ):
-            assert log_group is not None  # enabled in `logging` above
-            log_group.apply_removal_policy(self.removal_policy)
-            if self.kms_key is not None:
-                # The domain construct offers no key option for the log groups
-                # it creates, so set it on the CloudFormation resource.
-                cfn_log_group = log_group.node.default_child
-                assert isinstance(cfn_log_group, logs.CfnLogGroup)
-                cfn_log_group.kms_key_id = self.kms_key.key_arn
+        # The domain creates its log group itself with CDK's default RETAIN;
+        # give it the stack's policy so a removal_destroy teardown deletes it
+        # like the other log groups.
+        log_group = domain.app_log_group
+        assert log_group is not None  # enabled in `logging` above
+        log_group.apply_removal_policy(self.removal_policy)
+        if self.kms_key is not None:
+            # The domain construct offers no key option for the log group it
+            # creates, so set it on the CloudFormation resource.
+            cfn_log_group = log_group.node.default_child
+            assert isinstance(cfn_log_group, logs.CfnLogGroup)
+            cfn_log_group.kms_key_id = self.kms_key.key_arn
         # Resource-scoped access policy (added post-construction so it can
         # reference the domain's own ARN). Network access is already restricted
         # to the VPC + service SG; this requires IAM-signed requests AND scopes
