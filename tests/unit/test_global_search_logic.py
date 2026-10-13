@@ -524,7 +524,6 @@ async def test_synthesized_item_does_not_take_an_evidence_slot(
     strat._select_relevant_communities = AsyncMock(return_value=evidence[:10])  # type: ignore[method-assign]
     strat._augment_and_rerank_communities = AsyncMock(return_value=evidence)  # type: ignore[method-assign]
     strat._apply_map_reduce = AsyncMock(return_value=[synthesized, *evidence])  # type: ignore[method-assign]
-    strat._record_search_metrics = lambda *a, **k: None  # type: ignore[method-assign]
 
     result = await strat.asearch(SearchQuery(query="q", top_k=10))
 

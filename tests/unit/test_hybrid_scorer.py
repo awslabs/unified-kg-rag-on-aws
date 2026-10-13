@@ -5,6 +5,8 @@ every GraphRAG and LightRAG search strategy (AWS-free)."""
 
 from __future__ import annotations
 
+import copy
+
 import pytest
 
 from unified_kg_rag.adapters.retrieval.hybrid_scorer import HybridScorer
@@ -398,14 +400,25 @@ class TestFuseAndRerank:
         assert len(out) == 2
         assert out[0].score >= out[1].score
 
-    def test_metrics_recorded(self) -> None:
+    def test_single_result_survives_fusion(self) -> None:
         config = Config()
         config.search.reranking.enabled = False
         config.search.fusion.diversity_lambda = 1.0
         scorer = HybridScorer(config)
-        scorer.fuse_and_rerank_results({"a": [_r("x", 1.0, "1")]}, top_k=5)
-        metrics = scorer.get_metrics()
-        assert metrics["metrics"]["final_fused_count"] == 1
+        out = scorer.fuse_and_rerank_results({"a": [_r("x", 1.0, "1")]}, top_k=5)
+        assert [r.source for r in out] == ["1"]
+
+    def test_fusion_leaves_scorer_state_untouched(self) -> None:
+        # One scorer serves every concurrent query of a strategy, so a query
+        # must not write per-query numbers onto it.
+        config = Config()
+        config.search.reranking.enabled = False
+        scorer = HybridScorer(config)
+        before = copy.deepcopy(vars(scorer))
+        scorer.fuse_and_rerank_results(
+            {"a": [_r("x", 1.0, "1"), _r("y", 0.5, "2")]}, top_k=1
+        )
+        assert vars(scorer) == before
 
 
 class TestTypeQuota:
@@ -724,7 +737,6 @@ class TestDiversityFilteringScaling:
         assert [r.score for r in out] == sorted(
             (r.score for r in results), reverse=True
         )
-        assert scorer.get_metrics()["metrics"]["diversity_filtered_count"] == 0
 
     def test_scales_quadratically_not_cubically(self) -> None:
         # Mix-shaped candidate counts used to take 2-19 s with the cubic loop.

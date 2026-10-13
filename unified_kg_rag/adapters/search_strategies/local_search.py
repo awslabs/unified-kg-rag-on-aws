@@ -101,12 +101,6 @@ class LocalSearchStrategy(BaseSearchStrategy):
         )
 
         processing_time = time.time() - start_time
-        self._record_search_metrics(
-            processing_time,
-            len(final_results),
-            chain_stats["entity_count"],
-            chain_stats["text_unit_count"],
-        )
 
         logger.info(
             "Search completed - retrieved: %s results in %.3fs",
@@ -182,7 +176,6 @@ class LocalSearchStrategy(BaseSearchStrategy):
         stats = {
             "candidate_entity_count": len(candidate_entity_ids),
             "expanded_entity_count": len(expanded_entity_ids),
-            "entity_count": len(set(candidate_entity_ids + expanded_entity_ids)),
             "text_unit_count": len(text_unit_ids),
         }
         return all_results, stats
@@ -454,15 +447,3 @@ class LocalSearchStrategy(BaseSearchStrategy):
         if not results:
             return {}
         return {"text_units": self._restore_rank(results, text_unit_ids)}
-
-    def _record_search_metrics(
-        self,
-        processing_time: float,
-        retrieved_count: int,
-        entity_count: int,
-        text_unit_count: int,
-    ) -> None:
-        self._record_timing("processing_time", processing_time)
-        self._record_metric("retrieved_count", retrieved_count)
-        self._record_metric("entity_count", entity_count)
-        self._record_metric("text_unit_count", text_unit_count)

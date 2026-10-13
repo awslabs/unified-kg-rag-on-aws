@@ -553,22 +553,6 @@ async def test_find_candidate_communities_swallows_error() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# _record_search_metrics
-# --------------------------------------------------------------------------- #
-
-
-def test_record_search_metrics_populates_metrics() -> None:
-    strat = _bare_strategy()
-    strat._metrics = {"timings": {}, "metrics": {}}
-    strat._record_search_metrics(2.0, results_count=11, iterations=3)
-    assert strat._metrics["timings"]["processing_time"] == 2.0
-    assert strat._metrics["metrics"] == {
-        "retrieved_count": 11,
-        "iterations_completed": 3,
-    }
-
-
-# --------------------------------------------------------------------------- #
 # DRIFT primer -> follow-up (enable_primer)
 # --------------------------------------------------------------------------- #
 
@@ -712,7 +696,6 @@ async def test_asearch_skips_primer_without_candidate_communities() -> None:
     strat.hybrid_scorer = SimpleNamespace(
         fuse_and_rerank_results=lambda groups, **kw: groups["results"]
     )
-    strat._record_search_metrics = lambda *a, **k: None  # type: ignore[method-assign]
 
     result = await strat.asearch(SearchQuery(query="q"))
 
@@ -780,7 +763,6 @@ async def test_asearch_fuses_with_per_type_quota() -> None:
 
     strat._iterative_search = _fake_iterative  # type: ignore[method-assign]
     strat.hybrid_scorer = SimpleNamespace(fuse_and_rerank_results=_fuse)
-    strat._record_search_metrics = lambda *a, **k: None  # type: ignore[method-assign]
     strat.drift_config.enable_primer = False
 
     await strat.asearch(SearchQuery(query="q", top_k=10))
@@ -817,7 +799,6 @@ async def test_asearch_ranks_each_type_by_score_before_fusion() -> None:
 
     strat._iterative_search = _fake_iterative  # type: ignore[method-assign]
     strat.hybrid_scorer = SimpleNamespace(fuse_and_rerank_results=_fuse)
-    strat._record_search_metrics = lambda *a, **k: None  # type: ignore[method-assign]
     strat.drift_config.enable_primer = False
 
     await strat.asearch(SearchQuery(query="q", top_k=10))
@@ -872,7 +853,6 @@ async def test_asearch_passes_the_callers_config_to_the_primer() -> None:
     strat.hybrid_scorer = SimpleNamespace(
         fuse_and_rerank_results=lambda groups, **kw: groups["results"]
     )
-    strat._record_search_metrics = lambda *a, **k: None  # type: ignore[method-assign]
     caller_config = {"tags": ["caller"]}
 
     await strat.asearch(SearchQuery(query="q"), config=caller_config)

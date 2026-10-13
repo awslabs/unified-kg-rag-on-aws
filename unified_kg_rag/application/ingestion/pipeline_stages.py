@@ -66,6 +66,7 @@ from unified_kg_rag.shared import (
     get_logger,
     observability,
 )
+from unified_kg_rag.shared.genai import ERROR_TYPE
 from unified_kg_rag.shared.utils.cache_keys import is_excluded_source_path
 
 if TYPE_CHECKING:
@@ -222,7 +223,7 @@ class PipelineStage(ABC):
         except Exception as e:
             logger.exception("Stage '%s' failed: %s", self.name, e)
             span.record_exception(e)
-            span.set_attribute("error.type", type(e).__name__)
+            span.set_attribute(ERROR_TYPE, type(e).__name__)
             end_time = datetime.now()
 
             return self._create_result(

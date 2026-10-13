@@ -266,8 +266,6 @@ async def test_query_without_seed_ids_returns_nothing_without_connecting(
             raise AssertionError("connected without seeds")
 
     object.__setattr__(retriever, "_neptune_client", _Unconnectable())
-    object.__setattr__(retriever, "_record_metric", lambda *a, **k: None)
-    object.__setattr__(retriever, "_record_timing", lambda *a, **k: None)
     query = SearchQuery(query="Vendor", entity_focus=["Vendor"])
     assert await retriever.aretrieve(query) == []
 

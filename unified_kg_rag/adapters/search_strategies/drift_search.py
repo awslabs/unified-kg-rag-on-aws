@@ -159,7 +159,6 @@ class DriftSearchStrategy(BaseSearchStrategy):
             rerank_only_types={SectionType.TEXT.value},
         )
         processing_time = time.time() - start_time
-        self._record_search_metrics(processing_time, len(all_results), len(metrics))
 
         logger.info(
             "Search completed: %s iterations, %s results in %.3fs",
@@ -661,10 +660,3 @@ class DriftSearchStrategy(BaseSearchStrategy):
             for result in results
             if compute_hash(result.content, length=16) not in seen_hashes
         ]
-
-    def _record_search_metrics(
-        self, processing_time: float, results_count: int, iterations: int
-    ) -> None:
-        self._record_timing("processing_time", processing_time)
-        self._record_metric("retrieved_count", results_count)
-        self._record_metric("iterations_completed", iterations)

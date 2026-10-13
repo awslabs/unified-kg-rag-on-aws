@@ -239,8 +239,6 @@ def _opensearch_retriever(config: Config) -> OpenSearchRetriever:
         inst, "_terms_batch_size", config.indexing.opensearch.terms_batch_size
     )
     object.__setattr__(inst, "_field_mappings", inst._initialize_field_mappings())
-    object.__setattr__(inst, "_record_timing", lambda *a, **k: None)
-    object.__setattr__(inst, "_record_metric", lambda *a, **k: None)
     object.__setattr__(
         inst,
         "_embedding_model_id",
@@ -357,8 +355,6 @@ def _neptune_retriever(config: Config, neptune_client) -> NeptuneRetriever:
     object.__setattr__(inst, "_pool_size", config.aws.neptune.pool_size)
     object.__setattr__(inst, "_traversal_slots", weakref.WeakKeyDictionary())
     # Stub out the metrics recorders (pydantic model -> inject, don't patch).
-    object.__setattr__(inst, "_record_metric", lambda *a, **k: None)
-    object.__setattr__(inst, "_record_timing", lambda *a, **k: None)
     return inst
 
 

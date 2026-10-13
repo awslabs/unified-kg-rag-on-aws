@@ -57,7 +57,6 @@ class SimpleSearchStrategy(BaseSearchStrategy):
         )
 
         processing_time = time.time() - start_time
-        self._record_search_metrics(processing_time, len(final_results))
 
         logger.info(
             "Search completed - retrieved: %s results in %.3fs",
@@ -99,9 +98,3 @@ class SimpleSearchStrategy(BaseSearchStrategy):
         if configured == all_index_prefixes(self.config):
             return query
         return query.model_copy(update={"index_prefixes": configured})
-
-    def _record_search_metrics(
-        self, processing_time: float, retrieved_count: int
-    ) -> None:
-        self._record_timing("processing_time", processing_time)
-        self._record_metric("retrieved_count", retrieved_count)
