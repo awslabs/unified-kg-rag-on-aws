@@ -315,3 +315,16 @@ def test_relationship_pre_drop_is_scoped_to_the_suffix(indexer, mocker) -> None:
     rendered = repr(where_args[0].bytecode)
     assert "outV" in rendered
     assert "Entity-tenant-a" in rendered
+
+
+def test_a_failed_delete_batch_counts_each_of_its_ids(indexer, mocker) -> None:
+    indexer.neptune_config.batch_size = 2
+    g = mocker.MagicMock()
+    drop = g.E.return_value.has.return_value.where.return_value.drop.return_value
+    drop.iterate.side_effect = [RuntimeError("timed out"), None]
+    indexer.neptune_client.g = g
+
+    stats = indexer.delete_by_id(["a", "b", "c"], suffix="default")
+
+    assert (stats.total_items, stats.successful_items) == (3, 1)
+    assert (stats.failed_items, stats.failed_ids) == (2, ["a", "b"])

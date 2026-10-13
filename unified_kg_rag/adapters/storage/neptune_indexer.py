@@ -677,7 +677,7 @@ class NeptuneIndexer(GraphIndexer):
                     g.V().has("id", P.within(id_batch)).drop().iterate()
                 stats.add_success(len(id_batch))
             except Exception as e:
-                stats.add_error(str(e))
+                stats.add_error(str(e), len(id_batch), ids=list(id_batch))
                 logger.warning("Failed to delete ids batch: %s", e)
 
         return stats

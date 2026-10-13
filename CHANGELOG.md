@@ -466,6 +466,9 @@ Library API (Python callers and custom backends).
 - Importing `unified_kg_rag.application.cli.run_rag_chain` no longer puts
   `unified_kg_rag/application` at the front of `sys.path`, where its
   subpackages could shadow top-level modules of the same name (#251).
+- A failed Neptune delete batch is counted as one failure per id in it, with
+  the ids, instead of a single failure with none, so the failure rate and the
+  logs of a document removal reflect what was not deleted (#PR).
 - A Neptune relationship write that is retried after a lost response no
   longer adds a second parallel edge with the same id: the edge write looks
   the edge up first (`fold().coalesce(unfold(), addE(...))`) (#PR).
