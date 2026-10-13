@@ -374,6 +374,21 @@ def test_build_search_request_floors_size_to_terms_filter(retriever) -> None:
     assert body["size"] == n  # not clamped to _max_size
 
 
+def test_build_search_request_other_list_filters_do_not_raise_size(
+    retriever,
+) -> None:
+    # Only the id list names the hits to fetch; a 3,000-value type filter
+    # raised size (and the kNN k of every vector field) to 3,000.
+    types = [f"t{i}" for i in range(3000)]
+    q = SearchQuery(query="x", top_k=10, filters={"type": types})
+    body, _params = retriever._build_search_request(
+        q, SearchType.HYBRID, ["name"], ["name_embedding"], [0.1]
+    )
+    assert body["size"] == 10
+    knn = body["query"]["hybrid"]["queries"][1]["knn"]["name_embedding"]
+    assert knn["k"] == 10
+
+
 def test_build_search_request_terms_floor_bounded_by_result_window(retriever) -> None:
     # The floor never exceeds max_result_window (the cluster hits ceiling).
     huge = retriever._max_result_window + 5000

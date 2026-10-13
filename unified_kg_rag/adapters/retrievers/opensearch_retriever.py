@@ -541,20 +541,22 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         query_vector: list[float] | None,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         size = min(query.top_k * query.retrieval_multiplier, self._max_size)
-        # Fetch-by-id callers (local/global/mix expansion) set top_k=len(ids) and
-        # pass those ids as a terms filter to retrieve every one. Capping size at
-        # max_query_size (default 100) would silently drop ids beyond 100. When
-        # a terms filter is present, floor size at the largest terms-list length
-        # so no filtered id is lost, bounded by max_result_window (the cluster's
-        # hard hits ceiling).
-        largest_terms = self._largest_terms_filter_size(query.filters)
-        if largest_terms > size:
-            size = min(largest_terms, self._max_result_window)
-            if largest_terms > size:
+        # Fetch-by-id callers (local/mix expansion, source resolution) set
+        # top_k=len(ids) and pass those ids as an ``id`` filter to retrieve
+        # every one. Capping size at max_query_size (default 100) would
+        # silently drop ids beyond 100, so size is floored at the id count,
+        # bounded by max_result_window (the cluster's hard hits ceiling). Only
+        # the id list counts: a long list in another filter narrows the hits
+        # rather than naming them, and must not raise size (and kNN k).
+        ids = (query.filters or {}).get("id")
+        wanted = len(ids) if isinstance(ids, list) else 0
+        if wanted > size:
+            size = min(wanted, self._max_result_window)
+            if wanted > size:
                 logger.warning(
                     "A filter lists %s ids, more than the %s hits one search "
                     "returns (max_result_window); the rest are not fetched",
-                    largest_terms,
+                    wanted,
                     size,
                 )
         filters = self._build_filter_clauses(query.filters)
@@ -706,19 +708,6 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                 clauses.append({"term": {key: value}})
 
         return clauses
-
-    @staticmethod
-    def _largest_terms_filter_size(filters: dict[str, Any] | None) -> int:
-        """Length of the largest list-valued (terms) filter, else 0.
-
-        Used to floor the query size so a fetch-by-id (ids passed as a terms
-        filter with top_k=len(ids)) is never truncated below the number of ids
-        requested.
-        """
-        if not filters:
-            return 0
-        list_lengths = [len(v) for v in filters.values() if isinstance(v, list)]
-        return max(list_lengths, default=0)
 
     def _check_terms_filter_sizes(self, filters: dict[str, Any] | None) -> None:
         """Reject a list filter longer than one ``terms`` query may be.
