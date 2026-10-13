@@ -567,6 +567,40 @@ async def test_map_phase_one_overflowing_batch_is_left_unrated() -> None:
     assert len(points) == 3
 
 
+class _VllmOverflowingFirstReport(_SyncMapChain):
+    """Map chain failing report 0 the way vLLM reports a too-long prompt."""
+
+    def invoke(self, single_input: dict, config: Any = None) -> str:
+        if "community report 0" in single_input["reports"]:
+            import httpx
+            import openai
+
+            raise openai.BadRequestError(
+                "This model's maximum context length is 8192 tokens.",
+                response=httpx.Response(
+                    400, request=httpx.Request("POST", "http://localhost/v1")
+                ),
+                body={"object": "error", "type": "BadRequestError", "code": 400},
+            )
+        return super().invoke(single_input, config)
+
+
+async def test_map_phase_a_vllm_overflow_leaves_the_batch_unrated() -> None:
+    # Regression: vLLM and llama.cpp return a plain 400 for a prompt over the
+    # context, which LangChain does not map to ContextOverflowError, so one
+    # long batch failed the whole query.
+    strat = _strategy(ignore_errors=False, map_batch_size=1)
+    strat.batch_processor.max_attempts = 1  # as GlobalSearchStrategy configures
+    strat.map_rater = _VllmOverflowingFirstReport(
+        [_map_payload((f"point {i}", 50)) for i in (1, 2, 3)]
+    )
+    points, unrated = await strat._run_map_phase(
+        _communities(4), SearchQuery(query="q")
+    )
+    assert [r.source for r in unrated] == ["c0"]
+    assert len(points) == 3
+
+
 async def test_map_phase_fatal_error_degrades_when_ignored() -> None:
     strat = _strategy(ignore_errors=True, map_batch_size=1, reduce_with_llm=True)
     strat.batch_processor.max_attempts = 1  # as GlobalSearchStrategy configures

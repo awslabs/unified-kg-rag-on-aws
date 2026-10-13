@@ -384,6 +384,9 @@ Library API (Python callers and custom backends).
   It was read as transient, so every vector section, and the lexical half
   of hybrid with it, came back empty and the query answered "could not find
   relevant information" with no error (#PR).
+- A global-search map batch over the context of a vLLM or llama.cpp model is
+  left unrated, as on Bedrock and OpenAI: those servers report it as a plain
+  HTTP 400, which failed the whole query (#PR).
 - Queries that waited on a failed Neptune connection attempt each raise a
   copy of its error; re-raising the one shared error grew its traceback by
   every waiter's frames and kept them in memory (#264).
