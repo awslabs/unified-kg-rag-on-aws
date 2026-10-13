@@ -1,10 +1,10 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from concurrent.futures import as_completed
 from functools import partial
-from typing import Any, NamedTuple
+from typing import Any, NamedTuple, TypeVar
 
 from pydantic import BaseModel, Field
 
@@ -15,10 +15,15 @@ from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.ingestion.base_resolver import FuzzyMatcher
 from unified_kg_rag.domain.ingestion.graph_rank import with_graph_ranks
 from unified_kg_rag.domain.ingestion.merge import (
+    merge_claims,
     merge_entities,
     merge_relationships,
     relationship_id_remap,
+    remove_claim_text_units,
     remove_text_units,
+)
+from unified_kg_rag.domain.ingestion.relationship_endpoints import (
+    sync_relationship_endpoint_names,
 )
 from unified_kg_rag.domain.models import (
     Claim,
@@ -39,6 +44,9 @@ from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.utils.concurrency import ContextThreadPoolExecutor
 
 logger = get_logger(__name__)
+
+# A graph item whose description the cross-run merge reads back.
+_Described = TypeVar("_Described", Entity, Relationship)
 
 
 class CrossRunMergeResult(BaseModel):
@@ -387,6 +395,28 @@ class IndexingManager:
             id_remap_by_suffix=id_remap_by_suffix,
         )
 
+    def merge_with_stored_claims(
+        self, claims: list[Claim] | None
+    ) -> list[Claim] | None:
+        """Fold the stored state of each delta claim into it before upsert.
+
+        A claim's id does not depend on its document, so the claim another
+        document already stored has the delta claim's id: without the merge
+        the upsert replaces its descriptions and text units with this run's
+        (see ``merge_claims``). Read per index suffix from the vector store; a
+        failed read raises (see :meth:`merge_with_existing_graph`). With
+        ``indexing.cross_run_merge`` off the claims are returned unchanged.
+        """
+        if not claims or not self.config.indexing.cross_run_merge:
+            return claims
+        merged: list[Claim] = []
+        for suffix, group in sorted(self._group_by_suffix(claims).items()):
+            stored = self.opensearch_indexer.read_claims(
+                sorted({c.id for c in group}), suffix=suffix
+            )
+            merged.extend(merge_claims(stored, group) if stored else group)
+        return merged
+
     def _merge_suffix(
         self,
         suffix: str,
@@ -407,8 +437,12 @@ class IndexingManager:
             # their stored entities have other ids than the delta's, so they
             # are found through the stored names and read back as well.
             name_matcher, matched_ids = self._match_stored_names(suffix, entities)
-            existing = self.neptune_indexer.read_entities(
-                sorted({e.id for e in entities} | matched_ids), suffix=suffix
+            existing = self._with_full_descriptions(
+                self.neptune_indexer.read_entities(
+                    sorted({e.id for e in entities} | matched_ids), suffix=suffix
+                ),
+                self.opensearch_indexer.read_entity_descriptions,
+                suffix,
             )
             if existing:
                 merged_entities, entity_id_remap = merge_entities(
@@ -433,8 +467,10 @@ class IndexingManager:
                         sorted(set(entity_id_remap.values())), suffix=suffix
                     )
                 )
-            existing_rels = self.neptune_indexer.read_relationships(
-                sorted(rel_ids), suffix=suffix
+            existing_rels = self._with_full_descriptions(
+                self.neptune_indexer.read_relationships(sorted(rel_ids), suffix=suffix),
+                self.opensearch_indexer.read_relationship_descriptions,
+                suffix,
             )
             # Even when no existing relationships are read back, delta endpoints
             # must follow any entity-id collapse from the entity merge above —
@@ -457,6 +493,12 @@ class IndexingManager:
                         [r for r in merged_relationships if r.id in written]
                     )
                 )
+        if merged_entities is not entities and merged_relationships:
+            # Merged with stored entities: an edge re-pointed at one, or at one
+            # whose stored name differs from the delta's, must name it as the
+            # entity does.
+            merged_relationships = [r.model_copy() for r in merged_relationships]
+            sync_relationship_endpoint_names(merged_relationships, merged_entities)
         merged_entities, merged_relationships = self._rank_with_stored_graph(
             suffix, merged_entities, merged_relationships
         )
@@ -465,6 +507,25 @@ class IndexingManager:
             merged_relationships,
             {**entity_id_remap, **relationship_remap},
         )
+
+    def _with_full_descriptions(
+        self,
+        items: list[_Described],
+        read: Callable[..., dict[str, str]],
+        suffix: str,
+    ) -> list[_Described]:
+        """``items`` read back from the graph, with each description the graph
+        capped at ``indexing.neptune.property_max_length`` replaced by the
+        vector store's full one (the merged description is written there)."""
+        limit = self.config.indexing.neptune.property_max_length
+        capped = [i.id for i in items if len(i.description or "") >= limit]
+        if not capped:
+            return items
+        full = read(capped, suffix=suffix)
+        return [
+            i.model_copy(update={"description": full[i.id]}) if i.id in full else i
+            for i in items
+        ]
 
     def _rank_with_stored_graph(
         self,
@@ -523,8 +584,10 @@ class IndexingManager:
         entity_ids: list[str],
         relationship_ids: list[str],
         text_unit_ids: list[str],
+        claim_ids: Sequence[str] = (),
     ) -> dict[str, IndexingStats]:
-        """Strip removed text units from kept entities/relationships of a suffix.
+        """Strip removed text units from kept entities/relationships/claims of a
+        suffix.
 
         Reads the stored items back, removes ``text_unit_ids`` from their
         lineage (recomputing frequency/weight, see ``remove_text_units``) and
@@ -533,9 +596,19 @@ class IndexingManager:
         interrupted strip did not reach. A graph adapter without read-back
         leaves them unchanged.
 
+        Claims live in the vector store only: they are read back from it and
+        only those still citing a removed text unit are updated.
+
         A failed read is reported as failed items, so the caller keeps the
         documents' registry rows and retries the removal.
         """
+        results: dict[str, IndexingStats] = {}
+        if claim_ids:
+            results.update(
+                self._remove_text_units_from_claims(
+                    suffix, list(claim_ids), text_unit_ids
+                )
+            )
         try:
             entities = (
                 self.neptune_indexer.read_entities(entity_ids, suffix=suffix)
@@ -551,7 +624,7 @@ class IndexingManager:
             logger.error("Reading shared artifacts in '%s' failed: %s", suffix, e)
             stats = IndexingStats(total_items=len(entity_ids) + len(relationship_ids))
             stats.add_error(str(e), count=stats.total_items)
-            return {f"neptune_read_{suffix}": stats}
+            return {**results, f"neptune_read_{suffix}": stats}
         stripped_entities, stripped_relationships = remove_text_units(
             entities, relationships, text_unit_ids
         )
@@ -565,7 +638,7 @@ class IndexingManager:
         stripped_rels = {item.id: item for item in stripped_relationships}
         relationships = [stripped_rels.get(r.id, r) for r in relationships]
         if not entities and not relationships:
-            return {}
+            return results
         logger.info(
             "Removing %d text units from %d shared entities and %d shared "
             "relationships in '%s'",
@@ -594,7 +667,7 @@ class IndexingManager:
                     "opensearch_relationships",
                 )
             )
-        results = self._run_indexing_phase(phase1)
+        results.update(self._run_indexing_phase(phase1))
         results.update(
             self._run_indexing_phase(
                 [
@@ -607,6 +680,25 @@ class IndexingManager:
             )
         )
         return results
+
+    def _remove_text_units_from_claims(
+        self, suffix: str, claim_ids: list[str], text_unit_ids: list[str]
+    ) -> dict[str, IndexingStats]:
+        try:
+            claims = self.opensearch_indexer.read_claims(claim_ids, suffix=suffix)
+        except Exception as e:  # noqa: BLE001 - reported as failed items
+            logger.error("Reading shared claims in '%s' failed: %s", suffix, e)
+            stats = IndexingStats(total_items=len(claim_ids))
+            stats.add_error(str(e), count=len(claim_ids), ids=claim_ids)
+            return {f"opensearch_read_claims_{suffix}": stats}
+        stripped = remove_claim_text_units(claims, text_unit_ids)
+        if not stripped:
+            return {}
+        return {
+            f"opensearch_claims_{suffix}": (
+                self.opensearch_indexer.update_claim_lineage(stripped)
+            )
+        }
 
     def delete_documents(
         self, ids_by_suffix: dict[str, list[str]]

@@ -8,9 +8,9 @@ what keeps the live stores and the doc-status registry consistent:
 * stale artifacts of changed and deleted docs are removed in one pass, the
   deleted docs' registry rows dropped, and only then is the delta upserted +
   recorded;
-* the run's index suffix comes from the first text unit (default otherwise);
-* a missing delta falls back to a full ``index_all_data`` without touching the
-  registry.
+* the run's index suffix comes from the first text unit (the configured
+  ``index_value``, else default, otherwise);
+* a missing delta raises without touching the stores or the registry.
 
 AWS-free: an in-memory registry plus a recording indexing manager.
 """
@@ -84,6 +84,9 @@ class _RecordingManager:
 
     def merge_with_existing_graph(self, entities, relationships):
         return CrossRunMergeResult(entities=entities, relationships=relationships)
+
+    def merge_with_stored_claims(self, claims):
+        return claims
 
     def index_delta(self, **kwargs: Any) -> dict[str, IndexingStats]:
         self.calls.append(("index_delta", kwargs))
@@ -260,17 +263,38 @@ def test_suffix_defaults_when_there_are_no_text_units(mocker) -> None:
     assert changed is not None and changed.suffix == "default"
 
 
-def test_missing_delta_falls_back_to_full_indexing(mocker) -> None:
+def test_missing_delta_raises_instead_of_replacing_the_stores(mocker) -> None:
+    # A full replace with only this run's documents would wipe the rest.
     manager = _RecordingManager()
     stage = _stage(mocker, FakeDocStatusStore(), manager)
     build_store = mocker.patch.object(stage, "_build_doc_status_store")
     text_units, entities = _delta_inputs()
 
-    _run(stage, _context(None, []), text_units, entities)
+    with pytest.raises(PipelineStageError, match="delta"):
+        _run(stage, _context(None, []), text_units, entities)
 
-    assert [name for name, _ in manager.calls] == ["index_all_data"]
-    assert manager.calls[0][1]["entities"] == entities
+    assert manager.calls == []
     build_store.assert_not_called()
+
+
+def test_deletion_only_run_checks_the_configured_suffix(mocker) -> None:
+    # Nothing is extracted, so the suffix cannot come from a text unit.
+    store = FakeDocStatusStore()
+    _seed_registry(store, suffix="tenant1")
+    manager = _RecordingManager()
+    manager.config.processing.document_parsing.index_value = "tenant1"
+    checked: list[str | None] = []
+    manager.opensearch_indexer = SimpleNamespace(
+        check_index_settings=checked.append,
+        set_doc_status_tracking=lambda tracked: None,
+    )
+    stage = _stage(mocker, store, manager)
+    ctx = _context(DocumentDelta(deleted=[compute_doc_id(_DELETED)]), [])
+
+    _run(stage, ctx, text_units=[], entities=[])
+
+    assert checked == ["tenant1"]
+    assert store.get(compute_doc_id(_DELETED)) is None
 
 
 def test_failed_deleted_doc_removal_keeps_its_row_and_fails_the_stage(

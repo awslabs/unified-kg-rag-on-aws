@@ -682,18 +682,10 @@ class OpenSearchClient:
         logger.info("Created index: '%s'", index)
 
     @_handle_opensearch_errors
-    def create_search_pipeline(self, pipeline_id: str, body: dict[str, Any]) -> None:
-        if not self.check_search_pipeline_exists(pipeline_id):
-            self.client.search_pipeline.put(id=pipeline_id, body=body)
-            logger.debug("Created search pipeline: '%s'", pipeline_id)
-
-    @_handle_opensearch_errors
-    def check_search_pipeline_exists(self, pipeline_id: str) -> bool:
-        try:
-            self.client.search_pipeline.get(id=pipeline_id)
-            return True
-        except NotFoundError:
-            return False
+    def put_search_pipeline(self, pipeline_id: str, body: dict[str, Any]) -> None:
+        """Create or replace the search pipeline ``pipeline_id``."""
+        self.client.search_pipeline.put(id=pipeline_id, body=body)
+        logger.debug("Wrote search pipeline: '%s'", pipeline_id)
 
     @_handle_opensearch_errors
     def delete_alias(

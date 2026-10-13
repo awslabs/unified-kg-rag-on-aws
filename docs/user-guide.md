@@ -564,7 +564,7 @@ LLM stages are Bedrock-I/O-bound, so concurrency can far exceed the CPU count.
 | `indexing.neptune.index_concurrency` | `1` | Concurrent write batches (and relationship edges). The Gremlin connection pool grows to match if `aws.neptune.pool_size` is smaller. |
 | `indexing.neptune.max_attempts` | `4` | Attempts per Neptune write, including the first. Failures are retried with jittered exponential backoff from `retry_delay_seconds` (`2`), except errors a retry cannot fix (malformed query, access denied, bad parameter), which fail on the first attempt. `1` disables the retry. |
 | `indexing.neptune.max_hops` | `3` | Neighbour-expansion depth at retrieval time. |
-| `indexing.neptune.property_max_length` | `4000` | Character cap per Neptune property value. Keep it above the longest description that is not re-summarized (summarization triggers above 600 tokens, ~2,400 characters). Takes effect on re-ingestion. |
+| `indexing.neptune.property_max_length` | `4000` | Character cap per Neptune property value. Keep it above the longest description that is not re-summarized (summarization triggers above 600 tokens, ~2,400 characters). OpenSearch keeps descriptions in full, and the incremental cross-run merge takes a capped one from there. Takes effect on re-ingestion. |
 | `indexing.neptune.entity_importance_source` | `"rank"` | Entity importance in graph-expansion relevance (orders entities at the same distance from the seeds; nearer entities, seeds first, always rank higher): `rank` (indexed entity rank, its degree), `degree` (edge count at query time) or `none` (neutral 0.5 for every entity). |
 | `indexing.neptune.traversal_fetch_multiplier` | `3` | Graph expansion fetches this many times the result width, ranks, then keeps the seeds plus the best result-width others. `1` = cut in traversal order. |
 
@@ -573,7 +573,7 @@ LLM stages are Bedrock-I/O-bound, so concurrency can far exceed the CPU count.
 | Key | Default | What it does / when to change |
 |---|---|---|
 | `search.auto_routable_strategies` | `["local", "mix", "global", "drift"]` | Strategies the `auto` router may pick; its prompt describes exactly these, in this order. `auto` itself is rejected. Any strategy can still be chosen explicitly. |
-| `search.hybrid.lexical_weight` | `0.5` | Lexical weight in the OpenSearch hybrid pipeline (vector: `vector_weight`, also `0.5`). |
+| `search.hybrid.lexical_weight` | `0.5` | Lexical weight in the OpenSearch hybrid pipeline (vector: `vector_weight`, also `0.5`). `run-ingestion` writes the pipeline (`indexing.opensearch.hybrid_search_pipeline_name`) on every run, so a change takes effect from the next ingestion run, not at query time. One pipeline serves every namespace on the domain that uses its name: give a configuration with other weights its own pipeline name. |
 | `search.fusion.method` | `"rrf"` | `rrf` (reciprocal rank fusion) or `weighted`. |
 | `search.fusion.rrf_k` | `60` | RRF constant `k`. |
 | `search.fusion.fusion_weights` | `1.0` per bucket | Per-source-bucket weights; they scale each bucket's contribution under both `rrf` and `weighted`. |
@@ -1062,7 +1062,7 @@ steps on Neptune. Each store accepts the fields its indexer writes:
 | Text units | `id`, `text`, `translated_text_<language>`, `community_ids`, `n_tokens`, `attr_<key>`, `attributes.<path>` |
 | Entities | `id`, `name`, `name.keyword`, `description`, `type`, `rank`, `confidence`, `text_unit_ids`, `attr_<key>`, `attributes.<path>` |
 | Relationships | `id`, `source_id`, `target_id`, `source_name`, `target_name`, `description`, `weight`, `rank`, `text_unit_ids` |
-| Claims | `id`, `subject_id`, `object_id`, `subject_name`, `object_name`, `type`, `status`, `description`, `source_text` |
+| Claims | `id`, `subject_id`, `object_id`, `subject_name`, `object_name`, `type`, `status`, `description`, `source_text`, `text_unit_ids` |
 | Community reports | `id`, `community_id`, `name`, `summary`, `full_content`, `rank`, `rating`, `text_unit_ids`, `document_ids`, `attr_<key>`, `attributes.<path>` |
 | Neptune entity vertices | `id`, `name`, `type`, `description`, `rank`, `confidence`, `text_unit_ids`, `community_ids`, `attr_<key>` (where present) |
 | Neptune community vertices | `id`, `name`, `level`, `parent`, `size`, `period`, `children` |
@@ -1326,7 +1326,11 @@ descriptions over the summarization budget are re-summarized. Setting it to
 `false` overwrites the affected fields with the delta's values instead; the
 entity then loses its lineage to the unchanged documents' chunks. Requires a
 graph adapter that supports read-back (one without it degrades to overwrite).
-When a document changes or is deleted, entities and relationships it shares
+Claims merge the same way: a claim id does not depend on the document, so a
+claim that several documents state keeps every document's description, source
+text and text units, read back from the OpenSearch claims index (a claim
+indexed before claims stored their text units starts from this run's).
+When a document changes or is deleted, entities, relationships and claims it shares
 with other documents lose its chunks from `text_unit_ids` (frequency and
 weight follow), but keep the description it contributed until a full rebuild.
 If reading the stored items back fails, nothing is overwritten: a failed read

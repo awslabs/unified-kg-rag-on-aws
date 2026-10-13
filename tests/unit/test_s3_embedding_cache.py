@@ -18,6 +18,7 @@ from types import SimpleNamespace
 
 import boto3
 import pytest
+from botocore.exceptions import ClientError
 from moto import mock_aws
 
 from unified_kg_rag.adapters.aws.embedding_cache import S3EmbeddingCache
@@ -29,6 +30,10 @@ from unified_kg_rag.domain.models.config import S3EncryptionConfig
 pytestmark = pytest.mark.unit
 
 
+def _no_such_key(operation: str) -> ClientError:
+    return ClientError({"Error": {"Code": "NoSuchKey"}}, operation)
+
+
 class _FakeS3:
     """Minimal in-memory stand-in for the boto3 S3 client."""
 
@@ -38,7 +43,7 @@ class _FakeS3:
 
     def get_object(self, Bucket: str, Key: str):  # noqa: N803
         if Key not in self.objects:
-            raise KeyError(f"no such key: {Key}")  # stands in for ClientError
+            raise _no_such_key("GetObject")
         return {"Body": _Body(self.objects[Key])}
 
     def put_object(self, Bucket: str, Key: str, Body: bytes):  # noqa: N803
@@ -118,6 +123,64 @@ def test_flush_degrades_on_s3_error() -> None:
     c.flush()  # must not raise — persistence is best-effort
 
 
+@pytest.mark.parametrize(
+    "error",
+    [
+        RuntimeError("connection reset"),
+        ClientError({"Error": {"Code": "SlowDown"}}, "GetObject"),
+        ClientError({"Error": {"Code": "AccessDenied"}}, "GetObject"),
+    ],
+)
+def test_unreadable_object_is_never_overwritten(error: Exception) -> None:
+    # Only a missing object is empty: overwriting one that exists but could
+    # not be read would wipe every namespace's vectors (a full re-embed).
+    persisted = json.dumps({"other:512|x": [9.0], "titan:1024|h": [1.0]}).encode()
+
+    class _Unreadable(_FakeS3):
+        def get_object(self, Bucket: str, Key: str):  # noqa: N803
+            raise error
+
+    fake = _Unreadable({"embedding-cache/cache.json": persisted})
+    c = _cache(fake)
+    c.load()
+    c.put("new", [0.5])
+    c.flush()
+
+    assert fake.put_calls == 0
+    assert fake.objects["embedding-cache/cache.json"] == persisted
+
+
+def test_corrupt_object_is_replaced() -> None:
+    fake = _FakeS3({"embedding-cache/cache.json": b"{not json"})
+    c = _cache(fake)
+    c.load()
+    c.put("h", [0.5])
+    c.flush()
+    assert set(json.loads(fake.objects["embedding-cache/cache.json"])) == {
+        "titan:1024|h"
+    }
+
+
+def test_unreadable_object_at_flush_is_not_overwritten() -> None:
+    # The object changed after the load and the re-read fails: skip the flush.
+    class _FailsAfterLoad(_VersionedS3):
+        def get_object(self, Bucket: str, Key: str):  # noqa: N803
+            if self.get_calls:
+                raise RuntimeError("throttled")
+            return super().get_object(Bucket, Key)
+
+    fake = _FailsAfterLoad({_KEY: json.dumps({"other:512|x": [9.0]}).encode()})
+    c = _cache(fake)
+    c.load()
+    fake.objects[_KEY] = json.dumps(
+        {"other:512|x": [9.0], "other:512|y": [1.0]}
+    ).encode()
+    c.put("mine", [1.0])
+    c.flush()
+
+    assert set(json.loads(fake.objects[_KEY])) == {"other:512|x", "other:512|y"}
+
+
 def test_load_is_idempotent() -> None:
     fake = _FakeS3(
         {"embedding-cache/cache.json": json.dumps({"titan:1024|h": [1.0]}).encode()}
@@ -193,7 +256,7 @@ class _VersionedS3(_FakeS3):
 
     def head_object(self, Bucket: str, Key: str):  # noqa: N803
         if Key not in self.objects:
-            raise KeyError(Key)
+            raise ClientError({"Error": {"Code": "404"}}, "HeadObject")
         return {"ETag": self._etag(Key)}
 
     def put_object(self, Bucket: str, Key: str, Body: bytes):  # noqa: N803

@@ -4,7 +4,7 @@ import re
 import time
 from array import array
 from collections.abc import Callable, Collection
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 from unified_kg_rag.adapters.aws.opensearch import OpenSearchClient
 from unified_kg_rag.adapters.storage.embedding_settings import (
@@ -40,10 +40,27 @@ logger = get_logger(__name__)
 # embedding calls are IO-bound).
 _EMBED_BATCH_SIZE = 50
 _EMBED_WORKERS = 8
+# Items embedded and bulk-written at a time: one round of the concurrent
+# embedding requests. Holding a whole item type's vectors as float lists
+# before one bulk call took gigabytes on a large corpus.
+_WRITE_SLICE_SIZE = _EMBED_BATCH_SIZE * _EMBED_WORKERS
+# Ids per read-back search (well under index.max_result_window).
+_READ_BATCH_SIZE = 1000
 
 # Whether the doc-status registry tracks the index's documents: False when
 # a run with the registry off built it (see check_index_settings).
 _META_DOC_STATUS = "doc_status_registry"
+
+
+class _ItemSpec(NamedTuple):
+    """How one artifact type is embedded and written."""
+
+    name: str
+    alias_prefix: str
+    mapping: Callable[[], dict[str, Any]]
+    # One text per embedding field of the document, in prepare_doc's order.
+    extractors: list[Callable[[Any], str]]
+    prepare_doc: Callable[[Any, tuple[list[float], ...]], dict[str, Any]]
 
 
 class OpenSearchIndexer(VectorIndexer):
@@ -117,13 +134,7 @@ class OpenSearchIndexer(VectorIndexer):
         self.opensearch_client.close()
 
     def _index_prefixes(self) -> list[str]:
-        return [
-            self.opensearch_config.text_units_index_prefix,
-            self.opensearch_config.entities_index_prefix,
-            self.opensearch_config.community_reports_index_prefix,
-            self.opensearch_config.relationships_index_prefix,
-            self.opensearch_config.claims_index_prefix,
-        ]
+        return [spec.alias_prefix for spec in self._specs()]
 
     def _embedding_meta(self) -> dict[str, Any]:
         """What every index records of the embeddings it holds (``_meta``)."""
@@ -138,19 +149,7 @@ class OpenSearchIndexer(VectorIndexer):
         self._doc_status_tracked = tracked
 
     def _mapping_funcs(self) -> dict[str, Callable[[], dict[str, Any]]]:
-        return {
-            self.opensearch_config.text_units_index_prefix: (
-                self._get_text_units_mapping
-            ),
-            self.opensearch_config.entities_index_prefix: self._get_entities_mapping,
-            self.opensearch_config.community_reports_index_prefix: (
-                self._get_community_reports_mapping
-            ),
-            self.opensearch_config.relationships_index_prefix: (
-                self._get_relationships_mapping
-            ),
-            self.opensearch_config.claims_index_prefix: self._get_claims_mapping,
-        }
+        return {spec.alias_prefix: spec.mapping for spec in self._specs()}
 
     @staticmethod
     def _text_field_mismatches(
@@ -359,16 +358,17 @@ class OpenSearchIndexer(VectorIndexer):
 
     def initialize(self) -> bool:
         try:
+            # Written on every run (the PUT is idempotent), so a changed
+            # search.hybrid weight replaces the one an earlier run stored.
             pipeline_name = self.opensearch_config.hybrid_search_pipeline_name
-            if not self.opensearch_client.check_search_pipeline_exists(pipeline_name):
-                self._create_hybrid_search_pipeline(pipeline_name)
-                logger.info("Created hybrid search pipeline: '%s'", pipeline_name)
+            self._put_hybrid_search_pipeline(pipeline_name)
+            logger.info("Wrote hybrid search pipeline: '%s'", pipeline_name)
             return True
         except Exception as e:
             logger.error("Failed to initialize OpenSearch indexer: %s", e)
             return False
 
-    def _create_hybrid_search_pipeline(self, pipeline_name: str) -> None:
+    def _put_hybrid_search_pipeline(self, pipeline_name: str) -> None:
         lex_weight, vec_weight = (
             self.config.search.hybrid.lexical_weight,
             self.config.search.hybrid.vector_weight,
@@ -387,36 +387,60 @@ class OpenSearchIndexer(VectorIndexer):
                 }
             ],
         }
-        self.opensearch_client.create_search_pipeline(pipeline_name, body)
+        self.opensearch_client.put_search_pipeline(pipeline_name, body)
+
+    def _specs(self) -> tuple[_ItemSpec, ...]:
+        config = self.opensearch_config
+        return (
+            _ItemSpec(
+                "text units",
+                config.text_units_index_prefix,
+                self._get_text_units_mapping,
+                [self._text_unit_embedding_text],
+                self._prepare_text_unit_doc,
+            ),
+            _ItemSpec(
+                "entities",
+                config.entities_index_prefix,
+                self._get_entities_mapping,
+                [lambda e: e.name, self._entity_description_text],
+                self._prepare_entity_doc,
+            ),
+            _ItemSpec(
+                "community reports",
+                config.community_reports_index_prefix,
+                self._get_community_reports_mapping,
+                [lambda r: r.name, lambda r: r.summary, lambda r: r.full_content],
+                self._prepare_community_report_doc,
+            ),
+            _ItemSpec(
+                "relationships",
+                config.relationships_index_prefix,
+                self._get_relationships_mapping,
+                [self._relationship_description_text],
+                self._prepare_relationship_doc,
+            ),
+            _ItemSpec(
+                "claims",
+                config.claims_index_prefix,
+                self._get_claims_mapping,
+                [self._claim_description_text],
+                self._prepare_claim_doc,
+            ),
+        )
+
+    def _spec(self, name: str) -> _ItemSpec:
+        return next(spec for spec in self._specs() if spec.name == name)
 
     def index_text_units(
         self, text_units: list[TextUnit], *, suffixes: Collection[str] = ()
     ) -> IndexingStats:
-        return self._index_item_type(
-            items=text_units,
-            suffixes=suffixes,
-            item_type_name="text units",
-            alias_prefix=self.opensearch_config.text_units_index_prefix,
-            mapping_func=self._get_text_units_mapping,
-            embedding_field_extractors=[self._text_unit_embedding_text],
-            prepare_doc_func=self._prepare_text_unit_doc,
-        )
+        return self._index_item_type(text_units, self._spec("text units"), suffixes)
 
     def index_entities(
         self, entities: list[Entity], *, suffixes: Collection[str] = ()
     ) -> IndexingStats:
-        return self._index_item_type(
-            items=entities,
-            suffixes=suffixes,
-            item_type_name="entities",
-            alias_prefix=self.opensearch_config.entities_index_prefix,
-            mapping_func=self._get_entities_mapping,
-            embedding_field_extractors=[
-                lambda e: e.name,
-                self._entity_description_text,
-            ],
-            prepare_doc_func=self._prepare_entity_doc,
-        )
+        return self._index_item_type(entities, self._spec("entities"), suffixes)
 
     def _prepare_community_report_doc(
         self, report: CommunityReport, embeddings: tuple
@@ -444,19 +468,7 @@ class OpenSearchIndexer(VectorIndexer):
     def index_community_reports(
         self, reports: list[CommunityReport], *, suffixes: Collection[str] = ()
     ) -> IndexingStats:
-        return self._index_item_type(
-            items=reports,
-            suffixes=suffixes,
-            item_type_name="community reports",
-            alias_prefix=self.opensearch_config.community_reports_index_prefix,
-            mapping_func=self._get_community_reports_mapping,
-            embedding_field_extractors=[
-                lambda r: r.name,
-                lambda r: r.summary,
-                lambda r: r.full_content,
-            ],
-            prepare_doc_func=self._prepare_community_report_doc,
-        )
+        return self._index_item_type(reports, self._spec("community reports"), suffixes)
 
     def upsert_community_reports(self, reports: list[CommunityReport]) -> IndexingStats:
         """Upsert community reports by id into the live index (delta semantics).
@@ -466,18 +478,7 @@ class OpenSearchIndexer(VectorIndexer):
         detection only produced reports for the delta subgraph, so a swap would
         wipe every unchanged document's reports. Upsert-by-id preserves them.
         """
-        return self._upsert_item_type(
-            items=reports,
-            item_type_name="community reports",
-            alias_prefix=self.opensearch_config.community_reports_index_prefix,
-            mapping_func=self._get_community_reports_mapping,
-            embedding_field_extractors=[
-                lambda r: r.name,
-                lambda r: r.summary,
-                lambda r: r.full_content,
-            ],
-            prepare_doc_func=self._prepare_community_report_doc,
-        )
+        return self._upsert_item_type(reports, self._spec("community reports"))
 
     # Fallback embedding texts. An item with an empty description would get no
     # embedding, be skipped from the index and counted as a failure (which can
@@ -580,25 +581,12 @@ class OpenSearchIndexer(VectorIndexer):
         can retrieve relations directly, as in LightRAG's ``relationships_vdb``.
         """
         return self._index_item_type(
-            items=relationships,
-            suffixes=suffixes,
-            item_type_name="relationships",
-            alias_prefix=self.opensearch_config.relationships_index_prefix,
-            mapping_func=self._get_relationships_mapping,
-            embedding_field_extractors=[self._relationship_description_text],
-            prepare_doc_func=self._prepare_relationship_doc,
+            relationships, self._spec("relationships"), suffixes
         )
 
     def upsert_relationships(self, relationships: list[Relationship]) -> IndexingStats:
         """Upsert relationship vectors by id into the live index (delta)."""
-        return self._upsert_item_type(
-            items=relationships,
-            item_type_name="relationships",
-            alias_prefix=self.opensearch_config.relationships_index_prefix,
-            mapping_func=self._get_relationships_mapping,
-            embedding_field_extractors=[self._relationship_description_text],
-            prepare_doc_func=self._prepare_relationship_doc,
-        )
+        return self._upsert_item_type(relationships, self._spec("relationships"))
 
     @staticmethod
     def _prepare_claim_doc(
@@ -615,6 +603,8 @@ class OpenSearchIndexer(VectorIndexer):
             "description": claim.description or "",
             "description_embedding": embeddings[0],
             "source_text": claim.source_text or "",
+            # Read back by the cross-run claim merge (read_claims).
+            "text_unit_ids": list(claim.text_unit_ids or []),
         }
 
     def index_claims(
@@ -625,51 +615,105 @@ class OpenSearchIndexer(VectorIndexer):
         Connects claim extraction to retrieval: claims become first-class
         searchable artifacts (mirrors the relationship vector index).
         """
-        return self._index_item_type(
-            items=claims,
-            suffixes=suffixes,
-            item_type_name="claims",
-            alias_prefix=self.opensearch_config.claims_index_prefix,
-            mapping_func=self._get_claims_mapping,
-            embedding_field_extractors=[self._claim_description_text],
-            prepare_doc_func=self._prepare_claim_doc,
-        )
+        return self._index_item_type(claims, self._spec("claims"), suffixes)
 
     def upsert_claims(self, claims: list[Claim]) -> IndexingStats:
         """Upsert claim vectors by id into the live index (delta)."""
-        return self._upsert_item_type(
-            items=claims,
-            item_type_name="claims",
-            alias_prefix=self.opensearch_config.claims_index_prefix,
-            mapping_func=self._get_claims_mapping,
-            embedding_field_extractors=[self._claim_description_text],
-            prepare_doc_func=self._prepare_claim_doc,
+        return self._upsert_item_type(claims, self._spec("claims"))
+
+    def _read_sources(
+        self, alias_prefix: str, ids: list[str], suffix: str | None
+    ) -> list[dict[str, Any]]:
+        """The stored documents (without embeddings) of ``ids`` in ``suffix``'s
+        live index of ``alias_prefix``; none without a live index. Raises when
+        the read fails."""
+        alias_name = self._get_name(alias_prefix, suffix)
+        if not ids or not self.opensearch_client.get_index_name_by_alias(alias_name):
+            return []
+        sources: list[dict[str, Any]] = []
+        for start in range(0, len(ids), _READ_BATCH_SIZE):
+            batch = ids[start : start + _READ_BATCH_SIZE]
+            response = self.opensearch_client.search(
+                index=alias_name,
+                body={
+                    "size": len(batch),
+                    "query": {"ids": {"values": batch}},
+                    "_source": {"excludes": ["*_embedding"]},
+                },
+            )
+            sources.extend(
+                {"id": hit["_id"], **(hit.get("_source") or {})}
+                for hit in response.get("hits", {}).get("hits", [])
+            )
+        return sources
+
+    def read_claims(self, ids: list[str], suffix: str | None = None) -> list[Claim]:
+        """Read stored claims by id from ``suffix``'s live claims index.
+
+        A claim indexed before claims stored their ``text_unit_ids`` reads
+        back without them. Raises when the read fails.
+        """
+        return [
+            Claim.model_validate(
+                {
+                    "id": source["id"],
+                    "subject_id": source.get("subject_id") or "",
+                    "subject_name": source.get("subject_name") or "",
+                    "object_id": source.get("object_id"),
+                    "object_name": source.get("object_name") or "",
+                    "type": source.get("type") or "",
+                    "status": source.get("status") or None,
+                    "description": source.get("description") or None,
+                    "source_text": source.get("source_text") or None,
+                    "text_unit_ids": list(source.get("text_unit_ids") or []),
+                }
+            )
+            for source in self._read_sources(
+                self.opensearch_config.claims_index_prefix, ids, suffix
+            )
+        ]
+
+    def read_entity_descriptions(
+        self, ids: list[str], suffix: str | None = None
+    ) -> dict[str, str]:
+        """Stored entity descriptions by id (untruncated, unlike Neptune's)."""
+        return self._descriptions(
+            self.opensearch_config.entities_index_prefix, ids, suffix
+        )
+
+    def read_relationship_descriptions(
+        self, ids: list[str], suffix: str | None = None
+    ) -> dict[str, str]:
+        """Stored relationship descriptions by id (see
+        :meth:`read_entity_descriptions`)."""
+        return self._descriptions(
+            self.opensearch_config.relationships_index_prefix, ids, suffix
+        )
+
+    def _descriptions(
+        self, alias_prefix: str, ids: list[str], suffix: str | None
+    ) -> dict[str, str]:
+        return {
+            source["id"]: source["description"]
+            for source in self._read_sources(alias_prefix, ids, suffix)
+            if source.get("description")
+        }
+
+    def update_claim_lineage(self, claims: list[Claim]) -> IndexingStats:
+        """Set stored claims' ``text_unit_ids`` in place (no re-embedding)."""
+        return self._update_fields(
+            claims,
+            self.opensearch_config.claims_index_prefix,
+            lambda c: {"text_unit_ids": list(c.text_unit_ids or [])},
         )
 
     def upsert_text_units(self, text_units: list[TextUnit]) -> IndexingStats:
         """Upsert text units by id into the live index (delta semantics)."""
-        return self._upsert_item_type(
-            items=text_units,
-            item_type_name="text units",
-            alias_prefix=self.opensearch_config.text_units_index_prefix,
-            mapping_func=self._get_text_units_mapping,
-            embedding_field_extractors=[self._text_unit_embedding_text],
-            prepare_doc_func=self._prepare_text_unit_doc,
-        )
+        return self._upsert_item_type(text_units, self._spec("text units"))
 
     def upsert_entities(self, entities: list[Entity]) -> IndexingStats:
         """Upsert entities by id into the live index (delta semantics)."""
-        return self._upsert_item_type(
-            items=entities,
-            item_type_name="entities",
-            alias_prefix=self.opensearch_config.entities_index_prefix,
-            mapping_func=self._get_entities_mapping,
-            embedding_field_extractors=[
-                lambda e: e.name,
-                self._entity_description_text,
-            ],
-            prepare_doc_func=self._prepare_entity_doc,
-        )
+        return self._upsert_item_type(entities, self._spec("entities"))
 
     def update_entity_lineage(self, entities: list[Entity]) -> IndexingStats:
         """Set stored entities' ``text_unit_ids`` in place (no re-embedding)."""
@@ -798,15 +842,7 @@ class OpenSearchIndexer(VectorIndexer):
             )
         return results
 
-    def _upsert_item_type(
-        self,
-        items: list[Any],
-        item_type_name: str,
-        alias_prefix: str,
-        mapping_func: Callable[[], dict[str, Any]],
-        embedding_field_extractors: list[Callable[[Any], str]],
-        prepare_doc_func: Callable[[Any, tuple[list[float], ...]], dict[str, Any]],
-    ) -> IndexingStats:
+    def _upsert_item_type(self, items: list[Any], spec: _ItemSpec) -> IndexingStats:
         """Index documents by id into the live aliased index without rebuilding it.
 
         Unlike ``_index_item_type`` (create new index -> alias swap -> delete old),
@@ -817,40 +853,29 @@ class OpenSearchIndexer(VectorIndexer):
         if not items:
             return IndexingStats()
 
-        logger.info("Upserting %d %s", len(items), item_type_name)
+        logger.info("Upserting %d %s", len(items), spec.name)
         total_stats = IndexingStats()
 
         for suffix, chunk_items in self._group_items_by_suffix(items).items():
-            alias_name = self._get_name(alias_prefix, suffix)
+            alias_name = self._get_name(spec.alias_prefix, suffix)
             index_name = self.opensearch_client.get_index_name_by_alias(alias_name)
 
             try:
                 if not index_name:
                     # First-ever write for this alias: create one index + alias.
-                    index_name = self._new_index_name(alias_name, alias_prefix, suffix)
-                    mapping = mapping_func()
+                    index_name = self._new_index_name(
+                        alias_name, spec.alias_prefix, suffix
+                    )
+                    mapping = spec.mapping()
                     # Only an incremental run upserts: the registry tracks it.
                     mapping["mappings"].setdefault("_meta", {})[_META_DOC_STATUS] = True
                     self.opensearch_client.create_index(index_name, mapping)
                     self.opensearch_client.update_alias(alias_name, index_name)
 
-                embeddings = self._generate_embeddings(
-                    chunk_items, embedding_field_extractors
-                )
-                docs, failed_ids = self._prepare_documents(
-                    chunk_items, embeddings, prepare_doc_func
-                )
-                if failed_ids:
-                    total_stats.add_error(
-                        f"Failed to prepare {len(failed_ids)} documents",
-                        len(failed_ids),
-                        ids=failed_ids,
-                    )
-                if docs:
-                    total_stats.merge(self._perform_indexing(index_name, docs))
+                total_stats.merge(self._embed_and_write(index_name, chunk_items, spec))
             except Exception as e:
                 logger.error(
-                    "Failed to upsert %s (suffix=%s): %s", item_type_name, suffix, e
+                    "Failed to upsert %s (suffix=%s): %s", spec.name, suffix, e
                 )
                 total_stats.add_error(
                     str(e), len(chunk_items), ids=[item.id for item in chunk_items]
@@ -873,14 +898,7 @@ class OpenSearchIndexer(VectorIndexer):
         return doc
 
     def _index_item_type(
-        self,
-        items: list[Any],
-        item_type_name: str,
-        alias_prefix: str,
-        mapping_func: Callable[[], dict[str, Any]],
-        embedding_field_extractors: list[Callable[[Any], str]],
-        prepare_doc_func: Callable[[Any, tuple[list[float], ...]], dict[str, Any]],
-        suffixes: Collection[str] = (),
+        self, items: list[Any], spec: _ItemSpec, suffixes: Collection[str] = ()
     ) -> IndexingStats:
         """Build a new index per suffix and swap the alias onto it.
 
@@ -890,49 +908,28 @@ class OpenSearchIndexer(VectorIndexer):
         if not items and not suffixes:
             return IndexingStats()
 
-        logger.info("Indexing %s %s", len(items), item_type_name)
+        logger.info("Indexing %s %s", len(items), spec.name)
         total_stats = IndexingStats()
 
         for suffix, chunk_items in self._group_items_by_suffix(items, suffixes).items():
-            alias_name = self._get_name(alias_prefix, suffix)
+            alias_name = self._get_name(spec.alias_prefix, suffix)
             index_name = ""
 
             try:
-                index_name = self._new_index_name(alias_name, alias_prefix, suffix)
+                index_name = self._new_index_name(alias_name, spec.alias_prefix, suffix)
                 self.opensearch_client.create_index(
-                    index_name, mapping_func(), exist_ok=False
+                    index_name, spec.mapping(), exist_ok=False
                 )
 
-                embeddings = self._generate_embeddings(
-                    chunk_items, embedding_field_extractors
-                )
-                docs, failed_ids = self._prepare_documents(
-                    chunk_items, embeddings, prepare_doc_func
-                )
-
-                if failed_ids:
-                    total_stats.add_error(
-                        f"Failed to prepare {len(failed_ids)} documents",
-                        len(failed_ids),
-                        ids=failed_ids,
-                    )
+                written = self._embed_and_write(index_name, chunk_items, spec)
+                total_stats.merge(written)
 
                 # Swap onto the new index when it holds something, or when the
                 # rebuild has nothing of this type for the suffix.
-                swap = not chunk_items
-                if docs:
-                    indexing_stats = self._perform_indexing(index_name, docs)
-                    total_stats.merge(indexing_stats)
-                    swap = indexing_stats.successful_items > 0
-
-                swapped = False
-                if swap:
+                if not chunk_items or written.successful_items > 0:
                     self.opensearch_client.update_alias(
                         alias_name, index_name, remove_pattern=f"{alias_name}-*"
                     )
-                    swapped = True
-
-                if swapped:
                     self._reap_stale_indices(alias_name, index_name)
                 else:
                     # Nothing was written, so the alias stays on the previous
@@ -940,9 +937,7 @@ class OpenSearchIndexer(VectorIndexer):
                     self._drop_unswapped_index(alias_name, index_name)
 
             except Exception as e:
-                logger.error(
-                    "Failed to index %s (suffix=%s): %s", item_type_name, suffix, e
-                )
+                logger.error("Failed to index %s (suffix=%s): %s", spec.name, suffix, e)
                 # A failed empty replacement still fails the run.
                 total_stats.add_error(
                     str(e),
@@ -955,7 +950,7 @@ class OpenSearchIndexer(VectorIndexer):
         if total_stats.failed_items > 0:
             logger.warning(
                 "Indexing %s completed: %s succeeded, %s failed",
-                item_type_name,
+                spec.name,
                 total_stats.successful_items,
                 total_stats.failed_items,
             )
@@ -963,11 +958,35 @@ class OpenSearchIndexer(VectorIndexer):
             logger.info(
                 "Successfully indexed %s %s",
                 total_stats.successful_items,
-                item_type_name,
+                spec.name,
             )
 
         self._flush_embedding_cache()
         return total_stats
+
+    def _embed_and_write(
+        self, index_name: str, items: list[Any], spec: _ItemSpec
+    ) -> IndexingStats:
+        """Embed ``items`` and bulk-write them into ``index_name``, a slice at a
+        time, so only one slice's vectors are held at once. The index is
+        refreshed once, after the last slice."""
+        stats = IndexingStats()
+        for start in range(0, len(items), _WRITE_SLICE_SIZE):
+            chunk = items[start : start + _WRITE_SLICE_SIZE]
+            embeddings = self._generate_embeddings(chunk, spec.extractors)
+            docs, failed_ids = self._prepare_documents(
+                chunk, embeddings, spec.prepare_doc
+            )
+            if failed_ids:
+                stats.add_error(
+                    f"Failed to prepare {len(failed_ids)} documents",
+                    len(failed_ids),
+                    ids=failed_ids,
+                )
+            if docs:
+                last = start + _WRITE_SLICE_SIZE >= len(items)
+                stats.merge(self._perform_indexing(index_name, docs, refresh=last))
+        return stats
 
     @staticmethod
     def _index_timestamp(alias_name: str, index_name: str) -> str | None:
@@ -1215,7 +1234,7 @@ class OpenSearchIndexer(VectorIndexer):
         return docs, failed_ids
 
     def _perform_indexing(
-        self, index_name: str, documents: list[dict[str, Any]]
+        self, index_name: str, documents: list[dict[str, Any]], refresh: bool = True
     ) -> IndexingStats:
         start_time = time.time()
         stats = IndexingStats(total_items=len(documents))
@@ -1224,7 +1243,7 @@ class OpenSearchIndexer(VectorIndexer):
             response = self.opensearch_client.bulk_index(
                 index_name,
                 documents,
-                refresh=self.opensearch_config.refresh_after_batch,
+                refresh=refresh and self.opensearch_config.refresh_after_batch,
             )
 
             if not response.get("errors"):
@@ -1388,6 +1407,7 @@ class OpenSearchIndexer(VectorIndexer):
                 "description": {"type": "text", "analyzer": self.analyzer},
                 "description_embedding": self._get_knn_vector_mapping(),
                 "source_text": {"type": "text", "analyzer": self.analyzer},
+                "text_unit_ids": {"type": "keyword"},
                 "attributes": {"type": "object", "dynamic": True},
             }
         )

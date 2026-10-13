@@ -175,12 +175,12 @@ def test_text_unit_embedding_text_falls_back_to_text(indexer) -> None:
 
 
 def test_index_community_reports_prepare_doc_via_closure(indexer, mocker) -> None:
-    # index_community_reports defines prepare_doc inline; capture it through
+    # Capture the doc builder index_community_reports hands to
     # _index_item_type to test the doc shape it produces.
     captured = {}
 
-    def fake_index_item_type(**kwargs):
-        captured["prepare"] = kwargs["prepare_doc_func"]
+    def fake_index_item_type(items, spec, suffixes=()):
+        captured["prepare"] = spec.prepare_doc
         return IndexingStats()
 
     mocker.patch.object(indexer, "_index_item_type", side_effect=fake_index_item_type)
@@ -523,3 +523,162 @@ def test_lineage_update_reports_failed_items(indexer, mocker) -> None:
     stats = indexer.update_entity_lineage([Entity(id="e1", name="Vendor")])
 
     assert (stats.failed_items, stats.failed_ids) == (1, ["e1"])
+
+
+# --------------------------------------------------------------------------- #
+# initialize: hybrid search pipeline
+# --------------------------------------------------------------------------- #
+
+
+def test_initialize_rewrites_the_hybrid_pipeline_with_the_configured_weights(
+    indexer, mocker
+) -> None:
+    # An earlier run stored the pipeline with other weights: each run writes
+    # it again, so a changed search.hybrid weight takes effect.
+    indexer.opensearch_client = mocker.MagicMock()
+    indexer.config.search.hybrid.lexical_weight = 0.2
+    indexer.config.search.hybrid.vector_weight = 0.8
+
+    assert indexer.initialize()
+    assert indexer.initialize()
+
+    calls = indexer.opensearch_client.put_search_pipeline.call_args_list
+    assert len(calls) == 2
+    name, body = calls[-1].args
+    assert name == indexer.opensearch_config.hybrid_search_pipeline_name
+    (processor,) = body["phase_results_processors"]
+    combination = processor["normalization-processor"]["combination"]
+    assert combination["parameters"]["weights"] == [0.2, 0.8]
+
+
+# --------------------------------------------------------------------------- #
+# Embedding + bulk writes in slices
+# --------------------------------------------------------------------------- #
+
+
+def test_upsert_embeds_and_writes_one_slice_at_a_time(indexer, mocker) -> None:
+    # Embedding a whole item type before one bulk call held every vector at
+    # once (gigabytes on a large corpus): each slice is embedded and written
+    # before the next is embedded.
+    from unified_kg_rag.adapters.storage import opensearch_indexer as module
+
+    slice_size = module._WRITE_SLICE_SIZE
+    indexer._s3_embedding_cache = None
+    indexer.opensearch_client = mocker.MagicMock()
+    indexer.opensearch_client.get_index_name_by_alias.return_value = "idx"
+    indexer.opensearch_client.bulk_index.return_value = {"errors": False}
+    events: list[tuple[str, int]] = []
+    mocker.patch.object(
+        indexer,
+        "_generate_embeddings",
+        side_effect=lambda items, extractors: events.append(("embed", len(items)))
+        or [([0.1],) for _ in items],
+    )
+    indexer.opensearch_client.bulk_index.side_effect = lambda index, docs, refresh: (
+        events.append(("write", len(docs))) or {"errors": False}
+    )
+    units = [TextUnit(id=f"t{i}", text=f"text {i}") for i in range(slice_size * 2 + 1)]
+
+    stats = indexer.upsert_text_units(units)
+
+    assert events == [
+        ("embed", slice_size),
+        ("write", slice_size),
+        ("embed", slice_size),
+        ("write", slice_size),
+        ("embed", 1),
+        ("write", 1),
+    ]
+    assert stats.successful_items == len(units)
+    # Refreshed once, after the last slice.
+    refreshes = [
+        c.kwargs["refresh"] for c in indexer.opensearch_client.bulk_index.call_args_list
+    ]
+    assert refreshes == [False, False, True]
+
+
+# --------------------------------------------------------------------------- #
+# Claim read-back (cross-run claim merge)
+# --------------------------------------------------------------------------- #
+
+
+def test_claim_doc_stores_its_text_units(indexer) -> None:
+    claim = Claim(
+        id="c",
+        subject_id="s",
+        subject_name="S",
+        object_name="O",
+        type="T",
+        text_unit_ids=["tu-1"],
+    )
+    assert indexer._prepare_claim_doc(claim, ([0.1],))["text_unit_ids"] == ["tu-1"]
+    mapping = indexer._get_claims_mapping()["mappings"]["properties"]
+    assert mapping["text_unit_ids"] == {"type": "keyword"}
+
+
+def test_read_claims_reads_by_id_from_the_suffix_alias(indexer, mocker) -> None:
+    client = mocker.MagicMock()
+    indexer.opensearch_client = client
+    client.get_index_name_by_alias.return_value = "claims-acme-1"
+    client.search.return_value = {
+        "hits": {
+            "hits": [
+                {
+                    "_id": "c1",
+                    "_source": {
+                        "id": "c1",
+                        "subject_id": "s",
+                        "subject_name": "Vendor",
+                        "object_name": "Buyer",
+                        "type": "SUPPLY",
+                        "status": "TRUE",
+                        "description": "Vendor supplies Buyer.",
+                        "source_text": "src",
+                        "text_unit_ids": ["tu-1"],
+                    },
+                },
+                # Indexed before claims stored their text units.
+                {"_id": "c2", "_source": {"id": "c2", "type": "SUPPLY"}},
+            ]
+        }
+    }
+
+    claims = indexer.read_claims(["c1", "c2"], suffix="acme")
+
+    alias = indexer._get_name(indexer.opensearch_config.claims_index_prefix, "acme")
+    client.get_index_name_by_alias.assert_called_once_with(alias)
+    kwargs = client.search.call_args.kwargs
+    assert kwargs["index"] == alias
+    assert kwargs["body"]["query"] == {"ids": {"values": ["c1", "c2"]}}
+    assert [c.id for c in claims] == ["c1", "c2"]
+    assert claims[0].text_unit_ids == ["tu-1"]
+    assert claims[0].description == "Vendor supplies Buyer."
+    assert claims[1].text_unit_ids == []
+
+
+def test_read_claims_without_a_live_index_reads_nothing(indexer, mocker) -> None:
+    indexer.opensearch_client = mocker.MagicMock()
+    indexer.opensearch_client.get_index_name_by_alias.return_value = None
+
+    assert indexer.read_claims(["c1"], suffix="acme") == []
+    indexer.opensearch_client.search.assert_not_called()
+
+
+def test_read_entity_descriptions_maps_ids_to_full_descriptions(
+    indexer, mocker
+) -> None:
+    client = mocker.MagicMock()
+    indexer.opensearch_client = client
+    client.get_index_name_by_alias.return_value = "entities-default-1"
+    client.search.return_value = {
+        "hits": {
+            "hits": [
+                {"_id": "e1", "_source": {"id": "e1", "description": "x" * 5000}},
+                {"_id": "e2", "_source": {"id": "e2", "description": ""}},
+            ]
+        }
+    }
+
+    assert indexer.read_entity_descriptions(["e1", "e2"]) == {"e1": "x" * 5000}
+    alias = indexer._get_name(indexer.opensearch_config.entities_index_prefix, None)
+    assert client.search.call_args.kwargs["index"] == alias

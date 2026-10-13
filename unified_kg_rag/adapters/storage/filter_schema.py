@@ -119,6 +119,7 @@ def opensearch_filter_fields(
                     "status",
                     "description",
                     "source_text",
+                    "text_unit_ids",
                 }
             )
         ),

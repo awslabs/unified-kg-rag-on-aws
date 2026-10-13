@@ -536,7 +536,7 @@ LLM 단계는 Bedrock I/O가 병목이므로 동시성을 CPU 수보다 훨씬 �
 | `indexing.neptune.index_concurrency` | `1` | 동시에 보내는 쓰기 배치(와 관계 간선) 수입니다. `aws.neptune.pool_size`가 이보다 작으면 Gremlin 연결 풀이 이 값에 맞춰 늘어납니다. |
 | `indexing.neptune.max_attempts` | `4` | 첫 시도를 포함한 Neptune 쓰기당 시도 횟수입니다. 실패하면 `retry_delay_seconds`(`2`)에서 시작하는 지터 포함 지수 백오프로 재시도합니다. 단, 재시도로 해결되지 않는 오류(잘못된 쿼리, 액세스 거부, 잘못된 파라미터)는 첫 시도에서 실패합니다. `1`이면 재시도하지 않습니다. |
 | `indexing.neptune.max_hops` | `3` | 검색 시점의 이웃 확장 깊이입니다. |
-| `indexing.neptune.property_max_length` | `4000` | Neptune 속성 값당 최대 문자 수입니다. 다시 요약되지 않는 가장 긴 설명보다 크게 두세요(요약은 600토큰, 약 2,400자를 넘으면 실행). 다시 수집해야 반영됩니다. |
+| `indexing.neptune.property_max_length` | `4000` | Neptune 속성 값당 최대 문자 수입니다. 다시 요약되지 않는 가장 긴 설명보다 크게 두세요(요약은 600토큰, 약 2,400자를 넘으면 실행). OpenSearch는 설명을 자르지 않고 저장하며, 증분 실행의 실행 간 병합은 잘린 설명을 OpenSearch에서 읽어 옵니다. 다시 수집해야 반영됩니다. |
 | `indexing.neptune.entity_importance_source` | `"rank"` | 그래프 확장 관련도에 쓰는 엔티티 중요도입니다. 시드와의 거리가 먼저이고(시드가 항상 앞) 중요도는 같은 거리의 엔티티 사이에서만 순서를 정합니다. `rank`(인덱싱된 엔티티 rank, 즉 degree), `degree`(질의 시점의 간선 수), `none`(모든 엔티티에 중립값 0.5) 중 하나입니다. |
 | `indexing.neptune.traversal_fetch_multiplier` | `3` | 그래프 확장이 결과 폭의 이 배수만큼 가져와 순위를 매긴 뒤 시드는 모두 두고 나머지를 결과 폭만큼 남깁니다. `1`이면 순회 순서대로 자릅니다. |
 
@@ -545,7 +545,7 @@ LLM 단계는 Bedrock I/O가 병목이므로 동시성을 CPU 수보다 훨씬 �
 | 키 | 기본값 | 역할과 변경 시점 |
 |---|---|---|
 | `search.auto_routable_strategies` | `["local", "mix", "global", "drift"]` | `auto` 라우터가 고를 수 있는 전략입니다. 라우터 프롬프트는 이 전략들만 이 순서대로 설명합니다. `auto` 자체는 넣을 수 없습니다. 어떤 전략이든 직접 지정할 수는 있습니다. |
-| `search.hybrid.lexical_weight` | `0.5` | OpenSearch 하이브리드 파이프라인의 어휘 검색 가중치입니다(벡터는 `vector_weight`, 역시 `0.5`). |
+| `search.hybrid.lexical_weight` | `0.5` | OpenSearch 하이브리드 파이프라인의 어휘 검색 가중치입니다(벡터는 `vector_weight`, 역시 `0.5`). `run-ingestion`이 실행할 때마다 파이프라인(`indexing.opensearch.hybrid_search_pipeline_name`)을 다시 쓰므로, 바꾼 값은 질의 시점이 아니라 다음 수집 실행부터 적용됩니다. 같은 이름을 쓰는 도메인의 모든 네임스페이스가 파이프라인 하나를 공유하므로, 가중치가 다른 설정에는 별도 파이프라인 이름을 지정합니다. |
 | `search.fusion.method` | `"rrf"` | `rrf`(reciprocal rank fusion) 또는 `weighted`입니다. |
 | `search.fusion.rrf_k` | `60` | RRF 상수 `k`입니다. |
 | `search.fusion.fusion_weights` | 버킷마다 `1.0` | 소스 버킷별 가중치입니다. `rrf`와 `weighted` 모두에서 각 버킷의 기여도에 곱합니다. |
@@ -1015,7 +1015,7 @@ run-rag --query "..." --filters attr_category:research type:person --config-path
 | 텍스트 단위 | `id`, `text`, `translated_text_<language>`, `community_ids`, `n_tokens`, `attr_<key>`, `attributes.<path>` |
 | 엔티티 | `id`, `name`, `name.keyword`, `description`, `type`, `rank`, `confidence`, `text_unit_ids`, `attr_<key>`, `attributes.<path>` |
 | 관계 | `id`, `source_id`, `target_id`, `source_name`, `target_name`, `description`, `weight`, `rank`, `text_unit_ids` |
-| 주장 | `id`, `subject_id`, `object_id`, `subject_name`, `object_name`, `type`, `status`, `description`, `source_text` |
+| 주장 | `id`, `subject_id`, `object_id`, `subject_name`, `object_name`, `type`, `status`, `description`, `source_text`, `text_unit_ids` |
 | 커뮤니티 리포트 | `id`, `community_id`, `name`, `summary`, `full_content`, `rank`, `rating`, `text_unit_ids`, `document_ids`, `attr_<key>`, `attributes.<path>` |
 | Neptune 엔티티 정점 | `id`, `name`, `type`, `description`, `rank`, `confidence`, `text_unit_ids`, `community_ids`, `attr_<key>`(있는 경우) |
 | Neptune 커뮤니티 정점 | `id`, `name`, `level`, `parent`, `size`, `period`, `children` |
@@ -1246,7 +1246,10 @@ DynamoDB 레지스트리는 문서마다 산출물 ID(텍스트 단위, 엔티�
 설명이 요약 예산을 넘으면 다시 요약합니다. `false`로 두면 해당 필드를 변경분의 값으로
 덮어쓰며, 그러면 엔티티는 바뀌지 않은 문서의 청크와의 계보를 잃습니다. 이 기능에는
 읽어 오기를 지원하는 그래프 어댑터가 필요합니다(지원하지 않으면 덮어쓰기로
-동작합니다). 문서가 바뀌거나 삭제되면, 그 문서가 다른 문서와 공유하던 엔티티와 관계는
+동작합니다). 주장(claim)도 같은 방식으로 합칩니다. 주장 ID는 문서와 무관하므로, 여러
+문서가 진술한 주장은 각 문서의 설명, 원문, 텍스트 단위를 모두 유지하며 이 정보는
+OpenSearch 주장 인덱스에서 읽어 옵니다(주장이 텍스트 단위를 저장하기 전에 색인된 주장은
+이번 실행의 값에서 시작합니다). 문서가 바뀌거나 삭제되면, 그 문서가 다른 문서와 공유하던 엔티티, 관계, 주장은
 `text_unit_ids`에서 그 문서의 청크를 잃습니다(빈도와 가중치도 따라 바뀜). 다만 그
 문서가 보탠 설명은 전체 재구축 전까지 남습니다. 저장된 항목을 읽어 오지 못하면 아무것도
 덮어쓰지 않습니다. 병합 중 읽기가 실패하면 쓰기 전에 인덱싱 단계가 실패하고(문서는

@@ -393,6 +393,42 @@ class VectorIndexer(BaseIndexer):
         nothing."""
         return None
 
+    def read_claims(self, ids: list[str], suffix: str | None = None) -> list[Claim]:
+        """Read stored claims by id for the cross-run claim merge.
+
+        Scoped to ``suffix``'s index. Must return the fields the merge folds
+        in (description, source text, ``text_unit_ids``, status). Default
+        returns ``[]`` (no read-back: the upsert overwrites); adapters that
+        override it raise when a read fails, since ``[]`` means nothing is
+        stored.
+        """
+        return []
+
+    def read_entity_descriptions(
+        self, ids: list[str], suffix: str | None = None
+    ) -> dict[str, str]:
+        """Stored descriptions of entities by id, in full.
+
+        The cross-run merge reads entities back from the graph store, which
+        may cap property length (``indexing.neptune.property_max_length``);
+        the merged description is written to this store too, so a capped one
+        is taken from here. Default returns ``{}`` (keep the graph's);
+        adapters that override it raise when a read fails.
+        """
+        return {}
+
+    def read_relationship_descriptions(
+        self, ids: list[str], suffix: str | None = None
+    ) -> dict[str, str]:
+        """Stored descriptions of relationships by id, in full (see
+        :meth:`read_entity_descriptions`)."""
+        return {}
+
+    def update_claim_lineage(self, claims: list[Claim]) -> IndexingStats:
+        """Rewrite stored claims' ``text_unit_ids`` (text-unit removal); see
+        :meth:`update_entity_lineage`."""
+        return self.upsert_claims(claims)
+
     def update_entity_lineage(self, entities: list[Entity]) -> IndexingStats:
         """Rewrite stored entities' ``text_unit_ids`` (text-unit removal).
 
