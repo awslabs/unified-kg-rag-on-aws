@@ -286,11 +286,13 @@ class StorageStack(Stack):
         # AccountRootPrincipal — scoping it to the Fargate task role would create
         # a cross-stack circular dependency (the role lives in the compute stack
         # which depends on this one); the IAM caller still needs es:ESHttp* on
-        # the role, which is granted there. To keep this from being an
-        # account-wide grant at the IAM layer (any account principal holding
-        # es:ESHttp* would otherwise be authorized), the statement is additionally
-        # conditioned on the request originating from THIS VPC — so only
-        # in-VPC, IAM-signed, resource-scoped callers are allowed.
+        # the role, which is granted there. The aws:SourceVpc condition narrows
+        # only what THIS statement grants: within one account IAM allows a
+        # request when either the identity policy or the resource policy does,
+        # so a principal whose own policy allows es:ESHttp* on the domain is
+        # authorized regardless of it. What keeps callers outside the VPC out
+        # is the network boundary above (a VPC-only domain behind the service
+        # SG), not this condition.
         domain.add_access_policies(
             iam.PolicyStatement(
                 effect=iam.Effect.ALLOW,
