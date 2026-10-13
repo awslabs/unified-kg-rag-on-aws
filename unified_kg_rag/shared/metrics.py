@@ -2,10 +2,12 @@
 # SPDX-License-Identifier: Apache-2.0
 """Pluggable metrics sink — the operational-excellence boundary.
 
-The framework *collects* metrics in-memory (``MetricsMixin``, ``PipelineMetrics``)
-but should not assume a specific monitoring backend. ``MetricsSink`` is the port
-through which an embedding application forwards those metrics to its sink of
-choice. Two adapters ship:
+The ingestion pipeline publishes each run's scalar ``PipelineMetrics`` (and
+per-stage durations) through ``MetricsSink`` without assuming a monitoring
+backend: an embedding application passes the sink of its choice
+(``DataIngestionPipeline(metrics_sink=...)``). Query-side counters
+(``MetricsMixin`` on strategies and retrievers) stay in memory and do not reach
+the sink. Two adapters ship:
 
 - ``NullMetricsSink`` (default): discards — zero overhead, no AWS dependency.
 - ``CloudWatchEMFSink``: writes CloudWatch Embedded Metric Format (EMF) JSON to

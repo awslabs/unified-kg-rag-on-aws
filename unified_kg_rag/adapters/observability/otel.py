@@ -47,6 +47,7 @@ from unified_kg_rag.domain.models.config import (
     ObservabilityConfig,
 )
 from unified_kg_rag.shared.exceptions import ConfigurationError
+from unified_kg_rag.shared.genai import ERROR_TYPE
 from unified_kg_rag.shared.logging import get_logger
 from unified_kg_rag.shared.observability import SpanHandle, SpanKind
 
@@ -83,7 +84,6 @@ _EXPORTING_BACKENDS = (
 )
 # OpenInference resource attribute Phoenix files traces under.
 PHOENIX_PROJECT_ATTRIBUTE = "openinference.project.name"
-ERROR_TYPE = "error.type"
 # The provider this module made global, if any (see build_backend).
 _bound_global: list[Any] = []
 _SPAN_KINDS = {"internal": trace.SpanKind.INTERNAL, "client": trace.SpanKind.CLIENT}

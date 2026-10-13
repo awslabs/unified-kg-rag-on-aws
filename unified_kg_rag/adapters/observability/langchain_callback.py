@@ -41,6 +41,7 @@ from langchain_core.outputs import ChatGeneration, LLMResult
 
 from unified_kg_rag.shared import observability
 from unified_kg_rag.shared.genai import (
+    ERROR_TYPE,
     GEN_AI_INPUT_MESSAGES,
     GEN_AI_OPERATION_NAME,
     GEN_AI_OUTPUT_MESSAGES,
@@ -64,7 +65,6 @@ from unified_kg_rag.shared.observability import (
     SpanHandle,
 )
 
-ERROR_TYPE = "error.type"
 GUARDRAIL_INTERVENED = "aws.bedrock.guardrail.intervened"
 MODEL_PURPOSE = "kg_rag.model.purpose"
 

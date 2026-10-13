@@ -58,21 +58,11 @@ from unified_kg_rag.shared.genai import (
     GEN_AI_USAGE_INPUT_TOKENS,
     GEN_AI_USAGE_OUTPUT_TOKENS,
 )
-from unified_kg_rag.shared.observability import REDACTED
+from unified_kg_rag.shared.observability import ContentPolicy
 
 Attributes = Mapping[str, Any]
 AttributeMapper = Callable[[str, Attributes], dict[str, Any]]
 
-_OPERATION = GEN_AI_OPERATION_NAME
-_REQUEST_MODEL = GEN_AI_REQUEST_MODEL
-_RESPONSE_MODEL = GEN_AI_RESPONSE_MODEL
-_PROVIDER = GEN_AI_PROVIDER_NAME
-_INPUT_MESSAGES = GEN_AI_INPUT_MESSAGES
-_OUTPUT_MESSAGES = GEN_AI_OUTPUT_MESSAGES
-_INPUT_TOKENS = GEN_AI_USAGE_INPUT_TOKENS
-_OUTPUT_TOKENS = GEN_AI_USAGE_OUTPUT_TOKENS
-_CACHE_READ = GEN_AI_USAGE_CACHE_READ_INPUT_TOKENS
-_CACHE_WRITE = GEN_AI_USAGE_CACHE_CREATION_INPUT_TOKENS
 
 _RETRIEVE_SPAN = "kg_rag.retrieve"
 _RERANK_SPAN = "kg_rag.rerank"
@@ -80,7 +70,7 @@ _RERANK_SPAN = "kg_rag.rerank"
 
 def _kind(name: str, attributes: Attributes) -> str:
     """``llm`` / ``embedding`` / ``retriever`` / ``reranker`` / ``chain``."""
-    operation = attributes.get(_OPERATION)
+    operation = attributes.get(GEN_AI_OPERATION_NAME)
     if operation in ("chat", "text_completion", "generate_content"):
         return "llm"
     if operation == "embeddings":
@@ -106,10 +96,10 @@ def langfuse_attributes(name: str, attributes: Attributes) -> dict[str, Any]:
     added: dict[str, Any] = {
         "langfuse.observation.type": _LANGFUSE_TYPES[_kind(name, attributes)]
     }
-    if _INPUT_MESSAGES in attributes:
-        added["langfuse.observation.input"] = attributes[_INPUT_MESSAGES]
-    if _OUTPUT_MESSAGES in attributes:
-        added["langfuse.observation.output"] = attributes[_OUTPUT_MESSAGES]
+    if GEN_AI_INPUT_MESSAGES in attributes:
+        added["langfuse.observation.input"] = attributes[GEN_AI_INPUT_MESSAGES]
+    if GEN_AI_OUTPUT_MESSAGES in attributes:
+        added["langfuse.observation.output"] = attributes[GEN_AI_OUTPUT_MESSAGES]
     return added
 
 
@@ -126,32 +116,38 @@ def openinference_attributes(name: str, attributes: Attributes) -> dict[str, Any
     """OpenInference (Phoenix) attributes to add to a span."""
     kind = _kind(name, attributes)
     added: dict[str, Any] = {"openinference.span.kind": _OPENINFERENCE_KINDS[kind]}
-    model = attributes.get(_RESPONSE_MODEL) or attributes.get(_REQUEST_MODEL)
+    model = attributes.get(GEN_AI_RESPONSE_MODEL) or attributes.get(
+        GEN_AI_REQUEST_MODEL
+    )
     if kind == "embedding" and model:
         added["embedding.model_name"] = model
     elif model:
         added["llm.model_name"] = model
     if kind == "llm":
-        provider = attributes.get(_PROVIDER)
+        provider = attributes.get(GEN_AI_PROVIDER_NAME)
         if isinstance(provider, str):
             added["llm.provider"] = "aws" if provider.startswith("aws.") else provider
-        prompt = attributes.get(_INPUT_TOKENS)
-        completion = attributes.get(_OUTPUT_TOKENS)
+        prompt = attributes.get(GEN_AI_USAGE_INPUT_TOKENS)
+        completion = attributes.get(GEN_AI_USAGE_OUTPUT_TOKENS)
         if isinstance(prompt, int):
             added["llm.token_count.prompt"] = prompt
         if isinstance(completion, int):
             added["llm.token_count.completion"] = completion
         if isinstance(prompt, int) and isinstance(completion, int):
             added["llm.token_count.total"] = prompt + completion
-        if isinstance(cache_read := attributes.get(_CACHE_READ), int):
+        if isinstance(
+            cache_read := attributes.get(GEN_AI_USAGE_CACHE_READ_INPUT_TOKENS), int
+        ):
             added["llm.token_count.prompt_details.cache_read"] = cache_read
-        if isinstance(cache_write := attributes.get(_CACHE_WRITE), int):
+        if isinstance(
+            cache_write := attributes.get(GEN_AI_USAGE_CACHE_CREATION_INPUT_TOKENS), int
+        ):
             added["llm.token_count.prompt_details.cache_write"] = cache_write
-    if _INPUT_MESSAGES in attributes:
-        added["input.value"] = attributes[_INPUT_MESSAGES]
+    if GEN_AI_INPUT_MESSAGES in attributes:
+        added["input.value"] = attributes[GEN_AI_INPUT_MESSAGES]
         added["input.mime_type"] = "application/json"
-    if _OUTPUT_MESSAGES in attributes:
-        added["output.value"] = attributes[_OUTPUT_MESSAGES]
+    if GEN_AI_OUTPUT_MESSAGES in attributes:
+        added["output.value"] = attributes[GEN_AI_OUTPUT_MESSAGES]
         added["output.mime_type"] = "application/json"
     return added
 
@@ -167,14 +163,11 @@ class Redactor:
 
     def __init__(self, patterns: Sequence[str | re.Pattern[str]]) -> None:
         self.patterns = tuple(re.compile(p) for p in patterns)
+        # The same substitution the callback applies at capture.
+        self.text = ContentPolicy(redact_patterns=self.patterns).redact
 
     def __bool__(self) -> bool:
         return bool(self.patterns)
-
-    def text(self, value: str) -> str:
-        for pattern in self.patterns:
-            value = pattern.sub(REDACTED, value)
-        return value
 
     def value(self, value: Any) -> Any:
         if isinstance(value, str):
