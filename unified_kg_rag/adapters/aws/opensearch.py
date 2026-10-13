@@ -103,6 +103,9 @@ def _bulk_item_status(result: dict[str, Any]) -> int | None:
 
 
 INDEX_NOT_FOUND_TYPE = "index_not_found_exception"
+# A query over the cluster's clause limit, which OpenSearch answers with a 500
+# rather than a 400; the same query fails the same way every time.
+_CLAUSE_LIMIT_TYPES = frozenset({"too_many_nested_clauses", "too_many_clauses"})
 
 
 def _error_types(payload: Any) -> set[str]:
@@ -175,9 +178,10 @@ def _wrap_transport_error(exc: TransportError, context: str) -> AWSServiceError:
     ``_CLIENT_RETRY_STATUSES``), so: a cluster that cannot be reached
     (refused, DNS, TLS) or still answers 429/502/503/504 is a
     ``StoreConnectionError``, one that did not answer a ``StoreTimeoutError``,
-    a 401/403 a ``StoreAccessDeniedError`` and a 400 a
-    ``StoreRequestRejectedError`` (both carry the server's reason). Any other
-    status (a 500 for one query) stays a plain ``AWSServiceError``.
+    a 401/403 a ``StoreAccessDeniedError`` and a 400 (or a 500 for a query
+    over the clause limit) a ``StoreRequestRejectedError`` (both carry the
+    server's reason). Any other status (a 500 for one query) stays a plain
+    ``AWSServiceError``.
     """
     reason = error_reason(exc)
     msg = f"{context}: status={exc.status_code}, error={reason}"
@@ -189,7 +193,9 @@ def _wrap_transport_error(exc: TransportError, context: str) -> AWSServiceError:
     status = exc.status_code
     if status in (401, 403):
         return StoreAccessDeniedError(msg, reason=reason)
-    if status == 400:
+    if status == 400 or (
+        status == 500 and _error_types(exc.info or exc.error) & _CLAUSE_LIMIT_TYPES
+    ):
         return StoreRequestRejectedError(msg, reason=reason)
     if status in _CLIENT_RETRY_STATUSES:
         return StoreConnectionError(f"{msg} (still failing after the client's retries)")

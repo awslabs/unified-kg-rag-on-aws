@@ -1460,6 +1460,37 @@ async def test_rejected_search_is_a_fatal_configuration_error(
     assert is_fatal_retrieval_error(exc.value)
 
 
+_CLAUSE_LIMIT_BODY = {
+    "error": {
+        "root_cause": [
+            {
+                "type": "too_many_nested_clauses",
+                "reason": "Query contains too many nested clauses; "
+                "maxClauseCount is set to 1024",
+            }
+        ],
+        "type": "search_phase_execution_exception",
+        "reason": "all shards failed",
+    },
+    "status": 500,
+}
+
+
+@pytest.mark.parametrize("connection_cls", _CONNECTIONS)
+async def test_a_query_over_the_clause_limit_fails_the_query(
+    config: Config, connection_cls: type[Connection]
+) -> None:
+    # Regression: OpenSearch answers it with a 500, which degraded the
+    # section to no results although the same query fails every time.
+    error = _through_handler(_server_error(connection_cls, 500, _CLAUSE_LIMIT_BODY))
+    assert isinstance(error, StoreRequestRejectedError)
+    retriever = _retriever_over(config, {}, search_error=error)
+    retriever._opensearch_client.mappings = {}
+
+    with pytest.raises(ConfigurationError, match="too many nested clauses"):
+        await retriever.aretrieve(_text_units_query(config))
+
+
 async def test_a_server_error_of_one_search_stays_transient(config: Config) -> None:
     body = {"error": {"type": "some_exception", "reason": "busy"}, "status": 500}
     error = _through_handler(_server_error(AsyncHttpConnection, 500, body))

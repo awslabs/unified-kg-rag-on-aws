@@ -356,6 +356,12 @@ Library API (Python callers and custom backends).
   of retrying a quota that does not recover within minutes (#257).
 
 ### Fixed
+- The text-units section is no longer empty for a corpus translated into
+  five or more languages: its lexical search covers one field per
+  language, and the 200-term budget made more clauses than OpenSearch
+  allows (500 `too_many_nested_clauses`). The budget is now spread over the
+  fields searched, and a query over the clause limit fails the query
+  instead of degrading silently (#PR).
 - A short OpenSearch throttling burst no longer fails a query: opensearch-py
   retried a 429/502/503/504 back to back, so a burst of a few milliseconds
   used up `search.store_max_attempts`. Query requests now back off between
