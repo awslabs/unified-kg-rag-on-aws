@@ -189,9 +189,10 @@ Library API (Python callers and custom backends).
   test-only methods (#169); `DocStatus.PARSING` / `PROCESSING`,
   `DocStatusRecord.content_summary` / `content_length` and
   `application.cli.run_evaluation.exceeds_failure_budget` (#216);
-  `domain.retrieval.strategy_registry.registered_strategies` (#212); and
+  `domain.retrieval.strategy_registry.registered_strategies` (#212);
   `NeptuneClient.delete_vertices_in_batches` (the indexer's `clear` deletes
-  a label in retried batches itself) (#263).
+  a label in retried batches itself) (#263); and `NeptuneClient.connection`
+  (use `NeptuneClient.g`) (#266).
 - `BaseSearchStrategy.search` (a sync wrapper with no caller; use
   `asearch`) and the unused `timeout` parameter of
   `BaseSearchStrategy._safe_aretrieve` are removed (#249).
@@ -362,10 +363,6 @@ Library API (Python callers and custom backends).
   graph: a full build of 10,000 entities and their communities takes about
   20 s instead of 60 s, and 5,000 relationship writes about 5 s instead of
   28 s. Restart the stack (`down` and `up`) to pick it up (#265).
-
-### Removed
-- `NeptuneClient.connection`, which nothing in the package used; use
-  `NeptuneClient.g` (#266).
 
 ### Fixed
 - A Neptune connection lost under concurrent queries no longer leaks
