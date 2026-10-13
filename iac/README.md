@@ -147,6 +147,15 @@ positive integers (`opensearch_count`, `neptune_instances`, `sfn_timeout_hours`,
 > Every resource is tagged `project=unified-kg-rag-on-aws`, `env=<env_name>`,
 > `managed-by=cdk`, `owner`, and `cost-center` for cost allocation and ownership.
 
+> **The Neptune engine version is not pinned.** A new cluster starts on the
+> engine version Neptune defaults to at creation, so clusters deployed at
+> different times run different versions. Adding a pin now would make the next
+> deploy of every cluster not already on it change its engine: an upgrade with
+> downtime, or a downgrade that Neptune rejects. The client is pinned instead:
+> `gremlinpython` stays below 3.8 until Neptune's engine supports TinkerPop 3.8
+> (see `pyproject.toml`). To fix a version for a new deployment, set
+> `engine_version` in `storage_stack.py` before its first deploy.
+
 ### Well-Architected
 
 The stacks apply WAF defaults out of the box — least-privilege IAM

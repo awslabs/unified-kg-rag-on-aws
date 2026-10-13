@@ -202,6 +202,9 @@ class StorageStack(Stack):
             kms_key=self.kms_key,
             backup_retention=Duration.days(self.config.backup_retention_days),
             deletion_protection=self.config.deletion_protection,
+            # engine_version is deliberately unset: deployed clusters run the
+            # default of their creation time, so a pin would change the engine
+            # of every cluster not already on it (iac/README.md).
             auto_minor_version_upgrade=True,
             removal_policy=self.removal_policy,
         )
