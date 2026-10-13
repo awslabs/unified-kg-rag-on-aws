@@ -4,7 +4,7 @@ import logging
 import os
 import types
 from pathlib import Path
-from typing import Annotated, Any, Union, get_args, get_origin
+from typing import TYPE_CHECKING, Annotated, Any, Union, cast, get_args, get_origin
 
 import yaml
 from dotenv import load_dotenv
@@ -13,6 +13,9 @@ from pydantic import BaseModel, SecretStr, TypeAdapter, ValidationError
 from unified_kg_rag.domain.models import Config
 from unified_kg_rag.domain.models.provider_config import SQLITE
 from unified_kg_rag.shared.exceptions import ConfigurationError
+
+if TYPE_CHECKING:
+    from typing_extensions import TypeForm
 
 # Stdlib logger (not get_logger): this module is imported by the logging setup,
 # so reaching back through get_logger -> get_config would risk a circular import.
@@ -291,10 +294,12 @@ class ConfigLoader:
         else:
             # Checked against the field's type and constraints (the models do
             # not validate assignment), as the same value in the file would be.
+            # The Annotated form is built at runtime from the field, so a type
+            # checker cannot see it as the TypeForm that TypeAdapter is typed
+            # to take (pydantic >= 2.14); it is one, hence the cast.
             field = type(current).model_fields[final_key]
-            TypeAdapter(Annotated[field.annotation, field]).validate_python(
-                parsed_value
-            )
+            field_type = cast("TypeForm[Any]", Annotated[field.annotation, field])
+            TypeAdapter(field_type).validate_python(parsed_value)
             setattr(current, final_key, parsed_value)
 
     def reload_config(self) -> Config:
