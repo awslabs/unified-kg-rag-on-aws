@@ -191,8 +191,10 @@ Library API (Python callers and custom backends).
   `application.cli.run_evaluation.exceeds_failure_budget` (#216);
   `domain.retrieval.strategy_registry.registered_strategies` (#212);
   `NeptuneClient.delete_vertices_in_batches` (the indexer's `clear` deletes
-  a label in retried batches itself) (#263); and `NeptuneClient.connection`
-  (use `NeptuneClient.g`) (#266).
+  a label in retried batches itself) (#263); `NeptuneClient.connection`
+  (use `NeptuneClient.g`) (#266); and `BaseParser.parse_files`,
+  `ParsingStats` and `GraphAnalyzer.centrality_cache`, which nothing used
+  (#PR).
 - `BaseSearchStrategy.search` (a sync wrapper with no caller; use
   `asearch`) and the unused `timeout` parameter of
   `BaseSearchStrategy._safe_aretrieve` are removed (#249).

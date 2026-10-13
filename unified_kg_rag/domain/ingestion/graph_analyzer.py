@@ -358,10 +358,6 @@ class GraphAnalyzer:
             stats.largest_component_size = len(max(result, key=len))
 
     @property
-    def centrality_cache(self) -> dict[str, dict[str, float]]:
-        return self._centrality_cache
-
-    @property
     def graph(self) -> nx.Graph | None:
         return self._graph
 

@@ -109,9 +109,9 @@ class TestCentrality:
         analyzer = GraphAnalyzer(Config(), graph=_triangle_graph())
         analyzer.calculate_centrality()
         # degree/betweenness/pagerank are enabled by default.
-        assert "degree" in analyzer.centrality_cache
-        assert "pagerank" in analyzer.centrality_cache
-        assert "closeness" not in analyzer.centrality_cache
+        assert "degree" in analyzer._centrality_cache
+        assert "pagerank" in analyzer._centrality_cache
+        assert "closeness" not in analyzer._centrality_cache
 
 
 class TestStatistics:
@@ -187,9 +187,9 @@ class TestStatistics:
         analyzer = GraphAnalyzer(Config(), graph=_triangle_graph())
         analyzer.calculate_centrality()
         analyzer.get_graph_statistics()
-        assert analyzer.centrality_cache
+        assert analyzer._centrality_cache
         analyzer.graph = _star_graph()
-        assert analyzer.centrality_cache == {}
+        assert analyzer._centrality_cache == {}
         assert analyzer._statistics_cache is None
         assert set(analyzer.calculate_centrality()) == set(_star_graph().nodes)
 
