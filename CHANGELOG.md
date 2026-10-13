@@ -399,8 +399,8 @@ Library API (Python callers and custom backends).
 - A short OpenSearch throttling burst no longer fails a query: opensearch-py
   retried a 429/502/503/504 back to back, so a burst of a few milliseconds
   used up `search.store_max_attempts`. Query requests now back off between
-  attempts (0.5 s, doubling, at most 4 s) and still fail once the attempts
-  run out (#264).
+  attempts (0.25-0.5 s, then 0.5-1 s, doubling up to 2-4 s) and still fail
+  once the attempts run out (#264).
 - A query no longer hangs when gremlinpython's connection pool stays empty
   after a lost Neptune connection: a graph traversal that does not finish
   within twice `search.store_timeout_seconds` fails the query with

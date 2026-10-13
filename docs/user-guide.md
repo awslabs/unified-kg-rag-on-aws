@@ -608,7 +608,7 @@ LLM stages are Bedrock-I/O-bound, so concurrency can far exceed the CPU count.
 | `search.token_manager.max_context_tokens` | `30000` | Retrieval context budget for the answer prompt (see the note below). |
 | `search.token_manager.context_window_headroom_ratio` | `0.1` | Share of the window held back when the budget is derived (`max_context_tokens: null`). |
 | `search.store_timeout_seconds` | `30` | How long a query waits for one OpenSearch or Neptune request (and for opening a Neptune connection); a Neptune traversal, including its wait for a pooled connection, gets twice that. A store that does not answer fails the query instead of answering from no context. Ingestion keeps its own limits. |
-| `search.store_max_attempts` | `3` | Attempts of one OpenSearch query request that timed out, could not connect or got a 429/502/503/504, including the first, with a backoff between them (about 0.5 s, doubling, at most 4 s) so a short throttling burst is waited out. A hung cluster fails a query after about `3 x 30` s, and one still answering 429/5xx after them fails it too. Neptune query requests are not retried. |
+| `search.store_max_attempts` | `3` | Attempts of one OpenSearch query request that timed out, could not connect or got a 429/502/503/504, including the first, with a jittered backoff between them (0.25-0.5 s, then 0.5-1 s, doubling up to 2-4 s), so the default 3 attempts wait about 0.75-1.5 s in all and a short throttling burst is waited out. A hung cluster fails a query after about `3 x 30` s, and one still answering 429/5xx after them fails it too. Neptune query requests are not retried. |
 
 Per-section-type shares (`search.token_manager.type_budgets`) and `local` slot
 quotas (`search.local_search.type_quota`) are in the template.
