@@ -535,7 +535,10 @@ async def test_map_phase_fatal_error_degrades_when_ignored() -> None:
     strat = _strategy(ignore_errors=True, map_batch_size=1, reduce_with_llm=True)
     strat.batch_processor.max_attempts = 1  # as GlobalSearchStrategy configures
     strat.map_rater = _DeniedMapChain(
-        RuntimeError("AccessDeniedException: no access to the model")
+        ClientError(
+            {"Error": {"Code": "AccessDeniedException", "Message": "no access"}},
+            "InvokeModel",
+        )
     )
     out = await strat._apply_map_reduce(_communities(2), SearchQuery(query="q"))
     assert out  # degraded to concat-and-reduce over the unrated reports
