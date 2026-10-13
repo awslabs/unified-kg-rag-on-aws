@@ -3,7 +3,7 @@
 import asyncio
 import json
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from functools import cached_property, wraps
 from typing import TYPE_CHECKING, Any
 
@@ -59,6 +59,11 @@ RETRYABLE_BULK_ITEM_STATUSES = frozenset({429, 502, 503, 504})
 _REQUEST_TIMEOUT_SECONDS = 180
 _CLIENT_MAX_RETRIES = 5
 _CLIENT_RETRY_STATUSES = (429, 502, 503, 504)
+# Backoff between the attempts of one query request (see
+# OpenSearchClient._aquery). opensearch-py retries back to back, so a 429
+# burst of a few milliseconds used up every attempt.
+_QUERY_RETRY_BASE_DELAY_SECONDS = 0.5
+_QUERY_RETRY_MAX_DELAY_SECONDS = 4.0
 
 _DELETE_BATCH_MAX_NAMES = 20
 _DELETE_BATCH_MAX_CHARS = 3000
@@ -98,6 +103,9 @@ def _bulk_item_status(result: dict[str, Any]) -> int | None:
 
 
 INDEX_NOT_FOUND_TYPE = "index_not_found_exception"
+# A query over the cluster's clause limit, which OpenSearch answers with a 500
+# rather than a 400; the same query fails the same way every time.
+_CLAUSE_LIMIT_TYPES = frozenset({"too_many_nested_clauses", "too_many_clauses"})
 
 
 def _error_types(payload: Any) -> set[str]:
@@ -170,9 +178,10 @@ def _wrap_transport_error(exc: TransportError, context: str) -> AWSServiceError:
     ``_CLIENT_RETRY_STATUSES``), so: a cluster that cannot be reached
     (refused, DNS, TLS) or still answers 429/502/503/504 is a
     ``StoreConnectionError``, one that did not answer a ``StoreTimeoutError``,
-    a 401/403 a ``StoreAccessDeniedError`` and a 400 a
-    ``StoreRequestRejectedError`` (both carry the server's reason). Any other
-    status (a 500 for one query) stays a plain ``AWSServiceError``.
+    a 401/403 a ``StoreAccessDeniedError`` and a 400 (or a 500 for a query
+    over the clause limit) a ``StoreRequestRejectedError`` (both carry the
+    server's reason). Any other status (a 500 for one query) stays a plain
+    ``AWSServiceError``.
     """
     reason = error_reason(exc)
     msg = f"{context}: status={exc.status_code}, error={reason}"
@@ -184,7 +193,9 @@ def _wrap_transport_error(exc: TransportError, context: str) -> AWSServiceError:
     status = exc.status_code
     if status in (401, 403):
         return StoreAccessDeniedError(msg, reason=reason)
-    if status == 400:
+    if status == 400 or (
+        status == 500 and _error_types(exc.info or exc.error) & _CLAUSE_LIMIT_TYPES
+    ):
         return StoreRequestRejectedError(msg, reason=reason)
     if status in _CLIENT_RETRY_STATUSES:
         return StoreConnectionError(f"{msg} (still failing after the client's retries)")
@@ -492,14 +503,12 @@ class OpenSearchClient:
             "timeout": (
                 search.store_timeout_seconds if async_mode else _REQUEST_TIMEOUT_SECONDS
             ),
-            # Both clients retry timeouts and 429s. The async client serves the
-            # whole query hot path; with opensearch-py's defaults
-            # (retry_on_timeout=False, retry_on_status=(502, 503, 504)) a 429
-            # (throttling) would surface as a TransportError and silently
-            # degrade that index to zero results.
-            "max_retries": (
-                search.store_max_attempts - 1 if async_mode else _CLIENT_MAX_RETRIES
-            ),
+            # Both clients retry timeouts and 429s: with opensearch-py's
+            # defaults (retry_on_timeout=False, retry_on_status=(502, 503,
+            # 504)) a 429 (throttling) would surface as a TransportError. The
+            # async (query) client's attempts are made by _aquery, with a
+            # backoff between them.
+            "max_retries": 0 if async_mode else _CLIENT_MAX_RETRIES,
             "retry_on_timeout": True,
             "retry_on_status": _CLIENT_RETRY_STATUSES,
         }
@@ -833,15 +842,54 @@ class OpenSearchClient:
         result = self.client.search(**kwargs)
         return dict(result)
 
+    async def _aquery(self, request: Callable[[], Awaitable[Any]]) -> Any:
+        """``request()`` in up to ``search.store_max_attempts`` attempts.
+
+        A timeout, a connection failure and a 429/502/503/504 are retried
+        after an exponential backoff (``backoff_delay``); the last attempt's
+        error, or any other, propagates.
+        """
+        attempts = self.config.search.store_max_attempts
+        attempt = 1
+        while True:
+            try:
+                return await request()
+            except TransportError as e:
+                retryable = (
+                    isinstance(e, OpenSearchConnectionError)
+                    or e.status_code in _CLIENT_RETRY_STATUSES
+                )
+                if not retryable or attempt >= attempts:
+                    raise
+                delay = backoff_delay(
+                    attempt,
+                    _QUERY_RETRY_BASE_DELAY_SECONDS,
+                    _QUERY_RETRY_MAX_DELAY_SECONDS,
+                )
+                logger.warning(
+                    "OpenSearch query request failed (attempt %s/%s, status=%s); "
+                    "retrying in %.2fs",
+                    attempt,
+                    attempts,
+                    e.status_code,
+                    delay,
+                )
+                await asyncio.sleep(delay)
+                attempt += 1
+
     @_handle_async_opensearch_errors
     async def aindex_exists(self, index: str) -> bool:
         """Whether an index or alias named ``index`` exists."""
-        return bool(await self.async_client.indices.exists(index=index))
+        return bool(
+            await self._aquery(lambda: self.async_client.indices.exists(index=index))
+        )
 
     @_handle_async_opensearch_errors
     async def aget_mappings(self, index: str) -> dict[str, dict[str, Any]]:
         """The ``mappings`` of each index ``index`` (a name or alias) names."""
-        response = await self.async_client.indices.get_mapping(index=index)
+        response = await self._aquery(
+            lambda: self.async_client.indices.get_mapping(index=index)
+        )
         return {
             name: dict((body or {}).get("mappings") or {})
             for name, body in dict(response).items()
@@ -849,7 +897,7 @@ class OpenSearchClient:
 
     @_handle_async_opensearch_errors
     async def asearch(self, **kwargs: Any) -> dict[str, Any]:
-        result = await self.async_client.search(**kwargs)
+        result = await self._aquery(lambda: self.async_client.search(**kwargs))
         return dict(result)
 
     @_handle_opensearch_errors

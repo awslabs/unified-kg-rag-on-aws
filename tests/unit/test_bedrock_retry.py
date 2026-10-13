@@ -76,6 +76,7 @@ def _wrapper(client: _FakeRuntimeClient, **kwargs: Any) -> BedrockEmbeddingsWrap
     [
         "ModelErrorException",
         "ModelNotReadyException",
+        "ModelTimeoutException",
         "ServiceUnavailableException",
         "InternalServerException",
         "ThrottlingException",

@@ -261,6 +261,28 @@ def test_build_lexical_query_caps_a_long_query(retriever, text) -> None:
     assert (_terms(must), _terms(should)) == (150, 50)
 
 
+@pytest.mark.parametrize(
+    ("fields", "expected"), [(5, (150, 50)), (6, (150, 16)), (7, (142, 0))]
+)
+def test_build_lexical_query_scales_the_budget_by_field_count(
+    retriever, fields: int, expected: tuple[int, int]
+) -> None:
+    # Text units search one more field per translated language: with a target
+    # and four more languages (6-7 fields) 200 terms made 1,200-1,400 clauses,
+    # and the search failed with too_many_nested_clauses (500), leaving the
+    # text section empty. The 1,000 clauses are spread over the fields.
+    text = " ".join(f"word{i}" for i in range(300))
+    q = SearchQuery(query=text, optional_keywords=text.split())
+    body = retriever._build_lexical_query(q, [f"f{i}" for i in range(fields)])
+    if "bool" in body:
+        must = body["bool"]["must"][0]["multi_match"]["query"]
+        should = body["bool"]["should"][0]["multi_match"]["query"]
+    else:
+        must, should = body["multi_match"]["query"], ""
+    assert (_terms(must), _terms(should) if should else 0) == expected
+    assert (_terms(must) + (_terms(should) if should else 0)) * fields <= 1000
+
+
 def test_build_lexical_query_fuzzy_terms_count_their_expansions(retriever) -> None:
     keywords = [f"kw{i}" for i in range(300)]
     q = SearchQuery(query="alice", optional_keywords=keywords)

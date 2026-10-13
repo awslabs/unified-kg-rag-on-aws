@@ -15,9 +15,12 @@ import asyncio
 import json
 import socket
 import threading
+import time
 import weakref
 from collections.abc import Iterator
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+import httpx
 import pytest
 from botocore.exceptions import (
     ClientError,
@@ -127,6 +130,117 @@ def test_other_errors_are_transient(exc: Exception) -> None:
     assert is_fatal_retrieval_error(exc) is False
 
 
+# --- local model servers ----------------------------------------------------
+#
+# Regression: an OpenAI-compatible or Ollama server that refused every call (a
+# bad key, an unknown model, a refused port) degraded each section to no
+# results, so every strategy answered "could not find" and the logs blamed
+# OpenSearch. The errors are the clients' real types, built without a network.
+
+_MODEL_REQUEST = httpx.Request("POST", "http://model-server.test/v1/embeddings")
+
+
+def _openai_status(name: str, status: int) -> Exception:
+    openai = pytest.importorskip("openai")
+    response = httpx.Response(status, request=_MODEL_REQUEST)
+    cls = getattr(openai, name)
+    error: Exception = cls("synthetic", response=response, body=None)
+    return error
+
+
+@pytest.mark.parametrize(
+    ("name", "status", "fatal"),
+    [
+        ("AuthenticationError", 401, True),
+        ("PermissionDeniedError", 403, True),
+        ("NotFoundError", 404, True),
+        ("BadRequestError", 400, True),
+        ("RateLimitError", 429, False),
+        ("InternalServerError", 500, False),
+        ("APIStatusError", 408, False),
+        ("APIStatusError", 503, False),
+    ],
+)
+def test_openai_status_errors_are_fatal_unless_transient(
+    name: str, status: int, fatal: bool
+) -> None:
+    assert is_fatal_retrieval_error(_openai_status(name, status)) is fatal
+
+
+def test_an_unreachable_openai_server_is_fatal() -> None:
+    openai = pytest.importorskip("openai")
+    assert is_fatal_retrieval_error(openai.APIConnectionError(request=_MODEL_REQUEST))
+    assert is_fatal_retrieval_error(openai.APITimeoutError(request=_MODEL_REQUEST))
+
+
+@pytest.mark.parametrize(
+    ("status", "fatal"),
+    [(404, True), (401, True), (429, False), (500, False), (-1, False)],
+)
+def test_ollama_response_errors_are_fatal_unless_transient(
+    status: int, fatal: bool
+) -> None:
+    ollama = pytest.importorskip("ollama")
+    error = ollama.ResponseError("model 'synthetic' not found", status_code=status)
+    assert is_fatal_retrieval_error(error) is fatal
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        httpx.ConnectError("refused", request=_MODEL_REQUEST),
+        httpx.ReadTimeout("timed out", request=_MODEL_REQUEST),
+    ],
+    ids=lambda exc: type(exc).__name__,
+)
+def test_httpx_transport_errors_are_fatal(exc: Exception) -> None:
+    assert is_fatal_retrieval_error(exc)
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        # Same class names as the model clients', other libraries.
+        TransportError(500, "search_phase_execution_exception", "failed"),
+        GremlinServerError({"code": 500, "message": "failed", "attributes": {}}),
+    ],
+    ids=lambda exc: type(exc).__module__,
+)
+def test_store_errors_of_similar_names_are_not_provider_errors(
+    exc: Exception,
+) -> None:
+    assert is_fatal_retrieval_error(exc) is False
+
+
+def test_a_context_overflow_is_not_fatal() -> None:
+    """Only the one prompt is too long: a global map batch is left unrated."""
+    from langchain_aws.chat_models.bedrock_converse import (
+        BedrockContextOverflowError,
+    )
+
+    overflow = BedrockContextOverflowError(
+        {
+            "Error": {
+                "Code": "ValidationException",
+                "Message": "Input is too long for requested model.",
+            }
+        },
+        "Converse",
+    )
+    assert is_fatal_retrieval_error(overflow) is False
+    # Any other ValidationException (an invalid model id) still fails.
+    assert is_fatal_retrieval_error(_client_error("ValidationException")) is True
+
+
+def test_an_openai_context_overflow_is_not_fatal() -> None:
+    base = pytest.importorskip("langchain_openai.chat_models.base")
+    overflow_cls = base.OpenAIContextOverflowError
+
+    response = httpx.Response(400, request=_MODEL_REQUEST)
+    overflow = overflow_cls("too long", response=response, body=None)
+    assert is_fatal_retrieval_error(overflow) is False
+
+
 # --- unreachable stores, against real clients ------------------------------
 #
 # Regression: opensearch-py's ConnectionError is not a built-in ConnectionError
@@ -222,6 +336,77 @@ async def test_opensearch_timeout_is_a_store_timeout(silent_port: int) -> None:
         await search.client.close()
 
     assert is_fatal_retrieval_error(exc.value)
+
+
+class _ThrottlingOpenSearch:
+    """A local HTTP server answering searches 429 for ``burst`` seconds."""
+
+    def __init__(self, burst: float) -> None:
+        self.burst = burst
+        self.started: float | None = None
+        self.requests: list[float] = []
+        owner = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(self) -> None:  # noqa: N802 - http.server API
+                self.rfile.read(int(self.headers.get("Content-Length") or 0))
+                now = time.monotonic()
+                owner.started = owner.started or now
+                owner.requests.append(now)
+                if now - owner.started < owner.burst:
+                    status, body = 429, {
+                        "error": {"type": "es_rejected_execution_exception"},
+                        "status": 429,
+                    }
+                else:
+                    status, body = 200, {"hits": {"total": {"value": 0}, "hits": []}}
+                data = json.dumps(body).encode()
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+            do_GET = do_POST
+
+            def log_message(self, *_args: object) -> None:
+                pass
+
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.port: int = self.server.server_address[1]
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def close(self) -> None:
+        self.server.shutdown()
+        self.server.server_close()
+
+
+async def _search_throttled(config: Config, server: _ThrottlingOpenSearch) -> None:
+    client = OpenSearchClient(_local_opensearch_config(config, server.port))
+    try:
+        await client.asearch(index="any", body={"query": {"match_all": {}}})
+    finally:
+        await client.aclose()
+        server.close()
+
+
+async def test_a_short_429_burst_is_waited_out(config: Config) -> None:
+    # Regression: opensearch-py retried back to back, so a 429 burst of a few
+    # milliseconds used up every attempt and failed the query.
+    server = _ThrottlingOpenSearch(burst=0.2)
+    await _search_throttled(config, server)
+    assert len(server.requests) >= 2
+    assert server.requests[1] - server.requests[0] >= 0.2
+
+
+async def test_a_persistent_429_fails_after_store_max_attempts(
+    config: Config,
+) -> None:
+    config.search.store_max_attempts = 3
+    server = _ThrottlingOpenSearch(burst=60)
+    with pytest.raises(StoreConnectionError, match="status=429"):
+        await _search_throttled(config, server)
+    assert len(server.requests) == 3
 
 
 async def test_unreachable_opensearch_fails_the_retrieval(
@@ -677,6 +862,29 @@ async def test_neptune_fatal_traversal_error_surfaces_from_aretrieve(
     retriever = _neptune_retriever(config, _ClientWithLocalGraph())
     with pytest.raises(ConnectionError, match="Neptune endpoint"):
         await retriever.aretrieve(_SEEDED)
+
+
+async def test_a_traversal_blocked_on_the_pool_fails_and_resets(
+    config: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Regression: after a lost connection gremlinpython's pool could stay
+    # empty and to_list() block in pool.get() for good, hanging the query.
+    release = threading.Event()
+
+    def _blocked_to_list(self) -> list:
+        release.wait()
+        return []
+
+    monkeypatch.setattr(GraphTraversal, "to_list", _blocked_to_list)
+    config.search.store_timeout_seconds = 0.1
+    client = _ClientWithLocalGraph()
+    retriever = _neptune_retriever(config, client)
+    try:
+        with pytest.raises(StoreTimeoutError):
+            await asyncio.wait_for(retriever.aretrieve(_SEEDED), 5)
+    finally:
+        release.set()
+    assert client.resets
 
 
 async def test_neptune_transient_traversal_error_degrades_from_aretrieve(
@@ -1250,6 +1458,37 @@ async def test_rejected_search_is_a_fatal_configuration_error(
 
     assert reason in str(exc.value)
     assert is_fatal_retrieval_error(exc.value)
+
+
+_CLAUSE_LIMIT_BODY = {
+    "error": {
+        "root_cause": [
+            {
+                "type": "too_many_nested_clauses",
+                "reason": "Query contains too many nested clauses; "
+                "maxClauseCount is set to 1024",
+            }
+        ],
+        "type": "search_phase_execution_exception",
+        "reason": "all shards failed",
+    },
+    "status": 500,
+}
+
+
+@pytest.mark.parametrize("connection_cls", _CONNECTIONS)
+async def test_a_query_over_the_clause_limit_fails_the_query(
+    config: Config, connection_cls: type[Connection]
+) -> None:
+    # Regression: OpenSearch answers it with a 500, which degraded the
+    # section to no results although the same query fails every time.
+    error = _through_handler(_server_error(connection_cls, 500, _CLAUSE_LIMIT_BODY))
+    assert isinstance(error, StoreRequestRejectedError)
+    retriever = _retriever_over(config, {}, search_error=error)
+    retriever._opensearch_client.mappings = {}
+
+    with pytest.raises(ConfigurationError, match="too many nested clauses"):
+        await retriever.aretrieve(_text_units_query(config))
 
 
 async def test_a_server_error_of_one_search_stays_transient(config: Config) -> None:

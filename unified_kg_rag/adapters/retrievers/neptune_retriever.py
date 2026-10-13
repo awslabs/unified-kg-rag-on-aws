@@ -336,13 +336,21 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
             slots = self._traversal_slots.setdefault(
                 loop, asyncio.Semaphore(self._pool_size)
             )
+        # Each request is bounded by store_timeout_seconds, but not the wait
+        # for a pooled connection: after a lost connection gremlinpython's
+        # pool can stay empty and to_list() block for good in pool.get(). The
+        # timeout becomes a StoreTimeoutError, on which aretrieve resets the
+        # connection.
+        timeout = 2 * self._config.search.store_timeout_seconds
         try:
             # to_list() is a BLOCKING Gremlin round trip; running it directly in
             # this coroutine would block the event loop and serialize the seed
             # lookups that callers fan out via asyncio.gather. Offload it to a
             # worker thread so the gather actually overlaps.
             async with slots:
-                result: list[Any] = await asyncio.to_thread(traversal.to_list)
+                result: list[Any] = await asyncio.wait_for(
+                    asyncio.to_thread(traversal.to_list), timeout
+                )
             return result
         except Exception as e:
             # Fatal errors (an unusable connection, a refused configuration)

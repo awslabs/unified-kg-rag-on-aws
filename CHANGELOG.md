@@ -356,6 +356,32 @@ Library API (Python callers and custom backends).
   of retrying a quota that does not recover within minutes (#257).
 
 ### Fixed
+- Queries that waited on a failed Neptune connection attempt each raise a
+  copy of its error; re-raising the one shared error grew its traceback by
+  every waiter's frames and kept them in memory (#264).
+- The text-units section is no longer empty for a corpus translated into
+  five or more languages: its lexical search covers one field per
+  language, and the 200-term budget made more clauses than OpenSearch
+  allows (500 `too_many_nested_clauses`). The budget is now spread over the
+  fields searched, and a query over the clause limit fails the query
+  instead of degrading silently (#264).
+- A short OpenSearch throttling burst no longer fails a query: opensearch-py
+  retried a 429/502/503/504 back to back, so a burst of a few milliseconds
+  used up `search.store_max_attempts`. Query requests now back off between
+  attempts (0.5 s, doubling, at most 4 s) and still fail once the attempts
+  run out (#264).
+- A query no longer hangs when gremlinpython's connection pool stays empty
+  after a lost Neptune connection: a graph traversal that does not finish
+  within twice `search.store_timeout_seconds` fails the query with
+  `StoreTimeoutError` and the connection is replaced (#264).
+- A local model server that refuses or cannot serve a query (an
+  OpenAI-compatible or Ollama 401/403/404/400, a refused port, a timeout
+  after the client's retries) fails the query instead of every strategy
+  answering "could not find" while the log blamed OpenSearch (#264).
+- A global-search map batch longer than the model's context is left unrated
+  and the other batches still answer; Bedrock reports it as a
+  `ValidationException`, which failed the whole query. Bedrock's
+  `ModelTimeoutException` (HTTP 408) is retried as transient (#264).
 - Ingestion reconnects after a Neptune restart or failover. Its write retries
   reused the pooled websockets the server had closed, which gremlinpython
   never reopens, so every write failed every attempt until the process

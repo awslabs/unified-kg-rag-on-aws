@@ -263,6 +263,11 @@ AWS 모드와 다른 점:
 - `run-eval`의 LLM 심사(`langchain`, `ragas`)는 로컬 모델로 실행되어 점수의 신뢰도가
   낮습니다. 결정적 평가기는 영향을 받지 않습니다.
 
+Bedrock과 마찬가지로 모델 서버가 질의의 호출을 거부하거나(잘못된 키나 모델 이름,
+HTTP 4xx) 클라이언트 재시도 후에도 연결할 수 없으면, "찾을 수 없음"으로 답하지 않고
+클라이언트의 오류로 질의를 실패시킵니다.
+[자주 보는 오류](./operations.ko.md#자주-보는-오류)를 참고하세요.
+
 #### 공급자 플래그
 
 `run-ingestion`, `run-rag`, `run-eval`, `run-prompt-tuning`은 다음 플래그를 받습니다.
@@ -568,8 +573,8 @@ LLM 단계는 Bedrock I/O가 병목이므로 동시성을 CPU 수보다 훨씬 �
 | `search.drift_search.enable_llm_convergence` | `false` | 반복마다 LLM으로 수렴 여부를 확인합니다(반복당 호출 1회 추가). |
 | `search.token_manager.max_context_tokens` | `30000` | 답변 프롬프트에 넣는 검색 컨텍스트의 토큰 예산입니다(아래 참고 사항 참고). |
 | `search.token_manager.context_window_headroom_ratio` | `0.1` | 예산을 도출할 때(`max_context_tokens: null`) 남겨 두는 컨텍스트 창 비율입니다. |
-| `search.store_timeout_seconds` | `30` | 질의가 OpenSearch나 Neptune 요청 하나(그리고 Neptune 연결 열기)를 기다리는 시간입니다. 응답하지 않는 저장소는 컨텍스트 없이 답하지 않고 질의를 실패시킵니다. 수집은 자체 제한을 따릅니다. |
-| `search.store_max_attempts` | `3` | 시간 초과나 429/502/503/504를 받은 OpenSearch 질의 요청의 시도 횟수(첫 시도 포함)입니다. 멈춘 클러스터는 약 `3 x 30`초 뒤 질의를 실패시키고, 이 횟수 뒤에도 429/5xx로 응답하는 클러스터도 질의를 실패시킵니다. Neptune 질의 요청은 재시도하지 않습니다. |
+| `search.store_timeout_seconds` | `30` | 질의가 OpenSearch나 Neptune 요청 하나(그리고 Neptune 연결 열기)를 기다리는 시간입니다. 풀의 연결을 기다리는 시간을 포함한 Neptune 순회 하나에는 그 두 배를 줍니다. 응답하지 않는 저장소는 컨텍스트 없이 답하지 않고 질의를 실패시킵니다. 수집은 자체 제한을 따릅니다. |
+| `search.store_max_attempts` | `3` | 시간 초과, 연결 실패, 429/502/503/504를 받은 OpenSearch 질의 요청의 시도 횟수(첫 시도 포함)입니다. 시도 사이에는 대기 시간(약 0.5초에서 두 배씩, 최대 4초)을 두어 짧은 스로틀링은 기다려 넘깁니다. 멈춘 클러스터는 약 `3 x 30`초 뒤 질의를 실패시키고, 이 횟수 뒤에도 429/5xx로 응답하는 클러스터도 질의를 실패시킵니다. Neptune 질의 요청은 재시도하지 않습니다. |
 
 섹션 유형별 비율(`search.token_manager.type_budgets`)과 `local` 검색의 유형별 슬롯
 할당(`search.local_search.type_quota`)은 템플릿을 참고하세요.

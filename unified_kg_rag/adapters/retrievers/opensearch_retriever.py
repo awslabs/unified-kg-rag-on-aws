@@ -63,16 +63,19 @@ _INVALID_DIMENSION_MARKER = "query vector has invalid dimension"
 _DEFAULT_MAX_TERMS_COUNT = 65536
 # How much of a query the lexical (multi_match) side searches for. Lucene
 # allows 1,024 clauses per query (indices.query.bool.max_clause_count), and a
-# multi_match makes one per analyzed term per field (up to five fields here),
-# so a long question failed the search (400 "maxClauseCount", or 500
-# too_many_nested_clauses). A term is counted per word, and per character of
-# Hangul, Han or Kana text, which analyzes to about a term per character. The
-# question gets up to 150 terms and the optional keywords what is left of 200;
-# fuzziness rewrites each term into up to max_expansions terms, so it is kept
-# to short queries (entity names, keyword lists) and a longer question is
-# matched exactly. The vector side still embeds the whole query.
+# multi_match makes one per analyzed term per field, so a long question failed
+# the search (400 "maxClauseCount", or 500 too_many_nested_clauses). A term is
+# counted per word, and per character of Hangul, Han or Kana text, which
+# analyzes to about a term per character. The terms get 1,000 clauses spread
+# over the fields, at most 200 terms (five fields or fewer; text units search
+# one more field per translated language): the question up to 150 of them and
+# the optional keywords what is left. Fuzziness rewrites each term into up to
+# max_expansions terms, so it is kept to short queries (entity names, keyword
+# lists) and a longer question is matched exactly. The vector side still
+# embeds the whole query.
 _MAX_LEXICAL_QUERY_TERMS = 150
 _LEXICAL_TERM_BUDGET = 200
+_LEXICAL_CLAUSE_BUDGET = 1000
 _MAX_FUZZY_QUERY_TERMS = 10
 _FUZZY_MAX_EXPANSIONS = 10
 
@@ -596,20 +599,29 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         if not query.query or query.query == "*":
             return {"match_all": {}}
 
-        text, terms = _lexical_query_text(query.query, _MAX_LEXICAL_QUERY_TERMS)
+        budget = min(
+            _LEXICAL_TERM_BUDGET, _LEXICAL_CLAUSE_BUDGET // max(len(fields), 1)
+        )
+        text, terms = _lexical_query_text(
+            query.query, min(_MAX_LEXICAL_QUERY_TERMS, budget)
+        )
         main_query: dict[str, Any] = {"multi_match": {"query": text, "fields": fields}}
         # AUTO allows one edit on a 3-5 character term. On Latin words that
         # absorbs a typo; on Hangul/Han/Kana, where one character is a whole
         # syllable or morpheme, it matches a different word ("가나라상사" for
         # "가나다상사"). A query containing such text is matched exactly, as
         # is a long one (see _MAX_FUZZY_QUERY_TERMS).
-        if not has_dense_script(text) and terms <= _MAX_FUZZY_QUERY_TERMS:
+        if (
+            not has_dense_script(text)
+            and terms <= _MAX_FUZZY_QUERY_TERMS
+            and terms * _FUZZY_MAX_EXPANSIONS <= budget
+        ):
             main_query["multi_match"]["fuzziness"] = "AUTO"
             main_query["multi_match"]["max_expansions"] = _FUZZY_MAX_EXPANSIONS
             terms *= _FUZZY_MAX_EXPANSIONS
 
         optional_text, _ = _lexical_query_text(
-            " ".join(query.optional_keywords), _LEXICAL_TERM_BUDGET - terms
+            " ".join(query.optional_keywords), budget - terms
         )
         if not optional_text:
             return main_query
@@ -747,16 +759,18 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                     "it with this model (indexing.reset: true)."
                 ) from e
             if isinstance(e, StoreRequestRejectedError):
-                # A 400 is the same for every retry and every query: a filter
-                # value the field cannot hold, or a setting naming something the
-                # cluster lacks. Degrading it answered from no (or unfiltered)
+                # A 400 (or a clause-limit 500) is the same for every retry and
+                # every query: a filter value the field cannot hold, a setting
+                # naming something the cluster lacks, a query over the cluster's
+                # clause limit. Degrading it answered from no (or unfiltered)
                 # context.
                 raise ConfigurationError(
-                    f"OpenSearch rejected the search on {shown} "
-                    f"(status 400): {e.reason}. Check the query "
+                    f"OpenSearch rejected the search on {shown}: "
+                    f"{e.reason}. Check the query "
                     "filters (a value of another type than the field's) and the "
                     "OpenSearch settings the search uses, such as "
-                    "indexing.opensearch.hybrid_search_pipeline_name."
+                    "indexing.opensearch.hybrid_search_pipeline_name and "
+                    "indices.query.bool.max_clause_count."
                 ) from e
             # Any other fatal error (an unreachable or overloaded cluster)
             # propagates; a failure of this one search degrades to no hits.

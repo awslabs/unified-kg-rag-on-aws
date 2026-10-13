@@ -531,6 +531,42 @@ async def test_map_phase_fatal_error_propagates_when_not_ignored() -> None:
         await strat._apply_map_reduce(_communities(2), SearchQuery(query="q"))
 
 
+class _OverflowingFirstReport(_SyncMapChain):
+    """Map chain whose prompt with report 0 is over the model's context."""
+
+    def invoke(self, single_input: dict, config: Any = None) -> str:
+        if "community report 0" in single_input["reports"]:
+            from langchain_aws.chat_models.bedrock_converse import (
+                BedrockContextOverflowError,
+            )
+
+            raise BedrockContextOverflowError(
+                {
+                    "Error": {
+                        "Code": "ValidationException",
+                        "Message": "Input is too long for requested model.",
+                    }
+                },
+                "Converse",
+            )
+        return super().invoke(single_input, config)
+
+
+async def test_map_phase_one_overflowing_batch_is_left_unrated() -> None:
+    # Regression: Bedrock raises a too-long prompt as a ValidationException,
+    # which failed the whole query; the other batches still rate.
+    strat = _strategy(ignore_errors=False, map_batch_size=1)
+    strat.batch_processor.max_attempts = 1  # as GlobalSearchStrategy configures
+    strat.map_rater = _OverflowingFirstReport(
+        [_map_payload((f"point {i}", 50)) for i in (1, 2, 3)]
+    )
+    points, unrated = await strat._run_map_phase(
+        _communities(4), SearchQuery(query="q")
+    )
+    assert [r.source for r in unrated] == ["c0"]
+    assert len(points) == 3
+
+
 async def test_map_phase_fatal_error_degrades_when_ignored() -> None:
     strat = _strategy(ignore_errors=True, map_batch_size=1, reduce_with_llm=True)
     strat.batch_processor.max_attempts = 1  # as GlobalSearchStrategy configures
