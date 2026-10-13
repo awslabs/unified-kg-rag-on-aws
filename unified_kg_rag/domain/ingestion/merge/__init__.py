@@ -14,6 +14,9 @@ unified-kg-rag-on-aws's Pydantic domain models (no pandas):
   ``text_unit_ids`` and attributes; weight = sum of the per-text-unit
   extracted strengths (``relationship_weights``), as in a full build.
 
+- claims merge by id (it derives from subject, object, type and dates):
+  union description and source-text lines and ``text_unit_ids``.
+
 Communities and reports need no merge: their ids are content-derived, so a
 delta run's are upserted next to the existing ones (see ``community_content_id``).
 
@@ -22,15 +25,19 @@ with in-memory fixtures and back the upsert path in the indexers.
 """
 
 from .merger import (
+    merge_claims,
     merge_entities,
     merge_relationships,
     relationship_id_remap,
+    remove_claim_text_units,
     remove_text_units,
 )
 
 __all__ = [
+    "merge_claims",
     "merge_entities",
     "merge_relationships",
     "relationship_id_remap",
+    "remove_claim_text_units",
     "remove_text_units",
 ]

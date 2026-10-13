@@ -393,6 +393,22 @@ class VectorIndexer(BaseIndexer):
         nothing."""
         return None
 
+    def read_claims(self, ids: list[str], suffix: str | None = None) -> list[Claim]:
+        """Read stored claims by id for the cross-run claim merge.
+
+        Scoped to ``suffix``'s index. Must return the fields the merge folds
+        in (description, source text, ``text_unit_ids``, status). Default
+        returns ``[]`` (no read-back: the upsert overwrites); adapters that
+        override it raise when a read fails, since ``[]`` means nothing is
+        stored.
+        """
+        return []
+
+    def update_claim_lineage(self, claims: list[Claim]) -> IndexingStats:
+        """Rewrite stored claims' ``text_unit_ids`` (text-unit removal); see
+        :meth:`update_entity_lineage`."""
+        return self.upsert_claims(claims)
+
     def update_entity_lineage(self, entities: list[Entity]) -> IndexingStats:
         """Rewrite stored entities' ``text_unit_ids`` (text-unit removal).
 

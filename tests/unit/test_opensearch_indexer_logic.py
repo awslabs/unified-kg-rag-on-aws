@@ -595,3 +595,70 @@ def test_upsert_embeds_and_writes_one_slice_at_a_time(indexer, mocker) -> None:
         c.kwargs["refresh"] for c in indexer.opensearch_client.bulk_index.call_args_list
     ]
     assert refreshes == [False, False, True]
+
+
+# --------------------------------------------------------------------------- #
+# Claim read-back (cross-run claim merge)
+# --------------------------------------------------------------------------- #
+
+
+def test_claim_doc_stores_its_text_units(indexer) -> None:
+    claim = Claim(
+        id="c",
+        subject_id="s",
+        subject_name="S",
+        object_name="O",
+        type="T",
+        text_unit_ids=["tu-1"],
+    )
+    assert indexer._prepare_claim_doc(claim, ([0.1],))["text_unit_ids"] == ["tu-1"]
+    mapping = indexer._get_claims_mapping()["mappings"]["properties"]
+    assert mapping["text_unit_ids"] == {"type": "keyword"}
+
+
+def test_read_claims_reads_by_id_from_the_suffix_alias(indexer, mocker) -> None:
+    client = mocker.MagicMock()
+    indexer.opensearch_client = client
+    client.get_index_name_by_alias.return_value = "claims-acme-1"
+    client.search.return_value = {
+        "hits": {
+            "hits": [
+                {
+                    "_id": "c1",
+                    "_source": {
+                        "id": "c1",
+                        "subject_id": "s",
+                        "subject_name": "Vendor",
+                        "object_name": "Buyer",
+                        "type": "SUPPLY",
+                        "status": "TRUE",
+                        "description": "Vendor supplies Buyer.",
+                        "source_text": "src",
+                        "text_unit_ids": ["tu-1"],
+                    },
+                },
+                # Indexed before claims stored their text units.
+                {"_id": "c2", "_source": {"id": "c2", "type": "SUPPLY"}},
+            ]
+        }
+    }
+
+    claims = indexer.read_claims(["c1", "c2"], suffix="acme")
+
+    alias = indexer._get_name(indexer.opensearch_config.claims_index_prefix, "acme")
+    client.get_index_name_by_alias.assert_called_once_with(alias)
+    kwargs = client.search.call_args.kwargs
+    assert kwargs["index"] == alias
+    assert kwargs["body"]["query"] == {"ids": {"values": ["c1", "c2"]}}
+    assert [c.id for c in claims] == ["c1", "c2"]
+    assert claims[0].text_unit_ids == ["tu-1"]
+    assert claims[0].description == "Vendor supplies Buyer."
+    assert claims[1].text_unit_ids == []
+
+
+def test_read_claims_without_a_live_index_reads_nothing(indexer, mocker) -> None:
+    indexer.opensearch_client = mocker.MagicMock()
+    indexer.opensearch_client.get_index_name_by_alias.return_value = None
+
+    assert indexer.read_claims(["c1"], suffix="acme") == []
+    indexer.opensearch_client.search.assert_not_called()

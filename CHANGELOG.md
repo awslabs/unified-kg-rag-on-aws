@@ -466,6 +466,14 @@ Library API (Python callers and custom backends).
 - Importing `unified_kg_rag.application.cli.run_rag_chain` no longer puts
   `unified_kg_rag/application` at the front of `sys.path`, where its
   subpackages could shadow top-level modules of the same name (#251).
+- Incremental runs merge a claim that another document already stored instead
+  of overwriting it. A claim's id does not depend on its document, so adding a
+  document that states the same claim replaced its description, source text
+  and text units with the new document's only, and deleting that document
+  left the claim citing it. Claims now merge as in a full build (read back
+  from the OpenSearch claims index, which stores their `text_unit_ids`), and a
+  removed document's text units are stripped from claims shared with
+  surviving documents (#PR).
 - OpenSearch indexing embeds and bulk-writes each artifact type 400 items at
   a time instead of embedding the whole type before one bulk call. Memory no
   longer grows with the corpus (about 75 KB per entity before, several

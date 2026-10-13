@@ -1015,7 +1015,7 @@ run-rag --query "..." --filters attr_category:research type:person --config-path
 | 텍스트 단위 | `id`, `text`, `translated_text_<language>`, `community_ids`, `n_tokens`, `attr_<key>`, `attributes.<path>` |
 | 엔티티 | `id`, `name`, `name.keyword`, `description`, `type`, `rank`, `confidence`, `text_unit_ids`, `attr_<key>`, `attributes.<path>` |
 | 관계 | `id`, `source_id`, `target_id`, `source_name`, `target_name`, `description`, `weight`, `rank`, `text_unit_ids` |
-| 주장 | `id`, `subject_id`, `object_id`, `subject_name`, `object_name`, `type`, `status`, `description`, `source_text` |
+| 주장 | `id`, `subject_id`, `object_id`, `subject_name`, `object_name`, `type`, `status`, `description`, `source_text`, `text_unit_ids` |
 | 커뮤니티 리포트 | `id`, `community_id`, `name`, `summary`, `full_content`, `rank`, `rating`, `text_unit_ids`, `document_ids`, `attr_<key>`, `attributes.<path>` |
 | Neptune 엔티티 정점 | `id`, `name`, `type`, `description`, `rank`, `confidence`, `text_unit_ids`, `community_ids`, `attr_<key>`(있는 경우) |
 | Neptune 커뮤니티 정점 | `id`, `name`, `level`, `parent`, `size`, `period`, `children` |
@@ -1246,7 +1246,10 @@ DynamoDB 레지스트리는 문서마다 산출물 ID(텍스트 단위, 엔티�
 설명이 요약 예산을 넘으면 다시 요약합니다. `false`로 두면 해당 필드를 변경분의 값으로
 덮어쓰며, 그러면 엔티티는 바뀌지 않은 문서의 청크와의 계보를 잃습니다. 이 기능에는
 읽어 오기를 지원하는 그래프 어댑터가 필요합니다(지원하지 않으면 덮어쓰기로
-동작합니다). 문서가 바뀌거나 삭제되면, 그 문서가 다른 문서와 공유하던 엔티티와 관계는
+동작합니다). 주장(claim)도 같은 방식으로 합칩니다. 주장 ID는 문서와 무관하므로, 여러
+문서가 진술한 주장은 각 문서의 설명, 원문, 텍스트 단위를 모두 유지하며 이 정보는
+OpenSearch 주장 인덱스에서 읽어 옵니다(주장이 텍스트 단위를 저장하기 전에 색인된 주장은
+이번 실행의 값에서 시작합니다). 문서가 바뀌거나 삭제되면, 그 문서가 다른 문서와 공유하던 엔티티, 관계, 주장은
 `text_unit_ids`에서 그 문서의 청크를 잃습니다(빈도와 가중치도 따라 바뀜). 다만 그
 문서가 보탠 설명은 전체 재구축 전까지 남습니다. 저장된 항목을 읽어 오지 못하면 아무것도
 덮어쓰지 않습니다. 병합 중 읽기가 실패하면 쓰기 전에 인덱싱 단계가 실패하고(문서는

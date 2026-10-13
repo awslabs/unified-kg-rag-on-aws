@@ -45,12 +45,15 @@ class FakeIndexingManager:
     def merge_with_existing_graph(self, entities, relationships):
         return CrossRunMergeResult(entities=entities, relationships=relationships)
 
+    def merge_with_stored_claims(self, claims):
+        return claims
+
     def index_delta(self, **kwargs) -> dict[str, IndexingStats]:
         self.delta_calls.append(kwargs)
         return {}
 
     def remove_text_units_from_shared(
-        self, suffix, *, entity_ids, relationship_ids, text_unit_ids
+        self, suffix, *, entity_ids, relationship_ids, text_unit_ids, claim_ids=()
     ) -> dict[str, IndexingStats]:
         self.strip_calls.append(
             (suffix, list(entity_ids), list(relationship_ids), list(text_unit_ids))

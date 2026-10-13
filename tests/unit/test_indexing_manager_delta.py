@@ -306,3 +306,33 @@ def test_text_unit_removal_updates_vectors_in_place(manager) -> None:
     os_indexer.update_relationship_lineage.assert_called_once()
     neptune_indexer.upsert_entities.assert_called_once()
     neptune_indexer.upsert_relationships.assert_called_once()
+
+
+def test_a_failed_shared_claim_read_fails_the_removal(manager) -> None:
+    # The caller keeps the registry rows (and retries) on any failed item.
+    mgr, os_indexer, _ = manager
+    os_indexer.read_claims.side_effect = RuntimeError("search timed out")
+
+    results = mgr.remove_text_units_from_shared(
+        "default",
+        entity_ids=[],
+        relationship_ids=[],
+        text_unit_ids=["t2"],
+        claim_ids=["c1"],
+    )
+
+    stats = results["opensearch_read_claims_default"]
+    assert stats.failed_items == 1
+    assert stats.failed_ids == ["c1"]
+    os_indexer.update_claim_lineage.assert_not_called()
+
+
+def test_a_failed_stored_claim_read_raises_before_any_write(manager) -> None:
+    from unified_kg_rag.domain.models import Claim
+
+    mgr, os_indexer, _ = manager
+    os_indexer.read_claims.side_effect = RuntimeError("search timed out")
+    claim = Claim(id="c1", subject_id="s", subject_name="S", object_name="O", type="T")
+
+    with pytest.raises(RuntimeError):
+        mgr.merge_with_stored_claims([claim])

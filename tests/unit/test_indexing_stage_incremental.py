@@ -85,6 +85,9 @@ class _RecordingManager:
     def merge_with_existing_graph(self, entities, relationships):
         return CrossRunMergeResult(entities=entities, relationships=relationships)
 
+    def merge_with_stored_claims(self, claims):
+        return claims
+
     def index_delta(self, **kwargs: Any) -> dict[str, IndexingStats]:
         self.calls.append(("index_delta", kwargs))
         written = len(kwargs.get("entities") or [])

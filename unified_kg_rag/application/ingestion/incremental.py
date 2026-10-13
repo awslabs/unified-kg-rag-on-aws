@@ -186,10 +186,11 @@ class _SuffixRemoval(BaseModel):
 
     # Artifacts no surviving document references: deleted.
     exclusive_ids: list[str] = Field(default_factory=list)
-    # Entities/relationships a survivor still references: kept, but stripped
-    # of the removed text units.
+    # Entities/relationships/claims a survivor still references: kept, but
+    # stripped of the removed text units.
     shared_entity_ids: list[str] = Field(default_factory=list)
     shared_relationship_ids: list[str] = Field(default_factory=list)
+    shared_claim_ids: list[str] = Field(default_factory=list)
     removed_text_unit_ids: list[str] = Field(default_factory=list)
 
 
@@ -738,7 +739,9 @@ class IncrementalIndexer:
         )
         for suffix, removal in removals.items():
             if removal.removed_text_unit_ids and (
-                removal.shared_entity_ids or removal.shared_relationship_ids
+                removal.shared_entity_ids
+                or removal.shared_relationship_ids
+                or removal.shared_claim_ids
             ):
                 results.extend(
                     self.indexing_manager.remove_text_units_from_shared(
@@ -746,6 +749,7 @@ class IncrementalIndexer:
                         entity_ids=removal.shared_entity_ids,
                         relationship_ids=removal.shared_relationship_ids,
                         text_unit_ids=removal.removed_text_unit_ids,
+                        claim_ids=removal.shared_claim_ids,
                     ).values()
                 )
         failed = sum(s.failed_items for s in results if s is not None)
@@ -785,7 +789,8 @@ class IncrementalIndexer:
         a stored one under another id is recorded in the lineage by that id
         (and added to the document's PENDING record before the write, see
         :meth:`write_ahead`), and the communities and claims referencing it
-        are pointed at that id too.
+        are pointed at that id too. Claims are merged with the stored claims
+        of the same id, which other documents may have contributed to.
         """
         merged = self.indexing_manager.merge_with_existing_graph(
             entities, relationships
@@ -794,6 +799,7 @@ class IncrementalIndexer:
         communities, claims = _remap_references(
             communities, claims, merged.id_remap_by_suffix
         )
+        claims = self.indexing_manager.merge_with_stored_claims(claims)
         lineages = [
             _remap_lineage(lineage, merged.id_remap_by_suffix.get(lineage.suffix, {}))
             for lineage in lineages
@@ -1053,6 +1059,9 @@ class IncrementalIndexer:
                 ),
                 shared_relationship_ids=sorted(
                     {i for record in records for i in record.relationship_ids} & kept
+                ),
+                shared_claim_ids=sorted(
+                    {i for record in records for i in record.claim_ids} & kept
                 ),
                 removed_text_unit_ids=sorted(text_units - kept),
             )

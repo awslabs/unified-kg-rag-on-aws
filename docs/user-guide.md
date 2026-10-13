@@ -1062,7 +1062,7 @@ steps on Neptune. Each store accepts the fields its indexer writes:
 | Text units | `id`, `text`, `translated_text_<language>`, `community_ids`, `n_tokens`, `attr_<key>`, `attributes.<path>` |
 | Entities | `id`, `name`, `name.keyword`, `description`, `type`, `rank`, `confidence`, `text_unit_ids`, `attr_<key>`, `attributes.<path>` |
 | Relationships | `id`, `source_id`, `target_id`, `source_name`, `target_name`, `description`, `weight`, `rank`, `text_unit_ids` |
-| Claims | `id`, `subject_id`, `object_id`, `subject_name`, `object_name`, `type`, `status`, `description`, `source_text` |
+| Claims | `id`, `subject_id`, `object_id`, `subject_name`, `object_name`, `type`, `status`, `description`, `source_text`, `text_unit_ids` |
 | Community reports | `id`, `community_id`, `name`, `summary`, `full_content`, `rank`, `rating`, `text_unit_ids`, `document_ids`, `attr_<key>`, `attributes.<path>` |
 | Neptune entity vertices | `id`, `name`, `type`, `description`, `rank`, `confidence`, `text_unit_ids`, `community_ids`, `attr_<key>` (where present) |
 | Neptune community vertices | `id`, `name`, `level`, `parent`, `size`, `period`, `children` |
@@ -1326,7 +1326,11 @@ descriptions over the summarization budget are re-summarized. Setting it to
 `false` overwrites the affected fields with the delta's values instead; the
 entity then loses its lineage to the unchanged documents' chunks. Requires a
 graph adapter that supports read-back (one without it degrades to overwrite).
-When a document changes or is deleted, entities and relationships it shares
+Claims merge the same way: a claim id does not depend on the document, so a
+claim that several documents state keeps every document's description, source
+text and text units, read back from the OpenSearch claims index (a claim
+indexed before claims stored their text units starts from this run's).
+When a document changes or is deleted, entities, relationships and claims it shares
 with other documents lose its chunks from `text_unit_ids` (frequency and
 weight follow), but keep the description it contributed until a full rebuild.
 If reading the stored items back fails, nothing is overwritten: a failed read

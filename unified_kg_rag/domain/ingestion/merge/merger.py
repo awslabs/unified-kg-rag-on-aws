@@ -24,7 +24,7 @@ from unified_kg_rag.domain.ingestion.relationship_weights import (
     overlay_weights,
     text_unit_weights,
 )
-from unified_kg_rag.domain.models import Constants, Entity, Relationship
+from unified_kg_rag.domain.models import Claim, Constants, Entity, Relationship
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.utils.common import entity_key
 
@@ -356,3 +356,61 @@ def remove_text_units(
         apply_text_unit_weights(updated, weights)
         updated_relationships.append(updated)
     return updated_entities, updated_relationships
+
+
+def merge_claims(old: list[Claim], delta: list[Claim]) -> list[Claim]:
+    """Fold the stored evidence of each delta claim into it, matched by id.
+
+    A claim's id derives from its subject, object, type and dates, not from
+    its document, so the same claim extracted from another document has the
+    stored claim's id. As in the full-build ``ClaimResolver`` merge, the
+    descriptions and source texts are unioned (stored first), the text units
+    are the sorted union and the status is the stored one when it has one.
+    Every other field is the delta's. Returns the delta claims, merged.
+    """
+    stored = {claim.id: claim for claim in old}
+    merged: list[Claim] = []
+    for claim in delta:
+        match = stored.get(claim.id)
+        if match is None:
+            merged.append(claim)
+            continue
+        merged.append(
+            claim.model_copy(
+                update={
+                    "description": merge_descriptions(
+                        (match.description, claim.description)
+                    ),
+                    "source_text": merge_descriptions(
+                        (match.source_text, claim.source_text)
+                    ),
+                    "text_unit_ids": sorted(
+                        {*(match.text_unit_ids or []), *(claim.text_unit_ids or [])}
+                    ),
+                    "status": match.status or claim.status,
+                }
+            )
+        )
+    return merged
+
+
+def remove_claim_text_units(
+    claims: list[Claim], text_unit_ids: Collection[str]
+) -> list[Claim]:
+    """Strip removed text units from kept claims (see :func:`remove_text_units`).
+
+    Returns updated copies of only the claims that cited one of
+    ``text_unit_ids``; descriptions are left as they are.
+    """
+    removed = set(text_unit_ids)
+    return [
+        claim.model_copy(
+            update={
+                "text_unit_ids": [
+                    t for t in claim.text_unit_ids or [] if t not in removed
+                ]
+            }
+        )
+        for claim in claims
+        if not removed.isdisjoint(claim.text_unit_ids or [])
+    ]

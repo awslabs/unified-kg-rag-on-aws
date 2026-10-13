@@ -360,6 +360,18 @@ class FakeVectorStore(_Recorder):
     def update_entity_lineage(self, entities: list[Any]) -> IndexingStats:
         return self._update("entities", entities, ("text_unit_ids",))
 
+    def read_claims(self, ids: list[str], suffix: str | None = None) -> list[Any]:
+        bucket = self.data.get("claims", {})
+        wanted = suffix or Constants.DEFAULT_SUFFIX.value
+        return [
+            bucket[i].model_copy(deep=True)
+            for i in ids
+            if i in bucket and BaseIndexer.get_suffix(bucket[i]) == wanted
+        ]
+
+    def update_claim_lineage(self, claims: list[Any]) -> IndexingStats:
+        return self._update("claims", claims, ("text_unit_ids",))
+
     def update_relationship_lineage(self, relationships: list[Any]) -> IndexingStats:
         return self._update("relationships", relationships, ("text_unit_ids", "weight"))
 

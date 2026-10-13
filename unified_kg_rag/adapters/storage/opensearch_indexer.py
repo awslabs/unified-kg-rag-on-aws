@@ -44,6 +44,8 @@ _EMBED_WORKERS = 8
 # embedding requests. Holding a whole item type's vectors as float lists
 # before one bulk call took gigabytes on a large corpus.
 _WRITE_SLICE_SIZE = _EMBED_BATCH_SIZE * _EMBED_WORKERS
+# Ids per read-back search (well under index.max_result_window).
+_READ_BATCH_SIZE = 1000
 
 # Whether the doc-status registry tracks the index's documents: False when
 # a run with the registry off built it (see check_index_settings).
@@ -620,6 +622,8 @@ class OpenSearchIndexer(VectorIndexer):
             "description": claim.description or "",
             "description_embedding": embeddings[0],
             "source_text": claim.source_text or "",
+            # Read back by the cross-run claim merge (read_claims).
+            "text_unit_ids": list(claim.text_unit_ids or []),
         }
 
     def index_claims(
@@ -649,6 +653,54 @@ class OpenSearchIndexer(VectorIndexer):
             mapping_func=self._get_claims_mapping,
             embedding_field_extractors=[self._claim_description_text],
             prepare_doc_func=self._prepare_claim_doc,
+        )
+
+    def read_claims(self, ids: list[str], suffix: str | None = None) -> list[Claim]:
+        """Read stored claims by id from ``suffix``'s live claims index.
+
+        A claim indexed before claims stored their ``text_unit_ids`` reads
+        back without them. Raises when the read fails.
+        """
+        alias_name = self._get_name(self.opensearch_config.claims_index_prefix, suffix)
+        if not ids or not self.opensearch_client.get_index_name_by_alias(alias_name):
+            return []
+        claims: list[Claim] = []
+        for start in range(0, len(ids), _READ_BATCH_SIZE):
+            batch = ids[start : start + _READ_BATCH_SIZE]
+            response = self.opensearch_client.search(
+                index=alias_name,
+                body={
+                    "size": len(batch),
+                    "query": {"ids": {"values": batch}},
+                    "_source": {"excludes": ["*_embedding"]},
+                },
+            )
+            for hit in response.get("hits", {}).get("hits", []):
+                source = hit.get("_source") or {}
+                claims.append(
+                    Claim.model_validate(
+                        {
+                            "id": source.get("id") or hit["_id"],
+                            "subject_id": source.get("subject_id") or "",
+                            "subject_name": source.get("subject_name") or "",
+                            "object_id": source.get("object_id"),
+                            "object_name": source.get("object_name") or "",
+                            "type": source.get("type") or "",
+                            "status": source.get("status") or None,
+                            "description": source.get("description") or None,
+                            "source_text": source.get("source_text") or None,
+                            "text_unit_ids": list(source.get("text_unit_ids") or []),
+                        }
+                    )
+                )
+        return claims
+
+    def update_claim_lineage(self, claims: list[Claim]) -> IndexingStats:
+        """Set stored claims' ``text_unit_ids`` in place (no re-embedding)."""
+        return self._update_fields(
+            claims,
+            self.opensearch_config.claims_index_prefix,
+            lambda c: {"text_unit_ids": list(c.text_unit_ids or [])},
         )
 
     def upsert_text_units(self, text_units: list[TextUnit]) -> IndexingStats:
@@ -1399,6 +1451,7 @@ class OpenSearchIndexer(VectorIndexer):
                 "description": {"type": "text", "analyzer": self.analyzer},
                 "description_embedding": self._get_knn_vector_mapping(),
                 "source_text": {"type": "text", "analyzer": self.analyzer},
+                "text_unit_ids": {"type": "keyword"},
                 "attributes": {"type": "object", "dynamic": True},
             }
         )
