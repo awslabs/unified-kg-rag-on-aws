@@ -326,7 +326,7 @@ flowchart TD
     answer --> output["RAGOutput: answer + sources the model saw"]
 ```
 
-Neptune graph expansion is part of `local` and `drift`; for `mix`/`hybrid` it is opt-in (`search.lightrag_search.enable_graph_expansion`).
+Neptune graph expansion is part of `local` and `drift`; for `mix`/`hybrid` it is opt-in (`search.lightrag_search.enable_graph_expansion`). The strategies find the seed entities in OpenSearch and pass their ids to the graph retriever as an `id` filter; `NeptuneRetriever` expands from those ids only and returns nothing for a query without one.
 
 ### 6.1 GraphRAG Methodology (`adapters/search_strategies/`)
 

@@ -55,6 +55,9 @@ from unified_kg_rag.shared import (
 
 pytestmark = pytest.mark.unit
 
+# Every strategy seeds Neptune graph expansion with entity ids.
+_SEEDED = SearchQuery(query="hello", filters={"id": ["e1"]})
+
 
 # --- classifier ----------------------------------------------------------
 
@@ -219,7 +222,7 @@ async def test_unreachable_neptune_fails_the_retrieval(
     retriever = _neptune_retriever(config, _Client())
     try:
         with pytest.raises(StoreConnectionError, match="Neptune is not reachable"):
-            await retriever.aretrieve(SearchQuery(query="", filters={"id": ["e1"]}))
+            await retriever.aretrieve(_SEEDED)
     finally:
         await asyncio.to_thread(connection.close)
 
@@ -376,13 +379,13 @@ async def test_neptune_retriever_reraises_fatal(config: Config) -> None:
     )
     retriever = _neptune_retriever(config, client)
     with pytest.raises(AWSServiceError, match="connection"):
-        await retriever.aretrieve(SearchQuery(query="hello"))
+        await retriever.aretrieve(_SEEDED)
 
 
 async def test_neptune_retriever_degrades_on_transient(config: Config) -> None:
     client = _ClientRaisingOnG(AWSServiceError("Read timed out"))
     retriever = _neptune_retriever(config, client)
-    results = await retriever.aretrieve(SearchQuery(query="hello"))
+    results = await retriever.aretrieve(_SEEDED)
     assert results == []
 
 
@@ -437,7 +440,7 @@ async def test_neptune_fatal_traversal_error_surfaces_from_aretrieve(
     monkeypatch.setattr(GraphTraversal, "to_list", _fatal_to_list)
     retriever = _neptune_retriever(config, _ClientWithLocalGraph())
     with pytest.raises(ConnectionError, match="Neptune endpoint"):
-        await retriever.aretrieve(SearchQuery(query="hello", entity_focus=["Vendor"]))
+        await retriever.aretrieve(_SEEDED)
 
 
 async def test_neptune_transient_traversal_error_degrades_from_aretrieve(
@@ -448,7 +451,7 @@ async def test_neptune_transient_traversal_error_degrades_from_aretrieve(
 
     monkeypatch.setattr(GraphTraversal, "to_list", _transient_to_list)
     retriever = _neptune_retriever(config, _ClientWithLocalGraph())
-    assert await retriever.aretrieve(SearchQuery(query="hello")) == []
+    assert await retriever.aretrieve(_SEEDED) == []
 
 
 # --- OpenSearchRetriever: missing index (config mismatch) ------------------

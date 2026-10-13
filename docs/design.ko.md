@@ -326,7 +326,7 @@ flowchart TD
     answer --> output["RAGOutput: answer + sources the model saw"]
 ```
 
-Neptune 그래프 확장은 `local`과 `drift`에 포함되어 있고, `mix`/`hybrid`에서는 선택 사항입니다(`search.lightrag_search.enable_graph_expansion`).
+Neptune 그래프 확장은 `local`과 `drift`에 포함되어 있고, `mix`/`hybrid`에서는 선택 사항입니다(`search.lightrag_search.enable_graph_expansion`). 전략은 시드 엔티티를 OpenSearch에서 찾아 그 ID를 `id` 필터로 그래프 리트리버에 넘깁니다. `NeptuneRetriever`는 이 ID에서만 확장하며, `id` 필터가 없는 질의에는 결과를 돌려주지 않습니다.
 
 ### 6.1 GraphRAG 방법론 (`adapters/search_strategies/`)
 

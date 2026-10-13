@@ -175,6 +175,12 @@ Library API (Python callers and custom backends).
   `DocStatusRecord.content_summary` / `content_length` and
   `application.cli.run_evaluation.exceeds_failure_budget` (#216); and
   `domain.retrieval.strategy_registry.registered_strategies` (#212).
+- `NeptuneRetriever` expands only from seed entity ids passed as an `id`
+  filter, which is how every strategy calls it. The name-matching seed
+  lookup (used without an `id` filter; it lowercased query terms for a
+  case-sensitive match) and the community-seeded traversal (no strategy
+  requested it) are removed, with `NeptuneRetriever.DEFAULT_MAX_HOPS`
+  (#PR).
 - `BatchProcessor(max_retries=)` is `max_attempts=` (#151);
   `execute_with_fallback` no longer takes `batch_func` (sync) or
   `run_config` (#174, #216); `create_robust_xml_output_parser` requires

@@ -158,8 +158,8 @@ async def test_neptune_retriever_logs_no_query_text(
 
     mocker.patch.object(retriever, "_execute_traversal", side_effect=no_rows)
     caplog.set_level(logging.INFO)
-    # No entity focus: the name-term fallback path.
-    assert await retriever.aretrieve(SearchQuery(query=_SECRET_QUERY)) == []
+    seeded = SearchQuery(query=_SECRET_QUERY, filters={"id": ["e1"]})
+    assert await retriever.aretrieve(seeded) == []
     _assert_no_secret(caplog)
 
 
