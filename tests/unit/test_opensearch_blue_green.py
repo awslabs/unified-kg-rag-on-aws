@@ -436,3 +436,16 @@ def test_full_rebuild_refuses_to_write_into_an_existing_index(config) -> None:
     assert stats.failed_items == 1
     assert client.indices == {live: {_ALIAS}}
     assert "bulk_index" not in _op_names(client.calls)
+
+
+def test_reaper_keeps_an_older_index_that_still_carries_the_alias(config) -> None:
+    # Only an index the alias left is stale: an older one still serving the
+    # alias (another writer's swap in flight) must survive the cleanup.
+    older_serving = f"{_ALIAS}-20250101000000000"
+    older_stale = f"{_ALIAS}-20250101000001000"
+    live = f"{_ALIAS}-20250101000002000"
+    client = _FakeCluster({older_serving: {_ALIAS}, older_stale: set(), live: {_ALIAS}})
+
+    _indexer(config, client)._reap_stale_indices(_ALIAS, live)
+
+    assert set(client.indices) == {older_serving, live}

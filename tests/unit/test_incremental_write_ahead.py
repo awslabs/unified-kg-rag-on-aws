@@ -300,3 +300,34 @@ def test_retried_shared_strip_repairs_the_store_an_earlier_one_missed(
     harness.run(after)
 
     _assert_converged(harness, after)
+
+
+def test_removal_plans_in_flight_documents_from_their_stored_records() -> None:
+    # The write-ahead PENDING records also list what this run writes after the
+    # removal. A new document has no stored record: it neither removes nor
+    # retains anything (its pending "x" must not keep the deleted document's
+    # "x"). A changed document is planned from its stored record ("y"), not
+    # the pending one (which also lists the "z" it is about to write).
+    store = FakeDocStatusStore()
+    deleted, changed, new = "doc-deleted", "doc-changed", "doc-new"
+    for doc_id, entity in ((deleted, "x"), (changed, "y")):
+        store.put(
+            DocStatusRecord(
+                doc_id=doc_id,
+                content_hash="h",
+                status=DocStatus.PROCESSED,
+                entity_ids=[entity],
+            )
+        )
+    inc = IncrementalIndexer(store, indexing_manager=None)  # type: ignore[arg-type]
+    inc.write_ahead(
+        DocumentDelta(new=[new], changed=[changed], deleted=[deleted]),
+        [
+            DocumentLineage(doc_id=new, entity_ids=["x"]),
+            DocumentLineage(doc_id=changed, entity_ids=["z"]),
+        ],
+    )
+
+    plan = inc._plan_removal([changed, deleted])
+
+    assert plan["default"].exclusive_ids == ["x", "y"]
