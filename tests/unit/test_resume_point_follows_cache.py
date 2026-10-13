@@ -90,9 +90,13 @@ def _pipeline(config: Config, root: Path) -> DataIngestionPipeline:
     pipeline.state_manager = PipelineStateManager(cache_manager)
     pipeline.resume_manager = PipelineResumeManager(pipeline.state_manager, config)
     pipeline.name_to_type_map = {stage.value: stage for stage in PipelineStageType}
+    # The recorded history starts at graph_extraction (see _context), so the
+    # enabled stages do too: an enabled stage with no recorded result would
+    # be run first, as one switched on since the pipeline last ran.
+    order = list(DataIngestionPipeline.STAGE_CLASSES)
     pipeline.stages = [
         SimpleNamespace(name=stage.value)
-        for stage in DataIngestionPipeline.STAGE_CLASSES
+        for stage in order[order.index(PipelineStageType.GRAPH_EXTRACTION) :]
     ]
     return pipeline
 
