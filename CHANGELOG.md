@@ -463,6 +463,9 @@ Library API (Python callers and custom backends).
   `graph.community_detection.random_state: 0`, which Leiden rejects, fails
   config validation. The `resolution` description had its direction
   inverted: higher gives more, smaller communities (#250).
+- Importing `unified_kg_rag.application.cli.run_rag_chain` no longer puts
+  `unified_kg_rag/application` at the front of `sys.path`, where its
+  subpackages could shadow top-level modules of the same name (#PR).
 - `run-eval --eval-data-path` naming a file that does not exist exits 2 with
   `Error: invalid evaluation dataset: ...`, as the user guide documents and
   as an unreadable or invalid dataset does; it exited 1 (#230).

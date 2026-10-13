@@ -41,9 +41,6 @@ from unified_kg_rag.shared.config import load_cli_dotenv
 from unified_kg_rag.shared.utils import event_loop
 from unified_kg_rag.shared.utils.display import console, display_ascii_art
 
-ROOT_DIRECTORY = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT_DIRECTORY))
-
 nest_asyncio.apply()
 logger = get_logger(__name__)
 
