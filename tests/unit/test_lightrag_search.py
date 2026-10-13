@@ -508,13 +508,15 @@ class TestUpstreamTwoRetrievalWidths:
         captured: dict = {}
 
         def _fake_fuse(results_dict, top_k, retrieval_multiplier=1, query=None, **kw):
-            captured.update(kw)
+            captured.update(kw, top_k=top_k)
             return [r for results in results_dict.values() for r in results]
 
         strategy.hybrid_scorer.fuse_and_rerank_results = _fake_fuse  # type: ignore[method-assign]
         await strategy.asearch(_query(SearchStrategy.NAIVE, top_k=10))
         assert captured.get("per_type_quota") is None
         assert captured.get("rerank_only_types") is None
+        # Upstream naive returns `chunk_top_k` chunks, not the KG `top_k`.
+        assert captured["top_k"] == config.search.lightrag_search.chunk_stream_top_k
 
     def test_linked_chunk_pool_is_bounded_by_the_chunk_width(self) -> None:
         # The lineage pool is a CHUNK stream, so it follows chunk_top_k (20), not the

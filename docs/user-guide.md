@@ -1020,7 +1020,7 @@ rerank); only the retrieval algorithm differs.
 |---|---|---|
 | `mix` | General LightRAG use; balances graph + chunks | Low-level keywords → entity index, high-level keywords → relationship index, one-hop incident-relationship / endpoint-entity expansion (Neptune multi-hop expansion is opt-in: `search.lightrag_search.enable_graph_expansion`), **plus** naive vector chunk retrieval blended in. |
 | `hybrid` | Keyword-driven graph questions | Same as `mix` but without the extra naive chunk blend. |
-| `naive` | Fast baseline / comparison eval | Pure vector chunk retrieval, no graph. The LightRAG baseline. |
+| `naive` | Fast baseline / comparison eval | Chunk retrieval only, no graph; returns `search.lightrag_search.chunk_stream_top_k` chunks (default 20). Runs `--search-type` like every strategy, so the default `hybrid` adds BM25 to the vector query; `--search-type vector` reproduces upstream LightRAG's pure-vector baseline. |
 
 > For `mix`/`hybrid`, ensure the relationships vector index was built
 > (`indexing.opensearch.relationships_index_prefix`, built automatically during

@@ -306,6 +306,11 @@ Library API (Python callers and custom backends).
   answer's polarity, as it already did for `yes`/`no`. Such a gold was
   matched as a substring, so `예` scored 1.0 against `아니요, ... 예외 ...`
   (#246).
+- LightRAG `naive` returns `search.lightrag_search.chunk_stream_top_k`
+  chunks (default 20), as upstream `naive_query` returns `chunk_top_k`; it
+  returned `top_k` (10). The docs now say that `naive` runs the request's
+  `search_type` (BM25 + vector under the default `hybrid`) rather than pure
+  vector retrieval (#PR).
 - A Japanese or Chinese section truncated to fit its context budget keeps
   most of its room instead of collapsing to a few characters. Truncation
   backed off to the last ASCII space, which in such text can be the first
