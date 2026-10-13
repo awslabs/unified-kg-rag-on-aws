@@ -340,6 +340,10 @@ Library API (Python callers and custom backends).
   diversity cut ran once across all result types before the per-type quota,
   so over-quota entities took slots the quota then dropped and text kept 16
   of its 20; each type is now diversified within its own quota (#247).
+- Switching gleaning or claim extraction on for an existing `--pipeline-id`
+  runs the stage: the resume starts at the first enabled stage that has not
+  completed in the pipeline. It started after the last recorded stage, so
+  the new stage never ran (#PR).
 - An incremental run whose new and changed documents name no entity (an
   edit that removed the last one) commits them and applies the run's
   deletions. It failed graph extraction ("produced 0 outputs"), so the

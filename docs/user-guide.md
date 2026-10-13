@@ -900,7 +900,9 @@ run-ingestion --source-directory ./documents --config-path config.yaml --metrics
 cached and skipped on re-run. Pass `--pipeline-id` to resume a specific prior
 run; with `--resume-from-stage` you re-run from a chosen stage onward, otherwise
 the pipeline resumes at the first failed or incomplete stage (with
-`--enabled-stages`, the first such stage in that set). Before resuming, the CLI
+`--enabled-stages`, the first such stage in that set); a stage switched on
+since the pipeline last ran (gleaning or claim extraction, say) counts as
+incomplete. Before resuming, the CLI
 checks that every completed stage's output is still cached under the current
 inputs; when it is not (the corpus or config changed), it lists the stages and
 asks before going on, and the resume recomputes them. Without a terminal, pass

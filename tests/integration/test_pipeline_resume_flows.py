@@ -328,3 +328,30 @@ def test_a_delta_whose_documents_name_no_entity_still_commits(
     assert not harness.graph.ids("entities")
     # The next run finds nothing to do.
     assert harness.run() == 0
+
+
+@pytest.mark.parametrize(
+    ("block", "stage"),
+    [("gleaning", "gleaning"), ("claim_extraction", "claim_extraction")],
+)
+def test_a_stage_switched_on_for_an_existing_pipeline_id_runs(
+    harness: _Harness, block: str, stage: str
+) -> None:
+    # The stage was off when the pipeline first ran, so it has no recorded
+    # result; the re-run must start there rather than after the last
+    # recorded stage.
+    getattr(harness.config.processing, block).enabled = False
+    assert harness.run("--pipeline-id", "p1") == 0
+    assert stage not in {
+        r["stage_name"] for r in harness.metadata("p1")["stage_results"]
+    }
+
+    getattr(harness.config.processing, block).enabled = True
+    calls = harness.llm_calls
+    # The later stages' cached outputs no longer match: confirm the resume.
+    assert harness.run("--pipeline-id", "p1", "--yes") == 0
+    statuses = {
+        r["stage_name"]: r["status"] for r in harness.metadata("p1")["stage_results"]
+    }
+    assert statuses[stage] == "completed"
+    assert harness.llm_calls > calls
