@@ -382,6 +382,11 @@ Library API (Python callers and custom backends).
   and the other batches still answer; Bedrock reports it as a
   `ValidationException`, which failed the whole query. Bedrock's
   `ModelTimeoutException` (HTTP 408) is retried as transient (#264).
+- `langchain-aws` is required at 1.8.1 or later (was 1.7.0), the first
+  release that reports a prompt longer than the model's context as
+  `BedrockContextOverflowError`. On an older install Bedrock's
+  `ValidationException` reached the retrievers unwrapped, so such a prompt
+  still failed the whole query (#PR).
 - Ingestion reconnects after a Neptune restart or failover. Its write retries
   reused the pooled websockets the server had closed, which gremlinpython
   never reopens, so every write failed every attempt until the process
