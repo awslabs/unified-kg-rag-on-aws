@@ -40,7 +40,7 @@ from unified_kg_rag.domain.models import (
     PipelineStageStatus,
     TextUnit,
 )
-from unified_kg_rag.shared import ConfigurationError
+from unified_kg_rag.shared import AWSServiceError, ConfigurationError
 
 pytestmark = pytest.mark.unit
 
@@ -195,36 +195,75 @@ def test_index_without_recorded_settings_is_checked_by_dimension(mocker) -> None
     _indexer(mocker, client, _COHERE, 8).check_index_settings("default")
 
 
-def test_index_without_recorded_settings_is_given_them(mocker) -> None:
-    # Once given this run's settings, later runs check the model too.
+_ENGLISH = {"enabled": True, "source_language": "en", "target_language": "en"}
+
+
+def test_index_without_recorded_settings_is_given_only_its_dimension(
+    mocker,
+) -> None:
+    # Which same-dimension model built it cannot be told, so it is not
+    # recorded: recording this run's would refuse the right one later.
     client = _FakeOpenSearchClient()
-    _indexer(mocker, client).upsert_text_units([_unit()])
+    _indexer(mocker, client, _COHERE, 8).upsert_text_units([_unit()])
     _drop_meta(client)
 
-    _indexer(mocker, client).check_index_settings("default")
+    _indexer(mocker, client, _TITAN, 8).check_index_settings("default")
     (mappings,) = client.mappings.values()
-    assert mappings["_meta"] == {
-        "embedding_model_id": _TITAN,
-        "embedding_dimension": 8,
-    }
-    with pytest.raises(ConfigurationError, match=f"model '{_TITAN}'"):
-        _indexer(mocker, client, _COHERE, 8).check_index_settings("default")
+    assert mappings["_meta"] == {"embedding_dimension": 8}
+    _indexer(mocker, client, _COHERE, 8).check_index_settings("default")
+    with pytest.raises(ConfigurationError, match="an unrecorded model"):
+        _indexer(mocker, client, _COHERE, 16).check_index_settings("default")
 
 
-def test_index_without_recorded_settings_skips_the_language_check(mocker) -> None:
-    # Its text fields do not match this run's, so it is left as it is: the
-    # settings it was built with cannot be told.
+def test_index_given_its_dimension_is_then_checked_in_full(mocker) -> None:
+    client = _FakeOpenSearchClient()
+    _indexer(mocker, client, translation=_ENGLISH).upsert_text_units([_unit()])
+    _drop_meta(client)
+    _indexer(mocker, client, translation=_ENGLISH).check_index_settings("default")
+
+    with_ja = {**_ENGLISH, "additional_target_languages": ["ja"]}
+    with pytest.raises(ConfigurationError, match="'translated_text_ja'"):
+        _indexer(mocker, client, translation=with_ja).check_index_settings("default")
+
+
+def test_a_failed_dimension_record_is_logged_not_raised(mocker, caplog) -> None:
+    # A role without indices:admin/mapping/put must not stop the run before
+    # its write-ahead: recording the dimension is optional.
     client = _FakeOpenSearchClient()
     _indexer(mocker, client).upsert_text_units([_unit()])
     _drop_meta(client)
+    mocker.patch.object(
+        client,
+        "put_index_meta",
+        side_effect=AWSServiceError("status=403, security_exception"),
+    )
 
-    korean = {"source_language": "ko", "target_language": "ko"}
-    _indexer(mocker, client, translation=korean).check_index_settings("default")
+    with caplog.at_level("WARNING", logger=module.logger.name):
+        _indexer(mocker, client).check_index_settings("default")
+    assert "Could not record the embedding dimension" in caplog.text
     (mappings,) = client.mappings.values()
     assert "_meta" not in mappings
 
 
-_ENGLISH = {"enabled": True, "source_language": "en", "target_language": "en"}
+def test_index_without_recorded_settings_skips_the_language_check(
+    mocker, caplog
+) -> None:
+    # Its text fields do not match this run's, so it is left as it is (an
+    # older release may have mapped them otherwise), with a warning naming
+    # the fields and the reset remedy.
+    client = _FakeOpenSearchClient()
+    _indexer(mocker, client).upsert_text_units([_unit()])
+    _drop_meta(client)
+    (index_name,) = client.mappings
+
+    korean = {"source_language": "ko", "target_language": "ko"}
+    with caplog.at_level("WARNING", logger=module.logger.name):
+        _indexer(mocker, client, translation=korean).check_index_settings("default")
+    (mappings,) = client.mappings.values()
+    assert "_meta" not in mappings
+    assert index_name in caplog.text
+    assert "'text' uses" in caplog.text
+    assert "indexing.reset: true" in caplog.text
 
 
 @pytest.mark.parametrize(
