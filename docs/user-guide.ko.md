@@ -771,7 +771,9 @@ Secrets Manager나 태스크 시크릿에서 주입하세요.
 컨텍스트 구성은 `kg_rag.query` 트레이스에 있음). 비동기 배치 경로는 청크가 아니라
 배치마다 스팬을 하나 기록합니다. 스트리밍 답변의 모델 스팬은 답변 단계 실행
 메타데이터의 `session_id` / `user_id`에서 `session.id` / `user.id`를 가져오므로
-같은 세션으로 묶입니다. CloudWatch로 보내려면 태스크 옆에 ADOT나 OpenTelemetry Collector를 두고
+같은 세션으로 묶입니다. `ainvoke` 도중 취소된 모델 호출(예: `asyncio.wait_for` 시간 초과)은
+LangChain이 콜백을 호출하지 않으므로 모델 스팬이 남지 않습니다. 호출자가 스트림을 중간에
+그만 읽으면 그 스팬은 오류 없이 정상 종료됩니다. CloudWatch로 보내려면 태스크 옆에 ADOT나 OpenTelemetry Collector를 두고
 `backend: otlp`를 쓰세요([운영 런북](operations.ko.md#관측성)에 절차가 있습니다).
 로컬 Langfuse와 Phoenix 절차도 같은 곳에 있습니다.
 

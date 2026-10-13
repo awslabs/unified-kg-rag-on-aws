@@ -670,6 +670,9 @@ Library API (Python callers and custom backends).
   the host application's handlers as the plain message, with the structured
   fields as record attributes; a host `logging.basicConfig` printed every
   record as a dict repr (#PR).
+- A streamed model call the caller stops reading early (`break`, `aclose`)
+  ends its span normally; it was exported as an `ERROR` span with
+  `error.type: GeneratorExit` (#PR).
 
 ### Security
 - Prompts delimit corpus and retrieved text as data, and inputs cannot close
