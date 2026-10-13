@@ -1700,21 +1700,6 @@ class OpenSearchIndexingConfig(BaseModel):
         ge=1,
         description="Maximum number of hits returned per OpenSearch query",
     )
-    terms_batch_size: int = Field(
-        default=150,
-        ge=1,
-        description="Batch size when partitioning large terms filters to stay under the clause limit",
-    )
-    max_total_clauses: int = Field(
-        default=600,
-        ge=1,
-        description="Upper bound on boolean clauses per query (must stay under the cluster's max_clause_count)",
-    )
-    reserved_clauses: int = Field(
-        default=300,
-        ge=0,
-        description="Clause budget reserved for non-filter query parts when batching terms filters",
-    )
     index_settings: dict[str, Any] = Field(
         default_factory=lambda: {
             "number_of_shards": 1,

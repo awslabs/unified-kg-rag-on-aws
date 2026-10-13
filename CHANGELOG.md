@@ -66,6 +66,11 @@ ignored, so check the start-up warnings after upgrading.
   `SearchQuery.metadata["lightrag_mode"]` alias (#212).
 - A filter key that no retriever of the strategy declares raises
   `InvalidFilterError` (#123).
+- `indexing.opensearch.terms_batch_size`, `max_total_clauses` and
+  `reserved_clauses` are removed with the terms-filter batching they drove.
+  A list filter is one `terms` query whatever its length; one with more
+  values than the index's `max_terms_count` (65,536 by default) raises
+  `InvalidFilterError` (#PR).
 - IaC: `create_guardrail` decides whether the stack owns a guardrail; bring
   your own with `-c create_guardrail=false` (#103).
 - `run-ingestion --repair-metadata` is removed. It loaded the metadata it
@@ -364,6 +369,12 @@ Library API (Python callers and custom backends).
   claims read back carried no suffix, so the update went to the default
   suffix's index: the claim kept the deleted text units, and a claim with the
   same id there was overwritten (#256).
+- A query whose filters list many ids sends one search per index. Long list
+  filters were split into batches and every combination of the batches
+  searched in turn: two 3,000-id filters took 400 sequential requests, three
+  1,000-id filters 1,000, and the hybrid pipeline normalized each batch's
+  scores on its own, so hits of different batches were ranked against
+  each other on incomparable scores (#PR).
 - A query whose OpenSearch search is denied (HTTP 401/403, such as a
   fine-grained access control role without `indices:data/read/search`)
   fails with `ConfigurationError`. The 403 body names no permission keyword,

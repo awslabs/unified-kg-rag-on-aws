@@ -2,8 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """AWS-free unit tests for OpenSearchRetriever query/parse logic.
 
-Complements ``test_opensearch_clause_budget.py`` (batch-size budgeting). Here we
-cover the query-body construction (lexical / vector / hybrid), filter-clause
+Covers the query-body construction (lexical / vector / hybrid), filter-clause
 construction, per-index field mappings, search-type support guard, and hit ->
 RetrievalResult parsing — all pure, AWS-free logic. The retriever is built via
 ``__new__`` so its AWS-client ``__init__`` never runs; only the config-derived
@@ -335,8 +334,7 @@ def test_build_search_request_clamps_size_to_max(retriever) -> None:
 def test_build_search_request_floors_size_to_terms_filter(retriever) -> None:
     # Fetch-by-id: ids passed as a terms filter with top_k=len(ids). size must
     # not be clamped to max_query_size (default 100) or ids beyond 100 are
-    # silently dropped -- worse when a batch of terms_batch_size (150) ids is
-    # capped at 100 hits. Floor size at the terms-list length.
+    # silently dropped. Floor size at the terms-list length.
     n = retriever._max_size + 50  # 150 > 100
     ids = [f"id-{i}" for i in range(n)]
     q = SearchQuery(query="", top_k=n, retrieval_multiplier=1, filters={"id": ids})

@@ -601,12 +601,9 @@ indexing:
     language_analyzers:
       en: "english"
       ko: "nori"
-    # Query clause budget — keep max_total_clauses under the cluster's
-    # indices.query.bool.max_clause_count.
+    # Most hits one query returns (a fetch by id returns every listed id, up
+    # to index_settings.max_result_window).
     max_query_size: 100
-    terms_batch_size: 150
-    max_total_clauses: 600
-    reserved_clauses: 300
 
     # Index settings (applied at index creation)
     index_settings:
