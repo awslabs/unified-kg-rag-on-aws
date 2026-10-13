@@ -8,7 +8,8 @@ isolation, write concurrency, label scoping and property serialization) and
 real Gremlin Server). Here we cover the non-upsert paths and pure helpers:
 
 * ``index_entities`` / ``index_communities`` full-index traversal SHAPE via a
-  recording fake traversal (addV per item, label scoping, no fold/coalesce).
+  recording fake traversal (create-or-match per item, label scoping): writes
+  a retry cannot duplicate.
 * ``_group_items_by_suffix`` partitioning by item ``attributes["index"]``.
 * ``_build_vertex_properties`` (None drop, attribute_ prefix, truncation).
 * ``neptune_codec`` truncation and JSON serialization for edge list values.
@@ -48,6 +49,7 @@ class RecordingTraversal:
 @pytest.fixture
 def indexer(mocker):
     mocker.patch("unified_kg_rag.adapters.storage.neptune_indexer.NeptuneClient")
+    mocker.patch("unified_kg_rag.adapters.storage.neptune_indexer._sleep")
     from unified_kg_rag.adapters.storage.neptune_indexer import NeptuneIndexer
 
     return NeptuneIndexer(config=Config())
@@ -75,25 +77,27 @@ def _run_full_entity_builder(indexer, entities: list[Entity]) -> list[str]:
 
 
 # --------------------------------------------------------------------------- #
-# index_entities (full index path: addV, NO fold/coalesce)
+# index_entities (full index path: clear, then create-or-match per entity)
 # --------------------------------------------------------------------------- #
 
 
-def test_index_entities_uses_add_v_not_coalesce(indexer) -> None:
+def test_index_entities_matches_an_existing_vertex_instead_of_adding_one(
+    indexer,
+) -> None:
+    # Regression: the full build appended vertices (addV). A retry reaches
+    # Neptune over a new connection, so a batch whose response was lost was
+    # written twice: 100 duplicate entity vertices with "0 failed".
     calls = _run_full_entity_builder(indexer, [Entity(id="e1", name="Alice")])
-    # Full (clear-and-rebuild) index appends fresh vertices: add_v, never the
-    # idempotent fold/coalesce that the upsert path uses.
-    assert "add_v" in calls
-    assert "coalesce" not in calls
-    assert "fold" not in calls
+    assert "add_v" not in calls  # only inside the coalesce
+    assert calls[:4] == ["V", "has", "fold", "coalesce"]
 
 
-def test_index_entities_one_add_v_per_entity(indexer) -> None:
+def test_index_entities_one_create_or_match_per_entity(indexer) -> None:
     calls = _run_full_entity_builder(
         indexer,
         [Entity(id="e1", name="Alice"), Entity(id="e2", name="Bob")],
     )
-    assert calls.count("add_v") == 2
+    assert calls.count("coalesce") == 2
 
 
 def test_index_entities_passes_full_label_to_factory(indexer, mocker) -> None:
@@ -113,8 +117,8 @@ def test_index_entities_passes_full_label_to_factory(indexer, mocker) -> None:
 
 
 def test_index_entities_writes_list_props_multi_valued(indexer) -> None:
-    # Full index uses _add_properties_to_traversal: list -> repeated property()
-    # calls (multi-valued vertex property), scalar -> single property() call.
+    # list -> its values replaced (drop, then one property() per value: a
+    # multi-valued vertex property), scalar -> single property() call.
     calls: list[str] = []
     captured_factory = None
 
@@ -132,13 +136,13 @@ def test_index_entities_writes_list_props_multi_valued(indexer) -> None:
     # on top of the scalar properties (id, name, and any non-None defaults).
     # So the total exceeds the count of non-list properties by the list length.
     assert calls.count("property") >= 4
-    # No sideEffect/drop: the full-index path never clears existing values
-    # (unlike the upsert path's _set_properties_on_traversal).
-    assert "sideEffect" not in calls
+    # The values are replaced, not appended to, so a retry adds none.
+    assert "sideEffect" in calls
 
 
 # --------------------------------------------------------------------------- #
-# index_communities (full path: clear + addV, MemberOf edges, NO drop-by-target)
+# index_communities (full path: clear + create-or-match, MemberOf edges, NO
+# drop-by-target)
 # --------------------------------------------------------------------------- #
 
 
@@ -178,9 +182,9 @@ def test_index_communities_full_clears_label_and_builds_vertices(
 
     # Full index clears the community label before rebuilding.
     assert cleared == ["Community-default"]
-    # Vertex builder uses add_v (full path), not fold/coalesce.
-    assert "add_v" in vertex_calls
-    assert "coalesce" not in vertex_calls
+    # A retry after a lost response matches the vertex instead of adding one.
+    assert "add_v" not in vertex_calls
+    assert "coalesce" in vertex_calls
 
 
 def test_upsert_communities_does_not_clear_label(indexer, mocker) -> None:
@@ -244,6 +248,36 @@ def test_membership_is_not_re_added_when_its_drop_failed(indexer, mocker) -> Non
 
     add_edges.assert_not_called()
     assert stats.failed_ids == ["c1"]
+
+
+@pytest.mark.parametrize("method", ["index_communities", "upsert_communities"])
+def test_member_edges_are_added_only_for_entities_not_yet_members(
+    indexer, mocker, method
+) -> None:
+    # Regression: addE('MemberOf') was unconditional, so a retry after a lost
+    # response added every edge of the batch a second time (1,244 MemberOf
+    # edges for 974 memberships).
+    from unified_kg_rag.ports.indexer import IndexingStats
+
+    mocker.patch.object(indexer, "_clear_existing_data_by_label")
+    mocker.patch.object(
+        indexer, "_execute_batch_traversal", return_value=IndexingStats()
+    )
+    builds: dict[str, object] = {}
+    mocker.patch.object(
+        indexer,
+        "_execute_with_retries",
+        side_effect=lambda build, name, **kw: builds.setdefault(name, build),
+    )
+    comm = Community(
+        id="c1", name="C", level="0", parent="", children=[], entity_ids=["e1"]
+    )
+
+    getattr(indexer, method)([comm])
+
+    calls: list[str] = []
+    builds["Community edge indexing"](RecordingTraversal(calls))  # type: ignore[operator]
+    assert calls.index("not_") < calls.index("addE")
 
 
 def test_index_communities_empty_returns_empty_stats(indexer) -> None:

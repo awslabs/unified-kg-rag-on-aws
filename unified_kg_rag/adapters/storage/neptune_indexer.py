@@ -239,25 +239,17 @@ class NeptuneIndexer(GraphIndexer):
     def index_entities(
         self, entities: list[Entity], *, suffixes: Collection[str] = ()
     ) -> IndexingStats:
-        def get_traversal_builder(label: str) -> Callable:
-            def builder(g: GraphTraversalSource, batch: list[Entity]) -> GraphTraversal:
-                t = g
-                for entity in batch:
-                    props = entity_properties(
-                        entity, self.neptune_config.property_max_length
-                    )
-                    v_traversal = t.add_v(label).property("id", entity.id)
-                    self._add_properties_to_traversal(v_traversal, props)
-                    t = v_traversal
-                return cast(GraphTraversal, t)
+        """Rebuild each suffix's entity label: clear it, then write the entities.
 
-            return builder
-
+        Written with the upsert builder (:meth:`_entity_vertex_builder`): a
+        retry after a batch whose response was lost finds the vertices it
+        wrote instead of adding them a second time.
+        """
         return self._index_generic(
             entities,
             "Entity",
             self.neptune_config.entity_label_prefix,
-            get_traversal_builder,
+            self._entity_vertex_builder,
             clear_first=True,
             suffixes=suffixes,
         )
@@ -316,38 +308,26 @@ class NeptuneIndexer(GraphIndexer):
                 g: GraphTraversalSource,
                 batch: list[Community],
                 community_label: str = community_label,
-                upsert: bool = upsert,
             ) -> GraphTraversal:
-                t = g
+                # Create-or-match by id, so neither an incremental re-run nor
+                # a retry after a lost response adds a duplicate vertex.
+                t: Any = g
                 for comm in batch:
-                    props = self._build_vertex_properties(
-                        comm,
-                        {
-                            "name": comm.name,
-                            "level": comm.level,
-                            "parent": comm.parent,
-                            "size": comm.size,
-                            "period": comm.period,
-                            "children": comm.children,
-                        },
+                    t = self._upsert_vertex(t, community_label, comm.id)
+                    self._set_properties_on_traversal(
+                        t,
+                        self._build_vertex_properties(
+                            comm,
+                            {
+                                "name": comm.name,
+                                "level": comm.level,
+                                "parent": comm.parent,
+                                "size": comm.size,
+                                "period": comm.period,
+                                "children": comm.children,
+                            },
+                        ),
                     )
-                    if upsert:
-                        # Create-or-match by id so an incremental re-run updates
-                        # in place instead of adding a duplicate community vertex.
-                        v_traversal = (
-                            t.V()
-                            .has(community_label, "id", comm.id)
-                            .fold()
-                            .coalesce(
-                                __.unfold(),
-                                __.add_v(community_label).property("id", comm.id),
-                            )
-                        )
-                        self._set_properties_on_traversal(v_traversal, props)
-                    else:
-                        v_traversal = t.add_v(community_label).property("id", comm.id)
-                        self._add_properties_to_traversal(v_traversal, props)
-                    t = v_traversal
                 return cast(GraphTraversal, t)
 
             logger.info(
@@ -363,9 +343,9 @@ class NeptuneIndexer(GraphIndexer):
                 if not comm.entity_ids:
                     continue
                 if upsert:
-                    # Drop this community's existing membership edges so re-adding
-                    # does not create duplicate MemberOf edges on an incremental
-                    # run; re-adding after a failed drop would duplicate them.
+                    # Drop this community's existing membership edges, so an
+                    # entity that left the community does not stay a member;
+                    # after a failed drop the membership is left as it was.
                     def drop_members(
                         g: GraphTraversalSource,
                         community_label: str = community_label,
@@ -398,10 +378,17 @@ class NeptuneIndexer(GraphIndexer):
                         entity_ids: list[str] = entity_id_batch,
                         community_id: str = comm.id,
                     ) -> GraphTraversal:
+                        # Only entities not yet members: a retry after a lost
+                        # response must not add the edges a second time.
                         return (
                             g.V()
                             .hasLabel(entity_label)
                             .has("id", P.within(entity_ids))
+                            .not_(
+                                __.out("MemberOf")
+                                .hasLabel(community_label)
+                                .has("id", community_id)
+                            )
                             .addE("MemberOf")
                             .to(
                                 __.V().hasLabel(community_label).has("id", community_id)
@@ -429,39 +416,50 @@ class NeptuneIndexer(GraphIndexer):
     def upsert_entities(self, entities: list[Entity]) -> IndexingStats:
         """Idempotently merge entities into the live graph (delta semantics).
 
-        Uses ``V().has('id', x).fold().coalesce(unfold(), addV(label))`` so an
-        existing vertex is updated in place and a missing one is created — no
-        label-wide clear, no duplicate vertices on re-run.
+        The same writes as :meth:`index_entities` without the label-wide
+        clear: an existing vertex is updated in place and a missing one is
+        created, so a re-run adds no duplicate vertices.
         """
-
-        def get_traversal_builder(label: str) -> Callable:
-            def builder(g: GraphTraversalSource, batch: list[Entity]) -> GraphTraversal:
-                t = g
-                for entity in batch:
-                    props = entity_properties(
-                        entity, self.neptune_config.property_max_length
-                    )
-                    v_traversal = (
-                        t.V()
-                        .has(label, "id", entity.id)
-                        .fold()
-                        .coalesce(
-                            __.unfold(),
-                            __.add_v(label).property("id", entity.id),
-                        )
-                    )
-                    self._set_properties_on_traversal(v_traversal, props)
-                    t = v_traversal
-                return cast(GraphTraversal, t)
-
-            return builder
-
         return self._index_generic(
             entities,
             "Entity",
             self.neptune_config.entity_label_prefix,
-            get_traversal_builder,
+            self._entity_vertex_builder,
             clear_first=False,  # upsert is non-destructive
+        )
+
+    def _entity_vertex_builder(
+        self, label: str
+    ) -> Callable[[GraphTraversalSource, list[Entity]], GraphTraversal]:
+        """Build one traversal that creates or updates a batch of entity vertices.
+
+        ``V().has(label, 'id', x).fold().coalesce(unfold(), addV(label))``
+        matches an existing vertex or creates it, and the properties are
+        replaced (:meth:`_set_properties_on_traversal`), so running the same
+        batch twice leaves the graph as running it once.
+        """
+
+        def builder(g: GraphTraversalSource, batch: list[Entity]) -> GraphTraversal:
+            t: Any = g
+            for entity in batch:
+                t = self._upsert_vertex(t, label, entity.id)
+                self._set_properties_on_traversal(
+                    t,
+                    entity_properties(entity, self.neptune_config.property_max_length),
+                )
+            return cast(GraphTraversal, t)
+
+        return builder
+
+    @staticmethod
+    def _upsert_vertex(t: Any, label: str, vertex_id: str) -> GraphTraversal:
+        """Continue ``t`` with the vertex ``label``/``vertex_id``, created if missing."""
+        return cast(
+            GraphTraversal,
+            t.V()
+            .has(label, "id", vertex_id)
+            .fold()
+            .coalesce(__.unfold(), __.add_v(label).property("id", vertex_id)),
         )
 
     def upsert_relationships(self, relationships: list[Relationship]) -> IndexingStats:
@@ -715,29 +713,16 @@ class NeptuneIndexer(GraphIndexer):
 
         return stats
 
-    def _add_properties_to_traversal(
-        self, traversal: GraphTraversal, props: dict[str, Any]
-    ) -> None:
-        for key, value in props.items():
-            if isinstance(value, list):
-                for item in value:
-                    if item is not None:
-                        traversal.property(key, item)
-            else:
-                traversal.property(key, value)
-
     def _set_properties_on_traversal(
         self, traversal: GraphTraversal, props: dict[str, Any]
     ) -> None:
-        """Set properties idempotently for upserts, matching full-index encoding.
+        """Set properties idempotently (every vertex write: full and incremental).
 
-        Scalars use ``Cardinality.single`` so re-running an upsert overwrites
+        Scalars use ``Cardinality.single`` so re-running a write overwrites
         rather than accumulates. List values are written as multi-valued
-        ``Cardinality.set`` properties — the SAME encoding as the full-index
-        write path (:meth:`_add_properties_to_traversal`) and what the read path
-        expects — so an incremental run produces vertices indistinguishable from
-        a full run. The existing set is cleared first so re-upserts do not grow
-        stale members.
+        ``Cardinality.set`` properties, what the read path expects. The
+        existing set is cleared first so a re-write does not grow stale
+        members.
         """
         for key, value in props.items():
             if value is None:

@@ -361,6 +361,14 @@ Library API (Python callers and custom backends).
   never reopens, so every write failed every attempt until the process
   exited; each attempt now rebuilds its traversal over a new connection
   (#261).
+- A Neptune write retried after its response was lost no longer writes its
+  data twice. Since the retry goes over a new connection (#261), a batch that
+  was applied but whose answer was lost was applied again: a full build
+  duplicated entity and community vertices (and the relationship edges of
+  the duplicated entities), and any run duplicated `MemberOf` edges, while
+  the indexing stage reported 0 failed. Every vertex write now creates or
+  matches the vertex by id, and a `MemberOf` edge is added only for an
+  entity not yet a member (#PR).
 - A query whose embedding call cannot succeed fails instead of answering
   "I could not find relevant information": an invalid or inaccessible
   Bedrock model id, a model without on-demand throughput in the region, or
