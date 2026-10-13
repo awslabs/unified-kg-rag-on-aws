@@ -670,6 +670,28 @@ def test_full_reindex_keeps_one_index_per_alias(
         indexer.close()
 
 
+def test_index_admin_requests_resent_after_a_lost_response_succeed(
+    local_config: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # opensearch-py resends a request whose response was lost; the resend
+    # of a create or delete that already took effect gets the server's
+    # "already exists" / "no such index" answer, which is the result asked for.
+    os_client = OpenSearchClient(local_config)
+    name = f"resend-{uuid.uuid4().hex[:8]}"
+    try:
+        os_client.client.indices.create(index=name)  # the create that applied
+        # create_index saw no index before its request went out.
+        monkeypatch.setattr(os_client.client.indices, "exists", lambda index: False)
+        os_client.create_index(name, {}, exist_ok=False)
+        monkeypatch.undo()
+        os_client.client.indices.delete(index=name)  # the delete that applied
+        os_client.delete_indices([name])
+        assert not os_client.client.indices.exists(index=name)
+    finally:
+        os_client.client.indices.delete(index=name, ignore_unavailable=True)
+        os_client.close()
+
+
 def test_clear_keeps_sibling_namespaces(local_config: Config) -> None:
     # A reset of one namespace clears its stores only, though the index
     # names of its suffix under an additional suffix, and of a suffix

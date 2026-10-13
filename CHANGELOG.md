@@ -382,6 +382,13 @@ Library API (Python callers and custom backends).
   and the other batches still answer; Bedrock reports it as a
   `ValidationException`, which failed the whole query. Bedrock's
   `ModelTimeoutException` (HTTP 408) is retried as transient (#264).
+- A full build no longer fails when an OpenSearch index create or delete
+  loses its response (a reset connection, a 504 while the new index's shards
+  were allocated). opensearch-py resends the request, and the resend of a
+  create that had already taken effect was rejected with
+  `resource_already_exists_exception`, failing the indexing stage; a resent
+  delete got `index_not_found_exception`, so `indexing.reset` reported the
+  clear as failed. Both now count as done (#PR).
 - `langchain-aws` is required at 1.8.1 or later (was 1.7.0), the first
   release that reports a prompt longer than the model's context as
   `BedrockContextOverflowError`. On an older install Bedrock's

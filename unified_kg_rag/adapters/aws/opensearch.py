@@ -16,7 +16,12 @@ from opensearchpy import (
     RequestsHttpConnection,
 )
 from opensearchpy.exceptions import ConnectionError as OpenSearchConnectionError
-from opensearchpy.exceptions import ConnectionTimeout, NotFoundError, TransportError
+from opensearchpy.exceptions import (
+    ConnectionTimeout,
+    NotFoundError,
+    RequestError,
+    TransportError,
+)
 from opensearchpy.helpers import streaming_bulk
 
 from unified_kg_rag.adapters.llm.retry import backoff_delay
@@ -737,7 +742,16 @@ class OpenSearchClient:
             if exist_ok:
                 return
             raise ValueError(f"Index '{index}' already exists")
-        self.client.indices.create(index=index, body=body)
+        try:
+            self.client.indices.create(index=index, body=body)
+        except RequestError as e:
+            # The transport resends a create whose response was lost (a reset
+            # connection, a 504 while the shards were allocated); the index
+            # did not exist above, so the create that made it was this one.
+            if "resource_already_exists_exception" not in _error_types(
+                e.info or e.error
+            ):
+                raise
         logger.info("Created index: '%s'", index)
 
     @_handle_opensearch_errors
@@ -792,7 +806,9 @@ class OpenSearchClient:
     @_handle_opensearch_errors
     def _delete_index_batch(self, index_names: list[str]) -> None:
         indices_str = ",".join(index_names)
-        self.client.indices.delete(index=indices_str)
+        # A missing name is already deleted: a delete the transport resent
+        # after its response was lost would otherwise fail with a 404.
+        self.client.indices.delete(index=indices_str, ignore_unavailable=True)
         logger.info("Deleted indices: %s", indices_str)
 
     @_handle_opensearch_errors

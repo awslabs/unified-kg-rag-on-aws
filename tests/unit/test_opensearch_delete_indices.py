@@ -14,10 +14,12 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 import pytest
+from opensearchpy.exceptions import RequestError
 
 from unified_kg_rag.adapters.aws import opensearch as opensearch_mod
 from unified_kg_rag.adapters.aws.opensearch import OpenSearchClient
 from unified_kg_rag.shared import AWSServiceError
+from unified_kg_rag.shared.exceptions import StoreRequestRejectedError
 
 pytestmark = pytest.mark.unit
 
@@ -81,7 +83,7 @@ def test_a_failed_batch_does_not_stop_the_rest_and_is_reported() -> None:
     names = _leaked(45)  # three batches of at most 20
     failing = ",".join(names[20:40])
 
-    def delete(index: str) -> None:
+    def delete(index: str, **_: object) -> None:
         if index == failing:
             raise RuntimeError("cluster unavailable")
 
@@ -110,3 +112,40 @@ def test_create_index_keeps_an_existing_index_unless_told_not_to() -> None:
             "graphrag-entities-default-20260101120000000", {}, exist_ok=False
         )
     backing.indices.create.assert_not_called()
+
+
+_NEW_INDEX = "graphrag-claims-default-20260101120000000"
+
+
+def _rejected(error_type: str) -> RequestError:
+    """A 400 as the sync connection raises it (type name + parsed body)."""
+    body = {"error": {"type": error_type, "reason": "x"}, "status": 400}
+    return RequestError(400, error_type, body)
+
+
+def test_a_resent_create_that_finds_its_own_index_counts_as_created() -> None:
+    # The transport resends a create whose response was lost; the index did
+    # not exist before the call, so "already exists" is this create's result.
+    client, backing = _client()
+    backing.indices.exists.return_value = False
+    backing.indices.create.side_effect = _rejected("resource_already_exists_exception")
+
+    client.create_index(_NEW_INDEX, {}, exist_ok=False)
+
+    backing.indices.create.assert_called_once()
+
+
+def test_create_index_still_raises_any_other_rejection() -> None:
+    client, backing = _client()
+    backing.indices.exists.return_value = False
+    backing.indices.create.side_effect = _rejected("mapper_parsing_exception")
+
+    with pytest.raises(StoreRequestRejectedError, match="mapper_parsing"):
+        client.create_index(_NEW_INDEX, {})
+
+
+def test_a_delete_ignores_names_that_are_already_gone() -> None:
+    # A delete resent after its response was lost finds the index deleted.
+    client, backing = _client()
+    client.delete_indices([_NEW_INDEX])
+    assert backing.indices.delete.call_args.kwargs["ignore_unavailable"] is True
