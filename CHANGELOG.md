@@ -666,6 +666,17 @@ Library API (Python callers and custom backends).
   error without a `Cause` no longer fails the SNS publish; the Neptune
   Gremlin-errors alarm needs errors in 3 consecutive minutes, so retried
   write conflicts during parallel writes do not page (#219).
+- Used as a library (no `setup_logging`), the package's log records reach
+  the host application's handlers as the plain message, with the structured
+  fields as record attributes; a host `logging.basicConfig` printed every
+  record as a dict repr (#245).
+- A streamed model call the caller stops reading early (`break`, `aclose`)
+  ends its span normally; it was exported as an `ERROR` span with
+  `error.type: GeneratorExit` (#245).
+- Reconfiguring tracing with different settings no longer warns that "a
+  global OpenTelemetry tracer provider is already set" when that provider
+  is the one the package set itself; the user guide documents that the
+  global binding happens once per process (#245).
 
 ### Security
 - Prompts delimit corpus and retrieved text as data, and inputs cannot close
@@ -673,6 +684,12 @@ Library API (Python callers and custom backends).
 - INFO-level logs no longer carry query text, entity names or model output;
   `run-rag` strips terminal control characters from output; the CLIs warn
   when LangSmith tracing is on (#156, #173).
+- Logged tracebacks no longer print each frame's local variables. With
+  `log_format: plain` (and `structured` on a terminal) the console and
+  `logs/log_*.txt` showed them whenever `rich` was installed, so a failed
+  extraction or query wrote prompts, chunk text and model output into the
+  log. Console output piped to a file or another program no longer carries
+  ANSI colour codes either (#245).
 - Captured prompt and completion text is redacted as raw text on every
   tracing backend: with `otlp`, `langfuse` or `phoenix` it was redacted only
   at export, JSON-encoded, where a `\b` or `\s` pattern next to a newline

@@ -40,6 +40,20 @@ _SHARED_PROCESSORS: list[structlog.types.Processor] = [
 ]
 
 
+def _to_stdlib(logger: Any, method: str, event_dict: structlog.types.EventDict) -> Any:
+    """Hand the event to stdlib logging, in the form its handlers expect.
+
+    Under ``setup_logging`` the CLI's ``ProcessorFormatter`` handlers render
+    the whole event dict. Otherwise (library mode) the record carries the
+    message as ``msg`` and the fields as ``extra``, so a host handler's own
+    formatter prints the plain message, not a dict repr. Decided per call:
+    loggers cached before ``setup_logging`` switch too.
+    """
+    if LoggingSetup._handlers:
+        return ProcessorFormatter.wrap_for_formatter(logger, method, event_dict)
+    return structlog.stdlib.render_to_log_kwargs(logger, method, event_dict)
+
+
 def _configure_structlog() -> None:
     """Route structlog through stdlib logging; installs no handler.
 
@@ -54,7 +68,7 @@ def _configure_structlog() -> None:
             structlog.stdlib.PositionalArgumentsFormatter(),
             structlog.processors.StackInfoRenderer(),
             structlog.processors.UnicodeDecoder(),
-            ProcessorFormatter.wrap_for_formatter,
+            _to_stdlib,
         ],
         wrapper_class=structlog.stdlib.BoundLogger,
         logger_factory=LoggerFactory(),
@@ -103,7 +117,9 @@ class LoggingSetup:
         # CLI --verbose that lowers the 'unified_kg_rag' logger takes effect.
         console_handler = logging.StreamHandler(stream)
         console_handler.setFormatter(
-            cls._formatter(json=structured and not stream.isatty(), colors=True)
+            cls._formatter(
+                json=structured and not stream.isatty(), colors=stream.isatty()
+            )
         )
         cls._handlers.append(console_handler)
 
@@ -130,7 +146,13 @@ class LoggingSetup:
                 structlog.processors.JSONRenderer(default=str),
             ]
             if json
-            else [structlog.dev.ConsoleRenderer(colors=colors)]
+            # plain_traceback: the default (rich) formatter prints each frame's
+            # local variables (prompts, chunk text, model output).
+            else [
+                structlog.dev.ConsoleRenderer(
+                    colors=colors, exception_formatter=structlog.dev.plain_traceback
+                )
+            ]
         )
         return ProcessorFormatter(
             processors=[ProcessorFormatter.remove_processors_meta, *renderer],

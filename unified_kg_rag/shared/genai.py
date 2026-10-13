@@ -32,6 +32,8 @@ GEN_AI_INPUT_MESSAGES = "gen_ai.input.messages"
 GEN_AI_OUTPUT_MESSAGES = "gen_ai.output.messages"
 
 PROVIDER_AWS_BEDROCK = "aws.bedrock"
+# General OpenTelemetry convention for the class of a failure.
+ERROR_TYPE = "error.type"
 
 
 def embedding_span(

@@ -15,6 +15,10 @@ A ``session_id`` / ``user_id`` in the run's metadata (``config={"metadata":
 call can outlive the caller's ``bind_identity`` block, still groups with its
 session.
 
+A cancelled ``ainvoke`` / ``agenerate`` gets no callback from LangChain
+(``astream`` reports it through ``on_llm_error``), so its span is never ended
+or exported.
+
 Prompt and completion text (``gen_ai.input.messages`` /
 ``gen_ai.output.messages``) is recorded only when
 ``observability.capture_content`` is on, after ``redact_patterns``.
@@ -37,6 +41,7 @@ from langchain_core.outputs import ChatGeneration, LLMResult
 
 from unified_kg_rag.shared import observability
 from unified_kg_rag.shared.genai import (
+    ERROR_TYPE,
     GEN_AI_INPUT_MESSAGES,
     GEN_AI_OPERATION_NAME,
     GEN_AI_OUTPUT_MESSAGES,
@@ -60,7 +65,6 @@ from unified_kg_rag.shared.observability import (
     SpanHandle,
 )
 
-ERROR_TYPE = "error.type"
 GUARDRAIL_INTERVENED = "aws.bedrock.guardrail.intervened"
 MODEL_PURPOSE = "kg_rag.model.purpose"
 
@@ -201,6 +205,14 @@ class GenAITracingCallbackHandler(BaseCallbackHandler):
         with self._lock:
             span = self._spans.pop(run_id, None)
         if span is None:
+            return
+        if isinstance(error, GeneratorExit):
+            # The consumer stopped reading a stream (``break``, ``aclose``):
+            # an early end, not a failed call.
+            response = kwargs.get("response")
+            if isinstance(response, LLMResult):
+                span.set_attributes(self._response_attributes(response))
+            span.end()
             return
         span.record_exception(error)
         span.set_attribute(ERROR_TYPE, type(error).__name__)

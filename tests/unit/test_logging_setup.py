@@ -167,6 +167,7 @@ def test_importing_the_package_leaves_host_logging_alone(tmp_path: Path) -> None
         "logging.getLogger().setLevel(logging.ERROR)\n"
         "import unified_kg_rag.application.cli.run_evaluation\n"
         "from unified_kg_rag.shared import get_logger\n"
+        "host.setFormatter(logging.Formatter('%(levelname)s %(name)s %(message)s'))\n"
         "get_logger('unified_kg_rag.host_test').error('lib says %s', 'hi')\n"
         "root = logging.getLogger()\n"
         "assert root.handlers == [host], root.handlers\n"
@@ -182,10 +183,28 @@ def test_importing_the_package_leaves_host_logging_alone(tmp_path: Path) -> None
         timeout=120,
     )
     assert completed.returncode == 0, completed.stderr
-    assert "lib says hi" in completed.stdout
+    # The host's formatter renders the plain message, not an event-dict repr.
+    assert completed.stdout.splitlines() == [
+        "ERROR unified_kg_rag.host_test lib says hi"
+    ]
     assert list(tmp_path.iterdir()) == []
     after = set(package_logs.glob("*")) if package_logs.exists() else set()
     assert after == before
+
+
+def test_library_mode_records_carry_the_message_and_fields(
+    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Without setup_logging a host formatter sees the plain message; the
+    # structured fields are record attributes, not a dict repr in the message.
+    monkeypatch.setattr(LoggingSetup, "_handlers", [])
+    name = "unified_kg_rag.test_library_mode"
+    with caplog.at_level(logging.INFO, logger=name):
+        with bound_contextvars(pipeline_id="p-1"):
+            get_logger(name).warning("lib says %s", "hi")
+    (record,) = [r for r in caplog.records if r.name == name]
+    assert record.getMessage() == "lib says hi"
+    assert record.pipeline_id == "p-1"  # type: ignore[attr-defined]
 
 
 def test_relative_log_file_path_resolves_against_cwd(
@@ -197,3 +216,32 @@ def test_relative_log_file_path_resolves_against_cwd(
     )
     (log_file,) = (tmp_path / "logs").glob("run_*.txt")
     assert log_file.is_file()
+
+
+def _fail_with_a_secret_local() -> None:
+    model_output = "Quokka-secret-payload"
+    raise ValueError(f"parse failed: {len(model_output)} chars")
+
+
+@pytest.mark.parametrize("log_format", ["plain", "structured"])
+def test_tracebacks_show_no_frame_locals_or_ansi_codes(
+    stream: io.StringIO, tmp_path: Path, log_format: str
+) -> None:
+    # Frame locals hold prompts, chunk text and model output; a log line must
+    # carry the traceback only. A non-TTY stream gets no colour codes.
+    log_file = tmp_path / "run.txt"
+    setup_logging(
+        _config(log_format=log_format, log_to_file=True, log_file_path=str(log_file)),
+        stream=stream,
+    )
+    try:
+        _fail_with_a_secret_local()
+    except ValueError:
+        get_logger("unified_kg_rag.test_locals").exception("extraction failed")
+    for handler in LoggingSetup._handlers:
+        handler.flush()
+    (written,) = list(tmp_path.glob("run_*.txt"))
+    for output in (stream.getvalue(), written.read_text()):
+        assert "parse failed: 21 chars" in output
+        assert "Quokka-secret-payload" not in output
+        assert "\x1b[" not in output

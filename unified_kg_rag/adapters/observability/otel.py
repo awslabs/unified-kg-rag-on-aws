@@ -18,6 +18,12 @@ Backends:
   (vendor attribute names, then ``redact_patterns`` on every string
   attribute) on their way out.
 
+The global binding happens once: OpenTelemetry lets the global tracer
+provider be set only once per process. When ``configure_observability``
+installs new settings later, the package's own spans use the new provider,
+but spans that libraries emit through the global OpenTelemetry API still go to
+the first one, which was shut down with its backend, and are dropped.
+
 Spans are exported from a background thread. Each export request is bounded by
 ``export_timeout_seconds`` (or ``OTEL_EXPORTER_OTLP_TIMEOUT``) and the batch
 queue drops spans rather than block when it is full, so a slow or unreachable
@@ -41,6 +47,7 @@ from unified_kg_rag.domain.models.config import (
     ObservabilityConfig,
 )
 from unified_kg_rag.shared.exceptions import ConfigurationError
+from unified_kg_rag.shared.genai import ERROR_TYPE
 from unified_kg_rag.shared.logging import get_logger
 from unified_kg_rag.shared.observability import SpanHandle, SpanKind
 
@@ -77,7 +84,8 @@ _EXPORTING_BACKENDS = (
 )
 # OpenInference resource attribute Phoenix files traces under.
 PHOENIX_PROJECT_ATTRIBUTE = "openinference.project.name"
-ERROR_TYPE = "error.type"
+# The provider this module made global, if any (see build_backend).
+_bound_global: list[Any] = []
 _SPAN_KINDS = {"internal": trace.SpanKind.INTERNAL, "client": trace.SpanKind.CLIENT}
 
 AttributeValue = (
@@ -222,13 +230,14 @@ def build_backend(
         provider = trace.get_tracer_provider()
     elif config.backend in _EXPORTING_BACKENDS:
         provider = owned = _sdk_tracer_provider(config, env, span_exporter)
-        if span_exporter is None and isinstance(
-            trace.get_tracer_provider(), trace.ProxyTracerProvider
-        ):
+        current = trace.get_tracer_provider()
+        if span_exporter is None and isinstance(current, trace.ProxyTracerProvider):
             # Make it the global provider too, so spans from libraries
             # instrumented through the OTel API join the same traces.
+            # OpenTelemetry allows this once per process (module docstring).
             trace.set_tracer_provider(provider)
-        elif span_exporter is None:
+            _bound_global.append(provider)
+        elif span_exporter is None and current not in _bound_global:
             logger.warning(
                 "A global OpenTelemetry tracer provider is already set; "
                 "observability backend '%s' exports through its own provider. "

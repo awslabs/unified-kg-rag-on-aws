@@ -271,6 +271,33 @@ def test_backend_builds_a_bounded_otlp_exporter_without_logging_secrets(
         assert secret not in caplog.text
 
 
+def test_reconfiguring_does_not_blame_a_foreign_global_provider(
+    fake_otlp: list[dict[str, Any]],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # The first exporting backend becomes the global provider; rebuilding with
+    # new settings must not warn that "a global provider is already set" when
+    # that global is the package's own. A host's provider still warns.
+    from opentelemetry import trace
+    from opentelemetry.sdk.trace import TracerProvider
+
+    global_provider: list[Any] = [trace.ProxyTracerProvider()]
+    monkeypatch.setattr(otel, "_bound_global", [], raising=False)
+    monkeypatch.setattr(otel.trace, "get_tracer_provider", lambda: global_provider[0])
+    monkeypatch.setattr(
+        otel.trace, "set_tracer_provider", lambda p: global_provider.__setitem__(0, p)
+    )
+    warning = "A global OpenTelemetry tracer provider is already set"
+    with caplog.at_level(logging.WARNING):
+        for rate in (1.0, 0.5):
+            otel.build_backend(_config("otlp", sample_rate=rate)).shutdown()
+        assert warning not in caplog.text
+        global_provider[0] = TracerProvider()  # a host application's own
+        otel.build_backend(_config("otlp")).shutdown()
+    assert warning in caplog.text
+
+
 def test_grpc_protocol_selects_the_grpc_exporter(
     fake_otlp: list[dict[str, Any]], monkeypatch: pytest.MonkeyPatch
 ) -> None:

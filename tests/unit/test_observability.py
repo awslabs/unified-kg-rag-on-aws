@@ -689,6 +689,32 @@ def test_model_error_ends_the_span_with_error_status(tracing: Tracing) -> None:
     assert _attrs(span)["error.type"] == "RuntimeError"
 
 
+@pytest.mark.parametrize("asynchronous", [False, True], ids=["stream", "astream"])
+async def test_a_stream_stopped_early_ends_its_span_without_error(
+    tracing: Tracing, asynchronous: bool
+) -> None:
+    exporter = tracing()
+    handler = GenAITracingCallbackHandler("vendor.model-v1")
+    model = GenericFakeChatModel(
+        messages=iter([AIMessage(content="Vendor ships parts in two lots.")]),
+        callbacks=[handler],
+    )
+    if asynchronous:
+        chunks = model.astream(_PROMPT)
+        async for _ in chunks:
+            break
+        await chunks.aclose()
+    else:
+        stream = model.stream(_PROMPT)
+        next(stream)
+        stream.close()
+    span = _one(exporter, "chat vendor.model-v1")
+    assert span.status.status_code != StatusCode.ERROR
+    assert "error.type" not in _attrs(span)
+    assert not span.events
+    assert handler._spans == {}
+
+
 async def test_model_span_takes_session_and_user_from_run_metadata(
     tracing: Tracing,
 ) -> None:

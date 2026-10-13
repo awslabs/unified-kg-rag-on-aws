@@ -617,7 +617,7 @@ quotas (`search.local_search.type_quota`) are in the template.
 | `cache.ttl_seconds` | `86400` | Cache entry TTL; `null` = never expire. |
 | `logging.level` | `"INFO"` | `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`. |
 | `logging.log_format` | `"structured"` | `structured` or `plain`. |
-| `logging.log_to_file` | `true` | The CLIs also write logs to `log_file_path` (`logs/log.txt`, dated as `log_YYYYMMDD.txt`; a relative path is resolved against the working directory). Importing the package as a library configures no handler or file: the host application's logging setup applies. |
+| `logging.log_to_file` | `true` | The CLIs also write logs to `log_file_path` (`logs/log.txt`, dated as `log_YYYYMMDD.txt`; a relative path is resolved against the working directory). Importing the package as a library configures no handler or file: the host application's logging setup applies, its formatter shows the plain message, and the structured fields (`logger`, `level`, `pipeline_id`, `trace_id`, ...) are attributes of the log record. |
 | `logging.library_levels` | `{langchain_aws: WARNING, botocore: WARNING, urllib3: WARNING, opentelemetry: ERROR}` | Per-logger levels for chatty libraries. Setting the key replaces the whole map. |
 
 **What the logs contain.** At `INFO` and above the package logs only lengths,
@@ -806,7 +806,14 @@ trace (retrieval and context building are in the `kg_rag.query` trace), and
 the async batch path records one span per batch, not per chunk. The streamed
 answer's model span takes `session.id` / `user.id` from the `session_id` /
 `user_id` in the answer step's run metadata, so it still groups with its
-session. For CloudWatch, run an ADOT or
+session. A model call cancelled during `ainvoke` (for example by
+`asyncio.wait_for`) leaves no model span: LangChain reports no callback for
+it. A stream the caller stops reading early ends its span normally. With
+`otlp`, `langfuse` or `phoenix` the first backend the process installs also
+becomes OpenTelemetry's global tracer provider, which can be set only once:
+after a later configuration with different settings, the package's spans use
+the new exporter, but spans that other libraries emit through the global
+OpenTelemetry API are dropped. For CloudWatch, run an ADOT or
 OpenTelemetry Collector next to the task and use `backend: otlp` (recipe in
 the [runbook](operations.md#observability)). Local Langfuse and Phoenix
 recipes are there too.

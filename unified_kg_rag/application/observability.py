@@ -32,7 +32,10 @@ def configure_observability(
     A disabled config leaves whatever is installed alone (a host application
     may have installed a backend itself), so building a second chain with the
     default config does not switch tracing off. Re-running with the settings
-    already installed is a no-op. ``OTEL_SDK_DISABLED=true`` wins over
+    already installed is a no-op; different settings replace (and shut down)
+    the installed backend, but OpenTelemetry's global tracer provider stays
+    the first one set (see ``adapters.observability.otel``).
+    ``OTEL_SDK_DISABLED=true`` wins over
     ``enabled: true``, as the OpenTelemetry environment conventions specify.
 
     ``tracer_provider`` sends spans to a caller-owned OpenTelemetry tracer
