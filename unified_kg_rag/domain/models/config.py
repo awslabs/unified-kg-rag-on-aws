@@ -1539,12 +1539,20 @@ class NeptuneIndexingConfig(BaseModel):
     max_attempts: int = Field(
         default=4,
         ge=1,
-        description="Total attempts per Neptune write, including the first "
-        "(1 disables the retry). Errors a retry cannot fix (malformed query, "
-        "access denied, bad parameter) fail on the first attempt.",
+        description="Total attempts per Neptune indexer request (writes, "
+        "read-backs, drops and label clears), including the first (1 disables "
+        "the retry). Every error is retried except one a retry cannot fix, "
+        "which fails on the first attempt: a Neptune error code in "
+        "PERMANENT_NEPTUNE_ERROR_CODES (malformed query, access denied, bad "
+        "parameter, read-only violation, ...) or a client-side "
+        "ValueError/TypeError.",
     )
     retry_delay_seconds: int = Field(
-        default=2, ge=0, description="Delay in seconds between retry attempts"
+        default=2,
+        ge=0,
+        description="Base of the retry backoff in seconds (full jitter): the "
+        "wait after attempt n is random between 0 and "
+        "retry_delay_seconds * 2**(n-1). 0 retries at once.",
     )
     property_max_length: int = Field(
         default=4000,

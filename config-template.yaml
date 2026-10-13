@@ -641,11 +641,14 @@ indexing:
     # Gremlin connection pool (aws.neptune.pool_size, raised to at least this
     # value). Each batch accumulates its own stats, merged on completion.
     index_concurrency: 1
-    # Attempts per Neptune write, including the first (1 = no retry). Only
-    # transient errors (throttling, ConcurrentModificationException, connection
-    # loss, timeouts) are retried, with jittered exponential backoff from
-    # retry_delay_seconds.
+    # Attempts per Neptune indexer request (writes, read-backs, drops, label
+    # clears), including the first (1 = no retry). Every error is retried
+    # except one a retry cannot fix (a malformed query, access denied, a bad
+    # parameter: PERMANENT_NEPTUNE_ERROR_CODES, or a client-side
+    # ValueError/TypeError), which fails on the first attempt.
     max_attempts: 4
+    # Base of the full-jitter exponential backoff: the wait after attempt n is
+    # random between 0 and retry_delay_seconds * 2^(n-1) seconds.
     retry_delay_seconds: 2
     # Max characters per Neptune property value. Keep it above the longest
     # description that is not re-summarized (description_summarization only
