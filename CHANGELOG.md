@@ -466,6 +466,10 @@ Library API (Python callers and custom backends).
 - Importing `unified_kg_rag.application.cli.run_rag_chain` no longer puts
   `unified_kg_rag/application` at the front of `sys.path`, where its
   subpackages could shadow top-level modules of the same name (#251).
+- On an incremental run, a new relationship whose endpoint merged into a
+  stored entity under another name (for example `Acme Inc` into `ACME, Inc.`)
+  now carries the stored entity's name in `source_name`/`target_name`, as a
+  full build does; it kept the extracted name (#PR).
 - The incremental cross-run merge no longer writes a description cut at
   `indexing.neptune.property_max_length` to OpenSearch. It read stored
   entities and relationships back from Neptune, which caps property values,

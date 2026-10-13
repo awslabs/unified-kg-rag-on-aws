@@ -22,6 +22,9 @@ from unified_kg_rag.domain.ingestion.merge import (
     remove_claim_text_units,
     remove_text_units,
 )
+from unified_kg_rag.domain.ingestion.relationship_endpoints import (
+    sync_relationship_endpoint_names,
+)
 from unified_kg_rag.domain.models import (
     Claim,
     Community,
@@ -490,6 +493,12 @@ class IndexingManager:
                         [r for r in merged_relationships if r.id in written]
                     )
                 )
+        if merged_entities is not entities and merged_relationships:
+            # Merged with stored entities: an edge re-pointed at one, or at one
+            # whose stored name differs from the delta's, must name it as the
+            # entity does.
+            merged_relationships = [r.model_copy() for r in merged_relationships]
+            sync_relationship_endpoint_names(merged_relationships, merged_entities)
         merged_entities, merged_relationships = self._rank_with_stored_graph(
             suffix, merged_entities, merged_relationships
         )

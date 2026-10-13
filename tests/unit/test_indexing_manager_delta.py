@@ -379,3 +379,44 @@ def test_cross_run_merge_keeps_the_description_neptune_capped(kind) -> None:
     assert merged is not None
     (item,) = [m for m in merged if m.id == delta.id]
     assert item.description == f"{full}\nShips."
+
+
+def test_a_delta_edge_takes_the_name_of_the_stored_entity_it_merged_into() -> None:
+    # The delta's "Acme Inc" merges into the stored "ACME, Inc.": its
+    # edge is re-pointed at the stored id and must name that entity too.
+    from tests.fixtures.fakes.stores import FakeGraphStore, FakeVectorStore
+    from unified_kg_rag.application.storage.indexing_manager import IndexingManager
+    from unified_kg_rag.domain.models import Config
+
+    config = Config()
+    mgr = IndexingManager(
+        config=config,
+        vector_indexer=FakeVectorStore(opensearch_config=config.indexing.opensearch),
+        graph_indexer=FakeGraphStore(config),
+    )
+    buyer = Entity(id="e-buyer", name="Buyer", text_unit_ids=["t1"])
+    mgr.index_delta(
+        entities=[
+            Entity(id="e-old", name="ACME, Inc.", text_unit_ids=["t1"]),
+            buyer,
+        ]
+    )
+    delta_edge = Relationship(
+        id="r-new",
+        source_id="e-new",
+        target_id="e-buyer",
+        source_name="Acme Inc",
+        target_name="Buyer",
+        type="SUPPLIES",
+        text_unit_ids=["t2"],
+    )
+
+    result = mgr.merge_with_existing_graph(
+        [Entity(id="e-new", name="Acme Inc", text_unit_ids=["t2"]), buyer],
+        [delta_edge],
+    )
+
+    assert result.relationships is not None
+    (edge,) = result.relationships
+    assert (edge.source_id, edge.source_name) == ("e-old", "ACME, Inc.")
+    assert delta_edge.source_name == "Acme Inc"
