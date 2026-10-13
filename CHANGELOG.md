@@ -272,7 +272,7 @@ Library API (Python callers and custom backends).
   pypdf 6.20, tenacity 9.2 and boto3 1.43.110 in `uv.lock`; aws-cdk-lib and
   aws-cdk.aws-neptune-alpha 2.273 in the CDK lock. typeguard stays at 2.13.3
   and aws-cdk-cloud-assembly-schema below 55, the versions jsii and
-  aws-cdk-lib pin (#PR).
+  aws-cdk-lib pin (#241).
 
 ### Fixed
 - `run-eval --eval-data-path` naming a file that does not exist exits 2 with
