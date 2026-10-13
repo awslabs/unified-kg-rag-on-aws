@@ -998,7 +998,7 @@ documents as failed so the next run translates them again (§5).
 | `--suffix` | — (`default`) | [Index suffix](#index-suffix) to query; must match the corpus's `processing.document_parsing.index_value` |
 | `--enable-thinking` | off | Enable model step-by-step reasoning; a no-op for models that always reason (Claude 4.7+ / 5.x, OpenAI GPT), whose depth `aws.bedrock.default_effort` / `fast_effort` set |
 | `--search-strategy` | `auto` | `auto`, `drift`, `global`, `local`, `simple`, `mix`, `hybrid`, `naive` |
-| `--search-type` | `hybrid` | `hybrid`, `lexical`, `vector` |
+| `--search-type` | `hybrid` | `hybrid`, `lexical`, `vector`. The lexical side searches the first 150 words of the question (a Hangul, Han or Kana character counts as a word) and tolerates typos only in questions of up to 10 words; the vector side embeds the whole question |
 | `--top-k` | `10` | Max search results |
 | `--retrieval-multiplier` | `1` | Increase retrieval depth |
 | `--disable-query-processing` | off | Skip translation + entity extraction |

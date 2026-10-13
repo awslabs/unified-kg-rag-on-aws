@@ -50,7 +50,10 @@ from unified_kg_rag.shared.utils import (
     strip_embedding_fields,
     text_digest,
 )
-from unified_kg_rag.shared.utils.scripts import has_dense_script
+from unified_kg_rag.shared.utils.scripts import (
+    has_dense_script,
+    is_dense_script_char,
+)
 
 logger = get_logger(__name__)
 
@@ -64,11 +67,16 @@ _DEFAULT_MAX_TERMS_COUNT = 65536
 # allows 1,024 clauses per query (indices.query.bool.max_clause_count), and a
 # multi_match makes one per analyzed term per field (up to five fields here),
 # so a long question failed the search (400 "maxClauseCount", or 500
-# too_many_nested_clauses). Dense-script text (Hangul, Han, Kana) analyzes to
-# about a term per character, so it is capped by characters. The vector side
-# still embeds the whole query.
-_MAX_LEXICAL_QUERY_WORDS = 100
-_MAX_LEXICAL_QUERY_DENSE_CHARS = 150
+# too_many_nested_clauses). A term is counted per word, and per character of
+# Hangul, Han or Kana text, which analyzes to about a term per character. The
+# question gets up to 150 terms and the optional keywords what is left of 200;
+# fuzziness rewrites each term into up to max_expansions terms, so it is kept
+# to short queries (entity names, keyword lists) and a longer question is
+# matched exactly. The vector side still embeds the whole query.
+_MAX_LEXICAL_QUERY_TERMS = 150
+_LEXICAL_TERM_BUDGET = 200
+_MAX_FUZZY_QUERY_TERMS = 10
+_FUZZY_MAX_EXPANSIONS = 10
 # Where the reason ends inside a JSON body or a Python repr of one.
 _REASON_END = re.compile(r"[\"'}\]\\\n]")
 
@@ -116,14 +124,22 @@ def _is_timeout(exc: BaseException) -> bool:
     return False
 
 
-def _lexical_query_text(text: str) -> str:
-    """``text`` cut to what one lexical clause set can hold (see the caps)."""
-    words = text.split()
-    if len(words) > _MAX_LEXICAL_QUERY_WORDS:
-        text = " ".join(words[:_MAX_LEXICAL_QUERY_WORDS])
-    if len(text) > _MAX_LEXICAL_QUERY_DENSE_CHARS and has_dense_script(text):
-        text = text[:_MAX_LEXICAL_QUERY_DENSE_CHARS]
-    return text
+def _lexical_query_text(text: str, max_terms: int) -> tuple[str, int]:
+    """``text`` cut to ``max_terms`` terms (see the budget), and its term count."""
+    terms = 0
+    in_word = False
+    for i, ch in enumerate(text):
+        if is_dense_script_char(ch):
+            terms += 1
+            in_word = False
+        elif not ch.isalnum():
+            in_word = False
+        elif not in_word:
+            terms += 1
+            in_word = True
+        if terms > max_terms:
+            return text[:i].rstrip(), max_terms
+    return text, terms
 
 
 def _index_setting(settings: dict[str, Any], name: str, default: int) -> int:
@@ -631,22 +647,25 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         if not query.query or query.query == "*":
             return {"match_all": {}}
 
-        text = _lexical_query_text(query.query)
+        text, terms = _lexical_query_text(query.query, _MAX_LEXICAL_QUERY_TERMS)
         main_query: dict[str, Any] = {"multi_match": {"query": text, "fields": fields}}
         # AUTO allows one edit on a 3-5 character term. On Latin words that
         # absorbs a typo; on Hangul/Han/Kana, where one character is a whole
         # syllable or morpheme, it matches a different word ("가나라상사" for
-        # "가나다상사"). A query containing such text is matched exactly.
-        if not has_dense_script(text):
+        # "가나다상사"). A query containing such text is matched exactly, as
+        # is a long one (see _MAX_FUZZY_QUERY_TERMS).
+        if not has_dense_script(text) and terms <= _MAX_FUZZY_QUERY_TERMS:
             main_query["multi_match"]["fuzziness"] = "AUTO"
+            main_query["multi_match"]["max_expansions"] = _FUZZY_MAX_EXPANSIONS
+            terms *= _FUZZY_MAX_EXPANSIONS
 
-        if not query.optional_keywords:
+        optional_text, _ = _lexical_query_text(
+            " ".join(query.optional_keywords), _LEXICAL_TERM_BUDGET - terms
+        )
+        if not optional_text:
             return main_query
 
-        optional_keywords_query = _lexical_query_text(" ".join(query.optional_keywords))
-        should_clause = {
-            "multi_match": {"query": optional_keywords_query, "fields": fields}
-        }
+        should_clause = {"multi_match": {"query": optional_text, "fields": fields}}
 
         return {"bool": {"must": [main_query], "should": [should_clause]}}
 

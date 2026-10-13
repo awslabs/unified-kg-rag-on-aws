@@ -17,6 +17,7 @@ from unified_kg_rag.adapters.retrieval.token_manager import SectionType
 from unified_kg_rag.adapters.retrievers.opensearch_retriever import OpenSearchRetriever
 from unified_kg_rag.domain.models import Config, SearchQuery, SearchType
 from unified_kg_rag.domain.models.config import LanguageCode
+from unified_kg_rag.shared.utils.scripts import is_dense_script_char
 
 pytestmark = pytest.mark.unit
 
@@ -198,6 +199,20 @@ def test_build_lexical_query_multi_match_with_fuzziness(retriever) -> None:
     assert body["multi_match"]["query"] == "alice"
     assert body["multi_match"]["fields"] == ["name", "description"]
     assert body["multi_match"]["fuzziness"] == "AUTO"
+    # Each fuzzy term rewrites into at most this many terms per field.
+    assert body["multi_match"]["max_expansions"] == 10
+
+
+def test_build_lexical_query_matches_a_long_question_exactly(retriever) -> None:
+    # Fuzziness expands every term (up to 50 terms per field by default):
+    # on a 100,000-term index a 15-word question failed the search with
+    # too_many_nested_clauses. Past 10 words the query is matched exactly.
+    ten = " ".join(f"word{i}" for i in range(10))
+    body = retriever._build_lexical_query(SearchQuery(query=ten), ["name"])
+    assert body["multi_match"]["fuzziness"] == "AUTO"
+    body = retriever._build_lexical_query(SearchQuery(query=ten + " more"), ["name"])
+    assert "fuzziness" not in body["multi_match"]
+    assert "max_expansions" not in body["multi_match"]
 
 
 @pytest.mark.parametrize("text", ["가나다상사", "青空海運", "カタカナ", "가나다 Corp"])
@@ -217,28 +232,67 @@ def test_build_lexical_query_optional_keywords_become_should(retriever) -> None:
     assert body["bool"]["should"][0]["multi_match"]["query"] == "acme seattle"
 
 
+def _terms(text: str) -> int:
+    dense = sum(map(is_dense_script_char, text))
+    return dense or len(text.split())
+
+
 @pytest.mark.parametrize(
-    ("text", "limit"),
+    "text",
     [
-        (" ".join(f"word{i}" for i in range(1100)), "words"),
-        ("倉" * 1100, "chars"),
-        (" ".join(["가나다"] * 600), "chars"),
+        " ".join(f"word{i}" for i in range(1100)),
+        "倉" * 1100,
+        " ".join(["가나다"] * 600),
     ],
     ids=["latin", "han", "hangul"],
 )
-def test_build_lexical_query_caps_a_long_query(retriever, text, limit) -> None:
+def test_build_lexical_query_caps_a_long_query(retriever, text) -> None:
     # A multi_match makes one clause per term per field; 1,100 words failed
     # the search with maxClauseCount (400) and 600 with
-    # too_many_nested_clauses (500), each answered from no context.
+    # too_many_nested_clauses (500), each answered from no context. The
+    # question takes up to 150 terms and the optional keywords the rest of
+    # 200: a 150-character Han question with 150 Han keywords failed with
+    # too_many_nested_clauses on five fields.
     q = SearchQuery(query=text, optional_keywords=text.split()[:300])
     body = retriever._build_lexical_query(q, ["name"])
-    for clause in (body["bool"]["must"][0], body["bool"]["should"][0]):
-        capped = clause["multi_match"]["query"]
-        assert text.startswith(capped)
-        if limit == "words":
-            assert len(capped.split()) == 100
-        else:
-            assert len(capped) <= 150
+    must = body["bool"]["must"][0]["multi_match"]["query"]
+    should = body["bool"]["should"][0]["multi_match"]["query"]
+    assert text.startswith(must) and text.startswith(should)
+    assert (_terms(must), _terms(should)) == (150, 50)
+
+
+def test_build_lexical_query_fuzzy_terms_count_their_expansions(retriever) -> None:
+    keywords = [f"kw{i}" for i in range(300)]
+    q = SearchQuery(query="alice", optional_keywords=keywords)
+    body = retriever._build_lexical_query(q, ["name"])
+    should = body["bool"]["should"][0]["multi_match"]["query"]
+    # One fuzzy term expands to up to 10, leaving 190 of the 200.
+    assert should == " ".join(keywords[:190])
+
+
+def test_build_lexical_query_keeps_a_dense_name_in_a_long_question(
+    retriever,
+) -> None:
+    # One Hangul name made the whole question count as dense text, cut to
+    # 150 characters: the name at the end of a 170-character question was lost.
+    text = (
+        "Considering the supply agreement, the depot storage fees and the "
+        "courier schedule described in the contract, which Korean agent "
+        "represents Vendor, and where is 가나다상사 located?"
+    )
+    assert len(text) > 150
+    body = retriever._build_lexical_query(SearchQuery(query=text), ["name"])
+    assert body["multi_match"]["query"] == text
+
+
+def test_build_lexical_query_bounds_mixed_text(retriever) -> None:
+    # Words and dense-script characters count toward one term cap.
+    words = " ".join(f"word{i}" for i in range(60))
+    text = words + " " + "倉" * 300
+    capped = retriever._build_lexical_query(SearchQuery(query=text), ["name"])[
+        "multi_match"
+    ]["query"]
+    assert capped == words + " " + "倉" * 90
 
 
 def test_build_lexical_query_keeps_a_normal_query(retriever) -> None:
