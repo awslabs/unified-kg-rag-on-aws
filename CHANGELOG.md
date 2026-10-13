@@ -175,6 +175,9 @@ Library API (Python callers and custom backends).
   `DocStatusRecord.content_summary` / `content_length` and
   `application.cli.run_evaluation.exceeds_failure_budget` (#216); and
   `domain.retrieval.strategy_registry.registered_strategies` (#212).
+- `BaseSearchStrategy.search` (a sync wrapper with no caller; use
+  `asearch`) and the unused `timeout` parameter of
+  `BaseSearchStrategy._safe_aretrieve` are removed (#PR).
 - `NeptuneRetriever` expands only from seed entity ids passed as an `id`
   filter, which is how every strategy calls it. The name-matching seed
   lookup (used without an `id` filter; it lowercased query terms for a

@@ -200,7 +200,6 @@ class BaseSearchStrategy(MetricsMixin, ABC):
         retriever: BaseGraphRAGRetriever,
         query: SearchQuery,
         label: str,
-        timeout: float | None = None,
     ) -> list[RetrievalResult]:
         """Run one sub-retrieval, re-raising fatal errors and degrading the rest.
 
@@ -210,8 +209,6 @@ class BaseSearchStrategy(MetricsMixin, ABC):
         configuration is not reported as "no results"; anything else (timeouts,
         throttling, a malformed query) is logged under ``label`` and degrades to
         an empty list so one failing section does not sink the whole search.
-        ``timeout`` (seconds) bounds the call via `asyncio.wait_for`; hitting it
-        is treated as transient.
         """
         with observability.span(
             "kg_rag.retrieve",
@@ -221,12 +218,7 @@ class BaseSearchStrategy(MetricsMixin, ABC):
             top_k=query.top_k,
         ) as span:
             try:
-                if timeout is None:
-                    results = await retriever.aretrieve(query)
-                else:
-                    results = await asyncio.wait_for(
-                        retriever.aretrieve(query), timeout=timeout
-                    )
+                results = await retriever.aretrieve(query)
             except Exception as e:
                 if is_fatal_retrieval_error(e):
                     raise
@@ -479,11 +471,6 @@ class BaseSearchStrategy(MetricsMixin, ABC):
             scored.score = (total - position) / total
             rescored.append(scored)
         return rescored
-
-    def search(
-        self, query: SearchQuery, config: RunnableConfig | None = None
-    ) -> SearchResult:
-        return asyncio.run(self.asearch(query, config=config))
 
     @abstractmethod
     async def asearch(
