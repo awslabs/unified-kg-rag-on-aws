@@ -355,3 +355,84 @@ def test_a_stage_switched_on_for_an_existing_pipeline_id_runs(
     }
     assert statuses[stage] == "completed"
     assert harness.llm_calls > calls
+
+
+def test_a_phase_after_a_failed_upstream_stage_does_not_run(
+    harness: _Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # graph_extraction failed; an indexing-only window (the next Step
+    # Functions phase) must not index the empty upstream output.
+    from unified_kg_rag.domain.models import PipelineConfig, PipelineStageType
+    from unified_kg_rag.shared import PipelineExecutionError
+
+    def execute(stage, context):  # type: ignore[no-untyped-def]
+        raise RuntimeError("throttled beyond retries")
+
+    monkeypatch.setattr(ps.GraphExtractionStage, "execute", execute)
+    assert harness.run("--pipeline-id", "p1") == 1
+    pipeline = pipeline_module.DataIngestionPipeline(
+        harness.config,
+        PipelineConfig(
+            stages_enabled={
+                stage: stage is PipelineStageType.INDEXING
+                for stage in PipelineStageType
+            },
+            local_directory=harness.tmp_path / "cache",
+        ),
+        source_directory=harness.source,
+    )
+    with pytest.raises(PipelineExecutionError, match="upstream of this run"):
+        pipeline.run(harness.source, pipeline_id="p1")
+    assert not harness.graph.ids("entities")
+
+
+def test_rerunning_a_stage_drops_the_recorded_results_after_it(
+    harness: _Harness,
+) -> None:
+    # Re-running gleaning alone makes the recorded later stages stale: they
+    # leave the history, and the next run runs them again on its output.
+    assert harness.run("--pipeline-id", "p1") == 0
+    assert (
+        harness.run(
+            "--pipeline-id",
+            "p1",
+            "--resume-from-stage",
+            "gleaning",
+            "--enabled-stages",
+            "gleaning",
+        )
+        == 0
+    )
+    names = [r["stage_name"] for r in harness.metadata("p1")["stage_results"]]
+    assert names[-1] == "gleaning"
+
+    calls = harness.llm_calls
+    assert harness.run("--pipeline-id", "p1") == 0
+    statuses = {
+        r["stage_name"]: r["status"] for r in harness.metadata("p1")["stage_results"]
+    }
+    assert statuses["graph_resolution"] == statuses["indexing"] == "completed"
+    assert harness.llm_calls > calls  # community reports regenerated
+
+
+def test_a_stage_that_crashed_then_succeeds_commits_its_documents(
+    harness: _Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The crash recorded every text unit failed for graph_resolution, and the
+    # resumed run restores that record; the stage's successful re-run must
+    # replace it, or the documents stay FAILED.
+    crash = {"on": True}
+    original = ps.GraphResolutionStage.execute
+
+    def execute(stage, context):  # type: ignore[no-untyped-def]
+        if crash["on"]:
+            raise RuntimeError("worker crashed")
+        return original(stage, context)
+
+    monkeypatch.setattr(ps.GraphResolutionStage, "execute", execute)
+    assert harness.run("--pipeline-id", "p1", "--continue-on-error") == 1
+    assert {r.status for r in harness.registry.list_all()} == {DocStatus.FAILED}
+
+    crash["on"] = False
+    assert harness.run("--pipeline-id", "p1", "--yes") == 0
+    assert {r.status for r in harness.registry.list_all()} == {DocStatus.PROCESSED}
