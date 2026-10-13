@@ -359,16 +359,17 @@ class OpenSearchIndexer(VectorIndexer):
 
     def initialize(self) -> bool:
         try:
+            # Written on every run (the PUT is idempotent), so a changed
+            # search.hybrid weight replaces the one an earlier run stored.
             pipeline_name = self.opensearch_config.hybrid_search_pipeline_name
-            if not self.opensearch_client.check_search_pipeline_exists(pipeline_name):
-                self._create_hybrid_search_pipeline(pipeline_name)
-                logger.info("Created hybrid search pipeline: '%s'", pipeline_name)
+            self._put_hybrid_search_pipeline(pipeline_name)
+            logger.info("Wrote hybrid search pipeline: '%s'", pipeline_name)
             return True
         except Exception as e:
             logger.error("Failed to initialize OpenSearch indexer: %s", e)
             return False
 
-    def _create_hybrid_search_pipeline(self, pipeline_name: str) -> None:
+    def _put_hybrid_search_pipeline(self, pipeline_name: str) -> None:
         lex_weight, vec_weight = (
             self.config.search.hybrid.lexical_weight,
             self.config.search.hybrid.vector_weight,
@@ -387,7 +388,7 @@ class OpenSearchIndexer(VectorIndexer):
                 }
             ],
         }
-        self.opensearch_client.create_search_pipeline(pipeline_name, body)
+        self.opensearch_client.put_search_pipeline(pipeline_name, body)
 
     def index_text_units(
         self, text_units: list[TextUnit], *, suffixes: Collection[str] = ()

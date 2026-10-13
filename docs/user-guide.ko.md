@@ -545,7 +545,7 @@ LLM 단계는 Bedrock I/O가 병목이므로 동시성을 CPU 수보다 훨씬 �
 | 키 | 기본값 | 역할과 변경 시점 |
 |---|---|---|
 | `search.auto_routable_strategies` | `["local", "mix", "global", "drift"]` | `auto` 라우터가 고를 수 있는 전략입니다. 라우터 프롬프트는 이 전략들만 이 순서대로 설명합니다. `auto` 자체는 넣을 수 없습니다. 어떤 전략이든 직접 지정할 수는 있습니다. |
-| `search.hybrid.lexical_weight` | `0.5` | OpenSearch 하이브리드 파이프라인의 어휘 검색 가중치입니다(벡터는 `vector_weight`, 역시 `0.5`). |
+| `search.hybrid.lexical_weight` | `0.5` | OpenSearch 하이브리드 파이프라인의 어휘 검색 가중치입니다(벡터는 `vector_weight`, 역시 `0.5`). `run-ingestion`이 실행할 때마다 파이프라인(`indexing.opensearch.hybrid_search_pipeline_name`)을 다시 쓰므로, 바꾼 값은 질의 시점이 아니라 다음 수집 실행부터 적용됩니다. 같은 이름을 쓰는 도메인의 모든 네임스페이스가 파이프라인 하나를 공유하므로, 가중치가 다른 설정에는 별도 파이프라인 이름을 지정합니다. |
 | `search.fusion.method` | `"rrf"` | `rrf`(reciprocal rank fusion) 또는 `weighted`입니다. |
 | `search.fusion.rrf_k` | `60` | RRF 상수 `k`입니다. |
 | `search.fusion.fusion_weights` | 버킷마다 `1.0` | 소스 버킷별 가중치입니다. `rrf`와 `weighted` 모두에서 각 버킷의 기여도에 곱합니다. |

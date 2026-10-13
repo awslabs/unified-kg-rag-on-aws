@@ -466,6 +466,10 @@ Library API (Python callers and custom backends).
 - Importing `unified_kg_rag.application.cli.run_rag_chain` no longer puts
   `unified_kg_rag/application` at the front of `sys.path`, where its
   subpackages could shadow top-level modules of the same name (#251).
+- A changed `search.hybrid.lexical_weight` or `vector_weight` now takes
+  effect: `run-ingestion` writes the OpenSearch hybrid search pipeline on
+  every run. Before, it was created only when absent, so the weights of the
+  first run on a domain stayed in force (#PR).
 - With `indexing.opensearch.persist_embedding_cache`, an embedding-cache
   object that exists but cannot be read (throttling, access denied, a network
   error) is no longer treated as empty: the run embeds without it and does not

@@ -591,8 +591,9 @@ indexing:
     relationships_index_prefix: "graphrag-relationships"
     # Claim (covariate) vector index — makes extracted claims searchable.
     claims_index_prefix: "graphrag-claims"
-    # OpenSearch search pipeline that fuses lexical + vector results (created on
-    # initialize); its normalization/combination weights come from search.hybrid.
+    # OpenSearch search pipeline that fuses lexical + vector results (written on
+    # every ingestion run); its combination weights come from search.hybrid.
+    # Configurations sharing a domain with other weights need their own name.
     hybrid_search_pipeline_name: "graphrag-hybrid-search-pipeline"
     # Text analyzer per language code (extend without code changes); unlisted
     # languages use default_analyzer.
