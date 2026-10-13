@@ -555,14 +555,11 @@ class OpenSearchClient:
                 action["_id"] = str(doc_id)
             actions.append(action)
 
-        try:
-            # Rejected documents are collected into `errors` and reported
-            # rather than aborting the batch mid-stream (matches bulk_delete).
-            success_count, errors = self._bulk_with_item_retries(
-                actions, lambda ok, _result: ok
-            )
-        except Exception as e:
-            raise AWSServiceError("Streaming bulk operation failed.") from e
+        # Rejected documents are collected into `errors` and reported rather
+        # than aborting the batch mid-stream (matches bulk_delete).
+        success_count, errors = self._bulk_with_item_retries(
+            actions, lambda ok, _result: ok
+        )
 
         if errors:
             logger.warning(
@@ -578,6 +575,7 @@ class OpenSearchClient:
 
         return {"errors": bool(errors), "items": errors}
 
+    @_handle_opensearch_errors
     def bulk_delete(
         self, index: str, ids: list[str], refresh: bool = True
     ) -> dict[str, Any]:
@@ -598,16 +596,14 @@ class OpenSearchClient:
             # A delete of a missing doc reports not_found; treat as ok.
             return ok or result.get("delete", {}).get("result") == "not_found"
 
-        try:
-            success_count, errors = self._bulk_with_item_retries(actions, deleted)
-        except Exception as e:
-            raise AWSServiceError("Streaming bulk delete failed.") from e
+        success_count, errors = self._bulk_with_item_retries(actions, deleted)
 
         if refresh and success_count > 0:
             self.client.indices.refresh(index=index)
 
         return {"errors": bool(errors), "items": errors}
 
+    @_handle_opensearch_errors
     def bulk_update(
         self, index: str, documents: list[dict[str, Any]], refresh: bool = True
     ) -> dict[str, Any]:
@@ -632,10 +628,7 @@ class OpenSearchClient:
         def updated(ok: bool, result: dict[str, Any]) -> bool:
             return ok or _bulk_item_status(result) == 404
 
-        try:
-            success_count, errors = self._bulk_with_item_retries(actions, updated)
-        except Exception as e:
-            raise AWSServiceError("Streaming bulk update failed.") from e
+        success_count, errors = self._bulk_with_item_retries(actions, updated)
 
         if refresh and success_count > 0:
             self.client.indices.refresh(index=index)
@@ -653,8 +646,15 @@ class OpenSearchClient:
         action, in order, so each failed result maps back to its action. Items
         that failed with a status in :data:`RETRYABLE_BULK_ITEM_STATUSES` are
         resent up to :attr:`BULK_ITEM_MAX_RETRIES` times with backoff; other
-        failures are final. Returns the success count and the failed results
-        (each ``{op_type: {"_id", "status", "error", ...}}``).
+        failures are final. A whole bulk request the cluster still answers with
+        such a status after the client's own retries (which do not back off)
+        makes its items and the ones after it pending in the same way; when the
+        last round fails so, its error is raised. Returns the success count and
+        the failed results (each ``{op_type: {"_id", "status", "error", ...}}``).
+
+        Raises:
+            TransportError: A bulk request failed (typed by the callers'
+                ``_handle_opensearch_errors``).
         """
         success_count = 0
         failures: list[dict[str, Any]] = []
@@ -684,14 +684,27 @@ class OpenSearchClient:
                 chunk_size=self.BULK_CHUNK_SIZE,
                 raise_on_error=False,
             )
-            for action, (ok, result) in zip(pending, results, strict=True):
-                if succeeded(ok, result):
-                    success_count += 1
-                elif _bulk_item_status(result) in RETRYABLE_BULK_ITEM_STATUSES:
-                    retry_actions.append(action)
-                    retry_results.append(result)
-                else:
-                    failures.append(result)
+            answered = 0
+            try:
+                for action, (ok, result) in zip(pending, results, strict=True):
+                    answered += 1
+                    if succeeded(ok, result):
+                        success_count += 1
+                    elif _bulk_item_status(result) in RETRYABLE_BULK_ITEM_STATUSES:
+                        retry_actions.append(action)
+                        retry_results.append(result)
+                    else:
+                        failures.append(result)
+            except TransportError as e:
+                if (
+                    e.status_code not in RETRYABLE_BULK_ITEM_STATUSES
+                    or attempt == self.BULK_ITEM_MAX_RETRIES
+                ):
+                    raise
+                # The failed request's items and the unsent ones after it.
+                # Resending an index, delete or partial update by id is safe.
+                logger.warning("Bulk request failed: %s", error_reason(e))
+                retry_actions.extend(pending[answered:])
             if not retry_actions:
                 return success_count, failures
             pending = retry_actions

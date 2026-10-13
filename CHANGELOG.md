@@ -376,6 +376,14 @@ Library API (Python callers and custom backends).
   reconnect and retry like writes (`indexing.neptune.max_attempts`). Before,
   they had one attempt on the pooled connection, so in a long-lived process
   every later incremental run failed at its first read (#PR).
+- An OpenSearch bulk write survives a 429/502/503/504 burst longer than the
+  client's own retries, which resend at once (six attempts within about
+  150 ms). A bulk request still rejected so now resends its items with the
+  bulk-item backoff, so a burst of a second or more no longer fails a
+  write slice; when the last resend is rejected too, the error raised is a
+  typed one (`StoreConnectionError`, `StoreRequestRejectedError`) with the
+  status and the server's reason instead of "Streaming bulk operation
+  failed." (#PR).
 - A query whose embedding call cannot succeed fails instead of answering
   "I could not find relevant information": an invalid or inaccessible
   Bedrock model id, a model without on-demand throughput in the region, or
