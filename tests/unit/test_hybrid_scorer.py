@@ -460,6 +460,42 @@ class TestTypeQuota:
         assert counts["text"] == 2
         assert counts["claim"] == 4  # budget max(top_k=6, quota sum=2) - 2 text
 
+    def test_diversity_cut_keeps_every_type_its_reserved_slots(self) -> None:
+        # MMR runs before the quota. A single cross-type cut to the quota total
+        # let over-quota entities (higher fused scores) take slots the quota
+        # then dropped anyway, so text kept 16 of its 20. Each type must be
+        # diversified within its own quota instead.
+        config = Config()
+        config.search.reranking.enabled = False
+        config.search.fusion.diversity_lambda = 0.5
+
+        def stream(rtype: str, n: int, base: float) -> list[RetrievalResult]:
+            return [
+                RetrievalResult(
+                    content=" ".join(f"{rtype}{i}w{j}" for j in range(10)),
+                    score=base - i * 0.001,
+                    source=f"{rtype}{i}",
+                    retriever_type=rtype,
+                )
+                for i in range(n)
+            ]
+
+        quota = {"text": 20, "entity": 10}
+        out = HybridScorer(config).fuse_and_rerank_results(
+            {
+                "entities": stream("entity", 30, 0.9),
+                "text_units": stream("text", 20, 0.5),
+            },
+            top_k=10,
+            per_type_quota=quota,
+            rerank_only_types={"text"},
+        )
+
+        counts: dict[str, int] = {}
+        for r in out:
+            counts[r.retriever_type] = counts.get(r.retriever_type, 0) + 1
+        assert counts == quota
+
 
 class TestDiversityFiltering:
     def test_skipped_at_lambda_one(self) -> None:
@@ -621,7 +657,14 @@ def _reference_mmr(
 
     def mmr(idx: int) -> float:
         similarity = max(
-            (HybridScorer._jaccard(words[idx], words[j]) for j in selected),
+            (
+                (
+                    len(words[idx] & words[j]) / len(words[idx] | words[j])
+                    if words[idx] | words[j]
+                    else 0.0
+                )
+                for j in selected
+            ),
             default=0.0,
         )
         return lambda_val * relevances[idx] - (1 - lambda_val) * similarity
@@ -675,8 +718,8 @@ class TestDiversityFilteringScaling:
         results = self._candidates(30, seed=3)
         scorer = self._scorer_at(0.5)
 
-        out = scorer._apply_diversity_filtering(
-            list(results), top_k=10, retrieval_multiplier=3
+        out = scorer._diversify(
+            list(results), top_k=10, retrieval_multiplier=3, per_type_quota=None
         )
 
         assert sorted(r.source for r in out) == sorted(r.source for r in results)

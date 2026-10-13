@@ -306,6 +306,11 @@ Library API (Python callers and custom backends).
   answer's polarity, as it already did for `yes`/`no`. Such a gold was
   matched as a substring, so `예` scored 1.0 against `아니요, ... 예외 ...`
   (#246).
+- With MMR diversity on (`search.fusion.diversity_lambda` < 1, the default),
+  `local` and `drift` queries keep every reserved text-chunk slot. The
+  diversity cut ran once across all result types before the per-type quota,
+  so over-quota entities took slots the quota then dropped and text kept 16
+  of its 20; each type is now diversified within its own quota (#PR).
 - `run-eval --eval-data-path` naming a file that does not exist exits 2 with
   `Error: invalid evaluation dataset: ...`, as the user guide documents and
   as an unreadable or invalid dataset does; it exited 1 (#230).

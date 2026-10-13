@@ -109,18 +109,8 @@ class HybridScorer(MetricsMixin):
         combined_results = fusion_func(fusion_input)
 
         if self.fusion_config.diversity_lambda < 1.0:
-            # Diversity filtering cuts to top_k*multiplier, which runs BEFORE
-            # rerank/quota: whenever the per-type quotas sum to more than top_k,
-            # the cut would leave them nothing to protect. When a quota is set,
-            # keep at least the quota budget so diversity de-dups WITHIN that
-            # budget instead of collapsing it.
-            div_top_k = top_k
-            if per_type_quota:
-                div_top_k = max(top_k, sum(per_type_quota.values()))
-            combined_results = self._apply_diversity_filtering(
-                combined_results,
-                top_k=div_top_k,
-                retrieval_multiplier=retrieval_multiplier,
+            combined_results = self._diversify(
+                combined_results, top_k, retrieval_multiplier, per_type_quota
             )
 
         if self.rerank_model is not None and query is not None:
@@ -173,6 +163,45 @@ class HybridScorer(MetricsMixin):
         )
 
         return final_results
+
+    def _diversify(
+        self,
+        results: list[RetrievalResult],
+        top_k: int,
+        retrieval_multiplier: int,
+        per_type_quota: dict[str, int] | None,
+    ) -> list[RetrievalResult]:
+        """MMR diversity cut, run BEFORE rerank and the per-type quota.
+
+        Without a quota it is one cut to ``top_k * retrieval_multiplier``. With
+        a quota, a single cross-type cut would let one type's near-ties take
+        slots another type has reserved (text chunks lost a fifth of theirs to
+        over-quota entities that the quota then dropped anyway), so each type
+        is diversified within its own group up to its own quota; types without
+        a quota entry keep ``top_k`` as their width.
+        """
+        if not per_type_quota:
+            kept = self._apply_diversity_filtering(results, top_k, retrieval_multiplier)
+        else:
+            by_type: dict[str, list[RetrievalResult]] = defaultdict(list)
+            for result in results:
+                by_type[result.retriever_type].append(result)
+            kept = []
+            for rtype, group in by_type.items():
+                kept.extend(
+                    self._apply_diversity_filtering(
+                        group,
+                        per_type_quota.get(rtype, top_k),
+                        retrieval_multiplier,
+                    )
+                )
+        filtered_count = len(results) - len(kept)
+        if filtered_count:
+            logger.debug(
+                "Diversity filtering removed %s similar results", filtered_count
+            )
+        self._record_metric("diversity_filtered_count", filtered_count)
+        return kept
 
     @staticmethod
     def _select_with_type_quota(
@@ -426,7 +455,6 @@ class HybridScorer(MetricsMixin):
         # the candidate counts), and the selection loop below is quadratic in
         # the candidate count, so skip it outright.
         if target_count >= len(results):
-            self._record_metric("diversity_filtered_count", 0)
             return results
 
         word_sets = [
@@ -485,16 +513,7 @@ class HybridScorer(MetricsMixin):
             remaining.remove(best_idx)
             newest = best_idx
 
-        selected = [results[i] for i in selected_indices]
-
-        filtered_count = len(results) - len(selected)
-        if filtered_count > 0:
-            logger.debug(
-                "Diversity filtering removed %s similar results", filtered_count
-            )
-
-        self._record_metric("diversity_filtered_count", filtered_count)
-        return selected
+        return [results[i] for i in selected_indices]
 
     def _apply_bedrock_reranking(
         self, results: list[RetrievalResult], query: str
