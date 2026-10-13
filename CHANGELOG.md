@@ -71,7 +71,7 @@ ignored, so check the start-up warnings after upgrading.
 - `run-ingestion --repair-metadata` is removed. It loaded the metadata it
   was meant to repair, so on a corrupt file it failed like
   `--verify-metadata` and never repaired anything; use `--verify-metadata`
-  and, for a corrupt run, `--force-rebuild` or a new `--pipeline-id` (#PR).
+  and, for a corrupt run, `--force-rebuild` or a new `--pipeline-id` (#248).
 
 Defaults. Set the old value explicitly to keep the previous behaviour.
 - `graph.visualization.enabled` defaults to `false`; set it to `true` or
@@ -253,7 +253,7 @@ Library API (Python callers and custom backends).
   PageRank centrality, which no later stage read (the visualization
   computes its own) and which took minutes on a graph of tens of thousands
   of entities; its `centrality_stats` metrics are gone. It also no longer
-  caches a copy of graph resolution's entities and relationships (#PR).
+  caches a copy of graph resolution's entities and relationships (#248).
 - Retrieval: AUTO routes among `local`/`mix`/`global`/`drift` with the fast
   model; `mix`/`hybrid` retrievals, DRIFT steps and keyword extraction run
   concurrently; global search answers from ranked map points without a
@@ -352,28 +352,28 @@ Library API (Python callers and custom backends).
 - `run-ingestion` prints why it exits 1 (`Error: Pipeline failed at
   stage(s): ...`, as the operations guide documents), and a run with a
   failed stage no longer logs "Pipeline execution completed successfully"
-  but a WARNING (#PR).
+  but a WARNING (#248).
 - The ingestion summary's "Cache Hit Rate" and the `cache_hit_rate` metric
-  report the run's stage-cache hits; they read 0% on every run (#PR).
+  report the run's stage-cache hits; they read 0% on every run (#248).
 - A failed parent-level community report no longer records every document
   under it `FAILED`, which made the next incremental run re-extract most of
   the corpus for one report. Only a base-level report failure marks its
   documents; parent failures are logged and counted in `reports_failed`
-  (#PR).
+  (#248).
 - Changing `indexing.additional_suffix` or `document_parsing.source_scope`
   for a reused `--pipeline-id` recomputes the documents (from parsing and
   loading respectively) instead of restoring the old ones, which carried
   the previous registry namespace or scope into the run's delta. The stage
-  cache keys of a configuration that sets neither are unchanged (#PR).
+  cache keys of a configuration that sets neither are unchanged (#248).
 - Switching gleaning or claim extraction on for an existing `--pipeline-id`
   runs the stage: the resume starts at the first enabled stage that has not
   completed in the pipeline. It started after the last recorded stage, so
-  the new stage never ran (#PR).
+  the new stage never ran (#248).
 - An incremental run whose new and changed documents name no entity (an
   edit that removed the last one) commits them and applies the run's
   deletions. It failed graph extraction ("produced 0 outputs"), so the
   deletions were never applied and every later run failed the same way. A
-  full build, or a run in which a text unit failed, still fails (#PR).
+  full build, or a run in which a text unit failed, still fails (#248).
 - `run-eval --eval-data-path` naming a file that does not exist exits 2 with
   `Error: invalid evaluation dataset: ...`, as the user guide documents and
   as an unreadable or invalid dataset does; it exited 1 (#230).
