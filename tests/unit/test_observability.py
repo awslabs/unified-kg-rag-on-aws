@@ -588,6 +588,8 @@ async def test_a_query_degraded_under_ignore_errors_is_an_error_span(
     query = _one(exporter, "kg_rag.query")
     assert query.status.status_code == StatusCode.ERROR
     assert query.status.description == "RuntimeError"
+    # error.type too, as on a query that raised (OTel error-recording rule).
+    assert _attrs(query)["error.type"] == "RuntimeError"
     assert [e.name for e in query.events] == ["exception"]
     assert _attrs(query)["kg_rag.error"] is True
 

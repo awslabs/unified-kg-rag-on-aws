@@ -389,6 +389,9 @@ Library API (Python callers and custom backends).
   with that error. It left every batch unrated and answered from the raw
   reports; with `providers.llm.fast_model_id` set the answer call runs on
   another model, so nothing failed (#PR).
+- A query degraded under `processing.ignore_errors` records `error.type` on
+  its `kg_rag.query` span, as a query that raised does; the span had the
+  ERROR status only (#PR).
 - A query whose Neptune write was in flight when another query dropped the
   connection fails as a lost connection instead of waiting forever.
   gremlinpython's `close()` shuts its executor down, so the read the write
