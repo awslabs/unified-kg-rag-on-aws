@@ -202,7 +202,7 @@ Library API (Python callers and custom backends).
 - A suffix indexed with the doc-status registry off by a release before
   #233 cannot be told apart from a tracked one (its indices carry no
   marker), so an incremental run takes it as tracked: run such a suffix once
-  with `indexing.reset: true` (registry on) after upgrading (#PR).
+  with `indexing.reset: true` (registry on) after upgrading (#243).
 
 ### Added
 - `providers:` config section selecting each role's backend (`llm`,
@@ -442,17 +442,17 @@ Library API (Python callers and custom backends).
   `indices:admin/mapping/put` gets a WARNING instead of an incremental run
   that stops before its write-ahead. Such an index whose text fields do not
   match the run's languages is still written to, now with a WARNING naming
-  the fields and the `indexing.reset: true` remedy (#PR).
+  the fields and the `indexing.reset: true` remedy (#243).
 - A principal that may search but not read index mappings (an OpenSearch
   403) can query again: the first vector or hybrid query's embedding check
   read the mappings and failed every query on the denial. The check is now
   skipped with one WARNING; the search's own errors still fail the query.
   The invalid-dimension reason of a rejected query is cut at the end of the
-  reason instead of running on through the rest of the error body (#PR).
+  reason instead of running on through the rest of the error body (#243).
 - Closing a `GraphRAGChain` (`close()`, `aclose()` or its GC finalizer) waits
   only for its own background retriever closes. It waited up to 30 seconds
   for those of every chain in the process, so a dropped chain collected on
-  an event-loop thread could block that loop (#PR).
+  an event-loop thread could block that loop (#243).
 - IaC: a zone-aware OpenSearch domain spans as many AZs as it has data
   nodes, up to 3 and up to the VPC's AZs, so `opensearch_count=3` with
   `max_azs=3` uses three zones instead of two; on an existing domain the
