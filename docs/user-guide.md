@@ -580,7 +580,7 @@ LLM stages are Bedrock-I/O-bound, so concurrency can far exceed the CPU count.
 | `search.hybrid.lexical_weight` | `0.5` | Lexical weight in the OpenSearch hybrid pipeline (vector: `vector_weight`, also `0.5`). `run-ingestion` writes the pipeline (`indexing.opensearch.hybrid_search_pipeline_name`) on every run, so a change takes effect from the next ingestion run, not at query time. One pipeline serves every namespace on the domain that uses its name: give a configuration with other weights its own pipeline name. |
 | `search.fusion.method` | `"rrf"` | `rrf` (reciprocal rank fusion) or `weighted`. |
 | `search.fusion.rrf_k` | `60` | RRF constant `k`. |
-| `search.fusion.fusion_weights` | `1.0` per bucket | Per-source-bucket weights; they scale each bucket's contribution under both `rrf` and `weighted`. |
+| `search.fusion.fusion_weights` | `{}` (every bucket `1.0`) | Per-source-bucket weights; they scale each bucket's contribution under both `rrf` and `weighted`. The template lists the bucket names. |
 | `search.fusion.diversity_lambda` | `0.5` | MMR trade-off: `1.0` = pure relevance, `0.0` = maximum diversity. |
 | `search.reranking.enabled` | `true` | Rerank fused results with `rerank_model_id` (`cohere.rerank-v3-5:0`). |
 | `search.reranking.top_k` | `100` | Candidates sent to the reranker. |
@@ -600,6 +600,8 @@ LLM stages are Bedrock-I/O-bound, so concurrency can far exceed the CPU count.
 | `search.drift_search.enable_llm_convergence` | `false` | LLM convergence check after each iteration (one extra call per iteration). |
 | `search.token_manager.max_context_tokens` | `30000` | Retrieval context budget for the answer prompt (see the note below). |
 | `search.token_manager.context_window_headroom_ratio` | `0.1` | Share of the window held back when the budget is derived (`max_context_tokens: null`). |
+| `search.store_timeout_seconds` | `30` | How long a query waits for one OpenSearch or Neptune request (and for opening a Neptune connection). A store that does not answer fails the query instead of answering from no context. Ingestion keeps its own limits. |
+| `search.store_max_attempts` | `3` | Attempts of one OpenSearch query request that timed out or got a 429/502/503/504, including the first, so a hung cluster fails a query after about `3 x 30` s. Neptune query requests are not retried. |
 
 Per-section-type shares (`search.token_manager.type_budgets`) and `local` slot
 quotas (`search.local_search.type_quota`) are in the template.

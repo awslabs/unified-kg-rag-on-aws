@@ -1,14 +1,13 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
-import itertools
 import re
 import time
 from collections import OrderedDict
 from collections.abc import Coroutine
 from typing import Any, ClassVar
 
-from opensearchpy.exceptions import AuthorizationException, RequestError, TransportError
+from opensearchpy.exceptions import ConnectionTimeout, RequestError, TransportError
 
 from unified_kg_rag.adapters.aws.opensearch import (
     OpenSearchClient,
@@ -39,7 +38,13 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.domain.retrieval.index_prefixes import configured_index_prefixes
 from unified_kg_rag.ports.model_factory import EmbeddingFactoryPort
-from unified_kg_rag.shared import ConfigurationError, IndexNotFoundError, get_logger
+from unified_kg_rag.shared import (
+    ConfigurationError,
+    IndexNotFoundError,
+    InvalidFilterError,
+    StoreConnectionError,
+    get_logger,
+)
 from unified_kg_rag.shared.utils import (
     EMBEDDING_FIELD_SUFFIX,
     strip_embedding_fields,
@@ -52,6 +57,18 @@ logger = get_logger(__name__)
 # OpenSearch's kNN rejection of a query vector of another dimension than the
 # index's (a 400 whose text the client error wrapper keeps only on its cause).
 _INVALID_DIMENSION_MARKER = "query vector has invalid dimension"
+# OpenSearch's default index.max_terms_count: the most values one terms query
+# may hold.
+_DEFAULT_MAX_TERMS_COUNT = 65536
+# How much of a query the lexical (multi_match) side searches for. Lucene
+# allows 1,024 clauses per query (indices.query.bool.max_clause_count), and a
+# multi_match makes one per analyzed term per field (up to five fields here),
+# so a long question failed the search (400 "maxClauseCount", or 500
+# too_many_nested_clauses). Dense-script text (Hangul, Han, Kana) analyzes to
+# about a term per character, so it is capped by characters. The vector side
+# still embeds the whole query.
+_MAX_LEXICAL_QUERY_WORDS = 100
+_MAX_LEXICAL_QUERY_DENSE_CHARS = 150
 # Where the reason ends inside a JSON body or a Python repr of one.
 _REASON_END = re.compile(r"[\"'}\]\\\n]")
 
@@ -70,20 +87,43 @@ def _invalid_dimension_error(exc: BaseException) -> str | None:
     return None
 
 
-def _is_authorization_error(exc: BaseException) -> bool:
-    """Whether ``exc`` or one of its causes is an HTTP 403 from OpenSearch."""
+def _is_authorization_error(
+    exc: BaseException, statuses: tuple[int, ...] = (403,)
+) -> bool:
+    """Whether ``exc`` or one of its causes is an HTTP 403 (or ``statuses``)."""
     seen: set[int] = set()
     current: BaseException | None = exc
     while current is not None and id(current) not in seen:
         seen.add(id(current))
-        if isinstance(current, AuthorizationException) or (
-            isinstance(current, TransportError) and current.status_code == 403
-        ):
+        if isinstance(current, TransportError) and current.status_code in statuses:
             return True
-        if "status=403" in str(current):  # the client error wrapper's message
+        # The client error wrapper's message.
+        if any(f"status={status}" in str(current) for status in statuses):
             return True
         current = current.__cause__ or current.__context__
     return False
+
+
+def _is_timeout(exc: BaseException) -> bool:
+    """Whether ``exc`` or one of its causes is a request that timed out."""
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, ConnectionTimeout):
+            return True
+        current = current.__cause__ or current.__context__
+    return False
+
+
+def _lexical_query_text(text: str) -> str:
+    """``text`` cut to what one lexical clause set can hold (see the caps)."""
+    words = text.split()
+    if len(words) > _MAX_LEXICAL_QUERY_WORDS:
+        text = " ".join(words[:_MAX_LEXICAL_QUERY_WORDS])
+    if len(text) > _MAX_LEXICAL_QUERY_DENSE_CHARS and has_dense_script(text):
+        text = text[:_MAX_LEXICAL_QUERY_DENSE_CHARS]
+    return text
 
 
 def _rejected_request(exc: BaseException) -> RequestError | None:
@@ -116,14 +156,9 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         super().__init__(config, **kwargs)
         self._opensearch_client = opensearch_client
         self._opensearch_config = config.indexing.opensearch
-        # Clause-budget knobs are config-driven so they can track the cluster's
-        # indices.query.bool.max_clause_count without code changes. Stored as
-        # private attributes (this is a pydantic model, which rejects undeclared
-        # public attributes).
+        # Private attributes: this is a pydantic model, which rejects
+        # undeclared public attributes.
         self._max_size = self._opensearch_config.max_query_size
-        self._terms_batch_size = self._opensearch_config.terms_batch_size
-        self._max_total_clauses = self._opensearch_config.max_total_clauses
-        self._reserved_clauses = self._opensearch_config.reserved_clauses
         # Hard ceiling on hits per query (OpenSearch index.max_result_window
         # default). Fetch-by-id size may be floored up to the terms-filter size
         # but never beyond this, since the index is created with the default.
@@ -252,33 +287,20 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             if query_vector is not None:
                 await self._check_embedding_settings(index_prefixes, query.suffix)
 
-            safe_batch_size = self._calculate_safe_batch_size(query.filters)
-            large_filters = self._find_all_large_filter_lists(
-                query.filters, safe_batch_size
+            self._check_terms_filter_sizes(query.filters)
+            search_tasks = self._create_search_tasks(
+                query, search_type, index_prefixes, query_vector
             )
-            if large_filters:
-                all_results = await self._execute_multi_batched_retrieval(
-                    query,
-                    large_filters,
-                    safe_batch_size,
-                    search_type,
-                    index_prefixes,
-                    query_vector,
-                )
-            else:
-                search_tasks = self._create_search_tasks(
-                    query, search_type, index_prefixes, query_vector
-                )
 
-                if not search_tasks:
-                    logger.warning(
-                        "No searchable indices available for query: %s", query_preview
-                    )
-                    return []
+            if not search_tasks:
+                logger.warning(
+                    "No searchable indices available for query: %s", query_preview
+                )
+                return []
 
-                all_results = []
-                for results in await asyncio.gather(*search_tasks):
-                    all_results.extend(results)
+            all_results = []
+            for results in await asyncio.gather(*search_tasks):
+                all_results.extend(results)
 
             all_results.sort(key=lambda x: x.score or 0.0, reverse=True)
             final_results = all_results[: query.top_k * query.retrieval_multiplier]
@@ -451,7 +473,7 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                 # A search-only principal may not read mappings; the search
                 # itself still runs, and reports its own errors.
                 self._embedding_checked_aliases.add(alias)
-                if not getattr(self, "_embedding_check_denied_logged", False):
+                if not self._embedding_check_denied_logged:
                     self._embedding_check_denied_logged = True
                     logger.warning(
                         "Not allowed to read the mappings of %s (%s), so queries "
@@ -462,11 +484,22 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                         e,
                     )
                 return None
+            if _is_timeout(e):
+                raise self._unanswered_error(alias) from e
             if is_fatal_retrieval_error(e):
                 raise
             logger.debug("Could not read the mappings of %s: %s", alias, e)
             return None
         return mappings
+
+    def _unanswered_error(self, target: str) -> StoreConnectionError:
+        """The error a request OpenSearch never answered fails the query with."""
+        search = self._config.search
+        return StoreConnectionError(
+            f"OpenSearch did not answer a request on {target} within "
+            f"{search.store_timeout_seconds} s in {search.store_max_attempts} "
+            "attempt(s) (search.store_timeout_seconds, search.store_max_attempts)"
+        )
 
     def _raise_on_embedding_mismatch(
         self, index_name: str, mappings: dict[str, Any]
@@ -510,14 +543,20 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         size = min(query.top_k * query.retrieval_multiplier, self._max_size)
         # Fetch-by-id callers (local/global/mix expansion) set top_k=len(ids) and
         # pass those ids as a terms filter to retrieve every one. Capping size at
-        # max_query_size (default 100) would silently drop ids beyond 100 --
-        # worse when terms_batch_size (150) > max_query_size, since each batch
-        # then returns only 100 of its 150 ids. When a terms filter is present,
-        # floor size at the largest terms-list length so no filtered id is lost,
-        # bounded by max_result_window (the cluster's hard hits ceiling).
+        # max_query_size (default 100) would silently drop ids beyond 100. When
+        # a terms filter is present, floor size at the largest terms-list length
+        # so no filtered id is lost, bounded by max_result_window (the cluster's
+        # hard hits ceiling).
         largest_terms = self._largest_terms_filter_size(query.filters)
         if largest_terms > size:
             size = min(largest_terms, self._max_result_window)
+            if largest_terms > size:
+                logger.warning(
+                    "A filter lists %s ids, more than the %s hits one search "
+                    "returns (max_result_window); the rest are not fetched",
+                    largest_terms,
+                    size,
+                )
         filters = self._build_filter_clauses(query.filters)
 
         main_query = self._build_main_query(
@@ -582,20 +621,19 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         if not query.query or query.query == "*":
             return {"match_all": {}}
 
-        main_query: dict[str, Any] = {
-            "multi_match": {"query": query.query, "fields": fields}
-        }
+        text = _lexical_query_text(query.query)
+        main_query: dict[str, Any] = {"multi_match": {"query": text, "fields": fields}}
         # AUTO allows one edit on a 3-5 character term. On Latin words that
         # absorbs a typo; on Hangul/Han/Kana, where one character is a whole
         # syllable or morpheme, it matches a different word ("가나라상사" for
         # "가나다상사"). A query containing such text is matched exactly.
-        if not has_dense_script(query.query):
+        if not has_dense_script(text):
             main_query["multi_match"]["fuzziness"] = "AUTO"
 
         if not query.optional_keywords:
             return main_query
 
-        optional_keywords_query = " ".join(query.optional_keywords)
+        optional_keywords_query = _lexical_query_text(" ".join(query.optional_keywords))
         should_clause = {
             "multi_match": {"query": optional_keywords_query, "fields": fields}
         }
@@ -682,91 +720,29 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         list_lengths = [len(v) for v in filters.values() if isinstance(v, list)]
         return max(list_lengths, default=0)
 
-    def _calculate_safe_batch_size(self, filters: dict[str, Any] | None) -> int:
-        """Terms per list filter per request: ``terms_batch_size``, or less.
+    def _check_terms_filter_sizes(self, filters: dict[str, Any] | None) -> None:
+        """Reject a list filter longer than one ``terms`` query may be.
 
-        The clause budget (``max_total_clauses - reserved_clauses``) is split
-        across the list filters; a share below ``terms_batch_size`` lowers the
-        batch, but nothing raises it above the configured size.
+        A ``terms`` query is one clause however many values it holds, so a
+        long id list needs no splitting; the limit is the index's
+        ``max_terms_count`` (65,536 by default), which the cluster would
+        otherwise answer with a 400.
+
+        Raises:
+            InvalidFilterError: A list filter has more values than that.
         """
-        list_filter_count = sum(
-            1 for v in (filters or {}).values() if isinstance(v, list) and v
-        )
-        if not list_filter_count:
-            return self._terms_batch_size
-        available_clauses = self._max_total_clauses - self._reserved_clauses
-        safe_size = available_clauses // list_filter_count
-        return max(1, min(safe_size, self._terms_batch_size))
-
-    @staticmethod
-    def _find_all_large_filter_lists(
-        filters: dict[str, Any] | None, batch_size: int
-    ) -> dict[str, list[Any]]:
-        if not filters:
-            return {}
-
-        large_filters = {}
-        for key, value in filters.items():
-            if isinstance(value, list) and len(value) > batch_size:
-                large_filters[key] = value
-        return large_filters
-
-    async def _execute_multi_batched_retrieval(
-        self,
-        query: SearchQuery,
-        large_filters: dict[str, list[Any]],
-        batch_size: int,
-        search_type: SearchType,
-        index_prefixes: list[str],
-        query_vector: list[float] | None,
-    ) -> list[RetrievalResult]:
-        all_results: list[RetrievalResult] = []
-        seen_ids: set[str] = set()
-
-        filter_batches: dict[str, list[list[Any]]] = {}
-        for key, values in large_filters.items():
-            filter_batches[key] = [
-                values[i : i + batch_size] for i in range(0, len(values), batch_size)
-            ]
-
-        # The filters are ANDed, so every batch of one filter must meet every
-        # batch of the others: pairing batch i with batch i missed a match whose
-        # values fell in batches of different positions.
-        combinations = list(itertools.product(*filter_batches.values()))
-
-        logger.info(
-            "Executing multi-batched retrieval: %s large filters, %s batches, batch_size=%s (filter sizes: %s)",
-            len(large_filters),
-            len(combinations),
-            batch_size,
-            ", ".join(f"{k}={len(v)}" for k, v in large_filters.items()),
-        )
-
-        for combination in combinations:
-            batch_filters = {
-                **(query.filters or {}),
-                **dict(zip(filter_batches, combination, strict=True)),
-            }
-
-            batch_query = query.model_copy(update={"filters": batch_filters})
-
-            search_tasks = self._create_search_tasks(
-                batch_query, search_type, index_prefixes, query_vector
+        limit = int(
+            self._opensearch_config.index_settings.get(
+                "max_terms_count", _DEFAULT_MAX_TERMS_COUNT
             )
-
-            for results in await asyncio.gather(*search_tasks):
-                for result in results:
-                    if result.source is not None:
-                        if result.source not in seen_ids:
-                            seen_ids.add(result.source)
-                            all_results.append(result)
-
-        logger.debug(
-            "Multi-batched retrieval completed: %s unique results from %s batches",
-            len(all_results),
-            len(combinations),
         )
-        return all_results
+        for key, value in (filters or {}).items():
+            if isinstance(value, list) and len(value) > limit:
+                raise InvalidFilterError(
+                    f"Filter '{key}' lists {len(value)} values; an OpenSearch "
+                    f"terms query takes at most {limit} (index.max_terms_count). "
+                    "Narrow the filter."
+                )
 
     async def _execute_search(
         self,
@@ -785,6 +761,18 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             hits = response.get("hits", {}).get("hits", [])
             return [self._parse_hit(hit) for hit in hits]
         except Exception as e:
+            shown = ", ".join(aliases)
+            if _is_authorization_error(e, (401, 403)):
+                # Read before the generic check: a 403 body names no fatal
+                # marker, so a role without search rights answered every query
+                # from no context.
+                raise ConfigurationError(
+                    f"OpenSearch denied the search on {shown}: {e}. Grant the "
+                    "query role indices:data/read/search on these indices, or "
+                    "check its credentials."
+                ) from e
+            if _is_timeout(e):
+                raise self._unanswered_error(shown) from e
             # A fatal error (auth/config/connection) must propagate so the
             # caller surfaces it, rather than masquerading as "0 results".
             # Transient/per-index errors degrade to an empty list.

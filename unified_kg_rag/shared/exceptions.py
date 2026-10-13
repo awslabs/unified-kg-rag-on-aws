@@ -94,5 +94,7 @@ class StoreConnectionError(AWSServiceError, ConnectionError):
     """A store (OpenSearch, Neptune) could not be reached: refused, DNS, TLS.
 
     A ``ConnectionError``, so retrieval reports it rather than reading it as
-    "no results". A timeout is not one: a slow cluster is retried and degraded.
+    "no results". Queries also raise it for a lost connection and for a
+    request still unanswered after ``search.store_timeout_seconds`` (and its
+    retries); a timeout elsewhere stays an ``AWSServiceError`` and is retried.
     """

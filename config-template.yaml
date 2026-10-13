@@ -601,12 +601,9 @@ indexing:
     language_analyzers:
       en: "english"
       ko: "nori"
-    # Query clause budget — keep max_total_clauses under the cluster's
-    # indices.query.bool.max_clause_count.
+    # Most hits one query returns (a fetch by id returns every listed id, up
+    # to index_settings.max_result_window).
     max_query_size: 100
-    terms_batch_size: 150
-    max_total_clauses: 600
-    reserved_clauses: 300
 
     # Index settings (applied at index creation)
     index_settings:
@@ -691,25 +688,15 @@ search:
     # MMR: 1.0 = pure relevance (filtering skipped), 0.0 = maximum diversity.
     diversity_lambda: 0.5
     # Per-source-bucket weights. Both methods apply them: "rrf" scales each
-    # bucket's 1/(rrf_k + rank) term, "weighted" scales its scores. Keys are
-    # the retrieval source buckets the strategies emit; a bucket without a key
-    # defaults to 1.0.
-    fusion_weights:
-      graph_entities: 1.0
-      text_units: 1.0
-      relationships: 1.0
-      bridge_relationships: 1.0
-      community_reports: 1.0
-      claims: 1.0
-      lightrag_entities: 1.0
-      lightrag_relationships: 1.0
-      lightrag_endpoint_entities: 1.0
-      lightrag_incident_relationships: 1.0
-      lightrag_chunks: 1.0
-      lightrag_linked_chunks: 1.0
-      opensearch_all: 1.0
-      opensearch_community_reports: 1.0
-      results: 1.0
+    # bucket's 1/(rrf_k + rank) term, "weighted" scales its scores. A bucket
+    # without a key weighs 1.0. The buckets the strategies emit: local
+    # (graph_entities, text_units, relationships, bridge_relationships,
+    # community_reports, claims), LightRAG (lightrag_entities,
+    # lightrag_relationships, lightrag_endpoint_entities,
+    # lightrag_incident_relationships, lightrag_chunks,
+    # lightrag_linked_chunks), simple (opensearch_all), global
+    # (opensearch_community_reports, text_units) and drift (results).
+    fusion_weights: {}
 
   # Reranking Configuration
   reranking:
@@ -854,6 +841,14 @@ search:
       community: 0.10
       claim: 0.07
       general: 0.10
+
+  # How long a query waits for one OpenSearch or Neptune request (and for
+  # opening a Neptune connection), and how many attempts an OpenSearch query
+  # request gets on a timeout or a 429/502/503/504. A store that does not
+  # answer fails the query instead of answering from no context. Ingestion
+  # keeps its own, longer limits.
+  store_timeout_seconds: 30
+  store_max_attempts: 3
 
 # Memory Configuration
 memory:

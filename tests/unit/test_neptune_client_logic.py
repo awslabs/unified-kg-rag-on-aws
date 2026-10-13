@@ -14,11 +14,13 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from gremlin_python.driver.protocol import GremlinServerError
 
 from unified_kg_rag.adapters.aws import neptune as neptune_mod
 from unified_kg_rag.adapters.aws.neptune import NeptuneClient
+from unified_kg_rag.adapters.retrieval.base import is_fatal_retrieval_error
 from unified_kg_rag.domain.models import Config
-from unified_kg_rag.shared import AWSServiceError
+from unified_kg_rag.shared import AWSServiceError, StoreConnectionError
 
 pytestmark = pytest.mark.unit
 
@@ -96,13 +98,13 @@ def test_create_connection_builds_url_and_iam_headers(mocker) -> None:
             self,
             url: str,
             traversal_source: str,
-            headers: dict,
             pool_size: int | None = None,
             max_workers: int | None = None,
+            transport_factory: Any = None,
         ) -> None:
             captured["url"] = url
             captured["traversal_source"] = traversal_source
-            captured["headers"] = headers
+            captured["transport"] = transport_factory()
             captured["pool_size"] = pool_size
             captured["max_workers"] = max_workers
 
@@ -120,8 +122,9 @@ def test_create_connection_builds_url_and_iam_headers(mocker) -> None:
     assert isinstance(conn, _FakeConn)
     assert captured["url"] == "wss://db.example.com:8182/gremlin"
     assert captured["traversal_source"] == "g"
-    # IAM enabled -> signed headers present.
-    assert "Authorization" in captured["headers"]
+    # IAM enabled -> every websocket handshake is signed when it opens.
+    signed = captured["transport"]._sign(captured["url"])
+    assert signed["Authorization"].startswith("AWS4-HMAC-SHA256")
     # pool_size/max_workers wired from config (default 4) for concurrent writes.
     assert captured["pool_size"] == 4
     assert captured["max_workers"] == 4
@@ -137,11 +140,11 @@ def test_create_connection_no_iam_empty_headers(mocker) -> None:
             self,
             url: str,
             traversal_source: str,
-            headers: dict,
             pool_size: int | None = None,
             max_workers: int | None = None,
+            transport_factory: Any = None,
         ) -> None:
-            captured["headers"] = headers
+            captured["transport"] = transport_factory()
 
     mocker.patch.object(neptune_mod, "DriverRemoteConnection", _FakeConn)
     fake_g = mocker.MagicMock()
@@ -152,7 +155,7 @@ def test_create_connection_no_iam_empty_headers(mocker) -> None:
         return_value=mocker.MagicMock(withRemote=lambda c: fake_g),
     )
     client._create_connection()
-    assert captured["headers"] == {}
+    assert captured["transport"]._sign is None
 
 
 def test_failed_connection_probe_closes_the_connection(mocker) -> None:
@@ -192,7 +195,7 @@ def test_create_connection_without_ssl_uses_plain_websocket(mocker) -> None:
     _client(config)._create_connection()
     kwargs = connection.call_args.kwargs
     assert kwargs["url"] == "ws://localhost:8182/gremlin"
-    assert kwargs["headers"] == {}
+    assert kwargs["transport_factory"]()._sign is None
 
 
 @pytest.mark.parametrize(
@@ -221,8 +224,44 @@ def test_create_connection_wraps_failure(mocker) -> None:
         raise RuntimeError("network down")
 
     mocker.patch.object(neptune_mod, "DriverRemoteConnection", _boom)
-    with pytest.raises(AWSServiceError, match="Failed to establish connection"):
+    with pytest.raises(AWSServiceError, match="probe failed.*network down") as caught:
         client._create_connection()
+    assert not isinstance(caught.value, StoreConnectionError)
+
+
+def _probe_failing_with(mocker, exc: Exception) -> NeptuneClient:
+    mocker.patch.object(neptune_mod, "DriverRemoteConnection")
+    g = mocker.MagicMock()
+    g.V.return_value.limit.return_value.toList.side_effect = exc
+    mocker.patch.object(
+        neptune_mod, "traversal", return_value=mocker.MagicMock(withRemote=lambda c: g)
+    )
+    return _client(_config_with_neptune(endpoint="localhost", use_iam=False))
+
+
+def test_a_refused_connection_is_a_store_connection_error(mocker) -> None:
+    client = _probe_failing_with(mocker, ConnectionRefusedError("refused"))
+    with pytest.raises(StoreConnectionError, match="not reachable"):
+        client._create_connection()
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        TimeoutError(),
+        GremlinServerError(
+            {"code": 500, "message": "ThrottlingException", "attributes": {}}
+        ),
+    ],
+    ids=["timeout", "throttled"],
+)
+def test_a_slow_or_throttled_probe_stays_transient(mocker, exc: Exception) -> None:
+    # Every probe failure was "Failed to establish connection" (a fatal
+    # marker), so a probe that timed out or was throttled failed the query.
+    client = _probe_failing_with(mocker, exc)
+    with pytest.raises(AWSServiceError) as caught:
+        client._create_connection()
+    assert not is_fatal_retrieval_error(caught.value)
 
 
 # --- delete_vertices_in_batches ------------------------------------------

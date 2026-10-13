@@ -548,7 +548,7 @@ LLM 단계는 Bedrock I/O가 병목이므로 동시성을 CPU 수보다 훨씬 �
 | `search.hybrid.lexical_weight` | `0.5` | OpenSearch 하이브리드 파이프라인의 어휘 검색 가중치입니다(벡터는 `vector_weight`, 역시 `0.5`). `run-ingestion`이 실행할 때마다 파이프라인(`indexing.opensearch.hybrid_search_pipeline_name`)을 다시 쓰므로, 바꾼 값은 질의 시점이 아니라 다음 수집 실행부터 적용됩니다. 같은 이름을 쓰는 도메인의 모든 네임스페이스가 파이프라인 하나를 공유하므로, 가중치가 다른 설정에는 별도 파이프라인 이름을 지정합니다. |
 | `search.fusion.method` | `"rrf"` | `rrf`(reciprocal rank fusion) 또는 `weighted`입니다. |
 | `search.fusion.rrf_k` | `60` | RRF 상수 `k`입니다. |
-| `search.fusion.fusion_weights` | 버킷마다 `1.0` | 소스 버킷별 가중치입니다. `rrf`와 `weighted` 모두에서 각 버킷의 기여도에 곱합니다. |
+| `search.fusion.fusion_weights` | `{}`(모든 버킷 `1.0`) | 소스 버킷별 가중치입니다. `rrf`와 `weighted` 모두에서 각 버킷의 기여도에 곱합니다. 버킷 이름은 템플릿에 있습니다. |
 | `search.fusion.diversity_lambda` | `0.5` | MMR 균형값입니다. `1.0`은 관련도만, `0.0`은 다양성을 최대로 반영합니다. |
 | `search.reranking.enabled` | `true` | 융합 결과를 `rerank_model_id`(`cohere.rerank-v3-5:0`)로 재순위화합니다. |
 | `search.reranking.top_k` | `100` | 재순위화 모델에 보내는 후보 수입니다. |
@@ -568,6 +568,8 @@ LLM 단계는 Bedrock I/O가 병목이므로 동시성을 CPU 수보다 훨씬 �
 | `search.drift_search.enable_llm_convergence` | `false` | 반복마다 LLM으로 수렴 여부를 확인합니다(반복당 호출 1회 추가). |
 | `search.token_manager.max_context_tokens` | `30000` | 답변 프롬프트에 넣는 검색 컨텍스트의 토큰 예산입니다(아래 참고 사항 참고). |
 | `search.token_manager.context_window_headroom_ratio` | `0.1` | 예산을 도출할 때(`max_context_tokens: null`) 남겨 두는 컨텍스트 창 비율입니다. |
+| `search.store_timeout_seconds` | `30` | 질의가 OpenSearch나 Neptune 요청 하나(그리고 Neptune 연결 열기)를 기다리는 시간입니다. 응답하지 않는 저장소는 컨텍스트 없이 답하지 않고 질의를 실패시킵니다. 수집은 자체 제한을 따릅니다. |
+| `search.store_max_attempts` | `3` | 시간 초과나 429/502/503/504를 받은 OpenSearch 질의 요청의 시도 횟수(첫 시도 포함)입니다. 멈춘 클러스터는 약 `3 x 30`초 뒤 질의를 실패시킵니다. Neptune 질의 요청은 재시도하지 않습니다. |
 
 섹션 유형별 비율(`search.token_manager.type_budgets`)과 `local` 검색의 유형별 슬롯
 할당(`search.local_search.type_quota`)은 템플릿을 참고하세요.

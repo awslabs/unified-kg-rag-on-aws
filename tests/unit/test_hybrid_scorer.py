@@ -122,11 +122,11 @@ class TestReciprocalRankFusion:
         assert fused[0] is not original
 
     def test_default_weights_reproduce_plain_rrf(self) -> None:
-        # Default fusion_weights are all 1.0 (and an unconfigured bucket defaults
-        # to 1.0 too), so the RRF *term* is the unweighted 1/(k+rank) — the native
-        # blend above is the only other contribution.
+        # No fusion_weights by default, and an unconfigured bucket weighs 1.0,
+        # so the RRF *term* is the unweighted 1/(k+rank) — the native blend
+        # above is the only other contribution.
         scorer = _scorer()
-        assert all(w == 1.0 for w in scorer.fusion_config.fusion_weights.values())
+        assert scorer.fusion_config.fusion_weights == {}
         k = scorer.fusion_config.rrf_k
         fused = scorer._reciprocal_rank_fusion(
             {"unconfigured_bucket": [_r("only", 0.9, "1")]}
@@ -166,7 +166,7 @@ class TestWeightedFusion:
         assert by_content["x"] == pytest.approx(2.0)
         assert by_content["y"] == pytest.approx(0.5)
 
-    def test_unweighted_source_defaults_to_one(self, caplog) -> None:
+    def test_unweighted_source_defaults_to_one(self) -> None:
         config = Config()
         config.search.reranking.enabled = False
         config.search.fusion.fusion_weights = {"known": 2.0}

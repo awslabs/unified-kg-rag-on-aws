@@ -172,9 +172,6 @@ async def test_opensearch_retriever_logs_no_query_text(
     object.__setattr__(inst, "_config", config)
     object.__setattr__(inst, "_opensearch_config", config.indexing.opensearch)
     object.__setattr__(inst, "_max_size", config.indexing.opensearch.max_query_size)
-    object.__setattr__(
-        inst, "_terms_batch_size", config.indexing.opensearch.terms_batch_size
-    )
     object.__setattr__(inst, "_field_mappings", inst._initialize_field_mappings())
 
     async def no_vector(*_args: Any, **_kwargs: Any) -> None:

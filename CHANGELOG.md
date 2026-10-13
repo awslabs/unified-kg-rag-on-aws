@@ -66,6 +66,11 @@ ignored, so check the start-up warnings after upgrading.
   `SearchQuery.metadata["lightrag_mode"]` alias (#212).
 - A filter key that no retriever of the strategy declares raises
   `InvalidFilterError` (#123).
+- `indexing.opensearch.terms_batch_size`, `max_total_clauses` and
+  `reserved_clauses` are removed with the terms-filter batching they drove.
+  A list filter is one `terms` query whatever its length; one with more
+  values than the index's `max_terms_count` (65,536 by default) raises
+  `InvalidFilterError` (#258).
 - IaC: `create_guardrail` decides whether the stack owns a guardrail; bring
   your own with `-c create_guardrail=false` (#103).
 - `run-ingestion --repair-metadata` is removed. It loaded the metadata it
@@ -257,6 +262,9 @@ Library API (Python callers and custom backends).
   `guardrail_version` (#211).
 
 ### Changed
+- `search.fusion.fusion_weights` defaults to `{}`: every bucket weighs 1.0,
+  as the 15 listed 1.0 entries did, and weighted fusion no longer warns
+  about a bucket without a weight on every query (#258).
 - `unified_kg_rag.visualization` exports only `GraphVisualizationManager`;
   import the renderers from `unified_kg_rag.adapters.renderers` and the
   embedder and reducer from `unified_kg_rag.visualization.embeddings` (#246).
@@ -364,6 +372,46 @@ Library API (Python callers and custom backends).
   claims read back carried no suffix, so the update went to the default
   suffix's index: the claim kept the deleted text units, and a claim with the
   same id there was overwritten (#256).
+- The answer context stays within `max_tokens` (and the context budget).
+  Each section's `[source_id]` prefix and each section type's header were
+  not counted, so an explicit 600-token budget rendered up to 690 tokens.
+  Sections are now counted as rendered, and the headers of the types present
+  come off the budget (#258).
+- A long question no longer fails its lexical search. Lucene allows 1,024
+  clauses per query and a `multi_match` makes one per term per field, so
+  about 1,100 words (or 1,100 Han characters) failed with a misleading
+  "Check the query filters" `ConfigurationError` and about 600 words
+  degraded to no lexical hits. The lexical side now searches the first 100
+  words (150 characters of Hangul, Han or Kana text); the vector side still
+  embeds the whole question (#258).
+- A query whose filters list many ids sends one search per index. Long list
+  filters were split into batches and every combination of the batches
+  searched in turn: two 3,000-id filters took 400 sequential requests, three
+  1,000-id filters 1,000, and the hybrid pipeline normalized each batch's
+  scores on its own, so hits of different batches were ranked against
+  each other on incomparable scores (#258).
+- A query whose OpenSearch search is denied (HTTP 401/403, such as a
+  fine-grained access control role without `indices:data/read/search`)
+  fails with `ConfigurationError`. The 403 body names no permission keyword,
+  so the query answered "could not find relevant information" and reported
+  success. A Neptune that refuses the websocket (HTTP 401/403) fails the same
+  way (#258).
+- Queries no longer hang on a store that stops answering. The query-side
+  OpenSearch client waits `search.store_timeout_seconds` (30) per request in
+  `search.store_max_attempts` (3) attempts instead of the indexing client's
+  180 s in 6, and Neptune connects, reads and writes within the same
+  timeout; it had none, so a query (and the process exit) blocked forever.
+  A request still unanswered fails the query with `StoreConnectionError`; it
+  answered from no context and reported success (#258).
+- A Neptune connection the server closed (a restart or failover) is
+  dropped and the next query reconnects; every later query failed with
+  `Connection was already closed.` until the process restarted. Every pooled
+  websocket is now signed when it opens, so with IAM auth one first used more
+  than five minutes after the connection was built is no longer refused.
+  Every failed connection probe read as a connection failure; a throttled or
+  failed probe request is now transient like any other, a timed-out one is
+  reported as such, and only a refused or lost connection is a
+  `StoreConnectionError` (#258).
 - `ragas` evaluation counts each retrieved context once per batch. With
   `context_precision` selected, the count-capped selection walked the
   contexts again, which repeated every CountTokens call once a batch had more

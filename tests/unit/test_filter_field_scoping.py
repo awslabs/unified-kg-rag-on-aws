@@ -62,15 +62,6 @@ def _retriever(config: Config, client: _FakeOpenSearchClient) -> OpenSearchRetri
     object.__setattr__(inst, "_opensearch_config", config.indexing.opensearch)
     object.__setattr__(inst, "_max_size", config.indexing.opensearch.max_query_size)
     object.__setattr__(inst, "_max_result_window", 10000)
-    object.__setattr__(
-        inst, "_terms_batch_size", config.indexing.opensearch.terms_batch_size
-    )
-    object.__setattr__(
-        inst, "_max_total_clauses", config.indexing.opensearch.max_total_clauses
-    )
-    object.__setattr__(
-        inst, "_reserved_clauses", config.indexing.opensearch.reserved_clauses
-    )
     object.__setattr__(inst, "_field_mappings", inst._initialize_field_mappings())
     object.__setattr__(
         inst, "_index_filter_fields", inst._initialize_index_filter_fields()
@@ -123,6 +114,55 @@ async def _search_all(
         )
     )
     return retriever, client
+
+
+class _CountingOpenSearchClient(_FakeOpenSearchClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.requests = 0
+
+    async def asearch(self, index: str, body: dict[str, Any], **kw: Any) -> dict:
+        self.requests += 1
+        return await super().asearch(index, body, **kw)
+
+
+async def test_long_list_filters_are_sent_in_one_request(config: Config) -> None:
+    # A terms query is one clause however many values it holds. Batching the
+    # lists (and searching the cross product of the batches) sent 400
+    # sequential requests for two 3,000-id filters, each ranked on its own.
+    client = _CountingOpenSearchClient()
+    retriever = _retriever(config, client)
+    ids = [f"t{i}" for i in range(3000)]
+    communities = [f"c{i}" for i in range(3000)]
+    text_units = config.indexing.opensearch.text_units_index_prefix
+    await retriever.aretrieve(
+        SearchQuery(
+            query="supply terms",
+            search_type=SearchType.LEXICAL,
+            index_prefixes=[text_units],
+            filters={"id": ids, "community_ids": communities},
+        )
+    )
+    assert client.requests == 1
+    body = client.searches[_alias(retriever, text_units)]
+    assert {"terms": {"id": ids}} in _filter_clauses(body)
+    assert {"terms": {"community_ids": communities}} in _filter_clauses(body)
+
+
+async def test_a_list_filter_beyond_max_terms_count_is_rejected(
+    config: Config,
+) -> None:
+    client = _CountingOpenSearchClient()
+    retriever = _retriever(config, client)
+    with pytest.raises(InvalidFilterError, match="65537 values.*65536"):
+        await retriever.aretrieve(
+            SearchQuery(
+                query="supply terms",
+                search_type=SearchType.LEXICAL,
+                filters={"id": [f"t{i}" for i in range(65537)]},
+            )
+        )
+    assert client.requests == 0
 
 
 async def test_attribute_key_filters_only_attribute_bearing_indexes(

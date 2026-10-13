@@ -41,7 +41,10 @@ RETRYABLE_BULK_ITEM_STATUSES = frozenset({429, 502, 503, 504})
 # Bounds for one delete-index request. The names are joined into the URL
 # path, and OpenSearch's default max request line is 4 KB; staying well under
 # it leaves room for the host, URL encoding and query string.
-# Per-request timeout and transport retries of both OpenSearch clients.
+# Per-request timeout and transport retries of the sync (indexing) client. The
+# async client serves queries and takes search.store_timeout_seconds and
+# search.store_max_attempts instead: a hung cluster blocked a query for
+# 6 x 180 s before it answered from no context.
 _REQUEST_TIMEOUT_SECONDS = 180
 _CLIENT_MAX_RETRIES = 5
 _CLIENT_RETRY_STATUSES = (429, 502, 503, 504)
@@ -448,6 +451,7 @@ class OpenSearchClient:
         if not self.opensearch_config.endpoint:
             raise AWSServiceError("OpenSearch endpoint is not configured.")
 
+        search = self.config.search
         return {
             "hosts": [
                 {
@@ -458,13 +462,17 @@ class OpenSearchClient:
             "http_auth": self._get_auth(async_mode=async_mode),
             "use_ssl": self.opensearch_config.use_ssl,
             "verify_certs": self.opensearch_config.verify_certs,
-            "timeout": _REQUEST_TIMEOUT_SECONDS,
-            # One retry policy for the sync and async clients. The async client
-            # serves the whole query hot path; without it opensearch-py
-            # defaults to retry_on_timeout=False and retry_on_status=(502, 503,
-            # 504), so a 429 (throttling) would surface as a TransportError and
-            # silently degrade that index to zero results.
-            "max_retries": _CLIENT_MAX_RETRIES,
+            "timeout": (
+                search.store_timeout_seconds if async_mode else _REQUEST_TIMEOUT_SECONDS
+            ),
+            # Both clients retry timeouts and 429s. The async client serves the
+            # whole query hot path; with opensearch-py's defaults
+            # (retry_on_timeout=False, retry_on_status=(502, 503, 504)) a 429
+            # (throttling) would surface as a TransportError and silently
+            # degrade that index to zero results.
+            "max_retries": (
+                search.store_max_attempts - 1 if async_mode else _CLIENT_MAX_RETRIES
+            ),
             "retry_on_timeout": True,
             "retry_on_status": _CLIENT_RETRY_STATUSES,
         }

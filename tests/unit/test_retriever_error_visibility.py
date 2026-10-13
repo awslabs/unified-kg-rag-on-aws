@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import json
 import socket
+import threading
 import weakref
 from collections.abc import Iterator
 
@@ -32,6 +33,7 @@ from opensearchpy import (
 )
 from opensearchpy.exceptions import NotFoundError, TransportError
 
+from unified_kg_rag.adapters.aws.neptune import NeptuneClient
 from unified_kg_rag.adapters.aws.opensearch import (
     OpenSearchClient,
     _handle_async_opensearch_errors,
@@ -72,7 +74,6 @@ def test_connection_error_is_fatal() -> None:
         "Cannot get AWS credentials for OpenSearch IAM.",
         "OpenSearch endpoint is not configured.",
         "Failed to connect to OpenSearch.",
-        "Failed to establish connection to Neptune: timeout",
         "403 Forbidden",
         "AccessDenied",
     ],
@@ -219,12 +220,185 @@ async def test_unreachable_neptune_fails_the_retrieval(
     class _Client:
         g = traversal().with_remote(connection)
 
+        def reset(self, g: object = None) -> None:
+            pass
+
     retriever = _neptune_retriever(config, _Client())
     try:
         with pytest.raises(StoreConnectionError, match="Neptune is not reachable"):
             await retriever.aretrieve(_SEEDED)
     finally:
         await asyncio.to_thread(connection.close)
+
+
+# --- stores that stop answering mid-session --------------------------------
+#
+# Regression: the query client shared the indexing client's 180 s timeout and
+# six attempts, so a hung OpenSearch blocked a query for ~18 minutes and then
+# answered from no context; a Neptune that accepted the socket but never
+# answered blocked the query (and the process exit) forever; and a Neptune
+# connection the server had closed (restart, failover) was reused forever.
+
+
+def _local_neptune_config(config: Config, port: int, timeout: float) -> Config:
+    config.aws.neptune.endpoint = "127.0.0.1"
+    config.aws.neptune.port = port
+    config.aws.neptune.use_ssl = False
+    config.aws.neptune.use_iam = False
+    config.search.store_timeout_seconds = timeout
+    return config
+
+
+@pytest.mark.timeout(30)
+async def test_a_silent_opensearch_fails_the_query_within_its_timeout(
+    config: Config, silent_port: int
+) -> None:
+    config = _local_opensearch_config(config, silent_port)
+    config.search.store_timeout_seconds = 0.2
+    config.search.store_max_attempts = 2
+    retriever = _opensearch_retriever(config)
+    client = OpenSearchClient(config)
+    object.__setattr__(retriever, "_opensearch_client", client)
+    try:
+        with pytest.raises(StoreConnectionError, match="did not answer.*2 attempt"):
+            await retriever.aretrieve(
+                SearchQuery(query="hello", search_type=SearchType.LEXICAL)
+            )
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.timeout(30)
+async def test_a_silent_neptune_fails_the_query_within_its_timeout(
+    config: Config, silent_port: int
+) -> None:
+    config = _local_neptune_config(config, silent_port, timeout=0.3)
+    client = NeptuneClient(config, timeout_seconds=0.3)
+    retriever = _neptune_retriever(config, client)
+    try:
+        with pytest.raises(StoreConnectionError, match="did not answer within 0.3"):
+            await retriever.aretrieve(_SEEDED)
+    finally:
+        await asyncio.to_thread(client.close)
+
+
+@pytest.fixture
+def forbidden_port() -> Iterator[int]:
+    """A localhost port answering every HTTP request with 403 Forbidden."""
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        sock.listen(8)
+        sock.settimeout(10)
+
+        def _serve() -> None:
+            try:
+                while True:
+                    conn, _ = sock.accept()
+                    with conn:
+                        conn.recv(65536)
+                        conn.sendall(
+                            b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n"
+                            b"Connection: close\r\n\r\n"
+                        )
+            except OSError:
+                return
+
+        thread = threading.Thread(target=_serve, daemon=True)
+        thread.start()
+        yield sock.getsockname()[1]
+
+
+@pytest.mark.timeout(30)
+async def test_a_denied_neptune_connection_is_a_configuration_error(
+    config: Config, forbidden_port: int
+) -> None:
+    config = _local_neptune_config(config, forbidden_port, timeout=5)
+    client = NeptuneClient(config, timeout_seconds=5)
+    retriever = _neptune_retriever(config, client)
+    with pytest.raises(ConfigurationError, match="HTTP 403.*neptune-db:connect"):
+        await retriever.aretrieve(_SEEDED)
+
+
+class _FlakyConnection:
+    """A connection whose traversals fail as a websocket the server closed."""
+
+    def __init__(self, **_: object) -> None:
+        self.closed = False
+
+    def is_closed(self) -> bool:
+        return self.closed
+
+    def close(self) -> None:
+        self.closed = True
+
+
+async def test_a_lost_neptune_connection_is_replaced_on_the_next_query(
+    config: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from unified_kg_rag.adapters.aws import neptune as neptune_module
+
+    opened: list[_FlakyConnection] = []
+
+    def _connect(self: NeptuneClient) -> _FlakyConnection:
+        opened.append(_FlakyConnection())
+        return opened[-1]
+
+    monkeypatch.setattr(NeptuneClient, "_create_connection", _connect)
+    monkeypatch.setattr(
+        neptune_module, "traversal", lambda: _Remote(Graph().traversal())
+    )
+    outcomes: list[Exception | None] = [
+        RuntimeError("Connection was already closed."),
+        None,
+    ]
+
+    def _to_list(self) -> list:
+        outcome = outcomes.pop(0)
+        if outcome is not None:
+            raise outcome
+        return []
+
+    monkeypatch.setattr(GraphTraversal, "to_list", _to_list)
+    config.aws.neptune.endpoint = "neptune.example.invalid"
+    client = NeptuneClient(config)
+    retriever = _neptune_retriever(config, client)
+
+    with pytest.raises(StoreConnectionError, match="Connection was already closed"):
+        await retriever.aretrieve(_SEEDED)
+    assert len(opened) == 1 and opened[0].closed
+
+    assert await retriever.aretrieve(_SEEDED) == []
+    assert len(opened) == 2 and not opened[1].closed
+
+
+class _Remote:
+    """``traversal()`` stand-in: ``withRemote`` returns a local source."""
+
+    def __init__(self, source: object) -> None:
+        self._source = source
+
+    def withRemote(self, _connection: object) -> object:  # noqa: N802
+        return self._source
+
+
+def test_reset_spares_a_newer_connection(
+    config: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from unified_kg_rag.adapters.aws import neptune as neptune_module
+
+    monkeypatch.setattr(
+        NeptuneClient, "_create_connection", lambda self: _FlakyConnection()
+    )
+    monkeypatch.setattr(neptune_module, "traversal", lambda: _Remote(object()))
+    config.aws.neptune.endpoint = "neptune.example.invalid"
+    client = NeptuneClient(config)
+    stale_g = client.g
+    client.reset(stale_g)
+    current_g, current_connection = client.g, client.connection
+    # A second traversal that failed on the stale connection must not drop
+    # the one the next query already opened.
+    client.reset(stale_g)
+    assert client.g is current_g and not current_connection.is_closed()
 
 
 # --- OpenSearchRetriever top-level handler -------------------------------
@@ -235,9 +409,6 @@ def _opensearch_retriever(config: Config) -> OpenSearchRetriever:
     object.__setattr__(inst, "_config", config)
     object.__setattr__(inst, "_opensearch_config", config.indexing.opensearch)
     object.__setattr__(inst, "_max_size", config.indexing.opensearch.max_query_size)
-    object.__setattr__(
-        inst, "_terms_batch_size", config.indexing.opensearch.terms_batch_size
-    )
     object.__setattr__(inst, "_field_mappings", inst._initialize_field_mappings())
     object.__setattr__(
         inst,
@@ -246,6 +417,7 @@ def _opensearch_retriever(config: Config) -> OpenSearchRetriever:
     )
     object.__setattr__(inst, "_embedding_dimension", _QUERY_DIMENSION)
     object.__setattr__(inst, "_embedding_checked_aliases", set())
+    object.__setattr__(inst, "_embedding_check_denied_logged", False)
     return inst
 
 
@@ -370,11 +542,9 @@ class _ClientRaisingOnG:
 
 
 async def test_neptune_retriever_reraises_fatal(config: Config) -> None:
-    client = _ClientRaisingOnG(
-        AWSServiceError("Failed to establish connection to Neptune: down")
-    )
+    client = _ClientRaisingOnG(StoreConnectionError("Neptune is not reachable"))
     retriever = _neptune_retriever(config, client)
-    with pytest.raises(AWSServiceError, match="connection"):
+    with pytest.raises(StoreConnectionError, match="not reachable"):
         await retriever.aretrieve(_SEEDED)
 
 
@@ -422,9 +592,15 @@ async def test_neptune_execute_traversal_degrades_on_transient(
 class _ClientWithLocalGraph:
     """A fake NeptuneClient exposing a real, connectionless traversal source."""
 
+    def __init__(self) -> None:
+        self.resets: list[object] = []
+
     @property
     def g(self):
         return Graph().traversal()
+
+    def reset(self, g: object = None) -> None:
+        self.resets.append(g)
 
 
 async def test_neptune_fatal_traversal_error_surfaces_from_aretrieve(
@@ -917,8 +1093,50 @@ async def test_a_denied_search_stays_fatal(config: Config) -> None:
     retriever = _retriever_over(config, {}, search_error=_denied("asearch"))
     retriever._opensearch_client.mappings = {}
 
-    with pytest.raises(AWSServiceError, match="status=403"):
+    with pytest.raises(ConfigurationError, match="denied the search.*status=403"):
         await retriever.aretrieve(_text_units_query(config))
+
+
+# Fine-grained access control's 403 names no fatal marker ("no permissions"),
+# so a role without indices:data/read/search answered every query from no
+# context while the query reported success.
+_FGAC_DENIED_BODY = {
+    "error": {
+        "root_cause": [
+            {
+                "type": "security_exception",
+                "reason": "no permissions for [indices:data/read/search] "
+                "and User [name=query-role, backend_roles=[query-role]]",
+            }
+        ],
+        "type": "security_exception",
+        "reason": "no permissions for [indices:data/read/search] "
+        "and User [name=query-role, backend_roles=[query-role]]",
+    },
+    "status": 403,
+}
+
+
+@pytest.mark.parametrize("status", [401, 403])
+async def test_a_search_denied_by_fine_grained_access_control_is_fatal(
+    config: Config, status: int
+) -> None:
+    raw = _server_error(AsyncHttpConnection, status, _FGAC_DENIED_BODY)
+    with pytest.raises(AWSServiceError) as wrapped:
+        await _handle_async_opensearch_errors(_raise_async(raw))(None)
+    assert not is_fatal_retrieval_error(wrapped.value)
+    retriever = _retriever_over(config, {}, search_error=wrapped.value)
+    retriever._opensearch_client.mappings = {}
+
+    with pytest.raises(ConfigurationError, match="indices:data/read/search"):
+        await retriever.aretrieve(_text_units_query(config))
+
+
+def _raise_async(exc: Exception):
+    async def _raise(_self: object) -> None:
+        raise exc
+
+    return _raise
 
 
 # --- rejected requests (HTTP 400) -------------------------------------------

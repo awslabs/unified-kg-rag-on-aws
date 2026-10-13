@@ -1700,21 +1700,6 @@ class OpenSearchIndexingConfig(BaseModel):
         ge=1,
         description="Maximum number of hits returned per OpenSearch query",
     )
-    terms_batch_size: int = Field(
-        default=150,
-        ge=1,
-        description="Batch size when partitioning large terms filters to stay under the clause limit",
-    )
-    max_total_clauses: int = Field(
-        default=600,
-        ge=1,
-        description="Upper bound on boolean clauses per query (must stay under the cluster's max_clause_count)",
-    )
-    reserved_clauses: int = Field(
-        default=300,
-        ge=0,
-        description="Clause budget reserved for non-filter query parts when batching terms filters",
-    )
     index_settings: dict[str, Any] = Field(
         default_factory=lambda: {
             "number_of_shards": 1,
@@ -1862,23 +1847,7 @@ class FusionConfig(BaseModel):
         ),
     )
     fusion_weights: dict[str, float] = Field(
-        default_factory=lambda: {
-            "graph_entities": 1.0,
-            "text_units": 1.0,
-            "relationships": 1.0,
-            "bridge_relationships": 1.0,
-            "community_reports": 1.0,
-            "claims": 1.0,
-            "lightrag_entities": 1.0,
-            "lightrag_relationships": 1.0,
-            "lightrag_endpoint_entities": 1.0,
-            "lightrag_incident_relationships": 1.0,
-            "lightrag_chunks": 1.0,
-            "lightrag_linked_chunks": 1.0,
-            "opensearch_all": 1.0,
-            "opensearch_community_reports": 1.0,
-            "results": 1.0,
-        },
+        default_factory=dict,
         description=(
             "Per-source-bucket weights, applied by both fusion methods: RRF "
             "scales each bucket's 1/(rrf_k + rank) term and weighted fusion "
@@ -1889,7 +1858,7 @@ class FusionConfig(BaseModel):
             "lightrag_endpoint_entities, lightrag_incident_relationships, "
             "lightrag_chunks, lightrag_linked_chunks), simple (opensearch_all), "
             "global (opensearch_community_reports, text_units) and drift "
-            "(results). A bucket without a key defaults to 1.0."
+            "(results). A bucket without a key weighs 1.0 (the default: none)."
         ),
     )
 
@@ -2438,6 +2407,25 @@ class SearchConfig(BaseModel):
     )
     token_manager: TokenManagerConfig = Field(
         default_factory=TokenManagerConfig, description="Token management configuration"
+    )
+    store_timeout_seconds: float = Field(
+        default=30.0,
+        gt=0,
+        description=(
+            "Seconds a query waits for one OpenSearch or Neptune request (and "
+            "for opening a Neptune connection) before giving up on it. A store "
+            "that does not answer fails the query instead of answering from "
+            "no context. Ingestion keeps its own, longer limits."
+        ),
+    )
+    store_max_attempts: int = Field(
+        default=3,
+        ge=1,
+        description=(
+            "Attempts of one OpenSearch query request that timed out or got a "
+            "429/502/503/504, including the first. Neptune query requests are "
+            "not retried."
+        ),
     )
 
 

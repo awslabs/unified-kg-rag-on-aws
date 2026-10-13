@@ -453,7 +453,7 @@ CLI: `run-eval --eval-data-path <json> [--search-strategy ...]`.
 The nested Pydantic tree in `domain/models/config.py` (root `Config`), loaded by `shared/config.py` (`get_config`); the schema example is `config-template.yaml`.
 
 - Sections: `aws` (bedrock/neptune/opensearch/s3/dynamodb), `fixing`, `processing` (chunking/translation/graph_extraction/gleaning/claim_extraction), `graph` (analysis/community_detection/visualization), `indexing` (opensearch/neptune), `search` (hybrid/fusion/reranking/global_search/drift_search/lightrag_search/token_manager), `memory`, `cache`, `logging`, `evaluation`, `custom_prompts`.
-- **Config-based generalization**: The language→analyzer mapping (`language_analyzers`), OpenSearch clause budget (`max_total_clauses`, etc.), LightRAG fallback length, and eigenvector convergence parameters are all exposed via config.
+- **Config-based generalization**: The language→analyzer mapping (`language_analyzers`), LightRAG fallback length, and eigenvector convergence parameters are all exposed via config.
 - Adding a new config section: Define a Pydantic `BaseModel` → attach to its parent via `Field(default_factory=...)` → document in `config-template.yaml`.
 
 ---
@@ -464,7 +464,7 @@ The nested Pydantic tree in `domain/models/config.py` (root `Config`), loaded by
 
 - **Port-based fake adapters** (`fixtures/fakes/`): In-memory implementations of GraphStore/VectorStore/DocStatus verify domain logic without real AWS (the test-side benefit of hexagonal architecture).
 - **moto**: Verifies the DynamoDB/S3 adapters against the boto3 surface.
-- Layers: unit (models/registry/merge/dual-keyword/evaluation/token-counter/clause budget/lineage relevance), property (hypothesis: merge laws and incremental-vs-full-build convergence, interrupted runs, fusion monotonicity, MinHash and token-estimate equivalence, hash length; the `DocStatusPort.diff` partition is checked against every registry in `tests/integration/test_doc_status_conformance.py`), integration (incremental add/change/delete cycles), regression.
+- Layers: unit (models/registry/merge/dual-keyword/evaluation/token-counter/lineage relevance), property (hypothesis: merge laws and incremental-vs-full-build convergence, interrupted runs, fusion monotonicity, MinHash and token-estimate equivalence, hash length; the `DocStatusPort.diff` partition is checked against every registry in `tests/integration/test_doc_status_conformance.py`), integration (incremental add/change/delete cycles), regression.
 - Markers: `unit`, `integration`, `property`, `aws` (real AWS, excluded in CI), `slow`. `asyncio_mode = "auto"`.
 
 Run: `uv run pytest -m "not aws" --cov=unified_kg_rag`.
