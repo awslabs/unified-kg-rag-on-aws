@@ -306,6 +306,11 @@ Library API (Python callers and custom backends).
   answer's polarity, as it already did for `yes`/`no`. Such a gold was
   matched as a substring, so `예` scored 1.0 against `아니요, ... 예외 ...`
   (#246).
+- A small per-query context budget (`RAGInput.max_tokens` of 513 or less)
+  no longer yields an empty context and an abstention. The 512-token prompt
+  buffer is now taken from the configured or derived
+  `search.token_manager.max_context_tokens` only, not from an explicit
+  per-query budget (#PR).
 - With MMR diversity on (`search.fusion.diversity_lambda` < 1, the default),
   `local` and `drift` queries keep every reserved text-chunk slot. The
   diversity cut ran once across all result types before the per-type quota,
