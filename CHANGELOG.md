@@ -342,6 +342,12 @@ Library API (Python callers and custom backends).
   answer. A polarity word other than `yes` answers only when sentence
   punctuation, a dash or the line end follows it, and a word next to `/` is
   skipped (#255).
+- An automatic resume of an incremental run (same `--pipeline-id`) whose
+  extraction settings changed, such as a stage switched on since the last
+  run or another extraction model, restarts at `document_loading`. It kept
+  the previous run's delta and extraction fingerprint, so the changed stages
+  ran only on that delta's documents and the next run with a new pipeline id
+  re-extracted the whole corpus (#PR).
 - Deleting a document under a non-default index suffix
   (`processing.document_parsing.index_value`) strips its text units from the
   claims it shared with other documents in that suffix's claims index. The

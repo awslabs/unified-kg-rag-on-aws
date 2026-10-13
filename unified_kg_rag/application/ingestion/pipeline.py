@@ -64,6 +64,7 @@ from unified_kg_rag.shared.utils import (
     corpus_manifest_fingerprint,
     stage_cache_key,
 )
+from unified_kg_rag.shared.utils.cache_keys import extraction_fingerprint
 from unified_kg_rag.shared.utils.document_identity import registry_namespace
 
 if TYPE_CHECKING:
@@ -721,6 +722,9 @@ class DataIngestionPipeline:
                 start_stage_name, completed_stages = self._rewind_to_unrun_stage(
                     start_stage_name, completed_stages
                 )
+                start_stage_name, completed_stages = self._rewind_on_extraction_change(
+                    pipeline_id, start_stage_name, completed_stages
+                )
 
             self._check_upstream_complete(pipeline_id, start_stage_name)
             context = self.resume_manager.restore_pipeline_context(
@@ -774,6 +778,45 @@ class DataIngestionPipeline:
                     if canonical_order.index(name) < position
                 ]
         return start_stage_name, completed_stages
+
+    def _rewind_on_extraction_change(
+        self, pipeline_id: str, start_stage_name: str, completed_stages: list[str]
+    ) -> tuple[str, list[str]]:
+        """Move an auto resume back to document_loading when the extraction
+        settings changed since its delta was computed.
+
+        document_loading's cache key does not cover the extraction settings,
+        so a resume past it keeps the previous run's delta and extraction
+        fingerprint: the stages that rerun (a newly enabled stage, or one
+        whose inputs changed) see only that delta's documents, and the
+        commit records the old fingerprint, so the next run re-extracts
+        every document. Rerunning document_loading diffs the corpus with
+        this run's fingerprint; document_parsing stays cached.
+        """
+        loading = PipelineStageType.DOCUMENT_LOADING.value
+        canonical_order = [st.value for st in self.STAGE_CLASSES]
+        if (
+            start_stage_name not in canonical_order
+            or canonical_order.index(start_stage_name) <= canonical_order.index(loading)
+            or loading not in {stage.name for stage in self.stages}
+        ):
+            return start_stage_name, completed_stages
+        metadata = self.state_manager.load_pipeline_metadata(pipeline_id)
+        recorded = metadata.get("incremental_extraction_fingerprint")
+        if recorded is None or recorded == extraction_fingerprint(self.config):
+            return start_stage_name, completed_stages
+        logger.warning(
+            "The extraction settings changed since this pipeline computed its "
+            "incremental delta; resuming from '%s' instead of '%s'",
+            loading,
+            start_stage_name,
+        )
+        position = canonical_order.index(loading)
+        return loading, [
+            name
+            for name in completed_stages
+            if name in canonical_order and canonical_order.index(name) < position
+        ]
 
     def _check_upstream_complete(self, pipeline_id: str, start_stage_name: str) -> None:
         """Fail when the resume point is a recorded stage upstream of every

@@ -903,7 +903,11 @@ run; with `--resume-from-stage` you re-run from a chosen stage onward, otherwise
 the pipeline resumes at the first failed or incomplete stage (with
 `--enabled-stages`, the first such stage in that set); a stage switched on
 since the pipeline last ran (gleaning or claim extraction, say) counts as
-incomplete. Before resuming, the CLI
+incomplete. With incremental indexing, an automatic resume whose extraction
+settings differ from those its delta was computed with (a stage switched on,
+another model or prompt) restarts at `document_loading`, so the delta and the
+fingerprint recorded on the committed documents follow the new settings
+(`document_parsing` stays cached). Before resuming, the CLI
 checks that every completed stage's output is still cached under the current
 inputs; when it is not (the corpus or config changed), it lists the stages and
 asks before going on, and the resume recomputes them. Without a terminal, pass

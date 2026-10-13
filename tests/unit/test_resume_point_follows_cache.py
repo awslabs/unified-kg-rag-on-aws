@@ -42,6 +42,7 @@ from unified_kg_rag.shared.pipeline_manager import (
     PipelineResumeManager,
     PipelineStateManager,
 )
+from unified_kg_rag.shared.utils.cache_keys import extraction_fingerprint
 
 pytestmark = pytest.mark.unit
 
@@ -362,3 +363,74 @@ class TestResumeReadsCacheOnce:
         assert start == EXTRACTION
         assert [r.stage_name for r in context.stage_results] == []
         assert executed[0] == EXTRACTION
+
+
+def _all_stages_pipeline(config: Config, root: Path) -> DataIngestionPipeline:
+    """Like ``_pipeline``, with every stage enabled except those ``config``
+    switches off (claim extraction is off by default)."""
+    pipeline = _pipeline(config, root)
+    pipeline.stages = [
+        SimpleNamespace(name=stage.value)
+        for stage in DataIngestionPipeline.STAGE_CLASSES
+        if stage != PipelineStageType.CLAIM_EXTRACTION
+        or config.processing.claim_extraction.enabled
+    ]
+    return pipeline
+
+
+def _record_incremental_run(pipeline: DataIngestionPipeline) -> None:
+    """Persist a completed incremental run (claims off): every enabled stage
+    completed and cached its output, and document_loading's delta carries the
+    run's extraction fingerprint."""
+    context = _context()
+    completed = [stage.name for stage in pipeline.stages]
+    context.stage_results = [
+        _result(name, PipelineStageStatus.COMPLETED) for name in completed
+    ]
+    context.incremental_extraction_fingerprint = extraction_fingerprint(pipeline.config)
+    pipeline.state_manager.save_pipeline_metadata(context)
+    for name in completed:
+        pipeline._save_stage_outputs_to_cache(context, name)
+
+
+def _with_claims_config() -> Config:
+    config = Config()
+    config.processing.claim_extraction.enabled = True
+    return config
+
+
+class TestResumeAfterExtractionChange:
+    # P1 ran incrementally with claims off; P2 reuses its pipeline id with
+    # claims on. Resuming at claim_extraction kept P1's delta and extraction
+    # fingerprint: claims ran on that delta only, and the commit recorded the
+    # old fingerprint, so the next run re-extracted every document.
+    # The same holds for any other extraction setting (a model, say).
+    @pytest.mark.parametrize(
+        "changed_config",
+        [_with_claims_config(), _changed_model_config()],
+        ids=["claims-enabled", "model"],
+    )
+    def test_changed_extraction_settings_recompute_the_delta(
+        self, tmp_path, mocker, changed_config: Config
+    ) -> None:
+        _record_incremental_run(_all_stages_pipeline(Config(), tmp_path))
+
+        start, context, executed = _resume(
+            _all_stages_pipeline(changed_config, tmp_path), mocker
+        )
+
+        loading = PipelineStageType.DOCUMENT_LOADING.value
+        assert start == loading
+        assert executed[0] == loading
+        assert [r.stage_name for r in context.stage_results] == [
+            PipelineStageType.DOCUMENT_PARSING.value
+        ]
+
+    def test_unchanged_settings_keep_the_delta(self, tmp_path, mocker) -> None:
+        _record_incremental_run(_all_stages_pipeline(Config(), tmp_path))
+
+        start, _, executed = _resume(_all_stages_pipeline(Config(), tmp_path), mocker)
+
+        # Only indexing, which caches no output, runs again.
+        assert start == executed[0] == PipelineStageType.INDEXING.value
+        assert PipelineStageType.DOCUMENT_LOADING.value not in executed
