@@ -368,6 +368,8 @@ class EvaluationRunner:
         if is_s3_uri(eval_data_uri) and summary.run_manifest:
             # Record where the dataset came from, not the temporary copy.
             summary.run_manifest.get("dataset", {})["path"] = eval_data_uri
+        # The directory --outputs-directory chose, not the config default.
+        summary.configuration["outputs_directory"] = outputs_target
 
         local_outputs = (
             work_dir / "outputs" if is_s3_uri(outputs_target) else Path(outputs_target)

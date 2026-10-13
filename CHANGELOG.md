@@ -392,6 +392,9 @@ Library API (Python callers and custom backends).
 - A query degraded under `processing.ignore_errors` records `error.type` on
   its `kg_rag.query` span, as a query that raised does; the span had the
   ERROR status only (#PR).
+- `run-eval --outputs-directory` is recorded as the run's
+  `configuration.outputs_directory` in the evaluation summary, which named
+  the config default instead (#PR).
 - A query whose Neptune write was in flight when another query dropped the
   connection fails as a lost connection instead of waiting forever.
   gremlinpython's `close()` shuts its executor down, so the read the write
