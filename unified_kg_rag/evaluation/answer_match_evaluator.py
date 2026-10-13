@@ -99,11 +99,15 @@ _POLARITY_WORD = re.compile(
 # punctuation or the line end follows them ("No: it may not.", "**네**, 맞습니다."):
 # before a word, "no" is a determiner ("there is no clause") and "네" the
 # numeral four ("네 가지"); "예" also means "e.g." before ":" or ")" ("(예: …)").
+# Emphasis and quote marks around the word are skipped first; an opening
+# quote or emphasis after it starts the next word ("no **cap**", 'no "cap"'),
+# so neither counts as the punctuation. Known limit: other punctuation
+# before a word still reads as the answer ("no (explicit) cap", "no $500 cap").
 # Any other polarity word answers wherever it stands.
 _AMBIGUOUS_ANSWER = {
-    "no": re.compile(r"\s*[*_]*\s*(?:$|[^\w\s])"),
-    "네": re.compile(r"\s*[*_]*\s*(?:$|[^\w\s])"),
-    "예": re.compile(r"\s*[*_]*\s*(?:$|[^\w\s:)])"),
+    "no": re.compile(r"\s*[*_\"'`]*\s*(?:$|[^\w\s*_\"'`“‘「『])"),
+    "네": re.compile(r"\s*[*_\"'`]*\s*(?:$|[^\w\s*_\"'`“‘「『])"),
+    "예": re.compile(r"\s*[*_\"'`]*\s*(?:$|[^\w\s*_\"'`“‘「『:)])"),
 }
 # A word next to "/" names the options, not the answer ("Yes/No: No").
 _OPTION_SLASH = re.compile(r"\s*/")

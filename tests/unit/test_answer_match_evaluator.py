@@ -118,6 +118,17 @@ class TestNormalization:
             ("No - it does not.", "no", 1.0),
             ("No: Yes it is", "no", 1.0),
             ("No: Yes it is", "yes", 0.0),
+            # emphasis or an opening quote after "no" starts the next word
+            ("There is no **cap** on fees. Yes, the Vendor may.", "yes", 1.0),
+            ("There is **no** penalty clause. Yes, the Buyer may.", "yes", 1.0),
+            ('There is no "cap" on fees. Yes, the Vendor may.', "yes", 1.0),
+            ("There is no `cap` field. Yes, it is allowed.", "yes", 1.0),
+            ("There is no \u201ccap\u201d on fees. Yes.", "yes", 1.0),
+            ('He said "no".', "no", 1.0),
+            ("\u201cNo\u201d, it is not.", "no", 1.0),
+            ("| Question | Answer |\n|---|---|\n| Warranty? | **No** |", "no", 1.0),
+            # known limit: other punctuation before a word still reads as "no"
+            ("There is no (explicit) cap; yes, it may.", "no", 1.0),
         ],
     )
     def test_yes_no_gold_scored_by_leading_polarity(
@@ -173,6 +184,14 @@ class TestNormalization:
             ("아니오 (계약 제5조).", "아니오", 1.0),
             ("아니요 계약서에는 그런 내용이 없습니다.", "아니요", 1.0),
             ("**네**: 맞습니다.", "네", 1.0),
+            # emphasis or an opening quote after the numeral "네" starts a word
+            ("계약에는 네 **가지** 조건이 있습니다. 아니요.", "아니요", 1.0),
+            ('네 "가지" 조건이 있습니다. 아니요.', "아니요", 1.0),
+            ("- **아니요** — 없습니다.", "아니요", 1.0),
+            ("「いいえ」、買主は支払いません。", "いいえ", 1.0),
+            ("**是的**，卖方承担。", "是", 1.0),
+            ("答案：否。", "否", 1.0),
+            ("回答:不是。", "否", 1.0),
         ],
     )
     def test_cjk_yes_no_gold_scored_by_leading_polarity(
