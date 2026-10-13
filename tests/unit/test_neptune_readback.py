@@ -53,6 +53,8 @@ class _ReadChain:
 @pytest.fixture
 def indexer(mocker):
     mocker.patch("unified_kg_rag.adapters.storage.neptune_indexer.NeptuneClient")
+    # A failed read is retried; the backoff is not waited for.
+    mocker.patch("unified_kg_rag.adapters.storage.neptune_indexer._sleep")
     from unified_kg_rag.adapters.storage.neptune_indexer import NeptuneIndexer
 
     return NeptuneIndexer(config=Config())

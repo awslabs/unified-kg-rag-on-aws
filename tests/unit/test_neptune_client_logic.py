@@ -4,9 +4,8 @@
 
 No real Neptune/Gremlin connection is opened. ``DriverRemoteConnection`` is
 patched and the traversal source ``g`` is faked, so we exercise: SigV4 auth-header
-assembly, ``_create_connection`` URL/header wiring, the missing-endpoint guard,
-the ``delete_vertices_in_batches`` batching, and the
-``_handle_neptune_errors`` wrapping.
+assembly, ``_create_connection`` URL/header wiring and the missing-endpoint
+guard.
 """
 
 from __future__ import annotations
@@ -264,114 +263,6 @@ def test_a_probe_that_timed_out_is_a_store_timeout(mocker) -> None:
     client = _probe_failing_with(mocker, TimeoutError())
     with pytest.raises(StoreTimeoutError, match="did not answer"):
         client._create_connection()
-
-
-# --- delete_vertices_in_batches ------------------------------------------
-
-
-class _FakeTraversal:
-    """A fake GraphTraversalSource: the label count returns ``initial`` and
-    each drop request the next scripted count of dropped vertices; labels,
-    limit(n), count and drop requests are recorded."""
-
-    def __init__(self, dropped: list[int], initial: int | None = None) -> None:
-        self._dropped = list(dropped)
-        self._initial = sum(dropped) if initial is None else initial
-        self._limited = False
-        self.labels: list[str] = []
-        self.limits: list[int] = []
-        self.counts = 0
-        self.drops = 0
-
-    # Chainable no-op steps.
-    def V(self):  # noqa: N802
-        self._limited = False
-        return self
-
-    def hasLabel(self, label):  # noqa: N802
-        self.labels.append(label)
-        return self
-
-    def limit(self, n):
-        self._limited = True
-        self.limits.append(n)
-        return self
-
-    def sideEffect(self, traversal):  # noqa: N802
-        self.drops += 1
-        return self
-
-    def count(self):
-        return self
-
-    def next(self):
-        if not self._limited:
-            self.counts += 1
-            return self._initial
-        return self._dropped.pop(0)
-
-
-def _client_and_fake_g(
-    monkeypatch, dropped: list[int], initial: int | None = None
-) -> tuple[NeptuneClient, _FakeTraversal]:
-    client = _client(_config_with_neptune())
-    fake = _FakeTraversal(dropped, initial)
-    # Bypass the connection property by injecting _g directly.
-    monkeypatch.setattr(type(client), "g", property(lambda self: fake))
-    return client, fake
-
-
-def test_delete_batches_of_an_empty_label_send_one_request(monkeypatch) -> None:
-    client, fake = _client_and_fake_g(monkeypatch, dropped=[0])
-    client.delete_vertices_in_batches("MyLabel")
-    assert (fake.counts, fake.drops) == (1, 1)
-
-
-def test_delete_batches_stop_after_a_short_batch(monkeypatch) -> None:
-    client, fake = _client_and_fake_g(monkeypatch, dropped=[5, 5, 2])
-    client.delete_vertices_in_batches("MyLabel", batch_size=5)
-    # One count up front, then one bounded drop per request, each scoped to
-    # the label, no recount.
-    assert fake.counts == 1
-    assert fake.drops == 3
-    assert fake.limits == [5, 5, 5]
-    assert set(fake.labels) == {"MyLabel"}
-
-
-def test_delete_batches_stop_after_an_empty_batch(monkeypatch) -> None:
-    client, fake = _client_and_fake_g(monkeypatch, dropped=[5, 0])
-    client.delete_vertices_in_batches("MyLabel", batch_size=5)
-    assert fake.drops == 2
-
-
-def test_delete_batches_allow_vertices_added_meanwhile(monkeypatch) -> None:
-    # 10 counted, 15 dropped (writers added some): within the slack.
-    client, fake = _client_and_fake_g(monkeypatch, dropped=[5, 5, 5, 0], initial=10)
-    client.delete_vertices_in_batches("MyLabel", batch_size=5)
-    assert fake.drops == 4
-
-
-def test_delete_batches_fail_instead_of_looping_forever(monkeypatch) -> None:
-    # Every request reports a full batch: the passes stop at the bound.
-    client, fake = _client_and_fake_g(monkeypatch, dropped=[5] * 100, initial=10)
-    with pytest.raises(AWSServiceError, match="did not finish"):
-        client.delete_vertices_in_batches("MyLabel", batch_size=5)
-    assert fake.drops == 2 + neptune_mod._EXTRA_DELETE_PASSES
-
-
-# --- _handle_neptune_errors decorator ------------------------------------
-
-
-def test_handle_neptune_errors_wraps_exceptions(monkeypatch) -> None:
-    client = _client(_config_with_neptune())
-
-    class _BoomTraversal:
-        def V(self):  # noqa: N802
-            raise RuntimeError("gremlin exploded")
-
-    monkeypatch.setattr(type(client), "g", property(lambda self: _BoomTraversal()))
-    with pytest.raises(AWSServiceError, match="delete_vertices_in_batches.*failed"):
-        client.delete_vertices_in_batches("MyLabel")
 
 
 # --- connection attempts under concurrency ---------------------------------

@@ -111,7 +111,7 @@ def test_bulk_delete_wraps_transport_failure(mocker) -> None:
         yield  # pragma: no cover - makes this a generator
 
     mocker.patch.object(opensearch_mod, "streaming_bulk", side_effect=boom)
-    with pytest.raises(AWSServiceError, match="bulk delete failed"):
+    with pytest.raises(AWSServiceError, match="bulk_delete.*endpoint unreachable"):
         _client().bulk_delete("idx", ["a"])
 
 

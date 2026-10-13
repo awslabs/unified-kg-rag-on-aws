@@ -14,9 +14,12 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 import pytest
+from opensearchpy.exceptions import TransportError
 
 import unified_kg_rag.adapters.aws.opensearch as opensearch_mod
 from unified_kg_rag.adapters.aws.opensearch import OpenSearchClient
+from unified_kg_rag.shared import StoreConnectionError
+from unified_kg_rag.shared.exceptions import StoreRequestRejectedError
 
 pytestmark = pytest.mark.unit
 
@@ -167,3 +170,86 @@ def test_bulk_update_sends_partial_docs_and_skips_missing_ones(mocker) -> None:
         "doc": {"text_unit_ids": ["t1"]},
     }
     assert [item["update"]["_id"] for item in out["items"]] == ["bad"]
+
+
+def _rejecting_requests(statuses: list[int], calls: list[list[str]]):
+    """A streaming_bulk stand-in whose next requests fail whole with ``statuses``.
+
+    A failing call answers its first two items, then the request carrying the
+    next one fails (the only item fails when it is alone), as a 429 burst
+    hitting a write slice midway does.
+    """
+
+    def fake_streaming_bulk(client, actions, **kwargs):
+        sent = [action["_id"] for action in actions]
+        calls.append(sent)
+        status = statuses.pop(0) if statuses else None
+        for i, doc_id in enumerate(sent):
+            if status is not None and i == min(2, len(sent) - 1):
+                body = {"error": {"type": "rejected", "reason": f"injected {status}"}}
+                raise TransportError(status, "rejected", body)
+            yield True, {"index": {"_id": doc_id, "status": 201}}
+
+    return fake_streaming_bulk
+
+
+def test_a_whole_bulk_request_rejected_under_load_is_resent_with_backoff(
+    mocker,
+) -> None:
+    # Regression: opensearch-py retries a whole-request 429/5xx without any
+    # pause, so a burst longer than its few retries failed the write slice.
+    # The items the request carried (and the unsent ones after it) are now
+    # resent after the bulk-item backoff, like rejected items.
+    calls: list[list[str]] = []
+    mocker.patch.object(
+        opensearch_mod,
+        "streaming_bulk",
+        side_effect=_rejecting_requests([429, 503], calls),
+    )
+    sleep = mocker.patch.object(opensearch_mod, "_sleep")
+    docs = [{"id": doc_id} for doc_id in "abcde"]
+
+    out = _client().bulk_index("idx", docs)
+
+    assert out == {"errors": False, "items": []}
+    assert calls == [list("abcde"), list("cde"), ["e"]]
+    assert sleep.call_count == 2
+    assert all(call.args[0] > 0 for call in sleep.call_args_list)
+
+
+@pytest.mark.parametrize("method", ["bulk_index", "bulk_delete", "bulk_update"])
+def test_a_bulk_request_still_rejected_raises_a_typed_error(mocker, method) -> None:
+    # Regression: the bulk methods raised a plain AWSServiceError("Streaming
+    # bulk ... failed.") that dropped the status and the server's reason.
+    retries = OpenSearchClient.BULK_ITEM_MAX_RETRIES
+    calls: list[list[str]] = []
+    mocker.patch.object(
+        opensearch_mod,
+        "streaming_bulk",
+        side_effect=_rejecting_requests([429] * (retries + 1), calls),
+    )
+    mocker.patch.object(opensearch_mod, "_sleep")
+    args = (
+        ["a", "b", "c"]
+        if method == "bulk_delete"
+        else [{"id": doc_id, "x": 1} for doc_id in "abc"]
+    )
+
+    with pytest.raises(StoreConnectionError, match="status=429.*injected 429"):
+        getattr(_client(), method)("idx", args)
+    assert len(calls) == retries + 1
+
+
+def test_a_bulk_request_rejected_permanently_is_not_resent(mocker) -> None:
+    calls: list[list[str]] = []
+    mocker.patch.object(
+        opensearch_mod,
+        "streaming_bulk",
+        side_effect=_rejecting_requests([400], calls),
+    )
+    sleep = mocker.patch.object(opensearch_mod, "_sleep")
+
+    with pytest.raises(StoreRequestRejectedError, match="injected 400"):
+        _client().bulk_index("idx", [{"id": doc_id} for doc_id in "abc"])
+    assert len(calls) == 1
+    sleep.assert_not_called()

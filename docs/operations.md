@@ -190,8 +190,13 @@ next run processes the same new and changed documents again.
   delta, with an error naming the file and its id count. Split the file.
 
 Write failures are gated separately. OpenSearch bulk items rejected with a
-retryable status (429, 502, 503, 504) are resent up to four times with
-backoff first. If more than `indexing.max_failure_rate` (default `0.2`) of one
+retryable status (429, 502, 503, 504), and the items of a whole bulk request
+still answered with one after the client's own retries, are resent up to four
+times with backoff first. Every Neptune request of a run (writes, drops and
+the reads of removals and merges) is retried up to
+`indexing.neptune.max_attempts` times (default `4`) over a new connection,
+and each one is safe to repeat: a request whose response was lost is not
+applied twice. If more than `indexing.max_failure_rate` (default `0.2`) of one
 artifact type's writes still fail, the indexing stage fails and the documents
 are not recorded, so the next run retries them. Below that rate the run
 succeeds and only the documents that own a failed artifact are recorded

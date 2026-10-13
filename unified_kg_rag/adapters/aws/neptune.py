@@ -1,8 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
-import functools
-import math
 import threading
 from collections.abc import Callable
 from functools import cached_property
@@ -13,7 +11,7 @@ from gremlin_python.driver.aiohttp.transport import AiohttpTransport
 from gremlin_python.driver.driver_remote_connection import DriverRemoteConnection
 from gremlin_python.driver.protocol import GremlinServerError
 from gremlin_python.process.anonymous_traversal import traversal
-from gremlin_python.process.graph_traversal import GraphTraversalSource, __
+from gremlin_python.process.graph_traversal import GraphTraversalSource
 from gremlin_python.process.traversal import Traversal
 
 from unified_kg_rag.adapters.store_errors import causes
@@ -34,9 +32,6 @@ if TYPE_CHECKING:
     import boto3
 
 logger = get_logger(__name__)
-
-# Passes delete_vertices_in_batches allows beyond what the label's count needs.
-_EXTRA_DELETE_PASSES = 3
 
 # Neptune engine error codes for requests that fail the same way on every try
 # (Neptune user guide, "Graph Engine Error Messages and Codes"). Retrying
@@ -243,19 +238,6 @@ class _NeptuneTransport(AiohttpTransport):
             raise
 
 
-def _handle_neptune_errors(func: Callable) -> Callable:
-    @functools.wraps(func)
-    def wrapper(self: "NeptuneClient", *args: Any, **kwargs: Any) -> Any:
-        try:
-            return func(self, *args, **kwargs)
-        except Exception as e:
-            error_message = f"Neptune operation '{func.__name__}' failed: {e}"
-            logger.error(error_message)
-            raise AWSServiceError(error_message) from e
-
-    return wrapper
-
-
 def neptune_pool_size(config: Config) -> int:
     """Connections in a NeptuneClient's pool: the most requests in flight."""
     return max(config.aws.neptune.pool_size, config.indexing.neptune.index_concurrency)
@@ -421,45 +403,6 @@ class NeptuneClient:
             return dict(request.headers.items())
         except Exception as e:
             raise AWSServiceError("Failed to create SigV4 signature for Neptune") from e
-
-    @_handle_neptune_errors
-    def delete_vertices_in_batches(self, label: str, batch_size: int = 500) -> None:
-        """Drop every vertex of ``label``, ``batch_size`` per request.
-
-        Bounded requests keep each drop's transaction small. A request returns
-        how many vertices it dropped, so a short one is the last: no count of
-        the label per pass and no pause between requests. The label is counted
-        once up front to bound the passes: if requests keep reporting full
-        batches past that bound (a backend whose count does not reflect the
-        drop, or writers adding vertices meanwhile) the delete fails instead of
-        looping forever.
-
-        Raises:
-            AWSServiceError: The label still reported full batches after
-                ``ceil(count / batch_size) + _EXTRA_DELETE_PASSES`` passes.
-        """
-        initial = int(self.g.V().hasLabel(label).count().next())
-        max_passes = math.ceil(initial / batch_size) + _EXTRA_DELETE_PASSES
-        total = 0
-        for _ in range(max_passes):
-            dropped = int(
-                self.g.V()
-                .hasLabel(label)
-                .limit(batch_size)
-                .sideEffect(__.drop())
-                .count()
-                .next()
-            )
-            total += dropped
-            if dropped < batch_size:
-                break
-        else:
-            raise AWSServiceError(
-                f"Deleting vertices with label '{label}' did not finish: "
-                f"{max_passes} passes of {batch_size} each dropped a full batch "
-                f"({total} reported dropped, {initial} counted before)"
-            )
-        logger.info("Deleted %s vertices with label '%s'", total, label)
 
     def reset(self, g: GraphTraversalSource | None = None) -> None:
         """Drop the connection, so the next use opens (and signs) a new one.
