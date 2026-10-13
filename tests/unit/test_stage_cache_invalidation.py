@@ -313,6 +313,39 @@ class TestFingerprintScope:
             changed, PipelineStageType.DOCUMENT_PARSING
         ) == stage_input_fingerprint(Config(), PipelineStageType.DOCUMENT_PARSING)
 
+    @pytest.mark.parametrize(
+        ("path", "value", "first_rekeyed"),
+        [
+            # The suffix is part of every document id (its registry namespace).
+            ("indexing.additional_suffix", "v2", PipelineStageType.DOCUMENT_PARSING),
+            # The scope names the registry records the loading stage diffs.
+            (
+                "processing.document_parsing.source_scope",
+                "s3://example/corpus/",
+                PipelineStageType.DOCUMENT_LOADING,
+            ),
+        ],
+    )
+    def test_document_identity_settings_re_key_from_their_stage(
+        self, path: str, value: str, first_rekeyed: PipelineStageType
+    ) -> None:
+        from unified_kg_rag.shared.utils.cache_keys import extraction_fingerprint
+
+        changed = Config()
+        section, _, attribute = path.rpartition(".")
+        node = changed
+        for part in section.split("."):
+            node = getattr(node, part)
+        setattr(node, attribute, value)
+        start = list(PipelineStageType).index(first_rekeyed)
+        for position, stage in enumerate(PipelineStageType):
+            same = stage_input_fingerprint(changed, stage) == stage_input_fingerprint(
+                Config(), stage
+            )
+            assert same is (position < start), stage
+        # A document's extracted artifacts do not depend on it.
+        assert extraction_fingerprint(changed) == extraction_fingerprint(Config())
+
     def test_tier_efforts_fold_into_the_fingerprint(self) -> None:
         stage = PipelineStageType.DOCUMENT_PARSING
 

@@ -123,6 +123,17 @@ class PipelineStage(ABC):
         PipelineStageType.TRANSLATION,
     }
 
+    # The stages that build the graph from the extracted entities.
+    GRAPH_STAGES = {
+        PipelineStageType.CLAIM_EXTRACTION,
+        PipelineStageType.CLAIM_RESOLUTION,
+        PipelineStageType.COMMUNITY_DETECTION,
+        PipelineStageType.GLEANING,
+        PipelineStageType.GRAPH_ANALYSIS,
+        PipelineStageType.GRAPH_EXTRACTION,
+        PipelineStageType.GRAPH_RESOLUTION,
+    }
+
     OPTIONAL_OUTPUT_STAGES = {
         PipelineStageType.CLAIM_EXTRACTION,
         PipelineStageType.CLAIM_RESOLUTION,
@@ -235,8 +246,25 @@ class PipelineStage(ABC):
         delta is a no-op run. In that case every document-processing stage
         receives empty input, which is valid rather than a failure, so the
         must-have-input / critical-output checks are skipped pipeline-wide.
+
+        Likewise the new and changed documents of an incremental delta may
+        name no entity at all (an edit that removed the last one). The graph
+        stages then produce, or receive, nothing; the documents are still
+        committed (with an empty lineage) and the delta's deletions applied.
+        Failing here would stop every later run at the same documents. The
+        check stays when a text unit failed (an unreachable model also
+        extracts nothing) and for a full build, where a corpus without a
+        single entity points at a broken model or prompt.
         """
-        return context.incremental_delta is not None and not context.documents
+        if context.incremental_delta is None:
+            return False
+        if not context.documents:
+            return True
+        return (
+            self.stage_type in self.GRAPH_STAGES
+            and not self.config.indexing.reset
+            and not any(context.failed_text_unit_ids.values())
+        )
 
     def _empty_input_hint(self) -> str:
         return "Check that the previous stage completed successfully."
@@ -1082,7 +1110,9 @@ class GraphAnalysisStage(PipelineStage):
         context.knowledge_graph = _build_knowledge_graph(context)
         self.analyzer.graph = context.knowledge_graph
 
-        centrality_data = self.analyzer.calculate_centrality()
+        # Centrality is not computed here: no later stage reads it (the
+        # visualization computes its own), and betweenness alone takes
+        # minutes on a graph of tens of thousands of entities.
         graph_stats = self.analyzer.get_graph_statistics()
 
         metrics = {
@@ -1097,10 +1127,6 @@ class GraphAnalysisStage(PipelineStage):
                 "diameter": graph_stats.diameter,
                 "num_connected_components": graph_stats.num_connected_components,
                 "largest_component_size": graph_stats.largest_component_size,
-            },
-            "centrality_stats": {
-                "nodes_with_centrality": len(centrality_data),
-                "centrality_types_calculated": len(self.analyzer.centrality_cache),
             },
         }
 
@@ -1175,13 +1201,16 @@ class CommunityDetectionStage(PipelineStage):
     def _check_report_failures(
         self, communities: list[Community], failed_community_ids: list[str]
     ) -> list[str]:
-        """Text units of the communities left without a report.
+        """Text units of the base-level communities left without a report.
 
         Their documents are recorded FAILED, so the next incremental run
         re-processes them and generates the missing reports, the same way an
-        extraction failure is retried. More failures than
-        ``indexing.max_failure_rate`` of the communities fail the stage (the
-        reports are the community-report index's items).
+        extraction failure is retried. A failed parent-level report is only
+        logged (and counted in the stage metrics): a parent spans many
+        base-level communities, so recording its text units would re-extract
+        most of the corpus on the next run for one report. More failures
+        than ``indexing.max_failure_rate`` of the communities fail the stage
+        (the reports are the community-report index's items).
         """
         if not failed_community_ids:
             return []
@@ -1194,12 +1223,20 @@ class CommunityDetectionStage(PipelineStage):
                 f"({failure_rate:.0%} > {max_failure_rate:.0%} tolerated by "
                 f"indexing.max_failure_rate). Check the report model errors above."
             )
-        failed = set(failed_community_ids)
+        failed = [c for c in communities if c.id in set(failed_community_ids)]
+        parents = [c.id for c in failed if str(c.level) != "0"]
+        if parents:
+            logger.warning(
+                "%s parent-level community report(s) failed and are missing "
+                "from the index until the communities are rebuilt: %s",
+                len(parents),
+                ", ".join(parents),
+            )
         return sorted(
             {
                 unit_id
-                for community in communities
-                if community.id in failed
+                for community in failed
+                if str(community.level) == "0"
                 for unit_id in community.text_unit_ids or []
             }
         )

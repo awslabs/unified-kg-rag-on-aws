@@ -500,11 +500,17 @@ class DataIngestionPipeline:
 
             self._execute_pipeline(context, start_stage_name)
 
-            logger.info(
-                "Pipeline execution completed successfully - ID: '%s', Status: '%s'",
-                context.pipeline_id,
-                context.status,
-            )
+            if context.status == PipelineStageStatus.FAILED:
+                logger.warning(
+                    "Pipeline run finished with failed stages - ID: '%s'",
+                    context.pipeline_id,
+                )
+            else:
+                logger.info(
+                    "Pipeline run completed - ID: '%s', Status: '%s'",
+                    context.pipeline_id,
+                    context.status.value,
+                )
             return context
 
         except Exception as e:
@@ -711,6 +717,10 @@ class DataIngestionPipeline:
                     pipeline_id, resume_from_stage
                 )
             )
+            if resume_from_stage is None:
+                start_stage_name, completed_stages = self._rewind_to_unrun_stage(
+                    start_stage_name, completed_stages
+                )
 
             self._check_upstream_complete(pipeline_id, start_stage_name)
             context = self.resume_manager.restore_pipeline_context(
@@ -729,6 +739,41 @@ class DataIngestionPipeline:
                 "Failed to prepare resume for pipeline '%s': %s", pipeline_id, e
             )
             raise PipelineExecutionError(f"Pipeline resume failed: {e}") from e
+
+    def _rewind_to_unrun_stage(
+        self, start_stage_name: str, completed_stages: list[str]
+    ) -> tuple[str, list[str]]:
+        """Move an auto resume back to an enabled stage that never completed.
+
+        A stage switched on since the pipeline last ran (gleaning or claim
+        extraction, say) has no recorded result, so the resume point the
+        recorded stages give lies past it and the stage would never run.
+        The resume starts at the first such stage instead, and only the
+        completed stages upstream of it are restored.
+        """
+        canonical_order = [st.value for st in self.STAGE_CLASSES]
+        if start_stage_name not in canonical_order:
+            return start_stage_name, completed_stages
+        start_position = canonical_order.index(start_stage_name)
+        completed = set(completed_stages)
+        for stage in self.stages:
+            position = canonical_order.index(stage.name)
+            if position >= start_position:
+                break
+            if stage.name not in completed:
+                logger.warning(
+                    "Stage '%s' is enabled but has not completed in this "
+                    "pipeline (it was off when the pipeline last ran); resuming "
+                    "from it instead of '%s'",
+                    stage.name,
+                    start_stage_name,
+                )
+                return stage.name, [
+                    name
+                    for name in completed_stages
+                    if canonical_order.index(name) < position
+                ]
+        return start_stage_name, completed_stages
 
     def _check_upstream_complete(self, pipeline_id: str, start_stage_name: str) -> None:
         """Fail when the resume point is a recorded stage upstream of every
@@ -1335,33 +1380,6 @@ class DataIngestionPipeline:
         logger.info("PIPELINE SUMMARY")
         logger.info("=" * 60)
         logger.info(summary)
-
-    def repair_pipeline_metadata(self, pipeline_id: str) -> bool:
-        """Repair the on-disk metadata for ``pipeline_id``.
-
-        Loads the existing metadata, reconstructs a :class:`PipelineContext`, and
-        re-persists it (which re-merges stage results into canonical order). Takes
-        a pipeline_id — symmetric with :meth:`verify_pipeline_metadata` — so the
-        CLI does not have to hand-build a context.
-        """
-        logger.info("Attempting to repair pipeline metadata for: %s", pipeline_id)
-
-        try:
-            metadata = self.state_manager.load_pipeline_metadata(pipeline_id)
-            context = self.state_manager.create_context_from_metadata(metadata)
-            result = self.state_manager.repair_pipeline_metadata(context)
-            if result:
-                logger.info("Pipeline metadata repair successful for: %s", pipeline_id)
-            else:
-                logger.warning("Pipeline metadata repair failed for: %s", pipeline_id)
-            return result
-        except Exception as e:
-            logger.error(
-                "Error during pipeline metadata repair for %s: %s",
-                pipeline_id,
-                e,
-            )
-            return False
 
     def verify_pipeline_metadata(self, pipeline_id: str) -> bool:
         logger.info("Verifying pipeline metadata for: %s", pipeline_id)

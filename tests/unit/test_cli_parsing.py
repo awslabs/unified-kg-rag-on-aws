@@ -904,22 +904,6 @@ def test_verify_metadata_unknown_pipeline_reports_not_found(config, mocker) -> N
     runner.pipeline.verify_pipeline_metadata.assert_not_called()
 
 
-def test_repair_metadata_without_a_terminal_needs_yes(config, mocker) -> None:
-    from unified_kg_rag.shared import PipelineExecutionError
-
-    runner = _metadata_runner(config, mocker, "--repair-metadata")
-    mocker.patch.object(run_ingestion_pipeline.sys.stdin, "isatty", return_value=False)
-    with pytest.raises(PipelineExecutionError, match="--yes"):
-        runner._handle_metadata_operations()
-    run_ingestion_pipeline.Confirm.ask.assert_not_called()
-    runner.pipeline.repair_pipeline_metadata.assert_not_called()
-
-    runner.args.yes = True
-    runner.pipeline.repair_pipeline_metadata.return_value = True
-    assert runner._handle_metadata_operations() is True
-    run_ingestion_pipeline.Confirm.ask.assert_not_called()
-
-
 @pytest.mark.parametrize("name", ["GRAPH_EXTRACTION", "Graph_Extraction", " gleaning"])
 def test_resume_from_stage_is_case_insensitive(name) -> None:
     args = _ing_parser().parse_args(["--resume-from-stage", name])
@@ -959,6 +943,15 @@ def test_verify_metadata_valid_is_handled(config, mocker) -> None:
     assert runner._handle_metadata_operations() is True
 
 
+def test_repair_metadata_is_gone(capsys) -> None:
+    # It loaded the metadata it was meant to repair, so on a corrupt file it
+    # failed exactly like --verify-metadata and never repaired anything.
+    with pytest.raises(SystemExit) as exc:
+        _ing_parser().parse_args(["--repair-metadata", "--pipeline-id", "pid"])
+    assert exc.value.code == 2
+    assert "--repair-metadata" in capsys.readouterr().err
+
+
 def test_verify_metadata_corrupt_fails(config, mocker) -> None:
     from unified_kg_rag.shared import PipelineExecutionError
 
@@ -966,26 +959,6 @@ def test_verify_metadata_corrupt_fails(config, mocker) -> None:
     runner.pipeline.verify_pipeline_metadata.return_value = False
     with pytest.raises(PipelineExecutionError, match="corrupted"):
         runner._handle_metadata_operations()
-
-
-@pytest.mark.parametrize("outcome", [False, RuntimeError("disk full")])
-def test_repair_metadata_failure_fails(config, mocker, outcome) -> None:
-    from unified_kg_rag.shared import PipelineExecutionError
-
-    runner = _metadata_runner(config, mocker, "--repair-metadata")
-    if isinstance(outcome, Exception):
-        runner.pipeline.repair_pipeline_metadata.side_effect = outcome
-    else:
-        runner.pipeline.repair_pipeline_metadata.return_value = outcome
-    with pytest.raises(PipelineExecutionError, match="repair"):
-        runner._handle_metadata_operations()
-
-
-def test_repair_metadata_success_is_handled(config, mocker) -> None:
-    runner = _metadata_runner(config, mocker, "--verify-metadata", "--repair-metadata")
-    runner.pipeline.verify_pipeline_metadata.return_value = False
-    runner.pipeline.repair_pipeline_metadata.return_value = True
-    assert runner._handle_metadata_operations() is True
 
 
 @pytest.mark.parametrize("fails", [False, True])

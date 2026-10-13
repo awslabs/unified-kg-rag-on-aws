@@ -312,31 +312,6 @@ class PipelineStateManager:
             logger.error("Metadata verification failed: %s", e)
             return False
 
-    def repair_pipeline_metadata(self, context: PipelineContext) -> bool:
-        logger.info(
-            "Attempting to repair metadata for pipeline: '%s'", context.pipeline_id
-        )
-        try:
-            self.save_pipeline_metadata(context)
-            is_verified = self.verify_pipeline_metadata(context.pipeline_id)
-
-            if is_verified:
-                logger.info(
-                    "Successfully repaired metadata for pipeline: '%s'",
-                    context.pipeline_id,
-                )
-            else:
-                logger.error(
-                    "Failed to repair metadata for pipeline: '%s'", context.pipeline_id
-                )
-            return is_verified
-
-        except Exception as e:
-            logger.error(
-                "Error during metadata repair for '%s': %s", context.pipeline_id, e
-            )
-            return False
-
     def verify_pipeline_metadata(self, pipeline_id: str) -> bool:
         try:
             self.load_pipeline_metadata(pipeline_id)
@@ -383,10 +358,8 @@ STAGE_OUTPUTS: dict[PipelineStageType, dict[str, type[Any]]] = {
     },
     PipelineStageType.CLAIM_EXTRACTION: {"claims": Claim},
     PipelineStageType.CLAIM_RESOLUTION: {"resolved_claims": Claim},
-    PipelineStageType.GRAPH_ANALYSIS: {
-        "resolved_entities": Entity,
-        "resolved_relationships": Relationship,
-    },
+    # graph_analysis builds the graph from graph_resolution's (cached) output
+    # and caches nothing of its own; community detection rebuilds the graph.
     PipelineStageType.COMMUNITY_DETECTION: {
         "communities": Community,
         "community_reports": CommunityReport,

@@ -241,6 +241,17 @@ class TestStats:
         assert stats.local_entries == 2
         assert stats.total_size_bytes > 0
 
+    def test_per_pipeline_stats_carry_the_hit_rate(self, tmp_path: Path) -> None:
+        # The run's metrics report this hit rate; it read 0% on every run.
+        mgr = _manager(tmp_path)
+        mgr.save_stage_result([{"a": 1}], "k1", STAGE, PIPELINE)
+        for _ in range(3):
+            assert mgr.load_stage_result("k1", PIPELINE) is not None
+        assert mgr.load_stage_result("missing", PIPELINE) is None
+        stats = mgr.get_cache_stats(PIPELINE)
+        assert (stats.hit_count, stats.miss_count) == (3, 1)
+        assert stats.hit_rate == 0.75
+
     def test_default_stats_without_pipeline(self, tmp_path: Path) -> None:
         mgr = _manager(tmp_path)
         mgr.save_stage_result({"x": 1}, "k", STAGE, PIPELINE)

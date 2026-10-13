@@ -68,6 +68,10 @@ ignored, so check the start-up warnings after upgrading.
   `InvalidFilterError` (#123).
 - IaC: `create_guardrail` decides whether the stack owns a guardrail; bring
   your own with `-c create_guardrail=false` (#103).
+- `run-ingestion --repair-metadata` is removed. It loaded the metadata it
+  was meant to repair, so on a corrupt file it failed like
+  `--verify-metadata` and never repaired anything; use `--verify-metadata`
+  and, for a corrupt run, `--force-rebuild` or a new `--pipeline-id` (#248).
 
 Defaults. Set the old value explicitly to keep the previous behaviour.
 - `graph.visualization.enabled` defaults to `false`; set it to `true` or
@@ -245,6 +249,11 @@ Library API (Python callers and custom backends).
 - `LocalSearchStrategy` no longer takes an `entity_focus_multiplier`
   argument; nothing passed it, so it was always 2, now the class constant
   `ENTITY_CANDIDATES_PER_FOCUS` (#247).
+- The `graph_analysis` stage no longer computes degree, betweenness and
+  PageRank centrality, which no later stage read (the visualization
+  computes its own) and which took minutes on a graph of tens of thousands
+  of entities; its `centrality_stats` metrics are gone. It also no longer
+  caches a copy of graph resolution's entities and relationships (#248).
 - Retrieval: AUTO routes among `local`/`mix`/`global`/`drift` with the fast
   model; `mix`/`hybrid` retrievals, DRIFT steps and keyword extraction run
   concurrently; global search answers from ranked map points without a
@@ -340,6 +349,31 @@ Library API (Python callers and custom backends).
   diversity cut ran once across all result types before the per-type quota,
   so over-quota entities took slots the quota then dropped and text kept 16
   of its 20; each type is now diversified within its own quota (#247).
+- `run-ingestion` prints why it exits 1 (`Error: Pipeline failed at
+  stage(s): ...`, as the operations guide documents), and a run with a
+  failed stage no longer logs "Pipeline execution completed successfully"
+  but a WARNING (#248).
+- The ingestion summary's "Cache Hit Rate" and the `cache_hit_rate` metric
+  report the run's stage-cache hits; they read 0% on every run (#248).
+- A failed parent-level community report no longer records every document
+  under it `FAILED`, which made the next incremental run re-extract most of
+  the corpus for one report. Only a base-level report failure marks its
+  documents; parent failures are logged and counted in `reports_failed`
+  (#248).
+- Changing `indexing.additional_suffix` or `document_parsing.source_scope`
+  for a reused `--pipeline-id` recomputes the documents (from parsing and
+  loading respectively) instead of restoring the old ones, which carried
+  the previous registry namespace or scope into the run's delta. The stage
+  cache keys of a configuration that sets neither are unchanged (#248).
+- Switching gleaning or claim extraction on for an existing `--pipeline-id`
+  runs the stage: the resume starts at the first enabled stage that has not
+  completed in the pipeline. It started after the last recorded stage, so
+  the new stage never ran (#248).
+- An incremental run whose new and changed documents name no entity (an
+  edit that removed the last one) commits them and applies the run's
+  deletions. It failed graph extraction ("produced 0 outputs"), so the
+  deletions were never applied and every later run failed the same way. A
+  full build, or a run in which a text unit failed, still fails (#248).
 - `run-eval --eval-data-path` naming a file that does not exist exits 2 with
   `Error: invalid evaluation dataset: ...`, as the user guide documents and
   as an unreadable or invalid dataset does; it exited 1 (#230).
@@ -559,7 +593,7 @@ Library API (Python callers and custom backends).
   the integrity check built its cache keys before the corpus fingerprint was
   known, so it reported every stage missing and prompted, which crashed
   without a terminal. Prompts now fail with a clear message without a
-  terminal unless `--yes` is passed, including `--repair-metadata` (#223).
+  terminal unless `--yes` is passed (#223).
 - Retrying a failed Step Functions execution with the same `pipeline_id`
   resumes at the failed stage: an earlier attempt's failed stage result is no
   longer merged into the retry (it failed every phase), and the phases no

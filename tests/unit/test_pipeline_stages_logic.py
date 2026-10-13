@@ -114,11 +114,10 @@ def test_disallows_empty_output_without_delta() -> None:
     assert stage._allows_empty_output(ctx) is False
 
 
-def test_disallows_empty_output_when_delta_has_docs() -> None:
+def _delta_context_with_a_document() -> PipelineContext:
     from unified_kg_rag.domain.models import Document
     from unified_kg_rag.domain.models.document import DocumentDelta
 
-    stage = _make_stage(PipelineStageType.GRAPH_EXTRACTION)
     ctx = _context()
     ctx.incremental_delta = DocumentDelta()
     ctx.documents = [
@@ -131,6 +130,34 @@ def test_disallows_empty_output_when_delta_has_docs() -> None:
             total_pages=1,
         )
     ]
+    return ctx
+
+
+def test_disallows_empty_output_of_a_corpus_stage_when_delta_has_docs() -> None:
+    stage = _make_stage(PipelineStageType.TEXT_CHUNKING)
+    assert stage._allows_empty_output(_delta_context_with_a_document()) is False
+
+
+@pytest.mark.parametrize(
+    "stage_type",
+    [
+        PipelineStageType.GRAPH_EXTRACTION,
+        PipelineStageType.GRAPH_RESOLUTION,
+        PipelineStageType.GRAPH_ANALYSIS,
+        PipelineStageType.COMMUNITY_DETECTION,
+    ],
+)
+def test_an_incremental_delta_may_hold_no_entity(stage_type) -> None:
+    # The delta's documents may name nothing, unless a unit failed (an
+    # unreachable model extracts nothing too) or the run is a full build.
+    stage = _make_stage(stage_type)
+    ctx = _delta_context_with_a_document()
+    assert stage._allows_empty_output(ctx) is True
+    ctx.failed_text_unit_ids = {"graph_extraction": ["u1"]}
+    assert stage._allows_empty_output(ctx) is False
+    ctx.failed_text_unit_ids = {"graph_extraction": []}
+    assert stage._allows_empty_output(ctx) is True
+    stage.config.indexing.reset = True
     assert stage._allows_empty_output(ctx) is False
 
 
@@ -576,3 +603,64 @@ def test_community_stage_without_report_failures_records_none(mocker) -> None:
     stage._execute_core(ctx)
 
     assert ctx.failed_text_unit_ids == {"community_detection": []}
+
+
+# --- CommunityDetectionStage._check_report_failures --------------------
+
+
+def test_only_a_failed_base_level_report_marks_its_documents_failed() -> None:
+    # A parent report spans every child's text units: recording them would
+    # re-extract most of the corpus next run for one missing report.
+    from unified_kg_rag.application.ingestion.pipeline_stages import (
+        CommunityDetectionStage,
+    )
+    from unified_kg_rag.domain.models import Community
+
+    def community(cid: str, level: str, units: list[str]) -> Community:
+        return Community(
+            id=cid,
+            name=cid,
+            level=level,
+            parent="",
+            children=[],
+            text_unit_ids=units,
+        )
+
+    stage = CommunityDetectionStage.__new__(CommunityDetectionStage)
+    stage.config = Config()
+    stage.config.indexing.max_failure_rate = 1.0
+    communities = [
+        community("leaf-a", "0", ["u1"]),
+        community("leaf-b", "0", ["u2"]),
+        community("root", "1", ["u1", "u2"]),
+    ]
+    assert stage._check_report_failures(communities, ["root"]) == []
+    assert stage._check_report_failures(communities, ["root", "leaf-b"]) == ["u2"]
+
+
+# --- GraphAnalysisStage --------------------------------------------------
+
+
+def test_graph_analysis_builds_the_graph_without_centrality(mocker) -> None:
+    # Nothing downstream reads centrality, and betweenness takes minutes on
+    # a large graph; the stage also caches nothing graph_resolution did not.
+    from unified_kg_rag.application.ingestion.pipeline_stages import (
+        GraphAnalysisStage,
+    )
+    from unified_kg_rag.domain.ingestion.graph_analyzer import GraphAnalyzer
+    from unified_kg_rag.domain.models import Entity, Relationship
+    from unified_kg_rag.shared.pipeline_manager import STAGE_OUTPUTS
+
+    centrality = mocker.patch.object(GraphAnalyzer, "calculate_centrality")
+    stage = GraphAnalysisStage(Config())
+    ctx = _context()
+    ctx.resolved_entities = [Entity(id="a", name="A"), Entity(id="b", name="B")]
+    ctx.resolved_relationships = [
+        Relationship(id="r", source_id="a", target_id="b", type="WORKS_WITH")
+    ]
+    result = stage.execute(ctx)
+    assert result.status is PipelineStageStatus.COMPLETED, result.error_message
+    assert ctx.knowledge_graph.number_of_edges() == 1
+    assert result.metrics["graph_metrics"]["num_nodes"] == 2
+    centrality.assert_not_called()
+    assert PipelineStageType.GRAPH_ANALYSIS not in STAGE_OUTPUTS

@@ -275,13 +275,6 @@ def test_verify_pipeline_metadata_roundtrip(tmp_path) -> None:
     assert state.verify_pipeline_metadata("pid") is True
 
 
-def test_repair_pipeline_metadata_saves_and_verifies(tmp_path) -> None:
-    state = PipelineStateManager(_StubCacheManager(tmp_path))
-    ctx = _context("pid", [_stage_result("indexing")])
-    assert state.repair_pipeline_metadata(ctx) is True
-    assert state.verify_pipeline_metadata("pid") is True
-
-
 # --- update_stage_result --------------------------------------------------
 
 

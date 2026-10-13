@@ -79,8 +79,8 @@ CDK 스택에서 `start-execution` 한 번은 네 단계를 차례로 실행하�
 끝나면 `indexing.reset`을 다시 `false`로 돌립니다. 그대로 두면 실행할 때마다
 재구축합니다.
 
-`--verify-metadata`와 `--repair-metadata`(둘 다 `--pipeline-id` 필요)는 실행의
-단계 메타데이터를 검사하고 복구합니다. 실패하면 0이 아닌 종료 코드를 반환합니다.
+`--verify-metadata`(`--pipeline-id` 필요)는 실행의 단계 메타데이터를 검사하고,
+메타데이터가 없거나 손상되었으면 0이 아닌 종료 코드를 반환합니다.
 
 ## 증분 실행
 
@@ -274,7 +274,7 @@ Error: Missing endpoint configuration for the indexing stage: aws.neptune.endpoi
 ```
 
 - `run-ingestion`은 `indexing` 단계가 켜져 있으면 두 엔드포인트를 모두
-  검사합니다(`--verify-metadata` / `--repair-metadata`는 제외).
+  검사합니다(`--verify-metadata`는 제외).
 - `run-rag`와 `run-eval`은 선택한 전략의 검색기가 쓰는 엔드포인트를 검사합니다.
   모든 전략에 OpenSearch가 필요하고, `local`, `drift`, `mix`, `hybrid`는
   Neptune도 필요합니다. `auto`는 `search.auto_routable_strategies`의 모든 전략을
@@ -469,13 +469,13 @@ LangSmith로 업로드합니다.
 | `DocStatusRegistryError` | 문서 상태 레지스트리 테이블이 없거나, 접근할 수 없거나, 스로틀링됨 | 테이블을 만들거나 `aws.dynamodb.table_name`을 고치고, 메시지에 나온 DynamoDB 권한을 부여한 뒤 같은 `--pipeline-id`로 재개 |
 | `Incremental indexing is enabled but no document delta was computed` | 레지스트리 비교 없이 인덱싱 단계가 실행됨(`continue_on_error`로 로딩 단계 실패 뒤 진행) | 레지스트리에 접근할 수 있게 한 뒤 `document_loading`부터 다시 실행 |
 | `CacheSyncError` | S3 단계 캐시 다운로드나 업로드가 실패함 | 버킷 권한과 `aws.s3.encryption`을 확인한 뒤 같은 `--pipeline-id`로 재개 |
-| `Pipeline failed at stage(s): ...` | 단계가 실패해 CLI가 1로 종료함 | 해당 단계 로그를 확인해 고친 뒤 같은 `--pipeline-id`로 재개. `--verify-metadata`로 실행 메타데이터를 확인하고, `--repair-metadata`로 복구를 시도하거나 `--force-rebuild`로 처음부터 시작 |
-| `--source-directory is required for pipeline execution` | `--source-directory`도 `$GRAPHRAG_SOURCE_DIRECTORY`도 없음 | 플래그를 넘김. `--verify-metadata` / `--repair-metadata`에는 대신 `--pipeline-id`가 필요 |
+| `Pipeline failed at stage(s): ...` | 단계가 실패해 CLI가 1로 종료함 | 해당 단계 로그를 확인해 고친 뒤 같은 `--pipeline-id`로 재개. `--verify-metadata`로 실행 메타데이터를 확인하거나 `--force-rebuild`로 처음부터 시작 |
+| `--source-directory is required for pipeline execution` | `--source-directory`도 `$GRAPHRAG_SOURCE_DIRECTORY`도 없음 | 플래그를 넘김. `--verify-metadata`에는 대신 `--pipeline-id`가 필요 |
 | `--s3-bucket-name must be specified for S3 sync` | 버킷 없이 `--s3-sync`를 지정함 | `--s3-bucket-name`을 넘김 |
 | `--pipeline-id is required for --resume-from-stage` | 재개하려면 이전 실행이 필요함 | 그 실행의 `--pipeline-id`를 넘김 |
 | `Invalid stage names provided: ...` | `--enabled-stages`에 없는 단계 이름이 있음 | CLI가 출력하는 목록의 이름을 사용 |
 | `argument --resume-from-stage: Unknown pipeline stage ...`(종료 코드 2) | `--resume-from-stage`에 없는 단계 이름을 넘김 | 메시지에 나온 목록의 이름을 사용(대소문자 무관) |
-| `... needs confirmation, but stdin is not a terminal` | 다시 실행할 때 완료된 단계의 출력이 현재 입력 기준으로 캐시에 없거나 `--repair-metadata`를 실행했는데, 물어볼 터미널이 없음 | `--yes`를 넘겨 계속(재개하면서 그 단계를 다시 계산)하거나 새 `--pipeline-id`를 사용 |
+| `... needs confirmation, but stdin is not a terminal` | 다시 실행할 때 완료된 단계의 출력이 현재 입력 기준으로 캐시에 없는데, 물어볼 터미널이 없음 | `--yes`를 넘겨 계속(재개하면서 그 단계를 다시 계산)하거나 새 `--pipeline-id`를 사용 |
 | `Stage '<stage>', upstream of this run's enabled stages, has not completed` | `--enabled-stages` 범위(Step Functions 단계 묶음)를 재개했는데 앞 단계가 실패했거나 캐시된 출력이 없음 | 앞 단계를 먼저 실행. CDK 스택에서는 같은 `pipeline_id`로 새 실행을 시작 |
 | `The doc-status registry lists indexed documents of this namespace whose entities the graph store does not hold` | 레지스트리에 기록된 내용을 그래프가 잃음(Gremlin Server 재시작, `docker compose ... down -v`, 복원하거나 교체한 그래프) | `indexing.reset: true`로 다시 실행하거나 해당 네임스페이스의 레지스트리 레코드를 삭제(로컬 모드에서는 SQLite 파일) |
 | 로그에 `Connection refused`와 함께 `... processed N inputs but produced 0 outputs`(로컬 모드) | `providers.llm.base_url` / `providers.embedding.base_url`에서 Ollama나 OpenAI 호환 서버에 연결할 수 없음 | 서버를 띄우고(`docker compose -f docker/compose.local.yaml --profile models up -d --wait`), `base_url`(또는 `--model-base-url`)을 확인하고, 모델을 내려받음 |

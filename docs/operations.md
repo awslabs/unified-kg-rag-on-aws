@@ -83,8 +83,8 @@ too) after changing anything that is baked into the stored data:
 
 Set `indexing.reset` back to `false` afterwards; otherwise every run rebuilds.
 
-`--verify-metadata` and `--repair-metadata` (both need `--pipeline-id`) check
-and repair a run's stage metadata; both exit non-zero on failure.
+`--verify-metadata` (needs `--pipeline-id`) checks a run's stage metadata and
+exits non-zero when it is missing or corrupt.
 
 ## Incremental runs
 
@@ -294,7 +294,7 @@ Error: Missing endpoint configuration for the indexing stage: aws.neptune.endpoi
 ```
 
 - `run-ingestion` checks both endpoints when the `indexing` stage is enabled
-  (not for `--verify-metadata` / `--repair-metadata`).
+  (not for `--verify-metadata`).
 - `run-rag` and `run-eval` check the endpoints the chosen strategy's retrievers
   need: OpenSearch for every strategy, and Neptune as well for `local`,
   `drift`, `mix` and `hybrid`. `auto` checks every strategy in `search.auto_routable_strategies`.
@@ -496,13 +496,13 @@ content to LangSmith independently of this setting.
 | `DocStatusRegistryError` | The doc-status registry table is missing, not accessible, or throttled | Create the table or fix `aws.dynamodb.table_name`, grant the DynamoDB permissions named in the message, then resume with the same `--pipeline-id` |
 | `Incremental indexing is enabled but no document delta was computed` | The indexing stage ran without a registry diff (the loading stage failed under `continue_on_error`) | Re-run from `document_loading` once the registry is reachable |
 | `CacheSyncError` | The S3 stage-cache download or upload failed | Check bucket permissions and `aws.s3.encryption`, then resume with the same `--pipeline-id` |
-| `Pipeline failed at stage(s): ...` | A stage failed; the CLI exits 1 | Read the stage's log lines, fix, resume with the same `--pipeline-id`. `--verify-metadata` checks the run's metadata, `--repair-metadata` tries to fix it, `--force-rebuild` starts clean |
-| `--source-directory is required for pipeline execution` | No `--source-directory` and no `$GRAPHRAG_SOURCE_DIRECTORY` | Pass it; `--verify-metadata` / `--repair-metadata` need `--pipeline-id` instead |
+| `Pipeline failed at stage(s): ...` | A stage failed; the CLI exits 1 | Read the stage's log lines, fix, resume with the same `--pipeline-id`. `--verify-metadata` checks the run's metadata, `--force-rebuild` starts clean |
+| `--source-directory is required for pipeline execution` | No `--source-directory` and no `$GRAPHRAG_SOURCE_DIRECTORY` | Pass it; `--verify-metadata` needs `--pipeline-id` instead |
 | `--s3-bucket-name must be specified for S3 sync` | `--s3-sync` without a bucket | Pass `--s3-bucket-name` |
 | `--pipeline-id is required for --resume-from-stage` | Resuming needs the earlier run | Pass that run's `--pipeline-id` |
 | `Invalid stage names provided: ...` | `--enabled-stages` names an unknown stage | Use a name from the list the CLI prints |
 | `argument --resume-from-stage: Unknown pipeline stage ...` (exit 2) | `--resume-from-stage` names an unknown stage | Use a name from the list in the message (any case) |
-| `... needs confirmation, but stdin is not a terminal` | A re-run found completed stages whose output is no longer cached under the current inputs (or `--repair-metadata` ran) without a terminal to ask on | Pass `--yes` to go on (the resume recomputes those stages), or use a new `--pipeline-id` |
+| `... needs confirmation, but stdin is not a terminal` | A re-run found completed stages whose output is no longer cached under the current inputs, without a terminal to ask on | Pass `--yes` to go on (the resume recomputes those stages), or use a new `--pipeline-id` |
 | `Stage '<stage>', upstream of this run's enabled stages, has not completed` | An `--enabled-stages` window (a Step Functions phase) resumed while an earlier stage failed or lost its cached output | Run the earlier stages first; on the CDK stack, start a new execution with the same `pipeline_id` |
 | `The doc-status registry lists indexed documents of this namespace whose entities the graph store does not hold` | The graph lost what the registry records (a restarted Gremlin Server, `docker compose ... down -v`, a restored or replaced graph) | Re-run with `indexing.reset: true`, or delete the namespace's registry records (local mode: the SQLite file) |
 | `... processed N inputs but produced 0 outputs`, with `Connection refused` in the log (local mode) | Ollama or the OpenAI-compatible server is not reachable at `providers.llm.base_url` / `providers.embedding.base_url` | Start it (`docker compose -f docker/compose.local.yaml --profile models up -d --wait`), check `base_url` (or `--model-base-url`), and pull the models |

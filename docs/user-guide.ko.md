@@ -507,7 +507,7 @@ LLM 단계는 Bedrock I/O가 병목이므로 동시성을 CPU 수보다 훨씬 �
 | `graph.community_detection.min_community_size` | `3` | 이보다 작은 커뮤니티는 이웃 커뮤니티에 합칩니다. |
 | `graph.community_detection.report_generation.max_report_context_tokens` | `4000` | 리포트 프롬프트 하나에 넣는 엔티티·관계 컨텍스트의 토큰 예산입니다. |
 | `graph.community_detection.report_generation.content_length` | `"medium"` | 리포트 길이로, 리포트마다 요청할 findings 수입니다. `short`(5-7), `medium`(7-10), `long`(10-15) 중 하나입니다. |
-| `graph.analysis.centrality.calculate_betweenness` | `true` | 매개 중심성을 계산합니다. 노드가 `betweenness_auto_sample_threshold`(`2000`)보다 많은 그래프에서는 정확히 계산하지 않고 샘플링합니다. |
+| `graph.analysis.centrality.calculate_betweenness` | `true` | 시각화에서 매개 중심성을 계산합니다(수집 단계는 중심성을 계산하지 않음). 노드가 `betweenness_auto_sample_threshold`(`2000`)보다 많은 그래프에서는 정확히 계산하지 않고 샘플링합니다. |
 | `graph.visualization.enabled` | `false` | 수집 중에 시각화를 렌더링하고 레이아웃을 포함한 시각화 데이터를 내보냅니다(수집마다 노드당 임베딩 호출 한 번과 레이아웃 차원 축소가 추가됨). |
 | `graph.visualization.export_data` | `true` | `enabled: false`여도 `visualization_data.json`(그래프와 커뮤니티. 레이아웃과 중심성은 없음)을 기록해 `run-visualization`으로 필요할 때 렌더링할 수 있게 합니다. 그래프를 한 번 훑을 뿐이며 모델 호출이 없습니다. |
 | `graph.visualization.outputs_directory` | `null` | 지정하지 않으면 `<cache dir>/<pipeline_id>/visualization`에 기록하므로 데이터가 캐시와 함께 S3로 동기화됩니다. |
@@ -801,8 +801,7 @@ LangChain이 콜백을 호출하지 않으므로 모델 스팬이 남지 않습�
 | `--pipeline-id` | `$GRAPHRAG_PIPELINE_ID` | 재개하거나 검사할 기존 실행입니다. 플래그를 생략하면 환경 변수 `GRAPHRAG_PIPELINE_ID`를 씁니다. 이 ID가 실행의 캐시 디렉터리와 S3 접두사 이름이 되므로 영문 소문자, 숫자, 하이픈, 밑줄만 쓸 수 있습니다. |
 | `--resume-from-stage` | — | 재개할 단계 이름(대소문자 무관, `--pipeline-id` 필요). 없는 이름이면 사용법 오류(종료 코드 2) |
 | `--verify-metadata` | off | 파이프라인 메타데이터 무결성 확인(`--pipeline-id` 필요). 손상되었거나 실행을 찾지 못하면 0이 아닌 코드로 종료 |
-| `--repair-metadata` | off | 메타데이터 복구 시도(`--pipeline-id` 필요). 확인을 묻고, 복구에 실패하면 0이 아닌 코드로 종료 |
-| `--yes`, `-y` | off | 확인 질문(무결성 검사 실패 후 계속 진행, `--repair-metadata`)에 모두 예로 답함. stdin이 터미널이 아니면 질문할 수 없으므로 `--yes` 없이는 실행이 실패 |
+| `--yes`, `-y` | off | 확인 질문(무결성 검사 실패 후 계속 진행)에 모두 예로 답함. stdin이 터미널이 아니면 질문할 수 없으므로 `--yes` 없이는 실행이 실패 |
 | `--continue-on-error` | off | 단계에서 오류가 나도 계속 진행. 추출·해석·커뮤니티 단계가 비정상 종료해 산출물이 빠진 문서는 FAILED로 기록되어 다음 증분 실행이 다시 처리 |
 | `--enabled-stages` | 전체 | 실행할 단계 목록(쉼표로 구분) |
 | `--metrics-sink` | `none` | `none` 또는 `cloudwatch`(CloudWatch EMF — Embedded Metric Format — 지표를 차원 없는 시계열로 stdout에 출력. `pipeline_id`는 차원이 아니라 로그 속성으로 기록하므로 실행마다 지표 시계열이 늘지 않음). 실행은 자신이 실행한 단계의 지표만 내보내므로, 단계 묶음으로 나눈 실행에서 각 묶음이 서로의 수치를 다시 보내지 않음 |
@@ -828,7 +827,7 @@ LangChain이 콜백을 호출하지 않으므로 모델 스팬이 남지 않습�
 7. **`graph_resolution`** — 중복 엔티티와 관계를 병합합니다(이름 변형, `processing.fuzzy_entity_resolution`이면 비슷한 이름도).
 8. **`claim_extraction`** — 선택 단계입니다. 사실 주장을 추출합니다(기본은 꺼짐).
 9. **`claim_resolution`** — 선택 단계입니다. 추출한 주장의 중복을 제거합니다.
-10. **`graph_analysis`** — 중심성 지표와 그래프 통계를 계산합니다.
+10. **`graph_analysis`** — 그래프를 만들고 그 통계(`graph.analysis.statistics`)를 기록합니다.
 11. **`community_detection`** — Leiden 군집화와 LLM 커뮤니티 리포트 생성을 실행합니다.
 12. **`indexing`** — 모든 결과를 OpenSearch와 Neptune에 씁니다(켜져 있으면 DynamoDB
     레지스트리에도).
@@ -862,7 +861,8 @@ run-ingestion --source-directory ./documents --config-path config.yaml --metrics
 쓰고 건너뜁니다. 특정 실행을 재개하려면 `--pipeline-id`를 넘기세요.
 `--resume-from-stage`를 함께 쓰면 지정한 단계부터 다시 실행하고, 쓰지 않으면
 처음으로 실패했거나 완료되지 않은 단계부터 재개합니다(`--enabled-stages`를 쓰면 그
-목록 안에서 처음인 단계). 재개하기 전에 CLI는 완료된 단계의 출력이 현재 입력 기준으로
+목록 안에서 처음인 단계). 지난 실행 이후 켠 단계(예: gleaning, claim extraction)도
+완료되지 않은 단계로 봅니다. 재개하기 전에 CLI는 완료된 단계의 출력이 현재 입력 기준으로
 캐시에 남아 있는지 확인합니다. 남아 있지 않으면(코퍼스나 설정이 바뀐 경우) 해당 단계를
 보여 주고 계속할지 묻고, 재개하면서 그 단계를 다시 계산합니다. 터미널이 없으면 `--yes`를
 넘겨야 계속합니다. `--force-rebuild`는 캐시된 출력을 무시하고 모든 단계를 다시 계산한 뒤
@@ -1211,8 +1211,11 @@ aws:
 ### 실패한 문서
 
 텍스트 단위 하나라도 번역, 그래프 추출, gleaning, 주장 추출에 실패했거나, 텍스트 단위를
-포함한 커뮤니티의 보고서가 생성되지 않았거나, 산출물 하나를 저장소에 쓰는 데 실패한 문서는
-`FAILED`로 기록됩니다. 보고서 실패와 쓰기 실패는 각각 커뮤니티 수와 산출물 유형별 쓰기 수의
+포함한 기본 수준 커뮤니티의 보고서가 생성되지 않았거나, 산출물 하나를 저장소에 쓰는 데
+실패한 문서는 `FAILED`로 기록됩니다. 상위 수준 커뮤니티의 보고서 실패는 WARNING으로
+남기고 단계의 `reports_failed` 지표에 세지만 문서를 `FAILED`로 기록하지는 않습니다. 상위
+커뮤니티는 많은 문서에 걸쳐 있어, 보고서 하나 때문에 이를 모두 재시도하면 코퍼스 대부분을
+다시 추출하게 됩니다. 보고서 실패와 쓰기 실패는 각각 커뮤니티 수와 산출물 유형별 쓰기 수의
 `indexing.max_failure_rate`까지 허용하며, 이를 넘으면 해당 단계가 실패하고 아무것도
 기록하지 않습니다. 다음 실행은 파일이 바뀌지 않았더라도 이 문서를 변경된 문서로 처리합니다.
 실패한 실행이 쓴 내용을 제거하고 문서를 다시 처리합니다. 내용이 같은 채로

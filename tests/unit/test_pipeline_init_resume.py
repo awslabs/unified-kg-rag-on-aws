@@ -432,16 +432,19 @@ def test_calculate_stage_performance_durations_and_throughput() -> None:
 # --- _create_pipeline_metrics --------------------------------------------
 
 
-def test_create_pipeline_metrics_populates_counts_and_stage_metrics() -> None:
-    from unified_kg_rag.domain.models import Entity, Relationship, TextUnit
-    from unified_kg_rag.domain.models.cache import CacheStats
+def test_create_pipeline_metrics_populates_counts_and_stage_metrics(
+    tmp_path,
+) -> None:
+    from unified_kg_rag.domain.models import Config, Entity, Relationship, TextUnit
+    from unified_kg_rag.shared.cache_manager import CacheManager
 
     pipe = object.__new__(DataIngestionPipeline)
-    pipe.cache_manager = SimpleNamespace(
-        get_cache_stats=lambda pid: CacheStats(
-            hit_count=3, miss_count=1, total_size_bytes=1024 * 1024
-        )
-    )
+    # A real cache manager: three hits and a miss in this run.
+    pipe.cache_manager = CacheManager(Config(), tmp_path)
+    pipe.cache_manager.save_stage_result(["x" * 1024 * 1024], "k", "s", "pid")
+    for _ in range(3):
+        assert pipe.cache_manager.load_stage_result("k", "pid") is not None
+    assert pipe.cache_manager.load_stage_result("missing", "pid") is None
 
     ctx = _ctx_with_results(
         [
@@ -475,7 +478,7 @@ def test_create_pipeline_metrics_populates_counts_and_stage_metrics() -> None:
     assert metrics.total_items_index_failed == 1
     assert metrics.relationships_indexed == 2
     assert metrics.cache_hit_rate == 0.75
-    assert metrics.cache_size_mb == 1.0
+    assert metrics.cache_size_mb == pytest.approx(1.0, abs=0.01)
     # Stage durations flow through from _calculate_stage_performance.
     assert metrics.stage_durations.get("indexing") == 2.0
 

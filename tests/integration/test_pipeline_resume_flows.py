@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import io
 import json
+import logging
 import shutil
 import sys
 from pathlib import Path
@@ -307,3 +308,157 @@ def test_a_failed_phased_run_resumes_at_the_failed_stage(
         harness.sink.emitted[-1]
     ]
     assert all("total_entities_extracted" not in m for m in harness.sink.emitted)
+
+
+def test_a_delta_whose_documents_name_no_entity_still_commits(
+    harness: _Harness,
+) -> None:
+    # The only changed document no longer names an entity and the other one
+    # is deleted: the run commits both instead of failing graph extraction
+    # ("produced 0 outputs"), which would leave the deletion unapplied and
+    # fail every later run the same way.
+    assert harness.run() == 0
+    assert harness.graph.ids("entities")
+    (harness.source / "contract.txt").write_text("Nothing notable is written here.")
+    (harness.source / "logistics.txt").unlink()
+
+    assert harness.run() == 0
+    records = harness.registry.list_all()
+    assert [Path(r.file_path).name for r in records] == ["contract.txt"]
+    assert {r.status for r in records} == {DocStatus.PROCESSED}
+    assert not harness.graph.ids("entities")
+    # The next run finds nothing to do.
+    assert harness.run() == 0
+
+
+@pytest.mark.parametrize(
+    ("block", "stage"),
+    [("gleaning", "gleaning"), ("claim_extraction", "claim_extraction")],
+)
+def test_a_stage_switched_on_for_an_existing_pipeline_id_runs(
+    harness: _Harness, block: str, stage: str
+) -> None:
+    # The stage was off when the pipeline first ran, so it has no recorded
+    # result; the re-run must start there rather than after the last
+    # recorded stage.
+    getattr(harness.config.processing, block).enabled = False
+    assert harness.run("--pipeline-id", "p1") == 0
+    assert stage not in {
+        r["stage_name"] for r in harness.metadata("p1")["stage_results"]
+    }
+
+    getattr(harness.config.processing, block).enabled = True
+    calls = harness.llm_calls
+    # The later stages' cached outputs no longer match: confirm the resume.
+    assert harness.run("--pipeline-id", "p1", "--yes") == 0
+    statuses = {
+        r["stage_name"]: r["status"] for r in harness.metadata("p1")["stage_results"]
+    }
+    assert statuses[stage] == "completed"
+    assert harness.llm_calls > calls
+
+
+def test_a_phase_after_a_failed_upstream_stage_does_not_run(
+    harness: _Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # graph_extraction failed; an indexing-only window (the next Step
+    # Functions phase) must not index the empty upstream output.
+    from unified_kg_rag.domain.models import PipelineConfig, PipelineStageType
+    from unified_kg_rag.shared import PipelineExecutionError
+
+    def execute(stage, context):  # type: ignore[no-untyped-def]
+        raise RuntimeError("throttled beyond retries")
+
+    monkeypatch.setattr(ps.GraphExtractionStage, "execute", execute)
+    assert harness.run("--pipeline-id", "p1") == 1
+    pipeline = pipeline_module.DataIngestionPipeline(
+        harness.config,
+        PipelineConfig(
+            stages_enabled={
+                stage: stage is PipelineStageType.INDEXING
+                for stage in PipelineStageType
+            },
+            local_directory=harness.tmp_path / "cache",
+        ),
+        source_directory=harness.source,
+    )
+    with pytest.raises(PipelineExecutionError, match="upstream of this run"):
+        pipeline.run(harness.source, pipeline_id="p1")
+    assert not harness.graph.ids("entities")
+
+
+def test_rerunning_a_stage_drops_the_recorded_results_after_it(
+    harness: _Harness,
+) -> None:
+    # Re-running gleaning alone makes the recorded later stages stale: they
+    # leave the history, and the next run runs them again on its output.
+    assert harness.run("--pipeline-id", "p1") == 0
+    assert (
+        harness.run(
+            "--pipeline-id",
+            "p1",
+            "--resume-from-stage",
+            "gleaning",
+            "--enabled-stages",
+            "gleaning",
+        )
+        == 0
+    )
+    names = [r["stage_name"] for r in harness.metadata("p1")["stage_results"]]
+    assert names[-1] == "gleaning"
+
+    calls = harness.llm_calls
+    assert harness.run("--pipeline-id", "p1") == 0
+    statuses = {
+        r["stage_name"]: r["status"] for r in harness.metadata("p1")["stage_results"]
+    }
+    assert statuses["graph_resolution"] == statuses["indexing"] == "completed"
+    assert harness.llm_calls > calls  # community reports regenerated
+
+
+def test_a_stage_that_crashed_then_succeeds_commits_its_documents(
+    harness: _Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The crash recorded every text unit failed for graph_resolution, and the
+    # resumed run restores that record; the stage's successful re-run must
+    # replace it, or the documents stay FAILED.
+    crash = {"on": True}
+    original = ps.GraphResolutionStage.execute
+
+    def execute(stage, context):  # type: ignore[no-untyped-def]
+        if crash["on"]:
+            raise RuntimeError("worker crashed")
+        return original(stage, context)
+
+    monkeypatch.setattr(ps.GraphResolutionStage, "execute", execute)
+    assert harness.run("--pipeline-id", "p1", "--continue-on-error") == 1
+    assert {r.status for r in harness.registry.list_all()} == {DocStatus.FAILED}
+
+    crash["on"] = False
+    assert harness.run("--pipeline-id", "p1", "--yes") == 0
+    assert {r.status for r in harness.registry.list_all()} == {DocStatus.PROCESSED}
+
+
+def test_a_failed_run_says_which_stage_failed(
+    harness: _Harness,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    def execute(stage, context):  # type: ignore[no-untyped-def]
+        raise RuntimeError("throttled beyond retries")
+
+    monkeypatch.setattr(ps.GraphExtractionStage, "execute", execute)
+    caplog.set_level(logging.INFO)
+    assert harness.run() == 1
+    assert "Error: Pipeline failed at stage(s): graph_extraction" in (
+        capsys.readouterr().out
+    )
+    assert not any(
+        "Pipeline execution completed successfully" in r.getMessage()
+        for r in caplog.records
+    )
+    assert any(
+        r.levelname == "WARNING" and "finished with failed stages" in r.getMessage()
+        for r in caplog.records
+    )

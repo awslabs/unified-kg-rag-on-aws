@@ -535,7 +535,7 @@ LLM stages are Bedrock-I/O-bound, so concurrency can far exceed the CPU count.
 | `graph.community_detection.min_community_size` | `3` | Smaller communities merge into neighbours. |
 | `graph.community_detection.report_generation.max_report_context_tokens` | `4000` | Token budget for the entity/relationship context in one report prompt. |
 | `graph.community_detection.report_generation.content_length` | `"medium"` | Report length as findings per report: `short` (5-7), `medium` (7-10), `long` (10-15). |
-| `graph.analysis.centrality.calculate_betweenness` | `true` | Betweenness centrality. On graphs larger than `betweenness_auto_sample_threshold` (`2000`) nodes it is sampled instead of computed exactly. |
+| `graph.analysis.centrality.calculate_betweenness` | `true` | Betweenness centrality in the visualization (ingestion computes no centrality). On graphs larger than `betweenness_auto_sample_threshold` (`2000`) nodes it is sampled instead of computed exactly. |
 | `graph.visualization.enabled` | `false` | Render visualizations during ingestion and export their data with the layout (one embedding call per node plus a layout reduction per ingest). |
 | `graph.visualization.export_data` | `true` | With `enabled: false`, still write `visualization_data.json` (graph and communities, no layout or centrality; one pass over the graph, no model call) so `run-visualization` can render on demand. |
 | `graph.visualization.outputs_directory` | `null` | Unset writes to `<cache dir>/<pipeline_id>/visualization`, so the data syncs to S3 with the cache. |
@@ -839,8 +839,7 @@ OpenSearch + Neptune.
 | `--pipeline-id` | `$GRAPHRAG_PIPELINE_ID` | Existing run to resume/inspect. If the flag is omitted it falls back to the `GRAPHRAG_PIPELINE_ID` environment variable. The id names the run's cache directory and S3 prefix, so it accepts letters, digits, `.`, `_` and `-` only: up to 128 characters, starting with a letter or digit, with no `..`. |
 | `--resume-from-stage` | — | Stage to resume from, by name, case-insensitive (requires `--pipeline-id`); an unknown name is a usage error (exit 2) |
 | `--verify-metadata` | off | Verify pipeline metadata integrity (needs `--pipeline-id`); exits non-zero when it is corrupt or the run is not found |
-| `--repair-metadata` | off | Attempt metadata repair (needs `--pipeline-id`); asks for confirmation, and exits non-zero when the repair fails |
-| `--yes`, `-y` | off | Answer yes to confirmation prompts (continuing after a failed integrity check, `--repair-metadata`). Without a terminal on stdin a prompt cannot be asked, so the run fails unless `--yes` is passed |
+| `--yes`, `-y` | off | Answer yes to confirmation prompts (continuing after a failed integrity check). Without a terminal on stdin a prompt cannot be asked, so the run fails unless `--yes` is passed |
 | `--continue-on-error` | off | Keep going when a stage errors. The documents a crashed extraction, resolution or community stage left without artifacts are recorded FAILED, so the next incremental run re-processes them |
 | `--enabled-stages` | all | Comma-separated stage list to run |
 | `--metrics-sink` | `none` | `none`, or `cloudwatch` (emits CloudWatch EMF — Embedded Metric Format — metrics to stdout as dimensionless series; `pipeline_id` is recorded as a log property, not a dimension, so runs add no new metric series). A run emits the metrics of the stages it executed, so the phases of a phased run do not repeat each other's counts |
@@ -866,7 +865,7 @@ Run order (`DataIngestionPipeline.STAGE_CLASSES`). Use the stage **names**
 7. **`graph_resolution`** — merge duplicate entities/relationships (name variants; similar names with `processing.fuzzy_entity_resolution`).
 8. **`claim_extraction`** — optional; extract factual claims (off by default).
 9. **`claim_resolution`** — optional; dedupe extracted claims.
-10. **`graph_analysis`** — centrality metrics + graph statistics.
+10. **`graph_analysis`** — builds the graph and logs its statistics (`graph.analysis.statistics`).
 11. **`community_detection`** — Leiden clustering + LLM community reports.
 12. **`indexing`** — write everything to OpenSearch + Neptune (and DynamoDB
     registry when enabled).
@@ -900,7 +899,9 @@ run-ingestion --source-directory ./documents --config-path config.yaml --metrics
 cached and skipped on re-run. Pass `--pipeline-id` to resume a specific prior
 run; with `--resume-from-stage` you re-run from a chosen stage onward, otherwise
 the pipeline resumes at the first failed or incomplete stage (with
-`--enabled-stages`, the first such stage in that set). Before resuming, the CLI
+`--enabled-stages`, the first such stage in that set); a stage switched on
+since the pipeline last ran (gleaning or claim extraction, say) counts as
+incomplete. Before resuming, the CLI
 checks that every completed stage's output is still cached under the current
 inputs; when it is not (the corpus or config changed), it lists the stages and
 asks before going on, and the resume recomputes them. Without a terminal, pass
@@ -1285,9 +1286,12 @@ A registry written by a pre-release build is migrated on its first run; see
 ### Failed documents
 
 A document is recorded `FAILED` when translation, graph extraction, gleaning or
-claim extraction failed on any of its text units, when a community covering
-one of its text units got no report, or when writing one of its artifacts to
-the stores failed. Report and write failures are tolerated up to
+claim extraction failed on any of its text units, when a base-level
+community covering one of its text units got no report, or when writing one
+of its artifacts to the stores failed. A failed parent-level report is logged
+as a WARNING and counted in the stage's `reports_failed` metric, but marks no
+document `FAILED`: a parent covers many documents, and retrying them all for
+one report would re-extract most of the corpus. Report and write failures are tolerated up to
 `indexing.max_failure_rate` of the communities or of one artifact type's
 writes; above it the stage fails and nothing is recorded. The next run treats it as
 changed even if the file did not change: it removes what the failed run wrote
