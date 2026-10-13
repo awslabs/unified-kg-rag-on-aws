@@ -187,7 +187,7 @@ Library API (Python callers and custom backends).
 - `MetricsMixin` and `get_metrics()` on retrievers, search strategies,
   `HybridScorer` and `TokenManager` are removed. Nothing read the counters,
   concurrent queries overwrote each other's values, and the query spans
-  already carry the same counts and timings (#PR).
+  already carry the same counts and timings (#253).
 - `BatchProcessor(max_retries=)` is `max_attempts=` (#151);
   `execute_with_fallback` no longer takes `batch_func` (sync) or
   `run_config` (#174, #216); `create_robust_xml_output_parser` requires
