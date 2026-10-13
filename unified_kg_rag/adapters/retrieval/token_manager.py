@@ -1,5 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
+import re
 from collections.abc import Sequence
 from enum import Enum
 from typing import Any, ClassVar
@@ -24,6 +25,13 @@ logger = get_logger(__name__)
 # optimization. Callers short-circuit answer generation on this sentinel so the
 # LLM is never asked to answer from an empty context (which invites fabrication).
 EMPTY_CONTEXT_PLACEHOLDER = "No relevant information found."
+# Where a truncated section may end: whitespace, or CJK sentence/clause marks
+# for text written without spaces.
+_TRUNCATION_BREAK = re.compile(r"[\s。．！？、，；]")
+# A break is only taken from this trailing share of the kept prefix; further
+# back it would throw away most of the room (one space early in Japanese text
+# used to leave a few characters), so the cut falls at the character instead.
+_TRUNCATION_BACKOFF_RATIO = 0.2
 
 
 class SectionType(str, Enum):
@@ -492,7 +500,8 @@ class TokenManager(MetricsMixin):
         """Cut a section's content down to roughly ``max_tokens``, or None if the
         budget is too small to carry anything meaningful.
 
-        Cuts on a whitespace boundary using the section's own measured
+        Cuts on a whitespace or CJK punctuation boundary near the end of the
+        room (else mid-run, for text without one) using the section's own measured
         tokens-per-character ratio: this runs inside the packing loop, so a real
         token count per candidate prefix would mean an extra Bedrock count_tokens
         round trip per section. The ratio is exact enough for a budget cap, and the
@@ -507,7 +516,13 @@ class TokenManager(MetricsMixin):
         keep_chars = int(max_tokens * chars_per_token)
         if keep_chars <= 0:
             return None
-        head = section.content[:keep_chars].rsplit(" ", 1)[0].rstrip()
+        head = section.content[:keep_chars]
+        if keep_chars < len(section.content):
+            backoff_start = int(keep_chars * (1 - _TRUNCATION_BACKOFF_RATIO))
+            breaks = [m.end() for m in _TRUNCATION_BREAK.finditer(head, backoff_start)]
+            if breaks:
+                head = head[: breaks[-1]]
+        head = head.rstrip()
         if not head:
             return None
         return section.model_copy(

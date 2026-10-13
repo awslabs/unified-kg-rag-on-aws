@@ -516,6 +516,34 @@ class TestPerTypeBudgetIsAHardCap:
         assert original.token_count == 1000
         assert not original.metadata
 
+    @pytest.mark.parametrize(
+        "content",
+        [
+            # One early space, then text written without spaces: backing off to
+            # that space kept 2 of ~400 characters.
+            "契約 " + "東京倉庫は大阪商事のために部品を保管する。" * 20,
+            "供应商" + "与买方签订合同并约定付款条件" * 30,
+        ],
+        ids=["japanese-one-early-space", "chinese-no-space"],
+    )
+    def test_cjk_truncation_keeps_most_of_the_room(self, mocker, content) -> None:
+        original = ContextSection(
+            content=content,
+            token_count=len(content),
+            priority=1.0,
+            section_type=SectionType.TEXT,
+            source_id="s",
+        )
+        mgr = _make_manager(mocker)
+        room = len(content) // 2
+        section = mgr._truncate_to_tokens(original, max_tokens=room)
+        assert section is not None
+        kept = section.content.removesuffix(" …")
+        assert content.startswith(kept)
+        assert len(kept) >= room * 0.8
+        if "。" in content:
+            assert kept.endswith("。")  # a sentence mark within reach is used
+
     def test_a_type_whose_first_candidate_overflows_is_still_represented(
         self, mocker
     ) -> None:

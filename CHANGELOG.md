@@ -306,6 +306,11 @@ Library API (Python callers and custom backends).
   answer's polarity, as it already did for `yes`/`no`. Such a gold was
   matched as a substring, so `예` scored 1.0 against `아니요, ... 예외 ...`
   (#246).
+- A Japanese or Chinese section truncated to fit its context budget keeps
+  most of its room instead of collapsing to a few characters. Truncation
+  backed off to the last ASCII space, which in such text can be the first
+  word; it now ends on whitespace or CJK punctuation near the cut, or at the
+  cut itself (#PR).
 - A small per-query context budget (`RAGInput.max_tokens` of 513 or less)
   no longer yields an empty context and an abstention. The 512-token prompt
   buffer is now taken from the configured or derived
