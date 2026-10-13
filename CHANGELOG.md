@@ -245,6 +245,11 @@ Library API (Python callers and custom backends).
 - `LocalSearchStrategy` no longer takes an `entity_focus_multiplier`
   argument; nothing passed it, so it was always 2, now the class constant
   `ENTITY_CANDIDATES_PER_FOCUS` (#247).
+- The `graph_analysis` stage no longer computes degree, betweenness and
+  PageRank centrality, which no later stage read (the visualization
+  computes its own) and which took minutes on a graph of tens of thousands
+  of entities; its `centrality_stats` metrics are gone. It also no longer
+  caches a copy of graph resolution's entities and relationships (#PR).
 - Retrieval: AUTO routes among `local`/`mix`/`global`/`drift` with the fast
   model; `mix`/`hybrid` retrievals, DRIFT steps and keyword extraction run
   concurrently; global search answers from ranked map points without a

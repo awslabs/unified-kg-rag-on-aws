@@ -383,10 +383,8 @@ STAGE_OUTPUTS: dict[PipelineStageType, dict[str, type[Any]]] = {
     },
     PipelineStageType.CLAIM_EXTRACTION: {"claims": Claim},
     PipelineStageType.CLAIM_RESOLUTION: {"resolved_claims": Claim},
-    PipelineStageType.GRAPH_ANALYSIS: {
-        "resolved_entities": Entity,
-        "resolved_relationships": Relationship,
-    },
+    # graph_analysis builds the graph from graph_resolution's (cached) output
+    # and caches nothing of its own; community detection rebuilds the graph.
     PipelineStageType.COMMUNITY_DETECTION: {
         "communities": Community,
         "community_reports": CommunityReport,

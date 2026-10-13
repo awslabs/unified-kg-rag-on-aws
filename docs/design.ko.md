@@ -201,7 +201,7 @@ class LocalSearchStrategy(BaseSearchStrategy): ...
 | 7 | 그래프 해석 | `graph_resolver.py` + `description_summarizer.py` | 이름 변형 병합(퍼지 매칭은 선택), `text_unit_ids` 합집합, **병합된 설명의 LLM 재요약** |
 | 8 | 주장 추출(선택) | `claim_extractor.py` | 사실 진술(covariate) |
 | 9 | 주장 해석(선택) | `claim_resolver.py` | |
-| 10 | 그래프 분석 | `graph_analyzer.py` | 중심성(degree/betweenness/PageRank/eigenvector), 통계 |
+| 10 | 그래프 분석 | `graph_analyzer.py` | 그래프 구성과 통계(중심성은 시각화가 같은 모듈로 계산) |
 | 11 | 커뮤니티 탐지 | `community_detector.py` | 계층적 Leiden, 커뮤니티 리포트 생성(degree 정렬 + 토큰 예산 내 채우기) |
 | 12 | 인덱싱 | `application/storage/indexing_manager.py` | OpenSearch + Neptune. 전체 빌드는 실행의 접미사마다 모든 인덱스 유형을 교체하고, 실행에 없는 유형은 비웁니다 |
 

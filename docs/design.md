@@ -201,7 +201,7 @@ The `DataIngestionPipeline` in `application/ingestion/pipeline.py` runs 12 stage
 | 7 | Graph resolution | `graph_resolver.py` + `description_summarizer.py` | name-variant merge (fuzzy matching opt-in), `text_unit_ids` union, **LLM re-summarization of merged descriptions** |
 | 8 | Claim extraction (optional) | `claim_extractor.py` | factual assertions (covariate) |
 | 9 | Claim resolution (optional) | `claim_resolver.py` | |
-| 10 | Graph analysis | `graph_analyzer.py` | centrality (degree/betweenness/PageRank/eigenvector), statistics |
+| 10 | Graph analysis | `graph_analyzer.py` | graph build and statistics (the visualization computes centrality with the same module) |
 | 11 | Community detection | `community_detector.py` | hierarchical Leiden, community report generation (degree-sort + token-budget pack) |
 | 12 | Indexing | `application/storage/indexing_manager.py` | OpenSearch + Neptune; a full build replaces every index type of the run's suffixes, emptying one the run has nothing of |
 

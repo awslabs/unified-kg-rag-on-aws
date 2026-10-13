@@ -507,7 +507,7 @@ LLM 단계는 Bedrock I/O가 병목이므로 동시성을 CPU 수보다 훨씬 �
 | `graph.community_detection.min_community_size` | `3` | 이보다 작은 커뮤니티는 이웃 커뮤니티에 합칩니다. |
 | `graph.community_detection.report_generation.max_report_context_tokens` | `4000` | 리포트 프롬프트 하나에 넣는 엔티티·관계 컨텍스트의 토큰 예산입니다. |
 | `graph.community_detection.report_generation.content_length` | `"medium"` | 리포트 길이로, 리포트마다 요청할 findings 수입니다. `short`(5-7), `medium`(7-10), `long`(10-15) 중 하나입니다. |
-| `graph.analysis.centrality.calculate_betweenness` | `true` | 매개 중심성을 계산합니다. 노드가 `betweenness_auto_sample_threshold`(`2000`)보다 많은 그래프에서는 정확히 계산하지 않고 샘플링합니다. |
+| `graph.analysis.centrality.calculate_betweenness` | `true` | 시각화에서 매개 중심성을 계산합니다(수집 단계는 중심성을 계산하지 않음). 노드가 `betweenness_auto_sample_threshold`(`2000`)보다 많은 그래프에서는 정확히 계산하지 않고 샘플링합니다. |
 | `graph.visualization.enabled` | `false` | 수집 중에 시각화를 렌더링하고 레이아웃을 포함한 시각화 데이터를 내보냅니다(수집마다 노드당 임베딩 호출 한 번과 레이아웃 차원 축소가 추가됨). |
 | `graph.visualization.export_data` | `true` | `enabled: false`여도 `visualization_data.json`(그래프와 커뮤니티. 레이아웃과 중심성은 없음)을 기록해 `run-visualization`으로 필요할 때 렌더링할 수 있게 합니다. 그래프를 한 번 훑을 뿐이며 모델 호출이 없습니다. |
 | `graph.visualization.outputs_directory` | `null` | 지정하지 않으면 `<cache dir>/<pipeline_id>/visualization`에 기록하므로 데이터가 캐시와 함께 S3로 동기화됩니다. |
@@ -828,7 +828,7 @@ LangChain이 콜백을 호출하지 않으므로 모델 스팬이 남지 않습�
 7. **`graph_resolution`** — 중복 엔티티와 관계를 병합합니다(이름 변형, `processing.fuzzy_entity_resolution`이면 비슷한 이름도).
 8. **`claim_extraction`** — 선택 단계입니다. 사실 주장을 추출합니다(기본은 꺼짐).
 9. **`claim_resolution`** — 선택 단계입니다. 추출한 주장의 중복을 제거합니다.
-10. **`graph_analysis`** — 중심성 지표와 그래프 통계를 계산합니다.
+10. **`graph_analysis`** — 그래프를 만들고 그 통계(`graph.analysis.statistics`)를 기록합니다.
 11. **`community_detection`** — Leiden 군집화와 LLM 커뮤니티 리포트 생성을 실행합니다.
 12. **`indexing`** — 모든 결과를 OpenSearch와 Neptune에 씁니다(켜져 있으면 DynamoDB
     레지스트리에도).

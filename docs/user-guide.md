@@ -535,7 +535,7 @@ LLM stages are Bedrock-I/O-bound, so concurrency can far exceed the CPU count.
 | `graph.community_detection.min_community_size` | `3` | Smaller communities merge into neighbours. |
 | `graph.community_detection.report_generation.max_report_context_tokens` | `4000` | Token budget for the entity/relationship context in one report prompt. |
 | `graph.community_detection.report_generation.content_length` | `"medium"` | Report length as findings per report: `short` (5-7), `medium` (7-10), `long` (10-15). |
-| `graph.analysis.centrality.calculate_betweenness` | `true` | Betweenness centrality. On graphs larger than `betweenness_auto_sample_threshold` (`2000`) nodes it is sampled instead of computed exactly. |
+| `graph.analysis.centrality.calculate_betweenness` | `true` | Betweenness centrality in the visualization (ingestion computes no centrality). On graphs larger than `betweenness_auto_sample_threshold` (`2000`) nodes it is sampled instead of computed exactly. |
 | `graph.visualization.enabled` | `false` | Render visualizations during ingestion and export their data with the layout (one embedding call per node plus a layout reduction per ingest). |
 | `graph.visualization.export_data` | `true` | With `enabled: false`, still write `visualization_data.json` (graph and communities, no layout or centrality; one pass over the graph, no model call) so `run-visualization` can render on demand. |
 | `graph.visualization.outputs_directory` | `null` | Unset writes to `<cache dir>/<pipeline_id>/visualization`, so the data syncs to S3 with the cache. |
@@ -866,7 +866,7 @@ Run order (`DataIngestionPipeline.STAGE_CLASSES`). Use the stage **names**
 7. **`graph_resolution`** — merge duplicate entities/relationships (name variants; similar names with `processing.fuzzy_entity_resolution`).
 8. **`claim_extraction`** — optional; extract factual claims (off by default).
 9. **`claim_resolution`** — optional; dedupe extracted claims.
-10. **`graph_analysis`** — centrality metrics + graph statistics.
+10. **`graph_analysis`** — builds the graph and logs its statistics (`graph.analysis.statistics`).
 11. **`community_detection`** — Leiden clustering + LLM community reports.
 12. **`indexing`** — write everything to OpenSearch + Neptune (and DynamoDB
     registry when enabled).

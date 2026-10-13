@@ -636,3 +636,31 @@ def test_only_a_failed_base_level_report_marks_its_documents_failed() -> None:
     ]
     assert stage._check_report_failures(communities, ["root"]) == []
     assert stage._check_report_failures(communities, ["root", "leaf-b"]) == ["u2"]
+
+
+# --- GraphAnalysisStage --------------------------------------------------
+
+
+def test_graph_analysis_builds_the_graph_without_centrality(mocker) -> None:
+    # Nothing downstream reads centrality, and betweenness takes minutes on
+    # a large graph; the stage also caches nothing graph_resolution did not.
+    from unified_kg_rag.application.ingestion.pipeline_stages import (
+        GraphAnalysisStage,
+    )
+    from unified_kg_rag.domain.ingestion.graph_analyzer import GraphAnalyzer
+    from unified_kg_rag.domain.models import Entity, Relationship
+    from unified_kg_rag.shared.pipeline_manager import STAGE_OUTPUTS
+
+    centrality = mocker.patch.object(GraphAnalyzer, "calculate_centrality")
+    stage = GraphAnalysisStage(Config())
+    ctx = _context()
+    ctx.resolved_entities = [Entity(id="a", name="A"), Entity(id="b", name="B")]
+    ctx.resolved_relationships = [
+        Relationship(id="r", source_id="a", target_id="b", type="WORKS_WITH")
+    ]
+    result = stage.execute(ctx)
+    assert result.status is PipelineStageStatus.COMPLETED, result.error_message
+    assert ctx.knowledge_graph.number_of_edges() == 1
+    assert result.metrics["graph_metrics"]["num_nodes"] == 2
+    centrality.assert_not_called()
+    assert PipelineStageType.GRAPH_ANALYSIS not in STAGE_OUTPUTS

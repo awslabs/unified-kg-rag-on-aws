@@ -1110,7 +1110,9 @@ class GraphAnalysisStage(PipelineStage):
         context.knowledge_graph = _build_knowledge_graph(context)
         self.analyzer.graph = context.knowledge_graph
 
-        centrality_data = self.analyzer.calculate_centrality()
+        # Centrality is not computed here: no later stage reads it (the
+        # visualization computes its own), and betweenness alone takes
+        # minutes on a graph of tens of thousands of entities.
         graph_stats = self.analyzer.get_graph_statistics()
 
         metrics = {
@@ -1125,10 +1127,6 @@ class GraphAnalysisStage(PipelineStage):
                 "diameter": graph_stats.diameter,
                 "num_connected_components": graph_stats.num_connected_components,
                 "largest_component_size": graph_stats.largest_component_size,
-            },
-            "centrality_stats": {
-                "nodes_with_centrality": len(centrality_data),
-                "centrality_types_calculated": len(self.analyzer.centrality_cache),
             },
         }
 
