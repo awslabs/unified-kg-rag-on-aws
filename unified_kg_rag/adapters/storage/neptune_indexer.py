@@ -1,5 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
+import logging
 import math
 import random
 import time
@@ -909,8 +910,12 @@ class NeptuneIndexer(GraphIndexer):
         (concurrent) without any locking.
         """
         try:
+            # Not an error yet: the per-item fallback below may still index
+            # every item; one that fails there logs it.
             self._execute_with_retries(
-                lambda g: traversal_builder(g, batch), operation_name
+                lambda g: traversal_builder(g, batch),
+                operation_name,
+                exhausted_level=logging.WARNING,
             )
             stats.add_success(len(batch))
         except Exception as batch_error:
@@ -947,12 +952,14 @@ class NeptuneIndexer(GraphIndexer):
         operation_name: str,
         *,
         results: bool = False,
+        exhausted_level: int = logging.ERROR,
     ) -> list[Any]:
         """Run the traversal ``build`` makes, with retries (``run_traversal``).
 
         Each attempt builds it anew from the client's current source, so after
         a lost connection (a Neptune restart or failover) the retry goes over
         a new one. With ``results`` its results are returned, else ``[]``.
+        The final failure is logged at ``exhausted_level``.
         """
         max_attempts = self.neptune_config.max_attempts
         delay = self.neptune_config.retry_delay_seconds
@@ -962,7 +969,8 @@ class NeptuneIndexer(GraphIndexer):
                 return run_traversal(self.neptune_client, build, results=results)
             except Exception as e:
                 if is_permanent_neptune_error(e) or attempt + 1 == max_attempts:
-                    logger.error(
+                    logger.log(
+                        exhausted_level,
                         "Failed %s after %s attempt(s): %s",
                         operation_name,
                         attempt + 1,

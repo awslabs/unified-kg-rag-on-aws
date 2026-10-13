@@ -377,6 +377,9 @@ Library API (Python callers and custom backends).
   `RAGOutput` metadata) carries `degraded_error` with the error's type name
   and the `kg_rag.strategy` span carries it as `error.type`. The degraded
   answer had no marker (#PR).
+- A Neptune write batch that fails but whose items the per-item fallback
+  then indexes logs its final attempt as a WARNING, not an ERROR; an item
+  that fails on its own still logs an ERROR (#PR).
 - A Neptune connection lost under concurrent queries no longer leaks
   threads. A query took the traversal source before waiting for a pool
   slot, so after another query reset the connection it sent on the closed

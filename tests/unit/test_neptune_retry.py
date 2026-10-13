@@ -23,6 +23,7 @@ from gremlin_python.driver.protocol import GremlinServerError
 from unified_kg_rag.adapters.aws.neptune import is_permanent_neptune_error
 from unified_kg_rag.adapters.storage.neptune_indexer import NeptuneIndexer
 from unified_kg_rag.domain.models import Config
+from unified_kg_rag.ports.indexer import IndexingStats
 
 pytestmark = pytest.mark.unit
 
@@ -245,3 +246,46 @@ def test_a_lost_connection_is_replaced_before_the_retry(monkeypatch) -> None:
 
     assert len(opened) == 2 and opened[0].closed and not opened[1].closed
     assert [g.connection for g in built_on] == opened
+
+
+def test_a_failed_batch_the_fallback_indexes_logs_no_error(
+    indexer, mocker, caplog
+) -> None:
+    # Regression: "Failed ... after N attempt(s)" was logged at ERROR for the
+    # batch even when the per-item fallback then indexed every item.
+    import logging
+
+    def fake_run(client, build, *, results=False):
+        if len(build(None)) > 1:
+            raise _CME
+        return []
+
+    mocker.patch(_MOD + ".run_traversal", side_effect=fake_run)
+    indexer.neptune_config.max_attempts = 1
+    stats = IndexingStats(total_items=2)
+    with caplog.at_level(logging.WARNING):
+        indexer._execute_single_batch(
+            ["a", "b"], lambda _g, items: items, "upsert entities", stats
+        )
+    assert stats.successful_items == 2
+    assert [r.levelno for r in caplog.records if "attempt(s)" in r.getMessage()] == [
+        logging.WARNING
+    ]
+    assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
+
+
+def test_an_item_the_fallback_cannot_index_logs_an_error(
+    indexer, mocker, caplog
+) -> None:
+    import logging
+
+    mocker.patch(_MOD + ".run_traversal", side_effect=_CME)
+    indexer.neptune_config.max_attempts = 1
+    stats = IndexingStats(total_items=2)
+    with caplog.at_level(logging.WARNING):
+        indexer._execute_single_batch(
+            ["a", "b"], lambda _g, items: items, "upsert entities", stats
+        )
+    assert stats.failed_items == 2
+    levels = [r.levelno for r in caplog.records if "attempt(s)" in r.getMessage()]
+    assert levels == [logging.WARNING, logging.ERROR, logging.ERROR]
