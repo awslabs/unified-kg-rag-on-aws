@@ -8,8 +8,9 @@ isolation, write concurrency, label scoping and property serialization) and
 real Gremlin Server). Here we cover the non-upsert paths and pure helpers:
 
 * ``index_entities`` / ``index_communities`` full-index traversal SHAPE via a
-  recording fake traversal (create-or-match per item, label scoping): writes
-  a retry cannot duplicate.
+  recording fake traversal (create-or-match per item, label scoping), and the
+  label clear.
+* Retries of reads and drops, and writes that a retry cannot duplicate.
 * ``_group_items_by_suffix`` partitioning by item ``attributes["index"]``.
 * ``_build_vertex_properties`` (None drop, attribute_ prefix, truncation).
 * ``neptune_codec`` truncation and JSON serialization for edge list values.
@@ -228,25 +229,27 @@ def test_upsert_communities_does_not_clear_label(indexer, mocker) -> None:
 
 
 def test_membership_is_not_re_added_when_its_drop_failed(indexer, mocker) -> None:
-    # Re-adding the MemberOf edges next to the old ones would duplicate them.
+    # Re-adding the members after a failed drop would keep the entities that
+    # left the community; the community is reported failed instead.
     from unified_kg_rag.ports.indexer import IndexingStats
 
     mocker.patch.object(
         indexer, "_execute_batch_traversal", return_value=IndexingStats()
     )
-    add_edges = mocker.patch.object(indexer, "_execute_with_retries")
-    g = mocker.MagicMock()
-    g.V.return_value.hasLabel.return_value.has.return_value.inE.return_value.drop.return_value.iterate.side_effect = RuntimeError(
-        "drop timed out"
-    )
-    indexer.neptune_client.g = g
+    operations: list[str] = []
+
+    def execute(build, operation_name, **kwargs):
+        operations.append(operation_name)
+        raise RuntimeError("drop timed out")
+
+    mocker.patch.object(indexer, "_execute_with_retries", side_effect=execute)
     comm = Community(
         id="c1", name="C", level="0", parent="", children=[], entity_ids=["e1"]
     )
 
     stats = indexer.upsert_communities([comm])
 
-    add_edges.assert_not_called()
+    assert operations == ["Clearing MemberOf edges"]
     assert stats.failed_ids == ["c1"]
 
 
@@ -618,3 +621,207 @@ def test_find_incident_relationship_ids_batches_the_ids(indexer, mocker) -> None
 
     assert indexer.find_incident_relationship_ids(["e1", "e2", "e3"]) == ["r1", "r2"]
     assert [c.args[1].value for c in has.call_args_list] == [["e1", "e2"], ["e3"]]
+
+
+# --------------------------------------------------------------------------- #
+# _clear_existing_data_by_label (bounded, retried drops)
+# --------------------------------------------------------------------------- #
+
+
+class _ClearTraversal:
+    """A fake traversal source: the label count returns ``initial`` and each
+    drop request the next scripted count of dropped vertices; labels, limit(n),
+    counts and drops are recorded."""
+
+    def __init__(self, dropped: list[int], initial: int | None = None) -> None:
+        self._dropped = list(dropped)
+        self._initial = sum(dropped) if initial is None else initial
+        self._limited = False
+        self.labels: list[str] = []
+        self.limits: list[int] = []
+        self.counts = 0
+        self.drops = 0
+
+    def V(self):  # noqa: N802
+        self._limited = False
+        return self
+
+    def hasLabel(self, label):  # noqa: N802
+        self.labels.append(label)
+        return self
+
+    def limit(self, n):
+        self._limited = True
+        self.limits.append(n)
+        return self
+
+    def sideEffect(self, traversal):  # noqa: N802
+        self.drops += 1
+        return self
+
+    def count(self):
+        return self
+
+    def toList(self):  # noqa: N802
+        if not self._limited:
+            self.counts += 1
+            return [self._initial]
+        return [self._dropped.pop(0)]
+
+
+def _clearing(indexer, dropped: list[int], initial: int | None = None):
+    fake = _ClearTraversal(dropped, initial)
+    indexer.neptune_client.g = fake
+    return fake
+
+
+def test_clearing_an_empty_label_sends_one_drop(indexer) -> None:
+    fake = _clearing(indexer, dropped=[0])
+    indexer._clear_existing_data_by_label("MyLabel")
+    assert (fake.counts, fake.drops) == (1, 1)
+
+
+def test_clearing_stops_after_a_short_batch(indexer) -> None:
+    fake = _clearing(indexer, dropped=[5, 5, 2])
+    indexer._clear_existing_data_by_label("MyLabel", batch_size=5)
+    # One count up front, then one bounded drop per request, each scoped to
+    # the label, no recount.
+    assert fake.counts == 1
+    assert fake.drops == 3
+    assert fake.limits == [5, 5, 5]
+    assert set(fake.labels) == {"MyLabel"}
+
+
+def test_clearing_stops_after_an_empty_batch(indexer) -> None:
+    fake = _clearing(indexer, dropped=[5, 0])
+    indexer._clear_existing_data_by_label("MyLabel", batch_size=5)
+    assert fake.drops == 2
+
+
+def test_clearing_allows_vertices_added_meanwhile(indexer) -> None:
+    # 10 counted, 15 dropped (writers added some): within the slack.
+    fake = _clearing(indexer, dropped=[5, 5, 5, 0], initial=10)
+    indexer._clear_existing_data_by_label("MyLabel", batch_size=5)
+    assert fake.drops == 4
+
+
+def test_clearing_fails_instead_of_looping_forever(indexer) -> None:
+    from unified_kg_rag.adapters.storage import neptune_indexer
+    from unified_kg_rag.shared import AWSServiceError
+
+    # Every request reports a full batch: the passes stop at the bound.
+    fake = _clearing(indexer, dropped=[5] * 100, initial=10)
+    with pytest.raises(AWSServiceError, match="did not finish"):
+        indexer._clear_existing_data_by_label("MyLabel", batch_size=5)
+    assert fake.drops == 2 + neptune_indexer._EXTRA_DELETE_PASSES
+
+
+def test_clear_reports_a_failed_clear(indexer) -> None:
+    class _Boom:
+        def V(self):  # noqa: N802
+            raise RuntimeError("gremlin exploded")
+
+    indexer.neptune_client.g = _Boom()
+    assert indexer.clear(["default"]) is False
+
+
+# --------------------------------------------------------------------------- #
+# Reads and drops survive a lost connection (retried like writes)
+# --------------------------------------------------------------------------- #
+
+
+class _LostOnce:
+    """A traversal source whose first request fails as a lost connection.
+
+    Every later request answers ``rows``; a drop answers nothing.
+    """
+
+    def __init__(self, rows: list) -> None:
+        self.rows = rows
+        self.requests = 0
+
+    def __getattr__(self, name: str):
+        def step(*args, **kwargs):
+            if name in ("toList", "iterate"):
+                self.requests += 1
+                if self.requests == 1:
+                    raise ConnectionResetError("connection reset by peer")
+                return list(self.rows) if name == "toList" else None
+            return self
+
+        return step
+
+
+_READS = {
+    "read_entities": ([{"id": ["e1"], "name": ["Vendor"]}], 1),
+    "read_relationships": (
+        [
+            {
+                "props": {"id": "r1"},
+                "label": "RELATED",
+                "source_id": "a",
+                "target_id": "b",
+            }
+        ],
+        1,
+    ),
+    "read_neighbor_ids": ([{"id": "e1", "neighbors": ["e2"]}], 1),
+    "find_incident_relationship_ids": (["r1"], 1),
+}
+
+
+@pytest.mark.parametrize("read", sorted(_READS))
+def test_a_read_retries_after_a_lost_connection(indexer, read) -> None:
+    # Regression: reads used client.g directly with no retry and no reset, so
+    # a sub-second failover failed the run, and in a long-lived process every
+    # later incremental run failed its first read (check_graph_holds_registry).
+    rows, expected = _READS[read]
+    g = _LostOnce(rows)
+    indexer.neptune_client.g = g
+
+    result = getattr(indexer, read)(["e1"], suffix="default")
+
+    assert len(result) == expected
+    assert g.requests == 2
+    indexer.neptune_client.reset.assert_called_once_with(g)
+
+
+def test_read_entity_names_retries_after_a_lost_connection(indexer) -> None:
+    indexer.neptune_client.g = _LostOnce([{"id": "e1", "name": "Vendor"}])
+    assert indexer.read_entity_names("default") == [("e1", "Vendor")]
+
+
+def test_delete_by_id_retries_after_a_lost_connection(indexer) -> None:
+    g = _LostOnce([])
+    indexer.neptune_client.g = g
+
+    stats = indexer.delete_by_id(["e1"], suffix="default")
+
+    assert (stats.successful_items, stats.failed_items) == (1, 0)
+    assert g.requests == 3  # edges (lost, retried), then vertices
+
+
+def test_relationship_drop_retries_after_a_lost_connection(indexer, mocker) -> None:
+    # Regression: the drop-by-id before the edge writes had one attempt, so a
+    # lost connection failed the whole batch of edges.
+    g = _LostOnce(["r1"])
+    indexer.neptune_client.g = g
+    rel = Relationship(id="r1", source_id="a", target_id="b")
+
+    stats = indexer.upsert_relationships([rel])
+
+    assert (stats.successful_items, stats.failed_items) == (1, 0)
+
+
+def test_member_drop_retries_after_a_lost_connection(indexer, mocker) -> None:
+    from unified_kg_rag.ports.indexer import IndexingStats
+
+    mocker.patch.object(
+        indexer, "_execute_batch_traversal", return_value=IndexingStats()
+    )
+    indexer.neptune_client.g = _LostOnce([])
+    comm = Community(
+        id="c1", name="C", level="0", parent="", children=[], entity_ids=["e1"]
+    )
+
+    assert indexer.upsert_communities([comm]).failed_ids == []

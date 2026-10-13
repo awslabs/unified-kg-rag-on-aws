@@ -29,6 +29,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
+from gremlin_python.process.graph_traversal import __
 from opensearchpy.exceptions import NotFoundError
 
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
@@ -285,6 +286,56 @@ def test_graph_round_trip(local_config: Config, graph_indexer) -> None:
     ]
     assert graph_indexer.delete_by_id(["e-depot"], _SUFFIX).failed_items == 0
     assert _graph_entity_count(graph_indexer) == 2
+
+
+def test_graph_writes_retried_after_a_lost_response_add_nothing_twice(
+    graph_indexer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Every request is applied, then its response is lost once, so each one is
+    # retried (over a new connection) after it took effect. Regression: the
+    # full build's addV and the unconditional addE('MemberOf') then wrote
+    # every vertex and membership edge twice, reporting 0 failed.
+    from unified_kg_rag.adapters.storage import neptune_indexer as module
+    from unified_kg_rag.shared import StoreConnectionError
+
+    real_run = module.run_traversal
+
+    def lose_the_first_response(client, build, *, results=False):
+        out = real_run(client, build, results=results)
+        if not getattr(build, "lost", False):  # the retries pass the same build
+            build.lost = True
+            raise StoreConnectionError("response lost")
+        return out
+
+    monkeypatch.setattr(module, "run_traversal", lose_the_first_response)
+    monkeypatch.setattr(module, "_sleep", lambda _seconds: None)
+
+    def counts() -> tuple[int, int, int, int]:
+        g = graph_indexer.neptune_client.g
+        entity = graph_indexer._get_label("Entity", _SUFFIX)
+        community = graph_indexer._get_label("Community", _SUFFIX)
+        edges = g.V().hasLabel(entity).outE()
+        return (
+            int(g.V().hasLabel(entity).count().next()),
+            int(edges.not_(__.hasLabel("MemberOf")).count().next()),
+            int(g.V().hasLabel(entity).outE("MemberOf").count().next()),
+            int(g.V().hasLabel(community).count().next()),
+        )
+
+    assert graph_indexer.index_entities(_entities()).failed_items == 0
+    assert graph_indexer.index_relationships(_relationships()).failed_items == 0
+    assert graph_indexer.index_communities(_communities()).failed_items == 0
+    assert counts() == (3, 2, 3, 1)
+    (vendor,) = graph_indexer.read_entities(["e-vendor"], _SUFFIX)
+    assert sorted(vendor.text_unit_ids or []) == ["t1", "t2"]
+
+    assert graph_indexer.upsert_entities(_entities()).failed_items == 0
+    assert graph_indexer.upsert_relationships(_relationships()).failed_items == 0
+    assert graph_indexer.upsert_communities(_communities()).failed_items == 0
+    assert counts() == (3, 2, 3, 1)
+
+    assert graph_indexer.delete_by_id(["e-depot"], _SUFFIX).failed_items == 0
+    assert counts() == (2, 1, 2, 1)
 
 
 def test_graph_expansion_returns_every_seed_and_its_neighbourhood(

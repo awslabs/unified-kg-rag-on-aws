@@ -36,6 +36,7 @@ class RecordingTraversal:
 @pytest.fixture
 def indexer(mocker):
     mocker.patch("unified_kg_rag.adapters.storage.neptune_indexer.NeptuneClient")
+    mocker.patch("unified_kg_rag.adapters.storage.neptune_indexer._sleep")
     from unified_kg_rag.adapters.storage.neptune_indexer import NeptuneIndexer
 
     return NeptuneIndexer(config=Config())
@@ -50,6 +51,8 @@ def test_write_relationships_isolates_a_failing_edge(indexer, mocker) -> None:
     calls = {"n": 0}
 
     def flaky_execute(traversal, op, *, results=False):
+        if op != "Relationship indexing":  # the drop before the writes
+            return []
         calls["n"] += 1
         if calls["n"] == 2:  # second edge fails
             raise RuntimeError("neptune write rejected")
@@ -88,7 +91,9 @@ def test_write_relationships_counts_an_edge_without_source_as_failed(
     mocker.patch.object(
         indexer,
         "_execute_with_retries",
-        side_effect=lambda traversal, op, *, results=False: written[next(order)],
+        side_effect=lambda traversal, op, *, results=False: (
+            written[next(order)] if op == "Relationship indexing" else []
+        ),
     )
 
     stats = indexer.upsert_relationships(rels)
@@ -102,15 +107,17 @@ def test_an_edge_whose_drop_failed_is_not_re_added(indexer, mocker) -> None:
     # Re-adding next to the old edge would duplicate it: the batch fails.
     indexer.neptune_config.batch_size = 1
     g = mocker.MagicMock()
-    drop = g.E.return_value.has.return_value.where.return_value.drop.return_value
-    drop.iterate.side_effect = [RuntimeError("drop timed out"), None]
-    indexer.neptune_client.g = g
     built = mocker.patch.object(indexer, "_build_add_edge_traversal")
-    mocker.patch.object(
-        indexer,
-        "_execute_with_retries",
-        side_effect=lambda build, *_a, **_k: [build(g)],
-    )
+    drops: list[str] = []
+
+    def execute(build, op, **_kwargs):
+        if op == "Dropping existing edges":
+            drops.append(op)
+            if len(drops) == 1:  # the first batch's drop fails its retries
+                raise RuntimeError("drop timed out")
+        return [build(g)]
+
+    mocker.patch.object(indexer, "_execute_with_retries", side_effect=execute)
 
     stats = indexer.upsert_relationships(
         [
@@ -132,6 +139,8 @@ def test_edges_are_written_index_concurrency_at_a_time(indexer, mocker) -> None:
     barrier = threading.Barrier(4, timeout=5)
 
     def execute(traversal, op, *, results=False):
+        if op != "Relationship indexing":  # the drop before the writes
+            return []
         threads.add(threading.get_ident())
         barrier.wait()
         return ["edge-id"]
@@ -297,7 +306,11 @@ def test_relationship_pre_drop_is_scoped_to_the_suffix(indexer, mocker) -> None:
             return _step
 
     indexer.neptune_client.g = Recorder()
-    mocker.patch.object(indexer, "_execute_with_retries")
+    mocker.patch.object(
+        indexer,
+        "_execute_with_retries",
+        side_effect=lambda build, op, **kw: [build(indexer.neptune_client.g)],
+    )
     mocker.patch.object(indexer, "_build_add_edge_traversal")
 
     indexer.upsert_relationships(
@@ -323,6 +336,7 @@ def test_relationship_pre_drop_is_scoped_to_the_suffix(indexer, mocker) -> None:
 
 def test_a_failed_delete_batch_counts_each_of_its_ids(indexer, mocker) -> None:
     indexer.neptune_config.batch_size = 2
+    indexer.neptune_config.max_attempts = 1  # the first batch's drop fails
     g = mocker.MagicMock()
     drop = g.E.return_value.has.return_value.where.return_value.drop.return_value
     drop.iterate.side_effect = [RuntimeError("timed out"), None]

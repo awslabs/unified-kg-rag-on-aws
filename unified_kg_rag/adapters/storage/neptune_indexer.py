@@ -1,5 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
+import math
 import random
 import time
 from collections.abc import Callable, Collection, Iterator
@@ -33,7 +34,7 @@ from unified_kg_rag.domain.models import (
     Relationship,
 )
 from unified_kg_rag.ports.indexer import GraphIndexer, IndexingStats
-from unified_kg_rag.shared import AWSServiceError, get_logger
+from unified_kg_rag.shared import AWSServiceError, GraphRAGException, get_logger
 from unified_kg_rag.shared.utils.concurrency import ContextThreadPoolExecutor
 
 if TYPE_CHECKING:
@@ -46,6 +47,11 @@ logger = get_logger(__name__)
 _sleep = time.sleep
 # Retry-backoff jitter only; not a security/crypto context.
 _jitter = random.uniform  # nosec B311
+
+# Vertices one clear request drops, and the passes a clear allows beyond what
+# the label's count needs.
+_DELETE_BATCH_SIZE = 500
+_EXTRA_DELETE_PASSES = 3
 
 
 class NeptuneIndexer(GraphIndexer):
@@ -83,7 +89,7 @@ class NeptuneIndexer(GraphIndexer):
             if labels_to_delete:
                 logger.info("Clearing Neptune data for labels: %s", labels_to_delete)
                 for label in labels_to_delete:
-                    self.neptune_client.delete_vertices_in_batches(label)
+                    self._clear_existing_data_by_label(label)
             return True
         except Exception as e:
             logger.error(
@@ -108,21 +114,16 @@ class NeptuneIndexer(GraphIndexer):
             return []
         entity_label = self._get_label(self.neptune_config.entity_label_prefix, suffix)
         try:
-            g = self.neptune_client.g
-            entities: list[Entity] = []
-            for id_batch in self._batch_iterator(ids):
-                rows = (
-                    g.V()
-                    .hasLabel(entity_label)
-                    .has("id", P.within(id_batch))
-                    .valueMap()
-                    .toList()
-                )
-                for row in rows:
-                    entity = entity_from_vertex(row)
-                    if entity is not None:
-                        entities.append(entity)
-            return entities
+            rows = self._read_batches(
+                ids,
+                lambda g, batch: g.V()
+                .hasLabel(entity_label)
+                .has("id", P.within(batch))
+                .valueMap(),
+                "read_entities",
+            )
+            entities = [entity_from_vertex(row) for row in rows]
+            return [entity for entity in entities if entity is not None]
         except Exception as e:
             raise AWSServiceError(f"Neptune read_entities failed: {e}") from e
 
@@ -142,32 +143,30 @@ class NeptuneIndexer(GraphIndexer):
             return []
         entity_label = self._get_label(self.neptune_config.entity_label_prefix, suffix)
         try:
-            g = self.neptune_client.g
-            rels: list[Relationship] = []
-            for id_batch in self._batch_iterator(ids):
-                # source_id/target_id are edge TOPOLOGY (endpoint vertex ids)
-                # and the type is the edge label, so neither is in valueMap().
-                rows = (
-                    g.E()
-                    .has("id", P.within(id_batch))
-                    .where(__.outV().hasLabel(entity_label))
-                    .project("props", "label", "source_id", "target_id")
-                    .by(__.valueMap())
-                    .by(__.label())
-                    .by(__.outV().values("id"))
-                    .by(__.inV().values("id"))
-                    .toList()
+            # source_id/target_id are edge TOPOLOGY (endpoint vertex ids) and
+            # the type is the edge label, so neither is in valueMap().
+            rows = self._read_batches(
+                ids,
+                lambda g, batch: g.E()
+                .has("id", P.within(batch))
+                .where(__.outV().hasLabel(entity_label))
+                .project("props", "label", "source_id", "target_id")
+                .by(__.valueMap())
+                .by(__.label())
+                .by(__.outV().values("id"))
+                .by(__.inV().values("id")),
+                "read_relationships",
+            )
+            rels = [
+                relationship_from_edge(
+                    row.get("props") or {},
+                    str(row.get("label")),
+                    row.get("source_id"),
+                    row.get("target_id"),
                 )
-                for row in rows:
-                    rel = relationship_from_edge(
-                        row.get("props") or {},
-                        str(row.get("label")),
-                        row.get("source_id"),
-                        row.get("target_id"),
-                    )
-                    if rel is not None:
-                        rels.append(rel)
-            return rels
+                for row in rows
+            ]
+            return [rel for rel in rels if rel is not None]
         except Exception as e:
             raise AWSServiceError(f"Neptune read_relationships failed: {e}") from e
 
@@ -184,21 +183,17 @@ class NeptuneIndexer(GraphIndexer):
             return {}
         entity_label = self._get_label(self.neptune_config.entity_label_prefix, suffix)
         try:
-            g = self.neptune_client.g
-            neighbors: dict[str, list[str]] = {}
-            for id_batch in self._batch_iterator(entity_ids):
-                rows = (
-                    g.V()
-                    .hasLabel(entity_label)
-                    .has("id", P.within(id_batch))
-                    .project("id", "neighbors")
-                    .by("id")
-                    .by(__.both().hasLabel(entity_label).values("id").dedup().fold())
-                    .toList()
-                )
-                for row in rows:
-                    neighbors[str(row["id"])] = [str(n) for n in row["neighbors"]]
-            return neighbors
+            rows = self._read_batches(
+                entity_ids,
+                lambda g, batch: g.V()
+                .hasLabel(entity_label)
+                .has("id", P.within(batch))
+                .project("id", "neighbors")
+                .by("id")
+                .by(__.both().hasLabel(entity_label).values("id").dedup().fold()),
+                "read_neighbor_ids",
+            )
+            return {str(row["id"]): [str(n) for n in row["neighbors"]] for row in rows}
         except Exception as e:
             raise AWSServiceError(f"Neptune read_neighbor_ids failed: {e}") from e
 
@@ -209,18 +204,16 @@ class NeptuneIndexer(GraphIndexer):
         old entities whose ids differ from a delta entity's. Requires real
         Neptune; validated under the ``aws`` test marker.
         """
+        entity_label = self._get_label(self.neptune_config.entity_label_prefix, suffix)
         try:
-            g = self.neptune_client.g
-            entity_label = self._get_label(
-                self.neptune_config.entity_label_prefix, suffix
-            )
-            rows = (
-                g.V()
+            rows = self._execute_with_retries(
+                lambda g: g.V()
                 .hasLabel(entity_label)
                 .project("id", "name")
                 .by("id")
-                .by("name")
-                .toList()
+                .by("name"),
+                "read_entity_names",
+                results=True,
             )
             pairs: list[tuple[str, str]] = []
             for row in rows:
@@ -360,7 +353,9 @@ class NeptuneIndexer(GraphIndexer):
                         )
 
                     try:
-                        run_traversal(self.neptune_client, drop_members)
+                        self._execute_with_retries(
+                            drop_members, "Clearing MemberOf edges"
+                        )
                     except Exception as e:
                         stats.add_error(str(e), ids=[comm.id])
                         logger.warning(
@@ -567,7 +562,7 @@ class NeptuneIndexer(GraphIndexer):
                     )
 
                 try:
-                    run_traversal(self.neptune_client, drop_edges)
+                    self._execute_with_retries(drop_edges, "Dropping existing edges")
                     writable.extend(batch)
                 except Exception as e:
                     stats.add_error(
@@ -645,19 +640,16 @@ class NeptuneIndexer(GraphIndexer):
             else None
         )
         try:
-            g = self.neptune_client.g
-            rel_ids: set[str] = set()
-            for id_batch in self._batch_iterator(entity_ids):
-                base = g.V().hasLabel(label) if label is not None else g.V()
-                rows = (
-                    base.has("id", P.within(id_batch))
-                    .bothE()
-                    .values("id")
-                    .dedup()
-                    .toList()
-                )
-                rel_ids.update(str(rid) for rid in rows if rid is not None)
-            return sorted(rel_ids)
+            rows = self._read_batches(
+                entity_ids,
+                lambda g, batch: (g.V().hasLabel(label) if label is not None else g.V())
+                .has("id", P.within(batch))
+                .bothE()
+                .values("id")
+                .dedup(),
+                "find_incident_relationship_ids",
+            )
+            return sorted({str(rid) for rid in rows if rid is not None})
         except Exception as e:
             raise AWSServiceError(
                 f"Neptune find_incident_relationship_ids failed: {e}"
@@ -687,25 +679,35 @@ class NeptuneIndexer(GraphIndexer):
             )
 
         for id_batch in self._batch_iterator(ids):
+
+            # Scope the drop to this suffix. Edges are labeled by their
+            # relationship type (e.g. RELATED_TO / MemberOf), NOT by the entity
+            # label, so filtering edges with hasLabel(entity_label) would match
+            # nothing and leak stale edges. Instead scope edges by id AND by an
+            # endpoint vertex carrying this suffix's entity label
+            # (where(outV().hasLabel(...))), which both restricts to this
+            # tenant and matches real edges. A drop is safe to retry.
+            def drop_edges(
+                g: GraphTraversalSource, id_batch: list[str] = id_batch
+            ) -> GraphTraversal:
+                edges = g.E().has("id", P.within(id_batch))
+                if entity_label:
+                    edges = edges.where(__.outV().hasLabel(entity_label))
+                return edges.drop()
+
+            def drop_vertices(
+                g: GraphTraversalSource, id_batch: list[str] = id_batch
+            ) -> GraphTraversal:
+                vertices = (
+                    g.V().hasLabel(entity_label, community_label)
+                    if entity_label and community_label
+                    else g.V()
+                )
+                return vertices.has("id", P.within(id_batch)).drop()
+
             try:
-                g = self.neptune_client.g
-                if entity_label and community_label:
-                    # Scope the drop to this suffix. Edges are labeled by their
-                    # relationship type (e.g. RELATED_TO / MemberOf), NOT by the
-                    # entity label, so filtering edges with hasLabel(entity_label)
-                    # would match nothing and leak stale edges. Instead scope
-                    # edges by id AND by an endpoint vertex carrying this suffix's
-                    # entity label (where(outV().hasLabel(...))), which both
-                    # restricts to this tenant and matches real edges.
-                    g.E().has("id", P.within(id_batch)).where(
-                        __.outV().hasLabel(entity_label)
-                    ).drop().iterate()
-                    g.V().hasLabel(entity_label, community_label).has(
-                        "id", P.within(id_batch)
-                    ).drop().iterate()
-                else:
-                    g.E().has("id", P.within(id_batch)).drop().iterate()
-                    g.V().has("id", P.within(id_batch)).drop().iterate()
+                self._execute_with_retries(drop_edges, "Deleting edges by id")
+                self._execute_with_retries(drop_vertices, "Deleting vertices by id")
                 stats.add_success(len(id_batch))
             except Exception as e:
                 stats.add_error(str(e), len(id_batch), ids=list(id_batch))
@@ -782,17 +784,60 @@ class NeptuneIndexer(GraphIndexer):
         self._log_indexing_summary(f"{item_type_name.lower()}s", total_stats)
         return total_stats
 
-    def _clear_existing_data_by_label(self, label: str) -> None:
+    def _clear_existing_data_by_label(
+        self, label: str, batch_size: int = _DELETE_BATCH_SIZE
+    ) -> None:
+        """Drop every vertex of ``label``, ``batch_size`` per request.
+
+        Bounded requests keep each drop's transaction small, and each request
+        is retried like a write (a drop is safe to repeat). A request returns
+        how many vertices it dropped, so a short one is the last: no count of
+        the label per pass. The label is counted once up front to bound the
+        passes: if requests keep reporting full batches past that bound (a
+        backend whose count does not reflect the drop, or writers adding
+        vertices meanwhile) the clear fails instead of looping forever.
+
+        Raises:
+            AWSServiceError: A request failed after its retries, or the label
+                still reported full batches after
+                ``ceil(count / batch_size) + _EXTRA_DELETE_PASSES`` passes.
+        """
         try:
-            count_result = (
-                self.neptune_client.g.V().hasLabel(label).limit(1).count().next()
+            (initial,) = self._execute_with_retries(
+                lambda g: g.V().hasLabel(label).count(),
+                "Counting vertices to clear",
+                results=True,
             )
-            count = count_result[0] if isinstance(count_result, list) else count_result
-            if count > 0:
-                self.neptune_client.delete_vertices_in_batches(label)
+            max_passes = math.ceil(int(initial) / batch_size) + _EXTRA_DELETE_PASSES
+            total = 0
+            for _ in range(max_passes):
+                (dropped,) = self._execute_with_retries(
+                    lambda g: g.V()
+                    .hasLabel(label)
+                    .limit(batch_size)
+                    .sideEffect(__.drop())
+                    .count(),
+                    "Clearing vertices",
+                    results=True,
+                )
+                total += int(dropped)
+                if dropped < batch_size:
+                    break
+            else:
+                raise AWSServiceError(
+                    f"Deleting vertices with label '{label}' did not finish: "
+                    f"{max_passes} passes of {batch_size} each dropped a full "
+                    f"batch ({total} reported dropped, {initial} counted before)"
+                )
         except Exception as e:
             logger.error("Failed to clear data for label '%s': %s", label, e)
-            raise
+            if isinstance(e, GraphRAGException):
+                raise
+            raise AWSServiceError(
+                f"Clearing Neptune label '{label}' failed: {e}"
+            ) from e
+        if total:
+            logger.info("Deleted %s vertices with label '%s'", total, label)
 
     def _execute_batch_traversal(
         self,
@@ -937,6 +982,24 @@ class NeptuneIndexer(GraphIndexer):
                 )
                 _sleep(sleep_for)
                 attempt += 1
+
+    def _read_batches(
+        self,
+        ids: list[str],
+        query: Callable[[GraphTraversalSource, list[str]], Traversal],
+        operation_name: str,
+    ) -> list[Any]:
+        """The rows ``query`` reads for each batch of ``ids``, retried like a write."""
+        rows: list[Any] = []
+        for id_batch in self._batch_iterator(ids):
+
+            def build(
+                g: GraphTraversalSource, id_batch: list[str] = id_batch
+            ) -> Traversal:
+                return query(g, id_batch)
+
+            rows.extend(self._execute_with_retries(build, operation_name, results=True))
+        return rows
 
     def _batch_iterator(self, items: list[Any]) -> Iterator[list[Any]]:
         batch_size = self.neptune_config.batch_size

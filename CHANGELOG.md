@@ -369,6 +369,13 @@ Library API (Python callers and custom backends).
   the indexing stage reported 0 failed. Every vertex write now creates or
   matches the vertex by id, and a `MemberOf` edge is added only for an
   entity not yet a member (#PR).
+- A sub-second Neptune connection loss no longer fails an ingestion run in
+  its removals, merges or full-build clear. The indexer's reads (the merge
+  and removal read-backs, the incident-edge lookup), `delete_by_id`, the
+  label clear and the drops before relationship and membership writes now
+  reconnect and retry like writes (`indexing.neptune.max_attempts`). Before,
+  they had one attempt on the pooled connection, so in a long-lived process
+  every later incremental run failed at its first read (#PR).
 - A query whose embedding call cannot succeed fails instead of answering
   "I could not find relevant information": an invalid or inaccessible
   Bedrock model id, a model without on-demand throughput in the region, or
