@@ -279,6 +279,11 @@ Library API (Python callers and custom backends).
   aws-cdk-lib pin (#241).
 
 ### Fixed
+- `retrieval` matches a source by its file-name stem only when the
+  reference has no extension: `Report-A.pdf` no longer matches a source
+  `Report-A.docx`, and a version suffix such as `.v2` is part of the name, so
+  `notes.v1` does not match `notes.v2`. `docs/Report-A.pdf`, `report-a.pdf`
+  and `report-a` still match `Report-A.pdf` (#PR).
 - `answer_match` scores a Korean, Chinese or Japanese yes/no gold (`예`,
   `네`, `아니요`, `아니오`, `是`, `对`, `否`, `不是`, `はい`, `いいえ`) by the
   answer's polarity, as it already did for `yes`/`no`. Such a gold was

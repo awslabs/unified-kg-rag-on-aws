@@ -21,12 +21,16 @@ the answer model actually read. A source that maps to no file is
   context the rank metrics can see. Emitted whenever the query has sources,
   with or without ``reference_sources``.
 
-``k`` is ``evaluation.retrieval_k``. Matching rule (``source_keys``): each
-identifier is reduced, case-insensitively, to its full name and — when it ends
-in a file extension (``.`` + 1-5 ASCII letters/digits, at least one a letter) —
-its stem; a reference matches a source when the two key sets intersect. So
-``"docs/Report-A.pdf"``, ``"report-a.pdf"`` and ``"report-a"`` all match a
-source parsed from ``Report-A.pdf``. A ``/`` or ``\\`` is a directory separator
+``k`` is ``evaluation.retrieval_k``. Matching rule: each identifier is
+reduced, case-insensitively, to its name (``reference_key``); a source also
+keeps its stem when it ends in a file extension (``.`` + 1-5 ASCII
+letters/digits, at least one a letter, not a version such as ``.v2``;
+``source_keys``). A reference matches a source when its name is one of the
+source's keys, so a reference without an extension matches by stem and one
+with an extension needs the same extension: ``"docs/Report-A.pdf"``,
+``"report-a.pdf"`` and ``"report-a"`` all match a source parsed from
+``Report-A.pdf``, but ``"Report-A.docx"`` does not. Sources carry only a file
+name, so a reference's directories are ignored. A ``/`` or ``\\`` is a directory separator
 only in a path-like identifier (one whose last segment has a file extension, or
 that has a URI scheme or a leading ``/``, ``./``, ``../``, ``~/``); otherwise it
 is part of the name, so titles such as ``"St. Louis Cardinals"``,
@@ -60,8 +64,9 @@ from unified_kg_rag.domain.models import (
 )
 
 # A file extension: "." + 1-5 ASCII alphanumerics with at least one letter, so
-# "Version 2.0" or "Route 66" keep their numeric tail.
-_EXTENSION = re.compile(r"\.(?=[A-Za-z0-9]*[A-Za-z])[A-Za-z0-9]{1,5}$")
+# "Version 2.0" or "Route 66" keep their numeric tail, and not a version
+# (".v2"), so "notes.v1" and "notes.v2" are different names.
+_EXTENSION = re.compile(r"\.(?![vV]\d+$)(?=[A-Za-z0-9]*[A-Za-z])[A-Za-z0-9]{1,5}$")
 _PATH_PREFIXES = ("/", "./", "../", "~/")
 
 
@@ -74,8 +79,8 @@ def _is_path_like(identifier: str) -> bool:
     )
 
 
-def source_keys(identifier: str) -> frozenset[str]:
-    """Match keys of a file name / path / title: full name and stem (module doc).
+def reference_key(identifier: str) -> str:
+    """Normalized name of a file name / path / title ("" if blank).
 
     NFKC + casefold first: macOS and many PDF tools write decomposed (NFD)
     Hangul file names, and full-width letters ("ＡＢＣ") should equal ASCII.
@@ -86,7 +91,12 @@ def source_keys(identifier: str) -> frozenset[str]:
     # Underscores stand for spaces in file names derived from titles
     # ("Miquette_Giraudy.txt" for the title "Miquette Giraudy"), so both sides
     # compare with underscores folded to spaces.
-    name = " ".join(name.replace("_", " ").split())
+    return " ".join(name.replace("_", " ").split())
+
+
+def source_keys(identifier: str) -> frozenset[str]:
+    """Match keys of a source: its name and, with a file extension, its stem."""
+    name = reference_key(identifier)
     if not name:
         return frozenset()
     stem = _EXTENSION.sub("", name).strip()
@@ -135,17 +145,17 @@ class RetrievalEvaluator(BaseGraphRAGEvaluator):
         else:
             skipped[EvaluationMetricType.ATTRIBUTABLE_FRACTION.value] = "no_sources"
 
-        # reference display name -> its match keys (deduplicated by keys).
-        references: dict[frozenset[str], str] = {}
+        # reference match key -> its display name (deduplicated by key).
+        references: dict[str, str] = {}
         for ref in result.metadata.get("reference_sources") or []:
-            if isinstance(ref, str) and (keys := source_keys(ref)):
-                references.setdefault(keys, ref.strip())
+            if isinstance(ref, str) and (key := reference_key(ref)):
+                references.setdefault(key, ref.strip())
 
         def _matched(sources: list[frozenset[str]]) -> set[str]:
             return {
                 name
-                for ref_keys, name in references.items()
-                if any(ref_keys & keys for keys in sources)
+                for ref_key, name in references.items()
+                if any(ref_key in keys for keys in sources)
             }
 
         metadata: dict[str, Any] = {

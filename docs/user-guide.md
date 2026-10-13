@@ -1396,9 +1396,13 @@ set `enabled_evaluators: [answer_match, retrieval, graph_aware]`.
   (attributable / reported sources, also in `grouped_statistics` per strategy)
   shows how much of the context the rank metrics cover. Matching is
   NFKC-normalized and case-insensitive (so decomposed NFD Hangul file names
-  and full-width letters match) on the full name or, when the name ends in a file extension
-  (`.` + 1-5 letters/digits, at least one letter), its stem: `docs/Terms.pdf` =
-  `terms.pdf` = `terms`. A `/` is a directory separator only in a path-like
+  and full-width letters match) on the name. A reference without a file
+  extension (`.` + 1-5 letters/digits, at least one letter, not a version
+  such as `.v2`) also matches a source's stem; one with an extension needs
+  the same extension: `docs/Terms.pdf` = `terms.pdf` = `terms` all match the
+  source `Terms.pdf`, `terms.docx` does not, and `notes.v1` does not match
+  `notes.v2`. Sources carry only a file name, so a reference's directories
+  are ignored. A `/` is a directory separator only in a path-like
   value (a file extension, a URI scheme, or a leading `/`, `./`, `~/`), so
   titles such as `St. Louis Cardinals` or `AC/DC` are compared whole. The rank
   metrics are skipped when a query has no `reference_sources`, or has sources
