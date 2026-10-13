@@ -369,6 +369,13 @@ Library API (Python callers and custom backends).
   claims read back carried no suffix, so the update went to the default
   suffix's index: the claim kept the deleted text units, and a claim with the
   same id there was overwritten (#256).
+- A long question no longer fails its lexical search. Lucene allows 1,024
+  clauses per query and a `multi_match` makes one per term per field, so
+  about 1,100 words (or 1,100 Han characters) failed with a misleading
+  "Check the query filters" `ConfigurationError` and about 600 words
+  degraded to no lexical hits. The lexical side now searches the first 100
+  words (150 characters of Hangul, Han or Kana text); the vector side still
+  embeds the whole question (#PR).
 - A query whose filters list many ids sends one search per index. Long list
   filters were split into batches and every combination of the batches
   searched in turn: two 3,000-id filters took 400 sequential requests, three

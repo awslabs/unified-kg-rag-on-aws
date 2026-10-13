@@ -60,6 +60,15 @@ _INVALID_DIMENSION_MARKER = "query vector has invalid dimension"
 # OpenSearch's default index.max_terms_count: the most values one terms query
 # may hold.
 _DEFAULT_MAX_TERMS_COUNT = 65536
+# How much of a query the lexical (multi_match) side searches for. Lucene
+# allows 1,024 clauses per query (indices.query.bool.max_clause_count), and a
+# multi_match makes one per analyzed term per field (up to five fields here),
+# so a long question failed the search (400 "maxClauseCount", or 500
+# too_many_nested_clauses). Dense-script text (Hangul, Han, Kana) analyzes to
+# about a term per character, so it is capped by characters. The vector side
+# still embeds the whole query.
+_MAX_LEXICAL_QUERY_WORDS = 100
+_MAX_LEXICAL_QUERY_DENSE_CHARS = 150
 # Where the reason ends inside a JSON body or a Python repr of one.
 _REASON_END = re.compile(r"[\"'}\]\\\n]")
 
@@ -105,6 +114,16 @@ def _is_timeout(exc: BaseException) -> bool:
             return True
         current = current.__cause__ or current.__context__
     return False
+
+
+def _lexical_query_text(text: str) -> str:
+    """``text`` cut to what one lexical clause set can hold (see the caps)."""
+    words = text.split()
+    if len(words) > _MAX_LEXICAL_QUERY_WORDS:
+        text = " ".join(words[:_MAX_LEXICAL_QUERY_WORDS])
+    if len(text) > _MAX_LEXICAL_QUERY_DENSE_CHARS and has_dense_script(text):
+        text = text[:_MAX_LEXICAL_QUERY_DENSE_CHARS]
+    return text
 
 
 def _rejected_request(exc: BaseException) -> RequestError | None:
@@ -602,20 +621,19 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         if not query.query or query.query == "*":
             return {"match_all": {}}
 
-        main_query: dict[str, Any] = {
-            "multi_match": {"query": query.query, "fields": fields}
-        }
+        text = _lexical_query_text(query.query)
+        main_query: dict[str, Any] = {"multi_match": {"query": text, "fields": fields}}
         # AUTO allows one edit on a 3-5 character term. On Latin words that
         # absorbs a typo; on Hangul/Han/Kana, where one character is a whole
         # syllable or morpheme, it matches a different word ("가나라상사" for
         # "가나다상사"). A query containing such text is matched exactly.
-        if not has_dense_script(query.query):
+        if not has_dense_script(text):
             main_query["multi_match"]["fuzziness"] = "AUTO"
 
         if not query.optional_keywords:
             return main_query
 
-        optional_keywords_query = " ".join(query.optional_keywords)
+        optional_keywords_query = _lexical_query_text(" ".join(query.optional_keywords))
         should_clause = {
             "multi_match": {"query": optional_keywords_query, "fields": fields}
         }

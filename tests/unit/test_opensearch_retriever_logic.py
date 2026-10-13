@@ -217,6 +217,36 @@ def test_build_lexical_query_optional_keywords_become_should(retriever) -> None:
     assert body["bool"]["should"][0]["multi_match"]["query"] == "acme seattle"
 
 
+@pytest.mark.parametrize(
+    ("text", "limit"),
+    [
+        (" ".join(f"word{i}" for i in range(1100)), "words"),
+        ("倉" * 1100, "chars"),
+        (" ".join(["가나다"] * 600), "chars"),
+    ],
+    ids=["latin", "han", "hangul"],
+)
+def test_build_lexical_query_caps_a_long_query(retriever, text, limit) -> None:
+    # A multi_match makes one clause per term per field; 1,100 words failed
+    # the search with maxClauseCount (400) and 600 with
+    # too_many_nested_clauses (500), each answered from no context.
+    q = SearchQuery(query=text, optional_keywords=text.split()[:300])
+    body = retriever._build_lexical_query(q, ["name"])
+    for clause in (body["bool"]["must"][0], body["bool"]["should"][0]):
+        capped = clause["multi_match"]["query"]
+        assert text.startswith(capped)
+        if limit == "words":
+            assert len(capped.split()) == 100
+        else:
+            assert len(capped) <= 150
+
+
+def test_build_lexical_query_keeps_a_normal_query(retriever) -> None:
+    text = " ".join(f"word{i}" for i in range(100))
+    body = retriever._build_lexical_query(SearchQuery(query=text), ["name"])
+    assert body["multi_match"]["query"] == text
+
+
 # --------------------------------------------------------------------------- #
 # _build_vector_query
 # --------------------------------------------------------------------------- #
