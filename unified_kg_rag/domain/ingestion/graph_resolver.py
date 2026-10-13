@@ -27,6 +27,7 @@ from unified_kg_rag.domain.ingestion.relationship_weights import (
 )
 from unified_kg_rag.domain.models import Config, Entity, Relationship
 from unified_kg_rag.shared import GraphError, get_logger
+from unified_kg_rag.shared.utils import text_digest
 from unified_kg_rag.shared.utils.concurrency import ContextThreadPoolExecutor
 
 logger = get_logger(__name__)
@@ -378,11 +379,13 @@ class EntityResolver(BaseResolver):
                     # the run tolerates per-item errors.
                     if not self.config.processing.ignore_errors:
                         raise GraphError(
-                            f"Fuzzy matching failed for entity {original_name!r}: "
-                            f"{e!r}"
+                            "Fuzzy matching failed for entity "
+                            f"({text_digest(original_name)}): {type(e).__name__}"
                         ) from e
                     logger.warning(
-                        "Failed to find matches for entity '%s': %s", original_name, e
+                        "Failed to find matches for entity (%s): %s",
+                        text_digest(original_name),
+                        type(e).__name__,
                     )
                     continue
                 yield original_name, name_matches

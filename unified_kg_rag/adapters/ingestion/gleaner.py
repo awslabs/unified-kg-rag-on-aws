@@ -624,11 +624,12 @@ class GraphGleaner(BaseProcessor):
 
             if not isinstance(plan, dict):
                 logger.warning(
-                    "Could not extract a valid dictionary-based plan for unit '%s'. Received data type: %s, Preview: %s",
+                    "Could not extract a valid dictionary-based plan for unit "
+                    "'%s'. Received data type: %s",
                     unit.id,
-                    type(result_data),
-                    str(result_data)[:250],
+                    type(result_data).__name__,
                 )
+                logger.debug("Refinement output preview: %s", str(result_data)[:250])
                 return new_entities, new_relationships
 
             issues_data = plan.get("identified_issues", {})
@@ -669,8 +670,12 @@ class GraphGleaner(BaseProcessor):
                 )
         except Exception as e:
             logger.warning(
-                "Failed to parse refinement output for unit %s: %s. Input data: %s",
+                "Failed to parse refinement output for unit %s: %s",
                 unit.id,
+                type(e).__name__,
+            )
+            logger.debug(
+                "Refinement parse error: %s. Output preview: %s",
                 e,
                 str(result_data)[:250],
             )
@@ -801,10 +806,9 @@ class GraphGleaner(BaseProcessor):
                 kept.append(rel)
                 continue
             logger.info(
-                "Dropping ungrounded gleaned relationship '%s -> %s' — it names "
-                "an entity chunk '%s' does not list",
-                rel.source_name,
-                rel.target_name,
+                "Dropping ungrounded gleaned relationship '%s' — it names an "
+                "entity chunk '%s' does not list",
+                rel.short_id,
                 unit.short_id,
             )
         return kept
@@ -862,10 +866,9 @@ class GraphGleaner(BaseProcessor):
             if any(key in blocked for key in keys):
                 self._dropped_rejected_endpoint += 1
                 logger.info(
-                    "Dropping gleaned relationship '%s -> %s' — an endpoint was "
+                    "Dropping gleaned relationship '%s' — an endpoint was "
                     "rejected (ungrounded or low confidence) in chunk '%s'",
-                    rel.source_name,
-                    rel.target_name,
+                    rel.short_id,
                     unit.short_id,
                 )
                 continue
@@ -875,10 +878,9 @@ class GraphGleaner(BaseProcessor):
             ):
                 self._dropped_ungrounded_endpoint_name += 1
                 logger.info(
-                    "Dropping gleaned relationship '%s -> %s' — chunk '%s' neither "
+                    "Dropping gleaned relationship '%s' — chunk '%s' neither "
                     "lists nor names an endpoint",
-                    rel.source_name,
-                    rel.target_name,
+                    rel.short_id,
                     unit.short_id,
                 )
                 continue
@@ -1032,10 +1034,8 @@ class GraphGleaner(BaseProcessor):
         if relationship is None:
             logger.info(
                 "Dropping RELATIONSHIP_CORRECTION in chunk '%s': no single current "
-                "relationship '%s' -> '%s'",
+                "relationship matches its endpoints",
                 unit.short_id,
-                source,
-                target,
             )
             return False
 
@@ -1083,9 +1083,8 @@ class GraphGleaner(BaseProcessor):
 
         relationship.updated_at = datetime.now()
         logger.info(
-            "Applied RELATIONSHIP_CORRECTION to '%s' -> '%s' in chunk '%s' (%s)",
-            relationship.source_name,
-            relationship.target_name,
+            "Applied RELATIONSHIP_CORRECTION to '%s' in chunk '%s' (%s)",
+            relationship.short_id,
             unit.short_id,
             ", ".join(corrected),
         )

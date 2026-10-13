@@ -621,10 +621,9 @@ class GraphExtractor(BaseProcessor):
             ):
                 self.stats.relationships_dropped_ungrounded_endpoint += 1
                 logger.info(
-                    "Dropping relationship '%s -> %s' — endpoint entity was dropped "
+                    "Dropping relationship '%s' — endpoint entity was dropped "
                     "as ungrounded in chunk '%s'",
-                    rel.source_name,
-                    rel.target_name,
+                    rel.short_id,
                     text_unit.short_id,
                 )
                 continue
@@ -683,10 +682,9 @@ class GraphExtractor(BaseProcessor):
             ):
                 self.stats.relationships_dropped_ungrounded_unlisted_endpoint += 1
                 logger.info(
-                    "Dropping ungrounded relationship '%s -> %s' — it names an "
+                    "Dropping ungrounded relationship '%s' — it names an "
                     "entity chunk '%s' did not extract",
-                    rel.source_name,
-                    rel.target_name,
+                    rel.short_id,
                     text_unit.short_id,
                 )
             elif grounding.action == "penalize":
@@ -702,10 +700,9 @@ class GraphExtractor(BaseProcessor):
                 )
             else:  # drop
                 logger.info(
-                    "Dropping ungrounded relationship '%s -> %s' — source_text "
+                    "Dropping ungrounded relationship '%s' — source_text "
                     "not found in chunk '%s' (likely hallucinated)",
-                    rel.source_name,
-                    rel.target_name,
+                    rel.short_id,
                     text_unit.short_id,
                 )
         return kept

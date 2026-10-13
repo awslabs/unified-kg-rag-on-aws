@@ -10,7 +10,9 @@ and a short hash may appear; the text itself is DEBUG-only.
 
 from __future__ import annotations
 
+import ast
 import logging
+from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -230,3 +232,90 @@ def test_entity_parse_warnings_omit_corpus_names(
     )
     _assert_no_secret(caplog)
     assert "tu1" in _info_text(caplog)
+
+
+_PACKAGE = Path(__file__).resolve().parents[2] / "unified_kg_rag"
+_INFO_PLUS = {"info", "warning", "warn", "error", "exception", "critical"}
+# Attributes that hold user, corpus or model text on the package's models.
+_TEXT_ATTRS = {
+    "answer",
+    "content",
+    "description",
+    "full_content",
+    "llm_output",
+    "page_content",
+    "query",
+    "source_name",
+    "summary",
+    "target_name",
+    "text",
+    "title",
+}
+_GRAPH_VARS = {"claim", "community", "ent", "entity", "node", "rel", "relationship"}
+
+
+def _leaky_args(call: ast.Call) -> list[str]:
+    leaks: list[str] = []
+    for arg in call.args[1:]:
+        if (
+            isinstance(arg, ast.Call)
+            and isinstance(arg.func, ast.Name)
+            and arg.func.id in {"len", "text_digest"}
+        ):
+            continue
+        for sub in ast.walk(arg):
+            names_text = isinstance(sub, ast.Attribute) and (
+                sub.attr in _TEXT_ATTRS
+                or (
+                    sub.attr == "name"
+                    and isinstance(sub.value, ast.Name)
+                    and sub.value.id in _GRAPH_VARS
+                )
+            )
+            # ``str(model_output)[:250]`` previews.
+            previews_text = (
+                isinstance(sub, ast.Subscript)
+                and isinstance(sub.slice, ast.Slice)
+                and isinstance(sub.value, ast.Call)
+                and isinstance(sub.value.func, ast.Name)
+                and sub.value.func.id == "str"
+            )
+            if names_text or previews_text:
+                leaks.append(ast.unparse(arg))
+                break
+    return leaks
+
+
+def test_no_info_log_call_passes_corpus_or_model_text() -> None:
+    """Static guard: INFO+ ``logger`` calls never pass entity/relationship
+    names, descriptions, document text, queries or model-output previews.
+
+    Pass ``len(...)``, ids/short ids or ``text_digest(...)`` instead, and log
+    the text itself at DEBUG.
+    """
+    offenders: list[str] = []
+    for path in sorted(_PACKAGE.rglob("*.py")):
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr in _INFO_PLUS
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "logger"
+            ):
+                offenders += [
+                    f"{path.relative_to(_PACKAGE.parent)}:{node.lineno}: {leak}"
+                    for leak in _leaky_args(node)
+                ]
+    assert not offenders, "\n".join(offenders)
+
+
+def test_static_guard_flags_a_name_in_an_info_log() -> None:
+    call = ast.parse(
+        "logger.info('Dropping %s -> %s', rel.source_name, rel.target_name)"
+    ).body[0]
+    assert isinstance(call, ast.Expr) and isinstance(call.value, ast.Call)
+    assert _leaky_args(call.value) == ["rel.source_name", "rel.target_name"]
+    ok = ast.parse("logger.info('Dropping %s', rel.short_id)").body[0]
+    assert isinstance(ok, ast.Expr) and isinstance(ok.value, ast.Call)
+    assert _leaky_args(ok.value) == []

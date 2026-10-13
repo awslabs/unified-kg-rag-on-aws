@@ -924,6 +924,14 @@ Library API (Python callers and custom backends).
   extraction or query wrote prompts, chunk text and model output into the
   log. Console output piped to a file or another program no longer carries
   ANSI colour codes either (#245).
+- Gleaning and graph extraction no longer log relationship endpoint names
+  at INFO, and gleaning no longer logs a preview of unparseable model output
+  at WARNING. Gleaning is on by default, so every ingestion wrote corpus
+  entity names (people, companies) to the console and `logs/`. INFO records
+  now name the relationship and chunk by short id; entity resolution's
+  fuzzy-match failure names the entity by `len=… sha=…` digest. A unit test
+  fails when a new INFO+ log call passes names, descriptions, text or
+  model-output previews (#PR).
 - Captured prompt and completion text is redacted as raw text on every
   tracing backend: with `otlp`, `langfuse` or `phoenix` it was redacted only
   at export, JSON-encoded, where a `\b` or `\s` pattern next to a newline
