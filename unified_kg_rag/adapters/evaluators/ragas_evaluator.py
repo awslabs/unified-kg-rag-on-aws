@@ -144,22 +144,21 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
         )
 
     def _budgeted_contexts(
-        self, results: list[EvaluationResult], max_contexts: int | None = None
+        self, results: list[EvaluationResult]
     ) -> list[list[tuple[str, int]]]:
         """Per result: the top-ranked (context, tokens) within the token budget.
 
         Reported sources are in retrieval-rank order, so slicing keeps the
-        top-ranked ones. ``max_contexts`` caps the count before the
-        ``max_context_tokens`` budget is applied. The walk only depends on the
-        contexts before each step, so a prefix of the result is the result
-        for a smaller cap: each context is counted once.
+        top-ranked ones. The walk only depends on the contexts before each
+        step, so a prefix of the result (``_select`` with a count cap) is the
+        result for that cap: each context is counted once.
         """
         max_tokens = self.config.evaluation.max_context_tokens
         processed: list[list[tuple[str, int]]] = []
         for result in results:
             kept: list[tuple[str, int]] = []
             current_tokens = 0
-            for context in result.retrieved_contexts[:max_contexts]:
+            for context in result.retrieved_contexts:
                 context_token_count = self._token_counter.count_tokens(context)
 
                 remaining_tokens = max_tokens - self.BUFFER_TOKENS - current_tokens
@@ -190,12 +189,6 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
             )
             for kept in budgeted
         ]
-
-    def _truncate_contexts(
-        self, results: list[EvaluationResult], max_contexts: int | None = None
-    ) -> list[tuple[list[str], int]]:
-        """Per result: (top-ranked contexts within the token budget, their tokens)."""
-        return self._select(self._budgeted_contexts(results, max_contexts))
 
     def metric_types(self) -> list[EvaluationMetricType]:
         return [
