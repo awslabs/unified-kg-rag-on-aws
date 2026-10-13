@@ -118,7 +118,11 @@ class GraphVisualizationManager:
                 return self._spring_layout()
             return {}
 
-        embeddings = self.embedder.generate_embeddings(self.analyzer.graph)
+        # Only the interactive page uses positions, and it draws its top
+        # max_nodes; embed just those (one embedding call per node).
+        embeddings = self.embedder.generate_embeddings(
+            self._interactive().displayed_graph(self.analyzer.graph)
+        )
         # Failed generation yields no embeddings (never random substitutes).
         if not embeddings.embeddings:
             return self._degraded_layout("node embedding generation failed")
@@ -139,12 +143,12 @@ class GraphVisualizationManager:
         )
         return self._spring_layout()
 
+    def _interactive(self) -> InteractiveRenderer:
+        return InteractiveRenderer(self.viz_config.interactive or {})
+
     def _spring_layout(self) -> dict[str, Any]:
-        # Only the interactive page uses positions, and it draws its top
-        # max_nodes; lay out just those.
-        return InteractiveRenderer(self.viz_config.interactive or {}).spring_layout(
-            self.analyzer.graph
-        )
+        # Like the embeddings, the spring layout covers only the drawn nodes.
+        return self._interactive().spring_layout(self.analyzer.graph)
 
     def _generate_visualizations(
         self, outputs_dir: Path, layout: dict[str, Any]

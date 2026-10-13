@@ -323,6 +323,10 @@ Library API (Python callers and custom backends).
   install (#251).
 
 ### Fixed
+- An embedding-based visualization layout embeds only the nodes the
+  interactive page draws (the top `graph.visualization.interactive.max_nodes`
+  by degree), as the spring layout already did. Every node was embedded with
+  Bedrock, though only those positions are used (#PR).
 - A three-node graph's visualization layout uses PCA instead of UMAP, whose
   spectral initialization fails with that few points; the layout came out
   `DEGRADED` (#PR).
