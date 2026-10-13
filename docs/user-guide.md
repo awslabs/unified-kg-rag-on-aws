@@ -318,7 +318,11 @@ so restarting Gremlin Server empties it while the SQLite registry keeps its
 records. An incremental run then stops before writing anything and asks for
 `indexing.reset: true` (or deleting the registry), instead of treating the
 lost documents as unchanged. A list property written when a vertex is created keeps duplicate values
-(Neptune stores them once). Nothing in the compose file is hardened; it binds
+(Neptune stores them once). TinkerGraph indexes no property, so every
+relationship write, which looks its edge up by id first so that a retry does
+not duplicate it, scans the graph's edges: writing relationships slows down as
+the graph grows (8,000 edges took about 19 seconds in one measurement, twice
+a plain insert). Use it for development-sized corpora. Nothing in the compose file is hardened; it binds
 to `127.0.0.1` only.
 
 ---
