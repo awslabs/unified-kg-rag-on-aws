@@ -15,12 +15,13 @@ from opensearchpy import (
     OpenSearch,
     RequestsHttpConnection,
 )
-from opensearchpy.exceptions import NotFoundError, TransportError
+from opensearchpy.exceptions import ConnectionError as OpenSearchConnectionError
+from opensearchpy.exceptions import ConnectionTimeout, NotFoundError, TransportError
 from opensearchpy.helpers import streaming_bulk
 
 from unified_kg_rag.adapters.llm.retry import backoff_delay
 from unified_kg_rag.domain.models import Config
-from unified_kg_rag.shared import AWSServiceError, get_logger
+from unified_kg_rag.shared import AWSServiceError, StoreConnectionError, get_logger
 
 if TYPE_CHECKING:
     import boto3
@@ -124,6 +125,46 @@ def is_index_not_found(exc: BaseException) -> bool:
     return any(INDEX_NOT_FOUND_TYPE in _error_types(p) for p in payloads if p)
 
 
+def error_reason(exc: TransportError) -> str:
+    """The server's ``reason`` for an HTTP error, else the client's message.
+
+    The async connection leaves the raw JSON body in ``exc.error`` and
+    ``exc.info`` empty, so the reason is read from whichever holds a body.
+    """
+    for payload in (exc.info, exc.error):
+        if isinstance(payload, str):
+            try:
+                payload = json.loads(payload)
+            except ValueError:
+                continue
+        if not isinstance(payload, dict):
+            continue
+        error = payload.get("error", payload)
+        if not isinstance(error, dict):
+            continue
+        causes = [c for c in error.get("root_cause") or [] if isinstance(c, dict)]
+        for part in [*causes, error]:
+            if part.get("reason"):
+                return f"{part.get('type', 'error')}: {part['reason']}"
+    return str(exc.error)
+
+
+def _wrap_transport_error(exc: TransportError, context: str) -> AWSServiceError:
+    """The error the client raises for ``exc`` (to be chained ``from exc``).
+
+    A cluster that cannot be reached (refused, DNS, TLS, after the client's
+    own retries) becomes a ``StoreConnectionError``; a timeout stays a plain
+    ``AWSServiceError``, since a slow cluster may answer the next query.
+    """
+    msg = f"{context}: status={exc.status_code}, error={error_reason(exc)}"
+    logger.exception(msg)
+    if isinstance(exc, OpenSearchConnectionError) and not isinstance(
+        exc, ConnectionTimeout
+    ):
+        return StoreConnectionError(msg)
+    return AWSServiceError(msg)
+
+
 def _handle_opensearch_errors(func: Callable) -> Callable:
     @wraps(func)
     def wrapper(client_instance: "OpenSearchClient", *args: Any, **kwargs: Any) -> Any:
@@ -133,9 +174,9 @@ def _handle_opensearch_errors(func: Callable) -> Callable:
             logger.debug("Resource not found during '%s': %s", func.__name__, e)
             raise
         except TransportError as e:
-            msg = f"Transport error in '{func.__name__}': status={e.status_code}, info={e.info}"
-            logger.exception(msg)
-            raise AWSServiceError(msg) from e
+            raise _wrap_transport_error(
+                e, f"Transport error in '{func.__name__}'"
+            ) from e
         except Exception as e:
             msg = f"Unexpected error in '{func.__name__}': {e}"
             logger.exception(msg)
@@ -155,9 +196,9 @@ def _handle_async_opensearch_errors(func: Callable) -> Callable:
             logger.debug("Resource not found during async '%s': %s", func.__name__, e)
             raise
         except TransportError as e:
-            msg = f"Async transport error in '{func.__name__}': status={e.status_code}, info={e.info}"
-            logger.exception(msg)
-            raise AWSServiceError(msg) from e
+            raise _wrap_transport_error(
+                e, f"Async transport error in '{func.__name__}'"
+            ) from e
         except Exception as e:
             msg = f"Unexpected async error in '{func.__name__}': {e}"
             logger.exception(msg)

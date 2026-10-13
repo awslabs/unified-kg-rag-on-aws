@@ -65,11 +65,13 @@ def is_fatal_retrieval_error(exc: BaseException) -> bool:
     endpoint/config) or a connection failure: returning ``[]`` for these turns a
     real failure into a misleading "no results". Everything else (timeouts,
     throttling, a single malformed query) is treated as transient and the caller
-    may degrade to an empty result list. ``ConnectionError``, a missing suffix
-    (``IndexNotFoundError``) and a ``ConfigurationError`` (such as a query
-    embedding model the index was not built with) are always fatal.
-    The repo's adapters wrap backend failures in ``AWSServiceError`` carrying the
-    original message, so the markers are matched against the message text.
+    may degrade to an empty result list. ``ConnectionError`` (the store
+    clients raise ``StoreConnectionError`` for a store they cannot reach), a
+    missing suffix (``IndexNotFoundError``) and a ``ConfigurationError`` (such
+    as a query embedding model the index was not built with, or a request the
+    store rejects as invalid) are always fatal. Other failures arrive as an
+    ``AWSServiceError`` carrying the original message, which the markers are
+    matched against.
     """
     if isinstance(exc, ConnectionError | IndexNotFoundError | ConfigurationError):
         return True
@@ -198,7 +200,6 @@ class BaseSearchStrategy(MetricsMixin, ABC):
         retriever: BaseGraphRAGRetriever,
         query: SearchQuery,
         label: str,
-        timeout: float | None = None,
     ) -> list[RetrievalResult]:
         """Run one sub-retrieval, re-raising fatal errors and degrading the rest.
 
@@ -208,8 +209,6 @@ class BaseSearchStrategy(MetricsMixin, ABC):
         configuration is not reported as "no results"; anything else (timeouts,
         throttling, a malformed query) is logged under ``label`` and degrades to
         an empty list so one failing section does not sink the whole search.
-        ``timeout`` (seconds) bounds the call via `asyncio.wait_for`; hitting it
-        is treated as transient.
         """
         with observability.span(
             "kg_rag.retrieve",
@@ -219,12 +218,7 @@ class BaseSearchStrategy(MetricsMixin, ABC):
             top_k=query.top_k,
         ) as span:
             try:
-                if timeout is None:
-                    results = await retriever.aretrieve(query)
-                else:
-                    results = await asyncio.wait_for(
-                        retriever.aretrieve(query), timeout=timeout
-                    )
+                results = await retriever.aretrieve(query)
             except Exception as e:
                 if is_fatal_retrieval_error(e):
                     raise
@@ -477,11 +471,6 @@ class BaseSearchStrategy(MetricsMixin, ABC):
             scored.score = (total - position) / total
             rescored.append(scored)
         return rescored
-
-    def search(
-        self, query: SearchQuery, config: RunnableConfig | None = None
-    ) -> SearchResult:
-        return asyncio.run(self.asearch(query, config=config))
 
     @abstractmethod
     async def asearch(

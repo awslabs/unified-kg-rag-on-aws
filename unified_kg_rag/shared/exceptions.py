@@ -88,3 +88,11 @@ class PipelineStateError(GraphRAGException):
 
 class RerankModelError(ModelError):
     pass
+
+
+class StoreConnectionError(AWSServiceError, ConnectionError):
+    """A store (OpenSearch, Neptune) could not be reached: refused, DNS, TLS.
+
+    A ``ConnectionError``, so retrieval reports it rather than reading it as
+    "no results". A timeout is not one: a slow cluster is retried and degraded.
+    """

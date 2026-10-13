@@ -326,7 +326,7 @@ flowchart TD
     answer --> output["RAGOutput: answer + sources the model saw"]
 ```
 
-Neptune graph expansion is part of `local` and `drift`; for `mix`/`hybrid` it is opt-in (`search.lightrag_search.enable_graph_expansion`).
+Neptune graph expansion is part of `local` and `drift`; for `mix`/`hybrid` it is opt-in (`search.lightrag_search.enable_graph_expansion`). The strategies find the seed entities in OpenSearch and pass their ids to the graph retriever as an `id` filter; `NeptuneRetriever` expands from those ids only and returns nothing for a query without one.
 
 ### 6.1 GraphRAG Methodology (`adapters/search_strategies/`)
 
@@ -393,7 +393,7 @@ The AWS session is the bundle's (`Providers(boto_session=...)`, by default creat
 
 ### 8.5 Retrieval Error Visibility
 
-The retrievers (`opensearch_retriever`/`neptune_retriever`) do not disguise authentication/configuration/connection failures as "no results." `is_fatal_retrieval_error()` (`adapters/retrieval/base.py`) re-raises fatal errors with `exc_info` and degrades to `[]` only for transient errors, so an incorrect IAM permission or an endpoint typo surfaces instead of being buried as "0 search hits." Neptune's per-query `_execute_traversal` re-raises fatal errors too, so they reach that top-level guard. The search strategies apply the same rule to every sub-retrieval through one helper, `BaseSearchStrategy._safe_aretrieve`, so a section-level handler cannot re-swallow a fatal error the retriever raised; a transient failure still degrades only that section.
+The retrievers (`opensearch_retriever`/`neptune_retriever`) do not disguise authentication/configuration/connection failures as "no results." `is_fatal_retrieval_error()` (`adapters/retrieval/base.py`) re-raises fatal errors with `exc_info` and degrades to `[]` only for transient errors, so an incorrect IAM permission or an endpoint typo surfaces instead of being buried as "0 search hits." A store the client cannot reach (connection refused, DNS or TLS failure, after the client's own retries) raises `StoreConnectionError`, a `ConnectionError`, so the check is by type; a timeout, throttling (429) or a 5xx stays transient. A search OpenSearch rejects with HTTP 400 (a filter value of another type than its field, a search pipeline that does not exist) is rejected the same way on every retry, so it raises `ConfigurationError` with the server's reason. Neptune's per-query `_execute_traversal` re-raises fatal errors too, so they reach that top-level guard. The search strategies apply the same rule to every sub-retrieval through one helper, `BaseSearchStrategy._safe_aretrieve`, so a section-level handler cannot re-swallow a fatal error the retriever raised; a transient failure still degrades only that section.
 
 ### 8.6 Client Lifecycle / Resource Release
 

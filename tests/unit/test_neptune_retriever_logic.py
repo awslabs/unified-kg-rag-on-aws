@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """AWS-free unit tests for NeptuneRetriever Gremlin/parse logic.
 
-Covers the pure pieces of the graph-expansion retriever: label-prefix
-normalization, filter application onto a (recording) traversal, the
+Covers the pure pieces of the graph-expansion retriever: seed ids, filter
+application onto a (recording) traversal, the
 projection shape, property-map cleaning, traversal-result parsing into
 RetrievalResult, relevance scoring, and content building. The retriever is
 built via ``__new__`` so its AWS-client ``__init__`` never runs; a recording
@@ -53,29 +53,6 @@ def retriever(config: Config) -> NeptuneRetriever:
         inst, "_max_results_per_hop", config.indexing.neptune.max_results_per_hop
     )
     return inst
-
-
-# --------------------------------------------------------------------------- #
-# _normalize_label_prefixes
-# --------------------------------------------------------------------------- #
-
-
-def test_normalize_label_prefixes_string(retriever) -> None:
-    assert retriever._normalize_label_prefixes("entity") == ["entity"]
-
-
-def test_normalize_label_prefixes_none_returns_entity_and_community(
-    retriever, config
-) -> None:
-    out = retriever._normalize_label_prefixes(None)
-    assert out == [
-        config.indexing.neptune.entity_label_prefix,
-        config.indexing.neptune.community_label_prefix,
-    ]
-
-
-def test_normalize_label_prefixes_list_passthrough(retriever) -> None:
-    assert retriever._normalize_label_prefixes(["entity"]) == ["entity"]
 
 
 # --------------------------------------------------------------------------- #
@@ -200,28 +177,18 @@ def test_process_traversal_results_skips_missing_id(retriever) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# _create_retrieval_result (entity vs community typing)
+# _create_retrieval_result
 # --------------------------------------------------------------------------- #
 
 
 def test_create_retrieval_result_entity(retriever) -> None:
-    query = SearchQuery(query="alice")
     node = {"id": "e1", "name": "Alice", "description": "researcher"}
     item = {"node_type": "Entity-default", "path": []}
-    result = retriever._create_retrieval_result(item, node, query)
+    result = retriever._create_retrieval_result(item, node)
     assert result.source == "e1"
     assert result.retriever_type == SectionType.ENTITY.value
     assert result.metadata["_node_type"] == "Entity-default"
     assert "Entity: Alice" in result.content
-
-
-def test_create_retrieval_result_community(retriever) -> None:
-    query = SearchQuery(query="cluster")
-    node = {"id": "c1", "name": "Cluster", "size": 10}
-    item = {"node_type": "Community-default", "path": []}
-    result = retriever._create_retrieval_result(item, node, query)
-    assert result.retriever_type == SectionType.COMMUNITY.value
-    assert "Community: Cluster" in result.content
 
 
 # --------------------------------------------------------------------------- #
@@ -233,19 +200,10 @@ def test_build_content_entity_with_path(retriever) -> None:
     content = retriever._build_content(
         {"name": "Alice", "description": "researcher"},
         [{"name": ["Alice"]}, {"name": ["Acme"]}],
-        is_community=False,
     )
     assert "Entity: Alice" in content
     assert "Description: researcher" in content
     assert "Path: Alice -> Acme" in content
-
-
-def test_build_content_community(retriever) -> None:
-    content = retriever._build_content(
-        {"name": "Cluster", "size": 12}, [], is_community=True
-    )
-    assert "Community: Cluster" in content
-    assert "Size: 12" in content
 
 
 # --------------------------------------------------------------------------- #
@@ -256,14 +214,10 @@ def test_build_content_community(retriever) -> None:
 def test_calculate_relevance_bands_by_distance(retriever) -> None:
     # Path length L scores in (1 / (L + 1), 1 / L], importance places it inside
     # (the upper half of the band, so the open lower edge never ties).
-    seed = retriever._calculate_relevance(
-        {"importance": 1.0}, [{"name": ["a"]}], is_community=False
-    )
-    weak_seed = retriever._calculate_relevance(
-        {"importance": 0.0}, [{"name": ["a"]}], is_community=False
-    )
+    seed = retriever._calculate_relevance({"importance": 1.0}, [{"name": ["a"]}])
+    weak_seed = retriever._calculate_relevance({"importance": 0.0}, [{"name": ["a"]}])
     one_hop = retriever._calculate_relevance(
-        {"importance": 1.0}, [{"name": ["a"]}, {"name": ["b"]}], is_community=False
+        {"importance": 1.0}, [{"name": ["a"]}, {"name": ["b"]}]
     )
     assert seed == pytest.approx(1.0)
     assert weak_seed == pytest.approx(0.75)
@@ -273,76 +227,49 @@ def test_calculate_relevance_bands_by_distance(retriever) -> None:
 def test_calculate_relevance_nearer_node_outranks_more_important_far_one(
     retriever,
 ) -> None:
-    near = retriever._calculate_relevance({"importance": 0.0}, [{}], False)
-    far = retriever._calculate_relevance({"importance": 1.0}, [{}, {}], False)
+    near = retriever._calculate_relevance({"importance": 0.0}, [{}])
+    far = retriever._calculate_relevance({"importance": 1.0}, [{}, {}])
     assert near > far
 
 
 def test_calculate_relevance_importance_orders_within_a_distance(retriever) -> None:
-    low = retriever._calculate_relevance({"importance": 0.2}, [{}, {}], False)
-    high = retriever._calculate_relevance({"importance": 0.8}, [{}, {}], False)
+    low = retriever._calculate_relevance({"importance": 0.2}, [{}, {}])
+    high = retriever._calculate_relevance({"importance": 0.8}, [{}, {}])
     assert high > low
 
 
-def test_calculate_relevance_community_size_relative_to_largest(retriever) -> None:
-    largest = retriever._calculate_relevance(
-        {"size": 50}, [{}], is_community=True, max_community_size=50
-    )
-    half = retriever._calculate_relevance(
-        {"size": 25}, [{}], is_community=True, max_community_size=50
-    )
-    assert largest == pytest.approx(1.0)
-    assert half == pytest.approx(0.5 + 0.5 * (1.0 + 0.5) / 2)
-    assert 0.0 <= retriever._calculate_relevance({"size": 5}, [], True) <= 1.0
-
-
 # --------------------------------------------------------------------------- #
-# _get_seed_nodes (id-filter short-circuit path; pure, no traversal)
+# Seeds: the caller's id filter
 # --------------------------------------------------------------------------- #
 
 
-async def test_get_seed_nodes_id_filter_entity(retriever, config, mocker) -> None:
-    g = mocker.MagicMock()
-    # Community-search detection compares the requested label_prefixes against
-    # the config's (capitalized) prefixes, so pass the actual config value.
-    entity_prefix = config.indexing.neptune.entity_label_prefix
-    query = SearchQuery(
-        query="x", label_prefixes=[entity_prefix], filters={"id": ["e1"]}
-    )
-    entities, communities = await retriever._get_seed_nodes(g, query)
-    assert entities == [{"id": "e1"}]
-    assert communities == []
+@pytest.mark.parametrize(
+    ("filters", "expected"),
+    [
+        ({"id": ["e1", "e2"]}, ["e1", "e2"]),
+        ({"id": "e1"}, []),
+        ({"type": "ORG"}, []),
+        (None, []),
+    ],
+)
+def test_seed_ids_come_from_the_id_filter(retriever, filters, expected) -> None:
+    query = SearchQuery(query="x", filters=filters)
+    assert retriever._seed_ids(query) == expected
 
 
-async def test_get_seed_nodes_id_filter_community(retriever, config, mocker) -> None:
-    g = mocker.MagicMock()
-    community_prefix = config.indexing.neptune.community_label_prefix
-    query = SearchQuery(
-        query="x", label_prefixes=[community_prefix], filters={"id": ["c1", "c2"]}
-    )
-    entities, communities = await retriever._get_seed_nodes(g, query)
-    assert entities == []
-    assert communities == [{"id": "c1"}, {"id": "c2"}]
-
-
-async def test_get_seed_nodes_id_filter_defaults_to_entities(retriever, mocker) -> None:
-    # With no community/entity prefix match (and an id filter), the path returns
-    # the seeds as ENTITY seeds (the implementation's default fall-through).
-    g = mocker.MagicMock()
-    query = SearchQuery(query="x", label_prefixes=["entity"], filters={"id": ["e1"]})
-    entities, communities = await retriever._get_seed_nodes(g, query)
-    assert entities == [{"id": "e1"}]
-    assert communities == []
-
-
-async def test_get_seed_nodes_no_label_prefixes_returns_empty(
-    retriever, mocker
+async def test_query_without_seed_ids_returns_nothing_without_connecting(
+    retriever,
 ) -> None:
-    g = mocker.MagicMock()
-    query = SearchQuery(query="x", label_prefixes=["nonsense"])
-    entities, communities = await retriever._get_seed_nodes(g, query)
-    assert entities == []
-    assert communities == []
+    class _Unconnectable:
+        @property
+        def g(self):
+            raise AssertionError("connected without seeds")
+
+    object.__setattr__(retriever, "_neptune_client", _Unconnectable())
+    object.__setattr__(retriever, "_record_metric", lambda *a, **k: None)
+    object.__setattr__(retriever, "_record_timing", lambda *a, **k: None)
+    query = SearchQuery(query="Vendor", entity_focus=["Vendor"])
+    assert await retriever.aretrieve(query) == []
 
 
 @pytest.mark.parametrize("configured_hops", [1, 2, 5])
@@ -355,81 +282,6 @@ async def test_entity_traversal_honors_configured_max_hops(
     object.__setattr__(retriever, "_max_hops", configured_hops)
     text = await _entity_traversal_text(retriever, ["e1"], SearchQuery(query="x"))
     assert f".times({configured_hops}).emit()" in text
-
-
-# --------------------------------------------------------------------------- #
-# _find_seeds_by_type (entity_focus vs text-search fallback)
-# --------------------------------------------------------------------------- #
-
-
-async def test_find_seeds_by_type_uses_entity_focus_when_present(
-    retriever, mocker
-) -> None:
-    # With entity_focus, seeds are found by exact name membership (P.within),
-    # not the text-search fallback.
-    calls: list[tuple] = []
-    g = mocker.MagicMock()
-    g.V.return_value = RecordingTraversal(calls)
-    captured: dict = {}
-
-    async def _fake_execute(traversal):
-        captured["executed"] = True
-        return []
-
-    object.__setattr__(retriever, "_execute_traversal", _fake_execute)
-    query = SearchQuery(query="ignored text", entity_focus=["Alice", "Bob"])
-
-    out = await retriever._find_seeds_by_type(g, query, is_community=False)
-
-    assert out == []
-    step_names = [c[0] for c in calls]
-    # A `has("name", P.within(...))` step is emitted for the focus names.
-    has_name = [c for c in calls if c[0] == "has" and c[1] and c[1][0] == "name"]
-    assert has_name, f"expected has('name', ...) in {step_names}"
-    assert captured.get("executed") is True
-
-
-async def test_find_seeds_by_type_text_search_fallback_without_focus(
-    retriever, mocker
-) -> None:
-    # No entity_focus -> falls back to a text-search filter over query terms via
-    # a .where(...) step (not a direct name-equality lookup).
-    calls: list[tuple] = []
-    g = mocker.MagicMock()
-    g.V.return_value = RecordingTraversal(calls)
-
-    async def _fake_execute(traversal):
-        return []
-
-    object.__setattr__(retriever, "_execute_traversal", _fake_execute)
-    query = SearchQuery(query="acme supply agreement")
-
-    await retriever._find_seeds_by_type(g, query, is_community=False)
-
-    step_names = [c[0] for c in calls]
-    assert "where" in step_names, f"expected a text-search where() in {step_names}"
-
-
-async def test_find_seeds_by_type_empty_query_terms_returns_empty(
-    retriever, mocker
-) -> None:
-    # No focus and a query with no word characters -> no seeds (and no traversal
-    # execution), rather than an unbounded label scan.
-    g = mocker.MagicMock()
-    g.V.return_value = RecordingTraversal([])
-    executed = {"called": False}
-
-    async def _fake_execute(traversal):
-        executed["called"] = True
-        return []
-
-    object.__setattr__(retriever, "_execute_traversal", _fake_execute)
-    query = SearchQuery(query="!!! ??? ...")
-
-    out = await retriever._find_seeds_by_type(g, query, is_community=False)
-
-    assert out == []
-    assert executed["called"] is False
 
 
 # --------------------------------------------------------------------------- #
@@ -557,9 +409,7 @@ async def _entity_traversal_text(retriever, seed_ids: list[str], query) -> str:
 
     object.__setattr__(retriever, "_with_projection", lambda t, **_: t)
     object.__setattr__(retriever, "_execute_traversal", _capture)
-    await retriever._traverse_from_entities(
-        Graph().traversal(), [{"id": s} for s in seed_ids], query
-    )
+    await retriever._traverse_from_entities(Graph().traversal(), seed_ids, query)
     return Translator("g").translate(captured[0].bytecode)
 
 
@@ -604,39 +454,6 @@ async def test_entity_traversal_budget_scales_with_fetch_multiplier(
     assert f".dedup().limit({per_seed}))" in text
 
 
-async def test_community_traversal_expands_each_seed_with_its_own_budget(
-    retriever, config
-) -> None:
-    # Same shape as the entity expansion: a limit() inside repeat() is global,
-    # so the first communities' members used it up. Each seed community now
-    # gets its members and their neighbourhood inside its own local().
-    config.indexing.neptune.traversal_fetch_multiplier = 3
-    object.__setattr__(retriever, "_max_hops", 2)
-    object.__setattr__(retriever, "_max_results_per_hop", 7)
-    captured: list = []
-
-    async def _capture(traversal):
-        captured.append(traversal)
-        return []
-
-    object.__setattr__(retriever, "_with_projection", lambda t, **_: t)
-    object.__setattr__(retriever, "_execute_traversal", _capture)
-    query = SearchQuery(query="x", top_k=10, retrieval_multiplier=1)
-    await retriever._traverse_from_communities(
-        Graph().traversal(), [{"id": c} for c in ("c1", "c2", "c3", "c4")], query
-    )
-    # Fetch width 10 * 1 * 3 = 30 split over 4 seeds -> 8 entities per seed.
-    assert Translator("g").translate(captured[0].bytecode) == (
-        "g.V().hasLabel('Community-default')"
-        ".has('id',within(['c1','c2','c3','c4']))"
-        ".union(__.identity(),"
-        "__.local(__.in('MemberOf').hasLabel('Entity-default').limit(8)),"
-        "__.local(__.in('MemberOf').hasLabel('Entity-default')"
-        ".repeat(__.local(__.both().hasLabel('Entity-default').limit(7))"
-        ".dedup().limit(8)).times(2).emit()))"
-    )
-
-
 def test_a_node_reached_from_two_seeds_keeps_its_shortest_path(retriever) -> None:
     items = [
         _entity_item("seed", 0, rank=1),
@@ -648,51 +465,6 @@ def test_a_node_reached_from_two_seeds_keeps_its_shortest_path(retriever) -> Non
     # One hop (the shorter path) tops the (1/3, 1/2] band; two hops would cap
     # at 1/3.
     assert by_id == {"seed": pytest.approx(1.0), "shared": pytest.approx(0.5)}
-
-
-# --------------------------------------------------------------------------- #
-# _find_seeds_by_type
-# --------------------------------------------------------------------------- #
-
-
-@pytest.mark.parametrize(("is_community", "prop"), [(False, "rank"), (True, "size")])
-async def test_text_seeds_rank_by_a_stored_property(
-    retriever, is_community: bool, prop: str
-) -> None:
-    # Seeds are ordered by a property the indexer writes ("rank" on entities,
-    # "size" on communities); no threshold on an unwritten property drops them.
-    calls: list[tuple] = []
-
-    class _G:
-        def V(self):
-            return RecordingTraversal(calls)
-
-    async def _execute(traversal):
-        return [{"id": ["v1"], "name": ["vendor"]}]
-
-    object.__setattr__(retriever, "_execute_traversal", _execute)
-    query = SearchQuery(query="vendor terms", entity_focus=["vendor"])
-    seeds = await retriever._find_seeds_by_type(_G(), query, is_community=is_community)
-    assert seeds == [{"id": "v1", "name": "vendor"}]
-    by_steps = [args for name, args in calls if name == "by"]
-    assert by_steps and by_steps[0][0] == prop
-    assert not any(name == "has" and args[0] == "importance" for name, args in calls)
-
-
-async def test_name_matched_seeds_follow_the_requested_width(retriever) -> None:
-    calls: list[tuple] = []
-
-    class _G:
-        def V(self):
-            return RecordingTraversal(calls)
-
-    async def _execute(traversal):
-        return []
-
-    object.__setattr__(retriever, "_execute_traversal", _execute)
-    query = SearchQuery(query="vendor", top_k=12, retrieval_multiplier=2)
-    await retriever._find_seeds_by_type(_G(), query, is_community=False)
-    assert ("limit", (24,)) in [(name, tuple(args)) for name, args in calls]
 
 
 # --------------------------------------------------------------------------- #

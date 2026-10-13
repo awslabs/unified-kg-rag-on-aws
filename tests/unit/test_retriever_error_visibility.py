@@ -11,21 +11,33 @@ empty list only on genuinely-transient failures.
 
 from __future__ import annotations
 
+import asyncio
 import json
+import socket
 import weakref
+from collections.abc import Iterator
 
 import pytest
+from gremlin_python.driver.driver_remote_connection import DriverRemoteConnection
+from gremlin_python.process.anonymous_traversal import traversal
 from gremlin_python.process.graph_traversal import GraphTraversal
 from gremlin_python.structure.graph import Graph
 from opensearchpy import (
     AsyncHttpConnection,
+    AsyncOpenSearch,
     Connection,
+    OpenSearch,
     RequestsHttpConnection,
     Urllib3HttpConnection,
 )
 from opensearchpy.exceptions import NotFoundError, TransportError
 
-from unified_kg_rag.adapters.aws.opensearch import is_index_not_found
+from unified_kg_rag.adapters.aws.opensearch import (
+    OpenSearchClient,
+    _handle_async_opensearch_errors,
+    _handle_opensearch_errors,
+    is_index_not_found,
+)
 from unified_kg_rag.adapters.retrieval.base import is_fatal_retrieval_error
 from unified_kg_rag.adapters.retrievers.neptune_retriever import NeptuneRetriever
 from unified_kg_rag.adapters.retrievers.opensearch_retriever import OpenSearchRetriever
@@ -38,9 +50,13 @@ from unified_kg_rag.shared import (
     AWSServiceError,
     ConfigurationError,
     IndexNotFoundError,
+    StoreConnectionError,
 )
 
 pytestmark = pytest.mark.unit
+
+# Every strategy seeds Neptune graph expansion with entity ids.
+_SEEDED = SearchQuery(query="hello", filters={"id": ["e1"]})
 
 
 # --- classifier ----------------------------------------------------------
@@ -75,6 +91,140 @@ def test_misconfiguration_messages_are_fatal(message: str) -> None:
 )
 def test_transient_messages_are_not_fatal(message: str) -> None:
     assert is_fatal_retrieval_error(AWSServiceError(message)) is False
+
+
+# --- unreachable stores, against real clients ------------------------------
+#
+# Regression: opensearch-py's ConnectionError is not a built-in ConnectionError
+# and its message ("Cannot connect to host ...") matched no marker, so an
+# OpenSearch that was down read as "no results" and every strategy abstained.
+
+
+@pytest.fixture
+def closed_port() -> int:
+    """A localhost port nothing listens on (connections are refused)."""
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port: int = sock.getsockname()[1]
+    return port
+
+
+@pytest.fixture
+def silent_port() -> Iterator[int]:
+    """A localhost port that accepts connections and never answers."""
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        sock.listen(8)
+        yield sock.getsockname()[1]
+
+
+def _local_opensearch_config(config: Config, port: int) -> Config:
+    opensearch = config.aws.opensearch
+    opensearch.endpoint = "127.0.0.1"
+    opensearch.port = port
+    opensearch.use_ssl = False
+    opensearch.use_iam = False
+    opensearch.allow_anonymous = True
+    return config
+
+
+async def test_unreachable_opensearch_is_fatal(
+    config: Config, closed_port: int
+) -> None:
+    client = OpenSearchClient(_local_opensearch_config(config, closed_port))
+    try:
+        with pytest.raises(StoreConnectionError, match="Cannot connect") as exc:
+            await client.asearch(index="any", body={"query": {"match_all": {}}})
+    finally:
+        await client.aclose()
+
+    assert is_fatal_retrieval_error(exc.value)
+
+
+class _SyncSearch:
+    def __init__(self, port: int, **kwargs) -> None:
+        self.client = OpenSearch(hosts=[{"host": "127.0.0.1", "port": port}], **kwargs)
+
+    @_handle_opensearch_errors
+    def search(self) -> dict:
+        return self.client.search(index="any", body={})
+
+
+class _AsyncSearch:
+    def __init__(self, port: int, **kwargs) -> None:
+        self.client = AsyncOpenSearch(
+            hosts=[{"host": "127.0.0.1", "port": port}], **kwargs
+        )
+
+    @_handle_async_opensearch_errors
+    async def search(self) -> dict:
+        return await self.client.search(index="any", body={})
+
+
+@pytest.mark.parametrize("connection_cls", [RequestsHttpConnection, None])
+def test_unreachable_opensearch_is_fatal_for_the_sync_client(
+    closed_port: int, connection_cls: type[Connection] | None
+) -> None:
+    kwargs = {"connection_class": connection_cls} if connection_cls else {}
+    search = _SyncSearch(closed_port, max_retries=0, **kwargs)
+
+    with pytest.raises(StoreConnectionError) as exc:
+        search.search()
+
+    assert is_fatal_retrieval_error(exc.value)
+
+
+async def test_opensearch_timeout_stays_transient(silent_port: int) -> None:
+    search = _AsyncSearch(
+        silent_port,
+        connection_class=AsyncHttpConnection,
+        timeout=0.2,
+        max_retries=0,
+    )
+    try:
+        with pytest.raises(AWSServiceError) as exc:
+            await search.search()
+    finally:
+        await search.client.close()
+
+    assert not isinstance(exc.value, StoreConnectionError)
+    assert not is_fatal_retrieval_error(exc.value)
+
+
+async def test_unreachable_opensearch_fails_the_retrieval(
+    config: Config, closed_port: int
+) -> None:
+    retriever = _opensearch_retriever(config)
+    client = OpenSearchClient(_local_opensearch_config(config, closed_port))
+    object.__setattr__(retriever, "_opensearch_client", client)
+    try:
+        with pytest.raises(StoreConnectionError):
+            await retriever.aretrieve(
+                SearchQuery(query="hello", search_type=SearchType.LEXICAL)
+            )
+    finally:
+        await client.aclose()
+
+
+async def test_unreachable_neptune_fails_the_retrieval(
+    config: Config, closed_port: int
+) -> None:
+    # A connection opened earlier whose server has gone: gremlinpython opens
+    # its websocket on the first request and raises aiohttp's
+    # ClientConnectorError, which `_execute_traversal` used to degrade to [].
+    connection = DriverRemoteConnection(
+        f"ws://127.0.0.1:{closed_port}/gremlin", "g", pool_size=1
+    )
+
+    class _Client:
+        g = traversal().with_remote(connection)
+
+    retriever = _neptune_retriever(config, _Client())
+    try:
+        with pytest.raises(StoreConnectionError, match="Neptune is not reachable"):
+            await retriever.aretrieve(_SEEDED)
+    finally:
+        await asyncio.to_thread(connection.close)
 
 
 # --- OpenSearchRetriever top-level handler -------------------------------
@@ -229,13 +379,13 @@ async def test_neptune_retriever_reraises_fatal(config: Config) -> None:
     )
     retriever = _neptune_retriever(config, client)
     with pytest.raises(AWSServiceError, match="connection"):
-        await retriever.aretrieve(SearchQuery(query="hello"))
+        await retriever.aretrieve(_SEEDED)
 
 
 async def test_neptune_retriever_degrades_on_transient(config: Config) -> None:
     client = _ClientRaisingOnG(AWSServiceError("Read timed out"))
     retriever = _neptune_retriever(config, client)
-    results = await retriever.aretrieve(SearchQuery(query="hello"))
+    results = await retriever.aretrieve(_SEEDED)
     assert results == []
 
 
@@ -290,7 +440,7 @@ async def test_neptune_fatal_traversal_error_surfaces_from_aretrieve(
     monkeypatch.setattr(GraphTraversal, "to_list", _fatal_to_list)
     retriever = _neptune_retriever(config, _ClientWithLocalGraph())
     with pytest.raises(ConnectionError, match="Neptune endpoint"):
-        await retriever.aretrieve(SearchQuery(query="hello", entity_focus=["Vendor"]))
+        await retriever.aretrieve(_SEEDED)
 
 
 async def test_neptune_transient_traversal_error_degrades_from_aretrieve(
@@ -301,7 +451,7 @@ async def test_neptune_transient_traversal_error_degrades_from_aretrieve(
 
     monkeypatch.setattr(GraphTraversal, "to_list", _transient_to_list)
     retriever = _neptune_retriever(config, _ClientWithLocalGraph())
-    assert await retriever.aretrieve(SearchQuery(query="hello")) == []
+    assert await retriever.aretrieve(_SEEDED) == []
 
 
 # --- OpenSearchRetriever: missing index (config mismatch) ------------------
@@ -352,6 +502,23 @@ def _server_error(
     except TransportError as exc:
         return exc
     raise AssertionError("_raise_error did not raise")
+
+
+def _through_handler(exc: Exception) -> Exception:
+    """``exc`` as the OpenSearch client's error handler re-raises it.
+
+    The sync and async handlers wrap a transport error the same way.
+    """
+
+    @_handle_opensearch_errors
+    def search(_client) -> None:
+        raise exc
+
+    try:
+        search(None)
+    except Exception as handled:  # noqa: BLE001 - returned for the test
+        return handled
+    raise AssertionError("the handler did not raise")
 
 
 _NO_SUCH_INDEX_BODY = {
@@ -650,12 +817,8 @@ _INVALID_DIMENSION_BODY = {
 async def test_invalid_dimension_rejection_is_a_fatal_configuration_error(
     config: Config,
 ) -> None:
-    # The client error wrapper keeps only "status=400, info=None" for the async
-    # client; the reason survives on the cause.
     raw = _server_error(AsyncHttpConnection, 400, _INVALID_DIMENSION_BODY)
-    wrapped = AWSServiceError("Async transport error in 'asearch': status=400")
-    wrapped.__cause__ = raw
-    retriever = _retriever_over(config, {}, search_error=wrapped)
+    retriever = _retriever_over(config, {}, search_error=_through_handler(raw))
     retriever._opensearch_client.mappings = {}
 
     with pytest.raises(ConfigurationError) as exc:
@@ -760,3 +923,82 @@ async def test_a_denied_search_stays_fatal(config: Config) -> None:
 
     with pytest.raises(AWSServiceError, match="status=403"):
         await retriever.aretrieve(_text_units_query(config))
+
+
+# --- rejected requests (HTTP 400) -------------------------------------------
+#
+# Regression: a 400 is the same on every retry, yet it degraded to [] like a
+# timeout, so a missing search pipeline or a filter value of the wrong type
+# answered from no context (or from the other, unfiltered indices), and the
+# log kept only "status=400, info=None".
+
+
+_MISSING_PIPELINE_BODY = {
+    "error": {
+        "root_cause": [
+            {
+                "type": "illegal_argument_exception",
+                "reason": "Pipeline missing-pipeline is not defined",
+            }
+        ],
+        "type": "illegal_argument_exception",
+        "reason": "Pipeline missing-pipeline is not defined",
+    },
+    "status": 400,
+}
+_BAD_FILTER_VALUE_BODY = {
+    "error": {
+        "root_cause": [
+            {
+                "type": "query_shard_exception",
+                "reason": 'failed to create query: For input string: "abc"',
+            }
+        ],
+        "type": "search_phase_execution_exception",
+        "reason": "all shards failed",
+    },
+    "status": 400,
+}
+
+
+@pytest.mark.parametrize("connection_cls", _CONNECTIONS)
+def test_handler_keeps_the_server_reason(connection_cls: type[Connection]) -> None:
+    handled = _through_handler(
+        _server_error(connection_cls, 400, _MISSING_PIPELINE_BODY)
+    )
+    assert type(handled) is AWSServiceError
+    assert "status=400" in str(handled)
+    assert "Pipeline missing-pipeline is not defined" in str(handled)
+
+
+@pytest.mark.parametrize(
+    ("body", "reason"),
+    [
+        (_MISSING_PIPELINE_BODY, "Pipeline missing-pipeline is not defined"),
+        (_BAD_FILTER_VALUE_BODY, 'For input string: "abc"'),
+    ],
+)
+async def test_rejected_search_is_a_fatal_configuration_error(
+    config: Config, body: dict, reason: str
+) -> None:
+    error = _through_handler(_server_error(AsyncHttpConnection, 400, body))
+    retriever = _retriever_over(config, {}, search_error=error)
+    retriever._opensearch_client.mappings = {}
+
+    with pytest.raises(ConfigurationError) as exc:
+        await retriever.aretrieve(_text_units_query(config))
+
+    assert reason in str(exc.value)
+    assert is_fatal_retrieval_error(exc.value)
+
+
+@pytest.mark.parametrize("status", [429, 500, 503])
+async def test_throttling_and_server_errors_stay_transient(
+    config: Config, status: int
+) -> None:
+    body = {"error": {"type": "some_exception", "reason": "busy"}, "status": status}
+    error = _through_handler(_server_error(AsyncHttpConnection, status, body))
+    retriever = _retriever_over(config, {}, search_error=error)
+    retriever._opensearch_client.mappings = {}
+
+    assert await retriever.aretrieve(_text_units_query(config)) == []

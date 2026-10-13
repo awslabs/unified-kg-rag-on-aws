@@ -175,6 +175,15 @@ Library API (Python callers and custom backends).
   `DocStatusRecord.content_summary` / `content_length` and
   `application.cli.run_evaluation.exceeds_failure_budget` (#216); and
   `domain.retrieval.strategy_registry.registered_strategies` (#212).
+- `BaseSearchStrategy.search` (a sync wrapper with no caller; use
+  `asearch`) and the unused `timeout` parameter of
+  `BaseSearchStrategy._safe_aretrieve` are removed (#249).
+- `NeptuneRetriever` expands only from seed entity ids passed as an `id`
+  filter, which is how every strategy calls it. The name-matching seed
+  lookup (used without an `id` filter; it lowercased query terms for a
+  case-sensitive match) and the community-seeded traversal (no strategy
+  requested it) are removed, with `NeptuneRetriever.DEFAULT_MAX_HOPS`
+  (#249).
 - `BatchProcessor(max_retries=)` is `max_attempts=` (#151);
   `execute_with_fallback` no longer takes `batch_func` (sync) or
   `run_config` (#174, #216); `create_robust_xml_output_parser` requires
@@ -374,6 +383,22 @@ Library API (Python callers and custom backends).
   deletions. It failed graph extraction ("produced 0 outputs"), so the
   deletions were never applied and every later run failed the same way. A
   full build, or a run in which a text unit failed, still fails (#248).
+- OpenSearch terms-filter batching: a `terms_batch_size` below the clause
+  budget's share is honoured instead of being raised (50 became 150), and a
+  query with two or more over-long list filters searches every combination
+  of their batches; batch i of one filter was paired only with batch i of
+  the other, so matches across batches were missed (#249).
+- A search OpenSearch rejects with HTTP 400 (a filter value of another type
+  than its field, a `hybrid_search_pipeline_name` that does not exist) fails
+  with a `ConfigurationError` naming the server's reason. It degraded like a
+  timeout, so the query was answered from no context, or from the indices
+  the filter did not apply to (#249).
+- An OpenSearch or Neptune that cannot be reached (connection refused, DNS
+  or TLS failure) fails the query with `StoreConnectionError` instead of
+  reading as "no results": every strategy abstained and `run-eval` reported
+  a 100% success rate against a store that was down. A timeout, throttling
+  or a 5xx still degrades the one sub-search. OpenSearch errors now log the
+  server's reason instead of `info=None` (#249).
 - `run-eval --eval-data-path` naming a file that does not exist exits 2 with
   `Error: invalid evaluation dataset: ...`, as the user guide documents and
   as an unreadable or invalid dataset does; it exited 1 (#230).

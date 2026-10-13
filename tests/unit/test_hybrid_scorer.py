@@ -301,9 +301,7 @@ class TestOneContributionPerBucket:
         node_data = {"id": entity_id, "name": name, "description": f"{name} desc"}
         path_data = [{"name": [p]} for p in path]
         return RetrievalResult(
-            content=NeptuneRetriever._build_content(
-                node_data, path_data, is_community=False
-            ),
+            content=NeptuneRetriever._build_content(node_data, path_data),
             score=score,
             source=entity_id,
             retriever_type="entity",

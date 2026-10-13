@@ -73,18 +73,21 @@ def retriever(mocker) -> NeptuneRetriever:
     client = NeptuneClient(config=config, boto_session=MagicMock())
     instance = NeptuneRetriever(config=config, neptune_client=client)
 
-    async def no_seeds(g: Any, query: SearchQuery) -> tuple[list, list]:
-        return [], []
+    async def no_rows(g: Any, seed_ids: list, query: SearchQuery) -> list:
+        return []
 
-    mocker.patch.object(instance, "_get_seed_nodes", side_effect=no_seeds)
+    mocker.patch.object(instance, "_traverse_from_entities", side_effect=no_rows)
     return instance
+
+
+_SEEDED = SearchQuery(query="Vendor", filters={"id": ["e1"]})
 
 
 def test_connect_inside_asyncio_run_without_nest_asyncio(retriever) -> None:
     main = threading.current_thread()
 
     async def query() -> Any:
-        return await retriever.aretrieve(SearchQuery(query="Vendor"))
+        return await retriever.aretrieve(_SEEDED)
 
     loop = asyncio.new_event_loop()  # plain loop, nothing patched in
     try:
@@ -97,7 +100,7 @@ def test_connect_inside_asyncio_run_without_nest_asyncio(retriever) -> None:
 
 
 async def test_aclose_closes_the_connection_off_the_loop(retriever) -> None:
-    await retriever.aretrieve(SearchQuery(query="Vendor"))
+    await retriever.aretrieve(_SEEDED)
     await retriever.aclose()
     assert len(_FakeGremlinConnection.close_threads) == 1
     assert _FakeGremlinConnection.close_threads[0] is not threading.current_thread()

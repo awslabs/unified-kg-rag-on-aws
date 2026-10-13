@@ -268,7 +268,7 @@ def test_graph_round_trip(local_config: Config, graph_indexer) -> None:
     # Seeded by id, as every search strategy calls it. The indexers are
     # synchronous; retrieval runs on its own event loop.
     labels = local_config.indexing.neptune
-    by_seed_id, community = asyncio.run(
+    (by_seed_id,) = asyncio.run(
         _graph_retrieve(
             local_config,
             SearchQuery(
@@ -277,16 +277,9 @@ def test_graph_round_trip(local_config: Config, graph_indexer) -> None:
                 label_prefixes=labels.entity_label_prefix,
                 filters={"id": ["e-vendor"]},
             ),
-            SearchQuery(
-                query="",
-                suffix=_SUFFIX,
-                label_prefixes=labels.community_label_prefix,
-                filters={"id": ["c1"]},
-            ),
         )
     )
     assert {r.source for r in by_seed_id} == {"e-vendor", "e-buyer", "e-depot"}
-    assert {"c1", "e-vendor"} <= {r.source for r in community}
 
     assert graph_indexer.find_incident_relationship_ids(["e-depot"], _SUFFIX) == [
         "r-ships"
@@ -356,90 +349,6 @@ def test_graph_expansion_returns_every_seed_and_its_neighbourhood(
             assert len(found) == 2, (seed, sorted(scores))
             # One hop out always ranks below every seed (distance orders first).
             assert all(0 < scores[n] < min(scores[x] for x in seeds) for n in found)
-    finally:
-        graph_indexer.delete_by_id(ids, _SUFFIX)
-
-
-def test_community_expansion_expands_every_seed_community(
-    local_config: Config, graph_indexer
-) -> None:
-    # Community seeds share the entity expansion's budget shape: one
-    # traversal-wide limit used to let the first communities' members use it.
-    communities = [f"c-seed{i}" for i in range(4)]
-    members = {c: [f"{c}-m{j}" for j in range(2)] for c in communities}
-    neighbours = {
-        m: [f"{m}-n{k}" for k in range(2)] for g in members.values() for m in g
-    }
-    ids = (
-        communities
-        + [m for group in members.values() for m in group]
-        + [n for group in neighbours.values() for n in group]
-    )
-    entity_ids = [i for i in ids if i not in communities]
-    entities = [
-        Entity(
-            id=entity_id,
-            name=entity_id,
-            type="ORG",
-            description=f"{entity_id} description",
-            text_unit_ids=["t1"],
-            rank=1,
-        )
-        for entity_id in entity_ids
-    ]
-    relationships = [
-        Relationship(
-            id=f"r-{member}-{neighbour}",
-            source_id=member,
-            target_id=neighbour,
-            source_name=member,
-            target_name=neighbour,
-            description=f"{member} works with {neighbour}",
-            weight=1.0,
-            text_unit_ids=["t1"],
-        )
-        for member, group in neighbours.items()
-        for neighbour in group
-    ]
-    seed_communities = [
-        Community(
-            id=c,
-            name=c,
-            level="0",
-            parent="",
-            children=[],
-            entity_ids=members[c],
-            size=2,
-        )
-        for c in communities
-    ]
-    assert graph_indexer.index_entities(entities).failed_items == 0
-    assert graph_indexer.index_relationships(relationships).failed_items == 0
-    assert graph_indexer.index_communities(seed_communities).failed_items == 0
-    try:
-        config = local_config.model_copy(deep=True)
-        # Keep everything the traversal returns (no rank-then-cut).
-        config.indexing.neptune.traversal_fetch_multiplier = 1
-        (results,) = asyncio.run(
-            _graph_retrieve(
-                config,
-                SearchQuery(
-                    query="",
-                    suffix=_SUFFIX,
-                    top_k=8,
-                    label_prefixes=config.indexing.neptune.community_label_prefix,
-                    filters={"id": communities},
-                ),
-            )
-        )
-        found = {r.source for r in results}
-        # Width 8 over 4 seeds: each community, its 2 members and 2 of their
-        # neighbours, none starved.
-        for community, group in members.items():
-            assert community in found, sorted(found)
-            assert set(group) <= found, (community, sorted(found))
-            reached = [n for m in group for n in neighbours[m] if n in found]
-            assert len(reached) == 2, (community, sorted(found))
     finally:
         graph_indexer.delete_by_id(ids, _SUFFIX)
 

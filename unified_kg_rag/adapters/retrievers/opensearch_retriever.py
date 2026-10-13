@@ -1,15 +1,20 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
+import itertools
 import re
 import time
 from collections import OrderedDict
 from collections.abc import Coroutine
 from typing import Any, ClassVar
 
-from opensearchpy.exceptions import AuthorizationException, TransportError
+from opensearchpy.exceptions import AuthorizationException, RequestError, TransportError
 
-from unified_kg_rag.adapters.aws.opensearch import OpenSearchClient, is_index_not_found
+from unified_kg_rag.adapters.aws.opensearch import (
+    OpenSearchClient,
+    error_reason,
+    is_index_not_found,
+)
 from unified_kg_rag.adapters.retrieval.base import (
     BaseGraphRAGRetriever,
     is_fatal_retrieval_error,
@@ -79,6 +84,18 @@ def _is_authorization_error(exc: BaseException) -> bool:
             return True
         current = current.__cause__ or current.__context__
     return False
+
+
+def _rejected_request(exc: BaseException) -> RequestError | None:
+    """The HTTP 400 OpenSearch answered, if ``exc`` is (or wraps) one."""
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        if isinstance(current, RequestError):
+            return current
+        seen.add(id(current))
+        current = current.__cause__ or current.__context__
+    return None
 
 
 class OpenSearchRetriever(BaseGraphRAGRetriever):
@@ -667,36 +684,20 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         return max(list_lengths, default=0)
 
     def _calculate_safe_batch_size(self, filters: dict[str, Any] | None) -> int:
-        if not filters:
+        """Terms per list filter per request: ``terms_batch_size``, or less.
+
+        The clause budget (``max_total_clauses - reserved_clauses``) is split
+        across the list filters; a share below ``terms_batch_size`` lowers the
+        batch, but nothing raises it above the configured size.
+        """
+        list_filter_count = sum(
+            1 for v in (filters or {}).values() if isinstance(v, list) and v
+        )
+        if not list_filter_count:
             return self._terms_batch_size
-
-        list_filters = [
-            (k, v) for k, v in filters.items() if isinstance(v, list) and len(v) > 0
-        ]
-        if not list_filters:
-            return self._terms_batch_size
-
-        list_filter_count = len(list_filters)
-        total_terms = sum(len(v) for _, v in list_filters)
-
         available_clauses = self._max_total_clauses - self._reserved_clauses
         safe_size = available_clauses // list_filter_count
-
-        min_batch_size = max(1, available_clauses // max(list_filter_count, 1) // 2)
-
-        final_size = max(min_batch_size, min(safe_size, self._terms_batch_size))
-
-        logger.debug(
-            "Batch size calculation: %s list filters, total_terms=%s, available_clauses=%s, safe_size=%s, min_batch_size=%s, final_size=%s",
-            list_filter_count,
-            total_terms,
-            available_clauses,
-            safe_size,
-            min_batch_size,
-            final_size,
-        )
-
-        return final_size
+        return max(1, min(safe_size, self._terms_batch_size))
 
     @staticmethod
     def _find_all_large_filter_lists(
@@ -729,21 +730,24 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                 values[i : i + batch_size] for i in range(0, len(values), batch_size)
             ]
 
-        max_batches = max(len(batches) for batches in filter_batches.values())
+        # The filters are ANDed, so every batch of one filter must meet every
+        # batch of the others: pairing batch i with batch i missed a match whose
+        # values fell in batches of different positions.
+        combinations = list(itertools.product(*filter_batches.values()))
 
         logger.info(
             "Executing multi-batched retrieval: %s large filters, %s batches, batch_size=%s (filter sizes: %s)",
             len(large_filters),
-            max_batches,
+            len(combinations),
             batch_size,
             ", ".join(f"{k}={len(v)}" for k, v in large_filters.items()),
         )
 
-        for batch_idx in range(max_batches):
-            batch_filters = {**(query.filters or {})}
-            for key, batches in filter_batches.items():
-                actual_batch_idx = min(batch_idx, len(batches) - 1)
-                batch_filters[key] = batches[actual_batch_idx]
+        for combination in combinations:
+            batch_filters = {
+                **(query.filters or {}),
+                **dict(zip(filter_batches, combination, strict=True)),
+            }
 
             batch_query = query.model_copy(update={"filters": batch_filters})
 
@@ -761,7 +765,7 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         logger.debug(
             "Multi-batched retrieval completed: %s unique results from %s batches",
             len(all_results),
-            max_batches,
+            len(combinations),
         )
         return all_results
 
@@ -796,6 +800,18 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                     f"dimension {self._embedding_dimension}). Query with the "
                     "embedding settings the corpus was ingested with, or re-ingest "
                     "it with this model (indexing.reset: true)."
+                ) from e
+            if (rejected := _rejected_request(e)) is not None:
+                # A 400 is the same for every retry and every query: a filter
+                # value the field cannot hold, or a setting naming something the
+                # cluster lacks. Degrading it answered from no (or unfiltered)
+                # context.
+                raise ConfigurationError(
+                    f"OpenSearch rejected the search on {', '.join(aliases)} "
+                    f"(status 400): {error_reason(rejected)}. Check the query "
+                    "filters (a value of another type than the field's) and the "
+                    "OpenSearch settings the search uses, such as "
+                    "indexing.opensearch.hybrid_search_pipeline_name."
                 ) from e
             if is_index_not_found(e):
                 await self._require_ingested_suffix(suffix, e)
