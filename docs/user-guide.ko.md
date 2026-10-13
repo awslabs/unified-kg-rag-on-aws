@@ -1447,7 +1447,8 @@ run-eval --eval-data-path s3://my-bucket/eval/my_eval_data.json \
   `unanswerable` 블록(`total`, `correct_abstentions`, `accuracy`)이 있습니다. 답할 수
   있는 항목에서 거절은 다른 답변과 똑같이 채점합니다(보통 놓침). 각 결과에는
   `abstained`가 기록됩니다.
-- `run_manifest` — CLI 인자, 모델 ID(답변 생성, 평가 판정 모델·임베딩), 패키지 버전,
+- `run_manifest` — CLI 인자(`--model-base-url` 같은 `*_url` 인자는 사용자 정보·쿼리·
+  프래그먼트를 뺀 값), 모델 ID(답변 생성, 평가 판정 모델·임베딩), 패키지 버전,
   git 커밋(`git_sha`. 추적 파일이 커밋과 다르면 `git_dirty`도 기록. 패키지를 해당
   커밋을 추적하는 체크아웃에서 실행하지 않으면 둘 다 `null`), 해석된 전체 설정의
   `config_sha256`, `library_versions`(ragas, langchain*), 데이터셋(경로와 파일 sha256,

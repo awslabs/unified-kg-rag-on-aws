@@ -21,6 +21,7 @@ from unified_kg_rag.adapters.evaluators.base import (
     SKIPPED_METRICS_KEY,
     BaseEvaluator,
 )
+from unified_kg_rag.adapters.observability.endpoints import safe_url
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
 from unified_kg_rag.application.bootstrap import build_providers
@@ -814,6 +815,15 @@ class EvaluationManager:
         "langchain-community",
     )
 
+    @staticmethod
+    def _manifest_arg(name: str, value: Any) -> Any:
+        if isinstance(value, Path):
+            return str(value)
+        # ``--model-base-url`` may carry a key in its userinfo or query.
+        if name.endswith("_url") and isinstance(value, str):
+            return safe_url(value)
+        return value
+
     def build_run_manifest(
         self,
         eval_data_path: str | Path | None = None,
@@ -855,8 +865,7 @@ class EvaluationManager:
             },
             "dataset": dataset,
             "cli_args": {
-                k: str(v) if isinstance(v, Path) else v
-                for k, v in (cli_args or {}).items()
+                k: self._manifest_arg(k, v) for k, v in (cli_args or {}).items()
             },
             "models": {
                 "answer_generation": self.config.search.answer_generation_model_id,

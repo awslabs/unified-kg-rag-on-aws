@@ -944,6 +944,8 @@ Library API (Python callers and custom backends).
   fuzzy-match failure names the entity by `len=… sha=…` digest. A unit test
   fails when a new INFO+ log call passes names, descriptions, text or
   model-output previews (#PR).
+- The evaluation summary's `run_manifest.cli_args` records `--model-base-url`
+  without its userinfo, query and fragment, which may hold an API key (#PR).
 - Captured prompt and completion text is redacted as raw text on every
   tracing backend: with `otlp`, `langfuse` or `phoenix` it was redacted only
   at export, JSON-encoded, where a `\b` or `\s` pattern next to a newline

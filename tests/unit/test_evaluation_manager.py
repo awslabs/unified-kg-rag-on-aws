@@ -894,6 +894,14 @@ class TestComparability:
             == hashlib.sha256(data.read_bytes()).hexdigest()
         )
         assert manifest["cli_args"] == {"eval_data_path": str(data), "top_k": 5}
+        # A provider base URL may carry a key in its userinfo or query.
+        manifest = manager.build_run_manifest(
+            data,
+            {"model_base_url": "https://user:secret@llm.example.com:8443/v1?key=k#f"},
+        )
+        assert manifest["cli_args"] == {
+            "model_base_url": "https://llm.example.com:8443/v1"
+        }
         assert manifest["models"]["answer_generation"] == (
             config.search.answer_generation_model_id
         )
