@@ -399,6 +399,13 @@ Library API (Python callers and custom backends).
   a 100% success rate against a store that was down. A timeout, throttling
   or a 5xx still degrades the one sub-search. OpenSearch errors now log the
   server's reason instead of `info=None` (#249).
+- `entity_grounding.action: penalize` applies to gleaning additions too: an
+  entity or relationship gleaning proposed with evidence not found in the
+  chunk was dropped as under `drop`. It is now kept at its confidence (or
+  weight) times `penalty_factor`, on extraction's rules (a relationship only
+  when the chunk lists both endpoints; an entity still subject to
+  `entity_confidence_threshold`). A gleaning stage output cached by an
+  earlier version is reused until gleaning runs again (#PR).
 - An entity or relationship merged from text units of documents with
   different `filters` metadata carries every document's value (a list for a
   key with several), in extraction, gleaning, graph resolution and the

@@ -92,9 +92,8 @@ def _glean(gleaner, issues, entities=None, unit=UNIT):
     return {e.id: e for e in merged_entities}, merged_relationships
 
 
-@pytest.mark.parametrize("action", ["drop", "penalize"])
-def test_relationship_to_a_rejected_gleaned_entity_is_dropped(gleaner, action) -> None:
-    _ground(gleaner, action)
+def test_relationship_to_a_rejected_gleaned_entity_is_dropped(gleaner) -> None:
+    _ground(gleaner)
     entities, relationships = _glean(
         gleaner,
         [
@@ -107,9 +106,8 @@ def test_relationship_to_a_rejected_gleaned_entity_is_dropped(gleaner, action) -
     assert gleaner._dropped_rejected_endpoint == 1
 
 
-@pytest.mark.parametrize("action", ["drop", "penalize"])
-def test_rejection_holds_whatever_the_issue_order(gleaner, action) -> None:
-    _ground(gleaner, action)
+def test_rejection_holds_whatever_the_issue_order(gleaner) -> None:
+    _ground(gleaner)
     entities, relationships = _glean(
         gleaner,
         [
@@ -438,3 +436,41 @@ def test_gleaned_entity_below_the_threshold_is_dropped(gleaner) -> None:
     assert PHANTOM not in entities
     assert relationships == []
     assert gleaner._dropped_low_confidence_entities == 1
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_penalize_keeps_ungrounded_additions_down_weighted(gleaner, reverse) -> None:
+    # As at extraction: the entity stays at confidence x penalty_factor, and
+    # the relationship between two entities the chunk lists stays at weight x
+    # penalty_factor, whatever the order of the issues.
+    _ground(gleaner, "penalize")
+    issues = [
+        _entity_issue("Phantom Holdings", FABRICATED_QUOTE),
+        _relationship_issue("Vendor", "Phantom Holdings", FABRICATED_QUOTE),
+    ]
+    entities, relationships = _glean(gleaner, issues[::-1] if reverse else issues)
+    assert entities[PHANTOM].confidence == pytest.approx(0.5)
+    (rel,) = relationships
+    assert (rel.source_name, rel.target_name) == ("Vendor", "Phantom Holdings")
+    assert rel.weight == pytest.approx(0.5)
+
+
+def test_penalize_drops_an_ungrounded_relationship_to_an_unlisted_entity(
+    gleaner,
+) -> None:
+    # Depot is named in the chunk but not listed by it: keeping the ungrounded
+    # edge would make Depot cite the chunk, as extraction's penalize rule
+    # forbids.
+    _ground(gleaner, "penalize")
+    entities, relationships = _glean(
+        gleaner, [_relationship_issue("Vendor", "Depot", FABRICATED_QUOTE)]
+    )
+    assert relationships == []
+    assert BaseProcessor._generate_entity_id("Depot") not in entities
+
+
+def test_penalized_entity_below_the_threshold_is_dropped(gleaner) -> None:
+    _ground(gleaner, "penalize")
+    gleaner.extraction_config.entity_confidence_threshold = 0.6
+    entities, _ = _glean(gleaner, [_entity_issue("Phantom Holdings", FABRICATED_QUOTE)])
+    assert PHANTOM not in entities

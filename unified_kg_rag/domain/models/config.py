@@ -1000,7 +1000,8 @@ class EntityGroundingConfig(BaseModel):
         "confidence threshold can filter it without hard deletion. An "
         "ungrounded relationship is likewise dropped, or kept at its weight "
         "times penalty_factor; 'penalize' still drops one naming an entity its "
-        "chunk did not extract, which it would otherwise make cite the chunk.",
+        "chunk did not extract, which it would otherwise make cite the chunk. "
+        "Gleaning additions follow the same action.",
     )
     penalty_factor: float = Field(
         default=0.5,
