@@ -175,7 +175,9 @@ Two independent auth concerns:
 Local mode runs ingestion, querying and evaluation on a laptop or a single
 host without an AWS account: each role is served by a local component instead
 of Bedrock, Neptune, OpenSearch or DynamoDB. AWS stays the default and the
-primary target; local mode is for development and evaluation.
+primary target; local mode is for development and evaluation. It needs Docker
+with Compose 2.23.1 or later (`docker/compose.local.yaml` defines its Gremlin
+Server init script inline, which older releases reject).
 
 ```bash
 uv sync --extra local

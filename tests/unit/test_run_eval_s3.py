@@ -162,7 +162,10 @@ async def test_runner_downloads_dataset_and_uploads_outputs(s3, eval_config) -> 
     keys = _keys(s3, "out/")
     summary_key = next(k for k in keys if k.startswith("out/evaluation_summary_"))
     body = s3.get_object(Bucket=BUCKET, Key=summary_key)["Body"].read()
-    manifest = json.loads(body)["run_manifest"]
+    saved = json.loads(body)
+    # The effective outputs directory, not evaluation.outputs_directory.
+    assert saved["configuration"]["outputs_directory"] == f"s3://{BUCKET}/out/"
+    manifest = saved["run_manifest"]
     assert manifest["dataset"]["path"] == uri
     assert manifest["cli_args"]["eval_data_path"] == uri
     assert manifest["dataset"]["num_queries"] == 1

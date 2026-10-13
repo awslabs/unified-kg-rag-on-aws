@@ -173,7 +173,9 @@ optional 'unstructured' extra`). Python 3.11 또는 3.12에서는
 
 로컬 모드는 AWS 계정 없이 노트북이나 호스트 한 대에서 수집, 질의, 평가를 실행합니다.
 역할마다 Bedrock, Neptune, OpenSearch, DynamoDB 대신 로컬 구성 요소를 씁니다. 기본값과
-주 대상은 여전히 AWS이며, 로컬 모드는 개발과 평가용입니다.
+주 대상은 여전히 AWS이며, 로컬 모드는 개발과 평가용입니다. Docker와 Compose 2.23.1 이상이
+필요합니다(`docker/compose.local.yaml`은 Gremlin Server 초기화 스크립트를 파일 안에 정의하며,
+이전 릴리스는 이를 거부합니다).
 
 ```bash
 uv sync --extra local

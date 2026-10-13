@@ -4,6 +4,7 @@ import asyncio
 import copy
 import threading
 from collections.abc import Callable
+from concurrent.futures import Future
 from functools import cached_property
 from typing import TYPE_CHECKING, Any
 
@@ -259,8 +260,34 @@ class _ClosedPooledConnection:
         raise RuntimeError(_CLOSED_CONNECTION_MESSAGES[0])
 
 
+def _fail_late_submits(executor: Any) -> None:
+    """Make ``executor``'s ``submit`` after shutdown fail its future, not raise.
+
+    gremlinpython's ``Client.close`` shuts its executor down while a
+    request's write may be in flight; the write's callback then submits the
+    read, which raised there (and was only logged), so the request was never
+    answered and its thread waited forever. A failed future fails the request
+    instead, as a lost connection.
+    """
+    submit = executor.submit
+
+    def _submit(fn: Callable[..., Any], /, *args: Any, **kwargs: Any) -> Future[Any]:
+        try:
+            future: Future[Any] = submit(fn, *args, **kwargs)
+            return future
+        except RuntimeError:
+            failed: Future[Any] = Future()
+            failed.set_exception(RuntimeError(_CLOSED_CONNECTION_MESSAGES[2]))
+            return failed
+
+    executor.submit = _submit
+
+
 def _close_connection(connection: DriverRemoteConnection) -> None:
-    """Close ``connection`` and fail the requests still waiting on its pool."""
+    """Close ``connection``; fail its requests in flight or waiting on its pool."""
+    executor = getattr(getattr(connection, "_client", None), "_executor", None)
+    if executor is not None:
+        _fail_late_submits(executor)
     try:
         connection.close()
     finally:

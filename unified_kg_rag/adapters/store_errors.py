@@ -98,6 +98,18 @@ def is_fatal_retrieval_error(exc: BaseException) -> bool:
     return isinstance(exc, boto_exc.BotoCoreError)
 
 
+def is_bad_request(exc: BaseException) -> bool:
+    """Whether ``exc`` is an OpenAI-compatible server's HTTP 400.
+
+    vLLM and llama.cpp report a prompt longer than the model's context as a
+    plain 400, which LangChain does not map to ``ContextOverflowError``: the
+    global-search map step leaves a batch that got one unrated, as an
+    overflow, unless no batch was rated at all.
+    """
+    openai = sys.modules.get("openai")
+    return openai is not None and isinstance(exc, openai.BadRequestError)
+
+
 def _is_fatal_status(status: object) -> bool:
     # 408 and 429 resolve on their own, as does a 5xx; a 4xx is the same on
     # every call. A status-less error (Ollama's mid-stream ones: -1) is not.

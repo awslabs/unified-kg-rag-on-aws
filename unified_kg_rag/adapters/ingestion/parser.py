@@ -13,7 +13,6 @@ from langchain_community.document_loaders import (
     UnstructuredMarkdownLoader,
 )
 from langchain_community.document_loaders.base import BaseLoader
-from pydantic import BaseModel, Field
 
 from unified_kg_rag.adapters.ingestion.json_loader import JsonTextLoader
 from unified_kg_rag.adapters.store_errors import causes
@@ -38,47 +37,15 @@ UNSTRUCTURED_INSTALL_HINT = (
 )
 
 
-class ParsingStats(BaseModel):
-    num_total_files: int = Field(default=0)
-    num_successful_files: int = Field(default=0)
-    num_failed_files: int = Field(default=0)
-    total_processing_time: float = Field(default=0.0)
-
-    @property
-    def success_rate(self) -> float:
-        if self.num_total_files == 0:
-            return 0.0
-        return (self.num_successful_files / self.num_total_files) * 100
-
-
 class BaseParser(ABC):
     def __init__(self, config: Config) -> None:
         self.config = config
-        self.stats = ParsingStats()
 
     @abstractmethod
     def parse_file(
         self, file_path: str | Path, index_value: str | None = None
     ) -> Document:
         pass
-
-    def parse_files(
-        self, file_paths: list[str | Path], index_value: str | None = None
-    ) -> list[Document]:
-        documents = []
-        self.stats = ParsingStats(num_total_files=len(file_paths))
-
-        for file_path in file_paths:
-            try:
-                doc = self.parse_file(file_path, index_value)
-                documents.append(doc)
-                self.stats.num_successful_files += 1
-            except Exception as e:
-                logger.error("Failed to parse '%s': %s", file_path, e)
-                self.stats.num_failed_files += 1
-
-        logger.info("Parsing completed - Success rate: %.2f%%", self.stats.success_rate)
-        return documents
 
 
 class FileParser(BaseParser):

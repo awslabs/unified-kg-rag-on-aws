@@ -90,7 +90,7 @@ from unified_kg_rag.shared import (
     get_logger,
     observability,
 )
-from unified_kg_rag.shared.genai import GEN_AI_CONVERSATION_ID
+from unified_kg_rag.shared.genai import ERROR_TYPE, GEN_AI_CONVERSATION_ID
 from unified_kg_rag.shared.utils import (
     configure_event_loop,
     parse_llm_json,
@@ -1457,6 +1457,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             # The degraded answer is still a failed query: mark its span so.
             span.record_exception(e)
             span.set_error(type(e).__name__)
+            span.set_attribute(ERROR_TYPE, type(e).__name__)
             processing_time = time.time() - input_dict["start_time"]
 
             search_result = SearchResult(

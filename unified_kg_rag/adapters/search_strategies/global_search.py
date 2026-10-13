@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
 import math
-import sys
 import time
 from typing import Any
 
@@ -16,6 +15,7 @@ from unified_kg_rag.adapters.retrieval.base import (
     is_fatal_retrieval_error,
 )
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
+from unified_kg_rag.adapters.store_errors import is_bad_request
 from unified_kg_rag.domain.models import (
     Config,
     RetrievalResult,
@@ -36,18 +36,6 @@ from unified_kg_rag.shared.utils import parse_llm_json, safe_float_parse, text_d
 from unified_kg_rag.shared.utils.langchain import BatchProcessor
 
 logger = get_logger(__name__)
-
-
-def _is_bad_request(exc: BaseException) -> bool:
-    """Whether ``exc`` is an OpenAI-compatible server's HTTP 400.
-
-    vLLM and llama.cpp report a prompt longer than the model's context as a
-    plain 400, which LangChain does not map to ``ContextOverflowError``. In
-    the map step that 400 leaves the batch unrated, as an overflow does; a
-    400 every request gets still fails the query at the answer call.
-    """
-    openai = sys.modules.get("openai")
-    return openai is not None and isinstance(exc, openai.BadRequestError)
 
 
 class _MapPoint:
@@ -506,12 +494,19 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         # caller cannot access must fail the query, not degrade it to
         # "unrated" and an answer from the raw reports.
         fatal_errors: list[Exception] = []
+        # A 400 leaves its batch unrated (a vLLM/llama.cpp overflow), but one
+        # every batch got is the model refusing the request (an unsupported
+        # parameter, an unknown model id): with a fast map model the answer
+        # call, on another model, would not fail on it.
+        bad_requests: list[Exception] = []
 
         def sequential_func(single_input: dict[str, Any]) -> str:
             try:
                 return str(self.map_rater.invoke(single_input, config))
             except Exception as e:
-                if is_fatal_retrieval_error(e) and not _is_bad_request(e):
+                if is_bad_request(e):
+                    bad_requests.append(e)
+                elif is_fatal_retrieval_error(e):
                     fatal_errors.append(e)
                 raise
 
@@ -538,6 +533,8 @@ class GlobalSearchStrategy(BaseSearchStrategy):
                 unrated.extend(batch)
                 continue
             points.extend(batch_points)
+        if bad_requests and len(unrated) == len(results):
+            raise bad_requests[0]
         if unrated:
             logger.warning(
                 "Global map phase left %s/%s reports unrated (failed or "

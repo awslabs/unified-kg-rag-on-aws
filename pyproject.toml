@@ -65,7 +65,7 @@ dependencies = [
     # 1.8.1 is the first release that raises BedrockContextOverflowError (a
     # langchain-core ContextOverflowError) for a prompt longer than the model's
     # context; on older releases it is a plain ValidationException, which the
-    # retrievers treat as fatal (store_errors.is_fatal_store_error).
+    # retrievers treat as fatal (store_errors.is_fatal_retrieval_error).
     "langchain-aws>=1.8.1,<2.0.0",
     "langchain-classic>=1.0.0,<2.0.0",
     # Held at 0.3.x: ragas imports langchain_community.chat_models.vertexai

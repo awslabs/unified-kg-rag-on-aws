@@ -71,7 +71,7 @@ AWS 방식은 Amazon Bedrock을 호출하므로 먼저 [필요한 모델](./docs
 ### 사전 요구사항
 
 - 모든 방식: Python 3.10–3.12와 [uv](https://docs.astral.sh/uv/) (`pip`도 사용할 수 있습니다).
-- 로컬 모드: Docker와 Compose. 모델에 Bedrock을 쓰지 않으면 AWS 계정이 필요 없습니다.
+- 로컬 모드: Docker와 Compose 2.23.1 이상. 모델에 Bedrock을 쓰지 않으면 AWS 계정이 필요 없습니다.
 - 기존 AWS 리소스: Amazon Bedrock([필요한 모델](./docs/user-guide.ko.md#필수-모델)의 액세스 활성화)에 접근할 수 있는 AWS 자격 증명, Amazon Neptune 클러스터, Amazon OpenSearch Service 도메인. DynamoDB는 증분 인덱싱을 쓸 때만, S3 버킷은 단계 캐시 동기화(`--s3-sync`)나 임베딩 캐시 저장을 쓸 때만 필요합니다. 프레임워크는 이미 있는 서비스에 연결할 뿐 서비스를 만들지 않습니다.
 - 번들 CDK 스택: [`iac/README.md`의 Prerequisites](./iac/README.md#prerequisites)에 있는 CDK CLI와 Node.js, 이미지 푸시용 Docker.
 

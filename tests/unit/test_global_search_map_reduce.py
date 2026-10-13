@@ -567,21 +567,26 @@ async def test_map_phase_one_overflowing_batch_is_left_unrated() -> None:
     assert len(points) == 3
 
 
+def _bad_request(message: str) -> Exception:
+    """An OpenAI-compatible server's HTTP 400, as vLLM and llama.cpp send it."""
+    import httpx
+    import openai
+
+    return openai.BadRequestError(
+        message,
+        response=httpx.Response(
+            400, request=httpx.Request("POST", "http://localhost/v1")
+        ),
+        body={"object": "error", "type": "BadRequestError", "code": 400},
+    )
+
+
 class _VllmOverflowingFirstReport(_SyncMapChain):
     """Map chain failing report 0 the way vLLM reports a too-long prompt."""
 
     def invoke(self, single_input: dict, config: Any = None) -> str:
         if "community report 0" in single_input["reports"]:
-            import httpx
-            import openai
-
-            raise openai.BadRequestError(
-                "This model's maximum context length is 8192 tokens.",
-                response=httpx.Response(
-                    400, request=httpx.Request("POST", "http://localhost/v1")
-                ),
-                body={"object": "error", "type": "BadRequestError", "code": 400},
-            )
+            raise _bad_request("This model's maximum context length is 8192 tokens.")
         return super().invoke(single_input, config)
 
 
@@ -599,6 +604,20 @@ async def test_map_phase_a_vllm_overflow_leaves_the_batch_unrated() -> None:
     )
     assert [r.source for r in unrated] == ["c0"]
     assert len(points) == 3
+
+
+async def test_map_phase_a_400_on_every_batch_fails_the_query() -> None:
+    # Regression: every 400 left its batch unrated, so a map model refusing
+    # every request (an unsupported parameter, an unknown model id) answered
+    # from the unrated reports; with providers.llm.fast_model_id the answer
+    # call runs on another model and did not fail either.
+    import openai
+
+    strat = _strategy(ignore_errors=False, map_batch_size=1, reduce_with_llm=True)
+    strat.batch_processor.max_attempts = 1  # as GlobalSearchStrategy configures
+    strat.map_rater = _DeniedMapChain(_bad_request("Unknown parameter: 'top_k'"))
+    with pytest.raises(openai.BadRequestError, match="top_k"):
+        await strat._apply_map_reduce(_communities(2), SearchQuery(query="q"))
 
 
 async def test_map_phase_fatal_error_degrades_when_ignored() -> None:
