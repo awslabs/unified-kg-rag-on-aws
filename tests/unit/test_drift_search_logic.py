@@ -882,7 +882,10 @@ async def test_evolve_query_failures_are_logged(mocker) -> None:
     warning = mocker.spy(drift_search.logger, "warning")
     strat = _bare_strategy(ignore_errors=True)
     strat.query_refiner = _AChain(
-        raises=RuntimeError("AccessDeniedException: no access to the model")
+        raises=ClientError(
+            {"Error": {"Code": "AccessDeniedException", "Message": "no access"}},
+            "Converse",
+        )
     )
     strat.keyword_expander = _AChain(raises=TimeoutError("timed out"))
     out = await strat._evolve_query(SearchQuery(query="q"), "original", [], 1)

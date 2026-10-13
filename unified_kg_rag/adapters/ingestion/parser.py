@@ -16,6 +16,7 @@ from langchain_community.document_loaders.base import BaseLoader
 from pydantic import BaseModel, Field
 
 from unified_kg_rag.adapters.ingestion.json_loader import JsonTextLoader
+from unified_kg_rag.adapters.store_errors import causes
 from unified_kg_rag.domain.models import Config, Document
 from unified_kg_rag.shared import DataProcessingError, get_logger
 from unified_kg_rag.shared.utils.document_converter import convert_langchain_to_document
@@ -122,14 +123,7 @@ class FileParser(BaseParser):
     def _is_decode_error(exc: BaseException) -> bool:
         # TextLoader/CSVLoader wrap a UnicodeDecodeError in a RuntimeError
         # ("Error loading <path>"), so inspect the exception and its cause chain.
-        seen: set[int] = set()
-        cur: BaseException | None = exc
-        while cur is not None and id(cur) not in seen:
-            if isinstance(cur, UnicodeDecodeError):
-                return True
-            seen.add(id(cur))
-            cur = cur.__cause__ or cur.__context__
-        return False
+        return any(isinstance(cause, UnicodeDecodeError) for cause in causes(exc))
 
     def parse_file(
         self, file_path: str | Path, index_value: str | None = None
