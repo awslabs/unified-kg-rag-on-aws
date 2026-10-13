@@ -181,7 +181,14 @@ async def test_concurrent_queries_on_a_cached_strategy_are_isolated(
     assert first.query.top_k == 2 and second.query.top_k == 4
     assert {r.content.split()[0] for r in first.results} == {"first"}
     assert {r.content.split()[0] for r in second.results} == {"second"}
-    assert len(first.results) == 2 and len(second.results) == 4
+    # naive returns its chunk width (max(chunk_stream_top_k, top_k)), as upstream.
+    floor = (
+        chain.config.search.lightrag_search.chunk_stream_top_k
+        if strategy is SearchStrategy.NAIVE
+        else 0
+    )
+    assert len(first.results) == max(floor, 2)
+    assert len(second.results) == max(floor, 4)
     assert {r.metadata["filters"]["document_id"][0] for r in first.results} == {"d-1"}
     assert {r.metadata["filters"]["document_id"][0] for r in second.results} == {"d-2"}
     assert first.metadata is not second.metadata

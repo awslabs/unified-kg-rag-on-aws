@@ -268,9 +268,16 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
             if mode in (SearchStrategy.MIX.value, SearchStrategy.HYBRID.value)
             else None
         )
+        # naive returns the chunk width, as upstream `naive_query` returns
+        # `chunk_top_k` chunks rather than the KG `top_k`.
+        fuse_top_k = (
+            self._chunk_stream_top_k(query.top_k)
+            if mode == SearchStrategy.NAIVE.value
+            else query.top_k
+        )
         final_results = await self._fuse_and_rerank(
             results_by_source,
-            top_k=query.top_k,
+            top_k=fuse_top_k,
             retrieval_multiplier=query.retrieval_multiplier,
             query=query.query,
             per_type_quota=per_type_quota,
@@ -450,7 +457,11 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
     async def _retrieve_chunks(
         self, query: SearchQuery
     ) -> dict[str, list[RetrievalResult]]:
-        """Naive vector chunk retrieval over the text-units index."""
+        """Naive chunk retrieval over the text-units index.
+
+        Runs the request's ``search_type``: BM25 + vector under the default
+        ``hybrid``; ``vector`` matches upstream's pure-vector baseline.
+        """
         if not self.document_retriever:
             return {}
         search_query = SearchQuery(

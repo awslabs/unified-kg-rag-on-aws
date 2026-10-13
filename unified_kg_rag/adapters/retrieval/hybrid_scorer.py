@@ -109,18 +109,8 @@ class HybridScorer(MetricsMixin):
         combined_results = fusion_func(fusion_input)
 
         if self.fusion_config.diversity_lambda < 1.0:
-            # Diversity filtering cuts to top_k*multiplier, which runs BEFORE
-            # rerank/quota: whenever the per-type quotas sum to more than top_k,
-            # the cut would leave them nothing to protect. When a quota is set,
-            # keep at least the quota budget so diversity de-dups WITHIN that
-            # budget instead of collapsing it.
-            div_top_k = top_k
-            if per_type_quota:
-                div_top_k = max(top_k, sum(per_type_quota.values()))
-            combined_results = self._apply_diversity_filtering(
-                combined_results,
-                top_k=div_top_k,
-                retrieval_multiplier=retrieval_multiplier,
+            combined_results = self._diversify(
+                combined_results, top_k, retrieval_multiplier, per_type_quota
             )
 
         if self.rerank_model is not None and query is not None:
@@ -146,7 +136,7 @@ class HybridScorer(MetricsMixin):
                     to_rerank = self._apply_bedrock_reranking(to_rerank, query)
                 combined_results = kept + to_rerank
 
-        combined_results.sort(key=lambda x: x.score or 0.0, reverse=True)
+        combined_results.sort(key=lambda x: x.score, reverse=True)
         # A single cross-type [:top_k] cut lets one type (usually entities, with many
         # near-tie RRF scores) crowd out text chunks — which is where LightRAG/GraphRAG
         # multi-hop answers actually live. When per_type_quota is given, guarantee each
@@ -173,6 +163,45 @@ class HybridScorer(MetricsMixin):
         )
 
         return final_results
+
+    def _diversify(
+        self,
+        results: list[RetrievalResult],
+        top_k: int,
+        retrieval_multiplier: int,
+        per_type_quota: dict[str, int] | None,
+    ) -> list[RetrievalResult]:
+        """MMR diversity cut, run BEFORE rerank and the per-type quota.
+
+        Without a quota it is one cut to ``top_k * retrieval_multiplier``. With
+        a quota, a single cross-type cut would let one type's near-ties take
+        slots another type has reserved (text chunks lost a fifth of theirs to
+        over-quota entities that the quota then dropped anyway), so each type
+        is diversified within its own group up to its own quota; types without
+        a quota entry keep ``top_k`` as their width.
+        """
+        if not per_type_quota:
+            kept = self._apply_diversity_filtering(results, top_k, retrieval_multiplier)
+        else:
+            by_type: dict[str, list[RetrievalResult]] = defaultdict(list)
+            for result in results:
+                by_type[result.retriever_type].append(result)
+            kept = []
+            for rtype, group in by_type.items():
+                kept.extend(
+                    self._apply_diversity_filtering(
+                        group,
+                        per_type_quota.get(rtype, top_k),
+                        retrieval_multiplier,
+                    )
+                )
+        filtered_count = len(results) - len(kept)
+        if filtered_count:
+            logger.debug(
+                "Diversity filtering removed %s similar results", filtered_count
+            )
+        self._record_metric("diversity_filtered_count", filtered_count)
+        return kept
 
     @staticmethod
     def _select_with_type_quota(
@@ -227,7 +256,7 @@ class HybridScorer(MetricsMixin):
             if len(selected) >= budget:
                 break
             selected.append(r)
-        selected.sort(key=lambda x: x.score or 0.0, reverse=True)
+        selected.sort(key=lambda x: x.score, reverse=True)
         return selected
 
     @staticmethod
@@ -242,21 +271,8 @@ class HybridScorer(MetricsMixin):
         # but the normalization itself must not leak into the caller's list.
         copies = [r.model_copy() for r in results]
 
-        min_score = float("inf")
-        max_score = float("-inf")
-        has_score = False
-
-        for r in copies:
-            if r.score is not None:
-                has_score = True
-                min_score = min(min_score, r.score)
-                max_score = max(max_score, r.score)
-
-        if not has_score:
-            for r in copies:
-                r.score = 0.5
-            return copies
-
+        min_score = min(r.score for r in copies)
+        max_score = max(r.score for r in copies)
         score_range = max_score - min_score
 
         for result in copies:
@@ -291,7 +307,7 @@ class HybridScorer(MetricsMixin):
         native_norm: dict[str, float] = {}
         for results in buckets.values():
             for r in self._normalize_scores(results):
-                native_norm[self._get_result_key(r)] = r.score or 0.0
+                native_norm[self._get_result_key(r)] = r.score
 
         for name, results in buckets.items():
             weight = weights.get(name, 1.0)
@@ -334,7 +350,7 @@ class HybridScorer(MetricsMixin):
             weight = weights.get(name, 1.0)
             for result in self._once_per_bucket(results):
                 key = self._get_result_key(result)
-                scores[key] += (result.score or 0.0) * weight
+                scores[key] += result.score * weight
                 if key not in objects:
                     objects[key] = result.model_copy()
 
@@ -418,7 +434,7 @@ class HybridScorer(MetricsMixin):
         target_count = top_k * retrieval_multiplier
         # Sort a copy: the caller still holds `results` (the post-fusion list),
         # and an in-place sort here would reorder it as a side effect.
-        results = sorted(results, key=lambda x: x.score or 0.0, reverse=True)
+        results = sorted(results, key=lambda x: x.score, reverse=True)
 
         # A cut at least as wide as the candidate set removes nothing: MMR would
         # only permute the list, and every caller re-sorts by score afterwards.
@@ -426,7 +442,6 @@ class HybridScorer(MetricsMixin):
         # the candidate counts), and the selection loop below is quadratic in
         # the candidate count, so skip it outright.
         if target_count >= len(results):
-            self._record_metric("diversity_filtered_count", 0)
             return results
 
         word_sets = [
@@ -442,7 +457,7 @@ class HybridScorer(MetricsMixin):
         # MMR then keeps whatever is least like rank 1, i.e. off-topic results.
         # All-equal scores carry no relevance signal, so they map to 1.0 and the
         # ordering falls to the diversity term alone.
-        raw_scores = [r.score or 0.0 for r in results]
+        raw_scores = [r.score for r in results]
         max_score = raw_scores[0]
         min_score = raw_scores[-1]
         score_range = max_score - min_score
@@ -485,16 +500,7 @@ class HybridScorer(MetricsMixin):
             remaining.remove(best_idx)
             newest = best_idx
 
-        selected = [results[i] for i in selected_indices]
-
-        filtered_count = len(results) - len(selected)
-        if filtered_count > 0:
-            logger.debug(
-                "Diversity filtering removed %s similar results", filtered_count
-            )
-
-        self._record_metric("diversity_filtered_count", filtered_count)
-        return selected
+        return [results[i] for i in selected_indices]
 
     def _apply_bedrock_reranking(
         self, results: list[RetrievalResult], query: str
@@ -513,7 +519,7 @@ class HybridScorer(MetricsMixin):
                     metadata={
                         "key": key,
                         "source": result.source or "",
-                        "original_score": result.score or 0.0,
+                        "original_score": result.score,
                     },
                 )
                 documents.append(doc)
@@ -595,9 +601,3 @@ class HybridScorer(MetricsMixin):
         except Exception as e:
             logger.error("Reranking failed: %s", e)
             return results
-
-    @staticmethod
-    def _jaccard(words1: set[str], words2: set[str]) -> float:
-        """Jaccard similarity of two word sets (shared by MMR diversity)."""
-        union = len(words1 | words2)
-        return len(words1 & words2) / union if union > 0 else 0.0

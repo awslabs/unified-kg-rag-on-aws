@@ -174,13 +174,31 @@ class TestCountTokens:
 
 class TestBudgeting:
     def test_budget_exceeded_returns_empty_context(self, mocker) -> None:
-        # query alone (3 tokens) + buffer (512) exceeds a tiny target -> short circuit.
+        # The query alone (3 tokens) fills the explicit budget -> short circuit.
         mgr = _make_manager(mocker, max_context_tokens=1024)
         results = [_r("a b c d e", 0.9, "text", "s1")]
-        out = mgr.optimize_context(results, query="one two three", max_tokens=100)
+        out = mgr.optimize_context(results, query="one two three", max_tokens=3)
         assert out.sections == []
         assert out.sections_included == 0
         assert out.sections_excluded == 1
+
+    def test_small_explicit_budget_is_not_cut_by_the_prompt_buffer(
+        self, mocker
+    ) -> None:
+        # The 512-token prompt buffer used to come off an explicit budget too,
+        # so any RAGInput.max_tokens <= 513 produced an empty context.
+        mgr = _make_manager(mocker, max_context_tokens=1024)
+        results = [_r("a b c d e", 0.9, "text", "s1")]
+        out = mgr.optimize_context(results, query="one two three", max_tokens=100)
+        assert out.sections_included == 1
+
+    def test_prompt_buffer_comes_off_the_configured_budget(self, mocker) -> None:
+        mgr = _make_manager(mocker, max_context_tokens=1024)
+        fits = 1024 - TokenManager.CONTEXT_BUFFER_TOKENS - 1  # minus the 1-token query
+        results = [_r(" ".join(["w"] * (fits + 1)), 0.9, "text", "s1")]
+        for max_tokens in (None, 5000):
+            out = mgr.optimize_context(results, query="q", max_tokens=max_tokens)
+            assert out.total_tokens <= fits
 
     def test_fits_within_budget_includes_section(self, mocker) -> None:
         mgr = _make_manager(mocker, max_context_tokens=200000)
@@ -197,9 +215,7 @@ class TestBudgeting:
             _r("a b c d e", 0.9, "text", "s1"),
             _r("f g h i j", 0.8, "text", "s2"),
         ]
-        out = mgr.optimize_context(
-            results, query="q", max_tokens=6, max_context_tokens_buffer=0
-        )
+        out = mgr.optimize_context(results, query="q", max_tokens=6)
         # available = 6 - 1 - 0 = 5 tokens -> exactly one 5-token section fits.
         assert out.sections_included == 1
         assert out.total_tokens == 5
@@ -224,9 +240,7 @@ class TestPriorityOrdering:
             _r("t t t t t", 0.5, "text", "txt"),
         ]
         # Budget for only one section -> the higher-priority TEXT wins.
-        out = mgr.optimize_context(
-            results, query="q", max_tokens=6, max_context_tokens_buffer=0
-        )
+        out = mgr.optimize_context(results, query="q", max_tokens=6)
         assert out.sections_included == 1
         assert out.sections[0].section_type == SectionType.TEXT
 
@@ -243,9 +257,7 @@ class TestPriorityOrdering:
             _r("g g g g g", 0.5, "general", "gen"),
             _r("t t t t t", 0.5, "text", "txt"),
         ]
-        out = mgr.optimize_context(
-            results, query="q", max_tokens=6, max_context_tokens_buffer=0
-        )
+        out = mgr.optimize_context(results, query="q", max_tokens=6)
         assert out.sections_included == 1
         assert out.total_tokens <= 5
         # TEXT (1.3) outranks GENERAL (0.8) at equal base score.
@@ -260,7 +272,6 @@ class TestPriorityOrdering:
             [_r(" ".join(["t"] * 500), 0.9, "text", "t0")],
             query="q",
             max_tokens=floor + 1,
-            max_context_tokens_buffer=0,
         )
         assert out.sections_included == 1
         assert out.sections[0].metadata["truncated"] is True
@@ -348,7 +359,6 @@ class TestPerTypeBudgetIsAHardCap:
             text_results + community_results,
             query="q",
             max_tokens=1001,
-            max_context_tokens_buffer=0,
         )
         by_type: dict[SectionType, int] = {}
         for section in out.sections:
@@ -369,9 +379,7 @@ class TestPerTypeBudgetIsAHardCap:
         # leftover-pooling this fix removes.
         mgr = _make_manager(mocker)
         results = [_r(" ".join(["t"] * 100), 0.9, "text", f"t{i}") for i in range(20)]
-        out = mgr.optimize_context(
-            results, query="q", max_tokens=1001, max_context_tokens_buffer=0
-        )
+        out = mgr.optimize_context(results, query="q", max_tokens=1001)
         assert out.total_tokens == 1000
 
     def test_unused_share_of_a_sparse_type_is_left_unused(self, mocker) -> None:
@@ -385,9 +393,7 @@ class TestPerTypeBudgetIsAHardCap:
         results = [_r(" ".join(["t"] * 50), 0.9, "text", f"t{i}") for i in range(2)] + [
             _r(" ".join(["c"] * 50), 0.4, "community", f"c{i}") for i in range(40)
         ]
-        out = mgr.optimize_context(
-            results, query="q", max_tokens=1001, max_context_tokens_buffer=0
-        )
+        out = mgr.optimize_context(results, query="q", max_tokens=1001)
         by_type: dict[SectionType, int] = {}
         for section in out.sections:
             by_type[section.section_type] = (
@@ -404,9 +410,7 @@ class TestPerTypeBudgetIsAHardCap:
         # strategy.
         mgr = _make_manager(mocker)
         results = [_r(" ".join(["g"] * 50), 0.9, "general", f"g{i}") for i in range(10)]
-        out = mgr.optimize_context(
-            results, query="q", max_tokens=1001, max_context_tokens_buffer=0
-        )
+        out = mgr.optimize_context(results, query="q", max_tokens=1001)
         assert out.sections_included == 10
         assert out.total_tokens == 500
 
@@ -426,9 +430,7 @@ class TestPerTypeBudgetIsAHardCap:
         results = [_r(" ".join(["g"] * 20), 0.9, "general", "g0")] + [
             _r(" ".join(["c"] * 20), 0.9, "community", "c0")
         ]
-        out = mgr.optimize_context(
-            results, query="q", max_tokens=1001, max_context_tokens_buffer=0
-        )
+        out = mgr.optimize_context(results, query="q", max_tokens=1001)
         assert {s.section_type for s in out.sections} == {
             SectionType.GENERAL,
             SectionType.COMMUNITY,
@@ -470,9 +472,7 @@ class TestPerTypeBudgetIsAHardCap:
         # section is truncated to fit instead.
         mgr = _make_manager(mocker)
         results = [_r(" ".join(["t"] * 5000), 0.9, "text", "t0")]
-        out = mgr.optimize_context(
-            results, query="q", max_tokens=1001, max_context_tokens_buffer=0
-        )
+        out = mgr.optimize_context(results, query="q", max_tokens=1001)
         assert out.sections_included == 1
         section = out.sections[0]
         assert section.metadata["truncated"] is True
@@ -516,6 +516,34 @@ class TestPerTypeBudgetIsAHardCap:
         assert original.token_count == 1000
         assert not original.metadata
 
+    @pytest.mark.parametrize(
+        "content",
+        [
+            # One early space, then text written without spaces: backing off to
+            # that space kept 2 of ~400 characters.
+            "契約 " + "東京倉庫は大阪商事のために部品を保管する。" * 20,
+            "供应商" + "与买方签订合同并约定付款条件" * 30,
+        ],
+        ids=["japanese-one-early-space", "chinese-no-space"],
+    )
+    def test_cjk_truncation_keeps_most_of_the_room(self, mocker, content) -> None:
+        original = ContextSection(
+            content=content,
+            token_count=len(content),
+            priority=1.0,
+            section_type=SectionType.TEXT,
+            source_id="s",
+        )
+        mgr = _make_manager(mocker)
+        room = len(content) // 2
+        section = mgr._truncate_to_tokens(original, max_tokens=room)
+        assert section is not None
+        kept = section.content.removesuffix(" …")
+        assert content.startswith(kept)
+        assert len(kept) >= room * 0.8
+        if "。" in content:
+            assert kept.endswith("。")  # a sentence mark within reach is used
+
     def test_a_type_whose_first_candidate_overflows_is_still_represented(
         self, mocker
     ) -> None:
@@ -526,9 +554,7 @@ class TestPerTypeBudgetIsAHardCap:
         results = [
             _r(" ".join(["t"] * 100), 0.9, "text", f"t{i}") for i in range(20)
         ] + [_r(" ".join(["c"] * 900), 0.4, "community", "c0")]
-        out = mgr.optimize_context(
-            results, query="q", max_tokens=1001, max_context_tokens_buffer=0
-        )
+        out = mgr.optimize_context(results, query="q", max_tokens=1001)
         types = {s.section_type for s in out.sections}
         assert SectionType.COMMUNITY in types
         assert SectionType.TEXT in types
@@ -569,7 +595,6 @@ class TestSynthesizedSectionReservation:
             [_synthesized(400), *self._evidence()],
             query="q",
             max_tokens=1001,
-            max_context_tokens_buffer=0,
         )
         tokens = _tokens_by_source(out)
         # Before: GENERAL 0.10 of {TEXT 0.50, COMMUNITY 0.10, GENERAL 0.10} of
@@ -591,7 +616,6 @@ class TestSynthesizedSectionReservation:
             [_synthesized(2000), *self._evidence()],
             query="q",
             max_tokens=1001,
-            max_context_tokens_buffer=0,
         )
         assert [s.source_id for s in out.sections] == ["synthesized_key_points"]
         assert out.total_tokens == 1000
@@ -599,9 +623,7 @@ class TestSynthesizedSectionReservation:
 
     def test_without_synthesized_sections_the_split_is_unchanged(self, mocker) -> None:
         mgr = _make_manager(mocker)
-        plain = mgr.optimize_context(
-            self._evidence(), query="q", max_tokens=1001, max_context_tokens_buffer=0
-        )
+        plain = mgr.optimize_context(self._evidence(), query="q", max_tokens=1001)
         assert (
             sum(
                 s.token_count

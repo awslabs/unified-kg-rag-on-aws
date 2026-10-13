@@ -317,7 +317,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         return sorted(
             communities,
             key=lambda c: (
-                c.score or 0.0,
+                c.score,
                 float(c.metadata.get("rank", 0.0) or 0.0),
                 float(c.metadata.get("rating", 0.0) or 0.0),
             ),

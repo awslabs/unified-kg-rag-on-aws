@@ -352,7 +352,7 @@ Robustness: Even if the map response comes wrapped in code fences or prose, `_pa
 Runs dual-level keyword retrieval (hl/ll extraction via `KeywordsExtractionPrompt`) on top of the shared hybrid infrastructure.
 
 Modes (`RAGInput.search_strategy`):
-- **naive** — vector chunk retrieval only, no graph.
+- **naive** — chunk retrieval only, no graph: `chunk_stream_top_k` chunks under the request's `search_type` (`hybrid` BM25 + vector by default; `vector` is upstream's pure-vector baseline).
 - **hybrid** — ll → entity index + hl → relationship index + one-hop cross-type expansion (entity hits → incident relationships, relationship hits → endpoint entities) + the chunks those items cite.
 - **mix** — hybrid graph search, plus the **source chunks cited by the matched entities/relationships** (`text_unit_ids` lineage), plus a naive vector chunk retrieval, all blended in.
 

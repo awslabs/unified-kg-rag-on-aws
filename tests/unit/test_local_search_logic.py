@@ -41,7 +41,6 @@ def _result(
 def _bare_strategy(
     *,
     retrievers: dict | None = None,
-    entity_focus_multiplier: int = 2,
 ) -> LocalSearchStrategy:
     """A LocalSearchStrategy whose __init__ never runs (no AWS clients)."""
     strat = LocalSearchStrategy.__new__(LocalSearchStrategy)
@@ -58,7 +57,6 @@ def _bare_strategy(
         ),
     )
     strat.retrievers = retrievers or {}
-    strat.entity_focus_multiplier = entity_focus_multiplier
     return strat
 
 
@@ -236,17 +234,15 @@ async def test_retrieve_documents_merges_caller_filters_with_id_scope() -> None:
 
 async def test_find_candidate_entities_returns_sources_and_top_k() -> None:
     retriever = _StubRetriever([_result("e1"), _result(None), _result("e2")])
-    strat = _bare_strategy(
-        retrievers={"document": retriever}, entity_focus_multiplier=3
-    )
+    strat = _bare_strategy(retrievers={"document": retriever})
     query = SearchQuery(query="q", entity_focus=["Alice", "Bob"])
     out = await strat._find_candidate_entities(query)
     # Drops the result with no source; keeps the rest.
     assert out == ["e1", "e2"]
-    # top_k = len(entity_focus) * multiplier = 2 * 3.
+    # top_k = len(entity_focus) * candidates per focus entity = 2 * 2.
     sent = retriever.last_query
     assert sent is not None
-    assert sent.top_k == 6
+    assert sent.top_k == 4
     assert sent.index_prefixes == ["entities"]
 
 

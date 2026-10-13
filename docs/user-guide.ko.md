@@ -974,7 +974,7 @@ RRF + Bedrock 재순위화)를 거치며, 검색 알고리즘만 다릅니다.
 |---|---|---|
 | `mix` | 일반적인 LightRAG 사용, 그래프와 청크의 균형 | 저수준 키워드 → 엔티티 인덱스, 고수준 키워드 → 관계 인덱스, 1홉 연결 관계·끝점 엔티티 확장(Neptune 다중 홉 확장은 `search.lightrag_search.enable_graph_expansion`으로 선택)에 **더해** naive 벡터 청크 검색 결과를 섞습니다. |
 | `hybrid` | 키워드 중심의 그래프 질문 | `mix`와 같지만 naive 청크 결과를 섞지 않습니다. |
-| `naive` | 빠른 기준선, 비교 평가 | 그래프 없이 벡터 청크 검색만 합니다. LightRAG 기준선입니다. |
+| `naive` | 빠른 기준선, 비교 평가 | 그래프 없이 청크 검색만 하며 `search.lightrag_search.chunk_stream_top_k`개(기본 20개) 청크를 반환합니다. 다른 전략처럼 `--search-type`을 따르므로 기본값 `hybrid`는 벡터 검색에 BM25를 더합니다. upstream LightRAG의 순수 벡터 기준선은 `--search-type vector`로 재현합니다. |
 
 > `mix`/`hybrid`를 쓰려면 관계 벡터 인덱스
 > (`indexing.opensearch.relationships_index_prefix`, 수집 중 자동 생성)가 만들어져

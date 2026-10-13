@@ -696,12 +696,18 @@ search:
     fusion_weights:
       graph_entities: 1.0
       text_units: 1.0
+      relationships: 1.0
+      bridge_relationships: 1.0
+      community_reports: 1.0
+      claims: 1.0
       lightrag_entities: 1.0
       lightrag_relationships: 1.0
+      lightrag_endpoint_entities: 1.0
+      lightrag_incident_relationships: 1.0
       lightrag_chunks: 1.0
+      lightrag_linked_chunks: 1.0
       opensearch_all: 1.0
       opensearch_community_reports: 1.0
-      opensearch_candidate_community_reports: 1.0
       results: 1.0
 
   # Reranking Configuration

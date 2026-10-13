@@ -352,7 +352,7 @@ Neptune 그래프 확장은 `local`과 `drift`에 포함되어 있고, `mix`/`hy
 공유 하이브리드 인프라 위에서 이중 레벨 키워드 검색(`KeywordsExtractionPrompt`로 hl/ll 추출)을 실행합니다.
 
 모드(`RAGInput.search_strategy`):
-- **naive** — 그래프 없이 벡터 청크 검색만 합니다.
+- **naive** — 그래프 없이 청크 검색만 합니다. 요청의 `search_type`으로 `chunk_stream_top_k`개 청크를 가져옵니다(기본 `hybrid`는 BM25 + 벡터, `vector`는 upstream의 순수 벡터 기준선).
 - **hybrid** — ll → 엔티티 인덱스 + hl → 관계 인덱스 + 1홉 교차 유형 확장(엔티티 결과 → 연결된 관계, 관계 결과 → 끝점 엔티티) + 이 항목들이 인용한 청크.
 - **mix** — hybrid 그래프 검색에 **매칭된 엔티티·관계가 인용한 소스 청크**(`text_unit_ids` 계보)와 naive 벡터 청크 검색을 함께 섞습니다.
 

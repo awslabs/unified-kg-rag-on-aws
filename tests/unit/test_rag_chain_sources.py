@@ -107,8 +107,8 @@ def _run_context_and_format(
 def test_sources_exclude_budget_cut_sections_and_flag_truncation(
     config: Config,
 ) -> None:
-    # Available budget = max_tokens - query(1) - buffer(512) = 250 tokens, all
-    # TEXT. chunk-0 and chunk-1 (100 each) fit, chunk-2 is truncated to the
+    # Available budget = max_tokens - query(1) = 250 tokens, all TEXT.
+    # chunk-0 and chunk-1 (100 each) fit, chunk-2 is truncated to the
     # remaining 50, and chunk-3 is cut entirely.
     chain = _chain(config)
     results = [
@@ -117,7 +117,7 @@ def test_sources_exclude_budget_cut_sections_and_flag_truncation(
         _text_result(2, words=100, score=0.7),
         _text_result(3, words=100, score=0.6),
     ]
-    optimized, out = _run_context_and_format(chain, _state(results, 763))
+    optimized, out = _run_context_and_format(chain, _state(results, 251))
 
     assert optimized.sections_excluded == 1
     assert [s["source"] for s in out.sources] == ["chunk-0", "chunk-1", "chunk-2"]
@@ -174,6 +174,21 @@ def test_sources_follow_retrieval_rank_not_section_type_order(
     assert [s["source"] for s in out.sources] == ["entity-1", "chunk-1"]
     assert out.sources[0]["metadata"]["document_ids"] == []
     assert out.sources[0]["metadata"]["chunk_id"] is None
+
+    # Interleaved types: the selection groups them (both chunks, then the
+    # entity), so only a rank-order report keeps the entity in the middle.
+    interleaved = [
+        _text_result(0, words=10, score=0.9),
+        results[0].model_copy(update={"score": 0.85}),
+        _text_result(2, words=10, score=0.8),
+    ]
+    optimized, out = _run_context_and_format(chain, _state(interleaved, 4000))
+    assert [s.source_id for s in optimized.sections] == [
+        "chunk-0",
+        "chunk-2",
+        "entity-1",
+    ]
+    assert [s["source"] for s in out.sources] == ["chunk-0", "entity-1", "chunk-2"]
 
 
 def test_sources_exclude_synthesized_results(config: Config) -> None:
@@ -252,7 +267,7 @@ async def test_full_chain_sources_are_budgeted_selection_without_vectors(
             query="q",
             search_strategy=SearchStrategy.SIMPLE,
             enable_query_processing=False,
-            max_tokens=763,
+            max_tokens=251,
         )
     )
     assert isinstance(out, RAGOutput)
