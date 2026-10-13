@@ -266,16 +266,16 @@ Library API (Python callers and custom backends).
 - CDK: a failed ingestion phase notifies the alarm topic once. The
   `PipelineFailures` alarm is removed; the state machine's failure message
   (execution id and error) already covers it, and `PipelineTimedOutOrAborted`
-  still reports runs that never reach a phase's error handler (#PR).
+  still reports runs that never reach a phase's error handler (#251).
 - CDK: the OpenSearch domain publishes only its application logs. The slow
   search and index logs stayed empty (the app sets no slow-log thresholds),
   so their two log groups are removed; the domain is updated in place
-  (#PR).
+  (#251).
 - CDK: in `network_mode=private` (the default) the created VPC no longer has
   public subnets, an internet gateway or `0.0.0.0/0` routes, which the
   isolated data plane never used. The public range stays reserved, so the
   `app` subnets keep their CIDRs and an update of a deployed stack removes
-  only those resources (#PR).
+  only those resources (#251).
 - Retrieval: AUTO routes among `local`/`mix`/`global`/`drift` with the fast
   model; `mix`/`hybrid` retrievals, DRIFT steps and keyword extraction run
   concurrently; global search answers from ranked map points without a
@@ -319,7 +319,7 @@ Library API (Python callers and custom backends).
   `iac/requirements.txt` and `iac/requirements-lock.txt` are gone. Dependabot
   updates the CDK lock through `uv lock`, so a transitive bump the pinned
   aws-cdk-lib cannot admit no longer opens a pull request that fails to
-  install (#PR).
+  install (#251).
 
 ### Fixed
 - `ragas` evaluation counts each retrieved context once per batch. With
@@ -465,7 +465,7 @@ Library API (Python callers and custom backends).
   inverted: higher gives more, smaller communities (#250).
 - Importing `unified_kg_rag.application.cli.run_rag_chain` no longer puts
   `unified_kg_rag/application` at the front of `sys.path`, where its
-  subpackages could shadow top-level modules of the same name (#PR).
+  subpackages could shadow top-level modules of the same name (#251).
 - `run-eval --eval-data-path` naming a file that does not exist exits 2 with
   `Error: invalid evaluation dataset: ...`, as the user guide documents and
   as an unreadable or invalid dataset does; it exited 1 (#230).
