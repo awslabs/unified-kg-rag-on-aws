@@ -466,6 +466,12 @@ Library API (Python callers and custom backends).
 - Importing `unified_kg_rag.application.cli.run_rag_chain` no longer puts
   `unified_kg_rag/application` at the front of `sys.path`, where its
   subpackages could shadow top-level modules of the same name (#251).
+- With `indexing.opensearch.persist_embedding_cache`, an embedding-cache
+  object that exists but cannot be read (throttling, access denied, a network
+  error) is no longer treated as empty: the run embeds without it and does not
+  overwrite it. Before, its first flush replaced the object with only this
+  run's vectors, dropping every other model's and dimension's entries, and the
+  next runs re-embedded the corpus (#PR).
 - `run-eval --eval-data-path` naming a file that does not exist exits 2 with
   `Error: invalid evaluation dataset: ...`, as the user guide documents and
   as an unreadable or invalid dataset does; it exited 1 (#230).

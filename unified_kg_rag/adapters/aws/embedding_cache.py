@@ -19,8 +19,10 @@ Thread-safe: indexing tasks running on threads share one cache, so ``put``
 and ``flush`` may overlap. A flush uploads a snapshot and clears only the
 keys it uploaded.
 
-Best-effort: any S3 error degrades to an in-memory-only cache (load returns
-empty, flush is skipped) rather than failing the run.
+Best-effort: an S3 error degrades to an in-memory-only cache rather than
+failing the run. Only a missing object reads as empty; when the object exists
+but cannot be read, flushing is off for the rest of the run, so the
+whole-object overwrite never replaces entries this process could not read.
 """
 
 from __future__ import annotations
@@ -29,6 +31,8 @@ import json
 import threading
 from array import array
 from typing import TYPE_CHECKING, Any
+
+from botocore.exceptions import ClientError
 
 from unified_kg_rag.adapters.aws.s3_cache import sse_extra_args
 from unified_kg_rag.shared import get_logger
@@ -40,6 +44,17 @@ if TYPE_CHECKING:
     from unified_kg_rag.domain.models.config import S3EncryptionConfig
 
 logger = get_logger(__name__)
+
+# Error codes S3 returns for an object that does not exist (GetObject /
+# HeadObject).
+_MISSING_OBJECT_CODES = frozenset({"NoSuchKey", "404", "NotFound"})
+
+
+def _is_missing_object(error: Exception) -> bool:
+    return (
+        isinstance(error, ClientError)
+        and error.response.get("Error", {}).get("Code") in _MISSING_OBJECT_CODES
+    )
 
 
 class S3EmbeddingCache:
@@ -76,6 +91,9 @@ class S3EmbeddingCache:
         # re-reading (and re-parsing) the whole object.
         self._etag: str | None = None
         self._loaded = False
+        # Set when the object exists but could not be read: a flush would
+        # overwrite it without the entries this process never saw.
+        self._flush_disabled = False
         # Guards the maps above against concurrent put/flush; held only for
         # in-memory updates and snapshots, never across an S3 call.
         self._lock = threading.Lock()
@@ -95,23 +113,41 @@ class S3EmbeddingCache:
     def _namespaced(self, content_hash: str) -> str:
         return f"{self._namespace}|{content_hash}"
 
-    def _merge_remote(self) -> None:
+    def _merge_remote(self) -> bool:
         """Read the persisted map from S3 (all namespaces) and merge it in.
 
         Other namespaces take the remote entries; in this namespace the
         vectors this process holds win, so a pending one is never replaced.
-        A missing or unreadable object merges nothing.
+        A missing object or corrupt content merges nothing. A read error merges
+        nothing but turns flushing off for the run (see ``_flush_disabled``);
+        returns whether the object could be read.
         """
         try:
             obj = self.client.get_object(Bucket=self.bucket_name, Key=self.key)
-            data = json.loads(obj["Body"].read())
-        except Exception as e:  # noqa: BLE001 - missing/unreadable object -> empty
-            logger.info("Embedding cache not read from S3 (starting empty): %s", e)
-            return
+            body = obj["Body"].read()
+        except Exception as e:  # noqa: BLE001 - persistence is best-effort
+            if _is_missing_object(e):
+                logger.info("No embedding cache in S3 yet (starting empty): %s", e)
+                return True
+            logger.warning(
+                "Embedding cache in 's3://%s/%s' could not be read; it is not "
+                "used or overwritten this run: %s",
+                self.bucket_name,
+                self.key,
+                e,
+            )
+            self._flush_disabled = True
+            return False
+        try:
+            data = json.loads(body)
+        except ValueError:
+            # Corrupt content holds nothing to keep: the next flush replaces it.
+            logger.warning("Embedding cache in S3 is not valid JSON; replacing it")
+            data = None
         if not isinstance(data, dict):
             with self._lock:
                 self._etag = obj.get("ETag")
-            return
+            return True
         prefix = f"{self._namespace}|"
         foreign: dict[str, Any] = {}
         vectors: dict[str, array] = {}
@@ -128,6 +164,7 @@ class S3EmbeddingCache:
             self._foreign.update(foreign)
             for key, vector in vectors.items():
                 self._cache.setdefault(key, vector)
+        return True
 
     def load(self) -> None:
         """Load the persisted cache from S3 (best-effort, once)."""
@@ -185,11 +222,11 @@ class S3EmbeddingCache:
         """
         with self._flush_lock:
             with self._lock:
-                if not self._pending:
+                if not self._pending or self._flush_disabled:
                     return
             try:
-                if self._remote_changed():
-                    self._merge_remote()
+                if self._remote_changed() and not self._merge_remote():
+                    return
                 with self._lock:
                     flushed = set(self._pending)
                     foreign = list(self._foreign.items())
