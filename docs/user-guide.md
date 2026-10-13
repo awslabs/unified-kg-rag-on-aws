@@ -1574,7 +1574,8 @@ enabled `visualization_data.json` is uploaded with the cache (the sync copies
 `.json` files only; re-render the HTML locally with `run-visualization`). That
 file is the `--data-path` input. The interactive graph keeps only the top
 `interactive.max_nodes` nodes by degree (default 2000) so large graphs still
-render in a browser. It holds the graph nodes/edges (each node with its
+render in a browser; a spring layout is computed for those nodes only.
+It holds the graph nodes/edges (each node with its
 level-0 `community_id`, which the renderers color by), the community hierarchy
 and, when rendered at ingestion, the computed `layout` and centrality; vector
 attributes (`embedding`,

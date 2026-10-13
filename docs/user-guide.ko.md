@@ -1471,7 +1471,8 @@ spring 레이아웃과 설정한 중심성 지표를 계산합니다. `graph.vis
 쓰므로, S3 캐시 동기화를 켜면 `visualization_data.json`이 캐시와 함께 업로드됩니다(동기화는
 `.json` 파일만 복사하므로 HTML은 로컬에서 `run-visualization`으로 다시 렌더링하세요).
 이 파일이 `--data-path` 입력입니다. 대화형 그래프는 큰 그래프도 브라우저에서 렌더링할 수
-있도록 차수 기준 상위 `interactive.max_nodes`개 노드(기본 2000)만 남깁니다. 파일에는
+있도록 차수 기준 상위 `interactive.max_nodes`개 노드(기본 2000)만 남기며, spring 레이아웃도 이
+노드만으로 계산합니다. 파일에는
 그래프 노드와 간선(노드마다 렌더러가 색을 정하는 레벨 0 `community_id` 포함), 커뮤니티 계층과, 수집 중에 렌더링했다면 계산된 `layout`과 중심성이
 들어 있으며, 파일 크기를
 줄이려고 벡터 속성(`embedding`, `*_embedding`)은 뺍니다.
