@@ -197,3 +197,32 @@ def test_relative_log_file_path_resolves_against_cwd(
     )
     (log_file,) = (tmp_path / "logs").glob("run_*.txt")
     assert log_file.is_file()
+
+
+def _fail_with_a_secret_local() -> None:
+    model_output = "Quokka-secret-payload"
+    raise ValueError(f"parse failed: {len(model_output)} chars")
+
+
+@pytest.mark.parametrize("log_format", ["plain", "structured"])
+def test_tracebacks_show_no_frame_locals_or_ansi_codes(
+    stream: io.StringIO, tmp_path: Path, log_format: str
+) -> None:
+    # Frame locals hold prompts, chunk text and model output; a log line must
+    # carry the traceback only. A non-TTY stream gets no colour codes.
+    log_file = tmp_path / "run.txt"
+    setup_logging(
+        _config(log_format=log_format, log_to_file=True, log_file_path=str(log_file)),
+        stream=stream,
+    )
+    try:
+        _fail_with_a_secret_local()
+    except ValueError:
+        get_logger("unified_kg_rag.test_locals").exception("extraction failed")
+    for handler in LoggingSetup._handlers:
+        handler.flush()
+    (written,) = list(tmp_path.glob("run_*.txt"))
+    for output in (stream.getvalue(), written.read_text()):
+        assert "parse failed: 21 chars" in output
+        assert "Quokka-secret-payload" not in output
+        assert "\x1b[" not in output

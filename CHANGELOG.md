@@ -673,6 +673,12 @@ Library API (Python callers and custom backends).
 - INFO-level logs no longer carry query text, entity names or model output;
   `run-rag` strips terminal control characters from output; the CLIs warn
   when LangSmith tracing is on (#156, #173).
+- Logged tracebacks no longer print each frame's local variables. With
+  `log_format: plain` (and `structured` on a terminal) the console and
+  `logs/log_*.txt` showed them whenever `rich` was installed, so a failed
+  extraction or query wrote prompts, chunk text and model output into the
+  log. Console output piped to a file or another program no longer carries
+  ANSI colour codes either (#PR).
 - Captured prompt and completion text is redacted as raw text on every
   tracing backend: with `otlp`, `langfuse` or `phoenix` it was redacted only
   at export, JSON-encoded, where a `\b` or `\s` pattern next to a newline

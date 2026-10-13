@@ -103,7 +103,9 @@ class LoggingSetup:
         # CLI --verbose that lowers the 'unified_kg_rag' logger takes effect.
         console_handler = logging.StreamHandler(stream)
         console_handler.setFormatter(
-            cls._formatter(json=structured and not stream.isatty(), colors=True)
+            cls._formatter(
+                json=structured and not stream.isatty(), colors=stream.isatty()
+            )
         )
         cls._handlers.append(console_handler)
 
@@ -130,7 +132,13 @@ class LoggingSetup:
                 structlog.processors.JSONRenderer(default=str),
             ]
             if json
-            else [structlog.dev.ConsoleRenderer(colors=colors)]
+            # plain_traceback: the default (rich) formatter prints each frame's
+            # local variables (prompts, chunk text, model output).
+            else [
+                structlog.dev.ConsoleRenderer(
+                    colors=colors, exception_formatter=structlog.dev.plain_traceback
+                )
+            ]
         )
         return ProcessorFormatter(
             processors=[ProcessorFormatter.remove_processors_meta, *renderer],
