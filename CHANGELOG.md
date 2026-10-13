@@ -268,6 +268,9 @@ Library API (Python callers and custom backends).
   `guardrail_version` (#211).
 
 ### Changed
+- A custom vector indexer's `read_claims` no longer has to tag each claim
+  with the index it was read from; `IndexingManager` tags the claims it
+  writes back after a deletion (#PR).
 - `search.fusion.fusion_weights` defaults to `{}`: every bucket weighs 1.0,
   as the 15 listed 1.0 entries did, and weighted fusion no longer warns
   about a bucket without a weight on every query (#258).
