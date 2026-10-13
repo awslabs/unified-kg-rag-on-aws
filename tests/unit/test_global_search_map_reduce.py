@@ -620,6 +620,29 @@ async def test_map_phase_a_400_on_every_batch_fails_the_query() -> None:
         await strat._apply_map_reduce(_communities(2), SearchQuery(query="q"))
 
 
+async def test_map_phase_a_typed_overflow_on_every_batch_answers() -> None:
+    # Regression: langchain-openai's OpenAIContextOverflowError is a
+    # BadRequestError too, so an overflow on every batch (a level of at most
+    # map_batch_size reports is one batch) failed the query as a refused
+    # request instead of answering from the unrated reports.
+    base = pytest.importorskip("langchain_openai.chat_models.base")
+    import httpx
+
+    overflow = base.OpenAIContextOverflowError(
+        "too long",
+        response=httpx.Response(
+            400, request=httpx.Request("POST", "http://localhost/v1")
+        ),
+        body=None,
+    )
+    strat = _strategy(ignore_errors=False, map_batch_size=5, reduce_with_llm=True)
+    strat.batch_processor.max_attempts = 1  # as GlobalSearchStrategy configures
+    strat.map_rater = _DeniedMapChain(overflow)
+    out = await strat._apply_map_reduce(_communities(3), SearchQuery(query="q"))
+    assert out[0].content == "SYNTHESIZED ANSWER"
+    assert [r.source for r in out[1:]] == ["c0", "c1", "c2"]
+
+
 async def test_map_phase_fatal_error_degrades_when_ignored() -> None:
     strat = _strategy(ignore_errors=True, map_batch_size=1, reduce_with_llm=True)
     strat.batch_processor.max_attempts = 1  # as GlobalSearchStrategy configures

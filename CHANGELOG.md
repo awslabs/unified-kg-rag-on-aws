@@ -367,6 +367,11 @@ Library API (Python callers and custom backends).
   28 s. Restart the stack (`down` and `up`) to pick it up (#265).
 
 ### Fixed
+- A global-search map step whose every batch is over the model's context
+  (langchain-openai's `OpenAIContextOverflowError`) answers from the
+  unrated reports again. That error is an HTTP 400 too, so it was read as a
+  refused request and failed the query; a level with at most
+  `map_batch_size` reports is one batch (#PR).
 - A Neptune connection lost under concurrent queries no longer leaks
   threads. A query took the traversal source before waiting for a pool
   slot, so after another query reset the connection it sent on the closed
