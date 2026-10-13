@@ -117,6 +117,26 @@ class TestMetrics:
         out = _score(evaluator, [["DOC-7"]], ["doc-7"])
         assert out["metrics"]["mrr"] == 1.0
 
+    @pytest.mark.parametrize(
+        ("source", "reference", "hit"),
+        [
+            ("Report-A.pdf", "docs/Report-A.pdf", 1.0),
+            ("Report-A.pdf", "report-a.pdf", 1.0),
+            ("Report-A.pdf", "report-a", 1.0),
+            # an extension in the reference must agree
+            ("Report-A.docx", "Report-A.pdf", 0.0),
+            # a version suffix is part of the name, not an extension
+            ("notes.v2", "notes.v1", 0.0),
+            ("notes.v2", "notes", 0.0),
+            ("notes.v2", "Notes.V2", 1.0),
+        ],
+    )
+    def test_stem_matches_only_a_reference_without_extension(
+        self, evaluator: RetrievalEvaluator, source: str, reference: str, hit: float
+    ) -> None:
+        out = _score(evaluator, [[source]], [reference])
+        assert out["metrics"]["hit_at_k"] == hit
+
     def test_title_with_dots_matches_only_itself(
         self, evaluator: RetrievalEvaluator
     ) -> None:

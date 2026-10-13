@@ -126,13 +126,13 @@ class GraphAwareEvaluator(BaseGraphRAGEvaluator):
         # Only emit metrics for dimensions that actually have expectations; a
         # missing dimension is recorded as skipped, not scored 0.
         metrics: list[EvaluationMetric] = []
-        if expected_entities and e_cov is not None:
+        if e_cov is not None:
             metrics.append(
                 EvaluationMetric(
                     metric_type=EvaluationMetricType.ENTITY_COVERAGE, value=e_cov
                 )
             )
-        if expected_relationships and r_cov is not None:
+        if r_cov is not None:
             metrics.append(
                 EvaluationMetric(
                     metric_type=EvaluationMetricType.RELATIONSHIP_COVERAGE, value=r_cov

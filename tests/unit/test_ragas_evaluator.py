@@ -364,6 +364,37 @@ class TestAevaluateBatch:
         assert md["context_precision_contexts"] == 2
         assert md["context_precision_context_tokens"] == 2
 
+    async def test_each_context_counted_once_with_the_count_cap(self, mocker) -> None:
+        # The capped context_precision run reuses the full run's counts; a
+        # second walk recounted every context (a Bedrock CountTokens call
+        # each once the counter's LRU cache is exceeded).
+        ev, counter = _make_evaluator(
+            mocker,
+            ragas_metrics=[
+                EvaluationMetricType.CONTEXT_PRECISION,
+                EvaluationMetricType.FAITHFULNESS,
+            ],
+            ragas_max_contexts=2,
+        )
+
+        class _FakeRagasResult:
+            def __init__(self, name: str) -> None:
+                self.name = name
+
+            def to_pandas(self):
+                return pd.DataFrame({self.name: [1.0]})
+
+        mocker.patch.object(
+            rg_module,
+            "evaluate",
+            side_effect=lambda *, metrics, **_: _FakeRagasResult(metrics[0].name),
+        )
+        mocker.patch.object(rg_module.Dataset, "from_dict", side_effect=lambda d: d)
+        await ev.aevaluate_batch(
+            [_query()], [_result(contexts=["c1", "c2", "c3", "c4"])], ["truth"]
+        )
+        assert counter.count_tokens.call_count == 4
+
     async def test_single_run_when_cap_does_not_bind(self, mocker) -> None:
         ev, _ = _make_evaluator(
             mocker,

@@ -46,14 +46,7 @@ logger = get_logger(__name__)
 
 class RagasEvaluator(BaseGraphRAGEvaluator):
     BUFFER_TOKENS: ClassVar[int] = 128
-    METRIC_MAPPING = {
-        EvaluationMetricType.ANSWER_CORRECTNESS: "answer_correctness",
-        EvaluationMetricType.ANSWER_RELEVANCY: "answer_relevancy",
-        EvaluationMetricType.CONTEXT_PRECISION: "context_precision",
-        EvaluationMetricType.CONTEXT_RECALL: "context_recall",
-        EvaluationMetricType.FAITHFULNESS: "faithfulness",
-    }
-
+    # Each metric's score column in the RAGAS frame is its ``name``.
     RAGAS_METRICS = {
         EvaluationMetricType.ANSWER_CORRECTNESS: answer_correctness,
         EvaluationMetricType.ANSWER_RELEVANCY: answer_relevancy,
@@ -77,7 +70,9 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
     COUNT_CAPPED_METRICS: ClassVar[frozenset[EvaluationMetricType]] = frozenset(
         {EvaluationMetricType.CONTEXT_PRECISION}
     )
-    _SCORE_COLUMNS: ClassVar[frozenset[str]] = frozenset(METRIC_MAPPING.values())
+    _SCORE_COLUMNS: ClassVar[frozenset[str]] = frozenset(
+        m.name for m in RAGAS_METRICS.values()
+    )
 
     def __init__(
         self,
@@ -148,19 +143,21 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
             max_retries=evaluation.ragas_max_attempts,
         )
 
-    def _truncate_contexts(
+    def _budgeted_contexts(
         self, results: list[EvaluationResult], max_contexts: int | None = None
-    ) -> list[tuple[list[str], int]]:
-        """Per result: (top-ranked contexts within the token budget, their tokens).
+    ) -> list[list[tuple[str, int]]]:
+        """Per result: the top-ranked (context, tokens) within the token budget.
 
         Reported sources are in retrieval-rank order, so slicing keeps the
         top-ranked ones. ``max_contexts`` caps the count before the
-        ``max_context_tokens`` budget is applied.
+        ``max_context_tokens`` budget is applied. The walk only depends on the
+        contexts before each step, so a prefix of the result is the result
+        for a smaller cap: each context is counted once.
         """
         max_tokens = self.config.evaluation.max_context_tokens
-        processed: list[tuple[list[str], int]] = []
+        processed: list[list[tuple[str, int]]] = []
         for result in results:
-            safe_contexts = []
+            kept: list[tuple[str, int]] = []
             current_tokens = 0
             for context in result.retrieved_contexts[:max_contexts]:
                 context_token_count = self._token_counter.count_tokens(context)
@@ -173,14 +170,32 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
                                 context, remaining_tokens
                             )
                         )
-                        safe_contexts.append(truncated_context + "...")
-                        current_tokens += used
+                        kept.append((truncated_context + "...", used))
                     break
 
-                safe_contexts.append(context)
+                kept.append((context, context_token_count))
                 current_tokens += context_token_count
-            processed.append((safe_contexts, current_tokens))
+            processed.append(kept)
         return processed
+
+    @staticmethod
+    def _select(
+        budgeted: list[list[tuple[str, int]]], max_contexts: int | None = None
+    ) -> list[tuple[list[str], int]]:
+        """(contexts, their tokens) of the first ``max_contexts`` per result."""
+        return [
+            (
+                [c for c, _ in kept[:max_contexts]],
+                sum(t for _, t in kept[:max_contexts]),
+            )
+            for kept in budgeted
+        ]
+
+    def _truncate_contexts(
+        self, results: list[EvaluationResult], max_contexts: int | None = None
+    ) -> list[tuple[list[str], int]]:
+        """Per result: (top-ranked contexts within the token budget, their tokens)."""
+        return self._select(self._budgeted_contexts(results, max_contexts))
 
     def metric_types(self) -> list[EvaluationMetricType]:
         return [
@@ -210,7 +225,8 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
             metrics = []
             failed: dict[str, str] = {}
             skipped: dict[str, str] = {}
-            for metric_type, metric_name in self.METRIC_MAPPING.items():
+            for metric_type, metric in self.RAGAS_METRICS.items():
+                metric_name = metric.name
                 if metric_type not in self.config.evaluation.ragas_metrics:
                     continue
                 if metric_type in self.REFERENCE_METRICS and not has_reference:
@@ -311,10 +327,13 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
         # recall judge whether the answer / reference is supported by the
         # context, so they see the full token-budgeted set: capping them would
         # mark claims supported by a lower-ranked source as unsupported.
-        full = self._truncate_contexts(results)
+        # Counted once: the capped selection is a prefix of the full one (a
+        # second walk recounted every context past the counter's LRU cache).
+        budgeted = self._budgeted_contexts(results)
+        full = self._select(budgeted)
         precision = [m for m in metric_types if m in self.COUNT_CAPPED_METRICS]
         capped = (
-            self._truncate_contexts(results, self.config.evaluation.ragas_max_contexts)
+            self._select(budgeted, self.config.evaluation.ragas_max_contexts)
             if precision
             else full
         )
@@ -437,7 +456,7 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
 
     def validate_config(self) -> bool:
         unsupported_metrics = set(self.config.evaluation.ragas_metrics) - set(
-            self.METRIC_MAPPING
+            self.RAGAS_METRICS
         )
         if unsupported_metrics:
             logger.error("Unsupported Ragas metrics: '%s'", unsupported_metrics)

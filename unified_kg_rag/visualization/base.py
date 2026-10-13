@@ -4,8 +4,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-import networkx as nx
-
 from unified_kg_rag.adapters.ingestion.community_detector import CommunityDetector
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.adapters.renderers import (
@@ -13,6 +11,7 @@ from unified_kg_rag.adapters.renderers import (
     get_renderer_class,
     registered_renderers,
 )
+from unified_kg_rag.adapters.renderers.interactive import InteractiveRenderer
 from unified_kg_rag.domain.ingestion.graph_analyzer import GraphAnalyzer
 from unified_kg_rag.domain.ingestion.visualization_data import (
     DEFAULT_OUTPUTS_DIRECTORY,
@@ -116,8 +115,7 @@ class GraphVisualizationManager:
                 "Skipping embedding generation. Using spring layout as fallback."
             )
             if self.analyzer.graph:
-                spring_layout = nx.spring_layout(self.analyzer.graph, seed=42)
-                return {str(k): v.tolist() for k, v in spring_layout.items()}
+                return self._spring_layout()
             return {}
 
         embeddings = self.embedder.generate_embeddings(self.analyzer.graph)
@@ -139,8 +137,14 @@ class GraphVisualizationManager:
             "semantic embeddings).",
             reason,
         )
-        spring_layout = nx.spring_layout(self.analyzer.graph, seed=42)
-        return {str(k): v.tolist() for k, v in spring_layout.items()}
+        return self._spring_layout()
+
+    def _spring_layout(self) -> dict[str, Any]:
+        # Only the interactive page uses positions, and it draws its top
+        # max_nodes; lay out just those.
+        return InteractiveRenderer(self.viz_config.interactive or {}).spring_layout(
+            self.analyzer.graph
+        )
 
     def _generate_visualizations(
         self, outputs_dir: Path, layout: dict[str, Any]

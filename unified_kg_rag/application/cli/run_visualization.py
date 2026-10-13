@@ -26,6 +26,7 @@ from unified_kg_rag.adapters.renderers import (
     get_renderer_class,
     registered_renderers,
 )
+from unified_kg_rag.adapters.renderers.interactive import InteractiveRenderer
 from unified_kg_rag.application.cli.config_args import (
     config_path_arg,
     exit_on_config_error,
@@ -130,10 +131,9 @@ def _fill_missing_analysis(context: RenderContext, config: Any) -> None:
             "No layout in the data (exported without rendering); using a spring "
             "layout from the graph topology."
         )
-        context.layout = {
-            str(node): position.tolist()
-            for node, position in nx.spring_layout(context.graph, seed=42).items()
-        }
+        context.layout = InteractiveRenderer(
+            config.graph.visualization.interactive or {}
+        ).spring_layout(context.graph)
     if not context.centrality:
         context.centrality = GraphAnalyzer(config, context.graph).calculate_centrality()
 

@@ -1396,9 +1396,13 @@ set `enabled_evaluators: [answer_match, retrieval, graph_aware]`.
   (attributable / reported sources, also in `grouped_statistics` per strategy)
   shows how much of the context the rank metrics cover. Matching is
   NFKC-normalized and case-insensitive (so decomposed NFD Hangul file names
-  and full-width letters match) on the full name or, when the name ends in a file extension
-  (`.` + 1-5 letters/digits, at least one letter), its stem: `docs/Terms.pdf` =
-  `terms.pdf` = `terms`. A `/` is a directory separator only in a path-like
+  and full-width letters match) on the name. A reference without a file
+  extension (`.` + 1-5 letters/digits, at least one letter, not a version
+  such as `.v2`) also matches a source's stem; one with an extension needs
+  the same extension: `docs/Terms.pdf` = `terms.pdf` = `terms` all match the
+  source `Terms.pdf`, `terms.docx` does not, and `notes.v1` does not match
+  `notes.v2`. Sources carry only a file name, so a reference's directories
+  are ignored. A `/` is a directory separator only in a path-like
   value (a file extension, a URI scheme, or a leading `/`, `./`, `~/`), so
   titles such as `St. Louis Cardinals` or `AC/DC` are compared whole. The rank
   metrics are skipped when a query has no `reference_sources`, or has sources
@@ -1418,10 +1422,14 @@ set `enabled_evaluators: [answer_match, retrieval, graph_aware]`.
   spacing next to CJK letters is ignored (`3억 원` = `3억원`,
   `가나다 상사` = `가나다상사`). A single-word CJK gold is matched as a
   substring, but not inside a longer number or Latin word (`2년` does not
-  match `12년`). A `yes`/`no` gold is scored by the answer's polarity, as in
-  HotpotQA, since almost any long answer contains the word "no": the first
-  `yes`/`no` that answers the question, skipping Markdown headings and a `no`
-  followed by a word (`there is no clause`) or a number (`No. 5`). SQuAD-style `exact_match` and
+  match `12년`). A yes/no gold (`yes`/`no`; Korean `예`/`네`/`아니요`/`아니오`;
+  Chinese `是`/`对`/`否`/`不是`; Japanese `はい`/`いいえ`) is scored by the
+  answer's polarity, as in HotpotQA, since almost any long answer contains
+  the word "no" (or `예` in `예외`): the first whole yes/no word that answers
+  the question, skipping Markdown headings and a word other than `yes`
+  followed by a word (`there is no clause`, `네 가지`) or `no` followed by a
+  number (`No. 5`). So `네, 맞습니다` answers yes but `네 맞습니다` is not
+  read as an answer. SQuAD-style `exact_match` and
   `token_f1` are also emitted. Text is NFKC-normalized, then lowercased,
   punctuation deleted, English articles dropped and whitespace collapsed, as
   in the SQuAD v1.1 script, except that Unicode punctuation is deleted too and
@@ -1566,7 +1574,8 @@ enabled `visualization_data.json` is uploaded with the cache (the sync copies
 `.json` files only; re-render the HTML locally with `run-visualization`). That
 file is the `--data-path` input. The interactive graph keeps only the top
 `interactive.max_nodes` nodes by degree (default 2000) so large graphs still
-render in a browser. It holds the graph nodes/edges (each node with its
+render in a browser; a spring layout is computed for those nodes only.
+It holds the graph nodes/edges (each node with its
 level-0 `community_id`, which the renderers color by), the community hierarchy
 and, when rendered at ingestion, the computed `layout` and centrality; vector
 attributes (`embedding`,
@@ -1574,10 +1583,10 @@ attributes (`embedding`,
 
 Layout and error behaviour:
 
-- `embedding_method: "none"` uses a spring layout and never constructs a
-  Bedrock embedding client.
+- `embedding_method: "none"` uses a spring layout and never constructs an
+  embedding client.
 - `embedding_method: "description"` embeds each node's `name: description` with
-  Bedrock and reduces it with `layout_method`. If embedding fails, the
+  the embedding provider (`providers.embedding`, Bedrock by default) and reduces it with `layout_method`. If embedding fails, the
   visualization step fails when `processing.ignore_errors` is `false` (ingestion
   itself continues and logs the failure). With `ignore_errors: true` it logs an
   ERROR, falls back to a topology-only spring layout, and records

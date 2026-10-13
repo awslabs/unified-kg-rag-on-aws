@@ -497,7 +497,8 @@ graph:
     embedding_method: "description"
     layout_method: "umap"
 
-    # Node embeddings come from Bedrock (the model determines dimensionality).
+    # Node embeddings come from providers.embedding (the model determines
+    # dimensionality).
     # Only 'bedrock_model_id' is honored here; when unset, the OpenSearch
     # embedding model is reused. Set embedding_method: "none" to skip embeddings
     # and fall back to a spring layout.

@@ -51,8 +51,7 @@ class InteractiveRenderer:
                 self.max_nodes,
                 graph.number_of_nodes(),
             )
-            ranked = sorted(graph.degree(), key=lambda nd: nd[1], reverse=True)
-            graph = graph.subgraph(node for node, _ in ranked[: self.max_nodes])
+            graph = self.displayed_graph(graph)
 
         logger.info(
             "Creating interactive visualization for %s nodes...",
@@ -72,6 +71,23 @@ class InteractiveRenderer:
 
         net.save_graph(outputs_path)
         logger.info("Interactive visualization saved to %s", outputs_path)
+
+    def displayed_graph(self, graph: nx.Graph) -> nx.Graph:
+        """The part of ``graph`` the page draws: its top ``max_nodes`` by degree."""
+        if not self.max_nodes or graph.number_of_nodes() <= self.max_nodes:
+            return graph
+        ranked = sorted(graph.degree(), key=lambda nd: nd[1], reverse=True)
+        return graph.subgraph(node for node, _ in ranked[: self.max_nodes])
+
+    def spring_layout(self, graph: nx.Graph) -> dict[str, list[float]]:
+        """Seeded spring layout of the drawn nodes only.
+
+        A spring layout is quadratic in the node count, so laying out a large
+        graph and then drawing its top ``max_nodes`` spent minutes on nodes
+        the page never shows. A graph within the cap is laid out whole.
+        """
+        positions = nx.spring_layout(self.displayed_graph(graph), seed=42)
+        return {str(node): pos.tolist() for node, pos in positions.items()}
 
     def _init_network(self, directed: bool = False) -> Network:
         return Network(

@@ -1461,9 +1461,10 @@ class VisualizationConfig(BaseModel):
     ] = Field(
         default_factory=dict,
         description="Embedding parameters for node embedding. Only "
-        "'bedrock_model_id' is honored (node embeddings come from Bedrock; the "
-        "embedding dimensionality is determined by the chosen model). When "
-        "unset, the OpenSearch embedding model is reused.",
+        "'bedrock_model_id' is honored (node embeddings come from the "
+        "providers.embedding model factory; the embedding dimensionality is "
+        "determined by the chosen model). When unset, the OpenSearch embedding "
+        "model is reused.",
     )
     layout: dict[str, Any] = Field(
         default={
