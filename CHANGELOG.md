@@ -466,6 +466,9 @@ Library API (Python callers and custom backends).
 - Importing `unified_kg_rag.application.cli.run_rag_chain` no longer puts
   `unified_kg_rag/application` at the front of `sys.path`, where its
   subpackages could shadow top-level modules of the same name (#251).
+- A Neptune relationship write that is retried after a lost response no
+  longer adds a second parallel edge with the same id: the edge write looks
+  the edge up first (`fold().coalesce(unfold(), addE(...))`) (#PR).
 - An incremental run that only deletes documents (nothing new or changed to
   extract) now checks the live OpenSearch indices of its configured
   `document_parsing.index_value` before writing; it checked the `default`

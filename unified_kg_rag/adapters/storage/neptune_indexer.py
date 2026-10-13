@@ -464,9 +464,14 @@ class NeptuneIndexer(GraphIndexer):
 
         Edge properties take no cardinality (Neptune rejects it) and hold one
         value each, so ``relationship_properties`` serializes lists to JSON.
+
+        Idempotent (``fold().coalesce(unfold(), addE)``): the caller dropped
+        the edge first, so the existing edge is found only when a retry
+        follows a write whose response was lost; adding it again would leave
+        two parallel edges with one id.
         """
         add_edge = (
-            g.V()
+            __.V()
             .hasLabel(entity_label)
             .has("id", rel.source_id)
             .addE(relationship_label(rel))
@@ -476,10 +481,18 @@ class NeptuneIndexer(GraphIndexer):
         props = relationship_properties(rel, self.neptune_config.property_max_length)
         for key, value in props.items():
             add_edge.property(key, value)
-        # Return the new edge's id: with no source vertex addE gets no traverser
+        # Return the edge's id: with no source vertex addE gets no traverser
         # and raises nothing (a missing target does raise), so an empty result
         # is the only sign of a dropped edge.
-        return cast(GraphTraversal, add_edge.id_())
+        return cast(
+            GraphTraversal,
+            g.E()
+            .has("id", rel.id)
+            .where(__.outV().hasLabel(entity_label))
+            .fold()
+            .coalesce(__.unfold(), add_edge)
+            .id_(),
+        )
 
     def _write_relationships(self, relationships: list[Relationship]) -> IndexingStats:
         """Write relationship edges one small traversal per edge (idempotent).

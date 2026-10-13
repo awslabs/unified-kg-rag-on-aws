@@ -153,6 +153,32 @@ def test_add_edge_traversal_returns_the_edge_id(indexer) -> None:
     assert calls[-1] == "id_"
 
 
+def test_add_edge_traversal_returns_the_stored_edge_on_a_retry(indexer) -> None:
+    # A retry after a write whose response was lost must not add a second
+    # edge with the same id: the traversal looks the edge up first.
+    from gremlin_python.process.anonymous_traversal import traversal
+    from gremlin_python.structure.graph import Graph
+
+    written = indexer._build_add_edge_traversal(
+        traversal().withGraph(Graph()),
+        Relationship(id="r1", source_id="e1", target_id="e2"),
+        "Entity-default",
+    )
+    steps = written.bytecode.step_instructions
+    assert [step[0] for step in steps] == [
+        "E",
+        "has",
+        "where",
+        "fold",
+        "coalesce",
+        "id",
+    ]
+    assert steps[1][1:] == ["id", "r1"]
+    unfold, add_edge = steps[4][1:]
+    assert [step[0] for step in unfold.step_instructions] == ["unfold"]
+    assert "addE" in [step[0] for step in add_edge.step_instructions]
+
+
 def test_write_relationships_empty_input_returns_empty_stats(indexer) -> None:
     stats = indexer.upsert_relationships([])
     assert stats.total_items == 0
@@ -165,9 +191,12 @@ def _edge_property_steps(indexer, rel: Relationship) -> list[list]:
     from gremlin_python.structure.graph import Graph
 
     g = traversal().withGraph(Graph())
-    steps = indexer._build_add_edge_traversal(
-        g, rel, "Entity-default"
-    ).bytecode.step_instructions
+    written = indexer._build_add_edge_traversal(g, rel, "Entity-default")
+    # The addE branch of the fold().coalesce(unfold(), addE) upsert.
+    coalesce = next(
+        step for step in written.bytecode.step_instructions if step[0] == "coalesce"
+    )
+    steps = coalesce[-1].step_instructions
     add_e = next(i for i, step in enumerate(steps) if step[0] == "addE")
     return [step for step in steps[add_e + 1 :] if step[0] == "property"]
 
