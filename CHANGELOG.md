@@ -279,7 +279,7 @@ Library API (Python callers and custom backends).
   `AccessDeniedException`, `StoreRequestRejectedError` for an HTTP 400, and
   `StoreConfigurationError` (their base; also an `AWSServiceError` and a
   `ConfigurationError`) for a missing endpoint, credentials or auth method
-  (#PR).
+  (#261).
 - `search.fusion.fusion_weights` defaults to `{}`: every bucket weighs 1.0,
   as the 15 listed 1.0 entries did, and weighted fusion no longer warns
   about a bucket without a weight on every query (#258).
@@ -352,27 +352,27 @@ Library API (Python callers and custom backends).
   reused the pooled websockets the server had closed, which gremlinpython
   never reopens, so every write failed every attempt until the process
   exited; each attempt now rebuilds its traversal over a new connection
-  (#PR).
+  (#261).
 - A query whose embedding call cannot succeed fails instead of answering
   "I could not find relevant information": an invalid or inaccessible
   Bedrock model id, a model without on-demand throughput in the region, or
   missing credentials. A Bedrock endpoint that times out after the model
   wrapper's retries fails the query too, as a store that does not answer
-  does (#PR).
+  does (#261).
 - An OpenSearch cluster still answering 429/502/503/504 after the query
   client's `search.store_max_attempts` attempts (overloaded or restarting)
   fails the query with `StoreConnectionError`; every strategy answered from
   no context. An HTTP 500 for one search still degrades only that search
-  (#PR).
+  (#261).
 - Concurrent queries of an unreachable Neptune wait for one connection
   attempt instead of each making its own in turn: 16 queries took 16 times
-  `search.store_timeout_seconds` and held as many executor threads (#PR).
+  `search.store_timeout_seconds` and held as many executor threads (#261).
 - Local search keeps the seed entities the entities index found, and the
   text units they cite, when graph expansion degrades; it answered from
-  neither (#PR).
+  neither (#261).
 - An error that names a field such as `author` no longer fails the query:
   retrieval errors are classified by type, not by matching words such as
-  "auth" or "endpoint" in their message (#PR).
+  "auth" or "endpoint" in their message (#261).
 - `run-visualization` rejects an unknown `--renderers` name while parsing
   its arguments (exit code 2), instead of after loading the data and
   computing centrality (#255).
