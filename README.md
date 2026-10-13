@@ -72,7 +72,7 @@ lives in memory, and small local models extract weaker graphs.
 ### Prerequisites
 
 - Every path: Python 3.10–3.12 and [uv](https://docs.astral.sh/uv/) (`pip` also works).
-- Local mode: Docker with Compose. No AWS account is needed unless you keep Bedrock for the models.
+- Local mode: Docker with Compose 2.23.1 or later. No AWS account is needed unless you keep Bedrock for the models.
 - Existing AWS resources: AWS credentials with access to Amazon Bedrock (model access enabled for the [required models](./docs/user-guide.md#required-models)), an Amazon Neptune cluster and an Amazon OpenSearch Service domain. DynamoDB is needed only for incremental indexing, and an S3 bucket only for stage-cache sync (`--s3-sync`) or a persisted embedding cache. The framework connects to existing services and never creates them.
 - Bundled CDK stack: the CDK CLI and Node.js listed in [`iac/README.md` Prerequisites](./iac/README.md#prerequisites), and Docker to push the image.
 
