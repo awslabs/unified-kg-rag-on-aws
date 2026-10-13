@@ -1,10 +1,13 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
+import re
 import time
 from collections import OrderedDict
 from collections.abc import Coroutine
 from typing import Any, ClassVar
+
+from opensearchpy.exceptions import AuthorizationException, TransportError
 
 from unified_kg_rag.adapters.aws.opensearch import OpenSearchClient, is_index_not_found
 from unified_kg_rag.adapters.retrieval.base import (
@@ -44,6 +47,8 @@ logger = get_logger(__name__)
 # OpenSearch's kNN rejection of a query vector of another dimension than the
 # index's (a 400 whose text the client error wrapper keeps only on its cause).
 _INVALID_DIMENSION_MARKER = "query vector has invalid dimension"
+# Where the reason ends inside a JSON body or a Python repr of one.
+_REASON_END = re.compile(r"[\"'}\]\\\n]")
 
 
 def _invalid_dimension_error(exc: BaseException) -> str | None:
@@ -55,9 +60,25 @@ def _invalid_dimension_error(exc: BaseException) -> str | None:
         text = str(current)
         start = text.lower().find(_INVALID_DIMENSION_MARKER)
         if start >= 0:
-            return text[start:].split('"', 1)[0].rstrip(" .,'")
+            return _REASON_END.split(text[start:], 1)[0].rstrip(" .,")
         current = current.__cause__ or current.__context__
     return None
+
+
+def _is_authorization_error(exc: BaseException) -> bool:
+    """Whether ``exc`` or one of its causes is an HTTP 403 from OpenSearch."""
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, AuthorizationException) or (
+            isinstance(current, TransportError) and current.status_code == 403
+        ):
+            return True
+        if "status=403" in str(current):  # the client error wrapper's message
+            return True
+        current = current.__cause__ or current.__context__
+    return False
 
 
 class OpenSearchRetriever(BaseGraphRAGRetriever):
@@ -105,6 +126,8 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         )
         # Aliases whose indices were checked to hold this model's embeddings.
         self._embedding_checked_aliases: set[str] = set()
+        # Whether skipping the check for want of permission was logged.
+        self._embedding_check_denied_logged = False
         self._query_embedding_cache: OrderedDict[str, list[float]] = OrderedDict()
         # One embedding call per text in flight: concurrent sub-queries of one
         # search share it instead of each missing the cache.
@@ -408,6 +431,21 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                 await self._opensearch_client.aget_mappings(alias)
             )
         except Exception as e:  # noqa: BLE001 - the search reports real failures
+            if _is_authorization_error(e):
+                # A search-only principal may not read mappings; the search
+                # itself still runs, and reports its own errors.
+                self._embedding_checked_aliases.add(alias)
+                if not getattr(self, "_embedding_check_denied_logged", False):
+                    self._embedding_check_denied_logged = True
+                    logger.warning(
+                        "Not allowed to read the mappings of %s (%s), so queries "
+                        "are not checked against the embedding model the indices "
+                        "were built with. Grant indices:admin/mappings/get to "
+                        "enable the check.",
+                        alias,
+                        e,
+                    )
+                return None
             if is_fatal_retrieval_error(e):
                 raise
             logger.debug("Could not read the mappings of %s: %s", alias, e)

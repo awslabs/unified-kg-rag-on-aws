@@ -443,6 +443,12 @@ Library API (Python callers and custom backends).
   that stops before its write-ahead. Such an index whose text fields do not
   match the run's languages is still written to, now with a WARNING naming
   the fields and the `indexing.reset: true` remedy (#PR).
+- A principal that may search but not read index mappings (an OpenSearch
+  403) can query again: the first vector or hybrid query's embedding check
+  read the mappings and failed every query on the denial. The check is now
+  skipped with one WARNING; the search's own errors still fail the query.
+  The invalid-dimension reason of a rejected query is cut at the end of the
+  reason instead of running on through the rest of the error body (#PR).
 - Closing a `GraphRAGChain` (`close()`, `aclose()` or its GC finalizer) waits
   only for its own background retriever closes. It waited up to 30 seconds
   for those of every chain in the process, so a dropped chain collected on

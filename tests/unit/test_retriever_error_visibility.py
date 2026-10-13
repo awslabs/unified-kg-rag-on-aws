@@ -695,3 +695,68 @@ def test_queries_embed_with_the_indexed_dimension(
 
     assert factory.requests == [{"dimensions": expected}]
     assert retriever._embedding_dimension == expected
+
+
+def test_invalid_dimension_reason_is_cut_out_of_a_python_repr() -> None:
+    # The sync client error wrapper renders the parsed body with str(dict),
+    # so the reason sits in single quotes followed by the rest of the repr.
+    from unified_kg_rag.adapters.retrievers.opensearch_retriever import (
+        _invalid_dimension_error,
+    )
+
+    wrapped = AWSServiceError(
+        f"Transport error in 'search': status=400, info={_INVALID_DIMENSION_BODY}"
+    )
+
+    assert _invalid_dimension_error(wrapped) == (
+        "Query vector has invalid dimension: 8. Dimension should be: 512"
+    )
+
+
+# An Amazon OpenSearch Service access-policy denial (the text holds "auth").
+_ACCESS_DENIED_BODY = {
+    "Message": "User: arn:aws:iam::000000000000:role/search-only is not "
+    "authorized to perform: es:ESHttpGet"
+}
+
+
+def _denied(operation: str) -> AWSServiceError:
+    raw = _server_error(AsyncHttpConnection, 403, _ACCESS_DENIED_BODY)
+    denied = AWSServiceError(
+        f"Async transport error in '{operation}': status=403, "
+        f"info={_ACCESS_DENIED_BODY}"
+    )
+    denied.__cause__ = raw
+    return denied
+
+
+async def test_a_denied_mapping_read_skips_the_check_with_one_warning(
+    config: Config, recording_logger: _RecordingLogger
+) -> None:
+    # A search-only principal may not read mappings, and the 403's text holds
+    # the fatal "auth" marker: every vector query used to fail on the check.
+    denied = _denied("aget_mappings")
+    assert is_fatal_retrieval_error(denied)
+    retriever = _retriever_over(config, {})
+
+    async def _aget_mappings(index: str) -> dict[str, dict]:
+        retriever._opensearch_client.mapping_calls.append(index)
+        raise denied
+
+    retriever._opensearch_client.aget_mappings = _aget_mappings
+
+    for _ in range(2):
+        results = await retriever.aretrieve(_text_units_query(config))
+        assert [r.source for r in results] == ["t1"]
+
+    assert len(retriever._opensearch_client.mapping_calls) == 1
+    assert len(recording_logger.warnings) == 1
+    assert "Not allowed to read the mappings" in recording_logger.warnings[0][0]
+
+
+async def test_a_denied_search_stays_fatal(config: Config) -> None:
+    retriever = _retriever_over(config, {}, search_error=_denied("asearch"))
+    retriever._opensearch_client.mappings = {}
+
+    with pytest.raises(AWSServiceError, match="status=403"):
+        await retriever.aretrieve(_text_units_query(config))
