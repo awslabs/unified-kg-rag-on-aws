@@ -138,8 +138,9 @@ Layout: `tests/{unit,integration,property,fixtures/fakes}/`. Markers: `unit`,
   rounds and interrupted runs converging with a full build, fusion
   monotonicity; the `DocStatusPort.diff` partition runs against every registry
   in `tests/integration/test_doc_status_conformance.py`.
-- Coverage gate ratchets up with measured coverage (currently `--cov-fail-under=92`
-  in CI, measured ~93%). Run: `uv run pytest -m "not aws" --cov=unified_kg_rag`.
+- Coverage gate ratchets up with measured coverage (the `--cov-fail-under` floor in
+  `quality.yml` sits just under it). Run:
+  `uv run --extra otel pytest -m "not aws" --cov=unified_kg_rag`.
 
 ## Quality gate
 

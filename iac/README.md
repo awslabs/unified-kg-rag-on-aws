@@ -259,10 +259,10 @@ default `dev` environment.
 - [uv](https://docs.astral.sh/uv/) and Python 3.12+ (uv downloads a matching
   Python when none is installed). `iac/` is a uv project of its own, separate
   from the root package: `iac/uv.lock` pins the CDK libraries.
-- Node.js 20+ and the AWS CDK CLI v2, 2.1143.0 or later
-  (`npm install -g aws-cdk@2.1143.0` is the version CI pins). An older CLI
-  can reject the cloud assembly that the `aws-cdk-lib` release in
-  `uv.lock` produces; check with `cdk --version`.
+- Node.js on a supported LTS line (22 or 24; CI uses 24) and the AWS CDK CLI
+  v2, 2.1143.0 or later (`npm install -g aws-cdk@2.1143.0` is the version CI
+  pins). An older CLI can reject the cloud assembly that the `aws-cdk-lib`
+  release in `uv.lock` produces; check with `cdk --version`.
 - For `cdk bootstrap`/`cdk deploy`: AWS credentials for the target account
   and region. To push the app image after deploy: Docker.
 

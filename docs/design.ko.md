@@ -473,7 +473,7 @@ CLI: `run-eval --eval-data-path <json> [--search-strategy ...]`.
 
 ## 14. CI/CD와 보안
 
-- **CI**(`.github/workflows/`): `quality` 워크플로는 PR과 `main` 푸시에서 실행됩니다. ruff/black/isort/mypy와 커버리지 게이트를 포함한 pytest(단위, 속성, 통합 스위트를 `-m "not aws"` 한 번으로 실행), 지원하는 가장 낮은 Python 버전(3.10)에서의 테스트, 선택 파서 보안 검사, cdk-nag를 적용한 `cdk synth`와 IaC 단언 테스트를 수행합니다. `security` 워크플로는 `main` 푸시 때 차단 없이 보고만 하는 ASH 스캔을 실행합니다.
+- **CI**(`.github/workflows/`): `quality` 워크플로는 PR과 `main` 푸시를 검사합니다(린트, 타입 검사, 커버리지 하한을 둔 테스트 스위트, 이미지 빌드, cdk-nag를 적용한 IaC 합성). `licenses`는 의존성 집합이 바뀔 때 의존성 라이선스를, `security`는 `main`에서 보고만 하는 ASH 스캔을 실행합니다. 작업 목록은 워크플로 파일이 정본이며, 로컬에서 실행할 검사는 [CONTRIBUTING.md](../CONTRIBUTING.md#checks-to-run-before-pushing)에 있습니다.
 - **Dependabot**(`.github/dependabot.yml`): `uv` 잠금 파일(`/`), IaC `uv` 잠금 파일(`/iac`, 별도 uv 프로젝트), SHA로 고정한 GitHub Actions를 매주 갱신합니다. 호환성을 깨는 것으로 알려진 버전은 이유를 적은 `ignore` 항목으로 보류합니다.
 - **pre-commit**(`.pre-commit-config.yaml`): CI 게이트와 같은 검사를 합니다. `pre-commit install`.
 - **보안 강화**: 콘텐츠 해시는 SHA-256만 씁니다(CWE-327 대응). 의존성 스캔에서 나온 CVE는 위 Dependabot PR로 처리합니다. 토큰은 환경 변수나 설정으로 주입하며 코드에 하드코딩하지 않습니다.
