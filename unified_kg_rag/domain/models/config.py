@@ -687,8 +687,7 @@ class S3EncryptionConfig(BaseModel):
         description=(
             "S3 server-side encryption for cache uploads: BUCKET_DEFAULT (send no "
             "header; the bucket's default encryption, e.g. its KMS CMK, applies), "
-            "AES256 (force SSE-S3) or aws:kms (force SSE-KMS with kms_key_id). "
-            "NONE is a legacy alias of BUCKET_DEFAULT."
+            "AES256 (force SSE-S3) or aws:kms (force SSE-KMS with kms_key_id)."
         ),
     )
     kms_key_id: str | None = Field(
