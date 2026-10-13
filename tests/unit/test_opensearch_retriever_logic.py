@@ -717,3 +717,11 @@ async def test_query_embedding_cache_is_bounded(retriever, monkeypatch) -> None:
 
     assert embedder.calls == ["a", "b", "c", "b"]
     assert len(retriever._query_embedding_cache) == 2
+
+
+@pytest.mark.parametrize("key", ["max_result_window", "index.max_result_window"])
+def test_index_setting_reads_either_spelling(key) -> None:
+    from unified_kg_rag.adapters.retrievers.opensearch_retriever import _index_setting
+
+    assert _index_setting({key: "500"}, "max_result_window", 10000) == 500
+    assert _index_setting({}, "max_result_window", 10000) == 10000

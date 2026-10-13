@@ -399,6 +399,9 @@ Library API (Python callers and custom backends).
   `filters={"type": [...3,000 values]}` asked every index for 3,000 hits and
   every kNN field for k=3,000; only the `id` list of a fetch by id sets the
   size now (#PR).
+- `indexing.opensearch.index_settings` is read in either spelling:
+  `index.max_terms_count` and `index.max_result_window` fell back to the
+  defaults (65,536 and 10,000) (#PR).
 - A query whose filters list many ids sends one search per index. Long list
   filters were split into batches and every combination of the batches
   searched in turn: two 3,000-id filters took 400 sequential requests, three

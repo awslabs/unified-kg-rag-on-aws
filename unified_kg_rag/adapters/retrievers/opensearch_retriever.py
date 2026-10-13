@@ -126,6 +126,14 @@ def _lexical_query_text(text: str) -> str:
     return text
 
 
+def _index_setting(settings: dict[str, Any], name: str, default: int) -> int:
+    """``settings[name]``, also when written ``index.<name>``.
+
+    OpenSearch takes either spelling of an index setting.
+    """
+    return int(settings.get(name, settings.get(f"index.{name}", default)))
+
+
 def _rejected_request(exc: BaseException) -> RequestError | None:
     """The HTTP 400 OpenSearch answered, if ``exc`` is (or wraps) one."""
     seen: set[int] = set()
@@ -162,8 +170,8 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         # Hard ceiling on hits per query (OpenSearch index.max_result_window
         # default). Fetch-by-id size may be floored up to the terms-filter size
         # but never beyond this, since the index is created with the default.
-        self._max_result_window = self._opensearch_config.index_settings.get(
-            "max_result_window", 10000
+        self._max_result_window = _index_setting(
+            self._opensearch_config.index_settings, "max_result_window", 10000
         )
         self._embedding_factory = embedding_factory
         # Queries embed with the model and dimension the indexer embeds with
@@ -720,10 +728,10 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         Raises:
             InvalidFilterError: A list filter has more values than that.
         """
-        limit = int(
-            self._opensearch_config.index_settings.get(
-                "max_terms_count", _DEFAULT_MAX_TERMS_COUNT
-            )
+        limit = _index_setting(
+            self._opensearch_config.index_settings,
+            "max_terms_count",
+            _DEFAULT_MAX_TERMS_COUNT,
         )
         for key, value in (filters or {}).items():
             if isinstance(value, list) and len(value) > limit:
