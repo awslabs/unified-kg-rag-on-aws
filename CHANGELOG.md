@@ -466,6 +466,10 @@ Library API (Python callers and custom backends).
 - Importing `unified_kg_rag.application.cli.run_rag_chain` no longer puts
   `unified_kg_rag/application` at the front of `sys.path`, where its
   subpackages could shadow top-level modules of the same name (#251).
+- An incremental run that only deletes documents (nothing new or changed to
+  extract) now checks the live OpenSearch indices of its configured
+  `document_parsing.index_value` before writing; it checked the `default`
+  namespace's indices instead (#PR).
 - Incremental runs merge a claim that another document already stored instead
   of overwriting it. A claim's id does not depend on its document, so adding a
   document that states the same claim replaced its description, source text

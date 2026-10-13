@@ -1572,11 +1572,14 @@ def run_incremental_indexer(
 ) -> IncrementalIndexer:
     """The incremental indexer of a run, on the run's suffix and scope."""
     # Artifacts carry their own index suffix (multi-tenant/version aware);
-    # derive the run's suffix from the text units the same way the indexers do.
+    # derive the run's suffix from the text units the same way the indexers
+    # do. A run that only deletes extracts none: its suffix is the one its
+    # documents would carry (document_parsing.index_value).
     suffix = (
         BaseIndexer.get_suffix(text_units[0])
         if text_units
-        else Constants.DEFAULT_SUFFIX.value
+        else indexing_manager.config.processing.document_parsing.index_value
+        or Constants.DEFAULT_SUFFIX.value
     )
     return IncrementalIndexer(
         doc_status,

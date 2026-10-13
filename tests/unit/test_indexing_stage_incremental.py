@@ -8,7 +8,8 @@ what keeps the live stores and the doc-status registry consistent:
 * stale artifacts of changed and deleted docs are removed in one pass, the
   deleted docs' registry rows dropped, and only then is the delta upserted +
   recorded;
-* the run's index suffix comes from the first text unit (default otherwise);
+* the run's index suffix comes from the first text unit (the configured
+  ``index_value``, else default, otherwise);
 * a missing delta falls back to a full ``index_all_data`` without touching the
   registry.
 
@@ -274,6 +275,26 @@ def test_missing_delta_falls_back_to_full_indexing(mocker) -> None:
     assert [name for name, _ in manager.calls] == ["index_all_data"]
     assert manager.calls[0][1]["entities"] == entities
     build_store.assert_not_called()
+
+
+def test_deletion_only_run_checks_the_configured_suffix(mocker) -> None:
+    # Nothing is extracted, so the suffix cannot come from a text unit.
+    store = FakeDocStatusStore()
+    _seed_registry(store, suffix="tenant1")
+    manager = _RecordingManager()
+    manager.config.processing.document_parsing.index_value = "tenant1"
+    checked: list[str | None] = []
+    manager.opensearch_indexer = SimpleNamespace(
+        check_index_settings=checked.append,
+        set_doc_status_tracking=lambda tracked: None,
+    )
+    stage = _stage(mocker, store, manager)
+    ctx = _context(DocumentDelta(deleted=[compute_doc_id(_DELETED)]), [])
+
+    _run(stage, ctx, text_units=[], entities=[])
+
+    assert checked == ["tenant1"]
+    assert store.get(compute_doc_id(_DELETED)) is None
 
 
 def test_failed_deleted_doc_removal_keeps_its_row_and_fails_the_stage(
