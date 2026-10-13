@@ -91,6 +91,7 @@ def _pipeline(config: Config, root: Path) -> DataIngestionPipeline:
     pipeline.state_manager = PipelineStateManager(cache_manager)
     pipeline.resume_manager = PipelineResumeManager(pipeline.state_manager, config)
     pipeline.name_to_type_map = {stage.value: stage for stage in PipelineStageType}
+    pipeline.providers = SimpleNamespace(doc_status_enabled=True)
     # The recorded history starts at graph_extraction (see _context), so the
     # enabled stages do too: an enabled stage with no recorded result would
     # be run first, as one switched on since the pipeline last ran.
@@ -422,6 +423,22 @@ class TestResumeAfterExtractionChange:
         loading = PipelineStageType.DOCUMENT_LOADING.value
         assert start == loading
         assert executed[0] == loading
+        assert [r.stage_name for r in context.stage_results] == [
+            PipelineStageType.DOCUMENT_PARSING.value
+        ]
+
+    def test_a_disabled_registry_recomputes_the_delta(self, tmp_path, mocker) -> None:
+        # Rerunning a completed incremental id with the registry now off
+        # restored the old delta, and indexing wrote registry records the
+        # user had disabled instead of building the index in full.
+        _record_incremental_run(_all_stages_pipeline(Config(), tmp_path))
+        pipeline = _all_stages_pipeline(Config(), tmp_path)
+        pipeline.providers = SimpleNamespace(doc_status_enabled=False)
+
+        start, context, executed = _resume(pipeline, mocker)
+
+        loading = PipelineStageType.DOCUMENT_LOADING.value
+        assert start == executed[0] == loading
         assert [r.stage_name for r in context.stage_results] == [
             PipelineStageType.DOCUMENT_PARSING.value
         ]

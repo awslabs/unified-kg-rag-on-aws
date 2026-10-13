@@ -198,6 +198,12 @@ Library API (Python callers and custom backends).
   `execute_with_fallback` no longer takes `batch_func` (sync) or
   `run_config` (#174, #216); `create_robust_xml_output_parser` requires
   `output_tags` (#174).
+- `unified_kg_rag.visualization` exports only `GraphVisualizationManager`;
+  import the renderers from `unified_kg_rag.adapters.renderers` and the
+  embedder and reducer from `unified_kg_rag.visualization.embeddings` (#246).
+- `LocalSearchStrategy` no longer takes an `entity_focus_multiplier`
+  argument; nothing passed it, so it was always 2, now the class constant
+  `ENTITY_CANDIDATES_PER_FOCUS` (#247).
 
 ### Upgrading from pre-release builds
 - Doc-status registries written before source scopes existed are migrated in
@@ -262,15 +268,12 @@ Library API (Python callers and custom backends).
   `guardrail_version` (#211).
 
 ### Changed
+- A custom vector indexer's `read_claims` no longer has to tag each claim
+  with the index it was read from; `IndexingManager` tags the claims it
+  writes back after a deletion (#259).
 - `search.fusion.fusion_weights` defaults to `{}`: every bucket weighs 1.0,
   as the 15 listed 1.0 entries did, and weighted fusion no longer warns
   about a bucket without a weight on every query (#258).
-- `unified_kg_rag.visualization` exports only `GraphVisualizationManager`;
-  import the renderers from `unified_kg_rag.adapters.renderers` and the
-  embedder and reducer from `unified_kg_rag.visualization.embeddings` (#246).
-- `LocalSearchStrategy` no longer takes an `entity_focus_multiplier`
-  argument; nothing passed it, so it was always 2, now the class constant
-  `ENTITY_CANDIDATES_PER_FOCUS` (#247).
 - The `graph_analysis` stage no longer computes degree, betweenness and
   PageRank centrality, which no later stage read (the visualization
   computes its own) and which took minutes on a graph of tens of thousands
@@ -352,9 +355,11 @@ Library API (Python callers and custom backends).
   `DEGRADED` (#255).
 - The `answer_match` evaluator no longer reads `(예: …)` ("for example") as
   a yes, or the options in `Yes/No: No` and `(네/아니요): 아니요` as the
-  answer. A polarity word other than `yes` answers only when sentence
-  punctuation, a dash or the line end follows it, and a word next to `/` is
-  skipped (#255).
+  answer. `no`, `네` and `예`, which also mean "no X", "four" and "e.g.",
+  answer only when punctuation (other than `/`, or `:`/`)` after `예`) or
+  the line end follows them, so `No: it does not.`, `**No**: ...` and
+  `No (see Clause 5).` still answer; every other polarity word answers
+  wherever it stands, and a word next to `/` is skipped (#255).
 - Description re-summarization sizes one call's input to the summary
   model's context window (half of what it leaves beside
   `max_summary_tokens`, 1,000 to 12,000 tokens). A fixed 12,000-token input
@@ -366,6 +371,11 @@ Library API (Python callers and custom backends).
   the previous run's delta and extraction fingerprint, so the changed stages
   ran only on that delta's documents and the next run with a new pipeline id
   re-extracted the whole corpus (#256).
+- Rerunning a completed incremental pipeline id with the doc-status
+  registry since turned off restarts at `document_loading` and builds the
+  index in full. It restored the previous run's delta, so indexing wrote
+  `PENDING`/`PROCESSED` records to the registry the user had disabled
+  (#259).
 - Deleting a document under a non-default index suffix
   (`processing.document_parsing.index_value`) strips its text units from the
   claims it shared with other documents in that suffix's claims index. The

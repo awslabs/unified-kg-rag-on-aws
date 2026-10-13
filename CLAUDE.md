@@ -14,7 +14,7 @@ ports → domain`, with `shared` as a cross-cutting kernel any layer may use.
 
 - **`domain/`**: technology-agnostic core — `models/` (Pydantic), pure
   algorithms (`ingestion/` merge/delta/resolve/analyze, `retrieval/`
-  strategy registry + mixins), and `prompts/` templates. No boto3/LangChain/
+  strategy registry + index prefixes), and `prompts/` templates. No boto3/LangChain/
   backend imports, direct or transitive (`tests/unit/test_domain_purity.py`
   imports every domain module in a clean interpreter and checks
   `sys.modules`).

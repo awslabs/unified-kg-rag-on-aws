@@ -253,7 +253,12 @@ _GRAPH_VARS = {"claim", "community", "ent", "entity", "node", "rel", "relationsh
 
 def _leaky_args(call: ast.Call) -> list[str]:
     leaks: list[str] = []
-    for arg in call.args[1:]:
+    # The message itself when it is an f-string, the %-arguments and the
+    # keyword arguments (``extra=``) can all carry text.
+    candidates = [*call.args[1:], *(kw.value for kw in call.keywords)]
+    if call.args and isinstance(call.args[0], ast.JoinedStr):
+        candidates.insert(0, call.args[0])
+    for arg in candidates:
         if (
             isinstance(arg, ast.Call)
             and isinstance(arg.func, ast.Name)
@@ -316,3 +321,17 @@ def test_static_guard_flags_a_name_in_an_info_log() -> None:
     ok = ast.parse("logger.info('Dropping %s', rel.short_id)").body[0]
     assert isinstance(ok, ast.Expr) and isinstance(ok.value, ast.Call)
     assert _leaky_args(ok.value) == []
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "logger.info(f'Dropping {rel.source_name}')",
+        "logger.warning('Dropped', extra={'entity': entity.name})",
+        "logger.error('Failed', extra={'q': search_query.query})",
+    ],
+)
+def test_static_guard_flags_text_in_an_f_string_or_keyword(source: str) -> None:
+    call = ast.parse(source).body[0]
+    assert isinstance(call, ast.Expr) and isinstance(call.value, ast.Call)
+    assert _leaky_args(call.value)

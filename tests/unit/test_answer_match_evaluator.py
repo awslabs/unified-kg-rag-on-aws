@@ -111,6 +111,13 @@ class TestNormalization:
             ("1. No, the Buyer pays.", "no", 1.0),
             ("| Warranty? | Yes |", "yes", 1.0),
             ("No warranty is provided.", "no", 0.0),
+            # any punctuation after "no" answers, markdown emphasis included
+            ("No: the contract does not allow it.", "no", 1.0),
+            ("**No**: the clause forbids it.", "no", 1.0),
+            ("No (see Clause 5).", "no", 1.0),
+            ("No - it does not.", "no", 1.0),
+            ("No: Yes it is", "no", 1.0),
+            ("No: Yes it is", "yes", 0.0),
         ],
     )
     def test_yes_no_gold_scored_by_leading_polarity(
@@ -160,6 +167,12 @@ class TestNormalization:
             ("不是。卖方不承担运费。", "否", 1.0),
             ("否则，买方可以终止合同。", "否", 0.0),
             ("倉庫にはいります。", "はい", 0.0),
+            # "아니요"/"아니오" have no second meaning: any punctuation answers
+            ("아니요: 계약서에는 없습니다.", "아니요", 1.0),
+            ("**아니요**: 없습니다", "아니요", 1.0),
+            ("아니오 (계약 제5조).", "아니오", 1.0),
+            ("아니요 계약서에는 그런 내용이 없습니다.", "아니요", 1.0),
+            ("**네**: 맞습니다.", "네", 1.0),
         ],
     )
     def test_cjk_yes_no_gold_scored_by_leading_polarity(

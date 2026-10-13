@@ -398,13 +398,9 @@ class VectorIndexer(BaseIndexer):
 
         Scoped to ``suffix``'s index (``None``: the default suffix). Must
         return the fields the merge folds in (description, source text,
-        ``text_unit_ids``, status), each claim carrying ``suffix`` in its
-        ``attributes`` (``Constants.INDEX``) so that writing it back
-        (``update_claim_lineage``, which groups by ``get_suffix``) targets
-        the index it was read from. Default
-        returns ``[]`` (no read-back: the upsert overwrites); adapters that
-        override it raise when a read fails, since ``[]`` means nothing is
-        stored.
+        ``text_unit_ids``, status). Default returns ``[]`` (no read-back:
+        the upsert overwrites); adapters that override it raise when a read
+        fails, since ``[]`` means nothing is stored.
         """
         return []
 

@@ -95,11 +95,16 @@ _POLARITY_WORD = re.compile(
     + "|".join(sorted(map(re.escape, _POLARITY), key=len, reverse=True))
     + r")(?![\w-])"
 )
-# Except for "yes", a polarity word answers a question only when sentence
-# punctuation or the line end follows it ("No, it may not.", "**네**, 맞습니다.");
+# Three words have a second meaning, so they answer a question only when
+# punctuation or the line end follows them ("No: it may not.", "**네**, 맞습니다."):
 # before a word, "no" is a determiner ("there is no clause") and "네" the
-# numeral four ("네 가지"), and before ":" or ")" "예" means "e.g." ("(예: …)").
-_ANSWERING_NO = re.compile(r"\s*[*_]*\s*(?:$|[,.!?;。、，！？—–])")
+# numeral four ("네 가지"); "예" also means "e.g." before ":" or ")" ("(예: …)").
+# Any other polarity word answers wherever it stands.
+_AMBIGUOUS_ANSWER = {
+    "no": re.compile(r"\s*[*_]*\s*(?:$|[^\w\s])"),
+    "네": re.compile(r"\s*[*_]*\s*(?:$|[^\w\s])"),
+    "예": re.compile(r"\s*[*_]*\s*(?:$|[^\w\s:)])"),
+}
 # A word next to "/" names the options, not the answer ("Yes/No: No").
 _OPTION_SLASH = re.compile(r"\s*/")
 # "No." before a number abbreviates "number" ("Clause No. 5").
@@ -111,9 +116,10 @@ def _leading_polarity(prediction: str) -> str | None:
     """The polarity ("yes"/"no") of the first yes/no word that answers.
 
     Markdown heading lines are skipped, a polarity word next to "/" lists
-    the options ("Yes/No"), one other than "yes" not followed by sentence
-    punctuation or the line end ("there is no evidence", "(예: …)") is not an
-    answer, and "No." before a number is the abbreviation. Words are matched whole, so "예" in
+    the options ("Yes/No"), "no", "네" or "예" not followed by punctuation or
+    the line end ("there is no evidence", "네 가지") or "예" before ":" or ")"
+    ("(예: …)") is not an answer, and "No." before a number is the
+    abbreviation. Words are matched whole, so "예" in
     "예외" or "是" in "这是" is not one. The search runs over whole lines, so
     an abbreviation such as "U.S." cannot cut the answer short.
     """
@@ -126,9 +132,10 @@ def _leading_polarity(prediction: str) -> str | None:
             rest = line[match.end() :]
             if _OPTION_SLASH.match(rest) or line[: match.start()].rstrip()[-1:] == "/":
                 continue
-            if word == "yes":
+            answering = _AMBIGUOUS_ANSWER.get(word)
+            if answering is None:
                 return _POLARITY[word]
-            if _ANSWERING_NO.match(rest) and not _NUMBER_ABBREVIATION.match(rest):
+            if answering.match(rest) and not _NUMBER_ABBREVIATION.match(rest):
                 return _POLARITY[word]
     return None
 

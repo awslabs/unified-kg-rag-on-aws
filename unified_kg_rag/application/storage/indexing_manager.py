@@ -30,6 +30,7 @@ from unified_kg_rag.domain.models import (
     Community,
     CommunityReport,
     Config,
+    Constants,
     Entity,
     Relationship,
     TextUnit,
@@ -691,6 +692,13 @@ class IndexingManager:
             stats = IndexingStats(total_items=len(claim_ids))
             stats.add_error(str(e), count=len(claim_ids), ids=claim_ids)
             return {f"opensearch_read_claims_{suffix}": stats}
+        # The write-back groups by the claim's own index tag, so tag what was
+        # read with the index it came from.
+        for claim in claims:
+            claim.attributes = {
+                **(claim.attributes or {}),
+                Constants.INDEX.value: suffix,
+            }
         stripped = remove_claim_text_units(claims, text_unit_ids)
         if not stripped:
             return {}

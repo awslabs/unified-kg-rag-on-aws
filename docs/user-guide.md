@@ -1451,10 +1451,11 @@ set `enabled_evaluators: [answer_match, retrieval, graph_aware]`.
   answer's polarity, as in HotpotQA, since almost any long answer contains
   the word "no" (or `예` in `예외`): the first whole yes/no word that answers
   the question, skipping Markdown headings, a word next to `/` (the options
-  in `Yes/No: No` or `(네/아니요): 아니요`), a word other than `yes` that is
-  not followed by sentence punctuation (`, . ! ? ;`, a dash or their CJK
-  forms) or the line end (`there is no clause`, `네 가지`, `(예: …)`), and
-  `no` followed by a number (`No. 5`). So `네, 맞습니다` answers yes but
+  in `Yes/No: No` or `(네/아니요): 아니요`), `no` and `네` when no
+  punctuation (`No:`, `**No**:`, `No (`, `No -`) or line end follows them
+  (`there is no clause`, `네 가지`), `예` followed by `:` or `)` as well
+  (`(예: …)`, "e.g."), and `no` followed by a number (`No. 5`). Every other
+  yes/no word answers wherever it stands. So `네, 맞습니다` answers yes but
   `네 맞습니다` is not read as an answer. SQuAD-style `exact_match` and
   `token_f1` are also emitted. Text is NFKC-normalized, then lowercased,
   punctuation deleted, English articles dropped and whitespace collapsed, as
