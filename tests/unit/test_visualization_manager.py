@@ -248,3 +248,24 @@ def test_spring_layout_of_a_graph_within_the_cap_is_unchanged(
         str(k): v.tolist() for k, v in nx.spring_layout(_graph(), seed=42).items()
     }
     assert _manager(config, tmp_path)._generate_layout() == expected
+
+
+def test_failed_umap_marks_layout_degraded(
+    config: Config, tmp_path: Path, mocker
+) -> None:
+    # UMAP used to swallow its own failure and return PCA, so the manager's
+    # degraded fallback (layout_degraded: true) never ran.
+    from unified_kg_rag.visualization.embeddings import dimensionality
+
+    mocker.patch.object(
+        dimensionality.umap, "UMAP", side_effect=ValueError("umap blew up")
+    )
+    manager = _manager(
+        config, tmp_path, embedder=_FakeEmbedder(), embedding_method="description"
+    )
+    manager.viz_config.layout_method = "umap"
+    pca = mocker.spy(manager.reducer, "_apply_pca")
+    layout = manager._generate_layout()
+    assert manager.layout_degraded is True
+    pca.assert_not_called()
+    assert set(layout) == {"e1", "e2", "e3"}

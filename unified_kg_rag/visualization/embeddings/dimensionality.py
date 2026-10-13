@@ -100,22 +100,14 @@ class DimensionalityReducer:
         return layout
 
     def _apply_umap(self, embeddings: np.ndarray) -> np.ndarray:
-        try:
-            reducer = umap.UMAP(
-                n_neighbors=min(self.umap_config.n_neighbors, embeddings.shape[0] - 1),
-                min_dist=self.umap_config.min_dist,
-                n_components=self.umap_config.n_components,
-                metric=self.umap_config.metric,
-                random_state=self.umap_config.random_state,
-            )
-            result = reducer.fit_transform(embeddings)
-            return np.asarray(result)
-        except ImportError:
-            logger.warning("UMAP is not installed. Falling back to PCA.")
-            return self._apply_pca(embeddings)
-        except Exception as e:
-            logger.warning("UMAP failed: %s. Falling back to PCA.", e)
-            return self._apply_pca(embeddings)
+        reducer = umap.UMAP(
+            n_neighbors=min(self.umap_config.n_neighbors, embeddings.shape[0] - 1),
+            min_dist=self.umap_config.min_dist,
+            n_components=self.umap_config.n_components,
+            metric=self.umap_config.metric,
+            random_state=self.umap_config.random_state,
+        )
+        return np.asarray(reducer.fit_transform(embeddings))
 
     def _apply_tsne(self, embeddings: np.ndarray) -> np.ndarray:
         perplexity = min(self.tsne_config.perplexity, embeddings.shape[0] - 1)

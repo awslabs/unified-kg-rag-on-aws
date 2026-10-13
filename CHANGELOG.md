@@ -279,6 +279,10 @@ Library API (Python callers and custom backends).
   aws-cdk-lib pin (#241).
 
 ### Fixed
+- A failed UMAP reduction of the visualization layout now falls back to
+  the seeded spring layout and records `"layout_degraded": true`, as the user
+  guide documents; it silently returned a PCA layout marked as not degraded
+  (#PR).
 - `run-visualization` and ingestion-time rendering compute the spring
   layout only for the nodes the interactive page draws (the top
   `graph.visualization.interactive.max_nodes` by degree). A large graph was
