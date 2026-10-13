@@ -264,8 +264,10 @@ def test_failed_umap_marks_layout_degraded(
         config, tmp_path, embedder=_FakeEmbedder(), embedding_method="description"
     )
     manager.viz_config.layout_method = "umap"
+    # Three points go straight to PCA (UMAP needs more than n_components + 1).
+    manager.analyzer.graph.add_edge("e3", "e4")
     pca = mocker.spy(manager.reducer, "_apply_pca")
     layout = manager._generate_layout()
     assert manager.layout_degraded is True
     pca.assert_not_called()
-    assert set(layout) == {"e1", "e2", "e3"}
+    assert set(layout) == {"e1", "e2", "e3", "e4"}

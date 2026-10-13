@@ -323,6 +323,9 @@ Library API (Python callers and custom backends).
   install (#251).
 
 ### Fixed
+- A three-node graph's visualization layout uses PCA instead of UMAP, whose
+  spectral initialization fails with that few points; the layout came out
+  `DEGRADED` (#PR).
 - The `answer_match` evaluator no longer reads `(예: …)` ("for example") as
   a yes, or the options in `Yes/No: No` and `(네/아니요): 아니요` as the
   answer. A polarity word other than `yes` answers only when sentence
