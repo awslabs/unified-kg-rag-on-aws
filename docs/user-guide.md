@@ -808,7 +808,12 @@ answer's model span takes `session.id` / `user.id` from the `session_id` /
 `user_id` in the answer step's run metadata, so it still groups with its
 session. A model call cancelled during `ainvoke` (for example by
 `asyncio.wait_for`) leaves no model span: LangChain reports no callback for
-it. A stream the caller stops reading early ends its span normally. For CloudWatch, run an ADOT or
+it. A stream the caller stops reading early ends its span normally. With
+`otlp`, `langfuse` or `phoenix` the first backend the process installs also
+becomes OpenTelemetry's global tracer provider, which can be set only once:
+after a later configuration with different settings, the package's spans use
+the new exporter, but spans that other libraries emit through the global
+OpenTelemetry API are dropped. For CloudWatch, run an ADOT or
 OpenTelemetry Collector next to the task and use `backend: otlp` (recipe in
 the [runbook](operations.md#observability)). Local Langfuse and Phoenix
 recipes are there too.

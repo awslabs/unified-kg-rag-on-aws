@@ -773,7 +773,11 @@ Secrets Manager나 태스크 시크릿에서 주입하세요.
 메타데이터의 `session_id` / `user_id`에서 `session.id` / `user.id`를 가져오므로
 같은 세션으로 묶입니다. `ainvoke` 도중 취소된 모델 호출(예: `asyncio.wait_for` 시간 초과)은
 LangChain이 콜백을 호출하지 않으므로 모델 스팬이 남지 않습니다. 호출자가 스트림을 중간에
-그만 읽으면 그 스팬은 오류 없이 정상 종료됩니다. CloudWatch로 보내려면 태스크 옆에 ADOT나 OpenTelemetry Collector를 두고
+그만 읽으면 그 스팬은 오류 없이 정상 종료됩니다. `otlp`, `langfuse`, `phoenix`에서는
+프로세스가 처음 설치한 백엔드가 OpenTelemetry 전역 트레이서 공급자(tracer provider)도
+되는데, 전역 공급자는 한 번만 설정할 수 있습니다. 나중에 다른 설정으로 다시 구성하면 패키지의
+스팬은 새 내보내기 도구로 가지만, 다른 라이브러리가 전역 OpenTelemetry API로 남기는
+스팬은 버려집니다. CloudWatch로 보내려면 태스크 옆에 ADOT나 OpenTelemetry Collector를 두고
 `backend: otlp`를 쓰세요([운영 런북](operations.ko.md#관측성)에 절차가 있습니다).
 로컬 Langfuse와 Phoenix 절차도 같은 곳에 있습니다.
 

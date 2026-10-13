@@ -673,6 +673,10 @@ Library API (Python callers and custom backends).
 - A streamed model call the caller stops reading early (`break`, `aclose`)
   ends its span normally; it was exported as an `ERROR` span with
   `error.type: GeneratorExit` (#PR).
+- Reconfiguring tracing with different settings no longer warns that "a
+  global OpenTelemetry tracer provider is already set" when that provider
+  is the one the package set itself; the user guide documents that the
+  global binding happens once per process (#PR).
 
 ### Security
 - Prompts delimit corpus and retrieved text as data, and inputs cannot close
