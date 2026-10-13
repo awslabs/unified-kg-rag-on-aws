@@ -205,6 +205,7 @@ def _run(inc: IncrementalIndexer, corpus: dict[str, Content]) -> None:
     )
 
 
+@pytest.mark.slow
 @settings(
     max_examples=300,
     deadline=None,

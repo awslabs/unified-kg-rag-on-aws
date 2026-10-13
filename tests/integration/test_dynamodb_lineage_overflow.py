@@ -139,6 +139,7 @@ def _big_id() -> str:
     return document_doc_id(document("/c/big.txt", R0["/c/big.txt"]))
 
 
+@pytest.mark.slow
 @pytest.mark.timeout(600)
 def test_large_document_write_ahead_spills_and_recovers(
     ddb_store: DynamoDBDocStatusStore,

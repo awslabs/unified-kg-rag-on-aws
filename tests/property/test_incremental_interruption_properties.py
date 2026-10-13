@@ -100,6 +100,7 @@ def _follow_up(kind: str, before: Corpus, interrupted: Corpus) -> Corpus:
     return {path: c for path, c in interrupted.items() if path in before}
 
 
+@pytest.mark.slow
 @settings(
     max_examples=150,
     deadline=None,
