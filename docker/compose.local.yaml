@@ -8,7 +8,8 @@
 #   with the analysis-nori plugin that the Korean text mappings use (Amazon
 #   OpenSearch Service ships nori built in). Version matches the IaC domain.
 # - Gremlin Server: in-memory TinkerGraph over plain ws:// with no auth. Its
-#   TinkerPop line (3.7) matches the gremlinpython client.
+#   TinkerPop line (3.7) matches the gremlinpython client. Its init script
+#   indexes the "id" property the indexer looks vertices and edges up by.
 #
 # - Ollama (profile "models", so the stores alone start without it): serves
 #   the language and embedding models of local mode. No model is pulled
@@ -50,6 +51,13 @@ services:
     image: tinkerpop/gremlin-server:3.7.7@sha256:afc395b5e96cfeea72b6d0b59d22ad5cee502c31bfdad6f4d3b2de070d905e0f
     ports:
       - 127.0.0.1:8182:8182
+    configs:
+      # Replaces the image's init script (which only binds "g"). Every
+      # indexer write finds its vertex or edge by the "id" property first;
+      # without an index TinkerGraph scans them all for each lookup (10,000
+      # entities and their communities: about 60 s instead of 20 s).
+      - source: gremlin-init
+        target: /opt/gremlin-server/scripts/empty-sample.groovy
     healthcheck:
       test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/$$(hostname -i)/8182'"]
       interval: 5s
@@ -71,6 +79,14 @@ services:
       interval: 5s
       timeout: 5s
       retries: 30
+
+configs:
+  gremlin-init:
+    content: |
+      graph.createIndex("id", Vertex.class)
+      graph.createIndex("id", Edge.class)
+      def globals = [:]
+      globals << [g : traversal().withEmbedded(graph)]
 
 volumes:
   opensearch-data:

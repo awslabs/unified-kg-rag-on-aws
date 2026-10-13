@@ -323,11 +323,13 @@ so restarting Gremlin Server empties it while the SQLite registry keeps its
 records. An incremental run then stops before writing anything and asks for
 `indexing.reset: true` (or deleting the registry), instead of treating the
 lost documents as unchanged. A list property written when a vertex is created keeps duplicate values
-(Neptune stores them once). TinkerGraph indexes no property, so every
-relationship write, which looks its edge up by id first so that a retry does
-not duplicate it, scans the graph's edges: writing relationships slows down as
-the graph grows (8,000 edges took about 19 seconds in one measurement, twice
-a plain insert). Use it for development-sized corpora. Nothing in the compose file is hardened; it binds
+(Neptune stores them once). Every write looks its vertex or edge up by its
+`id` property first, so that a retry does not duplicate it; the compose
+file's Gremlin Server creates a TinkerGraph index on that property for
+vertices and edges at start-up. A Gremlin Server started without it scans
+every vertex or edge per lookup and slows down as the graph grows (10,000
+entities and their communities took about 60 seconds instead of 20). Use it
+for development-sized corpora. Nothing in the compose file is hardened; it binds
 to `127.0.0.1` only.
 
 ---
@@ -571,7 +573,7 @@ LLM stages are Bedrock-I/O-bound, so concurrency can far exceed the CPU count.
 | `indexing.opensearch.index_settings.refresh_interval` | `"1s"` | Raise it (or `"-1"`) for faster bulk loads, then reset for live querying. |
 | `indexing.neptune.batch_size` | `100` | Items per Neptune write batch. |
 | `indexing.neptune.index_concurrency` | `1` | Concurrent write batches (and relationship edges). The Gremlin connection pool grows to match if `aws.neptune.pool_size` is smaller. |
-| `indexing.neptune.max_attempts` | `4` | Attempts per Neptune write, including the first. Failures are retried with jittered exponential backoff from `retry_delay_seconds` (`2`), except errors a retry cannot fix (malformed query, access denied, bad parameter), which fail on the first attempt. `1` disables the retry. |
+| `indexing.neptune.max_attempts` | `4` | Attempts per Neptune indexer request (writes, read-backs, drops and label clears), including the first. Failures are retried with full-jitter exponential backoff (the wait after attempt n is random between 0 and `retry_delay_seconds` (`2`) x 2^(n-1) seconds), except errors a retry cannot fix (malformed query, access denied, bad parameter), which fail on the first attempt. `1` disables the retry. |
 | `indexing.neptune.max_hops` | `3` | Neighbour-expansion depth at retrieval time. |
 | `indexing.neptune.property_max_length` | `4000` | Character cap per Neptune property value. Keep it above the longest description that is not re-summarized (summarization triggers above 600 tokens, ~2,400 characters). OpenSearch keeps descriptions in full, and the incremental cross-run merge takes a capped one from there. Takes effect on re-ingestion. |
 | `indexing.neptune.entity_importance_source` | `"rank"` | Entity importance in graph-expansion relevance (orders entities at the same distance from the seeds; nearer entities, seeds first, always rank higher): `rank` (indexed entity rank, its degree), `degree` (edge count at query time) or `none` (neutral 0.5 for every entity). |
@@ -1451,8 +1453,9 @@ set `enabled_evaluators: [answer_match, retrieval, graph_aware]`.
   spacing next to CJK letters is ignored (`3억 원` = `3억원`,
   `가나다 상사` = `가나다상사`). A single-word CJK gold is matched as a
   substring, but not inside a longer number or Latin word (`2년` does not
-  match `12년`). A yes/no gold (`yes`/`no`; Korean `예`/`네`/`아니요`/`아니오`;
-  Chinese `是`/`对`/`否`/`不是`; Japanese `はい`/`いいえ`) is scored by the
+  match `12년`). A yes/no gold (`yes`/`no`/`nope`; Korean
+  `예`/`네`/`아니요`/`아니오`/`아닙니다`; Chinese `是`/`对`/`否`/`不是`/`没有`;
+  Japanese `はい`/`いいえ`) is scored by the
   answer's polarity, as in HotpotQA, since almost any long answer contains
   the word "no" (or `예` in `예외`): the first whole yes/no word that answers
   the question, skipping Markdown headings, a word next to `/` (the options

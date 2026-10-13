@@ -15,7 +15,7 @@ v1.1 script, so scores are not leaderboard-comparable), then:
   tolerated, substring match for single-word CJK phrases). Long-form RAG
   answers rarely equal a short gold span, so this is the headline
   deterministic answer metric. A yes/no gold ("yes"/"no", Korean
-  "예"/"네"/"아니요"/"아니오", Chinese "是"/"对"/"否"/"不是", Japanese
+  "예"/"네"/"아니요"/"아니오"/"아닙니다", Chinese "是"/"对"/"否"/"不是"/"没有", Japanese
   "はい"/"いいえ") is instead compared with the polarity of the first yes/no
   word that answers the question (not a heading, not the determiner in
   "there is no clause", not part of a longer word such as "예외").
@@ -76,10 +76,12 @@ def exact_match(prediction: str, reference: str) -> float:
 _POLARITY = {
     "yes": "yes",
     "no": "no",
+    "nope": "no",
     "예": "yes",
     "네": "yes",
     "아니요": "no",
     "아니오": "no",
+    "아닙니다": "no",
     "是": "yes",
     "是的": "yes",
     "对": "yes",
@@ -87,13 +89,16 @@ _POLARITY = {
     "否": "no",
     "不是": "no",
     "不是的": "no",
+    "没有": "no",
     "はい": "yes",
     "いいえ": "no",
 }
+# A hyphen (ASCII or U+2010, which NFKC makes of the non-breaking U+2011)
+# joins the word to the next one ("no-cap"), so it is not a whole word.
 _POLARITY_WORD = re.compile(
-    r"(?<![\w-])("
+    r"(?<![\w\u2010-])("
     + "|".join(sorted(map(re.escape, _POLARITY), key=len, reverse=True))
-    + r")(?![\w-])"
+    + r")(?![\w\u2010-])"
 )
 # Three words have a second meaning, so they answer a question only when
 # punctuation or the line end follows them ("No: it may not.", "**네**, 맞습니다."):
