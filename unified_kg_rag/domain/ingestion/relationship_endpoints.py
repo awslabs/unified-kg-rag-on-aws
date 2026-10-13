@@ -92,3 +92,28 @@ def cite_relationship_endpoints(
             )
         result.append(entity)
     return result, len(stubs)
+
+
+def sync_relationship_endpoint_names(
+    relationships: Sequence[Relationship], entities: Sequence[Entity]
+) -> int:
+    """Rewrite each edge's endpoint names from the entities' id -> name map.
+
+    ``source_name`` / ``target_name`` are denormalised copies of the entity
+    names, and the indexers, the gleaning prompt and retrieval context read
+    those copies rather than resolving the id. Renaming an entity in place
+    (a gleaning correction) or re-pointing an edge at a merged entity's id
+    (gleaning, graph resolution) leaves the copies naming the old entity, so
+    they are re-derived from the ids the edge references. An endpoint id with
+    no entity keeps its name. Mutates ``relationships``; returns the number of
+    edges changed.
+    """
+    name_by_id = {entity.id: entity.name for entity in entities}
+    resynced = 0
+    for rel in relationships:
+        source_name = name_by_id.get(rel.source_id, rel.source_name)
+        target_name = name_by_id.get(rel.target_id, rel.target_name)
+        if (source_name, target_name) != (rel.source_name, rel.target_name):
+            rel.source_name, rel.target_name = source_name, target_name
+            resynced += 1
+    return resynced

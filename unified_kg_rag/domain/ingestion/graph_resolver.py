@@ -17,6 +17,7 @@ from unified_kg_rag.domain.ingestion.base_resolver import (
 from unified_kg_rag.domain.ingestion.graph_rank import with_graph_ranks
 from unified_kg_rag.domain.ingestion.relationship_endpoints import (
     cite_relationship_endpoints,
+    sync_relationship_endpoint_names,
 )
 from unified_kg_rag.domain.ingestion.relationship_weights import (
     apply_text_unit_weights,
@@ -24,7 +25,7 @@ from unified_kg_rag.domain.ingestion.relationship_weights import (
     text_unit_weights,
 )
 from unified_kg_rag.domain.models import Config, Entity, Relationship
-from unified_kg_rag.shared import get_logger
+from unified_kg_rag.shared import GraphError, get_logger
 from unified_kg_rag.shared.utils.concurrency import ContextThreadPoolExecutor
 
 logger = get_logger(__name__)
@@ -358,11 +359,21 @@ class EntityResolver(BaseResolver):
                 if self.show_progress and done % _RESOLVE_PROGRESS_EVERY == 0:
                     logger.info("  ...resolved %s/%s entities", done, total)
                 try:
-                    yield original_name, future.result()
+                    name_matches = future.result()
                 except Exception as e:
+                    # A lost name falls back to exact matching only, so its
+                    # variants stay duplicate entities: fail the stage unless
+                    # the run tolerates per-item errors.
+                    if not self.config.processing.ignore_errors:
+                        raise GraphError(
+                            f"Fuzzy matching failed for entity {original_name!r}: "
+                            f"{e!r}"
+                        ) from e
                     logger.warning(
                         "Failed to find matches for entity '%s': %s", original_name, e
                     )
+                    continue
+                yield original_name, name_matches
 
     @staticmethod
     def _best_supported_name(entities: list[Entity]) -> str:
@@ -598,6 +609,9 @@ class GraphResolver:
             resolved_relationships,
             relationship_stats,
         ) = self.relationship_resolver.resolve(relationships, entity_mapping)
+        # A relationship re-pointed at a merged entity's id still names the
+        # entity it was extracted with ("Acme" for "Acme Inc").
+        sync_relationship_endpoint_names(resolved_relationships, resolved_entities)
         resolved_entities, resolved_relationships = with_graph_ranks(
             resolved_entities, resolved_relationships
         )

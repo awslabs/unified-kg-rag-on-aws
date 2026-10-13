@@ -234,6 +234,69 @@ def test_resolve_graph_is_idempotent_fixed_point(resolver: GraphResolver) -> Non
     assert len(twice["relationships"]) == len(once["relationships"])
 
 
+def test_resolve_graph_renames_edges_onto_the_merged_entity(
+    resolver: GraphResolver,
+) -> None:
+    # "Acme" merges into the better-supported "Acme Inc"; the edge extracted
+    # as "Acme" -> "Beta" must name the surviving entity, which the indexers
+    # and the retrieval context read.
+    entities = [
+        _ent("acme-inc", "Acme Inc", text_unit_ids=["t1", "t2"]),
+        _ent("acme", "Acme", text_unit_ids=["t3"]),
+        _ent("beta", "Beta", text_unit_ids=["t3"]),
+    ]
+    rels = [
+        Relationship(
+            id="r1",
+            source_id="acme",
+            source_name="Acme",
+            target_id="beta",
+            target_name="Beta",
+            type="SUPPLIES",
+        )
+    ]
+    result, _ = resolver.resolve_graph(entities, rels)
+    (rel,) = result["relationships"]
+    assert (rel.source_id, rel.source_name) == ("acme-inc", "Acme Inc")
+    assert rel.target_name == "Beta"
+    # The input edge is not mutated.
+    assert rels[0].source_name == "Acme"
+
+
+def _fuzzy_pool_resolver(*, ignore_errors: bool) -> GraphResolver:
+    config = Config()
+    config.processing.fuzzy_entity_resolution = True
+    config.processing.ignore_errors = ignore_errors
+    return GraphResolver(config, max_workers=2, use_process_pool=False)
+
+
+def _failing_match(name: str) -> list:
+    raise MemoryError("worker died")
+
+
+@pytest.mark.parametrize("ignore_errors", [False, True])
+def test_fuzzy_match_worker_failure(
+    monkeypatch: pytest.MonkeyPatch, ignore_errors: bool
+) -> None:
+    from unified_kg_rag.domain.ingestion import graph_resolver as module
+    from unified_kg_rag.shared import GraphError
+
+    # A failed match used to be logged and dropped even with ignore_errors
+    # off, so the name's variants silently stayed duplicate entities.
+    monkeypatch.setattr(module, "find_all_matches_for_entity_task", _failing_match)
+    entities = [
+        _ent("e1", "Acme Corporation Holdings", text_unit_ids=["t1"]),
+        _ent("e2", "Acme Corporation Holding", text_unit_ids=["t2"]),
+    ]
+    resolver = _fuzzy_pool_resolver(ignore_errors=ignore_errors)
+    if ignore_errors:
+        result, _ = resolver.resolve_graph(entities, [])
+        assert len(result["entities"]) == 2
+    else:
+        with pytest.raises(GraphError, match="Fuzzy matching failed"):
+            resolver.resolve_graph(entities, [])
+
+
 # --------------------------------------------------------------------------- #
 # Stats reduction-rate guards (zero-division branches)
 # --------------------------------------------------------------------------- #

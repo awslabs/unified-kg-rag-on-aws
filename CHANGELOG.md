@@ -399,6 +399,13 @@ Library API (Python callers and custom backends).
   a 100% success rate against a store that was down. A timeout, throttling
   or a 5xx still degrades the one sub-search. OpenSearch errors now log the
   server's reason instead of `info=None` (#249).
+- Graph resolution renames a relationship's `source_name`/`target_name` to
+  the entity its endpoint merged into: an edge extracted as "Acme" kept that
+  name after "Acme" merged into "Acme Inc", and the stale name reached
+  OpenSearch, Neptune and the LightRAG context. A fuzzy-matching worker
+  failure (for example a broken process pool) now fails the stage unless
+  `processing.ignore_errors` is on; it fell back to exact matching with a
+  warning, leaving duplicate entities in a run that reported success (#PR).
 - Community detection gives the same communities at every level in every
   process: `graspologic_native` returns its labels in a per-process hash
   order that set the next level's cluster-graph numbering and the
