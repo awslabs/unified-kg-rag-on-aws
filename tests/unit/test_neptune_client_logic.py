@@ -461,5 +461,72 @@ def test_reset_wakes_requests_waiting_for_a_pooled_connection(
     assert all(neptune_mod.is_connection_lost(e) for e in errors)
 
 
+def test_reset_fails_a_request_whose_write_is_in_flight(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Regression: gremlinpython's close() shuts its executor down while a
+    # request's write is in flight; the write's callback then fails to start
+    # the read ("cannot schedule new futures after shutdown"), the request is
+    # never answered and its thread waits forever (a lost retriever worker,
+    # and an interpreter exit that hangs joining it).
+    import threading
+
+    from gremlin_python.driver.driver_remote_connection import DriverRemoteConnection
+    from gremlin_python.driver.transport import AbstractBaseTransport
+
+    writing = threading.Event()
+    holder: dict[str, Any] = {}
+
+    class _SlowWriteTransport(AbstractBaseTransport):
+        """Its write finishes only once the client's executor is shut down."""
+
+        def connect(self, url: str, headers: Any = None) -> None:
+            pass
+
+        def write(self, message: Any) -> None:
+            writing.set()
+            executor = holder["connection"]._client._executor
+            while not executor._shutdown:
+                threading.Event().wait(0.01)
+
+        def read(self) -> Any:
+            raise AssertionError("no response is ever read")
+
+        def close(self) -> None:
+            pass
+
+        @property
+        def closed(self) -> bool:
+            return False
+
+    connection = DriverRemoteConnection(
+        "ws://127.0.0.1:9/gremlin",
+        "g",
+        pool_size=1,
+        transport_factory=_SlowWriteTransport,
+    )
+    holder["connection"] = connection
+    monkeypatch.setattr(NeptuneClient, "_create_connection", lambda self: connection)
+    client = _client(_config_with_neptune(endpoint="localhost", use_iam=False))
+    g = client.g
+    errors: list[Exception] = []
+
+    def _query() -> None:
+        try:
+            g.V().limit(1).to_list()
+        except Exception as e:  # noqa: BLE001 - asserted below
+            errors.append(e)
+
+    thread = threading.Thread(target=_query, daemon=True)
+    thread.start()
+    assert writing.wait(5)
+    client.reset(g)
+    thread.join(5)
+
+    assert not thread.is_alive()
+    assert len(errors) == 1
+    assert neptune_mod.is_connection_lost(errors[0])
+
+
 def test_a_request_on_a_closed_client_is_a_lost_connection() -> None:
     assert neptune_mod.is_connection_lost(Exception("Client is closed"))

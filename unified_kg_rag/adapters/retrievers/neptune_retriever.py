@@ -371,7 +371,7 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
         # for a pooled connection, which can block in gremlinpython's
         # pool.get(). This bound frees the slot, not the thread: the reset
         # below closes the connection, which wakes a thread blocked on its
-        # pool (NeptuneClient.reset).
+        # pool and fails one whose write was in flight (_close_connection).
         timeout = 2 * self._config.search.store_timeout_seconds
         try:
             async with slots:

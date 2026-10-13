@@ -384,6 +384,13 @@ Library API (Python callers and custom backends).
 - A global-search map batch over the context of a vLLM or llama.cpp model is
   left unrated, as on Bedrock and OpenAI: those servers report it as a plain
   HTTP 400, which failed the whole query (#266).
+- A query whose Neptune write was in flight when another query dropped the
+  connection fails as a lost connection instead of waiting forever.
+  gremlinpython's `close()` shuts its executor down, so the read the write
+  would have started was never scheduled; the retriever's worker thread was
+  lost for good (after `pool_size` such races every graph expansion hung)
+  and the process exit hung joining it. The indexer's requests, which have
+  no timeout, are freed the same way (#PR).
 - Queries that waited on a failed Neptune connection attempt each raise a
   copy of its error; re-raising the one shared error grew its traceback by
   every waiter's frames and kept them in memory (#264).
