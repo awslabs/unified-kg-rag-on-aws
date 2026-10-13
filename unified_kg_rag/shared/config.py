@@ -51,22 +51,24 @@ DOTENV_FILENAME = ".env"
 
 
 def resolve_relative_paths(config: Config, config_path: str | Path) -> None:
-    """Resolve a relative SQLite registry path against ``config_path``'s directory.
+    """Resolve relative SQLite store paths against ``config_path``'s directory.
 
-    The registry must be the same file on every run against the same
-    stores; relative to the working directory, a run started elsewhere would
-    silently use an empty registry. Applies when the registry is SQLite, so a
-    caller that switches the config to it afterwards (``--backend local``
-    over an ``aws`` config file) calls this again.
+    A store must be the same file on every run against it; relative to the
+    working directory, a run started elsewhere would silently use an empty
+    registry or store. Applies to each of the doc-status registry and the
+    graph and vector stores whose kind is SQLite, so a caller that switches
+    the config to it afterwards (``--backend local`` over an ``aws`` config
+    file) calls this again.
     """
-    doc_status = config.providers.doc_status
-    path = Path(doc_status.sqlite_path)
-    if (
-        doc_status.kind == SQLITE
-        and doc_status.sqlite_path != ":memory:"
-        and not path.is_absolute()
-    ):
-        doc_status.sqlite_path = str((Path(config_path).parent / path).resolve())
+    providers = config.providers
+    for section in (providers.doc_status, providers.graph, providers.vector):
+        path = Path(section.sqlite_path)
+        if (
+            section.kind == SQLITE
+            and section.sqlite_path != ":memory:"
+            and not path.is_absolute()
+        ):
+            section.sqlite_path = str((Path(config_path).parent / path).resolve())
 
 
 def load_cli_dotenv(directory: Path | None = None) -> Path | None:
