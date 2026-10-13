@@ -603,7 +603,6 @@ class DriftSearchStrategy(BaseSearchStrategy):
             return []
         graph_query = query.model_copy(deep=True)
         graph_query.query = ""
-        graph_query.entity_focus = []
         graph_query.filters = (graph_query.filters or {}).copy()
         graph_query.filters["id"] = candidate_entity_ids
         return await self._safe_aretrieve(

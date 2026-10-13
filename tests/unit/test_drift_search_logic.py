@@ -360,13 +360,12 @@ async def test_execute_search_iteration_merges_graph_and_document(mocker) -> Non
     out = await strat._execute_search_iteration(SearchQuery(query="q", top_k=7))
     contents = {r.content for r in out}
     assert contents == {"g1", "d1", "d2"}
-    # The graph sub-query is id-filtered and focus-cleared.
+    # The graph sub-query is id-filtered.
     graph_sent = graph.last_query
     document_sent = document.last_query
     assert graph_sent is not None and graph_sent.filters is not None
     assert document_sent is not None
     assert graph_sent.filters["id"] == ["e1"]
-    assert graph_sent.entity_focus == []
     assert document_sent.top_k == 7
 
 

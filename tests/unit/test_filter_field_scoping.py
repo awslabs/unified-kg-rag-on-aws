@@ -165,6 +165,26 @@ async def test_a_list_filter_beyond_max_terms_count_is_rejected(
     assert client.requests == 0
 
 
+@pytest.mark.parametrize("key", ["max_terms_count", "index.max_terms_count"])
+async def test_max_terms_count_is_read_in_either_spelling(
+    config: Config, key: str
+) -> None:
+    # OpenSearch takes "index.max_terms_count" as well; that spelling fell
+    # back to the 65,536 default.
+    config.indexing.opensearch.index_settings[key] = 10
+    client = _CountingOpenSearchClient()
+    retriever = _retriever(config, client)
+    with pytest.raises(InvalidFilterError, match="11 values.*at most 10"):
+        await retriever.aretrieve(
+            SearchQuery(
+                query="supply terms",
+                search_type=SearchType.LEXICAL,
+                filters={"id": [f"t{i}" for i in range(11)]},
+            )
+        )
+    assert client.requests == 0
+
+
 async def test_attribute_key_filters_only_attribute_bearing_indexes(
     config: Config,
 ) -> None:

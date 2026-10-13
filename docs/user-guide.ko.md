@@ -947,7 +947,7 @@ processing:
 | `--suffix` | —(`default`) | 질의할 [인덱스 접미사](#인덱스-접미사). 코퍼스의 `processing.document_parsing.index_value`와 같아야 합니다. |
 | `--enable-thinking` | off | 모델의 단계별 추론 활성화. 항상 추론하는 모델(Claude 4.7+ / 5.x, OpenAI GPT)에는 효과가 없으며, 이런 모델의 추론 강도는 `aws.bedrock.default_effort` / `fast_effort`로 정합니다 |
 | `--search-strategy` | `auto` | `auto`, `drift`, `global`, `local`, `simple`, `mix`, `hybrid`, `naive` |
-| `--search-type` | `hybrid` | `hybrid`, `lexical`, `vector` |
+| `--search-type` | `hybrid` | `hybrid`, `lexical`, `vector`. 어휘 검색은 질문의 앞 150단어(한글·한자·가나는 한 글자를 한 단어로 셈)만 검색하고, 오타 허용은 10단어 이하 질문에만 적용합니다. 벡터 검색은 질문 전체를 임베딩합니다 |
 | `--top-k` | `10` | 최대 검색 결과 수 |
 | `--retrieval-multiplier` | `1` | 검색 깊이 배수 |
 | `--disable-query-processing` | off | 번역과 엔티티 추출 건너뛰기 |

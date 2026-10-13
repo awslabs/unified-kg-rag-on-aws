@@ -64,6 +64,7 @@ ignored, so check the start-up warnings after upgrading.
   `processing.gleaning` (#171), `search.global_search.graph_timeout_seconds`
   (#161), `indexing.neptune.min_entity_importance` (#155) and the
   `SearchQuery.metadata["lightrag_mode"]` alias (#212).
+- `SearchQuery.label_prefixes` is removed; no retriever read it (#260).
 - A filter key that no retriever of the strategy declares raises
   `InvalidFilterError` (#123).
 - `indexing.opensearch.terms_batch_size`, `max_total_clauses` and
@@ -394,6 +395,23 @@ Library API (Python callers and custom backends).
   degraded to no lexical hits. The lexical side now searches the first 100
   words (150 characters of Hangul, Han or Kana text); the vector side still
   embeds the whole question (#258).
+- A question of more than about 10 words no longer fails its lexical search
+  on a large index. Typo tolerance (`fuzziness: AUTO`) expands every term
+  into up to 50 index terms per field, so on an index of 100,000 distinct
+  terms a 15-word question hit Lucene's clause limit: `naive` answered "could
+  not find" and `simple`/`mix` lost their text units. Typos are now tolerated
+  in questions of up to 10 words, with at most 10 expansions per term; a
+  longer question is matched exactly. The lexical side counts a word, or a
+  Hangul, Han or Kana character, as one term: the question gets the first
+  150 and DRIFT's optional keywords the rest of 200. A single Korean name no
+  longer cuts a whole English question to 150 characters (#260).
+- A long list filter other than `id` no longer raises the number of hits.
+  `filters={"type": [...3,000 values]}` asked every index for 3,000 hits and
+  every kNN field for k=3,000; only the `id` list of a fetch by id sets the
+  size now (#260).
+- `indexing.opensearch.index_settings` is read in either spelling:
+  `index.max_terms_count` and `index.max_result_window` fell back to the
+  defaults (65,536 and 10,000) (#260).
 - A query whose filters list many ids sends one search per index. Long list
   filters were split into batches and every combination of the batches
   searched in turn: two 3,000-id filters took 400 sequential requests, three

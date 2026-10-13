@@ -50,7 +50,10 @@ from unified_kg_rag.shared.utils import (
     strip_embedding_fields,
     text_digest,
 )
-from unified_kg_rag.shared.utils.scripts import has_dense_script
+from unified_kg_rag.shared.utils.scripts import (
+    has_dense_script,
+    is_dense_script_char,
+)
 
 logger = get_logger(__name__)
 
@@ -64,11 +67,16 @@ _DEFAULT_MAX_TERMS_COUNT = 65536
 # allows 1,024 clauses per query (indices.query.bool.max_clause_count), and a
 # multi_match makes one per analyzed term per field (up to five fields here),
 # so a long question failed the search (400 "maxClauseCount", or 500
-# too_many_nested_clauses). Dense-script text (Hangul, Han, Kana) analyzes to
-# about a term per character, so it is capped by characters. The vector side
-# still embeds the whole query.
-_MAX_LEXICAL_QUERY_WORDS = 100
-_MAX_LEXICAL_QUERY_DENSE_CHARS = 150
+# too_many_nested_clauses). A term is counted per word, and per character of
+# Hangul, Han or Kana text, which analyzes to about a term per character. The
+# question gets up to 150 terms and the optional keywords what is left of 200;
+# fuzziness rewrites each term into up to max_expansions terms, so it is kept
+# to short queries (entity names, keyword lists) and a longer question is
+# matched exactly. The vector side still embeds the whole query.
+_MAX_LEXICAL_QUERY_TERMS = 150
+_LEXICAL_TERM_BUDGET = 200
+_MAX_FUZZY_QUERY_TERMS = 10
+_FUZZY_MAX_EXPANSIONS = 10
 # Where the reason ends inside a JSON body or a Python repr of one.
 _REASON_END = re.compile(r"[\"'}\]\\\n]")
 
@@ -116,14 +124,30 @@ def _is_timeout(exc: BaseException) -> bool:
     return False
 
 
-def _lexical_query_text(text: str) -> str:
-    """``text`` cut to what one lexical clause set can hold (see the caps)."""
-    words = text.split()
-    if len(words) > _MAX_LEXICAL_QUERY_WORDS:
-        text = " ".join(words[:_MAX_LEXICAL_QUERY_WORDS])
-    if len(text) > _MAX_LEXICAL_QUERY_DENSE_CHARS and has_dense_script(text):
-        text = text[:_MAX_LEXICAL_QUERY_DENSE_CHARS]
-    return text
+def _lexical_query_text(text: str, max_terms: int) -> tuple[str, int]:
+    """``text`` cut to ``max_terms`` terms (see the budget), and its term count."""
+    terms = 0
+    in_word = False
+    for i, ch in enumerate(text):
+        if is_dense_script_char(ch):
+            terms += 1
+            in_word = False
+        elif not ch.isalnum():
+            in_word = False
+        elif not in_word:
+            terms += 1
+            in_word = True
+        if terms > max_terms:
+            return text[:i].rstrip(), max_terms
+    return text, terms
+
+
+def _index_setting(settings: dict[str, Any], name: str, default: int) -> int:
+    """``settings[name]``, also when written ``index.<name>``.
+
+    OpenSearch takes either spelling of an index setting.
+    """
+    return int(settings.get(name, settings.get(f"index.{name}", default)))
 
 
 def _rejected_request(exc: BaseException) -> RequestError | None:
@@ -162,8 +186,8 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         # Hard ceiling on hits per query (OpenSearch index.max_result_window
         # default). Fetch-by-id size may be floored up to the terms-filter size
         # but never beyond this, since the index is created with the default.
-        self._max_result_window = self._opensearch_config.index_settings.get(
-            "max_result_window", 10000
+        self._max_result_window = _index_setting(
+            self._opensearch_config.index_settings, "max_result_window", 10000
         )
         self._embedding_factory = embedding_factory
         # Queries embed with the model and dimension the indexer embeds with
@@ -541,20 +565,22 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         query_vector: list[float] | None,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         size = min(query.top_k * query.retrieval_multiplier, self._max_size)
-        # Fetch-by-id callers (local/global/mix expansion) set top_k=len(ids) and
-        # pass those ids as a terms filter to retrieve every one. Capping size at
-        # max_query_size (default 100) would silently drop ids beyond 100. When
-        # a terms filter is present, floor size at the largest terms-list length
-        # so no filtered id is lost, bounded by max_result_window (the cluster's
-        # hard hits ceiling).
-        largest_terms = self._largest_terms_filter_size(query.filters)
-        if largest_terms > size:
-            size = min(largest_terms, self._max_result_window)
-            if largest_terms > size:
+        # Fetch-by-id callers (local/mix expansion, source resolution) set
+        # top_k=len(ids) and pass those ids as an ``id`` filter to retrieve
+        # every one. Capping size at max_query_size (default 100) would
+        # silently drop ids beyond 100, so size is floored at the id count,
+        # bounded by max_result_window (the cluster's hard hits ceiling). Only
+        # the id list counts: a long list in another filter narrows the hits
+        # rather than naming them, and must not raise size (and kNN k).
+        ids = (query.filters or {}).get("id")
+        wanted = len(ids) if isinstance(ids, list) else 0
+        if wanted > size:
+            size = min(wanted, self._max_result_window)
+            if wanted > size:
                 logger.warning(
                     "A filter lists %s ids, more than the %s hits one search "
                     "returns (max_result_window); the rest are not fetched",
-                    largest_terms,
+                    wanted,
                     size,
                 )
         filters = self._build_filter_clauses(query.filters)
@@ -621,22 +647,25 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         if not query.query or query.query == "*":
             return {"match_all": {}}
 
-        text = _lexical_query_text(query.query)
+        text, terms = _lexical_query_text(query.query, _MAX_LEXICAL_QUERY_TERMS)
         main_query: dict[str, Any] = {"multi_match": {"query": text, "fields": fields}}
         # AUTO allows one edit on a 3-5 character term. On Latin words that
         # absorbs a typo; on Hangul/Han/Kana, where one character is a whole
         # syllable or morpheme, it matches a different word ("가나라상사" for
-        # "가나다상사"). A query containing such text is matched exactly.
-        if not has_dense_script(text):
+        # "가나다상사"). A query containing such text is matched exactly, as
+        # is a long one (see _MAX_FUZZY_QUERY_TERMS).
+        if not has_dense_script(text) and terms <= _MAX_FUZZY_QUERY_TERMS:
             main_query["multi_match"]["fuzziness"] = "AUTO"
+            main_query["multi_match"]["max_expansions"] = _FUZZY_MAX_EXPANSIONS
+            terms *= _FUZZY_MAX_EXPANSIONS
 
-        if not query.optional_keywords:
+        optional_text, _ = _lexical_query_text(
+            " ".join(query.optional_keywords), _LEXICAL_TERM_BUDGET - terms
+        )
+        if not optional_text:
             return main_query
 
-        optional_keywords_query = _lexical_query_text(" ".join(query.optional_keywords))
-        should_clause = {
-            "multi_match": {"query": optional_keywords_query, "fields": fields}
-        }
+        should_clause = {"multi_match": {"query": optional_text, "fields": fields}}
 
         return {"bool": {"must": [main_query], "should": [should_clause]}}
 
@@ -707,19 +736,6 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
 
         return clauses
 
-    @staticmethod
-    def _largest_terms_filter_size(filters: dict[str, Any] | None) -> int:
-        """Length of the largest list-valued (terms) filter, else 0.
-
-        Used to floor the query size so a fetch-by-id (ids passed as a terms
-        filter with top_k=len(ids)) is never truncated below the number of ids
-        requested.
-        """
-        if not filters:
-            return 0
-        list_lengths = [len(v) for v in filters.values() if isinstance(v, list)]
-        return max(list_lengths, default=0)
-
     def _check_terms_filter_sizes(self, filters: dict[str, Any] | None) -> None:
         """Reject a list filter longer than one ``terms`` query may be.
 
@@ -731,10 +747,10 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         Raises:
             InvalidFilterError: A list filter has more values than that.
         """
-        limit = int(
-            self._opensearch_config.index_settings.get(
-                "max_terms_count", _DEFAULT_MAX_TERMS_COUNT
-            )
+        limit = _index_setting(
+            self._opensearch_config.index_settings,
+            "max_terms_count",
+            _DEFAULT_MAX_TERMS_COUNT,
         )
         for key, value in (filters or {}).items():
             if isinstance(value, list) and len(value) > limit:
