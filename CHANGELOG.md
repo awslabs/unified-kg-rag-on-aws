@@ -279,6 +279,10 @@ Library API (Python callers and custom backends).
   aws-cdk-lib pin (#241).
 
 ### Fixed
+- `ragas` evaluation counts each retrieved context once per batch. With
+  `context_precision` selected, the count-capped selection walked the
+  contexts again, which repeated every CountTokens call once a batch had more
+  than 1,024 contexts (#PR).
 - A failed UMAP reduction of the visualization layout now falls back to
   the seeded spring layout and records `"layout_degraded": true`, as the user
   guide documents; it silently returned a PCA layout marked as not degraded
