@@ -68,6 +68,11 @@ Context keys (all optional; sensible defaults shown):
                                        listed
   alarm_email         None             subscribe an email to the alarm topic
   enable_cdk_nag      False            run cdk-nag AwsSolutions checks at synth
+  enable_cloudwatch_tracing False      ADOT collector sidecar that sends the app's
+                                       OpenTelemetry traces to CloudWatch
+                                       (X-Ray OTLP endpoint); needs Transaction
+                                       Search on in the account/region and an
+                                       image built with the `otel` extra
 
   # --- Compute sizing (Fargate) ---
   fargate_cpu         2048             task vCPU units (in-task ProcessPool
@@ -231,6 +236,14 @@ class DeploymentConfig:
     # guardrail stack warn bring-your-own users who set only
     # `guardrail_identifier` that a baseline guardrail is now created as well.
     create_guardrail_explicit: bool = False
+    # Opt-in ADOT collector sidecar exporting traces to CloudWatch (X-Ray OTLP
+    # endpoint). Off: the templates are exactly as without the feature.
+    enable_cloudwatch_tracing: bool = False
+
+    @property
+    def collector_cache_prefix(self) -> str:
+        """ECR pull-through cache prefix the collector image is pulled through."""
+        return f"{self.prefix}-ecr-public"
 
     @property
     def is_dev(self) -> bool:
@@ -306,7 +319,7 @@ class DeploymentConfig:
         fargate_cpu = as_int("fargate_cpu", 2048)
         fargate_memory = as_int("fargate_memory", 8192)
         _check_fargate_size(fargate_cpu, fargate_memory)
-        return cls(
+        config = cls(
             env_name=env_name,
             bedrock_region=ctx("bedrock_region"),
             vpc_id=ctx("vpc_id"),
@@ -367,4 +380,15 @@ class DeploymentConfig:
             cost_center=str(ctx("cost_center", "unified-kg-rag-on-aws")),
             removal_destroy=as_bool("removal_destroy", default=is_dev),
             create_guardrail_explicit=ctx("create_guardrail") is not None,
+            enable_cloudwatch_tracing=as_bool(
+                "enable_cloudwatch_tracing", default=False
+            ),
         )
+        # ECR limits a pull-through cache repository prefix to 30 characters.
+        if config.enable_cloudwatch_tracing and len(config.collector_cache_prefix) > 30:
+            raise ValueError(
+                "enable_cloudwatch_tracing: env_name is too long for the "
+                f"collector's ECR pull-through cache prefix "
+                f"'{config.collector_cache_prefix}' (at most 30 characters)"
+            )
+        return config

@@ -77,7 +77,20 @@ def _synth_errors(context: dict[str, Any], outdir: Path) -> list[str]:
     return errors
 
 
-@pytest.mark.parametrize("context", [{}, _PROD_HARDENED], ids=["dev", "prod-hardened"])
+_TRACING = {"enable_cloudwatch_tracing": "true"}
+
+
+@pytest.mark.parametrize(
+    "context",
+    [
+        {},
+        _PROD_HARDENED,
+        _TRACING,
+        {**_PROD_HARDENED, **_TRACING},
+        {**_TRACING, "network_mode": "public"},
+    ],
+    ids=["dev", "prod-hardened", "tracing", "prod-hardened-tracing", "public-tracing"],
+)
 def test_concrete_account_synth_has_no_nag_errors(
     context: dict[str, Any], tmp_path: Path
 ) -> None:

@@ -695,6 +695,8 @@ the CLI prints one line naming the variable and exits 2.
 | `S3_BUCKET_NAME` | `aws.s3.bucket_name` | |
 | `GRAPHRAG_DOC_STATUS_TABLE` | `aws.dynamodb.table_name` | |
 | `GRAPHRAG_DOC_STATUS_CREATE_TABLE` | `aws.dynamodb.create_table_if_missing` | |
+| `GRAPHRAG_OBSERVABILITY_ENABLED` | `observability.enabled` | |
+| `GRAPHRAG_OBSERVABILITY_BACKEND` | `observability.backend` | `none`, `otlp`, `langfuse` or `phoenix`. |
 | `LOG_LEVEL` | `logging.level` | |
 | `LOG_FORMAT` | `logging.log_format` | |
 | `LOG_TO_FILE` | `logging.log_to_file` | |
@@ -731,7 +733,10 @@ The CDK compute stack injects `AWS_REGION`, `BEDROCK_REGION`,
 `GRAPHRAG_DOC_STATUS_TABLE`, `GRAPHRAG_DOC_STATUS_CREATE_TABLE=false` (the
 table is IaC-managed and the task role cannot create tables), `LOG_FORMAT`, and,
 when a guardrail is deployed, `BEDROCK_GUARDRAIL_IDENTIFIER` (and
-`BEDROCK_GUARDRAIL_VERSION` when `guardrail_version` is set). Incremental
+`BEDROCK_GUARDRAIL_VERSION` when `guardrail_version` is set). With
+`enable_cloudwatch_tracing` it also injects `GRAPHRAG_OBSERVABILITY_ENABLED=true`,
+`GRAPHRAG_OBSERVABILITY_BACKEND=otlp`, `OTEL_EXPORTER_OTLP_ENDPOINT` (the
+collector sidecar) and `OTEL_RESOURCE_ATTRIBUTES`. Incremental
 indexing still needs `aws.dynamodb.enabled: true` in the config file.
 
 ### 2.11 `observability` — OpenTelemetry tracing
@@ -831,9 +836,13 @@ becomes OpenTelemetry's global tracer provider, which can be set only once:
 after a later configuration with different settings, the package's spans use
 the new exporter, but spans that other libraries emit through the global
 OpenTelemetry API are dropped. For CloudWatch, run an ADOT or
-OpenTelemetry Collector next to the task and use `backend: otlp` (recipe in
-the [runbook](operations.md#observability)). Local Langfuse and Phoenix
-recipes are there too.
+OpenTelemetry Collector next to the task and use `backend: otlp`; on the CDK
+stacks, `-c enable_cloudwatch_tracing=true` adds that collector and sets the
+backend (recipe, Transaction Search and the Bedrock invocation-logging
+backstop in the
+[runbook](operations.md#cloudwatch-through-the-adot-collector-sidecar)). Local
+Langfuse and Phoenix recipes are in the [runbook](operations.md#observability)
+too.
 
 ---
 

@@ -280,6 +280,13 @@ Library API (Python callers and custom backends).
 - CDK context keys `opensearch_master_instance`, `flow_log_retention_days`
   (#157), `sfn_timeout_hours`, `opensearch_volume_gib` and
   `guardrail_version` (#211).
+- CDK context key `enable_cloudwatch_tracing` (off by default): an ADOT
+  collector sidecar sends the app's traces to CloudWatch (X-Ray OTLP
+  endpoint, Transaction Search), with X-Ray write actions on the task role,
+  an ECR pull-through cache for the collector image and, in private mode, an
+  `xray` VPC endpoint; `GRAPHRAG_OBSERVABILITY_ENABLED` /
+  `GRAPHRAG_OBSERVABILITY_BACKEND` overrides; and a runbook recipe with
+  Bedrock model invocation logging as the account-level backstop (#PR).
 
 ### Changed
 - A custom vector indexer's `read_claims` no longer has to tag each claim
