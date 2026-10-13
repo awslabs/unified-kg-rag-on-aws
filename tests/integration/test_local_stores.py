@@ -29,6 +29,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
+from gremlin_python.driver.client import Client
 from gremlin_python.process.graph_traversal import __
 from opensearchpy.exceptions import NotFoundError
 
@@ -224,6 +225,24 @@ def _vector_entity_count(vector_indexer) -> int:
         vector_indexer.opensearch_config.entities_index_prefix, _SUFFIX
     )
     return int(vector_indexer.opensearch_client.client.count(index=alias)["count"])
+
+
+def test_gremlin_server_indexes_the_id_property(local_config: Config) -> None:
+    # Every indexer write looks its vertex or edge up by "id" first; without
+    # an index TinkerGraph scans the whole graph for each lookup.
+    neptune = local_config.aws.neptune
+    gremlin = Client(f"ws://{neptune.endpoint}:{neptune.port}/gremlin", "g")
+    try:
+        keys = (
+            gremlin.submit(
+                "[graph.getIndexedKeys(Vertex.class), graph.getIndexedKeys(Edge.class)]"
+            )
+            .all()
+            .result()
+        )
+    finally:
+        gremlin.close()
+    assert [set(k) for k in keys] == [{"id"}, {"id"}]
 
 
 def test_graph_round_trip(local_config: Config, graph_indexer) -> None:

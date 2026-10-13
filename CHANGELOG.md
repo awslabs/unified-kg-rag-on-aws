@@ -356,6 +356,12 @@ Library API (Python callers and custom backends).
   `docker build` is unchanged. When public.ecr.aws rate-limits the CI
   `docker` job (429), the job pulls the same digest from Docker Hub instead
   of retrying a quota that does not recover within minutes (#257).
+- Local mode: `docker/compose.local.yaml`'s Gremlin Server indexes the
+  `id` property of vertices and edges at start-up. Every graph write looks
+  its vertex or edge up by `id` first, which scanned the whole in-memory
+  graph: a full build of 10,000 entities and their communities takes about
+  20 s instead of 60 s, and 5,000 relationship writes about 5 s instead of
+  28 s. Restart the stack (`down` and `up`) to pick it up (#PR).
 
 ### Fixed
 - Queries that waited on a failed Neptune connection attempt each raise a
