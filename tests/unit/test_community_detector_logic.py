@@ -176,6 +176,81 @@ class TestBasePartition:
         assert "lonely" in set().union(*partition)
 
 
+class TestCanonicalOrder:
+    """Leiden's labels come from a Rust HashMap whose order changes per process;
+    nothing downstream may depend on it."""
+
+    @staticmethod
+    def _graph() -> nx.Graph:
+        base = nx.ring_of_cliques(8, 4)
+        g = nx.relabel_nodes(base, {n: f"e{n:02d}" for n in base.nodes})
+        for n in g.nodes:
+            g.nodes[n]["name"] = n
+        return g
+
+    @staticmethod
+    def _shuffled_leiden(monkeypatch: pytest.MonkeyPatch) -> None:
+        """Return Leiden's result reversed and with relabelled communities."""
+        from unified_kg_rag.adapters.ingestion import community_detector as module
+
+        def shuffled(graph: nx.Graph, **kwargs: Any) -> dict[Any, int]:
+            items = list(leiden(graph, **kwargs).items())
+            return {node: 1000 - label for node, label in reversed(items)}
+
+        monkeypatch.setattr(module, "leiden", shuffled)
+
+    def test_partition_order_ignores_leiden_label_order(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        cd = _detector(auto_resolution=False)
+        expected = cd._get_base_partition(self._graph())
+        self._shuffled_leiden(monkeypatch)
+        assert cd._get_base_partition(self._graph()) == expected
+
+    def test_hierarchy_ignores_leiden_label_order(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def snapshot() -> dict[str, tuple[int, str | None, str]]:
+            cd = _detector(auto_resolution=False, min_community_size=1)
+            cd(self._graph())
+            return {
+                cid: (c.level, c.parent_id, c.label)
+                for cid, c in cd.all_communities.items()
+            }
+
+        expected = snapshot()
+        assert max(level for level, _, _ in expected.values()) >= 1
+        self._shuffled_leiden(monkeypatch)
+        assert snapshot() == expected
+
+    def test_small_community_ties_go_to_the_lowest_label(self) -> None:
+        cd = _detector()
+        g = nx.Graph()
+        # z's first neighbor is in community 1, its second in community 0.
+        g.add_edge("z", "c")
+        g.add_edge("z", "a")
+        g.add_edge("a", "b")
+        g.add_edge("c", "d")
+        communities = {0: {"a", "b"}, 1: {"c", "d"}, 2: {"z"}}
+        merged = cd._merge_small_communities(communities, g, min_size=2)
+        assert merged[0] == {"a", "b", "z"}
+
+    def test_leiden_failure_raises_instead_of_truncating(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from unified_kg_rag.adapters.ingestion import community_detector as module
+
+        def failing_above_level_0(graph: nx.Graph, **kwargs: Any) -> dict[Any, int]:
+            if all(isinstance(n, int) for n in graph.nodes):
+                raise RuntimeError("native crash")
+            return leiden(graph, **kwargs)
+
+        monkeypatch.setattr(module, "leiden", failing_above_level_0)
+        cd = _detector(auto_resolution=False, min_community_size=1)
+        with pytest.raises(GraphError, match="Leiden partitioning failed.*native"):
+            cd(self._graph())
+
+
 class TestOptimalResolution:
     def test_selects_resolution_from_candidates(self) -> None:
         cd = _detector(auto_resolution=True)
@@ -1229,3 +1304,14 @@ class TestLeidenWrapper:
     ) -> None:
         with pytest.raises(ValueError):
             leiden(graph, **kwargs)
+
+
+def test_random_state_zero_is_rejected_at_config_time() -> None:
+    # graspologic_native rejects a seed of 0; the stage used to swallow that and
+    # write no communities.
+    from pydantic import ValidationError
+
+    from unified_kg_rag.domain.models.config import CommunityDetectionConfig
+
+    with pytest.raises(ValidationError):
+        CommunityDetectionConfig(random_state=0)

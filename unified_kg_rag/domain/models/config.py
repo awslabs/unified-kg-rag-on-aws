@@ -1358,10 +1358,14 @@ class CommunityDetectionConfig(BaseModel):
         default=1.0,
         gt=0.0,
         le=10.0,
-        description="Community detection resolution parameter (higher = fewer communities)",
+        description="Leiden modularity resolution: higher gives more, smaller "
+        "communities; lower gives fewer, larger ones.",
     )
     random_state: int = Field(
-        default=42, description="Random seed for reproducible results"
+        default=42,
+        ge=1,
+        description="Leiden random seed (a positive integer; the native Leiden "
+        "rejects 0). The same graph and seed give the same communities.",
     )
     max_levels: int = Field(default=5, ge=1, description="Maximum hierarchy levels")
     trials: int = Field(

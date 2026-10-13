@@ -399,6 +399,17 @@ Library API (Python callers and custom backends).
   a 100% success rate against a store that was down. A timeout, throttling
   or a 5xx still degrades the one sub-search. OpenSearch errors now log the
   server's reason instead of `info=None` (#249).
+- Community detection gives the same communities at every level in every
+  process: `graspologic_native` returns its labels in a per-process hash
+  order that set the next level's cluster-graph numbering and the
+  small-community merge order, so level-1+ communities, their ids and their
+  reports could change between two runs on the same graph. A Leiden failure
+  now fails the stage with a `GraphError` naming the graph size instead of
+  being logged and silently truncating the hierarchy (or leaving a
+  misleading "Communities must be detected" error), and
+  `graph.community_detection.random_state: 0`, which Leiden rejects, fails
+  config validation. The `resolution` description had its direction
+  inverted: higher gives more, smaller communities (#PR).
 - `run-eval --eval-data-path` naming a file that does not exist exits 2 with
   `Error: invalid evaluation dataset: ...`, as the user guide documents and
   as an unreadable or invalid dataset does; it exited 1 (#230).

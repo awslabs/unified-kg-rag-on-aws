@@ -501,6 +501,8 @@ LLM 단계는 Bedrock I/O가 병목이므로 동시성을 CPU 수보다 훨씬 �
 | 키 | 기본값 | 역할과 변경 시점 |
 |---|---|---|
 | `graph.community_detection.enabled` | `true` | Leiden 군집화와 커뮤니티 리포트 생성입니다. GraphRAG `global`/`drift`에 필요합니다. LightRAG만 쓰는 가벼운 수집이라면 `false`로 두세요. |
+| `graph.community_detection.resolution` | `1.0` | Leiden 해상도입니다. 높을수록 커뮤니티가 많아지고 작아지며(리포트 LLM 호출도 늘어남), 낮을수록 적어지고 커집니다. |
+| `graph.community_detection.random_state` | `42` | Leiden 시드로, 양의 정수입니다. 같은 그래프와 시드에서는 같은 커뮤니티가 나옵니다. |
 | `graph.community_detection.auto_resolution` | `false` | `true`이면 계층마다 `auto_resolution_candidates`를 차례로 시험해 모듈성이 가장 높은 해상도를 고릅니다. 그렇지 않으면 `resolution`(`1.0`)을 씁니다. |
 | `graph.community_detection.auto_resolution_max_nodes` | `10000` | 노드 수가 이보다 많으면 해상도 탐색을 건너뛰고 `resolution`을 씁니다. |
 | `graph.community_detection.max_levels` | `5` | 커뮤니티 계층의 최대 깊이입니다. |
