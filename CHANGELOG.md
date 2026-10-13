@@ -198,6 +198,12 @@ Library API (Python callers and custom backends).
   `execute_with_fallback` no longer takes `batch_func` (sync) or
   `run_config` (#174, #216); `create_robust_xml_output_parser` requires
   `output_tags` (#174).
+- `unified_kg_rag.visualization` exports only `GraphVisualizationManager`;
+  import the renderers from `unified_kg_rag.adapters.renderers` and the
+  embedder and reducer from `unified_kg_rag.visualization.embeddings` (#246).
+- `LocalSearchStrategy` no longer takes an `entity_focus_multiplier`
+  argument; nothing passed it, so it was always 2, now the class constant
+  `ENTITY_CANDIDATES_PER_FOCUS` (#247).
 
 ### Upgrading from pre-release builds
 - Doc-status registries written before source scopes existed are migrated in
@@ -265,12 +271,6 @@ Library API (Python callers and custom backends).
 - `search.fusion.fusion_weights` defaults to `{}`: every bucket weighs 1.0,
   as the 15 listed 1.0 entries did, and weighted fusion no longer warns
   about a bucket without a weight on every query (#258).
-- `unified_kg_rag.visualization` exports only `GraphVisualizationManager`;
-  import the renderers from `unified_kg_rag.adapters.renderers` and the
-  embedder and reducer from `unified_kg_rag.visualization.embeddings` (#246).
-- `LocalSearchStrategy` no longer takes an `entity_focus_multiplier`
-  argument; nothing passed it, so it was always 2, now the class constant
-  `ENTITY_CANDIDATES_PER_FOCUS` (#247).
 - The `graph_analysis` stage no longer computes degree, betweenness and
   PageRank centrality, which no later stage read (the visualization
   computes its own) and which took minutes on a graph of tens of thousands
