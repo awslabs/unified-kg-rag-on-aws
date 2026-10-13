@@ -9,7 +9,9 @@ from pathlib import Path
 import pytest
 import yaml
 
+from unified_kg_rag.domain.models.config import ObservabilityBackend
 from unified_kg_rag.shared.config import ConfigLoader
+from unified_kg_rag.shared.exceptions import ConfigurationError
 
 pytestmark = pytest.mark.unit
 
@@ -20,6 +22,8 @@ def _clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "GRAPHRAG_DOC_STATUS_TABLE",
         "GRAPHRAG_DOC_STATUS_CREATE_TABLE",
         "GRAPHRAG_SOURCE_SCOPE",
+        "GRAPHRAG_OBSERVABILITY_ENABLED",
+        "GRAPHRAG_OBSERVABILITY_BACKEND",
     ):
         monkeypatch.delenv(var, raising=False)
 
@@ -76,6 +80,25 @@ def test_guardrail_version_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("BEDROCK_GUARDRAIL_VERSION", "3")
     cfg = ConfigLoader().load_config()
     assert cfg.aws.bedrock.guardrail.version == "3"
+
+
+def test_observability_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The compute stack turns tracing on for the ADOT collector sidecar; the
+    # backend must be the enum member (its .value is logged), not a string.
+    monkeypatch.setenv("GRAPHRAG_OBSERVABILITY_ENABLED", "true")
+    monkeypatch.setenv("GRAPHRAG_OBSERVABILITY_BACKEND", "otlp")
+    observability = ConfigLoader().load_config().observability
+    assert observability.enabled is True
+    assert observability.backend is ObservabilityBackend.OTLP
+    assert observability.capture_content is False
+
+
+def test_invalid_observability_backend_from_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GRAPHRAG_OBSERVABILITY_BACKEND", "cloudwatch")
+    with pytest.raises(ConfigurationError, match="GRAPHRAG_OBSERVABILITY_BACKEND"):
+        ConfigLoader().load_config()
 
 
 def test_unset_env_keeps_defaults() -> None:

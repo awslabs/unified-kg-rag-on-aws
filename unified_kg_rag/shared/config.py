@@ -219,6 +219,11 @@ class ConfigLoader:
                 "dynamodb",
                 "create_table_if_missing",
             ),
+            # Injected by the CDK compute stack when enable_cloudwatch_tracing
+            # adds the ADOT collector sidecar, so the baked-in image config can
+            # stay tracing-free.
+            "GRAPHRAG_OBSERVABILITY_ENABLED": ("observability", "enabled"),
+            "GRAPHRAG_OBSERVABILITY_BACKEND": ("observability", "backend"),
         }
 
         for env_var, config_path in env_overrides.items():
@@ -299,8 +304,13 @@ class ConfigLoader:
             # to take (pydantic >= 2.14); it is one, hence the cast.
             field = type(current).model_fields[final_key]
             field_type = cast("TypeForm[Any]", Annotated[field.annotation, field])
-            TypeAdapter(field_type).validate_python(parsed_value)
-            setattr(current, final_key, parsed_value)
+            # The validated value is set, so an enum field holds the member
+            # (``observability.backend``), not the raw string.
+            setattr(
+                current,
+                final_key,
+                TypeAdapter(field_type).validate_python(parsed_value),
+            )
 
     def reload_config(self) -> Config:
         self._config = None

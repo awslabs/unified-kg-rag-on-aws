@@ -82,6 +82,8 @@ _CONFIG_ENV_OVERRIDES = (
     "GRAPHRAG_DOC_STATUS_TABLE",
     "GRAPHRAG_SOURCE_SCOPE",
     "GRAPHRAG_DOC_STATUS_CREATE_TABLE",
+    "GRAPHRAG_OBSERVABILITY_ENABLED",
+    "GRAPHRAG_OBSERVABILITY_BACKEND",
 )
 # Other environment the package reads: run-ingestion argument defaults, and
 # LangSmith tracing (every name langsmith accepts), which would upload test
