@@ -21,7 +21,7 @@ from unified_kg_rag.adapters.aws.neptune import NeptuneClient
 from unified_kg_rag.adapters.retrieval.base import is_fatal_retrieval_error
 from unified_kg_rag.domain.models import Config
 from unified_kg_rag.shared import AWSServiceError, StoreConnectionError
-from unified_kg_rag.shared.exceptions import StoreTimeoutError
+from unified_kg_rag.shared.exceptions import StoreAccessDeniedError, StoreTimeoutError
 
 pytestmark = pytest.mark.unit
 
@@ -307,6 +307,35 @@ def test_callers_waiting_on_a_failed_attempt_share_its_failure(mocker) -> None:
     with pytest.raises(StoreConnectionError):
         client.connection
     assert len(attempts) == 2
+
+
+def _traceback_depth(exc: BaseException) -> int:
+    depth, tb = 0, exc.__traceback__
+    while tb is not None:
+        depth, tb = depth + 1, tb.tb_next
+    return depth
+
+
+def test_each_waiter_gets_its_own_copy_of_the_failure() -> None:
+    # Regression: every waiter re-raised the one shared error, which grew its
+    # traceback by the waiter's frames each time and kept them alive.
+    client = _client(_config_with_neptune(endpoint="localhost", use_iam=False))
+    try:
+        raise StoreAccessDeniedError("Neptune denied", reason="synthetic")
+    except StoreAccessDeniedError as e:
+        failure = e
+    client._attempts, client._attempt_error = 1, failure
+    depth = _traceback_depth(failure)
+
+    raised = []
+    for _ in range(5):
+        with pytest.raises(StoreAccessDeniedError) as exc:
+            client._connected(attempts_seen=0)
+        raised.append(exc.value)
+
+    assert _traceback_depth(failure) == depth
+    assert all(e is not failure and e.__cause__ is failure for e in raised)
+    assert {(str(e), e.reason) for e in raised} == {("Neptune denied", "synthetic")}
 
 
 # --- _NeptuneTransport.connect -----------------------------------------------

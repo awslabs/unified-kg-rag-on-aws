@@ -1,6 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
+import copy
 import threading
 from collections.abc import Callable
 from functools import cached_property
@@ -309,8 +310,12 @@ class NeptuneClient:
         """
         if self._connection is not None and not self._connection.is_closed():
             return self._connection
-        if self._attempts != attempts_seen and self._attempt_error is not None:
-            raise self._attempt_error
+        error = self._attempt_error
+        if self._attempts != attempts_seen and error is not None:
+            # A copy per waiter (same type and message): re-raising the shared
+            # error appended every waiter's frames to its traceback and kept
+            # them alive with it.
+            raise copy.copy(error) from error
         logger.debug("Establishing new Neptune connection")
         try:
             self._connection, self._g = self._create_connection(), None

@@ -356,6 +356,9 @@ Library API (Python callers and custom backends).
   of retrying a quota that does not recover within minutes (#257).
 
 ### Fixed
+- Queries that waited on a failed Neptune connection attempt each raise a
+  copy of its error; re-raising the one shared error grew its traceback by
+  every waiter's frames and kept them in memory (#PR).
 - The text-units section is no longer empty for a corpus translated into
   five or more languages: its lexical search covers one field per
   language, and the 200-term budget made more clauses than OpenSearch
