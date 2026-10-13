@@ -30,12 +30,13 @@ def _result(
     score: float = 0.5,
     source: str | None = None,
     metadata: dict | None = None,
+    retriever_type: str = "document",
 ) -> RetrievalResult:
     return RetrievalResult(
         content=content,
         score=score,
         source=source,
-        retriever_type="document",
+        retriever_type=retriever_type,
         metadata=metadata or {},
     )
 
@@ -162,10 +163,19 @@ def test_summarize_results_empty_returns_placeholder() -> None:
 
 def test_summarize_results_community_vs_item_formatting() -> None:
     strat = _bare_strategy()
+    # The real index names, as OpenSearchRetriever records them.
     community = _result(
-        "C" * 300, score=0.9, metadata={"_search_index": "community_reports-dev"}
+        "C" * 300,
+        score=0.9,
+        metadata={"_search_index": "graphrag-community-reports-dev"},
+        retriever_type="community",
     )
-    item = _result("I" * 300, score=0.1, metadata={"_search_index": "text_units-dev"})
+    item = _result(
+        "I" * 300,
+        score=0.1,
+        metadata={"_search_index": "graphrag-text-units-dev"},
+        retriever_type="text",
+    )
     out = strat._summarize_results([item, community])
     lines = out.split("\n")
     # Sorted by score desc -> community (0.9) first. Both community and item are

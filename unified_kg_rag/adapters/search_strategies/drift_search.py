@@ -552,12 +552,13 @@ class DriftSearchStrategy(BaseSearchStrategy):
         if not results:
             return "No information gathered yet. Start by exploring broad topics related to the original query."
 
-        sorted_results = sorted(results, key=lambda x: x.score or 0.0, reverse=True)
+        sorted_results = sorted(results, key=lambda x: x.score, reverse=True)
         summaries = []
         for result in sorted_results:
-            if result.metadata and "community_reports" in result.metadata.get(
-                "_search_index", ""
-            ):
+            # By type, not index name: the real prefix is
+            # "graphrag-community-reports", which never contained
+            # "community_reports", so every report was labelled "Item:".
+            if result.retriever_type == SectionType.COMMUNITY.value:
                 summaries.append(
                     f"Community: {result.content[: self.drift_config.summary_char_limit]}..."
                 )

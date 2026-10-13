@@ -306,6 +306,10 @@ Library API (Python callers and custom backends).
   answer's polarity, as it already did for `yes`/`no`. Such a gold was
   matched as a substring, so `예` scored 1.0 against `아니요, ... 예외 ...`
   (#246).
+- DRIFT's query-refinement summary labels community reports `Community:`
+  again. It matched the index name against `community_reports`, which the
+  real `graphrag-community-reports` prefix never contains, so every report
+  was labelled `Item:` (#PR).
 - `search.fusion.method: weighted` no longer logs three "no configured
   weight" warnings per query. The default `fusion_weights` now name the
   buckets the strategies emit (local's `relationships`,
