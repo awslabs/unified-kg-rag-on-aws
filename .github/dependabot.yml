@@ -45,6 +45,15 @@ updates:
       - dependency-name: "cdk-nag"
         versions: [">=3.0.0"]
 
+      # Both repeated from the /iac entry for the same reason as cdk-nag. jsii
+      # (pulled in by aws-cdk-lib) pins typeguard==2.13.3, and aws-cdk-lib pins
+      # aws-cdk-cloud-assembly-schema below 55, so these bumps cannot resolve.
+      # Drop both when the newest aws-cdk-lib/jsii admit them.
+      - dependency-name: "typeguard"
+        versions: [">=3.0.0"]
+      - dependency-name: "aws-cdk-cloud-assembly-schema"
+        versions: [">=55.0.0"]
+
   # CDK app. Kept out of the root lock on purpose: it is deployment tooling that
   # ships nothing and shares no runtime with the package, so keeping it separate
   # avoids coupling the app's resolution to the CDK dependency tree (notably
@@ -74,6 +83,13 @@ updates:
       # entry as part of that migration.
       - dependency-name: "cdk-nag"
         versions: [">=3.0.0"]
+      # jsii pins typeguard==2.13.3 and aws-cdk-lib pins
+      # aws-cdk-cloud-assembly-schema below 55: a bump of either alone cannot
+      # resolve. Drop these when the newest aws-cdk-lib/jsii admit them.
+      - dependency-name: "typeguard"
+        versions: [">=3.0.0"]
+      - dependency-name: "aws-cdk-cloud-assembly-schema"
+        versions: [">=55.0.0"]
 
   # Workflow actions are pinned to commit SHAs (see .github/workflows/*.yml), so
   # they are invisible to every other update path.
