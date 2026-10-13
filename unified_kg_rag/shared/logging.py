@@ -40,6 +40,13 @@ _SHARED_PROCESSORS: list[structlog.types.Processor] = [
 ]
 
 
+# ``extra`` keys that ``logging.Logger.makeRecord`` refuses (KeyError), minus
+# the logging kwargs ``render_to_log_kwargs`` passes separately.
+_RESERVED_RECORD_KEYS = (
+    set(vars(logging.LogRecord("", 0, "", 0, "", (), None))) | {"message", "asctime"}
+) - set(structlog.stdlib.LOG_KWARG_NAMES)
+
+
 def _to_stdlib(logger: Any, method: str, event_dict: structlog.types.EventDict) -> Any:
     """Hand the event to stdlib logging, in the form its handlers expect.
 
@@ -47,10 +54,14 @@ def _to_stdlib(logger: Any, method: str, event_dict: structlog.types.EventDict) 
     the whole event dict. Otherwise (library mode) the record carries the
     message as ``msg`` and the fields as ``extra``, so a host handler's own
     formatter prints the plain message, not a dict repr. Decided per call:
-    loggers cached before ``setup_logging`` switch too.
+    loggers cached before ``setup_logging`` switch too. A field named like a
+    ``LogRecord`` attribute (a host binding ``name`` or ``process`` with
+    structlog.contextvars) is passed with a trailing ``_``.
     """
     if LoggingSetup._handlers:
         return ProcessorFormatter.wrap_for_formatter(logger, method, event_dict)
+    for key in _RESERVED_RECORD_KEYS & event_dict.keys():
+        event_dict[f"{key}_"] = event_dict.pop(key)
     return structlog.stdlib.render_to_log_kwargs(logger, method, event_dict)
 
 

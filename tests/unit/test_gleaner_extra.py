@@ -391,6 +391,48 @@ class TestCorrectionIssues:
         )
         assert rel.type == "EMPLOYS"
 
+    def test_correction_and_parse_logs_omit_corpus_names(
+        self, gleaner, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # Gleaning is on by default; its INFO/WARNING records used to carry
+        # relationship endpoint names and a 250-char model-output preview.
+        rel = Relationship(
+            id="r1",
+            short_id="r1",
+            source_id="e1",
+            target_id="e2",
+            source_name="Quokkasecret",
+            target_name="Zebrapassword",
+            type="EMPLOYS",
+        )
+        caplog.set_level(logging.INFO, logger=gleaner_module.__name__)
+        gleaner._parse_refinement_output(
+            self._plan(
+                self._relationship_correction(
+                    source="Quokkasecret",
+                    target="Zebrapassword",
+                    corrected_type="LOCATED_IN",
+                ),
+                self._relationship_correction(
+                    source="Quokkasecret", target="Nobodysecret", corrected_type="X"
+                ),
+            ),
+            self.UNIT,
+            GleaningIndex([], [rel]),
+        )
+        assert rel.type == "LOCATED_IN"
+        gleaner._parse_refinement_output(
+            ["Quokkasecret payroll"], self.UNIT, GleaningIndex([], [])
+        )
+        info = "\n".join(
+            r.getMessage() for r in caplog.records if r.levelno >= logging.INFO
+        )
+        assert "Applied RELATIONSHIP_CORRECTION to 'r1'" in info
+        assert "Dropping RELATIONSHIP_CORRECTION" in info
+        assert "Could not extract a valid dictionary-based plan" in info
+        for fragment in ("Quokkasecret", "Zebrapassword", "Nobodysecret", "payroll"):
+            assert fragment not in info, info
+
     def test_ambiguous_pair_without_a_current_type_is_dropped(self, gleaner) -> None:
         # Two edges join the same pair; with no stated current type there is no
         # way to tell which one the correction means, so neither is touched.

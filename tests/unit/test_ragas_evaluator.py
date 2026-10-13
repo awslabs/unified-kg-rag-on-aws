@@ -87,7 +87,7 @@ def _result(contexts=None, qid="q1") -> EvaluationResult:
 
 def _contexts(ev, results, capped: bool = False) -> list[list[str]]:
     cap = ev.config.evaluation.ragas_max_contexts if capped else None
-    return [contexts for contexts, _ in ev._truncate_contexts(results, cap)]
+    return [contexts for contexts, _ in ev._select(ev._budgeted_contexts(results), cap)]
 
 
 class TestTruncateContexts:
@@ -138,7 +138,7 @@ class TestTruncateContexts:
     def test_count_cap_applies_before_token_budget(self, mocker) -> None:
         # Without the count cap the oversized 3rd context would be truncated
         # into the leftover budget (400 - 60 > buffer) and kept as a fragment;
-        # capped at 2, it never reaches the token step.
+        # capped at 2, the selection keeps only the first two.
         ev, _ = _make_evaluator(mocker, max_context_tokens=400, ragas_max_contexts=2)
         first = " ".join(["a"] * 30)
         second = " ".join(["b"] * 30)
@@ -156,8 +156,8 @@ class TestTruncateContexts:
         ev, _ = _make_evaluator(mocker, max_context_tokens=200)
         first = " ".join(["w"] * 50)
         second = " ".join(["x"] * 100)
-        [(contexts, tokens)] = ev._truncate_contexts(
-            [_result(contexts=[first, second])]
+        [(contexts, tokens)] = ev._select(
+            ev._budgeted_contexts([_result(contexts=[first, second])])
         )
         # 50 whole + the second truncated into the 22 tokens left after the
         # buffer: the total stays within max_context_tokens - BUFFER_TOKENS.

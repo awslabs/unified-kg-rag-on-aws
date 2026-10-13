@@ -95,11 +95,13 @@ _POLARITY_WORD = re.compile(
     + "|".join(sorted(map(re.escape, _POLARITY), key=len, reverse=True))
     + r")(?![\w-])"
 )
-# Except for "yes", a polarity word answers a question only when punctuation
-# or the line end follows it ("No, it may not.", "네, 맞습니다."); before a
-# word, "no" is a determiner ("there is no clause") and "네" the numeral four
-# ("네 가지").
-_ANSWERING_NO = re.compile(r"\s*(?:$|[^\w\s])")
+# Except for "yes", a polarity word answers a question only when sentence
+# punctuation or the line end follows it ("No, it may not.", "**네**, 맞습니다.");
+# before a word, "no" is a determiner ("there is no clause") and "네" the
+# numeral four ("네 가지"), and before ":" or ")" "예" means "e.g." ("(예: …)").
+_ANSWERING_NO = re.compile(r"\s*[*_]*\s*(?:$|[,.!?;。、，！？—–])")
+# A word next to "/" names the options, not the answer ("Yes/No: No").
+_OPTION_SLASH = re.compile(r"\s*/")
 # "No." before a number abbreviates "number" ("Clause No. 5").
 _NUMBER_ABBREVIATION = re.compile(r"\.\s*\d")
 _MARKDOWN_HEADING = re.compile(r"\s*#{1,6}(?:\s|$)")
@@ -108,9 +110,10 @@ _MARKDOWN_HEADING = re.compile(r"\s*#{1,6}(?:\s|$)")
 def _leading_polarity(prediction: str) -> str | None:
     """The polarity ("yes"/"no") of the first yes/no word that answers.
 
-    Markdown heading lines are skipped, a polarity word other than "yes"
-    followed by a word ("there is no evidence") is not an answer, and "No."
-    before a number is the abbreviation. Words are matched whole, so "예" in
+    Markdown heading lines are skipped, a polarity word next to "/" lists
+    the options ("Yes/No"), one other than "yes" not followed by sentence
+    punctuation or the line end ("there is no evidence", "(예: …)") is not an
+    answer, and "No." before a number is the abbreviation. Words are matched whole, so "예" in
     "예외" or "是" in "这是" is not one. The search runs over whole lines, so
     an abbreviation such as "U.S." cannot cut the answer short.
     """
@@ -120,9 +123,11 @@ def _leading_polarity(prediction: str) -> str | None:
             continue
         for match in _POLARITY_WORD.finditer(line):
             word = match.group(1)
+            rest = line[match.end() :]
+            if _OPTION_SLASH.match(rest) or line[: match.start()].rstrip()[-1:] == "/":
+                continue
             if word == "yes":
                 return _POLARITY[word]
-            rest = line[match.end() :]
             if _ANSWERING_NO.match(rest) and not _NUMBER_ABBREVIATION.match(rest):
                 return _POLARITY[word]
     return None

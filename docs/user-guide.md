@@ -1440,10 +1440,12 @@ set `enabled_evaluators: [answer_match, retrieval, graph_aware]`.
   Chinese `是`/`对`/`否`/`不是`; Japanese `はい`/`いいえ`) is scored by the
   answer's polarity, as in HotpotQA, since almost any long answer contains
   the word "no" (or `예` in `예외`): the first whole yes/no word that answers
-  the question, skipping Markdown headings and a word other than `yes`
-  followed by a word (`there is no clause`, `네 가지`) or `no` followed by a
-  number (`No. 5`). So `네, 맞습니다` answers yes but `네 맞습니다` is not
-  read as an answer. SQuAD-style `exact_match` and
+  the question, skipping Markdown headings, a word next to `/` (the options
+  in `Yes/No: No` or `(네/아니요): 아니요`), a word other than `yes` that is
+  not followed by sentence punctuation (`, . ! ? ;`, a dash or their CJK
+  forms) or the line end (`there is no clause`, `네 가지`, `(예: …)`), and
+  `no` followed by a number (`No. 5`). So `네, 맞습니다` answers yes but
+  `네 맞습니다` is not read as an answer. SQuAD-style `exact_match` and
   `token_f1` are also emitted. Text is NFKC-normalized, then lowercased,
   punctuation deleted, English articles dropped and whitespace collapsed, as
   in the SQuAD v1.1 script, except that Unicode punctuation is deleted too and
@@ -1545,7 +1547,8 @@ The summary holds, per metric, mean/median/stdev/min/max/count
   and for `answerable: false` items an `unanswerable` block (`total`,
   `correct_abstentions`, `accuracy`). On answerable items an abstention is
   graded like any answer (normally a miss); each result carries `abstained`.
-- `run_manifest` — CLI arguments, model ids (answer generation, evaluation
+- `run_manifest` — CLI arguments (a `*_url` argument such as
+  `--model-base-url` without its userinfo, query and fragment), model ids (answer generation, evaluation
   judge/embedding), package version, git commit (`git_sha`, and `git_dirty`
   when tracked files differ from it; both `null` unless the package runs from
   a checkout that tracks it), `config_sha256` of the full resolved config, `library_versions`
@@ -1588,7 +1591,8 @@ enabled `visualization_data.json` is uploaded with the cache (the sync copies
 `.json` files only; re-render the HTML locally with `run-visualization`). That
 file is the `--data-path` input. The interactive graph keeps only the top
 `interactive.max_nodes` nodes by degree (default 2000) so large graphs still
-render in a browser; a spring layout is computed for those nodes only.
+render in a browser; the layout (node embeddings or the spring layout) is
+computed for those nodes only.
 It holds the graph nodes/edges (each node with its
 level-0 `community_id`, which the renderers color by), the community hierarchy
 and, when rendered at ingestion, the computed `layout` and centrality; vector
@@ -1870,6 +1874,10 @@ finally:
   without `close()`/`aclose()` they stay open until garbage collection.
 - Importing the package configures no logging handler; call
   `unified_kg_rag.shared.setup_logging(config)` to get the CLI's logging.
+  Without it the package's records reach your handlers with the plain
+  message, and structured fields (including values you bind with
+  `structlog.contextvars`) become record attributes; a field named like a
+  `LogRecord` attribute (`name`, `process`, `msg`, ...) gets a trailing `_`.
 
 Both constructors accept injected backends through a `providers=` bundle
 (`Providers(config, llm_factory=..., doc_status=..., vector_indexer_factory=...,

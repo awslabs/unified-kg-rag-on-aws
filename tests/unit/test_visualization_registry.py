@@ -167,15 +167,18 @@ class TestDimensionalityReducer:
             DimensionalityReducer({"umap": {"random_state": None}}).umap_config
         ).random_state is None
 
-    def test_too_few_points_falls_back_to_pca(self, mocker) -> None:
-        # With < n_components+1 points (n_components=2, so 2 points) the
-        # reducer downgrades UMAP to PCA but still lays out every node in 2D.
+    @pytest.mark.parametrize("n", [2, 3])
+    def test_too_few_points_falls_back_to_pca(self, mocker, n: int) -> None:
+        # UMAP's spectral init fails with k >= N at n_components + 1 points
+        # (n_components=2, so 3), which degraded a three-node graph's layout.
+        # Up to n_components + 1 points the reducer uses PCA instead and still
+        # lays out every node in 2D.
         reducer = DimensionalityReducer({})
         assert reducer.umap_config.n_components == 2
         umap = mocker.spy(reducer, "_apply_umap")
         pca = mocker.spy(reducer, "_apply_pca")
-        out = reducer.reduce_dimensions(_embeddings(2), method="umap")
-        assert len(out) == 2
+        out = reducer.reduce_dimensions(_embeddings(n), method="umap")
+        assert len(out) == n
         assert all(len(coord) == 2 for coord in out.values())
         umap.assert_not_called()
         pca.assert_called_once()

@@ -69,7 +69,8 @@ class DimensionalityReducer:
         nodes = embeddings.nodes
         embedding_matrix = np.array([embeddings.embeddings[node] for node in nodes])
 
-        if embedding_matrix.shape[0] < self.umap_config.n_components + 1:
+        # UMAP's spectral init needs more than n_components + 1 points.
+        if embedding_matrix.shape[0] <= self.umap_config.n_components + 1:
             logger.warning(
                 "Not enough data points (%s) for dimensionality reduction, falling back to PCA.",
                 embedding_matrix.shape[0],

@@ -241,6 +241,23 @@ def test_spring_layout_covers_only_the_drawn_nodes(
     assert "e2" in layout and len(layout) == 2
 
 
+def test_embedding_layout_embeds_only_the_drawn_nodes(
+    config: Config, tmp_path: Path, mocker
+) -> None:
+    # Every node used to be embedded (one Bedrock embedding per node) though
+    # the interactive page draws, and so positions, only its top max_nodes.
+    config.graph.visualization.interactive = {"max_nodes": 2}
+    embedder = _FakeEmbedder()
+    embed = mocker.spy(embedder, "generate_embeddings")
+    manager = _manager(
+        config, tmp_path, embedder=embedder, embedding_method="description"
+    )
+    layout = manager._generate_layout()
+    assert embed.call_args.args[0].number_of_nodes() == 2
+    assert "e2" in layout and len(layout) == 2
+    assert manager.layout_degraded is False
+
+
 def test_spring_layout_of_a_graph_within_the_cap_is_unchanged(
     config: Config, tmp_path: Path
 ) -> None:
@@ -264,8 +281,10 @@ def test_failed_umap_marks_layout_degraded(
         config, tmp_path, embedder=_FakeEmbedder(), embedding_method="description"
     )
     manager.viz_config.layout_method = "umap"
+    # Three points go straight to PCA (UMAP needs more than n_components + 1).
+    manager.analyzer.graph.add_edge("e3", "e4")
     pca = mocker.spy(manager.reducer, "_apply_pca")
     layout = manager._generate_layout()
     assert manager.layout_degraded is True
     pca.assert_not_called()
-    assert set(layout) == {"e1", "e2", "e3"}
+    assert set(layout) == {"e1", "e2", "e3", "e4"}

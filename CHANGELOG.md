@@ -323,6 +323,25 @@ Library API (Python callers and custom backends).
   install (#251).
 
 ### Fixed
+- `run-visualization` rejects an unknown `--renderers` name while parsing
+  its arguments (exit code 2), instead of after loading the data and
+  computing centrality (#255).
+- Used as a library without `setup_logging`, the package no longer raises
+  `KeyError` on every log call when the host binds a field named like a
+  `LogRecord` attribute (`name`, `process`, `msg`, ...) with
+  `structlog.contextvars`; the field is passed with a trailing `_` (#255).
+- An embedding-based visualization layout embeds only the nodes the
+  interactive page draws (the top `graph.visualization.interactive.max_nodes`
+  by degree), as the spring layout already did. Every node was embedded with
+  Bedrock, though only those positions are used (#255).
+- A three-node graph's visualization layout uses PCA instead of UMAP, whose
+  spectral initialization fails with that few points; the layout came out
+  `DEGRADED` (#255).
+- The `answer_match` evaluator no longer reads `(예: …)` ("for example") as
+  a yes, or the options in `Yes/No: No` and `(네/아니요): 아니요` as the
+  answer. A polarity word other than `yes` answers only when sentence
+  punctuation, a dash or the line end follows it, and a word next to `/` is
+  skipped (#255).
 - `ragas` evaluation counts each retrieved context once per batch. With
   `context_precision` selected, the count-capped selection walked the
   contexts again, which repeated every CountTokens call once a batch had more
@@ -924,6 +943,16 @@ Library API (Python callers and custom backends).
   extraction or query wrote prompts, chunk text and model output into the
   log. Console output piped to a file or another program no longer carries
   ANSI colour codes either (#245).
+- Gleaning and graph extraction no longer log relationship endpoint names
+  at INFO, and gleaning no longer logs a preview of unparseable model output
+  at WARNING. Gleaning is on by default, so every ingestion wrote corpus
+  entity names (people, companies) to the console and `logs/`. INFO records
+  now name the relationship and chunk by short id; entity resolution's
+  fuzzy-match failure names the entity by `len=… sha=…` digest. A unit test
+  fails when a new INFO+ log call passes names, descriptions, text or
+  model-output previews (#255).
+- The evaluation summary's `run_manifest.cli_args` records `--model-base-url`
+  without its userinfo, query and fragment, which may hold an API key (#255).
 - Captured prompt and completion text is redacted as raw text on every
   tracing backend: with `otlp`, `langfuse` or `phoenix` it was redacted only
   at export, JSON-encoded, where a `\b` or `\s` pattern next to a newline

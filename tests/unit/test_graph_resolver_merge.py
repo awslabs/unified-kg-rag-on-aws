@@ -12,6 +12,8 @@ deterministic and in-process.
 
 from __future__ import annotations
 
+import logging
+
 import pytest
 
 from unified_kg_rag.domain.ingestion.graph_resolver import (
@@ -299,7 +301,9 @@ def _failing_match(name: str) -> list:
 
 @pytest.mark.parametrize("ignore_errors", [False, True])
 def test_fuzzy_match_worker_failure(
-    monkeypatch: pytest.MonkeyPatch, ignore_errors: bool
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    ignore_errors: bool,
 ) -> None:
     from unified_kg_rag.domain.ingestion import graph_resolver as module
     from unified_kg_rag.shared import GraphError
@@ -312,12 +316,18 @@ def test_fuzzy_match_worker_failure(
         _ent("e2", "Acme Corporation Holding", text_unit_ids=["t2"]),
     ]
     resolver = _fuzzy_pool_resolver(ignore_errors=ignore_errors)
+    caplog.set_level(logging.INFO)
     if ignore_errors:
         result, _ = resolver.resolve_graph(entities, [])
         assert len(result["entities"]) == 2
+        assert "Failed to find matches" in caplog.text
     else:
-        with pytest.raises(GraphError, match="Fuzzy matching failed"):
+        with pytest.raises(GraphError, match="Fuzzy matching failed") as excinfo:
             resolver.resolve_graph(entities, [])
+        # The error is logged by the pipeline at ERROR: no entity name in it.
+        assert "Acme" not in str(excinfo.value)
+    # Corpus entity names stay out of INFO+ records.
+    assert "Acme" not in caplog.text
 
 
 # --------------------------------------------------------------------------- #

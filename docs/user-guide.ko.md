@@ -1349,8 +1349,9 @@ OpenSearch 주장 인덱스에서 읽어 옵니다(주장이 텍스트 단위를
   `예`/`네`/`아니요`/`아니오`, 중국어 `是`/`对`/`否`/`不是`, 일본어 `はい`/`いいえ`)이면
   긴 답변에는 거의 항상 "no"(또는 `예외`의 `예`)가 들어 있으므로, HotpotQA처럼 질문에
   답하는 첫 예/아니요 단어의 극성으로 채점합니다. 단어 전체가 일치해야 하며, Markdown
-  제목 줄, 뒤에 단어가 오는 `yes` 외의 단어(`there is no clause`, `네 가지`), 뒤에
-  숫자가 오는 `no`(`No. 5`)는 건너뜁니다. 그래서 `네, 맞습니다`는 yes로 읽지만
+  제목 줄, `/` 옆의 단어(`Yes/No: No`, `(네/아니요): 아니요`의 선택지), 뒤에 문장
+  부호(`, . ! ? ;`, 대시와 해당 CJK 부호)나 줄 끝이 오지 않는 `yes` 외의 단어(`there is
+  no clause`, `네 가지`, `(예: …)`), 뒤에 숫자가 오는 `no`(`No. 5`)는 건너뜁니다. 그래서 `네, 맞습니다`는 yes로 읽지만
   `네 맞습니다`는 답으로 보지 않습니다. SQuAD
   방식의 `exact_match`와 `token_f1`도 출력합니다. 텍스트는 NFKC로 정규화한 뒤 SQuAD
   v1.1 스크립트처럼 소문자로 바꾸고, 문장 부호를 지우고, 영어 관사를 빼고, 공백을 하나로
@@ -1446,7 +1447,8 @@ run-eval --eval-data-path s3://my-bucket/eval/my_eval_data.json \
   `unanswerable` 블록(`total`, `correct_abstentions`, `accuracy`)이 있습니다. 답할 수
   있는 항목에서 거절은 다른 답변과 똑같이 채점합니다(보통 놓침). 각 결과에는
   `abstained`가 기록됩니다.
-- `run_manifest` — CLI 인자, 모델 ID(답변 생성, 평가 판정 모델·임베딩), 패키지 버전,
+- `run_manifest` — CLI 인자(`--model-base-url` 같은 `*_url` 인자는 사용자 정보·쿼리·
+  프래그먼트를 뺀 값), 모델 ID(답변 생성, 평가 판정 모델·임베딩), 패키지 버전,
   git 커밋(`git_sha`. 추적 파일이 커밋과 다르면 `git_dirty`도 기록. 패키지를 해당
   커밋을 추적하는 체크아웃에서 실행하지 않으면 둘 다 `null`), 해석된 전체 설정의
   `config_sha256`, `library_versions`(ragas, langchain*), 데이터셋(경로와 파일 sha256,
@@ -1483,8 +1485,8 @@ spring 레이아웃과 설정한 중심성 지표를 계산합니다. `graph.vis
 쓰므로, S3 캐시 동기화를 켜면 `visualization_data.json`이 캐시와 함께 업로드됩니다(동기화는
 `.json` 파일만 복사하므로 HTML은 로컬에서 `run-visualization`으로 다시 렌더링하세요).
 이 파일이 `--data-path` 입력입니다. 대화형 그래프는 큰 그래프도 브라우저에서 렌더링할 수
-있도록 차수 기준 상위 `interactive.max_nodes`개 노드(기본 2000)만 남기며, spring 레이아웃도 이
-노드만으로 계산합니다. 파일에는
+있도록 차수 기준 상위 `interactive.max_nodes`개 노드(기본 2000)만 남기며, 레이아웃(노드 임베딩이나
+spring 레이아웃)도 이 노드만으로 계산합니다. 파일에는
 그래프 노드와 간선(노드마다 렌더러가 색을 정하는 레벨 0 `community_id` 포함), 커뮤니티 계층과, 수집 중에 렌더링했다면 계산된 `layout`과 중심성이
 들어 있으며, 파일 크기를
 줄이려고 벡터 속성(`embedding`, `*_embedding`)은 뺍니다.
@@ -1750,7 +1752,10 @@ finally:
 - 만든 객체는 항상 닫으세요. 두 클래스 모두 처음 사용할 때 연결을 열며,
   `close()`/`aclose()`를 호출하지 않으면 가비지 컬렉션 때까지 연결이 열려 있습니다.
 - 패키지를 import해도 로깅 핸들러는 설정하지 않습니다. CLI와 같은 로깅을 쓰려면
-  `unified_kg_rag.shared.setup_logging(config)`를 호출하세요.
+  `unified_kg_rag.shared.setup_logging(config)`를 호출하세요. 호출하지 않으면 패키지의
+  레코드는 일반 메시지로 호스트 핸들러에 전달되고, 구조화 필드(`structlog.contextvars`로
+  바인딩한 값 포함)는 레코드 속성이 됩니다. `LogRecord` 속성과 이름이 같은
+  필드(`name`, `process`, `msg` 등)에는 끝에 `_`가 붙습니다.
 
 두 생성자 모두 `providers=` 번들로 백엔드를 주입받습니다
 (`Providers(config, llm_factory=..., doc_status=..., vector_indexer_factory=...,

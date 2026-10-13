@@ -101,6 +101,16 @@ class TestNormalization:
             ("The U.S. law says yes.", "yes", 1.0),
             ("Clause No. 5 says yes.", "yes", 1.0),
             ("Clause No. 5 says yes.", "no", 0.0),
+            # options named with "/" are not the answer
+            ("Yes/No: No", "no", 1.0),
+            ("Yes/No: No", "yes", 0.0),
+            ("Answer (yes / no): yes", "yes", 1.0),
+            # answering punctuation, a dash and the line end still answer
+            ("Answer: No", "no", 1.0),
+            ("No—the Buyer pays.", "no", 1.0),
+            ("1. No, the Buyer pays.", "no", 1.0),
+            ("| Warranty? | Yes |", "yes", 1.0),
+            ("No warranty is provided.", "no", 0.0),
         ],
     )
     def test_yes_no_gold_scored_by_leading_polarity(
@@ -129,6 +139,27 @@ class TestNormalization:
             ("いいえ、ありません。", "はい", 0.0),
             ("はい、あります。", "はい", 1.0),
             ("いいえ、ありません。", "いいえ", 1.0),
+            # "예:" / "예)" abbreviate "for example", not "yes"
+            ("계약은 자동 갱신되지 않습니다 (예: 만료 시 종료).", "예", 0.0),
+            (
+                "예: 공급자가 위반한 경우 해지됩니다. 아니요, 갱신은 없습니다.",
+                "아니요",
+                1.0,
+            ),
+            ("예) 2024년 계약서. 아니요.", "아니요", 1.0),
+            ("질문 (네/아니요): 아니요", "아니요", 1.0),
+            ("질문 (네/아니요): 아니요", "네", 0.0),
+            ("질문 2 (네/아니요): 네", "네", 1.0),
+            # non-misfires: still answers
+            ("**네**, 맞습니다.", "예", 1.0),
+            ("답변: 예", "예", 1.0),
+            ("1. 예, 구매자가 부담합니다.", "예", 1.0),
+            ("예외적으로, 아니요.", "아니요", 1.0),
+            ("根据合同第3条，是。", "是", 1.0),
+            ("合同规定：是", "是", 1.0),
+            ("不是。卖方不承担运费。", "否", 1.0),
+            ("否则，买方可以终止合同。", "否", 0.0),
+            ("倉庫にはいります。", "はい", 0.0),
         ],
     )
     def test_cjk_yes_no_gold_scored_by_leading_polarity(
