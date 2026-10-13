@@ -44,7 +44,6 @@ _LOCAL_EMBEDDING = {
         "config-template.yaml",
         "config-template.yaml (uncommented)",
         "docker/config.yaml",
-        "docker/config.local.yaml",
     ],
 )
 def test_shipped_yaml_without_providers_keeps_the_aws_providers(path: str) -> None:
@@ -55,10 +54,8 @@ def test_shipped_yaml_without_providers_keeps_the_aws_providers(path: str) -> No
     else:
         raw = yaml.safe_load((_ROOT / path).read_text(encoding="utf-8")) or {}
     config = Config(**raw)
-    if raw.get("backend", Backend.AWS.value) != Backend.AWS.value:
-        pytest.skip(f"{path} selects another backend")
-    if "providers" in raw and not path.startswith("config-template.yaml"):
-        pytest.skip(f"{path} selects providers explicitly")
+    # docker/config.local.yaml selects `backend: local`; it is covered by the
+    # local preset tests below.
     assert config.backend is Backend.AWS
     kinds = {
         role: getattr(config.providers, role).kind
