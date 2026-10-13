@@ -232,15 +232,24 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Build the image
-        # The base image pulls from public.ecr.aws, which rate-limits anonymous
-        # pulls (429); retry only that, so a broken Dockerfile fails at once.
+        # The base image pulls from public.ecr.aws, whose anonymous data quota
+        # (429 toomanyrequests) does not recover within minutes. After the
+        # first 429, pull the same pinned digest from Docker Hub instead (same
+        # bytes, different registry); retry only 429s, so a broken Dockerfile
+        # fails at once.
         run: |
           set -o pipefail
+          # Docker Hub's library/ repos mirror public.ecr.aws/docker/library/,
+          # so the fallback is the Dockerfile's own ref with the registry swapped.
+          base=$(sed -n 's|^ARG BASE_IMAGE=public\.ecr\.aws/docker/library/\(.*@sha256:[0-9a-f]\{64\}\)$|\1|p' docker/Dockerfile)
+          [ -n "$base" ] || { echo "docker/Dockerfile: BASE_IMAGE is not a pinned public.ecr.aws/docker/library ref"; exit 1; }
+          base_arg=()
           for attempt in 1 2 3 4 5; do
-            if docker build -f docker/Dockerfile -t unified-kg-rag:ci . 2>&1 | tee "$RUNNER_TEMP/build.log"; then
+            if docker build -f docker/Dockerfile "${base_arg[@]}" -t unified-kg-rag:ci . 2>&1 | tee "$RUNNER_TEMP/build.log"; then
               exit 0
             fi
             grep -qiE '429|toomanyrequests' "$RUNNER_TEMP/build.log" || exit 1
+            base_arg=(--build-arg "BASE_IMAGE=docker.io/library/$base")
             if [ "$attempt" -lt 5 ]; then sleep $((attempt * 20)); fi
           done
           exit 1
