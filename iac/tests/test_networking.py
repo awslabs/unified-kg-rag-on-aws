@@ -8,7 +8,7 @@ import json
 from typing import Any
 
 import aws_cdk as cdk
-from aws_cdk.assertions import Annotations, Match, Template
+from aws_cdk.assertions import Template
 
 from iac.config import DeploymentConfig
 from iac.stacks.networking_stack import INTERFACE_ENDPOINTS, NetworkingStack
@@ -92,8 +92,17 @@ def test_flow_log_retention_is_configurable() -> None:
 
 
 def _reuse_warnings(stack: NetworkingStack) -> list[str]:
-    found = Annotations.from_stack(stack).find_warning("*", Match.any_value())
-    return [str(w.entry.data) for w in found if "Reusing VPC" in str(w.entry.data)]
+    # Read the construct metadata, not Annotations.find_warning: aws-cdk-lib and
+    # aws-cdk-cloud-assembly-schema both install
+    # aws_cdk/cloud_assembly_schema/__init__.py, and when the standalone copy
+    # wins the parallel install, find_warning cannot deserialize MetadataEntry.
+    warnings = (
+        str(entry.data)
+        for construct in stack.node.find_all()
+        for entry in construct.node.metadata
+        if entry.type == "aws:cdk:warning"
+    )
+    return [w for w in warnings if "Reusing VPC" in w]
 
 
 def test_reused_vpc_warns_with_required_endpoints() -> None:
