@@ -7,9 +7,13 @@ from collections import OrderedDict
 from collections.abc import Coroutine
 from typing import Any, ClassVar
 
-from opensearchpy.exceptions import AuthorizationException, TransportError
+from opensearchpy.exceptions import AuthorizationException, RequestError, TransportError
 
-from unified_kg_rag.adapters.aws.opensearch import OpenSearchClient, is_index_not_found
+from unified_kg_rag.adapters.aws.opensearch import (
+    OpenSearchClient,
+    error_reason,
+    is_index_not_found,
+)
 from unified_kg_rag.adapters.retrieval.base import (
     BaseGraphRAGRetriever,
     is_fatal_retrieval_error,
@@ -79,6 +83,18 @@ def _is_authorization_error(exc: BaseException) -> bool:
             return True
         current = current.__cause__ or current.__context__
     return False
+
+
+def _rejected_request(exc: BaseException) -> RequestError | None:
+    """The HTTP 400 OpenSearch answered, if ``exc`` is (or wraps) one."""
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        if isinstance(current, RequestError):
+            return current
+        seen.add(id(current))
+        current = current.__cause__ or current.__context__
+    return None
 
 
 class OpenSearchRetriever(BaseGraphRAGRetriever):
@@ -796,6 +812,18 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                     f"dimension {self._embedding_dimension}). Query with the "
                     "embedding settings the corpus was ingested with, or re-ingest "
                     "it with this model (indexing.reset: true)."
+                ) from e
+            if (rejected := _rejected_request(e)) is not None:
+                # A 400 is the same for every retry and every query: a filter
+                # value the field cannot hold, or a setting naming something the
+                # cluster lacks. Degrading it answered from no (or unfiltered)
+                # context.
+                raise ConfigurationError(
+                    f"OpenSearch rejected the search on {', '.join(aliases)} "
+                    f"(status 400): {error_reason(rejected)}. Check the query "
+                    "filters (a value of another type than the field's) and the "
+                    "OpenSearch settings the search uses, such as "
+                    "indexing.opensearch.hybrid_search_pipeline_name."
                 ) from e
             if is_index_not_found(e):
                 await self._require_ingested_suffix(suffix, e)

@@ -374,6 +374,11 @@ Library API (Python callers and custom backends).
   deletions. It failed graph extraction ("produced 0 outputs"), so the
   deletions were never applied and every later run failed the same way. A
   full build, or a run in which a text unit failed, still fails (#248).
+- A search OpenSearch rejects with HTTP 400 (a filter value of another type
+  than its field, a `hybrid_search_pipeline_name` that does not exist) fails
+  with a `ConfigurationError` naming the server's reason. It degraded like a
+  timeout, so the query was answered from no context, or from the indices
+  the filter did not apply to (#PR).
 - An OpenSearch or Neptune that cannot be reached (connection refused, DNS
   or TLS failure) fails the query with `StoreConnectionError` instead of
   reading as "no results": every strategy abstained and `run-eval` reported
