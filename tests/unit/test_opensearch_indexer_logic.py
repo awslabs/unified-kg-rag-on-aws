@@ -662,3 +662,23 @@ def test_read_claims_without_a_live_index_reads_nothing(indexer, mocker) -> None
 
     assert indexer.read_claims(["c1"], suffix="acme") == []
     indexer.opensearch_client.search.assert_not_called()
+
+
+def test_read_entity_descriptions_maps_ids_to_full_descriptions(
+    indexer, mocker
+) -> None:
+    client = mocker.MagicMock()
+    indexer.opensearch_client = client
+    client.get_index_name_by_alias.return_value = "entities-default-1"
+    client.search.return_value = {
+        "hits": {
+            "hits": [
+                {"_id": "e1", "_source": {"id": "e1", "description": "x" * 5000}},
+                {"_id": "e2", "_source": {"id": "e2", "description": ""}},
+            ]
+        }
+    }
+
+    assert indexer.read_entity_descriptions(["e1", "e2"]) == {"e1": "x" * 5000}
+    alias = indexer._get_name(indexer.opensearch_config.entities_index_prefix, None)
+    assert client.search.call_args.kwargs["index"] == alias

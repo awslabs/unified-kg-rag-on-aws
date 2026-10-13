@@ -466,6 +466,12 @@ Library API (Python callers and custom backends).
 - Importing `unified_kg_rag.application.cli.run_rag_chain` no longer puts
   `unified_kg_rag/application` at the front of `sys.path`, where its
   subpackages could shadow top-level modules of the same name (#251).
+- The incremental cross-run merge no longer writes a description cut at
+  `indexing.neptune.property_max_length` to OpenSearch. It read stored
+  entities and relationships back from Neptune, which caps property values,
+  so a long description lost its tail in OpenSearch on the next merge; a
+  capped description is now read from OpenSearch, which stores it in full
+  (#PR).
 - A failed Neptune delete batch is counted as one failure per id in it, with
   the ids, instead of a single failure with none, so the failure rate and the
   logs of a document removal reflect what was not deleted (#PR).

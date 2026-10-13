@@ -336,3 +336,46 @@ def test_a_failed_stored_claim_read_raises_before_any_write(manager) -> None:
 
     with pytest.raises(RuntimeError):
         mgr.merge_with_stored_claims([claim])
+
+
+@pytest.mark.parametrize("kind", ["entity", "relationship"])
+def test_cross_run_merge_keeps_the_description_neptune_capped(kind) -> None:
+    # Neptune caps property values at property_max_length; the merged
+    # description is written to OpenSearch too, so it must start from the
+    # full stored one, not from the graph's cut copy.
+    from tests.fixtures.fakes.stores import FakeGraphStore, FakeVectorStore
+    from unified_kg_rag.application.storage.indexing_manager import IndexingManager
+    from unified_kg_rag.domain.models import Config
+
+    config = Config()
+    config.indexing.neptune.property_max_length = 40
+    vector = FakeVectorStore(opensearch_config=config.indexing.opensearch)
+    mgr = IndexingManager(
+        config=config, vector_indexer=vector, graph_indexer=FakeGraphStore(config)
+    )
+    full = "Vendor supplies widgets to Buyer under a long-running agreement."
+    entities = [Entity(id=i, name=n) for i, n in (("e1", "Vendor"), ("e2", "Buyer"))]
+    if kind == "entity":
+        stored = Entity(id="e1", name="Vendor", description=full, text_unit_ids=["t1"])
+        delta = stored.model_copy(
+            update={"description": "Ships.", "text_unit_ids": ["t2"]}
+        )
+        mgr.index_delta(entities=[stored, entities[1]])
+        merged = mgr.merge_with_existing_graph([delta], None).entities
+    else:
+        stored = Relationship(
+            id="r1",
+            source_id="e1",
+            target_id="e2",
+            description=full,
+            text_unit_ids=["t1"],
+        )
+        delta = stored.model_copy(
+            update={"description": "Ships.", "text_unit_ids": ["t2"]}
+        )
+        mgr.index_delta(entities=entities, relationships=[stored])
+        merged = mgr.merge_with_existing_graph(None, [delta]).relationships
+
+    assert merged is not None
+    (item,) = [m for m in merged if m.id == delta.id]
+    assert item.description == f"{full}\nShips."

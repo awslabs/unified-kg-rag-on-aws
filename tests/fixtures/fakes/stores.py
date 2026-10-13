@@ -369,6 +369,24 @@ class FakeVectorStore(_Recorder):
             if i in bucket and BaseIndexer.get_suffix(bucket[i]) == wanted
         ]
 
+    def read_entity_descriptions(
+        self, ids: list[str], suffix: str | None = None
+    ) -> dict[str, str]:
+        return self._descriptions("entities", ids)
+
+    def read_relationship_descriptions(
+        self, ids: list[str], suffix: str | None = None
+    ) -> dict[str, str]:
+        return self._descriptions("relationships", ids)
+
+    def _descriptions(self, collection: str, ids: list[str]) -> dict[str, str]:
+        bucket = self.data.get(collection, {})
+        return {
+            i: bucket[i].description
+            for i in ids
+            if i in bucket and bucket[i].description
+        }
+
     def update_claim_lineage(self, claims: list[Any]) -> IndexingStats:
         return self._update("claims", claims, ("text_unit_ids",))
 

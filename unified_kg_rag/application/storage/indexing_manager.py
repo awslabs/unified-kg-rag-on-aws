@@ -4,7 +4,7 @@ import time
 from collections.abc import Callable, Sequence
 from concurrent.futures import as_completed
 from functools import partial
-from typing import Any, NamedTuple
+from typing import Any, NamedTuple, TypeVar
 
 from pydantic import BaseModel, Field
 
@@ -41,6 +41,9 @@ from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.utils.concurrency import ContextThreadPoolExecutor
 
 logger = get_logger(__name__)
+
+# A graph item whose description the cross-run merge reads back.
+_Described = TypeVar("_Described", Entity, Relationship)
 
 
 class CrossRunMergeResult(BaseModel):
@@ -431,8 +434,12 @@ class IndexingManager:
             # their stored entities have other ids than the delta's, so they
             # are found through the stored names and read back as well.
             name_matcher, matched_ids = self._match_stored_names(suffix, entities)
-            existing = self.neptune_indexer.read_entities(
-                sorted({e.id for e in entities} | matched_ids), suffix=suffix
+            existing = self._with_full_descriptions(
+                self.neptune_indexer.read_entities(
+                    sorted({e.id for e in entities} | matched_ids), suffix=suffix
+                ),
+                self.opensearch_indexer.read_entity_descriptions,
+                suffix,
             )
             if existing:
                 merged_entities, entity_id_remap = merge_entities(
@@ -457,8 +464,10 @@ class IndexingManager:
                         sorted(set(entity_id_remap.values())), suffix=suffix
                     )
                 )
-            existing_rels = self.neptune_indexer.read_relationships(
-                sorted(rel_ids), suffix=suffix
+            existing_rels = self._with_full_descriptions(
+                self.neptune_indexer.read_relationships(sorted(rel_ids), suffix=suffix),
+                self.opensearch_indexer.read_relationship_descriptions,
+                suffix,
             )
             # Even when no existing relationships are read back, delta endpoints
             # must follow any entity-id collapse from the entity merge above —
@@ -489,6 +498,25 @@ class IndexingManager:
             merged_relationships,
             {**entity_id_remap, **relationship_remap},
         )
+
+    def _with_full_descriptions(
+        self,
+        items: list[_Described],
+        read: Callable[..., dict[str, str]],
+        suffix: str,
+    ) -> list[_Described]:
+        """``items`` read back from the graph, with each description the graph
+        capped at ``indexing.neptune.property_max_length`` replaced by the
+        vector store's full one (the merged description is written there)."""
+        limit = self.config.indexing.neptune.property_max_length
+        capped = [i.id for i in items if len(i.description or "") >= limit]
+        if not capped:
+            return items
+        full = read(capped, suffix=suffix)
+        return [
+            i.model_copy(update={"description": full[i.id]}) if i.id in full else i
+            for i in items
+        ]
 
     def _rank_with_stored_graph(
         self,

@@ -655,16 +655,16 @@ class OpenSearchIndexer(VectorIndexer):
             prepare_doc_func=self._prepare_claim_doc,
         )
 
-    def read_claims(self, ids: list[str], suffix: str | None = None) -> list[Claim]:
-        """Read stored claims by id from ``suffix``'s live claims index.
-
-        A claim indexed before claims stored their ``text_unit_ids`` reads
-        back without them. Raises when the read fails.
-        """
-        alias_name = self._get_name(self.opensearch_config.claims_index_prefix, suffix)
+    def _read_sources(
+        self, alias_prefix: str, ids: list[str], suffix: str | None
+    ) -> list[dict[str, Any]]:
+        """The stored documents (without embeddings) of ``ids`` in ``suffix``'s
+        live index of ``alias_prefix``; none without a live index. Raises when
+        the read fails."""
+        alias_name = self._get_name(alias_prefix, suffix)
         if not ids or not self.opensearch_client.get_index_name_by_alias(alias_name):
             return []
-        claims: list[Claim] = []
+        sources: list[dict[str, Any]] = []
         for start in range(0, len(ids), _READ_BATCH_SIZE):
             batch = ids[start : start + _READ_BATCH_SIZE]
             response = self.opensearch_client.search(
@@ -675,25 +675,63 @@ class OpenSearchIndexer(VectorIndexer):
                     "_source": {"excludes": ["*_embedding"]},
                 },
             )
-            for hit in response.get("hits", {}).get("hits", []):
-                source = hit.get("_source") or {}
-                claims.append(
-                    Claim.model_validate(
-                        {
-                            "id": source.get("id") or hit["_id"],
-                            "subject_id": source.get("subject_id") or "",
-                            "subject_name": source.get("subject_name") or "",
-                            "object_id": source.get("object_id"),
-                            "object_name": source.get("object_name") or "",
-                            "type": source.get("type") or "",
-                            "status": source.get("status") or None,
-                            "description": source.get("description") or None,
-                            "source_text": source.get("source_text") or None,
-                            "text_unit_ids": list(source.get("text_unit_ids") or []),
-                        }
-                    )
-                )
-        return claims
+            sources.extend(
+                {"id": hit["_id"], **(hit.get("_source") or {})}
+                for hit in response.get("hits", {}).get("hits", [])
+            )
+        return sources
+
+    def read_claims(self, ids: list[str], suffix: str | None = None) -> list[Claim]:
+        """Read stored claims by id from ``suffix``'s live claims index.
+
+        A claim indexed before claims stored their ``text_unit_ids`` reads
+        back without them. Raises when the read fails.
+        """
+        return [
+            Claim.model_validate(
+                {
+                    "id": source["id"],
+                    "subject_id": source.get("subject_id") or "",
+                    "subject_name": source.get("subject_name") or "",
+                    "object_id": source.get("object_id"),
+                    "object_name": source.get("object_name") or "",
+                    "type": source.get("type") or "",
+                    "status": source.get("status") or None,
+                    "description": source.get("description") or None,
+                    "source_text": source.get("source_text") or None,
+                    "text_unit_ids": list(source.get("text_unit_ids") or []),
+                }
+            )
+            for source in self._read_sources(
+                self.opensearch_config.claims_index_prefix, ids, suffix
+            )
+        ]
+
+    def read_entity_descriptions(
+        self, ids: list[str], suffix: str | None = None
+    ) -> dict[str, str]:
+        """Stored entity descriptions by id (untruncated, unlike Neptune's)."""
+        return self._descriptions(
+            self.opensearch_config.entities_index_prefix, ids, suffix
+        )
+
+    def read_relationship_descriptions(
+        self, ids: list[str], suffix: str | None = None
+    ) -> dict[str, str]:
+        """Stored relationship descriptions by id (see
+        :meth:`read_entity_descriptions`)."""
+        return self._descriptions(
+            self.opensearch_config.relationships_index_prefix, ids, suffix
+        )
+
+    def _descriptions(
+        self, alias_prefix: str, ids: list[str], suffix: str | None
+    ) -> dict[str, str]:
+        return {
+            source["id"]: source["description"]
+            for source in self._read_sources(alias_prefix, ids, suffix)
+            if source.get("description")
+        }
 
     def update_claim_lineage(self, claims: list[Claim]) -> IndexingStats:
         """Set stored claims' ``text_unit_ids`` in place (no re-embedding)."""
