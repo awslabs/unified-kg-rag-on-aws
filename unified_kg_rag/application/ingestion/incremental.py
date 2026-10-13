@@ -1633,15 +1633,9 @@ def index_delta(
     with per-document lineage so subsequent runs diff correctly.
     """
     delta = context.incremental_delta
-    if delta is None:  # defensive; caller already guards
-        return indexing_manager.index_all_data(
-            text_units=text_units,
-            entities=entities,
-            relationships=relationships,
-            communities=communities,
-            community_reports=community_reports,
-            claims=claims,
-        )
+    if delta is None:
+        # A full replace here would wipe the documents the run did not load.
+        raise PipelineStageError("Incremental indexing needs the run's delta")
     incremental = run_incremental_indexer(
         doc_status(), indexing_manager, context, text_units
     )
