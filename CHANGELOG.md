@@ -404,14 +404,14 @@ Library API (Python callers and custom backends).
   or an empty list, and translation's input preparation returned `[]` on an
   error, which later failed in an unrelated `zip`. Claim extraction raises
   on a result count that does not match its text units instead of warning
-  and attributing claims by position (#PR).
+  and attributing claims by position (#250).
 - `entity_grounding.action: penalize` applies to gleaning additions too: an
   entity or relationship gleaning proposed with evidence not found in the
   chunk was dropped as under `drop`. It is now kept at its confidence (or
   weight) times `penalty_factor`, on extraction's rules (a relationship only
   when the chunk lists both endpoints; an entity still subject to
   `entity_confidence_threshold`). A gleaning stage output cached by an
-  earlier version is reused until gleaning runs again (#PR).
+  earlier version is reused until gleaning runs again (#250).
 - An entity or relationship merged from text units of documents with
   different `filters` metadata carries every document's value (a list for a
   key with several), in extraction, gleaning, graph resolution and the
@@ -420,19 +420,19 @@ Library API (Python callers and custom backends).
   missed it depending on input order. Takes effect on the next
   (re-)extraction of the affected documents. The user guide's filter example
   used `type:PERSON`, which matches nothing because types are stored
-  lowercase; it now shows `type:person` (#PR).
+  lowercase; it now shows `type:person` (#250).
 - Description re-summarization no longer sends a whole merged description
   to the model in one call however long it is (a popular entity reached
   ~100k input tokens): a description over 12,000 tokens is summarized
   map-reduce in budget-sized groups of its lines, as LightRAG does. A
-  description within the budget is summarized exactly as before (#PR).
+  description within the budget is summarized exactly as before (#250).
 - Graph resolution renames a relationship's `source_name`/`target_name` to
   the entity its endpoint merged into: an edge extracted as "Acme" kept that
   name after "Acme" merged into "Acme Inc", and the stale name reached
   OpenSearch, Neptune and the LightRAG context. A fuzzy-matching worker
   failure (for example a broken process pool) now fails the stage unless
   `processing.ignore_errors` is on; it fell back to exact matching with a
-  warning, leaving duplicate entities in a run that reported success (#PR).
+  warning, leaving duplicate entities in a run that reported success (#250).
 - Community detection gives the same communities at every level in every
   process: `graspologic_native` returns its labels in a per-process hash
   order that set the next level's cluster-graph numbering and the
@@ -443,7 +443,7 @@ Library API (Python callers and custom backends).
   misleading "Communities must be detected" error), and
   `graph.community_detection.random_state: 0`, which Leiden rejects, fails
   config validation. The `resolution` description had its direction
-  inverted: higher gives more, smaller communities (#PR).
+  inverted: higher gives more, smaller communities (#250).
 - `run-eval --eval-data-path` naming a file that does not exist exits 2 with
   `Error: invalid evaluation dataset: ...`, as the user guide documents and
   as an unreadable or invalid dataset does; it exited 1 (#230).
