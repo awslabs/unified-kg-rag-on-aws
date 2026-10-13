@@ -511,7 +511,8 @@ def test_execute_batch_reports_the_ids_of_failed_items(indexer, mocker) -> None:
     mocker.patch.object(indexer.neptune_config, "index_concurrency", 1)
     entities = [Entity(id="e1", name="Vendor"), Entity(id="e2", name="Buyer")]
 
-    def fail_e2(traversal, op):
+    def fail_e2(build, op):
+        traversal = build(None)
         if traversal == ["e2"] or len(traversal) == 2:
             raise RuntimeError("rejected")
 

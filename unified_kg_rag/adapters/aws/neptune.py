@@ -4,7 +4,7 @@ import asyncio
 import functools
 import math
 import threading
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from functools import cached_property
 from typing import TYPE_CHECKING, Any
 
@@ -14,14 +14,20 @@ from gremlin_python.driver.driver_remote_connection import DriverRemoteConnectio
 from gremlin_python.driver.protocol import GremlinServerError
 from gremlin_python.process.anonymous_traversal import traversal
 from gremlin_python.process.graph_traversal import GraphTraversalSource, __
+from gremlin_python.process.traversal import Traversal
 
+from unified_kg_rag.adapters.store_errors import causes
 from unified_kg_rag.domain.models import Config
 from unified_kg_rag.shared import (
     AWSServiceError,
-    ConfigurationError,
     GraphRAGException,
     StoreConnectionError,
     get_logger,
+)
+from unified_kg_rag.shared.exceptions import (
+    StoreAccessDeniedError,
+    StoreConfigurationError,
+    StoreTimeoutError,
 )
 
 if TYPE_CHECKING:
@@ -34,8 +40,9 @@ _EXTRA_DELETE_PASSES = 3
 
 # Neptune engine error codes for requests that fail the same way on every try
 # (Neptune user guide, "Graph Engine Error Messages and Codes"). Retrying
-# them only multiplies the failure, so they fail fast; any other error,
-# including a connection the server closed, keeps being retried.
+# them only multiplies the failure, so they fail fast; any other error keeps
+# being retried. A connection the server closed is replaced first
+# (``run_traversal``), so the retry reaches the server again.
 PERMANENT_NEPTUNE_ERROR_CODES: frozenset[str] = frozenset(
     {
         "AccessDeniedException",
@@ -58,7 +65,7 @@ def is_permanent_neptune_error(exc: BaseException) -> bool:
     message carries the JSON error body, ``"code"`` included; the code names
     are distinct identifiers, so matching them in the message is matching the
     code. Client-side argument errors (``ValueError``/``TypeError``) are
-    permanent too.
+    permanent too, as is a ``ConfigurationError`` (a denied connection).
     """
     if isinstance(exc, GremlinServerError):
         message = str(exc.status_message)
@@ -74,16 +81,6 @@ _CLOSED_CONNECTION_MESSAGES = (
 )
 
 
-def _causes(exc: BaseException) -> Iterator[BaseException]:
-    """``exc`` and the exceptions it was raised from, innermost last."""
-    seen: set[int] = set()
-    current: BaseException | None = exc
-    while current is not None and id(current) not in seen:
-        seen.add(id(current))
-        yield current
-        current = current.__cause__ or current.__context__
-
-
 def is_connection_lost(exc: BaseException) -> bool:
     """Whether ``exc`` (or a cause) means the Gremlin connection is unusable.
 
@@ -96,7 +93,7 @@ def is_connection_lost(exc: BaseException) -> bool:
         # aiohttp's ServerTimeoutError is a ClientConnectionError too, but a
         # server too slow to answer may answer the next request.
         return False
-    for current in _causes(exc):
+    for current in causes(exc):
         if isinstance(current, ConnectionError | aiohttp.ClientConnectionError):
             return True
         if isinstance(current, RuntimeError) and str(current) in (
@@ -111,8 +108,75 @@ def is_timeout(exc: BaseException) -> bool:
     # asyncio.TimeoutError is not the builtin one before Python 3.11.
     return any(
         isinstance(current, TimeoutError | asyncio.TimeoutError)
-        for current in _causes(exc)
+        for current in causes(exc)
     )
+
+
+def neptune_request_error(
+    exc: Exception, timeout_seconds: float | None, url: str | None = None
+) -> Exception:
+    """The error a failed Gremlin request raises: typed when Neptune is unusable.
+
+    A lost or unopenable connection becomes a ``StoreConnectionError``, a
+    request without an answer within ``timeout_seconds`` a
+    ``StoreTimeoutError`` and an IAM denial a ``StoreAccessDeniedError``; this
+    package's own errors and any other failure (a query Neptune failed) are
+    returned unchanged.
+    """
+    if isinstance(exc, GraphRAGException):
+        return exc
+    if isinstance(exc, GremlinServerError) and "AccessDeniedException" in str(
+        exc.status_message
+    ):
+        return StoreAccessDeniedError(
+            f"Neptune denied the request: {exc}. Check that the caller's IAM "
+            "policy allows the neptune-db actions the query needs (such as "
+            "neptune-db:ReadDataViaQuery)."
+        )
+    if is_timeout(exc):
+        within = f"within {timeout_seconds} s " if timeout_seconds else ""
+        return StoreTimeoutError(
+            f"Neptune did not answer {within}(search.store_timeout_seconds)"
+        )
+    if is_connection_lost(exc):
+        at = f" at '{url}'" if url else ""
+        return StoreConnectionError(
+            f"Neptune is not reachable{at} (Gremlin connection failed or lost): {exc}"
+        )
+    return exc
+
+
+def run_traversal(
+    client: "NeptuneClient",
+    build: Callable[[GraphTraversalSource], Traversal],
+    *,
+    results: bool = False,
+) -> list[Any]:
+    """Run the traversal ``build`` makes from ``client.g``; with ``results``, return them.
+
+    The traversal is built per call, from the current source, so a caller that
+    retries reaches the server over a new connection: when Neptune is
+    unusable (a connection the server closed on a restart or failover, or a
+    request without an answer) the connection is dropped (``reset``) and the
+    error raised as a ``StoreConnectionError``. gremlinpython never reopens a
+    pooled websocket the server closed, so reusing it failed every retry.
+    Without ``results`` the traversal is iterated (nothing sent back) and
+    ``[]`` is returned.
+    """
+    g = client.g
+    try:
+        traversal = build(g)
+        if results:
+            return list(traversal.toList())
+        traversal.iterate()
+        return []
+    except Exception as e:
+        error = neptune_request_error(e, client.timeout_seconds)
+        if isinstance(error, StoreConnectionError):
+            client.reset(g)
+        if error is e:
+            raise
+        raise error from e
 
 
 class _NeptuneTransport(AiohttpTransport):
@@ -160,7 +224,7 @@ class _NeptuneTransport(AiohttpTransport):
             except aiohttp.ClientResponseError as err:
                 if err.status in (401, 403):
                     # Not chained: the response repr carries the signed headers.
-                    raise ConfigurationError(
+                    raise StoreAccessDeniedError(
                         f"Neptune refused the connection (HTTP {err.status}). "
                         "Check that the caller's IAM policy allows "
                         "neptune-db:connect on the cluster and that "
@@ -212,10 +276,15 @@ class NeptuneClient:
         self.neptune_config = config.aws.neptune
         if boto_session is not None:
             self.boto_session = boto_session
-        self._timeout_seconds = timeout_seconds
+        self.timeout_seconds = timeout_seconds
         self._connection: DriverRemoteConnection | None = None
         self._g: GraphTraversalSource | None = None
         self._lock = threading.RLock()  # Reentrant lock for thread safety
+        # Connection attempts finished, and how the last one failed: callers
+        # that waited on the lock during a failed attempt share its failure
+        # instead of each opening (and timing out) one in turn.
+        self._attempts = 0
+        self._attempt_error: Exception | None = None
         logger.debug("Neptune client initialized")
 
     @cached_property
@@ -235,30 +304,56 @@ class NeptuneClient:
 
     @property
     def g(self) -> GraphTraversalSource:
+        attempts = self._attempts
         with self._lock:
-            if self._g is None or self.connection.is_closed():
-                self._g = traversal().withRemote(self.connection)
+            connection = self._connected(attempts)
+            if self._g is None:
+                self._g = traversal().withRemote(connection)
             return self._g
 
     @property
     def connection(self) -> DriverRemoteConnection:
+        attempts = self._attempts
         with self._lock:
-            if self._connection is None or self._connection.is_closed():
-                logger.debug("Establishing new Neptune connection")
-                self._connection = self._create_connection()
+            return self._connected(attempts)
+
+    def _connected(self, attempts_seen: int) -> DriverRemoteConnection:
+        """The open connection, opened now if needed (call holding the lock).
+
+        ``attempts_seen`` is the attempt count the caller read before waiting
+        for the lock. If an attempt failed meanwhile, its error is raised
+        rather than starting another: concurrent queries of an unreachable
+        Neptune wait for one attempt, not one each in turn.
+        """
+        if self._connection is not None and not self._connection.is_closed():
             return self._connection
+        if self._attempts != attempts_seen and self._attempt_error is not None:
+            raise self._attempt_error
+        logger.debug("Establishing new Neptune connection")
+        try:
+            self._connection, self._g = self._create_connection(), None
+            self._attempt_error = None
+        except Exception as e:
+            self._attempt_error = e
+            raise
+        finally:
+            self._attempts += 1
+        return self._connection
 
     def _create_connection(self) -> DriverRemoteConnection:
         """Open a connection and probe it with one request.
 
         Raises:
-            ConfigurationError: Neptune refused the connection (HTTP 401/403).
-            StoreConnectionError: Neptune could not be reached.
-            AWSServiceError: The probe failed otherwise (a timeout, a
-                throttled or failed request), which the next use may not.
+            StoreConfigurationError: No endpoint or credentials, or Neptune
+                refused the connection (``StoreAccessDeniedError``, HTTP
+                401/403).
+            StoreConnectionError: Neptune could not be reached
+                (``StoreTimeoutError``: it did not answer in time).
+            AWSServiceError: The probe failed otherwise (a throttled or failed
+                request), which the next use may not.
         """
         if not self.neptune_config.endpoint:
-            raise AWSServiceError("Neptune endpoint is not configured")
+            raise StoreConfigurationError("Neptune endpoint is not configured")
 
         scheme = "wss" if self.neptune_config.use_ssl else "ws"
         connection_url = (
@@ -266,7 +361,7 @@ class NeptuneClient:
             f"{self.neptune_config.port}/gremlin"
         )
         sign = self._get_auth_headers if self.neptune_config.use_iam else None
-        timeout = self._timeout_seconds
+        timeout = self.timeout_seconds
 
         remote_connection: DriverRemoteConnection | None = None
         try:
@@ -298,19 +393,18 @@ class NeptuneClient:
                 except Exception as close_error:  # noqa: BLE001 - keep the cause
                     logger.debug("Error closing failed connection: %s", close_error)
             logger.error("Neptune connection probe failed: %s", e)
+            error = neptune_request_error(e, timeout, connection_url)
+            if error is not e:
+                raise error from e
             if isinstance(e, GraphRAGException):
                 raise
-            if is_connection_lost(e):
-                raise StoreConnectionError(
-                    f"Neptune is not reachable at '{connection_url}': {e}"
-                ) from e
             raise AWSServiceError(f"Neptune connection probe failed: {e!r}") from e
 
     def _get_auth_headers(self, url: str) -> dict[str, str]:
         logger.debug("Using IAM authentication for Neptune connection")
         credentials = self.boto_session.get_credentials()
         if not credentials:
-            raise AWSServiceError(
+            raise StoreConfigurationError(
                 "Unable to get AWS credentials for IAM authentication"
             )
 

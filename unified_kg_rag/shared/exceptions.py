@@ -91,10 +91,37 @@ class RerankModelError(ModelError):
 
 
 class StoreConnectionError(AWSServiceError, ConnectionError):
-    """A store (OpenSearch, Neptune) could not be reached: refused, DNS, TLS.
+    """A store (OpenSearch, Neptune) is unusable: unreachable, lost, overloaded.
 
-    A ``ConnectionError``, so retrieval reports it rather than reading it as
-    "no results". Queries also raise it for a lost connection and for a
-    request still unanswered after ``search.store_timeout_seconds`` (and its
-    retries); a timeout elsewhere stays an ``AWSServiceError`` and is retried.
+    Raised by the store clients when a request could not be delivered or
+    answered after the client's own retries: refused, DNS or TLS failure, a
+    connection the server closed, or OpenSearch still answering HTTP
+    429/502/503/504. A ``ConnectionError``, so retrieval reports it rather than
+    reading it as "no results" (``adapters.store_errors``).
     """
+
+
+class StoreTimeoutError(StoreConnectionError):
+    """A store request got no answer in time (after the client's retries)."""
+
+
+class StoreConfigurationError(AWSServiceError, ConfigurationError):
+    """A store refuses this client the same way on every attempt.
+
+    No endpoint, credentials or auth method to connect with, or a request the
+    store rejects (``StoreRequestRejectedError``) or denies
+    (``StoreAccessDeniedError``). ``reason`` is the server's reason, if it gave
+    one.
+    """
+
+    def __init__(self, message: str, *, reason: str | None = None) -> None:
+        super().__init__(message)
+        self.reason = reason
+
+
+class StoreAccessDeniedError(StoreConfigurationError):
+    """The store denied the caller (HTTP 401/403): credentials or permissions."""
+
+
+class StoreRequestRejectedError(StoreConfigurationError):
+    """The store rejected a request as invalid (HTTP 400), as it will on retry."""

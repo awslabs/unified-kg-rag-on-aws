@@ -86,7 +86,7 @@ def test_returns_after_transient_failures_then_success(indexer, mocker) -> None:
     sleep = mocker.patch(_MOD + "._sleep", return_value=None)
     # Fails twice (ConcurrentModificationException), succeeds on the 3rd attempt.
     traversal = _FlakyTraversal(fail_times=2, exc=_CME)
-    indexer._execute_with_retries(traversal, "upsert entities")
+    indexer._execute_with_retries(lambda _g: traversal, "upsert entities")
     assert traversal.calls == 3
     assert sleep.call_count == 2  # one sleep per failed attempt
 
@@ -96,7 +96,7 @@ def test_reraises_after_max_attempts(indexer) -> None:
     indexer.neptune_config.retry_delay_seconds = 1
     traversal = _FlakyTraversal(fail_times=99, exc=_CME)
     with pytest.raises(GremlinServerError, match="ConcurrentModification"):
-        indexer._execute_with_retries(traversal, "upsert entities")
+        indexer._execute_with_retries(lambda _g: traversal, "upsert entities")
     assert traversal.calls == 3  # max_attempts counts the first try
 
 
@@ -107,7 +107,7 @@ def test_permanent_error_fails_on_first_attempt(indexer, mocker) -> None:
         fail_times=99, exc=_neptune_error("MalformedQueryException")
     )
     with pytest.raises(GremlinServerError, match="MalformedQuery"):
-        indexer._execute_with_retries(traversal, "upsert entities")
+        indexer._execute_with_retries(lambda _g: traversal, "upsert entities")
     assert traversal.calls == 1
     sleep.assert_not_called()
 
@@ -117,7 +117,7 @@ def test_succeeds_on_first_attempt_does_not_sleep(indexer, mocker) -> None:
     indexer.neptune_config.retry_delay_seconds = 1
     sleep = mocker.patch(_MOD + "._sleep", return_value=None)
     traversal = _FlakyTraversal(fail_times=0, exc=Exception("never raised"))
-    indexer._execute_with_retries(traversal, "upsert entities")
+    indexer._execute_with_retries(lambda _g: traversal, "upsert entities")
     assert traversal.calls == 1
     sleep.assert_not_called()
 
@@ -127,7 +127,7 @@ def test_single_attempt_raises_immediately(indexer) -> None:
     indexer.neptune_config.max_attempts = 1
     traversal = _FlakyTraversal(fail_times=99, exc=_CME)
     with pytest.raises(GremlinServerError):
-        indexer._execute_with_retries(traversal, "upsert entities")
+        indexer._execute_with_retries(lambda _g: traversal, "upsert entities")
     assert traversal.calls == 1
 
 
@@ -137,7 +137,7 @@ def test_backoff_is_full_jitter_over_exponential_window(indexer, mocker) -> None
     jitter = mocker.patch(_MOD + "._jitter", side_effect=lambda lo, hi: hi / 2)
     sleep = mocker.patch(_MOD + "._sleep", return_value=None)
     traversal = _FlakyTraversal(fail_times=3, exc=_neptune_error("ThrottlingException"))
-    indexer._execute_with_retries(traversal, "upsert entities")
+    indexer._execute_with_retries(lambda _g: traversal, "upsert entities")
     # Window doubles per attempt: [0, 2], [0, 4], [0, 8]; sleep uses the draw.
     assert [c.args for c in jitter.call_args_list] == [(0, 2), (0, 4), (0, 8)]
     assert [c.args[0] for c in sleep.call_args_list] == [1, 2, 4]
@@ -175,10 +175,73 @@ def test_permanent_errors_fail_fast(exc: BaseException) -> None:
 def test_results_mode_returns_the_traversal_results(indexer) -> None:
     indexer.neptune_config.max_attempts = 3
     traversal = _ResultTraversal(fail_times=1, exc=_CME, result=["r1"])
-    assert indexer._execute_with_retries(traversal, "edge", results=True) == ["r1"]
+    assert indexer._execute_with_retries(
+        lambda _g: traversal, "edge", results=True
+    ) == ["r1"]
     assert traversal.calls == 2
 
 
 def test_results_mode_returns_empty_when_nothing_matched(indexer) -> None:
     traversal = _ResultTraversal(fail_times=0, exc=_CME, result=[])
-    assert indexer._execute_with_retries(traversal, "edge", results=True) == []
+    assert (
+        indexer._execute_with_retries(lambda _g: traversal, "edge", results=True) == []
+    )
+
+
+# --- a connection the server closed (restart, failover) --------------------
+#
+# Regression: the retries reused the pooled websocket the server had closed,
+# which gremlinpython never reopens, so after a Neptune restart or failover
+# every write failed every attempt until the process exited.
+
+
+class _Connection:
+    def __init__(self) -> None:
+        self.closed = False
+
+    def is_closed(self) -> bool:
+        return self.closed
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class _Source:
+    """A traversal source bound to one connection (``traversal().withRemote``)."""
+
+    def __init__(self, connection: _Connection) -> None:
+        self.connection = connection
+
+
+def test_a_lost_connection_is_replaced_before_the_retry(monkeypatch) -> None:
+    from unified_kg_rag.adapters.aws import neptune as neptune_module
+    from unified_kg_rag.adapters.aws.neptune import NeptuneClient
+
+    opened: list[_Connection] = []
+
+    def _connect(self: NeptuneClient) -> _Connection:
+        opened.append(_Connection())
+        return opened[-1]
+
+    monkeypatch.setattr(NeptuneClient, "_create_connection", _connect)
+    monkeypatch.setattr(
+        neptune_module,
+        "traversal",
+        lambda: type("_T", (), {"withRemote": staticmethod(_Source)})(),
+    )
+    config = Config()
+    config.aws.neptune.endpoint = "neptune.example.invalid"
+    config.indexing.neptune.max_attempts = 3
+    indexer = NeptuneIndexer(config=config)
+    lost = RuntimeError("Connection was already closed.")
+    built_on: list[_Source] = []
+
+    def build(g: _Source) -> _FlakyTraversal:
+        built_on.append(g)
+        # Every request over the first connection fails as a closed socket.
+        return _FlakyTraversal(99 if g.connection is opened[0] else 0, lost)
+
+    indexer._execute_with_retries(build, "upsert entities")  # type: ignore[arg-type]
+
+    assert len(opened) == 2 and opened[0].closed and not opened[1].closed
+    assert [g.connection for g in built_on] == opened

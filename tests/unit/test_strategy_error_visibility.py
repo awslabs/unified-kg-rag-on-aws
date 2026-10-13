@@ -25,10 +25,14 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.domain.retrieval.strategy_registry import get_strategy_spec
 from unified_kg_rag.shared import AWSServiceError
+from unified_kg_rag.shared.exceptions import (
+    StoreAccessDeniedError,
+    StoreConfigurationError,
+)
 
 pytestmark = pytest.mark.unit
 
-_FATAL = AWSServiceError("Cannot get AWS credentials for OpenSearch IAM.")
+_FATAL = StoreConfigurationError("Cannot get AWS credentials for OpenSearch IAM.")
 _TRANSIENT = AWSServiceError("Read timed out")
 
 
@@ -74,7 +78,7 @@ async def test_simple_strategy_degrades_on_transient(config: Config) -> None:
 # exception without the fatal re-raise, so a Neptune AccessDenied or a broken
 # OpenSearch endpoint on those paths was reported as "no results".
 
-_NEPTUNE_FATAL = AWSServiceError(
+_NEPTUNE_FATAL = StoreAccessDeniedError(
     "AccessDeniedException: not authorized to perform neptune-db:ReadDataViaQuery"
 )
 

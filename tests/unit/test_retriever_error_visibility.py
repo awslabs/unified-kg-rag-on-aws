@@ -19,7 +19,14 @@ import weakref
 from collections.abc import Iterator
 
 import pytest
+from botocore.exceptions import (
+    ClientError,
+    EndpointConnectionError,
+    NoCredentialsError,
+    ReadTimeoutError,
+)
 from gremlin_python.driver.driver_remote_connection import DriverRemoteConnection
+from gremlin_python.driver.protocol import GremlinServerError
 from gremlin_python.process.anonymous_traversal import traversal
 from gremlin_python.process.graph_traversal import GraphTraversal
 from gremlin_python.structure.graph import Graph
@@ -31,7 +38,8 @@ from opensearchpy import (
     RequestsHttpConnection,
     Urllib3HttpConnection,
 )
-from opensearchpy.exceptions import NotFoundError, TransportError
+from opensearchpy.exceptions import ConnectionError as OpenSearchConnectionError
+from opensearchpy.exceptions import ConnectionTimeout, NotFoundError, TransportError
 
 from unified_kg_rag.adapters.aws.neptune import NeptuneClient
 from unified_kg_rag.adapters.aws.opensearch import (
@@ -54,6 +62,12 @@ from unified_kg_rag.shared import (
     IndexNotFoundError,
     StoreConnectionError,
 )
+from unified_kg_rag.shared.exceptions import (
+    StoreAccessDeniedError,
+    StoreConfigurationError,
+    StoreRequestRejectedError,
+    StoreTimeoutError,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -68,30 +82,49 @@ def test_connection_error_is_fatal() -> None:
     assert is_fatal_retrieval_error(ConnectionError("refused")) is True
 
 
-@pytest.mark.parametrize(
-    "message",
-    [
-        "Cannot get AWS credentials for OpenSearch IAM.",
-        "OpenSearch endpoint is not configured.",
-        "Failed to connect to OpenSearch.",
-        "403 Forbidden",
-        "AccessDenied",
-    ],
-)
-def test_misconfiguration_messages_are_fatal(message: str) -> None:
-    assert is_fatal_retrieval_error(AWSServiceError(message)) is True
+def _client_error(code: str, message: str = "x") -> ClientError:
+    return ClientError({"Error": {"Code": code, "Message": message}}, "InvokeModel")
 
 
 @pytest.mark.parametrize(
-    "message",
+    "exc",
     [
-        "Read timed out",
-        "429 Too Many Requests",
-        "malformed query syntax",
+        StoreConnectionError("Neptune is not reachable"),
+        StoreTimeoutError("OpenSearch did not answer"),
+        StoreConfigurationError("OpenSearch endpoint is not configured."),
+        StoreAccessDeniedError("status=403"),
+        StoreRequestRejectedError("status=400"),
+        _client_error(
+            "ValidationException", "The provided model identifier is invalid."
+        ),
+        _client_error("ResourceNotFoundException"),
+        _client_error("AccessDeniedException"),
+        _client_error("UnrecognizedClientException"),
+        NoCredentialsError(),
+        EndpointConnectionError(endpoint_url="https://bedrock-runtime.example"),
+        ReadTimeoutError(endpoint_url="https://bedrock-runtime.example"),
     ],
+    ids=lambda exc: type(exc).__name__,
 )
-def test_transient_messages_are_not_fatal(message: str) -> None:
-    assert is_fatal_retrieval_error(AWSServiceError(message)) is False
+def test_fatal_errors_are_classified_by_type(exc: Exception) -> None:
+    assert is_fatal_retrieval_error(exc) is True
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        # Messages are not matched: the old "auth" marker failed every query
+        # whose error named a field such as "author".
+        AWSServiceError("status=500, error=failed on field [author]"),
+        AWSServiceError("AccessDenied"),
+        RuntimeError("Read timed out"),
+        _client_error("ThrottlingException"),
+        _client_error("ModelErrorException"),
+    ],
+    ids=lambda exc: str(exc)[:30],
+)
+def test_other_errors_are_transient(exc: Exception) -> None:
+    assert is_fatal_retrieval_error(exc) is False
 
 
 # --- unreachable stores, against real clients ------------------------------
@@ -175,7 +208,7 @@ def test_unreachable_opensearch_is_fatal_for_the_sync_client(
     assert is_fatal_retrieval_error(exc.value)
 
 
-async def test_opensearch_timeout_stays_transient(silent_port: int) -> None:
+async def test_opensearch_timeout_is_a_store_timeout(silent_port: int) -> None:
     search = _AsyncSearch(
         silent_port,
         connection_class=AsyncHttpConnection,
@@ -183,13 +216,12 @@ async def test_opensearch_timeout_stays_transient(silent_port: int) -> None:
         max_retries=0,
     )
     try:
-        with pytest.raises(AWSServiceError) as exc:
+        with pytest.raises(StoreTimeoutError) as exc:
             await search.search()
     finally:
         await search.client.close()
 
-    assert not isinstance(exc.value, StoreConnectionError)
-    assert not is_fatal_retrieval_error(exc.value)
+    assert is_fatal_retrieval_error(exc.value)
 
 
 async def test_unreachable_opensearch_fails_the_retrieval(
@@ -436,7 +468,7 @@ async def test_opensearch_retriever_reraises_fatal(config: Config) -> None:
     # fatal credentials error.
     _set_query_vector_raising(
         retriever,
-        AWSServiceError("Cannot get AWS credentials for OpenSearch IAM."),
+        StoreConfigurationError("Cannot get AWS credentials for OpenSearch IAM."),
     )
     with pytest.raises(AWSServiceError, match="credentials"):
         await retriever.aretrieve(SearchQuery(query="hello"))
@@ -444,9 +476,38 @@ async def test_opensearch_retriever_reraises_fatal(config: Config) -> None:
 
 async def test_opensearch_retriever_degrades_on_transient(config: Config) -> None:
     retriever = _opensearch_retriever(config)
-    _set_query_vector_raising(retriever, AWSServiceError("Read timed out"))
+    _set_query_vector_raising(retriever, _client_error("ThrottlingException"))
     results = await retriever.aretrieve(SearchQuery(query="hello"))
     assert results == []
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        _client_error(
+            "ValidationException", "The provided model identifier is invalid."
+        ),
+        _client_error(
+            "ValidationException",
+            "Invocation of model ID with on-demand throughput isn't supported.",
+        ),
+        _client_error("ResourceNotFoundException"),
+        NoCredentialsError(),
+        # A Bedrock endpoint that times out after the model wrapper's retries
+        # fails the query, as a store that does not answer does.
+        ReadTimeoutError(endpoint_url="https://bedrock-runtime.example"),
+    ],
+    ids=lambda exc: type(exc).__name__,
+)
+async def test_a_query_embedding_that_cannot_succeed_fails_the_retrieval(
+    config: Config, exc: Exception
+) -> None:
+    # Regression: every query answered "no relevant information" while the
+    # query embedding model was misconfigured.
+    retriever = _opensearch_retriever(config)
+    _set_query_vector_raising(retriever, exc)
+    with pytest.raises(type(exc)):
+        await retriever.aretrieve(SearchQuery(query="hello"))
 
 
 _QUERY_DIMENSION = 8
@@ -499,9 +560,10 @@ async def test_opensearch_execute_search_reraises_fatal(config: Config) -> None:
     # out of _execute_search, not be swallowed into an empty result list.
     retriever = _opensearch_retriever(config)
     _set_asearch_raising(
-        retriever, AWSServiceError("The security token included is invalid.")
+        retriever,
+        _through_handler(OpenSearchConnectionError("N/A", "refused", Exception())),
     )
-    with pytest.raises(AWSServiceError, match="security token"):
+    with pytest.raises(StoreConnectionError, match="refused"):
         await retriever.aretrieve(SearchQuery(query="hello"))
 
 
@@ -573,9 +635,11 @@ class _RaisingTraversal:
 
 async def test_neptune_execute_traversal_reraises_fatal(config: Config) -> None:
     retriever = _neptune_retriever(config, None)
-    with pytest.raises(AWSServiceError, match="AccessDenied"):
+    body = json.dumps({"code": "AccessDeniedException", "detailedMessage": "x"})
+    denied = GremlinServerError({"code": 500, "message": body, "attributes": {}})
+    with pytest.raises(StoreAccessDeniedError, match="neptune-db"):
         await retriever._execute_traversal(
-            _RaisingTraversal(AWSServiceError("AccessDeniedException"))  # type: ignore[arg-type]
+            _RaisingTraversal(denied)  # type: ignore[arg-type]
         )
 
 
@@ -986,10 +1050,11 @@ _INVALID_DIMENSION_BODY = {
 }
 
 
+@pytest.mark.parametrize("connection_cls", _CONNECTIONS)
 async def test_invalid_dimension_rejection_is_a_fatal_configuration_error(
-    config: Config,
+    config: Config, connection_cls: type[Connection]
 ) -> None:
-    raw = _server_error(AsyncHttpConnection, 400, _INVALID_DIMENSION_BODY)
+    raw = _server_error(connection_cls, 400, _INVALID_DIMENSION_BODY)
     retriever = _retriever_over(config, {}, search_error=_through_handler(raw))
     retriever._opensearch_client.mappings = {}
 
@@ -1032,22 +1097,6 @@ def test_queries_embed_with_the_indexed_dimension(
     assert retriever._embedding_dimension == expected
 
 
-def test_invalid_dimension_reason_is_cut_out_of_a_python_repr() -> None:
-    # The sync client error wrapper renders the parsed body with str(dict),
-    # so the reason sits in single quotes followed by the rest of the repr.
-    from unified_kg_rag.adapters.retrievers.opensearch_retriever import (
-        _invalid_dimension_error,
-    )
-
-    wrapped = AWSServiceError(
-        f"Transport error in 'search': status=400, info={_INVALID_DIMENSION_BODY}"
-    )
-
-    assert _invalid_dimension_error(wrapped) == (
-        "Query vector has invalid dimension: 8. Dimension should be: 512"
-    )
-
-
 # An Amazon OpenSearch Service access-policy denial (the text holds "auth").
 _ACCESS_DENIED_BODY = {
     "Message": "User: arn:aws:iam::000000000000:role/search-only is not "
@@ -1055,22 +1104,18 @@ _ACCESS_DENIED_BODY = {
 }
 
 
-def _denied(operation: str) -> AWSServiceError:
-    raw = _server_error(AsyncHttpConnection, 403, _ACCESS_DENIED_BODY)
-    denied = AWSServiceError(
-        f"Async transport error in '{operation}': status=403, "
-        f"info={_ACCESS_DENIED_BODY}"
+def _denied() -> Exception:
+    return _through_handler(
+        _server_error(AsyncHttpConnection, 403, _ACCESS_DENIED_BODY)
     )
-    denied.__cause__ = raw
-    return denied
 
 
 async def test_a_denied_mapping_read_skips_the_check_with_one_warning(
     config: Config, recording_logger: _RecordingLogger
 ) -> None:
-    # A search-only principal may not read mappings, and the 403's text holds
-    # the fatal "auth" marker: every vector query used to fail on the check.
-    denied = _denied("aget_mappings")
+    # A search-only principal may not read mappings, and a 403 is fatal:
+    # every vector query used to fail on the check.
+    denied = _denied()
     assert is_fatal_retrieval_error(denied)
     retriever = _retriever_over(config, {})
 
@@ -1090,7 +1135,7 @@ async def test_a_denied_mapping_read_skips_the_check_with_one_warning(
 
 
 async def test_a_denied_search_stays_fatal(config: Config) -> None:
-    retriever = _retriever_over(config, {}, search_error=_denied("asearch"))
+    retriever = _retriever_over(config, {}, search_error=_denied())
     retriever._opensearch_client.mappings = {}
 
     with pytest.raises(ConfigurationError, match="denied the search.*status=403"):
@@ -1122,9 +1167,8 @@ async def test_a_search_denied_by_fine_grained_access_control_is_fatal(
     config: Config, status: int
 ) -> None:
     raw = _server_error(AsyncHttpConnection, status, _FGAC_DENIED_BODY)
-    with pytest.raises(AWSServiceError) as wrapped:
+    with pytest.raises(StoreAccessDeniedError) as wrapped:
         await _handle_async_opensearch_errors(_raise_async(raw))(None)
-    assert not is_fatal_retrieval_error(wrapped.value)
     retriever = _retriever_over(config, {}, search_error=wrapped.value)
     retriever._opensearch_client.mappings = {}
 
@@ -1180,9 +1224,11 @@ def test_handler_keeps_the_server_reason(connection_cls: type[Connection]) -> No
     handled = _through_handler(
         _server_error(connection_cls, 400, _MISSING_PIPELINE_BODY)
     )
-    assert type(handled) is AWSServiceError
+    assert isinstance(handled, StoreRequestRejectedError)
     assert "status=400" in str(handled)
     assert "Pipeline missing-pipeline is not defined" in str(handled)
+    assert handled.reason is not None
+    assert "Pipeline missing-pipeline is not defined" in handled.reason
 
 
 @pytest.mark.parametrize(
@@ -1206,13 +1252,65 @@ async def test_rejected_search_is_a_fatal_configuration_error(
     assert is_fatal_retrieval_error(exc.value)
 
 
-@pytest.mark.parametrize("status", [429, 500, 503])
-async def test_throttling_and_server_errors_stay_transient(
+async def test_a_server_error_of_one_search_stays_transient(config: Config) -> None:
+    body = {"error": {"type": "some_exception", "reason": "busy"}, "status": 500}
+    error = _through_handler(_server_error(AsyncHttpConnection, 500, body))
+    retriever = _retriever_over(config, {}, search_error=error)
+    retriever._opensearch_client.mappings = {}
+
+    assert await retriever.aretrieve(_text_units_query(config)) == []
+
+
+@pytest.mark.parametrize("status", [429, 502, 503, 504])
+async def test_throttling_or_unavailable_after_retries_fails_the_query(
     config: Config, status: int
 ) -> None:
+    # Regression: the transport retries these statuses; a cluster still
+    # answering them (overloaded, restarting) answered from no context.
     body = {"error": {"type": "some_exception", "reason": "busy"}, "status": status}
     error = _through_handler(_server_error(AsyncHttpConnection, status, body))
     retriever = _retriever_over(config, {}, search_error=error)
     retriever._opensearch_client.mappings = {}
 
-    assert await retriever.aretrieve(_text_units_query(config)) == []
+    with pytest.raises(StoreConnectionError, match=f"status={status}"):
+        await retriever.aretrieve(_text_units_query(config))
+
+
+# --- the embedding-settings check's mapping read -----------------------------
+
+
+def _mapping_read_failing_with(config: Config, exc: Exception) -> OpenSearchRetriever:
+    retriever = _retriever_over(config, {})
+
+    async def _aget_mappings(index: str) -> dict[str, dict]:
+        retriever._opensearch_client.mapping_calls.append(index)
+        raise exc
+
+    retriever._opensearch_client.aget_mappings = _aget_mappings
+    return retriever
+
+
+async def test_a_mapping_read_that_timed_out_fails_the_query(config: Config) -> None:
+    raw = ConnectionTimeout("TIMEOUT", "timed out", Exception())
+    retriever = _mapping_read_failing_with(config, _through_handler(raw))
+
+    with pytest.raises(StoreTimeoutError, match="did not answer a request on"):
+        await retriever.aretrieve(_text_units_query(config))
+
+
+async def test_an_unreachable_cluster_fails_the_mapping_read(config: Config) -> None:
+    raw = OpenSearchConnectionError("N/A", "refused", Exception())
+    retriever = _mapping_read_failing_with(config, _through_handler(raw))
+
+    with pytest.raises(StoreConnectionError, match="refused"):
+        await retriever.aretrieve(_text_units_query(config))
+
+
+async def test_a_failed_mapping_read_leaves_the_check_to_the_search(
+    config: Config,
+) -> None:
+    body = {"error": {"type": "some_exception", "reason": "busy"}, "status": 500}
+    error = _through_handler(_server_error(AsyncHttpConnection, 500, body))
+    retriever = _mapping_read_failing_with(config, error)
+
+    assert len(await retriever.aretrieve(_text_units_query(config))) == 1

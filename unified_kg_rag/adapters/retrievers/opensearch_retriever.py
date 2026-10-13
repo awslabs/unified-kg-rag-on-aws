@@ -1,23 +1,16 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
-import re
 import time
 from collections import OrderedDict
 from collections.abc import Coroutine
 from typing import Any, ClassVar
 
-from opensearchpy.exceptions import ConnectionTimeout, RequestError, TransportError
-
 from unified_kg_rag.adapters.aws.opensearch import (
     OpenSearchClient,
-    error_reason,
     is_index_not_found,
 )
-from unified_kg_rag.adapters.retrieval.base import (
-    BaseGraphRAGRetriever,
-    is_fatal_retrieval_error,
-)
+from unified_kg_rag.adapters.retrieval.base import BaseGraphRAGRetriever
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
 from unified_kg_rag.adapters.storage.embedding_settings import (
     configured_embedding_model,
@@ -29,6 +22,7 @@ from unified_kg_rag.adapters.storage.filter_schema import (
     opensearch_filter_fields,
     union_filter_fields,
 )
+from unified_kg_rag.adapters.store_errors import is_fatal_retrieval_error
 from unified_kg_rag.domain.models import (
     Config,
     Constants,
@@ -42,8 +36,12 @@ from unified_kg_rag.shared import (
     ConfigurationError,
     IndexNotFoundError,
     InvalidFilterError,
-    StoreConnectionError,
     get_logger,
+)
+from unified_kg_rag.shared.exceptions import (
+    StoreAccessDeniedError,
+    StoreRequestRejectedError,
+    StoreTimeoutError,
 )
 from unified_kg_rag.shared.utils import (
     EMBEDDING_FIELD_SUFFIX,
@@ -58,7 +56,7 @@ from unified_kg_rag.shared.utils.scripts import (
 logger = get_logger(__name__)
 
 # OpenSearch's kNN rejection of a query vector of another dimension than the
-# index's (a 400 whose text the client error wrapper keeps only on its cause).
+# index's (the reason of a 400).
 _INVALID_DIMENSION_MARKER = "query vector has invalid dimension"
 # OpenSearch's default index.max_terms_count: the most values one terms query
 # may hold.
@@ -77,51 +75,14 @@ _MAX_LEXICAL_QUERY_TERMS = 150
 _LEXICAL_TERM_BUDGET = 200
 _MAX_FUZZY_QUERY_TERMS = 10
 _FUZZY_MAX_EXPANSIONS = 10
-# Where the reason ends inside a JSON body or a Python repr of one.
-_REASON_END = re.compile(r"[\"'}\]\\\n]")
 
 
-def _invalid_dimension_error(exc: BaseException) -> str | None:
-    """OpenSearch's invalid-dimension reason in ``exc`` or its causes, if any."""
-    seen: set[int] = set()
-    current: BaseException | None = exc
-    while current is not None and id(current) not in seen:
-        seen.add(id(current))
-        text = str(current)
-        start = text.lower().find(_INVALID_DIMENSION_MARKER)
-        if start >= 0:
-            return _REASON_END.split(text[start:], 1)[0].rstrip(" .,")
-        current = current.__cause__ or current.__context__
-    return None
-
-
-def _is_authorization_error(
-    exc: BaseException, statuses: tuple[int, ...] = (403,)
-) -> bool:
-    """Whether ``exc`` or one of its causes is an HTTP 403 (or ``statuses``)."""
-    seen: set[int] = set()
-    current: BaseException | None = exc
-    while current is not None and id(current) not in seen:
-        seen.add(id(current))
-        if isinstance(current, TransportError) and current.status_code in statuses:
-            return True
-        # The client error wrapper's message.
-        if any(f"status={status}" in str(current) for status in statuses):
-            return True
-        current = current.__cause__ or current.__context__
-    return False
-
-
-def _is_timeout(exc: BaseException) -> bool:
-    """Whether ``exc`` or one of its causes is a request that timed out."""
-    seen: set[int] = set()
-    current: BaseException | None = exc
-    while current is not None and id(current) not in seen:
-        seen.add(id(current))
-        if isinstance(current, ConnectionTimeout):
-            return True
-        current = current.__cause__ or current.__context__
-    return False
+def _invalid_dimension_reason(reason: str | None) -> str | None:
+    """OpenSearch's invalid-dimension rejection in a 400's ``reason``, if any."""
+    start = (reason or "").lower().find(_INVALID_DIMENSION_MARKER)
+    if start < 0:
+        return None
+    return (reason or "")[start:].rstrip(" .,")
 
 
 def _lexical_query_text(text: str, max_terms: int) -> tuple[str, int]:
@@ -148,18 +109,6 @@ def _index_setting(settings: dict[str, Any], name: str, default: int) -> int:
     OpenSearch takes either spelling of an index setting.
     """
     return int(settings.get(name, settings.get(f"index.{name}", default)))
-
-
-def _rejected_request(exc: BaseException) -> RequestError | None:
-    """The HTTP 400 OpenSearch answered, if ``exc`` is (or wraps) one."""
-    seen: set[int] = set()
-    current: BaseException | None = exc
-    while current is not None and id(current) not in seen:
-        if isinstance(current, RequestError):
-            return current
-        seen.add(id(current))
-        current = current.__cause__ or current.__context__
-    return None
 
 
 class OpenSearchRetriever(BaseGraphRAGRetriever):
@@ -339,10 +288,10 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             return final_results
 
         except Exception as e:
-            # Log loudly with the traceback. Re-raise clearly-fatal errors
-            # (auth/credentials/endpoint/connection) so a broken configuration
-            # surfaces instead of masquerading as "0 results"; degrade to an
-            # empty list only on genuinely-transient failures.
+            # Log loudly with the traceback. Re-raise fatal errors (an
+            # unusable store, a refused configuration, a query embedding model
+            # call that cannot succeed) so they surface instead of
+            # masquerading as "0 results"; degrade only on transient ones.
             if is_fatal_retrieval_error(e):
                 logger.error(
                     "OpenSearch retrieval failed (fatal): %s", e, exc_info=True
@@ -493,7 +442,7 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                 await self._opensearch_client.aget_mappings(alias)
             )
         except Exception as e:  # noqa: BLE001 - the search reports real failures
-            if _is_authorization_error(e):
+            if isinstance(e, StoreAccessDeniedError):
                 # A search-only principal may not read mappings; the search
                 # itself still runs, and reports its own errors.
                 self._embedding_checked_aliases.add(alias)
@@ -508,7 +457,7 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                         e,
                     )
                 return None
-            if _is_timeout(e):
+            if isinstance(e, StoreTimeoutError):
                 raise self._unanswered_error(alias) from e
             if is_fatal_retrieval_error(e):
                 raise
@@ -516,10 +465,10 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             return None
         return mappings
 
-    def _unanswered_error(self, target: str) -> StoreConnectionError:
+    def _unanswered_error(self, target: str) -> StoreTimeoutError:
         """The error a request OpenSearch never answered fails the query with."""
         search = self._config.search
-        return StoreConnectionError(
+        return StoreTimeoutError(
             f"OpenSearch did not answer a request on {target} within "
             f"{search.store_timeout_seconds} s in {search.store_max_attempts} "
             "attempt(s) (search.store_timeout_seconds, search.store_max_attempts)"
@@ -778,44 +727,42 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             return [self._parse_hit(hit) for hit in hits]
         except Exception as e:
             shown = ", ".join(aliases)
-            if _is_authorization_error(e, (401, 403)):
-                # Read before the generic check: a 403 body names no fatal
-                # marker, so a role without search rights answered every query
-                # from no context.
+            if isinstance(e, StoreAccessDeniedError):
                 raise ConfigurationError(
                     f"OpenSearch denied the search on {shown}: {e}. Grant the "
                     "query role indices:data/read/search on these indices, or "
                     "check its credentials."
                 ) from e
-            if _is_timeout(e):
+            if isinstance(e, StoreTimeoutError):
                 raise self._unanswered_error(shown) from e
-            # A fatal error (auth/config/connection) must propagate so the
-            # caller surfaces it, rather than masquerading as "0 results".
-            # Transient/per-index errors degrade to an empty list.
-            if is_fatal_retrieval_error(e):
-                logger.error("Fatal search error on indices %s: %s", aliases, e)
-                raise
-            if reason := _invalid_dimension_error(e):
+            if reason := _invalid_dimension_reason(
+                e.reason if isinstance(e, StoreRequestRejectedError) else None
+            ):
                 raise ConfigurationError(
-                    f"OpenSearch rejected the query vector on {', '.join(aliases)}: "
+                    f"OpenSearch rejected the query vector on {shown}: "
                     f"{reason}. The index was built with another embedding model "
                     f"or dimension than queries embed with ('{self._embedding_model_id}', "
                     f"dimension {self._embedding_dimension}). Query with the "
                     "embedding settings the corpus was ingested with, or re-ingest "
                     "it with this model (indexing.reset: true)."
                 ) from e
-            if (rejected := _rejected_request(e)) is not None:
+            if isinstance(e, StoreRequestRejectedError):
                 # A 400 is the same for every retry and every query: a filter
                 # value the field cannot hold, or a setting naming something the
                 # cluster lacks. Degrading it answered from no (or unfiltered)
                 # context.
                 raise ConfigurationError(
-                    f"OpenSearch rejected the search on {', '.join(aliases)} "
-                    f"(status 400): {error_reason(rejected)}. Check the query "
+                    f"OpenSearch rejected the search on {shown} "
+                    f"(status 400): {e.reason}. Check the query "
                     "filters (a value of another type than the field's) and the "
                     "OpenSearch settings the search uses, such as "
                     "indexing.opensearch.hybrid_search_pipeline_name."
                 ) from e
+            # Any other fatal error (an unreachable or overloaded cluster)
+            # propagates; a failure of this one search degrades to no hits.
+            if is_fatal_retrieval_error(e):
+                logger.error("Fatal search error on indices %s: %s", aliases, e)
+                raise
             if is_index_not_found(e):
                 await self._require_ingested_suffix(suffix, e)
                 # A missing alias is a config/index mismatch (the index was

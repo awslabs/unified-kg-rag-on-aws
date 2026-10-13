@@ -15,14 +15,10 @@ from gremlin_python.process.traversal import P, Traversal
 
 from unified_kg_rag.adapters.aws.neptune import (
     NeptuneClient,
-    is_connection_lost,
-    is_timeout,
     neptune_pool_size,
+    neptune_request_error,
 )
-from unified_kg_rag.adapters.retrieval.base import (
-    BaseGraphRAGRetriever,
-    is_fatal_retrieval_error,
-)
+from unified_kg_rag.adapters.retrieval.base import BaseGraphRAGRetriever
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
 from unified_kg_rag.adapters.storage.filter_schema import (
     ATTRIBUTE_KEY_PREFIX,
@@ -30,6 +26,7 @@ from unified_kg_rag.adapters.storage.filter_schema import (
     FilterFields,
     union_filter_fields,
 )
+from unified_kg_rag.adapters.store_errors import is_fatal_retrieval_error
 from unified_kg_rag.domain.models import Config, RetrievalResult, SearchQuery
 from unified_kg_rag.shared import StoreConnectionError, get_logger
 from unified_kg_rag.shared.utils import text_digest
@@ -110,50 +107,37 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
             return results
 
         except Exception as e:
-            unavailable = self._unavailable_error(e)
-            if unavailable is not None:
+            error = self._request_error(e)
+            if not is_fatal_retrieval_error(error):
+                logger.error(
+                    "Neptune retrieval failed (transient, degrading to empty "
+                    "results): %s",
+                    e,
+                    exc_info=True,
+                )
+                return []
+            if isinstance(error, StoreConnectionError):
                 # The connection is unusable (lost, or a request that never
                 # got an answer): drop it, so the next query reconnects.
                 if g is not None:
                     await asyncio.to_thread(self._neptune_client.reset, g)
-                logger.error("Neptune retrieval failed: %s", unavailable)
-                if unavailable is e:
-                    raise
-                raise unavailable from e
-            # Re-raise clearly-fatal errors (auth/credentials/endpoint/
-            # connection) so a broken configuration is not silently reported as
-            # "no results"; degrade to an empty list only on transient failures.
-            if is_fatal_retrieval_error(e):
+                logger.error("Neptune retrieval failed: %s", error)
+            else:
+                # A broken configuration is not "no results".
                 logger.error("Neptune retrieval failed (fatal): %s", e, exc_info=True)
+            if error is e:
                 raise
-            logger.error(
-                "Neptune retrieval failed (transient, degrading to empty "
-                "results): %s",
-                e,
-                exc_info=True,
-            )
-            return []
+            raise error from e
 
-    def _unavailable_error(self, exc: Exception) -> StoreConnectionError | None:
-        """The error to fail the query with when Neptune is unusable, else None.
+    def _request_error(self, exc: Exception) -> Exception:
+        """``exc`` typed by the Neptune client's policy (``neptune_request_error``).
 
-        A lost connection fails every later request on it; a request without
-        an answer within ``search.store_timeout_seconds`` means the server is
-        not answering. Neither is "no results", so both fail the query.
+        A lost connection fails every later request on it, and a request
+        without an answer within ``search.store_timeout_seconds`` means the
+        server is not answering: both become a ``StoreConnectionError``, which
+        fails the query rather than reading as "no results".
         """
-        if isinstance(exc, StoreConnectionError):
-            return exc
-        if is_connection_lost(exc):
-            return StoreConnectionError(
-                f"Neptune is not reachable (Gremlin connection failed or lost): {exc}"
-            )
-        if is_timeout(exc):
-            return StoreConnectionError(
-                "Neptune did not answer within "
-                f"{self._config.search.store_timeout_seconds} s "
-                "(search.store_timeout_seconds)"
-            )
-        return None
+        return neptune_request_error(exc, self._config.search.store_timeout_seconds)
 
     @staticmethod
     def _seed_ids(query: SearchQuery) -> list[Any]:
@@ -361,12 +345,14 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
                 result: list[Any] = await asyncio.to_thread(traversal.to_list)
             return result
         except Exception as e:
-            # Fatal errors (auth/credentials/endpoint/connection) and an
-            # unusable connection must reach `aretrieve`, which re-raises
-            # them; swallowing them here turned a broken Neptune configuration
-            # into a silent "no seed nodes found".
-            if is_fatal_retrieval_error(e) or self._unavailable_error(e) is not None:
-                raise
+            # Fatal errors (an unusable connection, a refused configuration)
+            # must reach `aretrieve`, which re-raises them; swallowing them
+            # here turned a broken Neptune into a silent "no seed nodes found".
+            error = self._request_error(e)
+            if is_fatal_retrieval_error(error):
+                if error is e:
+                    raise
+                raise error from e
             logger.error("Gremlin traversal execution failed: %s", e)
             return []
 
