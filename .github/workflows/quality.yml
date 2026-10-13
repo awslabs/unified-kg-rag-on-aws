@@ -248,7 +248,7 @@ jobs:
             if docker build -f docker/Dockerfile "${base_arg[@]}" -t unified-kg-rag:ci . 2>&1 | tee "$RUNNER_TEMP/build.log"; then
               exit 0
             fi
-            grep -qiE '429|toomanyrequests' "$RUNNER_TEMP/build.log" || exit 1
+            grep -qiE 'toomanyrequests|429 Too Many Requests' "$RUNNER_TEMP/build.log" || exit 1
             base_arg=(--build-arg "BASE_IMAGE=docker.io/library/$base")
             if [ "$attempt" -lt 5 ]; then sleep $((attempt * 20)); fi
           done
