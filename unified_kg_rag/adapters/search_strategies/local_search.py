@@ -125,7 +125,8 @@ class LocalSearchStrategy(BaseSearchStrategy):
         self, query: SearchQuery
     ) -> tuple[dict[str, list[RetrievalResult]], dict[str, int]]:
         """Entities -> Neptune expansion -> ranked text units (the dependent chain)."""
-        candidate_entity_ids = await self._find_candidate_entities(query)
+        candidate_hits = await self._find_candidate_entities(query)
+        candidate_entity_ids = [str(hit.source) for hit in candidate_hits]
         logger.debug(
             "Found %s candidate entities: '%s%s'",
             len(candidate_entity_ids),
@@ -136,6 +137,16 @@ class LocalSearchStrategy(BaseSearchStrategy):
         expanded_entity_nodes = await self._expand_via_graph(
             query, candidate_entity_ids
         )
+        if not expanded_entity_nodes and candidate_hits:
+            # A successful expansion returns at least the seeds, so none means
+            # it failed (and degraded): keep the entities the index found, and
+            # the text units they name, rather than answer without either.
+            logger.warning(
+                "Graph expansion returned no entities; using the %s entities "
+                "the entity index matched",
+                len(candidate_hits),
+            )
+            expanded_entity_nodes = candidate_hits
         filtered_entity_nodes = self._filter_entities(
             expanded_entity_nodes,
             frequency_threshold=self.config.search.local_search.entity_frequency_threshold,
@@ -180,7 +191,10 @@ class LocalSearchStrategy(BaseSearchStrategy):
         }
         return all_results, stats
 
-    async def _find_candidate_entities(self, query: SearchQuery) -> list[str]:
+    async def _find_candidate_entities(
+        self, query: SearchQuery
+    ) -> list[RetrievalResult]:
+        """The entities-index hits that seed graph expansion (each with an id)."""
         if not self.document_retriever:
             return []
 
@@ -209,7 +223,7 @@ class LocalSearchStrategy(BaseSearchStrategy):
         results = await self._safe_aretrieve(
             self.document_retriever, search_query, "Candidate entity lookup"
         )
-        return [res.source for res in results if res.source]
+        return [res for res in results if res.source]
 
     async def _retrieve_claims(self, query: SearchQuery) -> list[RetrievalResult]:
         # Only consume the claims (covariate) index when extraction is enabled;

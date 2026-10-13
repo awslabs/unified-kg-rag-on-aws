@@ -185,6 +185,10 @@ def test_filter_entities_counts_unwrapped_single_id_as_one() -> None:
 # --------------------------------------------------------------------------- #
 
 
+def _sources(results: list) -> list:
+    return [r.source for r in results]
+
+
 async def test_find_candidate_entities_no_retriever_returns_empty() -> None:
     strat = _bare_strategy(retrievers={})
     query = SearchQuery(query="q", entity_focus=["Alice"])
@@ -195,7 +199,7 @@ async def test_find_candidate_entities_no_entity_focus_falls_back_to_query() -> 
     retriever = _StubRetriever([_result("e1")])
     strat = _bare_strategy(retrievers={"document": retriever})
     query = SearchQuery(query="q", entity_focus=[], top_k=5)
-    assert await strat._find_candidate_entities(query) == ["e1"]
+    assert _sources(await strat._find_candidate_entities(query)) == ["e1"]
     sent = retriever.last_query
     assert sent is not None
     assert sent.query == "q"
@@ -238,7 +242,7 @@ async def test_find_candidate_entities_returns_sources_and_top_k() -> None:
     query = SearchQuery(query="q", entity_focus=["Alice", "Bob"])
     out = await strat._find_candidate_entities(query)
     # Drops the result with no source; keeps the rest.
-    assert out == ["e1", "e2"]
+    assert _sources(out) == ["e1", "e2"]
     # top_k = len(entity_focus) * candidates per focus entity = 2 * 2.
     sent = retriever.last_query
     assert sent is not None

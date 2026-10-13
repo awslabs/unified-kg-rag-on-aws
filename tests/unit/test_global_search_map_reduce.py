@@ -21,6 +21,7 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
+from botocore.exceptions import ClientError
 
 from unified_kg_rag.adapters.search_strategies.global_search import (
     GlobalSearchStrategy,
@@ -521,9 +522,12 @@ async def test_map_phase_fatal_error_propagates_when_not_ignored() -> None:
     strat = _strategy(ignore_errors=False, map_batch_size=1)
     strat.batch_processor.max_attempts = 1  # as GlobalSearchStrategy configures
     strat.map_rater = _DeniedMapChain(
-        RuntimeError("AccessDeniedException: no access to the model")
+        ClientError(
+            {"Error": {"Code": "AccessDeniedException", "Message": "no access"}},
+            "InvokeModel",
+        )
     )
-    with pytest.raises(RuntimeError, match="AccessDenied"):
+    with pytest.raises(ClientError, match="AccessDenied"):
         await strat._apply_map_reduce(_communities(2), SearchQuery(query="q"))
 
 

@@ -16,9 +16,11 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
+from botocore.exceptions import ClientError
 
 from unified_kg_rag.adapters.search_strategies.drift_search import DriftSearchStrategy
 from unified_kg_rag.domain.models import Config, RetrievalResult, SearchQuery
+from unified_kg_rag.shared.exceptions import StoreAccessDeniedError
 from unified_kg_rag.shared.utils import compute_hash
 
 pytestmark = pytest.mark.unit
@@ -411,7 +413,7 @@ async def test_execute_search_iteration_tolerates_retriever_exception(mocker) ->
 async def test_execute_search_iteration_propagates_fatal_error(mocker) -> None:
     # gather(return_exceptions=True) used to swallow fatal errors too, so an
     # AccessDenied from Neptune read as "no graph results" on every iteration.
-    graph = _StubRetriever(raises=RuntimeError("AccessDeniedException: neptune-db"))
+    graph = _StubRetriever(raises=StoreAccessDeniedError("AccessDeniedException"))
     document = _StubRetriever([_result("d1")])
     strat = _bare_strategy(retrievers={"graph": graph, "document": document})
     mocker.patch.object(
@@ -419,7 +421,7 @@ async def test_execute_search_iteration_propagates_fatal_error(mocker) -> None:
         "_find_candidate_entities_for_iteration",
         mocker.AsyncMock(return_value=["e1"]),
     )
-    with pytest.raises(RuntimeError, match="AccessDenied"):
+    with pytest.raises(StoreAccessDeniedError, match="AccessDenied"):
         await strat._execute_search_iteration(SearchQuery(query="q"))
 
 
@@ -864,10 +866,13 @@ async def test_evolve_query_fatal_error_propagates_when_not_ignored() -> None:
     # gather(return_exceptions=True) must not swallow a fatal (access) error.
     strat = _bare_strategy(ignore_errors=False)
     strat.query_refiner = _AChain(
-        raises=RuntimeError("AccessDeniedException: no access to the model")
+        raises=ClientError(
+            {"Error": {"Code": "AccessDeniedException", "Message": "no access"}},
+            "Converse",
+        )
     )
     strat.keyword_expander = _AChain(["kw"])
-    with pytest.raises(RuntimeError, match="AccessDenied"):
+    with pytest.raises(ClientError, match="AccessDenied"):
         await strat._evolve_query(SearchQuery(query="q"), "original", [], 1)
 
 

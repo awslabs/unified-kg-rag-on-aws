@@ -11,6 +11,7 @@ the ``delete_vertices_in_batches`` batching, and the
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -21,6 +22,7 @@ from unified_kg_rag.adapters.aws.neptune import NeptuneClient
 from unified_kg_rag.adapters.retrieval.base import is_fatal_retrieval_error
 from unified_kg_rag.domain.models import Config
 from unified_kg_rag.shared import AWSServiceError, StoreConnectionError
+from unified_kg_rag.shared.exceptions import StoreTimeoutError
 
 pytestmark = pytest.mark.unit
 
@@ -245,23 +247,23 @@ def test_a_refused_connection_is_a_store_connection_error(mocker) -> None:
         client._create_connection()
 
 
-@pytest.mark.parametrize(
-    "exc",
-    [
-        TimeoutError(),
-        GremlinServerError(
-            {"code": 500, "message": "ThrottlingException", "attributes": {}}
-        ),
-    ],
-    ids=["timeout", "throttled"],
-)
-def test_a_slow_or_throttled_probe_stays_transient(mocker, exc: Exception) -> None:
+def test_a_throttled_probe_stays_transient(mocker) -> None:
     # Every probe failure was "Failed to establish connection" (a fatal
-    # marker), so a probe that timed out or was throttled failed the query.
+    # marker), so a probe that was throttled failed the query.
+    exc = GremlinServerError(
+        {"code": 500, "message": "ThrottlingException", "attributes": {}}
+    )
     client = _probe_failing_with(mocker, exc)
     with pytest.raises(AWSServiceError) as caught:
         client._create_connection()
     assert not is_fatal_retrieval_error(caught.value)
+
+
+def test_a_probe_that_timed_out_is_a_store_timeout(mocker) -> None:
+    # A query fails on a Neptune that does not answer (search.store_timeout_seconds).
+    client = _probe_failing_with(mocker, TimeoutError())
+    with pytest.raises(StoreTimeoutError, match="did not answer"):
+        client._create_connection()
 
 
 # --- delete_vertices_in_batches ------------------------------------------
@@ -370,3 +372,131 @@ def test_handle_neptune_errors_wraps_exceptions(monkeypatch) -> None:
     monkeypatch.setattr(type(client), "g", property(lambda self: _BoomTraversal()))
     with pytest.raises(AWSServiceError, match="delete_vertices_in_batches.*failed"):
         client.delete_vertices_in_batches("MyLabel")
+
+
+# --- connection attempts under concurrency ---------------------------------
+#
+# Regression: each query waiting for the client lock made its own connection
+# attempt after the previous one failed, so N queries of an unreachable
+# Neptune took N x the connect timeout and held N executor threads meanwhile.
+
+
+def test_callers_waiting_on_a_failed_attempt_share_its_failure(mocker) -> None:
+    import threading
+    import time
+
+    attempts: list[float] = []
+
+    def _unreachable(self: NeptuneClient) -> Any:
+        attempts.append(time.monotonic())
+        time.sleep(0.3)
+        raise StoreConnectionError("Neptune is not reachable")
+
+    mocker.patch.object(NeptuneClient, "_create_connection", _unreachable)
+    client = _client(_config_with_neptune(endpoint="localhost", use_iam=False))
+    errors: list[BaseException] = []
+    start = threading.Barrier(8)
+
+    def _query() -> None:
+        start.wait()
+        try:
+            client.g
+        except StoreConnectionError as e:
+            errors.append(e)
+
+    threads = [threading.Thread(target=_query) for _ in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(10)
+
+    assert len(errors) == 8
+    assert len(attempts) == 1
+    # A caller arriving after the failure tries again.
+    with pytest.raises(StoreConnectionError):
+        client.connection
+    assert len(attempts) == 2
+
+
+# --- _NeptuneTransport.connect -----------------------------------------------
+
+
+class _Handshake:
+    """Stands in for ``aiohttp.ClientSession.ws_connect``; records the headers."""
+
+    def __init__(self, error: Exception | None = None) -> None:
+        self.error = error
+        self.headers: list[dict[str, str]] = []
+
+    async def __call__(self, url: str, **kwargs: Any) -> object:
+        self.headers.append(dict(kwargs.get("headers") or {}))
+        if self.error is not None:
+            raise self.error
+        return SimpleNamespace(closed=True)  # a websocket close() skips
+
+
+def _handshake_error(status: int) -> Exception:
+    import aiohttp
+
+    return aiohttp.WSServerHandshakeError(
+        request_info=_request_info(), history=(), status=status
+    )
+
+
+def _request_info() -> Any:
+    import aiohttp
+    from multidict import CIMultiDict, CIMultiDictProxy
+    from yarl import URL
+
+    url = URL("ws://localhost:8182/gremlin")
+    return aiohttp.RequestInfo(url, "GET", CIMultiDictProxy(CIMultiDict()), url)
+
+
+def test_each_socket_is_signed_on_its_handshake(mocker) -> None:
+    import aiohttp
+
+    handshake = _Handshake()
+    mocker.patch.object(aiohttp.ClientSession, "ws_connect", handshake)
+    signed: list[str] = []
+
+    def _sign(url: str) -> dict[str, str]:
+        signed.append(url)
+        return {"Authorization": f"sig-{len(signed)}"}
+
+    transport = neptune_mod._NeptuneTransport(5, _sign)
+    try:
+        transport.connect("wss://db.example.com:8182/gremlin", {"User-Agent": "x"})
+    finally:
+        transport.close()
+
+    assert signed == ["wss://db.example.com:8182/gremlin"]
+    assert handshake.headers == [{"User-Agent": "x", "Authorization": "sig-1"}]
+
+
+@pytest.mark.parametrize("status", [401, 403])
+def test_a_denied_handshake_is_an_access_denied_error(mocker, status: int) -> None:
+    import aiohttp
+
+    from unified_kg_rag.shared.exceptions import StoreAccessDeniedError
+
+    mocker.patch.object(
+        aiohttp.ClientSession, "ws_connect", _Handshake(_handshake_error(status))
+    )
+    transport = neptune_mod._NeptuneTransport(5, None)
+    with pytest.raises(StoreAccessDeniedError, match=f"HTTP {status}") as caught:
+        transport.connect("wss://db.example.com:8182/gremlin")
+    # Not chained: the response repr carries the signed headers.
+    assert caught.value.__cause__ is None
+    assert transport._client_session is None or transport._client_session.closed
+
+
+def test_another_handshake_failure_is_raised_as_is(mocker) -> None:
+    import aiohttp
+
+    mocker.patch.object(
+        aiohttp.ClientSession, "ws_connect", _Handshake(_handshake_error(500))
+    )
+    transport = neptune_mod._NeptuneTransport(5, None)
+    with pytest.raises(aiohttp.WSServerHandshakeError) as caught:
+        transport.connect("wss://db.example.com:8182/gremlin")
+    assert caught.value.status == 500

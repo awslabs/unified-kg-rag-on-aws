@@ -16,6 +16,7 @@ from unified_kg_rag.adapters.retrieval.token_manager import (
     TokenManager,
 )
 from unified_kg_rag.adapters.storage.filter_schema import FilterFields
+from unified_kg_rag.adapters.store_errors import is_fatal_retrieval_error
 from unified_kg_rag.domain.models import (
     Config,
     RetrievalResult,
@@ -24,63 +25,10 @@ from unified_kg_rag.domain.models import (
     SearchResult,
     SearchType,
 )
-from unified_kg_rag.shared import (
-    ConfigurationError,
-    IndexNotFoundError,
-    InvalidFilterError,
-    get_logger,
-    observability,
-)
+from unified_kg_rag.shared import get_logger, observability
 from unified_kg_rag.shared.utils.store_names import graph_label, store_name
 
 logger = get_logger(__name__)
-
-# Substrings in an error message that indicate a non-transient (fatal)
-# misconfiguration — auth, credentials, endpoint/config, or an outright
-# connection failure. A retriever should surface these to the caller rather
-# than masking them as "0 results", which is indistinguishable from a genuine
-# empty match and silently hides broken auth/config from the user.
-_FATAL_ERROR_MARKERS: tuple[str, ...] = (
-    "credential",
-    "not configured",
-    "endpoint",
-    "auth",
-    "forbidden",
-    "unauthorized",
-    "access denied",
-    "accessdenied",
-    "security token",
-    "expiredtoken",
-    "expired token",
-    "invalidclienttoken",
-    "failed to connect",
-)
-
-
-def is_fatal_retrieval_error(exc: BaseException) -> bool:
-    """Classify a retrieval error as fatal (re-raise) vs transient (degrade).
-
-    Fatal = a clearly non-recoverable misconfiguration (auth/credentials/
-    endpoint/config) or a connection failure: returning ``[]`` for these turns a
-    real failure into a misleading "no results". Everything else (throttling,
-    a single malformed query) is treated as transient and the caller may
-    degrade to an empty result list. ``ConnectionError`` (the retrievers raise
-    ``StoreConnectionError`` for a store they cannot reach, whose connection
-    was lost, or that did not answer within ``search.store_timeout_seconds``), a
-    missing suffix (``IndexNotFoundError``), a ``ConfigurationError`` (such
-    as a query embedding model the index was not built with, or a request the
-    store rejects as invalid) and an ``InvalidFilterError`` are always fatal.
-    Other failures arrive as an ``AWSServiceError`` carrying the original
-    message, which the markers are matched against.
-    """
-    if isinstance(
-        exc,
-        ConnectionError | IndexNotFoundError | ConfigurationError | InvalidFilterError,
-    ):
-        return True
-    message = str(exc).lower()
-    return any(marker in message for marker in _FATAL_ERROR_MARKERS)
-
 
 # Source ids recorded per retrieval span; the hit count is always complete.
 _MAX_SPAN_SOURCE_IDS = 50
@@ -204,11 +152,12 @@ class BaseSearchStrategy(ABC):
         """Run one sub-retrieval, re-raising fatal errors and degrading the rest.
 
         The single place a strategy decides whether a retrieval failure is
-        surfaced or absorbed: fatal errors (auth/credentials/endpoint/
-        connection, see `is_fatal_retrieval_error`) propagate so a broken
-        configuration is not reported as "no results"; anything else (timeouts,
-        throttling, a malformed query) is logged under ``label`` and degrades to
-        an empty list so one failing section does not sink the whole search.
+        surfaced or absorbed: fatal errors (an unreachable, hung or overloaded
+        store, denied or invalid requests, a model call that cannot succeed:
+        see `is_fatal_retrieval_error`) propagate so a broken deployment is not
+        reported as "no results"; anything else (one request the store failed)
+        is logged under ``label`` and degrades to an empty list so one failing
+        section does not sink the whole search.
         """
         with observability.span(
             "kg_rag.retrieve",

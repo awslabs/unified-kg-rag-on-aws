@@ -106,7 +106,11 @@ def test_an_edge_whose_drop_failed_is_not_re_added(indexer, mocker) -> None:
     drop.iterate.side_effect = [RuntimeError("drop timed out"), None]
     indexer.neptune_client.g = g
     built = mocker.patch.object(indexer, "_build_add_edge_traversal")
-    mocker.patch.object(indexer, "_execute_with_retries", return_value=["edge-id"])
+    mocker.patch.object(
+        indexer,
+        "_execute_with_retries",
+        side_effect=lambda build, *_a, **_k: [build(g)],
+    )
 
     stats = indexer.upsert_relationships(
         [

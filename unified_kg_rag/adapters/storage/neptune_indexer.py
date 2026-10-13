@@ -11,11 +11,12 @@ from gremlin_python.process.graph_traversal import (
     GraphTraversalSource,
     __,
 )
-from gremlin_python.process.traversal import Cardinality, P
+from gremlin_python.process.traversal import Cardinality, P, Traversal
 
 from unified_kg_rag.adapters.aws.neptune import (
     NeptuneClient,
     is_permanent_neptune_error,
+    run_traversal,
 )
 from unified_kg_rag.adapters.storage.neptune_codec import (
     entity_from_vertex,
@@ -365,10 +366,21 @@ class NeptuneIndexer(GraphIndexer):
                     # Drop this community's existing membership edges so re-adding
                     # does not create duplicate MemberOf edges on an incremental
                     # run; re-adding after a failed drop would duplicate them.
+                    def drop_members(
+                        g: GraphTraversalSource,
+                        community_label: str = community_label,
+                        community_id: str = comm.id,
+                    ) -> GraphTraversal:
+                        return (
+                            g.V()
+                            .hasLabel(community_label)
+                            .has("id", community_id)
+                            .inE("MemberOf")
+                            .drop()
+                        )
+
                     try:
-                        self.neptune_client.g.V().hasLabel(community_label).has(
-                            "id", comm.id
-                        ).inE("MemberOf").drop().iterate()
+                        run_traversal(self.neptune_client, drop_members)
                     except Exception as e:
                         stats.add_error(str(e), ids=[comm.id])
                         logger.warning(
@@ -378,16 +390,27 @@ class NeptuneIndexer(GraphIndexer):
                         )
                         continue
                 for entity_id_batch in self._batch_iterator(comm.entity_ids):
-                    try:
-                        edge_traversal = (
-                            self.neptune_client.g.V()
+
+                    def add_members(
+                        g: GraphTraversalSource,
+                        entity_label: str = entity_label,
+                        community_label: str = community_label,
+                        entity_ids: list[str] = entity_id_batch,
+                        community_id: str = comm.id,
+                    ) -> GraphTraversal:
+                        return (
+                            g.V()
                             .hasLabel(entity_label)
-                            .has("id", P.within(entity_id_batch))
+                            .has("id", P.within(entity_ids))
                             .addE("MemberOf")
-                            .to(__.V().hasLabel(community_label).has("id", comm.id))
+                            .to(
+                                __.V().hasLabel(community_label).has("id", community_id)
+                            )
                         )
+
+                    try:
                         self._execute_with_retries(
-                            edge_traversal, "Community edge indexing"
+                            add_members, "Community edge indexing"
                         )
                     except Exception as e:
                         stats.add_error(str(e), ids=[comm.id])
@@ -532,10 +555,21 @@ class NeptuneIndexer(GraphIndexer):
             # another tenant's identical edges.
             writable: list[Relationship] = []
             for batch in self._batch_iterator(rels):
+
+                def drop_edges(
+                    g: GraphTraversalSource,
+                    entity_label: str = entity_label,
+                    batch: list[Relationship] = batch,
+                ) -> GraphTraversal:
+                    return (
+                        g.E()
+                        .has("id", P.within([rel.id for rel in batch]))
+                        .where(__.outV().hasLabel(entity_label))
+                        .drop()
+                    )
+
                 try:
-                    self.neptune_client.g.E().has(
-                        "id", P.within([rel.id for rel in batch])
-                    ).where(__.outV().hasLabel(entity_label)).drop().iterate()
+                    run_traversal(self.neptune_client, drop_edges)
                     writable.extend(batch)
                 except Exception as e:
                     stats.add_error(
@@ -550,11 +584,10 @@ class NeptuneIndexer(GraphIndexer):
             ) -> str | None:
                 """Write one edge; the error, or None once it is written."""
                 try:
-                    traversal = self._build_add_edge_traversal(
-                        self.neptune_client.g, rel, entity_label
-                    )
                     if self._execute_with_retries(
-                        traversal, "Relationship indexing", results=True
+                        lambda g: self._build_add_edge_traversal(g, rel, entity_label),
+                        "Relationship indexing",
+                        results=True,
                     ):
                         return None
                     return f"source entity '{rel.source_id}' not found"
@@ -846,9 +879,9 @@ class NeptuneIndexer(GraphIndexer):
         (concurrent) without any locking.
         """
         try:
-            g = self.neptune_client.g
-            traversal = traversal_builder(g, batch)
-            self._execute_with_retries(traversal, operation_name)
+            self._execute_with_retries(
+                lambda g: traversal_builder(g, batch), operation_name
+            )
             stats.add_success(len(batch))
         except Exception as batch_error:
             logger.warning(
@@ -858,10 +891,14 @@ class NeptuneIndexer(GraphIndexer):
                 batch_error,
             )
             for item in batch:
+
+                def build_one(
+                    g: GraphTraversalSource, item: Any = item
+                ) -> GraphTraversal:
+                    return traversal_builder(g, [item])
+
                 try:
-                    g = self.neptune_client.g
-                    traversal = traversal_builder(g, [item])
-                    self._execute_with_retries(traversal, operation_name)
+                    self._execute_with_retries(build_one, operation_name)
                     stats.add_success(1)
                 except Exception as item_error:
                     item_id = getattr(item, "id", None)
@@ -875,22 +912,24 @@ class NeptuneIndexer(GraphIndexer):
         return stats
 
     def _execute_with_retries(
-        self, traversal: GraphTraversal, operation_name: str, *, results: bool = False
+        self,
+        build: Callable[[GraphTraversalSource], Traversal],
+        operation_name: str,
+        *,
+        results: bool = False,
     ) -> list[Any]:
-        """Run ``traversal`` with retries; with ``results``, return its results.
+        """Run the traversal ``build`` makes, with retries (``run_traversal``).
 
-        Without ``results`` the traversal is iterated (nothing sent back) and
-        ``[]`` is returned.
+        Each attempt builds it anew from the client's current source, so after
+        a lost connection (a Neptune restart or failover) the retry goes over
+        a new one. With ``results`` its results are returned, else ``[]``.
         """
         max_attempts = self.neptune_config.max_attempts
         delay = self.neptune_config.retry_delay_seconds
         attempt = 0
         while True:
             try:
-                if results:
-                    return list(traversal.toList())
-                traversal.iterate()
-                return []
+                return run_traversal(self.neptune_client, build, results=results)
             except Exception as e:
                 if is_permanent_neptune_error(e) or attempt + 1 == max_attempts:
                     logger.error(

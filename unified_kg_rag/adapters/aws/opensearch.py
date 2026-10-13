@@ -21,7 +21,18 @@ from opensearchpy.helpers import streaming_bulk
 
 from unified_kg_rag.adapters.llm.retry import backoff_delay
 from unified_kg_rag.domain.models import Config
-from unified_kg_rag.shared import AWSServiceError, StoreConnectionError, get_logger
+from unified_kg_rag.shared import (
+    AWSServiceError,
+    GraphRAGException,
+    StoreConnectionError,
+    get_logger,
+)
+from unified_kg_rag.shared.exceptions import (
+    StoreAccessDeniedError,
+    StoreConfigurationError,
+    StoreRequestRejectedError,
+    StoreTimeoutError,
+)
 
 if TYPE_CHECKING:
     import boto3
@@ -153,18 +164,30 @@ def error_reason(exc: TransportError) -> str:
 
 
 def _wrap_transport_error(exc: TransportError, context: str) -> AWSServiceError:
-    """The error the client raises for ``exc`` (to be chained ``from exc``).
+    """The typed error the client raises for ``exc`` (to be chained ``from exc``).
 
-    A cluster that cannot be reached (refused, DNS, TLS, after the client's
-    own retries) becomes a ``StoreConnectionError``; a timeout stays a plain
-    ``AWSServiceError``, since a slow cluster may answer the next query.
+    The transport has already retried what a retry may fix (a timeout and
+    ``_CLIENT_RETRY_STATUSES``), so: a cluster that cannot be reached
+    (refused, DNS, TLS) or still answers 429/502/503/504 is a
+    ``StoreConnectionError``, one that did not answer a ``StoreTimeoutError``,
+    a 401/403 a ``StoreAccessDeniedError`` and a 400 a
+    ``StoreRequestRejectedError`` (both carry the server's reason). Any other
+    status (a 500 for one query) stays a plain ``AWSServiceError``.
     """
-    msg = f"{context}: status={exc.status_code}, error={error_reason(exc)}"
+    reason = error_reason(exc)
+    msg = f"{context}: status={exc.status_code}, error={reason}"
     logger.exception(msg)
-    if isinstance(exc, OpenSearchConnectionError) and not isinstance(
-        exc, ConnectionTimeout
-    ):
+    if isinstance(exc, ConnectionTimeout):
+        return StoreTimeoutError(msg)
+    if isinstance(exc, OpenSearchConnectionError):
         return StoreConnectionError(msg)
+    status = exc.status_code
+    if status in (401, 403):
+        return StoreAccessDeniedError(msg, reason=reason)
+    if status == 400:
+        return StoreRequestRejectedError(msg, reason=reason)
+    if status in _CLIENT_RETRY_STATUSES:
+        return StoreConnectionError(f"{msg} (still failing after the client's retries)")
     return AWSServiceError(msg)
 
 
@@ -180,6 +203,8 @@ def _handle_opensearch_errors(func: Callable) -> Callable:
             raise _wrap_transport_error(
                 e, f"Transport error in '{func.__name__}'"
             ) from e
+        except GraphRAGException:
+            raise
         except Exception as e:
             msg = f"Unexpected error in '{func.__name__}': {e}"
             logger.exception(msg)
@@ -202,6 +227,8 @@ def _handle_async_opensearch_errors(func: Callable) -> Callable:
             raise _wrap_transport_error(
                 e, f"Async transport error in '{func.__name__}'"
             ) from e
+        except GraphRAGException:
+            raise
         except Exception as e:
             msg = f"Unexpected async error in '{func.__name__}': {e}"
             logger.exception(msg)
@@ -436,7 +463,7 @@ class OpenSearchClient:
             return client
         except Exception as e:
             logger.exception("Failed to create OpenSearch client: %s", e)
-            raise AWSServiceError("Failed to connect to OpenSearch.") from e
+            raise StoreConnectionError("Failed to connect to OpenSearch.") from e
 
     def _create_async_client(self) -> AsyncOpenSearch:
         params = self._get_base_connection_params(async_mode=True)
@@ -449,7 +476,7 @@ class OpenSearchClient:
 
     def _get_base_connection_params(self, async_mode: bool) -> dict[str, Any]:
         if not self.opensearch_config.endpoint:
-            raise AWSServiceError("OpenSearch endpoint is not configured.")
+            raise StoreConfigurationError("OpenSearch endpoint is not configured.")
 
         search = self.config.search
         return {
@@ -483,7 +510,9 @@ class OpenSearchClient:
         if self.opensearch_config.use_iam:
             creds = self.boto_session.get_credentials()
             if not creds:
-                raise AWSServiceError("Cannot get AWS credentials for OpenSearch IAM.")
+                raise StoreConfigurationError(
+                    "Cannot get AWS credentials for OpenSearch IAM."
+                )
             # opensearch-py's own SigV4 signers must be used, NOT
             # requests_aws4auth.AWS4Auth: the sync RequestsHttpConnection tolerates
             # AWS4Auth, but AIOHttpConnection treats http_auth as a basic-auth
@@ -508,7 +537,7 @@ class OpenSearchClient:
             logger.debug("Connecting to OpenSearch without authentication")
             return None
 
-        raise AWSServiceError(
+        raise StoreConfigurationError(
             "No OpenSearch auth method configured (IAM, basic or allow_anonymous)."
         )
 
