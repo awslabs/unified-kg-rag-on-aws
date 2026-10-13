@@ -65,11 +65,13 @@ def is_fatal_retrieval_error(exc: BaseException) -> bool:
     endpoint/config) or a connection failure: returning ``[]`` for these turns a
     real failure into a misleading "no results". Everything else (timeouts,
     throttling, a single malformed query) is treated as transient and the caller
-    may degrade to an empty result list. ``ConnectionError``, a missing suffix
-    (``IndexNotFoundError``) and a ``ConfigurationError`` (such as a query
-    embedding model the index was not built with) are always fatal.
-    The repo's adapters wrap backend failures in ``AWSServiceError`` carrying the
-    original message, so the markers are matched against the message text.
+    may degrade to an empty result list. ``ConnectionError`` (the store
+    clients raise ``StoreConnectionError`` for a store they cannot reach), a
+    missing suffix (``IndexNotFoundError``) and a ``ConfigurationError`` (such
+    as a query embedding model the index was not built with, or a request the
+    store rejects as invalid) are always fatal. Other failures arrive as an
+    ``AWSServiceError`` carrying the original message, which the markers are
+    matched against.
     """
     if isinstance(exc, ConnectionError | IndexNotFoundError | ConfigurationError):
         return True

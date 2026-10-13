@@ -28,10 +28,19 @@ from unified_kg_rag.adapters.storage.filter_schema import (
     union_filter_fields,
 )
 from unified_kg_rag.domain.models import Config, RetrievalResult, SearchQuery
-from unified_kg_rag.shared import get_logger
+from unified_kg_rag.shared import StoreConnectionError, get_logger
 from unified_kg_rag.shared.utils import text_digest
 
 logger = get_logger(__name__)
+
+
+def _is_connect_failure(exc: BaseException) -> bool:
+    """Whether ``exc`` is aiohttp's ``ClientConnectorError`` (or a subclass).
+
+    gremlinpython's transport raises it when the websocket cannot be opened.
+    Matched by class name, as aiohttp is gremlinpython's dependency, not ours.
+    """
+    return any(cls.__name__ == "ClientConnectorError" for cls in type(exc).__mro__)
 
 
 class NeptuneRetriever(BaseGraphRAGRetriever):
@@ -514,6 +523,12 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
                 result: list[Any] = await asyncio.to_thread(traversal.to_list)
             return result
         except Exception as e:
+            if _is_connect_failure(e):
+                # The websocket could not be (re)opened: the server is down or
+                # unreachable (refused, DNS, TLS), as every later query will be.
+                raise StoreConnectionError(
+                    f"Neptune is not reachable (Gremlin connection failed): {e}"
+                ) from e
             # Fatal errors (auth/credentials/endpoint/connection) must reach
             # `aretrieve`, which re-raises them; swallowing them here turned a
             # broken Neptune configuration into a silent "no seed nodes found".

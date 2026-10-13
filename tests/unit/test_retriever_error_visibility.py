@@ -11,21 +11,33 @@ empty list only on genuinely-transient failures.
 
 from __future__ import annotations
 
+import asyncio
 import json
+import socket
 import weakref
+from collections.abc import Iterator
 
 import pytest
+from gremlin_python.driver.driver_remote_connection import DriverRemoteConnection
+from gremlin_python.process.anonymous_traversal import traversal
 from gremlin_python.process.graph_traversal import GraphTraversal
 from gremlin_python.structure.graph import Graph
 from opensearchpy import (
     AsyncHttpConnection,
+    AsyncOpenSearch,
     Connection,
+    OpenSearch,
     RequestsHttpConnection,
     Urllib3HttpConnection,
 )
 from opensearchpy.exceptions import NotFoundError, TransportError
 
-from unified_kg_rag.adapters.aws.opensearch import is_index_not_found
+from unified_kg_rag.adapters.aws.opensearch import (
+    OpenSearchClient,
+    _handle_async_opensearch_errors,
+    _handle_opensearch_errors,
+    is_index_not_found,
+)
 from unified_kg_rag.adapters.retrieval.base import is_fatal_retrieval_error
 from unified_kg_rag.adapters.retrievers.neptune_retriever import NeptuneRetriever
 from unified_kg_rag.adapters.retrievers.opensearch_retriever import OpenSearchRetriever
@@ -38,6 +50,7 @@ from unified_kg_rag.shared import (
     AWSServiceError,
     ConfigurationError,
     IndexNotFoundError,
+    StoreConnectionError,
 )
 
 pytestmark = pytest.mark.unit
@@ -75,6 +88,140 @@ def test_misconfiguration_messages_are_fatal(message: str) -> None:
 )
 def test_transient_messages_are_not_fatal(message: str) -> None:
     assert is_fatal_retrieval_error(AWSServiceError(message)) is False
+
+
+# --- unreachable stores, against real clients ------------------------------
+#
+# Regression: opensearch-py's ConnectionError is not a built-in ConnectionError
+# and its message ("Cannot connect to host ...") matched no marker, so an
+# OpenSearch that was down read as "no results" and every strategy abstained.
+
+
+@pytest.fixture
+def closed_port() -> int:
+    """A localhost port nothing listens on (connections are refused)."""
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port: int = sock.getsockname()[1]
+    return port
+
+
+@pytest.fixture
+def silent_port() -> Iterator[int]:
+    """A localhost port that accepts connections and never answers."""
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        sock.listen(8)
+        yield sock.getsockname()[1]
+
+
+def _local_opensearch_config(config: Config, port: int) -> Config:
+    opensearch = config.aws.opensearch
+    opensearch.endpoint = "127.0.0.1"
+    opensearch.port = port
+    opensearch.use_ssl = False
+    opensearch.use_iam = False
+    opensearch.allow_anonymous = True
+    return config
+
+
+async def test_unreachable_opensearch_is_fatal(
+    config: Config, closed_port: int
+) -> None:
+    client = OpenSearchClient(_local_opensearch_config(config, closed_port))
+    try:
+        with pytest.raises(StoreConnectionError, match="Cannot connect") as exc:
+            await client.asearch(index="any", body={"query": {"match_all": {}}})
+    finally:
+        await client.aclose()
+
+    assert is_fatal_retrieval_error(exc.value)
+
+
+class _SyncSearch:
+    def __init__(self, port: int, **kwargs) -> None:
+        self.client = OpenSearch(hosts=[{"host": "127.0.0.1", "port": port}], **kwargs)
+
+    @_handle_opensearch_errors
+    def search(self) -> dict:
+        return self.client.search(index="any", body={})
+
+
+class _AsyncSearch:
+    def __init__(self, port: int, **kwargs) -> None:
+        self.client = AsyncOpenSearch(
+            hosts=[{"host": "127.0.0.1", "port": port}], **kwargs
+        )
+
+    @_handle_async_opensearch_errors
+    async def search(self) -> dict:
+        return await self.client.search(index="any", body={})
+
+
+@pytest.mark.parametrize("connection_cls", [RequestsHttpConnection, None])
+def test_unreachable_opensearch_is_fatal_for_the_sync_client(
+    closed_port: int, connection_cls: type[Connection] | None
+) -> None:
+    kwargs = {"connection_class": connection_cls} if connection_cls else {}
+    search = _SyncSearch(closed_port, max_retries=0, **kwargs)
+
+    with pytest.raises(StoreConnectionError) as exc:
+        search.search()
+
+    assert is_fatal_retrieval_error(exc.value)
+
+
+async def test_opensearch_timeout_stays_transient(silent_port: int) -> None:
+    search = _AsyncSearch(
+        silent_port,
+        connection_class=AsyncHttpConnection,
+        timeout=0.2,
+        max_retries=0,
+    )
+    try:
+        with pytest.raises(AWSServiceError) as exc:
+            await search.search()
+    finally:
+        await search.client.close()
+
+    assert not isinstance(exc.value, StoreConnectionError)
+    assert not is_fatal_retrieval_error(exc.value)
+
+
+async def test_unreachable_opensearch_fails_the_retrieval(
+    config: Config, closed_port: int
+) -> None:
+    retriever = _opensearch_retriever(config)
+    client = OpenSearchClient(_local_opensearch_config(config, closed_port))
+    object.__setattr__(retriever, "_opensearch_client", client)
+    try:
+        with pytest.raises(StoreConnectionError):
+            await retriever.aretrieve(
+                SearchQuery(query="hello", search_type=SearchType.LEXICAL)
+            )
+    finally:
+        await client.aclose()
+
+
+async def test_unreachable_neptune_fails_the_retrieval(
+    config: Config, closed_port: int
+) -> None:
+    # A connection opened earlier whose server has gone: gremlinpython opens
+    # its websocket on the first request and raises aiohttp's
+    # ClientConnectorError, which `_execute_traversal` used to degrade to [].
+    connection = DriverRemoteConnection(
+        f"ws://127.0.0.1:{closed_port}/gremlin", "g", pool_size=1
+    )
+
+    class _Client:
+        g = traversal().with_remote(connection)
+
+    retriever = _neptune_retriever(config, _Client())
+    try:
+        with pytest.raises(StoreConnectionError, match="Neptune is not reachable"):
+            await retriever.aretrieve(SearchQuery(query="", filters={"id": ["e1"]}))
+    finally:
+        await asyncio.to_thread(connection.close)
 
 
 # --- OpenSearchRetriever top-level handler -------------------------------

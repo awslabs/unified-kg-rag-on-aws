@@ -374,6 +374,12 @@ Library API (Python callers and custom backends).
   deletions. It failed graph extraction ("produced 0 outputs"), so the
   deletions were never applied and every later run failed the same way. A
   full build, or a run in which a text unit failed, still fails (#248).
+- An OpenSearch or Neptune that cannot be reached (connection refused, DNS
+  or TLS failure) fails the query with `StoreConnectionError` instead of
+  reading as "no results": every strategy abstained and `run-eval` reported
+  a 100% success rate against a store that was down. A timeout, throttling
+  or a 5xx still degrades the one sub-search. OpenSearch errors now log the
+  server's reason instead of `info=None` (#PR).
 - `run-eval --eval-data-path` naming a file that does not exist exits 2 with
   `Error: invalid evaluation dataset: ...`, as the user guide documents and
   as an unreadable or invalid dataset does; it exited 1 (#230).

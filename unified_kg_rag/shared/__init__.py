@@ -23,6 +23,7 @@ from .exceptions import (
     PipelineStageError,
     PipelineStateError,
     RerankModelError,
+    StoreConnectionError,
 )
 from .logging import get_logger, setup_logging
 from .metrics import CloudWatchEMFSink, MetricsSink, NullMetricsSink
@@ -63,6 +64,7 @@ __all__ = [
     "PipelineStateError",
     "PipelineStateManager",
     "RerankModelError",
+    "StoreConnectionError",
     "get_cache_manager",
     "get_config",
     "get_logger",

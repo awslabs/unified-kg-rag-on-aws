@@ -393,7 +393,7 @@ AWS 세션은 묶음의 세션(`Providers(boto_session=...)`, 기본값은 처�
 
 ### 8.5 검색 오류 가시성
 
-리트리버(`opensearch_retriever`/`neptune_retriever`)는 인증, 설정, 연결 실패를 "결과 없음"으로 감추지 않습니다. `is_fatal_retrieval_error()`(`adapters/retrieval/base.py`)는 치명적 오류를 `exc_info`와 함께 다시 발생시키고, 일시적 오류일 때만 `[]`로 대신합니다. 그래서 잘못된 IAM 권한이나 엔드포인트 오타가 "검색 결과 0건"에 묻히지 않고 드러납니다. Neptune의 질의 단위 `_execute_traversal`도 치명적 오류를 다시 발생시키므로 이 최상위 판별까지 전달됩니다. 검색 전략은 모든 하위 검색에 같은 규칙을 공통 도우미 `BaseSearchStrategy._safe_aretrieve` 하나로 적용하므로, 섹션 단위 예외 처리가 리트리버가 올린 치명적 오류를 다시 삼키지 않습니다. 일시적 오류는 여전히 해당 섹션만 빈 결과로 처리합니다.
+리트리버(`opensearch_retriever`/`neptune_retriever`)는 인증, 설정, 연결 실패를 "결과 없음"으로 감추지 않습니다. `is_fatal_retrieval_error()`(`adapters/retrieval/base.py`)는 치명적 오류를 `exc_info`와 함께 다시 발생시키고, 일시적 오류일 때만 `[]`로 대신합니다. 그래서 잘못된 IAM 권한이나 엔드포인트 오타가 "검색 결과 0건"에 묻히지 않고 드러납니다. 클라이언트가 저장소에 연결하지 못하면(연결 거부, DNS 또는 TLS 실패. 클라이언트 자체 재시도 후) `ConnectionError`의 하위 형식인 `StoreConnectionError`가 발생하므로 메시지가 아닌 형식으로 판별합니다. 시간 초과, 스로틀링(429), 5xx 오류는 일시적 오류로 남습니다. Neptune의 질의 단위 `_execute_traversal`도 치명적 오류를 다시 발생시키므로 이 최상위 판별까지 전달됩니다. 검색 전략은 모든 하위 검색에 같은 규칙을 공통 도우미 `BaseSearchStrategy._safe_aretrieve` 하나로 적용하므로, 섹션 단위 예외 처리가 리트리버가 올린 치명적 오류를 다시 삼키지 않습니다. 일시적 오류는 여전히 해당 섹션만 빈 결과로 처리합니다.
 
 ### 8.6 클라이언트 수명 주기와 자원 해제
 
