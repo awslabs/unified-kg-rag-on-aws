@@ -905,6 +905,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             filtered=bool(search_query.filters),
         ) as span:
             result = await strategy_instance.asearch(search_query, config=config)
+            # A failure ignore_errors absorbed still degraded the answer.
+            if degraded := result.metadata.get("degraded_error"):
+                span.set_attribute(ERROR_TYPE, degraded)
             if observability.is_enabled():
                 span.set_attributes(
                     {

@@ -438,6 +438,53 @@ async def test_asearch_all_filtered_yields_empty_result_with_flag() -> None:
     assert result.metadata["map_reduce_applied"] is False
 
 
+@pytest.mark.parametrize("failing", ["map", "reduce"])
+async def test_asearch_marks_a_map_reduce_failure_ignore_errors_degraded(
+    failing: str,
+) -> None:
+    # Regression: with ignore_errors on, a failed map or reduce call degraded
+    # the answer with no marker on the result (nor error.type on the span).
+    strat = _strategy(
+        ignore_errors=True,
+        map_batch_size=1,
+        reduce_with_llm=True,
+        map_outputs=[_map_payload(("p", 50))] * 2,
+    )
+    if failing == "map":
+        strat._run_map_phase = AsyncMock(  # type: ignore[method-assign]
+            side_effect=TimeoutError("map down")
+        )
+    else:
+        strat.map_reducer.ainvoke = AsyncMock(side_effect=TimeoutError("down"))
+    communities = _communities(2)
+    for step in (
+        "_retrieve_community_reports",
+        "_select_relevant_communities",
+        "_augment_and_rerank_communities",
+    ):
+        setattr(strat, step, AsyncMock(return_value=communities))
+
+    result = await strat.asearch(SearchQuery(query="q"))
+
+    assert result.results
+    assert result.metadata["degraded_error"] == "TimeoutError"
+
+
+async def test_asearch_without_a_failure_has_no_degraded_marker() -> None:
+    strat = _strategy(map_batch_size=1, map_outputs=[_map_payload(("p", 50))] * 2)
+    communities = _communities(2)
+    for step in (
+        "_retrieve_community_reports",
+        "_select_relevant_communities",
+        "_augment_and_rerank_communities",
+    ):
+        setattr(strat, step, AsyncMock(return_value=communities))
+
+    result = await strat.asearch(SearchQuery(query="q"))
+
+    assert "degraded_error" not in result.metadata
+
+
 # --------------------------------------------------------------------------- #
 # Default (reduce_with_llm=False): packed points go to the answer model as-is
 # --------------------------------------------------------------------------- #
@@ -618,6 +665,29 @@ async def test_map_phase_a_400_on_every_batch_fails_the_query() -> None:
     strat.map_rater = _DeniedMapChain(_bad_request("Unknown parameter: 'top_k'"))
     with pytest.raises(openai.BadRequestError, match="top_k"):
         await strat._apply_map_reduce(_communities(2), SearchQuery(query="q"))
+
+
+async def test_map_phase_a_typed_overflow_on_every_batch_answers() -> None:
+    # Regression: langchain-openai's OpenAIContextOverflowError is a
+    # BadRequestError too, so an overflow on every batch (a level of at most
+    # map_batch_size reports is one batch) failed the query as a refused
+    # request instead of answering from the unrated reports.
+    base = pytest.importorskip("langchain_openai.chat_models.base")
+    import httpx
+
+    overflow = base.OpenAIContextOverflowError(
+        "too long",
+        response=httpx.Response(
+            400, request=httpx.Request("POST", "http://localhost/v1")
+        ),
+        body=None,
+    )
+    strat = _strategy(ignore_errors=False, map_batch_size=5, reduce_with_llm=True)
+    strat.batch_processor.max_attempts = 1  # as GlobalSearchStrategy configures
+    strat.map_rater = _DeniedMapChain(overflow)
+    out = await strat._apply_map_reduce(_communities(3), SearchQuery(query="q"))
+    assert out[0].content == "SYNTHESIZED ANSWER"
+    assert [r.source for r in out[1:]] == ["c0", "c1", "c2"]
 
 
 async def test_map_phase_fatal_error_degrades_when_ignored() -> None:

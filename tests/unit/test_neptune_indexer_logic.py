@@ -513,7 +513,7 @@ def test_execute_batch_falls_back_to_per_item_on_batch_failure(indexer, mocker) 
     mocker.patch.object(indexer.neptune_config, "index_concurrency", 1)
     calls = {"n": 0}
 
-    def flaky(traversal, op):
+    def flaky(traversal, op, **kwargs):
         calls["n"] += 1
         # The very first call is the whole-batch attempt -> fail it.
         if calls["n"] == 1:

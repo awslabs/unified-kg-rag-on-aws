@@ -514,6 +514,48 @@ async def test_query_span_tree_carries_counts_and_ids_not_content(
             assert "What does Vendor supply" not in str(value)
 
 
+async def test_a_degraded_strategy_marks_its_span_with_the_error_type(
+    tracing: Tracing,
+) -> None:
+    # Regression: a map/reduce failure ignore_errors absorbed left no
+    # error.type on the kg_rag.strategy span.
+    exporter = tracing()
+    config = Config()
+    config.search.reranking.enabled = False
+    chain = GraphRAGChain(
+        config=config,
+        model_factory=_FakeModelFactory(),
+        memory_manager=_FakeMemoryManager(),  # type: ignore[arg-type]
+        retriever_builders={
+            RetrieverRole.DOCUMENT: _FakeRetriever,  # type: ignore[dict-item]
+            RetrieverRole.GRAPH: _FakeRetriever,  # type: ignore[dict-item]
+        },
+    )
+    chain.token_manager.count_tokens = lambda text: len((text or "").split())
+    strategy = chain._get_strategy_instance(SearchStrategy.SIMPLE)
+    real_asearch = strategy.asearch
+
+    async def degraded_asearch(query: Any, config: Any = None) -> Any:
+        result = await real_asearch(query, config=config)
+        result.metadata["degraded_error"] = "TimeoutError"
+        return result
+
+    strategy.asearch = degraded_asearch  # type: ignore[method-assign]
+    try:
+        output = await chain.ainvoke(
+            RAGInput(
+                query="What does Vendor supply?",
+                search_strategy=SearchStrategy.SIMPLE,
+                enable_query_processing=False,
+            )
+        )
+    finally:
+        await chain.aclose()
+
+    assert output.metadata["degraded_error"] == "TimeoutError"  # type: ignore[union-attr]
+    assert _attrs(_one(exporter, "kg_rag.strategy"))["error.type"] == "TimeoutError"
+
+
 async def test_query_spans_carry_the_conversation_as_session_and_the_user(
     tracing: Tracing,
 ) -> None:

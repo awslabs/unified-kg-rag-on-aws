@@ -52,6 +52,11 @@ class _MapPoint:
         self.score = score
 
 
+def _record(degraded: list[str] | None, error: Exception) -> None:
+    if degraded is not None:
+        degraded.append(type(error).__name__)
+
+
 @register_strategy(SearchStrategy.GLOBAL, required_roles=(RetrieverRole.DOCUMENT,))
 class GlobalSearchStrategy(BaseSearchStrategy):
     def __init__(
@@ -166,10 +171,12 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         )
 
         no_relevant_points = False
+        # Type names of the map/reduce failures ignore_errors degraded.
+        degraded: list[str] = []
         if self.global_search_config.enable_map_reduce:
             pre_map_count = len(final_results)
             final_results = await self._apply_map_reduce(
-                final_results, query, config=config
+                final_results, query, config=config, degraded=degraded
             )
             # Only an all-below-threshold map phase empties a non-empty input.
             no_relevant_points = pre_map_count > 0 and not final_results
@@ -198,6 +205,8 @@ class GlobalSearchStrategy(BaseSearchStrategy):
                 "selected_community_count": len(selected_communities),
                 "map_reduce_applied": self._was_map_reduce_applied(final_results),
                 "map_reduce_no_relevant_points": no_relevant_points,
+                # The chain sets error.type on the strategy span from it.
+                **({"degraded_error": degraded[0]} if degraded else {}),
             },
         )
 
@@ -385,6 +394,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         query: SearchQuery,
         *,
         config: RunnableConfig | None = None,
+        degraded: list[str] | None = None,
     ) -> list[RetrievalResult]:
         """MS GraphRAG global-search map-reduce.
 
@@ -408,6 +418,9 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         failed (throttling, timeout) or returned unparseable output, their
         reports were never judged, so it degrades to concat-and-reduce over
         just those unrated reports instead.
+
+        The type name of each failure ``ignore_errors`` degraded is appended
+        to ``degraded``.
         """
         reports = [
             r for r in results if r.retriever_type == SectionType.COMMUNITY.value
@@ -426,6 +439,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             if not self.ignore_errors:
                 raise
             logger.error("Map phase failed: %s", e)
+            _record(degraded, e)
             map_points, unrated = [], list(reports)
 
         ranked_points = self._filter_and_rank_points(map_points)
@@ -438,7 +452,9 @@ class GlobalSearchStrategy(BaseSearchStrategy):
                     len(unrated),
                     len(reports),
                 )
-                reduced = await self._concat_reduce(unrated, query, config=config)
+                reduced = await self._concat_reduce(
+                    unrated, query, config=config, degraded=degraded
+                )
                 return reduced + text_units
             logger.warning(
                 "All %s map key points scored at or below threshold %s; "
@@ -453,7 +469,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             self._pack_points_within_budget, ranked_points
         )
         return await self._reduce_from_points(
-            packed_points, results, query, config=config
+            packed_points, results, query, config=config, degraded=degraded
         )
 
     async def _run_map_phase(
@@ -618,6 +634,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         query: SearchQuery,
         *,
         config: RunnableConfig | None = None,
+        degraded: list[str] | None = None,
     ) -> list[RetrievalResult]:
         synthesis_input = "\n\n".join(
             f"- (relevance {p.score}) {p.description}" for p in points
@@ -656,6 +673,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             if not self.ignore_errors:
                 raise
             logger.error("Map-reduce synthesis failed: %s", e)
+            _record(degraded, e)
             return results
 
         summary_result = RetrievalResult(
@@ -679,6 +697,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         query: SearchQuery,
         *,
         config: RunnableConfig | None = None,
+        degraded: list[str] | None = None,
     ) -> list[RetrievalResult]:
         """Legacy direct concat-and-reduce path (map-reduce degradation target).
 
@@ -713,6 +732,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
                 raise
 
             logger.error("Map-reduce synthesis failed: %s", e)
+            _record(degraded, e)
             return results
 
     def _was_map_reduce_applied(self, final_results: list[RetrievalResult]) -> bool:

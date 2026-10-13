@@ -104,10 +104,16 @@ def is_bad_request(exc: BaseException) -> bool:
     vLLM and llama.cpp report a prompt longer than the model's context as a
     plain 400, which LangChain does not map to ``ContextOverflowError``: the
     global-search map step leaves a batch that got one unrated, as an
-    overflow, unless no batch was rated at all.
+    overflow, unless no batch was rated at all. A typed overflow
+    (langchain-openai's ``OpenAIContextOverflowError`` is a ``BadRequestError``
+    too) is never one: only that prompt is too long, however many batches hit
+    it.
     """
     openai = sys.modules.get("openai")
-    return openai is not None and isinstance(exc, openai.BadRequestError)
+    if openai is None or not isinstance(exc, openai.BadRequestError):
+        return False
+    overflow = sys.modules.get("langchain_core.exceptions")
+    return overflow is None or not isinstance(exc, overflow.ContextOverflowError)
 
 
 def _is_fatal_status(status: object) -> bool:
