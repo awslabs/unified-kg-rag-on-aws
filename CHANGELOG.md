@@ -363,7 +363,21 @@ Library API (Python callers and custom backends).
   20 s instead of 60 s, and 5,000 relationship writes about 5 s instead of
   28 s. Restart the stack (`down` and `up`) to pick it up (#265).
 
+### Removed
+- `NeptuneClient.connection`, which nothing in the package used; use
+  `NeptuneClient.g` (#PR).
+
 ### Fixed
+- A Neptune connection lost under concurrent queries no longer leaks
+  threads. A query took the traversal source before waiting for a pool
+  slot, so after another query reset the connection it sent on the closed
+  one and blocked in gremlinpython's `pool.get()` for good; the timeout
+  freed the slot but not the thread, and after a few outages the loop's
+  default executor had no thread left: every strategy hung, and `aclose()`
+  and the process exit with them. The traversal is now built in its worker
+  from the current source, closing a connection wakes the requests waiting
+  on its pool (they fail as a lost connection), and traversals run on
+  threads the retriever owns (#PR).
 - Queries that waited on a failed Neptune connection attempt each raise a
   copy of its error; re-raising the one shared error grew its traceback by
   every waiter's frames and kept them in memory (#264).

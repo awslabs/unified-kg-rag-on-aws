@@ -71,9 +71,11 @@ def is_permanent_neptune_error(exc: BaseException) -> bool:
 
 # What gremlinpython raises on a websocket that is gone (the server closed it,
 # or restarted, or failed over): the pooled connection is never reopened.
+# "Client is closed": a request on a connection ``reset`` already closed.
 _CLOSED_CONNECTION_MESSAGES = (
     "Connection was already closed.",
     "Connection was closed by server.",
+    "Client is closed",
 )
 
 
@@ -92,7 +94,7 @@ def is_connection_lost(exc: BaseException) -> bool:
     for current in causes(exc):
         if isinstance(current, ConnectionError | aiohttp.ClientConnectionError):
             return True
-        if isinstance(current, RuntimeError) and str(current) in (
+        if isinstance(current, Exception) and str(current) in (
             _CLOSED_CONNECTION_MESSAGES
         ):
             return True
@@ -239,6 +241,34 @@ class _NeptuneTransport(AiohttpTransport):
             raise
 
 
+class _ClosedPooledConnection:
+    """Stand-in a closed client's pool hands out: every request on it fails.
+
+    gremlinpython's ``Client.close`` takes the idle connections out of the
+    pool and leaves it empty, while a request already past its ``is_closed``
+    check waits in ``pool.get()`` with no timeout, holding its thread for
+    good. Putting this in the pool wakes each such request in turn: it fails
+    as a lost connection and puts the stand-in back for the next one.
+    """
+
+    def __init__(self, pool: Any) -> None:
+        self._pool = pool
+
+    def write(self, request_message: Any) -> Any:
+        self._pool.put_nowait(self)
+        raise RuntimeError(_CLOSED_CONNECTION_MESSAGES[0])
+
+
+def _close_connection(connection: DriverRemoteConnection) -> None:
+    """Close ``connection`` and fail the requests still waiting on its pool."""
+    try:
+        connection.close()
+    finally:
+        pool = getattr(getattr(connection, "_client", None), "_pool", None)
+        if pool is not None:
+            pool.put_nowait(_ClosedPooledConnection(pool))
+
+
 def neptune_pool_size(config: Config) -> int:
     """Connections in a NeptuneClient's pool: the most requests in flight."""
     return max(config.aws.neptune.pool_size, config.indexing.neptune.index_concurrency)
@@ -293,12 +323,6 @@ class NeptuneClient:
             if self._g is None:
                 self._g = traversal().withRemote(connection)
             return self._g
-
-    @property
-    def connection(self) -> DriverRemoteConnection:
-        attempts = self._attempts
-        with self._lock:
-            return self._connected(attempts)
 
     def _connected(self, attempts_seen: int) -> DriverRemoteConnection:
         """The open connection, opened now if needed (call holding the lock).
@@ -422,7 +446,7 @@ class NeptuneClient:
                 return
             stale, self._connection, self._g = self._connection, None, None
         try:
-            stale.close()
+            _close_connection(stale)
         except Exception as e:  # noqa: BLE001 - the connection is gone anyway
             logger.debug("Error closing a lost Neptune connection: %s", e)
         logger.info("Dropped the Neptune connection; the next query reconnects")
@@ -431,7 +455,7 @@ class NeptuneClient:
         with self._lock:
             if self._connection and not self._connection.is_closed():
                 try:
-                    self._connection.close()
+                    _close_connection(self._connection)
                     self._connection = None
                     self._g = None
                     logger.info("Closed Neptune connection")

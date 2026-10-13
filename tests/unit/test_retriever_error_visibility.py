@@ -611,7 +611,7 @@ def test_reset_spares_a_newer_connection(
     client = NeptuneClient(config)
     stale_g = client.g
     client.reset(stale_g)
-    current_g, current_connection = client.g, client.connection
+    current_g, current_connection = client.g, client._connection
     # A second traversal that failed on the stale connection must not drop
     # the one the next query already opened.
     client.reset(stale_g)
@@ -773,6 +773,7 @@ def _neptune_retriever(config: Config, neptune_client) -> NeptuneRetriever:
     )
     object.__setattr__(inst, "_pool_size", config.aws.neptune.pool_size)
     object.__setattr__(inst, "_traversal_slots", weakref.WeakKeyDictionary())
+    object.__setattr__(inst, "_executor", None)
     # Stub out the metrics recorders (pydantic model -> inject, don't patch).
     return inst
 
@@ -819,21 +820,23 @@ class _RaisingTraversal:
 
 
 async def test_neptune_execute_traversal_reraises_fatal(config: Config) -> None:
-    retriever = _neptune_retriever(config, None)
+    retriever = _neptune_retriever(config, _ClientWithLocalGraph())
     body = json.dumps({"code": "AccessDeniedException", "detailedMessage": "x"})
     denied = GremlinServerError({"code": 500, "message": body, "attributes": {}})
     with pytest.raises(StoreAccessDeniedError, match="neptune-db"):
         await retriever._execute_traversal(
-            _RaisingTraversal(denied)  # type: ignore[arg-type]
+            lambda g: _RaisingTraversal(denied)  # type: ignore[arg-type,return-value]
         )
 
 
 async def test_neptune_execute_traversal_degrades_on_transient(
     config: Config,
 ) -> None:
-    retriever = _neptune_retriever(config, None)
+    retriever = _neptune_retriever(config, _ClientWithLocalGraph())
     results = await retriever._execute_traversal(
-        _RaisingTraversal(AWSServiceError("Read timed out"))  # type: ignore[arg-type]
+        lambda g: _RaisingTraversal(  # type: ignore[arg-type,return-value]
+            AWSServiceError("Read timed out")
+        )
     )
     assert results == []
 
@@ -885,6 +888,74 @@ async def test_a_traversal_blocked_on_the_pool_fails_and_resets(
     finally:
         release.set()
     assert client.resets
+
+
+class _SwappableClient:
+    """A fake NeptuneClient whose source a ``reset`` replaces."""
+
+    def __init__(self) -> None:
+        self.current = Graph().traversal()
+
+    @property
+    def g(self):
+        return self.current
+
+    def reset(self, g: object = None) -> None:
+        self.current = Graph().traversal()
+
+    def close(self) -> None:
+        pass
+
+
+async def test_a_queued_traversal_uses_the_source_of_the_moment(
+    config: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Regression: aretrieve took ``g`` before waiting for a pool slot, so a
+    # query queued while another one reset the connection sent on the closed
+    # connection, whose pool.get() then blocked its thread for good.
+    config.aws.neptune.pool_size = 1
+    release = threading.Event()
+    graphs: list[object] = []
+
+    def _to_list(self) -> list:
+        graphs.append(self.graph)
+        if len(graphs) == 1:
+            release.wait(5)
+        return []
+
+    monkeypatch.setattr(GraphTraversal, "to_list", _to_list)
+    client = _SwappableClient()
+    retriever = _neptune_retriever(config, client)
+    first = asyncio.ensure_future(retriever.aretrieve(_SEEDED))
+    while not graphs:
+        await asyncio.sleep(0.01)
+    queued = asyncio.ensure_future(retriever.aretrieve(_SEEDED))
+    await asyncio.sleep(0.05)
+    stale = client.current.graph
+    client.reset()
+    release.set()
+    await asyncio.gather(first, queued)
+    assert graphs[0] is stale
+    assert graphs[1] is client.current.graph
+
+
+async def test_traversals_run_on_the_retrievers_own_threads(
+    config: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Regression: traversals ran on the loop's default executor, so ones that
+    # hung starved the model calls and every other strategy that share it.
+    names: list[str] = []
+
+    def _to_list(self) -> list:
+        names.append(threading.current_thread().name)
+        return []
+
+    monkeypatch.setattr(GraphTraversal, "to_list", _to_list)
+    retriever = _neptune_retriever(config, _SwappableClient())
+    await retriever.aretrieve(_SEEDED)
+    assert names and names[0].startswith("neptune-retriever")
+    retriever.close()
+    assert retriever._executor is None
 
 
 async def test_neptune_transient_traversal_error_degrades_from_aretrieve(
