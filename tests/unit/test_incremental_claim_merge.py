@@ -187,3 +187,15 @@ def test_remove_claim_text_units_returns_only_the_claims_it_changed() -> None:
     assert stripped.id == _CLAIM_ID
     assert stripped.text_unit_ids == ["tu-a"]
     assert shared.text_unit_ids == ["tu-a", "tu-b"]
+
+
+def test_merge_claims_status_matches_the_resolver_for_two_claims() -> None:
+    # The docstring's claim: for one stored and one delta claim the stored
+    # status is ClaimResolver's most-common rule (the first on a tie).
+    stored = _claim("a.txt").model_copy(update={"status": "SUSPECTED"})
+    delta = _claim("b.txt")
+    resolver = ClaimResolver(Config(), use_process_pool=False, show_progress=False)
+
+    (merged,) = merge_claims([stored], [delta])
+
+    assert merged.status == resolver._merge_claims([stored, delta]).status
