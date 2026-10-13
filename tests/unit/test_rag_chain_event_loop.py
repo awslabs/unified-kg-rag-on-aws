@@ -115,7 +115,7 @@ def test_loop_change_closes_evicted_retrievers() -> None:
     # Every loop got its own retriever; each evicted one was closed (its loop
     # is gone, so synchronously, in the background), and identity is not
     # fooled by id reuse.
-    rag_chain_module._join_background_closes()
+    chain._background_closes.join()
     assert len(built) == 5
     assert [r.closed for r in built] == [1, 1, 1, 1, 0]
     chain.close()
@@ -144,7 +144,7 @@ def test_evicted_retriever_whose_close_drives_a_loop_is_closed() -> None:
 
     # Evicted inside the next query's running loop, their blocking close
     # still runs to completion (on a worker thread).
-    rag_chain_module._join_background_closes()
+    chain._background_closes.join()
     assert [r.closed for r in built] == [1, 1, 0]
     chain.close()
     assert built[-1].closed == 1
@@ -177,6 +177,31 @@ def test_evicting_a_slowly_closing_retriever_does_not_stall_the_query() -> None:
 
     # Chain close waits for the background close.
     assert [r.closed for r in built] == [1, 1]
+
+
+def test_chain_close_does_not_wait_for_another_chains_background_close() -> None:
+    # Regression: background closes were tracked process-wide, so closing
+    # (or GC-finalizing) one chain waited up to 30 s for another chain's slow
+    # close, which could block the event loop the finalizer ran on.
+    _SlowClosingRetriever.release.clear()
+    slow, slow_built = _chain(_SlowClosingRetriever)
+    other, _ = _chain()
+    try:
+        _run_on_fresh_loop(slow.ainvoke({"query": "q"}))  # type: ignore[arg-type]
+        _run_on_fresh_loop(slow.ainvoke({"query": "q"}))  # type: ignore[arg-type]
+        assert slow_built[0].closed == 0  # still closing in the background
+        _run_on_fresh_loop(other.ainvoke({"query": "q"}))  # type: ignore[arg-type]
+
+        started = time.monotonic()
+        other.close()
+        assert time.monotonic() - started < 2
+        started = time.monotonic()
+        _run_on_fresh_loop(other.aclose())
+        assert time.monotonic() - started < 2
+    finally:
+        _SlowClosingRetriever.release.set()
+        slow.close()
+    assert [r.closed for r in slow_built] == [1, 1]
 
 
 async def test_aclose_closes_retrievers_of_a_closed_loop_off_the_loop() -> None:

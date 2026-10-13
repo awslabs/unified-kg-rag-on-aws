@@ -709,7 +709,8 @@ def test_incremental_write_refuses_other_languages_or_an_untracked_build(
                 other.check_index_settings(_SUFFIX)
 
         # A full build by a run with the registry off is not updated
-        # incrementally; a pre-#231 index (no _meta) is given this run's.
+        # incrementally; a pre-#231 index (no _meta) is given the dimension
+        # it verifiably holds, not this run's model.
         indexer.set_doc_status_tracking(False)
         assert indexer.index_text_units(_text_units()).failed_items == 0
         with pytest.raises(ConfigurationError, match="registry off"):
@@ -723,9 +724,9 @@ def test_incremental_write_refuses_other_languages_or_an_untracked_build(
         assert index_name
         client.put_index_meta(index_name, {})
         indexer.check_index_settings(_SUFFIX)
-        assert client.get_index_mappings(index_name)["_meta"] == (
-            indexer._embedding_meta()
-        )
+        assert client.get_index_mappings(index_name)["_meta"] == {
+            "embedding_dimension": indexer._embedding_meta()["embedding_dimension"]
+        }
     finally:
         indexer.clear([_SUFFIX])
         indexer.close()

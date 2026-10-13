@@ -11,6 +11,7 @@ from unified_kg_rag.adapters.storage.embedding_settings import (
     META_DIMENSION,
     META_MODEL,
     resolve_embedding_dimension,
+    stored_embedding_settings,
 )
 from unified_kg_rag.domain.models import (
     Claim,
@@ -196,8 +197,15 @@ class OpenSearchIndexer(VectorIndexer):
           off holds documents the registry does not describe.
 
         The last two are checked only on an index that records its embedding
-        settings; one built before is given them (when its dimension and text
-        fields match), so later runs check it in full.
+        settings. One built before it did (before #231) is given the one
+        setting that can be verified, its vector dimension, when its text
+        fields match this run's, so later runs check it in full; its model
+        stays unrecorded, as which same-dimension model built it cannot be
+        told. Such an index carries no registry marker either, so it is taken
+        as registry-tracked. Giving it the dimension is best-effort: a failure
+        (e.g. a role without ``indices:admin/mapping/put``) is logged and the
+        run goes on. An index whose text fields do not match is left as it
+        is, with a warning: an older release may have mapped them otherwise.
 
         Raises:
             ConfigurationError: An index of ``suffix`` does not match.
@@ -213,12 +221,7 @@ class OpenSearchIndexer(VectorIndexer):
             mappings = self.opensearch_client.get_index_mappings(index_name)
             meta = mappings.get("_meta") or {}
             properties = mappings.get("properties") or {}
-            dimensions = {
-                field.get("dimension")
-                for field in properties.values()
-                if isinstance(field, dict) and field.get("type") == "knn_vector"
-            }
-            stored_model = meta.get(META_MODEL)
+            stored_model, dimensions = stored_embedding_settings(mappings)
             if not dimensions <= {expected[META_DIMENSION]} or stored_model not in (
                 None,
                 expected[META_MODEL],
@@ -226,9 +229,7 @@ class OpenSearchIndexer(VectorIndexer):
                 stored = (
                     f"model '{stored_model}'" if stored_model else "an unrecorded model"
                 )
-                stored_dimensions = ", ".join(
-                    str(d) for d in sorted(d for d in dimensions if isinstance(d, int))
-                )
+                stored_dimensions = ", ".join(str(d) for d in sorted(dimensions))
                 raise ConfigurationError(
                     f"The OpenSearch index '{index_name}' holds embeddings of "
                     f"{stored} (dimension {stored_dimensions or 'unknown'}), but "
@@ -241,11 +242,8 @@ class OpenSearchIndexer(VectorIndexer):
             mismatches = self._text_field_mismatches(
                 mapping_funcs[prefix]()["mappings"]["properties"], properties
             )
-            if stored_model is None:
-                # Built before the index recorded its settings: give it
-                # this run's when they match, so later runs check it in full.
-                if not mismatches:
-                    self.opensearch_client.put_index_meta(index_name, expected)
+            if META_MODEL not in meta and META_DIMENSION not in meta:
+                self._record_legacy_dimension(index_name, meta, dimensions, mismatches)
                 continue
             if mismatches:
                 raise ConfigurationError(
@@ -268,6 +266,45 @@ class OpenSearchIndexer(VectorIndexer):
                     "(registry on) to rebuild the stores and the registry, or "
                     "keep the registry off for this suffix."
                 )
+
+    def _record_legacy_dimension(
+        self,
+        index_name: str,
+        meta: dict[str, Any],
+        dimensions: set[int],
+        mismatches: list[str],
+    ) -> None:
+        """Give an index built before it recorded its settings its dimension.
+
+        See ``check_index_settings``: only when its text fields match this
+        run's, and best-effort.
+        """
+        if mismatches:
+            logger.warning(
+                "The OpenSearch index '%s' records no embedding settings and its "
+                "text fields do not match this run's language settings (%s); "
+                "documents written incrementally may be analyzed differently "
+                "from the rest. Re-run once with indexing.reset: true to "
+                "rebuild it for the current processing.translation and "
+                "indexing.opensearch.language_analyzers.",
+                index_name,
+                "; ".join(mismatches),
+            )
+            return
+        if len(dimensions) != 1:
+            return  # no vector field to verify the dimension by
+        try:
+            self.opensearch_client.put_index_meta(
+                index_name, {**meta, META_DIMENSION: next(iter(dimensions))}
+            )
+        except Exception as e:  # noqa: BLE001 - recording it is optional
+            logger.warning(
+                "Could not record the embedding dimension in the _meta of the "
+                "OpenSearch index '%s' (%s); its dimension is still checked on "
+                "every run, its languages and registry state only once recorded.",
+                index_name,
+                e,
+            )
 
     def clear(self, suffixes: list[str]) -> bool:
         if not suffixes:

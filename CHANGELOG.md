@@ -199,6 +199,10 @@ Library API (Python callers and custom backends).
   SQLite registry gains the column on first open (#224).
 - Roles with a custom IAM policy need `dynamodb:BatchGetItem` and
   `dynamodb:BatchWriteItem` on the registry table (#191, #194).
+- A suffix indexed with the doc-status registry off by a release before
+  #233 cannot be told apart from a tracked one (its indices carry no
+  marker), so an incremental run takes it as tracked: run such a suffix once
+  with `indexing.reset: true` (registry on) after upgrading (#243).
 
 ### Added
 - `providers:` config section selecting each role's backend (`llm`,
@@ -419,8 +423,8 @@ Library API (Python callers and custom backends).
   registry ("1 new, 10 unchanged"), so documents went missing. Each index
   now records in its `_meta` whether the registry tracks it. An index built
   before it recorded its settings is not checked for languages or the
-  registry, and is given the run's embedding settings when its dimension
-  and text fields match, so later runs check its model (#233).
+  registry, and is given its settings when its dimension and text fields
+  match, so later runs check it in full (#233).
 - A run with `indexing.reset: true` that reuses the pipeline id of an
   incremental run (a fixed `--pipeline-id`) rebuilds the stores from the
   whole corpus. It resumed at the indexing stage from the previous run's
@@ -429,6 +433,26 @@ Library API (Python callers and custom backends).
   run. `indexing.reset` is now an input of the document-loading stage cache
   key (only when set, so existing caches keep their keys), not of the
   extraction fingerprint (#233).
+- An OpenSearch index built before indices recorded their embedding
+  settings (#231) is given only its vector dimension, not the run's
+  embedding model: another model of the same dimension may have built it,
+  and recording the run's model would then refuse the right configuration
+  at ingestion and at query time. Its model stays unchecked, as before.
+  Recording the dimension is best-effort: a role without
+  `indices:admin/mapping/put` gets a WARNING instead of an incremental run
+  that stops before its write-ahead. Such an index whose text fields do not
+  match the run's languages is still written to, now with a WARNING naming
+  the fields and the `indexing.reset: true` remedy (#243).
+- A principal that may search but not read index mappings (an OpenSearch
+  403) can query again: the first vector or hybrid query's embedding check
+  read the mappings and failed every query on the denial. The check is now
+  skipped with one WARNING; the search's own errors still fail the query.
+  The invalid-dimension reason of a rejected query is cut at the end of the
+  reason instead of running on through the rest of the error body (#243).
+- Closing a `GraphRAGChain` (`close()`, `aclose()` or its GC finalizer) waits
+  only for its own background retriever closes. It waited up to 30 seconds
+  for those of every chain in the process, so a dropped chain collected on
+  an event-loop thread could block that loop (#243).
 - IaC: a zone-aware OpenSearch domain spans as many AZs as it has data
   nodes, up to 3 and up to the VPC's AZs, so `opensearch_count=3` with
   `max_azs=3` uses three zones instead of two; on an existing domain the

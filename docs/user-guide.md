@@ -1208,9 +1208,18 @@ SQLite file instead (`providers.doc_status.kind: sqlite`, switched on by
   index records whether the registry tracks it, and a later incremental run
   on that suffix stops before any write: re-run once with
   `indexing.reset: true` and the registry on, or keep the registry off for
-  that suffix. Indices built before they recorded their settings are not
-  checked for languages or the registry; an incremental run whose dimension
-  and text fields match gives them this run's embedding settings.
+  that suffix. Indices built before they recorded their settings (before
+  #231) are not checked for languages or the registry. An incremental run
+  whose text fields match records their vector dimension, the one setting it
+  can verify (not the model, which another model of the same dimension may
+  have been), and later runs check them in full; one whose text fields do not
+  match leaves them as they are and logs a WARNING naming the fields: re-run
+  once with `indexing.reset: true` to rebuild them for the current languages.
+  Such indices carry no registry marker, so they are taken as tracked by the
+  registry. **Upgrading:** if a suffix was ever indexed with the registry off
+  by a release before #233, run it once with `indexing.reset: true` (registry
+  on) before its next incremental run; nothing can tell that run apart from
+  a tracked one.
 
 ### Deletion scope
 
