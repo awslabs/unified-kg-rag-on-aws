@@ -321,6 +321,11 @@ Library API (Python callers and custom backends).
   updates the CDK lock through `uv lock`, so a transitive bump the pinned
   aws-cdk-lib cannot admit no longer opens a pull request that fails to
   install (#251).
+- `docker/Dockerfile` takes the base image from a `BASE_IMAGE` build
+  argument whose default is the same pinned public.ecr.aws ref, so a plain
+  `docker build` is unchanged. When public.ecr.aws rate-limits the CI
+  `docker` job (429), the job pulls the same digest from Docker Hub instead
+  of retrying a quota that does not recover within minutes (#257).
 
 ### Fixed
 - `run-visualization` rejects an unknown `--renderers` name while parsing
