@@ -363,6 +363,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         # long-lived loop instead of a fresh loop per call, so their
         # loop-bound retrievers are built once and reused.
         self._loop_runner = _LoopRunner(self.config.processing.io_workers)
+        # This chain's own retriever closes running on daemon threads: chain
+        # close waits for these only, never for another chain's.
+        self._background_closes = _BackgroundCloses()
         # Safety net for a chain dropped without close()/aclose(): release the
         # cached retrievers' sockets, then stop the loop. The finalizer holds
         # the caches and runner, never the chain itself, so it does not keep
@@ -375,6 +378,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             self._strategy_cache,
             self._cache_lock,
             self._loop_runner,
+            self._background_closes,
         )
         self.chain = self._build_chain()
 
@@ -998,7 +1002,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             evicted = self._take_cached_retrievers(dead) if dead else {}
         for retrievers in evicted.values():
             # The loop is closed, so this is their synchronous close.
-            self._release_retrievers(retrievers, None, wait=False)
+            self._release_retrievers(
+                retrievers, None, wait=False, background=self._background_closes
+            )
         return current
 
     def _take_cached_retrievers(
@@ -1018,6 +1024,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         loop: asyncio.AbstractEventLoop | None,
         *,
         wait: bool,
+        background: "_BackgroundCloses | None" = None,
     ) -> None:
         """Close retrievers from sync code (best-effort, never raises).
 
@@ -1031,7 +1038,8 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
 
         ``wait=False`` (eviction on the query path) returns without waiting
         for the closes: they run on a daemon thread, so a slow close does not
-        stall the query; chain close waits for them.
+        stall the query; chain close waits for them. ``background`` tracks
+        those closes (the owning chain's tracker; a private one if omitted).
         """
         if not retrievers:
             return
@@ -1057,7 +1065,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         if current is None and wait:
             _close_retrievers(retrievers)
             return
-        worker = _close_in_background(retrievers)
+        worker = (background or _BackgroundCloses()).start(retrievers)
         if wait:
             worker.join(timeout=_TEARDOWN_TIMEOUT_SECONDS)
 
@@ -1095,7 +1103,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             else:
                 # Their loop is gone: the blocking closes run off this loop.
                 await asyncio.to_thread(_close_retrievers, retrievers)
-        await asyncio.to_thread(_join_background_closes)
+        background = getattr(self, "_background_closes", None)
+        if background is not None:
+            await asyncio.to_thread(background.join)
         runner = getattr(self, "_loop_runner", None)
         if runner is not None:
             await asyncio.to_thread(runner.stop)
@@ -1107,6 +1117,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             getattr(self, "_strategy_cache", {}),
             getattr(self, "_cache_lock", None) or threading.RLock(),
             getattr(self, "_loop_runner", None),
+            getattr(self, "_background_closes", None),
         )
 
     def _optimize_context(self, state: dict[str, Any]) -> OptimizedContext:
@@ -1650,37 +1661,44 @@ def _close_retrievers(retrievers: list[BaseGraphRAGRetriever]) -> None:
             logger.debug("Error closing retriever %r: %s", retriever, e)
 
 
-# Retriever closes running on daemon threads (see _close_in_background).
-_BACKGROUND_CLOSES: set[threading.Thread] = set()
-_BACKGROUND_CLOSES_LOCK = threading.Lock()
+class _BackgroundCloses:
+    """One chain's retriever closes running on daemon threads.
 
+    Per chain rather than process-wide, so closing (or collecting) one chain
+    waits only for its own closes, never for another chain's slow ones.
+    """
 
-def _close_in_background(retrievers: list[BaseGraphRAGRetriever]) -> threading.Thread:
-    """Start the synchronous closes of ``retrievers`` on a daemon thread."""
+    def __init__(self) -> None:
+        self._workers: set[threading.Thread] = set()
+        self._lock = threading.Lock()
 
-    def run() -> None:
-        try:
-            _close_retrievers(retrievers)
-        finally:
-            with _BACKGROUND_CLOSES_LOCK:
-                _BACKGROUND_CLOSES.discard(threading.current_thread())
+    def start(self, retrievers: list[BaseGraphRAGRetriever]) -> threading.Thread:
+        """Start the synchronous closes of ``retrievers`` on a daemon thread."""
 
-    worker = threading.Thread(target=run, name="kg-rag-retriever-close", daemon=True)
-    with _BACKGROUND_CLOSES_LOCK:
-        _BACKGROUND_CLOSES.add(worker)
-    worker.start()
-    return worker
+        def run() -> None:
+            try:
+                _close_retrievers(retrievers)
+            finally:
+                with self._lock:
+                    self._workers.discard(threading.current_thread())
 
+        worker = threading.Thread(
+            target=run, name="kg-rag-retriever-close", daemon=True
+        )
+        with self._lock:
+            self._workers.add(worker)
+        worker.start()
+        return worker
 
-def _join_background_closes(timeout: float = _TEARDOWN_TIMEOUT_SECONDS) -> None:
-    """Wait, up to ``timeout`` in all, for the background closes to finish."""
-    deadline = time.monotonic() + timeout
-    with _BACKGROUND_CLOSES_LOCK:
-        workers = list(_BACKGROUND_CLOSES)
-    for worker in workers:
-        if worker is threading.current_thread():
-            continue
-        worker.join(timeout=max(0.0, deadline - time.monotonic()))
+    def join(self, timeout: float = _TEARDOWN_TIMEOUT_SECONDS) -> None:
+        """Wait, up to ``timeout`` in all, for these closes to finish."""
+        deadline = time.monotonic() + timeout
+        with self._lock:
+            workers = list(self._workers)
+        for worker in workers:
+            if worker is threading.current_thread():
+                continue
+            worker.join(timeout=max(0.0, deadline - time.monotonic()))
 
 
 async def _aclose_retrievers(retrievers: list[BaseGraphRAGRetriever]) -> None:
@@ -1718,6 +1736,7 @@ def _release_cached_resources(
     strategy_cache: dict[Any, BaseSearchStrategy],
     lock: threading.RLock,
     runner: "_LoopRunner | None",
+    background: _BackgroundCloses | None = None,
 ) -> None:
     """Close every cached retriever, then stop the sync-API loop (never raises).
 
@@ -1725,8 +1744,11 @@ def _release_cached_resources(
     chain's GC finalizer.
     """
     for loop, retrievers in _take_cached(retriever_cache, strategy_cache, lock).items():
-        GraphRAGChain._release_retrievers(retrievers, loop, wait=True)
-    _join_background_closes()
+        GraphRAGChain._release_retrievers(
+            retrievers, loop, wait=True, background=background
+        )
+    if background is not None:
+        background.join()
     if runner is not None:
         runner.stop()
 

@@ -429,6 +429,10 @@ Library API (Python callers and custom backends).
   run. `indexing.reset` is now an input of the document-loading stage cache
   key (only when set, so existing caches keep their keys), not of the
   extraction fingerprint (#233).
+- Closing a `GraphRAGChain` (`close()`, `aclose()` or its GC finalizer) waits
+  only for its own background retriever closes. It waited up to 30 seconds
+  for those of every chain in the process, so a dropped chain collected on
+  an event-loop thread could block that loop (#PR).
 - IaC: a zone-aware OpenSearch domain spans as many AZs as it has data
   nodes, up to 3 and up to the VPC's AZs, so `opensearch_count=3` with
   `max_azs=3` uses three zones instead of two; on an existing domain the
