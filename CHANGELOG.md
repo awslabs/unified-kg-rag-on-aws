@@ -244,7 +244,7 @@ Library API (Python callers and custom backends).
   embedder and reducer from `unified_kg_rag.visualization.embeddings` (#246).
 - `LocalSearchStrategy` no longer takes an `entity_focus_multiplier`
   argument; nothing passed it, so it was always 2, now the class constant
-  `ENTITY_CANDIDATES_PER_FOCUS` (#PR).
+  `ENTITY_CANDIDATES_PER_FOCUS` (#247).
 - Retrieval: AUTO routes among `local`/`mix`/`global`/`drift` with the fast
   model; `mix`/`hybrid` retrievals, DRIFT steps and keyword extraction run
   concurrently; global search answers from ranked map points without a
@@ -312,34 +312,34 @@ Library API (Python callers and custom backends).
 - DRIFT's query-refinement summary labels community reports `Community:`
   again. It matched the index name against `community_reports`, which the
   real `graphrag-community-reports` prefix never contains, so every report
-  was labelled `Item:` (#PR).
+  was labelled `Item:` (#247).
 - `search.fusion.method: weighted` no longer logs three "no configured
   weight" warnings per query. The default `fusion_weights` now name the
   buckets the strategies emit (local's `relationships`,
   `bridge_relationships`, `community_reports` and `claims`, and LightRAG's
   endpoint, incident and linked-chunk streams) and drop
   `opensearch_candidate_community_reports`, which nothing emits. Every
-  weight stays 1.0, so ranking is unchanged (#PR).
+  weight stays 1.0, so ranking is unchanged (#247).
 - LightRAG `naive` returns `search.lightrag_search.chunk_stream_top_k`
   chunks (default 20), as upstream `naive_query` returns `chunk_top_k`; it
   returned `top_k` (10). The docs now say that `naive` runs the request's
   `search_type` (BM25 + vector under the default `hybrid`) rather than pure
-  vector retrieval (#PR).
+  vector retrieval (#247).
 - A Japanese or Chinese section truncated to fit its context budget keeps
   most of its room instead of collapsing to a few characters. Truncation
   backed off to the last ASCII space, which in such text can be the first
   word; it now ends on whitespace or CJK punctuation near the cut, or at the
-  cut itself (#PR).
+  cut itself (#247).
 - A small per-query context budget (`RAGInput.max_tokens` of 513 or less)
   no longer yields an empty context and an abstention. The 512-token prompt
   buffer is now taken from the configured or derived
   `search.token_manager.max_context_tokens` only, not from an explicit
-  per-query budget (#PR).
+  per-query budget (#247).
 - With MMR diversity on (`search.fusion.diversity_lambda` < 1, the default),
   `local` and `drift` queries keep every reserved text-chunk slot. The
   diversity cut ran once across all result types before the per-type quota,
   so over-quota entities took slots the quota then dropped and text kept 16
-  of its 20; each type is now diversified within its own quota (#PR).
+  of its 20; each type is now diversified within its own quota (#247).
 - `run-eval --eval-data-path` naming a file that does not exist exits 2 with
   `Error: invalid evaluation dataset: ...`, as the user guide documents and
   as an unreadable or invalid dataset does; it exited 1 (#230).
