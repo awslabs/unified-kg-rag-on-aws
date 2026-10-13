@@ -34,6 +34,7 @@ from unified_kg_rag.domain.retrieval.index_prefixes import configured_index_pref
 from unified_kg_rag.ports.model_factory import EmbeddingFactoryPort
 from unified_kg_rag.shared import (
     ConfigurationError,
+    EmbeddingModelError,
     IndexNotFoundError,
     InvalidFilterError,
     get_logger,
@@ -394,7 +395,15 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             done.exception()
 
     async def _store_embedding(self, query_text: str) -> list[float]:
-        vector: list[float] = await self._embedding_model.aembed_query(query_text)
+        try:
+            vector: list[float] = await self._embedding_model.aembed_query(query_text)
+        except Exception as e:
+            # Raised after the client's own retries. Every vector section of
+            # the query shares this one embedding: degrading it to "no
+            # results" read as "could not find relevant information".
+            raise EmbeddingModelError(
+                f"Query embedding failed: {type(e).__name__}: {e}"
+            ) from e
         cache = self._query_embedding_cache
         cache[query_text] = vector
         if len(cache) > self.QUERY_EMBEDDING_CACHE_SIZE:

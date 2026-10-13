@@ -21,6 +21,7 @@ from collections.abc import Iterator
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import httpx
+import openai
 import pytest
 from botocore.exceptions import (
     ClientError,
@@ -62,6 +63,7 @@ from unified_kg_rag.domain.models.config import EmbeddingModelId
 from unified_kg_rag.shared import (
     AWSServiceError,
     ConfigurationError,
+    EmbeddingModelError,
     IndexNotFoundError,
     StoreConnectionError,
 )
@@ -750,6 +752,40 @@ async def test_opensearch_execute_search_reraises_fatal(config: Config) -> None:
     )
     with pytest.raises(StoreConnectionError, match="refused"):
         await retriever.aretrieve(SearchQuery(query="hello"))
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        # A crashed Ollama runner, a dead vLLM engine: a 5xx left after the
+        # client's retries.
+        lambda: openai.InternalServerError(
+            "engine dead",
+            response=httpx.Response(500, request=httpx.Request("POST", "http://x")),
+            body=None,
+        ),
+        lambda: AWSServiceError("Read timed out"),
+    ],
+)
+async def test_a_failed_query_embedding_fails_the_retrieval(
+    config: Config, error
+) -> None:
+    # Regression: a 5xx from the embedding server read as transient, so every
+    # vector section (and the lexical half of hybrid with it) came back empty
+    # and the query answered "could not find relevant information".
+    from collections import OrderedDict
+
+    class _FailingEmbedder:
+        async def aembed_query(self, text: str) -> list[float]:
+            raise error()
+
+    retriever = _opensearch_retriever(config)
+    object.__setattr__(retriever, "_embedding_model", _FailingEmbedder())
+    object.__setattr__(retriever, "_query_embedding_cache", OrderedDict())
+    object.__setattr__(retriever, "_pending_embeddings", {})
+    with pytest.raises(EmbeddingModelError, match="Query embedding failed") as info:
+        await retriever.aretrieve(SearchQuery(query="hello"))
+    assert is_fatal_retrieval_error(info.value)
 
 
 async def test_opensearch_execute_search_degrades_on_transient(config: Config) -> None:

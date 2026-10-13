@@ -378,6 +378,12 @@ Library API (Python callers and custom backends).
   from the current source, closing a connection wakes the requests waiting
   on its pool (they fail as a lost connection), and traversals run on
   threads the retriever owns (#PR).
+- A query embedding call that still fails after the client's retries (a
+  5xx from a crashed Ollama runner or dead vLLM engine, a persistent Bedrock
+  `InternalServerException`) fails the query with `EmbeddingModelError`.
+  It was read as transient, so every vector section, and the lexical half
+  of hybrid with it, came back empty and the query answered "could not find
+  relevant information" with no error (#PR).
 - Queries that waited on a failed Neptune connection attempt each raise a
   copy of its error; re-raising the one shared error grew its traceback by
   every waiter's frames and kept them in memory (#264).

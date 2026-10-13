@@ -17,16 +17,20 @@ from collections.abc import Iterator
 
 from unified_kg_rag.shared import (
     ConfigurationError,
+    EmbeddingModelError,
     IndexNotFoundError,
     InvalidFilterError,
 )
 
 # Errors that fail every later query the same way: a store that cannot be
 # reached or keeps failing, a missing suffix, a configuration the store or the
-# query refuses, a filter key no index declares.
+# query refuses, a filter key no index declares, and a query embedding that
+# failed after the client's retries (every vector search of the query needs
+# it).
 _FATAL_TYPES = (
     ConnectionError,
     ConfigurationError,
+    EmbeddingModelError,
     IndexNotFoundError,
     InvalidFilterError,
 )
@@ -55,6 +59,9 @@ def is_fatal_retrieval_error(exc: BaseException) -> bool:
     - ``ConfigurationError`` (``StoreConfigurationError`` and its denied and
       rejected kinds, an embedding model the index was not built with),
       ``IndexNotFoundError`` and ``InvalidFilterError``.
+    - ``EmbeddingModelError``: the query embedding failed, whatever the cause
+      (a 5xx after the client's retries too). The query's vector searches all
+      share it, so no partial answer is left to degrade to.
     - A botocore ``ClientError`` (a Bedrock call) unless its code is one of the
       transient ones (``is_transient_bedrock_error``): an invalid or
       inaccessible model id, a model in another region, denied access.
