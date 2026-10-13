@@ -325,7 +325,7 @@ Library API (Python callers and custom backends).
   argument whose default is the same pinned public.ecr.aws ref, so a plain
   `docker build` is unchanged. When public.ecr.aws rate-limits the CI
   `docker` job (429), the job pulls the same digest from Docker Hub instead
-  of retrying a quota that does not recover within minutes (#PR).
+  of retrying a quota that does not recover within minutes (#257).
 
 ### Fixed
 - `run-visualization` rejects an unknown `--renderers` name while parsing
