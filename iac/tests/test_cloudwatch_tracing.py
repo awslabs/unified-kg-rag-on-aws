@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any
 
 import aws_cdk as cdk
@@ -80,6 +81,7 @@ def test_disabled_adds_nothing(context: dict[str, Any]) -> None:
     assert not [k for k in _env(_containers(compute)["app"]) if "OBSERVABILITY" in k]
     assert not [a for a in _actions(_statements(compute, "")) if a.startswith("xray:")]
     compute.resource_count_is("AWS::ECR::PullThroughCacheRule", 0)
+    assert compute.find_outputs("CollectorImageUri") == {}
     assert _xray_endpoints(network) == []
 
 
@@ -106,6 +108,11 @@ def test_enabled_runs_a_non_essential_collector_the_app_waits_for() -> None:
             "UpstreamRegistryUrl": "public.ecr.aws",
         },
     )
+    # The warm-up pull the README runs after deploy uses this exact image.
+    (output,) = compute.find_outputs("CollectorImageUri").values()
+    assert _render(output["Value"]).endswith(
+        f"graphrag-ecr-public/aws-observability/aws-otel-collector@{COLLECTOR_DIGEST}"
+    )
     config = json.loads(_render(_env(collector)["AOT_CONFIG_CONTENT"]))
     # Listens on localhost only; exports to the region's OTLP traces endpoint.
     assert config["receivers"]["otlp"]["protocols"] == {
@@ -117,8 +124,11 @@ def test_enabled_runs_a_non_essential_collector_the_app_waits_for() -> None:
     )
     assert exporter["auth"] == {"authenticator": "sigv4auth/traces"}
     # A shutdown flush must end inside ECS's 30 s stop timeout.
+    # No sending queue (drained batch by batch at shutdown) and no retry, so
+    # what is left at shutdown is at most two 10 s exports.
     assert exporter["timeout"] == "10s"
-    assert exporter["retry_on_failure"] == {"max_elapsed_time": "15s"}
+    assert exporter["sending_queue"] == {"enabled": False}
+    assert exporter["retry_on_failure"] == {"enabled": False}
     assert config["extensions"]["sigv4auth/traces"] == {
         "region": "us-west-2",
         "service": "xray",
@@ -222,3 +232,38 @@ def test_phase_overrides_target_the_app_container() -> None:
     definition = _render(machine["Properties"]["DefinitionString"])
     assert '"Name":"app"' in definition
     assert '"Name":"otel-collector"' not in definition
+
+
+def _leaves(node: Any, path: tuple[str, ...] = ()) -> dict[tuple[str, ...], Any]:
+    if not isinstance(node, dict):
+        return {path: node}
+    return {
+        k: v
+        for key, child in node.items()
+        for k, v in _leaves(child, (*path, key)).items()
+    }
+
+
+@pytest.mark.parametrize("doc", ["operations.md", "operations.ko.md"])
+def test_runbook_shows_the_collector_config_the_stack_renders(doc: str) -> None:
+    _, compute = _stacks(_ON)
+    rendered = _render(
+        _env(_containers(compute)["otel-collector"])["AOT_CONFIG_CONTENT"]
+    )
+    config = json.loads(rendered.replace("us-west-2", "us-east-1"))
+    text = (Path(__file__).parents[2] / "docs" / doc).read_text(encoding="utf-8")
+    start = text.index("```yaml\nextensions:\n  health_check:")
+    block = text[start : text.index("```\n", start + 7)]
+    # Every key of the rendered config, and each scalar value, is in the
+    # runbook's copy (no YAML parser in the IaC environment).
+    for path, value in _leaves(config).items():
+        assert f"{path[-1]}:" in block, (doc, path)
+        if isinstance(value, list):
+            assert f"[{', '.join(value)}]" in block, (doc, path)
+        elif isinstance(value, str):
+            assert value.replace("<AWS::URLSuffix>", "amazonaws.com") in block, (
+                doc,
+                path,
+            )
+        else:
+            assert str(value).lower() in block, (doc, path)

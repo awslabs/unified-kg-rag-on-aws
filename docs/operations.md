@@ -445,6 +445,11 @@ the private-mode `xray` endpoint, is in
 3. **Deploy** with `cdk deploy --all -c enable_cloudwatch_tracing=true` (add
    the flag to every later deploy, or set it in `cdk.json`, or the next deploy
    removes the sidecar).
+4. **Pull the collector image once** from a workstation before the first run
+   (step 4 of [CloudWatch tracing](../iac/README.md#cloudwatch-tracing-optional)).
+   The image comes through an ECR pull-through cache whose first pull may need
+   an internet route when ECR is reached through an interface endpoint, as in
+   `private` mode, and ECS fails a task when it cannot pull any of its images.
 
 **Where to look.** Run an ingestion or a query, then open the CloudWatch
 console, **Application Signals, Transaction Search**, and filter on the
@@ -466,7 +471,9 @@ group (`/<prefix>/tasks`): a `403` means a missing X-Ray permission or the
 wrong SigV4 service, a rejection naming the destination means Transaction
 Search is off, and a connection timeout in `private` mode means the `xray`
 interface endpoint is missing (a reused VPC must provide it). A collector
-failure never fails the run: the collector container is not essential.
+that crashes or cannot export never fails the run, since its container is not
+essential; a collector image ECS cannot pull does (`CannotPullContainerError`
+in the stopped task's reason), so pull it once as in step 4.
 
 **Cost.** Transaction Search bills spans as CloudWatch Logs ingestion and
 storage in `aws/spans`, and charges for indexed spans above the free 1%. An
@@ -477,30 +484,53 @@ trace summaries. The `xray` interface endpoint (private mode) bills per
 AZ-hour like the others.
 
 **Without the CDK stacks**, run the same collector configuration yourself; the
-one the stack renders, after the CloudWatch OTLP guide, is:
+one the stack renders (`compute_stack.py`, after the CloudWatch OTLP guide) is,
+for `us-east-1`. The memory limit fits a 512 MiB container, and the exporter
+has no queue and no retry so a shutdown flush ends inside ECS's 30 s stop
+timeout:
 
 ```yaml
+extensions:
+  health_check:
+    endpoint: 127.0.0.1:13133
+  sigv4auth/traces:
+    region: us-east-1
+    service: xray
 receivers:
   otlp:
     protocols:
       http:
         endpoint: 127.0.0.1:4318
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 400
+    spike_limit_mib: 100
+  batch:
+    send_batch_size: 512
+    send_batch_max_size: 1000
+    timeout: 5s
 exporters:
   otlphttp/traces:
-    compression: gzip
     traces_endpoint: https://xray.us-east-1.amazonaws.com/v1/traces
+    compression: gzip
     auth:
       authenticator: sigv4auth/traces
-extensions:
-  sigv4auth/traces:
-    region: us-east-1
-    service: xray
+    timeout: 10s
+    sending_queue:
+      enabled: false
+    retry_on_failure:
+      enabled: false
 service:
-  extensions: [sigv4auth/traces]
+  extensions: [health_check, sigv4auth/traces]
   pipelines:
     traces:
       receivers: [otlp]
+      processors: [memory_limiter, batch]
       exporters: [otlphttp/traces]
+  telemetry:
+    metrics:
+      level: none
 ```
 
 The collector's role needs X-Ray write access (`xray:PutTraceSegments`,

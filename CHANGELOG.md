@@ -24,7 +24,7 @@ details.
   and evaluation on Ollama, a sentence-transformers cross-encoder and
   embedded SQLite graph and vector stores and doc-status registry, so Ollama
   is the only service to run; Gremlin Server and OpenSearch in containers
-  remain an option (#209, #PR).
+  remain an option (#209, #271-#273).
 - Optional OpenTelemetry tracing of ingestion and queries, exported over OTLP
   or to Langfuse or Arize Phoenix (#207, #208).
 - Incremental indexing that survives interruption: a write-ahead registry
@@ -91,6 +91,9 @@ Defaults. Set the old value explicitly to keep the previous behaviour.
   when the LLM is not Bedrock and sets no `context_window_size`: what the
   default local model's 32,768-token window accepts beside its output
   reservation (30000 was clamped, with a WARNING, on every query) (#224, #226).
+- `backend: local` uses the embedded SQLite graph and vector stores, not the
+  Gremlin Server and OpenSearch containers; to keep the containers, or for a
+  local index built before, see *Upgrading from pre-release builds* (#273).
 - Entity resolution merges only names equal after normalization, legal-form
   removal and dense-script spacing. Similarity matching is opt-in
   (`processing.fuzzy_entity_resolution: true`), and

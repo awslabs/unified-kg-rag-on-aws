@@ -420,6 +420,11 @@ OpenTelemetry(ADOT) 수집기 사이드카가 추가되고, 앱이 그 수집기
 3. **배포**: `cdk deploy --all -c enable_cloudwatch_tracing=true`. 이후 배포에도
    이 플래그를 주거나 `cdk.json`에 넣으세요. 빠뜨리면 다음 배포에서 사이드카가
    제거됩니다.
+4. **수집기 이미지를 한 번 pull**: 첫 실행 전에 작업용 컴퓨터에서 받아 두세요
+   ([CloudWatch tracing](../iac/README.md#cloudwatch-tracing-optional)의 4단계).
+   이미지는 ECR pull-through 캐시를 거쳐 오는데, ECR에 인터페이스 엔드포인트로
+   접근하면(`private` 모드) 캐시를 거치는 첫 pull에 인터넷 경로가 필요할 수
+   있습니다. ECS는 이미지 중 하나라도 받지 못하면 태스크를 실패시킵니다.
 
 **확인할 곳.** 수집이나 질의를 실행한 뒤 CloudWatch 콘솔의 **Application Signals,
 Transaction Search**에서 서비스 `unified-kg-rag`로 거르세요. 수집 실행마다
@@ -440,7 +445,9 @@ fields @timestamp, name, durationNano, attributes.gen_ai.usage.input_tokens, tra
 것이고, 대상(destination)을 언급하며 거부되면 Transaction Search가 꺼진 것이며,
 `private` 모드에서 연결 시간 초과가 나면 `xray` 인터페이스 엔드포인트가 없는
 것입니다(재사용하는 VPC는 직접 준비해야 합니다). 수집기 컨테이너는 필수
-컨테이너가 아니므로 수집기가 실패해도 실행은 실패하지 않습니다.
+컨테이너가 아니므로 수집기가 죽거나 내보내지 못해도 실행은 실패하지 않습니다.
+다만 ECS가 수집기 이미지를 받지 못하면 실행이 실패하므로(중지된 태스크 사유의
+`CannotPullContainerError`) 4단계처럼 미리 한 번 받아 두세요.
 
 **비용.** Transaction Search는 스팬을 `aws/spans`의 CloudWatch Logs 수집과 저장으로
 과금하고, 무료 1%를 넘는 색인 스팬에도 요금을 매깁니다. 수집 실행은 스테이지,
@@ -450,30 +457,53 @@ fields @timestamp, name, durationNano, attributes.gen_ai.usage.input_tokens, tra
 모드)도 다른 엔드포인트처럼 AZ-시간 단위로 과금됩니다.
 
 **CDK 스택 없이** 쓰려면 같은 수집기 설정을 직접 실행하세요. CloudWatch OTLP
-안내서를 따라 스택이 만드는 설정은 다음과 같습니다.
+안내서를 따라 스택이 만드는 설정(`compute_stack.py`)은 `us-east-1` 기준으로
+다음과 같습니다. 메모리 한도는 512 MiB 컨테이너에 맞춘 값이고, 종료 시 남은
+스팬을 내보내는 작업이 ECS의 30초 중지 제한 안에 끝나도록 exporter에 큐와
+재시도를 두지 않습니다.
 
 ```yaml
+extensions:
+  health_check:
+    endpoint: 127.0.0.1:13133
+  sigv4auth/traces:
+    region: us-east-1
+    service: xray
 receivers:
   otlp:
     protocols:
       http:
         endpoint: 127.0.0.1:4318
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 400
+    spike_limit_mib: 100
+  batch:
+    send_batch_size: 512
+    send_batch_max_size: 1000
+    timeout: 5s
 exporters:
   otlphttp/traces:
-    compression: gzip
     traces_endpoint: https://xray.us-east-1.amazonaws.com/v1/traces
+    compression: gzip
     auth:
       authenticator: sigv4auth/traces
-extensions:
-  sigv4auth/traces:
-    region: us-east-1
-    service: xray
+    timeout: 10s
+    sending_queue:
+      enabled: false
+    retry_on_failure:
+      enabled: false
 service:
-  extensions: [sigv4auth/traces]
+  extensions: [health_check, sigv4auth/traces]
   pipelines:
     traces:
       receivers: [otlp]
+      processors: [memory_limiter, batch]
       exporters: [otlphttp/traces]
+  telemetry:
+    metrics:
+      level: none
 ```
 
 수집기 역할에는 X-Ray 쓰기 권한(`xray:PutTraceSegments`, `xray:PutSpans`,

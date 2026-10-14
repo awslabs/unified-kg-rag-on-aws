@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import json
 
-from aws_cdk import Duration, RemovalPolicy, Stack
+from aws_cdk import CfnOutput, Duration, RemovalPolicy, Stack
 from aws_cdk import aws_ecr as ecr
 from aws_cdk import aws_ecs as ecs
 from aws_cdk import aws_iam as iam
@@ -357,7 +357,11 @@ class ComputeStack(Stack):
         # (no-NAT) data plane has no route to public.ecr.aws, but it reaches
         # this account's ECR through the VPC endpoints, and ECR fetches the
         # image upstream itself. The cached repository is created on the first
-        # pull and is not removed with the stack.
+        # pull and is not removed with the stack. That first pull may itself
+        # need an internet route when ECR is reached through an interface
+        # endpoint, and ECS fails a task whose image (essential or not) it
+        # cannot pull, so the README has the operator warm the cache from a
+        # workstation after deploy: CollectorImageUri is the image to pull.
         prefix = self.config.collector_cache_prefix
         cache_rule = ecr.CfnPullThroughCacheRule(
             self,
@@ -378,6 +382,12 @@ class ComputeStack(Stack):
             )
         )
         task_def.node.add_dependency(cache_rule)
+        CfnOutput(
+            self,
+            "CollectorImageUri",
+            value=repository.repository_uri_for_digest(COLLECTOR_DIGEST),
+            description="Pull once after deploy to fill the collector image cache",
+        )
 
         region, suffix = self.region, self.url_suffix
         collector_config = {
@@ -409,9 +419,16 @@ class ComputeStack(Stack):
                     "auth": {"authenticator": "sigv4auth/traces"},
                     # Bounded so a shutdown flush against an unreachable
                     # endpoint ends inside ECS's 30 s stop timeout: the
-                    # collector then exits 0 instead of being killed.
+                    # collector then exits 0 instead of being killed. No
+                    # queue and no retry: the batch processor exports
+                    # synchronously, so at shutdown only the in-flight export
+                    # and its final batch remain (2 x 10 s), where a queue
+                    # would drain every queued batch, each up to timeout plus
+                    # retries. A failed batch is dropped; the app keeps
+                    # running either way.
                     "timeout": "10s",
-                    "retry_on_failure": {"max_elapsed_time": "15s"},
+                    "sending_queue": {"enabled": False},
+                    "retry_on_failure": {"enabled": False},
                 }
             },
             "service": {

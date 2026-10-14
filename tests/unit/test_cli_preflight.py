@@ -73,9 +73,8 @@ def test_missing_endpoints_error_names_config_key_and_env_var() -> None:
 @pytest.mark.parametrize(
     ("role", "kind", "key"),
     [
-        (ProviderRole.GRAPH_INDEXER, "neptune", "aws.neptune.endpoint"),
+        (ProviderRole.GRAPH_RETRIEVER, "neptune", "aws.neptune.endpoint"),
         (ProviderRole.GRAPH_RETRIEVER, "gremlin", "aws.neptune.endpoint"),
-        (ProviderRole.VECTOR_INDEXER, "opensearch", "aws.opensearch.endpoint"),
         (ProviderRole.VECTOR_RETRIEVER, "opensearch", "aws.opensearch.endpoint"),
     ],
 )
@@ -149,6 +148,24 @@ def test_ingestion_exits_before_the_pipeline_when_indexing_lacks_endpoints(
     assert exc.value.code == 1
     pipeline.assert_not_called()
     assert "aws.opensearch.endpoint" in capsys.readouterr().out
+
+
+def test_ingestion_checks_both_store_endpoints_through_the_retriever_kinds(
+    mocker, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The indexer kinds declare no endpoint; run-ingestion still checks the
+    # graph and vector endpoints, resolved via the shared providers sections.
+    import unified_kg_rag.adapters.providers  # noqa: F401  (registers the kinds)
+
+    assert provider_endpoint(ProviderRole.GRAPH_INDEXER, "neptune") is None
+    runner = _ingestion_runner(mocker, tmp_path, _config())
+    pipeline = mocker.patch.object(run_ingestion_pipeline, "DataIngestionPipeline")
+    with pytest.raises(SystemExit):
+        runner.run()
+    pipeline.assert_not_called()
+    out = " ".join(capsys.readouterr().out.split())  # undo console wrapping
+    assert "aws.neptune.endpoint (env NEPTUNE_ENDPOINT)" in out
+    assert "aws.opensearch.endpoint (env OPENSEARCH_ENDPOINT)" in out
 
 
 def test_ingestion_without_the_indexing_stage_needs_no_endpoints(
