@@ -11,6 +11,7 @@ indexer's alias swap, ``_meta`` and settings checks.
 from __future__ import annotations
 
 import asyncio
+import gc
 import logging
 import math
 import sqlite3
@@ -890,6 +891,30 @@ def test_in_memory_engine(tmp_path: Path) -> None:
     assert engine.search(index=INDEX, body={})["hits"]["hits"][0]["_id"] == "a"
     engine.close()
     assert not any(key[0] == engine._cache_path for key in engine_module._INDEX_CACHE)
+
+
+def test_in_memory_engines_never_share_cached_indices() -> None:
+    # A collected engine's id() is reused by the next one: keyed by it, the
+    # new engine was served the old one's cached index.
+    for _ in range(20):
+        old = SQLiteSearchEngine(":memory:")
+        old.create_index(INDEX, MAPPING)
+        old.bulk_index(INDEX, [{"id": "old", "name": "Vendor"}])
+        assert [h["_id"] for h in old.search(index=INDEX, body={})["hits"]["hits"]] == [
+            "old"
+        ]
+        old_key = old._cache_path
+        del old  # not closed: collecting it frees its cached index
+        gc.collect()
+        assert not any(key[0] == old_key for key in engine_module._INDEX_CACHE)
+        new = SQLiteSearchEngine(":memory:")
+        new.create_index(INDEX, MAPPING)
+        new.bulk_index(INDEX, [{"id": "new", "name": "Vendor"}])
+        try:
+            hits = new.search(index=INDEX, body={})["hits"]["hits"]
+            assert [h["_id"] for h in hits] == ["new"]
+        finally:
+            new.close()
 
 
 # --------------------------------------------------------------------------- #

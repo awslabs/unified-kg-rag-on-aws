@@ -465,6 +465,11 @@ Library API (Python callers and custom backends).
   process swapped out and deleted in between (a blue/green re-index while
   queries are served) failed the query with a bare `TypeError` or answered
   from nothing. It now searches the index it resolved, whole (#PR).
+- An in-memory embedded search engine (`":memory:"`) no longer answers
+  from another, garbage-collected one's indices. Its cached indices were
+  keyed by `id(engine)`, which Python reuses after collection; they are now
+  keyed by a random id and freed when the engine closes or is collected
+  (#PR).
 - A global-search map step whose every batch is over the model's context
   (langchain-openai's `OpenAIContextOverflowError`) answers from the
   unrated reports again. That error is an HTTP 400 too, so it was read as a

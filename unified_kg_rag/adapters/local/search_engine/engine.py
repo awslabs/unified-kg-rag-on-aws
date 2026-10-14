@@ -43,6 +43,7 @@ import json
 import sqlite3
 import threading
 import uuid
+import weakref
 from collections.abc import Iterator
 from contextlib import contextmanager
 from fnmatch import fnmatchcase
@@ -258,9 +259,15 @@ class SQLiteSearchEngine:
         self.path = str(path)
         self.timeout_seconds = timeout_seconds
         self._memory = self.path == ":memory:"
+        # An in-memory database is private to this engine: so are its cached
+        # indices, freed when the engine closes or is collected.
         self._cache_path = (
-            f":memory:{id(self)}" if self._memory else str(Path(self.path).resolve())
+            f":memory:{uuid.uuid4().hex}"
+            if self._memory
+            else str(Path(self.path).resolve())
         )
+        if self._memory:
+            weakref.finalize(self, _drop_cached, self._cache_path)
         self._connection: sqlite3.Connection | None = None
         self._lock = threading.RLock()
 
