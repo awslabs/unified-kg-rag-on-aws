@@ -2973,7 +2973,7 @@ class Config(BaseModel):
         description=(
             "Provider preset. 'aws' (default): Bedrock, Neptune, OpenSearch and "
             "DynamoDB. 'local': fills in local providers (Ollama, a cross-encoder "
-            "reranker, Gremlin Server, a local OpenSearch, SQLite) for every "
+            "reranker, embedded SQLite graph/vector stores and registry) for every "
             "providers/aws.neptune/aws.opensearch key the config leaves unset."
         ),
     )

@@ -32,6 +32,10 @@ from unified_kg_rag.application.cli.config_args import (
     exit_on_config_error,
 )
 from unified_kg_rag.application.cli.help_text import doc_epilog
+from unified_kg_rag.application.cli.provider_args import (
+    add_provider_arguments,
+    apply_provider_arguments,
+)
 from unified_kg_rag.domain.ingestion.graph_analyzer import (
     CentralityMetrics,
     GraphAnalyzer,
@@ -206,6 +210,9 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--config-path", type=config_path_arg, default=None, help="Config YAML path"
     )
+    # Accepted like on the other CLIs, so one command line (and a config of
+    # either backend) serves them all; rendering makes no model call.
+    add_provider_arguments(parser)
     return parser
 
 
@@ -214,7 +221,7 @@ def main() -> int:
     args = _build_parser().parse_args()
     try:
         with exit_on_config_error():
-            config = get_config(args.config_path)
+            config = apply_provider_arguments(get_config(args.config_path), args)
         setup_logging(config)
         written = run_visualization(
             args.data_path, args.output_dir, args.renderers, config

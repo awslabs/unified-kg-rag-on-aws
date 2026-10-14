@@ -97,9 +97,9 @@ AWS 모드에만 해당합니다. [로컬 모드](#로컬-모드-aws-없이)에�
 이 프레임워크는 **이미 있는** 서비스에 연결할 뿐 서비스를 만들지 않습니다. 실행
 방법은 세 가지입니다.
 
-- **로컬 모드(개발용).** 모든 구성 요소(Ollama 모델, Gremlin Server, OpenSearch,
-  SQLite)를 로컬에서 실행하거나, 저장소만 로컬로 두고 모델은 Bedrock을 씁니다. 아래
-  [로컬 모드](#로컬-모드-aws-없이)를 참고하세요.
+- **로컬 모드(개발용).** 모든 구성 요소(Ollama 모델과 내장 SQLite 저장소, 또는
+  컨테이너로 띄운 Gremlin Server와 OpenSearch)를 로컬에서 실행하거나, 저장소만 로컬로
+  두고 모델은 Bedrock을 씁니다. 아래 [로컬 모드](#로컬-모드-aws-없이)를 참고하세요.
 
 - **기존 서비스 사용.** Neptune과 OpenSearch(쓴다면 S3와 DynamoDB도)가 이미 실행
   중이라면 엔드포인트를 `config.yaml`(아래 §2.1)에 적고 다음 단계로 넘어가면
@@ -173,24 +173,26 @@ optional 'unstructured' extra`). Python 3.11 또는 3.12에서는
 
 로컬 모드는 AWS 계정 없이 노트북이나 호스트 한 대에서 수집, 질의, 평가를 실행합니다.
 역할마다 Bedrock, Neptune, OpenSearch, DynamoDB 대신 로컬 구성 요소를 씁니다. 기본값과
-주 대상은 여전히 AWS이며, 로컬 모드는 개발과 평가용입니다. Docker와 Compose 2.23.1 이상이
-필요합니다(`docker/compose.local.yaml`은 Gremlin Server 초기화 스크립트를 파일 안에 정의하며,
-이전 릴리스는 이를 거부합니다).
+주 대상은 여전히 AWS이며, 로컬 모드는 개발과 평가용입니다. 기본 설정에서는 그래프 저장소,
+벡터·어휘 저장소, 증분 인덱싱 레지스트리가 모두 SQLite 파일이므로 실행할 서비스는
+[Ollama](https://ollama.com)(직접 설치, `http://localhost:11434`에서 서비스) 하나뿐입니다.
 
 ```bash
 uv sync --extra local
-docker compose -f docker/compose.local.yaml --profile models up -d --wait
-docker compose -f docker/compose.local.yaml exec ollama ollama pull qwen2.5:7b-instruct
-docker compose -f docker/compose.local.yaml exec ollama ollama pull bge-m3
-uv run run-ingestion --config-path docker/config.local.yaml --source-directory ./docs-in
-uv run run-rag --config-path docker/config.local.yaml --query "..."
-docker compose -f docker/compose.local.yaml down -v
+ollama pull qwen2.5:7b-instruct
+ollama pull bge-m3
+uv run run-ingestion --backend local --source-directory ./docs-in
+uv run run-rag --backend local --query "..."
 ```
 
-`down -v`는 저장소 데이터를 지우지만 SQLite 레지스트리(`docker/config.local.yaml`이면
-저장소 루트의 `.unified-kg-rag/doc-status.sqlite3`)는 지우지 않습니다. 새 저장소에
-다시 수집하기 전에 이 파일을 지우거나 `indexing.reset: true`로 설정하세요. 그러지 않으면
-증분 실행이 아무것도 쓰기 전에 멈춥니다(이 절 끝의 Gremlin Server 설명 참고).
+설정 파일이 없으면 저장소는 작업 디렉터리의 `.unified-kg-rag/`에 만들어집니다
+(`graph.sqlite3`, `vector.sqlite3`, `doc-status.sqlite3`). 따라서 모든 명령을 같은
+디렉터리에서 실행하거나, `backend: local`을 적은 설정 파일에 설정을 두세요(이때 상대
+경로는 그 파일 기준으로 해석합니다). 프리셋에서 증분 인덱싱은 꺼져 있으며,
+`providers.doc_status.enabled: true`로 켭니다. 처음부터 다시 하려면 세 파일을 함께
+지우거나(레지스트리는 저장소에 든 내용을 기록합니다) `indexing.reset: true`로 한 번
+실행하세요. Gremlin Server와 OpenSearch를 컨테이너로 실행하려면
+[컨테이너로 띄운 로컬 저장소](#컨테이너로-띄운-로컬-저장소)를 참고하세요.
 
 Linux에서 `uv sync --extra local`은 GPU 유무와 관계없이 잠금 파일이 고정한 CUDA용
 PyTorch 빌드(수 GB)를 크로스 인코더용으로 설치합니다. CPU 빌드를 쓰려면 uv의 pip
@@ -204,23 +206,27 @@ uv pip install --torch-backend cpu -e '.[local]'
 `uv run`은 이 패키지를 그대로 두지만, 나중에 그냥 `uv sync`를 실행하면 지워지고
 `uv sync --extra local`을 실행하면 잠금 파일의 CUDA 빌드로 돌아갑니다.
 
-`backend: local`([`docker/config.local.yaml`](../docker/config.local.yaml)에 설정되어
-있고, `--backend local`로도 지정. [공급자 플래그](#공급자-플래그) 참고)은 설정에서 비워 둔
-모든 키에 아래 공급자를 채웁니다. 파일에 적은 키는 항상 프리셋보다 우선합니다.
-`providers.<역할>.kind`, `aws.neptune`이나 `aws.opensearch`의 연결 키(`port`,
-`use_iam`, `use_ssl` 등), 임베딩·재순위화 모델 ID를 적은 설정은 `backend: local`에서도
-그 값을 유지합니다. `config-template.yaml`은 이 키들을 주석으로 남겨 두었으므로, 사본에
-`backend: local`만 적으면 전환됩니다. 역할별 선택은 `providers:` 아래에 있고, 역할을 섞어
-쓸 수도 있습니다. 예를 들어 저장소만 로컬로 두고 모델은 Bedrock을 쓸 수 있습니다.
+`backend: local`(설정 파일에 적거나 `--backend local`로 지정. [공급자 플래그](#공급자-플래그)
+참고)은 설정에서 비워 둔 모든 키에 아래 공급자를 채웁니다. 파일에 적은 키는 항상
+프리셋보다 우선합니다. `providers.<역할>.kind`, `aws.neptune`이나 `aws.opensearch`의
+연결 키(`port`, `use_iam`, `use_ssl` 등), 임베딩·재순위화 모델 ID를 적은 설정은
+`backend: local`에서도 그 값을 유지합니다. `config-template.yaml`은 이 키들을 주석으로
+남겨 두었으므로, 사본에 `backend: local`만 적으면 전환됩니다. 역할별 선택은 `providers:`
+아래에 있고, 역할을 섞어 쓸 수도 있습니다. 예를 들어 저장소만 로컬로 두고 모델은
+Bedrock을 쓸 수 있습니다.
 
 | 역할 | `providers.<역할>.kind` | 로컬 기본값 |
 |---|---|---|
 | 언어 모델 | `llm`: `bedrock` \| `openai_compatible` \| `ollama` | `ollama`, `http://localhost:11434`의 `qwen2.5:7b-instruct` |
 | 임베딩 | `embedding`: `bedrock` \| `openai_compatible` \| `ollama` | `ollama`, `bge-m3`(1024차원) |
 | 재순위화 | `rerank`: `bedrock` \| `cross_encoder` \| `none` | `cross_encoder`, `cross-encoder/mmarco-mMiniLMv2-L12-H384-v1` |
-| 그래프 저장소 | `graph`: `neptune` \| `gremlin` | `gremlin`(`localhost:8182`의 Gremlin Server, SigV4 없음) |
-| 벡터·어휘 저장소 | `vector`: `opensearch` | `localhost:9200`의 로컬 OpenSearch, 인증 없음 |
-| 문서 상태 레지스트리 | `doc_status`: `dynamodb` \| `sqlite` | `providers.doc_status.sqlite_path`의 `sqlite` |
+| 그래프 저장소 | `graph`: `neptune` \| `gremlin` \| `sqlite` | `providers.graph.sqlite_path`(기본값 `.unified-kg-rag/graph.sqlite3`)의 `sqlite` |
+| 벡터·어휘 저장소 | `vector`: `opensearch` \| `sqlite` | `providers.vector.sqlite_path`(기본값 `.unified-kg-rag/vector.sqlite3`)의 `sqlite` |
+| 문서 상태 레지스트리 | `doc_status`: `dynamodb` \| `sqlite` | `providers.doc_status.sqlite_path`(기본값 `.unified-kg-rag/doc-status.sqlite3`)의 `sqlite` |
+
+`gremlin`은 TinkerPop Gremlin Server, `opensearch`는 로컬 OpenSearch이며, 프리셋이
+`localhost`로 지정하는 `aws.neptune`과 `aws.opensearch` 키로 연결합니다
+([컨테이너로 띄운 로컬 저장소](#컨테이너로-띄운-로컬-저장소) 참고).
 
 - **모델.** Bedrock이 아닌 LLM을 쓰면 `providers.llm.default_model_id`(필요하면
   `fast_model_id`도)가 모든 역할의 Bedrock 계층 모델 두 개를 대신합니다. 역할별
@@ -234,15 +240,20 @@ uv pip install --torch-backend cpu -e '.[local]'
   기본값을 씁니다. OpenAI 호환 서버(vLLM, llama.cpp
   server, LM Studio)에는 `base_url`(`/v1` 루트)과, 필요하면 `api_key`를 지정합니다.
 - **임베딩.** Bedrock이 아닌 공급자에서는 `providers.embedding.model_id`와 `dimension`이
-  필수입니다. 차원은 OpenSearch 매핑에 고정되므로 둘 중 하나를 바꾸면 전체를 다시
+  필수입니다. 차원은 벡터 저장소 매핑에 고정되므로 둘 중 하나를 바꾸면 전체를 다시
   인덱싱해야 합니다.
 - **재순위화.** 크로스 인코더는 첫 질의 때 Hugging Face에서 모델을 내려받습니다.
   `[local]` extra가 없거나 `kind: none`이면 융합 순서를 그대로 씁니다. 이 경우 로그에 한 번
   남고 융합 스팬에 `kg_rag.rerank_enabled=false`로 보입니다.
+- **내장 저장소.** `sqlite` 저장소는 각각 파일 하나이며, 처음 쓸 때 만들어집니다.
+  상대 경로 `sqlite_path`는 설정 파일 디렉터리(설정 파일이 없으면 작업 디렉터리)를
+  기준으로 해석합니다. `indexing.neptune`과 `indexing.opensearch` 설정(인덱스 접두사,
+  배치 크기, 임베딩 설정)은 Neptune과 OpenSearch에서처럼 이 저장소에도 적용되며, 쓰기는
+  다른 프로세스의 잠금을 `search.store_timeout_seconds`까지 기다립니다.
 - **증분 인덱싱**은 `providers.doc_status.enabled: true`(또는 기존 스위치인
   `aws.dynamodb.enabled: true`)일 때 SQLite 레지스트리를 씁니다.
   [`docker/config.local.yaml`](../docker/config.local.yaml)은 이를 켭니다.
-  상대 경로 `sqlite_path`는 설정 파일 디렉터리를 기준으로 해석하며, 실행 로그에
+  상대 경로 `sqlite_path`는 저장소와 같은 방식으로 해석하며, 실행 로그에
   데이터베이스의 절대 경로를 남깁니다.
 - **토큰 계산**은 문자 체계를 고려한 추정치(Bedrock이 대체 수단으로 쓰는 것과 같음)를
   씁니다. `providers.llm.tokenizer: tiktoken`이면 BPE 인코딩으로 세며, 처음 쓸 때 인코딩
@@ -257,8 +268,24 @@ AWS 모드와 다른 점:
   가장 큰 모델을 쓰세요.
 - Bedrock 프롬프트 캐싱과 Guardrails가 없습니다(로컬 공급자는 `aws.bedrock.guardrail`을
   무시합니다). 추론 노력(effort) 설정도 적용되지 않습니다.
-- 한국어 어휘 분석은 `nori` 플러그인(compose 파일이 설치) 또는 OpenSearch에 있는 동등한
-  분석기에 의존합니다.
+- 내장 벡터 저장소는 OpenSearch 어댑터가 만드는 질의에 답하지만 세 가지가 다릅니다.
+  `nori`(한국어), `kuromoji`(일본어), `smartcn`(중국어)으로 매핑한 텍스트는 형태소
+  분석 대신 서로 겹치는 CJK 문자 바이그램으로 나눕니다. 그래서 긴 단어 안의 이름도
+  찾지만(홍길동으로부터의 홍길동) 순위는 OpenSearch와 다릅니다. `english` 분석기는
+  `[local]` extra의 `snowballstemmer`가 있을 때만 어간을 추출합니다(없으면 경고를 한 번
+  남깁니다). 퍼지 매칭이 없으므로 철자가 틀린 질의어는 벡터 검색으로만 찾습니다. kNN
+  검색은 정확 검색입니다. 필터를 통과한 문서를 모두 채점하므로 정확하지만 비용이 인덱스
+  크기에 비례해 늘어납니다.
+- 내장 벡터 저장소는 검색하는 인덱스를 메모리에 올립니다(벡터 필드마다 약 문서 수 x
+  차원 x 4바이트). 인덱스당 문서 약 100,000개를 기준으로 설계했으며, 더 큰 인덱스를
+  올리면 경고를 남깁니다. 그 이상은 OpenSearch를 쓰세요.
+- SQLite는 한 번에 한 프로세스만 씁니다. 저장소 파일마다 수집은 한 번에 하나만
+  실행하세요(질의는 수집과 함께 읽을 수 있습니다). `search.store_timeout_seconds`보다
+  오래 기다린 쓰기는 "stayed locked"로 실패합니다([자주 보는 오류](./operations.ko.md#자주-보는-오류)
+  참고). 파일은 로컬 디스크에 두세요. 네트워크 파일 시스템(NFS, SMB, Amazon EFS)은
+  지원하지 않습니다.
+- [컨테이너](#컨테이너로-띄운-로컬-저장소)를 쓰면 한국어 어휘 분석은 `nori` 플러그인(compose
+  파일이 설치) 또는 OpenSearch에 있는 동등한 분석기에 의존합니다.
 - 토큰 수는 추정치이므로 컨텍스트 예산도 근사치입니다.
 - 로컬 모델의 응답이 출력 한도에서 잘려도 잘림으로 감지하지 못합니다(Bedrock은 중단
   사유를 알려 줍니다). `max_output_tokens`는 모델이 실제로 생성할 수 있는 값으로 두세요.
@@ -272,7 +299,9 @@ HTTP 4xx) 클라이언트 재시도 후에도 연결할 수 없으면, "찾을 �
 
 #### 공급자 플래그
 
-`run-ingestion`, `run-rag`, `run-eval`, `run-prompt-tuning`은 다음 플래그를 받습니다.
+`run-ingestion`, `run-rag`, `run-eval`, `run-prompt-tuning`, `run-visualization`은 다음
+플래그를 받습니다(`run-visualization`은 모델이나 저장소를 호출하지 않으므로, 모든 CLI에
+같은 명령줄을 쓸 수 있도록 받기만 합니다).
 플래그마다 읽어 들인 설정의 해당 키를 덮어쓰며, 파일에 적은 키도 덮어씁니다. 플래그를
 생략하면 설정을 그대로 씁니다.
 
@@ -287,22 +316,38 @@ HTTP 4xx) 클라이언트 재시도 후에도 연결할 수 없으면, "찾을 �
 | `--rerank-provider KIND` | `providers.rerank.kind`: `bedrock`, `cross_encoder`, `none` |
 | `--model-base-url URL` | `providers.llm.base_url`과 `providers.embedding.base_url` |
 
-#### 로컬 저장소와 Bedrock 모델
+#### 컨테이너로 띄운 로컬 저장소
 
-모델은 Bedrock을 쓰고 저장소만 로컬로 실행하려면 `models` 프로필 없이 저장소만 띄우고
-(`docker compose -f docker/compose.local.yaml up -d --wait`), `docker/config.local.yaml`
-사본에서 `providers.llm.kind`, `providers.embedding.kind`, `providers.rerank.kind`를
-`bedrock`으로 바꾸세요(이때 Bedrock 모델 ID는 카탈로그로 검증합니다). Bedrock 액세스
-권한이 있는 AWS 자격 증명이 필요합니다.
+[`docker/compose.local.yaml`](../docker/compose.local.yaml)은 저장소를 서버로
+실행합니다. TinkerPop Gremlin Server(메모리 기반 TinkerGraph), 단일 노드 OpenSearch
+2.13, 그리고 `models` 프로필에서 Ollama를 실행합니다. OpenSearch는 보안 플러그인을 끄고
+`analysis-nori` 플러그인을 설치합니다(한국어 매핑이 `nori`를 쓰며, Amazon OpenSearch
+Service에는 기본으로 들어 있습니다). 이 OpenSearch는 Amazon OpenSearch Service와 같은
+질의 엔진이므로 AWS에 배포하기 전에 순위(형태소 분석기, 퍼지 매칭)를 확인할 때 쓰세요.
+[`docker/config.local.yaml`](../docker/config.local.yaml)은
+`providers.graph.kind: gremlin`과 `providers.vector.kind: opensearch`를 지정하고 증분
+인덱싱을 켭니다. Docker와 Compose 2.23.1 이상이 필요합니다(compose 파일은 Gremlin
+Server 초기화 스크립트를 파일 안에 정의하며, 이전 릴리스는 이를 거부합니다).
 
-[`docker/compose.local.yaml`](../docker/compose.local.yaml)은 TinkerPop Gremlin
-Server(메모리 기반 TinkerGraph), 단일 노드 OpenSearch 2.13, 그리고 `models` 프로필에서
-Ollama를 실행합니다. OpenSearch는 보안 플러그인을 끄고 `analysis-nori` 플러그인을
-설치합니다(한국어 매핑이 `nori`를 쓰며, Amazon OpenSearch Service에는 기본으로 들어
-있습니다). 모델은 자동으로 내려받지 않습니다. `backend: local` 프리셋은
+```bash
+uv sync --extra local
+docker compose -f docker/compose.local.yaml --profile models up -d --wait
+docker compose -f docker/compose.local.yaml exec ollama ollama pull qwen2.5:7b-instruct
+docker compose -f docker/compose.local.yaml exec ollama ollama pull bge-m3
+uv run run-ingestion --config-path docker/config.local.yaml --source-directory ./docs-in
+uv run run-rag --config-path docker/config.local.yaml --query "..."
+docker compose -f docker/compose.local.yaml down -v
+```
+
+`down -v`는 저장소 데이터를 지우지만 SQLite 레지스트리(`docker/config.local.yaml`이면
+저장소 루트의 `.unified-kg-rag/doc-status.sqlite3`)는 지우지 않습니다. 새 저장소에
+다시 수집하기 전에 이 파일을 지우거나 `indexing.reset: true`로 설정하세요. 그러지 않으면
+증분 실행이 아무것도 쓰기 전에 멈춥니다(아래 Gremlin Server 설명 참고).
+
+모델은 자동으로 내려받지 않습니다. `backend: local` 프리셋은
 `aws.neptune.use_ssl: false`, `use_iam: false`(SigV4 없는 `ws://`)와
 `aws.opensearch.allow_anonymous: true`, `use_ssl: false`(인증 없는 `http://`)로
-프레임워크를 이 컨테이너에 연결합니다.
+`gremlin`과 `opensearch` kind를 이 컨테이너에 연결합니다.
 
 모델 없이 저장소만 확인하려면 해싱 임베딩 공급자와 가짜 모델 서버를 쓰는 스모크 테스트를
 실행하세요: `LOCAL_STORES=1 uv run pytest tests/integration/test_local_stores.py`.
@@ -312,6 +357,15 @@ Neptune과 다른 점이 있습니다. TinkerGraph는 그래프를 메모리에�
 문서를 변경 없음으로 처리하지 않고, 아무것도 쓰기 전에 멈추며 `indexing.reset: true`(또는
 레지스트리 삭제)를 안내합니다. 또 정점을 만들 때 쓴 리스트 속성에 중복 값을 그대로 저장합니다(Neptune은 한 번만 저장). 모든 쓰기는 재시도해도 중복되지 않도록 먼저 `id` 속성으로 정점이나 엣지를 찾으며, compose 파일의 Gremlin Server는 시작할 때 정점과 엣지의 이 속성에 TinkerGraph 인덱스를 만듭니다. 이 인덱스 없이 띄운 Gremlin Server는 찾을 때마다 정점이나 엣지를 모두 훑으므로 그래프가 커질수록 느려집니다(엔티티 10,000개와 커뮤니티에 약 20초 대신 60초). 개발용 규모의 코퍼스에만 쓰세요. compose 파일에는
 보안 강화 설정이 없으며 `127.0.0.1`에만 바인딩합니다.
+
+#### 로컬 저장소와 Bedrock 모델
+
+모델은 Bedrock을 쓰고 저장소만 로컬로 실행하려면 `backend: local`을 적은 설정에서
+`providers.llm.kind`, `providers.embedding.kind`, `providers.rerank.kind`를 `bedrock`으로
+바꾸세요(이때 Bedrock 모델 ID는 카탈로그로 검증합니다). Bedrock 액세스 권한이 있는 AWS
+자격 증명이 필요합니다. 내장 저장소는 그 밖에 필요한 것이 없습니다. 컨테이너를 쓰려면
+`models` 프로필 없이 저장소만 띄우고(`docker compose -f docker/compose.local.yaml up -d --wait`),
+`docker/config.local.yaml` 사본에서 바꾸세요.
 
 ---
 
@@ -1544,6 +1598,7 @@ spring 레이아웃)도 이 노드만으로 계산합니다. 파일에는
 | `--output-dir` | `visualization_outputs` | 렌더링한 파일을 쓸 위치 |
 | `--renderers` | 등록된 전체 | 실행할 렌더러: `interactive`, `static` |
 | `--config-path` | — | `config.yaml` 경로 |
+| `--backend`, `--llm-provider` 등 | — | 다른 CLI처럼 받기만 합니다(모델이나 저장소를 호출하지 않음). [공급자 플래그](#공급자-플래그) 참고 |
 
 등록된 렌더러는 **`interactive`**(pyvis)와 **`static`**(Bokeh) 두 개입니다. 설정은
 `graph.visualization` 아래(`interactive.*`, `static.*`, `embedding_method`/`layout_method`)에
@@ -1811,9 +1866,10 @@ graph_indexer_factory=..., retriever_builders=...)`). 번들 없이 쓸 때
   Ollama, OpenAI 호환 서버를, 재순위화는 Bedrock이나 sentence-transformers 크로스 인코더를
   씁니다([로컬 모드](#로컬-모드-aws-없이)). 다른 공급자는 `register_provider`로 빌더를
   등록해야 합니다([설계 문서 §15](./design.ko.md#15-확장-가이드)).
-- **기본 제공 저장소 백엔드는 두 가지입니다.** Neptune(로컬 개발에서는 TinkerPop
-  Gremlin Server)과 OpenSearch입니다. 다른 저장소를 쓰려면 사용자 정의 어댑터가
-  필요합니다.
+- **기본 제공 저장소 조합은 두 가지입니다.** Neptune(로컬 개발에서는 TinkerPop
+  Gremlin Server)과 OpenSearch, 그리고 로컬 모드용 내장 SQLite 그래프·벡터
+  저장소(호스트 한 대, 인덱스당 문서 약 100,000개)입니다. 다른 저장소를 쓰려면 사용자
+  정의 어댑터가 필요합니다.
 - **서빙 계층이 없습니다.** 패키지는 CLI와 Python 라이브러리를 제공하며, HTTP API,
   최종 사용자 인증, 요청 속도 제한은 없습니다.
 - **필터는 접근 제어가 아닙니다**(§4). 테넌트는 인덱스 접미사로 분리하세요.

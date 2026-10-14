@@ -95,9 +95,10 @@ The [Model Catalog](./models.md) lists every curated model and its limits.
 The framework connects to services that **already exist** — it never creates
 them. Choose one of three ways to run it:
 
-- **Local mode (development).** Run every component locally (Ollama models,
-  Gremlin Server, OpenSearch and SQLite), or only the stores with Bedrock
-  models; see [Local mode](#local-mode-no-aws) below.
+- **Local mode (development).** Run every component locally (Ollama models
+  and embedded SQLite stores, or Gremlin Server and OpenSearch in
+  containers), or only the stores with Bedrock models; see
+  [Local mode](#local-mode-no-aws) below.
 
 - **Bring your own services.** If Neptune and OpenSearch (and, when you use
   them, S3 and DynamoDB) are already running, just record their endpoints in `config.yaml`
@@ -175,26 +176,28 @@ Two independent auth concerns:
 Local mode runs ingestion, querying and evaluation on a laptop or a single
 host without an AWS account: each role is served by a local component instead
 of Bedrock, Neptune, OpenSearch or DynamoDB. AWS stays the default and the
-primary target; local mode is for development and evaluation. It needs Docker
-with Compose 2.23.1 or later (`docker/compose.local.yaml` defines its Gremlin
-Server init script inline, which older releases reject).
+primary target; local mode is for development and evaluation. By default the
+graph store, the vector/lexical store and the incremental-indexing registry
+are SQLite files, so the only service to run is [Ollama](https://ollama.com)
+(installed natively, serving `http://localhost:11434`):
 
 ```bash
 uv sync --extra local
-docker compose -f docker/compose.local.yaml --profile models up -d --wait
-docker compose -f docker/compose.local.yaml exec ollama ollama pull qwen2.5:7b-instruct
-docker compose -f docker/compose.local.yaml exec ollama ollama pull bge-m3
-uv run run-ingestion --config-path docker/config.local.yaml --source-directory ./docs-in
-uv run run-rag --config-path docker/config.local.yaml --query "..."
-docker compose -f docker/compose.local.yaml down -v
+ollama pull qwen2.5:7b-instruct
+ollama pull bge-m3
+uv run run-ingestion --backend local --source-directory ./docs-in
+uv run run-rag --backend local --query "..."
 ```
 
-`down -v` deletes the stores' data but not the SQLite registry
-(`.unified-kg-rag/doc-status.sqlite3` at the repository root with
-`docker/config.local.yaml`). Before the next ingestion into fresh stores,
-delete that file or set `indexing.reset: true`; otherwise the incremental run
-stops before writing anything (see the Gremlin Server note at the end of this
-section).
+Without a config file the stores are created in `.unified-kg-rag/` in the
+working directory (`graph.sqlite3`, `vector.sqlite3`, `doc-status.sqlite3`),
+so run every command from the same directory, or put the settings in a config
+file with `backend: local` (relative paths then resolve against the file).
+Incremental indexing is off in the preset; turn it on with
+`providers.doc_status.enabled: true`. To start over, delete the three files
+together (the registry describes what the stores hold) or run once with
+`indexing.reset: true`. To run Gremlin Server and OpenSearch in containers
+instead, see [Local stores in containers](#local-stores-in-containers).
 
 On Linux, `uv sync --extra local` installs the CUDA build of PyTorch that the
 lockfile pins (several GB) for the cross-encoder, GPU or not. To get the CPU
@@ -208,14 +211,14 @@ uv pip install --torch-backend cpu -e '.[local]'
 `uv run` keeps these packages; a later plain `uv sync` removes them, and
 `uv sync --extra local` brings back the locked CUDA build.
 
-`backend: local` (set in [`docker/config.local.yaml`](../docker/config.local.yaml),
-or `--backend local`, see [Provider flags](#provider-flags)) fills in these
-providers for every key the config leaves unset. A key the file sets always
-wins over the preset: a config that sets `providers.<role>.kind`, an
-`aws.neptune` or `aws.opensearch` connection key (`port`, `use_iam`,
-`use_ssl`, ...) or an embedding or rerank model id keeps that value under
-`backend: local`. `config-template.yaml` leaves these keys commented out, so a
-copy of it switches with `backend: local` alone. Each role is chosen under
+`backend: local` (in a config file, or `--backend local`, see
+[Provider flags](#provider-flags)) fills in these providers for every key the
+config leaves unset. A key the file sets always wins over the preset: a
+config that sets `providers.<role>.kind`, an `aws.neptune` or
+`aws.opensearch` connection key (`port`, `use_iam`, `use_ssl`, ...) or an
+embedding or rerank model id keeps that value under `backend: local`.
+`config-template.yaml` leaves these keys commented out, so a copy of it
+switches with `backend: local` alone. Each role is chosen under
 `providers:`, so roles can be mixed, for example local stores with Bedrock
 models:
 
@@ -224,9 +227,13 @@ models:
 | Language models | `llm`: `bedrock` \| `openai_compatible` \| `ollama` | `ollama`, `qwen2.5:7b-instruct` at `http://localhost:11434` |
 | Embeddings | `embedding`: `bedrock` \| `openai_compatible` \| `ollama` | `ollama`, `bge-m3` (1024 dimensions) |
 | Reranking | `rerank`: `bedrock` \| `cross_encoder` \| `none` | `cross_encoder`, `cross-encoder/mmarco-mMiniLMv2-L12-H384-v1` |
-| Graph store | `graph`: `neptune` \| `gremlin` | `gremlin` (Gremlin Server at `localhost:8182`, no SigV4) |
-| Vector/lexical store | `vector`: `opensearch` | local OpenSearch at `localhost:9200`, no auth |
-| Doc-status registry | `doc_status`: `dynamodb` \| `sqlite` | `sqlite` at `providers.doc_status.sqlite_path` |
+| Graph store | `graph`: `neptune` \| `gremlin` \| `sqlite` | `sqlite` at `providers.graph.sqlite_path` (default `.unified-kg-rag/graph.sqlite3`) |
+| Vector/lexical store | `vector`: `opensearch` \| `sqlite` | `sqlite` at `providers.vector.sqlite_path` (default `.unified-kg-rag/vector.sqlite3`) |
+| Doc-status registry | `doc_status`: `dynamodb` \| `sqlite` | `sqlite` at `providers.doc_status.sqlite_path` (default `.unified-kg-rag/doc-status.sqlite3`) |
+
+`gremlin` is a TinkerPop Gremlin Server and `opensearch` a local OpenSearch,
+both reached through the `aws.neptune` and `aws.opensearch` keys the preset
+points at `localhost` (see [Local stores in containers](#local-stores-in-containers)).
 
 - **Models.** With a non-Bedrock LLM, `providers.llm.default_model_id` (and
   optionally `fast_model_id`) replaces the two Bedrock tiers for every role;
@@ -242,17 +249,23 @@ models:
   OpenAI-compatible server (vLLM, llama.cpp server, LM Studio) takes
   `base_url` (its `/v1` root) and, if it needs one, `api_key`.
 - **Embeddings.** `providers.embedding.model_id` and `dimension` are required
-  with a non-Bedrock provider; the dimension is fixed into the OpenSearch
+  with a non-Bedrock provider; the dimension is fixed into the vector store's
   mappings, so changing either needs a full re-index.
 - **Reranking.** The cross-encoder downloads its model from Hugging Face on the
   first query. Without the `[local]` extra (or with `kind: none`) queries keep
   the fused order; this is logged once and visible as
   `kg_rag.rerank_enabled=false` on the fusion span.
+- **Embedded stores.** Each `sqlite` store is one file, created on first use.
+  A relative `sqlite_path` is resolved against the config file's directory
+  (the working directory without a config file). The `indexing.neptune` and
+  `indexing.opensearch` settings (index prefixes, batch sizes, embedding
+  settings) apply to them as to Neptune and OpenSearch, and a write waits up
+  to `search.store_timeout_seconds` for another process's lock.
 - **Incremental indexing** uses the SQLite registry when
   `providers.doc_status.enabled: true` (or `aws.dynamodb.enabled: true`, the
   original switch); [`docker/config.local.yaml`](../docker/config.local.yaml)
-  turns it on. A relative `sqlite_path` is resolved against the config file's
-  directory, and the run logs the database's absolute path.
+  turns it on. A relative `sqlite_path` is resolved like the stores', and the
+  run logs the database's absolute path.
 - **Token counting** uses the script-aware estimate (the same one Bedrock falls
   back to); `providers.llm.tokenizer: tiktoken` counts with a BPE encoding
   instead, which downloads its encoding file on first use.
@@ -266,8 +279,28 @@ Expected differences from AWS mode:
   and thinner community reports. Prefer the largest model the hardware runs.
 - No Bedrock prompt caching and no Guardrails (`aws.bedrock.guardrail` is
   ignored by the local providers); reasoning effort settings do not apply.
-- Korean lexical analysis depends on the `nori` plugin (installed by the compose
-  file) or an equivalent analyzer in your OpenSearch.
+- The embedded vector store answers the queries the OpenSearch adapter
+  builds, with three differences. Text mapped to `nori` (Korean), `kuromoji`
+  (Japanese) or `smartcn` (Chinese) is split into overlapping CJK character
+  bigrams instead of being analyzed morphologically, so a name still matches
+  inside a longer word (홍길동 in 홍길동으로부터) but ranking differs from
+  OpenSearch's; the `english` analyzer stems only with `snowballstemmer`
+  from the `[local]` extra (without it, a warning is logged once). There is
+  no fuzzy matching, so a misspelled query term matches only through the
+  vector side. kNN search is exact: every document that passes the filters is
+  scored, which is accurate but grows linearly with the index.
+- The embedded vector store keeps each index it searches in memory (about
+  documents x dimension x 4 bytes per vector field). It is sized for about
+  100,000 documents per index and logs a warning when it loads a larger one;
+  use OpenSearch beyond that.
+- SQLite allows one writer at a time: run one ingestion per store file at a
+  time (queries can read alongside it). A writer that waits longer than
+  `search.store_timeout_seconds` fails with "stayed locked" (see
+  [Common errors](./operations.md#common-errors)). Keep the files on a local
+  disk; network filesystems (NFS, SMB, Amazon EFS) are not supported.
+- With the [containers](#local-stores-in-containers), Korean lexical analysis
+  depends on the `nori` plugin (installed by the compose file) or an
+  equivalent analyzer in your OpenSearch.
 - Token counts are estimates, so context budgets are approximate.
 - A local model's response cut at its output limit is not detected as
   truncated (Bedrock reports the stop reason); keep `max_output_tokens` at
@@ -282,8 +315,9 @@ query with the client's error rather than answering "could not find"; see
 
 #### Provider flags
 
-`run-ingestion`, `run-rag`, `run-eval` and `run-prompt-tuning` take these
-flags. Each one overrides its key of the loaded config, a key the file sets
+`run-ingestion`, `run-rag`, `run-eval`, `run-prompt-tuning` and
+`run-visualization` take these flags (`run-visualization` calls no model or
+store, so it only accepts them, for one command line across the CLIs). Each one overrides its key of the loaded config, a key the file sets
 included; an omitted flag leaves the config as it is.
 
 | Flag | Sets |
@@ -297,21 +331,39 @@ included; an omitted flag leaves the config as it is.
 | `--rerank-provider KIND` | `providers.rerank.kind`: `bedrock`, `cross_encoder` or `none` |
 | `--model-base-url URL` | `providers.llm.base_url` and `providers.embedding.base_url` |
 
-#### Local stores with Bedrock models
+#### Local stores in containers
 
-To keep Bedrock for the models and run only the stores locally, start the
-stores alone (`docker compose -f docker/compose.local.yaml up -d --wait`, no
-`models` profile) and set `providers.llm.kind`, `providers.embedding.kind` and
-`providers.rerank.kind` to `bedrock` in a copy of
-`docker/config.local.yaml` (Bedrock model ids then validate against the
-catalog), with AWS credentials that have Bedrock access.
+[`docker/compose.local.yaml`](../docker/compose.local.yaml) runs the stores
+as servers instead: a TinkerPop Gremlin Server (in-memory TinkerGraph), a
+single-node OpenSearch 2.13 with the security plugin disabled and the
+`analysis-nori` plugin installed (the Korean mappings use `nori`; Amazon
+OpenSearch Service ships it built in), and, under the `models` profile,
+Ollama. OpenSearch is the same query engine as Amazon OpenSearch Service, so
+use it to check ranking (morphological analyzers, fuzzy matching) before an
+AWS deployment. [`docker/config.local.yaml`](../docker/config.local.yaml)
+selects `providers.graph.kind: gremlin` and `providers.vector.kind:
+opensearch` and turns on incremental indexing. It needs Docker with Compose
+2.23.1 or later (the compose file defines its Gremlin Server init script
+inline, which older releases reject).
 
-[`docker/compose.local.yaml`](../docker/compose.local.yaml) runs a TinkerPop
-Gremlin Server (in-memory TinkerGraph), a single-node OpenSearch 2.13 with
-the security plugin disabled and the `analysis-nori` plugin installed (the
-Korean mappings use `nori`; Amazon OpenSearch Service ships it built in), and,
-under the `models` profile, Ollama. No model is pulled automatically.
-The `backend: local` preset points the framework at them with
+```bash
+uv sync --extra local
+docker compose -f docker/compose.local.yaml --profile models up -d --wait
+docker compose -f docker/compose.local.yaml exec ollama ollama pull qwen2.5:7b-instruct
+docker compose -f docker/compose.local.yaml exec ollama ollama pull bge-m3
+uv run run-ingestion --config-path docker/config.local.yaml --source-directory ./docs-in
+uv run run-rag --config-path docker/config.local.yaml --query "..."
+docker compose -f docker/compose.local.yaml down -v
+```
+
+`down -v` deletes the stores' data but not the SQLite registry
+(`.unified-kg-rag/doc-status.sqlite3` at the repository root with
+`docker/config.local.yaml`). Before the next ingestion into fresh stores,
+delete that file or set `indexing.reset: true`; otherwise the incremental run
+stops before writing anything (see the Gremlin Server note below).
+
+No model is pulled automatically. The `backend: local` preset points the
+`gremlin` and `opensearch` kinds at the containers with
 `aws.neptune.use_ssl: false` and `use_iam: false` (plain `ws://`, no SigV4)
 and `aws.opensearch.allow_anonymous: true` with `use_ssl: false` (plain
 `http://`, no auth).
@@ -333,6 +385,16 @@ every vertex or edge per lookup and slows down as the graph grows (10,000
 entities and their communities took about 60 seconds instead of 20). Use it
 for development-sized corpora. Nothing in the compose file is hardened; it binds
 to `127.0.0.1` only.
+
+#### Local stores with Bedrock models
+
+To keep Bedrock for the models and run only the stores locally, set
+`providers.llm.kind`, `providers.embedding.kind` and `providers.rerank.kind`
+to `bedrock` in a config with `backend: local` (Bedrock model ids then
+validate against the catalog), with AWS credentials that have Bedrock access.
+The embedded stores need nothing else; for the containers, start the stores
+alone (`docker compose -f docker/compose.local.yaml up -d --wait`, no
+`models` profile) and make the change in a copy of `docker/config.local.yaml`.
 
 ---
 
@@ -1660,6 +1722,7 @@ Layout and error behaviour:
 | `--output-dir` | `visualization_outputs` | Where to write rendered files |
 | `--renderers` | all registered | Renderers to run: `interactive`, `static` |
 | `--config-path` | — | Path to `config.yaml` |
+| `--backend`, `--llm-provider`, ... | — | Accepted like on the other CLIs (no model or store is called); see [Provider flags](#provider-flags) |
 
 The two registered renderers are **`interactive`** (pyvis) and **`static`**
 (Bokeh). Their settings live under `graph.visualization` (`interactive.*`,
@@ -1943,8 +2006,10 @@ graph_indexer_factory=..., retriever_builders=...)`). Without a bundle,
   ([Local mode](#local-mode-no-aws)). Other providers need a builder
   registered with `register_provider`
   ([Design Doc §15](./design.md#15-extension-guide)).
-- **Two store backends ship.** Neptune (or a TinkerPop Gremlin Server for
-  local development) and OpenSearch. Other stores need custom adapters.
+- **Two store pairings ship.** Neptune (or a TinkerPop Gremlin Server for
+  local development) with OpenSearch, and the embedded SQLite graph and
+  vector stores for local mode (single host, about 100,000 documents per
+  index). Other stores need custom adapters.
 - **No serving layer.** The package provides CLIs and a Python library; it has
   no HTTP API, end-user authentication or rate limiting.
 - **Filters are not access control** (§4). Separate tenants by index suffix.

@@ -60,18 +60,19 @@ flowchart LR
 
 | 방식 | 그래프·벡터 저장소 | 모델 | 시작 방법 |
 |---|---|---|---|
-| **로컬 모드**(개발용, AWS 불필요) | 컨테이너로 띄운 Gremlin Server와 OpenSearch([`docker/compose.local.yaml`](./docker/compose.local.yaml)), 증분 인덱싱용 SQLite | Ollama(또는 OpenAI 호환 서버)나 Amazon Bedrock | [로컬 모드](./docs/user-guide.ko.md#로컬-모드-aws-없이)를 따라 컨테이너를 띄우고 Ollama 모델 두 개를 내려받은 뒤 `--config-path docker/config.local.yaml`을 넘깁니다 |
+| **로컬 모드**(개발용, AWS 불필요) | 서버 없는 내장 SQLite 그래프·벡터 저장소와 레지스트리, 또는 컨테이너로 띄운 Gremlin Server와 OpenSearch([`docker/compose.local.yaml`](./docker/compose.local.yaml)) | Ollama(또는 OpenAI 호환 서버)나 Amazon Bedrock | [로컬 모드](./docs/user-guide.ko.md#로컬-모드-aws-없이)를 따라 Ollama 모델 두 개를 내려받은 뒤 `--backend local`을 넘깁니다 |
 | **기존 AWS 리소스** | 사용 중인 Neptune 클러스터와 OpenSearch 도메인(증분 인덱싱을 쓰면 DynamoDB, 단계 캐시 동기화나 임베딩 캐시 저장을 쓸 때만 S3 버킷) | Amazon Bedrock | `config-template.yaml`을 `config.yaml`로 복사하고 엔드포인트를 입력합니다 |
 | **번들 CDK 스택** | [`iac/`](./iac/README.md)가 Fargate 데이터 플레인, Step Functions 수집 파이프라인과 함께 생성 | Amazon Bedrock | [AWS에 배포](#aws에-배포선택)를 진행한 뒤 [`iac/README.md`의 After deploy](./iac/README.md#after-deploy)를 따릅니다 |
 
 AWS 방식은 Amazon Bedrock을 호출하므로 먼저 [필요한 모델](./docs/user-guide.ko.md#필수-모델)의
-액세스를 활성화하세요. 로컬 모드는 개발과 평가 전용입니다. 저장소는 보안 강화가 되어 있지
-않고 그래프를 메모리에만 보관하며, 작은 로컬 모델은 그래프를 더 약하게 추출합니다.
+액세스를 활성화하세요. 로컬 모드는 개발과 평가 전용입니다. 내장 저장소는 호스트 한 대와
+인덱스당 문서 약 100,000개를 기준으로 하고, 컨테이너는 보안 강화가 되어 있지 않으며, 작은
+로컬 모델은 그래프를 더 약하게 추출합니다.
 
 ### 사전 요구사항
 
 - 모든 방식: Python 3.10–3.12와 [uv](https://docs.astral.sh/uv/) (`pip`도 사용할 수 있습니다).
-- 로컬 모드: Docker와 Compose 2.23.1 이상. 모델에 Bedrock을 쓰지 않으면 AWS 계정이 필요 없습니다.
+- 로컬 모드: 모델용 [Ollama](https://ollama.com). 저장소를 컨테이너로 띄울 때만 Docker와 Compose 2.23.1 이상이 필요합니다. 모델에 Bedrock을 쓰지 않으면 AWS 계정이 필요 없습니다.
 - 기존 AWS 리소스: Amazon Bedrock([필요한 모델](./docs/user-guide.ko.md#필수-모델)의 액세스 활성화)에 접근할 수 있는 AWS 자격 증명, Amazon Neptune 클러스터, Amazon OpenSearch Service 도메인. DynamoDB는 증분 인덱싱을 쓸 때만, S3 버킷은 단계 캐시 동기화(`--s3-sync`)나 임베딩 캐시 저장을 쓸 때만 필요합니다. 프레임워크는 이미 있는 서비스에 연결할 뿐 서비스를 만들지 않습니다.
 - 번들 CDK 스택: [`iac/README.md`의 Prerequisites](./iac/README.md#prerequisites)에 있는 CDK CLI와 Node.js, 이미지 푸시용 Docker.
 

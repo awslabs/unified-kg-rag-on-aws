@@ -21,8 +21,10 @@ details.
   (`mix`/`hybrid`/`naive`), with triple-hybrid (lexical + semantic + graph)
   retrieval, RRF fusion, reranking and multilingual ingestion.
 - Local mode: `backend: local` (or `--backend local`) runs ingestion, queries
-  and evaluation on Ollama, a sentence-transformers cross-encoder, Gremlin
-  Server, a local OpenSearch and a SQLite doc-status registry (#209).
+  and evaluation on Ollama, a sentence-transformers cross-encoder and
+  embedded SQLite graph and vector stores and doc-status registry, so Ollama
+  is the only service to run; Gremlin Server and OpenSearch in containers
+  remain an option (#209, #PR).
 - Optional OpenTelemetry tracing of ingestion and queries, exported over OTLP
   or to Langfuse or Arize Phoenix (#207, #208).
 - Incremental indexing that survives interruption: a write-ahead registry
@@ -246,6 +248,12 @@ Library API (Python callers and custom backends).
   #233 cannot be told apart from a tracked one (its indices carry no
   marker), so an incremental run takes it as tracked: run such a suffix once
   with `indexing.reset: true` (registry on) after upgrading (#243).
+- A `backend: local` config of your own that relied on the preset for the
+  stores now gets the embedded SQLite stores, empty, while its registry still
+  lists the documents indexed into the containers, so its next incremental
+  run stops before writing anything. Add `providers.graph.kind: gremlin` and
+  `providers.vector.kind: opensearch` to keep the containers, or run once
+  with `indexing.reset: true` to rebuild in the embedded stores (#273).
 
 ### Added
 - `providers:` config section selecting each role's backend (`llm`,
@@ -253,12 +261,16 @@ Library API (Python callers and custom backends).
   registry (`@register_provider`); a `[local]` extra; `SQLiteDocStatusStore`;
   an Ollama service in `docker/compose.local.yaml`; and
   `providers.doc_status.enabled` (#154, #209).
-- `providers.vector.kind: sqlite`: an embedded vector and lexical store in
-  one SQLite file (`providers.vector.sqlite_path`) that answers the
-  OpenSearch queries the indexer and retriever build (exact kNN, Lucene
-  BM25, CJK bigram analyzers, neural-search hybrid fusion), for about
-  100,000 documents per index without a server; `snowballstemmer` joins the
-  `[local]` extra for its `english` analyzer (#271).
+- Embedded stores, no server needed: `providers.vector.kind: sqlite`, a
+  vector and lexical store in one SQLite file (`providers.vector.sqlite_path`)
+  that answers the OpenSearch queries the unchanged indexer and retriever
+  build (exact kNN, Lucene BM25, CJK bigram analyzers, neural-search hybrid
+  fusion) for about 100,000 documents per index; and
+  `providers.graph.kind: sqlite` (`SQLiteGraphIndexer`,
+  `SQLiteGraphRetriever`), Neptune's write semantics and graph expansion in
+  `providers.graph.sqlite_path`. Single host, one writer at a time, local
+  disks only. `snowballstemmer` joins the `[local]` extra for the `english`
+  analyzer (#271, #272).
 - `observability:` section (off by default, `otel` extra): spans for runs,
   stages, batches and each query step, GenAI model-call spans with token
   usage, log/trace correlation, `session.id` / `user.id`
@@ -293,11 +305,14 @@ Library API (Python callers and custom backends).
   `xray` VPC endpoint; `GRAPHRAG_OBSERVABILITY_ENABLED` /
   `GRAPHRAG_OBSERVABILITY_BACKEND` overrides; and a runbook recipe with
   Bedrock model invocation logging as the account-level backstop (#269).
-- Embedded SQLite graph store, `providers.graph.kind: sqlite`
-  (`SQLiteGraphIndexer`, `SQLiteGraphRetriever`): Neptune's write semantics
-  and graph expansion on one local file, no server needed (#272).
 
 ### Changed
+- `backend: local` selects the embedded SQLite graph and vector stores
+  (`.unified-kg-rag/graph.sqlite3` and `vector.sqlite3` by default), so
+  `--backend local` with a native Ollama needs no container.
+  `docker/config.local.yaml` selects `gremlin` and `opensearch` explicitly
+  and keeps the compose flow as it was. `run-visualization` takes the
+  provider flags of the other CLIs (#273).
 - A custom vector indexer's `read_claims` no longer has to tag each claim
   with the index it was read from; `IndexingManager` tags the claims it
   writes back after a deletion (#259).

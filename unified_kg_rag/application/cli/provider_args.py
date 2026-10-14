@@ -1,6 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Provider-selection flags shared by run-ingestion, run-rag and run-eval.
+"""Provider-selection flags shared by the CLIs (run-ingestion, run-rag,
+run-eval, run-prompt-tuning, run-visualization).
 
 Each flag overrides one ``backend`` / ``providers`` key of the loaded config
 (see ``application.bootstrap.with_provider_overrides``); omitted flags leave
@@ -29,8 +30,7 @@ def add_provider_arguments(parser: argparse.ArgumentParser) -> None:
         "--backend",
         choices=[b.value for b in Backend],
         help="Provider preset: 'aws' (Bedrock, Neptune, OpenSearch, DynamoDB) or "
-        "'local' (Ollama, cross-encoder, Gremlin Server, local OpenSearch, "
-        "SQLite). The preset fills in only keys the config leaves unset: a "
+        "'local' (Ollama, cross-encoder, embedded SQLite stores). The preset fills in only keys the config leaves unset: a "
         "providers.*, aws.neptune.*, aws.opensearch.* or model-id key the "
         "file sets always wins",
     )

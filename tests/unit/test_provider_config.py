@@ -189,7 +189,10 @@ def test_local_preset_fills_every_role_and_the_store_endpoints() -> None:
     assert config.providers.llm.kind == preset["llm"]["kind"]
     assert config.providers.embedding.dimension == preset["embedding"]["dimension"]
     assert config.providers.rerank.kind == "cross_encoder"
-    assert config.providers.graph.kind == "gremlin"
+    # The stores are the embedded ones; the endpoints below serve a config
+    # that selects the gremlin and opensearch kinds (the containers).
+    assert config.providers.graph.kind == "sqlite"
+    assert config.providers.vector.kind == "sqlite"
     assert config.providers.doc_status.kind == "sqlite"
     assert config.search.answer_generation_model_id == preset["llm"]["default_model_id"]
     assert (
@@ -255,6 +258,14 @@ def test_local_backend_from_yaml(tmp_path: Path) -> None:
     config = ConfigLoader(path).load_config()
     assert config.backend is Backend.LOCAL
     assert config.search.answer_generation_model_id == "synthetic-llm"
+    # The preset's embedded stores live next to the config file, whatever
+    # directory the run starts in.
+    assert config.providers.graph.sqlite_path == str(
+        tmp_path.resolve() / ".unified-kg-rag" / "graph.sqlite3"
+    )
+    assert config.providers.vector.sqlite_path == str(
+        tmp_path.resolve() / ".unified-kg-rag" / "vector.sqlite3"
+    )
 
 
 @pytest.mark.parametrize(
@@ -305,6 +316,9 @@ def test_shipped_local_config_selects_local_mode() -> None:
     assert config.providers.llm.kind == "ollama"
     assert config.providers.doc_status.kind == "sqlite"
     assert config.doc_status_enabled is True
+    # The compose flow keeps the containers for the stores.
+    assert config.providers.graph.kind == "gremlin"
+    assert config.providers.vector.kind == "opensearch"
     assert config.aws.neptune.use_iam is False
 
 
@@ -315,9 +329,10 @@ def test_shipped_local_config_sets_only_what_differs_from_the_preset() -> None:
     raw = yaml.safe_load(text)
     uncommented = uncommented_template(text)
     assert Config(**uncommented) == Config(**raw)
-    # Only the registry is set: incremental indexing is off in the preset.
+    # Only the stores are set: the containers instead of the embedded stores,
+    # and the registry (incremental indexing is off in the preset).
     assert set(raw) == {"backend", "providers", "logging"}
-    assert set(raw["providers"]) == {"doc_status"}
+    assert set(raw["providers"]) == {"graph", "vector", "doc_status"}
     assert set(raw["providers"]["doc_status"]) == {"enabled", "sqlite_path"}
     shown = set(commented_key_paths(text))
     assert shown == {
