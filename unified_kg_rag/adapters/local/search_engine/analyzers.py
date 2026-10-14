@@ -30,10 +30,10 @@ from __future__ import annotations
 import re
 import threading
 from collections.abc import Callable
-from functools import cache
+from functools import cache, lru_cache
 
 from unified_kg_rag.shared import get_logger
-from unified_kg_rag.shared.utils.scripts import is_dense_script_char
+from unified_kg_rag.shared.utils.scripts import DENSE_SCRIPT_LETTERS
 
 logger = get_logger(__name__)
 
@@ -47,6 +47,8 @@ _warned_lock = threading.Lock()
 
 # A word: a run of letters, digits, marks or connector punctuation.
 _WORD = re.compile(r"\w+")
+# Splits a word into alternating other / dense-script runs (dense at odd indices).
+_DENSE_RUN = re.compile(f"([{DENSE_SCRIPT_LETTERS}]+)")
 _POSSESSIVE = re.compile(r"['’＇][sS]\b")
 
 
@@ -83,19 +85,6 @@ def get_analyzer(name: str | None) -> Analyzer:
     return _ANALYZERS[STANDARD]
 
 
-def _split_runs(word: str) -> list[tuple[str, bool]]:
-    """``word`` cut into runs of dense-script letters and of other characters."""
-    runs: list[tuple[str, bool]] = []
-    start = 0
-    for i in range(1, len(word) + 1):
-        if i == len(word) or is_dense_script_char(word[i]) != is_dense_script_char(
-            word[start]
-        ):
-            runs.append((word[start:i], is_dense_script_char(word[start])))
-            start = i
-    return runs
-
-
 def _bigrams(run: str) -> list[str]:
     if len(run) == 1:
         return [run]
@@ -107,10 +96,10 @@ def _tokens(text: str, word_filter: Callable[[str], str | None]) -> list[str]:
     rewrite or drop it), dense-script runs as bigrams."""
     tokens: list[str] = []
     for word in _WORD.findall(text.lower()):
-        for run, dense in _split_runs(word):
-            if dense:
+        for i, run in enumerate(_DENSE_RUN.split(word)):
+            if i % 2:
                 tokens.extend(_bigrams(run))
-            elif (kept := word_filter(run)) is not None:
+            elif run and (kept := word_filter(run)) is not None:
                 tokens.append(kept)
     return tokens
 
@@ -142,6 +131,8 @@ def _porter_stem() -> Callable[[str], str] | None:
     stemmer = snowballstemmer.stemmer("porter")
     lock = threading.Lock()  # a stemmer object is not thread-safe
 
+    # A corpus repeats its words: stem each distinct one once.
+    @lru_cache(maxsize=1 << 16)
     def stem(word: str) -> str:
         with lock:
             result: str = stemmer.stemWord(word)

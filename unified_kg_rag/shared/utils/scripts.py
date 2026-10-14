@@ -14,6 +14,7 @@ from __future__ import annotations
 import re
 
 __all__ = [
+    "DENSE_SCRIPT_LETTERS",
     "drop_dense_script_spaces",
     "has_dense_script",
     "is_dense_script_char",
@@ -34,6 +35,11 @@ _DENSE_SCRIPT_LETTER_RANGES: tuple[tuple[int, int], ...] = (
     (0xD7B0, 0xD7FF),  # Hangul Jamo Extended-B
     (0xF900, 0xFAFF),  # CJK Compatibility Ideographs
     (0x20000, 0x323AF),  # CJK Unified Ideographs Extensions B-H
+)
+
+# The same letters as the body of a regex character class (``[...]``).
+DENSE_SCRIPT_LETTERS = "".join(
+    f"{chr(lo)}-{chr(hi)}" for lo, hi in _DENSE_SCRIPT_LETTER_RANGES
 )
 
 

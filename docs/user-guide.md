@@ -292,7 +292,9 @@ Expected differences from AWS mode:
 - The embedded vector store keeps each index it searches in memory (about
   documents x dimension x 4 bytes per vector field). It is sized for about
   100,000 documents per index and logs a warning when it loads a larger one;
-  use OpenSearch beyond that.
+  use OpenSearch beyond that. Every write reloads the index on the next
+  query, and the first lexical query after it re-analyzes the searched text
+  field: about 10 s for 50,000 documents of 120 words.
 - SQLite allows one writer at a time: run one ingestion per store file at a
   time (queries can read alongside it). A writer that waits longer than
   `search.store_timeout_seconds` fails with "stayed locked" (see

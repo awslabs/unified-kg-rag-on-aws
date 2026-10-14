@@ -406,6 +406,11 @@ Library API (Python callers and custom backends).
   scikit-learn's 318, which include content words such as "amount", "bill",
   "interest", "system", "name" and "detail", so a query like "interest bill
   amount" found nothing lexically on an English corpus (#PR).
+- The first lexical query after a write to the embedded search engine is
+  about 7x faster (63 s to 8 s at 50,000 documents of 120 words; 27x for
+  the `english` analyzer alone): its analyzers split CJK runs with one
+  regular expression instead of testing each character twice, and stem each
+  distinct word once (#PR).
 - A global-search map step whose every batch is over the model's context
   (langchain-openai's `OpenAIContextOverflowError`) answers from the
   unrated reports again. That error is an HTTP 400 too, so it was read as a
