@@ -35,6 +35,7 @@ from pathlib import Path
 import pytest
 
 from tests.fixtures.store_backends import StoreHarness, open_harness
+from unified_kg_rag.adapters.local.search_engine.analyzers import get_analyzer
 from unified_kg_rag.domain.models import (
     Config,
     RetrievalResult,
@@ -247,3 +248,29 @@ def test_hybrid_ranking_matches_opensearch(
         assert len(shared) >= 0.9 * _TOP
         for source in shared:
             assert mine[source] == pytest.approx(reference[source], abs=0.05)
+
+
+# In-word punctuation, possessives, stop words and inflections.
+_ANALYZED = [
+    "The Vendor's suppliers are shipping widgets",
+    "don't 1,000.50 U.S.A. e-mail a:b it's VENDOR'S x＇s o’neil’s",
+    "3.14 a1.b 1.a x_y co-op 'quoted' rock'n'roll e.g. 2024.01.15 $5,000.00",
+    "rate: 5%; term:3 years. Fee:10 one..two a.,b 1.,2 end. 12:30 ab:cd:",
+    "Interest on the bill amount is due; the fire system's computer name",
+    "naïve café's résumé",
+]
+
+
+@pytest.mark.parametrize("analyzer", ["standard", "english"])
+def test_analyzers_tokenize_latin_text_like_opensearch(
+    tmp_path: Path, analyzer: str
+) -> None:
+    opened = open_harness("container", tmp_path)
+    try:
+        client = next(opened).vector_indexer.opensearch_client.client
+        for text in _ANALYZED:
+            response = client.indices.analyze(body={"analyzer": analyzer, "text": text})
+            expected = [token["token"] for token in response["tokens"]]
+            assert get_analyzer(analyzer)(text) == expected, text
+    finally:
+        opened.close()

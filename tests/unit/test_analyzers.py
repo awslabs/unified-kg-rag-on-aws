@@ -196,3 +196,21 @@ def test_english_stems_each_distinct_word_once(monkeypatch: pytest.MonkeyPatch) 
         assert sorted(calls) == ["shipping", "widgets"]
     finally:
         analyzers._porter_stem.cache_clear()
+
+
+def test_in_word_punctuation_joins_like_opensearch() -> None:
+    # OpenSearch 2.13's _analyze output for the same text.
+    assert standard_analyzer("don't 1,000.50 U.S.A. e-mail a:b 12:30 3.2.1(a)") == [
+        "don't",
+        "1,000.50",
+        "u.s.a",
+        "e",
+        "mail",
+        "a:b",
+        "12",
+        "30",
+        "3.2.1",
+        "a",
+    ]
+    # Not across a letter-digit boundary, nor into a dense-script run.
+    assert standard_analyzer("a1.b 1.a 가.나") == ["a1", "b", "1", "a", "가", "나"]

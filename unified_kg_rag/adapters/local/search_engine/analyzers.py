@@ -7,11 +7,13 @@ A text field's mapping names its analyzer (``OpenSearchIndexer`` picks it from
 looks the name up here and analyzes both the indexed text and the query text
 with it. Approximations of the OpenSearch analyzers of the same names:
 
-- ``standard``: Unicode word split and lowercase. A run of Hangul, Han or Kana
-  letters becomes overlapping character bigrams ("홍길동으로부터" -> "홍길",
-  "길동", "동으", ...), and a single such letter a unigram, so a word matches
-  inside a longer run without a morphological dictionary. (OpenSearch's
-  ``standard`` keeps a Hangul run as one token; the bigrams are deliberate.)
+- ``standard``: Unicode word split (keeping "don't", "u.s.a" and "1,000.50"
+  whole, as OpenSearch's tokenizer does) and lowercase. A run of Hangul, Han
+  or Kana letters becomes overlapping character bigrams ("홍길동으로부터" ->
+  "홍길", "길동", "동으", ...), and a single such letter a unigram, so a word
+  matches inside a longer run without a morphological dictionary.
+  (OpenSearch's ``standard`` keeps a Hangul run as one token; the bigrams are
+  deliberate.)
 - ``nori``, ``kuromoji`` and ``smartcn``: the same analyzer as ``standard``.
   The bigrams stand in for their morphological analysis: recall on a
   word-in-compound query is comparable, ranking is not identical.
@@ -45,8 +47,15 @@ _ANALYZERS: dict[str, Analyzer] = {}
 _warned: set[str] = set()
 _warned_lock = threading.Lock()
 
-# A word: a run of letters, digits, marks or connector punctuation.
-_WORD = re.compile(r"\w+")
+# A word: a run of letters, digits, marks or connector punctuation, joined
+# across the punctuation Unicode word boundaries (UAX #29, which OpenSearch's
+# standard tokenizer follows) keep inside a word: ":", ".", "'" between two
+# letters ("u.s.a", "don't"), ",", ".", ";", "'" between two digits ("1,000.50").
+_LETTER = f"[^\\W\\d_{DENSE_SCRIPT_LETTERS}]"
+_WORD = re.compile(
+    rf"\w+(?:(?:(?<={_LETTER})[:.'·‘’＇．](?={_LETTER})"
+    rf"|(?<=\d)[,.;'‘’＇．，；](?=\d))\w+)*"
+)
 # Splits a word into alternating other / dense-script runs (dense at odd indices).
 _DENSE_RUN = re.compile(f"([{DENSE_SCRIPT_LETTERS}]+)")
 _POSSESSIVE = re.compile(r"['’＇][sS]\b")

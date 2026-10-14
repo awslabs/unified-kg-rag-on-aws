@@ -420,6 +420,10 @@ Library API (Python callers and custom backends).
   a document (a file changed outside the engine) raises
   `StoreConfigurationError`, and an index another process deleted leaves
   this process's cache (#PR).
+- The embedded search engine's analyzers keep a word whole across in-word
+  punctuation as OpenSearch's standard tokenizer does ("don't", "u.s.a",
+  "1,000.50", "2024.01.15"). They split there, so a query for an amount
+  such as "1,000,000" matched every document containing "000" (#PR).
 - A global-search map step whose every batch is over the model's context
   (langchain-openai's `OpenAIContextOverflowError`) answers from the
   unrated reports again. That error is an HTTP 400 too, so it was read as a
