@@ -103,3 +103,42 @@ def test_hybrid_scorer_uses_injected_rerank_factory() -> None:
     # The injected factory is used; its get_model produced the rerank model.
     assert scorer.rerank_factory is fake
     assert scorer.rerank_model is not None
+
+
+def test_opensearch_indexer_uses_injected_search_engine_client(mocker) -> None:
+    # Another engine speaking the SearchEngineClient surface replaces the
+    # default OpenSearch client: none is built, and closing reaches the engine.
+    default_client = mocker.patch(
+        "unified_kg_rag.adapters.storage.opensearch_indexer.OpenSearchClient"
+    )
+    engine = mocker.MagicMock()
+
+    indexer = OpenSearchIndexer(
+        config=Config(),
+        embedding_factory=FakeEmbeddingFactory(),
+        opensearch_client=engine,
+    )
+
+    assert indexer.opensearch_client is engine
+    default_client.assert_not_called()
+    indexer.close()
+    engine.close.assert_called_once()
+
+
+def test_s3_embedding_cache_session_does_not_come_from_the_client(mocker) -> None:
+    # The S3 embedding cache signs with the indexer's own session, so an
+    # injected engine without a boto_session still gets one.
+    session = mocker.MagicMock()
+    config = Config()
+    config.aws.s3.bucket_name = "bucket"
+    config.indexing.opensearch.persist_embedding_cache = True
+
+    indexer = OpenSearchIndexer(
+        config=config,
+        boto_session=session,
+        embedding_factory=FakeEmbeddingFactory(),
+        opensearch_client=mocker.MagicMock(spec=[]),
+    )
+
+    assert indexer._s3_embedding_cache is not None
+    assert indexer._s3_embedding_cache._session is session

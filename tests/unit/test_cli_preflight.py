@@ -5,10 +5,17 @@
 from __future__ import annotations
 
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 
+from unified_kg_rag.adapters import provider_registry
+from unified_kg_rag.adapters.provider_registry import (
+    ProviderRole,
+    provider_endpoint,
+    register_provider,
+)
 from unified_kg_rag.application.cli import (
     run_evaluation,
     run_ingestion_pipeline,
@@ -61,6 +68,60 @@ def test_missing_endpoints_error_names_config_key_and_env_var() -> None:
     assert missing_endpoints_error(_config("n", "o"), {_DOC, _GRAPH}, "x") is None
     # Only the roles asked for are checked.
     assert missing_endpoints_error(_config(opensearch="o"), {_DOC}, "x") is None
+
+
+@pytest.mark.parametrize(
+    ("role", "kind", "key"),
+    [
+        (ProviderRole.GRAPH_INDEXER, "neptune", "aws.neptune.endpoint"),
+        (ProviderRole.GRAPH_RETRIEVER, "gremlin", "aws.neptune.endpoint"),
+        (ProviderRole.VECTOR_INDEXER, "opensearch", "aws.opensearch.endpoint"),
+        (ProviderRole.VECTOR_RETRIEVER, "opensearch", "aws.opensearch.endpoint"),
+    ],
+)
+def test_server_store_kinds_declare_their_endpoint(
+    role: ProviderRole, kind: str, key: str
+) -> None:
+    import unified_kg_rag.adapters.providers  # noqa: F401  (registers the kinds)
+
+    endpoint = provider_endpoint(role, kind)
+    assert endpoint is not None and endpoint[0] == key
+    assert provider_endpoint(role, f" {kind.upper()} ") == endpoint
+
+
+@pytest.fixture
+def embedded_kind() -> Iterator[str]:
+    kind = "synthetic_embedded"
+    for role in (ProviderRole.GRAPH_RETRIEVER, ProviderRole.VECTOR_RETRIEVER):
+        register_provider(role, kind)(lambda providers: None)
+    yield kind
+    for role in ProviderRole:
+        provider_registry._REGISTRY.pop((role, kind), None)
+
+
+def test_kind_without_an_endpoint_is_not_checked(embedded_kind: str) -> None:
+    config = _config()
+    config.providers.graph.kind = embedded_kind
+    assert missing_endpoints_error(config, {_GRAPH}, "x") is None
+    # The other role still follows its own kind (opensearch, unset).
+    error = missing_endpoints_error(config, {_DOC, _GRAPH}, "x")
+    assert error is not None
+    assert "aws.opensearch.endpoint" in error
+    assert "aws.neptune.endpoint" not in error
+
+
+def test_reregistering_a_kind_replaces_its_endpoint() -> None:
+    kind = "synthetic_server"
+    role = ProviderRole.GRAPH_RETRIEVER
+    try:
+        register_provider(role, kind, endpoint=("aws.neptune.endpoint", "X"))(
+            lambda providers: None
+        )
+        assert provider_endpoint(role, kind) == ("aws.neptune.endpoint", "X")
+        register_provider(role, kind)(lambda providers: None)
+        assert provider_endpoint(role, kind) is None
+    finally:
+        provider_registry._REGISTRY.pop((role, kind), None)
 
 
 # --- run-ingestion -------------------------------------------------------

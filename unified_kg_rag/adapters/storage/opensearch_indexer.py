@@ -13,6 +13,7 @@ from unified_kg_rag.adapters.storage.embedding_settings import (
     resolve_embedding_dimension,
     stored_embedding_settings,
 )
+from unified_kg_rag.adapters.storage.search_engine import SearchEngineClient
 from unified_kg_rag.domain.models import (
     Claim,
     CommunityReport,
@@ -74,11 +75,19 @@ class OpenSearchIndexer(VectorIndexer):
         boto_session: "boto3.Session | None" = None,
         *,
         embedding_factory: EmbeddingFactoryPort,
+        opensearch_client: SearchEngineClient | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(config)
         self.opensearch_config = self.config.indexing.opensearch
-        self.opensearch_client = OpenSearchClient(config, boto_session)
+        # Kept here, not read back through the client: the S3 embedding cache
+        # needs it whichever search engine is injected.
+        self.boto_session = boto_session
+        self.opensearch_client: SearchEngineClient = (
+            opensearch_client
+            if opensearch_client is not None
+            else OpenSearchClient(config, boto_session)
+        )
         self.embedding_factory = embedding_factory
         self._embedding_dimension = self._resolve_embedding_dimension()
         self.embedding_model = self.embedding_factory.get_model(
@@ -120,9 +129,20 @@ class OpenSearchIndexer(VectorIndexer):
             key=self.opensearch_config.embedding_cache_s3_key,
             model_id=model_id_value(self.opensearch_config.embedding_model_id),
             dimension=self._embedding_dimension,
-            boto_session=self.opensearch_client.boto_session,
+            boto_session=self._s3_session(),
             encryption=self.config.aws.s3.encryption,
         )
+
+    def _s3_session(self) -> "boto3.Session":
+        """The given session, else the default one ``OpenSearchClient`` makes."""
+        if self.boto_session is None:
+            import boto3
+
+            self.boto_session = boto3.Session(
+                profile_name=self.config.aws.profile_name,
+                region_name=self.config.aws.region_name,
+            )
+        return self.boto_session
 
     def _resolve_embedding_dimension(self) -> int:
         return resolve_embedding_dimension(
@@ -130,7 +150,7 @@ class OpenSearchIndexer(VectorIndexer):
         )
 
     def close(self) -> None:
-        """Release the underlying OpenSearch client's connections (best-effort)."""
+        """Release the search-engine client's connections (best-effort)."""
         self.opensearch_client.close()
 
     def _index_prefixes(self) -> list[str]:

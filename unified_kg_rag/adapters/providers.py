@@ -26,6 +26,7 @@ from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any
 
 from unified_kg_rag.adapters.provider_registry import (
+    RETRIEVER_PROVIDER_ROLES,
     ProviderRole,
     get_provider_builder,
     provider_kind,
@@ -60,11 +61,6 @@ if TYPE_CHECKING:
     from unified_kg_rag.ports.indexer import GraphIndexer, VectorIndexer
 
 TokenCounterFactory = Callable[..., TokenCounterPort]
-
-_RETRIEVER_ROLES: dict[RetrieverRole, ProviderRole] = {
-    RetrieverRole.GRAPH: ProviderRole.GRAPH_RETRIEVER,
-    RetrieverRole.DOCUMENT: ProviderRole.VECTOR_RETRIEVER,
-}
 
 
 class Providers:
@@ -217,7 +213,7 @@ class Providers:
         builder = self._retriever_builders.get(role)
         if builder is not None:
             return builder()
-        provider_role = _RETRIEVER_ROLES.get(RetrieverRole(role))
+        provider_role = RETRIEVER_PROVIDER_ROLES.get(RetrieverRole(role))
         if provider_role is None:
             raise ValueError(f"No retriever bound to role: '{role}'")
         retriever: BaseGraphRAGRetriever = self._build(provider_role)
@@ -355,8 +351,12 @@ def _signing_session(providers: Providers, needed: bool) -> boto3.Session | None
 
 # Gremlin Server speaks the same TinkerPop protocol as Neptune; the config
 # validator requires aws.neptune.use_iam: false for it (no SigV4).
-@register_provider(ProviderRole.GRAPH_INDEXER, NEPTUNE)
-@register_provider(ProviderRole.GRAPH_INDEXER, GREMLIN)
+_NEPTUNE_ENDPOINT = ("aws.neptune.endpoint", "NEPTUNE_ENDPOINT")
+_OPENSEARCH_ENDPOINT = ("aws.opensearch.endpoint", "OPENSEARCH_ENDPOINT")
+
+
+@register_provider(ProviderRole.GRAPH_INDEXER, NEPTUNE, endpoint=_NEPTUNE_ENDPOINT)
+@register_provider(ProviderRole.GRAPH_INDEXER, GREMLIN, endpoint=_NEPTUNE_ENDPOINT)
 def _neptune_graph_indexer(providers: Providers) -> GraphIndexer:
     from unified_kg_rag.adapters.storage.neptune_indexer import NeptuneIndexer
 
@@ -366,8 +366,8 @@ def _neptune_graph_indexer(providers: Providers) -> GraphIndexer:
     )
 
 
-@register_provider(ProviderRole.GRAPH_RETRIEVER, NEPTUNE)
-@register_provider(ProviderRole.GRAPH_RETRIEVER, GREMLIN)
+@register_provider(ProviderRole.GRAPH_RETRIEVER, NEPTUNE, endpoint=_NEPTUNE_ENDPOINT)
+@register_provider(ProviderRole.GRAPH_RETRIEVER, GREMLIN, endpoint=_NEPTUNE_ENDPOINT)
 def _neptune_graph_retriever(providers: Providers) -> BaseGraphRAGRetriever:
     from unified_kg_rag.adapters.aws.neptune import NeptuneClient
     from unified_kg_rag.adapters.retrievers.neptune_retriever import (
@@ -386,7 +386,9 @@ def _neptune_graph_retriever(providers: Providers) -> BaseGraphRAGRetriever:
     )
 
 
-@register_provider(ProviderRole.VECTOR_INDEXER, OPENSEARCH)
+@register_provider(
+    ProviderRole.VECTOR_INDEXER, OPENSEARCH, endpoint=_OPENSEARCH_ENDPOINT
+)
 def _opensearch_vector_indexer(providers: Providers) -> VectorIndexer:
     from unified_kg_rag.adapters.storage.opensearch_indexer import (
         OpenSearchIndexer,
@@ -405,7 +407,9 @@ def _opensearch_vector_indexer(providers: Providers) -> VectorIndexer:
     )
 
 
-@register_provider(ProviderRole.VECTOR_RETRIEVER, OPENSEARCH)
+@register_provider(
+    ProviderRole.VECTOR_RETRIEVER, OPENSEARCH, endpoint=_OPENSEARCH_ENDPOINT
+)
 def _opensearch_vector_retriever(providers: Providers) -> BaseGraphRAGRetriever:
     from unified_kg_rag.adapters.aws.opensearch import OpenSearchClient
     from unified_kg_rag.adapters.retrievers.opensearch_retriever import (

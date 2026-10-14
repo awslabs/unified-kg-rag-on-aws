@@ -14,7 +14,6 @@ import json
 import logging
 import sys
 import threading
-from types import SimpleNamespace
 
 import boto3
 import pytest
@@ -232,7 +231,7 @@ def test_indexer_passes_s3_encryption_to_embedding_cache(config: Config) -> None
     indexer.config = config
     indexer.opensearch_config = config.indexing.opensearch
     indexer._embedding_dimension = 1024
-    indexer.opensearch_client = SimpleNamespace(boto_session=None)
+    indexer.boto_session = None
     cache = indexer._build_s3_embedding_cache()
     assert cache is not None
     assert cache._sse_args == {"ServerSideEncryption": "AES256"}

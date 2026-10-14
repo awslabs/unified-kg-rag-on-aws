@@ -6,10 +6,7 @@ from collections import OrderedDict
 from collections.abc import Coroutine
 from typing import Any, ClassVar
 
-from unified_kg_rag.adapters.aws.opensearch import (
-    OpenSearchClient,
-    is_index_not_found,
-)
+from unified_kg_rag.adapters.aws.opensearch import is_index_not_found
 from unified_kg_rag.adapters.retrieval.base import BaseGraphRAGRetriever
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
 from unified_kg_rag.adapters.storage.embedding_settings import (
@@ -22,6 +19,7 @@ from unified_kg_rag.adapters.storage.filter_schema import (
     opensearch_filter_fields,
     union_filter_fields,
 )
+from unified_kg_rag.adapters.storage.search_engine import SearchEngineClient
 from unified_kg_rag.adapters.store_errors import is_fatal_retrieval_error
 from unified_kg_rag.domain.models import (
     Config,
@@ -125,7 +123,7 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
     def __init__(
         self,
         config: Config,
-        opensearch_client: OpenSearchClient,
+        opensearch_client: SearchEngineClient,
         *,
         embedding_factory: EmbeddingFactoryPort,
         **kwargs: Any,

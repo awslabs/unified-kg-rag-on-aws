@@ -369,3 +369,29 @@ def test_local_preset_budget_only_fits_the_default_local_window(
 ) -> None:
     config = Config(backend="local", providers={"llm": llm})
     assert config.search.token_manager.max_context_tokens == 30_000
+
+
+@pytest.mark.parametrize(
+    ("section", "default"),
+    [("graph", "graph.sqlite3"), ("vector", "vector.sqlite3")],
+)
+def test_store_sqlite_path_follows_the_config_file_only_for_sqlite(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, section: str, default: str
+) -> None:
+    # Inert for the server kinds; resolved like the doc-status registry once
+    # the section's kind is sqlite.
+    (tmp_path / "conf").mkdir()
+    path = tmp_path / "conf" / "config.yaml"
+    monkeypatch.chdir(tmp_path)
+
+    path.write_text("providers: {}\n", encoding="utf-8")
+    config = ConfigLoader(Path("conf/config.yaml")).load_config()
+    assert getattr(config.providers, section).sqlite_path == (
+        f".unified-kg-rag/{default}"
+    )
+
+    path.write_text(f"providers:\n  {section}:\n    kind: sqlite\n", encoding="utf-8")
+    config = ConfigLoader(Path("conf/config.yaml")).load_config()
+    assert getattr(config.providers, section).sqlite_path == str(
+        tmp_path.resolve() / "conf" / ".unified-kg-rag" / default
+    )

@@ -9,21 +9,34 @@ indexing stage for ``run-ingestion``, after every LLM stage has been paid for.
 
 from __future__ import annotations
 
+from functools import reduce
+from typing import Any
+
+from unified_kg_rag.adapters.provider_registry import (
+    RETRIEVER_PROVIDER_ROLES,
+    provider_endpoint,
+    provider_kind,
+)
 from unified_kg_rag.domain.models import Config, RetrieverRole, SearchStrategy
 from unified_kg_rag.domain.retrieval.strategy_registry import get_strategy_spec
 
-# role -> (config key, environment variable) of the endpoint the default
-# adapter for that role connects to.
-_ROLE_ENDPOINTS: dict[RetrieverRole, tuple[str, str]] = {
-    RetrieverRole.GRAPH: ("aws.neptune.endpoint", "NEPTUNE_ENDPOINT"),
-    RetrieverRole.DOCUMENT: ("aws.opensearch.endpoint", "OPENSEARCH_ENDPOINT"),
-}
+
+def _role_endpoint(config: Config, role: RetrieverRole) -> tuple[str, str] | None:
+    """The endpoint setting of the store kind ``config`` selects for ``role``.
+
+    None for a kind that declares no endpoint (an embedded store, or a custom
+    kind that checks its own settings).
+    """
+    # Importing the module registers the built-in kinds and their endpoints.
+    import unified_kg_rag.adapters.providers  # noqa: F401
+
+    provider_role = RETRIEVER_PROVIDER_ROLES[role]
+    return provider_endpoint(provider_role, provider_kind(config, provider_role))
 
 
-def _endpoint(config: Config, role: RetrieverRole) -> str | None:
-    if role is RetrieverRole.GRAPH:
-        return config.aws.neptune.endpoint
-    return config.aws.opensearch.endpoint
+def _setting(config: Config, key: str) -> Any:
+    """The value at dotted ``key`` (``aws.neptune.endpoint``) of ``config``."""
+    return reduce(getattr, key.split("."), config)
 
 
 def strategy_roles(config: Config, strategy: SearchStrategy) -> set[RetrieverRole]:
@@ -42,12 +55,16 @@ def strategy_roles(config: Config, strategy: SearchStrategy) -> set[RetrieverRol
 def missing_endpoints_error(
     config: Config, roles: set[RetrieverRole], purpose: str
 ) -> str | None:
-    """Message naming each unset endpoint ``roles`` need, or None if all are set."""
-    missing = [
-        f"{key} (env {env})"
-        for role, (key, env) in _ROLE_ENDPOINTS.items()
-        if role in roles and not _endpoint(config, role)
-    ]
+    """Message naming each unset endpoint ``roles`` need, or None if all are set.
+
+    Only roles whose selected store kind declares an endpoint
+    (``register_provider(..., endpoint=...)``) are checked.
+    """
+    missing: list[str] = []
+    for role in RETRIEVER_PROVIDER_ROLES:
+        endpoint = _role_endpoint(config, role) if role in roles else None
+        if endpoint is not None and not _setting(config, endpoint[0]):
+            missing.append(f"{endpoint[0]} (env {endpoint[1]})")
     if not missing:
         return None
     return (

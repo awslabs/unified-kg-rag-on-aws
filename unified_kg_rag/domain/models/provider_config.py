@@ -219,6 +219,13 @@ class GraphProviderConfig(BaseModel):
             "the same adapter, configured by aws.neptune with use_iam: false)."
         ),
     )
+    sqlite_path: str = Field(
+        default=".unified-kg-rag/graph.sqlite3",
+        min_length=1,
+        description="SQLite database file when kind is sqlite (created on first "
+        "use). A relative path is resolved against the config file's directory "
+        "(the working directory without a config file).",
+    )
 
 
 class VectorProviderConfig(BaseModel):
@@ -228,6 +235,13 @@ class VectorProviderConfig(BaseModel):
             "Vector/lexical store: opensearch (Amazon OpenSearch Service or a "
             "local OpenSearch, configured by aws.opensearch)."
         ),
+    )
+    sqlite_path: str = Field(
+        default=".unified-kg-rag/vector.sqlite3",
+        min_length=1,
+        description="SQLite database file when kind is sqlite (created on first "
+        "use). A relative path is resolved against the config file's directory "
+        "(the working directory without a config file).",
     )
 
 
