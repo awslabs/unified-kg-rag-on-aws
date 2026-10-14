@@ -18,10 +18,9 @@ import pytest
 
 from tests.fixtures.fakes.embeddings import HashingEmbeddingFactory
 from tests.fixtures.store_backends import (
-    BACKENDS,
-    CAPABILITIES,
     RETRIEVERS,
     StoreHarness,
+    backends,
     open_harness,
 )
 from unified_kg_rag.domain.models import (
@@ -42,10 +41,8 @@ pytestmark = pytest.mark.integration
 _SUFFIX = "default"
 
 
-@pytest.fixture(params=BACKENDS)
+@pytest.fixture(params=backends(RETRIEVERS))
 def harness(request: pytest.FixtureRequest, tmp_path: Path) -> Iterator[StoreHarness]:
-    if RETRIEVERS not in CAPABILITIES[request.param]:
-        pytest.skip(f"the {request.param} backend has no retrievers")
     yield from open_harness(request.param, tmp_path)
 
 
