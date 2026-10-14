@@ -288,7 +288,7 @@ def test_a_client_error_reports_its_error_code_not_its_message(code: str) -> Non
     assert reason == f"rerank model initialization failed: {code}"
 
 
-# --- several stages (global search reranked twice) -------------------------------
+# --- several stages (a caller that fuses more than once) -------------------------
 
 
 def test_two_stages_are_recorded_in_order_with_the_worst_as_summary() -> None:

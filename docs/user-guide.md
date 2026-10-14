@@ -1196,10 +1196,11 @@ A `failed` or `unavailable` reason names what failed without its message: the
 AWS error code for a Bedrock error (`AccessDeniedException`,
 `ValidationException`), otherwise the exception type.
 
-When a query reranks more than once, the top-level `status` is the worst
-stage's, in the order `failed` > `unavailable` > `applied` > `skipped` >
-`disabled`. Each result's `metadata.reranked` flag still marks the results the
-model reordered. Building a Bedrock reranker makes no AWS call, so a permission
+Every built-in strategy reranks once per query, so `stages` has one entry. A
+caller that fuses more than once into the same trace gets one stage per fusion,
+and the top-level `status` is the worst stage's, in the order `failed` >
+`unavailable` > `applied` > `skipped` > `disabled`. Each result's
+`metadata.reranked` flag still marks the results the model reordered. Building a Bedrock reranker makes no AWS call, so a permission
 or region problem shows up as `failed` at the first query, not as
 `unavailable`. Set `search.reranking.required: true` to fail such queries with
 `RerankModelError` instead of answering from the fused order. The status is also

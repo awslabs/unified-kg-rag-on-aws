@@ -1127,8 +1127,10 @@ run-rag --query "..." --filters attr_category:research type:person --config-path
 오류는 AWS 오류 코드(`AccessDeniedException`, `ValidationException`), 그 밖에는
 예외 유형입니다.
 
-한 질의가 여러 번 재순위화하면 최상위 `status`는 가장 나쁜 단계의 상태이며, 순서는
-`failed` > `unavailable` > `applied` > `skipped` > `disabled`입니다. 각 결과의
+기본 제공 전략은 질의마다 한 번만 재순위화하므로 `stages`에는 항목이 하나입니다.
+같은 기록에 여러 번 융합하는 호출자는 융합마다 단계가 하나씩 생기고, 최상위
+`status`는 가장 나쁜 단계의 상태입니다. 순서는 `failed` > `unavailable` >
+`applied` > `skipped` > `disabled`입니다. 각 결과의
 `metadata.reranked` 플래그는 그대로 모델이 순서를 바꾼 결과를 표시합니다. Bedrock
 재순위화 모델을 만들 때는 AWS를 호출하지 않으므로, 권한이나 리전 문제는
 `unavailable`이 아니라 첫 질의의 `failed`로 나타납니다. 이런 질의를 융합 순서로
