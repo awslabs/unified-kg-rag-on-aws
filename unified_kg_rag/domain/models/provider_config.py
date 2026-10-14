@@ -6,9 +6,9 @@ Each role — language model, embedding model, reranker, graph store, vector
 store, document-status registry — names the provider ``kind`` that serves it.
 The defaults are the AWS services (Bedrock, Neptune, OpenSearch, DynamoDB), so
 a config without these sections behaves exactly as before. ``backend: local``
-is a preset that fills in local providers (Ollama, a cross-encoder reranker,
-Gremlin Server, a local OpenSearch and SQLite) for every key the config does
-not set itself.
+is a preset that fills in local providers (Ollama, a cross-encoder reranker
+and the embedded SQLite graph, vector and registry stores) for every key the
+config does not set itself.
 
 A ``kind`` is a plain string resolved at runtime through the provider registry
 (``unified_kg_rag.adapters.provider_registry``), so a custom kind can be
@@ -295,8 +295,11 @@ _OLLAMA_URL = "http://localhost:11434"
 LOCAL_MAX_CONTEXT_TOKENS = 22_000
 
 # What `backend: local` fills in, under whatever the config sets itself. The
-# stores match docker/compose.local.yaml; the models are small multilingual
-# Ollama models (the user pulls them; nothing here downloads anything).
+# stores are the embedded SQLite ones (no server); the aws.neptune and
+# aws.opensearch entries point the gremlin and opensearch kinds at
+# docker/compose.local.yaml when a config selects them. The models are small
+# multilingual Ollama models (the user pulls them; nothing here downloads
+# anything).
 LOCAL_PRESET: dict[str, Any] = {
     "providers": {
         "llm": {
@@ -314,8 +317,8 @@ LOCAL_PRESET: dict[str, Any] = {
             "kind": CROSS_ENCODER,
             "model_id": "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1",
         },
-        "graph": {"kind": GREMLIN},
-        "vector": {"kind": OPENSEARCH},
+        "graph": {"kind": SQLITE},
+        "vector": {"kind": SQLITE},
         "doc_status": {"kind": SQLITE},
     },
     "aws": {

@@ -1,4 +1,5 @@
-# Local mode: every component runs on this machine, no AWS account needed.
+# Local mode with the stores in containers: every component runs on this
+# machine, no AWS account needed.
 #
 # backend: local fills in the local providers for every key this file leaves
 # unset (see the user guide's "Local mode" for the full list and the expected
@@ -6,8 +7,13 @@
 #   - language models and embeddings: Ollama at localhost:11434
 #   - reranking: a sentence-transformers cross-encoder ([local] extra; without
 #     it queries keep the fused order)
-#   - graph: Gremlin Server, vector/lexical: OpenSearch (docker/compose.local.yaml)
-#   - incremental-indexing registry: SQLite
+#   - graph, vector/lexical store and incremental-indexing registry: SQLite
+#     files (no server)
+#
+# This file swaps the embedded graph and vector stores for the Gremlin Server
+# and OpenSearch containers of docker/compose.local.yaml (the same query
+# engine as Amazon OpenSearch Service, with nori and fuzzy matching). Without
+# the containers, drop the --config-path and pass --backend local instead.
 #
 #   uv sync --extra local
 #   docker compose -f docker/compose.local.yaml --profile models up -d --wait
@@ -26,6 +32,10 @@
 backend: local
 
 providers:
+  graph:
+    kind: gremlin
+  vector:
+    kind: opensearch
   # llm:
   #   # Any model pulled into Ollama. Small models extract noticeably weaker
   #   # graphs than the Bedrock defaults; use the largest one your hardware

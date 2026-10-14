@@ -1,6 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""The provider flags of run-ingestion, run-rag, run-eval and run-prompt-tuning.
+"""The provider flags of run-ingestion, run-rag, run-eval, run-prompt-tuning
+and run-visualization.
 
 Parsing only, plus the runners' config loading: nothing is built.
 """
@@ -17,6 +18,7 @@ from unified_kg_rag.application.cli import (
     run_ingestion_pipeline,
     run_prompt_tuning,
     run_rag_chain,
+    run_visualization,
 )
 from unified_kg_rag.application.cli.provider_args import apply_provider_arguments
 from unified_kg_rag.domain.models import Backend, Config
@@ -34,6 +36,7 @@ _PARSERS = {
         ["--eval-data-path", "eval.json"],
     ),
     "run-prompt-tuning": (run_prompt_tuning._build_parser, ["--source-directory", "s"]),
+    "run-visualization": (run_visualization._build_parser, ["--data-path", "v.json"]),
 }
 
 
@@ -72,6 +75,7 @@ def test_every_cli_accepts_the_provider_flags(cli: str) -> None:
     assert config.providers.rerank.kind == "none"
     # The rest of the local preset still applies.
     assert config.providers.doc_status.kind == "sqlite"
+    assert config.providers.graph.kind == config.providers.vector.kind == "sqlite"
 
 
 @pytest.mark.parametrize("cli", sorted(_PARSERS))
@@ -118,6 +122,8 @@ def test_backend_local_flag_resolves_the_registry_against_the_config_file(
 
     config = apply_provider_arguments(get_config(path), args)
 
-    sqlite_path = Path(config.providers.doc_status.sqlite_path)
-    assert sqlite_path.is_absolute()
-    assert sqlite_path.is_relative_to(config_dir.resolve())
+    providers = config.providers
+    for section in (providers.doc_status, providers.graph, providers.vector):
+        sqlite_path = Path(section.sqlite_path)
+        assert sqlite_path.is_absolute()
+        assert sqlite_path.is_relative_to(config_dir.resolve())

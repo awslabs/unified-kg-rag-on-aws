@@ -174,8 +174,8 @@ aws:
 # Provider preset. "aws" (default): Bedrock, Neptune, OpenSearch, DynamoDB.
 # "local" fills in local providers for every key under providers, aws.neptune
 # and aws.opensearch that this file leaves unset: Ollama models, a cross-encoder
-# reranker, Gremlin Server, a local OpenSearch and a SQLite registry, plus a
-# retrieval context budget the local model's window accepts (see the
+# reranker and embedded SQLite graph and vector stores and registry (no
+# server), plus a retrieval context budget the local model's window accepts (see the
 # user guide's "Local mode" and docker/config.local.yaml). A key this file sets
 # always wins over the preset, so the providers section and the Neptune and
 # OpenSearch connection keys are commented out here; uncomment a key only to
@@ -235,11 +235,19 @@ backend: "aws"
 #     batch_size: 16
 #   graph:
 #     # neptune | gremlin (a TinkerPop Gremlin Server through aws.neptune with
-#     # use_iam: false)
+#     # use_iam: false) | sqlite (an embedded single-host graph, no server;
+#     # the indexing.neptune settings apply to it too)
 #     kind: "neptune"
+#     # SQLite graph file (kind: sqlite); relative to this config file.
+#     sqlite_path: ".unified-kg-rag/graph.sqlite3"
 #   vector:
-#     # opensearch (Amazon OpenSearch Service or a local OpenSearch)
+#     # opensearch (Amazon OpenSearch Service or a local OpenSearch) | sqlite
+#     # (an embedded store answering the same queries: CJK bigrams instead of
+#     # nori, no fuzziness, exact kNN; about 100k documents per index). The
+#     # indexing.opensearch settings apply to both.
 #     kind: "opensearch"
+#     # SQLite vector file (kind: sqlite); relative to this config file.
+#     sqlite_path: ".unified-kg-rag/vector.sqlite3"
 #   doc_status:
 #     # dynamodb | sqlite
 #     kind: "dynamodb"

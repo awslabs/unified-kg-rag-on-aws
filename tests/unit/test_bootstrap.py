@@ -65,6 +65,8 @@ def _local_config(tmp_path: Path, **overrides: Any) -> Config:
         backend="local",
         providers={
             "rerank": {"kind": "none"},
+            "graph": {"sqlite_path": str(tmp_path / "graph.sqlite3")},
+            "vector": {"sqlite_path": str(tmp_path / "vector.sqlite3")},
             "doc_status": {
                 "enabled": True,
                 "sqlite_path": str(tmp_path / "doc-status.sqlite3"),
@@ -255,23 +257,38 @@ def test_local_backend_reaches_every_query_component(no_aws, tmp_path) -> None:
         assert isinstance(instance.token_manager._token_counter, LocalTokenCounter)
 
 
-def test_local_backend_builds_the_store_retrievers(no_aws, tmp_path, mocker) -> None:
+@pytest.mark.parametrize("stores", ["embedded", "containers"])
+def test_local_backend_builds_the_store_retrievers(no_aws, tmp_path, stores) -> None:
+    from unified_kg_rag.adapters.local.search_engine import SQLiteSearchEngine
     from unified_kg_rag.adapters.retrievers.neptune_retriever import NeptuneRetriever
     from unified_kg_rag.adapters.retrievers.opensearch_retriever import (
         OpenSearchRetriever,
     )
+    from unified_kg_rag.adapters.retrievers.sqlite_graph_retriever import (
+        SQLiteGraphRetriever,
+    )
     from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain
 
-    chain = GraphRAGChain(_local_config(tmp_path))
+    config = _local_config(tmp_path)
+    if stores == "containers":  # docker/config.local.yaml
+        config.providers.graph.kind = "gremlin"
+        config.providers.vector.kind = "opensearch"
+    chain = GraphRAGChain(config)
     graph = chain._build_retriever(RetrieverRole.GRAPH)
     document = chain._build_retriever(RetrieverRole.DOCUMENT)
-    assert isinstance(graph, NeptuneRetriever)
+    if stores == "embedded":
+        assert isinstance(graph, SQLiteGraphRetriever)
+        assert isinstance(document._opensearch_client, SQLiteSearchEngine)
+    else:
+        assert isinstance(graph, NeptuneRetriever)
+        assert not isinstance(document._opensearch_client, SQLiteSearchEngine)
     assert isinstance(document, OpenSearchRetriever)
     assert isinstance(document._embedding_factory, OllamaEmbeddingFactory)
 
 
 def test_local_backend_reaches_every_ingestion_component(no_aws, tmp_path) -> None:
-    from unified_kg_rag.adapters.storage.neptune_indexer import NeptuneIndexer
+    from unified_kg_rag.adapters.local.search_engine import SQLiteSearchEngine
+    from unified_kg_rag.adapters.local.sqlite_graph import SQLiteGraphIndexer
     from unified_kg_rag.adapters.storage.opensearch_indexer import OpenSearchIndexer
     from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
 
@@ -301,7 +318,8 @@ def test_local_backend_reaches_every_ingestion_component(no_aws, tmp_path) -> No
     assert stages[T.COMMUNITY_DETECTION].detector.factory is llm
     manager = stages[T.INDEXING].indexing_manager
     assert isinstance(manager.opensearch_indexer, OpenSearchIndexer)
-    assert isinstance(manager.neptune_indexer, NeptuneIndexer)
+    assert isinstance(manager.opensearch_indexer.opensearch_client, SQLiteSearchEngine)
+    assert isinstance(manager.neptune_indexer, SQLiteGraphIndexer)
     assert manager.opensearch_indexer.embedding_factory is providers.embedding_factory
     assert manager.description_summarizer.factory is llm
     # The registry the pipeline injects is the configured SQLite store.
@@ -465,7 +483,9 @@ def test_local_cli_pipeline_chain_and_stores_load_no_aws_sdk(tmp_path) -> None:
         "from unified_kg_rag.domain.models import Config, PipelineConfig, "
         "RetrieverRole\n"
         "config = Config(backend='local', providers={'doc_status': "
-        f"{{'enabled': True, 'sqlite_path': {str(tmp_path / 'r.sqlite3')!r}}}}})\n"
+        f"{{'enabled': True, 'sqlite_path': {str(tmp_path / 'r.sqlite3')!r}}}, "
+        f"'graph': {{'sqlite_path': {str(tmp_path / 'g.sqlite3')!r}}}, "
+        f"'vector': {{'sqlite_path': {str(tmp_path / 'v.sqlite3')!r}}}}})\n"
         "pipeline = DataIngestionPipeline(config, PipelineConfig("
         f"local_directory={str(tmp_path / 'cache')!r}), "
         f"source_directory={str(tmp_path)!r})\n"
