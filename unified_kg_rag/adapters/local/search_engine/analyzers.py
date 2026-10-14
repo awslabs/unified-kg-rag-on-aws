@@ -15,10 +15,10 @@ with it. Approximations of the OpenSearch analyzers of the same names:
 - ``nori``, ``kuromoji`` and ``smartcn``: the same analyzer as ``standard``.
   The bigrams stand in for their morphological analysis: recall on a
   word-in-compound query is comparable, ranking is not identical.
-- ``english``: possessive strip, lowercase, scikit-learn's English stop words
-  and Porter stemming (``snowballstemmer``, from the ``[local]`` extra; without
-  it the analyzer does not stem, with one warning). Dense-script runs become
-  bigrams as in ``standard``.
+- ``english``: OpenSearch's chain — possessive strip, lowercase, Lucene's 33
+  English stop words (``_english_``) and Porter stemming (``snowballstemmer``,
+  from the ``[local]`` extra; without it the analyzer does not stem, with one
+  warning). Dense-script runs become bigrams as in ``standard``.
 
 An unknown name falls back to ``standard`` with one warning per name. Register
 another with ``@register_analyzer("name")``: an analyzer is a callable from a
@@ -47,7 +47,7 @@ _warned_lock = threading.Lock()
 
 # A word: a run of letters, digits, marks or connector punctuation.
 _WORD = re.compile(r"\w+")
-_POSSESSIVE = re.compile(r"['’][sS]\b")
+_POSSESSIVE = re.compile(r"['’＇][sS]\b")
 
 
 def register_analyzer(*names: str) -> Callable[[Analyzer], Analyzer]:
@@ -120,11 +120,12 @@ def standard_analyzer(text: str) -> list[str]:
     return _tokens(text, lambda word: word)
 
 
-@cache
-def _english_stop_words() -> frozenset[str]:
-    from sklearn.feature_extraction.text import ENGLISH_STOP_WORDS
-
-    return frozenset(ENGLISH_STOP_WORDS)
+# Lucene's EnglishAnalyzer.ENGLISH_STOP_WORDS_SET, the ``_english_`` stop words
+# of OpenSearch's ``english`` analyzer.
+ENGLISH_STOP_WORDS = frozenset(
+    "a an and are as at be but by for if in into is it no not of on or such "
+    "that the their then there these they this to was will with".split()
+)
 
 
 @cache
@@ -151,11 +152,10 @@ def _porter_stem() -> Callable[[str], str] | None:
 
 @register_analyzer("english")
 def english_analyzer(text: str) -> list[str]:
-    stop_words = _english_stop_words()
     stem = _porter_stem()
 
     def keep(word: str) -> str | None:
-        if word in stop_words:
+        if word in ENGLISH_STOP_WORDS:
             return None
         return stem(word) if stem is not None else word
 

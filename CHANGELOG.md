@@ -401,6 +401,11 @@ Library API (Python callers and custom backends).
   28 s. Restart the stack (`down` and `up`) to pick it up (#265).
 
 ### Fixed
+- The embedded search engine's `english` analyzer drops only Lucene's 33
+  English stop words, as OpenSearch's `english` analyzer does. It used
+  scikit-learn's 318, which include content words such as "amount", "bill",
+  "interest", "system", "name" and "detail", so a query like "interest bill
+  amount" found nothing lexically on an English corpus (#PR).
 - A global-search map step whose every batch is over the model's context
   (langchain-openai's `OpenAIContextOverflowError`) answers from the
   unrated reports again. That error is an HTTP 400 too, so it was read as a

@@ -280,6 +280,46 @@ def test_multi_match_takes_the_best_field(engine) -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [
+        ("fire system", "fire"),
+        ("interest bill amount", "bill"),
+        ("computer name detail", "computer"),
+    ],
+)
+def test_english_multi_match_keeps_content_words(
+    tmp_path: Path, query: str, expected: str
+) -> None:
+    # Only Lucene's 33 English stop words are dropped, as by OpenSearch; a
+    # wider list (scikit-learn's 318) drops these whole queries.
+    engine = SQLiteSearchEngine(tmp_path / "english.sqlite3")
+    try:
+        engine.create_index(
+            "en",
+            {
+                "mappings": {
+                    "properties": {"text": {"type": "text", "analyzer": "english"}}
+                }
+            },
+        )
+        engine.bulk_index(
+            "en",
+            [
+                {"id": "fire", "text": "The fire system failed"},
+                {"id": "bill", "text": "Interest on the bill amount is due"},
+                {"id": "computer", "text": "Each computer has a name and a detail"},
+            ],
+        )
+        response = engine.search(
+            index="en",
+            body={"query": {"multi_match": {"query": query, "fields": ["text"]}}},
+        )
+        assert [hit["_id"] for hit in response["hits"]["hits"]] == [expected]
+    finally:
+        engine.close()
+
+
 def test_knn_cosine_scores_and_top_k(engine) -> None:
     hits = _hits(engine, {"knn": {"vec": {"vector": [1.0, 0.0], "k": 2}}})
     # (1 + cos) / 2: a = 1, c = (1 + 1/sqrt 2) / 2, b = 0.5 (not in the top 2)

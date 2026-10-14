@@ -92,6 +92,16 @@ def test_english_strips_possessives_and_stop_words_and_stems() -> None:
     assert english_analyzer("supplies 공급계약") == ["suppli", "공급", "급계", "계약"]
 
 
+def test_english_stop_words_are_lucenes() -> None:
+    # OpenSearch's ``english`` analyzer drops exactly these (``_english_``).
+    assert len(analyzers.ENGLISH_STOP_WORDS) == 33
+    assert {"the", "a", "is", "with", "their"} <= analyzers.ENGLISH_STOP_WORDS
+    pytest.importorskip("snowballstemmer")
+    assert english_analyzer("interest bill amount") == ["interest", "bill", "amount"]
+    assert english_analyzer("fire system") == ["fire", "system"]
+    assert english_analyzer("computer name detail") == ["comput", "name", "detail"]
+
+
 def test_english_without_snowballstemmer_does_not_stem(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:

@@ -13,7 +13,10 @@ kNN) must share 90 % of its top 10 with scores within 0.05.
 The corpus is ASCII under the ``standard`` analyzer, which both engines
 tokenize identically, and its words are at least three edits apart, so the
 ``fuzziness: AUTO`` that OpenSearch applies (and the embedded engine ignores)
-expands no query term. A hybrid search fetches 50 hits, of which the top 10 are compared, and its
+expands no query term. A second, English corpus runs the lexical comparison
+under the ``english`` analyzer: inflected forms, Lucene's stop words and words
+other stop lists drop ("amount", "bill", "system"), with stems three edits
+apart. A hybrid search fetches 50 hits, of which the top 10 are compared, and its
 queries match at most 50 documents lexically: OpenSearch 2.13
 (neural-search) was observed to min-max normalize a sub-query that matches more
 documents than the request's ``size`` over hits outside its top ``size``, so
@@ -25,7 +28,8 @@ from __future__ import annotations
 
 import os
 import random
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -98,19 +102,71 @@ def _corpus() -> tuple[list[TextUnit], list[str], list[str]]:
     return units, common, mid[:8] + pairs[:4]
 
 
-def _standard_analyzer(config: Config) -> None:
-    config.indexing.opensearch.language_analyzers = {}
+# Inflected forms of one stem each, the stems at least three edits apart.
+_ENGLISH_WORDS = [
+    ["amount", "amounts"],
+    ["bill", "bills", "billed"],
+    ["interest", "interests"],
+    ["system", "systems"],
+    ["computer", "computers"],
+    ["detail", "details", "detailed"],
+    ["supply", "supplies", "supplied"],
+    ["vendor", "vendors"],
+    ["warehouse", "warehouses"],
+    ["invoice", "invoices", "invoiced"],
+    ["shipping", "shipped", "ships"],
+    ["payment", "payments"],
+    ["fire", "fires"],
+    ["contract", "contracts"],
+    ["delivery", "deliveries"],
+    ["quarter", "quarters"],
+]
+# Lucene's stop words: dropped from documents and queries alike.
+_STOP = ["the", "a", "of", "and", "is", "to", "with", "their"]
 
 
-@pytest.fixture
-def stores(tmp_path: Path) -> Iterator[tuple[StoreHarness, StoreHarness]]:
-    units, _, _ = _corpus()
+def _english_corpus() -> tuple[list[TextUnit], list[str]]:
+    rng = random.Random(7)
+    weights = [1.0 / (rank + 1) for rank in range(len(_ENGLISH_WORDS))]
+    texts = []
+    for _ in range(150):
+        words = [
+            rng.choice(forms)
+            for forms in rng.choices(_ENGLISH_WORDS, weights, k=rng.randint(4, 12))
+        ]
+        texts.append(words + rng.sample(_STOP, k=3))
+    units = [
+        TextUnit(id=f"e{i:03d}", text=" ".join(rng.sample(text, k=len(text))))
+        for i, text in enumerate(texts)
+    ]
+    queries = ["interest bill amount", "fire system", "computer name detail"] + [
+        " ".join(
+            [rng.choice(forms) for forms in rng.sample(_ENGLISH_WORDS, k=2)]
+            + rng.sample(_STOP, k=1)
+        )
+        for _ in range(9)
+    ]
+    return units, queries
+
+
+def _analyzer(name: str) -> Callable[[Config], None]:
+    def configure(config: Config) -> None:
+        config.indexing.opensearch.language_analyzers = {}
+        config.indexing.opensearch.default_analyzer = name
+
+    return configure
+
+
+@contextmanager
+def _indexed_pair(
+    tmp_path: Path, units: list[TextUnit], analyzer: str
+) -> Iterator[tuple[StoreHarness, StoreHarness]]:
     sqlite = open_harness("sqlite", tmp_path)
     container = open_harness("container", tmp_path)
     pair = []
     try:
         for opened in (sqlite, container):
-            harness = next(opened).derive(_standard_analyzer)
+            harness = next(opened).derive(_analyzer(analyzer))
             harness.initialize()
             stats = harness.vector_indexer.index_text_units(units)
             assert stats.failed_items == 0, stats.errors
@@ -119,6 +175,13 @@ def stores(tmp_path: Path) -> Iterator[tuple[StoreHarness, StoreHarness]]:
     finally:
         for opened in (sqlite, container):
             opened.close()
+
+
+@pytest.fixture
+def stores(tmp_path: Path) -> Iterator[tuple[StoreHarness, StoreHarness]]:
+    units, _, _ = _corpus()
+    with _indexed_pair(tmp_path, units, "standard") as pair:
+        yield pair
 
 
 def _search(
@@ -140,20 +203,31 @@ def _search(
     )
 
 
-def test_lexical_ranking_matches_opensearch(
-    stores: tuple[StoreHarness, StoreHarness],
+def _assert_same_lexical_ranking(
+    sqlite: StoreHarness, container: StoreHarness, queries: list[str]
 ) -> None:
-    sqlite, container = stores
-    _, common, _ = _corpus()
     for ours, theirs in zip(
-        _search(sqlite, SearchType.LEXICAL, common),
-        _search(container, SearchType.LEXICAL, common),
+        _search(sqlite, SearchType.LEXICAL, queries),
+        _search(container, SearchType.LEXICAL, queries),
         strict=True,
     ):
         assert theirs, "a query without hits compares nothing"
         assert [r.source for r in ours] == [r.source for r in theirs]
         for mine, reference in zip(ours, theirs, strict=True):
             assert mine.score == pytest.approx(reference.score, rel=0.05)
+
+
+def test_lexical_ranking_matches_opensearch(
+    stores: tuple[StoreHarness, StoreHarness],
+) -> None:
+    _, common, _ = _corpus()
+    _assert_same_lexical_ranking(*stores, common)
+
+
+def test_english_analyzer_ranking_matches_opensearch(tmp_path: Path) -> None:
+    units, queries = _english_corpus()
+    with _indexed_pair(tmp_path, units, "english") as (sqlite, container):
+        _assert_same_lexical_ranking(sqlite, container, queries)
 
 
 def test_hybrid_ranking_matches_opensearch(
