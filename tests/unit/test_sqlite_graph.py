@@ -559,6 +559,23 @@ async def test_retriever_without_seeds_or_with_unknown_suffix(config: Config) ->
     indexer.close()
 
 
+def test_degree_binds_under_the_variable_limit(indexer: SQLiteGraphIndexer) -> None:
+    # Older SQLite builds bind at most 999 values per statement.
+    _graph(indexer, [("s", f"n{i:03d}") for i in range(450)])
+    indexer.store.connection.setlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER, 999)
+    rows = _store(indexer).traverse(
+        LABEL,
+        ["s"],
+        max_hops=1,
+        max_results_per_hop=500,
+        per_seed_limit=500,
+        with_degree=True,
+    )
+    assert len(rows) == 451
+    assert rows[0]["degree"] == 450
+    assert {row["degree"] for row in rows[1:]} == {1}
+
+
 async def test_traversal_reads_one_snapshot(
     config: Config, monkeypatch: pytest.MonkeyPatch
 ) -> None:

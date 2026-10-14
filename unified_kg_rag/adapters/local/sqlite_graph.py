@@ -86,7 +86,8 @@ _SCHEMA = (
     "ON memberships (entity_label, entity_id)",
 )
 
-# Stay under SQLite's bound-parameter limit (999 on older builds).
+# Stay under SQLite's bound-parameter limit (999 on older builds): a
+# statement binds at most 2 * _BATCH + 1 values, or splits its batch.
 _BATCH = 400
 
 # SQLITE_BUSY / SQLITE_LOCKED: another connection holds the lock.
@@ -100,9 +101,9 @@ _NODE_KEYS = ("id", "name", "description", "rank", "text_unit_ids")
 VertexFilter = Callable[[dict[str, Any]], bool]
 
 
-def _batches(items: list[Any]) -> Iterator[list[Any]]:
-    for start in range(0, len(items), _BATCH):
-        yield items[start : start + _BATCH]
+def _batches(items: list[Any], size: int = _BATCH) -> Iterator[list[Any]]:
+    for start in range(0, len(items), size):
+        yield items[start : start + size]
 
 
 def _marks(items: Collection[Any]) -> str:
@@ -311,7 +312,8 @@ class SQLiteGraphStore:
     ) -> dict[str, int]:
         """Incident edges plus memberships of each vertex (``bothE().count()``)."""
         counts: dict[str, int] = {}
-        for batch in _batches(list(dict.fromkeys(ids))):
+        # The batch is bound three times.
+        for batch in _batches(list(dict.fromkeys(ids)), _BATCH // 3):
             marks = _marks(batch)
             rows = connection.execute(
                 f"SELECT source_id FROM edges WHERE label = ? AND source_id IN ({marks}) "

@@ -429,6 +429,10 @@ Library API (Python callers and custom backends).
   ingestion deleting a vertex the walk had reached in between (an
   incremental run while queries are served) made the whole expansion come
   back empty (#PR).
+- Graph expansion with `entity_importance_source: degree` on the embedded
+  SQLite graph store no longer fails on a SQLite build limited to 999 bound
+  parameters once a query reaches more than 332 entities: the degree query
+  bound its batch three times (#PR).
 - A global-search map step whose every batch is over the model's context
   (langchain-openai's `OpenAIContextOverflowError`) answers from the
   unrated reports again. That error is an HTTP 400 too, so it was read as a
