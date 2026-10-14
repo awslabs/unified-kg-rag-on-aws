@@ -116,6 +116,7 @@ def assign_document_identity(
     document: Document,
     source_root: str | Path,
     additional_suffix: str | None = None,
+    store_tag: str | None = None,
 ) -> None:
     """Re-derive ``document``'s identity against the corpus root, in place.
 
@@ -136,7 +137,7 @@ def assign_document_identity(
     )
     document.metadata[RELATIVE_PATH_KEY] = relative
     document.metadata[REGISTRY_NAMESPACE_KEY] = registry_namespace(
-        _document_suffix(document), additional_suffix
+        _document_suffix(document), additional_suffix, store_tag
     )
     document.document_id = compute_document_id(relative, compute_content_hash(document))
 

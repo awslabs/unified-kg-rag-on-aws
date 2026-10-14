@@ -318,6 +318,17 @@ class TestFingerprintScope:
         [
             # The suffix is part of every document id (its registry namespace).
             ("indexing.additional_suffix", "v2", PipelineStageType.DOCUMENT_PARSING),
+            # So are the index and label prefixes (store_namespace_tag).
+            (
+                "indexing.opensearch.text_units_index_prefix",
+                "other-text-units",
+                PipelineStageType.DOCUMENT_PARSING,
+            ),
+            (
+                "indexing.neptune.entity_label_prefix",
+                "OtherEntity",
+                PipelineStageType.DOCUMENT_PARSING,
+            ),
             # The scope names the registry records the loading stage diffs.
             (
                 "processing.document_parsing.source_scope",

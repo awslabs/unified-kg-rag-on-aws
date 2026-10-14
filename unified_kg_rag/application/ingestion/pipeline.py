@@ -65,7 +65,7 @@ from unified_kg_rag.shared.utils import (
     stage_cache_key,
 )
 from unified_kg_rag.shared.utils.cache_keys import extraction_fingerprint
-from unified_kg_rag.shared.utils.document_identity import registry_namespace
+from unified_kg_rag.shared.utils.document_identity import config_registry_namespace
 
 if TYPE_CHECKING:
     import boto3
@@ -635,9 +635,7 @@ class DataIngestionPipeline:
         validate_retired_scopes(
             retired,
             parsing.source_scope or source_directory.as_posix(),
-            registry_namespace(
-                parsing.index_value, self.config.indexing.additional_suffix
-            ),
+            config_registry_namespace(self.config.indexing, parsing.index_value),
         )
 
     def _resolve_pipeline_id(

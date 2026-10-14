@@ -44,6 +44,21 @@ Runs on different index suffixes that use separate doc-status tables
 (`aws.dynamodb.table_name`) do not share either and can run side by side.
 Otherwise, wait for one run to finish before starting the next.
 
+A doc-status table namespace is the index suffix (`index_value`, `default`
+when unset) plus `indexing.additional_suffix`, plus a tag of the
+`indexing.opensearch.*_index_prefix` and `indexing.neptune.*_label_prefix`
+values when any of them is not the default. Two configurations that differ
+only in those prefixes write different stores, so they keep separate records
+even in one table (the CDK stack injects one fixed table name): artifact ids
+are derived from content, and records of the other store set would otherwise
+keep a changed document's old text units and entities in this run's stores.
+A default configuration keeps the namespace it always had. A configuration
+with custom prefixes whose records were written before the prefixes joined
+the namespace sees its corpus as new: its first run re-indexes it (the stage
+cache is re-keyed from parsing on), and the old records stay in the table
+under the untagged namespace. Delete those records once no configuration with
+the default prefixes and the same suffixes uses the table.
+
 On the CDK stack, each `start-execution` starts one execution that runs the
 four phases in sequence. The stack defines no schedule or event trigger, so
 executions start only when someone (or an automation you add) calls
