@@ -280,15 +280,20 @@ Expected differences from AWS mode:
 - No Bedrock prompt caching and no Guardrails (`aws.bedrock.guardrail` is
   ignored by the local providers); reasoning effort settings do not apply.
 - The embedded vector store answers the queries the OpenSearch adapter
-  builds, with three differences. Text mapped to `nori` (Korean), `kuromoji`
+  builds, with four differences. Text mapped to `nori` (Korean), `kuromoji`
   (Japanese) or `smartcn` (Chinese) is split into overlapping CJK character
   bigrams instead of being analyzed morphologically, so a name still matches
   inside a longer word (홍길동 in 홍길동으로부터) but ranking differs from
   OpenSearch's; the `english` analyzer stems only with `snowballstemmer`
   from the `[local]` extra (without it, a warning is logged once). There is
-  no fuzzy matching, so a misspelled query term matches only through the
-  vector side. kNN search is exact: every document that passes the filters is
-  scored, which is accurate but grows linearly with the index.
+  no fuzzy matching (OpenSearch's `fuzziness: AUTO`), so a misspelled query
+  term, and under the `standard` analyzer, which does not stem, an inflected
+  form ("vendors" for "vendor"), matches only through the vector side. kNN
+  search is exact: every document that passes the filters is scored, which
+  is accurate but grows linearly with the index. Hybrid search min-max
+  normalizes each sub-query over its top `size` hits; OpenSearch 2.13 was
+  observed to normalize a sub-query that matches more documents than `size`
+  over a wider set, so fused scores and the order near the cut can differ.
 - The embedded vector store keeps each index it searches in memory (about
   documents x dimension x 4 bytes per vector field). It is sized for about
   100,000 documents per index and logs a warning when it loads a larger one;
