@@ -258,7 +258,7 @@ Library API (Python callers and custom backends).
   OpenSearch queries the indexer and retriever build (exact kNN, Lucene
   BM25, CJK bigram analyzers, neural-search hybrid fusion), for about
   100,000 documents per index without a server; `snowballstemmer` joins the
-  `[local]` extra for its `english` analyzer (#PR).
+  `[local]` extra for its `english` analyzer (#271).
 - `observability:` section (off by default, `otel` extra): spans for runs,
   stages, batches and each query step, GenAI model-call spans with token
   usage, log/trace correlation, `session.id` / `user.id`
