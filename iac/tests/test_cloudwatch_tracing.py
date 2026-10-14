@@ -234,14 +234,20 @@ def test_phase_overrides_target_the_app_container() -> None:
     assert '"Name":"otel-collector"' not in definition
 
 
-def _leaves(node: Any, path: tuple[str, ...] = ()) -> dict[tuple[str, ...], Any]:
-    if not isinstance(node, dict):
-        return {path: node}
-    return {
-        k: v
-        for key, child in node.items()
-        for k, v in _leaves(child, (*path, key)).items()
-    }
+def _yaml(node: Any, indent: str = "") -> str:
+    """``node`` as block YAML in the runbook's style (no YAML library in the
+    IaC environment): flow lists, lower-case booleans, plain scalars."""
+    lines = []
+    for key, value in node.items():
+        if isinstance(value, dict):
+            lines.append(f"{indent}{key}:\n{_yaml(value, indent + '  ')}")
+        elif isinstance(value, list):
+            lines.append(f"{indent}{key}: [{', '.join(value)}]\n")
+        elif isinstance(value, bool):
+            lines.append(f"{indent}{key}: {str(value).lower()}\n")
+        else:
+            lines.append(f"{indent}{key}: {value}\n")
+    return "".join(lines)
 
 
 @pytest.mark.parametrize("doc", ["operations.md", "operations.ko.md"])
@@ -250,20 +256,12 @@ def test_runbook_shows_the_collector_config_the_stack_renders(doc: str) -> None:
     rendered = _render(
         _env(_containers(compute)["otel-collector"])["AOT_CONFIG_CONTENT"]
     )
-    config = json.loads(rendered.replace("us-west-2", "us-east-1"))
+    config = json.loads(
+        rendered.replace("us-west-2", "us-east-1").replace(
+            "<AWS::URLSuffix>", "amazonaws.com"
+        )
+    )
     text = (Path(__file__).parents[2] / "docs" / doc).read_text(encoding="utf-8")
     start = text.index("```yaml\nextensions:\n  health_check:")
-    block = text[start : text.index("```\n", start + 7)]
-    # Every key of the rendered config, and each scalar value, is in the
-    # runbook's copy (no YAML parser in the IaC environment).
-    for path, value in _leaves(config).items():
-        assert f"{path[-1]}:" in block, (doc, path)
-        if isinstance(value, list):
-            assert f"[{', '.join(value)}]" in block, (doc, path)
-        elif isinstance(value, str):
-            assert value.replace("<AWS::URLSuffix>", "amazonaws.com") in block, (
-                doc,
-                path,
-            )
-        else:
-            assert str(value).lower() in block, (doc, path)
+    block = text[start + len("```yaml\n") : text.index("```\n", start + 7)]
+    assert block == _yaml(config), doc
