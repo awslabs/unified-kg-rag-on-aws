@@ -561,3 +561,63 @@ def test_the_graph_probe_reads_every_record_until_it_finds_entities(
 def test_the_graph_probe_skips_a_registry_without_indexed_documents(harness) -> None:
     inc, store, _, _ = harness
     inc.check_graph_holds_registry(detect_delta([_doc("/a.txt", "x")], store)[0])
+
+
+def test_the_vector_probe_reads_the_records_suffix(harness) -> None:
+    # A run under parsing.index_value: the text units live under its suffix,
+    # so probing the default suffix would call every such run's store lost.
+    inc, store, _, vector = harness
+    a = _doc("/a.txt", "x")
+    tu = TextUnit(
+        id="tu-a",
+        text="...",
+        document_ids=[a.document_id],
+        attributes={"index": "tenant-a"},
+    )
+    vendor = Entity(
+        id="e-vendor",
+        name="Vendor",
+        text_unit_ids=["tu-a"],
+        attributes={"index": "tenant-a"},
+    )
+    _, fingerprints = detect_delta([a], store)
+    inc.commit(
+        lineages=build_document_lineage(
+            documents=[a],
+            text_units=[tu],
+            entities=[vendor],
+            relationships=[],
+            communities=[],
+            claims=[],
+            suffix="tenant-a",
+        ),
+        fingerprints=fingerprints,
+        text_units=[tu],
+        entities=[vendor],
+    )
+    assert vector.read_text_unit_ids(["tu-a"]) == []
+    delta, _ = detect_delta([a, _doc("/b.txt", "y")], store)
+
+    inc.check_graph_holds_registry(delta)
+
+    vector.clear(["tenant-a"])
+    with pytest.raises(DataProcessingError, match="vector store"):
+        inc.check_graph_holds_registry(delta)
+
+
+def test_the_vector_probe_covers_documents_without_entities(harness) -> None:
+    # An entity-less corpus (every extraction came back empty): the graph has
+    # nothing to probe, but the records still list text units the vector
+    # store must hold.
+    inc, store, _, vector = harness
+    a = _doc("/a.txt", "x")
+    tus, _ = _artifacts_for(a, [])
+    _commit(inc, [a], tus, [])
+    delta, _ = detect_delta([a, _doc("/b.txt", "y")], store)
+    assert not any(r.entity_ids for r in store.list_all())
+
+    inc.check_graph_holds_registry(delta)
+
+    vector.clear(["default"])
+    with pytest.raises(DataProcessingError, match="vector store"):
+        inc.check_graph_holds_registry(delta)
