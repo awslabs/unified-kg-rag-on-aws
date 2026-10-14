@@ -412,6 +412,11 @@ Library API (Python callers and custom backends).
   Index creation that names an analyzer the cluster lacks now fails with an
   error naming the analyzer and the fix. The docs no longer claim nori is
   built into Amazon OpenSearch Service (#282).
+- `aws`-marked tests (`pytest -m aws`) keep the real environment. The
+  suite's environment isolation cleared `NEPTUNE_ENDPOINT`,
+  `OPENSEARCH_ENDPOINT` and the ECS container-credential variables and set
+  fake keys for them too, so the real-store conformance tests always skipped
+  and would have called AWS with the fake keys (#PR).
 - Configurations that differ only in their OpenSearch index or Neptune
   label prefixes no longer share a doc-status registry namespace in one
   table (the CDK stack injects one fixed table name). The other store set's
