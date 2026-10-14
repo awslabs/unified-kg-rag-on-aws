@@ -21,10 +21,12 @@ with it. Approximations of the OpenSearch analyzers of the same names:
 - ``nori``, ``kuromoji`` and ``smartcn``: the same analyzer as ``standard``.
   The bigrams stand in for their morphological analysis: recall on a
   word-in-compound query is comparable, ranking is not identical.
-- ``english``: OpenSearch's chain — possessive strip, lowercase, Lucene's 33
-  English stop words (``_english_``) and Porter stemming (``snowballstemmer``,
-  from the ``[local]`` extra; without it the analyzer does not stem, with one
-  warning). Dense-script runs become bigrams as in ``standard``.
+- ``english``: OpenSearch's chain — possessive strip ("'s" off a token's
+  end), lowercase, Lucene's 33 English stop words (``_english_``) and Porter
+  stemming as Lucene's ``PorterStemmer`` (``snowballstemmer``'s "porter" with
+  Lucene's departures from it, from the ``[local]`` extra; without it the
+  analyzer does not stem, with one warning). Words of one or two letters are
+  not stemmed. Dense-script runs become bigrams as in ``standard``.
 
 An unknown name falls back to ``standard`` with one warning per name. Register
 another with ``@register_analyzer("name")``: an analyzer is a callable from a
@@ -172,7 +174,6 @@ def _word_pattern(astral: bool) -> re.Pattern[str]:
 
 # Splits a word into alternating other / dense-script runs (dense at odd indices).
 _DENSE_RUN = re.compile(f"([{DENSE_SCRIPT_LETTERS}]+)")
-_POSSESSIVE = re.compile(r"['’＇][sS]\b")
 
 
 def register_analyzer(*names: str) -> Callable[[Analyzer], Analyzer]:
@@ -260,9 +261,51 @@ def _porter_stem() -> Callable[[str], str] | None:
     def stem(word: str) -> str:
         with lock:
             result: str = stemmer.stemWord(word)
+            # Lucene's PorterStemmer is Porter's own revision of the published
+            # algorithm that snowball's "porter" implements. Where step 1 left
+            # "-bli" or "-logi" (and steps 3 to 5 kept it), its step 2 also
+            # turns "-bli" into "-ble" (then through steps 3 to 5) and "-logi"
+            # into "-log"; its step 1b undoubles any final consonant but l, s
+            # and z after dropping "-ed" or "-ing" (snowball: bb dd ff gg mm
+            # nn pp rr tt only; steps 2 to 5 keep the doubled ones).
+            base = result[:-1]
+            if word.startswith(base) and word[len(base) :] in _STEP1_I_ENDINGS:
+                if result.endswith("bli") and _has_measure(result[:-3]):
+                    result = stemmer.stemWord(base + "e")
+                elif result.endswith("logi") and _has_measure(result[:-4]):
+                    result = base
+            elif (
+                word.startswith(result)
+                and word[len(result) :] in ("ed", "eds", "ing", "ings")
+                and result[-2:] in _UNDOUBLED
+            ):
+                result = stemmer.stemWord(base)
         return result
 
     return stem
+
+
+# What a word ends in where Porter's step 1 leaves an "i" in its place
+# ("possibly", "biologies", "bullied", ...).
+_STEP1_I_ENDINGS = frozenset({"i", "y", "is", "ys", "ies", "ied", "yed", "ying"})
+_UNDOUBLED = frozenset(c * 2 for c in "cghjkqvwx")
+
+
+def _has_measure(stem: str) -> bool:
+    """Porter's m(stem) > 0: a vowel followed by a consonant, where "y" is a
+    vowel after a consonant."""
+    seen_vowel = previous_consonant = False
+    for ch in stem:
+        consonant = ch not in "aeiou" and (ch != "y" or not previous_consonant)
+        if consonant and seen_vowel:
+            return True
+        seen_vowel = seen_vowel or not consonant
+        previous_consonant = consonant
+    return False
+
+
+# The possessive endings Lucene's EnglishPossessiveFilter strips from a token.
+_POSSESSIVES = ("'s", "\u2019s", "\uff07s")
 
 
 @register_analyzer("english")
@@ -270,8 +313,11 @@ def english_analyzer(text: str) -> list[str]:
     stem = _porter_stem()
 
     def keep(word: str) -> str | None:
+        if word.endswith(_POSSESSIVES):
+            word = word[:-2]
         if word in ENGLISH_STOP_WORDS:
             return None
-        return stem(word) if stem is not None else word
+        # Like Lucene's PorterStemmer, leave words of one or two letters.
+        return stem(word) if stem is not None and len(word) > 2 else word
 
-    return _tokens(_POSSESSIVE.sub("", text), keep)
+    return _tokens(text, keep)

@@ -280,3 +280,53 @@ def test_text_beyond_the_basic_multilingual_plane_splits_the_same() -> None:
             "\U00020000",
         ]
     assert standard_analyzer("a\U000e0100b 🄰b 𑄃𑄨") == ["a\U000e0100b", "🄰b", "𑄃𑄨"]
+
+
+def test_english_possessives_and_short_words_like_opensearch() -> None:
+    pytest.importorskip("snowballstemmer")
+    # A possessive is stripped from a token's end, not from the text; a word
+    # of one or two letters is not stemmed (snowball: "us" -> "u", "s" -> "").
+    assert english_analyzer("pant-'s Exc.'s o’neil’s x＇s S&P500 us os Ds") == [
+        "pant",
+        "s",
+        "exc",
+        "s",
+        "o’neil",
+        "x",
+        "s",
+        "p500",
+        "us",
+        "os",
+        "ds",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("word", "stem"),
+    [
+        # Lucene's PorterStemmer, as OpenSearch's porter_stem filter answers.
+        ("apology", "apolog"),
+        ("apologies", "apolog"),
+        ("theology", "theologi"),  # m("the") = 0
+        ("possibly", "possibl"),
+        ("contractibly", "contract"),
+        ("ignobly", "ignobl"),
+        ("trekking", "trek"),
+        ("yakked", "yak"),
+        ("specced", "spec"),
+        ("revving", "rev"),
+        # Where steps 3 to 5 leave "-bli" or "-logi", Lucene keeps it.
+        ("bubbliness", "bubbli"),
+        ("killogie", "killogi"),
+        ("humblie", "humbli"),
+        # Snowball and Lucene agree.
+        ("running", "run"),
+        ("ponies", "poni"),
+        ("agreed", "agre"),
+        ("hopping", "hop"),
+        ("sizing", "size"),
+    ],
+)
+def test_english_stems_like_lucene(word: str, stem: str) -> None:
+    pytest.importorskip("snowballstemmer")
+    assert english_analyzer(word) == [stem]

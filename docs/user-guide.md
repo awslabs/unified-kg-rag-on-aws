@@ -300,7 +300,9 @@ Expected differences from AWS mode:
   100,000 documents per index and logs a warning when it loads a larger one;
   use OpenSearch beyond that. Every write reloads the index on the next
   query, and the first lexical query after it re-analyzes the searched text
-  field: about 10 s for 50,000 documents of 120 words.
+  field: about 10 s for 50,000 documents of 120 words. Under the `english`
+  analyzer a field of more than about 65,000 distinct words outgrows the
+  stemmer's cache, which makes that query about three times slower.
 - SQLite allows one writer at a time: run one ingestion per store file at a
   time (queries can read alongside it). A writer that waits longer than
   `search.store_timeout_seconds` fails with "stayed locked" (see

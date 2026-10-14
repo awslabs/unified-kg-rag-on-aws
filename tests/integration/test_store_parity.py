@@ -265,7 +265,7 @@ _ANALYZED = [
     "العَرَبِيَّة الْعَقْد עִבְרִית חוֹזֶה צה\"ל ג'ורג' café résumé",
     "ภาษาไทย สัญญาที่ลงนาม ไทยabc ไทย๑๒ မြန်မာဘာသာ ខ្មែរ ລາວ",
     "a：b a‧b ١٬٠٠٠ 12؍34 co\u00adop a\u200bb 1\u202f000 _a_ __ foo‿bar",
-    "x² H₂O ½ ① Ⓐb 𝐀b ﬁx",
+    "x² H₂O ½ ① Ⓐb 𝐀b ﬁx pant-'s Exc.'s S&P500 us os Ds trekking contractibly",
 ]
 
 

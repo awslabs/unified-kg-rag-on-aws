@@ -451,6 +451,14 @@ Library API (Python callers and custom backends).
   in-word punctuation of other scripts and widths joins ("a：b", "١٬٠٠٠",
   "צה"ל"); and symbols ("x²", "½") are no part of a word. Emoji are still
   not indexed (OpenSearch keeps them) (#PR).
+- The embedded search engine's `english` analyzer stems as OpenSearch's
+  (Lucene's `PorterStemmer`): it leaves words of one or two letters ("us",
+  "os"; a lone "s" became an empty token), maps "-logy" to "-log" and
+  "-bly" to "-ble" before the later steps ("apology" -> "apolog",
+  "contractibly" -> "contract") and undoubles any final consonant after
+  "-ed"/"-ing" ("trekking" -> "trek"). It now agrees with OpenSearch on all
+  457,417 dictionary words and suffixed forms checked. The possessive "'s" comes off a token's end
+  rather than out of the text ("pant-'s" keeps its "s") (#PR).
 - A global-search map step whose every batch is over the model's context
   (langchain-openai's `OpenAIContextOverflowError`) answers from the
   unrated reports again. That error is an HTTP 400 too, so it was read as a
