@@ -130,6 +130,10 @@ full re-index of the affected index type).
   `--pipeline-id` to apply the fixes to them (#167, #170, #171, #201, #214).
 
 Library API (Python callers and custom backends).
+- Custom search strategies: `BaseSearchStrategy._fuse_and_rerank` takes a
+  required `rerank_trace=` (create it with `self._new_rerank_trace()` and
+  pass it to `SearchResult.metadata["rerank"]`); a call without it raises
+  `TypeError` instead of reporting the rerank as `skipped` (#PR).
 - Import paths (#216 unless noted): `HierarchicalCommunity` →
   `domain.models`; `LanguageModelInfo`, `EmbeddingModelInfo`,
   `RerankModelInfo`, `effective_max_output_tokens` →
