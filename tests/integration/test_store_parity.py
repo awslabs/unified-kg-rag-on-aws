@@ -250,7 +250,8 @@ def test_hybrid_ranking_matches_opensearch(
             assert mine[source] == pytest.approx(reference[source], abs=0.05)
 
 
-# In-word punctuation, possessives, stop words and inflections.
+# In-word punctuation, possessives, stop words and inflections, in several
+# scripts (none of the Han, Hangul and Kana the analyzers bigram).
 _ANALYZED = [
     "The Vendor's suppliers are shipping widgets",
     "don't 1,000.50 U.S.A. e-mail a:b it's VENDOR'S x＇s o’neil’s",
@@ -258,13 +259,18 @@ _ANALYZED = [
     "rate: 5%; term:3 years. Fee:10 one..two a.,b 1.,2 end. 12:30 ab:cd:",
     "Interest on the bill amount is due; the fire system's computer name",
     "naïve café's résumé",
+    # Combining marks (and NFD Latin), spaceless scripts, in-word punctuation
+    # of other scripts, format characters, connectors and symbols.
+    "हिन्दी भाषा में अनुबंध की शर्तें বাংলা চুক্তি தமிழ் ఒప్పందం",
+    "العَرَبِيَّة الْعَقْد עִבְרִית חוֹזֶה צה\"ל ג'ורג' café résumé",
+    "ภาษาไทย สัญญาที่ลงนาม ไทยabc ไทย๑๒ မြန်မာဘာသာ ខ្មែរ ລາວ",
+    "a：b a‧b ١٬٠٠٠ 12؍34 co\u00adop a\u200bb 1\u202f000 _a_ __ foo‿bar",
+    "x² H₂O ½ ① Ⓐb 𝐀b ﬁx",
 ]
 
 
 @pytest.mark.parametrize("analyzer", ["standard", "english"])
-def test_analyzers_tokenize_latin_text_like_opensearch(
-    tmp_path: Path, analyzer: str
-) -> None:
+def test_analyzers_tokenize_like_opensearch(tmp_path: Path, analyzer: str) -> None:
     opened = open_harness("container", tmp_path)
     try:
         client = next(opened).vector_indexer.opensearch_client.client

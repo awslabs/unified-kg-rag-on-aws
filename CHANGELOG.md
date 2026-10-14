@@ -440,6 +440,17 @@ Library API (Python callers and custom backends).
   SQLite graph store no longer fails on a SQLite build limited to 999 bound
   parameters once a query reaches more than 332 entities: the degree query
   bound its batch three times (#278).
+- The embedded search engine's analyzers split words as OpenSearch's
+  standard tokenizer does in every script. A word kept no combining mark
+  (Python's `\w` has none), so Devanagari, Bengali, Tamil, Telugu, Thai,
+  Myanmar and Khmer words, Arabic and Hebrew with vowel marks and
+  decomposed Latin ("café" as "e" + U+0301) fell apart into single letters,
+  and a query such as "अनुबंध" matched unrelated documents. Words now keep
+  their marks and format characters; a Thai, Lao, Myanmar or Khmer run stays
+  whole apart from other scripts (OpenSearch does not segment it either);
+  in-word punctuation of other scripts and widths joins ("a：b", "١٬٠٠٠",
+  "צה"ל"); and symbols ("x²", "½") are no part of a word. Emoji are still
+  not indexed (OpenSearch keeps them) (#PR).
 - A global-search map step whose every batch is over the model's context
   (langchain-openai's `OpenAIContextOverflowError`) answers from the
   unrated reports again. That error is an HTTP 400 too, so it was read as a
