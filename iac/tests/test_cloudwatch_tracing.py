@@ -80,6 +80,7 @@ def test_disabled_adds_nothing(context: dict[str, Any]) -> None:
     assert not [k for k in _env(_containers(compute)["app"]) if "OBSERVABILITY" in k]
     assert not [a for a in _actions(_statements(compute, "")) if a.startswith("xray:")]
     compute.resource_count_is("AWS::ECR::PullThroughCacheRule", 0)
+    assert compute.find_outputs("CollectorImageUri") == {}
     assert _xray_endpoints(network) == []
 
 
@@ -105,6 +106,11 @@ def test_enabled_runs_a_non_essential_collector_the_app_waits_for() -> None:
             "UpstreamRegistry": "ecr-public",
             "UpstreamRegistryUrl": "public.ecr.aws",
         },
+    )
+    # The warm-up pull the README runs after deploy uses this exact image.
+    (output,) = compute.find_outputs("CollectorImageUri").values()
+    assert _render(output["Value"]).endswith(
+        f"graphrag-ecr-public/aws-observability/aws-otel-collector@{COLLECTOR_DIGEST}"
     )
     config = json.loads(_render(_env(collector)["AOT_CONFIG_CONTENT"]))
     # Listens on localhost only; exports to the region's OTLP traces endpoint.

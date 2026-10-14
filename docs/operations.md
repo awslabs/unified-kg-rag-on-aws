@@ -445,6 +445,11 @@ the private-mode `xray` endpoint, is in
 3. **Deploy** with `cdk deploy --all -c enable_cloudwatch_tracing=true` (add
    the flag to every later deploy, or set it in `cdk.json`, or the next deploy
    removes the sidecar).
+4. **Pull the collector image once** from a workstation before the first run
+   (step 4 of [CloudWatch tracing](../iac/README.md#cloudwatch-tracing-optional)).
+   The image comes through an ECR pull-through cache whose first pull may need
+   an internet route when ECR is reached through an interface endpoint, as in
+   `private` mode, and ECS fails a task when it cannot pull any of its images.
 
 **Where to look.** Run an ingestion or a query, then open the CloudWatch
 console, **Application Signals, Transaction Search**, and filter on the
@@ -466,7 +471,9 @@ group (`/<prefix>/tasks`): a `403` means a missing X-Ray permission or the
 wrong SigV4 service, a rejection naming the destination means Transaction
 Search is off, and a connection timeout in `private` mode means the `xray`
 interface endpoint is missing (a reused VPC must provide it). A collector
-failure never fails the run: the collector container is not essential.
+that crashes or cannot export never fails the run, since its container is not
+essential; a collector image ECS cannot pull does (`CannotPullContainerError`
+in the stopped task's reason), so pull it once as in step 4.
 
 **Cost.** Transaction Search bills spans as CloudWatch Logs ingestion and
 storage in `aws/spans`, and charges for indexed spans above the free 1%. An

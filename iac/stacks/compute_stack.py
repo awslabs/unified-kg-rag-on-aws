@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import json
 
-from aws_cdk import Duration, RemovalPolicy, Stack
+from aws_cdk import CfnOutput, Duration, RemovalPolicy, Stack
 from aws_cdk import aws_ecr as ecr
 from aws_cdk import aws_ecs as ecs
 from aws_cdk import aws_iam as iam
@@ -357,7 +357,11 @@ class ComputeStack(Stack):
         # (no-NAT) data plane has no route to public.ecr.aws, but it reaches
         # this account's ECR through the VPC endpoints, and ECR fetches the
         # image upstream itself. The cached repository is created on the first
-        # pull and is not removed with the stack.
+        # pull and is not removed with the stack. That first pull may itself
+        # need an internet route when ECR is reached through an interface
+        # endpoint, and ECS fails a task whose image (essential or not) it
+        # cannot pull, so the README has the operator warm the cache from a
+        # workstation after deploy: CollectorImageUri is the image to pull.
         prefix = self.config.collector_cache_prefix
         cache_rule = ecr.CfnPullThroughCacheRule(
             self,
@@ -378,6 +382,12 @@ class ComputeStack(Stack):
             )
         )
         task_def.node.add_dependency(cache_rule)
+        CfnOutput(
+            self,
+            "CollectorImageUri",
+            value=repository.repository_uri_for_digest(COLLECTOR_DIGEST),
+            description="Pull once after deploy to fill the collector image cache",
+        )
 
         region, suffix = self.region, self.url_suffix
         collector_config = {

@@ -328,12 +328,33 @@ is not recorded (`observability.capture_content` stays `false`).
    `observability.enabled is true but OpenTelemetry is not installed`.
 3. Deploy with the option on:
    `cdk deploy --all -c enable_cloudwatch_tracing=true`.
+4. Before the first run, pull the collector image once from a workstation
+   (with Docker and permission to pull from the account's ECR). The image
+   comes through an ECR pull-through cache, and the first pull through it may
+   need an internet route when ECR is reached through an interface endpoint,
+   as the `private` data plane does. ECS fails a task when it cannot pull any
+   of its images, so until the cache holds the image every phase would fail.
+   The pull fills the cache; later pulls come from it. Repeat after an
+   upgrade that changes the pinned digest. Outside `dev`, use the
+   environment's stack name (for example `GraphRagProdCompute`).
+
+   ```bash
+   REGION=<deploy region>
+   COLLECTOR_IMAGE=$(aws cloudformation describe-stacks --region "$REGION" \
+     --stack-name GraphRagCompute \
+     --query "Stacks[0].Outputs[?OutputKey=='CollectorImageUri'].OutputValue" \
+     --output text)
+   aws ecr get-login-password --region "$REGION" \
+     | docker login --username AWS --password-stdin "${COLLECTOR_IMAGE%%/*}"
+   docker pull --platform linux/amd64 "$COLLECTOR_IMAGE"
+   ```
 
 What the option changes:
 
 - **Task definition**: an `otel-collector` container (ADOT collector
   `v0.50.0`, pinned by digest in `compute_stack.py`) that is not essential, so
-  a collector failure loses traces but never stops a run. The `app` container
+  a collector that crashes or cannot export loses traces but never stops a
+  run. An image ECS cannot pull does fail the task (step 4). The `app` container
   starts after it and gets `GRAPHRAG_OBSERVABILITY_ENABLED=true`,
   `GRAPHRAG_OBSERVABILITY_BACKEND=otlp`,
   `OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318` and
@@ -342,8 +363,9 @@ What the option changes:
 - **Image source**: the collector image is pulled through an ECR pull-through
   cache rule for ECR Public (prefix `<prefix>-ecr-public`), because the
   `private` data plane cannot reach `public.ecr.aws`. ECR creates the cached
-  repository on the first pull; `cdk destroy` removes the rule but not that
-  repository.
+  repository on the first pull (step 4); `cdk destroy` removes the rule but
+  not that repository. The `GraphRagCompute` output `CollectorImageUri` is
+  the cached image.
 - **IAM**: the task role gets `xray:PutTraceSegments`, `xray:PutSpans` and
   `xray:PutSpansForIndexing` (write-only; X-Ray has no resource-level
   scoping), and the execution role may create and import into the one cached
@@ -385,6 +407,7 @@ OPENSEARCH_ENDPOINT=$(output GraphRagStorage OpenSearchEndpoint)
 | `GraphRagOrchestration` | `StateMachineArn` | Ingestion state machine |
 | `GraphRagSecurity` | `KmsKeyArn` | Shared CMK, only with `use_cmk=true` |
 | `GraphRagGuardrail` | `GuardrailIdentifier` | Created guardrail, in `bedrock_region` |
+| `GraphRagCompute` | `CollectorImageUri` | Collector image to pull once after deploy, only with `enable_cloudwatch_tracing` ([CloudWatch tracing](#cloudwatch-tracing-optional)) |
 
 The task already receives the endpoints, bucket, table and regions as
 environment variables, so these outputs are needed only for tools that run
