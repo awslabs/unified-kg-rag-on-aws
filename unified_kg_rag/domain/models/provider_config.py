@@ -216,7 +216,8 @@ class GraphProviderConfig(BaseModel):
         default=NEPTUNE,
         description=(
             "Graph store: neptune | gremlin (a TinkerPop Gremlin Server through "
-            "the same adapter, configured by aws.neptune with use_iam: false)."
+            "the same adapter, configured by aws.neptune with use_iam: false) | "
+            "sqlite (an embedded single-host graph in providers.graph.sqlite_path)."
         ),
     )
     sqlite_path: str = Field(

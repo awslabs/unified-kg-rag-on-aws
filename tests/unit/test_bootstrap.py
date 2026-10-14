@@ -112,8 +112,16 @@ def test_built_in_kinds_are_registered() -> None:
         "openai_compatible",
     ]
     assert registered_kinds(ProviderRole.RERANK) == ["bedrock", "cross_encoder", "none"]
-    assert registered_kinds(ProviderRole.GRAPH_INDEXER) == ["gremlin", "neptune"]
-    assert registered_kinds(ProviderRole.GRAPH_RETRIEVER) == ["gremlin", "neptune"]
+    assert registered_kinds(ProviderRole.GRAPH_INDEXER) == [
+        "gremlin",
+        "neptune",
+        "sqlite",
+    ]
+    assert registered_kinds(ProviderRole.GRAPH_RETRIEVER) == [
+        "gremlin",
+        "neptune",
+        "sqlite",
+    ]
     assert registered_kinds(ProviderRole.VECTOR_INDEXER) == ["opensearch", "sqlite"]
     assert registered_kinds(ProviderRole.VECTOR_RETRIEVER) == ["opensearch", "sqlite"]
     assert registered_kinds(ProviderRole.DOC_STATUS) == ["dynamodb", "sqlite"]
