@@ -411,6 +411,15 @@ Library API (Python callers and custom backends).
   the `english` analyzer alone): its analyzers split CJK runs with one
   regular expression instead of testing each character twice, and stem each
   distinct word once (#PR).
+- A kNN or hybrid query on the embedded search engine no longer returns no
+  results when another process writes while it loads the index. The load
+  read the generation, the documents and each vector field in separate
+  statements, so a commit in between left a vector without a document; the
+  `KeyError` that followed was read as a non-fatal failure and the query
+  answered from nothing. The load now reads one snapshot, a vector without
+  a document (a file changed outside the engine) raises
+  `StoreConfigurationError`, and an index another process deleted leaves
+  this process's cache (#PR).
 - A global-search map step whose every batch is over the model's context
   (langchain-openai's `OpenAIContextOverflowError`) answers from the
   unrated reports again. That error is an HTTP 400 too, so it was read as a
