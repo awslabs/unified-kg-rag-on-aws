@@ -709,15 +709,15 @@ def test_generation_reload_across_two_engines(engine, tmp_path: Path) -> None:
         reader.close()
 
 
-class _CommitBeforeVectors:
-    """A connection that lets ``write`` commit just before the first read of
-    the vectors table: between the reads of one index load."""
+class _CommitBefore:
+    """A connection that lets ``write`` commit just before the first statement
+    starting with ``prefix``: between two reads of one operation."""
 
-    def __init__(self, real: sqlite3.Connection, write: Any) -> None:
-        self.real, self.write, self.fired = real, write, False
+    def __init__(self, real: sqlite3.Connection, prefix: str, write: Any) -> None:
+        self.real, self.prefix, self.write, self.fired = real, prefix, write, False
 
     def execute(self, sql: str, *args: Any) -> Any:
-        if sql.startswith("SELECT id, vec FROM vectors") and not self.fired:
+        if sql.startswith(self.prefix) and not self.fired:
             self.fired = True
             self.write()
         return self.real.execute(sql, *args)
@@ -730,8 +730,9 @@ def test_index_load_reads_one_snapshot(engine, tmp_path: Path) -> None:
     reader = SQLiteSearchEngine(tmp_path / "vector.sqlite3")
     try:
         engine_module._INDEX_CACHE.clear()
-        reader._connection = _CommitBeforeVectors(  # type: ignore[assignment]
+        reader._connection = _CommitBefore(  # type: ignore[assignment]
             reader.connection,
+            "SELECT id, vec FROM vectors",
             lambda: engine.bulk_index(INDEX, [{"id": "d", "vec": [1.0, 0.0]}]),
         )
         knn = {"knn": {"vec": {"vector": [1.0, 0.0], "k": 5}}}
@@ -740,6 +741,44 @@ def test_index_load_reads_one_snapshot(engine, tmp_path: Path) -> None:
         assert set(_hits(reader, knn)) == {"a", "b", "c"}
         assert reader._connection.fired
         assert set(_hits(reader, knn)) == {"a", "b", "c", "d"}
+    finally:
+        reader.close()
+
+
+@pytest.mark.parametrize(
+    "prefix",
+    [
+        "SELECT settings FROM indices",  # the result window check
+        "SELECT body FROM pipelines",
+        "SELECT name, generation FROM indices",  # the index load
+        "SELECT id, source FROM docs",  # an id lookup
+    ],
+)
+def test_search_reads_one_snapshot(engine, tmp_path: Path, prefix: str) -> None:
+    def blue_green() -> None:
+        # Another engine re-indexes into a new index and deletes the old one.
+        engine.create_index("things-2", MAPPING)
+        engine.bulk_index("things-2", [{"id": "z", "vec": [1.0, 0.0]}])
+        engine.update_alias(ALIAS, "things-2", remove_pattern="things-*")
+        engine.delete_indices([INDEX])
+
+    reader = SQLiteSearchEngine(tmp_path / "vector.sqlite3")
+    try:
+        engine_module._INDEX_CACHE.clear()
+        reader._connection = _CommitBefore(  # type: ignore[assignment]
+            reader.connection, prefix, blue_green
+        )
+        query = (
+            {"ids": {"values": ["a", "z"]}}
+            if prefix.startswith("SELECT id, source")
+            else {"hybrid": {"queries": [{"match_all": {}}, {"match_all": {}}]}}
+        )
+        # The search resolved the alias before the swap: it reads the old
+        # index whole (it read a deleted index's rows as None: TypeError).
+        hits = _hits(reader, query, search_pipeline=PIPELINE)
+        assert reader._connection.fired
+        assert set(hits) == ({"a"} if "ids" in query else {"a", "b", "c"})
+        assert set(_hits(reader, query, search_pipeline=PIPELINE)) == {"z"}
     finally:
         reader.close()
 

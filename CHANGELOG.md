@@ -459,6 +459,12 @@ Library API (Python callers and custom backends).
   "-ed"/"-ing" ("trekking" -> "trek"). It now agrees with OpenSearch on all
   457,417 dictionary words and suffixed forms checked. The possessive "'s" comes off a token's end
   rather than out of the text ("pant-'s" keeps its "s") (#PR).
+- A search on the embedded search engine reads one snapshot of the file.
+  It resolved the index, checked the result window, read the search
+  pipeline and loaded each index in separate reads, so an index another
+  process swapped out and deleted in between (a blue/green re-index while
+  queries are served) failed the query with a bare `TypeError` or answered
+  from nothing. It now searches the index it resolved, whole (#PR).
 - A global-search map step whose every batch is over the model's context
   (langchain-openai's `OpenAIContextOverflowError`) answers from the
   unrated reports again. That error is an HTTP 400 too, so it was read as a
