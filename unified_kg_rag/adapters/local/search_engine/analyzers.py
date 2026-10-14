@@ -135,9 +135,9 @@ def _word_ranges() -> dict[str, list[tuple[int, int]]]:
 
 @cache
 def _word_pattern(astral: bool) -> re.Pattern[str]:
-    """A word: a whole run of a spaceless script, or a run of letters, digits,
-    marks, format characters and connectors (a connector-only run is no word)
-    joined across in-word punctuation. No other symbol (emoji, "²", "½") is
+    """A word: a run of letters, digits, marks, format characters and
+    connectors (a connector-only run is no word) joined across in-word
+    punctuation, or a whole run of a spaceless script. No other symbol (emoji, "²", "½") is
     part of a word.
 
     Without ``astral``, for text of the Basic Multilingual Plane only: the
@@ -166,14 +166,15 @@ def _word_pattern(astral: bool) -> re.Pattern[str]:
         f'|(?<=[{hebrew}])"(?=[{hebrew}])'
     )
     return re.compile(
-        f"[{spaceless}][{spaceless}{extend}]*"
-        f"|[{connector}]*[{letter}{digit}]{character}*"
+        f"[{connector}]*[{letter}{digit}]{character}*"
         f"(?:(?:{joint}){character}+|(?<=[{hebrew}])'{character}*)*"
+        f"|[{spaceless}][{spaceless}{extend}]*"
     )
 
 
 # Splits a word into alternating other / dense-script runs (dense at odd indices).
 _DENSE_RUN = re.compile(f"([{DENSE_SCRIPT_LETTERS}]+)")
+_ASTRAL = re.compile("[\U00010000-\U0010ffff]")
 
 
 def register_analyzer(*names: str) -> Callable[[Analyzer], Analyzer]:
@@ -220,7 +221,8 @@ def _tokens(text: str, word_filter: Callable[[str], str | None]) -> list[str]:
     rewrite or drop it), dense-script runs as bigrams."""
     tokens: list[str] = []
     text = text.lower()
-    for word in _word_pattern(max(text, default="") > "\uffff").findall(text):
+    astral = not text.isascii() and _ASTRAL.search(text) is not None
+    for word in _word_pattern(astral).findall(text):
         for i, run in enumerate(_DENSE_RUN.split(word)):
             if i % 2:
                 tokens.extend(_bigrams(run))
