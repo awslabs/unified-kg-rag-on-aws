@@ -398,7 +398,7 @@ def test_fetch_multiplier_one_keeps_every_traversed_entity(retriever, config) ->
 
 
 async def _entity_traversal_text(retriever, seed_ids: list[str], query) -> str:
-    """The Gremlin text `_traverse_from_entities` sends, projection left out."""
+    """The Gremlin text `_traverse` sends, projection left out."""
     captured: list = []
 
     async def _capture(build):
@@ -407,7 +407,7 @@ async def _entity_traversal_text(retriever, seed_ids: list[str], query) -> str:
 
     object.__setattr__(retriever, "_with_projection", lambda t, **_: t)
     object.__setattr__(retriever, "_execute_traversal", _capture)
-    await retriever._traverse_from_entities(seed_ids, query)
+    await retriever._traverse(seed_ids, query)
     return Translator("g").translate(captured[0].bytecode)
 
 
