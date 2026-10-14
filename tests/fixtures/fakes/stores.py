@@ -87,9 +87,10 @@ class FakeGraphStore:
     Neptune semantics kept: list properties of a vertex are set-cardinality
     (distinct values, a re-upsert replaces the list), a property absent from an
     upsert keeps its stored value, re-adding an edge replaces it, an edge whose
-    endpoint vertex the suffix lacks is not written (a failed item), dropping a
-    vertex drops its incident edges, and a full ``index_entities`` first clears
-    the suffix's entity vertices.
+    endpoint vertex the suffix lacks is not written (a failed item, and the
+    stored edge of its id is dropped), dropping a vertex drops its incident
+    edges, and a full ``index_entities`` first clears the suffix's entity
+    vertices.
     """
 
     def __init__(self, config: Config | None = None) -> None:
@@ -143,6 +144,10 @@ class FakeGraphStore:
         vertices = self.data.get("entities", {})
         for rel in relationships:
             suffix = BaseIndexer.get_suffix(rel)
+            # The stored edge of this id is dropped first (as
+            # NeptuneIndexer._write_relationships does), so re-adding an edge
+            # whose endpoint is gone leaves no edge behind.
+            bucket.pop((suffix, rel.id), None)
             # addE runs between the suffix's entity vertices: an edge whose
             # endpoint vertex the suffix lacks is not written (see
             # NeptuneIndexer._build_add_edge_traversal).
@@ -291,7 +296,14 @@ class FakeVectorStore(_Recorder):
         self.delete_calls: list[tuple[str, str]] = []
 
     def clear(self, suffixes: list[str]) -> bool:
-        self.data.clear()
+        # Only the given suffixes' documents, like the per-alias delete.
+        for bucket in self.data.values():
+            for item_id in [
+                i
+                for i, item in bucket.items()
+                if BaseIndexer.get_suffix(item) in suffixes
+            ]:
+                del bucket[item_id]
         return True
 
     def check_index_settings(self, suffix: str | None = None) -> None:

@@ -391,7 +391,7 @@ def test_hybrid_normalizes_each_sub_query_over_its_top_size_hits(engine) -> None
 def test_lexical_and_vector_queries_return_raw_scores(engine) -> None:
     lexical = _hits(engine, {"multi_match": {"query": "depot", "fields": ["name"]}})
     # BM25, not normalized: N = 3, n = 1, tf = dl = avgdl = 1.
-    assert lexical == {"c": pytest.approx(math.log(1 + 2.5 / 1.5) / 2.2)}
+    assert lexical == {"c": pytest.approx(math.log(1 + 2.5 / 1.5) * 2.2 / 2.2)}
     vector = _hits(engine, {"knn": {"vec_l2": {"vector": [0.0, 1.0], "k": 1}}})
     assert vector == {"a": pytest.approx(0.5)}  # 1 / (1 + 1)
 

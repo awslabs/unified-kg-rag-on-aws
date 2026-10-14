@@ -1,6 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""BM25 scoring as Lucene 9's ``BM25Similarity`` computes it (OpenSearch's default).
+"""BM25 scoring as OpenSearch computes it (Lucene's ``LegacyBM25Similarity``).
 
 Per query term, with ``N`` the documents that have the field, ``n`` those of
 them that contain the term, ``tf`` its frequency in the document, ``dl`` the
@@ -8,10 +8,12 @@ document's field length in tokens and ``avgdl`` the mean length over the
 ``N`` documents::
 
     idf   = ln(1 + (N - n + 0.5) / (n + 0.5))
-    score = idf * tf / (tf + k1 * (1 - b + b * dl / avgdl))
+    score = idf * (k1 + 1) * tf / (tf + k1 * (1 - b + b * dl / avgdl))
 
-with ``k1 = 1.2`` and ``b = 0.75`` and no ``(k1 + 1)`` factor (Lucene dropped
-it in 8.0; it does not change the ranking). Lucene stores ``dl`` as a one-byte
+with ``k1 = 1.2`` and ``b = 0.75``. Lucene 8 dropped the ``(k1 + 1)`` factor
+from ``BM25Similarity``, but OpenSearch's default similarity keeps it (its
+explain output shows it as a boost of 2.2); it scales every score alike, so
+it changes the scores, not the ranking. Lucene stores ``dl`` as a one-byte
 norm (``SmallFloat.intToByte4``), so a long field's length is rounded down to
 one of 256 values; ``quantized_length`` does the same so scores match.
 Statistics are per field, per index. A query term repeated in the query counts
@@ -68,7 +70,7 @@ def term_score(
     b: float = B,
 ) -> float:
     """One query term's score in one document (``length`` already quantized)."""
-    return term_idf * tf / (tf + k1 * (1 - b + b * length / avg_length))
+    return term_idf * (k1 + 1) * tf / (tf + k1 * (1 - b + b * length / avg_length))
 
 
 class FieldIndex:
