@@ -11,11 +11,13 @@ with it. Approximations of the OpenSearch analyzers of the same names:
   #29): a word keeps its combining marks ("हिन्दी", a decomposed "café"),
   in-word punctuation joins ("don't", "u.s.a", "1,000.50", "a：b"), and a run
   of Thai, Lao, Myanmar or Khmer stays whole (neither engine segments it).
-  Then lowercase. Unlike OpenSearch it drops emoji (OpenSearch keeps one as a
-  token), as both drop other symbols ("²", "½"). A run of Hangul, Han
-  or Kana letters becomes overlapping character bigrams ("홍길동으로부터" ->
-  "홍길", "길동", "동으", ...), and a single such letter a unigram, so a word
-  matches inside a longer run without a morphological dictionary.
+  Then lowercase each character, as Lucene does ("İ" -> "i"). Unlike
+  OpenSearch it drops emoji (OpenSearch keeps one as a token), as both drop
+  other symbols ("²", "½"). A run of Hangul, Han or Kana letters becomes
+  overlapping character bigrams ("홍길동으로부터" -> "홍길", "길동", "동으",
+  ...), and a single such letter a unigram, so a word matches inside a
+  longer run without a morphological dictionary; marks and format
+  characters in the run are left out of them.
   (OpenSearch's ``standard`` keeps a Hangul run as one token; the bigrams are
   deliberate.)
 - ``nori``, ``kuromoji`` and ``smartcn``: the same analyzer as ``standard``.
@@ -114,10 +116,10 @@ def _word_ranges() -> dict[str, list[tuple[int, int]]]:
             kind = category(chr(cp))
             if kind[0] in "LM" and cp in spaceless:
                 role = "spaceless"
-            elif kind[0] == "L" or kind == "Nl":
-                role = "letter"
-            elif kind == "Nd":
-                role = "digit"
+            elif kind[0] == "L" or kind == "Nl" or cp == 0x05F3:
+                role = "letter"  # with the Hebrew geresh, a letter in UAX #29
+            elif kind == "Nd" or cp == 0x066B:
+                role = "digit"  # with the Arabic decimal separator ("٣٫٥")
             elif kind[0] == "M" or (kind == "Cf" and cp != 0x200B):
                 role = "extend"  # a zero width space separates words
             elif kind == "Pc" or cp == 0x202F:
@@ -134,6 +136,16 @@ def _word_ranges() -> dict[str, list[tuple[int, int]]]:
 
 
 @cache
+def _part(role: str, astral: bool) -> str:
+    """The characters of ``role`` as the body of a regex character class;
+    without ``astral``, of the Basic Multilingual Plane only."""
+    limit = 0x10FFFF if astral else 0xFFFF
+    return _class(
+        [(lo, min(hi, limit)) for lo, hi in _word_ranges()[role] if lo <= limit]
+    )
+
+
+@cache
 def _word_pattern(astral: bool) -> re.Pattern[str]:
     """A word: a run of letters, digits, marks, format characters and
     connectors (a connector-only run is no word) joined across in-word
@@ -144,22 +156,16 @@ def _word_pattern(astral: bool) -> re.Pattern[str]:
     same matches, about four times faster (``re`` tries a character class's
     ranges above U+FFFF one by one).
     """
-    limit = 0x10FFFF if astral else 0xFFFF
-
-    def part(role: str) -> str:
-        return _class(
-            [(lo, min(hi, limit)) for lo, hi in _word_ranges()[role] if lo <= limit]
-        )
-
     spaceless, letter, digit, extend, connector = (
-        part(role) for role in ("spaceless", "letter", "digit", "extend", "connector")
+        _part(role, astral)
+        for role in ("spaceless", "letter", "digit", "extend", "connector")
     )
     hebrew = _class(list(_HEBREW))
     character = f"[{letter}{digit}{extend}{connector}]"
     # A letter on both sides (a mark or format character counts as part of
     # the letter before it); Han, Hangul and Kana letters do not count.
     before_letter = f"(?<=[{letter}{extend}])(?<![{DENSE_SCRIPT_LETTERS}])"
-    after_letter = f"(?=[{letter}{extend}])(?![{DENSE_SCRIPT_LETTERS}])"
+    after_letter = f"(?=[{extend}]*[{letter}])(?![{extend}]*[{DENSE_SCRIPT_LETTERS}])"
     joint = (
         f"{before_letter}[{_MID_LETTER}{_MID_NUM_LETTER}]{after_letter}"
         f"|(?<=\\d)[{_MID_NUM}{_MID_NUM_LETTER}](?=\\d)"
@@ -172,8 +178,17 @@ def _word_pattern(astral: bool) -> re.Pattern[str]:
     )
 
 
-# Splits a word into alternating other / dense-script runs (dense at odd indices).
-_DENSE_RUN = re.compile(f"([{DENSE_SCRIPT_LETTERS}]+)")
+@cache
+def _dense_run(astral: bool) -> re.Pattern[str]:
+    """Splits a word into alternating other / dense-script runs (dense at
+    odd indices) and the connectors that start the others ("漢_x"). A dense
+    run keeps the marks and format characters after its letters, as
+    OpenSearch keeps them in the letter's token."""
+    dense, extend = DENSE_SCRIPT_LETTERS, _part("extend", astral)
+    return re.compile(f"([{dense}][{dense}{extend}]*)[{_part('connector', astral)}]*")
+
+
+_NOT_DENSE = re.compile(f"[^{DENSE_SCRIPT_LETTERS}]+")
 _ASTRAL = re.compile("[\U00010000-\U0010ffff]")
 
 
@@ -220,12 +235,15 @@ def _tokens(text: str, word_filter: Callable[[str], str | None]) -> list[str]:
     """Words of ``text`` lowercased (each kept by ``word_filter``, which may
     rewrite or drop it), dense-script runs as bigrams."""
     tokens: list[str] = []
-    text = text.lower()
+    # Per character, as Lucene lowercases: "İ" -> "i" (``str.lower`` adds a
+    # combining dot), "Σ" -> "σ" (``str.lower`` makes a final one "ς").
+    text = text.replace("\u0130", "i").replace("\u03a3", "\u03c3").lower()
     astral = not text.isascii() and _ASTRAL.search(text) is not None
     for word in _word_pattern(astral).findall(text):
-        for i, run in enumerate(_DENSE_RUN.split(word)):
+        for i, run in enumerate(_dense_run(astral).split(word)):
             if i % 2:
-                tokens.extend(_bigrams(run))
+                # The bigrams are of the letters, without the marks between.
+                tokens.extend(_bigrams(_NOT_DENSE.sub("", run)))
             elif run and (kept := word_filter(run)) is not None:
                 tokens.append(kept)
     return tokens
