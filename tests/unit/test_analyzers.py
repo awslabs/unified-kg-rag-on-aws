@@ -59,7 +59,7 @@ def test_mixed_scripts_split_at_script_boundaries() -> None:
     ]
 
 
-@pytest.mark.parametrize("name", ["standard", "nori", "kuromoji", "smartcn"])
+@pytest.mark.parametrize("name", ["standard", "cjk", "nori", "kuromoji", "smartcn"])
 def test_cjk_analyzer_names_share_the_bigram_analyzer(name: str) -> None:
     assert get_analyzer(name) is standard_analyzer
 

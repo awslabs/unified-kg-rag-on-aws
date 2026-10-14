@@ -20,7 +20,7 @@ with it. Approximations of the OpenSearch analyzers of the same names:
   characters in the run are left out of them.
   (OpenSearch's ``standard`` keeps a Hangul run as one token; the bigrams are
   deliberate.)
-- ``nori``, ``kuromoji`` and ``smartcn``: the same analyzer as ``standard``.
+- ``cjk``, ``nori``, ``kuromoji`` and ``smartcn``: the same analyzer as ``standard``.
   The bigrams stand in for their morphological analysis: recall on a
   word-in-compound query is comparable, ranking is not identical.
 - ``english``: OpenSearch's chain — possessive strip ("'s" off a token's
@@ -249,7 +249,7 @@ def _tokens(text: str, word_filter: Callable[[str], str | None]) -> list[str]:
     return tokens
 
 
-@register_analyzer(STANDARD, "nori", "kuromoji", "smartcn")
+@register_analyzer(STANDARD, "cjk", "nori", "kuromoji", "smartcn")
 def standard_analyzer(text: str) -> list[str]:
     return _tokens(text, lambda word: word)
 
