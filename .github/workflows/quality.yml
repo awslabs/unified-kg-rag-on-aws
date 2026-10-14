@@ -105,10 +105,12 @@ jobs:
           if-no-files-found: ignore
 
   local-stores:
-    # tests/integration/test_local_stores.py is skipped unless LOCAL_STORES=1,
-    # so the quality job never runs the graph/vector adapters against a real
-    # Gremlin Server and OpenSearch (with nori). Start the dev compose stack
-    # (no AWS, hashing embeddings) and run that smoke test here.
+    # The container backend of the store conformance suites, the SQLite vs
+    # OpenSearch parity test and tests/integration/test_local_stores.py are
+    # skipped unless LOCAL_STORES=1, so the quality job never runs the
+    # graph/vector adapters against a real Gremlin Server and OpenSearch (with
+    # nori). Start the dev compose stack (no AWS, hashing embeddings) and run
+    # them here.
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -138,6 +140,13 @@ jobs:
         env:
           LOCAL_STORES: "1"
         run: uv run pytest tests/integration/test_local_stores.py
+
+      - name: Store conformance and parity against the local stores
+        env:
+          LOCAL_STORES: "1"
+        run: >-
+          uv run pytest tests/integration/test_*conformance*.py
+          tests/integration/test_store_parity.py
 
       - name: Store logs
         if: failure()
