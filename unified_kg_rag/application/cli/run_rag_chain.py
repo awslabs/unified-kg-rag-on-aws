@@ -67,6 +67,24 @@ def _markup_safe(text: object) -> str:
     return escape(terminal_safe(text))
 
 
+def _rerank_line(rerank: dict[str, Any]) -> str:
+    """``metadata.rerank`` as one line: the overall status and reason, then
+    each stage when a query reranked more than once."""
+    line = str(rerank.get("status", "unknown"))
+    if reason := rerank.get("reason"):
+        line += f" ({reason})"
+    stages = rerank.get("stages") or []
+    if len(stages) > 1:
+        line += (
+            " ["
+            + "; ".join(
+                f"{stage.get('scope')}: {stage.get('status')}" for stage in stages
+            )
+            + "]"
+        )
+    return line
+
+
 class CommandLineInterface:
     def __init__(self) -> None:
         self.parser = self._setup_arguments()
@@ -507,7 +525,11 @@ class RAGChainRunner:
             for key, value in all_metadata.items():
                 if key in ["results", "query"]:
                     continue
-                if key == "search_strategy":
+                if key == "rerank" and isinstance(value, dict):
+                    metrics_content += (
+                        f"  - Rerank: {_markup_safe(_rerank_line(value))}\n"
+                    )
+                elif key == "search_strategy":
                     metrics_content += f"  - Search Strategy: {value}\n"
                 elif key == "processing_time":
                     metrics_content += f"  - Processing Time: {value:.2f}s\n"

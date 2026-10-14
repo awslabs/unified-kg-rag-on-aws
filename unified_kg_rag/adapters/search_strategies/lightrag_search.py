@@ -201,6 +201,7 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
         self, query: SearchQuery, config: RunnableConfig | None = None
     ) -> SearchResult:
         start_time = time.time()
+        rerank = self._new_rerank_trace()
         mode = self._mode(query)
         logger.info(
             "LightRAG search started - mode: '%s', query: %s",
@@ -277,6 +278,7 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
         )
         final_results = await self._fuse_and_rerank(
             results_by_source,
+            rerank_trace=rerank,
             top_k=fuse_top_k,
             retrieval_multiplier=query.retrieval_multiplier,
             query=query.query,
@@ -303,6 +305,7 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
                 "hl_keyword_count": len(query.hl_keywords),
                 "ll_keyword_count": len(query.ll_keywords),
                 "sources": {k: len(v) for k, v in results_by_source.items()},
+                "rerank": rerank.summary(),
             },
         )
 

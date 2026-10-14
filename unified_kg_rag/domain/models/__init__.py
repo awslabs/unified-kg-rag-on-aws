@@ -55,6 +55,8 @@ from .pipeline import (
 from .provider_config import Backend, ProvidersConfig
 from .relationship import Relationship
 from .retrieval import (
+    RerankStage,
+    RerankStatus,
     RetrievalResult,
     RetrieverRole,
     SearchQuery,
@@ -121,6 +123,8 @@ __all__ = [
     "Relationship",
     "RerankModelId",
     "ResolutionMethod",
+    "RerankStage",
+    "RerankStatus",
     "RetrievalResult",
     "RetrieverRole",
     "S3EncryptionType",

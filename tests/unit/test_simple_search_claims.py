@@ -46,7 +46,7 @@ def _make_strategy(config: Config):
         retrievers={RetrieverRole.DOCUMENT.value: os_r},
     )
     strategy.hybrid_scorer.fuse_and_rerank_results = (  # type: ignore[method-assign]
-        lambda results_dict, top_k, retrieval_multiplier=1, query=None: [
+        lambda results_dict, top_k, retrieval_multiplier=1, query=None, **_: [
             r for results in results_dict.values() for r in results
         ]
     )

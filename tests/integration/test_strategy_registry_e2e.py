@@ -68,7 +68,7 @@ async def test_simple_strategy_runs_through_registry() -> None:
     retrievers = {role.value: FakeRetriever(role.value) for role in spec.required_roles}
     strategy = spec.strategy_class(config=config, retrievers=retrievers)
     strategy.hybrid_scorer.fuse_and_rerank_results = (  # type: ignore[method-assign]
-        lambda results_dict, top_k, retrieval_multiplier=1, query=None: [
+        lambda results_dict, top_k, retrieval_multiplier=1, query=None, **_: [
             r for results in results_dict.values() for r in results
         ]
     )

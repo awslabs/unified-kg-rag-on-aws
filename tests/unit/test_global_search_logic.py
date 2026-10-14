@@ -13,11 +13,12 @@ never runs; retriever and chain objects are replaced with fakes / AsyncMocks.
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
 from unified_kg_rag.adapters.search_strategies.global_search import GlobalSearchStrategy
-from unified_kg_rag.domain.models import RetrievalResult, SearchQuery
+from unified_kg_rag.domain.models import Config, RetrievalResult, SearchQuery
 from unified_kg_rag.shared.utils.langchain import BatchProcessor
 
 pytestmark = pytest.mark.unit
@@ -71,6 +72,15 @@ class _StubRetriever:
         return self._results
 
 
+def _no_rerank_scorer() -> Any:
+    """A real scorer with reranking off (asearch asks it for a rerank trace)."""
+    from unified_kg_rag.adapters.retrieval.hybrid_scorer import HybridScorer
+
+    config = Config()
+    config.search.reranking.enabled = False
+    return HybridScorer(config)
+
+
 def _bare_strategy(
     *,
     threshold: float = 0.5,
@@ -98,6 +108,7 @@ def _bare_strategy(
     )
     strat.ignore_errors = ignore_errors
     strat.target_language = "en"
+    strat.hybrid_scorer = _no_rerank_scorer()
     strat.retrievers = retrievers or {}
     strat.config = SimpleNamespace(
         indexing=SimpleNamespace(
@@ -342,7 +353,7 @@ async def test_augment_empty_selection_post_processes_the_fallback() -> None:
     strat._fuse_and_rerank = _fuse  # type: ignore[method-assign]
 
     out = await strat._augment_and_rerank_communities(
-        [], fallback, SearchQuery(query="q")
+        [], fallback, SearchQuery(query="q"), strat._new_rerank_trace()
     )
 
     best_two = ["c4", "c3"]
@@ -354,7 +365,9 @@ async def test_augment_empty_selection_post_processes_the_fallback() -> None:
 async def test_augment_empty_selection_and_no_fallback_is_empty() -> None:
     strat = _bare_strategy()
     assert (
-        await strat._augment_and_rerank_communities([], [], SearchQuery(query="q"))
+        await strat._augment_and_rerank_communities(
+            [], [], SearchQuery(query="q"), strat._new_rerank_trace()
+        )
         == []
     )
 
@@ -479,7 +492,10 @@ async def test_report_slots_keep_every_selected_report(reserve: bool) -> None:
     strat._retrieve_community_context = _context  # type: ignore[method-assign]
 
     out = await strat._augment_and_rerank_communities(
-        reports, reports, SearchQuery(query="q", top_k=10)
+        reports,
+        reports,
+        SearchQuery(query="q", top_k=10),
+        strat._new_rerank_trace(),
     )
 
     kept_reports = [r for r in out if r.retriever_type == "community"]

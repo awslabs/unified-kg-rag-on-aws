@@ -719,6 +719,11 @@ search:
     # with Bedrock reranking.
     # rerank_model_id: "cohere.rerank-v3-5:0"
     top_k: 100
+    # true fails the query (RerankModelError) when the rerank model cannot be
+    # built, a rerank call fails or returns nothing usable. false keeps the
+    # fused order instead; either way metadata.rerank reports what happened
+    # (applied, disabled, unavailable, skipped or failed).
+    required: false
 
   # LightRAG dual-level keyword search (mix/hybrid/naive modes)
   lightrag_search:

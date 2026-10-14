@@ -6,6 +6,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
+from .retrieval import RerankStatus
+
 
 class EvaluationMetricType(str, Enum):
     ANSWER_CORRECTNESS = "answer_correctness"
@@ -164,6 +166,14 @@ class EvaluationResult(BaseModel):
             "answer on answerable items; correct on metadata.answerable=false ones."
         ),
     )
+    rerank_status: RerankStatus | None = Field(
+        default=None,
+        description=(
+            "What reranking did for this query (the chain's metadata.rerank "
+            "status): applied, disabled, unavailable, skipped or failed. None "
+            "when answer generation failed before retrieval reported it."
+        ),
+    )
 
 
 class EvaluationMetric(BaseModel):
@@ -255,6 +265,14 @@ class EvaluationSummary(BaseModel):
             "actual search strategy ('per_strategy'), and for items marked "
             "metadata.answerable=false an 'unanswerable' block with 'total', "
             "'correct_abstentions' and 'accuracy'."
+        ),
+    )
+    rerank_status_counts: dict[str, int] = Field(
+        default_factory=dict,
+        description=(
+            "Queries per rerank status (EvaluationResult.rerank_status), e.g. "
+            "{'applied': 48, 'failed': 2}; queries without a status are not "
+            "counted."
         ),
     )
     run_manifest: dict[str, Any] = Field(

@@ -1890,6 +1890,16 @@ class RerankingConfig(BaseModel):
         ge=1,
         description="Maximum number of top results to rerank",
     )
+    required: bool = Field(
+        default=False,
+        description=(
+            "Fail the query with RerankModelError when reranking is enabled "
+            "but the rerank model cannot be built, the rerank call fails or it "
+            "returns nothing usable. false keeps the fused order and reports "
+            "the outcome in SearchResult.metadata['rerank']. No effect when "
+            "reranking is disabled or providers.rerank.kind is none."
+        ),
+    )
 
 
 class GlobalSearchConfig(BaseModel):

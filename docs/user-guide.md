@@ -254,7 +254,8 @@ points at `localhost` (see [Local stores in containers](#local-stores-in-contain
 - **Reranking.** The cross-encoder downloads its model from Hugging Face on the
   first query. Without the `[local]` extra (or with `kind: none`) queries keep
   the fused order; this is logged once and visible as
-  `kg_rag.rerank_enabled=false` on the fusion span.
+  `kg_rag.rerank_enabled=false` on the fusion span and as
+  `metadata.rerank.status` `unavailable` (or `disabled` for `kind: none`).
 - **Embedded stores.** Each `sqlite` store is one file, created on first use.
   A relative `sqlite_path` is resolved against the config file's directory
   (the working directory without a config file). The `indexing.neptune` and
@@ -666,6 +667,7 @@ LLM stages are Bedrock-I/O-bound, so concurrency can far exceed the CPU count.
 | `search.fusion.diversity_lambda` | `0.5` | MMR trade-off: `1.0` = pure relevance, `0.0` = maximum diversity. |
 | `search.reranking.enabled` | `true` | Rerank fused results with `rerank_model_id` (`cohere.rerank-v3-5:0`). |
 | `search.reranking.top_k` | `100` | Candidates sent to the reranker. |
+| `search.reranking.required` | `false` | `true` fails the query with `RerankModelError` when reranking is enabled but the rerank model cannot be built, a rerank call fails, or it returns nothing usable. `false` keeps the fused order in those cases (an initialization failure is logged at ERROR). No effect when reranking is off or `providers.rerank.kind` is `none`. See [Rerank status](#rerank-status). |
 | `search.lightrag_search.kg_stream_top_k` | `40` | Width of the LightRAG entity/relationship vector queries (a floor against the request's `top_k`). |
 | `search.lightrag_search.chunk_stream_top_k` | `20` | Width of the LightRAG chunk stream. |
 | `search.lightrag_search.enable_graph_expansion` | `false` | `mix`/`hybrid`: also expand matches through Neptune. |
@@ -876,8 +878,10 @@ spans and exported as given, so pass an opaque id, not an e-mail address.
   units, and `error.type` plus the exception when it crashed) → `kg_rag.batch` / `kg_rag.batch.chunk`
   (item and failure counts) → one `chat <model>` span per model call and
   `embeddings <model>` spans.
-- Query: `kg_rag.query` → `kg_rag.strategy` → `kg_rag.retrieve` (hit counts per
-  result type and up to 50 source ids) → `kg_rag.fusion` (in/out counts) →
+- Query: `kg_rag.query` → `kg_rag.strategy` (`kg_rag.rerank_status`, the
+  query's [rerank status](#rerank-status)) → `kg_rag.retrieve` (hit counts per
+  result type and up to 50 source ids) → `kg_rag.fusion` (in/out counts, the
+  step's `kg_rag.rerank_status`) →
   `kg_rag.rerank` (`kg_rag.rerank.status` = `ok`, `empty` or `error`, document
   counts) → `kg_rag.context_build` (tokens used vs the token budget) → the
   answer's `chat <model>` span.
@@ -1170,6 +1174,38 @@ run-rag --query "..." --verbose --config-path config.yaml
 # Attribute filters
 run-rag --query "..." --filters attr_category:research type:person --config-path config.yaml
 ```
+
+### Rerank status
+
+Every query reports what reranking did in `metadata.rerank` of the
+`SearchResult` and of the RAG output (and so in `--output-format json`):
+`status`, `reason` and `stages`, one entry per rerank step with its own
+`status`, `scope` (`all`, or the result types it reranked, e.g. `text` for
+`local`, `drift`, `mix` and `hybrid`) and `reason`. `--verbose` prints it as one
+`Rerank:` line in the execution metrics.
+
+| Status | Meaning |
+|---|---|
+| `applied` | The rerank model reordered the candidates. |
+| `disabled` | Reranking is off: `search.reranking.enabled: false` or `providers.rerank.kind: none`. |
+| `unavailable` | Reranking is on but the rerank model could not be built (initialization failed, or the cross-encoder's `[local]` extra is missing); an initialization failure is logged at ERROR. |
+| `skipped` | Nothing to rerank: no candidates (including a strategy that returned early), none of a rerank-eligible type, or no query text. |
+| `failed` | The rerank call raised (a denied `bedrock:Rerank`, a region without the model, an unreachable endpoint) or returned nothing usable; the fused order was kept. |
+
+A `failed` or `unavailable` reason names what failed without its message: the
+AWS error code for a Bedrock error (`AccessDeniedException`,
+`ValidationException`), otherwise the exception type.
+
+Every built-in strategy reranks once per query, so `stages` has one entry. A
+caller that fuses more than once into the same trace gets one stage per fusion,
+and the top-level `status` is the worst stage's, in the order `failed` >
+`unavailable` > `applied` > `skipped` > `disabled`. Each result's
+`metadata.reranked` flag still marks the results the model reordered. Building a Bedrock reranker makes no AWS call, so a permission
+or region problem shows up as `failed` at the first query, not as
+`unavailable`. Set `search.reranking.required: true` to fail such queries with
+`RerankModelError` instead of answering from the fused order. The status is also
+the `kg_rag.rerank_status` attribute of the `kg_rag.fusion` and
+`kg_rag.strategy` spans.
 
 Filters compile to `term`/`terms`/`range` clauses on OpenSearch and `has`
 steps on Neptune. Each store accepts the fields its indexer writes:
@@ -1668,6 +1704,10 @@ The summary holds, per metric, mean/median/stdev/min/max/count
   and for `answerable: false` items an `unanswerable` block (`total`,
   `correct_abstentions`, `accuracy`). On answerable items an abstention is
   graded like any answer (normally a miss); each result carries `abstained`.
+- `rerank_status_counts` — queries per rerank status, e.g.
+  `{"applied": 48, "failed": 2}`; each result carries `rerank_status`
+  (`applied`, `disabled`, `unavailable`, `skipped`, `failed`, or `null` when
+  answer generation failed first; see [Rerank status](#rerank-status)).
 - `run_manifest` — CLI arguments (a `*_url` argument such as
   `--model-base-url` without its userinfo, query and fragment), model ids (answer generation, evaluation
   judge/embedding), package version, git commit (`git_sha`, and `git_dirty`
@@ -1895,7 +1935,9 @@ on).
 > inference-profile ARNs denies it. Grant `bedrock:Rerank` on `Resource: "*"`
 > in its own statement, as the CDK task role does
 > (`iac/stacks/compute_stack.py`). Without it, every query logs
-> `Reranking failed: ...` at ERROR and returns the fused results unreranked.
+> `Reranking failed: ...` at ERROR, reports `metadata.rerank.status: failed`
+> and returns the fused results unreranked (or fails, with
+> `search.reranking.required: true`).
 > Reranking is on by default (`search.reranking.enabled`); if you cannot grant
 > the action, set it to `false`.
 >
@@ -2026,7 +2068,8 @@ graph_indexer_factory=..., retriever_builders=...)`). Without a bundle,
   over more than one ingestion and query run.
 - **Reranking is regional.** The rerank models are not offered in every
   Bedrock region (see [Required models](#required-models)). Without reranking,
-  results are ranked by fusion only.
+  results are ranked by fusion only; `metadata.rerank` shows it per query
+  ([Rerank status](#rerank-status)).
 - **Three model providers ship.** Amazon Bedrock (the default), Ollama and
   OpenAI-compatible servers for language models and embeddings, and Bedrock or
   a sentence-transformers cross-encoder for reranking

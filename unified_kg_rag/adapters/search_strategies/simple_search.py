@@ -31,6 +31,7 @@ class SimpleSearchStrategy(BaseSearchStrategy):
         self, query: SearchQuery, config: RunnableConfig | None = None
     ) -> SearchResult:
         start_time = time.time()
+        rerank = self._new_rerank_trace()
         logger.info(
             "Simple search started - query: %s ('%s')",
             text_digest(query.query),
@@ -46,11 +47,12 @@ class SimpleSearchStrategy(BaseSearchStrategy):
                 total_results=0,
                 search_strategy="simple_search",
                 processing_time=time.time() - start_time,
-                metadata={},
+                metadata={"rerank": rerank.summary()},
             )
 
         final_results = await self._fuse_and_rerank(
             all_results,
+            rerank_trace=rerank,
             top_k=query.top_k,
             retrieval_multiplier=query.retrieval_multiplier,
             query=query.query,
@@ -70,7 +72,7 @@ class SimpleSearchStrategy(BaseSearchStrategy):
             total_results=len(final_results),
             search_strategy="simple_search",
             processing_time=processing_time,
-            metadata={},
+            metadata={"rerank": rerank.summary()},
         )
 
     async def _retrieve_documents(

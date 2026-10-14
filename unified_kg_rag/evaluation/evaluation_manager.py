@@ -6,7 +6,7 @@ import shutil
 import statistics
 import subprocess
 import uuid
-from collections import defaultdict
+from collections import Counter, defaultdict
 from collections.abc import Callable
 from datetime import datetime, timezone
 from importlib.metadata import PackageNotFoundError, version
@@ -410,6 +410,7 @@ class EvaluationManager:
                         error_message=error_message,
                         abstained=error_message is None
                         and self._is_abstention(answer, rag_metadata),
+                        rerank_status=(rag_metadata.get("rerank") or {}).get("status"),
                     )
                 )
             except Exception as e:
@@ -764,6 +765,13 @@ class EvaluationManager:
             metric_statistics=self._calculate_metric_statistics(reports),
             metric_outcomes=self._calculate_metric_outcomes(results, reports),
             abstention_statistics=self._calculate_abstention_statistics(results),
+            rerank_status_counts=dict(
+                sorted(
+                    Counter(
+                        r.rerank_status.value for r in results if r.rerank_status
+                    ).items()
+                )
+            ),
             grouped_statistics=self._calculate_grouped_statistics(
                 queries, results, reports
             ),

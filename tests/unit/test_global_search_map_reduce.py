@@ -84,6 +84,15 @@ def _map_payload(*scored: tuple[str, int]) -> str:
     return json.dumps({"points": [{"description": d, "score": s} for d, s in scored]})
 
 
+def _no_rerank_scorer() -> Any:
+    """A real scorer with reranking off (asearch asks it for a rerank trace)."""
+    from unified_kg_rag.adapters.retrieval.hybrid_scorer import HybridScorer
+
+    config = Config()
+    config.search.reranking.enabled = False
+    return HybridScorer(config)
+
+
 def _strategy(
     *,
     map_batch_size: int = 2,
@@ -110,6 +119,7 @@ def _strategy(
     )
     strat.ignore_errors = ignore_errors
     strat.target_language = "English"
+    strat.hybrid_scorer = _no_rerank_scorer()
     strat.map_rater = _SyncMapChain(map_outputs or [])
     strat.map_reducer = (
         reducer if reducer is not None else _reducer("SYNTHESIZED ANSWER")
