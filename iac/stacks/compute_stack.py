@@ -409,9 +409,16 @@ class ComputeStack(Stack):
                     "auth": {"authenticator": "sigv4auth/traces"},
                     # Bounded so a shutdown flush against an unreachable
                     # endpoint ends inside ECS's 30 s stop timeout: the
-                    # collector then exits 0 instead of being killed.
+                    # collector then exits 0 instead of being killed. No
+                    # queue and no retry: the batch processor exports
+                    # synchronously, so at shutdown only the in-flight export
+                    # and its final batch remain (2 x 10 s), where a queue
+                    # would drain every queued batch, each up to timeout plus
+                    # retries. A failed batch is dropped; the app keeps
+                    # running either way.
                     "timeout": "10s",
-                    "retry_on_failure": {"max_elapsed_time": "15s"},
+                    "sending_queue": {"enabled": False},
+                    "retry_on_failure": {"enabled": False},
                 }
             },
             "service": {

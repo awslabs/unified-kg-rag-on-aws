@@ -117,8 +117,11 @@ def test_enabled_runs_a_non_essential_collector_the_app_waits_for() -> None:
     )
     assert exporter["auth"] == {"authenticator": "sigv4auth/traces"}
     # A shutdown flush must end inside ECS's 30 s stop timeout.
+    # No sending queue (drained batch by batch at shutdown) and no retry, so
+    # what is left at shutdown is at most two 10 s exports.
     assert exporter["timeout"] == "10s"
-    assert exporter["retry_on_failure"] == {"max_elapsed_time": "15s"}
+    assert exporter["sending_queue"] == {"enabled": False}
+    assert exporter["retry_on_failure"] == {"enabled": False}
     assert config["extensions"]["sigv4auth/traces"] == {
         "region": "us-west-2",
         "service": "xray",
