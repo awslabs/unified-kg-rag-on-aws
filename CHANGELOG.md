@@ -424,6 +424,11 @@ Library API (Python callers and custom backends).
   punctuation as OpenSearch's standard tokenizer does ("don't", "u.s.a",
   "1,000.50", "2024.01.15"). They split there, so a query for an amount
   such as "1,000,000" matched every document containing "000" (#277).
+- Graph expansion on the embedded SQLite graph store reads one snapshot.
+  Its neighbour and vertex reads ran as separate statements, so an
+  ingestion deleting a vertex the walk had reached in between (an
+  incremental run while queries are served) made the whole expansion come
+  back empty (#PR).
 - A global-search map step whose every batch is over the model's context
   (langchain-openai's `OpenAIContextOverflowError`) answers from the
   unrated reports again. That error is an HTTP 400 too, so it was read as a

@@ -559,6 +559,35 @@ async def test_retriever_without_seeds_or_with_unknown_suffix(config: Config) ->
     indexer.close()
 
 
+async def test_traversal_reads_one_snapshot(
+    config: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Another process deletes a vertex the walk reached, between the walk's
+    # neighbour query and its vertex read: the traversal answers from the
+    # graph as it was when it started, not with nothing.
+    indexer = SQLiteGraphIndexer(config)
+    _graph(indexer, [("a", "b"), ("a", "c")])
+    writer = SQLiteGraphIndexer(config)
+    neighbors = SQLiteGraphStore.neighbors
+
+    def write_between(connection: Any, label: str, vertex_id: str, limit: int):
+        found = neighbors(connection, label, vertex_id, limit)
+        if vertex_id == "a":
+            writer.delete_by_id(["b"], suffix="default")
+        return found
+
+    monkeypatch.setattr(SQLiteGraphStore, "neighbors", staticmethod(write_between))
+    retriever = SQLiteGraphRetriever(config)
+    query = SearchQuery(query="q", filters={"id": ["a"]})
+    assert [r.source for r in await retriever.aretrieve(query)] == ["a", "b", "c"]
+    # The read ended its transaction: the next one sees the delete.
+    assert [r.source for r in await retriever.aretrieve(query)] == ["a", "c"]
+    assert not retriever._store.connection.in_transaction
+    retriever.close()
+    writer.close()
+    indexer.close()
+
+
 # --- errors and registration ------------------------------------------------
 
 

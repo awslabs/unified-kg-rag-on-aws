@@ -20,8 +20,8 @@ against):
 Values are encoded and decoded by ``neptune_codec``, so
 ``indexing.neptune.property_max_length`` truncates strings as in Neptune.
 Dropping a vertex drops its incident edges and memberships. Each store uses
-one connection behind a lock, in WAL mode, and waits up to
-``search.store_timeout_seconds`` for another writer's lock.
+one connection behind a lock, in WAL mode (each read is one snapshot), and
+waits up to ``search.store_timeout_seconds`` for another writer's lock.
 """
 
 from __future__ import annotations
@@ -239,9 +239,21 @@ class SQLiteGraphStore:
 
     @contextmanager
     def read(self, operation: str) -> Iterator[sqlite3.Connection]:
-        """The connection, under the lock, with errors typed."""
+        """The connection, under the lock, with errors typed, in one read
+        transaction: every statement of the block reads the same snapshot, so
+        another connection's write between two of them is not seen half way
+        (a vertex a neighbour query returned is still there to read)."""
         with self._lock, self.errors(operation):
-            yield self.connection
+            connection = self.connection
+            # Inside a write transaction, that transaction is the snapshot.
+            own = not connection.in_transaction
+            if own:
+                connection.execute("BEGIN")
+            try:
+                yield connection
+            finally:
+                if own and connection.in_transaction:
+                    connection.execute("ROLLBACK")
 
     @contextmanager
     def transaction(self, operation: str) -> Iterator[sqlite3.Connection]:
