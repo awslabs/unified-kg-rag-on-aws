@@ -158,6 +158,52 @@ class SearchQuery(BaseModel):
         return validate_safe_name(value, "suffix")
 
 
+class RerankStatus(str, Enum):
+    """What reranking did for one query (``SearchResult.metadata["rerank"]``).
+
+    - ``applied``: the rerank model reordered the candidates.
+    - ``disabled``: reranking is off (``search.reranking.enabled: false`` or
+      ``providers.rerank.kind: none``).
+    - ``unavailable``: reranking is on but the rerank model could not be built.
+    - ``skipped``: nothing to rerank (no candidates, none of a rerank-eligible
+      type, no query text).
+    - ``failed``: the rerank call raised or returned nothing usable; the fused
+      order was kept.
+    """
+
+    APPLIED = "applied"
+    DISABLED = "disabled"
+    UNAVAILABLE = "unavailable"
+    SKIPPED = "skipped"
+    FAILED = "failed"
+
+    @property
+    def severity(self) -> int:
+        """Rank for the worst-case summary over a query's rerank stages."""
+        return _RERANK_SEVERITY[self]
+
+
+_RERANK_SEVERITY = {
+    RerankStatus.FAILED: 4,
+    RerankStatus.UNAVAILABLE: 3,
+    RerankStatus.APPLIED: 2,
+    RerankStatus.SKIPPED: 1,
+    RerankStatus.DISABLED: 0,
+}
+
+
+class RerankStage(BaseModel):
+    """One rerank step of a query: its outcome, what it covered and why."""
+
+    status: RerankStatus = Field(description="Outcome of this rerank step")
+    scope: str = Field(
+        description="Result types offered to the reranker: 'all' or e.g. 'text'"
+    )
+    reason: str | None = Field(
+        default=None, description="Why the step was not applied, if it was not"
+    )
+
+
 class SearchResult(BaseModel):
     query: SearchQuery = Field(description="Original search query that was processed")
     results: list[RetrievalResult] = Field(description="Retrieved search results")

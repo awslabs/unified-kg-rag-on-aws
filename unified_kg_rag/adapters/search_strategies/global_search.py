@@ -14,6 +14,7 @@ from unified_kg_rag.adapters.retrieval.base import (
     BaseSearchStrategy,
     is_fatal_retrieval_error,
 )
+from unified_kg_rag.adapters.retrieval.hybrid_scorer import RerankTrace
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
 from unified_kg_rag.adapters.store_errors import is_bad_request
 from unified_kg_rag.domain.models import (
@@ -119,6 +120,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         self, query: SearchQuery, config: RunnableConfig | None = None
     ) -> SearchResult:
         start_time = time.time()
+        rerank = self._new_rerank_trace()
         logger.info(
             "Global search started - query: %s ('%s')",
             text_digest(query.query),
@@ -134,7 +136,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
                 total_results=0,
                 search_strategy="global_search",
                 processing_time=time.time() - start_time,
-                metadata={},
+                metadata={"rerank": rerank.summary()},
             )
 
         community_ids = self._get_ids(retrieved_communities, "community_id")
@@ -157,7 +159,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         )
 
         final_results = await self._augment_and_rerank_communities(
-            selected_communities, retrieved_communities, query
+            selected_communities, retrieved_communities, query, rerank
         )
         logger.debug(
             "Augmented %s items: '%s%s'",
@@ -205,6 +207,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
                 "selected_community_count": len(selected_communities),
                 "map_reduce_applied": self._was_map_reduce_applied(final_results),
                 "map_reduce_no_relevant_points": no_relevant_points,
+                "rerank": rerank.summary(),
                 # The chain sets error.type on the strategy span from it.
                 **({"degraded_error": degraded[0]} if degraded else {}),
             },
@@ -332,6 +335,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         selected: list[RetrievalResult],
         fallback: list[RetrievalResult],
         query: SearchQuery,
+        rerank: RerankTrace | None = None,
     ) -> list[RetrievalResult]:
         if not selected:
             # Dynamic selection kept nothing: fall back to the retrieved reports,
@@ -348,6 +352,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
                 "opensearch_community_reports": selected,
                 "text_units": context,
             },
+            rerank_trace=rerank,
             top_k=query.top_k,
             retrieval_multiplier=query.retrieval_multiplier,
             query=query.query,

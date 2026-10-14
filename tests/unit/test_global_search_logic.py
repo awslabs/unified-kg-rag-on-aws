@@ -13,11 +13,12 @@ never runs; retriever and chain objects are replaced with fakes / AsyncMocks.
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
 from unified_kg_rag.adapters.search_strategies.global_search import GlobalSearchStrategy
-from unified_kg_rag.domain.models import RetrievalResult, SearchQuery
+from unified_kg_rag.domain.models import Config, RetrievalResult, SearchQuery
 from unified_kg_rag.shared.utils.langchain import BatchProcessor
 
 pytestmark = pytest.mark.unit
@@ -71,6 +72,15 @@ class _StubRetriever:
         return self._results
 
 
+def _no_rerank_scorer() -> Any:
+    """A real scorer with reranking off (asearch asks it for a rerank trace)."""
+    from unified_kg_rag.adapters.retrieval.hybrid_scorer import HybridScorer
+
+    config = Config()
+    config.search.reranking.enabled = False
+    return HybridScorer(config)
+
+
 def _bare_strategy(
     *,
     threshold: float = 0.5,
@@ -98,6 +108,7 @@ def _bare_strategy(
     )
     strat.ignore_errors = ignore_errors
     strat.target_language = "en"
+    strat.hybrid_scorer = _no_rerank_scorer()
     strat.retrievers = retrievers or {}
     strat.config = SimpleNamespace(
         indexing=SimpleNamespace(

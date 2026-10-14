@@ -10,7 +10,7 @@ from langchain_core.retrievers import BaseRetriever
 from langchain_core.runnables import RunnableConfig
 
 from unified_kg_rag.adapters.providers import Providers
-from unified_kg_rag.adapters.retrieval.hybrid_scorer import HybridScorer
+from unified_kg_rag.adapters.retrieval.hybrid_scorer import HybridScorer, RerankTrace
 from unified_kg_rag.adapters.retrieval.token_manager import (
     SectionType,
     TokenManager,
@@ -185,14 +185,24 @@ class BaseSearchStrategy(ABC):
                 span.set_attributes(_retrieval_attributes(results))
             return results
 
+    def _new_rerank_trace(self) -> RerankTrace:
+        """The per-query rerank record ``asearch`` passes to ``_fuse_and_rerank``
+        and reports as ``SearchResult.metadata["rerank"]``."""
+        return self.hybrid_scorer.new_trace()
+
     async def _fuse_and_rerank(
-        self, results_dict: dict[str, list[RetrievalResult]], **kwargs: Any
+        self,
+        results_dict: dict[str, list[RetrievalResult]],
+        rerank_trace: RerankTrace | None = None,
+        **kwargs: Any,
     ) -> list[RetrievalResult]:
         """``HybridScorer.fuse_and_rerank_results`` off the event-loop thread.
 
         Reranking is a blocking model call (a Bedrock round trip by default),
-        so running it inline would stall every other query on the loop.
+        so running it inline would stall every other query on the loop. The
+        rerank outcome is recorded on ``rerank_trace``, the calling query's own.
         """
+        trace = rerank_trace if rerank_trace is not None else self._new_rerank_trace()
         tracing = observability.is_enabled()
         with observability.span(
             "kg_rag.fusion",
@@ -200,12 +210,16 @@ class BaseSearchStrategy(ABC):
         ) as span:
             # to_thread copies the context, so the rerank span nests here.
             results: list[RetrievalResult] = await asyncio.to_thread(
-                self.hybrid_scorer.fuse_and_rerank_results, results_dict, **kwargs
+                self.hybrid_scorer.fuse_and_rerank_results,
+                results_dict,
+                rerank_trace=trace,
+                **kwargs,
             )
             if tracing:
                 span.set_attributes(
                     {
                         "kg_rag.results_out": len(results),
+                        "kg_rag.rerank_status": trace.stages[-1].status.value,
                         "kg_rag.reranked": sum(
                             bool((r.metadata or {}).get("reranked")) for r in results
                         ),

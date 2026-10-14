@@ -915,6 +915,8 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
                         "kg_rag.total_results": result.total_results,
                     }
                 )
+                if rerank := result.metadata.get("rerank"):
+                    span.set_attribute("kg_rag.rerank_status", rerank["status"])
             return result
 
     @staticmethod

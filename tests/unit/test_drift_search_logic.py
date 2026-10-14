@@ -18,6 +18,7 @@ from types import SimpleNamespace
 import pytest
 from botocore.exceptions import ClientError
 
+from unified_kg_rag.adapters.retrieval.hybrid_scorer import HybridScorer
 from unified_kg_rag.adapters.search_strategies.drift_search import DriftSearchStrategy
 from unified_kg_rag.domain.models import Config, RetrievalResult, SearchQuery
 from unified_kg_rag.shared.exceptions import StoreAccessDeniedError
@@ -73,6 +74,13 @@ class _StubRetriever:
         return self._results
 
 
+def _no_rerank_scorer() -> HybridScorer:
+    """A real scorer with reranking off (asearch asks it for a rerank trace)."""
+    config = Config()
+    config.search.reranking.enabled = False
+    return HybridScorer(config)
+
+
 def _bare_strategy(
     *,
     retrievers: dict | None = None,
@@ -100,6 +108,7 @@ def _bare_strategy(
     strat.ignore_errors = ignore_errors
     strat.target_language = "en"
     strat.retrievers = retrievers or {}
+    strat.hybrid_scorer = _no_rerank_scorer()
     strat.config = SimpleNamespace(
         indexing=SimpleNamespace(
             opensearch=SimpleNamespace(
@@ -694,8 +703,8 @@ async def test_asearch_skips_primer_without_candidate_communities() -> None:
         called["iterative"] += 1
 
     strat._iterative_search = _fake_iterative  # type: ignore[method-assign]
-    strat.hybrid_scorer = SimpleNamespace(
-        fuse_and_rerank_results=lambda groups, **kw: groups["results"]
+    strat.hybrid_scorer.fuse_and_rerank_results = (  # type: ignore[method-assign]
+        lambda groups, **kw: groups["results"]
     )
 
     result = await strat.asearch(SearchQuery(query="q"))
@@ -763,7 +772,7 @@ async def test_asearch_fuses_with_per_type_quota() -> None:
         return groups["results"]
 
     strat._iterative_search = _fake_iterative  # type: ignore[method-assign]
-    strat.hybrid_scorer = SimpleNamespace(fuse_and_rerank_results=_fuse)
+    strat.hybrid_scorer.fuse_and_rerank_results = _fuse  # type: ignore[method-assign]
     strat.drift_config.enable_primer = False
 
     await strat.asearch(SearchQuery(query="q", top_k=10))
@@ -799,7 +808,7 @@ async def test_asearch_ranks_each_type_by_score_before_fusion() -> None:
         return groups["results"]
 
     strat._iterative_search = _fake_iterative  # type: ignore[method-assign]
-    strat.hybrid_scorer = SimpleNamespace(fuse_and_rerank_results=_fuse)
+    strat.hybrid_scorer.fuse_and_rerank_results = _fuse  # type: ignore[method-assign]
     strat.drift_config.enable_primer = False
 
     await strat.asearch(SearchQuery(query="q", top_k=10))
@@ -851,8 +860,8 @@ async def test_asearch_passes_the_callers_config_to_the_primer() -> None:
         received.append(config)
 
     strat._iterative_search = _fake_iterative  # type: ignore[method-assign]
-    strat.hybrid_scorer = SimpleNamespace(
-        fuse_and_rerank_results=lambda groups, **kw: groups["results"]
+    strat.hybrid_scorer.fuse_and_rerank_results = (  # type: ignore[method-assign]
+        lambda groups, **kw: groups["results"]
     )
     caller_config = {"tags": ["caller"]}
 

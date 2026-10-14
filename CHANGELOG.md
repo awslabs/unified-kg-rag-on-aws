@@ -308,6 +308,15 @@ Library API (Python callers and custom backends).
   `xray` VPC endpoint; `GRAPHRAG_OBSERVABILITY_ENABLED` /
   `GRAPHRAG_OBSERVABILITY_BACKEND` overrides; and a runbook recipe with
   Bedrock model invocation logging as the account-level backstop (#269).
+- Per-query rerank status: `metadata.rerank` on every search result and RAG
+  output (`applied`, `disabled`, `unavailable`, `skipped` or `failed`, per
+  rerank stage plus a worst-case summary), a `Rerank:` line in `run-rag
+  --verbose`, `rerank_status` on each evaluation result and
+  `rerank_status_counts` in the summary, and `kg_rag.rerank_status` on the
+  fusion and strategy spans. A rerank model that could not be built is now
+  logged at ERROR instead of WARNING. Opt-in `search.reranking.required`
+  fails the query with `RerankModelError` instead of answering from the
+  fused order. Reported by @vibhupb (#83) (#PR).
 
 ### Changed
 - `backend: local` selects the embedded SQLite graph and vector stores

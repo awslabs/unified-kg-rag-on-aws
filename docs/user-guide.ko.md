@@ -244,7 +244,8 @@ Bedrock을 쓸 수 있습니다.
   인덱싱해야 합니다.
 - **재순위화.** 크로스 인코더는 첫 질의 때 Hugging Face에서 모델을 내려받습니다.
   `[local]` extra가 없거나 `kind: none`이면 융합 순서를 그대로 씁니다. 이 경우 로그에 한 번
-  남고 융합 스팬에 `kg_rag.rerank_enabled=false`로 보입니다.
+  남고 융합 스팬에 `kg_rag.rerank_enabled=false`로, `metadata.rerank.status`에
+  `unavailable`(`kind: none`이면 `disabled`)로 보입니다.
 - **내장 저장소.** `sqlite` 저장소는 각각 파일 하나이며, 처음 쓸 때 만들어집니다.
   상대 경로 `sqlite_path`는 설정 파일 디렉터리(설정 파일이 없으면 작업 디렉터리)를
   기준으로 해석합니다. `indexing.neptune`과 `indexing.opensearch` 설정(인덱스 접두사,
@@ -621,6 +622,7 @@ LLM 단계는 Bedrock I/O가 병목이므로 동시성을 CPU 수보다 훨씬 �
 | `search.fusion.diversity_lambda` | `0.5` | MMR 균형값입니다. `1.0`은 관련도만, `0.0`은 다양성을 최대로 반영합니다. |
 | `search.reranking.enabled` | `true` | 융합 결과를 `rerank_model_id`(`cohere.rerank-v3-5:0`)로 재순위화합니다. |
 | `search.reranking.top_k` | `100` | 재순위화 모델에 보내는 후보 수입니다. |
+| `search.reranking.required` | `false` | `true`이면 재순위화가 켜져 있는데 재순위화 모델을 만들 수 없거나, 재순위화 호출이 실패하거나, 쓸 수 있는 결과를 돌려주지 않을 때 질의를 `RerankModelError`로 실패시킵니다. `false`이면 이런 경우 융합 순서를 유지합니다(초기화 실패는 ERROR로 기록). 재순위화가 꺼져 있거나 `providers.rerank.kind`가 `none`이면 효과가 없습니다. [재순위화 상태](#재순위화-상태) 참고. |
 | `search.lightrag_search.kg_stream_top_k` | `40` | LightRAG 엔티티·관계 벡터 질의의 폭입니다(요청의 `top_k`에 대한 하한). |
 | `search.lightrag_search.chunk_stream_top_k` | `20` | LightRAG 청크 스트림의 폭입니다. |
 | `search.lightrag_search.enable_graph_expansion` | `false` | `mix`/`hybrid`에서 일치한 항목을 Neptune으로 추가 확장합니다. |
@@ -827,8 +829,10 @@ Secrets Manager나 태스크 시크릿에서 주입하세요.
   단계의 수치 지표를 `kg_rag.stage.<metric>`으로, 단계가 예외로 끝나면 `error.type`과
   예외) → `kg_rag.batch` / `kg_rag.batch.chunk`(항목 수와 실패 수) → 모델
   호출마다 `chat <model>` 스팬, 임베딩 호출마다 `embeddings <model>` 스팬
-- 질의: `kg_rag.query` → `kg_rag.strategy` → `kg_rag.retrieve`(결과 유형별 적중 수와
-  최대 50개의 소스 ID) → `kg_rag.fusion`(입력·출력 수) → `kg_rag.rerank`
+- 질의: `kg_rag.query` → `kg_rag.strategy`(질의의 [재순위화 상태](#재순위화-상태)인
+  `kg_rag.rerank_status`) → `kg_rag.retrieve`(결과 유형별 적중 수와
+  최대 50개의 소스 ID) → `kg_rag.fusion`(입력·출력 수, 해당 단계의
+  `kg_rag.rerank_status`) → `kg_rag.rerank`
   (`kg_rag.rerank.status` = `ok`, `empty`, `error`와 문서 수) →
   `kg_rag.context_build`(사용한 토큰과 토큰 예산) → 답변 생성의 `chat <model>` 스팬
 - 모델 스팬은 OpenTelemetry GenAI 시맨틱 규약을 따릅니다(임베딩, Bedrock 재순위화
@@ -1102,6 +1106,31 @@ run-rag --query "..." --verbose --config-path config.yaml
 # Attribute filters
 run-rag --query "..." --filters attr_category:research type:person --config-path config.yaml
 ```
+
+### 재순위화 상태
+
+모든 질의는 재순위화 결과를 `SearchResult`와 RAG 출력의 `metadata.rerank`에
+남깁니다(따라서 `--output-format json`에도 나옵니다). `status`, `reason`, `stages`로
+구성되며, `stages`에는 재순위화 단계마다 `status`, `scope`(`all`, 또는 재순위화한
+결과 유형. 예: `local`, `drift`, `mix`, `hybrid`의 `text`), `reason`이 있습니다.
+`--verbose`는 실행 지표에 `Rerank:` 한 줄로 출력합니다.
+
+| 상태 | 의미 |
+|---|---|
+| `applied` | 재순위화 모델이 후보 순서를 바꿨습니다. |
+| `disabled` | 재순위화가 꺼져 있습니다: `search.reranking.enabled: false` 또는 `providers.rerank.kind: none`. |
+| `unavailable` | 재순위화가 켜져 있지만 재순위화 모델을 만들 수 없습니다(초기화 실패, 또는 크로스 인코더의 `[local]` extra 미설치). 초기화 실패는 ERROR로 기록됩니다. |
+| `skipped` | 재순위화할 대상이 없습니다: 후보 없음(전략이 일찍 반환한 경우 포함), 재순위화 대상 유형의 결과 없음, 질의 텍스트 없음. |
+| `failed` | 재순위화 호출이 예외를 냈거나(`bedrock:Rerank` 거부, 모델이 없는 리전, 연결할 수 없는 엔드포인트) 쓸 수 있는 결과를 돌려주지 않았습니다. 융합 순서를 유지했습니다. |
+
+한 질의가 여러 번 재순위화하면 최상위 `status`는 가장 나쁜 단계의 상태이며, 순서는
+`failed` > `unavailable` > `applied` > `skipped` > `disabled`입니다. 각 결과의
+`metadata.reranked` 플래그는 그대로 모델이 순서를 바꾼 결과를 표시합니다. Bedrock
+재순위화 모델을 만들 때는 AWS를 호출하지 않으므로, 권한이나 리전 문제는
+`unavailable`이 아니라 첫 질의의 `failed`로 나타납니다. 이런 질의를 융합 순서로
+답하는 대신 `RerankModelError`로 실패시키려면 `search.reranking.required: true`를
+설정하세요. 이 상태는 `kg_rag.fusion`과 `kg_rag.strategy` 스팬의
+`kg_rag.rerank_status` 속성에도 기록됩니다.
 
 필터는 OpenSearch에서는 `term`/`terms`/`range` 절로, Neptune에서는 `has` 단계로
 변환됩니다. 저장소마다 해당 인덱서가 쓰는 필드를 받습니다.
@@ -1547,6 +1576,10 @@ run-eval --eval-data-path s3://my-bucket/eval/my_eval_data.json \
   `unanswerable` 블록(`total`, `correct_abstentions`, `accuracy`)이 있습니다. 답할 수
   있는 항목에서 거절은 다른 답변과 똑같이 채점합니다(보통 놓침). 각 결과에는
   `abstained`가 기록됩니다.
+- `rerank_status_counts` — 재순위화 상태별 질의 수입니다(예:
+  `{"applied": 48, "failed": 2}`). 각 결과에는 `rerank_status`(`applied`,
+  `disabled`, `unavailable`, `skipped`, `failed`, 답변 생성이 먼저 실패했으면 `null`)가
+  기록됩니다([재순위화 상태](#재순위화-상태) 참고).
 - `run_manifest` — CLI 인자(`--model-base-url` 같은 `*_url` 인자는 사용자 정보·쿼리·
   프래그먼트를 뺀 값), 모델 ID(답변 생성, 평가 판정 모델·임베딩), 패키지 버전,
   git 커밋(`git_sha`. 추적 파일이 커밋과 다르면 `git_dirty`도 기록. 패키지를 해당
@@ -1762,7 +1795,9 @@ SigV4), OpenSearch(설정한 인덱스 읽기·쓰기), S3(설정한 버킷), Dy
 > 인가합니다. 파운데이션 모델 ARN이나 추론 프로파일 ARN으로 범위를 좁힌 정책 문으로는
 > 거부됩니다. CDK 태스크 역할(`iac/stacks/compute_stack.py`)처럼 별도 정책 문에서
 > `Resource: "*"`에 `bedrock:Rerank`를 허용하세요. 이 권한이 없으면 질의마다
-> `Reranking failed: ...` ERROR가 남고, 재순위화하지 않은 융합 결과를 반환합니다.
+> `Reranking failed: ...` ERROR가 남고, `metadata.rerank.status: failed`를 보고하며,
+> 재순위화하지 않은 융합 결과를 반환합니다(`search.reranking.required: true`이면
+> 질의가 실패합니다).
 > 재순위화는 기본으로 켜져 있습니다(`search.reranking.enabled`). 이 권한을 줄 수
 > 없다면 `false`로 설정하세요.
 >
@@ -1884,6 +1919,7 @@ graph_indexer_factory=..., retriever_builders=...)`). 번들 없이 쓸 때
   결정적입니다. 설정을 비교할 때는 수집과 질의를 두 번 이상 실행해 비교하세요.
 - **재순위화는 리전에 따라 다릅니다.** 재순위화 모델은 모든 Bedrock 리전에 있지
   않습니다([필수 모델](#필수-모델) 참고). 재순위화가 없으면 융합 결과의 순위만 씁니다.
+  질의마다 `metadata.rerank`에 이 사실이 나타납니다([재순위화 상태](#재순위화-상태)).
 - **기본 제공 모델 공급자는 세 가지입니다.** 언어 모델과 임베딩은 Amazon Bedrock(기본값),
   Ollama, OpenAI 호환 서버를, 재순위화는 Bedrock이나 sentence-transformers 크로스 인코더를
   씁니다([로컬 모드](#로컬-모드-aws-없이)). 다른 공급자는 `register_provider`로 빌더를

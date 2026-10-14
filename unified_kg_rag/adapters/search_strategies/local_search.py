@@ -42,6 +42,7 @@ class LocalSearchStrategy(BaseSearchStrategy):
         self, query: SearchQuery, config: RunnableConfig | None = None
     ) -> SearchResult:
         start_time = time.time()
+        rerank = self._new_rerank_trace()
         logger.info(
             "Local search started - query: %s ('%s') with %s focus entities",
             text_digest(query.query),
@@ -93,6 +94,7 @@ class LocalSearchStrategy(BaseSearchStrategy):
         # per-section context assembly.
         final_results = await self._fuse_and_rerank(
             all_results,
+            rerank_trace=rerank,
             top_k=query.top_k,
             retrieval_multiplier=query.retrieval_multiplier,
             query=query.query,
@@ -118,6 +120,7 @@ class LocalSearchStrategy(BaseSearchStrategy):
                 "candidate_entity_count": chain_stats["candidate_entity_count"],
                 "expanded_entity_count": chain_stats["expanded_entity_count"],
                 "text_unit_count": chain_stats["text_unit_count"],
+                "rerank": rerank.summary(),
             },
         )
 

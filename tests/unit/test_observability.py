@@ -514,6 +514,62 @@ async def test_query_span_tree_carries_counts_and_ids_not_content(
             assert "What does Vendor supply" not in str(value)
 
 
+async def test_fusion_and_strategy_spans_carry_the_rerank_status(
+    tracing: Tracing,
+) -> None:
+    from unittest.mock import MagicMock
+
+    from unified_kg_rag.adapters.providers import Providers
+
+    class _FailingReranker:
+        top_n = None
+
+        def compress_documents(self, documents: Any, query: str) -> Any:
+            raise RuntimeError("rerank backend down")
+
+    class _RerankFactory:
+        kind = "fake"
+
+        def get_model(self, model_id: Any, **kwargs: Any) -> Any:
+            return _FailingReranker()
+
+        def get_model_info(self, model_id: Any) -> None:
+            return None
+
+    exporter = tracing()
+    config = Config()
+    chain = GraphRAGChain(
+        config=config,
+        providers=Providers(
+            config,
+            boto_session=MagicMock(),
+            llm_factory=_FakeModelFactory(),
+            rerank_factory=_RerankFactory(),
+            retriever_builders={
+                RetrieverRole.DOCUMENT: _FakeRetriever,  # type: ignore[dict-item]
+                RetrieverRole.GRAPH: _FakeRetriever,  # type: ignore[dict-item]
+            },
+        ),
+        memory_manager=_FakeMemoryManager(),  # type: ignore[arg-type]
+    )
+    chain.token_manager.count_tokens = lambda text: len((text or "").split())
+    try:
+        await chain.ainvoke(
+            RAGInput(
+                query="What does Vendor supply?",
+                search_strategy=SearchStrategy.SIMPLE,
+                enable_query_processing=False,
+            )
+        )
+    finally:
+        await chain.aclose()
+
+    assert _attrs(_one(exporter, "kg_rag.fusion"))["kg_rag.rerank_status"] == "failed"
+    assert _attrs(_one(exporter, "kg_rag.strategy"))["kg_rag.rerank_status"] == (
+        "failed"
+    )
+
+
 async def test_a_degraded_strategy_marks_its_span_with_the_error_type(
     tracing: Tracing,
 ) -> None:

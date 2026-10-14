@@ -9,9 +9,15 @@ from typing import Any
 from langchain_core.documents import Document
 
 from unified_kg_rag.adapters.providers import Providers
-from unified_kg_rag.domain.models import Config, FusionMethod, RetrievalResult
+from unified_kg_rag.domain.models import (
+    Config,
+    FusionMethod,
+    RerankStage,
+    RerankStatus,
+    RetrievalResult,
+)
 from unified_kg_rag.ports.model_factory import RerankFactoryPort
-from unified_kg_rag.shared import get_logger
+from unified_kg_rag.shared import RerankModelError, get_logger
 from unified_kg_rag.shared.utils import compute_hash
 
 logger = get_logger(__name__)
@@ -27,6 +33,41 @@ def _with_top_n(model: Any, top_n: int) -> Any:
     clone = copy.copy(model)
     clone.top_n = top_n
     return clone
+
+
+def _cause_name(exc: BaseException) -> str:
+    """Type name of what actually failed (the rerank wrappers re-raise every
+    error as ``RerankModelError``); never the message, which can carry ARNs."""
+    return type(exc.__cause__ or exc).__name__
+
+
+class RerankTrace:
+    """The rerank outcomes of ONE query, one stage per fusion call.
+
+    Each ``asearch`` call creates its own (``HybridScorer.new_trace``) and
+    passes it down explicitly: strategies and their scorer are shared by
+    concurrent queries, so the record must never live on either.
+    """
+
+    def __init__(self, idle: RerankStage) -> None:
+        # Reported when the query never reached fusion (an early return).
+        self._idle = idle
+        self.stages: list[RerankStage] = []
+
+    def record(self, stage: RerankStage) -> None:
+        self.stages.append(stage)
+
+    def summary(self) -> dict[str, Any]:
+        """``SearchResult.metadata["rerank"]``: the worst stage's status and
+        reason (failed > unavailable > applied > skipped > disabled), and
+        every stage in order."""
+        stages = self.stages or [self._idle]
+        worst = max(stages, key=lambda stage: stage.status.severity)
+        return {
+            "status": worst.status.value,
+            "reason": worst.reason,
+            "stages": [stage.model_dump(mode="json") for stage in stages],
+        }
 
 
 class HybridScorer:
@@ -46,15 +87,19 @@ class HybridScorer:
         self.rerank_factory: RerankFactoryPort | None = rerank_factory
         self._providers = providers
         self.rerank_model: Any = None
+        # Status and reason of every query while there is no rerank model.
+        self._inactive: tuple[RerankStatus, str | None] = (
+            RerankStatus.DISABLED,
+            "search.reranking.enabled is false",
+        )
         self._initialize_reranking()
 
     def _initialize_reranking(self) -> None:
+        rerank_config = self.config.search.reranking
+        if not rerank_config.enabled:
+            logger.debug("Reranking is disabled in configuration")
+            return
         try:
-            rerank_config = self.config.search.reranking
-            if not rerank_config or not rerank_config.enabled:
-                logger.debug("Reranking is disabled in configuration")
-                return
-
             if self.rerank_factory is None:
                 self.rerank_factory = Providers.resolve(
                     self.config, self._providers
@@ -64,11 +109,47 @@ class HybridScorer:
                 model_id=rerank_config.rerank_model_id,
                 top_k=rerank_config.top_k,
             )
-
         except Exception as e:
-            logger.warning("Reranking initialization failed: %s", e)
+            if rerank_config.required:
+                if isinstance(e, RerankModelError):
+                    raise
+                raise RerankModelError(f"Rerank model could not be built: {e}") from e
+            # Enabled but not built: every query runs on fusion alone, so say
+            # so loudly once instead of degrading silently.
+            logger.error(
+                "Reranking initialization failed; queries keep the fused "
+                "order (set search.reranking.required to fail instead): %s",
+                e,
+            )
             self.rerank_factory = None
-            self.rerank_model = None
+            self._inactive = (
+                RerankStatus.UNAVAILABLE,
+                f"rerank model initialization failed: {_cause_name(e)}",
+            )
+            return
+        if self.rerank_model is not None:
+            return
+        # A factory may decline to build a model: the no-op provider by design,
+        # a local one whose optional dependency is missing (it logs why).
+        if getattr(self.rerank_factory, "kind", None) == "none":
+            self._inactive = (RerankStatus.DISABLED, "providers.rerank.kind is none")
+            return
+        if rerank_config.required:
+            raise RerankModelError("The rerank provider returned no rerank model")
+        self._inactive = (
+            RerankStatus.UNAVAILABLE,
+            "the rerank provider returned no rerank model",
+        )
+
+    def new_trace(self) -> RerankTrace:
+        """A fresh per-query rerank record (see ``RerankTrace``)."""
+        if self.rerank_model is None:
+            return RerankTrace(self._stage("all", *self._inactive))
+        return RerankTrace(self._stage("all", RerankStatus.SKIPPED, "no candidates"))
+
+    @staticmethod
+    def _stage(scope: str, status: RerankStatus, reason: str | None) -> RerankStage:
+        return RerankStage(status=status, scope=scope, reason=reason)
 
     def fuse_and_rerank_results(
         self,
@@ -78,7 +159,12 @@ class HybridScorer:
         query: str | None = None,
         per_type_quota: dict[str, int] | None = None,
         rerank_only_types: set[str] | None = None,
+        rerank_trace: RerankTrace | None = None,
     ) -> list[RetrievalResult]:
+        """Fuse, diversify, rerank and cut ``results_dict`` to ``top_k``.
+
+        The rerank step's outcome is recorded on ``rerank_trace`` when given.
+        """
         start_time = time.time()
         method = self.fusion_config.method
 
@@ -112,28 +198,42 @@ class HybridScorer:
                 combined_results, top_k, retrieval_multiplier, per_type_quota
             )
 
-        if self.rerank_model is not None and query is not None:
-            if rerank_only_types is None:
-                combined_results = self._apply_bedrock_reranking(
-                    combined_results, query
+        scope = (
+            "all" if rerank_only_types is None else ",".join(sorted(rerank_only_types))
+        )
+        if self.rerank_model is None:
+            stage = self._stage(scope, *self._inactive)
+        elif not query:
+            stage = self._stage(scope, RerankStatus.SKIPPED, "no query text")
+        elif not combined_results:
+            stage = self._stage(scope, RerankStatus.SKIPPED, "no candidates")
+        elif rerank_only_types is None:
+            combined_results, stage = self._apply_bedrock_reranking(
+                combined_results, query, scope
+            )
+        else:
+            # Rerank ONLY the given types (e.g. {"text"}), leaving KG streams
+            # (entity/relationship/community) on their native degree/cosine order.
+            # Content-vs-query reranking buries multi-hop BRIDGE entities/relations
+            # whose description lacks the question's surface terms, and upstream
+            # LightRAG reranks chunks only.
+            to_rerank = [
+                r for r in combined_results if r.retriever_type in rerank_only_types
+            ]
+            kept = [
+                r for r in combined_results if r.retriever_type not in rerank_only_types
+            ]
+            if to_rerank:
+                to_rerank, stage = self._apply_bedrock_reranking(
+                    to_rerank, query, scope
                 )
             else:
-                # Rerank ONLY the given types (e.g. {"text"}), leaving KG streams
-                # (entity/relationship/community) on their native degree/cosine order.
-                # Content-vs-query reranking buries multi-hop BRIDGE entities/relations
-                # whose description lacks the question's surface terms, and upstream
-                # LightRAG reranks chunks only.
-                to_rerank = [
-                    r for r in combined_results if r.retriever_type in rerank_only_types
-                ]
-                kept = [
-                    r
-                    for r in combined_results
-                    if r.retriever_type not in rerank_only_types
-                ]
-                if to_rerank:
-                    to_rerank = self._apply_bedrock_reranking(to_rerank, query)
-                combined_results = kept + to_rerank
+                stage = self._stage(
+                    scope, RerankStatus.SKIPPED, "no rerank-eligible results"
+                )
+            combined_results = kept + to_rerank
+        if rerank_trace is not None:
+            rerank_trace.record(stage)
 
         combined_results.sort(key=lambda x: x.score, reverse=True)
         # A single cross-type [:top_k] cut lets one type (usually entities, with many
@@ -490,10 +590,19 @@ class HybridScorer:
         return [results[i] for i in selected_indices]
 
     def _apply_bedrock_reranking(
-        self, results: list[RetrievalResult], query: str
-    ) -> list[RetrievalResult]:
-        if not self.rerank_model or not results:
-            return results
+        self, results: list[RetrievalResult], query: str, scope: str = "all"
+    ) -> tuple[list[RetrievalResult], RerankStage]:
+        """``results`` reordered by the rerank model, and the step's outcome.
+
+        A failed or empty rerank keeps ``results`` (status ``failed``) unless
+        ``search.reranking.required`` is set, which raises
+        ``RerankModelError`` instead.
+        """
+        if not self.rerank_model:
+            return results, self._stage(scope, *self._inactive)
+        if not results:
+            return results, self._stage(scope, RerankStatus.SKIPPED, "no candidates")
+        required = self.config.search.reranking.required
 
         try:
             start_time = time.time()
@@ -561,28 +670,36 @@ class HybridScorer:
                         reranked_results.append(reranked_result)
 
             processing_time = time.time() - start_time
-
-            if not reranked_results:
-                # The rerank model returned nothing usable (empty output, or all
-                # keys failed the guard above). Returning [] here would silently
-                # drop the entire candidate set and produce an empty answer, so
-                # degrade to the original (already fused/scored) results instead.
-                logger.warning(
-                    "Reranking produced no usable results; "
-                    "falling back to the %s pre-rerank results",
-                    len(results),
-                )
-                return results
-
-            logger.info(
-                "Reranking completed: %s -> %s results in %.3fs",
-                len(results),
-                len(reranked_results),
-                processing_time,
+        except Exception as e:
+            if required:
+                if isinstance(e, RerankModelError):
+                    raise
+                raise RerankModelError(f"Reranking failed: {e}") from e
+            logger.error("Reranking failed; keeping the fused order: %s", e)
+            return results, self._stage(
+                scope, RerankStatus.FAILED, f"rerank call failed: {_cause_name(e)}"
             )
 
-            return reranked_results
+        if not reranked_results:
+            # The rerank model returned nothing usable (empty output, or all
+            # keys failed the guard above). Returning [] here would silently
+            # drop the entire candidate set and produce an empty answer, so
+            # degrade to the original (already fused/scored) results instead.
+            if required:
+                raise RerankModelError("Reranking returned no usable results")
+            logger.warning(
+                "Reranking produced no usable results; "
+                "falling back to the %s pre-rerank results",
+                len(results),
+            )
+            return results, self._stage(
+                scope, RerankStatus.FAILED, "rerank returned no usable results"
+            )
 
-        except Exception as e:
-            logger.error("Reranking failed: %s", e)
-            return results
+        logger.info(
+            "Reranking completed: %s -> %s results in %.3fs",
+            len(results),
+            len(reranked_results),
+            processing_time,
+        )
+        return reranked_results, self._stage(scope, RerankStatus.APPLIED, None)

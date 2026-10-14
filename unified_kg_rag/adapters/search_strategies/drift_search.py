@@ -104,6 +104,7 @@ class DriftSearchStrategy(BaseSearchStrategy):
         self, query: SearchQuery, config: RunnableConfig | None = None
     ) -> SearchResult:
         start_time = time.time()
+        rerank = self._new_rerank_trace()
         logger.info(
             "Drift search started - query: %s ('%s')",
             text_digest(query.query),
@@ -152,6 +153,7 @@ class DriftSearchStrategy(BaseSearchStrategy):
         # bucket by position, so order each type by its native score first.
         final_results = await self._fuse_and_rerank(
             {"results": self._rank_within_type(all_results)},
+            rerank_trace=rerank,
             top_k=query.top_k,
             retrieval_multiplier=query.retrieval_multiplier,
             query=query.query,
@@ -176,6 +178,7 @@ class DriftSearchStrategy(BaseSearchStrategy):
             metadata={
                 "iterations_completed": len(metrics),
                 "iteration_metrics": metrics,
+                "rerank": rerank.summary(),
             },
         )
 
