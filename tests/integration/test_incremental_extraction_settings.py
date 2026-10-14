@@ -52,6 +52,8 @@ class _Harness:
         (self.source / "logistics.txt").write_text("Depot stores widgets for Vendor.")
         self.store = FakeDocStatusStore()
         self.graph = FakeGraphStore()
+        # Both stores persist across runs, as the registry does.
+        self.vectors: FakeVectorStore | None = None
         self.extractions: list[str] = []
         self.claim_calls = 0
 
@@ -63,7 +65,9 @@ class _Harness:
         return _respond(system, human)
 
     def run(self, config: Config, pipeline_id: str) -> PipelineContext:
-        vectors = FakeVectorStore(config.indexing.opensearch)
+        if self.vectors is None:
+            self.vectors = FakeVectorStore(config.indexing.opensearch)
+        vectors = self.vectors
         providers = Providers(
             config,
             boto_session=MagicMock(),

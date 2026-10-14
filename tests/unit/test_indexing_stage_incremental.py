@@ -63,6 +63,7 @@ class _RecordingManager:
         self.opensearch_indexer = SimpleNamespace(
             check_index_settings=lambda suffix=None: None,
             set_doc_status_tracking=lambda tracked: None,
+            read_text_unit_ids=lambda ids, suffix=None: ids,
         )
 
     def index_all_data(self, **kwargs: Any) -> dict[str, IndexingStats]:
@@ -287,6 +288,7 @@ def test_deletion_only_run_checks_the_configured_suffix(mocker) -> None:
     manager.opensearch_indexer = SimpleNamespace(
         check_index_settings=checked.append,
         set_doc_status_tracking=lambda tracked: None,
+        read_text_unit_ids=lambda ids, suffix=None: ids,
     )
     stage = _stage(mocker, store, manager)
     ctx = _context(DocumentDelta(deleted=[compute_doc_id(_DELETED)]), [])

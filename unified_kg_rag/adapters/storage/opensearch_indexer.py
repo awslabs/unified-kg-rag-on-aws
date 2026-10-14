@@ -667,6 +667,17 @@ class OpenSearchIndexer(VectorIndexer):
             )
         return sources
 
+    def read_text_unit_ids(
+        self, ids: list[str], suffix: str | None = None
+    ) -> list[str]:
+        """The ids among ``ids`` in ``suffix``'s live text-unit index."""
+        return [
+            source["id"]
+            for source in self._read_sources(
+                self.opensearch_config.text_units_index_prefix, ids, suffix
+            )
+        ]
+
     def read_claims(self, ids: list[str], suffix: str | None = None) -> list[Claim]:
         """Read stored claims by id from ``suffix``'s live claims index.
 

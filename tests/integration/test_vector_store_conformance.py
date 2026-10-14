@@ -393,6 +393,18 @@ def test_description_reads_are_scoped_to_a_suffix(harness: StoreHarness) -> None
     assert indexer.read_entity_descriptions(["e-depot"]) == {}
 
 
+def test_text_unit_id_reads_are_scoped_to_a_suffix(harness: StoreHarness) -> None:
+    # The incremental probe that the vector store still holds the registry's
+    # documents: [] without a live index, the stored ids with one.
+    indexer = harness.vector_indexer
+    tenant = harness.suffix("tenant")
+    assert indexer.read_text_unit_ids(["t1"], suffix=tenant) == []
+    _write(harness, "text_units", "upsert", _text_units(tenant))
+    found = indexer.read_text_unit_ids(["t1", "t-missing", "t2"], suffix=tenant)
+    assert sorted(found) == ["t1", "t2"]
+    assert indexer.read_text_unit_ids(["t1"]) == []
+
+
 def test_delete_document_artifacts_reaches_every_index(harness: StoreHarness) -> None:
     for kind in _KINDS:
         _write(harness, kind, "index", _ITEMS[kind](None))

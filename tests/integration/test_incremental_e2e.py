@@ -13,7 +13,9 @@ from __future__ import annotations
 import pytest
 
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
+from tests.fixtures.fakes.embeddings import HashingEmbeddingFactory
 from tests.fixtures.fakes.stores import FakeGraphStore, FakeVectorStore
+from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.application.ingestion.incremental import (
     IncrementalIndexer,
     build_document_lineage,
@@ -439,6 +441,70 @@ def test_a_graph_that_lost_the_registrys_documents_fails_fast(harness) -> None:
     graph.clear(["default"])
     with pytest.raises(DataProcessingError, match="indexing.reset"):
         inc.check_graph_holds_registry(delta)
+
+
+def test_a_vector_store_that_lost_the_registrys_documents_fails_fast(
+    harness,
+) -> None:
+    # The vector database was deleted (or providers.vector.sqlite_path
+    # changed) while the graph and the registry stayed: the run would index
+    # only the delta into a fresh vector store, with no error.
+    inc, store, _, vector = harness
+    a = _doc("/a.txt", "x")
+    tus, ents = _artifacts_for(a, ["e-vendor"])
+    _commit(inc, [a], tus, ents)
+    delta, _ = detect_delta([a, _doc("/b.txt", "y")], store)
+
+    inc.check_graph_holds_registry(delta)
+
+    vector.clear(["default"])
+    with pytest.raises(DataProcessingError, match="vector store.*indexing.reset"):
+        inc.check_graph_holds_registry(delta)
+
+
+def test_the_vector_probe_is_skipped_by_a_store_that_cannot_tell(
+    harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    inc, store, _, vector = harness
+    a = _doc("/a.txt", "x")
+    tus, ents = _artifacts_for(a, ["e-vendor"])
+    _commit(inc, [a], tus, ents)
+    vector.clear(["default"])
+    # The port default: a backend that cannot read text units back.
+    monkeypatch.setattr(vector, "read_text_unit_ids", lambda ids, suffix=None: None)
+
+    inc.check_graph_holds_registry(detect_delta([a], store)[0])
+
+
+def test_embedded_stores_moved_vector_file_fails_fast(tmp_path) -> None:
+    def manager(vector_file: str) -> IndexingManager:
+        config = Config()
+        config.providers.graph.kind = "sqlite"
+        config.providers.graph.sqlite_path = str(tmp_path / "graph.sqlite3")
+        config.providers.vector.kind = "sqlite"
+        config.providers.vector.sqlite_path = str(tmp_path / vector_file)
+        providers = Providers(config, embedding_factory=HashingEmbeddingFactory())
+        return IndexingManager(
+            config=config,
+            vector_indexer=providers.build_vector_indexer(),
+            graph_indexer=providers.build_graph_indexer(),
+        )
+
+    store = FakeDocStatusStore()
+    first = manager("vector.sqlite3")
+    a = _doc("/a.txt", "x")
+    tus, ents = _artifacts_for(a, ["e-vendor"])
+    _commit(IncrementalIndexer(store, first), [a], tus, ents)
+    first.close()
+    delta, _ = detect_delta([a, _doc("/b.txt", "y")], store)
+
+    same = manager("vector.sqlite3")
+    IncrementalIndexer(store, same).check_graph_holds_registry(delta)
+    same.close()
+    moved = manager("elsewhere.sqlite3")
+    with pytest.raises(DataProcessingError, match="vector store"):
+        IncrementalIndexer(store, moved).check_graph_holds_registry(delta)
+    moved.close()
 
 
 def test_the_graph_probe_reads_past_documents_without_entities(
