@@ -27,7 +27,7 @@ Read the [AWS Open Source Blog introduction](https://aws.amazon.com/ko/blogs/ope
 
 ![Data ingestion pipeline](./assets/ingestion-pipeline.drawio.png)
 
-Ingestion is a resumable 12-stage pipeline: parse, load, chunk, optionally translate, extract entities and relationships with an LLM, optionally glean, resolve duplicates, optionally extract claims, compute graph metrics, detect Leiden communities with LLM-written reports, and index into OpenSearch and Neptune. Stage checkpoints are cached locally and can be synced to S3.
+Ingestion is a resumable 12-stage pipeline: parse, load, chunk, optionally translate, extract entities and relationships with an LLM, optionally glean, resolve duplicates, optionally extract claims, compute graph metrics, detect Leiden communities with LLM-written reports, and index into the search and graph stores (OpenSearch and Neptune on AWS; embedded SQLite or containers in local mode). Stage checkpoints are cached locally and can be synced to S3.
 
 ![Retrieval pipeline](./assets/retrieval-pipeline.drawio.png)
 
