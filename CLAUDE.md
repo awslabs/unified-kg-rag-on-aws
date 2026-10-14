@@ -26,7 +26,9 @@ ports → domain`, with `shared` as a cross-cutting kernel any layer may use.
   in `__init__`): `ports/__init__` names them but does not export them; import
   them from `adapters.retrieval.base` / `adapters.evaluators.base`.
 - **`adapters/`**: concrete technology bindings — `aws/` (Bedrock, Neptune,
-  OpenSearch, DynamoDB, S3), `local/` (Ollama/OpenAI-compatible, SQLite),
+  OpenSearch, DynamoDB, S3), `local/` (Ollama/OpenAI-compatible, the SQLite
+  doc-status registry, graph store `sqlite_graph.py` and vector engine
+  `search_engine/`),
   `llm/` (provider-neutral chain assembly, retry, token estimate),
   `storage/` (indexers), `retrievers/`,
   `search_strategies/`, `retrieval/` (base + hybrid scorer + token/memory
@@ -133,6 +135,8 @@ Layout: `tests/{unit,integration,property,fixtures/fakes}/`. Markers: `unit`,
   `@pytest.mark.timeout(n)`).
 - `tests/integration/test_local_stores.py` needs `LOCAL_STORES=1` and the
   `docker/compose.local.yaml` stores; the CI `local-stores` job runs it.
+- `tests/integration/test_embedded_e2e.py` runs `backend: local` end to end on
+  the embedded SQLite stores (no containers, no AWS) in the default jobs.
 - `pytest-asyncio` is in `asyncio_mode = "auto"` — `async def test_*` just works.
 - Property tests (`hypothesis`) cover invariants: merge laws, incremental
   rounds and interrupted runs converging with a full build, fusion
