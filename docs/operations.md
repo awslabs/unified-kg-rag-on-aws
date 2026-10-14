@@ -484,30 +484,53 @@ trace summaries. The `xray` interface endpoint (private mode) bills per
 AZ-hour like the others.
 
 **Without the CDK stacks**, run the same collector configuration yourself; the
-one the stack renders, after the CloudWatch OTLP guide, is:
+one the stack renders (`compute_stack.py`, after the CloudWatch OTLP guide) is,
+for `us-east-1`. The memory limit fits a 512 MiB container, and the exporter
+has no queue and no retry so a shutdown flush ends inside ECS's 30 s stop
+timeout:
 
 ```yaml
+extensions:
+  health_check:
+    endpoint: 127.0.0.1:13133
+  sigv4auth/traces:
+    region: us-east-1
+    service: xray
 receivers:
   otlp:
     protocols:
       http:
         endpoint: 127.0.0.1:4318
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 400
+    spike_limit_mib: 100
+  batch:
+    send_batch_size: 512
+    send_batch_max_size: 1000
+    timeout: 5s
 exporters:
   otlphttp/traces:
-    compression: gzip
     traces_endpoint: https://xray.us-east-1.amazonaws.com/v1/traces
+    compression: gzip
     auth:
       authenticator: sigv4auth/traces
-extensions:
-  sigv4auth/traces:
-    region: us-east-1
-    service: xray
+    timeout: 10s
+    sending_queue:
+      enabled: false
+    retry_on_failure:
+      enabled: false
 service:
-  extensions: [sigv4auth/traces]
+  extensions: [health_check, sigv4auth/traces]
   pipelines:
     traces:
       receivers: [otlp]
+      processors: [memory_limiter, batch]
       exporters: [otlphttp/traces]
+  telemetry:
+    metrics:
+      level: none
 ```
 
 The collector's role needs X-Ray write access (`xray:PutTraceSegments`,

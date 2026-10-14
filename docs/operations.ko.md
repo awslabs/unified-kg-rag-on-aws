@@ -457,30 +457,53 @@ fields @timestamp, name, durationNano, attributes.gen_ai.usage.input_tokens, tra
 모드)도 다른 엔드포인트처럼 AZ-시간 단위로 과금됩니다.
 
 **CDK 스택 없이** 쓰려면 같은 수집기 설정을 직접 실행하세요. CloudWatch OTLP
-안내서를 따라 스택이 만드는 설정은 다음과 같습니다.
+안내서를 따라 스택이 만드는 설정(`compute_stack.py`)은 `us-east-1` 기준으로
+다음과 같습니다. 메모리 한도는 512 MiB 컨테이너에 맞춘 값이고, 종료 시 남은
+스팬을 내보내는 작업이 ECS의 30초 중지 제한 안에 끝나도록 exporter에 큐와
+재시도를 두지 않습니다.
 
 ```yaml
+extensions:
+  health_check:
+    endpoint: 127.0.0.1:13133
+  sigv4auth/traces:
+    region: us-east-1
+    service: xray
 receivers:
   otlp:
     protocols:
       http:
         endpoint: 127.0.0.1:4318
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 400
+    spike_limit_mib: 100
+  batch:
+    send_batch_size: 512
+    send_batch_max_size: 1000
+    timeout: 5s
 exporters:
   otlphttp/traces:
-    compression: gzip
     traces_endpoint: https://xray.us-east-1.amazonaws.com/v1/traces
+    compression: gzip
     auth:
       authenticator: sigv4auth/traces
-extensions:
-  sigv4auth/traces:
-    region: us-east-1
-    service: xray
+    timeout: 10s
+    sending_queue:
+      enabled: false
+    retry_on_failure:
+      enabled: false
 service:
-  extensions: [sigv4auth/traces]
+  extensions: [health_check, sigv4auth/traces]
   pipelines:
     traces:
       receivers: [otlp]
+      processors: [memory_limiter, batch]
       exporters: [otlphttp/traces]
+  telemetry:
+    metrics:
+      level: none
 ```
 
 수집기 역할에는 X-Ray 쓰기 권한(`xray:PutTraceSegments`, `xray:PutSpans`,
