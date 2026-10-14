@@ -466,7 +466,7 @@ Library API (Python callers and custom backends).
   and "Σ" to "σ" as Lucene does (an "İstanbul" query missed "istanbul"), and
   end a word at in-word punctuation followed by a mark but no letter
   ("क:" + U+032A). Indexed text is analyzed when an index loads, so stored
-  stores pick this up without re-indexing (#PR).
+  stores pick this up without re-indexing (#281).
 - A search on the embedded search engine reads one snapshot of the file.
   It resolved the index, checked the result window, read the search
   pipeline and loaded each index in separate reads, so an index another
