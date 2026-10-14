@@ -5,8 +5,8 @@
 Two modes (config.network_mode):
   - "private" (default): isolated subnets with NO NAT gateway, and no public
     subnet or internet gateway. The data plane reaches AWS services only
-    through VPC endpoints (Bedrock, S3, DynamoDB, ECR, CloudWatch Logs, STS).
-    No internet egress.
+    through VPC endpoints (Bedrock, S3, DynamoDB, ECR, CloudWatch Logs, STS;
+    X-Ray too with enable_cloudwatch_tracing). No internet egress.
   - "public": private subnets WITH NAT egress (simpler; allows arbitrary
     outbound, e.g. pulling public packages at runtime).
 
@@ -55,6 +55,9 @@ INTERFACE_ENDPOINTS = {
     # kept so such a configuration does not hang in private mode.
     "Sts": ec2.InterfaceVpcEndpointAwsService.STS,
 }
+# Only with enable_cloudwatch_tracing: the collector sidecar's route to the
+# CloudWatch OTLP traces endpoint (xray.<region>.amazonaws.com).
+TRACING_ENDPOINTS = {"XRay": ec2.InterfaceVpcEndpointAwsService.XRAY}
 
 
 class NetworkingStack(Stack):
@@ -187,7 +190,7 @@ class NetworkingStack(Stack):
         self.endpoint_sg.add_ingress_rule(
             self.service_sg, ec2.Port.tcp(443), "HTTPS from the data plane"
         )
-        for name, service in INTERFACE_ENDPOINTS.items():
+        for name, service in self._interface_endpoints().items():
             endpoint = vpc.add_interface_endpoint(
                 f"{name}Endpoint",
                 service=service,
@@ -210,6 +213,11 @@ class NetworkingStack(Stack):
                     conditions={"StringEquals": {"aws:PrincipalAccount": self.account}},
                 )
             )
+
+    def _interface_endpoints(self) -> dict[str, ec2.InterfaceVpcEndpointAwsService]:
+        if self.config.enable_cloudwatch_tracing:
+            return {**INTERFACE_ENDPOINTS, **TRACING_ENDPOINTS}
+        return INTERFACE_ENDPOINTS
 
     def _restrict_gateway_endpoints(
         self, s3: ec2.GatewayVpcEndpoint, dynamodb: ec2.GatewayVpcEndpoint
@@ -270,7 +278,9 @@ class NetworkingStack(Stack):
         # and a missing endpoint only shows up at runtime as a hung call.
         gateways = "s3, dynamodb"
         if self.config.is_private:
-            interfaces = ", ".join(s.short_name for s in INTERFACE_ENDPOINTS.values())
+            interfaces = ", ".join(
+                s.short_name for s in self._interface_endpoints().values()
+            )
             message = (
                 f"Reusing VPC '{self.config.vpc_id}' in private mode: this stack "
                 "creates NO VPC endpoints. The VPC needs PRIVATE_ISOLATED subnets "

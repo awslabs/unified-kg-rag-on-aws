@@ -660,6 +660,8 @@ LLM 단계는 Bedrock I/O가 병목이므로 동시성을 CPU 수보다 훨씬 �
 | `S3_BUCKET_NAME` | `aws.s3.bucket_name` | |
 | `GRAPHRAG_DOC_STATUS_TABLE` | `aws.dynamodb.table_name` | |
 | `GRAPHRAG_DOC_STATUS_CREATE_TABLE` | `aws.dynamodb.create_table_if_missing` | |
+| `GRAPHRAG_OBSERVABILITY_ENABLED` | `observability.enabled` | |
+| `GRAPHRAG_OBSERVABILITY_BACKEND` | `observability.backend` | `none`, `otlp`, `langfuse`, `phoenix` 중 하나. |
 | `LOG_LEVEL` | `logging.level` | |
 | `LOG_FORMAT` | `logging.log_format` | |
 | `LOG_TO_FILE` | `logging.log_to_file` | |
@@ -697,7 +699,10 @@ CDK compute 스택은 `AWS_REGION`, `BEDROCK_REGION`,
 `GRAPHRAG_DOC_STATUS_TABLE`, `GRAPHRAG_DOC_STATUS_CREATE_TABLE=false`(테이블은
 IaC가 관리하며 태스크 역할에는 테이블 생성 권한이 없음), `LOG_FORMAT`을 주입하고,
 가드레일을 배포했다면 `BEDROCK_GUARDRAIL_IDENTIFIER`도 주입합니다(`guardrail_version`을
-설정하면 `BEDROCK_GUARDRAIL_VERSION`도 주입). 증분 인덱싱을
+설정하면 `BEDROCK_GUARDRAIL_VERSION`도 주입). `enable_cloudwatch_tracing`을 켜면
+`GRAPHRAG_OBSERVABILITY_ENABLED=true`, `GRAPHRAG_OBSERVABILITY_BACKEND=otlp`,
+`OTEL_EXPORTER_OTLP_ENDPOINT`(수집기 사이드카), `OTEL_RESOURCE_ATTRIBUTES`도
+주입합니다. 증분 인덱싱을
 쓰려면 설정 파일에 `aws.dynamodb.enabled: true`가 있어야 합니다.
 
 ### 2.11 `observability` — OpenTelemetry 추적
@@ -789,8 +794,11 @@ LangChain이 콜백을 호출하지 않으므로 모델 스팬이 남지 않습�
 되는데, 전역 공급자는 한 번만 설정할 수 있습니다. 나중에 다른 설정으로 다시 구성하면 패키지의
 스팬은 새 내보내기 도구로 가지만, 다른 라이브러리가 전역 OpenTelemetry API로 남기는
 스팬은 버려집니다. CloudWatch로 보내려면 태스크 옆에 ADOT나 OpenTelemetry Collector를 두고
-`backend: otlp`를 쓰세요([운영 런북](operations.ko.md#관측성)에 절차가 있습니다).
-로컬 Langfuse와 Phoenix 절차도 같은 곳에 있습니다.
+`backend: otlp`를 쓰세요. CDK 스택에서는 `-c enable_cloudwatch_tracing=true`가 그
+수집기를 추가하고 백엔드를 설정합니다(절차, Transaction Search, Bedrock 호출 로깅
+보조 수단은 [운영 런북](operations.ko.md#adot-수집기-사이드카를-거친-cloudwatch)에
+있습니다). 로컬 Langfuse와 Phoenix 절차는 [운영 런북](operations.ko.md#관측성)에
+있습니다.
 
 ---
 

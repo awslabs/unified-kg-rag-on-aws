@@ -890,7 +890,9 @@ logging:
 # or for the vendor backends LANGFUSE_HOST / LANGFUSE_PUBLIC_KEY /
 # LANGFUSE_SECRET_KEY and PHOENIX_COLLECTOR_ENDPOINT / PHOENIX_API_KEY. Fill
 # the keys from Secrets Manager or ECS task secrets at runtime.
-# OTEL_SDK_DISABLED=true turns tracing off regardless.
+# OTEL_SDK_DISABLED=true turns tracing off regardless. GRAPHRAG_OBSERVABILITY_ENABLED
+# and GRAPHRAG_OBSERVABILITY_BACKEND override `enabled` and `backend` (the CDK
+# stacks set them with enable_cloudwatch_tracing).
 observability:
   enabled: false
   # none:     send spans to the process's global OpenTelemetry tracer provider

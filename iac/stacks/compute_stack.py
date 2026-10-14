@@ -7,11 +7,18 @@ The same task definition runs each Step Functions phase; the command and
 ``--resume-from-stage`` are supplied as container overrides by the orchestration
 stack. Store endpoints are injected as the env vars the app reads
 (NEPTUNE_ENDPOINT / OPENSEARCH_ENDPOINT / BEDROCK_REGION / S3_BUCKET_NAME).
+
+With ``enable_cloudwatch_tracing`` the task also runs an AWS Distro for
+OpenTelemetry (ADOT) collector sidecar: the app exports OTLP/HTTP to it on
+localhost, and it signs (SigV4, task role) and forwards the spans to the
+CloudWatch OTLP traces endpoint (``https://xray.<region>.amazonaws.com/v1/traces``).
 """
 
 from __future__ import annotations
 
-from aws_cdk import RemovalPolicy, Stack
+import json
+
+from aws_cdk import Duration, RemovalPolicy, Stack
 from aws_cdk import aws_ecr as ecr
 from aws_cdk import aws_ecs as ecs
 from aws_cdk import aws_iam as iam
@@ -22,6 +29,18 @@ from constructs import Construct
 from iac.config import DeploymentConfig
 from iac.stacks.networking_stack import NetworkingStack
 from iac.stacks.storage_stack import StorageStack
+
+# ADOT collector v0.50.0, pinned by the multi-arch index digest so a re-pushed
+# tag cannot change the sidecar. Bump both together (`docker buildx imagetools
+# inspect public.ecr.aws/aws-observability/aws-otel-collector:<tag>`).
+COLLECTOR_REPOSITORY = "aws-observability/aws-otel-collector"
+COLLECTOR_VERSION = "v0.50.0"
+COLLECTOR_DIGEST = (
+    "sha256:7968fb60db6a2390a47ba6a2df029745638486e285c9b2487da1b722d0855a3e"
+)
+# Where the app's OTLP exporter sends spans: the collector in the same task
+# (awsvpc tasks share one network namespace).
+COLLECTOR_OTLP_HTTP = "127.0.0.1:4318"
 
 
 class ComputeStack(Stack):
@@ -228,6 +247,22 @@ class ComputeStack(Stack):
             s3.Bucket.from_bucket_name(
                 self, "CorpusBucket", self.config.corpus_bucket_name
             ).grant_read(role)
+        if self.config.enable_cloudwatch_tracing:
+            # The collector sidecar signs span uploads to the CloudWatch OTLP
+            # traces endpoint with this role. Write-only: PutTraceSegments is
+            # what the CloudWatch guide's managed policies grant for it, and
+            # PutSpans / PutSpansForIndexing are the X-Ray actions for
+            # OpenTelemetry span uploads. None has resource-level scoping.
+            role.add_to_policy(
+                iam.PolicyStatement(
+                    actions=[
+                        "xray:PutTraceSegments",
+                        "xray:PutSpans",
+                        "xray:PutSpansForIndexing",
+                    ],
+                    resources=["*"],
+                )
+            )
         return role
 
     # ----------------------------------------------------- task definition
@@ -276,7 +311,20 @@ class ComputeStack(Stack):
             environment["BEDROCK_GUARDRAIL_IDENTIFIER"] = self.guardrail_identifier
         if self.config.guardrail_version:
             environment["BEDROCK_GUARDRAIL_VERSION"] = self.config.guardrail_version
-        task_def.add_container(
+        if self.config.enable_cloudwatch_tracing:
+            # Tracing on, backend otlp, pointed at the sidecar. Prompt and
+            # completion capture stays at the config default (off).
+            environment.update(
+                {
+                    "GRAPHRAG_OBSERVABILITY_ENABLED": "true",
+                    "GRAPHRAG_OBSERVABILITY_BACKEND": "otlp",
+                    "OTEL_EXPORTER_OTLP_ENDPOINT": f"http://{COLLECTOR_OTLP_HTTP}",
+                    "OTEL_RESOURCE_ATTRIBUTES": (
+                        f"deployment.environment={self.config.env_name}"
+                    ),
+                }
+            )
+        app = task_def.add_container(
             "app",
             image=ecs.ContainerImage.from_ecr_repository(
                 self.repository, self.config.image_tag
@@ -286,4 +334,116 @@ class ComputeStack(Stack):
             ),
             environment=environment,
         )
+        if self.config.enable_cloudwatch_tracing:
+            collector = self._add_trace_collector(task_def)
+            # Started first so the app's first spans find it; START, not
+            # HEALTHY, so a collector that never turns healthy cannot hold the
+            # app back. On stop, ECS stops the app first, then the collector,
+            # which flushes what the app sent on exit.
+            app.add_container_dependencies(
+                ecs.ContainerDependency(
+                    container=collector,
+                    condition=ecs.ContainerDependencyCondition.START,
+                )
+            )
         return task_def
+
+    # ------------------------------------------------ trace collector sidecar
+    def _add_trace_collector(
+        self, task_def: ecs.FargateTaskDefinition
+    ) -> ecs.ContainerDefinition:
+        """The ADOT collector: OTLP/HTTP on localhost in, CloudWatch out."""
+        # Pulled through an ECR pull-through cache of ECR Public: the private
+        # (no-NAT) data plane has no route to public.ecr.aws, but it reaches
+        # this account's ECR through the VPC endpoints, and ECR fetches the
+        # image upstream itself. The cached repository is created on the first
+        # pull and is not removed with the stack.
+        prefix = self.config.collector_cache_prefix
+        cache_rule = ecr.CfnPullThroughCacheRule(
+            self,
+            "CollectorImageCache",
+            ecr_repository_prefix=prefix,
+            upstream_registry="ecr-public",
+            upstream_registry_url="public.ecr.aws",
+        )
+        repository = ecr.Repository.from_repository_name(
+            self, "CollectorRepo", f"{prefix}/{COLLECTOR_REPOSITORY}"
+        )
+        # The first pull through the cache creates the repository and imports
+        # the image, on this one repository only.
+        task_def.add_to_execution_role_policy(
+            iam.PolicyStatement(
+                actions=["ecr:CreateRepository", "ecr:BatchImportUpstreamImage"],
+                resources=[repository.repository_arn],
+            )
+        )
+        task_def.node.add_dependency(cache_rule)
+
+        region, suffix = self.region, self.url_suffix
+        collector_config = {
+            "extensions": {
+                "health_check": {"endpoint": "127.0.0.1:13133"},
+                "sigv4auth/traces": {"region": region, "service": "xray"},
+            },
+            "receivers": {
+                "otlp": {"protocols": {"http": {"endpoint": COLLECTOR_OTLP_HTTP}}}
+            },
+            "processors": {
+                # Hard container limit 512 MiB: refuse data before an OOM kill.
+                "memory_limiter": {
+                    "check_interval": "1s",
+                    "limit_mib": 400,
+                    "spike_limit_mib": 100,
+                },
+                # The endpoint takes at most 10,000 spans / 5 MB per request.
+                "batch": {
+                    "send_batch_size": 512,
+                    "send_batch_max_size": 1000,
+                    "timeout": "5s",
+                },
+            },
+            "exporters": {
+                "otlphttp/traces": {
+                    "traces_endpoint": f"https://xray.{region}.{suffix}/v1/traces",
+                    "compression": "gzip",
+                    "auth": {"authenticator": "sigv4auth/traces"},
+                    # Bounded so a shutdown flush against an unreachable
+                    # endpoint ends inside ECS's 30 s stop timeout: the
+                    # collector then exits 0 instead of being killed.
+                    "timeout": "10s",
+                    "retry_on_failure": {"max_elapsed_time": "15s"},
+                }
+            },
+            "service": {
+                "extensions": ["health_check", "sigv4auth/traces"],
+                "pipelines": {
+                    "traces": {
+                        "receivers": ["otlp"],
+                        "processors": ["memory_limiter", "batch"],
+                        "exporters": ["otlphttp/traces"],
+                    }
+                },
+                # No internal metrics endpoint (:8888) in the task.
+                "telemetry": {"metrics": {"level": "none"}},
+            },
+        }
+        return task_def.add_container(
+            "otel-collector",
+            image=ecs.ContainerImage.from_ecr_repository(repository, COLLECTOR_DIGEST),
+            # Losing the collector loses traces, never the run.
+            essential=False,
+            cpu=256,
+            memory_limit_mib=512,
+            # ADOT reads its YAML (JSON is YAML) from this variable.
+            environment={"AOT_CONFIG_CONTENT": json.dumps(collector_config)},
+            logging=ecs.LogDriver.aws_logs(
+                stream_prefix="otel-collector", log_group=self.log_group
+            ),
+            health_check=ecs.HealthCheck(
+                command=["CMD", "/healthcheck"],
+                interval=Duration.seconds(30),
+                timeout=Duration.seconds(5),
+                retries=3,
+                start_period=Duration.seconds(10),
+            ),
+        )

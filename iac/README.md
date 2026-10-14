@@ -109,7 +109,7 @@ Prep (parse/load/chunk/translate) → GraphBuild (extract/glean/resolve/claims)
 | `env_name` | `dev` | stack/resource name prefix. `dev` keeps bare `GraphRag*`/`graphrag-*` names; a non-dev env (e.g. `prod`) scopes them (`GraphRagProd*`, `prod-graphrag-*`) so environments don't collide in one account/region |
 | `bedrock_region` | deploy region | Bedrock runtime region: injected into the task as `BEDROCK_REGION`, and the region of the `GraphRagGuardrail` stack. With `network_mode=private`, synth fails unless it equals the deploy region (the Bedrock VPC endpoints serve the deploy region only) |
 | `network_mode` | `private` | `private` = isolated subnets + VPC endpoints, **no NAT** (no internet egress); `public` = private subnets with NAT egress |
-| `vpc_id` | _(none)_ | **reuse** an existing VPC instead of creating one. The stack adds **no** VPC endpoints or subnets to it (synth warns with the list): in `private` mode it needs `PRIVATE_ISOLATED` subnets (no NAT or internet gateway route), S3/DynamoDB gateway endpoints, and private-DNS interface endpoints for `bedrock`, `bedrock-runtime`, `bedrock-agent-runtime`, `ecr.api`, `ecr.dkr`, `logs` and `sts`; in `public` mode it needs `PRIVATE_WITH_EGRESS` subnets (NAT route) |
+| `vpc_id` | _(none)_ | **reuse** an existing VPC instead of creating one. The stack adds **no** VPC endpoints or subnets to it (synth warns with the list): in `private` mode it needs `PRIVATE_ISOLATED` subnets (no NAT or internet gateway route), S3/DynamoDB gateway endpoints, and private-DNS interface endpoints for `bedrock`, `bedrock-runtime`, `bedrock-agent-runtime`, `ecr.api`, `ecr.dkr`, `logs` and `sts` (and `xray` with `enable_cloudwatch_tracing`); in `public` mode it needs `PRIVATE_WITH_EGRESS` subnets (NAT route) |
 | `max_azs` | `2` | AZs for a newly-created VPC |
 | `cache_bucket_name` | _(none)_ | **reuse** an existing S3 cache bucket instead of creating one |
 | `corpus_bucket_name` | _(none)_ | S3 bucket the corpus is read from when it is not in the cache bucket: the task role gets read-only access and, in `private` mode, the S3 gateway endpoint policy allows it |
@@ -135,6 +135,7 @@ Prep (parse/load/chunk/translate) → GraphBuild (extract/glean/resolve/claims)
 | `bedrock_model_arns` | _(none)_ | scope Bedrock `InvokeModel` IAM to specific model ARNs: a list in `cdk.json`, or a comma-separated string with `-c bedrock_model_arns=arn:...,arn:...`. The list **replaces** the default `foundation-model/*` grant. If it names only foundation models, the default `inference-profile/*` grants are kept, because the app calls models that are offered only through an inference profile (Claude 4.5 and later) by profile id; a profile call is still authorized against the listed foundation-model ARNs, so no other model becomes callable. Cross-region and global profiles route to several regions, so list foundation models with a `*` region (`arn:aws:bedrock:*::foundation-model/<model-id>`). If the list names any inference-profile ARN, it is used exactly as given and no other profile is granted. `Rerank` and `ListInferenceProfiles` stay on `*` (they have no resource scoping) |
 | `alarm_email` | _(none)_ | subscribe an email to the pipeline alarm topic |
 | `enable_cdk_nag` | `false` | run cdk-nag AwsSolutions (Well-Architected) checks at synth |
+| `enable_cloudwatch_tracing` | `false` | send the app's OpenTelemetry traces to CloudWatch through an ADOT collector sidecar ([CloudWatch tracing](#cloudwatch-tracing-optional)). Adds the sidecar, an ECR pull-through cache rule for its image, X-Ray write actions on the task role and, in `private` mode, an `xray` interface endpoint. Off, the templates are the same as without the option. Needs CloudWatch Transaction Search in the account and region, and an image built with the `otel` extra. With it on, `env_name` may be at most 10 characters (the cache prefix `<env>-graphrag-ecr-public` is limited to 30) |
 | `owner` | `aws-proserve` | `owner` tag applied to every resource |
 | `cost_center` | `unified-kg-rag-on-aws` | `cost-center` tag applied to every resource |
 | `removal_destroy` | `true` (dev) / `false` (non-dev) | `DESTROY` vs `RETAIN` on stack deletion for the stateful stores, the KMS keys, the guardrail, the OpenSearch domain log groups, and the fixed-name ECR repository (emptied first) and log groups (`/<prefix>/tasks`, `/<prefix>/pipeline`). Retained fixed-name resources make the next deploy fail on the duplicate name, so delete them by hand after a `cdk destroy` with `removal_destroy=false` |
@@ -251,13 +252,14 @@ for your region and sizes. What scales each service's cost:
 | Amazon Neptune | Instance-hours × `neptune_instances`, storage and I/O, backup retention | `neptune_instance`, `neptune_instances` (1 in dev), `backup_retention_days`, tear down dev |
 | Amazon OpenSearch Service | Data node-hours × `opensearch_count`, plus three dedicated masters when `opensearch_count > 1`, and 50 GiB gp3 storage per data node | `opensearch_instance`, `opensearch_master_instance`, `opensearch_count` (1 in dev) |
 | AWS Fargate | vCPU and memory per task for the run time of each phase and query task | `fargate_cpu`, `fargate_memory` |
-| VPC interface endpoints (`private`) | Seven endpoints × `max_azs`, billed per AZ-hour, plus data processed | `max_azs`, or reuse a VPC's endpoints (`vpc_id`) |
+| VPC interface endpoints (`private`) | Seven endpoints (eight with `enable_cloudwatch_tracing`) × `max_azs`, billed per AZ-hour, plus data processed | `max_azs`, or reuse a VPC's endpoints (`vpc_id`) |
 | NAT gateways (`public`) | One per AZ, billed per hour, plus data processed | `max_azs`, or use `private` mode |
 | Amazon S3 | Stage checkpoints, embedding cache, corpus, access logs | 30-day expiry on `pipeline-runs/` and `embedding-cache/` |
 | Amazon DynamoDB | On-demand reads and writes: one full-table diff scan per ingestion plus one record per processed document; point-in-time recovery | Fewer, larger runs |
 | Amazon CloudWatch | Log ingestion and retention (task, pipeline and, with `vpc_flow_logs`, flow logs), alarms, dashboard | `vpc_flow_logs`, `flow_log_retention_days` |
 | AWS KMS | Customer-managed keys per month and requests: the alarm-topic key always, the data key with `use_cmk` | `use_cmk` |
 | AWS Step Functions | State transitions per ingestion run (a few per phase) | — |
+| CloudWatch traces (`enable_cloudwatch_tracing`) | Spans ingested by Transaction Search (billed as CloudWatch Logs ingestion into `aws/spans`) and the share of spans indexed beyond the free 1% | `observability.sample_rate` in the image config, the Transaction Search indexing percentage |
 
 Neptune, OpenSearch, interface endpoints and NAT gateways bill while the stack
 exists, whether or not anything runs. `cdk destroy --all` removes them in the
@@ -303,6 +305,56 @@ cdk deploy --all
 > NAT gateways in `public` mode (see [Cost drivers](#cost-drivers)). `removal_destroy=true` (dev default) tears
 > everything down on `cdk destroy --all`; non-dev envs default to
 > `removal_destroy=false` and `deletion_protection=true`.
+
+## CloudWatch tracing (optional)
+
+`-c enable_cloudwatch_tracing=true` adds an AWS Distro for OpenTelemetry
+(ADOT) collector sidecar to the task. The app exports its spans (ingestion
+stages, queries, retrieval, rerank, and model calls with token usage) over
+OTLP/HTTP to the collector on `127.0.0.1:4318`; the collector signs them with
+the task role (SigV4) and sends them to the CloudWatch OTLP traces endpoint
+`https://xray.<region>.amazonaws.com/v1/traces`. Prompt and completion text
+is not recorded (`observability.capture_content` stays `false`).
+
+1. Turn on CloudWatch Transaction Search once per account and region; the
+   traces endpoint rejects spans until it is on. This is an account-level
+   setting that the stacks do not change: see
+   [Observability](../docs/operations.md#cloudwatch-through-the-adot-collector-sidecar)
+   for the commands and what it switches.
+2. Build the image with the `otel` extra (step 2 of [After deploy](#after-deploy)):
+   `--build-arg UV_EXTRAS="--extra otel"` (with Markdown parsing,
+   `--build-arg UV_EXTRAS="--extra otel --extra unstructured"`). An image
+   without it fails at start-up with
+   `observability.enabled is true but OpenTelemetry is not installed`.
+3. Deploy with the option on:
+   `cdk deploy --all -c enable_cloudwatch_tracing=true`.
+
+What the option changes:
+
+- **Task definition**: an `otel-collector` container (ADOT collector
+  `v0.50.0`, pinned by digest in `compute_stack.py`) that is not essential, so
+  a collector failure loses traces but never stops a run. The `app` container
+  starts after it and gets `GRAPHRAG_OBSERVABILITY_ENABLED=true`,
+  `GRAPHRAG_OBSERVABILITY_BACKEND=otlp`,
+  `OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318` and
+  `OTEL_RESOURCE_ATTRIBUTES=deployment.environment=<env_name>`. The collector
+  logs to the task log group under the `otel-collector/` stream prefix.
+- **Image source**: the collector image is pulled through an ECR pull-through
+  cache rule for ECR Public (prefix `<prefix>-ecr-public`), because the
+  `private` data plane cannot reach `public.ecr.aws`. ECR creates the cached
+  repository on the first pull; `cdk destroy` removes the rule but not that
+  repository.
+- **IAM**: the task role gets `xray:PutTraceSegments`, `xray:PutSpans` and
+  `xray:PutSpansForIndexing` (write-only; X-Ray has no resource-level
+  scoping), and the execution role may create and import into the one cached
+  repository.
+- **Network**: in `private` mode, an `xray` interface endpoint (same
+  security group and this-account endpoint policy as the others). A reused
+  private VPC must provide it.
+
+Traces appear in the CloudWatch console under **Application Signals,
+Transaction Search** (service `unified-kg-rag`), and spans are stored in the
+`aws/spans` log group.
 
 ## After deploy
 
@@ -354,7 +406,8 @@ Fargate architecture (x86_64). Outside dev, push a unique version tag instead
 and deploy with `-c image_tag=<tag>`: any tag other than `latest` makes the
 repository's tags immutable, so a pushed image cannot be swapped under the
 running task definition. To parse `.md`/`.html` files, build with
-`--build-arg UV_EXTRAS="--extra unstructured"`.
+`--build-arg UV_EXTRAS="--extra unstructured"`; with `enable_cloudwatch_tracing`,
+add the `otel` extra (`--build-arg UV_EXTRAS="--extra otel"`).
 
 The image bakes in the tracked, endpoint-free `docker/config.yaml` as
 `/app/config.yaml`; the deployed values come from the environment variables the
@@ -470,7 +523,7 @@ TASK_ARN=$(aws ecs run-task --region "$REGION" --cluster "$CLUSTER" \
 
 aws ecs wait tasks-stopped --region "$REGION" --cluster "$CLUSTER" --tasks "$TASK_ARN"
 aws ecs describe-tasks --region "$REGION" --cluster "$CLUSTER" --tasks "$TASK_ARN" \
-  --query 'tasks[0].containers[0].exitCode' --output text
+  --query "tasks[0].containers[?name=='app'].exitCode | [0]" --output text
 aws s3 ls "s3://$CACHE_BUCKET/eval/results/run-001/" --region "$REGION"
 ```
 

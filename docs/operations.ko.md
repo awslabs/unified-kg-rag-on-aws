@@ -383,22 +383,81 @@ observability:
 OpenInference 종류(`LLM`, `EMBEDDING`, `RETRIEVER`, `RERANKER`, `CHAIN`)가
 붙으므로 모델 호출의 토큰 수가 보이고 Sessions 화면에서 대화의 질의가 묶입니다.
 
-### ADOT 수집기를 거친 CloudWatch
+### ADOT 수집기 사이드카를 거친 CloudWatch
 
 CloudWatch는 `https://xray.<region>.amazonaws.com/v1/traces`에서 SigV4로 서명한
-OTLP 트레이스를 받으므로 키가 필요 없습니다. AWS Distro for OpenTelemetry(ADOT)
-수집기나 `sigv4auth` 확장을 쓰는 OpenTelemetry Collector를 태스크 옆(ECS
-사이드카)에서 실행하고, 패키지는 `backend: otlp`와
-`OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318`로 수집기를 가리키게 합니다.
-서명은 수집기가 태스크 역할로 합니다. CloudWatch OTLP 가이드를 따른 수집기 설정은
-다음과 같습니다.
+OTLP 트레이스를 받으므로 키가 필요 없습니다. 앱의 OTLP 익스포터는 요청에 서명하지
+않으므로 옆에 둔 수집기가 서명해서 전달합니다. CDK 스택에서는
+`-c enable_cloudwatch_tracing=true`를 주면 태스크에 AWS Distro for
+OpenTelemetry(ADOT) 수집기 사이드카가 추가되고, 앱이 그 수집기를 가리킵니다
+(`backend: otlp`, `OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318`). 서명은
+수집기가 태스크 역할로 합니다. IAM과 프라이빗 모드의 `xray` 엔드포인트를 포함해
+이 옵션이 바꾸는 내용은
+[iac/README.md](../iac/README.md#cloudwatch-tracing-optional)에 있습니다.
+
+1. **Transaction Search 켜기**(계정과 리전마다 한 번). 켜기 전에는 트레이스
+   엔드포인트가 스팬을 거부합니다. 계정 전체 설정이라 이 스택만이 아니라 그
+   리전의 모든 X-Ray 스팬 수집을 CloudWatch Logs 수집(`aws/spans` 로그 그룹,
+   CloudWatch Logs 수집 요금)으로 옮기고, 스팬의 1%를 무료로 트레이스 요약으로
+   색인합니다. 다른 워크로드가 현재 설정에 기대고 있을 수 있으니 먼저 확인하세요.
+
+   ```bash
+   aws xray get-trace-segment-destination --region "$REGION"
+   ```
+
+   `"Destination": "CloudWatchLogs", "Status": "ACTIVE"`이면 이미 켜져 있습니다.
+   아니면 CloudWatch 콘솔(**Application Signals, Transaction Search, Enable
+   Transaction Search**)에서 켜세요. 콘솔은 X-Ray에 필요한 로그 그룹 리소스 정책도
+   함께 설정합니다. API로 켜려면
+   [Transaction Search 안내서](https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/Enable-TransactionSearch.html)의
+   단계(`xray.amazonaws.com`용 CloudWatch Logs 리소스 정책을 만든 뒤
+   `aws xray update-trace-segment-destination --destination CloudWatchLogs`)를
+   따르세요. 켠 뒤 스팬을 검색할 수 있을 때까지 10분 정도 걸릴 수 있습니다.
+2. **`otel` extra를 넣어 이미지 빌드**:
+   `docker build --build-arg UV_EXTRAS="--extra otel" -f docker/Dockerfile ...`.
+   빠지면 시작할 때
+   `observability.enabled is true but OpenTelemetry is not installed`로 실패합니다.
+3. **배포**: `cdk deploy --all -c enable_cloudwatch_tracing=true`. 이후 배포에도
+   이 플래그를 주거나 `cdk.json`에 넣으세요. 빠뜨리면 다음 배포에서 사이드카가
+   제거됩니다.
+
+**확인할 곳.** 수집이나 질의를 실행한 뒤 CloudWatch 콘솔의 **Application Signals,
+Transaction Search**에서 서비스 `unified-kg-rag`로 거르세요. 수집 실행마다
+`kg_rag.ingestion.run` 트레이스 하나, 질의마다 `kg_rag.query` 트레이스 하나가
+생기며 자식 스팬은 [관측성](#관측성)에 나온 그대로입니다. 스팬은 `aws/spans` 로그
+그룹에도 있어 Logs Insights로 볼 수 있습니다(필드가 비어 나오면 먼저
+`fields @message | limit 5`로 정확한 필드 경로를 확인하세요).
+
+```text
+fields @timestamp, name, durationNano, attributes.gen_ai.usage.input_tokens, traceId
+| filter resource.attributes.service.name = "unified-kg-rag"
+| sort @timestamp desc
+| limit 50
+```
+
+트레이스가 오지 않으면 태스크 로그 그룹(`/<prefix>/tasks`)의 `otel-collector/`
+로그 스트림을 읽으세요. `403`이면 X-Ray 권한이 없거나 SigV4 서비스 이름이 틀린
+것이고, 대상(destination)을 언급하며 거부되면 Transaction Search가 꺼진 것이며,
+`private` 모드에서 연결 시간 초과가 나면 `xray` 인터페이스 엔드포인트가 없는
+것입니다(재사용하는 VPC는 직접 준비해야 합니다). 수집기 컨테이너는 필수
+컨테이너가 아니므로 수집기가 실패해도 실행은 실패하지 않습니다.
+
+**비용.** Transaction Search는 스팬을 `aws/spans`의 CloudWatch Logs 수집과 저장으로
+과금하고, 무료 1%를 넘는 색인 스팬에도 요금을 매깁니다. 수집 실행은 스테이지,
+배치, 모델 호출마다 스팬을 만들므로 코퍼스가 크면 스팬도 많습니다. 이미지 설정의
+`observability.sample_rate`를 낮춰 루트 트레이스를 표본 추출하고, 트레이스 요약을
+검색하지 않는다면 색인 비율은 1%로 두세요. `xray` 인터페이스 엔드포인트(프라이빗
+모드)도 다른 엔드포인트처럼 AZ-시간 단위로 과금됩니다.
+
+**CDK 스택 없이** 쓰려면 같은 수집기 설정을 직접 실행하세요. CloudWatch OTLP
+안내서를 따라 스택이 만드는 설정은 다음과 같습니다.
 
 ```yaml
 receivers:
   otlp:
     protocols:
       http:
-        endpoint: 0.0.0.0:4318
+        endpoint: 127.0.0.1:4318
 exporters:
   otlphttp/traces:
     compression: gzip
@@ -417,17 +476,41 @@ service:
       exporters: [otlphttp/traces]
 ```
 
-사전 조건: 계정과 리전마다 한 번 CloudWatch Transaction Search를 켜야 하며(X-Ray
-스팬 수집이 CloudWatch Logs 과금으로 바뀜), 태스크 역할에 CloudWatch 가이드가
-안내하는 X-Ray 쓰기 권한이 있어야 합니다(관리형 정책
-`CloudWatchAgentServerPolicy`에 포함). CDK 스택은 사이드카를 추가하지 않으며, 배포
-시 선택할 사항입니다.
+수집기 역할에는 X-Ray 쓰기 권한(`xray:PutTraceSegments`, `xray:PutSpans`,
+`xray:PutSpansForIndexing`)이 필요합니다. CloudWatch 안내서는 관리형 정책
+`AWSXrayWriteOnlyAccess`를 안내합니다.
 
-**계정 수준 보조 수단.** Bedrock 모델 호출 로깅(Bedrock 콘솔의 Settings, 리전별)은
-이 패키지의 추적과 관계없이 모든 `InvokeModel` / `Converse` 요청과 응답(임베딩
-포함)을 CloudWatch Logs나 S3에 기록합니다. Rerank 호출(`bedrock-agent-runtime`)은
-기록하지 않고 프롬프트와 응답 전문을 담으므로, 저장 위치는 수집한 본문과 같은 수준으로
-다루세요. 감사 기록은 이 로깅으로, 질의별 분석은 트레이스로 하세요.
+**계정 수준 보조 수단: Bedrock 모델 호출 로깅.** 이 패키지의 추적과 관계없이 리전의
+모든 `InvokeModel` / `Converse` 요청과 응답(임베딩 포함)을 CloudWatch Logs나 S3에
+기록합니다. 감사 기록은 이 로깅으로, 질의별 분석은 트레이스로 하세요. Rerank
+호출(`bedrock-agent-runtime`)은 기록하지 않고, 프롬프트와 응답 전문을 담으므로
+저장 위치는 수집한 본문처럼 보호하세요(읽기 권한 제한, CMK, 보존 기간). 계정과
+리전마다 하나뿐인 설정이라 그곳의 모든 워크로드가 함께 쓰므로 CDK 스택은 관리하지
+않습니다. 스택에서 켜고 끄면 계정 안의 다른 모든 로깅이 바뀝니다. Bedrock 런타임
+리전(`bedrock_region`)에서 설정하세요.
+
+```bash
+# 먼저 확인: 아래 put은 기존 설정을 대체합니다.
+aws bedrock get-model-invocation-logging-configuration --region "$BEDROCK_REGION"
+
+aws bedrock put-model-invocation-logging-configuration --region "$BEDROCK_REGION" \
+  --logging-config '{
+    "cloudWatchConfig": {
+      "logGroupName": "/aws/bedrock/model-invocation-logs",
+      "roleArn": "arn:aws:iam::<account>:role/<bedrock-logging-role>"
+    },
+    "textDataDeliveryEnabled": true,
+    "embeddingDataDeliveryEnabled": false
+  }'
+```
+
+로그 그룹이 있어야 하고, 역할은 `bedrock.amazonaws.com`을 신뢰하며 그 로그 그룹에
+`logs:CreateLogStream`과 `logs:PutLogEvents`를 허용해야 합니다. 콘솔(**Amazon
+Bedrock, Settings, Model invocation logging**)에서 둘 다 만들 수 있습니다.
+[Monitor model invocation using CloudWatch Logs and Amazon S3](https://docs.aws.amazon.com/bedrock/latest/userguide/model-invocation-logging.html)를
+참고하세요. 끄려면 `aws bedrock delete-model-invocation-logging-configuration`을
+실행합니다. CloudWatch 콘솔의 **GenAI Observability, Model Invocations**는 이 로그를
+Bedrock 자체의 호출, 토큰, 지연 시간 지표와 함께 보여 줍니다.
 
 ### 전송 제한, 프라이빗 VPC, 개인정보
 

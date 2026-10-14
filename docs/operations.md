@@ -407,22 +407,84 @@ OpenInference kinds (`LLM`, `EMBEDDING`, `RETRIEVER`, `RERANKER`, `CHAIN`), so
 model calls show their token counts and the Sessions view groups a
 conversation's queries.
 
-### CloudWatch through an ADOT collector
+### CloudWatch through the ADOT collector sidecar
 
 CloudWatch accepts OTLP traces at `https://xray.<region>.amazonaws.com/v1/traces`
-signed with SigV4, so no key is involved. Run the AWS Distro for
-OpenTelemetry (ADOT) collector, or an OpenTelemetry Collector with the
-`sigv4auth` extension, next to the task (an ECS sidecar); point the package at
-it with `backend: otlp` and `OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318`;
-the collector signs with the task role. Collector configuration, after the
-CloudWatch OTLP guide:
+signed with SigV4, so no key is involved. The app's OTLP exporter does not
+sign requests, so a collector next to it signs and forwards them. On the CDK
+stacks, `-c enable_cloudwatch_tracing=true` adds an AWS Distro for
+OpenTelemetry (ADOT) collector sidecar to the task and points the app at it
+(`backend: otlp`, `OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318`); the
+collector signs with the task role. What the option changes, including IAM and
+the private-mode `xray` endpoint, is in
+[iac/README.md](../iac/README.md#cloudwatch-tracing-optional).
+
+1. **Turn on Transaction Search** (once per account and region). The traces
+   endpoint rejects spans until it is on. It is an account-wide setting: it
+   moves all X-Ray span ingestion in the region, not only this stack's, to
+   CloudWatch Logs collection (the `aws/spans` log group, billed as CloudWatch
+   Logs ingestion) and indexes 1% of spans as trace summaries for free. Check
+   it first; another workload may already rely on the current destination:
+
+   ```bash
+   aws xray get-trace-segment-destination --region "$REGION"
+   ```
+
+   `"Destination": "CloudWatchLogs", "Status": "ACTIVE"` means it is on.
+   Otherwise turn it on in the CloudWatch console (**Application Signals,
+   Transaction Search, Enable Transaction Search**), which also sets up the
+   log-group resource policy X-Ray needs, or follow the API steps of the
+   [Transaction Search guide](https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/Enable-TransactionSearch.html)
+   (a CloudWatch Logs resource policy for `xray.amazonaws.com`, then
+   `aws xray update-trace-segment-destination --destination CloudWatchLogs`).
+   Spans can take 10 minutes to become searchable after it is turned on.
+2. **Build the image with the `otel` extra**:
+   `docker build --build-arg UV_EXTRAS="--extra otel" -f docker/Dockerfile ...`.
+   Without it the run fails at start-up with
+   `observability.enabled is true but OpenTelemetry is not installed`.
+3. **Deploy** with `cdk deploy --all -c enable_cloudwatch_tracing=true` (add
+   the flag to every later deploy, or set it in `cdk.json`, or the next deploy
+   removes the sidecar).
+
+**Where to look.** Run an ingestion or a query, then open the CloudWatch
+console, **Application Signals, Transaction Search**, and filter on the
+service `unified-kg-rag`. Each run is one `kg_rag.ingestion.run` trace and each
+query one `kg_rag.query` trace, with the children listed under
+[Observability](#observability). The spans are also in the `aws/spans` log
+group, for Logs Insights (if a field comes back empty, run
+`fields @message | limit 5` first to see the exact field paths):
+
+```text
+fields @timestamp, name, durationNano, attributes.gen_ai.usage.input_tokens, traceId
+| filter resource.attributes.service.name = "unified-kg-rag"
+| sort @timestamp desc
+| limit 50
+```
+
+If no trace arrives, read the `otel-collector/` log streams of the task log
+group (`/<prefix>/tasks`): a `403` means a missing X-Ray permission or the
+wrong SigV4 service, a rejection naming the destination means Transaction
+Search is off, and a connection timeout in `private` mode means the `xray`
+interface endpoint is missing (a reused VPC must provide it). A collector
+failure never fails the run: the collector container is not essential.
+
+**Cost.** Transaction Search bills spans as CloudWatch Logs ingestion and
+storage in `aws/spans`, and charges for indexed spans above the free 1%. An
+ingestion run emits a span per stage, batch and model call, so a large corpus
+produces many spans: lower `observability.sample_rate` in the image config to
+sample root traces, and keep the indexing percentage at 1% unless you search
+trace summaries. The `xray` interface endpoint (private mode) bills per
+AZ-hour like the others.
+
+**Without the CDK stacks**, run the same collector configuration yourself; the
+one the stack renders, after the CloudWatch OTLP guide, is:
 
 ```yaml
 receivers:
   otlp:
     protocols:
       http:
-        endpoint: 0.0.0.0:4318
+        endpoint: 127.0.0.1:4318
 exporters:
   otlphttp/traces:
     compression: gzip
@@ -441,19 +503,43 @@ service:
       exporters: [otlphttp/traces]
 ```
 
-Prerequisites: CloudWatch Transaction Search enabled once per account and
-region (it moves X-Ray span ingestion to CloudWatch Logs billing), and a task
-role with the X-Ray write permissions the CloudWatch guide lists (the
-`CloudWatchAgentServerPolicy` managed policy covers them). The CDK stacks do
-not add the sidecar; it is a deployment choice.
+The collector's role needs X-Ray write access (`xray:PutTraceSegments`,
+`xray:PutSpans`, `xray:PutSpansForIndexing`; the `AWSXrayWriteOnlyAccess`
+managed policy is what the CloudWatch guide names).
 
-**Account-level backstop.** Bedrock model invocation logging (Bedrock console,
-Settings, per region) records every `InvokeModel` / `Converse` request and
-response, embeddings included, to CloudWatch Logs or S3, whatever this
-package's tracing does. It does not cover the Rerank call
-(`bedrock-agent-runtime`), and it holds full prompt and response text, so
-treat its destination like captured content. Use it as the audit record and
-traces for the per-query breakdown.
+**Account-level backstop: Bedrock model invocation logging.** It records
+every `InvokeModel` / `Converse` request and response in a region, embeddings
+included, to CloudWatch Logs or S3, whatever this package's tracing does:
+use it as the audit record and traces for the per-query breakdown. It does not
+cover the Rerank call (`bedrock-agent-runtime`), and it holds full prompt and
+response text, so protect its destination like captured content (restricted
+readers, the CMK, a retention period). It is one setting per account and
+region, shared by every workload there, so the CDK stacks do not manage it:
+turning it on or off from a stack would change logging for everything else in
+the account. Set it in the Bedrock runtime region (`bedrock_region`):
+
+```bash
+# Check first: an existing configuration is replaced by the put below.
+aws bedrock get-model-invocation-logging-configuration --region "$BEDROCK_REGION"
+
+aws bedrock put-model-invocation-logging-configuration --region "$BEDROCK_REGION" \
+  --logging-config '{
+    "cloudWatchConfig": {
+      "logGroupName": "/aws/bedrock/model-invocation-logs",
+      "roleArn": "arn:aws:iam::<account>:role/<bedrock-logging-role>"
+    },
+    "textDataDeliveryEnabled": true,
+    "embeddingDataDeliveryEnabled": false
+  }'
+```
+
+The log group must exist, and the role must trust `bedrock.amazonaws.com` and
+allow `logs:CreateLogStream` and `logs:PutLogEvents` on it; the console
+(**Amazon Bedrock, Settings, Model invocation logging**) can create both. See
+[Monitor model invocation using CloudWatch Logs and Amazon S3](https://docs.aws.amazon.com/bedrock/latest/userguide/model-invocation-logging.html).
+`aws bedrock delete-model-invocation-logging-configuration` turns it off.
+In the CloudWatch console, **GenAI Observability, Model Invocations** lists
+these logs next to Bedrock's own invocation, token and latency metrics.
 
 ### Export limits, private VPCs and privacy
 
