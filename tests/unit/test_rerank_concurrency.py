@@ -123,7 +123,9 @@ async def test_strategy_fusion_runs_off_the_event_loop() -> None:
         return []
 
     strategy.hybrid_scorer.fuse_and_rerank_results = fuse  # type: ignore[method-assign]
-    await strategy._fuse_and_rerank({}, top_k=1)
+    await strategy._fuse_and_rerank(
+        {}, rerank_trace=strategy._new_rerank_trace(), top_k=1
+    )
     assert seen and seen[0] is not threading.current_thread()
 
 

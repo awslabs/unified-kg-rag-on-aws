@@ -193,16 +193,18 @@ class BaseSearchStrategy(ABC):
     async def _fuse_and_rerank(
         self,
         results_dict: dict[str, list[RetrievalResult]],
-        rerank_trace: RerankTrace | None = None,
+        *,
+        rerank_trace: RerankTrace,
         **kwargs: Any,
     ) -> list[RetrievalResult]:
         """``HybridScorer.fuse_and_rerank_results`` off the event-loop thread.
 
         Reranking is a blocking model call (a Bedrock round trip by default),
         so running it inline would stall every other query on the loop. The
-        rerank outcome is recorded on ``rerank_trace``, the calling query's own.
+        rerank outcome is recorded on ``rerank_trace``, the calling query's own
+        and required: a throwaway default would report the query as skipped
+        while its rerank failed.
         """
-        trace = rerank_trace if rerank_trace is not None else self._new_rerank_trace()
         tracing = observability.is_enabled()
         with observability.span(
             "kg_rag.fusion",
@@ -212,14 +214,14 @@ class BaseSearchStrategy(ABC):
             results: list[RetrievalResult] = await asyncio.to_thread(
                 self.hybrid_scorer.fuse_and_rerank_results,
                 results_dict,
-                rerank_trace=trace,
+                rerank_trace=rerank_trace,
                 **kwargs,
             )
             if tracing:
                 span.set_attributes(
                     {
                         "kg_rag.results_out": len(results),
-                        "kg_rag.rerank_status": trace.stages[-1].status.value,
+                        "kg_rag.rerank_status": rerank_trace.stages[-1].status.value,
                         "kg_rag.reranked": sum(
                             bool((r.metadata or {}).get("reranked")) for r in results
                         ),

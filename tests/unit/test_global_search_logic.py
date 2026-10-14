@@ -353,7 +353,7 @@ async def test_augment_empty_selection_post_processes_the_fallback() -> None:
     strat._fuse_and_rerank = _fuse  # type: ignore[method-assign]
 
     out = await strat._augment_and_rerank_communities(
-        [], fallback, SearchQuery(query="q")
+        [], fallback, SearchQuery(query="q"), strat._new_rerank_trace()
     )
 
     best_two = ["c4", "c3"]
@@ -365,7 +365,9 @@ async def test_augment_empty_selection_post_processes_the_fallback() -> None:
 async def test_augment_empty_selection_and_no_fallback_is_empty() -> None:
     strat = _bare_strategy()
     assert (
-        await strat._augment_and_rerank_communities([], [], SearchQuery(query="q"))
+        await strat._augment_and_rerank_communities(
+            [], [], SearchQuery(query="q"), strat._new_rerank_trace()
+        )
         == []
     )
 
@@ -490,7 +492,10 @@ async def test_report_slots_keep_every_selected_report(reserve: bool) -> None:
     strat._retrieve_community_context = _context  # type: ignore[method-assign]
 
     out = await strat._augment_and_rerank_communities(
-        reports, reports, SearchQuery(query="q", top_k=10)
+        reports,
+        reports,
+        SearchQuery(query="q", top_k=10),
+        strat._new_rerank_trace(),
     )
 
     kept_reports = [r for r in out if r.retriever_type == "community"]

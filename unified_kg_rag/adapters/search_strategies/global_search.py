@@ -335,7 +335,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         selected: list[RetrievalResult],
         fallback: list[RetrievalResult],
         query: SearchQuery,
-        rerank: RerankTrace | None = None,
+        rerank: RerankTrace,
     ) -> list[RetrievalResult]:
         if not selected:
             # Dynamic selection kept nothing: fall back to the retrieved reports,
