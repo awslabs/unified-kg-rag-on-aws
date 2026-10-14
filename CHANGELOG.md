@@ -253,7 +253,7 @@ Library API (Python callers and custom backends).
   lists the documents indexed into the containers, so its next incremental
   run stops before writing anything. Add `providers.graph.kind: gremlin` and
   `providers.vector.kind: opensearch` to keep the containers, or run once
-  with `indexing.reset: true` to rebuild in the embedded stores (#PR).
+  with `indexing.reset: true` to rebuild in the embedded stores (#273).
 
 ### Added
 - `providers:` config section selecting each role's backend (`llm`,
@@ -312,7 +312,7 @@ Library API (Python callers and custom backends).
   `--backend local` with a native Ollama needs no container.
   `docker/config.local.yaml` selects `gremlin` and `opensearch` explicitly
   and keeps the compose flow as it was. `run-visualization` takes the
-  provider flags of the other CLIs (#PR).
+  provider flags of the other CLIs (#273).
 - A custom vector indexer's `read_claims` no longer has to tag each claim
   with the index it was read from; `IndexingManager` tags the claims it
   writes back after a deletion (#259).
