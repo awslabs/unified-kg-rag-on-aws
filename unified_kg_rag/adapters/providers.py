@@ -387,6 +387,22 @@ def _neptune_graph_retriever(providers: Providers) -> BaseGraphRAGRetriever:
     )
 
 
+@register_provider(ProviderRole.GRAPH_INDEXER, SQLITE)
+def _sqlite_graph_indexer(providers: Providers) -> GraphIndexer:
+    from unified_kg_rag.adapters.local.sqlite_graph import SQLiteGraphIndexer
+
+    return SQLiteGraphIndexer(providers.config)
+
+
+@register_provider(ProviderRole.GRAPH_RETRIEVER, SQLITE)
+def _sqlite_graph_retriever(providers: Providers) -> BaseGraphRAGRetriever:
+    from unified_kg_rag.adapters.retrievers.sqlite_graph_retriever import (
+        SQLiteGraphRetriever,
+    )
+
+    return SQLiteGraphRetriever(config=providers.config)
+
+
 @register_provider(
     ProviderRole.VECTOR_INDEXER, OPENSEARCH, endpoint=_OPENSEARCH_ENDPOINT
 )

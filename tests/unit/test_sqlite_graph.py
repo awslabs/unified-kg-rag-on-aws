@@ -1,0 +1,617 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+"""The embedded SQLite graph store (``providers.graph.kind: sqlite``).
+
+The indexer must keep Neptune's write semantics (``FakeGraphStore`` is the
+reference: the comparison test replays one write sequence against both) and
+the retriever must walk the graph as ``NeptuneRetriever``'s Gremlin
+traversal does.
+"""
+
+from __future__ import annotations
+
+import sqlite3
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from tests.fixtures.fakes.stores import FakeGraphStore
+from unified_kg_rag.adapters.local.sqlite_graph import (
+    SQLiteGraphIndexer,
+    SQLiteGraphStore,
+)
+from unified_kg_rag.adapters.provider_registry import ProviderRole, provider_endpoint
+from unified_kg_rag.adapters.providers import Providers
+from unified_kg_rag.adapters.retrievers.sqlite_graph_retriever import (
+    SQLiteGraphRetriever,
+)
+from unified_kg_rag.domain.models import (
+    Community,
+    Config,
+    Entity,
+    Relationship,
+    SearchQuery,
+)
+from unified_kg_rag.shared.exceptions import StoreConfigurationError, StoreTimeoutError
+
+pytestmark = pytest.mark.unit
+
+LABEL = "Entity-default"
+
+
+def _config(tmp_path: Path, **neptune: Any) -> Config:
+    return Config.model_validate(
+        {
+            "providers": {
+                "graph": {
+                    "kind": "sqlite",
+                    "sqlite_path": str(tmp_path / "graph.sqlite3"),
+                }
+            },
+            "indexing": {"neptune": neptune},
+            "search": {"store_timeout_seconds": 0.2},
+        }
+    )
+
+
+def _entity(entity_id: str, suffix: str | None = None, **fields: Any) -> Entity:
+    attributes = dict(fields.pop("attributes", None) or {})
+    if suffix:
+        attributes["index"] = suffix
+    fields.setdefault("name", entity_id.upper())
+    return Entity(id=entity_id, attributes=attributes or None, **fields)
+
+
+def _rel(
+    rel_id: str, source: str, target: str, suffix: str | None = None, **fields: Any
+) -> Relationship:
+    attributes = dict(fields.pop("attributes", None) or {})
+    if suffix:
+        attributes["index"] = suffix
+    return Relationship(
+        id=rel_id,
+        source_id=source,
+        target_id=target,
+        attributes=attributes or None,
+        **fields,
+    )
+
+
+def _community(comm_id: str, members: list[str] | None, **fields: Any) -> Community:
+    fields.setdefault("level", "0")
+    fields.setdefault("parent", "-1")
+    fields.setdefault("children", [])
+    return Community(id=comm_id, name=comm_id, entity_ids=members, **fields)
+
+
+@pytest.fixture
+def config(tmp_path: Path) -> Config:
+    return _config(tmp_path)
+
+
+@pytest.fixture
+def indexer(config: Config) -> Any:
+    indexer = SQLiteGraphIndexer(config)
+    assert indexer.initialize()
+    yield indexer
+    indexer.close()
+
+
+def _graph(indexer: SQLiteGraphIndexer, edges: list[tuple[str, str]]) -> None:
+    ids = sorted({end for edge in edges for end in edge})
+    indexer.upsert_entities([_entity(i) for i in ids])
+    stats = indexer.upsert_relationships([_rel(f"{a}-{b}", a, b) for a, b in edges])
+    assert stats.failed_items == 0
+
+
+# --- codec and write semantics ---------------------------------------------
+
+
+def test_entity_and_relationship_round_trip(indexer: SQLiteGraphIndexer) -> None:
+    entity = _entity(
+        "e1",
+        type="ORG",
+        description="desc",
+        rank=3,
+        confidence=0.5,
+        text_unit_ids=["t2", "t1"],
+        community_ids=["c1"],
+        attributes={"role": "vendor", "meta": {"k": 1}, "tags": ["x", "y"]},
+    )
+    indexer.upsert_entities([entity, _entity("e2")])
+    rel = _rel(
+        "r1",
+        "e1",
+        "e2",
+        type="SUPPLIES",
+        source_name="E1",
+        target_name="E2",
+        weight=2.0,
+        description="supplies",
+        rank=4,
+        text_unit_ids=["t1", "t1", "t3"],
+        attributes={"meta": {"k": 2}},
+    )
+    assert indexer.upsert_relationships([rel]).successful_items == 1
+
+    (read,) = indexer.read_entities(["e1"])
+    assert read.model_dump(exclude={"text_unit_ids"}) == entity.model_dump(
+        exclude={"text_unit_ids"}
+    )
+    assert sorted(read.text_unit_ids or []) == ["t1", "t2"]
+    (read_rel,) = indexer.read_relationships(["r1"])
+    # Edge lists are JSON strings: order and duplicates survive.
+    assert read_rel == rel
+
+
+def test_property_max_length_truncates_strings(tmp_path: Path) -> None:
+    indexer = SQLiteGraphIndexer(_config(tmp_path, property_max_length=4))
+    indexer.upsert_entities([_entity("e1", description="abcdefgh")])
+    (read,) = indexer.read_entities(["e1"])
+    assert read.description == "abcd"
+    assert read.name == "E1"[:4]
+
+
+def test_upsert_keeps_absent_properties_and_replaces_lists(
+    indexer: SQLiteGraphIndexer,
+) -> None:
+    indexer.upsert_entities(
+        [_entity("e1", description="kept", text_unit_ids=["a", "a", "b"])]
+    )
+    (read,) = indexer.read_entities(["e1"])
+    assert sorted(read.text_unit_ids or []) == ["a", "b"]
+    indexer.upsert_entities([_entity("e1", text_unit_ids=["c"])])
+    (read,) = indexer.read_entities(["e1"])
+    assert read.description == "kept"
+    assert read.text_unit_ids == ["c"]
+
+
+def test_edge_with_missing_endpoint_fails_by_id(indexer: SQLiteGraphIndexer) -> None:
+    indexer.upsert_entities([_entity("a")])
+    stats = indexer.upsert_relationships(
+        [_rel("r1", "a", "ghost"), _rel("r2", "a", "a")]
+    )
+    assert stats.failed_ids == ["r1"]
+    assert stats.successful_items == 1
+    assert [r.id for r in indexer.read_relationships(["r1", "r2"])] == ["r2"]
+
+
+def test_readding_an_edge_replaces_it(indexer: SQLiteGraphIndexer) -> None:
+    indexer.upsert_entities([_entity("a"), _entity("b")])
+    indexer.index_relationships([_rel("r1", "a", "b", description="old")])
+    indexer.upsert_relationships([_rel("r1", "b", "a", description="new")])
+    (rel,) = indexer.read_relationships(["r1"])
+    assert (rel.source_id, rel.target_id, rel.description) == ("b", "a", "new")
+    assert indexer.find_incident_relationship_ids(["a"]) == ["r1"]
+
+
+def test_index_entities_replaces_the_suffix_label(
+    indexer: SQLiteGraphIndexer,
+) -> None:
+    _graph(indexer, [("a", "b")])
+    indexer.upsert_entities([_entity("x", "other")])
+    indexer.index_entities([_entity("c")])
+    assert indexer.read_entity_names() == [("c", "C")]
+    # The cleared vertices took their edges with them.
+    assert indexer.read_relationships(["a-b"]) == []
+    # An empty rebuild of a suffix named in ``suffixes`` empties it.
+    indexer.index_entities([], suffixes=["other"])
+    assert indexer.read_entity_names("other") == []
+    assert indexer.read_entity_names() == [("c", "C")]
+
+
+def test_suffixes_and_additional_suffix_isolate(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    tenant = SQLiteGraphIndexer(config)
+    config_b = config.model_copy(deep=True)
+    config_b.indexing.additional_suffix = "v2"
+    versioned = SQLiteGraphIndexer(config_b)
+    tenant.upsert_entities([_entity("e1", description="t"), _entity("e1", "s1")])
+    versioned.upsert_entities([_entity("e1", description="v")])
+    assert [e.description for e in tenant.read_entities(["e1"])] == ["t"]
+    assert [e.description for e in versioned.read_entities(["e1"])] == ["v"]
+    assert [e.id for e in tenant.read_entities(["e1"], suffix="s1")] == ["e1"]
+    assert tenant.read_entities(["e1"], suffix="s2") == []
+
+
+def _members(indexer: SQLiteGraphIndexer) -> set[tuple[str, str]]:
+    with indexer.store.read("test") as connection:
+        rows = connection.execute(
+            "SELECT community_id, entity_id FROM memberships"
+        ).fetchall()
+    return {(c, e) for c, e in rows}
+
+
+def _vertex_ids(indexer: SQLiteGraphIndexer, label: str) -> list[str]:
+    with indexer.store.read("test") as connection:
+        rows = connection.execute(
+            "SELECT id FROM vertices WHERE label = ? ORDER BY id", (label,)
+        ).fetchall()
+    return [row[0] for row in rows]
+
+
+def test_communities_index_clears_and_upsert_merges(
+    indexer: SQLiteGraphIndexer,
+) -> None:
+    indexer.upsert_entities([_entity("a"), _entity("b")])
+    indexer.index_communities(
+        [_community("c1", ["a", "ghost"]), _community("c2", ["b"])]
+    )
+    assert _members(indexer) == {("c1", "a"), ("c2", "b")}
+
+    # The upsert never clears: c2 stays; c1's members are replaced; a
+    # community without entity_ids keeps its memberships.
+    indexer.upsert_communities([_community("c1", ["b"]), _community("c3", [])])
+    assert _vertex_ids(indexer, "Community-default") == ["c1", "c2", "c3"]
+    assert _members(indexer) == {("c1", "b"), ("c2", "b")}
+    indexer.upsert_communities([_community("c1", None, size=7)])
+    assert _members(indexer) == {("c1", "b"), ("c2", "b")}
+
+    indexer.index_communities([_community("c9", ["a"])])
+    assert _vertex_ids(indexer, "Community-default") == ["c9"]
+    assert _members(indexer) == {("c9", "a")}
+    indexer.index_communities([], suffixes=["default"])
+    assert _vertex_ids(indexer, "Community-default") == []
+    assert _members(indexer) == set()
+
+
+def test_delete_by_id_drops_edges_and_memberships(
+    indexer: SQLiteGraphIndexer,
+) -> None:
+    _graph(indexer, [("a", "b"), ("b", "c")])
+    indexer.upsert_communities([_community("c1", ["a", "b"])])
+    stats = indexer.delete_by_id(["b"], suffix="default")
+    assert stats.successful_items == 1
+    assert indexer.read_entity_names() == [("a", "A"), ("c", "C")]
+    assert indexer.find_incident_relationship_ids(["a", "c"]) == []
+    assert _members(indexer) == {("c1", "a")}
+    # Edges by id, and community vertices with their memberships.
+    indexer.upsert_entities([_entity("b")])
+    indexer.upsert_relationships([_rel("r", "a", "b")])
+    indexer.delete_by_id(["r", "c1"], suffix="default")
+    assert indexer.read_relationships(["r"]) == []
+    assert _vertex_ids(indexer, "Community-default") == []
+    assert _members(indexer) == set()
+
+
+def test_delete_by_id_scoped_and_unscoped(indexer: SQLiteGraphIndexer) -> None:
+    indexer.upsert_entities([_entity("e1"), _entity("e1", "s1"), _entity("e2", "s1")])
+    indexer.upsert_relationships([_rel("r1", "e1", "e2", "s1")])
+    indexer.delete_by_id(["e1"], suffix="s1")
+    assert [e.id for e in indexer.read_entities(["e1"])] == ["e1"]
+    assert indexer.read_entities(["e1"], suffix="s1") == []
+    assert indexer.read_relationships(["r1"], suffix="s1") == []
+
+    indexer.upsert_entities([_entity("e1", "s1")])
+    indexer.delete_by_id(["e1"])
+    assert indexer.read_entities(["e1"]) == []
+    assert indexer.read_entities(["e1"], suffix="s1") == []
+    assert [e.id for e in indexer.read_entities(["e2"], suffix="s1")] == ["e2"]
+
+
+def test_neighbor_and_incident_reads(indexer: SQLiteGraphIndexer) -> None:
+    _graph(indexer, [("a", "b"), ("c", "a"), ("a", "a")])
+    indexer.upsert_entities([_entity("x", "s1"), _entity("a", "s1")])
+    indexer.upsert_relationships([_rel("s-r", "a", "x", "s1")])
+    assert indexer.read_neighbor_ids(["a", "ghost", "b"]) == {
+        "a": ["a", "b", "c"],
+        "b": ["a"],
+    }
+    assert indexer.read_neighbor_ids(["a"], suffix="s1") == {"a": ["x"]}
+    assert indexer.find_incident_relationship_ids(["b"]) == ["a-b"]
+    assert indexer.find_incident_relationship_ids(["a"], suffix="s1") == ["s-r"]
+    assert indexer.find_incident_relationship_ids(["a"], suffix=None) == [
+        "a-a",
+        "a-b",
+        "c-a",
+        "s-r",
+    ]
+
+
+def test_clear_drops_the_suffixes(indexer: SQLiteGraphIndexer) -> None:
+    _graph(indexer, [("a", "b")])
+    indexer.upsert_entities([_entity("k", "keep")])
+    indexer.upsert_communities([_community("c1", ["a"])])
+    assert indexer.clear([]) is True
+    assert indexer.clear(["default"]) is True
+    assert indexer.read_entity_names() == []
+    assert _members(indexer) == set()
+    assert indexer.read_entity_names("keep") == [("k", "K")]
+
+
+def test_persists_after_reopen(config: Config) -> None:
+    first = SQLiteGraphIndexer(config)
+    _graph(first, [("a", "b")])
+    first.close()
+    second = SQLiteGraphIndexer(config)
+    assert [r.id for r in second.read_relationships(["a-b"])] == ["a-b"]
+    assert second.read_entity_names() == [("a", "A"), ("b", "B")]
+    second.close()
+
+
+# --- comparison with the reference fake --------------------------------------
+
+
+def _replay(store: Any) -> list[Any]:
+    """One write sequence, then every read the incremental path uses."""
+    out: list[Any] = []
+    store.index_entities(
+        [
+            _entity("a", description="A1", text_unit_ids=["t1", "t1"], rank=1),
+            _entity("b", attributes={"role": "buyer", "meta": {"x": 1}}),
+            _entity("c", "s1", description="other tenant"),
+        ]
+    )
+    out.append(
+        store.index_relationships(
+            [
+                _rel("ab", "a", "b", text_unit_ids=["t1"], weight=2.0),
+                _rel("bz", "b", "z"),
+                _rel("cc", "c", "c", "s1"),
+            ]
+        ).failed_ids
+    )
+    store.index_communities([_community("c1", ["a", "b"])])
+    store.upsert_entities(
+        [_entity("a", text_unit_ids=["t2"]), _entity("d", confidence=0.25)]
+    )
+    store.upsert_relationships(
+        [_rel("ab", "a", "b", description="re-added"), _rel("ad", "a", "d")]
+    )
+    store.upsert_communities([_community("c2", ["d"])])
+    store.delete_by_id(["d"], suffix="default")
+    store.upsert_entities([_entity("e", "s1"), _entity("e")])
+    store.delete_by_id(["e"])
+    for suffix in (None, "s1"):
+        out.append(store.read_entities(["a", "b", "c", "d", "e"], suffix=suffix))
+        out.append(store.read_relationships(["ab", "ad", "bz", "cc"], suffix=suffix))
+        out.append(sorted(store.read_entity_names(suffix)))
+        out.append(store.read_neighbor_ids(["a", "b", "c", "d"], suffix=suffix))
+        out.append(store.find_incident_relationship_ids(["a", "c"], suffix=suffix))
+    store.index_entities([], suffixes=["s1"])
+    out.append(store.read_entities(["c"], suffix="s1"))
+    out.append(store.read_relationships(["cc"], suffix="s1"))
+    return out
+
+
+def test_matches_the_fake_graph_store(config: Config) -> None:
+    fake = _replay(FakeGraphStore(config))
+    real = _replay(SQLiteGraphIndexer(config))
+    assert real == fake
+    assert fake[0] == ["bz"]  # the sequence exercises a failed edge
+
+
+# --- traversal ---------------------------------------------------------------
+
+
+def _store(indexer: SQLiteGraphIndexer) -> SQLiteGraphStore:
+    return indexer.store
+
+
+def _traverse(
+    indexer: SQLiteGraphIndexer, seeds: list[str], **kwargs: Any
+) -> list[tuple[str, ...]]:
+    options = {"max_hops": 3, "max_results_per_hop": 50, "per_seed_limit": 100}
+    options.update(kwargs)
+    rows = _store(indexer).traverse(LABEL, seeds, **options)
+    return [tuple(p["name"][0].lower() for p in row["path"]) for row in rows]
+
+
+def test_traversal_walks_breadth_first_from_each_seed(
+    indexer: SQLiteGraphIndexer,
+) -> None:
+    _graph(indexer, [("s", "b"), ("s", "a"), ("a", "c"), ("c", "d"), ("d", "e")])
+    assert _traverse(indexer, ["s", "ghost"]) == [
+        ("s",),
+        ("s", "a"),
+        ("s", "b"),
+        ("s", "a", "c"),
+        ("s", "a", "c", "d"),
+    ]
+    assert _traverse(indexer, ["s"], max_hops=1) == [("s",), ("s", "a"), ("s", "b")]
+
+
+def test_traversal_excludes_seeds_and_dedupes_per_seed(
+    indexer: SQLiteGraphIndexer,
+) -> None:
+    _graph(indexer, [("s", "t"), ("s", "a"), ("t", "a"), ("a", "b"), ("t", "b")])
+    assert _traverse(indexer, ["s", "t"]) == [
+        ("s",),
+        ("s", "a"),
+        ("s", "a", "b"),
+        ("t",),
+        ("t", "a"),
+        ("t", "b"),
+    ]
+
+
+def test_traversal_budget_is_split_per_seed(indexer: SQLiteGraphIndexer) -> None:
+    edges = [("s", f"n{i}") for i in range(5)] + [("t", f"m{i}") for i in range(5)]
+    _graph(indexer, edges)
+    paths = _traverse(indexer, ["s", "t"], per_seed_limit=2)
+    assert paths == [("s",), ("s", "n0"), ("s", "n1"), ("t",), ("t", "m0"), ("t", "m1")]
+
+
+def test_max_results_per_hop_caps_each_vertex(indexer: SQLiteGraphIndexer) -> None:
+    _graph(indexer, [("z", "a"), ("z", "b"), ("z", "c"), ("a", "x"), ("a", "y")])
+    assert _traverse(indexer, ["z"], max_results_per_hop=1) == [
+        ("z",),
+        ("z", "a"),
+        ("z", "a", "x"),
+    ]
+    # The cap is taken before the seeds are skipped, as Gremlin's
+    # local(both().limit(n)) is: a's first neighbour by id is the seed here.
+    assert _traverse(indexer, ["x"], max_results_per_hop=1) == [("x",), ("x", "a")]
+
+
+def test_traversal_ignores_communities_and_other_suffixes(
+    indexer: SQLiteGraphIndexer,
+) -> None:
+    _graph(indexer, [("s", "a")])
+    indexer.upsert_entities([_entity("s", "s1"), _entity("z", "s1")])
+    indexer.upsert_relationships([_rel("sz", "s", "z", "s1")])
+    indexer.upsert_communities([_community("c1", ["s", "a"])])
+    assert _traverse(indexer, ["s"]) == [("s",), ("s", "a")]
+
+
+def test_degree_counts_edges_and_memberships(indexer: SQLiteGraphIndexer) -> None:
+    _graph(indexer, [("s", "a"), ("s", "b")])
+    indexer.upsert_communities([_community("c1", ["s"]), _community("c2", ["s"])])
+    rows = _store(indexer).traverse(
+        LABEL,
+        ["s"],
+        max_hops=1,
+        max_results_per_hop=50,
+        per_seed_limit=10,
+        with_degree=True,
+    )
+    assert {row["node"]["id"][0]: row["degree"] for row in rows} == {
+        "s": 4,
+        "a": 1,
+        "b": 1,
+    }
+    assert rows[0]["node_type"] == LABEL
+    assert set(rows[0]["node"]) == {"id", "name", "rank"}
+
+
+async def test_retriever_ranks_by_distance(config: Config) -> None:
+    indexer = SQLiteGraphIndexer(config)
+    _graph(indexer, [("s", "a"), ("a", "b")])
+    retriever = SQLiteGraphRetriever(config)
+    query = SearchQuery(query="q", filters={"id": ["s"]})
+    results = await retriever.aretrieve(query)
+    assert [r.source for r in results] == ["s", "a", "b"]
+    assert results[0].score > results[1].score > results[2].score
+    assert results[2].content.endswith("Path: S -> A -> B")
+    # Deterministic: the same graph answers the same way.
+    assert [r.model_dump() for r in await retriever.aretrieve(query)] == [
+        r.model_dump() for r in results
+    ]
+    await retriever.aclose()
+    indexer.close()
+
+
+async def test_retriever_fetch_limit_is_split_across_seeds(config: Config) -> None:
+    indexer = SQLiteGraphIndexer(config)
+    edges = [("s", f"n{i}") for i in range(9)] + [("t", f"m{i}") for i in range(9)]
+    _graph(indexer, edges)
+    retriever = SQLiteGraphRetriever(config)
+    # fetch_limit = 1 * 1 * 3 (traversal_fetch_multiplier): ceil(3 / 2) = 2
+    # per seed; the cut then keeps the seeds plus the best 1.
+    rows = await retriever._traverse(
+        ["s", "t"], SearchQuery(query="q", top_k=1, filters={"id": ["s", "t"]})
+    )
+    assert sorted(row["node"]["id"][0] for row in rows) == [
+        "m0",
+        "m1",
+        "n0",
+        "n1",
+        "s",
+        "t",
+    ]
+    retriever.close()
+    indexer.close()
+
+
+async def test_retriever_filters(config: Config) -> None:
+    indexer = SQLiteGraphIndexer(config)
+    indexer.upsert_entities(
+        [
+            _entity("s", type="ORG", rank=5),
+            _entity("a", type="ORG", rank=1, attributes={"role": "vendor"}),
+            _entity("b", type="PERSON", rank=9, attributes={"role": "buyer"}),
+            _entity("c", rank=3),
+        ]
+    )
+    indexer.upsert_relationships(
+        [_rel("sa", "s", "a"), _rel("sb", "s", "b"), _rel("sc", "s", "c")]
+    )
+    retriever = SQLiteGraphRetriever(config)
+
+    async def ids(filters: dict[str, Any]) -> list[str]:
+        query = SearchQuery(query="q", filters={"id": ["s"], **filters})
+        return sorted(r.source for r in await retriever.aretrieve(query))
+
+    # A plain key is strict: c has no type and goes too. Seeds are filtered.
+    assert await ids({"type": "ORG"}) == ["a", "s"]
+    assert await ids({"type": ["PERSON", "ORG"]}) == ["a", "b", "s"]
+    assert await ids({"rank": {"gte": 3}}) == ["b", "c", "s"]
+    assert await ids({"rank": {"gt": 1, "lt": 9}}) == ["c", "s"]
+    # attr_* applies only where the property exists.
+    assert await ids({"attr_role": "vendor"}) == ["a", "c", "s"]
+    # A key no entity vertex declares is dropped, not matched.
+    assert await ids({"level": "0"}) == ["a", "b", "c", "s"]
+    # Comparing across types matches nothing rather than raising.
+    assert await ids({"rank": {"gte": "x"}}) == []
+    retriever.close()
+    indexer.close()
+
+
+async def test_retriever_without_seeds_or_with_unknown_suffix(config: Config) -> None:
+    indexer = SQLiteGraphIndexer(config)
+    _graph(indexer, [("s", "a")])
+    retriever = SQLiteGraphRetriever(config)
+    assert await retriever.aretrieve(SearchQuery(query="q")) == []
+    query = SearchQuery(query="q", suffix="nope", filters={"id": ["s"]})
+    assert await retriever.aretrieve(query) == []
+    retriever.close()
+    indexer.close()
+
+
+# --- errors and registration ------------------------------------------------
+
+
+def test_corrupt_database_is_a_configuration_error(tmp_path: Path) -> None:
+    path = tmp_path / "graph.sqlite3"
+    path.write_bytes(b"not a sqlite database at all" * 100)
+    indexer = SQLiteGraphIndexer(_config(tmp_path))
+    with pytest.raises(StoreConfigurationError):
+        indexer.initialize()
+    with pytest.raises(StoreConfigurationError):
+        indexer.read_entities(["a"])
+    assert indexer.read_entity_names() == []  # best-effort, as in Neptune
+    assert indexer.clear(["default"]) is False
+
+
+async def test_locked_database_is_a_timeout(config: Config) -> None:
+    indexer = SQLiteGraphIndexer(config)
+    _graph(indexer, [("s", "a")])
+    holder = sqlite3.connect(config.providers.graph.sqlite_path, isolation_level=None)
+    holder.execute("BEGIN EXCLUSIVE")
+    try:
+        with pytest.raises(StoreTimeoutError):
+            indexer.upsert_entities([_entity("b")])
+    finally:
+        holder.execute("ROLLBACK")
+    indexer.close()
+    # WAL readers never wait for a writer; an exclusive locking mode, taken
+    # while no other connection is open, locks them out too.
+    holder.execute("PRAGMA locking_mode=EXCLUSIVE")
+    holder.execute("BEGIN EXCLUSIVE")
+    holder.execute("DELETE FROM vertices WHERE id = 'none'")
+    try:
+        retriever = SQLiteGraphRetriever(config)
+        # A fatal error fails the query instead of reading as "no results".
+        with pytest.raises(StoreTimeoutError):
+            await retriever.aretrieve(SearchQuery(query="q", filters={"id": ["s"]}))
+        retriever.close()
+    finally:
+        holder.execute("ROLLBACK")
+        holder.close()
+    assert indexer.upsert_entities([_entity("b")]).successful_items == 1
+    indexer.close()
+
+
+def test_sqlite_kind_is_registered_without_an_endpoint(config: Config) -> None:
+    providers = Providers(config)
+    indexer = providers.build_graph_indexer()
+    assert isinstance(indexer, SQLiteGraphIndexer)
+    from unified_kg_rag.domain.models import RetrieverRole
+
+    retriever = providers.build_retriever(RetrieverRole.GRAPH)
+    assert isinstance(retriever, SQLiteGraphRetriever)
+    for role in (ProviderRole.GRAPH_INDEXER, ProviderRole.GRAPH_RETRIEVER):
+        assert provider_endpoint(role, "sqlite") is None
+    indexer.close()
+    retriever.close()

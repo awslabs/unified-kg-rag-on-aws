@@ -293,6 +293,9 @@ Library API (Python callers and custom backends).
   `xray` VPC endpoint; `GRAPHRAG_OBSERVABILITY_ENABLED` /
   `GRAPHRAG_OBSERVABILITY_BACKEND` overrides; and a runbook recipe with
   Bedrock model invocation logging as the account-level backstop (#269).
+- Embedded SQLite graph store, `providers.graph.kind: sqlite`
+  (`SQLiteGraphIndexer`, `SQLiteGraphRetriever`): Neptune's write semantics
+  and graph expansion on one local file, no server needed (#272).
 
 ### Changed
 - A custom vector indexer's `read_claims` no longer has to tag each claim

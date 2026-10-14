@@ -9,6 +9,7 @@
 - ``sqlite_doc_status``: the document-status registry on SQLite.
 - ``search_engine``: an embedded vector/lexical store on SQLite that answers
   the OpenSearch queries of ``OpenSearchIndexer`` and ``OpenSearchRetriever``.
+- ``sqlite_graph``: the knowledge-graph store on SQLite.
 
 Each conforms structurally to its port (``ModelFactoryPort``,
 ``TokenCounterPort``, ``DocStatusPort``). The provider registry

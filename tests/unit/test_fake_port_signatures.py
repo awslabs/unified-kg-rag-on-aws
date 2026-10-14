@@ -39,6 +39,7 @@ from unified_kg_rag.adapters.local.rerank import (
 )
 from unified_kg_rag.adapters.local.search_engine import SQLiteSearchEngine
 from unified_kg_rag.adapters.local.sqlite_doc_status import SQLiteDocStatusStore
+from unified_kg_rag.adapters.local.sqlite_graph import SQLiteGraphIndexer
 from unified_kg_rag.adapters.local.token_counter import LocalTokenCounter
 from unified_kg_rag.adapters.storage.search_engine import SearchEngineClient
 from unified_kg_rag.ports import (
@@ -69,6 +70,7 @@ def _shape(func: object) -> list[tuple[str, inspect._ParameterKind, bool]]:
 
 PAIRS = [
     (FakeGraphStore, GraphIndexer),
+    (SQLiteGraphIndexer, GraphIndexer),
     (FakeVectorStore, VectorIndexer),
     (FakeDocStatusStore, DocStatusPort),
     (SQLiteDocStatusStore, DocStatusPort),
