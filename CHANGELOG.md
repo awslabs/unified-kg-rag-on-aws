@@ -253,6 +253,12 @@ Library API (Python callers and custom backends).
   registry (`@register_provider`); a `[local]` extra; `SQLiteDocStatusStore`;
   an Ollama service in `docker/compose.local.yaml`; and
   `providers.doc_status.enabled` (#154, #209).
+- `providers.vector.kind: sqlite`: an embedded vector and lexical store in
+  one SQLite file (`providers.vector.sqlite_path`) that answers the
+  OpenSearch queries the indexer and retriever build (exact kNN, Lucene
+  BM25, CJK bigram analyzers, neural-search hybrid fusion), for about
+  100,000 documents per index without a server; `snowballstemmer` joins the
+  `[local]` extra for its `english` analyzer (#271).
 - `observability:` section (off by default, `otel` extra): spans for runs,
   stages, batches and each query step, GenAI model-call spans with token
   usage, log/trace correlation, `session.id` / `user.id`

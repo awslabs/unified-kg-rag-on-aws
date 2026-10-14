@@ -114,7 +114,8 @@ def test_built_in_kinds_are_registered() -> None:
     assert registered_kinds(ProviderRole.RERANK) == ["bedrock", "cross_encoder", "none"]
     assert registered_kinds(ProviderRole.GRAPH_INDEXER) == ["gremlin", "neptune"]
     assert registered_kinds(ProviderRole.GRAPH_RETRIEVER) == ["gremlin", "neptune"]
-    assert registered_kinds(ProviderRole.VECTOR_INDEXER) == ["opensearch"]
+    assert registered_kinds(ProviderRole.VECTOR_INDEXER) == ["opensearch", "sqlite"]
+    assert registered_kinds(ProviderRole.VECTOR_RETRIEVER) == ["opensearch", "sqlite"]
     assert registered_kinds(ProviderRole.DOC_STATUS) == ["dynamodb", "sqlite"]
 
 
@@ -127,7 +128,9 @@ def test_check_providers_reports_the_selection() -> None:
 
 def test_an_unregistered_kind_fails_fast_with_the_registered_ones() -> None:
     config = Config(providers={"vector": {"kind": "lancedb"}})
-    with pytest.raises(ConfigurationError, match="Registered kinds: opensearch"):
+    with pytest.raises(
+        ConfigurationError, match="Registered kinds: opensearch, sqlite"
+    ):
         build_providers(config)
     with pytest.raises(ConfigurationError, match="providers.vector.kind 'lancedb'"):
         Providers(config).build_vector_indexer()

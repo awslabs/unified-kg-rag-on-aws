@@ -233,7 +233,9 @@ class VectorProviderConfig(BaseModel):
         default=OPENSEARCH,
         description=(
             "Vector/lexical store: opensearch (Amazon OpenSearch Service or a "
-            "local OpenSearch, configured by aws.opensearch)."
+            "local OpenSearch, configured by aws.opensearch) | sqlite (an "
+            "embedded store in sqlite_path that answers the same queries, for "
+            "about 100k documents per index; no server)."
         ),
     )
     sqlite_path: str = Field(

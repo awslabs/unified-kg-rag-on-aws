@@ -37,6 +37,7 @@ from unified_kg_rag.adapters.local.rerank import (
     CrossEncoderRerankFactory,
     NoRerankFactory,
 )
+from unified_kg_rag.adapters.local.search_engine import SQLiteSearchEngine
 from unified_kg_rag.adapters.local.sqlite_doc_status import SQLiteDocStatusStore
 from unified_kg_rag.adapters.local.token_counter import LocalTokenCounter
 from unified_kg_rag.adapters.storage.search_engine import SearchEngineClient
@@ -86,6 +87,7 @@ PAIRS = [
     (LocalTokenCounter, TokenCounterPort),
     (BedrockTokenCounter, TokenCounterPort),
     (OpenSearchClient, SearchEngineClient),
+    (SQLiteSearchEngine, SearchEngineClient),
 ]
 
 

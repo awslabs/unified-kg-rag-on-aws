@@ -134,12 +134,15 @@ otel = [
 # servers (vLLM, llama.cpp, LM Studio) and Ollama for the LLM and embeddings,
 # tiktoken for `providers.llm.tokenizer: tiktoken`, and a sentence-transformers
 # cross-encoder for `providers.rerank.kind: cross_encoder` (pulls in PyTorch;
-# without it reranking is skipped with a warning). The core package imports
-# none of these; the local adapters load them only when their kind is selected.
+# without it reranking is skipped with a warning), and the Porter stemmer of
+# the embedded SQLite vector store's `english` analyzer (without it that
+# analyzer does not stem, with a warning). The core package imports none of
+# these; the local adapters load them only when their kind is selected.
 local = [
     "langchain-ollama>=1.0.0,<2.0.0",
     "langchain-openai>=1.1.14,<2.0.0",
     "sentence-transformers>=5.1.0",
+    "snowballstemmer>=2.2",
     "tiktoken>=0.12.0",
 ]
 
@@ -250,6 +253,7 @@ module = [
     "pyvis.*",
     "ragas.*",
     "sklearn.*",
+    "snowballstemmer",
     "umap.*",
     "datasets.*",
     "lxml.*",

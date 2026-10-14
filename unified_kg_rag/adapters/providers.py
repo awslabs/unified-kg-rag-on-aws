@@ -57,6 +57,7 @@ if TYPE_CHECKING:
     import boto3
 
     from unified_kg_rag.adapters.retrieval.base import BaseGraphRAGRetriever
+    from unified_kg_rag.adapters.storage.search_engine import SearchEngineClient
     from unified_kg_rag.ports.doc_status import DocStatusPort
     from unified_kg_rag.ports.indexer import GraphIndexer, VectorIndexer
 
@@ -424,6 +425,50 @@ def _opensearch_vector_retriever(providers: Providers) -> BaseGraphRAGRetriever:
                 providers, providers.config.aws.opensearch.use_iam
             ),
         ),
+        embedding_factory=providers.embedding_factory,
+    )
+
+
+def _sqlite_search_engine(providers: Providers) -> SearchEngineClient:
+    """An embedded engine on ``providers.vector.sqlite_path`` (no endpoint)."""
+    from unified_kg_rag.adapters.local.search_engine import SQLiteSearchEngine
+
+    config = providers.config
+    return SQLiteSearchEngine(
+        config.providers.vector.sqlite_path,
+        timeout_seconds=config.search.store_timeout_seconds,
+    )
+
+
+# The embedded engine answers the OpenSearch protocol, so the OpenSearch
+# indexer and retriever run on it unchanged.
+@register_provider(ProviderRole.VECTOR_INDEXER, SQLITE)
+def _sqlite_vector_indexer(providers: Providers) -> VectorIndexer:
+    from unified_kg_rag.adapters.storage.opensearch_indexer import (
+        OpenSearchIndexer,
+    )
+
+    config = providers.config
+    return OpenSearchIndexer(
+        config=config,
+        # Only the S3 embedding cache needs a session.
+        boto_session=_signing_session(
+            providers, config.indexing.opensearch.persist_embedding_cache
+        ),
+        embedding_factory=providers.embedding_factory,
+        opensearch_client=_sqlite_search_engine(providers),
+    )
+
+
+@register_provider(ProviderRole.VECTOR_RETRIEVER, SQLITE)
+def _sqlite_vector_retriever(providers: Providers) -> BaseGraphRAGRetriever:
+    from unified_kg_rag.adapters.retrievers.opensearch_retriever import (
+        OpenSearchRetriever,
+    )
+
+    return OpenSearchRetriever(
+        config=providers.config,
+        opensearch_client=_sqlite_search_engine(providers),
         embedding_factory=providers.embedding_factory,
     )
 
