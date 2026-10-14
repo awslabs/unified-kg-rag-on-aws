@@ -263,7 +263,31 @@ _OPENSEARCH_TOKENS = {
     ],
     # Symbols are no word characters, but symbols that are letters are.
     "x² H₂O ½ ① Ⓐb": ["x", "h", "o", "ⓐb"],
+    # The Arabic decimal separator is a digit, the Hebrew geresh a letter.
+    "١٢٣٫٤٥ ۳٫۵ ג׳ורג׳": ["١٢٣٫٤٥", "۳٫۵", "ג׳ורג׳"],
+    # Lowercased per character: "İ" -> "i", a final "Σ" -> "σ".
+    "İstanbul ΟΔΟΣ": ["istanbul", "οδοσ"],
+    # In-word punctuation needs a letter after the marks that follow it.
+    "क:̪ a:́b": ["क", "a:́b"],
 }
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        # Marks and format characters after a dense letter stay out of the
+        # bigrams, and no token is a lone mark, format character or connector.
+        ("한국어\u200c abc", ["한국", "국어", "abc"]),
+        ("漢字\u0301", ["漢字"]),
+        ("日本\xad語", ["日本", "本語"]),
+        ("葛\U000e0100城市", ["葛城", "城市"]),
+        ("漢\ufe00字 가\u0301나", ["漢字", "가나"]),
+        ("한_x 日‿本 한\u200dabc", ["한", "x", "日", "本", "한", "abc"]),
+    ],
+)
+def test_marks_after_dense_letters_are_no_token(text: str, expected: list[str]) -> None:
+    assert standard_analyzer(text) == expected
+    assert english_analyzer(text) == expected
 
 
 @pytest.mark.parametrize("text", list(_OPENSEARCH_TOKENS))

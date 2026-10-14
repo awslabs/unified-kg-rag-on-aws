@@ -459,6 +459,14 @@ Library API (Python callers and custom backends).
   "-ed"/"-ing" ("trekking" -> "trek"). It now agrees with OpenSearch on all
   457,417 dictionary words and suffixed forms checked. The possessive "'s" comes off a token's end
   rather than out of the text ("pant-'s" keeps its "s") (#280).
+- The embedded search engine's analyzers no longer index a lone mark,
+  format character or connector after a Han, Hangul or Kana letter
+  ("한국어" + U+200C gave a token U+200C; "日本" + soft hyphen + "語" lost
+  the "本語" bigram), keep "١٢٣٫٤٥" and "ג׳ורג׳" whole, lowercase "İ" to "i"
+  and "Σ" to "σ" as Lucene does (an "İstanbul" query missed "istanbul"), and
+  end a word at in-word punctuation followed by a mark but no letter
+  ("क:" + U+032A). Indexed text is analyzed when an index loads, so stored
+  stores pick this up without re-indexing (#PR).
 - A search on the embedded search engine reads one snapshot of the file.
   It resolved the index, checked the result window, read the search
   pipeline and loaded each index in separate reads, so an index another
