@@ -24,6 +24,7 @@ import time
 from typing import Any
 
 import pytest
+from botocore.exceptions import ClientError
 from langchain_core.documents import Document
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage
@@ -254,6 +255,37 @@ def test_a_query_that_never_reached_fusion_is_skipped() -> None:
     assert _scorer(_FakeRerankFactory(None)).new_trace().summary()["status"] == (
         "unavailable"
     )
+
+
+_ARN = "arn:aws:sts::123456789012:assumed-role/Example/session"
+
+
+def _client_error(code: str) -> Exception:
+    return ClientError(
+        {"Error": {"Code": code, "Message": f"denied for {_ARN}"}}, "Rerank"
+    )
+
+
+@pytest.mark.parametrize(
+    "code", ["AccessDeniedException", "ValidationException", "ResourceNotFound"]
+)
+def test_a_client_error_reports_its_error_code_not_its_message(code: str) -> None:
+    class _ClientErrorReranker(_FakeReranker):
+        def compress_documents(self, documents: Any, query: str) -> list[Document]:
+            # The Bedrock wrapper re-raises every error as RerankModelError.
+            try:
+                raise _client_error(code)
+            except ClientError as e:
+                raise RerankModelError(f"Reranking failed: {e}") from e
+
+    scorer = _scorer(_FakeRerankFactory(_ClientErrorReranker()))
+    _, rerank = _fuse(scorer, _results("text", "text"))
+    assert rerank["reason"] == f"rerank call failed: {code}"
+    assert _ARN not in str(rerank)
+
+    init = _scorer(_FakeRerankFactory(raises=_client_error(code)))
+    reason = init.new_trace().summary()["reason"]
+    assert reason == f"rerank model initialization failed: {code}"
 
 
 # --- several stages (global search reranked twice) -------------------------------

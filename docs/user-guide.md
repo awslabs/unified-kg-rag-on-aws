@@ -1192,6 +1192,10 @@ Every query reports what reranking did in `metadata.rerank` of the
 | `skipped` | Nothing to rerank: no candidates (including a strategy that returned early), none of a rerank-eligible type, or no query text. |
 | `failed` | The rerank call raised (a denied `bedrock:Rerank`, a region without the model, an unreachable endpoint) or returned nothing usable; the fused order was kept. |
 
+A `failed` or `unavailable` reason names what failed without its message: the
+AWS error code for a Bedrock error (`AccessDeniedException`,
+`ValidationException`), otherwise the exception type.
+
 When a query reranks more than once, the top-level `status` is the worst
 stage's, in the order `failed` > `unavailable` > `applied` > `skipped` >
 `disabled`. Each result's `metadata.reranked` flag still marks the results the

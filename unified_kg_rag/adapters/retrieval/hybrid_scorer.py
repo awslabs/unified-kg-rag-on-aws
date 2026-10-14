@@ -1,6 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 import copy
+import sys
 import time
 from collections import defaultdict
 from collections.abc import Callable
@@ -36,9 +37,21 @@ def _with_top_n(model: Any, top_n: int) -> Any:
 
 
 def _cause_name(exc: BaseException) -> str:
-    """Type name of what actually failed (the rerank wrappers re-raise every
-    error as ``RerankModelError``); never the message, which can carry ARNs."""
-    return type(exc.__cause__ or exc).__name__
+    """What actually failed (the rerank wrappers re-raise every error as
+    ``RerankModelError``): a botocore ``ClientError``'s error code (so access
+    denied, a validation error and a model missing in the region differ),
+    otherwise the type name. Never the message, which can carry ARNs."""
+    cause = exc.__cause__ or exc
+    # botocore is not imported here (local mode loads no AWS SDK); a
+    # ClientError can only exist once something else imported it.
+    botocore_exceptions = sys.modules.get("botocore.exceptions")
+    if botocore_exceptions is not None and isinstance(
+        cause, botocore_exceptions.ClientError
+    ):
+        code = cause.response.get("Error", {}).get("Code")
+        if code:
+            return str(code)
+    return type(cause).__name__
 
 
 class RerankTrace:

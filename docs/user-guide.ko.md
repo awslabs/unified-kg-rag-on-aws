@@ -1123,6 +1123,10 @@ run-rag --query "..." --filters attr_category:research type:person --config-path
 | `skipped` | 재순위화할 대상이 없습니다: 후보 없음(전략이 일찍 반환한 경우 포함), 재순위화 대상 유형의 결과 없음, 질의 텍스트 없음. |
 | `failed` | 재순위화 호출이 예외를 냈거나(`bedrock:Rerank` 거부, 모델이 없는 리전, 연결할 수 없는 엔드포인트) 쓸 수 있는 결과를 돌려주지 않았습니다. 융합 순서를 유지했습니다. |
 
+`failed`와 `unavailable`의 `reason`은 메시지 없이 실패 원인만 밝힙니다. Bedrock
+오류는 AWS 오류 코드(`AccessDeniedException`, `ValidationException`), 그 밖에는
+예외 유형입니다.
+
 한 질의가 여러 번 재순위화하면 최상위 `status`는 가장 나쁜 단계의 상태이며, 순서는
 `failed` > `unavailable` > `applied` > `skipped` > `disabled`입니다. 각 결과의
 `metadata.reranked` 플래그는 그대로 모델이 순서를 바꾼 결과를 표시합니다. Bedrock
