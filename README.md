@@ -25,19 +25,11 @@ Read the [AWS Open Source Blog introduction](https://aws.amazon.com/ko/blogs/ope
 
 ## Architecture
 
-![Data Ingestion Pipeline](./assets/ingestion_pipeline.png)
+![Data ingestion pipeline](./assets/ingestion-pipeline.drawio.png)
 
 Ingestion is a resumable 12-stage pipeline: parse, load, chunk, optionally translate, extract entities and relationships with an LLM, optionally glean, resolve duplicates, optionally extract claims, compute graph metrics, detect Leiden communities with LLM-written reports, and index into OpenSearch and Neptune. Stage checkpoints are cached locally and can be synced to S3.
 
-```mermaid
-flowchart LR
-    query["Query + strategy"] --> qp["Query processing<br/>translation, entities or keywords"]
-    qp --> graphrag["GraphRAG<br/>simple, local, global, drift"]
-    qp --> lightrag["LightRAG<br/>naive, hybrid, mix"]
-    graphrag --> fuse["Fusion (RRF) + Bedrock rerank"]
-    lightrag --> fuse
-    fuse --> budget["Token budget"] --> answer["Answer + sources"]
-```
+![Retrieval pipeline](./assets/retrieval-pipeline.drawio.png)
 
 Every strategy runs through the same hybrid scorer and token budget. Pick one with `--search-strategy` (CLI) or `RAGInput.search_strategy` (Python):
 

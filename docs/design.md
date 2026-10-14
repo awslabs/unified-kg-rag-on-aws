@@ -189,7 +189,7 @@ The `domain/models/` package contains pure Pydantic models with no infrastructur
 
 The `DataIngestionPipeline` in `application/ingestion/pipeline.py` runs 12 stages in order (`application/ingestion/pipeline_stages.py`).
 
-![Ingestion Pipeline](../assets/ingestion_pipeline.png)
+![Ingestion pipeline](../assets/ingestion-pipeline.drawio.png)
 
 | # | Stage | Module | Notes |
 |---|---|---|---|
@@ -304,32 +304,9 @@ Enable with: `config.aws.dynamodb.enabled = true`.
 
 The `GraphRAGChain` (an LCEL Runnable) in `application/retrieval/rag_chain.py` performs memory (a follow-up with conversation history is rewritten as a standalone question, `QueryRewritePrompt`) → strategy resolution → query processing (translation, entity/keyword extraction) → retrieval → (RAG) context build + answer generation. Routing, retrieval and the answer all read the standalone question. The methodology is selected via `RAGInput.search_strategy`.
 
-```mermaid
-flowchart TD
-    input["RAGInput: query, search_strategy, suffix, filters"] --> memory["Conversation memory (use_memory): a follow-up is rewritten as a standalone question"]
-    memory --> resolve["Resolve strategy (auto: LLM router over search.auto_routable_strategies)"]
-    resolve --> qp["Query processing: translation alongside entities or dual-level keywords, as the strategy declares"]
-    qp --> graphrag
-    qp --> lightrag
-    subgraph graphrag["GraphRAG strategies"]
-        simple["simple: OpenSearch vector + BM25"]
-        local["local: entities, Neptune expansion, text units, reports, relationships, claims"]
-        global["global: community reports, map-reduce key points"]
-        drift["drift: iterative query refinement, optional primer"]
-    end
-    subgraph lightrag["LightRAG strategies"]
-        naive["naive: vector chunks"]
-        hybrid["hybrid: ll keywords to entity index, hl keywords to relationship index, one-hop expansion"]
-        mix["mix: hybrid + cited chunks + vector chunks"]
-    end
-    graphrag --> fuse["HybridScorer: RRF or weighted fusion, MMR diversity, Bedrock rerank"]
-    lightrag --> fuse
-    fuse --> mode{"ChainMode"}
-    mode -- SEARCH --> results["Fused retrieval results"]
-    mode -- RAG --> budget["TokenManager: per-section token budget"]
-    budget --> answer["Answer generation"]
-    answer --> output["RAGOutput: answer + sources the model saw"]
-```
+![Retrieval pipeline](../assets/retrieval-pipeline.drawio.png)
+
+`ChainMode` decides where the chain stops: `SEARCH` returns the fused, ranked retrieval results without an answer; `RAG` (the default) packs them into the token budget (`TokenManager`, §7), generates the answer, and returns a `RAGOutput` whose sources are exactly the sections the answer model saw. When the budgeted context is empty, the chain answers that it cannot answer without calling the LLM.
 
 Neptune graph expansion is part of `local` and `drift`; for `mix`/`hybrid` it is opt-in (`search.lightrag_search.enable_graph_expansion`). The strategies find the seed entities in OpenSearch and pass their ids to the graph retriever as an `id` filter; `NeptuneRetriever` expands from those ids only and returns nothing for a query without one.
 

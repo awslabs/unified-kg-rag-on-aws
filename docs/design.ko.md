@@ -189,7 +189,7 @@ class LocalSearchStrategy(BaseSearchStrategy): ...
 
 `application/ingestion/pipeline.py`의 `DataIngestionPipeline`이 12개 단계를 차례로 실행합니다(`application/ingestion/pipeline_stages.py`).
 
-![수집 파이프라인](../assets/ingestion_pipeline.png)
+![수집 파이프라인](../assets/ingestion-pipeline.drawio.png)
 
 | # | 단계 | 모듈 | 비고 |
 |---|---|---|---|
@@ -304,32 +304,9 @@ flowchart LR
 
 `application/retrieval/rag_chain.py`의 `GraphRAGChain`(LCEL Runnable)이 메모리(대화 이력이 있는 후속 질문을 독립된 질문으로 다시 씀, `QueryRewritePrompt`) → 전략 결정 → 질의 처리(번역, 엔티티·키워드 추출) → 검색 → (RAG) 컨텍스트 구성과 답변 생성을 수행합니다. 라우팅, 검색, 답변 모두 다시 쓴 질문을 사용합니다. 방법론은 `RAGInput.search_strategy`로 고릅니다.
 
-```mermaid
-flowchart TD
-    input["RAGInput: query, search_strategy, suffix, filters"] --> memory["Conversation memory (use_memory): a follow-up is rewritten as a standalone question"]
-    memory --> resolve["Resolve strategy (auto: LLM router over search.auto_routable_strategies)"]
-    resolve --> qp["Query processing: translation alongside entities or dual-level keywords, as the strategy declares"]
-    qp --> graphrag
-    qp --> lightrag
-    subgraph graphrag["GraphRAG strategies"]
-        simple["simple: OpenSearch vector + BM25"]
-        local["local: entities, Neptune expansion, text units, reports, relationships, claims"]
-        global["global: community reports, map-reduce key points"]
-        drift["drift: iterative query refinement, optional primer"]
-    end
-    subgraph lightrag["LightRAG strategies"]
-        naive["naive: vector chunks"]
-        hybrid["hybrid: ll keywords to entity index, hl keywords to relationship index, one-hop expansion"]
-        mix["mix: hybrid + cited chunks + vector chunks"]
-    end
-    graphrag --> fuse["HybridScorer: RRF or weighted fusion, MMR diversity, Bedrock rerank"]
-    lightrag --> fuse
-    fuse --> mode{"ChainMode"}
-    mode -- SEARCH --> results["Fused retrieval results"]
-    mode -- RAG --> budget["TokenManager: per-section token budget"]
-    budget --> answer["Answer generation"]
-    answer --> output["RAGOutput: answer + sources the model saw"]
-```
+![검색 파이프라인](../assets/retrieval-pipeline.drawio.png)
+
+`ChainMode`가 체인이 끝나는 지점을 정합니다. `SEARCH`는 답변 없이 융합·정렬한 검색 결과를 돌려주고, `RAG`(기본값)는 결과를 토큰 예산(`TokenManager`, §7)에 맞춰 담은 뒤 답변을 생성해 `RAGOutput`을 돌려줍니다. 이때 출처는 답변 모델이 실제로 본 섹션과 정확히 일치합니다. 예산을 적용한 컨텍스트가 비어 있으면 LLM을 호출하지 않고 답할 수 없다고 응답합니다.
 
 Neptune 그래프 확장은 `local`과 `drift`에 포함되어 있고, `mix`/`hybrid`에서는 선택 사항입니다(`search.lightrag_search.enable_graph_expansion`). 전략은 시드 엔티티를 OpenSearch에서 찾아 그 ID를 `id` 필터로 그래프 리트리버에 넘깁니다. `NeptuneRetriever`는 이 ID에서만 확장하며, `id` 필터가 없는 질의에는 결과를 돌려주지 않습니다.
 
