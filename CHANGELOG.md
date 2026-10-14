@@ -133,7 +133,7 @@ Library API (Python callers and custom backends).
 - Custom search strategies: `BaseSearchStrategy._fuse_and_rerank` takes a
   required `rerank_trace=` (create it with `self._new_rerank_trace()` and
   pass it to `SearchResult.metadata["rerank"]`); a call without it raises
-  `TypeError` instead of reporting the rerank as `skipped` (#PR).
+  `TypeError` instead of reporting the rerank as `skipped` (#284).
 - Import paths (#216 unless noted): `HierarchicalCommunity` →
   `domain.models`; `LanguageModelInfo`, `EmbeddingModelInfo`,
   `RerankModelInfo`, `effective_max_output_tokens` →
@@ -320,7 +320,7 @@ Library API (Python callers and custom backends).
   fusion and strategy spans. A rerank model that could not be built is now
   logged at ERROR instead of WARNING. Opt-in `search.reranking.required`
   fails the query with `RerankModelError` instead of answering from the
-  fused order. Reported by @vibhupb (#83) (#PR).
+  fused order. Reported by @vibhupb (#83) (#284).
 
 ### Changed
 - `backend: local` selects the embedded SQLite graph and vector stores
