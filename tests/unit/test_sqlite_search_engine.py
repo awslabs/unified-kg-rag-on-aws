@@ -280,6 +280,46 @@ def test_multi_match_takes_the_best_field(engine) -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [
+        ("fire system", "fire"),
+        ("interest bill amount", "bill"),
+        ("computer name detail", "computer"),
+    ],
+)
+def test_english_multi_match_keeps_content_words(
+    tmp_path: Path, query: str, expected: str
+) -> None:
+    # Only Lucene's 33 English stop words are dropped, as by OpenSearch; a
+    # wider list (scikit-learn's 318) drops these whole queries.
+    engine = SQLiteSearchEngine(tmp_path / "english.sqlite3")
+    try:
+        engine.create_index(
+            "en",
+            {
+                "mappings": {
+                    "properties": {"text": {"type": "text", "analyzer": "english"}}
+                }
+            },
+        )
+        engine.bulk_index(
+            "en",
+            [
+                {"id": "fire", "text": "The fire system failed"},
+                {"id": "bill", "text": "Interest on the bill amount is due"},
+                {"id": "computer", "text": "Each computer has a name and a detail"},
+            ],
+        )
+        response = engine.search(
+            index="en",
+            body={"query": {"multi_match": {"query": query, "fields": ["text"]}}},
+        )
+        assert [hit["_id"] for hit in response["hits"]["hits"]] == [expected]
+    finally:
+        engine.close()
+
+
 def test_knn_cosine_scores_and_top_k(engine) -> None:
     hits = _hits(engine, {"knn": {"vec": {"vector": [1.0, 0.0], "k": 2}}})
     # (1 + cos) / 2: a = 1, c = (1 + 1/sqrt 2) / 2, b = 0.5 (not in the top 2)
@@ -667,6 +707,71 @@ def test_generation_reload_across_two_engines(engine, tmp_path: Path) -> None:
         assert engine_module._INDEX_CACHE[(reader._cache_path, INDEX)] is reloaded
     finally:
         reader.close()
+
+
+class _CommitBeforeVectors:
+    """A connection that lets ``write`` commit just before the first read of
+    the vectors table: between the reads of one index load."""
+
+    def __init__(self, real: sqlite3.Connection, write: Any) -> None:
+        self.real, self.write, self.fired = real, write, False
+
+    def execute(self, sql: str, *args: Any) -> Any:
+        if sql.startswith("SELECT id, vec FROM vectors") and not self.fired:
+            self.fired = True
+            self.write()
+        return self.real.execute(sql, *args)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.real, name)
+
+
+def test_index_load_reads_one_snapshot(engine, tmp_path: Path) -> None:
+    reader = SQLiteSearchEngine(tmp_path / "vector.sqlite3")
+    try:
+        engine_module._INDEX_CACHE.clear()
+        reader._connection = _CommitBeforeVectors(  # type: ignore[assignment]
+            reader.connection,
+            lambda: engine.bulk_index(INDEX, [{"id": "d", "vec": [1.0, 0.0]}]),
+        )
+        knn = {"knn": {"vec": {"vector": [1.0, 0.0], "k": 5}}}
+        # The load predates the write: its vectors are the documents' (a
+        # load spanning the commit had a vector without a document: KeyError).
+        assert set(_hits(reader, knn)) == {"a", "b", "c"}
+        assert reader._connection.fired
+        assert set(_hits(reader, knn)) == {"a", "b", "c", "d"}
+    finally:
+        reader.close()
+
+
+def test_vectors_without_documents_raise_a_store_error(engine, tmp_path: Path) -> None:
+    raw = sqlite3.connect(tmp_path / "vector.sqlite3", isolation_level=None)
+    try:
+        raw.execute("DELETE FROM docs WHERE id = 'a'")
+        raw.execute("UPDATE indices SET generation = generation + 1000")
+    finally:
+        raw.close()
+    with pytest.raises(StoreConfigurationError, match="without a document"):
+        _hits(engine, {"knn": {"vec": {"vector": [1.0, 0.0], "k": 5}}})
+
+
+def test_indices_deleted_by_another_process_leave_the_cache(
+    engine, tmp_path: Path
+) -> None:
+    engine.create_index("other-1", MAPPING)
+    engine.bulk_index("other-1", DOCS[:1])
+    _hits(engine, {"match_all": {}})
+    engine.search(index="other-1", body={})
+    assert (engine._cache_path, "other-1") in engine_module._INDEX_CACHE
+    # Another process deletes it: this one's cache is not told.
+    raw = sqlite3.connect(tmp_path / "vector.sqlite3", isolation_level=None)
+    try:
+        raw.execute("DELETE FROM indices WHERE name = 'other-1'")
+    finally:
+        raw.close()
+    _hits(engine, {"match_all": {}})
+    assert (engine._cache_path, "other-1") not in engine_module._INDEX_CACHE
+    assert (engine._cache_path, INDEX) in engine_module._INDEX_CACHE
 
 
 def test_data_persists_after_reopen(engine, tmp_path: Path) -> None:

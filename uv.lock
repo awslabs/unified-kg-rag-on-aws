@@ -4968,6 +4968,7 @@ dev = [
     { name = "pytest-mock" },
     { name = "pytest-timeout" },
     { name = "ruff" },
+    { name = "snowballstemmer" },
     { name = "types-boto3", extra = ["full"] },
 ]
 
@@ -5039,6 +5040,7 @@ dev = [
     { name = "pytest-mock", specifier = ">=3.12.0" },
     { name = "pytest-timeout", specifier = ">=2.4.0" },
     { name = "ruff", specifier = ">=0.16.1" },
+    { name = "snowballstemmer", specifier = ">=2.2" },
     { name = "types-boto3", extras = ["full"], specifier = ">=1.43.71" },
 ]
 

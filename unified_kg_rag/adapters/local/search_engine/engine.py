@@ -781,21 +781,38 @@ class SQLiteSearchEngine:
     # --- reads --------------------------------------------------------------
 
     def _load(self, index: str) -> LoadedIndex:
-        """``index`` from the module cache, reloaded if a write changed it."""
+        """``index`` from the module cache, reloaded if a write changed it.
+
+        The generation and the rows are read in one transaction, so from one
+        snapshot of the file (in WAL mode a reader does not block the writer):
+        a write committed meanwhile cannot leave vectors without documents.
+        Cached indices of this file that another engine deleted are dropped.
+        """
         key = (self._cache_path, index)
         with self._reading("read an index") as connection:
-            row = connection.execute(
-                "SELECT generation FROM indices WHERE name = ?", (index,)
-            ).fetchone()
-            if row is None:
-                raise index_not_found(index)
-            generation = int(row[0])
-            with _CACHE_LOCK:
-                cached = _INDEX_CACHE.get(key)
-                if cached is not None and cached.generation == generation:
-                    return cached
-                loaded = self._read_index(connection, index, generation)
-                _INDEX_CACHE[key] = loaded
+            connection.execute("BEGIN")
+            try:
+                generations = dict(
+                    connection.execute("SELECT name, generation FROM indices")
+                )
+                with _CACHE_LOCK:
+                    for stale in [
+                        k
+                        for k in _INDEX_CACHE
+                        if k[0] == self._cache_path and k[1] not in generations
+                    ]:
+                        del _INDEX_CACHE[stale]
+                    if index not in generations:
+                        raise index_not_found(index)
+                    generation = int(generations[index])
+                    cached = _INDEX_CACHE.get(key)
+                    if cached is not None and cached.generation == generation:
+                        return cached
+                    loaded = self._read_index(connection, index, generation)
+                    _INDEX_CACHE[key] = loaded
+            finally:
+                if connection.in_transaction:
+                    connection.execute("COMMIT")
         return loaded
 
     def _read_index(
@@ -831,6 +848,14 @@ class SQLiteSearchEngine:
                 (index, name),
             ).fetchall()
             ids = [r[0] for r in rows]
+            if orphans := [doc_id for doc_id in ids if doc_id not in sources]:
+                raise StoreConfigurationError(
+                    f"Embedded search engine: index '{index}' of the SQLite "
+                    f"database '{self.path}' has {len(orphans)} vector(s) of "
+                    f"field [{name}] without a document (e.g. '{orphans[0]}'). "
+                    "The file was changed outside this engine; re-index it "
+                    "(indexing.reset: true)."
+                )
             matrix = (
                 np.vstack([np.frombuffer(r[1], dtype=np.float32) for r in rows])
                 if rows

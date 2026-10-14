@@ -5,6 +5,8 @@
 from __future__ import annotations
 
 import logging
+import random
+import re
 import sys
 
 import pytest
@@ -16,6 +18,7 @@ from unified_kg_rag.adapters.local.search_engine.analyzers import (
     register_analyzer,
     standard_analyzer,
 )
+from unified_kg_rag.shared.utils.scripts import is_dense_script_char
 
 pytestmark = pytest.mark.unit
 
@@ -92,6 +95,16 @@ def test_english_strips_possessives_and_stop_words_and_stems() -> None:
     assert english_analyzer("supplies 공급계약") == ["suppli", "공급", "급계", "계약"]
 
 
+def test_english_stop_words_are_lucenes() -> None:
+    # OpenSearch's ``english`` analyzer drops exactly these (``_english_``).
+    assert len(analyzers.ENGLISH_STOP_WORDS) == 33
+    assert {"the", "a", "is", "with", "their"} <= analyzers.ENGLISH_STOP_WORDS
+    pytest.importorskip("snowballstemmer")
+    assert english_analyzer("interest bill amount") == ["interest", "bill", "amount"]
+    assert english_analyzer("fire system") == ["fire", "system"]
+    assert english_analyzer("computer name detail") == ["comput", "name", "detail"]
+
+
 def test_english_without_snowballstemmer_does_not_stem(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -108,3 +121,96 @@ def test_english_without_snowballstemmer_does_not_stem(
         assert caplog.text.count("snowballstemmer is not installed") == 1
     finally:
         analyzers._porter_stem.cache_clear()
+
+
+def _per_character_tokens(text: str) -> list[str]:
+    """The ``standard`` tokens by a per-character script test (reference)."""
+    tokens: list[str] = []
+    for word in re.findall(r"\w+", text.lower()):
+        start = 0
+        for i in range(1, len(word) + 1):
+            if i == len(word) or is_dense_script_char(word[i]) != is_dense_script_char(
+                word[start]
+            ):
+                run = word[start:i]
+                if is_dense_script_char(run[0]):
+                    tokens.extend(
+                        [run]
+                        if len(run) == 1
+                        else [run[i : i + 2] for i in range(len(run) - 1)]
+                    )
+                else:
+                    tokens.append(run)
+                start = i
+    return tokens
+
+
+def test_dense_run_split_matches_a_per_character_scan() -> None:
+    rng = random.Random(3)
+    words = [
+        "Vendor",
+        "ships",
+        "3",
+        "홍길동으로부터",
+        "AI기반",
+        "東京都に住む",
+        "カタカナx",
+        "北京大学",
+        "2년",
+        "x東y",
+        "가",
+        "ㄱㄴ",
+        "\U00020000\U00020001b",
+        "été",
+        "under_score",
+    ]
+    for _ in range(500):
+        text = " ".join(rng.choices(words, k=rng.randint(1, 12)))
+        assert standard_analyzer(text) == _per_character_tokens(text)
+
+
+def test_english_stems_each_distinct_word_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    snowballstemmer = pytest.importorskip("snowballstemmer")
+    calls: list[str] = []
+    real = snowballstemmer.stemmer
+
+    def counting(name: str) -> object:
+        stemmer = real(name)
+
+        class Counting:
+            def stemWord(self, word: str) -> str:  # noqa: N802
+                calls.append(word)
+                return str(stemmer.stemWord(word))
+
+        return Counting()
+
+    monkeypatch.setattr(snowballstemmer, "stemmer", counting)
+    analyzers._porter_stem.cache_clear()
+    try:
+        assert english_analyzer("shipping widgets shipping widgets") == [
+            "ship",
+            "widget",
+            "ship",
+            "widget",
+        ]
+        assert sorted(calls) == ["shipping", "widgets"]
+    finally:
+        analyzers._porter_stem.cache_clear()
+
+
+def test_in_word_punctuation_joins_like_opensearch() -> None:
+    # OpenSearch 2.13's _analyze output for the same text.
+    assert standard_analyzer("don't 1,000.50 U.S.A. e-mail a:b 12:30 3.2.1(a)") == [
+        "don't",
+        "1,000.50",
+        "u.s.a",
+        "e",
+        "mail",
+        "a:b",
+        "12",
+        "30",
+        "3.2.1",
+        "a",
+    ]
+    # Not across a letter-digit boundary, nor into a dense-script run.
+    assert standard_analyzer("a1.b 1.a 가.나") == ["a1", "b", "1", "a", "가", "나"]

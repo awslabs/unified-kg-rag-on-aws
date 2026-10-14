@@ -401,6 +401,29 @@ Library API (Python callers and custom backends).
   28 s. Restart the stack (`down` and `up`) to pick it up (#265).
 
 ### Fixed
+- The embedded search engine's `english` analyzer drops only Lucene's 33
+  English stop words, as OpenSearch's `english` analyzer does. It used
+  scikit-learn's 318, which include content words such as "amount", "bill",
+  "interest", "system", "name" and "detail", so a query like "interest bill
+  amount" found nothing lexically on an English corpus (#277).
+- The first lexical query after a write to the embedded search engine is
+  about 7x faster (63 s to 8 s at 50,000 documents of 120 words; 27x for
+  the `english` analyzer alone): its analyzers split CJK runs with one
+  regular expression instead of testing each character twice, and stem each
+  distinct word once (#277).
+- A kNN or hybrid query on the embedded search engine no longer returns no
+  results when another process writes while it loads the index. The load
+  read the generation, the documents and each vector field in separate
+  statements, so a commit in between left a vector without a document; the
+  `KeyError` that followed was read as a non-fatal failure and the query
+  answered from nothing. The load now reads one snapshot, a vector without
+  a document (a file changed outside the engine) raises
+  `StoreConfigurationError`, and an index another process deleted leaves
+  this process's cache (#277).
+- The embedded search engine's analyzers keep a word whole across in-word
+  punctuation as OpenSearch's standard tokenizer does ("don't", "u.s.a",
+  "1,000.50", "2024.01.15"). They split there, so a query for an amount
+  such as "1,000,000" matched every document containing "000" (#277).
 - A global-search map step whose every batch is over the model's context
   (langchain-openai's `OpenAIContextOverflowError`) answers from the
   unrated reports again. That error is an HTTP 400 too, so it was read as a
