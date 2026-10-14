@@ -401,6 +401,17 @@ Library API (Python callers and custom backends).
   28 s. Restart the stack (`down` and `up`) to pick it up (#265).
 
 ### Fixed
+- A CDK deployment indexes Korean text: an Amazon OpenSearch Service domain
+  has no `nori` analyzer unless its optional Nori package is associated, so
+  with the default `language_analyzers` (`ko: nori`) a Korean corpus or target
+  language failed every Korean index with `mapper_parsing_exception: analyzer
+  [nori] has not been configured in mappings`. The compute stack now injects
+  `OPENSEARCH_KOREAN_ANALYZER` (new context key `opensearch_korean_analyzer`,
+  default `cjk`, OpenSearch's built-in bigram analyzer), which overrides
+  `language_analyzers.ko`; set it to `nori` once the package is associated.
+  Index creation that names an analyzer the cluster lacks now fails with an
+  error naming the analyzer and the fix. The docs no longer claim nori is
+  built into Amazon OpenSearch Service (#PR).
 - The embedded search engine's `english` analyzer drops only Lucene's 33
   English stop words, as OpenSearch's `english` analyzer does. It used
   scikit-learn's 318, which include content words such as "amount", "bill",

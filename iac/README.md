@@ -119,6 +119,7 @@ Prep (parse/load/chunk/translate) → GraphBuild (extract/glean/resolve/claims)
 | `opensearch_master_instance` | `m6g.large.search` | dedicated master node type, used only when `opensearch_count > 1`. 8 GiB Graviton, which AWS sizes for up to 10 nodes / 10K shards on OpenSearch 2.13; raise it for larger domains |
 | `opensearch_count` | `1` (dev) / `2` (non-dev) | OpenSearch data node count (`>1` ⇒ 3 dedicated masters + zone awareness, e.g. 2 data nodes = 5 nodes; dev runs a single node for cost). A zone-aware domain spans as many AZs as it has data nodes, up to 3 and up to the AZs of the VPC (`max_azs` for a created VPC): 3 data nodes with `max_azs=3` use 3 AZs. **Upgrading:** earlier versions pinned such domains to 2 AZs, so the first deploy of an existing domain with 3 or more data nodes in a VPC with 3 or more AZs moves it to 3 AZs, which OpenSearch applies as a blue/green deployment (new nodes, every shard copied; the domain stays available but slower, which can take hours on a large domain). Deploy it in a quiet window, with no ingestion running |
 | `opensearch_volume_gib` | `50` | GP3 volume per OpenSearch data node; the free-storage alarm fires at 40% free |
+| `opensearch_korean_analyzer` | `cjk` | OpenSearch analyzer of Korean text, injected as `OPENSEARCH_KOREAN_ANALYZER` (overrides `indexing.opensearch.language_analyzers.ko` of the image config). The domain has no `nori` unless its optional Nori package (`analysis-nori`) is associated, and an index whose mapping names a missing analyzer fails to create; `cjk` (character bigrams) is built into OpenSearch. To use `nori`, associate the package (console **Packages** or `aws opensearch associate-package`, a blue/green deployment), deploy with `nori`, and re-run once with `indexing.reset: true` |
 | `doc_status_table` | `graphrag-doc-status` (dev) / `<env>-graphrag-doc-status` (non-dev) | DynamoDB doc-status (incremental-indexing registry) table name, injected into the task as `GRAPHRAG_DOC_STATUS_TABLE`. Changing it on a deployed environment creates a new, empty registry table |
 | `backup_retention_days` | `7` | Neptune automated backup retention, 1-35 days (see [Backup and restore](../docs/operations.md#backup-and-restore)) |
 | `fargate_cpu` | `2048` | Fargate task vCPU units (in-task ProcessPool extractors scale with vCPU): `256`, `512`, `1024`, `2048`, `4096`, `8192` or `16384` |
@@ -436,6 +437,7 @@ The image bakes in the tracked, endpoint-free `docker/config.yaml` as
 `/app/config.yaml`; the deployed values come from the environment variables the
 task injects: `NEPTUNE_ENDPOINT`, `OPENSEARCH_ENDPOINT`, `S3_BUCKET_NAME`,
 `AWS_REGION`, `BEDROCK_REGION`, `LOG_FORMAT`, `OPENSEARCH_NUMBER_OF_REPLICAS`,
+`OPENSEARCH_KOREAN_ANALYZER` (`opensearch_korean_analyzer`),
 `GRAPHRAG_DOC_STATUS_TABLE`
 (the table this stack created) and `GRAPHRAG_DOC_STATUS_CREATE_TABLE=false`,
 plus `BEDROCK_GUARDRAIL_IDENTIFIER` when `guardrail_identifier` is set (and

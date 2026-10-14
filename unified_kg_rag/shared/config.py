@@ -205,6 +205,15 @@ class ConfigLoader:
                 "index_settings",
                 "number_of_replicas",
             ),
+            # Injected by the CDK compute stack: Amazon OpenSearch Service has
+            # no nori unless its optional plugin is associated, so the IaC maps
+            # Korean to an analyzer the domain has (the built-in cjk).
+            "OPENSEARCH_KOREAN_ANALYZER": (
+                "indexing",
+                "opensearch",
+                "language_analyzers",
+                "ko",
+            ),
             # Injected by the CDK compute stack so the app uses the IaC-managed
             # doc-status table (and never auto-creates an unmanaged one).
             "GRAPHRAG_DOC_STATUS_TABLE": ("aws", "dynamodb", "table_name"),
