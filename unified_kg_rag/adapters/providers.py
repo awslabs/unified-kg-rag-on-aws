@@ -351,13 +351,15 @@ def _signing_session(providers: Providers, needed: bool) -> boto3.Session | None
 
 
 # Gremlin Server speaks the same TinkerPop protocol as Neptune; the config
-# validator requires aws.neptune.use_iam: false for it (no SigV4).
+# validator requires aws.neptune.use_iam: false for it (no SigV4). Only the
+# retriever kinds declare the endpoint: preflight resolves it through the
+# retriever role, and each indexer shares its retriever's providers section.
 _NEPTUNE_ENDPOINT = ("aws.neptune.endpoint", "NEPTUNE_ENDPOINT")
 _OPENSEARCH_ENDPOINT = ("aws.opensearch.endpoint", "OPENSEARCH_ENDPOINT")
 
 
-@register_provider(ProviderRole.GRAPH_INDEXER, NEPTUNE, endpoint=_NEPTUNE_ENDPOINT)
-@register_provider(ProviderRole.GRAPH_INDEXER, GREMLIN, endpoint=_NEPTUNE_ENDPOINT)
+@register_provider(ProviderRole.GRAPH_INDEXER, NEPTUNE)
+@register_provider(ProviderRole.GRAPH_INDEXER, GREMLIN)
 def _neptune_graph_indexer(providers: Providers) -> GraphIndexer:
     from unified_kg_rag.adapters.storage.neptune_indexer import NeptuneIndexer
 
@@ -403,9 +405,7 @@ def _sqlite_graph_retriever(providers: Providers) -> BaseGraphRAGRetriever:
     return SQLiteGraphRetriever(config=providers.config)
 
 
-@register_provider(
-    ProviderRole.VECTOR_INDEXER, OPENSEARCH, endpoint=_OPENSEARCH_ENDPOINT
-)
+@register_provider(ProviderRole.VECTOR_INDEXER, OPENSEARCH)
 def _opensearch_vector_indexer(providers: Providers) -> VectorIndexer:
     from unified_kg_rag.adapters.storage.opensearch_indexer import (
         OpenSearchIndexer,
