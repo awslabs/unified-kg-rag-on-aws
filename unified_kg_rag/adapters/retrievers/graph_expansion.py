@@ -133,38 +133,28 @@ class GraphExpansionRetriever(BaseGraphRAGRetriever):
         return union_filter_fields(NEPTUNE_FILTER_FIELDS.values())
 
     @staticmethod
-    def _scope_filters_to_labels(
-        label_kinds: dict[str, str], filters: dict[str, Any] | None
-    ) -> tuple[dict[str, Any] | None, dict[str, list[str]]]:
-        """Restrict filters to the vertex labels that declare each key.
+    def _scope_filters_to_label(
+        label: str, kind: str, filters: dict[str, Any] | None
+    ) -> dict[str, Any] | None:
+        """``filters`` without the keys ``label`` does not declare.
 
-        ``label_kinds`` maps each target label to its ``NEPTUNE_FILTER_FIELDS``
-        kind. Mirrors the OpenSearch per-index scoping: a filter on ``key``
-        drops every vertex lacking ``key``, so keys no target label declares
-        are dropped, and for a key only some labels declare the returned
-        ``exempt`` map lists the labels the filter must not touch.
+        ``kind`` is the label's ``NEPTUNE_FILTER_FIELDS`` kind. Mirrors the
+        OpenSearch per-index scoping: a filter on ``key`` drops every vertex
+        lacking ``key``, so a key the label does not declare is dropped
+        rather than emptying the traversal.
         """
         if not filters:
-            return filters, {}
+            return filters
+        fields = NEPTUNE_FILTER_FIELDS[kind]
         kept: dict[str, Any] = {}
-        exempt: dict[str, list[str]] = {}
         for key, value in filters.items():
-            lacking = [
-                label
-                for label, kind in label_kinds.items()
-                if not NEPTUNE_FILTER_FIELDS[kind].declares(key)
-            ]
-            if len(lacking) == len(label_kinds):
+            if not fields.declares(key):
                 logger.debug(
-                    "Dropped filter key '%s': no %s vertex declares it",
-                    key,
-                    "/".join(label_kinds),
+                    "Dropped filter key '%s': no %s vertex declares it", key, label
                 )
                 continue
             kept[key] = value
-            if lacking:
-                exempt[key] = lacking
-        return kept or None, exempt
+        return kept or None
 
     @staticmethod
     def _clean_property_map(prop_map: dict[str, Any]) -> dict[str, Any]:

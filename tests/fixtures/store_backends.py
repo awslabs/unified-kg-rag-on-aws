@@ -53,7 +53,8 @@ from unified_kg_rag.shared import get_config
 LOCAL_CONFIG = Path(__file__).parents[2] / "docker" / "config.local.yaml"
 DEFAULT_SUFFIX = Constants.DEFAULT_SUFFIX.value
 
-# Capabilities a backend may lack; a test needing one skips the others.
+# Capabilities a backend may lack; a test needing one runs only on the
+# backends that have it (``backends``).
 RETRIEVERS = "retrievers"
 # Aliases, index mappings and _meta, search pipelines (OpenSearch protocol).
 INDEX_ADMIN = "index_admin"
@@ -168,11 +169,6 @@ class StoreHarness:
         )
 
     # --- setup ---------------------------------------------------------------
-
-    def require(self, capability: str) -> None:
-        """Skip the test on a backend without ``capability``."""
-        if capability not in self.capabilities:
-            pytest.skip(f"the {self.kind} backend has no {capability}")
 
     def suffix(self, name: str) -> str:
         """A suffix unique to this harness (``<name>-<tag>``), cleared on
@@ -291,7 +287,6 @@ class StoreHarness:
     ) -> list[list[RetrievalResult]]:
         """Run ``queries`` on a fresh retriever of ``role`` (first given to
         ``prepare``, if any), in order."""
-        self.require(RETRIEVERS)
         build = (
             self.graph_retriever
             if role is RetrieverRole.GRAPH
@@ -371,6 +366,15 @@ BACKENDS = [
     pytest.param("container", id="container"),
     pytest.param("aws", id="aws", marks=pytest.mark.aws),
 ]
+
+
+def backends(*capabilities: str) -> list[Any]:
+    """The :data:`BACKENDS` that have every one of ``capabilities``."""
+    return [
+        param
+        for param in BACKENDS
+        if set(capabilities) <= CAPABILITIES[param.values[0]]
+    ]
 
 
 def open_harness(kind: str, tmp_path: Path) -> Iterator[StoreHarness]:

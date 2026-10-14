@@ -393,6 +393,18 @@ class VectorIndexer(BaseIndexer):
         nothing."""
         return None
 
+    def read_text_unit_ids(
+        self, ids: list[str], suffix: str | None = None
+    ) -> list[str] | None:
+        """The ids among ``ids`` that ``suffix``'s text-unit index holds.
+
+        An incremental run probes it to tell the vector store still holds the
+        registry's documents. Default returns ``None``: the backend cannot
+        tell, and the probe is skipped. Adapters that override it return
+        ``[]`` without a live index and raise when a read fails.
+        """
+        return None
+
     def read_claims(self, ids: list[str], suffix: str | None = None) -> list[Claim]:
         """Read stored claims by id for the cross-run claim merge.
 

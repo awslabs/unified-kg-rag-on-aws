@@ -424,6 +424,22 @@ Library API (Python callers and custom backends).
   punctuation as OpenSearch's standard tokenizer does ("don't", "u.s.a",
   "1,000.50", "2024.01.15"). They split there, so a query for an amount
   such as "1,000,000" matched every document containing "000" (#277).
+- An incremental run fails before writing when the vector store lost the
+  documents the doc-status registry lists (local mode: `vector.sqlite3`
+  deleted or moved, or `providers.vector.sqlite_path` changed). Only the
+  graph was probed, so the run called those documents unchanged and left a
+  vector store holding just the new and changed ones, with no error. The
+  probe reads a few of their text units (`VectorIndexer.read_text_unit_ids`;
+  a backend that cannot answer skips it) (#278).
+- Graph expansion on the embedded SQLite graph store reads one snapshot.
+  Its neighbour and vertex reads ran as separate statements, so an
+  ingestion deleting a vertex the walk had reached in between (an
+  incremental run while queries are served) made the whole expansion come
+  back empty (#278).
+- Graph expansion with `entity_importance_source: degree` on the embedded
+  SQLite graph store no longer fails on a SQLite build limited to 999 bound
+  parameters once a query reaches more than 332 entities: the degree query
+  bound its batch three times (#278).
 - A global-search map step whose every batch is over the model's context
   (langchain-openai's `OpenAIContextOverflowError`) answers from the
   unrated reports again. That error is an HTTP 400 too, so it was read as a

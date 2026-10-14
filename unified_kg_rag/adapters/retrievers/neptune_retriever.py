@@ -107,27 +107,25 @@ class NeptuneRetriever(GraphExpansionRetriever):
 
     @staticmethod
     def _filter_predicate(key: str, steps: list[tuple[str, Any]]) -> GraphTraversal:
-        """Anonymous traversal a vertex must match for one filter entry.
+        """Anonymous traversal a vertex must match for one ``attr_*`` entry.
 
         ``attr_*`` keys apply where present: a vertex without the property
         passes. Entity vertices carry their own extracted attributes (e.g.
         ``attr_role``) but not document attribute filters (``attr_category``
         lives in OpenSearch), so a strict match would empty graph expansion for
-        every document-attribute filter. Every other key is strict.
+        every document-attribute filter. Every other key is a strict ``has``
+        (``_apply_filters``).
         """
         matched = __.has(*steps[0])
         for step in steps[1:]:
             matched = matched.has(*step)
-        if key.startswith(ATTRIBUTE_KEY_PREFIX):
-            return __.or_(matched, __.hasNot(key))
-        return matched
+        return __.or_(matched, __.hasNot(key))
 
     @classmethod
     def _apply_filters(
         cls,
         traversal: GraphTraversal,
         filters: dict[str, Any] | None,
-        exempt_labels: dict[str, list[str]] | None = None,
     ) -> GraphTraversal:
         if not filters:
             return traversal
@@ -138,25 +136,14 @@ class NeptuneRetriever(GraphExpansionRetriever):
             steps = cls._filter_steps(key, value)
             if not steps:
                 continue
-            predicate = cls._filter_predicate(key, steps)
-            exempt = (exempt_labels or {}).get(key)
-            if exempt:
-                # Only the labels that carry ``key`` are filtered; vertices of
-                # the exempt labels pass through untouched.
-                traversal = traversal.or_(__.hasLabel(*exempt), predicate)
-            elif key.startswith(ATTRIBUTE_KEY_PREFIX):
-                traversal = traversal.where(predicate)
+            if key.startswith(ATTRIBUTE_KEY_PREFIX):
+                traversal = traversal.where(cls._filter_predicate(key, steps))
             else:
                 for step in steps:
                     traversal = traversal.has(*step)
         return traversal
 
     async def _traverse(
-        self, seed_ids: list[Any], query: SearchQuery
-    ) -> list[dict[str, Any]]:
-        return await self._traverse_from_entities(seed_ids, query)
-
-    async def _traverse_from_entities(
         self, seed_ids: list[Any], query: SearchQuery
     ) -> list[dict[str, Any]]:
         # Every seed the caller chose; a fixed cap here dropped seeds silently.
@@ -196,9 +183,7 @@ class NeptuneRetriever(GraphExpansionRetriever):
         # the seeds together still fetch >= fetch_limit candidates for the
         # top_k * retrieval_multiplier expansion slots the cut keeps.
         per_seed_limit = math.ceil(fetch_limit / len(seed_ids))
-        filters, exempt = self._scope_filters_to_labels(
-            {entity_label: "entity"}, query.filters
-        )
+        filters = self._scope_filters_to_label(entity_label, "entity", query.filters)
         with_degree = self._neptune_config.entity_importance_source == "degree"
 
         def build(g: GraphTraversalSource) -> Traversal:
@@ -224,7 +209,7 @@ class NeptuneRetriever(GraphExpansionRetriever):
                     ),
                 )
             )
-            traversal = self._apply_filters(traversal, filters, exempt)
+            traversal = self._apply_filters(traversal, filters)
             return self._with_projection(traversal, with_degree=with_degree)
 
         return await self._execute_traversal(build)

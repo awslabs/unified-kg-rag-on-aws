@@ -20,8 +20,8 @@ against):
 Values are encoded and decoded by ``neptune_codec``, so
 ``indexing.neptune.property_max_length`` truncates strings as in Neptune.
 Dropping a vertex drops its incident edges and memberships. Each store uses
-one connection behind a lock, in WAL mode, and waits up to
-``search.store_timeout_seconds`` for another writer's lock.
+one connection behind a lock, in WAL mode (each read is one snapshot), and
+waits up to ``search.store_timeout_seconds`` for another writer's lock.
 """
 
 from __future__ import annotations
@@ -86,7 +86,8 @@ _SCHEMA = (
     "ON memberships (entity_label, entity_id)",
 )
 
-# Stay under SQLite's bound-parameter limit (999 on older builds).
+# Stay under SQLite's bound-parameter limit (999 on older builds): a
+# statement binds at most 2 * _BATCH + 1 values, or splits its batch.
 _BATCH = 400
 
 # SQLITE_BUSY / SQLITE_LOCKED: another connection holds the lock.
@@ -100,9 +101,9 @@ _NODE_KEYS = ("id", "name", "description", "rank", "text_unit_ids")
 VertexFilter = Callable[[dict[str, Any]], bool]
 
 
-def _batches(items: list[Any]) -> Iterator[list[Any]]:
-    for start in range(0, len(items), _BATCH):
-        yield items[start : start + _BATCH]
+def _batches(items: list[Any], size: int = _BATCH) -> Iterator[list[Any]]:
+    for start in range(0, len(items), size):
+        yield items[start : start + size]
 
 
 def _marks(items: Collection[Any]) -> str:
@@ -239,9 +240,21 @@ class SQLiteGraphStore:
 
     @contextmanager
     def read(self, operation: str) -> Iterator[sqlite3.Connection]:
-        """The connection, under the lock, with errors typed."""
+        """The connection, under the lock, with errors typed, in one read
+        transaction: every statement of the block reads the same snapshot, so
+        another connection's write between two of them is not seen half way
+        (a vertex a neighbour query returned is still there to read)."""
         with self._lock, self.errors(operation):
-            yield self.connection
+            connection = self.connection
+            # Inside a write transaction, that transaction is the snapshot.
+            own = not connection.in_transaction
+            if own:
+                connection.execute("BEGIN")
+            try:
+                yield connection
+            finally:
+                if own and connection.in_transaction:
+                    connection.execute("ROLLBACK")
 
     @contextmanager
     def transaction(self, operation: str) -> Iterator[sqlite3.Connection]:
@@ -299,7 +312,8 @@ class SQLiteGraphStore:
     ) -> dict[str, int]:
         """Incident edges plus memberships of each vertex (``bothE().count()``)."""
         counts: dict[str, int] = {}
-        for batch in _batches(list(dict.fromkeys(ids))):
+        # The batch is bound three times.
+        for batch in _batches(list(dict.fromkeys(ids)), _BATCH // 3):
             marks = _marks(batch)
             rows = connection.execute(
                 f"SELECT source_id FROM edges WHERE label = ? AND source_id IN ({marks}) "

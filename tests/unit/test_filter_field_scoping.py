@@ -311,18 +311,6 @@ def test_attribute_prefixes_match_documents_carrying_attributes(
 # --------------------------------------------------------------------------- #
 
 
-class _RecordingTraversal:
-    def __init__(self, calls: list[tuple]) -> None:
-        self._calls = calls
-
-    def __getattr__(self, name: str):
-        def _step(*args, **kwargs):
-            self._calls.append((name, args))
-            return self
-
-        return _step
-
-
 def _neptune(config: Config) -> NeptuneRetriever:
     inst = NeptuneRetriever.__new__(NeptuneRetriever)
     object.__setattr__(inst, "_config", config)
@@ -330,20 +318,20 @@ def _neptune(config: Config) -> NeptuneRetriever:
     return inst
 
 
-def test_neptune_drops_key_no_target_label_declares() -> None:
-    filters, exempt = NeptuneRetriever._scope_filters_to_labels(
-        {"Entity-default": "entity"},
+def test_neptune_drops_key_the_label_does_not_declare() -> None:
+    filters = NeptuneRetriever._scope_filters_to_label(
+        "Entity-default",
+        "entity",
         {"id": ["e1"], "type": "PERSON", "status": "open"},
     )
     assert filters == {"id": ["e1"], "type": "PERSON"}
-    assert exempt == {}
 
 
 def _matches(vertex: dict[str, Any], steps: list[list[Any]]) -> bool:
     """Evaluate the filter steps ``_apply_filters`` emits against one vertex.
 
-    Covers the subset used: ``has`` (value or ``P``), ``hasNot``, ``hasLabel``,
-    ``or`` and ``where`` over anonymous traversals.
+    Covers the subset used: ``has`` (value or ``P``), ``hasNot``, ``or`` and
+    ``where`` over anonymous traversals.
     """
 
     def _sub(arg: Any) -> bool:
@@ -369,9 +357,6 @@ def _matches(vertex: dict[str, Any], steps: list[list[Any]]) -> bool:
         elif name == "hasNot":
             if args[0] in vertex:
                 return False
-        elif name == "hasLabel":
-            if vertex["label"] not in args:
-                return False
         elif name == "or":
             if not any(_sub(a) for a in args):
                 return False
@@ -384,69 +369,36 @@ def _matches(vertex: dict[str, Any], steps: list[list[Any]]) -> bool:
 
 
 _VERTICES = [
-    {"label": "Entity-default", "id": "e1", "type": "PERSON", "attr_role": "buyer"},
-    {"label": "Entity-default", "id": "e2", "type": "PERSON", "attr_role": "vendor"},
-    {"label": "Entity-default", "id": "e3", "type": "ORGANIZATION"},
-    {"label": "Community-default", "id": "c1", "size": 3},
+    {"id": "e1", "type": "PERSON", "attr_role": "buyer"},
+    {"id": "e2", "type": "PERSON", "attr_role": "vendor"},
+    {"id": "e3", "type": "ORGANIZATION"},
 ]
 
 
-def _kept(label_kinds: dict[str, str], filters: dict[str, Any]) -> list[str]:
-    scoped, exempt = NeptuneRetriever._scope_filters_to_labels(label_kinds, filters)
-    traversal = NeptuneRetriever._apply_filters(__.identity(), scoped, exempt)
+def _kept(filters: dict[str, Any]) -> list[str]:
+    scoped = NeptuneRetriever._scope_filters_to_label(
+        "Entity-default", "entity", filters
+    )
+    traversal = NeptuneRetriever._apply_filters(__.identity(), scoped)
     steps = traversal.bytecode.step_instructions
-    return [
-        v["id"] for v in _VERTICES if v["label"] in label_kinds and _matches(v, steps)
-    ]
-
-
-_ENTITY = {"Entity-default": "entity"}
-_BOTH = {"Community-default": "community", "Entity-default": "entity"}
+    return [v["id"] for v in _VERTICES if _matches(v, steps)]
 
 
 def test_neptune_entity_attribute_filters_vertices_that_have_it() -> None:
     # attr_role is an LLM-extracted entity attribute stored on the vertex;
     # vertices without the property are not filtered by it.
-    assert _kept(_ENTITY, {"attr_role": "buyer"}) == ["e1", "e3"]
-    assert _kept(_ENTITY, {"attr_role": ["buyer", "vendor"]}) == ["e1", "e2", "e3"]
+    assert _kept({"attr_role": "buyer"}) == ["e1", "e3"]
+    assert _kept({"attr_role": ["buyer", "vendor"]}) == ["e1", "e2", "e3"]
 
 
 def test_neptune_document_attribute_does_not_empty_expansion() -> None:
     # attr_category is a document attribute: absent on every vertex.
-    assert _kept(_ENTITY, {"attr_category": "research"}) == ["e1", "e2", "e3"]
-    assert _kept(_BOTH, {"attr_category": "research"}) == ["e1", "e2", "e3", "c1"]
+    assert _kept({"attr_category": "research"}) == ["e1", "e2", "e3"]
 
 
 def test_neptune_strict_key_stays_strict() -> None:
-    assert _kept(_ENTITY, {"type": "PERSON"}) == ["e1", "e2"]
-    # Strict on the entity label, exempt on the community label.
-    assert _kept(_BOTH, {"type": "ORGANIZATION"}) == ["e3", "c1"]
-    assert _kept(_ENTITY, {"type": "PERSON", "attr_role": "vendor"}) == ["e2"]
-
-
-def test_neptune_exempts_labels_lacking_a_key() -> None:
-    filters, exempt = NeptuneRetriever._scope_filters_to_labels(
-        {"Community-default": "community", "Entity-default": "entity"},
-        {"type": "PERSON"},
-    )
-    assert filters == {"type": "PERSON"}
-    assert exempt == {"type": ["Community-default"]}
-
-    calls: list[tuple] = []
-    NeptuneRetriever._apply_filters(_RecordingTraversal(calls), filters, exempt)
-    # Guarded: vertices of the exempt label pass, the rest must match.
-    assert [c[0] for c in calls] == ["or_"]
-
-
-def test_neptune_key_on_every_label_is_a_plain_has() -> None:
-    filters, exempt = NeptuneRetriever._scope_filters_to_labels(
-        {"Community-default": "community", "Entity-default": "entity"},
-        {"name": "Vendor"},
-    )
-    assert exempt == {}
-    calls: list[tuple] = []
-    NeptuneRetriever._apply_filters(_RecordingTraversal(calls), filters, exempt)
-    assert [c[0] for c in calls] == ["has"]
+    assert _kept({"type": "PERSON"}) == ["e1", "e2"]
+    assert _kept({"type": "PERSON", "attr_role": "vendor"}) == ["e2"]
 
 
 def test_neptune_filter_fields(config: Config) -> None:

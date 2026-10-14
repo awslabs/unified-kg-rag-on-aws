@@ -23,6 +23,7 @@ from tests.fixtures.store_backends import (
     INDEX_ADMIN,
     SUFFIX_SCOPED_VECTOR_IDS,
     StoreHarness,
+    backends,
     open_harness,
 )
 from unified_kg_rag.domain.models import (
@@ -222,12 +223,12 @@ def test_a_full_build_with_suffixes_empties_them(harness: StoreHarness) -> None:
     assert harness.stored_ids("entities") == {"e-vendor", "e-buyer", "e-depot"}
 
 
+@pytest.mark.parametrize("harness", backends(INDEX_ADMIN), indirect=True)
 def test_full_reindex_keeps_one_index_per_alias(
     harness: StoreHarness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # Each full run builds a new timestamped index and swaps the alias onto
     # it; the previous ones must be deleted, or every run leaks an index.
-    harness.require(INDEX_ADMIN)
     start = datetime(2026, 1, 1)
     ticks = iter(range(10_000))
 
@@ -392,6 +393,18 @@ def test_description_reads_are_scoped_to_a_suffix(harness: StoreHarness) -> None
     assert indexer.read_entity_descriptions(["e-depot"]) == {}
 
 
+def test_text_unit_id_reads_are_scoped_to_a_suffix(harness: StoreHarness) -> None:
+    # The incremental probe that the vector store still holds the registry's
+    # documents: [] without a live index, the stored ids with one.
+    indexer = harness.vector_indexer
+    tenant = harness.suffix("tenant")
+    assert indexer.read_text_unit_ids(["t1"], suffix=tenant) == []
+    _write(harness, "text_units", "upsert", _text_units(tenant))
+    found = indexer.read_text_unit_ids(["t1", "t-missing", "t2"], suffix=tenant)
+    assert sorted(found) == ["t1", "t2"]
+    assert indexer.read_text_unit_ids(["t1"]) == []
+
+
 def test_delete_document_artifacts_reaches_every_index(harness: StoreHarness) -> None:
     for kind in _KINDS:
         _write(harness, kind, "index", _ITEMS[kind](None))
@@ -411,12 +424,12 @@ def test_delete_document_artifacts_reaches_every_index(harness: StoreHarness) ->
     assert harness.vector_indexer.delete_document_artifacts([], "default") == {}
 
 
+@pytest.mark.parametrize("harness", backends(INDEX_ADMIN), indirect=True)
 def test_incremental_write_refuses_another_embedding_model(
     harness: StoreHarness,
 ) -> None:
     # The index records the model and dimension in its mapping's _meta; a
     # run embedding with another one must not write into it.
-    harness.require(INDEX_ADMIN)
     _write(harness, "entities", "upsert", _entities())
     harness.vector_indexer.check_index_settings("default")
     other_model = harness.derive(
@@ -436,12 +449,12 @@ def _set_languages(**languages: Any) -> Callable[[Config], None]:
     return change
 
 
+@pytest.mark.parametrize("harness", backends(INDEX_ADMIN), indirect=True)
 def test_incremental_write_refuses_other_languages_or_an_untracked_build(
     harness: StoreHarness,
 ) -> None:
     # A text field's analyzer cannot change on a live index, and a field it
     # does not map yet would be mapped as a keyword on first write.
-    harness.require(INDEX_ADMIN)
     indexer = harness.vector_indexer
     _write(harness, "text_units", "upsert", _text_units())
     indexer.check_index_settings("default")

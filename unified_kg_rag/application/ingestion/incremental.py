@@ -28,9 +28,9 @@ stays storage-focused and is exercised end-to-end with in-memory fakes.
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Callable, Collection
+from collections.abc import Callable, Collection, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field
 
@@ -194,12 +194,32 @@ class _SuffixRemoval(BaseModel):
     removed_text_unit_ids: list[str] = Field(default_factory=list)
 
 
-# Indexed documents with entities, and entities of them, probed in the graph
-# store before a delta run writes (IncrementalIndexer.check_graph_holds_registry).
+# Indexed documents with entities, and entities (text units) of them, probed in
+# the graph (vector) store before a delta run writes
+# (IncrementalIndexer.check_graph_holds_registry).
 # Stored records are read in batches of _PROBE_DOCUMENTS until that many are
 # found, so a corpus that starts with entity-less pages is still probed.
 _PROBE_DOCUMENTS = 20
 _PROBE_ENTITIES = 100
+
+
+def _store_holds_any(
+    ids_by_suffix: dict[str, list[str]],
+    read: Callable[[list[str], str], Sequence[Any] | None],
+) -> bool:
+    """Whether ``read`` finds any of a few of each suffix's ids: true with
+    nothing to probe, or when ``read`` returns ``None`` (cannot tell)."""
+    probes = {
+        suffix: sorted(set(ids))[:_PROBE_ENTITIES]
+        for suffix, ids in ids_by_suffix.items()
+        if ids
+    }
+    for suffix, ids in probes.items():
+        found = read(ids, suffix)
+        if found is None or found:
+            return True
+    return not probes
+
 
 _EXTRACTION_FAILED = "extraction failed on some text units"
 _WRITE_FAILED = "writing some of its artifacts to the stores failed"
@@ -393,49 +413,62 @@ class IncrementalIndexer:
         self._in_flight: set[str] = set()
 
     def check_graph_holds_registry(self, delta: DocumentDelta) -> None:
-        """Raise before any write when the graph lost the registry's documents.
+        """Raise before any write when the stores lost the registry's documents.
 
         The registry and the stores must describe the same corpus: with a
         registry of indexed documents over an emptied graph (an in-memory
-        Gremlin Server restarted, say), the diff calls those documents
-        unchanged and they would never be indexed again. Probes the entities
-        of a few indexed documents of the run's namespace; when the graph
-        holds none of them, raises :class:`DataProcessingError`.
+        Gremlin Server restarted, say) or vector store (its database file
+        deleted or moved, ``providers.vector.sqlite_path`` changed), the diff
+        calls those documents unchanged and they would never be indexed
+        again. Probes the entities (graph store) and text units (vector
+        store, ``VectorIndexer.read_text_unit_ids``) of a few indexed
+        documents of the run's namespace; when a store holds none of them,
+        raises :class:`DataProcessingError`.
 
         The probed documents are ``PROCESSED`` records that list entities:
         records are read in batches until enough are found or every stored
         record was read, so entity-less documents first in the corpus (cover
         pages, say), however many, cannot leave the check with nothing to
-        probe.
+        probe. The text units are those of every ``PROCESSED`` record read.
         """
         stored = [*delta.unchanged, *delta.changed]
-        ids_by_suffix: dict[str, list[str]] = defaultdict(list)
+        entity_ids: dict[str, list[str]] = defaultdict(list)
+        text_unit_ids: dict[str, list[str]] = defaultdict(list)
         probed = 0
         for start in range(0, len(stored), _PROBE_DOCUMENTS):
             batch = stored[start : start + _PROBE_DOCUMENTS]
             for record in self.doc_status.get_many(batch).values():
-                if record.status is DocStatus.PROCESSED and record.entity_ids:
-                    ids_by_suffix[record.suffix].extend(record.entity_ids)
+                if record.status is not DocStatus.PROCESSED:
+                    continue
+                text_unit_ids[record.suffix].extend(record.text_unit_ids)
+                if record.entity_ids:
+                    entity_ids[record.suffix].extend(record.entity_ids)
                     probed += 1
             if probed >= _PROBE_DOCUMENTS:
                 break
-        probes = {
-            suffix: sorted(set(ids))[:_PROBE_ENTITIES]
-            for suffix, ids in ids_by_suffix.items()
-            if ids
-        }
-        if not probes or any(
-            self.indexing_manager.neptune_indexer.read_entities(ids, suffix=suffix)
-            for suffix, ids in probes.items()
-        ):
-            return
-        raise DataProcessingError(
-            "The doc-status registry lists indexed documents of this namespace "
-            "whose entities the graph store does not hold (an in-memory Gremlin "
-            "Server loses its graph on restart). Re-run with indexing.reset: "
-            "true to rebuild the stores and the registry, or delete the "
-            "registry's records of this namespace."
+        graph = self.indexing_manager.neptune_indexer
+        vector = self.indexing_manager.opensearch_indexer
+        lost = "doc-status registry lists indexed documents of this namespace whose"
+        advice = (
+            "Re-run with indexing.reset: true to rebuild the stores and the "
+            "registry, or delete the registry's records of this namespace."
         )
+        if not _store_holds_any(
+            entity_ids, lambda ids, suffix: graph.read_entities(ids, suffix=suffix)
+        ):
+            raise DataProcessingError(
+                f"The {lost} entities the graph store does not hold (an "
+                f"in-memory Gremlin Server loses its graph on restart). {advice}"
+            )
+        if not _store_holds_any(
+            text_unit_ids,
+            lambda ids, suffix: vector.read_text_unit_ids(ids, suffix=suffix),
+        ):
+            raise DataProcessingError(
+                f"The {lost} text units the vector store does not hold (its "
+                "database file was deleted or moved, providers.vector."
+                f"sqlite_path changed, or its indices were deleted). {advice}"
+            )
 
     def write_ahead(
         self, delta: DocumentDelta, lineages: list[DocumentLineage]

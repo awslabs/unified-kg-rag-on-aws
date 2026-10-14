@@ -167,6 +167,15 @@ def test_upsert_keeps_absent_properties_and_replaces_lists(
     assert read.text_unit_ids == ["c"]
 
 
+def test_upsert_with_an_empty_list_removes_the_property(
+    indexer: SQLiteGraphIndexer,
+) -> None:
+    indexer.upsert_entities([_entity("e1", text_unit_ids=["a"])])
+    indexer.upsert_entities([_entity("e1", text_unit_ids=[])])
+    (read,) = indexer.read_entities(["e1"])
+    assert not read.text_unit_ids
+
+
 def test_edge_with_missing_endpoint_fails_by_id(indexer: SQLiteGraphIndexer) -> None:
     indexer.upsert_entities([_entity("a")])
     stats = indexer.upsert_relationships(
@@ -288,6 +297,27 @@ def test_delete_by_id_scoped_and_unscoped(indexer: SQLiteGraphIndexer) -> None:
     assert indexer.read_entities(["e1"]) == []
     assert indexer.read_entities(["e1"], suffix="s1") == []
     assert [e.id for e in indexer.read_entities(["e2"], suffix="s1")] == ["e2"]
+
+
+def test_unscoped_delete_by_id_deletes_edges_by_id(
+    indexer: SQLiteGraphIndexer,
+) -> None:
+    _graph(indexer, [("a", "b")])
+    indexer.delete_by_id(["a-b"])
+    assert indexer.read_relationships(["a-b"]) == []
+    assert [e.id for e in indexer.read_entities(["a", "b"])] == ["a", "b"]
+
+
+def test_rebuilding_the_entity_label_drops_its_memberships(
+    indexer: SQLiteGraphIndexer,
+) -> None:
+    # Dropping an entity vertex drops its MemberOf edges, even when the
+    # community vertex stays: a re-added entity is not a member again.
+    indexer.upsert_entities([_entity("a"), _entity("b")])
+    indexer.upsert_communities([_community("c1", ["a", "b"])])
+    indexer.index_entities([_entity("a")])
+    assert _vertex_ids(indexer, "Community-default") == ["c1"]
+    assert _members(indexer) == set()
 
 
 def test_neighbor_and_incident_reads(indexer: SQLiteGraphIndexer) -> None:
@@ -555,6 +585,93 @@ async def test_retriever_without_seeds_or_with_unknown_suffix(config: Config) ->
     assert await retriever.aretrieve(SearchQuery(query="q")) == []
     query = SearchQuery(query="q", suffix="nope", filters={"id": ["s"]})
     assert await retriever.aretrieve(query) == []
+    retriever.close()
+    indexer.close()
+
+
+def test_degree_binds_under_the_variable_limit(indexer: SQLiteGraphIndexer) -> None:
+    # Older SQLite builds bind at most 999 values per statement.
+    connection = indexer.store.connection
+    if not hasattr(connection, "setlimit"):  # Connection.setlimit is Python 3.11+
+        pytest.skip("sqlite3.Connection.setlimit needs Python 3.11")
+    _graph(indexer, [("s", f"n{i:03d}") for i in range(450)])
+    connection.setlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER, 999)
+    rows = _store(indexer).traverse(
+        LABEL,
+        ["s"],
+        max_hops=1,
+        max_results_per_hop=500,
+        per_seed_limit=500,
+        with_degree=True,
+    )
+    assert len(rows) == 451
+    assert rows[0]["degree"] == 450
+    assert {row["degree"] for row in rows[1:]} == {1}
+
+
+async def test_traversal_reads_one_snapshot(
+    config: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Another process deletes a vertex the walk reached, between the walk's
+    # neighbour query and its vertex read: the traversal answers from the
+    # graph as it was when it started, not with nothing.
+    indexer = SQLiteGraphIndexer(config)
+    _graph(indexer, [("a", "b"), ("a", "c")])
+    writer = SQLiteGraphIndexer(config)
+    neighbors = SQLiteGraphStore.neighbors
+
+    def write_between(connection: Any, label: str, vertex_id: str, limit: int):
+        found = neighbors(connection, label, vertex_id, limit)
+        if vertex_id == "a":
+            writer.delete_by_id(["b"], suffix="default")
+        return found
+
+    monkeypatch.setattr(SQLiteGraphStore, "neighbors", staticmethod(write_between))
+    retriever = SQLiteGraphRetriever(config)
+    query = SearchQuery(query="q", filters={"id": ["a"]})
+    assert [r.source for r in await retriever.aretrieve(query)] == ["a", "b", "c"]
+    # The read ended its transaction: the next one sees the delete.
+    assert [r.source for r in await retriever.aretrieve(query)] == ["a", "c"]
+    assert not retriever._store.connection.in_transaction
+    retriever.close()
+    writer.close()
+    indexer.close()
+
+
+async def test_retriever_filters_only_the_reached_vertex(config: Config) -> None:
+    # A filter keeps a vertex reached through one it drops (Gremlin filters
+    # the emitted vertex, not the path).
+    indexer = SQLiteGraphIndexer(config)
+    indexer.upsert_entities(
+        [
+            _entity("s", type="ORG"),
+            _entity("a", type="PERSON"),
+            _entity("b", type="ORG"),
+        ]
+    )
+    indexer.upsert_relationships([_rel("sa", "s", "a"), _rel("ab", "a", "b")])
+    retriever = SQLiteGraphRetriever(config)
+    query = SearchQuery(query="q", filters={"id": ["s"], "type": "ORG"})
+    assert [r.source for r in await retriever.aretrieve(query)] == ["s", "b"]
+    retriever.close()
+    indexer.close()
+
+
+async def test_retriever_ranks_by_degree(tmp_path: Path) -> None:
+    config = _config(tmp_path, entity_importance_source="degree", max_hops=1)
+    indexer = SQLiteGraphIndexer(config)
+    indexer.upsert_entities(
+        [_entity("s"), _entity("a", rank=9), _entity("b", rank=1)]
+        + [_entity(i) for i in ("x", "y")]
+    )
+    indexer.upsert_relationships(
+        [_rel("sa", "s", "a"), _rel("sb", "s", "b")]
+        + [_rel("bx", "b", "x"), _rel("by", "b", "y")]
+    )
+    retriever = SQLiteGraphRetriever(config)
+    results = await retriever.aretrieve(SearchQuery(query="q", filters={"id": ["s"]}))
+    # b has three edges, a one: b first despite a's higher rank.
+    assert [r.source for r in results] == ["s", "b", "a"]
     retriever.close()
     indexer.close()
 

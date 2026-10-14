@@ -390,6 +390,17 @@ class FakeVectorStore(_Recorder):
     def update_entity_lineage(self, entities: list[Any]) -> IndexingStats:
         return self._update("entities", entities, ("text_unit_ids",))
 
+    def read_text_unit_ids(
+        self, ids: list[str], suffix: str | None = None
+    ) -> list[str] | None:
+        bucket = self.data.get("text_units", {})
+        wanted = suffix or Constants.DEFAULT_SUFFIX.value
+        return [
+            i
+            for i in ids
+            if i in bucket and BaseIndexer.get_suffix(bucket[i]) == wanted
+        ]
+
     def read_claims(self, ids: list[str], suffix: str | None = None) -> list[Any]:
         # Like the OpenSearch claims index: only the stored fields come back,
         # tagged with the suffix they were read from (the port's contract).

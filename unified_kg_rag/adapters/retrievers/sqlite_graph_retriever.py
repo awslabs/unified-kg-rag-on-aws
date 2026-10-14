@@ -135,9 +135,7 @@ class SQLiteGraphRetriever(GraphExpansionRetriever):
             * query.retrieval_multiplier
             * self._neptune_config.traversal_fetch_multiplier
         )
-        filters, _ = self._scope_filters_to_labels(
-            {entity_label: "entity"}, query.filters
-        )
+        filters = self._scope_filters_to_label(entity_label, "entity", query.filters)
         return await asyncio.to_thread(
             self._store.traverse,
             entity_label,
