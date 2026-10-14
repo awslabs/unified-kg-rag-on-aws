@@ -25,19 +25,11 @@
 
 ## 아키텍처
 
-![수집 파이프라인](./assets/ingestion_pipeline.png)
+![수집 파이프라인](./assets/ingestion-pipeline.drawio.png)
 
-수집은 중단 후 재개할 수 있는 12단계 파이프라인입니다. 파싱, 로딩, 청킹, (선택) 번역, LLM 기반 엔티티·관계 추출, (선택) 추가 추출(gleaning), 중복 해소, (선택) 주장 추출, 그래프 지표 계산, Leiden 커뮤니티 탐지와 LLM 커뮤니티 리포트 작성을 거쳐 OpenSearch와 Neptune에 인덱싱합니다. 단계별 체크포인트는 로컬에 캐시되며 S3와 동기화할 수 있습니다.
+수집은 중단 후 재개할 수 있는 12단계 파이프라인입니다. 파싱, 로딩, 청킹, (선택) 번역, LLM 기반 엔티티·관계 추출, (선택) 추가 추출(gleaning), 중복 해소, (선택) 주장 추출, 그래프 지표 계산, Leiden 커뮤니티 탐지와 LLM 커뮤니티 리포트 작성을 거쳐 검색·그래프 저장소에 인덱싱합니다(AWS에서는 OpenSearch와 Neptune, 로컬 모드에서는 내장 SQLite 또는 컨테이너). 단계별 체크포인트는 로컬에 캐시되며 S3와 동기화할 수 있습니다.
 
-```mermaid
-flowchart LR
-    query["Query + strategy"] --> qp["Query processing<br/>translation, entities or keywords"]
-    qp --> graphrag["GraphRAG<br/>simple, local, global, drift"]
-    qp --> lightrag["LightRAG<br/>naive, hybrid, mix"]
-    graphrag --> fuse["Fusion (RRF) + Bedrock rerank"]
-    lightrag --> fuse
-    fuse --> budget["Token budget"] --> answer["Answer + sources"]
-```
+![검색 파이프라인](./assets/retrieval-pipeline.drawio.png)
 
 모든 전략은 같은 하이브리드 스코어러와 토큰 예산을 거칩니다. CLI에서는 `--search-strategy`, Python에서는 `RAGInput.search_strategy`로 전략을 고릅니다.
 
