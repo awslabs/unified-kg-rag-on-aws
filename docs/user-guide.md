@@ -280,12 +280,13 @@ Expected differences from AWS mode:
 - No Bedrock prompt caching and no Guardrails (`aws.bedrock.guardrail` is
   ignored by the local providers); reasoning effort settings do not apply.
 - The embedded vector store answers the queries the OpenSearch adapter
-  builds, with four differences. Text mapped to `nori` (Korean), `kuromoji`
+  builds, with five differences. Text mapped to `nori` (Korean), `kuromoji`
   (Japanese) or `smartcn` (Chinese) is split into overlapping CJK character
   bigrams instead of being analyzed morphologically, so a name still matches
   inside a longer word (홍길동 in 홍길동으로부터) but ranking differs from
   OpenSearch's; the `english` analyzer stems only with `snowballstemmer`
-  from the `[local]` extra (without it, a warning is logged once). There is
+  from the `[local]` extra (without it, a warning is logged once). Emoji are
+  not indexed (OpenSearch's tokenizer keeps each as a word). There is
   no fuzzy matching (OpenSearch's `fuzziness: AUTO`), so a misspelled query
   term, and under the `standard` analyzer, which does not stem, an inflected
   form ("vendors" for "vendor"), matches only through the vector side. kNN
@@ -299,7 +300,9 @@ Expected differences from AWS mode:
   100,000 documents per index and logs a warning when it loads a larger one;
   use OpenSearch beyond that. Every write reloads the index on the next
   query, and the first lexical query after it re-analyzes the searched text
-  field: about 10 s for 50,000 documents of 120 words.
+  field: about 10 s for 50,000 documents of 120 words. Under the `english`
+  analyzer a field of more than about 65,000 distinct words outgrows the
+  stemmer's cache, which makes that query about three times slower.
 - SQLite allows one writer at a time: run one ingestion per store file at a
   time (queries can read alongside it). A writer that waits longer than
   `search.store_timeout_seconds` fails with "stayed locked" (see

@@ -43,6 +43,7 @@ import json
 import sqlite3
 import threading
 import uuid
+import weakref
 from collections.abc import Iterator
 from contextlib import contextmanager
 from fnmatch import fnmatchcase
@@ -258,9 +259,15 @@ class SQLiteSearchEngine:
         self.path = str(path)
         self.timeout_seconds = timeout_seconds
         self._memory = self.path == ":memory:"
+        # An in-memory database is private to this engine: so are its cached
+        # indices, freed when the engine closes or is collected.
         self._cache_path = (
-            f":memory:{id(self)}" if self._memory else str(Path(self.path).resolve())
+            f":memory:{uuid.uuid4().hex}"
+            if self._memory
+            else str(Path(self.path).resolve())
         )
+        if self._memory:
+            weakref.finalize(self, _drop_cached, self._cache_path)
         self._connection: sqlite3.Connection | None = None
         self._lock = threading.RLock()
 
@@ -341,8 +348,19 @@ class SQLiteSearchEngine:
 
     @contextmanager
     def _reading(self, operation: str) -> Iterator[sqlite3.Connection]:
+        """One read transaction: every read in it sees one snapshot of the
+        file (in WAL mode a reader does not block the writer). A nested block
+        shares the outer one."""
         with self._lock, self._errors(operation):
-            yield self.connection
+            connection = self.connection
+            outer = not connection.in_transaction
+            if outer:
+                connection.execute("BEGIN")
+            try:
+                yield connection
+            finally:
+                if outer and connection.in_transaction:
+                    connection.execute("COMMIT")
 
     def close(self) -> None:
         """Close the connection (reopened on next use). Never raises."""
@@ -783,36 +801,30 @@ class SQLiteSearchEngine:
     def _load(self, index: str) -> LoadedIndex:
         """``index`` from the module cache, reloaded if a write changed it.
 
-        The generation and the rows are read in one transaction, so from one
-        snapshot of the file (in WAL mode a reader does not block the writer):
+        The generation and the rows are read in one snapshot (``_reading``):
         a write committed meanwhile cannot leave vectors without documents.
         Cached indices of this file that another engine deleted are dropped.
         """
         key = (self._cache_path, index)
         with self._reading("read an index") as connection:
-            connection.execute("BEGIN")
-            try:
-                generations = dict(
-                    connection.execute("SELECT name, generation FROM indices")
-                )
-                with _CACHE_LOCK:
-                    for stale in [
-                        k
-                        for k in _INDEX_CACHE
-                        if k[0] == self._cache_path and k[1] not in generations
-                    ]:
-                        del _INDEX_CACHE[stale]
-                    if index not in generations:
-                        raise index_not_found(index)
-                    generation = int(generations[index])
-                    cached = _INDEX_CACHE.get(key)
-                    if cached is not None and cached.generation == generation:
-                        return cached
-                    loaded = self._read_index(connection, index, generation)
-                    _INDEX_CACHE[key] = loaded
-            finally:
-                if connection.in_transaction:
-                    connection.execute("COMMIT")
+            generations = dict(
+                connection.execute("SELECT name, generation FROM indices")
+            )
+            with _CACHE_LOCK:
+                for stale in [
+                    k
+                    for k in _INDEX_CACHE
+                    if k[0] == self._cache_path and k[1] not in generations
+                ]:
+                    del _INDEX_CACHE[stale]
+                if index not in generations:
+                    raise index_not_found(index)
+                generation = int(generations[index])
+                cached = _INDEX_CACHE.get(key)
+                if cached is not None and cached.generation == generation:
+                    return cached
+                loaded = self._read_index(connection, index, generation)
+                _INDEX_CACHE[key] = loaded
         return loaded
 
     def _read_index(
@@ -910,20 +922,23 @@ class SQLiteSearchEngine:
         excludes = self._excludes(body.get("_source", True))
         query = body.get("query") or {"match_all": {}}
         pipeline = kwargs.get("search_pipeline")
-        with self._reading("resolve the searched indices") as connection:
+        # Every read of one search from one snapshot: an index another
+        # process deletes meanwhile is either searched whole or not found.
+        with self._reading("search") as connection:
             names = self._resolve(connection, kwargs.get("index") or "*")
             for name in names:
                 self._check_window(connection, name, size)
-        hybrid = isinstance(query, dict) and "hybrid" in query
-        if hybrid and pipeline is None:
-            raise rejected(
-                "a [hybrid] query needs a search_pipeline with a normalization-processor"
-            )
-        # The pipeline must exist whatever the query, as on a cluster.
-        weights = self._pipeline(pipeline) if pipeline is not None else None
-        if not hybrid and (lookup := _id_lookup(query)) is not None:
-            return self._fetch_by_ids(names, *lookup, size, excludes)
-        loaded = [self._load(name) for name in names]
+            hybrid = isinstance(query, dict) and "hybrid" in query
+            if hybrid and pipeline is None:
+                raise rejected(
+                    "a [hybrid] query needs a search_pipeline with a "
+                    "normalization-processor"
+                )
+            # The pipeline must exist whatever the query, as on a cluster.
+            weights = self._pipeline(pipeline) if pipeline is not None else None
+            if not hybrid and (lookup := _id_lookup(query)) is not None:
+                return self._fetch_by_ids(names, *lookup, size, excludes)
+            loaded = [self._load(name) for name in names]
         if hybrid:
             hits = self._hybrid(loaded, query, size, weights)
         else:

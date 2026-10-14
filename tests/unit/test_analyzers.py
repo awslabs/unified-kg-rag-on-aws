@@ -214,3 +214,119 @@ def test_in_word_punctuation_joins_like_opensearch() -> None:
     ]
     # Not across a letter-digit boundary, nor into a dense-script run.
     assert standard_analyzer("a1.b 1.a 가.나") == ["a1", "b", "1", "a", "가", "나"]
+
+
+# OpenSearch 2.13's _analyze output (standard analyzer) for the same text.
+_OPENSEARCH_TOKENS = {
+    # Combining marks stay in their word (Python's \w has none of them).
+    "हिन्दी भाषा में अनुबंध": ["हिन्दी", "भाषा", "में", "अनुबंध"],
+    "বাংলা ভাষায় চুক্তি": ["বাংলা", "ভাষায়", "চুক্তি"],
+    "தமிழ் ஒப்பந்தம்": ["தமிழ்", "ஒப்பந்தம்"],
+    "العَرَبِيَّة الْعَقْد": ["العَرَبِيَّة", "الْعَقْد"],
+    "עִבְרִית חוֹזֶה": ["עִבְרִית", "חוֹזֶה"],
+    "café résumé": ["café", "résumé"],
+    "́abc x ́ y": ["abc", "x", "y"],
+    # Spaceless scripts: a whole run, apart from other scripts and digits.
+    "ภาษาไทย สัญญาที่ลงนาม": ["ภาษาไทย", "สัญญาที่ลงนาม"],
+    "မြန်မာဘာသာ ខ្មែរ": ["မြန်မာဘာသာ", "ខ្មែរ"],
+    "ไทยabc ไทย๑๒ a_ไทย ไทย_ไทย": [
+        "ไทย",
+        "abc",
+        "ไทย",
+        "๑๒",
+        "a_",
+        "ไทย",
+        "ไทย",
+        "ไทย",
+    ],
+    # In-word punctuation of other scripts and widths.
+    "a：b a‧b ab︓cd ١٬٠٠٠ 12؍34 a٬b": [
+        "a：b",
+        "a‧b",
+        "ab︓cd",
+        "١٬٠٠٠",
+        "12؍34",
+        "a",
+        "b",
+    ],
+    "צה\"ל ג'ורג' ab\"cd": ['צה"ל', "ג'ורג'", "ab", "cd"],
+    # Format characters join, but a zero width space separates; a connector
+    # (or a narrow no-break space) joins but is no word on its own.
+    "co­op a‍b a​b 1 000 _a_ __ foo‿bar": [
+        "co­op",
+        "a‍b",
+        "a",
+        "b",
+        "1 000",
+        "_a_",
+        "foo‿bar",
+    ],
+    # Symbols are no word characters, but symbols that are letters are.
+    "x² H₂O ½ ① Ⓐb": ["x", "h", "o", "ⓐb"],
+}
+
+
+@pytest.mark.parametrize("text", list(_OPENSEARCH_TOKENS))
+def test_words_split_like_opensearch_in_every_script(text: str) -> None:
+    assert standard_analyzer(text) == _OPENSEARCH_TOKENS[text]
+
+
+def test_text_beyond_the_basic_multilingual_plane_splits_the_same() -> None:
+    # Such text takes the slower pattern with the ranges above U+FFFF.
+    for text, expected in _OPENSEARCH_TOKENS.items():
+        assert standard_analyzer(f"{text} 𝐀b \U00020000") == [
+            *expected,
+            "𝐀b",
+            "\U00020000",
+        ]
+    assert standard_analyzer("a\U000e0100b 🄰b 𑄃𑄨") == ["a\U000e0100b", "🄰b", "𑄃𑄨"]
+
+
+def test_english_possessives_and_short_words_like_opensearch() -> None:
+    pytest.importorskip("snowballstemmer")
+    # A possessive is stripped from a token's end, not from the text; a word
+    # of one or two letters is not stemmed (snowball: "us" -> "u", "s" -> "").
+    assert english_analyzer("pant-'s Exc.'s o’neil’s x＇s S&P500 us os Ds") == [
+        "pant",
+        "s",
+        "exc",
+        "s",
+        "o’neil",
+        "x",
+        "s",
+        "p500",
+        "us",
+        "os",
+        "ds",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("word", "stem"),
+    [
+        # Lucene's PorterStemmer, as OpenSearch's porter_stem filter answers.
+        ("apology", "apolog"),
+        ("apologies", "apolog"),
+        ("theology", "theologi"),  # m("the") = 0
+        ("possibly", "possibl"),
+        ("contractibly", "contract"),
+        ("ignobly", "ignobl"),
+        ("trekking", "trek"),
+        ("yakked", "yak"),
+        ("specced", "spec"),
+        ("revving", "rev"),
+        # Where steps 3 to 5 leave "-bli" or "-logi", Lucene keeps it.
+        ("bubbliness", "bubbli"),
+        ("killogie", "killogi"),
+        ("humblie", "humbli"),
+        # Snowball and Lucene agree.
+        ("running", "run"),
+        ("ponies", "poni"),
+        ("agreed", "agre"),
+        ("hopping", "hop"),
+        ("sizing", "size"),
+    ],
+)
+def test_english_stems_like_lucene(word: str, stem: str) -> None:
+    pytest.importorskip("snowballstemmer")
+    assert english_analyzer(word) == [stem]
