@@ -411,7 +411,7 @@ Library API (Python callers and custom backends).
   `language_analyzers.ko`; set it to `nori` once the package is associated.
   Index creation that names an analyzer the cluster lacks now fails with an
   error naming the analyzer and the fix. The docs no longer claim nori is
-  built into Amazon OpenSearch Service (#PR).
+  built into Amazon OpenSearch Service (#282).
 - The embedded search engine's `english` analyzer drops only Lucene's 33
   English stop words, as OpenSearch's `english` analyzer does. It used
   scikit-learn's 318, which include content words such as "amount", "bill",
