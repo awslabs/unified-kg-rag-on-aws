@@ -60,19 +60,20 @@ See the [User Guide §4](./docs/user-guide.md#4-querying-run-rag) for per-strate
 
 | Path | Graph and vector stores | Models | Start here |
 |---|---|---|---|
-| **Local mode** (development, no AWS) | Gremlin Server and OpenSearch in containers ([`docker/compose.local.yaml`](./docker/compose.local.yaml)), SQLite for incremental indexing | Ollama (or any OpenAI-compatible server), or Amazon Bedrock | Follow [Local mode](./docs/user-guide.md#local-mode-no-aws): start the containers, pull the two Ollama models, then pass `--config-path docker/config.local.yaml` |
+| **Local mode** (development, no AWS) | Embedded SQLite graph and vector stores and registry, no server; or Gremlin Server and OpenSearch in containers ([`docker/compose.local.yaml`](./docker/compose.local.yaml)) | Ollama (or any OpenAI-compatible server), or Amazon Bedrock | Follow [Local mode](./docs/user-guide.md#local-mode-no-aws): pull the two Ollama models, then pass `--backend local` |
 | **Existing AWS resources** | Your Neptune cluster and OpenSearch domain (plus DynamoDB for incremental indexing, and an S3 bucket only to sync the stage cache or persist the embedding cache) | Amazon Bedrock | Copy `config-template.yaml` to `config.yaml` and set the endpoints |
 | **Bundled CDK stack** | Created by [`iac/`](./iac/README.md), with a Fargate data plane and a Step Functions ingestion pipeline | Amazon Bedrock | [Deploy on AWS](#deploy-on-aws-optional), then [`iac/README.md` After deploy](./iac/README.md#after-deploy) |
 
 The AWS paths call Amazon Bedrock, so enable the
 [required models](./docs/user-guide.md#required-models) first. Local mode is
-for development and evaluation only: the stores are not hardened, the graph
-lives in memory, and small local models extract weaker graphs.
+for development and evaluation only: the embedded stores serve one host and
+about 100,000 documents per index, the containers are not hardened, and small
+local models extract weaker graphs.
 
 ### Prerequisites
 
 - Every path: Python 3.10–3.12 and [uv](https://docs.astral.sh/uv/) (`pip` also works).
-- Local mode: Docker with Compose 2.23.1 or later. No AWS account is needed unless you keep Bedrock for the models.
+- Local mode: [Ollama](https://ollama.com) for the models; Docker with Compose 2.23.1 or later only for the stores in containers. No AWS account is needed unless you keep Bedrock for the models.
 - Existing AWS resources: AWS credentials with access to Amazon Bedrock (model access enabled for the [required models](./docs/user-guide.md#required-models)), an Amazon Neptune cluster and an Amazon OpenSearch Service domain. DynamoDB is needed only for incremental indexing, and an S3 bucket only for stage-cache sync (`--s3-sync`) or a persisted embedding cache. The framework connects to existing services and never creates them.
 - Bundled CDK stack: the CDK CLI and Node.js listed in [`iac/README.md` Prerequisites](./iac/README.md#prerequisites), and Docker to push the image.
 

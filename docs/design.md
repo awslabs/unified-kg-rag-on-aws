@@ -114,9 +114,9 @@ unified_kg_rag/
 | Port | Location | Adapter | Notes |
 |---|---|---|---|
 | `DocStatusPort` | `ports/doc_status.py` | `adapters/aws/dynamodb.py` (`DynamoDBDocStatusStore`), `adapters/local/sqlite_doc_status.py` (`SQLiteDocStatusStore`), `FakeDocStatusStore` for tests | Persists incremental-indexing document status/lineage |
-| `GraphIndexer` (write-side) | `ports/indexer.py` | `adapters/storage/neptune_indexer.py` | Single contract for full + delta (`upsert_*`/`delete_by_id`) |
-| `VectorIndexer` (write-side) | `ports/indexer.py` | `adapters/storage/opensearch_indexer.py` | Same |
-| `BaseGraphRAGRetriever` (read-side) | `adapters/retrieval/base.py` | `adapters/retrievers/{neptune,opensearch}_retriever.py` | Retrieval adapters |
+| `GraphIndexer` (write-side) | `ports/indexer.py` | `adapters/storage/neptune_indexer.py`; local: `adapters/local/sqlite_graph.py` | Single contract for full + delta (`upsert_*`/`delete_by_id`) |
+| `VectorIndexer` (write-side) | `ports/indexer.py` | `adapters/storage/opensearch_indexer.py` (on OpenSearch, or on `adapters/local/search_engine/` through `SearchEngineClient`) | Same |
+| `BaseGraphRAGRetriever` (read-side) | `adapters/retrieval/base.py` | `adapters/retrievers/{neptune,opensearch,sqlite_graph}_retriever.py` (the graph ones on `graph_expansion.py`) | Retrieval adapters |
 | LLM/Embedding/Rerank factories, token counter | `ports/model_factory.py` (`ModelFactoryPort`, `TokenCounterPort`, and the `LanguageModelInfo` / `EmbeddingModelInfo` / `RerankModelInfo` records `get_model_info` returns) | `adapters/aws/bedrock.py`, `adapters/aws/bedrock_models.py`, `adapters/aws/token_counter.py`; local: `adapters/local/{models,embeddings,rerank,token_counter}.py` | Carried by one `Providers` bundle (`adapters/providers.py`, built by `application/bootstrap.py`) that each orchestrator builds once and passes to every component; each role's adapter is the one `providers.<role>.kind` selects through `adapters/provider_registry.py` (default Bedrock; §15) |
 
 > Design note: Pure ports (`DocStatusPort`, the write-side indexer ABCs) are gathered in `ports/`. The read-side abstract bases (`BaseGraphRAGRetriever`/`BaseSearchStrategy`) are "adapter bases" that construct infrastructure (HybridScorer/TokenManager) in `__init__`, so they live in `adapters/retrieval/base.py` and are imported from there; `ports/__init__` does not export them and only names them in its catalog docstring (no duplicate Protocol definition is kept). `BaseGraphRAGEvaluator` (`adapters/evaluators/base.py`) is an adapter base of the same kind.
@@ -151,7 +151,8 @@ This pattern follows the same philosophy as the existing `ParserFactory._loader_
 > (entities to both stores, entities-before-edges phasing, the orphan-edge
 > cascade) is deliberate domain knowledge rather than arbitrary dispatch. Which
 > backend fills each role is open: `providers.graph.kind` / `providers.vector.kind`
-> select a registered builder (Neptune or Gremlin Server, OpenSearch), or a
+> select a registered builder (Neptune, Gremlin Server or the embedded SQLite
+> graph; OpenSearch or the embedded SQLite vector store), or a
 > `GraphIndexer` / `VectorIndexer` is injected
 > (`IndexingManager(vector_indexer=…, graph_indexer=…)`). The read path does the
 > same through the `RetrieverRole` → builder map.
@@ -505,8 +506,8 @@ subclassing or editing dispatch code. The ports, their default
 |---|---|---|---|
 | `LLMFactoryPort` / `EmbeddingFactoryPort` / `RerankFactoryPort` (`ports/model_factory.py`, `Protocol`) | `get_model()` / `get_model_info()` returning a LangChain-compatible model | `BedrockLanguageModelFactory` / `BedrockEmbeddingModelFactory` / `BedrockRerankModelFactory` (`openai_compatible`, `ollama`; `cross_encoder`, `none`) | a `Providers` bundle (see below): `GraphRAGChain(providers=...)`, `DataIngestionPipeline(..., providers=...)`, `EvaluationManager(..., providers=...)`; `GraphRAGChain(model_factory=...)` is shorthand for an LLM-only bundle |
 | `TokenCounterPort` (`ports/model_factory.py`, `Protocol`) | `count_tokens()` / `truncate_to_token_limit()` | `BedrockTokenCounter` (`LocalTokenCounter`: estimate or tiktoken; follows the LLM kind) | `Providers(token_counter_factory=...)` |
-| `VectorIndexer` / `GraphIndexer` (`ports/indexer.py`, ABC) | `index_*` / `upsert_*` / `delete_by_id` | `OpenSearchIndexer` / `NeptuneIndexer` (`gremlin`: the same adapter on Gremlin Server) | `Providers(vector_indexer_factory=..., graph_indexer_factory=...)`, `DataIngestionPipeline(..., vector_indexer=..., graph_indexer=...)` or `IndexingManager(vector_indexer=..., graph_indexer=...)` |
-| retriever (role-keyed builder) | `BaseGraphRAGRetriever.aretrieve` | `OpenSearchRetriever` / `NeptuneRetriever` | `Providers(retriever_builders=...)` or `GraphRAGChain(retriever_builders={RetrieverRole.GRAPH: lambda: MyGraphRetriever(...)})` |
+| `VectorIndexer` / `GraphIndexer` (`ports/indexer.py`, ABC) | `index_*` / `upsert_*` / `delete_by_id` | `OpenSearchIndexer` / `NeptuneIndexer` (`gremlin`: the same adapter on Gremlin Server; `sqlite`: `OpenSearchIndexer` on `SQLiteSearchEngine` / `SQLiteGraphIndexer`) | `Providers(vector_indexer_factory=..., graph_indexer_factory=...)`, `DataIngestionPipeline(..., vector_indexer=..., graph_indexer=...)` or `IndexingManager(vector_indexer=..., graph_indexer=...)` |
+| retriever (role-keyed builder) | `BaseGraphRAGRetriever.aretrieve` | `OpenSearchRetriever` / `NeptuneRetriever` (`sqlite`: `OpenSearchRetriever` on `SQLiteSearchEngine` / `SQLiteGraphRetriever`) | `Providers(retriever_builders=...)` or `GraphRAGChain(retriever_builders={RetrieverRole.GRAPH: lambda: MyGraphRetriever(...)})` |
 | `DocStatusPort` (`ports/doc_status.py`, `Protocol`) | `get` / `get_many` / `put` / `put_many` / `delete` / `list_all` / `diff` and `record_fits` / `add_lineage_overflow` / `get_lineage_overflow` / `delete_lineage_overflow`, all called directly. Subclassing `DocStatusPort` inherits defaults for all but `get` / `put` / `delete` / `list_all` / `diff` (one record per call, no size limit, no overflow) | `DynamoDBDocStatusStore` (`SQLiteDocStatusStore`) | `Providers(doc_status=...)` or `DataIngestionPipeline(..., doc_status=...)` (either turns incremental indexing on); conform structurally and pass `tests/integration/test_doc_status_conformance.py` |
 
 **Errors from a custom retriever or backend** are classified by type, never
@@ -633,9 +634,20 @@ doc_status=..., vector_indexer=..., graph_indexer=...)`, exercised in
 `tests/integration/test_ingestion_stages.py`). They are
 the recommended starting point for a custom store. Besides the AWS adapters the
 framework ships the local ones in-tree (`adapters/local/`: OpenAI-compatible
-and Ollama models, a cross-encoder reranker, a local token counter and the
-SQLite registry); embedded stores (a NetworkX/Kùzu graph, a LanceDB vector
-store) are planned under the same registry.
+and Ollama models, a cross-encoder reranker, a local token counter, the
+SQLite registry and the embedded SQLite graph and vector stores that
+`backend: local` selects). The two stores show the two ways to add a
+backend. The vector store, `SQLiteSearchEngine` (`adapters/local/search_engine/`),
+implements the `SearchEngineClient` protocol (`adapters/storage/search_engine.py`),
+the OpenSearch client calls the indexer and retriever make, so the unchanged
+`OpenSearchIndexer` and `OpenSearchRetriever` run on it and both backends
+share one copy of the indexing and retrieval logic; a request outside the
+query subset it implements is rejected (`StoreRequestRejectedError`). Gremlin
+cannot be emulated that way, so the graph store is its own `GraphIndexer`
+(`SQLiteGraphIndexer`, with `FakeGraphStore` as the reference for the write
+semantics) and a `GraphExpansionRetriever` subclass
+(`adapters/retrievers/graph_expansion.py`) that implements only the traversal;
+the scoring, cutting and content building it shares with `NeptuneRetriever`.
 
 ### Deliberate Design Boundaries
 
@@ -644,14 +656,17 @@ intentional decisions rather than oversights:
 
 - **`SearchQuery` carries adapter vocabulary (label/index prefixes) by design.**
   The domain query model exposes index/label prefixes that the search strategies
-  and both retrievers read and write (~120 references). Hoisting these behind a
-  fully backend-neutral abstraction would be a large, behavior-risking churn that
-  buys nothing while there is exactly one storage backend pairing (Neptune +
-  OpenSearch). The hexagonal boundary that matters — the write-side indexer ports
-  and the model-factory ports — *is* abstracted and dependency-injected (see
-  §2.1 and the `IndexingManager` / `ModelFactoryPort` DI seams). The query-model
-  vocabulary is the pragmatic place to stop: it is revisited if and when a second
-  backend pairing actually lands, at which point the refactor pays for itself.
+  and both retrievers read and write (~120 references). The second store
+  pairing, the embedded SQLite graph and vector stores, kept it: a prefix names
+  a logical collection (an index, a vertex label) that each pairing maps to its
+  own storage, so the SQLite stores read the same prefixes without a new
+  abstraction. The vector store speaks the OpenSearch protocol and the graph
+  store keys its rows by the same `graph_label`. The hexagonal boundary that
+  matters — the write-side indexer ports and the model-factory ports — *is*
+  abstracted and dependency-injected (see §2.1 and the `IndexingManager` /
+  `ModelFactoryPort` DI seams). Hoisting the vocabulary behind a fully
+  backend-neutral query model would be a large, behavior-risking churn that a
+  backend which cannot map named collections would have to justify.
 
 - **Incremental `diff()` still scans the full DynamoDB table per run.**
   `DynamoDBDocStatusStore.diff()` scans the whole doc-status table to classify

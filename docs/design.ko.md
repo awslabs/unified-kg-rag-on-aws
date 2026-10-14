@@ -115,9 +115,9 @@ unified_kg_rag/
 | 포트 | 위치 | 어댑터 | 비고 |
 |---|---|---|---|
 | `DocStatusPort` | `ports/doc_status.py` | `adapters/aws/dynamodb.py` (`DynamoDBDocStatusStore`), `adapters/local/sqlite_doc_status.py` (`SQLiteDocStatusStore`), 테스트용 `FakeDocStatusStore` | 증분 인덱싱의 문서 상태와 계보 저장 |
-| `GraphIndexer` (쓰기 측) | `ports/indexer.py` | `adapters/storage/neptune_indexer.py` | 전체 인덱싱과 델타(`upsert_*`/`delete_by_id`)를 하나의 계약으로 처리 |
-| `VectorIndexer` (쓰기 측) | `ports/indexer.py` | `adapters/storage/opensearch_indexer.py` | 위와 같음 |
-| `BaseGraphRAGRetriever` (읽기 측) | `adapters/retrieval/base.py` | `adapters/retrievers/{neptune,opensearch}_retriever.py` | 검색 어댑터 |
+| `GraphIndexer` (쓰기 측) | `ports/indexer.py` | `adapters/storage/neptune_indexer.py`. 로컬: `adapters/local/sqlite_graph.py` | 전체 인덱싱과 델타(`upsert_*`/`delete_by_id`)를 하나의 계약으로 처리 |
+| `VectorIndexer` (쓰기 측) | `ports/indexer.py` | `adapters/storage/opensearch_indexer.py`(OpenSearch, 또는 `SearchEngineClient`를 통해 `adapters/local/search_engine/` 위에서 동작) | 위와 같음 |
+| `BaseGraphRAGRetriever` (읽기 측) | `adapters/retrieval/base.py` | `adapters/retrievers/{neptune,opensearch,sqlite_graph}_retriever.py`(그래프 리트리버는 `graph_expansion.py` 기반) | 검색 어댑터 |
 | LLM/임베딩/재순위화 팩토리, 토큰 카운터 | `ports/model_factory.py` (`ModelFactoryPort`, `TokenCounterPort`, 그리고 `get_model_info`가 돌려주는 `LanguageModelInfo` / `EmbeddingModelInfo` / `RerankModelInfo` 레코드) | `adapters/aws/bedrock.py`, `adapters/aws/bedrock_models.py`, `adapters/aws/token_counter.py`. 로컬: `adapters/local/{models,embeddings,rerank,token_counter}.py` | 오케스트레이터마다 한 번 만드는 `Providers` 묶음(`adapters/providers.py`, `application/bootstrap.py`가 생성)에 담아 모든 구성 요소에 전달. 역할별 어댑터는 `adapters/provider_registry.py`를 거쳐 `providers.<역할>.kind`가 고름(기본값 Bedrock. §15) |
 
 > 설계 참고: 순수 포트(`DocStatusPort`, 쓰기 측 인덱서 ABC)는 `ports/`에 모았습니다. 읽기 측 추상 베이스(`BaseGraphRAGRetriever`/`BaseSearchStrategy`)는 `__init__`에서 인프라(HybridScorer/TokenManager)를 생성하는 "어댑터 베이스"이므로 `adapters/retrieval/base.py`에 두고 그곳에서 import합니다. `ports/__init__`은 이들을 export하지 않고 카탈로그 docstring에 이름만 적습니다(중복 Protocol 정의는 두지 않습니다). `BaseGraphRAGEvaluator`(`adapters/evaluators/base.py`)도 같은 종류의 어댑터 베이스입니다.
@@ -151,7 +151,8 @@ class LocalSearchStrategy(BaseSearchStrategy): ...
 > 요소이고, 역할별 fan-out(엔티티를 두 저장소에 모두 쓰기, 엣지보다 엔티티를 먼저 쓰는
 > 단계 구분, 고아 엣지 연쇄 삭제)은 임의의 디스패치가 아니라 의도된 도메인 지식이기
 > 때문입니다. 각 역할을 맡을 백엔드는 열려 있습니다. `providers.graph.kind` /
-> `providers.vector.kind`가 등록된 빌더(Neptune 또는 Gremlin Server, OpenSearch)를
+> `providers.vector.kind`가 등록된 빌더(Neptune, Gremlin Server 또는 내장 SQLite 그래프.
+> OpenSearch 또는 내장 SQLite 벡터 저장소)를
 > 고르거나, `GraphIndexer` / `VectorIndexer`를 주입합니다
 > (`IndexingManager(vector_indexer=…, graph_indexer=…)`). 읽기 경로도 `RetrieverRole`
 > → 빌더 맵으로 같은 방식을 씁니다.
@@ -504,8 +505,8 @@ CLI: `run-eval --eval-data-path <json> [--search-strategy ...]`.
 |---|---|---|---|
 | `LLMFactoryPort` / `EmbeddingFactoryPort` / `RerankFactoryPort` (`ports/model_factory.py`, `Protocol`) | LangChain 호환 모델을 반환하는 `get_model()` / `get_model_info()` | `BedrockLanguageModelFactory` / `BedrockEmbeddingModelFactory` / `BedrockRerankModelFactory`(`openai_compatible`, `ollama`. `cross_encoder`, `none`) | `Providers` 묶음(아래 참고): `GraphRAGChain(providers=...)`, `DataIngestionPipeline(..., providers=...)`, `EvaluationManager(..., providers=...)`. `GraphRAGChain(model_factory=...)`는 LLM만 담은 묶음의 줄임 표기 |
 | `TokenCounterPort` (`ports/model_factory.py`, `Protocol`) | `count_tokens()` / `truncate_to_token_limit()` | `BedrockTokenCounter`(`LocalTokenCounter`: 추정치 또는 tiktoken. LLM kind를 따름) | `Providers(token_counter_factory=...)` |
-| `VectorIndexer` / `GraphIndexer` (`ports/indexer.py`, ABC) | `index_*` / `upsert_*` / `delete_by_id` | `OpenSearchIndexer` / `NeptuneIndexer`(`gremlin`: 같은 어댑터로 Gremlin Server 사용) | `Providers(vector_indexer_factory=..., graph_indexer_factory=...)`, `DataIngestionPipeline(..., vector_indexer=..., graph_indexer=...)` 또는 `IndexingManager(vector_indexer=..., graph_indexer=...)` |
-| 리트리버(역할별 빌더) | `BaseGraphRAGRetriever.aretrieve` | `OpenSearchRetriever` / `NeptuneRetriever` | `Providers(retriever_builders=...)` 또는 `GraphRAGChain(retriever_builders={RetrieverRole.GRAPH: lambda: MyGraphRetriever(...)})` |
+| `VectorIndexer` / `GraphIndexer` (`ports/indexer.py`, ABC) | `index_*` / `upsert_*` / `delete_by_id` | `OpenSearchIndexer` / `NeptuneIndexer`(`gremlin`: 같은 어댑터로 Gremlin Server 사용. `sqlite`: `SQLiteSearchEngine` 위의 `OpenSearchIndexer` / `SQLiteGraphIndexer`) | `Providers(vector_indexer_factory=..., graph_indexer_factory=...)`, `DataIngestionPipeline(..., vector_indexer=..., graph_indexer=...)` 또는 `IndexingManager(vector_indexer=..., graph_indexer=...)` |
+| 리트리버(역할별 빌더) | `BaseGraphRAGRetriever.aretrieve` | `OpenSearchRetriever` / `NeptuneRetriever`(`sqlite`: `SQLiteSearchEngine` 위의 `OpenSearchRetriever` / `SQLiteGraphRetriever`) | `Providers(retriever_builders=...)` 또는 `GraphRAGChain(retriever_builders={RetrieverRole.GRAPH: lambda: MyGraphRetriever(...)})` |
 | `DocStatusPort` (`ports/doc_status.py`, `Protocol`) | `get` / `get_many` / `put` / `put_many` / `delete` / `list_all` / `diff`와 `record_fits` / `add_lineage_overflow` / `get_lineage_overflow` / `delete_lineage_overflow`. 모두 직접 호출합니다. `DocStatusPort`를 상속하면 `get` / `put` / `delete` / `list_all` / `diff`를 뺀 나머지는 기본 구현(호출마다 레코드 하나, 크기 한도 없음, 초과분 없음)을 물려받습니다 | `DynamoDBDocStatusStore`(`SQLiteDocStatusStore`) | `Providers(doc_status=...)` 또는 `DataIngestionPipeline(..., doc_status=...)`(어느 쪽이든 증분 인덱싱이 켜짐). 구조를 맞추고 `tests/integration/test_doc_status_conformance.py`를 통과해야 함 |
 
 **커스텀 리트리버나 백엔드의 오류**는 메시지가 아니라 타입으로만 분류합니다
@@ -615,8 +616,16 @@ vector_indexer_factory=lambda: vectors, graph_indexer_factory=lambda: graph))`, 
 graph_indexer=...)`, `tests/integration/test_ingestion_stages.py`에서
 검증), 커스텀 저장소를 만들 때 출발점으로 권장합니다. 이 프레임워크는 AWS 어댑터 외에 로컬
 어댑터도 저장소 안에 제공합니다(`adapters/local/`: OpenAI 호환·Ollama 모델, 크로스 인코더
-재순위화, 로컬 토큰 카운터, SQLite 레지스트리). 내장형 저장소(NetworkX/Kùzu 그래프,
-LanceDB 벡터 저장소)는 같은 레지스트리에 추가할 계획입니다.
+재순위화, 로컬 토큰 카운터, SQLite 레지스트리, 그리고 `backend: local`이 고르는 내장 SQLite
+그래프·벡터 저장소). 두 저장소는 백엔드를 추가하는 두 가지 방법을 보여 줍니다. 벡터
+저장소 `SQLiteSearchEngine`(`adapters/local/search_engine/`)은 인덱서와 리트리버가 부르는
+OpenSearch 클라이언트 호출인 `SearchEngineClient` 프로토콜(`adapters/storage/search_engine.py`)을
+구현합니다. 그래서 `OpenSearchIndexer`와 `OpenSearchRetriever`가 그대로 그 위에서 동작하고,
+두 백엔드가 인덱싱·검색 로직 하나를 함께 씁니다. 구현한 질의 범위를 벗어난 요청은
+거부합니다(`StoreRequestRejectedError`). Gremlin은 이렇게 흉내 낼 수 없으므로 그래프
+저장소는 별도의 `GraphIndexer`(`SQLiteGraphIndexer`, 쓰기 의미의 기준은 `FakeGraphStore`)와
+순회만 구현하는 `GraphExpansionRetriever` 하위 클래스(`adapters/retrievers/graph_expansion.py`)입니다.
+채점, 자르기, 내용 구성은 `NeptuneRetriever`와 함께 씁니다.
 
 ### 의도적 설계 경계
 
@@ -625,13 +634,15 @@ LanceDB 벡터 저장소)는 같은 레지스트리에 추가할 계획입니다
 
 - **`SearchQuery`는 의도적으로 어댑터 어휘(레이블·인덱스 접두사)를 담습니다.**
   도메인 질의 모델은 검색 전략과 두 리트리버가 읽고 쓰는 인덱스·레이블 접두사를
-  노출합니다(약 120곳에서 참조). 이를 완전히 백엔드 중립적인 추상화 뒤로 옮기려면
-  동작을 바꿀 위험이 있는 큰 변경이 필요하지만, 저장소 백엔드 조합이 하나(Neptune +
-  OpenSearch)뿐인 지금은 얻는 것이 없습니다. 중요한 헥사고날 경계인 쓰기 측 인덱서
-  포트와 모델 팩토리 포트는 *이미* 추상화되어 있고 의존성 주입을 받습니다(§2.1과
-  `IndexingManager` / `ModelFactoryPort` 주입 지점 참고). 질의 모델의 어휘는 현실적으로
-  멈추기 적당한 지점입니다. 두 번째 백엔드 조합이 실제로 생기면 그때 다시 검토하며,
-  그 시점에는 리팩터링이 비용을 치를 만한 가치가 있습니다.
+  노출합니다(약 120곳에서 참조). 두 번째 저장소 조합인 내장 SQLite 그래프·벡터 저장소도
+  이 어휘를 그대로 썼습니다. 접두사는 논리적 컬렉션(인덱스, 정점 레이블)의 이름이고
+  조합마다 이를 자기 저장 방식에 대응시키므로, SQLite 저장소는 새 추상화 없이 같은
+  접두사를 읽습니다. 벡터 저장소는 OpenSearch 프로토콜로 동작하고, 그래프 저장소는 같은
+  `graph_label`로 행을 구분합니다. 중요한 헥사고날 경계인 쓰기 측 인덱서 포트와 모델
+  팩토리 포트는 *이미* 추상화되어 있고 의존성 주입을 받습니다(§2.1과 `IndexingManager` /
+  `ModelFactoryPort` 주입 지점 참고). 이 어휘를 완전히 백엔드 중립적인 질의 모델 뒤로
+  옮기는 것은 동작을 바꿀 위험이 있는 큰 변경이며, 이름 붙은 컬렉션에 대응시킬 수 없는
+  백엔드가 생길 때에야 정당화됩니다.
 
 - **증분 `diff()`는 여전히 실행마다 DynamoDB 테이블 전체를 스캔합니다.**
   `DynamoDBDocStatusStore.diff()`는 new/changed/unchanged를 분류하고 `deleted`를
