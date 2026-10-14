@@ -9,13 +9,12 @@ unified-kg-rag-on-aws's *shared* infrastructure rather than as a separate, reduc
 - high-level keywords (``hl_keywords``) -> relationships index (lexical + vector),
 - the entity hits are expanded one hop to their incident relationships and
   the relationship hits to their endpoint entities (both from OpenSearch),
-- ``mix`` additionally pulls the source chunks referenced by the matched
+- ``hybrid`` and ``mix`` pull the source chunks referenced by the matched
   entities/relationships (following ``text_unit_ids`` lineage, allocating slots
-  per hit by weighted polling so every match keeps at least one chunk, and
-  deduplicating against the naive vector chunk stream — LightRAG's
-  ``_find_related_text_unit_from_entities``/``_from_relations`` +
-  ``pick_by_weighted_polling`` + ``_merge_chunks``) and blends a naive vector
-  chunk retrieval,
+  per hit by weighted polling so every match keeps at least one chunk —
+  LightRAG's ``_find_related_text_unit_from_entities``/``_from_relations`` +
+  ``pick_by_weighted_polling``); ``mix`` additionally blends the naive chunk
+  retrieval, deduplicating the cited chunks against it (``_merge_chunks``),
 - everything is fused and reranked via the shared :class:`HybridScorer`
   (BM25 lexical + vector semantic + graph + RRF + Bedrock rerank).
 
@@ -128,7 +127,7 @@ def _pick_by_weighted_polling(
     return selected
 
 
-# NAIVE is vector-chunk-only (no graph), so it declares DOCUMENT-only roles;
+# NAIVE is chunk retrieval only (no graph), so it declares DOCUMENT-only roles;
 # MIX/HYBRID keep the default (DOCUMENT, GRAPH) so the opt-in multi-hop graph
 # expansion (`search.lightrag_search.enable_graph_expansion`) has a GRAPH
 # retriever. The shared class can't carry one required_roles for all three, so
@@ -148,10 +147,11 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
     :class:`SearchStrategy` passed via ``query.metadata['search_strategy']``
     (the chain sets it; default ``mix``):
 
-    - ``naive``: vector chunk retrieval only (no graph).
+    - ``naive``: chunk retrieval only (no graph), with the request's
+      ``search_type`` (BM25 + vector by default).
     - ``hybrid``: ll->entities + hl->relationships + one-hop cross-type
       expansion + the chunks those items cite.
-    - ``mix``: hybrid graph retrieval blended with naive chunk retrieval.
+    - ``mix``: ``hybrid`` plus the ``naive`` chunk retrieval.
 
     Backends are accessed only through the abstract GRAPH / DOCUMENT retriever
     roles (``self.graph_retriever`` / ``self.document_retriever``).
