@@ -86,3 +86,9 @@ def test_valid_fargate_sizes_pass() -> None:
     config = _config({"fargate_cpu": "4096", "fargate_memory": "16384"})
     assert (config.fargate_cpu, config.fargate_memory) == (4096, 16384)
     assert (_config({}).fargate_cpu, _config({}).fargate_memory) == (2048, 8192)
+
+
+@pytest.mark.parametrize("value", ["", "nori,cjk", "../x", "-nori"])
+def test_korean_analyzer_must_be_an_analyzer_name(value: str) -> None:
+    with pytest.raises(ValueError, match="opensearch_korean_analyzer"):
+        _config({"opensearch_korean_analyzer": value})

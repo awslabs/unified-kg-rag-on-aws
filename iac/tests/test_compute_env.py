@@ -85,6 +85,20 @@ def test_opensearch_replicas_follow_node_count(
     assert _task_environment(context)["OPENSEARCH_NUMBER_OF_REPLICAS"] == replicas
 
 
+@pytest.mark.parametrize(
+    ("context", "analyzer"),
+    [({}, "cjk"), ({"opensearch_korean_analyzer": "nori"}, "nori")],
+    ids=["default-built-in", "nori-plugin-associated"],
+)
+def test_korean_analyzer_is_one_the_domain_has(
+    context: dict[str, Any], analyzer: str
+) -> None:
+    # The domain has no nori unless its optional package is associated, so the
+    # default maps Korean to the built-in cjk analyzer. Name must match the
+    # unified_kg_rag.shared.config env override.
+    assert _task_environment(context)["OPENSEARCH_KOREAN_ANALYZER"] == analyzer
+
+
 def test_guardrail_version_is_injected_only_when_set() -> None:
     assert "BEDROCK_GUARDRAIL_VERSION" not in _task_environment()
     env = _task_environment({"guardrail_identifier": "gr-1", "guardrail_version": "2"})

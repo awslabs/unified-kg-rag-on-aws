@@ -346,8 +346,9 @@ included; an omitted flag leaves the config as it is.
 [`docker/compose.local.yaml`](../docker/compose.local.yaml) runs the stores
 as servers instead: a TinkerPop Gremlin Server (in-memory TinkerGraph), a
 single-node OpenSearch 2.13 with the security plugin disabled and the
-`analysis-nori` plugin installed (the Korean mappings use `nori`; Amazon
-OpenSearch Service ships it built in), and, under the `models` profile,
+`analysis-nori` plugin installed (the Korean mappings use `nori`; an Amazon
+OpenSearch Service domain has it only once its optional package is associated,
+see [Multilingual ingestion](#multilingual-ingestion)), and, under the `models` profile,
 Ollama. OpenSearch is the same query engine as Amazon OpenSearch Service, so
 use it to check ranking (morphological analyzers, fuzzy matching) before an
 AWS deployment. [`docker/config.local.yaml`](../docker/config.local.yaml)
@@ -764,6 +765,7 @@ the CLI prints one line naming the variable and exits 2.
 | `OPENSEARCH_USERNAME` | `aws.opensearch.username` | Basic auth when `aws.opensearch.use_iam: false`. |
 | `OPENSEARCH_PASSWORD` | `aws.opensearch.password` | Kept masked in logs. |
 | `OPENSEARCH_NUMBER_OF_REPLICAS` | `indexing.opensearch.index_settings.number_of_replicas` | Applies to indices created afterwards. |
+| `OPENSEARCH_KOREAN_ANALYZER` | `indexing.opensearch.language_analyzers.ko` | Applies to indices created afterwards. |
 | `S3_BUCKET_NAME` | `aws.s3.bucket_name` | |
 | `GRAPHRAG_DOC_STATUS_TABLE` | `aws.dynamodb.table_name` | |
 | `GRAPHRAG_DOC_STATUS_CREATE_TABLE` | `aws.dynamodb.create_table_if_missing` | |
@@ -801,7 +803,8 @@ and never changes `os.environ`; a Python caller that wants one loads it itself
 
 The CDK compute stack injects `AWS_REGION`, `BEDROCK_REGION`,
 `NEPTUNE_ENDPOINT`, `OPENSEARCH_ENDPOINT`, `OPENSEARCH_NUMBER_OF_REPLICAS`
-(1 on a multi-node domain), `S3_BUCKET_NAME`,
+(1 on a multi-node domain), `OPENSEARCH_KOREAN_ANALYZER` (`cjk` unless
+`opensearch_korean_analyzer` is set), `S3_BUCKET_NAME`,
 `GRAPHRAG_DOC_STATUS_TABLE`, `GRAPHRAG_DOC_STATUS_CREATE_TABLE=false` (the
 table is IaC-managed and the task role cannot create tables), `LOG_FORMAT`, and,
 when a guardrail is deployed, `BEDROCK_GUARDRAIL_IDENTIFIER` (and
@@ -1065,6 +1068,20 @@ Changing `source_language` changes the mapping, so re-index the text units.
 Parsed text and queries are NFC-normalized, so decomposed Hangul (NFD, as
 written by macOS file systems and many PDF text layers) matches its composed
 form.
+
+The analyzer must exist on the cluster: an index whose mapping names one it
+lacks is not created, and the indexing stage fails with `the cluster has no
+analyzer '<name>'`. `nori` comes from the `analysis-nori` plugin, which the
+[local OpenSearch container](#local-stores-in-containers) installs but an
+Amazon OpenSearch Service domain has only once its optional Nori package is
+associated. The [CDK deployment](../iac/README.md) therefore maps `ko` to
+OpenSearch's built-in `cjk` analyzer (overlapping character bigrams, close to
+what the embedded engine does for `nori`), through `OPENSEARCH_KOREAN_ANALYZER`,
+which wins over the image's config file. For morphological Korean analysis on
+the domain, associate the Nori package (console **Packages**, or
+`aws opensearch associate-package`; a blue/green deployment), then deploy with
+`-c opensearch_korean_analyzer=nori` and re-run once with `indexing.reset:
+true` to rebuild the Korean indices.
 
 A text unit whose translation fails keeps its original text and is extracted
 in the source language. A failed call for a whole target language fails the

@@ -604,7 +604,10 @@ indexing:
     # Configurations sharing a domain with other weights need their own name.
     hybrid_search_pipeline_name: "graphrag-hybrid-search-pipeline"
     # Text analyzer per language code (extend without code changes); unlisted
-    # languages use default_analyzer.
+    # languages use default_analyzer. The cluster must have it: nori is the
+    # analysis-nori plugin, which an Amazon OpenSearch Service domain has only
+    # once its optional Nori package is associated (cjk is built in; the CDK
+    # deployment sets ko through OPENSEARCH_KOREAN_ANALYZER).
     default_analyzer: "standard"
     language_analyzers:
       en: "english"

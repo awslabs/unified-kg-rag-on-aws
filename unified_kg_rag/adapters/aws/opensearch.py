@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
 import json
+import re
 import time
 from collections.abc import Awaitable, Callable
 from functools import cached_property, wraps
@@ -111,6 +112,8 @@ INDEX_NOT_FOUND_TYPE = "index_not_found_exception"
 # A query over the cluster's clause limit, which OpenSearch answers with a 500
 # rather than a 400; the same query fails the same way every time.
 _CLAUSE_LIMIT_TYPES = frozenset({"too_many_nested_clauses", "too_many_clauses"})
+# How OpenSearch rejects a mapping naming an analyzer the cluster lacks.
+_MISSING_ANALYZER = re.compile(r"analyzer \[([^\]]+)\] has not been configured")
 
 
 def _error_types(payload: Any) -> set[str]:
@@ -174,6 +177,29 @@ def error_reason(exc: TransportError) -> str:
             if part.get("reason"):
                 return f"{part.get('type', 'error')}: {part['reason']}"
     return str(exc.error)
+
+
+def _missing_analyzer_error(
+    index: str, analyzer: str, exc: TransportError
+) -> StoreRequestRejectedError:
+    """The error for a mapping whose text analyzer the cluster does not have.
+
+    A language analyzer such as ``nori`` comes from a plugin, which Amazon
+    OpenSearch Service installs only once its optional package is associated.
+    """
+    reason = error_reason(exc)
+    msg = (
+        f"Cannot create the OpenSearch index '{index}': the cluster has no "
+        f"analyzer '{analyzer}', which its mapping uses (the analysis plugin "
+        "that provides it is not installed). Map the language to an analyzer "
+        "the cluster has in indexing.opensearch.language_analyzers (e.g. "
+        "ko: cjk, built into OpenSearch; the CDK deployment sets it with "
+        "-c opensearch_korean_analyzer), or install the plugin (for nori: "
+        "analysis-nori, an optional plugin package to associate with an "
+        "Amazon OpenSearch Service domain)."
+    )
+    logger.error("%s (%s)", msg, reason)
+    return StoreRequestRejectedError(msg, reason=reason)
 
 
 def _wrap_transport_error(exc: TransportError, context: str) -> AWSServiceError:
@@ -751,6 +777,8 @@ class OpenSearchClient:
             if "resource_already_exists_exception" not in _error_types(
                 e.info or e.error
             ):
+                if missing := _MISSING_ANALYZER.search(error_reason(e)):
+                    raise _missing_analyzer_error(index, missing.group(1), e) from e
                 raise
         logger.info("Created index: '%s'", index)
 

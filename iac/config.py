@@ -36,6 +36,12 @@ Context keys (all optional; sensible defaults shown):
   opensearch_master_instance "m6g.large.search"  dedicated master type when
                                        opensearch_count > 1 (8 GiB Graviton; sized
                                        for <=10 nodes / 10K shards on OS 2.13)
+  opensearch_korean_analyzer "cjk"    OpenSearch analyzer of Korean text
+                                       (OPENSEARCH_KOREAN_ANALYZER, overrides
+                                       language_analyzers.ko): the domain has no
+                                       nori unless its optional analysis-nori
+                                       package is associated; set "nori" once it
+                                       is
   doc_status_table    dev:"graphrag-doc-status"/else:"<env>-graphrag-doc-status"
   opensearch_volume_gib 50             GP3 volume per OpenSearch data node; the
                                        free-storage alarm fires at 40% of it
@@ -91,6 +97,7 @@ Context keys (all optional; sensible defaults shown):
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -180,6 +187,10 @@ def _check_fargate_size(cpu: int, memory: int) -> None:
         )
 
 
+# An OpenSearch analyzer name (no index-name characters such as "/" or ",").
+_ANALYZER_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*")
+
+
 # Retention values CloudWatch Logs accepts (AWS::Logs::LogGroup RetentionInDays).
 _LOG_RETENTION_DAYS = frozenset(
     (1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, 1096, 1827)
@@ -239,6 +250,10 @@ class DeploymentConfig:
     # Opt-in ADOT collector sidecar exporting traces to CloudWatch (X-Ray OTLP
     # endpoint). Off: the templates are exactly as without the feature.
     enable_cloudwatch_tracing: bool = False
+    # Analyzer the app maps Korean text to (OPENSEARCH_KOREAN_ANALYZER). The
+    # domain has no nori unless the optional analysis-nori package is
+    # associated with it; cjk (character bigrams) is built into OpenSearch.
+    opensearch_korean_analyzer: str = "cjk"
 
     @property
     def collector_cache_prefix(self) -> str:
@@ -316,6 +331,12 @@ class DeploymentConfig:
                 "flow_log_retention_days must be a CloudWatch Logs retention value "
                 f"{sorted(_LOG_RETENTION_DAYS)}, got {flow_log_retention_days}"
             )
+        opensearch_korean_analyzer = str(ctx("opensearch_korean_analyzer", "cjk"))
+        if not _ANALYZER_NAME.fullmatch(opensearch_korean_analyzer):
+            raise ValueError(
+                "opensearch_korean_analyzer must be an OpenSearch analyzer name "
+                f"(e.g. cjk or nori), got {opensearch_korean_analyzer!r}"
+            )
         fargate_cpu = as_int("fargate_cpu", 2048)
         fargate_memory = as_int("fargate_memory", 8192)
         _check_fargate_size(fargate_cpu, fargate_memory)
@@ -383,6 +404,7 @@ class DeploymentConfig:
             enable_cloudwatch_tracing=as_bool(
                 "enable_cloudwatch_tracing", default=False
             ),
+            opensearch_korean_analyzer=opensearch_korean_analyzer,
         )
         # ECR limits a pull-through cache repository prefix to 30 characters.
         if config.enable_cloudwatch_tracing and len(config.collector_cache_prefix) > 30:

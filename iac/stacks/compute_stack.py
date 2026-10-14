@@ -293,6 +293,10 @@ class ComputeStack(Stack):
             "OPENSEARCH_NUMBER_OF_REPLICAS": str(
                 min(self.config.opensearch_count - 1, 1)
             ),
+            # Overrides language_analyzers.ko: the domain has no nori (Korean
+            # morphological analyzer) unless its optional analysis-nori
+            # package is associated, and a mapping naming it fails to create.
+            "OPENSEARCH_KOREAN_ANALYZER": self.config.opensearch_korean_analyzer,
             # Maps to aws.dynamodb.table_name. The table is IaC-managed (KMS,
             # PITR, alarms) and the task role has no dynamodb:CreateTable, so
             # disable app-side auto-creation. With aws.dynamodb.enabled, a

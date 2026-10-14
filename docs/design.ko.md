@@ -388,7 +388,7 @@ AWS 세션은 묶음의 세션(`Providers(boto_session=...)`, 기본값은 처�
 
 ### 8.7 다국어 처리
 
-- **OpenSearch 분석기**: 언어→분석기 매핑은 설정(`indexing.opensearch.language_analyzers`, 기본값 `{"en": "english", "ko": "nori"}`)으로 노출되어 있어 코드를 고치지 않고 늘릴 수 있습니다. nori(한국어 형태소 분석기)는 OpenSearch Service에 내장되어 있습니다. 매핑이 없는 언어는 `default_analyzer`를 씁니다.
+- **OpenSearch 분석기**: 언어→분석기 매핑은 설정(`indexing.opensearch.language_analyzers`, 기본값 `{"en": "english", "ko": "nori"}`)으로 노출되어 있어 코드를 고치지 않고 늘릴 수 있습니다. nori(한국어 형태소 분석기)는 `analysis-nori` 플러그인이 제공합니다. 로컬 OpenSearch 컨테이너에는 설치되어 있지만 Amazon OpenSearch Service 도메인에는 선택 사항인 Nori 패키지를 연결해야만 생기므로, CDK 배포는 `ko`를 OpenSearch에 내장된 `cjk` 분석기(문자 바이그램)로 매핑합니다(`opensearch_korean_analyzer`, `OPENSEARCH_KOREAN_ANALYZER`로 주입). 클러스터에 없는 분석기를 매핑에 쓰면 인덱스 생성이 그 분석기 이름을 밝힌 오류로 실패합니다. 매핑이 없는 언어는 `default_analyzer`를 씁니다.
 - **엔티티 ID 정규화**: ID는 `entity_key`(`shared/utils/common.py`)의 해시입니다. NFKC + casefold를 적용하되 기호와 모든 문자 체계의 문자·숫자는 남기고 따옴표, 쉼표, 끝 문장 부호만 지웁니다. 그래서 한국어·CJK·악센트가 있는 이름도 고유한 ID를 얻고 "C++"/"C#"도 구분되며, `Entity.name`은 표시 형태를 유지합니다(§3). 비어 있지 않은 입력이 빈 ID가 되는 일은 없습니다.
 - **번역 건너뛰기**: `TranslationConfig.is_noop`(source_language == target_language이고 추가 대상 언어 없음)이면 번역 단계 전체를 비용 없이 건너뜁니다(`application/ingestion/pipeline_stages.py`의 `TranslationStage._should_skip`).
 - **인코딩 자동 감지**: 텍스트 파서는 UTF-8이 아닌 파일에서 `UnicodeDecodeError`가 나면 `charset-normalizer`로 인코딩을 감지하고 명시적인 `encoding=`으로 다시 시도합니다(`adapters/ingestion/parser.py`의 `FileParser._detect_encoding`). LangChain의 `autodetect_encoding=True`는 `chardet` 의존성을 추가로 끌어오므로 의도적으로 쓰지 않습니다.

@@ -76,6 +76,19 @@ def test_opensearch_replicas_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings["number_of_shards"] == 1
 
 
+def test_korean_analyzer_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The compute stack maps Korean to an analyzer Amazon OpenSearch Service
+    # has without the optional Nori plugin; the other languages are kept.
+    monkeypatch.setenv("OPENSEARCH_KOREAN_ANALYZER", "cjk")
+    analyzers = ConfigLoader().load_config().indexing.opensearch.language_analyzers
+    assert analyzers == {"en": "english", "ko": "cjk"}
+
+
+def test_korean_analyzer_default_without_env() -> None:
+    analyzers = ConfigLoader().load_config().indexing.opensearch.language_analyzers
+    assert analyzers["ko"] == "nori"
+
+
 def test_guardrail_version_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("BEDROCK_GUARDRAIL_VERSION", "3")
     cfg = ConfigLoader().load_config()

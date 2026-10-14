@@ -5,8 +5,10 @@
 #   docker compose -f docker/compose.local.yaml down -v
 #
 # - OpenSearch: single node, security plugin disabled (plain http, no auth),
-#   with the analysis-nori plugin that the Korean text mappings use (Amazon
-#   OpenSearch Service ships nori built in). Version matches the IaC domain.
+#   with the analysis-nori plugin that the Korean text mappings use (an Amazon
+#   OpenSearch Service domain has it only once its optional Nori package is
+#   associated; the IaC maps Korean to the built-in cjk analyzer instead).
+#   Version matches the IaC domain.
 # - Gremlin Server: in-memory TinkerGraph over plain ws:// with no auth. Its
 #   TinkerPop line (3.7) matches the gremlinpython client. Its init script
 #   indexes the "id" property the indexer looks vertices and edges up by.

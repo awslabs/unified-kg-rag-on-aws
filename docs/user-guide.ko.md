@@ -329,8 +329,8 @@ HTTP 4xx) 클라이언트 재시도 후에도 연결할 수 없으면, "찾을 �
 [`docker/compose.local.yaml`](../docker/compose.local.yaml)은 저장소를 서버로
 실행합니다. TinkerPop Gremlin Server(메모리 기반 TinkerGraph), 단일 노드 OpenSearch
 2.13, 그리고 `models` 프로필에서 Ollama를 실행합니다. OpenSearch는 보안 플러그인을 끄고
-`analysis-nori` 플러그인을 설치합니다(한국어 매핑이 `nori`를 쓰며, Amazon OpenSearch
-Service에는 기본으로 들어 있습니다). 이 OpenSearch는 Amazon OpenSearch Service와 같은
+`analysis-nori` 플러그인을 설치합니다(한국어 매핑이 `nori`를 씁니다. Amazon OpenSearch
+Service 도메인에는 선택 사항인 패키지를 연결해야만 생깁니다. [다국어 수집](#다국어-수집) 참고). 이 OpenSearch는 Amazon OpenSearch Service와 같은
 질의 엔진이므로 AWS에 배포하기 전에 순위(형태소 분석기, 퍼지 매칭)를 확인할 때 쓰세요.
 [`docker/config.local.yaml`](../docker/config.local.yaml)은
 `providers.graph.kind: gremlin`과 `providers.vector.kind: opensearch`를 지정하고 증분
@@ -719,6 +719,7 @@ LLM 단계는 Bedrock I/O가 병목이므로 동시성을 CPU 수보다 훨씬 �
 | `OPENSEARCH_USERNAME` | `aws.opensearch.username` | `aws.opensearch.use_iam: false`일 때의 기본 인증입니다. |
 | `OPENSEARCH_PASSWORD` | `aws.opensearch.password` | 로그에는 가려서 표시합니다. |
 | `OPENSEARCH_NUMBER_OF_REPLICAS` | `indexing.opensearch.index_settings.number_of_replicas` | 이후에 만드는 인덱스에 적용됩니다. |
+| `OPENSEARCH_KOREAN_ANALYZER` | `indexing.opensearch.language_analyzers.ko` | 이후에 만드는 인덱스에 적용됩니다. |
 | `S3_BUCKET_NAME` | `aws.s3.bucket_name` | |
 | `GRAPHRAG_DOC_STATUS_TABLE` | `aws.dynamodb.table_name` | |
 | `GRAPHRAG_DOC_STATUS_CREATE_TABLE` | `aws.dynamodb.create_table_if_missing` | |
@@ -757,7 +758,8 @@ Python 코드에서 `.env`가 필요하면 직접 읽으세요(예: `get_config(
 
 CDK compute 스택은 `AWS_REGION`, `BEDROCK_REGION`,
 `NEPTUNE_ENDPOINT`, `OPENSEARCH_ENDPOINT`, `OPENSEARCH_NUMBER_OF_REPLICAS`(다중 노드
-도메인이면 1), `S3_BUCKET_NAME`,
+도메인이면 1), `OPENSEARCH_KOREAN_ANALYZER`(`opensearch_korean_analyzer`를 지정하지
+않으면 `cjk`), `S3_BUCKET_NAME`,
 `GRAPHRAG_DOC_STATUS_TABLE`, `GRAPHRAG_DOC_STATUS_CREATE_TABLE=false`(테이블은
 IaC가 관리하며 태스크 역할에는 테이블 생성 권한이 없음), `LOG_FORMAT`을 주입하고,
 가드레일을 배포했다면 `BEDROCK_GUARDRAIL_IDENTIFIER`도 주입합니다(`guardrail_version`을
@@ -1002,6 +1004,18 @@ processing:
 달라지므로 텍스트 단위를 다시 인덱싱해야 합니다. 파싱한 텍스트와 질의는 NFC로
 정규화하므로, 자모가 분해된 한글(NFD. macOS 파일 시스템과 많은 PDF 텍스트 레이어가
 쓰는 형태)도 조합형과 일치합니다.
+
+분석기는 클러스터에 있어야 합니다. 매핑이 클러스터에 없는 분석기를 가리키면 인덱스를
+만들지 못하고 인덱싱 단계가 `the cluster has no analyzer '<name>'` 오류로 실패합니다.
+`nori`는 `analysis-nori` 플러그인이 제공하며, [로컬 OpenSearch
+컨테이너](#컨테이너로-띄운-로컬-저장소)에는 설치되어 있지만 Amazon OpenSearch Service
+도메인에는 선택 사항인 Nori 패키지를 연결해야만 생깁니다. 그래서 [CDK
+배포](../iac/README.md)는 `OPENSEARCH_KOREAN_ANALYZER`로 `ko`를 OpenSearch에 내장된
+`cjk` 분석기(겹치는 문자 바이그램. 임베디드 엔진이 `nori`를 처리하는 방식과 비슷함)로
+매핑하며, 이 값이 이미지의 설정 파일보다 우선합니다. 도메인에서 한국어 형태소 분석을
+쓰려면 Nori 패키지를 연결한 뒤(콘솔 **Packages** 또는 `aws opensearch
+associate-package`. 블루/그린 배포가 일어남) `-c opensearch_korean_analyzer=nori`로
+배포하고, `indexing.reset: true`로 한 번 다시 실행해 한국어 인덱스를 다시 만드세요.
 
 번역에 실패한 텍스트 단위는 원문을 유지하고 원문 언어로 추출합니다. 대상 언어 하나의
 호출 전체가 실패하면 `processing.ignore_errors`가 `true`가 아닌 한 단계가 실패합니다.
