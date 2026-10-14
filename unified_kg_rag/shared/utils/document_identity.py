@@ -33,10 +33,15 @@ outside the pipeline); the pipeline stages re-derive the id against the root.
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path, PurePosixPath, PureWindowsPath
+from typing import TYPE_CHECKING
 
 from .common import compute_hash, generate_stable_id
+
+if TYPE_CHECKING:
+    from unified_kg_rag.domain.models.config import IndexingConfig
 
 # Document.metadata key holding the path relative to the corpus root (the
 # directory loader already records it under this name).
@@ -84,14 +89,59 @@ def compute_document_id(source_key: str, content_hash: str) -> str:
     return generate_stable_id(f"doc:{source_key}:{content_hash}")
 
 
-def registry_namespace(suffix: str | None, additional_suffix: str | None = None) -> str:
+def store_namespace_tag(indexing: IndexingConfig) -> str | None:
+    """Tag of the store set ``indexing``'s index and label prefixes name.
+
+    The OpenSearch ``*_index_prefix`` and Neptune ``*_label_prefix`` settings
+    pick the physical stores as much as the suffixes do, so two configurations
+    that differ only in them must not share a registry namespace: artifact ids
+    are content-derived, and removal planning would count the other store
+    set's records as owners of ids it does not hold. ``None`` while every
+    prefix is at its default, so a default configuration keeps the namespace
+    (and registry keys) it always had; otherwise a hash of the prefixes that
+    differ from their defaults (a prefix added later, left at its default,
+    does not move the tag). Neptune prefixes compare capitalized, as the
+    labels are named.
+    """
+    changed: dict[str, str] = {}
+    for section in (indexing.opensearch, indexing.neptune):
+        for name, field in type(section).model_fields.items():
+            if not name.endswith("_prefix"):
+                continue
+            value, default = getattr(section, name), field.default
+            if section is indexing.neptune:
+                value, default = value.capitalize(), default.capitalize()
+            if value != default:
+                changed[name] = value
+    if not changed:
+        return None
+    return compute_hash(json.dumps(changed, sort_keys=True), length=12)
+
+
+def registry_namespace(
+    suffix: str | None,
+    additional_suffix: str | None = None,
+    store_tag: str | None = None,
+) -> str:
     """The index namespace a document's artifacts are written to.
 
     Mirrors how the indexers name indices/labels: the item suffix (``index``
-    attribute, ``default`` when unset) plus ``indexing.additional_suffix``.
+    attribute, ``default`` when unset) plus ``indexing.additional_suffix``,
+    plus ``@<store_tag>`` (:func:`store_namespace_tag`) when the index or
+    label prefixes are not the defaults. An item suffix never contains ``@``,
+    so a tagged namespace cannot equal an untagged one.
     """
     namespace = suffix or DEFAULT_NAMESPACE
-    return f"{namespace}-{additional_suffix}" if additional_suffix else namespace
+    if additional_suffix:
+        namespace = f"{namespace}-{additional_suffix}"
+    return f"{namespace}@{store_tag}" if store_tag else namespace
+
+
+def config_registry_namespace(indexing: IndexingConfig, suffix: str | None) -> str:
+    """:func:`registry_namespace` of item ``suffix`` under ``indexing``."""
+    return registry_namespace(
+        suffix, indexing.additional_suffix, store_namespace_tag(indexing)
+    )
 
 
 def compute_doc_id(

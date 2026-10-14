@@ -77,9 +77,9 @@ from unified_kg_rag.shared.utils.document_identity import (
     DEFAULT_NAMESPACE,
     RELATIVE_PATH_KEY,
     compute_doc_id,
+    config_registry_namespace,
     normalize_source_path,
     normalize_source_scope,
-    registry_namespace,
     relative_source_path,
 )
 
@@ -1199,7 +1199,9 @@ def run_registry_scope(
     """The run's registry scope, namespace, source scope and failed files.
 
     The scope is the index namespace the run writes (``index_value`` +
-    ``indexing.additional_suffix``) and the corpus source
+    ``indexing.additional_suffix``, tagged with the index and label prefixes
+    when they are not the defaults, see ``store_namespace_tag``) and the
+    corpus source
     (``document_parsing.source_scope``, else the resolved source
     directory), so a run never deletes another tenant's or another
     corpus's documents. The source scope is also part of every document's
@@ -1208,9 +1210,7 @@ def run_registry_scope(
     been, mapped to their legacy key (see ``legacy_doc_id``).
     """
     parsing = config.processing.document_parsing
-    namespace = registry_namespace(
-        parsing.index_value, config.indexing.additional_suffix
-    )
+    namespace = config_registry_namespace(config.indexing, parsing.index_value)
     root = source_directory
     source_scope = parsing.source_scope or root.as_posix()
     failed_doc_ids: dict[str, str] = {}
@@ -1458,18 +1458,18 @@ def reset_namespaces(
     """The registry namespaces whose stores a reset clears.
 
     ``clear_all_data`` clears the suffixes of the run's text units under
-    ``indexing.additional_suffix``; the run's own namespace (its registry
+    ``indexing.additional_suffix`` (in the stores the configured prefixes
+    name); the run's own namespace (its registry
     scope, else the configured ``index_value``) is always included.
     """
-    additional = config.indexing.additional_suffix
     namespaces = {
-        registry_namespace(BaseIndexer.get_suffix(unit), additional)
+        config_registry_namespace(config.indexing, BaseIndexer.get_suffix(unit))
         for unit in text_units
     }
     namespaces.add(
         scope_namespace(context.incremental_scope)
-        or registry_namespace(
-            config.processing.document_parsing.index_value, additional
+        or config_registry_namespace(
+            config.indexing, config.processing.document_parsing.index_value
         )
     )
     return namespaces

@@ -59,6 +59,7 @@ from unified_kg_rag.domain.models import Config, ModelPurpose, PipelineStageType
 from unified_kg_rag.domain.models.config import BedrockConfig, GuardrailConfig
 
 from .common import compute_hash
+from .document_identity import store_namespace_tag
 
 FINGERPRINT_LENGTH = 12
 
@@ -89,6 +90,7 @@ _STAGE_INPUT_PATHS: dict[PipelineStageType, tuple[str, ...]] = {
         "aws.bedrock.model_overrides",
         # Part of every document's identity (its registry namespace).
         "indexing.additional_suffix",
+        "indexing.store_namespace_tag",
     ),
     # A reset loads the whole corpus where an incremental run loads only its
     # new and changed documents, so the two runs' outputs differ from here on.
@@ -159,6 +161,9 @@ def _ingestion_guardrail(config: Config) -> GuardrailConfig:
 _DERIVED_PATHS: dict[str, Callable[[Config], Any]] = {
     "aws.bedrock.effort": lambda config: config.aws.bedrock.default_effort,
     "aws.bedrock.guardrail": _ingestion_guardrail,
+    # The index and label prefixes as the registry namespace sees them
+    # (``None`` while they are the defaults).
+    "indexing.store_namespace_tag": lambda config: store_namespace_tag(config.indexing),
 }
 
 
@@ -196,6 +201,7 @@ _OMIT_WHEN_DEFAULT: dict[str, Any] = {
 } | {
     "indexing.reset": False,
     "indexing.additional_suffix": None,
+    "indexing.store_namespace_tag": None,
     "processing.document_parsing.source_scope": None,
 }
 
@@ -315,6 +321,7 @@ _EXTRACTION_NON_OUTPUT_PATHS = frozenset(
         "processing.deduplicate",
         "indexing.reset",
         "indexing.additional_suffix",
+        "indexing.store_namespace_tag",
         "processing.document_parsing.source_scope",
     }
 )

@@ -68,6 +68,7 @@ from unified_kg_rag.shared import (
 )
 from unified_kg_rag.shared.genai import ERROR_TYPE
 from unified_kg_rag.shared.utils.cache_keys import is_excluded_source_path
+from unified_kg_rag.shared.utils.document_identity import store_namespace_tag
 
 if TYPE_CHECKING:
     from unified_kg_rag.ports import DocStatusPort
@@ -407,6 +408,7 @@ class DocumentLoadingStage(PipelineStage):
                     document,
                     self.loader.source_directory,
                     self.config.indexing.additional_suffix,
+                    store_namespace_tag(self.config.indexing),
                 )
             failed_files = self.loader.failed_files
             context.failed_source_files = list(failed_files)
@@ -555,6 +557,7 @@ class DocumentParsingStage(PipelineStage):
                     document,
                     self.source_directory,
                     self.config.indexing.additional_suffix,
+                    store_namespace_tag(self.config.indexing),
                 )
                 parsed_documents.append(document)
 

@@ -108,7 +108,9 @@ _FAKE_AWS_ENV = {
 
 
 @pytest.fixture(autouse=True)
-def _isolated_aws_env(monkeypatch: pytest.MonkeyPatch) -> None:
+def _isolated_aws_env(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Pin every test to fake, local-only AWS credentials and config.
 
     Also clears the other environment the package reads (config overrides,
@@ -121,7 +123,12 @@ def _isolated_aws_env(monkeypatch: pytest.MonkeyPatch) -> None:
     unmocked client reach a real account. Config files point at ``/dev/null``
     and IMDS is disabled so no credential source other than the fake keys is
     consulted. Tests that need a specific value set it with ``monkeypatch``.
+    Tests marked ``aws`` keep the real environment, as they keep the real
+    transport (``_block_real_aws_http``): they read the store endpoints from
+    it and call AWS with the real credential chain.
     """
+    if request.node.get_closest_marker("aws") is not None:
+        return
     for name in _AWS_ENV_TO_CLEAR + _CONFIG_ENV_OVERRIDES + _OTHER_ENV_TO_CLEAR:
         monkeypatch.delenv(name, raising=False)
     for name, value in _FAKE_AWS_ENV.items():

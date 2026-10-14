@@ -20,6 +20,8 @@ from pathlib import Path
 
 import boto3
 import pytest
+from hypothesis import given
+from hypothesis import strategies as st
 from moto import mock_aws
 
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
@@ -29,12 +31,17 @@ from tests.integration.test_incremental_source_scopes import (
     write_corpus,
 )
 from unified_kg_rag.adapters.aws.dynamodb import DynamoDBDocStatusStore
+from unified_kg_rag.adapters.local.sqlite_doc_status import SQLiteDocStatusStore
 from unified_kg_rag.domain.ingestion.delta_detector import (
     compute_doc_id,
     scope_namespace,
 )
 from unified_kg_rag.domain.models import Config
 from unified_kg_rag.ports import DocStatusPort
+from unified_kg_rag.shared.utils.document_identity import (
+    config_registry_namespace,
+    store_namespace_tag,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -217,3 +224,119 @@ def test_a_legacy_record_of_another_namespace_is_not_adopted(table, tmp_path) ->
     assert len(rerun.incremental_delta.unchanged) == 1
     assert not y.model.extractions
     assert table.get(legacy_id) is None
+
+
+# --- index/label prefixes ------------------------------------------------------
+# Two configurations that differ only in their OpenSearch index and Neptune
+# label prefixes write different stores. The CDK stack injects one fixed table
+# name, so switching prefixes on a stack shares the table under the same
+# suffixes: the prefixes must keep their records apart.
+
+
+@pytest.fixture(params=["fake", "sqlite"])
+def prefix_table(request, tmp_path) -> Iterator[DocStatusPort]:
+    """One registry table both store sets write."""
+    if request.param == "fake":
+        yield FakeDocStatusStore()
+        return
+    store = SQLiteDocStatusStore(Config(), path=tmp_path / "doc-status.db")
+    yield store
+    store.close()
+
+
+def _prefixed_stack(
+    registry: DocStatusPort, tmp_path: Path, name: str | None
+) -> ScopeStack:
+    """A stack on the default suffix whose stores are named ``name`` (the
+    default prefixes when ``None``)."""
+    config = scope_test_config()
+    if name is not None:
+        opensearch = config.indexing.opensearch
+        for field in type(opensearch).model_fields:
+            if field.endswith("_index_prefix"):
+                setattr(opensearch, field, f"{name}-{field}")
+        config.indexing.neptune.entity_label_prefix = f"Entity{name}"
+        config.indexing.neptune.community_label_prefix = f"Community{name}"
+    return ScopeStack(registry, tmp_path / (name or "defaults"), config=config)
+
+
+def test_other_prefixes_records_do_not_keep_a_changed_documents_artifacts(
+    prefix_table, tmp_path
+) -> None:
+    x = _prefixed_stack(prefix_table, tmp_path, None)
+    y = _prefixed_stack(prefix_table, tmp_path, "other")
+    # The same file in both corpora: the same text-unit and entity ids.
+    source_x = write_corpus(tmp_path / "src-x", {"doc.txt": X1_TEXT})
+    x.run(source_x)
+    y.run(write_corpus(tmp_path / "src-y", {"doc.txt": X1_TEXT}))
+    y_before = (_store_ids(y), _records_of(prefix_table, y))
+
+    write_corpus(source_x, {"doc.txt": X2_TEXT})
+    context = x.run(source_x)
+
+    assert len(context.incremental_delta.changed) == 1
+    # Y's record lists the old text unit and entities, but in Y's stores:
+    # it must not keep them in X's.
+    assert x.texts() == {X2_TEXT}
+    assert x.entity_names() == {"Depot"}
+    assert (_store_ids(y), _records_of(prefix_table, y)) == y_before
+
+
+def test_other_prefixes_index_a_corpus_already_in_the_registry(
+    prefix_table, tmp_path
+) -> None:
+    x = _prefixed_stack(prefix_table, tmp_path, None)
+    y = _prefixed_stack(prefix_table, tmp_path, "other")
+    source = write_corpus(tmp_path / "src", {"doc.txt": X1_TEXT})
+    x.run(source)
+
+    # Same source directory, other stores: Y's are empty, so nothing of the
+    # corpus is unchanged for Y.
+    context = y.run(source)
+
+    assert len(context.incremental_delta.new) == 1
+    assert y.texts() == {X1_TEXT}
+    rerun = x.run(source)
+    assert len(rerun.incremental_delta.unchanged) == 1
+    assert not x.model.extractions
+
+
+def _records_of(registry: DocStatusPort, stack: ScopeStack) -> dict[str, object]:
+    namespace = config_registry_namespace(stack.config.indexing, None)
+    return {
+        r.doc_id: r.model_dump()
+        for r in registry.list_all()
+        if scope_namespace(r.scope) == namespace
+    }
+
+
+def test_default_prefixes_keep_the_released_namespaces() -> None:
+    # Registries written before the prefixes joined the namespace keep their
+    # keys: a default configuration is not re-indexed on upgrade.
+    config = Config()
+    assert store_namespace_tag(config.indexing) is None
+    assert config_registry_namespace(config.indexing, None) == "default"
+    config.indexing.additional_suffix = "x"
+    assert config_registry_namespace(config.indexing, "tenant") == "tenant-x"
+    # Neptune capitalizes label prefixes: "entity" names the default label.
+    config.indexing.neptune.entity_label_prefix = "entity"
+    assert store_namespace_tag(config.indexing) is None
+
+
+@given(
+    suffix=st.none() | st.from_regex(r"[a-z0-9_-]{1,12}", fullmatch=True),
+    additional=st.none() | st.from_regex(r"[a-z0-9_-]{1,12}", fullmatch=True),
+)
+def test_default_prefixes_namespace_is_the_suffix_formula(
+    suffix: str | None, additional: str | None
+) -> None:
+    config = Config()
+    config.indexing.additional_suffix = additional
+    expected = suffix or "default"
+    if additional:
+        expected = f"{expected}-{additional}"
+    assert config_registry_namespace(config.indexing, suffix) == expected
+    # Any prefix change moves it to a namespace no suffix spells.
+    config.indexing.opensearch.entities_index_prefix = "custom-entities"
+    tagged = config_registry_namespace(config.indexing, suffix)
+    assert tagged.startswith(f"{expected}@") and tagged != expected

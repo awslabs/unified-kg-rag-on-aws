@@ -412,6 +412,21 @@ Library API (Python callers and custom backends).
   Index creation that names an analyzer the cluster lacks now fails with an
   error naming the analyzer and the fix. The docs no longer claim nori is
   built into Amazon OpenSearch Service (#282).
+- `aws`-marked tests (`pytest -m aws`) keep the real environment. The
+  suite's environment isolation cleared `NEPTUNE_ENDPOINT`,
+  `OPENSEARCH_ENDPOINT` and the ECS container-credential variables and set
+  fake keys for them too, so the real-store conformance tests always skipped
+  and would have called AWS with the fake keys (#283).
+- Configurations that differ only in their OpenSearch index or Neptune
+  label prefixes no longer share a doc-status registry namespace in one
+  table (the CDK stack injects one fixed table name). The other store set's
+  records counted as owners of the same content-derived ids, so a changed
+  document's old text units and entities stayed searchable with no owner,
+  and a run over a corpus the other set had indexed from the same directory
+  found nothing to index. The namespace now carries a tag of the prefixes
+  that differ from their defaults; default prefixes keep their namespace.
+  A configuration with custom prefixes re-indexes its corpus once and leaves
+  its old records in the table (see operations.md, Concurrent runs) (#283).
 - The embedded search engine's `english` analyzer drops only Lucene's 33
   English stop words, as OpenSearch's `english` analyzer does. It used
   scikit-learn's 318, which include content words such as "amount", "bill",
