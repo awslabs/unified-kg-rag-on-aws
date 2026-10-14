@@ -450,7 +450,7 @@ Library API (Python callers and custom backends).
   whole apart from other scripts (OpenSearch does not segment it either);
   in-word punctuation of other scripts and widths joins ("a：b", "١٬٠٠٠",
   "צה"ל"); and symbols ("x²", "½") are no part of a word. Emoji are still
-  not indexed (OpenSearch keeps them) (#PR).
+  not indexed (OpenSearch keeps them) (#280).
 - The embedded search engine's `english` analyzer stems as OpenSearch's
   (Lucene's `PorterStemmer`): it leaves words of one or two letters ("us",
   "os"; a lone "s" became an empty token), maps "-logy" to "-log" and
@@ -458,18 +458,18 @@ Library API (Python callers and custom backends).
   "contractibly" -> "contract") and undoubles any final consonant after
   "-ed"/"-ing" ("trekking" -> "trek"). It now agrees with OpenSearch on all
   457,417 dictionary words and suffixed forms checked. The possessive "'s" comes off a token's end
-  rather than out of the text ("pant-'s" keeps its "s") (#PR).
+  rather than out of the text ("pant-'s" keeps its "s") (#280).
 - A search on the embedded search engine reads one snapshot of the file.
   It resolved the index, checked the result window, read the search
   pipeline and loaded each index in separate reads, so an index another
   process swapped out and deleted in between (a blue/green re-index while
   queries are served) failed the query with a bare `TypeError` or answered
-  from nothing. It now searches the index it resolved, whole (#PR).
+  from nothing. It now searches the index it resolved, whole (#280).
 - An in-memory embedded search engine (`":memory:"`) no longer answers
   from another, garbage-collected one's indices. Its cached indices were
   keyed by `id(engine)`, which Python reuses after collection; they are now
   keyed by a random id and freed when the engine closes or is collected
-  (#PR).
+  (#280).
 - A global-search map step whose every batch is over the model's context
   (langchain-openai's `OpenAIContextOverflowError`) answers from the
   unrated reports again. That error is an HTTP 400 too, so it was read as a
