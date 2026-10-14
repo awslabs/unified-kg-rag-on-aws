@@ -144,6 +144,41 @@ def test_create_index_still_raises_any_other_rejection() -> None:
         client.create_index(_NEW_INDEX, {})
 
 
+def test_create_index_names_a_missing_analyzer_plugin() -> None:
+    # OpenSearch 2.13 without the analysis-nori plugin (as an Amazon
+    # OpenSearch Service domain without the optional package) answers so.
+    reason = "analyzer [nori] has not been configured in mappings"
+    body = {
+        "error": {
+            "root_cause": [
+                {
+                    "type": "mapper_parsing_exception",
+                    "reason": f"Failed to parse mapping [_doc]: {reason}",
+                }
+            ],
+            "type": "mapper_parsing_exception",
+            "reason": f"Failed to parse mapping [_doc]: {reason}",
+            "caused_by": {"type": "illegal_argument_exception", "reason": reason},
+        },
+        "status": 400,
+    }
+    client, backing = _client()
+    backing.indices.exists.return_value = False
+    backing.indices.create.side_effect = RequestError(
+        400, "mapper_parsing_exception", body
+    )
+
+    with pytest.raises(StoreRequestRejectedError) as raised:
+        client.create_index(_NEW_INDEX, {})
+
+    message = str(raised.value)
+    assert f"'{_NEW_INDEX}'" in message
+    assert "no analyzer 'nori'" in message
+    assert "indexing.opensearch.language_analyzers" in message
+    assert "analysis-nori" in message
+    assert raised.value.reason is not None and reason in raised.value.reason
+
+
 def test_a_delete_ignores_names_that_are_already_gone() -> None:
     # A delete resent after its response was lost finds the index deleted.
     client, backing = _client()
