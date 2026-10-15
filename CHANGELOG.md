@@ -548,6 +548,13 @@ Library API (Python callers and custom backends).
   (#300).
 
 ### Fixed
+- kNN search on the default lucene engine explores
+  `indexing.opensearch.vector_search.ef_search` candidates (default 100):
+  lucene ignores the `index.knn.algo_param.ef_search` index setting, so each
+  query searched only as many candidates as it returned hits (10 to 40) and
+  missed about 1 in 10 of its true nearest neighbours. The retriever sends
+  `k = max(hits, ef_search)` on lucene and still returns the hits asked
+  for; faiss and nmslib keep reading the index setting (#PR).
 - `processing.max_attempts` (and every `BatchProcessor`'s `max_attempts`)
   counts the first call, as documented: an item that keeps failing with a
   retryable error is called `max_attempts` times. The first call used to

@@ -645,6 +645,7 @@ LLM stages are Bedrock-I/O-bound, so concurrency can far exceed the CPU count.
 | `indexing.opensearch.persist_embedding_cache` | `false` | Persist the embedding cache to S3 so unchanged text is not re-embedded across runs. Requires `aws.s3.bucket_name`. |
 | `indexing.opensearch.language_analyzers` | `{en: english, ko: nori}` | Text analyzer per language code; unlisted languages use `default_analyzer` (`standard`). |
 | `indexing.opensearch.vector_search.engine` | `"lucene"` | HNSW engine. `lucene` supports `cosinesimil` up to 1024 dimensions; see the template for `faiss`. |
+| `indexing.opensearch.vector_search.ef_search` | `100` | Candidates a kNN query explores (more: better recall, slower). On `faiss` and `nmslib` it is the index setting `index.knn.algo_param.ef_search`, fixed when the index is created. `lucene` ignores that setting, so the retriever sends it as the `k` of each kNN query (at least the hits it returns); there it applies from the next query. |
 | `indexing.opensearch.index_settings.refresh_interval` | `"1s"` | Raise it (or `"-1"`) for faster bulk loads, then reset for live querying. |
 | `indexing.neptune.batch_size` | `100` | Items per Neptune write batch. |
 | `indexing.neptune.index_concurrency` | `1` | Concurrent write batches (and relationship edges). The Gremlin connection pool grows to match if `aws.neptune.pool_size` is smaller. |

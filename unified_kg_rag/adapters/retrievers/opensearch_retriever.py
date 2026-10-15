@@ -619,7 +619,9 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             lexical = {"bool": {"must": [lexical], "filter": filters}}
         if query_vector is not None and search_type != SearchType.LEXICAL:
             knn = self._search_body(
-                self._build_vector_query(query_vector, size, vector_fields, filters),
+                self._build_vector_query(
+                    query_vector, self._knn_k(size), vector_fields, filters
+                ),
                 size,
             )
             if search_type == SearchType.VECTOR:
@@ -629,6 +631,20 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             # A filter browse: no text to score by.
             lexical = {"bool": {"filter": filters}} if filters else {"match_all": {}}
         return [self._search_body(lexical, size, sort)]
+
+    def _knn_k(self, size: int) -> int:
+        """The ``k`` of a kNN search returning ``size`` hits.
+
+        The lucene engine ignores ``index.knn.algo_param.ef_search`` and
+        explores ``k`` candidates per field, so a ``k`` of ``size`` (10 to 40
+        for a query) cut recall@10 to about 0.8; it gets
+        ``vector_search.ef_search`` at least. faiss and nmslib read the index
+        setting, and ``size`` hits are kept either way.
+        """
+        vector_search = self._opensearch_config.vector_search
+        if vector_search.get("engine", "lucene") != "lucene":
+            return size
+        return max(size, int(vector_search.get("ef_search", 100)))
 
     @staticmethod
     def _search_body(

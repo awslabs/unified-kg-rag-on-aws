@@ -395,6 +395,20 @@ def test_hybrid_filters_reach_both_searches(retriever) -> None:
     }
 
 
+@pytest.mark.parametrize(
+    ("engine", "size", "k"),
+    [("lucene", 5, 100), ("lucene", 150, 150), ("faiss", 5, 5), ("nmslib", 5, 5)],
+)
+def test_knn_k_is_ef_search_on_lucene(retriever, config, engine, size, k) -> None:
+    # lucene ignores index.knn.algo_param.ef_search and explores k candidates,
+    # so k = size (10-40) cut recall; faiss/nmslib read the index setting.
+    config.indexing.opensearch.vector_search["engine"] = engine
+    q = SearchQuery(query="alice", search_type=SearchType.HYBRID)
+    lexical, knn = _bodies(retriever, q, [0.1], size=size)
+    assert knn["query"]["knn"]["name_embedding"]["k"] == k
+    assert lexical["size"] == knn["size"] == size
+
+
 def test_vector_search_is_one_knn_search(retriever) -> None:
     (body,) = _bodies(
         retriever, SearchQuery(query="alice", search_type=SearchType.VECTOR), [0.1]

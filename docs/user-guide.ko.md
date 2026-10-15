@@ -599,6 +599,7 @@ LLM 단계는 Bedrock I/O가 병목이므로 동시성을 CPU 수보다 훨씬 �
 | `indexing.opensearch.persist_embedding_cache` | `false` | 임베딩 캐시를 S3에 저장해, 바뀌지 않은 텍스트를 실행마다 다시 임베딩하지 않습니다. `aws.s3.bucket_name`이 필요합니다. |
 | `indexing.opensearch.language_analyzers` | `{en: english, ko: nori}` | 언어 코드별 텍스트 분석기입니다. 목록에 없는 언어는 `default_analyzer`(`standard`)를 씁니다. |
 | `indexing.opensearch.vector_search.engine` | `"lucene"` | HNSW 엔진입니다. `lucene`은 1024차원까지 `cosinesimil`을 지원합니다. `faiss`는 템플릿을 참고하세요. |
+| `indexing.opensearch.vector_search.ef_search` | `100` | kNN 질의가 탐색하는 후보 수입니다(클수록 재현율이 높고 느림). `faiss`와 `nmslib`에서는 인덱스 설정 `index.knn.algo_param.ef_search`이며 인덱스를 만들 때 정해집니다. `lucene`은 이 설정을 무시하므로 리트리버가 이 값을 kNN 질의마다 `k`로 보냅니다(반환할 결과 수 이상). 그래서 `lucene`에서는 다음 질의부터 적용됩니다. |
 | `indexing.opensearch.index_settings.refresh_interval` | `"1s"` | 대량 적재를 빠르게 하려면 늘리거나 `"-1"`로 두고, 실제 질의 전에 되돌리세요. |
 | `indexing.neptune.batch_size` | `100` | Neptune 쓰기 배치당 항목 수입니다. |
 | `indexing.neptune.index_concurrency` | `1` | 동시에 보내는 쓰기 배치(와 관계 간선) 수입니다. `aws.neptune.pool_size`가 이보다 작으면 Gremlin 연결 풀이 이 값에 맞춰 늘어납니다. |

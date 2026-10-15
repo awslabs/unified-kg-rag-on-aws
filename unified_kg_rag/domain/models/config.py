@@ -1705,7 +1705,14 @@ class OpenSearchIndexingConfig(BaseModel):
             "m": 24,
             "ef_search": 100,
         },
-        description="HNSW algorithm parameters for approximate nearest neighbor search",
+        description=(
+            "HNSW algorithm parameters for approximate nearest neighbor search. "
+            "ef_search is the candidate list size of a query: on faiss and "
+            "nmslib the index setting index.knn.algo_param.ef_search (fixed "
+            "when the index is created), on lucene, which ignores that "
+            "setting, the k of every kNN query (at least the hits requested), "
+            "read at query time."
+        ),
     )
 
 

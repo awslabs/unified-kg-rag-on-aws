@@ -289,6 +289,27 @@ def test_hybrid_normalizes_each_search_over_its_own_hits(tmp_path: Path) -> None
             assert hit.score == pytest.approx(score, abs=0.01)
 
 
+def test_vector_search_recall_against_exact_knn(tmp_path: Path) -> None:
+    # The lucene engine ignores index.knn.algo_param.ef_search and explores k
+    # candidates: with k = the 10 hits requested, OpenSearch found about 91 %
+    # of the exact top 10 here; with k = ef_search (100), all but a few.
+    rng = random.Random(3)
+    words = _vocabulary(rng, 400)
+    units = [
+        TextUnit(id=f"u{i:05d}", text=" ".join(rng.choices(words, k=12)))
+        for i in range(10_000)
+    ]
+    queries = [" ".join(rng.choices(words, k=4)) for _ in range(30)]
+    with _indexed_pair(tmp_path, units, "standard") as (sqlite, container):
+        exact = _search(sqlite, SearchType.VECTOR, queries)
+        approximate = _search(container, SearchType.VECTOR, queries)
+    found = sum(
+        len({r.source for r in ours} & {r.source for r in theirs})
+        for ours, theirs in zip(exact, approximate, strict=True)
+    )
+    assert found / (_TOP * len(queries)) >= 0.98
+
+
 def test_hybrid_keeps_the_last_lexical_hit(tmp_path: Path) -> None:
     # Five documents match "widget price" and the search returns four.
     # OpenSearch 2.13's hybrid query dropped the size-th lexical hit of such
