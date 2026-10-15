@@ -336,7 +336,12 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                 )
 
             body, params = self._build_search_request(
-                index_query, search_type, lexical_fields, vector_fields, query_vector
+                index_query,
+                search_type,
+                lexical_fields,
+                vector_fields,
+                query_vector,
+                sort=self._importance_sort(prefix, index_query, search_type),
             )
             target_alias = self._get_name(prefix, query.suffix)
             search_tasks.append(
@@ -344,6 +349,33 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             )
 
         return search_tasks
+
+    def _importance_sort(
+        self, prefix: str, query: SearchQuery, search_type: SearchType
+    ) -> list[dict[str, Any]] | None:
+        """The order of a search without query text, on an index with ``rank``.
+
+        Such a search (a filter browse, e.g. the edges incident to some
+        entities) has no relevance to rank by, so OpenSearch returns its hits
+        in index order and a capped page kept arbitrary ones. Rank them by the
+        artifact's importance instead: ``rank`` (degree), then ``weight``,
+        then ``id`` for a stable order. A fetch by id is left alone: it asks
+        for every id it names, so no cut drops one.
+        """
+        if (
+            search_type != SearchType.LEXICAL
+            or (query.query and query.query != "*")
+            or "id" in (query.filters or {})
+        ):
+            return None
+        declared = self._index_filter_fields.get(prefix)
+        if declared is None or "rank" not in declared.fields:
+            return None
+        return [
+            {name: {"order": order}}
+            for name, order in (("rank", "desc"), ("weight", "desc"), ("id", "asc"))
+            if name in declared.fields
+        ]
 
     def _normalize_index_prefixes(self, prefixes: str | list[str] | None) -> list[str]:
         if isinstance(prefixes, str):
@@ -522,6 +554,8 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         lexical_fields: list[str],
         vector_fields: list[str],
         query_vector: list[float] | None,
+        *,
+        sort: list[dict[str, Any]] | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         size = min(query.top_k * query.retrieval_multiplier, self._max_size)
         # Fetch-by-id callers (local/mix expansion, source resolution) set
@@ -556,11 +590,15 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
 
         # Embedding vectors are only needed server-side for kNN scoring; never
         # ship them back (community reports alone carry three per hit).
-        search_body = {
+        search_body: dict[str, Any] = {
             "size": size,
             "query": main_query,
             "_source": {"excludes": [f"*{EMBEDDING_FIELD_SUFFIX}"]},
         }
+        if sort:
+            # Sorted hits carry no _score unless asked to track it.
+            search_body["sort"] = sort
+            search_body["track_scores"] = True
         params = {}
 
         if search_type == SearchType.HYBRID:

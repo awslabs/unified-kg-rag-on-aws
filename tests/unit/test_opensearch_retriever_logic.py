@@ -30,6 +30,9 @@ def retriever(config: Config) -> OpenSearchRetriever:
     object.__setattr__(inst, "_max_size", config.indexing.opensearch.max_query_size)
     object.__setattr__(inst, "_max_result_window", 10000)
     object.__setattr__(inst, "_field_mappings", inst._initialize_field_mappings())
+    object.__setattr__(
+        inst, "_index_filter_fields", inst._initialize_index_filter_fields()
+    )
     return inst
 
 
@@ -474,6 +477,36 @@ def test_build_search_request_terms_floor_bounded_by_result_window(retriever) ->
         q, SearchType.LEXICAL, ["name"], [], None
     )
     assert body["size"] == retriever._max_result_window
+
+
+def test_text_less_search_sorts_by_importance(retriever, config) -> None:
+    o = config.indexing.opensearch
+    browse = SearchQuery(query="", filters={"source_id": ["e1"]})
+    assert retriever._importance_sort(
+        o.relationships_index_prefix, browse, SearchType.LEXICAL
+    ) == [
+        {"rank": {"order": "desc"}},
+        {"weight": {"order": "desc"}},
+        {"id": {"order": "asc"}},
+    ]
+    body, _params = retriever._build_search_request(
+        browse,
+        SearchType.LEXICAL,
+        ["description"],
+        [],
+        None,
+        sort=[{"rank": {"order": "desc"}}],
+    )
+    assert body["sort"] == [{"rank": {"order": "desc"}}]
+    assert body["track_scores"] is True
+    # Not for a search with text, a fetch by id or an index without rank.
+    by_id = SearchQuery(query="", filters={"id": ["r1"]})
+    for prefix, query in (
+        (o.relationships_index_prefix, SearchQuery(query="supplies")),
+        (o.relationships_index_prefix, by_id),
+        (o.text_units_index_prefix, browse),
+    ):
+        assert retriever._importance_sort(prefix, query, SearchType.LEXICAL) is None
 
 
 def test_build_search_request_hybrid_sets_pipeline_param(retriever, config) -> None:

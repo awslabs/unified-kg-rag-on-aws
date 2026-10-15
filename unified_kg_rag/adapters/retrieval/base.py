@@ -356,13 +356,15 @@ class BaseSearchStrategy(ABC):
             side = await self._safe_aretrieve(
                 retriever, search_query, f"Incident relationship retrieval ({field})"
             )
-            # A full page means the count cap bound and edges were dropped —
-            # upstream drops none. Say so rather than let a silent truncation read
-            # as "all edges".
+            # A text-less search is ordered by (rank, weight) server-side (the
+            # retriever's importance sort), so a full page holds the best edges.
+            # Still, the count cap bound and edges were dropped — upstream drops
+            # none. Say so rather than let a silent truncation read as "all edges".
             if len(side) >= page:
                 logger.warning(
-                    "Incident-edge fetch on %s hit the %s-hit page cap; "
-                    "the expansion is truncated (upstream truncates by tokens only)",
+                    "Incident-edge fetch on %s hit the %s-hit page cap; the "
+                    "lowest-ranked edges are dropped (upstream truncates by "
+                    "tokens only)",
                     field,
                     page,
                 )

@@ -63,6 +63,7 @@ from unified_kg_rag.adapters.local.search_engine.query import (
     evaluate,
     field_specs,
     rejected,
+    sort_hits,
 )
 from unified_kg_rag.adapters.local.sqlite_util import (
     connect,
@@ -900,7 +901,7 @@ class SQLiteSearchEngine:
         body = kwargs.get("body") or {}
         if not isinstance(body, dict):
             raise rejected("the search body must be an object")
-        unknown = set(body) - {"size", "query", "_source"}
+        unknown = set(body) - {"size", "query", "_source", "sort", "track_scores"}
         if unknown:
             raise rejected(f"the search body does not support {sorted(unknown)}")
         size = body.get("size", _DEFAULT_SIZE)
@@ -923,13 +924,22 @@ class SQLiteSearchEngine:
                 )
             # The pipeline must exist whatever the query, as on a cluster.
             weights = self._pipeline(pipeline) if pipeline is not None else None
-            if not hybrid and (lookup := _id_lookup(query)) is not None:
+            sort = body.get("sort")
+            if hybrid and sort is not None:
+                raise rejected("[sort] cannot be used with a [hybrid] query")
+            if (
+                not hybrid
+                and sort is None
+                and (lookup := _id_lookup(query)) is not None
+            ):
                 return self._fetch_by_ids(names, *lookup, size, excludes)
             loaded = [self._load(name) for name in names]
         if hybrid:
             hits = self._hybrid(loaded, query, size, weights)
         else:
             hits = self._ranked([(index, evaluate(index, query)) for index in loaded])
+            if sort is not None:
+                hits = sort_hits(hits, sort)
         return self._response(
             [
                 (index.name, doc_id, score, self._source(index, doc_id, excludes))

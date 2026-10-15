@@ -7,7 +7,8 @@ Exactly the clauses ``OpenSearchRetriever`` and ``OpenSearchIndexer`` build:
 ``multi_match`` (``best_fields``; ``fuzziness``/``max_expansions`` are
 accepted and ignored), ``bool`` (``must``/``should``/``filter``) and ``knn``
 (``vector``/``k``/``filter``). The top-level ``hybrid`` query is the engine's
-(it fuses across indices). Any other clause or parameter raises
+(it fuses across indices). A body's ``sort`` takes ``{field: {"order":
+...}}`` entries (``sort_hits``). Any other clause or parameter raises
 ``StoreRequestRejectedError``, as OpenSearch answers a query it cannot parse
 with a 400, so a new query shape fails a test instead of silently matching
 something else.
@@ -452,3 +453,49 @@ def _knn(index: LoadedIndex, body: Any) -> Scores:
         return {}
     rows = np.fromiter((stored.rows[i] for i in ids), dtype=np.int64, count=len(ids))
     return _top_k(ids, vector_scores(stored, query, rows), k)
+
+
+Hit = tuple[LoadedIndex, str, float]
+
+
+def _sort_fields(sort: Any) -> list[tuple[str, bool]]:
+    """``[{field: {"order": "asc" | "desc"}}, ...]`` -> (field, descending)."""
+    if not isinstance(sort, list):
+        raise rejected(f"[sort] takes a list, got {sort!r}")
+    fields = []
+    for entry in sort:
+        path, options = _single_field("sort", entry)
+        order = _require_keys("sort", options, {"order"}).get("order", "asc")
+        if order not in ("asc", "desc"):
+            raise rejected(f"[sort] order must be asc or desc, got {order!r}")
+        fields.append((path, order == "desc"))
+    return fields
+
+
+def sort_hits(hits: list[Hit], sort: Any) -> list[Hit]:
+    """``hits`` in the order of a search body's ``sort``, as OpenSearch sorts.
+
+    A numeric field sorts by number, any other by keyword; a multi-valued
+    field by its smallest value ascending and its largest descending; a
+    document without the field comes last either way. Ties keep the score
+    order.
+    """
+    for path, descending in reversed(_sort_fields(sort)):
+
+        def value(hit: Hit, path: str = path, descending: bool = descending) -> Any:
+            index, doc_id, _score = hit
+            spec = index.specs.get(path)
+            raw = resolve_path(index.sources[doc_id], path)
+            if spec is not None and spec.type in NUMERIC_TYPES:
+                values: list[Any] = [n for v in raw if (n := _number(v)) is not None]
+            else:
+                values = [_keyword(v) for v in raw]
+            if not values:
+                return None
+            return max(values) if descending else min(values)
+
+        keyed = [(value(hit), hit) for hit in hits]
+        present = [pair for pair in keyed if pair[0] is not None]
+        present.sort(key=lambda pair: pair[0], reverse=descending)
+        hits = [hit for _, hit in present] + [hit for key, hit in keyed if key is None]
+    return hits
