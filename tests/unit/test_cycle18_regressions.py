@@ -29,6 +29,8 @@ async def test_run_rag_passes_only_chain_keywords(mocker) -> None:
     cli.config = object()
     cli.args = SimpleNamespace(mode="rag", enable_thinking=True)
     await cli._initialize_chain()
+    # bind() of an empty dict passes, so first prove the chain was created.
+    assert captured["config"] is cli.config
     inspect.signature(GraphRAGChain.__init__).bind(None, **captured)
 
 
