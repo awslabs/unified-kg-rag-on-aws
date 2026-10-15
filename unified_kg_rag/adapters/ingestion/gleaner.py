@@ -1040,6 +1040,7 @@ class GraphGleaner(BaseProcessor):
             )
             return False
 
+        original_short_id = relationship.short_id
         corrected: list[str] = []
         corrected_type = self._clean_text(details.get("corrected_type"))
         if corrected_type and corrected_type != relationship.type:
@@ -1062,6 +1063,19 @@ class GraphGleaner(BaseProcessor):
             )
             corrected.append("direction")
 
+        if corrected:
+            # The id follows the corrected (source, target, type), as for an
+            # edge extracted that way. Keeping the original key's id gave the
+            # corrected edge and a later document's native statement of it
+            # two ids: a full build merges them by key, while an incremental
+            # run (which reads stored edges back by id) stored both.
+            relationship.id = self._generate_relationship_id(
+                relationship.source_name or "",
+                relationship.target_name or "",
+                relationship.type or "",
+            )
+            relationship.short_id = relationship.id[:8]
+
         description = merge_descriptions(
             (relationship.description, self._clean_text(details.get("description")))
         )
@@ -1083,7 +1097,7 @@ class GraphGleaner(BaseProcessor):
         relationship.updated_at = datetime.now()
         logger.info(
             "Applied RELATIONSHIP_CORRECTION to '%s' in chunk '%s' (%s)",
-            relationship.short_id,
+            original_short_id,
             unit.short_id,
             ", ".join(corrected),
         )
@@ -1178,10 +1192,10 @@ class GraphGleaner(BaseProcessor):
         id_remap: dict[str, str],
     ) -> list[Relationship]:
         relationships_map: dict[tuple, Relationship] = {}
-        # Id -> key of the kept edge holding it: a RELATIONSHIP_CORRECTION
-        # retypes or reverses an edge and keeps its id, so a re-proposal of
-        # the old edge merges into it rather than adding a second edge with
-        # the same id.
+        # Id -> key of the kept edge holding it: an edge another key already
+        # holds the id of (a gleaning output cached before corrections
+        # re-keyed the edge they change) merges into that edge rather than
+        # adding a second edge with the same id.
         key_by_id: dict[str, tuple] = {}
         dropped = 0
 

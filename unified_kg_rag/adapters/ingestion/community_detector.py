@@ -350,9 +350,15 @@ class CommunityDetector:
         """
         target_graph = graph if graph is not None else self.graph
 
-        if target_graph.number_of_edges() == 0:
+        # Leiden needs some edge weight: on a graph whose every edge weighs 0
+        # (strength-0 relationships, clamped by ``edge_weight``; an incremental
+        # delta clusters only the new document's subgraph) graspologic_native
+        # panics with a ``BaseException`` that ends the run and every resume.
+        # Such a graph has no structure to partition, like an edgeless one.
+        if target_graph.size(weight="weight") == 0:
             logger.warning(
-                "Graph has no edges. Treating each node as a separate community."
+                "Graph has no weighted edges. Treating each node as a separate "
+                "community."
             )
             return [{node} for node in sorted(target_graph.nodes(), key=str)]
 

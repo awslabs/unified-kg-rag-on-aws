@@ -399,14 +399,6 @@ class BaseResolver(ABC):
         return Counter(non_empty_values).most_common(1)[0][0]
 
     @staticmethod
-    def _merge_attributes(attributes_list: list[dict[str, Any]]) -> dict[str, Any]:
-        merged = {}
-        for attrs in attributes_list:
-            if attrs:
-                merged.update(attrs)
-        return merged
-
-    @staticmethod
     def _merge_descriptions(descriptions: list[str]) -> str:
         """Combine descriptions, dropping blank and duplicate lines.
 

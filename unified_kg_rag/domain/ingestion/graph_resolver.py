@@ -9,7 +9,7 @@ from typing import Any, TypeVar
 
 from pydantic import BaseModel, Field
 
-from unified_kg_rag.domain.ingestion.base_processor import union_document_filters
+from unified_kg_rag.domain.ingestion.base_processor import merge_attributes
 from unified_kg_rag.domain.ingestion.base_resolver import (
     BaseResolver,
     FuzzyMatcher,
@@ -66,17 +66,6 @@ def _join_groups_sharing_ids(groups: list[list[_ItemT]]) -> list[list[_ItemT]]:
     if len(joined) < len(groups):
         logger.info("Joined %s groups that shared an id", len(groups) - len(joined))
     return list(joined.values())
-
-
-def _merged_attributes(
-    attribute_maps: list[dict[str, Any] | None],
-) -> dict[str, Any]:
-    """Union the attribute maps (later wins), document ``filters`` unioned."""
-    present = [attrs for attrs in attribute_maps if attrs]
-    merged = BaseResolver._merge_attributes(present)
-    for attrs in present:
-        merged = union_document_filters(merged, attrs) or merged
-    return merged
 
 
 # Emit a progress log line every N completed items in the resolver's parallel
@@ -434,7 +423,7 @@ class EntityResolver(BaseResolver):
                 [e.community_ids for e in entities if e.community_ids]
             ),
             confidence=merged_confidence,
-            attributes=_merged_attributes([e.attributes for e in entities]),
+            attributes=merge_attributes([e.attributes for e in entities]),
             # Keep the earliest known creation time; leave it None (truthfully
             # unknown) rather than fabricating wall-clock time when no member
             # carries one, so the merge stays a pure, reproducible function of
@@ -567,7 +556,7 @@ class RelationshipResolver(BaseResolver):
             ),
             description_embedding=primary_rel.description_embedding,
             text_unit_ids=merged_text_unit_ids,
-            attributes=_merged_attributes([r.attributes for r in relationships]),
+            attributes=merge_attributes([r.attributes for r in relationships]),
             # See _merge_entities: leave created_at None when unknown so the
             # merge is a pure function of its inputs.
             created_at=min(

@@ -11,9 +11,8 @@ graph references stay stable.
 from __future__ import annotations
 
 from collections.abc import Collection
-from typing import Any
 
-from unified_kg_rag.domain.ingestion.base_processor import union_document_filters
+from unified_kg_rag.domain.ingestion.base_processor import merge_attributes
 from unified_kg_rag.domain.ingestion.base_resolver import (
     FuzzyMatcher,
     entity_types_compatible,
@@ -41,21 +40,6 @@ def _dedupe_preserve_order(values: list[str]) -> list[str]:
     return result
 
 
-def _merge_attributes(
-    old: dict[str, Any] | None, new: dict[str, Any] | None
-) -> dict[str, Any] | None:
-    """Union two attribute maps, the newer value winning on a shared key.
-
-    Same rule as the full-build resolver's ``_merge_attributes``, document
-    ``filters`` unioned (``union_document_filters``). Attributes carry the
-    index suffix the item is written under, so dropping them would move a
-    merged item into the default suffix.
-    """
-    if not old and not new:
-        return None
-    return union_document_filters({**(old or {}), **(new or {})}, old)
-
-
 def _merge_entity_fields(surviving: Entity, incoming: Entity) -> None:
     """Fold ``incoming``'s evidence into ``surviving`` in place (id preserved).
 
@@ -67,11 +51,16 @@ def _merge_entity_fields(surviving: Entity, incoming: Entity) -> None:
     ``incoming`` (same id, another name): edges carry a copy of their
     endpoints' names, and the stored edges the delta does not rewrite would
     keep naming the old one. A full rebuild applies such a rename.
+
+    The type stays the surviving one too (``incoming``'s only fills a missing
+    type), while a full build keeps the most frequent type of a name's
+    mentions (a gleaning retype counted among them), so an incremental run
+    can keep a type a full rebuild replaces, like a rename.
     """
     surviving.description = merge_descriptions(
         (surviving.description, incoming.description)
     )
-    surviving.attributes = _merge_attributes(surviving.attributes, incoming.attributes)
+    surviving.attributes = merge_attributes((surviving.attributes, incoming.attributes))
     surviving.text_unit_ids = _dedupe_preserve_order(
         (surviving.text_unit_ids or []) + (incoming.text_unit_ids or [])
     )
@@ -259,9 +248,9 @@ def merge_relationships(
             # so the incremental path must too.
             continue
         key = _relationship_key(source_id, target_id, rel)
-        # Id first: a gleaning correction changes an edge's type or direction in
-        # place and keeps its id, so a later delta of the uncorrected edge
-        # carries the stored id under a different key.
+        # Id first: an edge stored before gleaning corrections re-keyed the
+        # edge they retype or reverse kept the id of its uncorrected key,
+        # which a later delta of the uncorrected edge carries.
         match = by_id.get(rel.id) or by_id.get(id_by_key.get(key, ""))
         if match is None:
             new_rel = rel.model_copy(deep=True)
@@ -274,7 +263,7 @@ def merge_relationships(
 
         weights = overlay_weights(text_unit_weights(match), text_unit_weights(rel))
         match.description = merge_descriptions((match.description, rel.description))
-        match.attributes = _merge_attributes(match.attributes, rel.attributes)
+        match.attributes = merge_attributes((match.attributes, rel.attributes))
         match.text_unit_ids = _dedupe_preserve_order(
             (match.text_unit_ids or []) + (rel.text_unit_ids or [])
         )
@@ -333,7 +322,7 @@ def remove_text_units(
     the remaining per-text-unit strengths). Descriptions are left as they are:
     removing a document's contribution would need an LLM re-summary. So are
     the attributes: the document ``filters`` values the merge unioned in
-    (``union_document_filters``) stay on the shared item until a full
+    (``merge_attributes``) stay on the shared item until a full
     rebuild.
     """
     removed = set(text_unit_ids)
@@ -372,7 +361,7 @@ def merge_claims(old: list[Claim], delta: list[Claim]) -> list[Claim]:
     stored claim keeps no per-status counts, though, so over three or more
     documents the two can differ (stored ``SUSPECTED`` stays when two later
     documents say ``TRUE``). The attributes are unioned with the document
-    ``filters`` of both (see ``_merge_attributes``). Every other field is the
+    ``filters`` of both (see ``merge_attributes``). Every other field is the
     delta's. Returns the delta claims, merged.
     """
     stored = {claim.id: claim for claim in old}
@@ -395,7 +384,9 @@ def merge_claims(old: list[Claim], delta: list[Claim]) -> list[Claim]:
                         {*(match.text_unit_ids or []), *(claim.text_unit_ids or [])}
                     ),
                     "status": match.status or claim.status,
-                    "attributes": _merge_attributes(match.attributes, claim.attributes),
+                    "attributes": merge_attributes(
+                        (match.attributes, claim.attributes)
+                    ),
                 }
             )
         )
