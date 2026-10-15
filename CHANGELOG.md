@@ -376,6 +376,16 @@ Library API (Python callers and custom backends).
   in one 5-minute period), and `NeptuneHighCpu` fires only after 90% CPU in
   3 consecutive 5-minute periods, so normal bulk-indexing peaks no longer
   page (#298).
+- Ingestion logs one start and one completion line per stage (with its input
+  and output counts); the per-stage `=====` STARTED/COMPLETED banners are
+  gone, and the per-stage counts stay in the stage metrics. `DirectoryLoader`
+  only reads pre-parsed `Document` JSON for the loading stage: its unused
+  `config`, `supported_extensions`, `parse_files`, `recursive`,
+  `compute_dir_hash`, `deduplicate`, `similarity_threshold`,
+  `minhash_permutations` and `n_grams_size` arguments are removed, and the
+  user guide now states the fixed near-duplicate rule of
+  `processing.deduplicate` (MinHash Jaccard >= 0.9 over character 3-grams)
+  (#299).
 - Context packing ranks sections by their retrieval score alone; the fixed
   per-type priority weights (text 1.3 ... general 0.8) are gone. The
   per-type shares (`search.token_manager.type_budgets`) already decided the
@@ -669,6 +679,11 @@ Library API (Python callers and custom backends).
   same model ARNs, so models that accept CountTokens get exact token counts
   on the deployed stack instead of silently falling back to estimates after
   an `AccessDenied` (#298).
+- `indexing.reset` with the doc-status registry enabled fails the indexing
+  stage with `DocStatusRegistryError` when the registry cannot be cleared,
+  instead of logging a warning and indexing on: the stale records would make
+  the next incremental run skip the re-ingested documents as unchanged
+  (#299).
 - CloudWatch tracing (`enable_cloudwatch_tracing`): the task role keeps
   only `xray:PutTraceSegments`, the one action the X-Ray OTLP traces
   endpoint authorizes (a role with only `xray:PutSpans` gets a 403);

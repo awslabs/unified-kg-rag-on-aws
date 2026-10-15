@@ -49,7 +49,6 @@ from unified_kg_rag.shared import (
     PipelineExecutionError,
     PipelineResumeError,
     PipelineResumeManager,
-    PipelineStageError,
     PipelineStateError,
     PipelineStateManager,
     get_cache_manager,
@@ -577,7 +576,6 @@ class DataIngestionPipeline:
                     config=self.config,
                     providers=self.providers,
                     source_directory=source_directory,
-                    parse_files=stage.loader.parse_files,
                     doc_status=stage._doc_status,
                 )
 
@@ -1076,18 +1074,6 @@ class DataIngestionPipeline:
 
             return result
 
-        except PipelineStageError as e:
-            logger.error("Stage '%s' validation failed: %s", stage.name, e)
-            failed_result = PipelineStageResult(
-                stage_name=stage.name,
-                status=PipelineStageStatus.FAILED,
-                start_time=running_result.start_time,
-                end_time=datetime.now(),
-                error_message=str(e),
-            )
-            self.state_manager.update_stage_result(context, failed_result)
-            return failed_result
-
         except Exception as e:
             logger.error(
                 "Unexpected error in stage '%s': %s", stage.name, e, exc_info=True
@@ -1154,11 +1140,7 @@ class DataIngestionPipeline:
                     stage_name=stage_name,
                     pipeline_id=context.pipeline_id,
                     metadata={
-                        "stage_type": (
-                            stage_type.value
-                            if hasattr(stage_type, "value")
-                            else str(stage_type)
-                        ),
+                        "stage_type": stage_type.value,
                         "context_attribute": context_attr,
                     },
                 )
@@ -1167,12 +1149,7 @@ class DataIngestionPipeline:
                     item_count = cache_entry.record_count or (
                         len(data_to_save) if isinstance(data_to_save, list) else 1
                     )
-                    chunked_info = ""
-                    if getattr(cache_entry.metadata, "is_chunked", False):
-                        chunk_count = getattr(cache_entry.metadata, "chunk_count", 0)
-                        chunked_info = f" (chunked into {chunk_count} files)"
-
-                    saved_outputs.append(f"{item_count} {context_attr}{chunked_info}")
+                    saved_outputs.append(f"{item_count} {context_attr}")
                     logger.info("Successfully cached %s", context_attr)
                 else:
                     logger.warning("Cache manager returned None for %s", context_attr)

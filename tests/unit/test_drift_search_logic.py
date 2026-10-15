@@ -598,6 +598,14 @@ async def test_run_primer_degrades_on_error_when_ignoring() -> None:
     assert len(strat.primer.calls) == 1  # the failing call was attempted
 
 
+async def test_run_primer_raises_on_error_without_ignore_errors() -> None:
+    strat = _primer_strategy(
+        primer_raises=RuntimeError("bedrock down"), ignore_errors=False
+    )
+    with pytest.raises(RuntimeError, match="bedrock down"):
+        await strat._run_primer(SearchQuery(query="q"), [_result("report")])
+
+
 async def test_run_primer_without_reports_makes_no_llm_call() -> None:
     # No community summaries -> nothing to ground a hypothetical answer in, so
     # the primer LLM is not called at all (it could only guess).

@@ -311,3 +311,24 @@ def test_reset_keeps_scopeless_records_of_another_namespace_of_the_suffix(
     assert cleared.doc_id not in records
     assert initial_release.doc_id not in records
     assert document_doc_id(a) in records
+
+
+def test_reset_fails_when_the_registry_cannot_be_cleared(mocker) -> None:
+    # The stores are already wiped: a registry left with stale records would
+    # make the next incremental run skip re-ingested documents as unchanged,
+    # so the reset fails instead of logging and indexing on.
+    from unified_kg_rag.shared.exceptions import DocStatusRegistryError
+
+    class _UnreachableStore(FakeDocStatusStore):
+        def list_all(self):
+            raise ConnectionError("registry unreachable")
+
+    store = _UnreachableStore()
+    config = _reset_config()
+    stage = _reset_stage(mocker, config, store)
+    context = _context()
+    context.text_units = [TextUnit(id="tu-a", text="x", document_ids=["doc-a"])]
+
+    with pytest.raises(DocStatusRegistryError, match="could not clear"):
+        stage._execute_core(context)
+    stage.indexing_manager.index_all_data.assert_not_called()

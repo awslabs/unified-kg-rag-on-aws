@@ -102,18 +102,6 @@ def _build_knowledge_graph(context: PipelineContext) -> Any:
 
 
 class PipelineStage(ABC):
-    CRITICAL_STAGES = {
-        PipelineStageType.COMMUNITY_DETECTION,
-        PipelineStageType.DOCUMENT_LOADING,
-        PipelineStageType.DOCUMENT_PARSING,
-        PipelineStageType.GRAPH_ANALYSIS,
-        PipelineStageType.GRAPH_EXTRACTION,
-        PipelineStageType.GRAPH_RESOLUTION,
-        PipelineStageType.INDEXING,
-        PipelineStageType.TEXT_CHUNKING,
-        PipelineStageType.TRANSLATION,
-    }
-
     MUST_HAVE_INPUT_STAGES = {
         PipelineStageType.COMMUNITY_DETECTION,
         PipelineStageType.GRAPH_ANALYSIS,
@@ -136,6 +124,8 @@ class PipelineStage(ABC):
         PipelineStageType.GRAPH_RESOLUTION,
     }
 
+    # Stages that may produce nothing from a non-empty input; every other
+    # stage fails on zero outputs.
     OPTIONAL_OUTPUT_STAGES = {
         PipelineStageType.CLAIM_EXTRACTION,
         PipelineStageType.CLAIM_RESOLUTION,
@@ -274,7 +264,7 @@ class PipelineStage(ABC):
     def _validate_critical_stage_output(
         self, input_count: int, output_count: int
     ) -> None:
-        is_critical = self._should_validate_output()
+        is_critical = self.stage_type not in self.OPTIONAL_OUTPUT_STAGES
         must_have_input = self.stage_type in self.MUST_HAVE_INPUT_STAGES
 
         if input_count == 0:
@@ -303,13 +293,6 @@ class PipelineStage(ABC):
                 self.name,
                 input_count,
             )
-
-    def _should_validate_output(self) -> bool:
-        if self.stage_type in self.CRITICAL_STAGES:
-            return True
-        if self.stage_type in self.OPTIONAL_OUTPUT_STAGES:
-            return False
-        return True
 
     def _create_result(
         self,
@@ -352,22 +335,14 @@ class DocumentLoadingStage(PipelineStage):
         self,
         config: Config,
         source_directory: Path,
-        parse_files: bool = False,
         doc_status: "DocStatusPort | None" = None,
         providers: Providers | None = None,
     ):
         super().__init__(PipelineStageType.DOCUMENT_LOADING, config, providers)
-        self.loader = DirectoryLoader(
-            source_directory,
-            config=self.config,
-            # Without parsing, the directory holds pre-parsed Document JSON; any
-            # other file would only fail Document.from_json_file.
-            supported_extensions=None if parse_files else {".json"},
-            # Deduplication runs in this stage, after document identity is
-            # assigned, so an incremental run can prefer indexed documents.
-            deduplicate=False,
-            parse_files=parse_files,
-        )
+        # Without parsing, the directory holds pre-parsed Document JSON.
+        # Deduplication runs in this stage, after document identity is
+        # assigned, so an incremental run can prefer indexed documents.
+        self.loader = DirectoryLoader(source_directory)
         # Injected by the pipeline (built once at the orchestration layer) when
         # incremental indexing is enabled; built lazily otherwise.
         self._doc_status = doc_status
@@ -375,9 +350,6 @@ class DocumentLoadingStage(PipelineStage):
     def _execute_core(
         self, context: PipelineContext
     ) -> tuple[int, int, dict[str, Any] | None]:
-        logger.info("=" * 60)
-        logger.info("DOCUMENT LOADING STAGE - STARTED")
-        logger.info("=" * 60)
 
         # A context restored from a reused pipeline id carries the previous
         # run's delta in its metadata. This stage recomputes the document set,
@@ -449,12 +421,6 @@ class DocumentLoadingStage(PipelineStage):
             "delta_skipped": delta_skipped,
             "failed_files": failed_files,
         }
-
-        logger.info("=" * 60)
-        logger.info(
-            "DOCUMENT LOADING STAGE - COMPLETED (%s documents loaded)", output_count
-        )
-        logger.info("=" * 60)
 
         return input_count, output_count, metrics
 
@@ -531,9 +497,6 @@ class DocumentParsingStage(PipelineStage):
     def _execute_core(
         self, context: PipelineContext
     ) -> tuple[int, int, dict[str, Any] | None]:
-        logger.info("=" * 60)
-        logger.info("DOCUMENT PARSING STAGE - STARTED")
-        logger.info("=" * 60)
 
         files_to_parse = self._discover_files()
         input_count = len(files_to_parse)
@@ -584,14 +547,6 @@ class DocumentParsingStage(PipelineStage):
                 (output_count / input_count * 100) if input_count > 0 else 0
             ),
         }
-
-        logger.info("=" * 60)
-        logger.info(
-            "DOCUMENT PARSING STAGE - COMPLETED (%s/%s files parsed)",
-            output_count,
-            input_count,
-        )
-        logger.info("=" * 60)
 
         return input_count, output_count, metrics
 
@@ -671,9 +626,6 @@ class TextChunkingStage(PipelineStage):
     def _execute_core(
         self, context: PipelineContext
     ) -> tuple[int, int, dict[str, Any] | None]:
-        logger.info("=" * 60)
-        logger.info("TEXT CHUNKING STAGE - STARTED")
-        logger.info("=" * 60)
 
         # One call for the whole corpus: the intelligent chunker batches its
         # boundary-model calls across documents, and the logged stats cover
@@ -689,12 +641,6 @@ class TextChunkingStage(PipelineStage):
             "total_chunks": total_chunks,
             "avg_chunks_per_doc": total_chunks / doc_count if doc_count else 0.0,
         }
-
-        logger.info("=" * 60)
-        logger.info(
-            "TEXT CHUNKING STAGE - COMPLETED (%s text units created)", total_chunks
-        )
-        logger.info("=" * 60)
 
         return doc_count, total_chunks, metrics
 
@@ -732,13 +678,10 @@ class TranslationStage(PipelineStage):
     def _execute_core(
         self, context: PipelineContext
     ) -> tuple[int, int, dict[str, Any] | None]:
-        logger.info("=" * 60)
-        logger.info("TRANSLATION STAGE - STARTED")
-        logger.info("=" * 60)
 
         skip_reason = self._should_skip()
         if skip_reason is not None:
-            logger.info("TRANSLATION STAGE - SKIPPED (%s)", skip_reason)
+            logger.info("Skipping translation: %s", skip_reason)
             # Leave translated_units empty; downstream stages fall back to
             # context.text_units, so this is a true no-op.
             context.translated_units = []
@@ -750,7 +693,6 @@ class TranslationStage(PipelineStage):
                 "skipped": True,
                 "skip_reason": skip_reason,
             }
-            logger.info("=" * 60)
             return len(context.text_units), len(context.text_units), metrics
 
         translated_units = self.translator.translate_text_units(context.text_units)
@@ -780,13 +722,6 @@ class TranslationStage(PipelineStage):
             "translation_stats": translation_stats,
         }
 
-        logger.info("=" * 60)
-        logger.info(
-            "TRANSLATION STAGE - COMPLETED (Translated %s text units)",
-            units_translated_count,
-        )
-        logger.info("=" * 60)
-
         return len(context.text_units), len(translated_units), metrics
 
 
@@ -802,9 +737,6 @@ class GraphExtractionStage(PipelineStage):
     def _execute_core(
         self, context: PipelineContext
     ) -> tuple[int, int, dict[str, Any] | None]:
-        logger.info("=" * 60)
-        logger.info("GRAPH EXTRACTION STAGE - STARTED")
-        logger.info("=" * 60)
 
         text_units = context.translated_units or context.text_units
 
@@ -814,9 +746,7 @@ class GraphExtractionStage(PipelineStage):
         context.entities = entities
         context.relationships = relationships
         context.rejected_entities = list(self.extractor.rejected_entities)
-        context.failed_text_unit_ids[self.name] = (
-            stats.failed_text_unit_ids if stats else []
-        )
+        context.failed_text_unit_ids[self.name] = stats.failed_text_unit_ids
 
         entities_count = len(context.entities)
         relationships_count = len(context.relationships)
@@ -825,17 +755,9 @@ class GraphExtractionStage(PipelineStage):
             "text_units_processed": len(text_units),
             "entities_extracted": entities_count,
             "relationships_extracted": relationships_count,
-            "failed_units": stats.num_failed_extractions if stats else 0,
+            "failed_units": stats.num_failed_extractions,
             "extraction_stats": stats.model_dump(),
         }
-
-        logger.info("=" * 60)
-        logger.info(
-            "GRAPH EXTRACTION STAGE - COMPLETED (%s entities, %s relationships)",
-            entities_count,
-            relationships_count,
-        )
-        logger.info("=" * 60)
 
         return len(text_units), entities_count + relationships_count, metrics
 
@@ -852,9 +774,6 @@ class GleaningStage(PipelineStage):
     def _execute_core(
         self, context: PipelineContext
     ) -> tuple[int, int, dict[str, Any] | None]:
-        logger.info("=" * 60)
-        logger.info("GLEANING STAGE - STARTED")
-        logger.info("=" * 60)
 
         text_units = context.translated_units or context.text_units
         initial_entities = context.entities
@@ -869,16 +788,14 @@ class GleaningStage(PipelineStage):
 
         context.entities = entities
         context.relationships = relationships
-        context.failed_text_unit_ids[self.name] = (
-            gleaning_stats.failed_text_unit_ids if gleaning_stats else []
-        )
+        context.failed_text_unit_ids[self.name] = gleaning_stats.failed_text_unit_ids
         final_entities_count = len(context.entities)
         final_relationships_count = len(context.relationships)
 
         # Graph growth from gleaning: items it added per extracted item.
         initial_items = len(initial_entities) + len(initial_relationships)
         improvement_rate = 0.0
-        if gleaning_stats and initial_items > 0:
+        if initial_items > 0:
             improvement_rate = (
                 gleaning_stats.total_entities_added
                 + gleaning_stats.total_relationships_added
@@ -894,25 +811,11 @@ class GleaningStage(PipelineStage):
             "relationship_improvement": final_relationships_count
             - len(initial_relationships),
             "improvement_rate": improvement_rate,
-            "iterations_completed": (
-                gleaning_stats.total_rounds if gleaning_stats else 0
-            ),
-            "refinement_calls": (
-                gleaning_stats.total_refinement_calls if gleaning_stats else 0
-            ),
-            "failed_units": gleaning_stats.num_failed_units if gleaning_stats else 0,
+            "iterations_completed": gleaning_stats.total_rounds,
+            "refinement_calls": gleaning_stats.total_refinement_calls,
+            "failed_units": gleaning_stats.num_failed_units,
             "gleaning_stats": gleaning_stats.model_dump(),
         }
-
-        logger.info("=" * 60)
-        logger.info(
-            "GLEANING STAGE - COMPLETED (%s -> %s entities, %s -> %s relationships improved)",
-            len(initial_entities),
-            final_entities_count,
-            len(initial_relationships),
-            final_relationships_count,
-        )
-        logger.info("=" * 60)
 
         input_count = (
             len(text_units) + len(initial_entities) + len(initial_relationships)
@@ -938,9 +841,6 @@ class GraphResolutionStage(PipelineStage):
     def _execute_core(
         self, context: PipelineContext
     ) -> tuple[int, int, dict[str, Any] | None]:
-        logger.info("=" * 60)
-        logger.info("GRAPH RESOLUTION STAGE - STARTED")
-        logger.info("=" * 60)
 
         resolution_result, stats = self.resolver.resolve_graph(
             context.entities, context.relationships
@@ -979,16 +879,6 @@ class GraphResolutionStage(PipelineStage):
             "resolution_stats": stats.model_dump(),
         }
 
-        logger.info("=" * 60)
-        logger.info(
-            "GRAPH RESOLUTION STAGE - COMPLETED (%s -> %s entities, %s -> %s relationships resolved)",
-            original_entities_count,
-            resolved_entities_count,
-            original_relationships_count,
-            resolved_relationships_count,
-        )
-        logger.info("=" * 60)
-
         input_count = original_entities_count + original_relationships_count
         output_count = resolved_entities_count + resolved_relationships_count
         return input_count, output_count, metrics
@@ -1006,33 +896,20 @@ class ClaimExtractionStage(PipelineStage):
     def _execute_core(
         self, context: PipelineContext
     ) -> tuple[int, int, dict[str, Any] | None]:
-        logger.info("=" * 60)
-        logger.info("CLAIM EXTRACTION STAGE - STARTED")
-        logger.info("=" * 60)
 
         text_units = context.translated_units or context.text_units
         claims, extraction_stats = self.extractor.extract_from_text_units(
             text_units, context.resolved_entities
         )
         context.claims = claims
-        context.failed_text_unit_ids[self.name] = (
-            extraction_stats.failed_text_unit_ids if extraction_stats else []
-        )
+        context.failed_text_unit_ids[self.name] = extraction_stats.failed_text_unit_ids
 
         metrics = {
             "text_units_processed": len(text_units),
             "claims_extracted": len(claims),
-            "failed_units": (
-                extraction_stats.num_failed_extractions if extraction_stats else 0
-            ),
+            "failed_units": extraction_stats.num_failed_extractions,
             "extraction_stats": extraction_stats.model_dump(),
         }
-
-        logger.info("=" * 60)
-        logger.info(
-            "CLAIM EXTRACTION STAGE - COMPLETED (%s claims extracted)", len(claims)
-        )
-        logger.info("=" * 60)
 
         return len(text_units), len(claims), metrics
 
@@ -1045,9 +922,6 @@ class ClaimResolutionStage(PipelineStage):
     def _execute_core(
         self, context: PipelineContext
     ) -> tuple[int, int, dict[str, Any] | None]:
-        logger.info("=" * 60)
-        logger.info("CLAIM RESOLUTION STAGE - STARTED")
-        logger.info("=" * 60)
 
         if not context.claims or not context.resolved_entities:
             # Nothing can resolve: say so explicitly, so no later stage reads a
@@ -1079,15 +953,6 @@ class ClaimResolutionStage(PipelineStage):
             "resolution_stats": stats.model_dump(),
         }
 
-        logger.info("=" * 60)
-        logger.info(
-            "CLAIM RESOLUTION STAGE - COMPLETED (%s -> %s claims resolved, %s claims removed)",
-            original_claims_count,
-            resolved_count,
-            removed_count,
-        )
-        logger.info("=" * 60)
-
         return original_claims_count, resolved_count, metrics
 
 
@@ -1103,9 +968,6 @@ class GraphAnalysisStage(PipelineStage):
     def _execute_core(
         self, context: PipelineContext
     ) -> tuple[int, int, dict[str, Any] | None]:
-        logger.info("=" * 60)
-        logger.info("GRAPH ANALYSIS STAGE - STARTED")
-        logger.info("=" * 60)
 
         entities = context.resolved_entities
         relationships = context.resolved_relationships
@@ -1133,14 +995,6 @@ class GraphAnalysisStage(PipelineStage):
                 "largest_component_size": graph_stats.largest_component_size,
             },
         }
-
-        logger.info("=" * 60)
-        logger.info(
-            "GRAPH ANALYSIS STAGE - COMPLETED (%s nodes, %s edges)",
-            graph_stats.num_nodes,
-            graph_stats.num_edges,
-        )
-        logger.info("=" * 60)
 
         input_count = len(entities) + len(relationships)
         output_count = len(entities)
@@ -1248,14 +1102,6 @@ class CommunityDetectionStage(PipelineStage):
 
     @staticmethod
     def _get_detection_stats_dict(metrics_obj: CommunityMetrics) -> dict[str, Any]:
-        if not metrics_obj:
-            return {
-                "num_communities": 0,
-                "average_community_size": 0.0,
-                "largest_community_size": 0,
-                "smallest_community_size": 0,
-                "community_size_distribution": {},
-            }
         return {
             "num_communities": metrics_obj.num_communities,
             "average_community_size": metrics_obj.average_community_size,
@@ -1267,9 +1113,6 @@ class CommunityDetectionStage(PipelineStage):
     def _execute_core(
         self, context: PipelineContext
     ) -> tuple[int, int, dict[str, Any] | None]:
-        logger.info("=" * 60)
-        logger.info("COMMUNITY DETECTION STAGE - STARTED")
-        logger.info("=" * 60)
 
         entities = context.resolved_entities
         relationships = context.resolved_relationships
@@ -1354,14 +1197,6 @@ class CommunityDetectionStage(PipelineStage):
             ),
         }
 
-        logger.info("=" * 60)
-        logger.info(
-            "COMMUNITY DETECTION STAGE - COMPLETED (%s communities, %s reports)",
-            communities_count,
-            reports_count,
-        )
-        logger.info("=" * 60)
-
         input_count = len(entities) + len(relationships)
         output_count = communities_count + reports_count
         return input_count, output_count, metrics
@@ -1393,9 +1228,6 @@ class IndexingStage(PipelineStage):
     def _execute_core(
         self, context: PipelineContext
     ) -> tuple[int, int, dict[str, Any] | None]:
-        logger.info("=" * 60)
-        logger.info("INDEXING STAGE - STARTED")
-        logger.info("=" * 60)
 
         if self.config.indexing.reset:
             logger.info("Clearing all existing data")
@@ -1405,8 +1237,9 @@ class IndexingStage(PipelineStage):
             # wipes OpenSearch + Neptune; leaving stale content-hash lineage would
             # make the NEXT incremental run classify re-ingested docs as
             # "unchanged" (skipping them despite the graph having been wiped) and
-            # leave rows for docs no longer in the corpus. Only relevant when the
-            # registry is in use (incremental mode).
+            # leave rows for docs no longer in the corpus, so a registry that
+            # cannot be cleared fails the stage (DocStatusRegistryError). Only
+            # relevant when the registry is in use (incremental mode).
             if self._doc_status is not None or self.config.doc_status_enabled:
                 clear_registry_namespaces(
                     self._build_doc_status_store,
@@ -1543,14 +1376,6 @@ class IndexingStage(PipelineStage):
             ),
         }
 
-        logger.info("=" * 60)
-        logger.info(
-            "INDEXING STAGE - COMPLETED (%s items indexed, %s failed)",
-            total_indexed,
-            total_failed,
-        )
-        logger.info("=" * 60)
-
         return input_count, total_indexed, metrics
 
     def _index_incremental(
@@ -1577,17 +1402,15 @@ class IndexingStage(PipelineStage):
         )
 
     def _validate_backend_success(self, indexing_results: dict[str, Any]) -> None:
-        # 1) Per-index-type validation: fail if any individual index type failed
-        #    entirely (0 successes) OR exceeded the tolerated partial-failure rate.
-        #    The partial-failure gate is what stops a run where, say, most
-        #    relationship edges are dropped by a backend error from still being
-        #    reported as a successful pipeline (the write failures otherwise only
-        #    surface in per-stage stats and never affect stage/pipeline success).
+        # Fail if any index type failed entirely (0 successes) OR exceeded the
+        # tolerated partial-failure rate. The partial-failure gate is what stops
+        # a run where, say, most relationship edges are dropped by a backend
+        # error from still being reported as a successful pipeline (the write
+        # failures otherwise only surface in per-stage stats). A wholly failed
+        # backend fails all its index types, so it is caught here too.
         max_failure_rate = self.config.indexing.max_failure_rate
         failed_index_types = []
         for key, stats in indexing_results.items():
-            if not stats:
-                continue
             # An index type that raised before _perform_indexing seeds
             # total_items surfaces as total_items=0, failed_items=N. Treat that
             # (failed_items>0, zero successes) as a hard failure rather than
@@ -1622,55 +1445,5 @@ class IndexingStage(PipelineStage):
                 f"exceeded the tolerated failure rate ({max_failure_rate:.0%}) or "
                 f"failed to index any items. This indicates a configuration or "
                 f"connectivity issue. Check the logs above for specific errors."
-            )
-            raise PipelineStageError(error_msg)
-
-        # 2) Backend-level validation (defensive): fail if entire backend has zero successes
-        opensearch_keys = [
-            k for k in indexing_results.keys() if k.startswith("opensearch_")
-        ]
-        neptune_keys = [k for k in indexing_results.keys() if k.startswith("neptune_")]
-
-        backend_groups = {
-            "OpenSearch": opensearch_keys,
-            "Neptune": neptune_keys,
-        }
-
-        failed_backends = []
-
-        for backend_name, keys in backend_groups.items():
-            if not keys:
-                continue
-
-            backend_total = 0
-            backend_successful = 0
-            backend_failed = 0
-
-            for key in keys:
-                stats = indexing_results.get(key)
-                if stats:
-                    backend_total += stats.total_items
-                    backend_successful += stats.successful_items
-                    backend_failed += stats.failed_items
-
-            # backend_total counts only items that reached _perform_indexing; an
-            # index type that raised earlier contributes to backend_failed only.
-            # Gate on either so a wholly-exception backend (total=0, failed>0) is
-            # still flagged.
-            backend_attempted = backend_total + backend_failed
-            if backend_attempted > 0 and backend_successful == 0:
-                failed_backends.append(backend_name)
-                logger.error(
-                    "%s backend completely failed: 0/%s items indexed successfully",
-                    backend_name,
-                    backend_attempted,
-                )
-
-        if failed_backends:
-            error_msg = (
-                f"Indexing failed: {', '.join(failed_backends)} backend(s) "
-                f"completely failed to index any items. "
-                f"This indicates a critical configuration or connectivity issue. "
-                f"Check the logs above for specific error details."
             )
             raise PipelineStageError(error_msg)

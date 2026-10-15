@@ -2,16 +2,14 @@
 # SPDX-License-Identifier: Apache-2.0
 """DirectoryLoader behavior against real temp files — no AWS, no network.
 
-Exercises the document-loading entry point end to end: file discovery
-(recursion, extension filtering, exclude patterns), the two load_single paths
-(JSON passthrough vs ParserFactory parsing), MinHash deduplication, stable
-content-derived doc ids, directory hashing, and graceful per-file error
-handling. Everything runs against real files written under tmp_path.
+Exercises the pre-parsed ``Document`` JSON loader: file discovery
+(recursion, extension filtering, exclude patterns), JSON loading, MinHash
+deduplication, stable doc ids and graceful per-file error handling.
+Everything runs against real files written under tmp_path.
 """
 
 from __future__ import annotations
 
-import importlib.util
 import json
 from pathlib import Path
 
@@ -21,7 +19,7 @@ from unified_kg_rag.adapters.ingestion.loader import (
     DirectoryLoader,
     compute_minhash,
 )
-from unified_kg_rag.domain.models import Config, Document
+from unified_kg_rag.domain.models import Document
 
 pytestmark = pytest.mark.unit
 
@@ -44,34 +42,6 @@ def _write_json_doc(path: Path, document_id: str, text: str) -> None:
         ),
         encoding="utf-8",
     )
-
-
-# --------------------------------------------------------------------------- #
-# Construction / validation
-# --------------------------------------------------------------------------- #
-def test_invalid_similarity_threshold_rejected(tmp_path: Path) -> None:
-    with pytest.raises(ValueError, match="similarity_threshold"):
-        DirectoryLoader(tmp_path, similarity_threshold=0.0)
-    with pytest.raises(ValueError, match="similarity_threshold"):
-        DirectoryLoader(tmp_path, similarity_threshold=1.5)
-
-
-def test_invalid_minhash_permutations_rejected(tmp_path: Path) -> None:
-    with pytest.raises(ValueError, match="minhash_permutations"):
-        DirectoryLoader(tmp_path, minhash_permutations=0)
-
-
-def test_invalid_n_grams_size_rejected(tmp_path: Path) -> None:
-    with pytest.raises(ValueError, match="n_grams_size"):
-        DirectoryLoader(tmp_path, n_grams_size=0)
-
-
-def test_parse_files_widens_supported_extensions(tmp_path: Path) -> None:
-    # With parse_files + config, the parser's formats join the supported set.
-    loader = DirectoryLoader(tmp_path, config=Config(), parse_files=True)
-    assert {".txt", ".csv", ".json"} <= loader.supported_extensions
-    # .pdf is a ParserFactory format, not a loader default.
-    assert ".pdf" in loader.supported_extensions
 
 
 # --------------------------------------------------------------------------- #
@@ -99,8 +69,10 @@ def test_empty_directory_returns_empty(tmp_path: Path) -> None:
 
 
 def test_discover_filters_by_extension(tmp_path: Path) -> None:
+    # Only pre-parsed Document JSON: a raw .txt would fail from_json_file.
     _write_json_doc(tmp_path / "keep.json", "id-keep", "kept content")
     (tmp_path / "skip.xyz").write_text("unsupported extension")
+    (tmp_path / "raw.txt").write_text("raw text is the parsing stage's input")
     loader = DirectoryLoader(tmp_path)
     discovered = {p.name for p in loader.discover_files()}
     assert discovered == {"keep.json"}
@@ -154,16 +126,6 @@ def test_discover_recursive_includes_nested(tmp_path: Path) -> None:
     assert discovered == {"top.json", "deep.json"}
 
 
-def test_discover_non_recursive_skips_nested(tmp_path: Path) -> None:
-    _write_json_doc(tmp_path / "top.json", "id-top", "top level content")
-    nested = tmp_path / "sub"
-    nested.mkdir()
-    _write_json_doc(nested / "deep.json", "id-deep", "nested content")
-    loader = DirectoryLoader(tmp_path, recursive=False)
-    discovered = {p.name for p in loader.discover_files()}
-    assert discovered == {"top.json"}
-
-
 def test_discover_results_sorted(tmp_path: Path) -> None:
     for name in ("c.json", "a.json", "b.json"):
         _write_json_doc(tmp_path / name, f"id-{name}", "content")
@@ -172,7 +134,7 @@ def test_discover_results_sorted(tmp_path: Path) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# JSON passthrough loading (parse_files=False)
+# JSON loading
 # --------------------------------------------------------------------------- #
 def test_load_json_documents_enriches_metadata(tmp_path: Path) -> None:
     _write_json_doc(tmp_path / "doc.json", "id-doc", "hello content")
@@ -212,65 +174,6 @@ def test_malformed_json_is_skipped_not_fatal(tmp_path: Path) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# ParserFactory loading (parse_files=True)
-# --------------------------------------------------------------------------- #
-def test_parse_txt_and_csv_via_factory(tmp_path: Path) -> None:
-    (tmp_path / "note.txt").write_text("Plain text body for the parser path.")
-    (tmp_path / "data.csv").write_text("name,age\nAlice,30\nBob,25\n")
-    loader = DirectoryLoader(tmp_path, config=Config(), parse_files=True)
-    docs = loader.load()
-    by_name = {d.file_name: d for d in docs}
-    assert set(by_name) == {"note.txt", "data.csv"}
-    assert "Plain text body" in (by_name["note.txt"].page_content or "")
-    assert "Alice" in (by_name["data.csv"].page_content or "")
-
-
-def test_json_uses_passthrough_even_when_parse_files(tmp_path: Path) -> None:
-    # .json is explicitly routed to from_json_file, not the ParserFactory.
-    _write_json_doc(tmp_path / "doc.json", "id-json", "json passthrough body")
-    loader = DirectoryLoader(tmp_path, config=Config(), parse_files=True)
-    docs = loader.load()
-    assert docs[0].document_id == "id-json"
-
-
-def test_empty_file_skipped_in_parse_mode(tmp_path: Path) -> None:
-    # FileParser raises on empty parsed text; the loader skips it gracefully.
-    (tmp_path / "empty.txt").write_text("")
-    loader = DirectoryLoader(tmp_path, config=Config(), parse_files=True)
-    docs = loader.load()
-    assert docs == []
-    assert loader.failed_files == [str(tmp_path / "empty.txt")]
-
-
-def test_tsv_not_discovered_since_unparseable(tmp_path: Path) -> None:
-    # .tsv is no longer advertised (the ParserFactory has no .tsv loader), so a
-    # .tsv source is filtered out at discovery rather than discovered-then-failed.
-    (tmp_path / "data.tsv").write_text("a\tb\n1\t2\n")
-    (tmp_path / "ok.txt").write_text("plain text that parses fine")
-    loader = DirectoryLoader(tmp_path, config=Config(), parse_files=True)
-    docs = loader.load()
-    assert {d.file_name for d in docs} == {"ok.txt"}
-    # never discovered, so it is not counted as a parse failure either
-    assert str(tmp_path / "data.tsv") not in loader.failed_files
-
-
-@pytest.mark.skipif(
-    importlib.util.find_spec("unstructured") is not None,
-    reason="unstructured installed; .md is actually parseable",
-)
-def test_markdown_skipped_without_unstructured(tmp_path: Path) -> None:
-    # Without the optional `unstructured` dep, the ParserFactory does not
-    # advertise .md, so it is not in supported_extensions and a markdown source
-    # is filtered at discovery (not a parse failure); only the .txt survives.
-    (tmp_path / "notes.md").write_text("# Heading\n\nSome markdown body.\n")
-    (tmp_path / "ok.txt").write_text("plain text that parses fine")
-    loader = DirectoryLoader(tmp_path, config=Config(), parse_files=True)
-    docs = loader.load()
-    assert {d.file_name for d in docs} == {"ok.txt"}
-    assert str(tmp_path / "notes.md") not in loader.failed_files
-
-
-# --------------------------------------------------------------------------- #
 # Deduplication (MinHash + Jaccard, real ProcessPoolExecutor)
 # --------------------------------------------------------------------------- #
 def test_duplicate_documents_collapse(tmp_path: Path) -> None:
@@ -280,8 +183,8 @@ def test_duplicate_documents_collapse(tmp_path: Path) -> None:
     _write_json_doc(
         tmp_path / "c.json", "id-c", "an entirely unrelated paragraph about ships"
     )
-    loader = DirectoryLoader(tmp_path, deduplicate=True, similarity_threshold=0.9)
-    docs = loader.load()
+    loader = DirectoryLoader(tmp_path)
+    docs = loader.deduplicate_documents(loader.load())
     ids = {d.document_id for d in docs}
     # One of the two identical docs is dropped; the distinct one stays.
     assert len(docs) == 2
@@ -290,59 +193,17 @@ def test_duplicate_documents_collapse(tmp_path: Path) -> None:
 
 def test_dedup_noop_with_single_document(tmp_path: Path) -> None:
     _write_json_doc(tmp_path / "only.json", "id-only", "solitary content here")
-    loader = DirectoryLoader(tmp_path, deduplicate=True)
-    docs = loader.load()
+    loader = DirectoryLoader(tmp_path)
+    docs = loader.deduplicate_documents(loader.load())
     assert len(docs) == 1
 
 
 def test_dedup_keeps_all_when_distinct(tmp_path: Path) -> None:
     _write_json_doc(tmp_path / "a.json", "id-a", "alpha topic about astronomy stars")
     _write_json_doc(tmp_path / "b.json", "id-b", "beta topic regarding cooking recipes")
-    loader = DirectoryLoader(tmp_path, deduplicate=True, similarity_threshold=0.9)
-    docs = loader.load()
-    assert {d.document_id for d in docs} == {"id-a", "id-b"}
-
-
-# --------------------------------------------------------------------------- #
-# Directory hash
-# --------------------------------------------------------------------------- #
-def test_directory_hash_is_stable_and_content_sensitive(tmp_path: Path) -> None:
-    _write_json_doc(tmp_path / "a.json", "id-a", "first body")
-    loader = DirectoryLoader(tmp_path, compute_dir_hash=True)
-    loader.load()
-    first = loader.directory_hash
-    assert isinstance(first, str) and first
-
-    # Re-running over the same files yields the same hash.
-    loader2 = DirectoryLoader(tmp_path, compute_dir_hash=True)
-    loader2.load()
-    assert loader2.directory_hash == first
-
-
-def test_directory_hash_changes_when_file_added(tmp_path: Path) -> None:
-    _write_json_doc(tmp_path / "a.json", "id-a", "first body")
-    loader = DirectoryLoader(tmp_path, compute_dir_hash=True)
-    loader.load()
-    before = loader.directory_hash
-
-    _write_json_doc(tmp_path / "b.json", "id-b", "second body")
-    loader2 = DirectoryLoader(tmp_path, compute_dir_hash=True)
-    loader2.load()
-    assert loader2.directory_hash != before
-
-
-def test_directory_hash_not_computed_unless_requested(tmp_path: Path) -> None:
-    _write_json_doc(tmp_path / "a.json", "id-a", "body")
     loader = DirectoryLoader(tmp_path)
-    loader.load()
-    assert loader.directory_hash is None
-
-
-def test_compute_dir_hash_empty_file_list(tmp_path: Path) -> None:
-    # Direct call with no files still returns a deterministic hash string.
-    loader = DirectoryLoader(tmp_path, compute_dir_hash=True)
-    h = loader._compute_dir_hash([])
-    assert isinstance(h, str) and h
+    docs = loader.deduplicate_documents(loader.load())
+    assert {d.document_id for d in docs} == {"id-a", "id-b"}
 
 
 # --------------------------------------------------------------------------- #
@@ -371,7 +232,7 @@ def test_dedup_keeps_the_preferred_copy(tmp_path: Path) -> None:
     same = "the quick brown fox jumps over the lazy dog repeatedly today"
     _write_json_doc(tmp_path / "a_copy.json", "id-copy", same)
     _write_json_doc(tmp_path / "b_original.json", "id-original", same)
-    loader = DirectoryLoader(tmp_path, similarity_threshold=0.9)
+    loader = DirectoryLoader(tmp_path)
     docs = loader.load()
     assert [d.document_id for d in docs] == ["id-copy", "id-original"]
 

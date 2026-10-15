@@ -766,3 +766,48 @@ async def test_map_phase_runs_max_concurrency_calls_at_once() -> None:
 
     assert len(points) == 40 and unrated == []
     assert strat.map_rater.max_active == 20  # type: ignore[attr-defined]
+
+
+# --------------------------------------------------------------------------- #
+# Reduce LLM failure: ignore_errors decides between raising and degrading
+# --------------------------------------------------------------------------- #
+
+
+def _failing_reducer() -> Any:
+    chain = SimpleNamespace()
+    chain.ainvoke = AsyncMock(side_effect=RuntimeError("reduce model down"))
+    return chain
+
+
+@pytest.mark.parametrize("path", ["points", "concat"])
+async def test_reduce_failure_raises_without_ignore_errors(path: str) -> None:
+    strat = _strategy(
+        ignore_errors=False, reducer=_failing_reducer(), reduce_with_llm=True
+    )
+    query = SearchQuery(query="q")
+    with pytest.raises(RuntimeError, match="reduce model down"):
+        if path == "points":
+            await strat._reduce_from_points(
+                [_MapPoint("point", 80)], _communities(2), query
+            )
+        else:
+            await strat._concat_reduce(_communities(2), query)
+
+
+@pytest.mark.parametrize("path", ["points", "concat"])
+async def test_reduce_failure_degrades_with_ignore_errors(path: str) -> None:
+    strat = _strategy(
+        ignore_errors=True, reducer=_failing_reducer(), reduce_with_llm=True
+    )
+    query = SearchQuery(query="q")
+    results = _communities(2)
+    degraded: list[str] = []
+    if path == "points":
+        out = await strat._reduce_from_points(
+            [_MapPoint("point", 80)], results, query, degraded=degraded
+        )
+    else:
+        out = await strat._concat_reduce(results, query, degraded=degraded)
+    # The reports pass through without a synthesis; the failure is recorded.
+    assert out == results
+    assert degraded == ["RuntimeError"]

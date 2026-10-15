@@ -78,20 +78,19 @@ def test_validate_no_required_input_returns_on_zero_input() -> None:
     stage._validate_critical_stage_output(input_count=0, output_count=0)
 
 
-def test_should_validate_output_matrix() -> None:
-    critical = _make_stage(PipelineStageType.INDEXING)
-    optional = _make_stage(PipelineStageType.GLEANING)
-    other = _make_stage(PipelineStageType.CLAIM_RESOLUTION)  # not critical/optional
-    assert critical._should_validate_output() is True
-    assert optional._should_validate_output() is False
-    # Unlisted stage types default to requiring output validation.
-    assert other._should_validate_output() is False  # CLAIM_RESOLUTION is optional
-
-
-def test_should_validate_output_defaults_true_for_unlisted() -> None:
-    # GRAPH_ANALYSIS is critical; pick a type that's neither critical nor optional.
-    stage = _make_stage(PipelineStageType.DOCUMENT_LOADING)  # critical -> True
-    assert stage._should_validate_output() is True
+@pytest.mark.parametrize("stage_type", list(PipelineStageType))
+def test_zero_output_fails_every_stage_but_the_optional_ones(stage_type) -> None:
+    stage = _make_stage(stage_type)
+    # Claims and gleaning may legitimately find nothing new.
+    if stage_type in {
+        PipelineStageType.CLAIM_EXTRACTION,
+        PipelineStageType.CLAIM_RESOLUTION,
+        PipelineStageType.GLEANING,
+    }:
+        stage._validate_critical_stage_output(input_count=5, output_count=0)
+    else:
+        with pytest.raises(PipelineStageError, match="produced 0 outputs"):
+            stage._validate_critical_stage_output(input_count=5, output_count=0)
 
 
 # --- _allows_empty_output ------------------------------------------------
@@ -269,20 +268,6 @@ def test_validate_backend_success_raises_on_index_type_total_failure(mocker) -> 
         "opensearch_entities": IndexingStats(total_items=5, successful_items=0),
     }
     with pytest.raises(PipelineStageError, match="opensearch_entities"):
-        stage._validate_backend_success(results)
-
-
-def test_validate_backend_success_raises_on_backend_total_failure(mocker) -> None:
-    stage, _mgr = _indexing_stage(mocker, {})
-    # Each individual key has SOME success, but the whole Neptune backend has 0.
-    # Construct so no single key is all-zero (avoids the index-type guard) yet
-    # the backend aggregate is zero -> backend-level guard fires.
-    results = {
-        "neptune_entities": IndexingStats(total_items=2, successful_items=0),
-        "neptune_relationships": IndexingStats(total_items=0, successful_items=0),
-    }
-    # Here neptune_entities IS all-zero, so the per-index guard fires first.
-    with pytest.raises(PipelineStageError):
         stage._validate_backend_success(results)
 
 
