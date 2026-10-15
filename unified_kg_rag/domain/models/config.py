@@ -815,17 +815,6 @@ class ChunkingConfig(BaseModel):
         "fast",
         description="Language model for intelligent chunking",
     )
-    content_type: str = Field(
-        default="text",
-        pattern="^(text|html|markdown)$",
-        description=(
-            "Document body to chunk. 'text' is every document's plain text. "
-            "'markdown' / 'html' select the markdown or HTML body a parser "
-            "built from typed document elements; the intelligent chunker then "
-            "pre-splits it at headers. A document without that body (the "
-            "built-in file loaders produce plain text only) is chunked as text."
-        ),
-    )
     min_chunk_size: int = Field(
         default=1000,
         ge=1,

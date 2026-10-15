@@ -30,7 +30,6 @@ from unified_kg_rag.domain.models import (
     ChunkingStrategy,
     Config,
     Document,
-    DocumentContent,
 )
 from unified_kg_rag.domain.prompts.data_processing import TextChunkingPrompt
 from unified_kg_rag.shared import DataProcessingError
@@ -324,23 +323,6 @@ class TestLineBoundaryProcessor:
 
 
 # --------------------------------------------------------------------------- #
-# IntelligentTextChunker._get_structured_splitter (pure static helper)
-# --------------------------------------------------------------------------- #
-class TestStructuredSplitter:
-    def test_markdown_header_split(self) -> None:
-        splitter = IntelligentTextChunker._get_structured_splitter("markdown")
-        docs = splitter.split_text("# Title\nbody one\n## Sub\nbody two")
-        contents = [d.page_content for d in docs]
-        assert len(contents) >= 2
-        joined = "\n".join(contents)
-        assert "body one" in joined and "body two" in joined
-
-    # NOTE: the HTML header splitter requires the optional bs4/lxml dependency,
-    # which is not installed in the AWS-free test environment, so the HTML branch
-    # of _get_structured_splitter is not exercised here.
-
-
-# --------------------------------------------------------------------------- #
 # SimpleTextChunker
 # --------------------------------------------------------------------------- #
 @pytest.fixture
@@ -360,9 +342,6 @@ def _doc(text: str) -> Document:
         document_id="doc1",
         file_name="f.txt",
         file_path="/tmp/f.txt",
-        file_type="txt",
-        total_pages=1,
-        content=DocumentContent(text=text),
     )
 
 
@@ -607,6 +586,24 @@ class TestIntelligentChunkerHelpers:
         )
         assert out == ["body"]
 
+    def test_boundary_parsing_bug_falls_back_with_a_warning(
+        self, intelligent_chunker, mocker, caplog
+    ) -> None:
+        # A bug in the boundary parsing was swallowed at debug level and the
+        # pre-chunk kept whole as if the model had asked for no split. It
+        # reaches the one boundary handler: WARNING and the size fallback.
+        mocker.patch.object(
+            LineBasedBoundaryProcessor,
+            "_extract_from_line_number_field",
+            side_effect=RuntimeError("parser bug"),
+        )
+        with caplog.at_level("WARNING", logger=chunker_module.logger.name):
+            out = intelligent_chunker._chunk_with_llm_boundaries(
+                "body", {"chunk_boundaries": {"line_number": 2}}
+            )
+        assert out is None
+        assert "parser bug" in caplog.text
+
     def test_chunk_with_boundaries_splits(self, intelligent_chunker) -> None:
         text = "first line here\nsecond chunk begins now and is fairly long indeed"
         out = intelligent_chunker._chunk_with_llm_boundaries(
@@ -673,13 +670,6 @@ class TestIntelligentChunkerHelpers:
     def test_create_pre_chunks_plain_text(self, intelligent_chunker) -> None:
         out = intelligent_chunker._create_pre_chunks("a b c d e f")
         assert out == ["a b c d e f"]
-
-    def test_create_pre_chunks_markdown(self, intelligent_chunker) -> None:
-        out = intelligent_chunker._create_pre_chunks(
-            "# Title\nbody text one\n## Sub\nbody text two", "markdown"
-        )
-        joined = "\n".join(out)
-        assert "body text one" in joined and "body text two" in joined
 
     def test_handle_llm_failure_records_stats(self, intelligent_chunker) -> None:
         final: list = []
@@ -790,23 +780,12 @@ class TestIntelligentChunkerPipeline:
         assert intelligent_chunker.stats.num_pre_chunks_processed == 2
 
     def test_plain_text_is_not_header_split(self, intelligent_chunker, mocker) -> None:
-        # content_type "markdown" on a document without a markdown body: the
-        # text is chunked as text, so blank lines and "#" lines stay as written.
-        intelligent_chunker.config.processing.chunking.content_type = "markdown"
+        # Documents are chunked as plain text: blank lines and "#" lines stay
+        # as written.
         intelligent_chunker.chunker.invoke = mocker.Mock(return_value={})
         text = "# not a heading, a comment line\n\n    indented line kept\nlast"
         units = intelligent_chunker.chunk_documents([_doc(text)])
         assert [u.text for u in units] == [text]
-
-    def test_merge_structured_chunks_oversized_split(
-        self, intelligent_chunker, mocker
-    ) -> None:
-        intelligent_chunker.config.processing.chunking.pre_chunk_size = 20
-        intelligent_chunker.config.processing.chunking.min_chunk_size = 5
-        Doc = mocker.Mock
-        chunks = [Doc(page_content="a" * 50), Doc(page_content="b" * 3)]
-        out = intelligent_chunker._merge_structured_chunks(chunks)
-        assert out  # oversized first chunk is re-split via pre_splitter
 
 
 def test_default_chunk_sizes_fit_the_embedding_input() -> None:

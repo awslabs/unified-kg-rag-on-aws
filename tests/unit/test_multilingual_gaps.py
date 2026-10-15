@@ -103,14 +103,14 @@ class TestNonUtf8Recovery:
         document = parser.parse_file(p)
         # The whole file would otherwise be dropped on UnicodeDecodeError; with
         # autodetect it parses and the Korean content survives.
-        assert "한국어" in document.content.text
+        assert "한국어" in document.page_content
 
     def test_csv_loader_recovers_cp949(self, tmp_path: Path) -> None:
         p = tmp_path / "doc.csv"
         p.write_bytes(("name,desc\nAWS,클라우드 서비스 제공자\n").encode("cp949"))
         parser = ParserFactory.create_parser(p, Config())
         document = parser.parse_file(p)
-        assert "클라우드" in document.content.text
+        assert "클라우드" in document.page_content
 
     def test_text_loaders_are_encoding_aware(self) -> None:
         # The .txt/.csv loaders are eligible for the detect-and-retry path.
@@ -123,22 +123,17 @@ class TestNonUtf8Recovery:
     def test_document_from_json_file_reads_cp949(self, tmp_path: Path) -> None:
         # Build a real exported Document JSON, re-encode it as cp949, and confirm
         # from_json_file recovers it (it previously hardcoded encoding="utf-8").
-        from unified_kg_rag.domain.models.document import DocumentContent
-
         doc = Document(
             document_id="d1",
             file_name="korean.txt",
             file_path="korean.txt",
-            file_type="txt",
-            total_pages=1,
             page_content=_KOREAN_TEXT,
-            content=DocumentContent(text=_KOREAN_TEXT),
         )
         json_str = doc.to_json_file()
         p = tmp_path / "doc.json"
         p.write_bytes(json_str.encode("cp949"))
         loaded = Document.from_json_file(p)
-        assert loaded.content.text == _KOREAN_TEXT
+        assert loaded.page_content == _KOREAN_TEXT
 
 
 # --- GAP 3: translation enable flag + same-language no-op --------------------

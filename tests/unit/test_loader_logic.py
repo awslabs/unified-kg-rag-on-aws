@@ -221,8 +221,8 @@ def test_parse_txt_and_csv_via_factory(tmp_path: Path) -> None:
     docs = loader.load()
     by_name = {d.file_name: d for d in docs}
     assert set(by_name) == {"note.txt", "data.csv"}
-    assert "Plain text body" in (by_name["note.txt"].content.text or "")
-    assert "Alice" in (by_name["data.csv"].content.text or "")
+    assert "Plain text body" in (by_name["note.txt"].page_content or "")
+    assert "Alice" in (by_name["data.csv"].page_content or "")
 
 
 def test_json_uses_passthrough_even_when_parse_files(tmp_path: Path) -> None:

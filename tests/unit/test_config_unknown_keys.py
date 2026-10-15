@@ -85,3 +85,21 @@ def test_non_mapping_config_file_is_a_clear_error(tmp_path: Path) -> None:
     path.write_text("- a\n- b\n")
     with pytest.raises(ValueError, match="must be a YAML mapping"):
         ConfigLoader(path).load_config()
+
+
+def test_removed_chunking_content_type_is_warned_and_ignored(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    # ``processing.chunking.content_type`` never took effect (no parser built
+    # a markdown or HTML body) and was removed: a config that still sets it
+    # loads, with the unknown-key warning.
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        yaml.safe_dump({"processing": {"chunking": {"content_type": "markdown"}}})
+    )
+    with caplog.at_level(logging.WARNING):
+        config = ConfigLoader(path).load_config()
+    assert _unknown(caplog) == [
+        "Unknown config key 'processing.chunking.content_type' is ignored"
+    ]
+    assert "content_type" not in config.processing.chunking.model_dump()

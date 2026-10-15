@@ -60,7 +60,7 @@ def load_corpus_texts(
                 text = path.read_text(encoding="utf-8")
             else:
                 document = ParserFactory.create_parser(path, config).parse_file(path)
-                text = (document.content.text if document.content else None) or ""
+                text = document.page_content
         except Exception as e:
             logger.warning("Could not read %s: %s", path, e)
             continue

@@ -40,11 +40,9 @@ def test_object_parses_via_factory(tmp_path: Path) -> None:
     assert parser.loader_class is JsonTextLoader
 
     doc = parser.parse_file(path)
-    text = doc.content.text
+    text = doc.page_content
     assert '"vendor": "Vendor Co"' in text  # keys kept for extraction context
     assert "Delivery within 30 days" in text
-    assert doc.file_type == "json"
-    assert doc.total_pages == 1
     assert doc.metadata["source"] == str(path)
 
 
@@ -83,7 +81,7 @@ def test_non_utf8_file_retried_with_detected_encoding(tmp_path: Path) -> None:
         encoding="cp949",
     )
     doc = ParserFactory.create_parser(path, Config()).parse_file(path)
-    assert "공급자" in doc.content.text
+    assert "공급자" in doc.page_content
 
 
 def test_invalid_json_fails_with_processing_error(tmp_path: Path) -> None:

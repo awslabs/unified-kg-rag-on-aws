@@ -345,8 +345,6 @@ def _scoped_document(relative: str, text: str) -> Document:
         document_id=relative,
         file_name=relative,
         file_path=f"/staging/{relative}",
-        file_type="txt",
-        total_pages=1,
     )
     assign_document_identity(document, "/staging")
     assign_registry_source(document, _SOURCE)

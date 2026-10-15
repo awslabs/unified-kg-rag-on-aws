@@ -94,12 +94,7 @@ logger = get_logger(__name__)
 
 def compute_content_hash(document: Document) -> str:
     """Compute a content hash for change detection over the document text."""
-    text = ""
-    if document.content and document.content.text:
-        text = document.content.text
-    elif document.page_content:
-        text = document.page_content
-    return compute_text_hash(text)
+    return compute_text_hash(document.page_content)
 
 
 def _document_suffix(document: Document) -> str | None:

@@ -6,11 +6,7 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Any
 
-from langchain_text_splitters import (
-    HTMLHeaderTextSplitter,
-    MarkdownHeaderTextSplitter,
-    RecursiveCharacterTextSplitter,
-)
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from pydantic import BaseModel, Field
 from tqdm import tqdm
 
@@ -158,23 +154,10 @@ class LineBasedBoundaryProcessor:
         self.max_line_miss_rate = max_line_miss_rate
 
     def extract_line_numbers(self, boundaries: dict[str, Any] | list[Any]) -> list[int]:
-        try:
-            if not boundaries:
-                return []
-
-            if self._is_single_chunk_request(boundaries):
-                return []
-
-            line_numbers = self._extract_line_numbers_from_response(boundaries)
-
-            valid_line_numbers = [
-                num for num in line_numbers if isinstance(num, int) and num > 1
-            ]
-            return sorted(set(valid_line_numbers))
-
-        except Exception as e:
-            logger.debug("Failed to extract line numbers: %s", e)
+        if not boundaries or self._is_single_chunk_request(boundaries):
             return []
+        line_numbers = self._extract_line_numbers_from_response(boundaries)
+        return sorted({num for num in line_numbers if isinstance(num, int) and num > 1})
 
     @staticmethod
     def _is_single_chunk_request(boundaries: dict[str, Any] | list[Any]) -> bool:
@@ -186,32 +169,24 @@ class LineBasedBoundaryProcessor:
         self, boundaries: dict[str, Any] | list[Any]
     ) -> list[int]:
         line_numbers = []
-
-        try:
-            if isinstance(boundaries, dict):
-                chunk_boundaries = boundaries.get("chunk_boundaries")
-                if chunk_boundaries:
+        if isinstance(boundaries, dict):
+            chunk_boundaries = boundaries.get("chunk_boundaries")
+            if chunk_boundaries:
+                line_numbers.extend(
+                    self._extract_from_chunk_boundaries(chunk_boundaries)
+                )
+            if "line_number" in boundaries:
+                line_numbers.extend(
+                    self._extract_from_line_number_field(boundaries["line_number"])
+                )
+        elif isinstance(boundaries, list):
+            for item in boundaries:
+                if isinstance(item, int):
+                    line_numbers.append(item)
+                elif isinstance(item, dict) and "line_number" in item:
                     line_numbers.extend(
-                        self._extract_from_chunk_boundaries(chunk_boundaries)
+                        self._extract_from_line_number_field(item["line_number"])
                     )
-
-                if "line_number" in boundaries:
-                    line_numbers.extend(
-                        self._extract_from_line_number_field(boundaries["line_number"])
-                    )
-
-            elif isinstance(boundaries, list):
-                for item in boundaries:
-                    if isinstance(item, int):
-                        line_numbers.append(item)
-                    elif isinstance(item, dict) and "line_number" in item:
-                        line_numbers.extend(
-                            self._extract_from_line_number_field(item["line_number"])
-                        )
-
-        except Exception as e:
-            logger.debug("Failed to extract line numbers from response: %s", e)
-
         return line_numbers
 
     def _extract_from_chunk_boundaries(self, chunk_boundaries: Any) -> list[int]:
@@ -514,7 +489,7 @@ class BaseChunker(ABC):
     ) -> None:
         doc_start_time = time.time()
         try:
-            if doc.is_error or not doc.content:
+            if doc.is_error:
                 self.stats.num_failed_documents += 1
                 return
 
@@ -620,23 +595,6 @@ class BaseChunker(ABC):
         # CountTokens API does not accept embedding models.
         return estimate_token_count(text)
 
-    def _document_body(self, doc: Document) -> tuple[str | None, str]:
-        """The body to chunk and its format (``"text"``, ``"markdown"``, ``"html"``).
-
-        ``content_type`` selects the document's markdown or HTML body when its
-        parser produced one; every document has a plain-text body, which is
-        used otherwise. The format decides whether pre-chunks follow headers,
-        so plain text is never run through a header splitter.
-        """
-        if not doc.content:
-            return None, "text"
-        content_type = self.chunking_config.content_type
-        body = getattr(doc.content, content_type, None)
-        if isinstance(body, str) and body:
-            return body, content_type
-        text = doc.content.text
-        return (text, "text") if text else (None, "text")
-
 
 class SimpleTextChunker(BaseChunker):
     def __init__(
@@ -653,7 +611,7 @@ class SimpleTextChunker(BaseChunker):
 
     def _chunk_single_document(self, doc: Document) -> list[TextUnit]:
         try:
-            content, _ = self._document_body(doc)
+            content = doc.page_content
             if not content:
                 return []
 
@@ -734,7 +692,7 @@ class IntelligentTextChunker(BaseChunker):
         """
         planned: dict[int, list[str]] = {}
         for doc in documents:
-            if not doc.is_error and doc.content:
+            if not doc.is_error:
                 planned[id(doc)] = self._pre_chunks_of(doc)
         responses = self._request_boundaries(list(planned.values()), "all documents")
         self._planned = {
@@ -749,8 +707,8 @@ class IntelligentTextChunker(BaseChunker):
             self._planned = {}
 
     def _pre_chunks_of(self, doc: Document) -> list[str]:
-        content, content_format = self._document_body(doc)
-        return self._create_pre_chunks(content, content_format) if content else []
+        content = doc.page_content
+        return self._create_pre_chunks(content) if content else []
 
     def _chunk_single_document(self, doc: Document) -> list[TextUnit]:
         try:
@@ -953,7 +911,8 @@ class IntelligentTextChunker(BaseChunker):
             return self._extract_chunks_from_line_indices(text, indices)
 
         except Exception as e:
-            logger.debug("Failed LLM line-based boundary chunking: %s", e)
+            # The pre-chunk is split by size instead (_handle_llm_failure).
+            logger.warning("Failed LLM line-based boundary chunking: %s", e)
             return None
 
     def _extract_chunks_from_line_indices(
@@ -980,69 +939,12 @@ class IntelligentTextChunker(BaseChunker):
         # Line-boundary slices are disjoint: allow no overlap between them.
         return self.chunk_processor.merge_small_chunks(chunks, source=text, overlap=0)
 
-    def _create_pre_chunks(
-        self, content: str, content_format: str = "text"
-    ) -> list[str]:
-        """Split a body into pre-chunks, at headers for markdown and HTML."""
+    def _create_pre_chunks(self, content: str) -> list[str]:
         try:
-            if content_format in ("markdown", "html"):
-                logger.debug("Creating structured pre-chunks for %s", content_format)
-                return self._create_structured_pre_chunks(content, content_format)
             return self.pre_splitter.split_text(content)
         except Exception as e:
             logger.warning("Failed to create pre-chunks: %s", e)
             return [content] if content else []
-
-    def _create_structured_pre_chunks(
-        self, content: str, content_type: str
-    ) -> list[str]:
-        try:
-            splitter = self._get_structured_splitter(content_type)
-            return self._merge_structured_chunks(splitter.split_text(content))
-        except Exception as e:
-            logger.warning(
-                "Failed to create structured pre-chunks for %s: %s", content_type, e
-            )
-            return self.pre_splitter.split_text(content)
-
-    def _merge_structured_chunks(self, structured_chunks: list[Any]) -> list[str]:
-        try:
-            final_pre_chunks = []
-            i = 0
-            while i < len(structured_chunks):
-                current_content, i = self._merge_small_structured_chunks(
-                    structured_chunks, i
-                )
-                if (
-                    len(current_content)
-                    > self.config.processing.chunking.pre_chunk_size
-                ):
-                    final_pre_chunks.extend(
-                        self.pre_splitter.split_text(current_content)
-                    )
-                else:
-                    final_pre_chunks.append(current_content)
-                i += 1
-            return final_pre_chunks
-        except Exception as e:
-            logger.warning("Failed to merge structured chunks: %s", e)
-            return [chunk.page_content for chunk in structured_chunks]
-
-    def _merge_small_structured_chunks(
-        self, chunks: list[Any], start_idx: int
-    ) -> tuple[str, int]:
-        i = start_idx
-        content = chunks[i].page_content
-        config = self.config.processing.chunking
-
-        while len(content) < config.min_chunk_size and (i + 1) < len(chunks):
-            next_content = chunks[i + 1].page_content
-            if len(content) + len(next_content) <= config.pre_chunk_size:
-                content += "\n\n" + next_content
-                i += 1
-            else:
-                break
-        return content, i
 
     def _create_fallback_chunks(self, pre_chunk: str) -> list[str]:
         chunks = (
@@ -1073,24 +975,6 @@ class IntelligentTextChunker(BaseChunker):
             )
 
         return inputs
-
-    @staticmethod
-    def _get_structured_splitter(
-        content_type: str,
-    ) -> MarkdownHeaderTextSplitter | HTMLHeaderTextSplitter:
-        try:
-            if content_type == "markdown":
-                return MarkdownHeaderTextSplitter(
-                    headers_to_split_on=[("#", "H1"), ("##", "H2"), ("###", "H3")],
-                    strip_headers=False,
-                )
-            return HTMLHeaderTextSplitter(
-                headers_to_split_on=[("h1", "H1"), ("h2", "H2"), ("h3", "H3")]
-            )
-        except Exception as e:
-            raise DataProcessingError(
-                f"Failed to create structured splitter for {content_type}: {e}"
-            ) from e
 
     def _log_completion_summary(self, total_time: float) -> None:
         super()._log_completion_summary(total_time)

@@ -41,8 +41,6 @@ def _doc(path: str) -> Document:
         document_id=path,
         file_name=path,
         file_path=path,
-        file_type="txt",
-        total_pages=1,
     )
 
 

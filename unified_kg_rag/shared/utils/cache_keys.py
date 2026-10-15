@@ -164,6 +164,13 @@ _DERIVED_PATHS: dict[str, Callable[[Config], Any]] = {
     # The index and label prefixes as the registry namespace sees them
     # (``None`` while they are the defaults).
     "indexing.store_namespace_tag": lambda config: store_namespace_tag(config.indexing),
+    # The removed ``content_type`` stays in at "text", the only value that
+    # ever took effect, so stage caches and extraction fingerprints keep
+    # their released keys.
+    "processing.chunking": lambda config: config.processing.chunking.model_dump(
+        mode="json"
+    )
+    | {"content_type": "text"},
 }
 
 

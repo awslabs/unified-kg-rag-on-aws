@@ -112,12 +112,7 @@ class FileParser(BaseParser):
                 langchain_docs, file_path, index_value=index_value
             )
 
-            if (
-                document.content
-                and hasattr(document.content, "text")
-                and isinstance(document.content.text, str)
-                and document.content.text.strip() == ""
-            ):
+            if not document.page_content.strip():
                 raise DataProcessingError(
                     f"Parsed text is empty for '{self.file_type_name}' '{file_path}'"
                 )

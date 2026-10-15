@@ -143,8 +143,6 @@ def _document(path: str) -> Document:
         document_id=f"run-{path}",
         file_name=path,
         file_path=path,
-        file_type="txt",
-        total_pages=1,
     )
 
 

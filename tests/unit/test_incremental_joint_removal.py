@@ -46,8 +46,6 @@ def _doc(path: str, text: str) -> Document:
         document_id=path,
         file_name=path.rsplit("/", 1)[-1],
         file_path=path,
-        file_type="txt",
-        total_pages=1,
     )
 
 
