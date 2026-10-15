@@ -370,7 +370,8 @@ To check it works:
 
 ### Langfuse
 
-A local Langfuse (v3) runs from its Docker Compose file:
+A local Langfuse runs from its Docker Compose file (it pulls Langfuse v4; v3
+works the same way):
 
 ```bash
 git clone --depth 1 https://github.com/langfuse/langfuse.git
@@ -393,12 +394,18 @@ observability:
 ```
 
 Each query is a `kg_rag.query` trace, grouped under its conversation in
-Sessions (and under `RAGInput.user_id` in Users); model calls show as
-generations with their token usage. For Langfuse Cloud set `LANGFUSE_HOST` to
+Sessions when `RAGInput.conversation_id` is set (and under `RAGInput.user_id`
+in Users); model calls show as generations with their token usage. Langfuse v4
+runs in `events_only` mode by default, where the public `/api/public/traces`,
+`/api/public/observations` and `/api/public/sessions` endpoints are disabled:
+read spans through `/api/public/v2/observations` or the UI. For Langfuse Cloud set `LANGFUSE_HOST` to
 the region's URL (for example `https://cloud.langfuse.com`). Langfuse accepts
-OTLP over HTTP only. If you set `OTEL_EXPORTER_OTLP_HEADERS` yourself instead
-of the two keys, include `x-langfuse-ingestion-version=4`, or traces can take
-minutes to appear.
+OTLP over HTTP only. If you set `OTEL_EXPORTER_OTLP_ENDPOINT` instead of
+`LANGFUSE_HOST`, give it `<host>/api/public/otel` (the exporter appends
+`/v1/traces`; the host root returns 404). If you set
+`OTEL_EXPORTER_OTLP_HEADERS` yourself instead of the two keys, include
+`x-langfuse-ingestion-version=4`: Langfuse Cloud can otherwise take minutes to
+show traces (a self-hosted v4 server writes them at once either way).
 
 ### Arize Phoenix
 
