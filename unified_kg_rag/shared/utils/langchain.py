@@ -13,7 +13,6 @@ import tenacity
 from langchain_core.callbacks import BaseCallbackHandler, BaseCallbackManager
 from langchain_core.exceptions import OutputParserException
 from langchain_core.output_parsers import XMLOutputParser
-from langchain_core.runnables import RunnableConfig
 from lxml import etree
 from pydantic import BaseModel, Field
 from tenacity import RetryCallState
@@ -47,10 +46,6 @@ BATCH_ITEM_FAILED: Final = _BatchItemFailed()
 returned in place as this marker. Test it with ``result is BATCH_ITEM_FAILED``;
 an empty result (``{}``, ``""``) is a real LLM output, not a failure.
 """
-
-
-# Internal marker: the item's first call failed and it is called again.
-_RETRY: Final = object()
 
 
 def _batch_outcome(items: list[Any], results: list[Any]) -> dict[str, Any]:
@@ -126,9 +121,9 @@ class BatchProcessor(BaseModel):
     max_attempts: int = Field(
         default=5,
         ge=1,
-        description="Calls an item gets after its first call fails with a "
-        "retryable error: up to this many while its error stays retryable. An "
-        "item whose first error is not retryable is not called again",
+        description="Total calls per item, including the first (1 disables "
+        "the retry). Only retryable errors are retried: an item whose error is "
+        "not retryable is not called again",
     )
     call_timeout_seconds: int = Field(
         default=300,
@@ -264,14 +259,9 @@ class BatchProcessor(BaseModel):
 
         def process_one(single_input: dict[str, Any]) -> Any:
             try:
-                return timed_sequential_func(single_input)
-            except Exception as error:
-                if not self._retry_after(task_name, error):
-                    return BATCH_ITEM_FAILED
-            try:
                 return retrying_sequential_func(single_input)
             except Exception as error:
-                return self._failed_every_attempt(task_name, error)
+                return self._failed(task_name, error)
 
         results: list[Any] = [BATCH_ITEM_FAILED] * len(inputs)
         progress = ProgressLogger(task_name, len(inputs))
@@ -319,26 +309,13 @@ class BatchProcessor(BaseModel):
         )
         return inputs
 
-    def _retry_after(self, task_name: str, error: BaseException) -> bool:
-        """Whether an item whose first call raised ``error`` is called again.
-
-        The retry runs through the retry decorator, whose first attempt is a
-        new call: a permanent error (a truncated response, access denied)
-        would cost a second call that fails the same way.
-        """
+    def _failed(self, task_name: str, error: BaseException) -> Any:
         if self._is_retryable(error):
-            logger.warning(
-                "Item of '%s' failed (%s); retrying it alone", task_name, error
+            logger.error("Item failed every attempt in '%s': %s", task_name, error)
+        else:
+            logger.error(
+                "Item failed in '%s' with a non-retryable error: %s", task_name, error
             )
-            return True
-        logger.error(
-            "Item failed in '%s' with a non-retryable error: %s", task_name, error
-        )
-        return False
-
-    @staticmethod
-    def _failed_every_attempt(task_name: str, error: BaseException) -> Any:
-        logger.error("Item failed every attempt in '%s': %s", task_name, error)
         return BATCH_ITEM_FAILED
 
     @staticmethod
@@ -392,18 +369,15 @@ class BatchProcessor(BaseModel):
         self,
         items_to_process: list[Any],
         prepare_inputs_func: Callable[[list[Any]], list[dict[str, Any]]],
-        batch_func: Callable[..., Any],
         sequential_func: Callable[..., Any],
         task_name: str,
         show_progress: bool = True,
     ) -> list[Any]:
         """The async :meth:`execute_with_fallback`, on the event loop.
 
-        Each item is a one-input ``batch_func`` call (``Runnable.abatch``
-        with ``return_exceptions``), up to ``max_concurrency`` in flight. An
-        item whose call failed is called again through ``sequential_func``
-        (``Runnable.ainvoke``) with retries; a call that raised instead of
-        returning the error in place is always called again.
+        Each item is one awaited ``sequential_func`` call (``Runnable.ainvoke``),
+        up to ``max_concurrency`` in flight; an item whose call fails with a
+        retryable error is retried alone (``max_attempts``).
         """
         with observability.span(
             "kg_rag.batch", task=task_name, items=len(items_to_process)
@@ -411,7 +385,6 @@ class BatchProcessor(BaseModel):
             results = await self._aexecute_with_fallback(
                 items_to_process,
                 prepare_inputs_func,
-                batch_func,
                 sequential_func,
                 task_name,
                 show_progress,
@@ -423,7 +396,6 @@ class BatchProcessor(BaseModel):
         self,
         items_to_process: list[Any],
         prepare_inputs_func: Callable[[list[Any]], list[dict[str, Any]]],
-        batch_func: Callable[..., Any],
         sequential_func: Callable[..., Any],
         task_name: str,
         show_progress: bool,
@@ -432,39 +404,18 @@ class BatchProcessor(BaseModel):
         if not inputs:
             return []
 
-        # batch_func follows the Runnable.batch/abatch signature; per-item
-        # exceptions come back in place.
-        batch_config = RunnableConfig(max_concurrency=self.max_concurrency)
         retrying_sequential_func = self._create_retry_decorator(task_name)(
             sequential_func
         )
         semaphore = asyncio.Semaphore(self.max_concurrency)
         progress = ProgressLogger(task_name, len(inputs))
 
-        async def first_call(single_input: dict[str, Any]) -> Any:
-            try:
-                (result,) = await batch_func(
-                    [single_input], config=batch_config, return_exceptions=True
-                )
-            except Exception as error:
-                logger.warning(
-                    "Batch call of '%s' failed (%s); calling the item on its own",
-                    task_name,
-                    error,
-                )
-                return _RETRY
-            if not isinstance(result, BaseException):
-                return result
-            return _RETRY if self._retry_after(task_name, result) else BATCH_ITEM_FAILED
-
         async def process_one(single_input: dict[str, Any]) -> Any:
             async with semaphore:
-                result = await first_call(single_input)
-                if result is _RETRY:
-                    try:
-                        result = await retrying_sequential_func(single_input)
-                    except Exception as error:
-                        result = self._failed_every_attempt(task_name, error)
+                try:
+                    result = await retrying_sequential_func(single_input)
+                except Exception as error:
+                    result = self._failed(task_name, error)
             progress.update()
             return result
 

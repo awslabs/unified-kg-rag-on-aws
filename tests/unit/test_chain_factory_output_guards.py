@@ -238,7 +238,6 @@ async def test_truncated_item_is_called_once_async() -> None:
     ).aexecute_with_fallback(
         items_to_process=[_INPUT],
         prepare_inputs_func=lambda items: list(items),
-        batch_func=chain.abatch,
         sequential_func=chain.ainvoke,
         task_name="extraction",
         show_progress=False,

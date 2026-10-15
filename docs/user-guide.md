@@ -585,7 +585,7 @@ LLM stages are Bedrock-I/O-bound, so concurrency can far exceed the CPU count.
 | Key | Default | What it does / when to change |
 |---|---|---|
 | `processing.max_concurrency` | `20` | LLM calls an ingestion stage keeps in flight; the next item starts as soon as one finishes. Lower it if Bedrock throttles; raise it if quota allows. |
-| `processing.max_attempts` | `5` | Attempts for an ingestion LLM item called again after its first call fails. Transient Bedrock errors, call timeouts and unparseable output are retried; other errors fail fast. `1` disables the retry. |
+| `processing.max_attempts` | `5` | Attempts per ingestion LLM item, including the first call. Transient Bedrock errors, call timeouts and unparseable output are retried; other errors fail fast. `1` disables the retry. |
 | `processing.io_workers` | `64` | Threads for blocking query-path I/O (Bedrock calls, Neptune traversals, reranking) in the CLIs and the chain's sync methods. Python's default caps it at `min(32, CPUs + 4)`, six on a 2-vCPU task. An async host calls `configure_event_loop(asyncio.get_running_loop(), config.processing.io_workers)` (from `unified_kg_rag.shared.utils`) at startup. |
 | `processing.ignore_errors` | `false` | When a whole step fails (a batch call, a translation language, an evaluator, global map/reduce, the DRIFT primer, the auto router), log it and continue with an empty or degraded result instead of raising. Items whose own LLM call fails are always skipped and reported, whatever this says. |
 | `processing.deduplicate` | `false` | Drop near-duplicate documents before extraction. Two documents are near-duplicates when the Jaccard similarity of their character 3-gram sets, estimated with a 128-permutation MinHash, is at least 0.9; of each pair the first is kept (an incremental run keeps the already-indexed copy). These parameters are fixed. |
@@ -891,6 +891,9 @@ spans and exported as given, so pass an opaque id, not an e-mail address.
   `kg_rag.rerank` (`kg_rag.rerank.status` = `ok`, `empty` or `error`, document
   counts) → `kg_rag.context_build` (tokens used vs the token budget) → the
   answer's `chat <model>` span.
+- Evaluation (`run-eval`): one `kg_rag.batch` root for answer generation (item
+  and failure counts only) → one `kg_rag.query` per question, which carries
+  that question's input and output.
 - Model spans follow the OpenTelemetry GenAI semantic conventions (span
   kind `CLIENT`, as for embedding and Bedrock rerank spans):
   `gen_ai.request.model`, `gen_ai.request.max_tokens` / `temperature`,
