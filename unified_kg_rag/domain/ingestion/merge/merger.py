@@ -63,6 +63,11 @@ def _merge_entity_fields(surviving: Entity, incoming: Entity) -> None:
     field semantics as the full-build resolver (``EntityResolver._merge_entities``):
     description union, text-unit/community-id union, frequency = #text-units,
     max confidence/rank, first-known type, attribute union.
+
+    The name stays the surviving one, even when a gleaning correction renamed
+    ``incoming`` (same id, another name): edges carry a copy of their
+    endpoints' names, and the stored edges the delta does not rewrite would
+    keep naming the old one. A full rebuild applies such a rename.
     """
     surviving.description = merge_descriptions(
         (surviving.description, incoming.description)

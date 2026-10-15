@@ -52,6 +52,16 @@ class TestMergeEntities:
         assert remap == {}
         assert merged[0].text_unit_ids == ["t1", "t2"]
 
+    def test_a_renamed_delta_copy_keeps_the_stored_name(self) -> None:
+        # Gleaning renamed the delta's copy in place (the id still derives
+        # from "Acme"). The stored edges the delta does not rewrite name
+        # "Acme", so the entity must too; a full rebuild applies the rename.
+        old = [_entity("e1", "Acme", text_unit_ids=["t1"])]
+        delta = [_entity("e1", "Acme Corporation", text_unit_ids=["t2"])]
+        merged, remap = merge_entities(old, delta)
+        assert [(e.id, e.name) for e in merged] == [("e1", "Acme")]
+        assert remap == {}
+
     def test_frequency_recomputed_from_text_units(self) -> None:
         old = [_entity("e1", "Alice", rank=5, text_unit_ids=["t1", "t2"])]
         delta = [_entity("e9", "Alice", text_unit_ids=["t2", "t3"])]
