@@ -161,7 +161,7 @@ positive integers (`opensearch_count`, `neptune_instances`, `sfn_timeout_hours`,
 ### Well-Architected
 
 The stacks apply WAF defaults out of the box — least-privilege IAM
-(`bedrock:InvokeModel` scoped to model/inference-profile ARNs, `neptune-db:connect`,
+(`bedrock:InvokeModel` and `bedrock:CountTokens` scoped to model/inference-profile ARNs, `neptune-db:connect`,
 domain-scoped `es:ESHttp*`), encryption in transit + at rest, Graviton instances,
 S3 cache
 lifecycle (checkpoint prefixes only) + access logs, Step Functions X-Ray tracing + execution logging,

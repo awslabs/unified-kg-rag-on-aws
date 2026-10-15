@@ -1800,7 +1800,8 @@ custom_prompts:
 ### IAM 권한
 
 CLI를 실행하는 주체에 다음 권한을 주세요. Bedrock(설정한 모델 ID에 대한 InvokeModel /
-InvokeModelWithResponseStream과 임베딩), Neptune(`use_iam: true`일 때 connect /
+InvokeModelWithResponseStream / CountTokens와 임베딩. CountTokens가 없으면 토큰 수를
+추정값으로 계산함), Neptune(`use_iam: true`일 때 connect /
 SigV4), OpenSearch(설정한 인덱스 읽기·쓰기), S3(설정한 버킷), DynamoDB(증분 인덱싱을
 켠 경우).
 

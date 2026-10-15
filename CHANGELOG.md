@@ -642,6 +642,10 @@ Library API (Python callers and custom backends).
   only LightRAG `mix`/`hybrid` use the relationship vector index; `local`
   (relationship section, bridge relationships), `simple` and `drift` query it
   too (#295).
+- CDK task role: `bedrock:CountTokens` is granted with `InvokeModel` on the
+  same model ARNs, so models that accept CountTokens get exact token counts
+  on the deployed stack instead of silently falling back to estimates after
+  an `AccessDenied` (#PR).
 - CloudWatch tracing (`enable_cloudwatch_tracing`): the task role keeps
   only `xray:PutTraceSegments`, the one action the X-Ray OTLP traces
   endpoint authorizes (a role with only `xray:PutSpans` gets a 403);

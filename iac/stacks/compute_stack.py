@@ -153,7 +153,11 @@ class ComputeStack(Stack):
         # through a profile (resolved at runtime) would otherwise be denied,
         # and a profile call still needs the foundation-model ARNs listed, so
         # this grants no model beyond them. Listing any inference-profile ARN
-        # scopes profiles to exactly the ARNs given.
+        # scopes profiles to exactly the ARNs given. CountTokens (exact token
+        # counts for models that accept it) authorizes against the
+        # foundation-model resource only (Service Authorization Reference), so
+        # the same foundation-model ARNs cover it; without it the counter
+        # gets AccessDenied and silently falls back to estimates.
         partition = self.partition
         profile_resources = [
             f"arn:{partition}:bedrock:*:{self.account}:inference-profile/*",
@@ -174,6 +178,7 @@ class ComputeStack(Stack):
                 actions=[
                     "bedrock:InvokeModel",
                     "bedrock:InvokeModelWithResponseStream",
+                    "bedrock:CountTokens",
                 ],
                 resources=bedrock_resources,
             )
