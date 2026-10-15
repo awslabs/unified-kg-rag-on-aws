@@ -385,7 +385,7 @@ Library API (Python callers and custom backends).
   `minhash_permutations` and `n_grams_size` arguments are removed, and the
   user guide now states the fixed near-duplicate rule of
   `processing.deduplicate` (MinHash Jaccard >= 0.9 over character 3-grams)
-  (#PR).
+  (#299).
 - Context packing ranks sections by their retrieval score alone; the fixed
   per-type priority weights (text 1.3 ... general 0.8) are gone. The
   per-type shares (`search.token_manager.type_budgets`) already decided the
@@ -683,7 +683,7 @@ Library API (Python callers and custom backends).
   stage with `DocStatusRegistryError` when the registry cannot be cleared,
   instead of logging a warning and indexing on: the stale records would make
   the next incremental run skip the re-ingested documents as unchanged
-  (#PR).
+  (#299).
 - CloudWatch tracing (`enable_cloudwatch_tracing`): the task role keeps
   only `xray:PutTraceSegments`, the one action the X-Ray OTLP traces
   endpoint authorizes (a role with only `xray:PutSpans` gets a 403);
