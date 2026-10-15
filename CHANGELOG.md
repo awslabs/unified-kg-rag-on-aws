@@ -1713,7 +1713,7 @@ Library API (Python callers and custom backends).
   whose edges all weigh 0, and an incremental run clusters only the new
   documents' subgraph, so one such document crashed the run and every
   resume. Such a graph now gets one community per entity, as a graph
-  without edges does (#PR).
+  without edges does (#304).
 - An incremental run no longer stores a relationship twice when a gleaning
   correction reversed or retyped it in one document and a later document
   states the corrected form. The corrected edge kept the id of its original
@@ -1722,7 +1722,7 @@ Library API (Python callers and custom backends).
   two vector documents, where a full build has one. A correction now gives
   the edge the id of its corrected key; an edge stated the uncorrected way
   stays a separate edge, as in a full build. Edges stored by an earlier
-  version keep their id until a full rebuild (#PR).
+  version keep their id until a full rebuild (#304).
 - Graph resolution and the cross-run merge merge attributes with one
   function (`base_processor.merge_attributes`), so a full build and an
   incremental build give an item the same document `filters`: the
@@ -1730,7 +1730,7 @@ Library API (Python callers and custom backends).
   one-element list instead of a scalar) when the stored item had no
   filters, and the vector store's `attr_*` fields followed. An item without
   attributes now has none (`None`) on both paths; resolution gave it `{}`
-  (#PR).
+  (#304).
 
 ### Removed
 - `Entity.frequency`: it counted an entity's text units in every merge path
