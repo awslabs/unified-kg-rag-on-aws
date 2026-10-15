@@ -788,7 +788,7 @@ extra 없이 추적을 켜면 시작할 때 extra 이름을 알려 주는 `Confi
 |---|---|---|
 | `observability.enabled` | `false` | 스팬을 기록합니다. `OTEL_SDK_DISABLED=true`이면 이 값과 관계없이 꺼집니다. |
 | `observability.backend` | `"none"` | `none`: 호스트 애플리케이션이나 `opentelemetry-instrument`가 설정한 프로세스 전역 트레이서 프로바이더로 스팬을 보냅니다. `otlp`: 패키지가 OTLP 익스포터를 직접 설치합니다. `langfuse` / `phoenix`: 같은 OTLP 익스포터를 Langfuse나 Arize Phoenix로 향하게 하고 해당 서비스의 속성 이름을 더합니다(아래 참고). |
-| `observability.capture_content` | `false` | 모델 스팬에 프롬프트와 응답 본문도 기록합니다. 기밀 코퍼스에서는 끈 채로 두세요. |
+| `observability.capture_content` | `false` | 모델 스팬에 프롬프트와 응답 본문을, `kg_rag.query` 스팬에 질의와 답변을 기록합니다(*트레이스 구조* 참고). 기밀 코퍼스에서는 끈 채로 두세요. |
 | `observability.redact_patterns` | `[]` | `[REDACTED]`로 바꿀 정규식 목록입니다. 기록하는 본문에 적용하고, `otlp`/`langfuse`/`phoenix`에서는 내보내는 모든 문자열 속성, 이벤트 속성(예외 메시지), 상태 메시지에도 적용합니다. |
 | `observability.sample_rate` | `1.0` | 남길 루트 트레이스의 비율입니다(`otlp`, `langfuse`, `phoenix`). 하위 스팬은 루트의 결정을 따릅니다. `none`에서는 호스트의 트레이서 프로바이더가 샘플링합니다. |
 | `observability.service_name` | `"unified-kg-rag"` | `service.name` 리소스 속성이자 Phoenix 프로젝트 이름입니다. `OTEL_SERVICE_NAME`(과 `PHOENIX_PROJECT_NAME`)이 설정되어 있으면 그 값이 우선합니다. |
@@ -829,7 +829,9 @@ Secrets Manager나 태스크 시크릿에서 주입하세요.
   단계의 수치 지표를 `kg_rag.stage.<metric>`으로, 단계가 예외로 끝나면 `error.type`과
   예외) → `kg_rag.batch` / `kg_rag.batch.chunk`(항목 수와 실패 수) → 모델
   호출마다 `chat <model>` 스팬, 임베딩 호출마다 `embeddings <model>` 스팬
-- 질의: `kg_rag.query` → `kg_rag.strategy`(질의의 [재순위화 상태](#재순위화-상태)인
+- 질의: `kg_rag.query`(`capture_content`일 때 마스킹한 질의를 `input.value`로,
+  `stream` / `astream`이 아니면 마스킹한 답변을 `output.value`로 기록하며 Langfuse와
+  Phoenix는 이 값을 트레이스 목록에 표시) → `kg_rag.strategy`(질의의 [재순위화 상태](#재순위화-상태)인
   `kg_rag.rerank_status`) → `kg_rag.retrieve`(결과 유형별 적중 수와
   최대 50개의 소스 ID) → `kg_rag.fusion`(입력·출력 수, 해당 단계의
   `kg_rag.rerank_status`) → `kg_rag.rerank`

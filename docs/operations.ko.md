@@ -597,8 +597,8 @@ Langfuse나 Phoenix는 인터넷 송신이 필요한데, 프라이빗 모드 스
 자격 증명을 뺀 엔드포인트와 헤더 이름만 나오고 값은 나오지 않습니다.
 
 개인정보 기본값: 스팬에는 개수, ID, 모델 이름, 토큰 사용량만 들어갑니다.
-`capture_content: true`로 설정하면 모델 스팬에 프롬프트와 응답 본문이
-(`redact_patterns` 적용 후) 추가되므로, 트레이스 백엔드가 코퍼스 데이터를 보관해도
+`capture_content: true`로 설정하면 모델 스팬에 프롬프트와 응답 본문이, `kg_rag.query`
+스팬에 질의와 답변이 (`redact_patterns` 적용 후) 추가되므로, 트레이스 백엔드가 코퍼스 데이터를 보관해도
 되는 환경에서만 켜세요. `otlp`, `langfuse`, `phoenix`에서는 내보낼 때도 모든 문자열
 속성, 이벤트 속성(예외 메시지에 질의가 들어갈 수 있음), 상태 메시지에
 `redact_patterns`를 적용하며 `session.id`와 `user.id`도 대상입니다. `none`에서는

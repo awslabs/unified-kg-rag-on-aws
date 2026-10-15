@@ -634,8 +634,8 @@ as ECS task secrets from Secrets Manager. The start-up line
 credentials and the header names, never their values.
 
 Privacy defaults: spans carry counts, ids, model names and token usage only.
-`capture_content: true` adds prompt and completion text to model spans (after
-`redact_patterns`); enable it only where the trace backend may hold corpus
+`capture_content: true` adds prompt and completion text to model spans, and
+the query and answer to the `kg_rag.query` span (after `redact_patterns`); enable it only where the trace backend may hold corpus
 data. With `otlp`, `langfuse` or `phoenix`, `redact_patterns` also applies at
 export to every string attribute, event attribute (an exception message can
 quote a query) and status message, `session.id` and `user.id` included; with

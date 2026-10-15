@@ -834,7 +834,7 @@ OpenTelemetry-related is imported.
 |---|---|---|
 | `observability.enabled` | `false` | Emit spans. `OTEL_SDK_DISABLED=true` turns it off regardless. |
 | `observability.backend` | `"none"` | `none`: spans go to the process's global tracer provider, which a host application or `opentelemetry-instrument` sets up. `otlp`: the package installs an OTLP exporter. `langfuse` / `phoenix`: the same OTLP exporter pointed at Langfuse or Arize Phoenix, with that vendor's attribute names added (see below). |
-| `observability.capture_content` | `false` | Also record prompt and completion text on model spans. Leave off for confidential corpora. |
+| `observability.capture_content` | `false` | Also record prompt and completion text on model spans, and the query and answer on the `kg_rag.query` span (see *Trace shape*). Leave off for confidential corpora. |
 | `observability.redact_patterns` | `[]` | Regular expressions replaced with `[REDACTED]` in captured content and, with `otlp`/`langfuse`/`phoenix`, in every exported string attribute, event attribute (exception messages) and status message. |
 | `observability.sample_rate` | `1.0` | Fraction of root traces kept (`otlp`, `langfuse`, `phoenix`); child spans follow their root. With `none` the host's tracer provider samples. |
 | `observability.service_name` | `"unified-kg-rag"` | `service.name` resource attribute, and the Phoenix project; `OTEL_SERVICE_NAME` (and `PHOENIX_PROJECT_NAME`) win when set. |
@@ -878,7 +878,10 @@ spans and exported as given, so pass an opaque id, not an e-mail address.
   units, and `error.type` plus the exception when it crashed) → `kg_rag.batch` / `kg_rag.batch.chunk`
   (item and failure counts) → one `chat <model>` span per model call and
   `embeddings <model>` spans.
-- Query: `kg_rag.query` → `kg_rag.strategy` (`kg_rag.rerank_status`, the
+- Query: `kg_rag.query` (with `capture_content`, the redacted query as
+  `input.value` and, outside `stream` / `astream`, the redacted answer as
+  `output.value`, which Langfuse and Phoenix show in their trace lists) →
+  `kg_rag.strategy` (`kg_rag.rerank_status`, the
   query's [rerank status](#rerank-status)) → `kg_rag.retrieve` (hit counts per
   result type and up to 50 source ids) → `kg_rag.fusion` (in/out counts, the
   step's `kg_rag.rerank_status`) →

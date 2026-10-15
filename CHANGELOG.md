@@ -278,6 +278,11 @@ Library API (Python callers and custom backends).
   with `indexing.reset: true` to rebuild in the embedded stores (#273).
 
 ### Added
+- With `observability.capture_content`, the root `kg_rag.query` span records
+  the redacted query as `input.value` and, outside `stream` / `astream`, the
+  redacted answer as `output.value`, so the Langfuse and Phoenix trace lists
+  show each query trace's input and output instead of leaving them empty
+  (#PR).
 - `providers:` config section selecting each role's backend (`llm`,
   `embedding`, `rerank`, `graph`, `vector`, `doc_status`) through a provider
   registry (`@register_provider`); a `[local]` extra; `SQLiteDocStatusStore`;

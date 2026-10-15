@@ -514,6 +514,76 @@ async def test_query_span_tree_carries_counts_and_ids_not_content(
             assert "What does Vendor supply" not in str(value)
 
 
+def _simple_chain() -> GraphRAGChain:
+    config = Config()
+    config.search.reranking.enabled = False
+    chain = GraphRAGChain(
+        config=config,
+        model_factory=_FakeModelFactory(),
+        memory_manager=_FakeMemoryManager(),  # type: ignore[arg-type]
+        retriever_builders={
+            RetrieverRole.DOCUMENT: _FakeRetriever,  # type: ignore[dict-item]
+            RetrieverRole.GRAPH: _FakeRetriever,  # type: ignore[dict-item]
+        },
+    )
+    chain.token_manager.count_tokens = lambda text: len((text or "").split())
+    return chain
+
+
+_SIMPLE_QUERY = RAGInput(
+    query="What does Vendor supply?",
+    search_strategy=SearchStrategy.SIMPLE,
+    enable_query_processing=False,
+)
+
+
+async def test_captured_query_span_carries_redacted_query_and_answer(
+    tracing: Tracing,
+) -> None:
+    # Regression: the root span had no input/output, so the Langfuse and
+    # Phoenix trace lists showed every query trace with empty input/output.
+    exporter = tracing(capture_content=True, redact_patterns=[r"\d+ units"])
+    chain = _simple_chain()
+    try:
+        output = await chain.ainvoke(_SIMPLE_QUERY)
+    finally:
+        await chain.aclose()
+    assert output.answer == "Vendor ships 120 units."  # type: ignore[union-attr]
+    query = _attrs(_one(exporter, "kg_rag.query"))
+    assert query["input.value"] == "What does Vendor supply?"
+    assert query["output.value"] == "Vendor ships [REDACTED]."
+
+
+async def test_streamed_query_span_carries_only_the_redacted_query(
+    tracing: Tracing,
+) -> None:
+    # The streamed answer is produced after the query span has ended.
+    exporter = tracing(capture_content=True, redact_patterns=["Vendor"])
+    chain = _simple_chain()
+    try:
+        chunks = [chunk async for chunk in chain.astream(_SIMPLE_QUERY)]
+    finally:
+        await chain.aclose()
+    assert "".join(chunks) == "Vendor ships 120 units."
+    query = _attrs(_one(exporter, "kg_rag.query"))
+    assert query["input.value"] == "What does [REDACTED] supply?"
+    assert "output.value" not in query
+
+
+async def test_query_span_has_no_input_or_output_without_capture(
+    tracing: Tracing,
+) -> None:
+    exporter = tracing()
+    chain = _simple_chain()
+    try:
+        await chain.ainvoke(_SIMPLE_QUERY)
+        _ = [chunk async for chunk in chain.astream(_SIMPLE_QUERY)]
+    finally:
+        await chain.aclose()
+    for span in _by_name(exporter)["kg_rag.query"]:
+        assert not {"input.value", "output.value"} & set(_attrs(span))
+
+
 async def test_fusion_and_strategy_spans_carry_the_rerank_status(
     tracing: Tracing,
 ) -> None:

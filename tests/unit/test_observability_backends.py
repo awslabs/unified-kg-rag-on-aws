@@ -527,6 +527,25 @@ def test_redaction_covers_every_exported_string(
         assert "[REDACTED] balance" in span.attributes[vendor_input]
 
 
+@pytest.mark.parametrize("backend", ["langfuse", "phoenix"])
+def test_query_span_input_and_output_reach_the_backend_redacted(
+    backend: str, no_global_provider: None
+) -> None:
+    # The root kg_rag.query span records the query and answer as
+    # input.value / output.value (read by Langfuse and Phoenix for the trace
+    # list). The vendor mapping must keep them, and export-time redaction
+    # still applies to them.
+    exporter, _ = _install(backend, redact_patterns=[r"ACCT-\d+"])
+    with observability.span(
+        "kg_rag.query",
+        {"input.value": "balance of ACCT-1?", "output.value": "ACCT-1 owes 3."},
+    ):
+        pass
+    attributes = _flushed(exporter)["kg_rag.query"].attributes
+    assert attributes["input.value"] == "balance of [REDACTED]?"
+    assert attributes["output.value"] == "[REDACTED] owes 3."
+
+
 @pytest.mark.parametrize("backend", ["otlp", "langfuse", "phoenix", "none"])
 def test_content_is_redacted_at_capture_on_every_backend(
     backend: str,
