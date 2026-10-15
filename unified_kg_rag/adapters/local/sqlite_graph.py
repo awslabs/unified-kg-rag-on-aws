@@ -76,8 +76,15 @@ _SCHEMA = (
         PRIMARY KEY (label, id)
     )
     """,
-    "CREATE INDEX IF NOT EXISTS edges_source ON edges (label, source_id)",
-    "CREATE INDEX IF NOT EXISTS edges_target ON edges (label, target_id)",
+    # With the other endpoint last, a vertex's neighbours come off the index
+    # in order (``neighbors``' ORDER BY ... LIMIT reads only them).
+    "CREATE INDEX IF NOT EXISTS edges_source_target "
+    "ON edges (label, source_id, target_id)",
+    "CREATE INDEX IF NOT EXISTS edges_target_source "
+    "ON edges (label, target_id, source_id)",
+    # The two-column indexes of earlier releases, which the new ones cover.
+    "DROP INDEX IF EXISTS edges_source",
+    "DROP INDEX IF EXISTS edges_target",
     "CREATE INDEX IF NOT EXISTS edges_id ON edges (id)",
     """
     CREATE TABLE IF NOT EXISTS memberships (
@@ -93,7 +100,7 @@ _SCHEMA = (
 )
 
 # Stay under SQLite's bound-parameter limit (999 on older builds): a
-# statement binds at most 2 * _BATCH + 1 values, or splits its batch.
+# statement binds at most 2 * _BATCH + 2 values, or splits its batch.
 _BATCH = 400
 
 # The vertex properties a traversal row projects (NeptuneRetriever's
@@ -777,10 +784,15 @@ class SQLiteGraphIndexer(GraphIndexer):
             neighbors: dict[str, set[str]] = {i: set() for i in stored}
             for batch in _batches(list(stored)):
                 marks = _marks(batch)
+                # One indexed lookup per endpoint (an OR reads every edge of
+                # the label).
                 rows = connection.execute(
-                    f"SELECT source_id, target_id FROM edges WHERE label = ? "
-                    f"AND (source_id IN ({marks}) OR target_id IN ({marks}))",
-                    [label, *batch, *batch],
+                    "SELECT source_id, target_id FROM edges WHERE label = ? "
+                    f"AND source_id IN ({marks}) "
+                    "UNION ALL "
+                    "SELECT source_id, target_id FROM edges WHERE label = ? "
+                    f"AND target_id IN ({marks})",
+                    [label, *batch, label, *batch],
                 ).fetchall()
                 for source_id, target_id in rows:
                     if source_id in neighbors:
@@ -803,13 +815,21 @@ class SQLiteGraphIndexer(GraphIndexer):
         with self.store.read("find incident relationships") as connection:
             for batch in _batches(list(dict.fromkeys(entity_ids))):
                 marks = _marks(batch)
-                scope, scope_args = (
-                    ("label = ? AND ", [label]) if label is not None else ("", [])
-                )
-                rows = connection.execute(
-                    f"SELECT id FROM edges WHERE {scope}"
-                    f"(source_id IN ({marks}) OR target_id IN ({marks}))",
-                    [*scope_args, *batch, *batch],
-                ).fetchall()
+                if label is None:
+                    # No index leads with an endpoint: one scan of the table.
+                    rows = connection.execute(
+                        f"SELECT id FROM edges WHERE source_id IN ({marks}) "
+                        f"OR target_id IN ({marks})",
+                        [*batch, *batch],
+                    ).fetchall()
+                else:
+                    rows = connection.execute(
+                        "SELECT id FROM edges WHERE label = ? "
+                        f"AND source_id IN ({marks}) "
+                        "UNION ALL "
+                        "SELECT id FROM edges WHERE label = ? "
+                        f"AND target_id IN ({marks})",
+                        [label, *batch, label, *batch],
+                    ).fetchall()
                 found.update(row[0] for row in rows)
         return sorted(found)

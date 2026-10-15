@@ -518,6 +518,13 @@ Library API (Python callers and custom backends).
   ("I’m sorry, …") is caught like its ASCII form and the original query is
   searched; the follow-up rewrite guard and the translation guard now share
   one normalisation (#292).
+- Embedded graph store: a vertex's edges are looked up through
+  `(label, source_id, target_id)` and `(label, target_id, source_id)`
+  indexes, and the neighbour and incident-edge reads query each endpoint
+  separately, instead of walking every edge of the label. A graph expansion
+  over 150k edges took about 10 s and now takes milliseconds. A database an
+  earlier release wrote gets the new indexes, and loses the two it replaces,
+  the first time it is opened (#PR).
 - The SQLite doc-status registry waits `search.store_timeout_seconds` for
   another process's write lock, as the embedded graph and vector stores do
   (it waited sqlite3's 5 s default), says the database stayed locked in its

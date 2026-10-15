@@ -360,6 +360,92 @@ def test_persists_after_reopen(config: Config) -> None:
     second.close()
 
 
+class _Recording:
+    """A connection that records the ``(sql, parameters)`` it executes."""
+
+    def __init__(self, connection: sqlite3.Connection) -> None:
+        self.connection = connection
+        self.statements: list[tuple[str, Any]] = []
+
+    def execute(self, sql: str, parameters: Any = ()) -> sqlite3.Cursor:
+        self.statements.append((sql, parameters))
+        return self.connection.execute(sql, parameters)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.connection, name)
+
+
+def test_edge_reads_look_up_each_endpoint_in_an_index(
+    indexer: SQLiteGraphIndexer,
+) -> None:
+    # A vertex's edges are read through an index on (label, endpoint): a
+    # plan that walks every edge of the label made a graph expansion over
+    # 150k edges take seconds.
+    _graph(indexer, [(f"v{i}", f"v{(i * 7) % 50}") for i in range(50)])
+    recording = _Recording(indexer.store.connection)
+    indexer.store._connection = recording  # type: ignore[assignment]
+    _traverse(indexer, ["v1"], max_hops=2, max_results_per_hop=5)
+    indexer.read_neighbor_ids(["v1", "v2"])
+    indexer.find_incident_relationship_ids(["v1", "v2"], suffix="default")
+    indexer.store._connection = recording.connection
+    edge_reads = [
+        (sql, parameters)
+        for sql, parameters in recording.statements
+        if sql.startswith("SELECT") and "FROM edges" in sql
+    ]
+    assert len(edge_reads) >= 3
+    for sql, parameters in edge_reads:
+        plan = [
+            row[3]
+            for row in recording.connection.execute(
+                f"EXPLAIN QUERY PLAN {sql}", parameters
+            )
+        ]
+        scans = [step for step in plan if "edges" in step.split(" USING")[0]]
+        assert scans, plan
+        for step in scans:
+            assert step.startswith("SEARCH") and (
+                "source_id=?" in step or "target_id=?" in step
+            ), (sql, plan)
+        # The neighbours come off the index in order: no sort of the label.
+        assert not any("TEMP B-TREE" in step for step in plan), (sql, plan)
+
+
+def test_opening_an_earlier_database_replaces_its_edge_indexes(
+    config: Config,
+) -> None:
+    # A file an earlier release wrote has the two-column endpoint indexes.
+    path = config.providers.graph.sqlite_path
+    connection = sqlite3.connect(path)
+    connection.executescript("""
+        CREATE TABLE vertices (label TEXT NOT NULL, id TEXT NOT NULL,
+            props TEXT NOT NULL, PRIMARY KEY (label, id));
+        CREATE TABLE edges (label TEXT NOT NULL, id TEXT NOT NULL,
+            type TEXT NOT NULL, source_id TEXT NOT NULL,
+            target_id TEXT NOT NULL, props TEXT NOT NULL,
+            PRIMARY KEY (label, id));
+        CREATE INDEX edges_source ON edges (label, source_id);
+        CREATE INDEX edges_target ON edges (label, target_id);
+        """)
+    connection.close()
+    first = SQLiteGraphIndexer(config)
+    _graph(first, [("a", "b")])
+    first.close()
+    second = SQLiteGraphIndexer(config)
+    with second.store.read("test") as connection:
+        indexes = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'index' "
+                "AND tbl_name = 'edges'"
+            )
+        }
+    assert {"edges_source_target", "edges_target_source"} <= indexes
+    assert not {"edges_source", "edges_target"} & indexes
+    assert second.read_neighbor_ids(["a"]) == {"a": ["b"]}
+    second.close()
+
+
 # --- comparison with the reference fake --------------------------------------
 
 
