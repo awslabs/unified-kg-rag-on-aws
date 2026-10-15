@@ -1050,10 +1050,13 @@ class TestAbstention:
             ],
         )
         assert [r.query_id for r in reports] == ["q0"]
+        # Same shape as the overall block: no "accuracy", since a decline in
+        # the model's own words ("A confident guess." could be one) is not
+        # detected and the rate is only a lower bound.
         assert summary.abstention_statistics["unanswerable"] == {
-            "total": 2,
-            "correct_abstentions": 1,
-            "accuracy": 0.5,
+            "abstained": 1,
+            "answered": 2,
+            "abstention_rate": 0.5,
         }
         assert summary.metric_outcomes["answer_match"]["answer_contains"] == {
             "scored": 1,

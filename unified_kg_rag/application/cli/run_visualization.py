@@ -23,8 +23,8 @@ import networkx as nx
 
 from unified_kg_rag.adapters.renderers import (
     RenderContext,
-    get_renderer_class,
     registered_renderers,
+    render_all,
 )
 from unified_kg_rag.adapters.renderers.interactive import InteractiveRenderer
 from unified_kg_rag.application.cli.config_args import (
@@ -149,25 +149,9 @@ def run_visualization(
     output_dir.mkdir(parents=True, exist_ok=True)
     context = load_render_context(data_path)
     _fill_missing_analysis(context, config)
-    viz_config = config.graph.visualization
-
-    written: list[Path] = []
-    for name in renderer_names:
-        renderer_cls = get_renderer_class(name)
-        # Resolve config generically (no hardcoded renderer names) so a newly
-        # registered renderer works without editing this dispatch. Default to an
-        # empty dict so renderers can call ``.get(...)`` even without a block.
-        renderer_config = getattr(viz_config, name, None) or {}
-        try:
-            paths = renderer_cls(renderer_config).render(context, output_dir)
-            written.extend(paths)
-            if paths:
-                logger.info("Renderer '%s' wrote %d file(s)", name, len(paths))
-            else:
-                logger.warning("Renderer '%s' wrote no files", name)
-        except Exception as e:
-            logger.error("Renderer '%s' failed: %s", name, e)
-
+    written = render_all(
+        context, output_dir, renderer_names, config.graph.visualization
+    )
     if not written:
         logger.error(
             "No visualization files were rendered from '%s' (empty graph or "

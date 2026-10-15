@@ -128,7 +128,7 @@ class PromptTuner:
         chain = setup_chain(
             model_purpose=ModelPurpose.INGESTION,
             factory=self.factory,
-            model_id=self.config.search.entity_extraction_model_id,
+            model_id=self.config.processing.graph_extraction.extraction_model_id,
             prompt_class=CorpusProfilePrompt,
             parser=StrOutputParser(),
             custom_prompts=self.config.custom_prompts,
@@ -321,6 +321,8 @@ class PromptTuner:
     ) -> str:
         """Render one (text → extraction) pair in the GraphExtractionPrompt shape.
 
+        Types are shown UPPERCASE, as the extraction rules ask: the merge step
+        stores the most frequent entity type lower-cased.
         Confidence is stored normalized (0.0-1.0) and weight as the summed
         1-10 strength, while the extraction prompt teaches a 1-10 scale for
         both, so both are mapped back onto it for the demonstration.
@@ -344,7 +346,7 @@ class PromptTuner:
                 [
                     "<entity>",
                     f"<name>{_esc(entity.name)}</name>",
-                    f"<type>{_esc(entity.type) or 'ENTITY'}</type>",
+                    f"<type>{_esc(entity.type).upper() or 'ENTITY'}</type>",
                     f"<description>{_esc(entity.description)}</description>",
                     f"<confidence>{confidence_1_10}</confidence>",
                     f"<source_text>{span}</source_text>",
@@ -368,7 +370,7 @@ class PromptTuner:
                     "<relationship>",
                     f"<source>{_esc(rel.source_name)}</source>",
                     f"<target>{_esc(rel.target_name)}</target>",
-                    f"<type>{_esc(rel.type) or 'RELATED_TO'}</type>",
+                    f"<type>{_esc(rel.type).upper() or 'RELATED_TO'}</type>",
                     f"<description>{_esc(rel.description)}</description>",
                     f"<strength>{strength_1_10}</strength>",
                     f"<source_text>{span}</source_text>",

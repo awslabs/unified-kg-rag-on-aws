@@ -139,6 +139,9 @@ full re-index of the affected index type).
   `--pipeline-id` to apply the fixes to them (#167, #170, #171, #201, #214).
 
 Library API (Python callers and custom backends).
+- `EvaluationRunner(args, rag_chain, config)` takes the run's config (the
+  one the chain was built from) instead of loading it again from
+  `args.config_path` (#292).
 - Custom search strategies: `BaseSearchStrategy._fuse_and_rerank` takes a
   required `rerank_trace=` (create it with `self._new_rerank_trace()` and
   pass it to `SearchResult.metadata["rerank"]`); a call without it raises
@@ -278,6 +281,11 @@ Library API (Python callers and custom backends).
   with `indexing.reset: true` to rebuild in the embedded stores (#273).
 
 ### Added
+- With `observability.capture_content`, the root `kg_rag.query` span records
+  the redacted query as `input.value` and, outside `stream` / `astream`, the
+  redacted answer as `output.value`, so the Langfuse and Phoenix trace lists
+  show each query trace's input and output instead of leaving them empty
+  (#292).
 - `providers:` config section selecting each role's backend (`llm`,
   `embedding`, `rerank`, `graph`, `vector`, `doc_status`) through a provider
   registry (`@register_provider`); a `[local]` extra; `SQLiteDocStatusStore`;
@@ -349,6 +357,17 @@ Library API (Python callers and custom backends).
   reports `counts_via_api` (the Bedrock counter turns it off once a model
   rejects CountTokens); a custom counter without the attribute keeps the
   answer model's `supports_count_tokens` (#287).
+- `visualization_data.json` edges no longer repeat every relationship they
+  merge under `attributes.relationships` (about half of the edge bytes); no
+  renderer read it, and the edge keeps its own type, weight and description
+  (#292).
+- `run-eval` `abstention_statistics.unanswerable` has the shape of the
+  overall block (`abstained`, `answered`, `abstention_rate`); the
+  `correct_abstentions` and `accuracy` keys are gone. Only the fixed
+  no-context reply counts as an abstention, and the chain returns it only
+  when retrieval finds nothing, so on a populated index `accuracy` stayed
+  near 0 even when the model declined correctly; the rate is now documented
+  as a lower bound on correct declines (#292).
 - `backend: local` selects the embedded SQLite graph and vector stores
   (`.unified-kg-rag/graph.sqlite3` and `vector.sqlite3` by default), so
   `--backend local` with a native Ollama needs no container.
@@ -482,6 +501,23 @@ Library API (Python callers and custom backends).
   cites it, and the chunk's relationships naming it are dropped; another
   chunk's low score no longer removes a stub. Only non-default thresholds
   are affected (#291).
+- `graph.visualization.interactive` set without `physics_enabled` (for
+  example only `max_nodes`) keeps physics off, the documented default; the
+  renderer fell back to physics on whenever the key was missing (#292).
+- The graph-expansion step's `kg_rag.retrieve` span label and failure log
+  say `graph expansion` instead of `Neptune graph expansion`, which was wrong
+  with the embedded SQLite or Gremlin Server graph store (#292).
+- `run-prompt-tuning` profiles the corpus with
+  `processing.graph_extraction.extraction_model_id`, the ingestion model the
+  tuned prompt is for, instead of the query-time
+  `search.entity_extraction_model_id` (#292).
+- `run-prompt-tuning`: the corpus-grounded few-shot examples show entity and
+  relationship types UPPERCASE, as the extraction rules they follow ask;
+  entity types came out lower-cased (`<type>organization</type>`) (#292).
+- Query translation: a refusal written with a typographic apostrophe
+  ("I’m sorry, …") is caught like its ASCII form and the original query is
+  searched; the follow-up rewrite guard and the translation guard now share
+  one normalisation (#292).
 - CloudWatch tracing (`enable_cloudwatch_tracing`): the task role keeps
   only `xray:PutTraceSegments`, the one action the X-Ray OTLP traces
   endpoint authorizes (a role with only `xray:PutSpans` gets a 403);

@@ -263,8 +263,9 @@ class EvaluationSummary(BaseModel):
             "Abstentions (the chain's fixed no-context reply) among answered "
             "queries: 'abstained', 'answered', 'abstention_rate', the same per "
             "actual search strategy ('per_strategy'), and for items marked "
-            "metadata.answerable=false an 'unanswerable' block with 'total', "
-            "'correct_abstentions' and 'accuracy'."
+            "metadata.answerable=false an 'unanswerable' block of the same "
+            "shape. Only the no-context reply (empty retrieval) counts, so on "
+            "unanswerable items the rate is a lower bound on correct declines."
         ),
     )
     rerank_status_counts: dict[str, int] = Field(

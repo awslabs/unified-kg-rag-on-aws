@@ -995,14 +995,13 @@ class EvaluationManager:
             **_rate(answered),
             "per_strategy": {k: _rate(v) for k, v in sorted(by_strategy.items())},
         }
+        # Only the fixed no-context reply counts as an abstention, and the
+        # chain returns it only when retrieval finds nothing; a model that
+        # declines in its own words is not detected. On unanswerable items the
+        # rate is therefore a lower bound on correct declines, not an accuracy.
         unanswerable = [r for r in answered if cls._is_unanswerable(r)]
         if unanswerable:
-            correct = sum(1 for r in unanswerable if r.abstained)
-            stats["unanswerable"] = {
-                "total": len(unanswerable),
-                "correct_abstentions": correct,
-                "accuracy": correct / len(unanswerable),
-            }
+            stats["unanswerable"] = _rate(unanswerable)
         return stats
 
     @staticmethod

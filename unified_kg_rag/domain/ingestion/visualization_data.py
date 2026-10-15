@@ -32,10 +32,24 @@ DEFAULT_OUTPUTS_DIRECTORY = "outputs/visualization"
 
 
 def strip_heavy_attributes(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Drop vector attributes from exported items: they are large, unused by any
-    renderer, and dominate file size."""
+    """Drop the attributes no renderer reads from exported nodes and edges.
+
+    Vectors are large and dominate file size. ``relationships`` is the copy of
+    every relationship an edge merges (see ``GraphBuilder``), which only
+    community detection on the live graph reads; exported, it repeats each
+    edge's own attributes.
+    """
     return [
-        {**item, "attributes": strip_embedding_fields(item.get("attributes") or {})}
+        {
+            **item,
+            "attributes": {
+                key: value
+                for key, value in strip_embedding_fields(
+                    item.get("attributes") or {}
+                ).items()
+                if key != "relationships"
+            },
+        }
         for item in items
     ]
 

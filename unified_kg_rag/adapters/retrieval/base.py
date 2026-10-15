@@ -291,7 +291,7 @@ class BaseSearchStrategy(ABC):
         search_query.filters["id"] = seed_entity_ids
 
         return await self._safe_aretrieve(
-            self.graph_retriever, search_query, "Neptune graph expansion"
+            self.graph_retriever, search_query, "graph expansion"
         )
 
     def _incident_fetch_limit(self) -> int:

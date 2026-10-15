@@ -11,7 +11,7 @@ D3 exporter) is added by subclassing ``BaseRenderer`` and decorating it with
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar
@@ -77,3 +77,33 @@ def get_renderer_class(name: str) -> type[BaseRenderer]:
         raise ValueError(
             f"No renderer registered for '{name}'. Available: {available}."
         ) from None
+
+
+def render_all(
+    context: RenderContext,
+    output_dir: Path,
+    renderer_names: Iterable[str],
+    viz_config: Any,
+) -> list[Path]:
+    """Run each named renderer over ``context``; return the files written.
+
+    A renderer's config is the ``viz_config`` attribute named after it (an
+    empty dict when there is none), so a newly registered renderer needs no
+    dispatch edit. An unknown name raises ``ValueError``; a renderer that
+    fails is logged and skipped so the others still render.
+    """
+    written: list[Path] = []
+    for name in renderer_names:
+        renderer_cls = get_renderer_class(name)
+        renderer_config = getattr(viz_config, name, None) or {}
+        try:
+            paths = renderer_cls(renderer_config).render(context, output_dir)
+        except Exception as e:  # noqa: BLE001 - one renderer must not sink the rest
+            logger.error("Renderer '%s' failed: %s", name, e)
+            continue
+        if paths:
+            logger.info("Renderer '%s' wrote %d file(s)", name, len(paths))
+        else:
+            logger.warning("Renderer '%s' wrote no files", name)
+        written.extend(paths)
+    return written

@@ -17,6 +17,7 @@ from unified_kg_rag.adapters.renderers import (
     get_renderer_class,
     register_renderer,
     registered_renderers,
+    render_all,
 )
 from unified_kg_rag.application.cli import run_visualization as cli_module
 from unified_kg_rag.application.cli.run_visualization import (
@@ -150,6 +151,31 @@ class TestRunVisualization:
         assert set(context.layout) == {"e1", "e2", "e3"}
         assert context.centrality["e2"].degree == 1.0
 
+    def test_exported_edges_do_not_repeat_their_relationships(self) -> None:
+        # Regression: every edge carried a copy of each relationship it merges
+        # under attributes.relationships, about half of the edge bytes, though
+        # no renderer reads it.
+        from unified_kg_rag.domain.ingestion.graph_builder import GraphBuilder
+        from unified_kg_rag.domain.ingestion.visualization_data import graph_data
+        from unified_kg_rag.domain.models import Entity, Relationship
+
+        entities = [
+            Entity(id="e1", name="Vendor", embedding=[0.1]),
+            Entity(id="e2", name="Buyer"),
+        ]
+        relationships = [
+            Relationship(id=f"r{i}", source_id="e1", target_id="e2", type="SUPPLIES")
+            for i in range(2)
+        ]
+        graph = GraphBuilder(entities, relationships).build()
+        assert len(graph.edges["e1", "e2"]["relationships"]) == 2  # live graph
+        data = graph_data(graph, {"hierarchy": []})
+        (edge,) = data["edges"]
+        assert "relationships" not in edge["attributes"]
+        assert edge["attributes"]["type"] == "SUPPLIES"
+        assert edge["attributes"]["weight"] == 2.0
+        assert "embedding" not in data["nodes"][0]["attributes"]
+
     def test_data_only_export_lays_out_only_the_drawn_nodes(
         self, tmp_path: Path, config: Config
     ) -> None:
@@ -174,6 +200,37 @@ class TestRendererRegistry:
     def test_unknown_renderer_raises(self) -> None:
         with pytest.raises(ValueError, match="No renderer registered"):
             get_renderer_class("does-not-exist")
+
+    @pytest.mark.usefixtures("restore_renderer_registry")
+    def test_render_all_skips_a_failing_renderer_and_passes_each_its_block(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # The one render loop the manager and run-visualization share.
+        seen: dict[str, object] = {}
+
+        @register_renderer("broken_for_test")
+        class _Broken(BaseRenderer):
+            def render(self, context: RenderContext, output_dir: Path) -> list[Path]:
+                raise RuntimeError("cannot draw")
+
+        @register_renderer("ok_for_test")
+        class _Ok(BaseRenderer):
+            def render(self, context: RenderContext, output_dir: Path) -> list[Path]:
+                seen["config"] = self.config
+                return [output_dir / "ok.txt"]
+
+        viz_config = type("V", (), {"ok_for_test": {"size": 3}})()
+        written = render_all(
+            RenderContext(graph=nx.Graph()),
+            tmp_path,
+            ["broken_for_test", "ok_for_test"],
+            viz_config,
+        )
+        assert written == [tmp_path / "ok.txt"]
+        assert seen["config"] == {"size": 3}
+        assert "Renderer 'broken_for_test' failed: cannot draw" in caplog.text
+        with pytest.raises(ValueError, match="No renderer registered"):
+            render_all(RenderContext(graph=nx.Graph()), tmp_path, ["nope"], None)
 
 
 def _write_empty_export(tmp_path: Path) -> Path:

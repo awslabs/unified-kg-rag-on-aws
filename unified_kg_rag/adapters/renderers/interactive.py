@@ -28,7 +28,9 @@ class InteractiveRenderer:
     def __init__(self, config: dict[str, Any]) -> None:
         self.height = config.get("height", "900px")
         self.width = config.get("width", "100%")
-        self.physics_enabled = config.get("physics_enabled", True)
+        # The same default as graph.visualization.interactive, which a
+        # user-set dict replaces whole.
+        self.physics_enabled = config.get("physics_enabled", False)
         self.cdn_resources = config.get("cdn_resources", "in_line")
         self.background_color = config.get("background_color", "#f8fafc")
         self.font_family = config.get("font_family", "Arial")

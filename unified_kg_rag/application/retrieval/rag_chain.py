@@ -709,6 +709,12 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         "no text was provided",
     )
 
+    @staticmethod
+    def _refusal_text(text: str) -> str:
+        """``text`` normalised for matching the refusal phrases: stripped,
+        lower-cased, a typographic apostrophe (``I\u2019m``) made ASCII."""
+        return text.strip().lower().replace("\u2019", "'")
+
     @classmethod
     def _looks_like_translation_refusal(cls, candidate: str, original: str) -> bool:
         """Heuristic: does the 'translation' look like LLM meta-output, not a
@@ -716,8 +722,8 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         (an identical passthrough is fine) and opens with a known refusal/notice
         phrase, so genuine translations that merely contain such words mid-text
         are not caught."""
-        text = candidate.strip().lower()
-        if not text or text == original.strip().lower():
+        text = cls._refusal_text(candidate)
+        if not text or text == cls._refusal_text(original):
             return False
         return text.startswith(cls._TRANSLATION_REFUSAL_MARKERS)
 
@@ -843,7 +849,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         # rewritten question may start the same way ("I can't find …; where
         # is it?") but ends with a question mark, unless the question asks
         # the user to clarify ("I'm sorry, could you clarify which contract?").
-        opening = text.lower().replace("\u2019", "'")
+        opening = cls._refusal_text(text)
         if opening.startswith(cls._REFUSAL_OPENINGS) and (
             not text.endswith("?") or cls._CLARIFICATION_REQUEST.search(opening)
         ):
@@ -1383,7 +1389,14 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             ) as span,
         ):
             result = await self._ainvoke(rag_input, input_dict, config, span)
-            span.set_attributes(self._query_outcome_attributes(result))
+            span.set_attributes(
+                {
+                    **self._query_outcome_attributes(result),
+                    **_captured_content(
+                        output=result.answer if isinstance(result, RAGOutput) else None
+                    ),
+                }
+            )
             return result
 
     @staticmethod
@@ -1404,13 +1417,15 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         return {key: value for key, value in identity.items() if value}
 
     def _query_span_attributes(self, rag_input: RAGInput) -> dict[str, Any]:
-        """Query-span attributes: the request's settings, never its text."""
+        """Query-span attributes: the request's settings; its text only when
+        ``observability.capture_content`` is on (redacted)."""
         return {
             GEN_AI_CONVERSATION_ID: rag_input.conversation_id,
             "kg_rag.mode": self.mode,
             "kg_rag.requested_strategy": rag_input.search_strategy,
             "kg_rag.top_k": rag_input.top_k,
             "kg_rag.use_memory": rag_input.use_memory,
+            **_captured_content(input=rag_input.query),
         }
 
     @staticmethod
@@ -1638,6 +1653,22 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
 
         state["answer"] = "".join(chunks)
         await self._save_memory(self._format_output_step(state))
+
+
+def _captured_content(
+    input: str | None = None, output: str | None = None
+) -> dict[str, str]:
+    """``input.value`` / ``output.value`` for the query span, redacted, when
+    ``observability.capture_content`` is on; empty otherwise.
+
+    Langfuse and Phoenix both read these names, and take a trace's input and
+    output in their trace lists from its root span.
+    """
+    policy = observability.content_policy()
+    if not policy.capture_content:
+        return {}
+    values = {"input.value": input, "output.value": output}
+    return {key: policy.redact(text) for key, text in values.items() if text}
 
 
 _T = TypeVar("_T")

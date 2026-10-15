@@ -584,7 +584,7 @@ LLM 단계는 Bedrock I/O가 병목이므로 동시성을 CPU 수보다 훨씬 �
 | `graph.visualization.export_data` | `true` | `enabled: false`여도 `visualization_data.json`(그래프와 커뮤니티. 레이아웃과 중심성은 없음)을 기록해 `run-visualization`으로 필요할 때 렌더링할 수 있게 합니다. 그래프를 한 번 훑을 뿐이며 모델 호출이 없습니다. |
 | `graph.visualization.outputs_directory` | `null` | 지정하지 않으면 `<cache dir>/<pipeline_id>/visualization`에 기록하므로 데이터가 캐시와 함께 S3로 동기화됩니다. |
 | `graph.visualization.layout_method` | `"umap"` | `umap`, `tsne`, `pca` 중 하나입니다. |
-| `graph.visualization.interactive.max_nodes` | `2000` | `interactive_graph.html`에 남길 차수 기준 상위 N개 노드입니다. `0`이나 `null`이면 제한하지 않습니다. `interactive`를 지정하면 기본 딕셔너리가 통째로 대체되므로, physics를 끈 상태로 두려면 `physics_enabled: false`도 함께 지정하세요. |
+| `graph.visualization.interactive.max_nodes` | `2000` | `interactive_graph.html`에 남길 차수 기준 상위 N개 노드입니다. `0`이나 `null`이면 제한하지 않습니다. `physics_enabled`를 지정하지 않으면 physics는 꺼져 있습니다(`false`). |
 
 ### 2.5 `indexing` — OpenSearch와 Neptune 쓰기
 
@@ -788,7 +788,7 @@ extra 없이 추적을 켜면 시작할 때 extra 이름을 알려 주는 `Confi
 |---|---|---|
 | `observability.enabled` | `false` | 스팬을 기록합니다. `OTEL_SDK_DISABLED=true`이면 이 값과 관계없이 꺼집니다. |
 | `observability.backend` | `"none"` | `none`: 호스트 애플리케이션이나 `opentelemetry-instrument`가 설정한 프로세스 전역 트레이서 프로바이더로 스팬을 보냅니다. `otlp`: 패키지가 OTLP 익스포터를 직접 설치합니다. `langfuse` / `phoenix`: 같은 OTLP 익스포터를 Langfuse나 Arize Phoenix로 향하게 하고 해당 서비스의 속성 이름을 더합니다(아래 참고). |
-| `observability.capture_content` | `false` | 모델 스팬에 프롬프트와 응답 본문도 기록합니다. 기밀 코퍼스에서는 끈 채로 두세요. |
+| `observability.capture_content` | `false` | 모델 스팬에 프롬프트와 응답 본문을, `kg_rag.query` 스팬에 질의와 답변을 기록합니다(*트레이스 구조* 참고). 기밀 코퍼스에서는 끈 채로 두세요. |
 | `observability.redact_patterns` | `[]` | `[REDACTED]`로 바꿀 정규식 목록입니다. 기록하는 본문에 적용하고, `otlp`/`langfuse`/`phoenix`에서는 내보내는 모든 문자열 속성, 이벤트 속성(예외 메시지), 상태 메시지에도 적용합니다. |
 | `observability.sample_rate` | `1.0` | 남길 루트 트레이스의 비율입니다(`otlp`, `langfuse`, `phoenix`). 하위 스팬은 루트의 결정을 따릅니다. `none`에서는 호스트의 트레이서 프로바이더가 샘플링합니다. |
 | `observability.service_name` | `"unified-kg-rag"` | `service.name` 리소스 속성이자 Phoenix 프로젝트 이름입니다. `OTEL_SERVICE_NAME`(과 `PHOENIX_PROJECT_NAME`)이 설정되어 있으면 그 값이 우선합니다. |
@@ -829,7 +829,9 @@ Secrets Manager나 태스크 시크릿에서 주입하세요.
   단계의 수치 지표를 `kg_rag.stage.<metric>`으로, 단계가 예외로 끝나면 `error.type`과
   예외) → `kg_rag.batch` / `kg_rag.batch.chunk`(항목 수와 실패 수) → 모델
   호출마다 `chat <model>` 스팬, 임베딩 호출마다 `embeddings <model>` 스팬
-- 질의: `kg_rag.query` → `kg_rag.strategy`(질의의 [재순위화 상태](#재순위화-상태)인
+- 질의: `kg_rag.query`(`capture_content`일 때 마스킹한 질의를 `input.value`로,
+  `stream` / `astream`이 아니면 마스킹한 답변을 `output.value`로 기록하며 Langfuse와
+  Phoenix는 이 값을 트레이스 목록에 표시) → `kg_rag.strategy`(질의의 [재순위화 상태](#재순위화-상태)인
   `kg_rag.rerank_status`) → `kg_rag.retrieve`(결과 유형별 적중 수와
   최대 50개의 소스 ID) → `kg_rag.fusion`(입력·출력 수, 해당 단계의
   `kg_rag.rerank_status`) → `kg_rag.rerank`
@@ -1581,9 +1583,11 @@ run-eval --eval-data-path s3://my-bucket/eval/my_eval_data.json \
 - `abstention_statistics` — 체인이 답변 대신 고정된 컨텍스트 없음 응답("I could not
   find relevant information…")을 반환한 빈도입니다. `abstained`, `answered`,
   `abstention_rate`, 같은 값의 `per_strategy`가 있고, `answerable: false` 항목에는
-  `unanswerable` 블록(`total`, `correct_abstentions`, `accuracy`)이 있습니다. 답할 수
-  있는 항목에서 거절은 다른 답변과 똑같이 채점합니다(보통 놓침). 각 결과에는
-  `abstained`가 기록됩니다.
+  같은 형태의 `unanswerable` 블록이 있습니다. 고정 응답만 거절로 세며 체인은 검색
+  결과가 없을 때만 이 응답을 반환합니다. 모델이 자기 말로 답변을 거절하면 감지하지
+  않으므로, 데이터가 색인된 상태에서 `unanswerable`의 비율은 정확도가 아니라 올바른
+  거절의 하한입니다. 답할 수 있는 항목에서 거절은 다른 답변과 똑같이 채점합니다(보통
+  놓침). 각 결과에는 `abstained`가 기록됩니다.
 - `rerank_status_counts` — 재순위화 상태별 질의 수입니다(예:
   `{"applied": 48, "failed": 2}`). 각 결과에는 `rerank_status`(`applied`,
   `disabled`, `unavailable`, `skipped`, `failed`, 답변 생성이 먼저 실패했으면 `null`)가
@@ -1679,8 +1683,9 @@ run-visualization --data-path visualization_data.json --renderers interactive --
 
 ## 8. 프롬프트 튜닝 (`run-prompt-tuning`)
 
-디렉터리에서 문서를 표본으로 뽑고 Bedrock으로 코퍼스 특성(도메인, 언어, 페르소나,
-엔티티 유형)을 분석한 뒤, 검토해서 `config.yaml`에 합칠 수 있는 도메인 맞춤
+디렉터리에서 문서를 표본으로 뽑고 설정된 언어 모델
+(`processing.graph_extraction.extraction_model_id`)로 코퍼스 특성(도메인, 언어,
+페르소나, 엔티티 유형)을 분석한 뒤, 검토해서 `config.yaml`에 합칠 수 있는 도메인 맞춤
 `custom_prompts` YAML 조각을 씁니다.
 
 ### CLI 플래그

@@ -44,6 +44,9 @@ pytestmark = pytest.mark.unit
         "I notice the text you provided is already in English.",
         "There is no text to translate.",
         "As an AI, I cannot translate this.",
+        # A typographic apostrophe, as the rewrite guard already accepts.
+        "I\u2019m sorry, but this is already English.",
+        "I can\u2019t translate an empty request.",
     ],
 )
 def test_translation_refusal_detected(candidate) -> None:

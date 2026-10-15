@@ -629,7 +629,7 @@ LLM stages are Bedrock-I/O-bound, so concurrency can far exceed the CPU count.
 | `graph.visualization.export_data` | `true` | With `enabled: false`, still write `visualization_data.json` (graph and communities, no layout or centrality; one pass over the graph, no model call) so `run-visualization` can render on demand. |
 | `graph.visualization.outputs_directory` | `null` | Unset writes to `<cache dir>/<pipeline_id>/visualization`, so the data syncs to S3 with the cache. |
 | `graph.visualization.layout_method` | `"umap"` | `umap`, `tsne`, or `pca`. |
-| `graph.visualization.interactive.max_nodes` | `2000` | Top-N nodes by degree kept in `interactive_graph.html`; `0` or `null` disables the cap. Setting `interactive` replaces its default dict, so also set `physics_enabled: false` to keep physics off. |
+| `graph.visualization.interactive.max_nodes` | `2000` | Top-N nodes by degree kept in `interactive_graph.html`; `0` or `null` disables the cap. Physics stays off (`physics_enabled: false`) unless set. |
 
 ### 2.5 `indexing` — OpenSearch & Neptune write side
 
@@ -834,7 +834,7 @@ OpenTelemetry-related is imported.
 |---|---|---|
 | `observability.enabled` | `false` | Emit spans. `OTEL_SDK_DISABLED=true` turns it off regardless. |
 | `observability.backend` | `"none"` | `none`: spans go to the process's global tracer provider, which a host application or `opentelemetry-instrument` sets up. `otlp`: the package installs an OTLP exporter. `langfuse` / `phoenix`: the same OTLP exporter pointed at Langfuse or Arize Phoenix, with that vendor's attribute names added (see below). |
-| `observability.capture_content` | `false` | Also record prompt and completion text on model spans. Leave off for confidential corpora. |
+| `observability.capture_content` | `false` | Also record prompt and completion text on model spans, and the query and answer on the `kg_rag.query` span (see *Trace shape*). Leave off for confidential corpora. |
 | `observability.redact_patterns` | `[]` | Regular expressions replaced with `[REDACTED]` in captured content and, with `otlp`/`langfuse`/`phoenix`, in every exported string attribute, event attribute (exception messages) and status message. |
 | `observability.sample_rate` | `1.0` | Fraction of root traces kept (`otlp`, `langfuse`, `phoenix`); child spans follow their root. With `none` the host's tracer provider samples. |
 | `observability.service_name` | `"unified-kg-rag"` | `service.name` resource attribute, and the Phoenix project; `OTEL_SERVICE_NAME` (and `PHOENIX_PROJECT_NAME`) win when set. |
@@ -878,7 +878,10 @@ spans and exported as given, so pass an opaque id, not an e-mail address.
   units, and `error.type` plus the exception when it crashed) → `kg_rag.batch` / `kg_rag.batch.chunk`
   (item and failure counts) → one `chat <model>` span per model call and
   `embeddings <model>` spans.
-- Query: `kg_rag.query` → `kg_rag.strategy` (`kg_rag.rerank_status`, the
+- Query: `kg_rag.query` (with `capture_content`, the redacted query as
+  `input.value` and, outside `stream` / `astream`, the redacted answer as
+  `output.value`, which Langfuse and Phoenix show in their trace lists) →
+  `kg_rag.strategy` (`kg_rag.rerank_status`, the
   query's [rerank status](#rerank-status)) → `kg_rag.retrieve` (hit counts per
   result type and up to 50 source ids) → `kg_rag.fusion` (in/out counts, the
   step's `kg_rag.rerank_status`) →
@@ -1703,9 +1706,12 @@ The summary holds, per metric, mean/median/stdev/min/max/count
 - `abstention_statistics` — how often the chain returned its fixed
   no-context reply ("I could not find relevant information…") instead of an
   answer: `abstained`, `answered`, `abstention_rate`, the same `per_strategy`,
-  and for `answerable: false` items an `unanswerable` block (`total`,
-  `correct_abstentions`, `accuracy`). On answerable items an abstention is
-  graded like any answer (normally a miss); each result carries `abstained`.
+  and for `answerable: false` items an `unanswerable` block of the same shape.
+  Only the fixed reply counts, and the chain returns it only when retrieval
+  finds nothing: a model that declines in its own words is not detected, so on
+  a populated index the `unanswerable` rate is a lower bound on correct
+  declines, not an accuracy. On answerable items an abstention is graded like
+  any answer (normally a miss); each result carries `abstained`.
 - `rerank_status_counts` — queries per rerank status, e.g.
   `{"applied": 48, "failed": 2}`; each result carries `rerank_status`
   (`applied`, `disabled`, `unavailable`, `skipped`, `failed`, or `null` when
@@ -1810,7 +1816,8 @@ run-visualization --data-path visualization_data.json --renderers interactive --
 ## 8. Prompt tuning (`run-prompt-tuning`)
 
 Samples documents from a directory, profiles the corpus (domain / language /
-persona / entity types) via Bedrock, and writes a domain-adapted
+persona / entity types) with the configured language model
+(`processing.graph_extraction.extraction_model_id`), and writes a domain-adapted
 `custom_prompts` YAML fragment for you to review and merge into `config.yaml`.
 
 ### CLI flags

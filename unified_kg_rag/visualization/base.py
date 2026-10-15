@@ -8,8 +8,8 @@ from unified_kg_rag.adapters.ingestion.community_detector import CommunityDetect
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.adapters.renderers import (
     RenderContext,
-    get_renderer_class,
     registered_renderers,
+    render_all,
 )
 from unified_kg_rag.adapters.renderers.interactive import InteractiveRenderer
 from unified_kg_rag.domain.ingestion.graph_analyzer import GraphAnalyzer
@@ -166,18 +166,9 @@ class GraphVisualizationManager:
             community_hierarchy=list(self.community_detector.all_communities.values()),
             centrality=self.analyzer.calculate_centrality(),
         )
-        written: list[Path] = []
-        for name in registered_renderers():
-            try:
-                renderer_cls = get_renderer_class(name)
-                # Resolve each renderer's config block generically (viz_config
-                # attribute named after the renderer); a renderer without a
-                # dedicated config block gets an empty dict so renderers can call
-                # ``.get(...)`` uniformly. No hardcoded renderer list.
-                renderer_config = getattr(self.viz_config, name, None) or {}
-                written += renderer_cls(renderer_config).render(context, outputs_dir)
-            except Exception as e:
-                logger.warning("Renderer '%s' failed: %s", name, e)
+        written = render_all(
+            context, outputs_dir, registered_renderers(), self.viz_config
+        )
         if not written:
             logger.warning("No visualization files were rendered.")
         return written
