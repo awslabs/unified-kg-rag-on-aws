@@ -541,7 +541,7 @@ LLM 단계는 Bedrock I/O가 병목이므로 동시성을 CPU 수보다 훨씬 �
 | `processing.max_attempts` | `5` | 첫 호출이 실패한 수집 LLM 항목을 다시 호출할 때의 시도 횟수입니다. 일시적 Bedrock 오류, 호출 시간 초과, 파싱할 수 없는 출력은 재시도하고 그 밖의 오류는 바로 실패합니다. `1`이면 재시도하지 않습니다. |
 | `processing.io_workers` | `64` | CLI와 체인의 동기 메서드에서 질의 경로의 블로킹 I/O(Bedrock 호출, Neptune 순회, 재순위화)를 처리하는 스레드 수입니다. Python 기본값은 `min(32, CPUs + 4)`라서 vCPU 2개인 태스크에서는 6개입니다. 비동기 호스트는 시작할 때 `configure_event_loop(asyncio.get_running_loop(), config.processing.io_workers)`(`unified_kg_rag.shared.utils`)를 호출합니다. |
 | `processing.ignore_errors` | `false` | 단계 전체가 실패할 때(배치 호출, 번역 대상 언어, 평가기, global map/reduce, DRIFT primer, auto 라우터) 예외를 일으키지 않고 로그를 남긴 뒤 빈 결과나 저하된 결과로 계속합니다. 개별 항목의 LLM 호출 실패는 이 값과 관계없이 항상 건너뛰고 보고합니다. |
-| `processing.deduplicate` | `false` | 추출 전에 중복 문서를 제거합니다. |
+| `processing.deduplicate` | `false` | 추출 전에 거의 같은 문서를 제거합니다. 두 문서의 문자 3-gram 집합 Jaccard 유사도(128개 순열 MinHash로 추정)가 0.9 이상이면 중복으로 보고, 둘 중 앞의 문서를 남깁니다(증분 실행에서는 이미 색인된 문서를 남깁니다). 이 값들은 고정입니다. |
 | `processing.resolution_method` | `"minhash"` | 엔티티 해석 방식입니다. `minhash` 또는 `sequence_matcher`입니다. |
 | `processing.fuzzy_entity_resolution` | `false` | 이름이 비슷하기만 한 엔티티도 전체 빌드와 증분 병합에서 병합합니다. 끄면 정규화, 법인 형태 표기 제거, 한자·한글·가나 옆 공백 제거 뒤 이름이 같을 때만 병합합니다. |
 | `processing.similarity_threshold` | `0.85` | 퍼지 엔티티 해석과 클레임 주체·객체의 엔티티 이름 매칭에 쓰는 임계값입니다. 서로 다른 엔티티가 합쳐지면 올리세요. |

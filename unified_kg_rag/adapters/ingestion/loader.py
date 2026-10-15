@@ -9,10 +9,9 @@ from pathlib import Path
 
 from datasketch import MinHash, MinHashLSH
 
-from unified_kg_rag.adapters.ingestion.parser import ParserFactory
-from unified_kg_rag.domain.models import Config, Document
+from unified_kg_rag.domain.models import Document
 from unified_kg_rag.shared import get_logger
-from unified_kg_rag.shared.utils import compute_hash, default_max_workers
+from unified_kg_rag.shared.utils import default_max_workers
 from unified_kg_rag.shared.utils.cache_keys import is_excluded_source_path
 from unified_kg_rag.shared.utils.concurrency import ContextThreadPoolExecutor
 
@@ -36,12 +35,22 @@ def compute_minhash(
     return doc_index, minhash
 
 
+# Near-duplicate detection parameters of ``processing.deduplicate``: two
+# documents are duplicates when the Jaccard similarity of their character
+# 3-gram sets, estimated with a 128-permutation MinHash, is at least 0.9.
+DEDUP_SIMILARITY_THRESHOLD = 0.9
+DEDUP_MINHASH_PERMUTATIONS = 128
+DEDUP_N_GRAMS = 3
+
+
 class DirectoryLoader:
-    # Only extensions the ParserFactory ALWAYS handles. .md/.html are added at
-    # runtime by the parser-extension union below WHEN the optional 'unstructured'
-    # package is installed; .tsv was advertised here but the parser has no .tsv
-    # loader, so a .tsv file passed the filter then failed to parse — dropped.
-    DEFAULT_SUPPORTED_EXTENSIONS = {".csv", ".json", ".txt"}
+    """Load pre-parsed ``Document`` JSON files from a directory (recursively).
+
+    Used by the loading stage when the parsing stage did not run; the stage
+    also calls :meth:`deduplicate_documents` on the run's documents.
+    """
+
+    SUPPORTED_EXTENSIONS = frozenset({".json"})
     # Hidden paths and __pycache__ are always excluded
     # (is_excluded_source_path); these patterns exclude more on top.
     DEFAULT_EXCLUDE_PATTERNS: frozenset[str] = frozenset()
@@ -49,48 +58,13 @@ class DirectoryLoader:
     def __init__(
         self,
         source_directory: str | Path,
-        config: Config | None = None,
-        recursive: bool = True,
-        supported_extensions: set[str] | None = None,
         exclude_patterns: set[str] | None = None,
-        deduplicate: bool = False,
-        similarity_threshold: float = 0.9,
-        minhash_permutations: int = 128,
-        n_grams_size: int = 3,
         max_workers: int | None = None,
-        compute_dir_hash: bool = False,
-        parse_files: bool = False,
     ):
-        if not 0.0 < similarity_threshold <= 1.0:
-            raise ValueError("similarity_threshold must be between 0.0 and 1.0")
-        if minhash_permutations <= 0:
-            raise ValueError("minhash_permutations must be positive")
-        if n_grams_size <= 0:
-            raise ValueError("n_grams_size must be positive")
-
         self.source_directory = Path(source_directory).resolve()
-        self.config = config
-        self.recursive = recursive
-        self.supported_extensions = (
-            supported_extensions or self.DEFAULT_SUPPORTED_EXTENSIONS
-        )
         self.exclude_patterns = exclude_patterns or self.DEFAULT_EXCLUDE_PATTERNS
-        self.deduplicate = deduplicate
-        self.similarity_threshold = similarity_threshold
-        self.minhash_permutations = minhash_permutations
-        self.n_grams_size = n_grams_size
         self.max_workers = max_workers or default_max_workers()
-        self.compute_dir_hash = compute_dir_hash
-        self.parse_files = parse_files
-
-        if self.parse_files and self.config:
-            parser_extensions = set(ParserFactory.get_supported_extensions())
-            self.supported_extensions = self.supported_extensions.union(
-                parser_extensions
-            )
-
         self.failed_files: list[str] = []
-        self.directory_hash: str | None = None
 
     def load(self) -> list[Document]:
         start_time = time.time()
@@ -107,12 +81,6 @@ class DirectoryLoader:
 
         docs, failed_paths = self._load_files_concurrently(discovered_files)
         self.failed_files = sorted(map(str, failed_paths))
-
-        if self.deduplicate and docs:
-            docs = self._deduplicate_documents(docs)
-
-        if self.compute_dir_hash:
-            self.directory_hash = self._compute_dir_hash(discovered_files)
 
         success_rate = (
             (len(docs) / len(discovered_files)) * 100 if discovered_files else 0
@@ -143,16 +111,13 @@ class DirectoryLoader:
             )
 
     def discover_files(self) -> list[Path]:
-        pattern = "**/*" if self.recursive else "*"
-        files = [
-            p for p in self.source_directory.glob(pattern) if self._is_valid_file(p)
-        ]
+        files = [p for p in self.source_directory.rglob("*") if self._is_valid_file(p)]
         return sorted(files)
 
     def _is_valid_file(self, path: Path) -> bool:
         return (
             path.is_file()
-            and path.suffix.lower() in self.supported_extensions
+            and path.suffix.lower() in self.SUPPORTED_EXTENSIONS
             and not self._is_excluded(path)
         )
 
@@ -225,11 +190,6 @@ class DirectoryLoader:
             return None
 
     def load_single(self, file_path: Path) -> Document:
-        if self.parse_files and self.config and file_path.suffix.lower() != ".json":
-            parser = ParserFactory.create_parser(file_path, self.config)
-            return parser.parse_file(
-                file_path, self.config.processing.document_parsing.index_value
-            )
         return Document.from_json_file(file_path)
 
     def deduplicate_documents(
@@ -245,14 +205,6 @@ class DirectoryLoader:
         the already-indexed copy) and one ``avoid`` accepts loses to any other
         (a copy whose indexing failed). The survivors keep their input order.
         """
-        return self._deduplicate_documents(documents, keep, avoid)
-
-    def _deduplicate_documents(
-        self,
-        documents: list[Document],
-        keep: Callable[[Document], bool] | None = None,
-        avoid: Callable[[Document], bool] | None = None,
-    ) -> list[Document]:
         if len(documents) < 2:
             return documents
 
@@ -294,8 +246,8 @@ class DirectoryLoader:
         minhashes = {}
         compute_func = partial(
             compute_minhash,
-            num_permutations=self.minhash_permutations,
-            n_grams=self.n_grams_size,
+            num_permutations=DEDUP_MINHASH_PERMUTATIONS,
+            n_grams=DEDUP_N_GRAMS,
         )
 
         with ProcessPoolExecutor(max_workers=self.max_workers) as executor:
@@ -344,7 +296,7 @@ class DirectoryLoader:
         signatures, cheaper than handing them to a worker process.
         """
         lsh = MinHashLSH(
-            threshold=self.similarity_threshold, num_perm=self.minhash_permutations
+            threshold=DEDUP_SIMILARITY_THRESHOLD, num_perm=DEDUP_MINHASH_PERMUTATIONS
         )
         for doc_idx, minhash in minhashes.items():
             lsh.insert(doc_idx, minhash)
@@ -355,28 +307,7 @@ class DirectoryLoader:
                 if (
                     isinstance(other, int)
                     and rank[doc_idx] < rank[other]
-                    and minhash.jaccard(minhashes[other]) >= self.similarity_threshold
+                    and minhash.jaccard(minhashes[other]) >= DEDUP_SIMILARITY_THRESHOLD
                 ):
                     duplicate_indices.add(other)
         return duplicate_indices
-
-    def _compute_dir_hash(self, files: list[Path]) -> str:
-        if not files:
-            return compute_hash("", algorithm="sha256", length=16)
-
-        file_info_parts = []
-        for file_path in files:
-            try:
-                stat = file_path.stat()
-                info = (
-                    f"{file_path.relative_to(self.source_directory)}:"
-                    f"{stat.st_mtime_ns}:{stat.st_size}"
-                )
-                file_info_parts.append(info)
-            except Exception as e:
-                logger.warning("Could not stat file for hash '%s': %s", file_path, e)
-
-        content = "\n".join(file_info_parts)
-        hash_value = compute_hash(content, algorithm="sha256", length=16)
-        logger.debug("Computed directory hash: '%s'", hash_value)
-        return hash_value
