@@ -350,7 +350,6 @@ class DocumentLoadingStage(PipelineStage):
     def _execute_core(
         self, context: PipelineContext
     ) -> tuple[int, int, dict[str, Any] | None]:
-
         # A context restored from a reused pipeline id carries the previous
         # run's delta in its metadata. This stage recomputes the document set,
         # so that delta no longer describes it: drop it before (re)deriving one,
@@ -497,7 +496,6 @@ class DocumentParsingStage(PipelineStage):
     def _execute_core(
         self, context: PipelineContext
     ) -> tuple[int, int, dict[str, Any] | None]:
-
         files_to_parse = self._discover_files()
         input_count = len(files_to_parse)
 
@@ -626,7 +624,6 @@ class TextChunkingStage(PipelineStage):
     def _execute_core(
         self, context: PipelineContext
     ) -> tuple[int, int, dict[str, Any] | None]:
-
         # One call for the whole corpus: the intelligent chunker batches its
         # boundary-model calls across documents, and the logged stats cover
         # the stage rather than its last document.
@@ -678,7 +675,6 @@ class TranslationStage(PipelineStage):
     def _execute_core(
         self, context: PipelineContext
     ) -> tuple[int, int, dict[str, Any] | None]:
-
         skip_reason = self._should_skip()
         if skip_reason is not None:
             logger.info("Skipping translation: %s", skip_reason)
@@ -737,7 +733,6 @@ class GraphExtractionStage(PipelineStage):
     def _execute_core(
         self, context: PipelineContext
     ) -> tuple[int, int, dict[str, Any] | None]:
-
         text_units = context.translated_units or context.text_units
 
         entities, relationships, stats = self.extractor.extract_from_text_units(
@@ -774,7 +769,6 @@ class GleaningStage(PipelineStage):
     def _execute_core(
         self, context: PipelineContext
     ) -> tuple[int, int, dict[str, Any] | None]:
-
         text_units = context.translated_units or context.text_units
         initial_entities = context.entities
         initial_relationships = context.relationships
@@ -841,7 +835,6 @@ class GraphResolutionStage(PipelineStage):
     def _execute_core(
         self, context: PipelineContext
     ) -> tuple[int, int, dict[str, Any] | None]:
-
         resolution_result, stats = self.resolver.resolve_graph(
             context.entities, context.relationships
         )
@@ -896,7 +889,6 @@ class ClaimExtractionStage(PipelineStage):
     def _execute_core(
         self, context: PipelineContext
     ) -> tuple[int, int, dict[str, Any] | None]:
-
         text_units = context.translated_units or context.text_units
         claims, extraction_stats = self.extractor.extract_from_text_units(
             text_units, context.resolved_entities
@@ -922,7 +914,6 @@ class ClaimResolutionStage(PipelineStage):
     def _execute_core(
         self, context: PipelineContext
     ) -> tuple[int, int, dict[str, Any] | None]:
-
         if not context.claims or not context.resolved_entities:
             # Nothing can resolve: say so explicitly, so no later stage reads a
             # stale (resumed) result or the unresolved claims.
@@ -968,7 +959,6 @@ class GraphAnalysisStage(PipelineStage):
     def _execute_core(
         self, context: PipelineContext
     ) -> tuple[int, int, dict[str, Any] | None]:
-
         entities = context.resolved_entities
         relationships = context.resolved_relationships
         claims = _resolved_claims(context)
@@ -1113,7 +1103,6 @@ class CommunityDetectionStage(PipelineStage):
     def _execute_core(
         self, context: PipelineContext
     ) -> tuple[int, int, dict[str, Any] | None]:
-
         entities = context.resolved_entities
         relationships = context.resolved_relationships
 
@@ -1228,7 +1217,6 @@ class IndexingStage(PipelineStage):
     def _execute_core(
         self, context: PipelineContext
     ) -> tuple[int, int, dict[str, Any] | None]:
-
         if self.config.indexing.reset:
             logger.info("Clearing all existing data")
             text_units = context.translated_units or context.text_units

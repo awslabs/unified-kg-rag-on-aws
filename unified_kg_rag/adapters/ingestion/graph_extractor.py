@@ -407,11 +407,15 @@ class GraphExtractor(BaseProcessor):
             ):
                 relationships.append(relationship)
 
-        relationships = self._drop_relationships_to_dropped_entities(
-            relationships, dropped_keys, text_unit
-        )
         kept_relationships = self._drop_relationships_to_dropped_entities(
-            relationships, low_confidence_keys, text_unit, reason="low confidence"
+            relationships, dropped_keys, text_unit, "ungrounded"
+        )
+        self.stats.relationships_dropped_ungrounded_endpoint += len(
+            relationships
+        ) - len(kept_relationships)
+        relationships = kept_relationships
+        kept_relationships = self._drop_relationships_to_dropped_entities(
+            relationships, low_confidence_keys, text_unit, "low confidence"
         )
         self.stats.relationships_filtered_by_confidence += len(relationships) - len(
             kept_relationships
@@ -581,14 +585,14 @@ class GraphExtractor(BaseProcessor):
         relationships: list[Relationship],
         dropped_keys: set[str],
         text_unit: TextUnit,
-        reason: str = "ungrounded",
+        reason: str,
     ) -> list[Relationship]:
-        """Remove relationships whose endpoint the chunk dropped.
+        """Remove relationships whose endpoint the chunk dropped (as ``reason``,
+        for the log); the caller counts the removed ones.
 
         Without this, ``_materialize_relationship_endpoints`` would recreate the
         dropped (ungrounded or low-confidence) entity as a description-less
-        stub and undo the guard. Only an ``ungrounded`` drop counts towards
-        ``relationships_dropped_ungrounded_endpoint``.
+        stub and undo the guard.
         """
         if not dropped_keys:
             return relationships
@@ -598,8 +602,6 @@ class GraphExtractor(BaseProcessor):
                 entity_key(rel.source_name or "") in dropped_keys
                 or entity_key(rel.target_name or "") in dropped_keys
             ):
-                if reason == "ungrounded":
-                    self.stats.relationships_dropped_ungrounded_endpoint += 1
                 logger.info(
                     "Dropping relationship '%s' — endpoint entity was dropped "
                     "as %s in chunk '%s'",
