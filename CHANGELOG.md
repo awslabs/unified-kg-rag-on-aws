@@ -349,6 +349,13 @@ Library API (Python callers and custom backends).
   reports `counts_via_api` (the Bedrock counter turns it off once a model
   rejects CountTokens); a custom counter without the attribute keeps the
   answer model's `supports_count_tokens` (#287).
+- `run-eval` `abstention_statistics.unanswerable` has the shape of the
+  overall block (`abstained`, `answered`, `abstention_rate`); the
+  `correct_abstentions` and `accuracy` keys are gone. Only the fixed
+  no-context reply counts as an abstention, and the chain returns it only
+  when retrieval finds nothing, so on a populated index `accuracy` stayed
+  near 0 even when the model declined correctly; the rate is now documented
+  as a lower bound on correct declines (#PR).
 - `backend: local` selects the embedded SQLite graph and vector stores
   (`.unified-kg-rag/graph.sqlite3` and `vector.sqlite3` by default), so
   `--backend local` with a native Ollama needs no container.

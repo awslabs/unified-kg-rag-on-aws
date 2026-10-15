@@ -1703,9 +1703,12 @@ The summary holds, per metric, mean/median/stdev/min/max/count
 - `abstention_statistics` — how often the chain returned its fixed
   no-context reply ("I could not find relevant information…") instead of an
   answer: `abstained`, `answered`, `abstention_rate`, the same `per_strategy`,
-  and for `answerable: false` items an `unanswerable` block (`total`,
-  `correct_abstentions`, `accuracy`). On answerable items an abstention is
-  graded like any answer (normally a miss); each result carries `abstained`.
+  and for `answerable: false` items an `unanswerable` block of the same shape.
+  Only the fixed reply counts, and the chain returns it only when retrieval
+  finds nothing: a model that declines in its own words is not detected, so on
+  a populated index the `unanswerable` rate is a lower bound on correct
+  declines, not an accuracy. On answerable items an abstention is graded like
+  any answer (normally a miss); each result carries `abstained`.
 - `rerank_status_counts` — queries per rerank status, e.g.
   `{"applied": 48, "failed": 2}`; each result carries `rerank_status`
   (`applied`, `disabled`, `unavailable`, `skipped`, `failed`, or `null` when

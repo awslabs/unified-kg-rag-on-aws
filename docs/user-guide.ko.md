@@ -1581,9 +1581,11 @@ run-eval --eval-data-path s3://my-bucket/eval/my_eval_data.json \
 - `abstention_statistics` — 체인이 답변 대신 고정된 컨텍스트 없음 응답("I could not
   find relevant information…")을 반환한 빈도입니다. `abstained`, `answered`,
   `abstention_rate`, 같은 값의 `per_strategy`가 있고, `answerable: false` 항목에는
-  `unanswerable` 블록(`total`, `correct_abstentions`, `accuracy`)이 있습니다. 답할 수
-  있는 항목에서 거절은 다른 답변과 똑같이 채점합니다(보통 놓침). 각 결과에는
-  `abstained`가 기록됩니다.
+  같은 형태의 `unanswerable` 블록이 있습니다. 고정 응답만 거절로 세며 체인은 검색
+  결과가 없을 때만 이 응답을 반환합니다. 모델이 자기 말로 답변을 거절하면 감지하지
+  않으므로, 데이터가 색인된 상태에서 `unanswerable`의 비율은 정확도가 아니라 올바른
+  거절의 하한입니다. 답할 수 있는 항목에서 거절은 다른 답변과 똑같이 채점합니다(보통
+  놓침). 각 결과에는 `abstained`가 기록됩니다.
 - `rerank_status_counts` — 재순위화 상태별 질의 수입니다(예:
   `{"applied": 48, "failed": 2}`). 각 결과에는 `rerank_status`(`applied`,
   `disabled`, `unavailable`, `skipped`, `failed`, 답변 생성이 먼저 실패했으면 `null`)가
