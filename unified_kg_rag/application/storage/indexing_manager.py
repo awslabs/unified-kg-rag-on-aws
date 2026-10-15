@@ -361,7 +361,7 @@ class IndexingManager:
         """Union delta artifacts with existing graph state before upsert.
 
         Reads the existing entities/relationships the delta touches back from the
-        graph store and merges (description/text_unit_ids union, frequency/weight
+        graph store and merges (description/text_unit_ids union, weight
         recompute) via the pure merge functions, so a cross-run upsert accumulates
         rather than overwriting. If the adapter does not support read-back it
         returns ``[]`` and this degenerates to the existing overwrite behaviour.
@@ -591,7 +591,7 @@ class IndexingManager:
         suffix.
 
         Reads the stored items back, removes ``text_unit_ids`` from their
-        lineage (recomputing frequency/weight, see ``remove_text_units``) and
+        lineage (recomputing weight, see ``remove_text_units``) and
         writes every item read back to both stores (the vector store updates
         only those fields in place), so a retry also repairs a store an earlier,
         interrupted strip did not reach. A graph adapter without read-back

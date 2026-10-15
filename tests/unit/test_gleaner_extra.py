@@ -252,6 +252,10 @@ class TestParseRefinementOutput:
 # --------------------------------------------------------------------------- #
 # ENTITY_CORRECTION / RELATIONSHIP_CORRECTION issues
 # --------------------------------------------------------------------------- #
+# Corrections resolve only the items citing the unit being refined.
+CITES = ["t1"]
+
+
 class TestCorrectionIssues:
     """Corrections the refinement prompt asks for must reach the graph.
 
@@ -277,7 +281,7 @@ class TestCorrectionIssues:
         return {"issue_type": "RELATIONSHIP_CORRECTION", "details": details}
 
     def test_entity_type_correction_applied(self, gleaner) -> None:
-        entity = _ent("e1", "acme corp")
+        entity = _ent("e1", "acme corp", text_unit_ids=CITES)
         entity.type = "PERSON"
         ents, rels = gleaner._parse_refinement_output(
             self._plan(
@@ -291,7 +295,7 @@ class TestCorrectionIssues:
         assert ents == [] and rels == []
 
     def test_entity_rename_keeps_display_form_and_the_id(self, gleaner) -> None:
-        entity = _ent("e1", "acme")
+        entity = _ent("e1", "acme", text_unit_ids=CITES)
         entity.name_embedding = [0.1, 0.2]
         gleaner._parse_refinement_output(
             self._plan(
@@ -311,7 +315,7 @@ class TestCorrectionIssues:
         assert entity.name_embedding is None
 
     def test_entity_correction_for_unknown_name_is_dropped(self, gleaner) -> None:
-        entity = _ent("e1", "acme corp")
+        entity = _ent("e1", "acme corp", text_unit_ids=CITES)
         entity.type = "PERSON"
         gleaner._parse_refinement_output(
             self._plan(
@@ -327,6 +331,7 @@ class TestCorrectionIssues:
     def test_relationship_type_correction_applied(self, gleaner) -> None:
         rel = Relationship(
             id="r1",
+            text_unit_ids=CITES,
             source_id="e1",
             target_id="e2",
             source_name="acme corp",
@@ -350,6 +355,7 @@ class TestCorrectionIssues:
     def test_reversed_direction_swaps_ids_and_names_together(self, gleaner) -> None:
         rel = Relationship(
             id="r1",
+            text_unit_ids=CITES,
             source_id="e-seattle",
             target_id="e-acme",
             source_name="seattle",
@@ -374,6 +380,7 @@ class TestCorrectionIssues:
     def test_relationship_correction_for_unknown_edge_is_dropped(self, gleaner) -> None:
         rel = Relationship(
             id="r1",
+            text_unit_ids=CITES,
             source_id="e1",
             target_id="e2",
             source_name="acme corp",
@@ -391,6 +398,40 @@ class TestCorrectionIssues:
         )
         assert rel.type == "EMPLOYS"
 
+    def test_corrections_leave_other_units_items_alone(self, gleaner) -> None:
+        # The unit's prompt lists only the items citing it. Resolved in the
+        # whole round, a correction could rename, retype or reverse an item
+        # only another unit cites, which that unit's incremental run lacks.
+        foreign = _ent("e1", "acme corp", type="PERSON", text_unit_ids=["t2"])
+        edge = Relationship(
+            id="r1",
+            text_unit_ids=["t2"],
+            source_id="e1",
+            target_id="e2",
+            source_name="acme corp",
+            target_name="seattle",
+            type="EMPLOYS",
+        )
+        gleaner._parse_refinement_output(
+            self._plan(
+                self._entity_correction(
+                    name="acme corp",
+                    corrected_name="Acme Holdings",
+                    corrected_type="ORGANIZATION",
+                ),
+                self._relationship_correction(
+                    source="acme corp",
+                    target="seattle",
+                    corrected_source="seattle",
+                    corrected_target="acme corp",
+                ),
+            ),
+            self.UNIT,
+            GleaningIndex([foreign], [edge]),
+        )
+        assert (foreign.name, foreign.type) == ("acme corp", "PERSON")
+        assert (edge.source_name, edge.target_name) == ("acme corp", "seattle")
+
     def test_correction_and_parse_logs_omit_corpus_names(
         self, gleaner, caplog: pytest.LogCaptureFixture
     ) -> None:
@@ -398,6 +439,7 @@ class TestCorrectionIssues:
         # relationship endpoint names and a 250-char model-output preview.
         rel = Relationship(
             id="r1",
+            text_unit_ids=CITES,
             short_id="r1",
             source_id="e1",
             target_id="e2",
@@ -441,6 +483,7 @@ class TestCorrectionIssues:
             "target_id": "e2",
             "source_name": "acme corp",
             "target_name": "seattle",
+            "text_unit_ids": CITES,
         }
         first = Relationship(id="r1", type="EMPLOYS", **shared)
         second = Relationship(id="r2", type="FOUNDED_IN", **shared)
@@ -461,6 +504,7 @@ class TestCorrectionIssues:
             "target_id": "e2",
             "source_name": "acme corp",
             "target_name": "seattle",
+            "text_unit_ids": CITES,
         }
         first = Relationship(id="r1", type="EMPLOYS", **shared)
         second = Relationship(id="r2", type="FOUNDED_IN", **shared)
@@ -483,7 +527,7 @@ class TestCorrectionIssues:
     ) -> None:
         # The hallucination guard covers corrections too, not just additions.
         gleaner.extraction_config.entity_grounding.enabled = True
-        entity = _ent("e1", "acme corp")
+        entity = _ent("e1", "acme corp", text_unit_ids=CITES)
         entity.type = "PERSON"
         issue = self._entity_correction(name="acme corp", corrected_type="ORGANIZATION")
         issue["text_evidence"] = "A clause that appears nowhere in the chunk."
@@ -495,7 +539,7 @@ class TestCorrectionIssues:
     def test_correction_survives_a_full_gleaning_round(self, gleaner, mocker) -> None:
         # End-to-end through glean_graph: the corrected entity is the one the
         # stage returns, so the correction reaches the graph the pipeline indexes.
-        seed = _ent("e1", "acme corp")
+        seed = _ent("e1", "acme corp", text_unit_ids=CITES)
         seed.type = "PERSON"
         gleaner.graph_refiner = mocker.Mock()
         gleaner.graph_refiner.invoke.return_value = {
@@ -562,6 +606,7 @@ class TestCorrectionIssues:
     ) -> None:
         edge = Relationship(
             id="r1",
+            text_unit_ids=CITES,
             source_id="e1",
             target_id="e2",
             source_name="acme",
@@ -571,7 +616,10 @@ class TestCorrectionIssues:
         entities, relationships = self._glean_one_round(
             gleaner,
             mocker,
-            [_ent("e1", "acme"), _ent("e2", "seattle")],
+            [
+                _ent("e1", "acme", text_unit_ids=CITES),
+                _ent("e2", "seattle", text_unit_ids=CITES),
+            ],
             [edge],
             self._entity_correction(name="acme", corrected_name="Acme Corporation"),
         )
@@ -589,6 +637,7 @@ class TestCorrectionIssues:
     ) -> None:
         edge = Relationship(
             id="r1",
+            text_unit_ids=CITES,
             source_id="e1",
             target_id="e2",
             source_name="jane roe",
@@ -598,7 +647,10 @@ class TestCorrectionIssues:
         entities, relationships = self._glean_one_round(
             gleaner,
             mocker,
-            [_ent("e1", "jane roe"), _ent("e2", "acme")],
+            [
+                _ent("e1", "jane roe", text_unit_ids=CITES),
+                _ent("e2", "acme", text_unit_ids=CITES),
+            ],
             [edge],
             self._entity_correction(name="acme", corrected_name="Acme Corporation"),
         )
@@ -615,9 +667,10 @@ class TestCorrectionIssues:
         # A rename can make two entities share a name, at which point the round's
         # duplicate merge re-points every edge at the surviving id. The edge must
         # then carry the survivor's name, not the one it was extracted under.
-        canonical = _ent("e1", "acme corporation")
+        canonical = _ent("e1", "acme corporation", text_unit_ids=CITES)
         edge = Relationship(
             id="r1",
+            text_unit_ids=CITES,
             source_id="e2",
             target_id="e3",
             source_name="acme",
@@ -627,7 +680,11 @@ class TestCorrectionIssues:
         entities, relationships = self._glean_one_round(
             gleaner,
             mocker,
-            [canonical, _ent("e2", "acme"), _ent("e3", "seattle")],
+            [
+                canonical,
+                _ent("e2", "acme", text_unit_ids=CITES),
+                _ent("e3", "seattle", text_unit_ids=CITES),
+            ],
             [edge],
             self._entity_correction(name="acme", corrected_name="Acme Corporation"),
         )
@@ -644,6 +701,7 @@ class TestCorrectionIssues:
         # then land on the side the swapped id now occupies, not the old one.
         edge = Relationship(
             id="r1",
+            text_unit_ids=CITES,
             source_id="e-seattle",
             target_id="e-acme",
             source_name="seattle",
@@ -653,7 +711,10 @@ class TestCorrectionIssues:
         entities, relationships = self._glean_one_round(
             gleaner,
             mocker,
-            [_ent("e-acme", "acme corp"), _ent("e-seattle", "seattle")],
+            [
+                _ent("e-acme", "acme corp", text_unit_ids=CITES),
+                _ent("e-seattle", "seattle", text_unit_ids=CITES),
+            ],
             [edge],
             self._relationship_correction(
                 source="seattle",

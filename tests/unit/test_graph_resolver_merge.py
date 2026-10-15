@@ -4,7 +4,7 @@
 
 graph_resolver.py is pure domain (no AWS) and carries the entity/relationship
 merge arithmetic that feeds ranking and the incremental path. These lock the
-merge semantics — max-confidence, frequency = |text_unit_ids|, summed per-text-unit
+merge semantics — max-confidence, text-unit union, summed per-text-unit
 weight, self-loop removal, type normalization, determinism — and the stats
 reduction-rate guards. Run with use_process_pool=False so grouping is
 deterministic and in-process.
@@ -53,7 +53,7 @@ def test_merge_takes_max_confidence(resolver: GraphResolver) -> None:
     assert merged.confidence == 0.9
 
 
-def test_merge_recomputes_frequency_from_text_unit_union(
+def test_merge_unions_text_units(
     resolver: GraphResolver,
 ) -> None:
     entities = [
@@ -61,8 +61,6 @@ def test_merge_recomputes_frequency_from_text_unit_union(
         _ent("e2", "Acme", text_unit_ids=["t1", "t2"]),
     ]
     merged = resolver.entity_resolver._merge_entities(entities)
-    # Deduped union {t1, t2} -> frequency 2.
-    assert merged.frequency == 2
     assert set(merged.text_unit_ids) == {"t1", "t2"}
 
 
@@ -110,12 +108,11 @@ def test_entity_merge_is_deterministic(resolver: GraphResolver) -> None:
     a = resolver.entity_resolver._merge_entities(entities)
     b = resolver.entity_resolver._merge_entities(entities)
     # Everything except the wall-clock updated_at must be identical run to run.
-    assert (a.id, a.name, a.description, set(a.text_unit_ids), a.frequency) == (
+    assert (a.id, a.name, a.description, set(a.text_unit_ids)) == (
         b.id,
         b.name,
         b.description,
         set(b.text_unit_ids),
-        b.frequency,
     )
 
 

@@ -200,7 +200,7 @@ class TestParseRelationshipData:
 # _merge_entities
 # --------------------------------------------------------------------------- #
 class TestMergeEntities:
-    def test_duplicate_ids_merged_frequency_from_text_units(self, extractor) -> None:
+    def test_duplicate_ids_merged_text_units_unioned(self, extractor) -> None:
         e1 = Entity(
             id="e1", name="Alice", type="PERSON", text_unit_ids=["t1"], confidence=0.5
         )
@@ -210,8 +210,6 @@ class TestMergeEntities:
         merged = extractor._merge_entities([e1, e2])
         assert len(merged) == 1
         survivor = merged[0]
-        # frequency = count of unique text_unit_ids
-        assert survivor.frequency == 2
         assert set(survivor.text_unit_ids) == {"t1", "t2"}
 
     def test_confidence_is_max_not_mean(self, extractor) -> None:
@@ -269,13 +267,6 @@ class TestMergeEntities:
         e2 = Entity(id="e2", name="Bob", type="PERSON", text_unit_ids=["t1"])
         merged = extractor._merge_entities([e1, e2])
         assert len(merged) == 2
-
-    def test_frequency_set_from_text_units_single(self, extractor) -> None:
-        e1 = Entity(
-            id="e1", name="Alice", type="PERSON", text_unit_ids=["t1", "t2", "t3"]
-        )
-        merged = extractor._merge_entities([e1])
-        assert merged[0].frequency == 3
 
     def test_empty_input(self, extractor) -> None:
         assert extractor._merge_entities([]) == []
@@ -373,9 +364,7 @@ class TestMaterializeRelationshipEndpoints:
             for e in extractor._materialize_relationship_endpoints(existing, rels)
         }
         assert out["e1"].text_unit_ids == ["t1", "t2", "t3"]
-        assert out["e1"].frequency == 3
         assert out["e2"].text_unit_ids == ["t2", "t1", "t3"]
-        assert out["e2"].frequency == 3
         # The input entity is not mutated.
         assert existing[0].text_unit_ids == ["t1"]
 
@@ -404,42 +393,43 @@ class TestMaterializeRelationshipEndpoints:
 
 
 # --------------------------------------------------------------------------- #
-# _filter_entities_by_confidence / _filter_orphan_relationships
+# _apply_confidence_threshold
 # --------------------------------------------------------------------------- #
 class TestConfidenceFiltering:
-    def test_threshold_zero_disables_filtering(self, extractor) -> None:
+    def test_threshold_zero_disables_filtering(self, extractor, text_unit) -> None:
         extractor.extraction_config.entity_confidence_threshold = 0.0
         ents = [Entity(id="e1", name="A", confidence=0.1)]
-        out, removed = extractor._filter_entities_by_confidence(ents)
-        assert removed == 0
+        out, dropped = extractor._apply_confidence_threshold(ents, text_unit)
+        assert dropped == set()
         assert out == ents
 
-    def test_low_confidence_filtered(self, extractor) -> None:
+    def test_low_confidence_filtered(self, extractor, text_unit) -> None:
         extractor.extraction_config.entity_confidence_threshold = 0.5
         ents = [
             Entity(id="e1", name="A", confidence=0.9),
             Entity(id="e2", name="B", confidence=0.1),
         ]
-        out, removed = extractor._filter_entities_by_confidence(ents)
-        assert removed == 1
+        out, dropped = extractor._apply_confidence_threshold(ents, text_unit)
+        assert dropped == {"b"}
         assert {e.id for e in out} == {"e1"}
+        assert extractor.stats.entities_filtered_by_confidence == 1
 
-    def test_none_confidence_treated_as_one(self, extractor) -> None:
+    def test_none_confidence_treated_as_one(self, extractor, text_unit) -> None:
         extractor.extraction_config.entity_confidence_threshold = 0.5
         ents = [Entity(id="e1", name="A", confidence=None)]
-        out, removed = extractor._filter_entities_by_confidence(ents)
-        assert removed == 0
+        out, dropped = extractor._apply_confidence_threshold(ents, text_unit)
+        assert dropped == set()
         assert out == ents
 
-    def test_orphan_relationship_filtered(self, extractor) -> None:
-        valid = [Entity(id="e1", name="A"), Entity(id="e2", name="B")]
-        rels = [
-            Relationship(id="r1", source_id="e1", target_id="e2"),
-            Relationship(id="r2", source_id="e1", target_id="GONE"),
+    def test_kept_copy_in_the_chunk_lifts_the_key(self, extractor, text_unit) -> None:
+        extractor.extraction_config.entity_confidence_threshold = 0.5
+        ents = [
+            Entity(id="e1", name="A", confidence=0.1),
+            Entity(id="e1", name="A", confidence=0.9),
         ]
-        out, removed = extractor._filter_orphan_relationships(rels, valid)
-        assert removed == 1
-        assert {r.id for r in out} == {"r1"}
+        out, dropped = extractor._apply_confidence_threshold(ents, text_unit)
+        assert dropped == set()
+        assert [e.confidence for e in out] == [0.9]
 
 
 # --------------------------------------------------------------------------- #
@@ -653,6 +643,75 @@ class TestProcessExtractionResults:
         ents, rels = extractor._process_extraction_results(units, results)
         assert sorted(e.name for e in ents) == ["Acme", "Harbor"]
         assert [(r.source_name, r.target_name) for r in rels] == [("Acme", "Harbor")]
+
+    @staticmethod
+    def _output(acme_confidence: float) -> dict:
+        return {
+            "entities": {
+                "entity": [
+                    {"name": "Acme", "type": "ORG", "confidence": acme_confidence},
+                    {"name": "Bob", "type": "PERSON", "confidence": 0.9},
+                ]
+            },
+            "relationships": {
+                "relationship": {"source": "Bob", "target": "Acme", "type": "WORKS_AT"}
+            },
+        }
+
+    def _lineage(self, extractor, units, results) -> tuple[dict, list]:
+        extractor.stats = ExtractionStats()
+        ents, rels = extractor._process_extraction_results(units, results)
+        return (
+            {e.name: e.text_unit_ids for e in ents},
+            [(r.source_name, r.target_name, r.text_unit_ids) for r in rels],
+        )
+
+    def test_confidence_threshold_does_not_depend_on_the_batch(self, extractor) -> None:
+        # The threshold judges each chunk's own instance. Applied to the
+        # merged entity (max confidence over the batch), "Acme" from the
+        # low-confidence chunk B survived next to chunk A but not alone, so a
+        # full build and an incremental run of B disagreed.
+        extractor.extraction_config.entity_confidence_threshold = 0.5
+        unit_a, unit_b = TextUnit(id="A", text="x"), TextUnit(id="B", text="x")
+        together = self._lineage(
+            extractor, [unit_a, unit_b], [self._output(0.9), self._output(0.2)]
+        )
+        alone_a = self._lineage(extractor, [unit_a], [self._output(0.9)])
+        alone_b = self._lineage(extractor, [unit_b], [self._output(0.2)])
+        assert together == (
+            {"Acme": ["A"], "Bob": ["A", "B"]},
+            [("Bob", "Acme", ["A"])],
+        )
+        assert alone_b == ({"Bob": ["B"]}, [])
+        assert alone_a == ({"Acme": ["A"], "Bob": ["A"]}, [("Bob", "Acme", ["A"])])
+        assert extractor.rejected_entities[-1].text_unit_id == "B"
+
+    def test_low_confidence_elsewhere_does_not_drop_a_stub(self, extractor) -> None:
+        # "X" is listed at low confidence in A only; B names it only in a
+        # relationship, so B's stub cites B whether or not A shares the batch.
+        extractor.extraction_config.entity_confidence_threshold = 0.5
+        unit_a, unit_b = TextUnit(id="A", text="x"), TextUnit(id="B", text="x")
+        out_a = {
+            "entities": {"entity": [{"name": "X", "type": "ORG", "confidence": 0.2}]}
+        }
+        out_b = {
+            "entities": {
+                "entity": [{"name": "Bob", "type": "PERSON", "confidence": 0.9}]
+            },
+            "relationships": {
+                "relationship": {"source": "Bob", "target": "X", "type": "WORKS_AT"}
+            },
+        }
+        together = self._lineage(extractor, [unit_a, unit_b], [out_a, out_b])
+        alone_b = self._lineage(extractor, [unit_b], [out_b])
+        assert (
+            together
+            == alone_b
+            == (
+                {"Bob": ["B"], "X": ["B"]},
+                [("Bob", "X", ["B"])],
+            )
+        )
 
 
 # --------------------------------------------------------------------------- #

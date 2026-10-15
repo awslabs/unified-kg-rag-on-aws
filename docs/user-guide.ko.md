@@ -559,7 +559,7 @@ LLM 단계는 Bedrock I/O가 병목이므로 동시성을 CPU 수보다 훨씬 �
 | `processing.translation.additional_target_languages` | `null` | 추가로 번역할 대상 언어 목록입니다. 언어마다 해당 언어의 분석기를 쓰는 `translated_text_<language>` 필드에 인덱싱하고 어휘 검색에 포함합니다(질의별 `RAGInput.target_language`와 함께 쓰면 유용). 추출, 임베딩, 답변 컨텍스트는 `target_language`만 씁니다. 언어 하나마다 청크당 LLM 호출이 하나씩 늘어납니다. |
 | `processing.graph_extraction.entity_types` | 범용 유형 7개 | 추출 프롬프트에 넣는 `"LABEL: description"` 항목입니다. 도메인 적응에 가장 효과가 큰 설정입니다(§9). 빈 목록이면 모델이 유형을 고릅니다. |
 | `processing.graph_extraction.max_entities_per_chunk` | `50` | 청크당 엔티티 상한입니다(관계는 `max_relationships_per_chunk`, 역시 `50`). |
-| `processing.graph_extraction.entity_confidence_threshold` | `0.0` | 신뢰도가 이 값보다 낮은 엔티티를 버립니다. `0.0`이면 모두 유지합니다. |
+| `processing.graph_extraction.entity_confidence_threshold` | `0.0` | 청크마다 신뢰도가 이 값보다 낮게 매겨진 엔티티를 그 청크에서 버리고, 그 청크에서 이 엔티티를 가리키는 관계도 버립니다. 청크 단위로 적용하므로 어떤 문서와 함께 인덱싱하는지에 따라 결과가 달라지지 않습니다. `0.0`이면 모두 유지합니다. |
 | `processing.graph_extraction.description_summarization.enabled` | `true` | 병합된 설명이 `force_summary_threshold_tokens`(`600`)보다 길면 LLM으로 다시 요약합니다. |
 | `processing.graph_extraction.entity_grounding.enabled` | `false` | 환각 방지 장치입니다. 원문 그대로의 `source_text` 구간이 청크에 없는 엔티티와 관계를 버리거나, `action: "penalize"`이면 가중치를 낮춥니다. 다만 `penalize`여도 청크가 추출하지 않은 엔티티를 가리키는 근거 없는 관계는 버립니다. 문장 부호는 무시하며, 한자·한글·가나 구간은 문자 바이그램으로 비교하므로 한국어 조사가 달라져도 원문에 있는 것으로 봅니다. gleaning이 추가한 항목에도 적용합니다(`penalize`이면 같은 규칙으로 버리지 않고 가중치를 낮춥니다). 그 청크에서 거부된 엔티티를 가리키는 gleaning 관계는 버리고, 청크가 나열하지 않은 엔티티를 가리키는 관계는 청크에 그 이름이 있을 때만 남깁니다. |
 | `processing.gleaning.enabled` | `true` | 놓친 엔티티와 관계를 찾는 추가 추출 패스입니다. |

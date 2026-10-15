@@ -25,10 +25,6 @@ class Entity(Named):
         "it is related to), set at graph resolution and on incremental merges; "
         "higher is more important",
     )
-    frequency: int | None = Field(
-        None,
-        description="Number of text units supporting the entity (recomputed on merge)",
-    )
     confidence: float | None = Field(
         default=1.0,
         ge=0.0,

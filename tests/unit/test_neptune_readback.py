@@ -265,8 +265,7 @@ def test_entity_read_back_inverts_the_vertex_encoding(indexer) -> None:
 
     (read,) = indexer.read_entities([written.id], suffix="tenant-a")
 
-    # frequency is derived (len(text_unit_ids)) and not stored.
-    exclude = {"created_at", "updated_at", "frequency"}
+    exclude = {"created_at", "updated_at"}
     assert read.model_dump(exclude=exclude) == written.model_dump(exclude=exclude)
     assert BaseIndexer.get_suffix(read) == "tenant-a"
 

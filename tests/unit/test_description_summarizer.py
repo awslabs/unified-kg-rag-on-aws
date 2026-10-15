@@ -162,7 +162,6 @@ class TestSummarizeEntities:
             type="PERSON",
             description=LONG_DESCRIPTION,
             text_unit_ids=["t1", "t2"],
-            frequency=2,
             confidence=0.9,
         )
         out = summarizer.summarize_entities([ent])[0]
@@ -171,7 +170,6 @@ class TestSummarizeEntities:
         assert out.name == "Alice"
         assert out.type == "PERSON"
         assert out.text_unit_ids == ["t1", "t2"]
-        assert out.frequency == 2
         assert out.confidence == 0.9
 
     def test_only_over_threshold_items_sent_to_llm(self, summarizer, mocker) -> None:

@@ -433,9 +433,6 @@ class EntityResolver(BaseResolver):
             community_ids=self._merge_lists(
                 [e.community_ids for e in entities if e.community_ids]
             ),
-            # Recompute from text-unit support (pre-existing frequencies are
-            # typically None in a full build), so frequency is a real signal.
-            frequency=len(merged_text_unit_ids),
             confidence=merged_confidence,
             attributes=_merged_attributes([e.attributes for e in entities]),
             # Keep the earliest known creation time; leave it None (truthfully

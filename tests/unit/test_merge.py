@@ -52,12 +52,22 @@ class TestMergeEntities:
         assert remap == {}
         assert merged[0].text_unit_ids == ["t1", "t2"]
 
-    def test_frequency_recomputed_from_text_units(self) -> None:
+    def test_a_renamed_delta_copy_keeps_the_stored_name(self) -> None:
+        # Gleaning renamed the delta's copy in place (the id still derives
+        # from "Acme"). The stored edges the delta does not rewrite name
+        # "Acme", so the entity must too; a full rebuild applies the rename.
+        old = [_entity("e1", "Acme", text_unit_ids=["t1"])]
+        delta = [_entity("e1", "Acme Corporation", text_unit_ids=["t2"])]
+        merged, remap = merge_entities(old, delta)
+        assert [(e.id, e.name) for e in merged] == [("e1", "Acme")]
+        assert remap == {}
+
+    def test_text_units_unioned_and_rank_kept(self) -> None:
         old = [_entity("e1", "Alice", rank=5, text_unit_ids=["t1", "t2"])]
         delta = [_entity("e9", "Alice", text_unit_ids=["t2", "t3"])]
         merged, _ = merge_entities(old, delta)
-        # union {t1,t2,t3} -> frequency 3; rank (graph importance) is preserved.
-        assert merged[0].frequency == 3
+        # union {t1,t2,t3}; rank (graph importance) is preserved.
+        assert merged[0].text_unit_ids == ["t1", "t2", "t3"]
         assert merged[0].rank == 5
 
     def test_confidence_and_rank_take_max_on_merge(self) -> None:
@@ -400,12 +410,20 @@ class TestRemoveTextUnits:
             entities, relationships, {"tb"}
         )
 
-        assert [(e.id, e.text_unit_ids, e.frequency) for e in kept_entities] == [
-            ("e1", ["ta"], 1)
-        ]
+        assert [(e.id, e.text_unit_ids) for e in kept_entities] == [("e1", ["ta"])]
         assert kept_entities[0].description == "d"
         assert [(r.id, r.text_unit_ids, r.weight) for r in kept_relationships] == [
             ("r1", ["ta"], 1.0)
         ]
         # Inputs are not mutated.
         assert entities[0].text_unit_ids == ["ta", "tb"]
+
+
+def test_entity_cached_with_the_removed_frequency_field_still_loads() -> None:
+    # Stage caches written before `frequency` was removed carry the key; the
+    # model ignores it rather than failing a resumed run.
+    entity = Entity.model_validate_json(
+        '{"id": "e1", "name": "Acme", "text_unit_ids": ["t1"], "frequency": 1}'
+    )
+    assert entity.text_unit_ids == ["t1"]
+    assert "frequency" not in entity.model_dump()

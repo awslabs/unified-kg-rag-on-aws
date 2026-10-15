@@ -604,7 +604,7 @@ LLM stages are Bedrock-I/O-bound, so concurrency can far exceed the CPU count.
 | `processing.translation.additional_target_languages` | `null` | Extra target languages to translate into. Each is indexed in its own `translated_text_<language>` field with that language's analyzer and searched lexically (useful with a per-query `RAGInput.target_language`); extraction, embeddings and the answer context use `target_language` only. Each language is one more LLM call per chunk. |
 | `processing.graph_extraction.entity_types` | 7 generic types | `"LABEL: description"` items injected into the extraction prompt. The most effective domain-adaptation knob (§9). An empty list lets the model choose. |
 | `processing.graph_extraction.max_entities_per_chunk` | `50` | Cap on entities per chunk (relationships: `max_relationships_per_chunk`, also `50`). |
-| `processing.graph_extraction.entity_confidence_threshold` | `0.0` | Drop entities below this confidence; `0.0` keeps all. |
+| `processing.graph_extraction.entity_confidence_threshold` | `0.0` | Drop an entity from each chunk that scored it below this confidence, with that chunk's relationships naming it (per chunk, so the result does not depend on which documents are indexed together); `0.0` keeps all. |
 | `processing.graph_extraction.description_summarization.enabled` | `true` | Re-summarize merged descriptions longer than `force_summary_threshold_tokens` (`600`) with an LLM. |
 | `processing.graph_extraction.entity_grounding.enabled` | `false` | Hallucination guard: drop (or, with `action: "penalize"`, down-weight) entities and relationships whose verbatim `source_text` span is absent from the chunk; `penalize` still drops an ungrounded relationship naming an entity the chunk did not extract (punctuation ignored; Han/Hangul/Kana spans are compared by character bigrams, so a Korean particle change still counts as present). Also applies to gleaning additions (under `penalize` they are down-weighted, not dropped, on the same rules): a gleaned relationship naming an entity rejected for its chunk is dropped, and one naming an entity the chunk does not list is kept only when the chunk contains the name. |
 | `processing.gleaning.enabled` | `true` | Extra extraction passes that catch missed entities and relationships. |
@@ -1471,7 +1471,7 @@ The SQLite registry of local mode has no such limit.
 ### Cross-run merge
 
 By default (`indexing.cross_run_merge: true`) a delta run *unions* the delta
-with existing graph state (description / `text_unit_ids` / frequency / weight)
+with existing graph state (description / `text_unit_ids` / weight)
 before upsert, so an entity shared with unchanged documents keeps their
 descriptions and chunk lineage (which `mix` follows). Each delta run reads the
 touched entities and relationships back from the graph first, and merged
@@ -1486,8 +1486,8 @@ spelling, so a claim that several documents state (as "Acme Inc" in one and
 source text and text units, read back from the OpenSearch claims index (a claim
 indexed before claims stored their text units starts from this run's).
 When a document changes or is deleted, entities, relationships and claims it shares
-with other documents lose its chunks from `text_unit_ids` (frequency and
-weight follow), but keep the description it contributed until a full rebuild.
+with other documents lose its chunks from `text_unit_ids` (weight
+follows), but keep the description it contributed until a full rebuild.
 If reading the stored items back fails, nothing is overwritten: a failed read
 during the merge fails the indexing stage before any write (the documents stay
 unrecorded and are retried), and a failed read while removing a document's

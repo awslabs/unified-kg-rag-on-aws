@@ -177,7 +177,6 @@ class BaseProcessor:
                 description_embedding=None,
                 text_unit_ids=[text_unit.id],
                 community_ids=None,
-                frequency=None,
                 confidence=confidence,
                 attributes=attributes,
                 created_at=datetime.now(),

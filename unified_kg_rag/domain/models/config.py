@@ -1033,7 +1033,9 @@ class GraphExtractionConfig(BaseModel):
         ge=0.0,
         le=1.0,
         description="Minimum confidence score for filtering entities. "
-        "Entities below this threshold are excluded. Set to 0.0 to disable filtering. "
+        "Applied per text unit: an entity a chunk scored below this threshold is "
+        "dropped from that chunk, with the chunk's relationships naming it. Set to "
+        "0.0 to disable filtering. "
         "Compared against the normalized confidence: the prompt's 1-10 score / 10 "
         "(an integer 1 -> 0.1; decimal values <= 1 are taken as fractions).",
     )
@@ -1742,7 +1744,7 @@ class IndexingConfig(BaseModel):
         default=True,
         description="On incremental (delta) runs, read existing graph entities/"
         "relationships and union them with the delta (description/text_unit_ids/"
-        "frequency/weight) before upsert, instead of overwriting. Requires a graph "
+        "weight) before upsert, instead of overwriting. Requires a graph "
         "adapter that supports read-back (an adapter without it degrades to "
         "overwrite). On by default: overwriting replaces an entity shared with "
         "unchanged documents by its delta-only description and text_unit_ids. "
