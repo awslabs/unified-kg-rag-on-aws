@@ -344,12 +344,47 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                 size=size,
                 sort=self._importance_sort(prefix, index_query, search_type),
             )
+            probe = (
+                self._attribute_probe(prefix, index_query.filters)
+                if query_vector is not None and search_type != SearchType.LEXICAL
+                else None
+            )
             target_alias = self._get_name(prefix, query.suffix)
             search_tasks.append(
-                self._search_index(target_alias, bodies, size, query.suffix)
+                self._search_index(target_alias, bodies, size, query.suffix, probe)
             )
 
         return search_tasks
+
+    def _attribute_probe(
+        self, prefix: str, filters: dict[str, Any] | None
+    ) -> dict[str, Any] | None:
+        """A search for one document matching the filters' attribute keys.
+
+        ``attr_<key>`` and ``attributes.<path>`` are mapped only once a
+        document carries them, and OpenSearch 2.13 rejects a kNN filter on a
+        field the index does not map (a 400, "Rewrite first"), so an
+        attribute filter failed every vector and hybrid search of an index
+        whose documents lack the attribute, community reports above all. When
+        no document matches the attribute clauses the kNN search could find
+        nothing anyway, so the index is skipped instead (fail-closed, as
+        ``filter_schema`` documents). None when the filters have no such key.
+        """
+        declared = self._index_filter_fields.get(prefix) if filters else None
+        if declared is None:
+            return None
+        attributes = {
+            key: value
+            for key, value in (filters or {}).items()
+            if key not in declared.fields
+        }
+        if not attributes:
+            return None
+        return {
+            "size": 1,
+            "query": {"bool": {"filter": self._build_filter_clauses(attributes)}},
+            "_source": False,
+        }
 
     @staticmethod
     def _interleave(
@@ -767,12 +802,25 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         bodies: list[dict[str, Any]],
         size: int,
         suffix: str | None,
+        probe: dict[str, Any] | None = None,
     ) -> list[RetrievalResult]:
         """The hits of ``bodies`` on ``alias``; two (hybrid) are fused.
 
+        With a ``probe`` (``_attribute_probe``) that finds nothing, none.
         A search that failed transiently or found no index degrades the
         index to no hits (logged once), as one hybrid search did.
         """
+        if probe is not None:
+            found = await self._search(alias, probe)
+            if isinstance(found, Exception):
+                return await self._degraded_search(alias, suffix, found)
+            if not found:
+                logger.debug(
+                    "No document of %s matches the attribute filters; "
+                    "skipping its search",
+                    alias,
+                )
+                return []
         outcomes = await asyncio.gather(*(self._search(alias, body) for body in bodies))
         responses: list[list[dict[str, Any]]] = []
         for outcome in outcomes:

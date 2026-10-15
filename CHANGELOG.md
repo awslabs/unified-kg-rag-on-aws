@@ -548,6 +548,13 @@ Library API (Python callers and custom backends).
   (#300).
 
 ### Fixed
+- An attribute filter (`attr_<key>`, `attributes.<path>`) no longer fails
+  vector and hybrid searches on OpenSearch 2.13 with `ConfigurationError`
+  ("Rewrite first") when an index never mapped the attribute, such as the
+  community reports of `simple`, `global`, `drift` and `local` with
+  `--filters attr_category:x`. Such an index is now skipped (no document
+  can match), as documented: the reports drop out of the answer instead of
+  failing it (#PR).
 - kNN search on the default lucene engine explores
   `indexing.opensearch.vector_search.ef_search` candidates (default 100):
   lucene ignores the `index.knn.algo_param.ef_search` index setting, so each

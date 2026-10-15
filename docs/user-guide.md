@@ -1246,7 +1246,9 @@ units unfiltered. The two stores treat `attr_<key>` differently:
   units, entities, and community reports. A document without the attribute is
   excluded, so community reports, which usually lack document attributes, drop
   out of an attribute-filtered query. This is deliberate (fail-closed): an
-  attribute filter never returns content it cannot vouch for.
+  attribute filter never returns content it cannot vouch for. A vector or
+  hybrid search skips an index none of whose documents match the attribute
+  (OpenSearch 2.13 rejects a kNN filter on a field the index does not map).
 - Neptune applies `attr_<key>` on entity vertices where present: a vertex
   passes when the property matches or when it has no such property. A
   document-attribute filter such as `attr_category` therefore leaves graph

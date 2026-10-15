@@ -538,6 +538,54 @@ async def test_hybrid_fuses_the_two_searches_client_side(
         assert r.score == pytest.approx(expected[r.source])
 
 
+@pytest.mark.parametrize(
+    ("search_type", "filters", "searches"),
+    [
+        # No document has the attribute: only the probe runs.
+        (SearchType.HYBRID, {"attr_category": "a"}, 1),
+        (SearchType.VECTOR, {"attributes.category": "a"}, 1),
+        # A lexical filter on an unmapped field matches nothing, unprobed.
+        (SearchType.LEXICAL, {"attr_category": "a"}, 1),
+        # Declared fields are always mapped: no probe.
+        (SearchType.HYBRID, {"rank": {"gte": 1}}, 2),
+    ],
+)
+async def test_attribute_filter_probes_before_a_knn_search(
+    retriever, config, mocker, search_type, filters, searches
+) -> None:
+    # OpenSearch 2.13 rejects a kNN filter on a field the index does not map
+    # (attr_* on community reports), which failed the whole query.
+    prefix = config.indexing.opensearch.community_reports_index_prefix
+
+    class _NoAttributes(_Client):
+        async def asearch(self, **request) -> dict:
+            response = await super().asearch(**request)
+            if request["body"].get("_source") is False:
+                response["hits"]["hits"] = []
+            return response
+
+    client = _NoAttributes({prefix: [("cr1", 1.0)]})
+    object.__setattr__(retriever, "_opensearch_client", client)
+    vector = None if search_type == SearchType.LEXICAL else [0.1]
+    mocker.patch.object(
+        OpenSearchRetriever, "_get_query_vector", mocker.AsyncMock(return_value=vector)
+    )
+    mocker.patch.object(OpenSearchRetriever, "_check_embedding_settings")
+    results = await retriever.aretrieve(
+        SearchQuery(
+            query="x",
+            search_type=search_type,
+            index_prefixes=[prefix],
+            filters=filters,
+        )
+    )
+    assert len(client.requests) == searches
+    probed = any(body.get("_source") is False for body in client.bodies)
+    assert probed == (searches == 1 and search_type != SearchType.LEXICAL)
+    if probed:
+        assert results == []
+
+
 async def test_index_sweep_takes_each_index_in_turn(retriever, config, mocker) -> None:
     # Raw scores of two indices do not compare (here the entity index's sum of
     # two kNN scores tops every text hit); the sweep keeps each index's best.
