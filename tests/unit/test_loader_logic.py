@@ -3,7 +3,7 @@
 """DirectoryLoader behavior against real temp files — no AWS, no network.
 
 Exercises the pre-parsed ``Document`` JSON loader: file discovery
-(recursion, extension filtering, exclude patterns), JSON loading, MinHash
+(recursion, extension filtering, hidden-path exclusion), JSON loading, MinHash
 deduplication, stable doc ids and graceful per-file error handling.
 Everything runs against real files written under tmp_path.
 """
@@ -97,24 +97,22 @@ def test_discover_under_hidden_ancestor_finds_files(tmp_path: Path) -> None:
     assert discovered == {"doc.json"}
 
 
-def test_discover_excludes_hidden_and_pattern_dirs(tmp_path: Path) -> None:
+def test_discover_excludes_hidden_and_pycache_dirs(tmp_path: Path) -> None:
     _write_json_doc(tmp_path / "keep.json", "id-keep", "kept content")
-    for sub in (".git", "__pycache__", "drafts"):
+    for sub in (".git", "__pycache__"):
         (tmp_path / sub).mkdir()
         _write_json_doc(tmp_path / sub / "x.json", f"id-{sub}", "excluded content")
-    loader = DirectoryLoader(
-        tmp_path,
-        exclude_patterns=DirectoryLoader.DEFAULT_EXCLUDE_PATTERNS | {"drafts/*"},
-    )
+    loader = DirectoryLoader(tmp_path)
     assert {p.relative_to(tmp_path).as_posix() for p in loader.discover_files()} == {
         "keep.json"
     }
 
 
-def test_is_excluded_path_outside_root_uses_full_path(tmp_path: Path) -> None:
-    loader = DirectoryLoader(tmp_path / "corpus")
-    assert loader._is_excluded(Path("/elsewhere/.hidden.json"))
-    assert not loader._is_excluded(Path("/elsewhere/visible.json"))
+def test_old_positional_arguments_fail_at_construction(tmp_path: Path) -> None:
+    # DirectoryLoader(path, config) used to bind the config to a removed
+    # second parameter and only failed later, inside discovery.
+    with pytest.raises(TypeError):
+        DirectoryLoader(tmp_path, object())  # type: ignore[call-arg]
 
 
 def test_discover_recursive_includes_nested(tmp_path: Path) -> None:

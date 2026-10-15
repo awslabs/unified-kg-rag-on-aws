@@ -1,6 +1,5 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-import fnmatch
 import time
 from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -51,19 +50,10 @@ class DirectoryLoader:
     """
 
     SUPPORTED_EXTENSIONS = frozenset({".json"})
-    # Hidden paths and __pycache__ are always excluded
-    # (is_excluded_source_path); these patterns exclude more on top.
-    DEFAULT_EXCLUDE_PATTERNS: frozenset[str] = frozenset()
 
-    def __init__(
-        self,
-        source_directory: str | Path,
-        exclude_patterns: set[str] | None = None,
-        max_workers: int | None = None,
-    ):
+    def __init__(self, source_directory: str | Path):
         self.source_directory = Path(source_directory).resolve()
-        self.exclude_patterns = exclude_patterns or self.DEFAULT_EXCLUDE_PATTERNS
-        self.max_workers = max_workers or default_max_workers()
+        self.max_workers = default_max_workers()
         self.failed_files: list[str] = []
 
     def load(self) -> list[Document]:
@@ -115,35 +105,13 @@ class DirectoryLoader:
         return sorted(files)
 
     def _is_valid_file(self, path: Path) -> bool:
+        # Hidden paths and __pycache__ follow the rule discovery and the
+        # corpus fingerprint use; only the part below the root is tested, so
+        # a hidden ancestor of the source directory does not hide the corpus.
         return (
             path.is_file()
             and path.suffix.lower() in self.SUPPORTED_EXTENSIONS
-            and not self._is_excluded(path)
-        )
-
-    def _is_excluded(self, path: Path) -> bool:
-        """Whether ``path`` is outside the corpus or matches an exclude pattern.
-
-        Hidden paths follow the rule discovery and the corpus fingerprint use
-        (:func:`is_excluded_source_path`).
-
-        Matching the absolute path let a pattern such as ``**/.*`` fire on a
-        hidden *ancestor* of the source directory (a corpus under
-        ``/tmp/.cache/corpus`` discovered zero files). The relative path is
-        tested both bare (``drafts/*``) and with a leading ``/`` so ``**/``
-        patterns also cover top-level entries (``**/.*`` matches ``.env``).
-        """
-        if is_excluded_source_path(path, self.source_directory):
-            return True
-        try:
-            relative = path.relative_to(self.source_directory).as_posix()
-        except ValueError:
-            relative = path.as_posix()
-        candidates = (relative, f"/{relative}")
-        return any(
-            fnmatch.fnmatch(candidate, pattern)
-            for pattern in self.exclude_patterns
-            for candidate in candidates
+            and not is_excluded_source_path(path, self.source_directory)
         )
 
     def _load_files_concurrently(

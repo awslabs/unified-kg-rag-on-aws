@@ -93,7 +93,7 @@ jobs:
           uv run pytest -m "not aws"
           --cov=unified_kg_rag --cov-report=term-missing
           --cov-report=xml:coverage.xml --junitxml=report.xml
-          --cov-fail-under=93
+          --cov-fail-under=95
 
       - name: Upload coverage + test report
         # Surface coverage.xml / report.xml as artifacts for inspection on each run.

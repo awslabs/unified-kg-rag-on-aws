@@ -11,7 +11,7 @@ FROM ${BASE_IMAGE} AS base
 
 # uv (static binary) for fast, locked installs. Pinned by tag and digest so a
 # new uv release cannot change the build; bump both together.
-COPY --from=ghcr.io/astral-sh/uv:0.12.6@sha256:88bc6eb1ccd4b82efd0e1b530caffabddf50dc2bf612e66c14ea25b8ee8a4d3d /uv /usr/local/bin/uv
+COPY --from=ghcr.io/astral-sh/uv:0.12.23@sha256:61d393e44e249f2e4b526b6c7ddcecce245946826e608e11c93ad4f5bba55b21 /uv /usr/local/bin/uv
 
 # Runtime deps: the AWS CLI is used by the entrypoint to sync the source corpus
 # from S3 (the loader only reads a local Path). libgomp1 is needed by the

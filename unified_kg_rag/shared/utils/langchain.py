@@ -14,7 +14,7 @@ from langchain_core.callbacks import BaseCallbackHandler, BaseCallbackManager
 from langchain_core.exceptions import OutputParserException
 from langchain_core.output_parsers import XMLOutputParser
 from lxml import etree
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from tenacity import RetryCallState
 from tqdm import tqdm
 from tqdm.asyncio import tqdm as async_tqdm
@@ -102,6 +102,10 @@ class ProgressLogger:
 
 
 class BatchProcessor(BaseModel):
+    # A removed setting (batch_size, chunk_concurrency, max_retries) raises
+    # instead of being silently ignored.
+    model_config = ConfigDict(extra="forbid")
+
     max_concurrency: int = Field(
         default=5,
         ge=1,
