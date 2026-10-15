@@ -494,6 +494,10 @@ Library API (Python callers and custom backends).
   cites it, and the chunk's relationships naming it are dropped; another
   chunk's low score no longer removes a stub. Only non-default thresholds
   are affected (#291).
+- Query translation: a refusal written with a typographic apostrophe
+  ("I’m sorry, …") is caught like its ASCII form and the original query is
+  searched; the follow-up rewrite guard and the translation guard now share
+  one normalisation (#PR).
 - CloudWatch tracing (`enable_cloudwatch_tracing`): the task role keeps
   only `xray:PutTraceSegments`, the one action the X-Ray OTLP traces
   endpoint authorizes (a role with only `xray:PutSpans` gets a 403);

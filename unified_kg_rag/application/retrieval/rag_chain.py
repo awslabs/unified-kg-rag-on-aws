@@ -709,6 +709,12 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         "no text was provided",
     )
 
+    @staticmethod
+    def _refusal_text(text: str) -> str:
+        """``text`` normalised for matching the refusal phrases: stripped,
+        lower-cased, a typographic apostrophe (``I\u2019m``) made ASCII."""
+        return text.strip().lower().replace("\u2019", "'")
+
     @classmethod
     def _looks_like_translation_refusal(cls, candidate: str, original: str) -> bool:
         """Heuristic: does the 'translation' look like LLM meta-output, not a
@@ -716,8 +722,8 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         (an identical passthrough is fine) and opens with a known refusal/notice
         phrase, so genuine translations that merely contain such words mid-text
         are not caught."""
-        text = candidate.strip().lower()
-        if not text or text == original.strip().lower():
+        text = cls._refusal_text(candidate)
+        if not text or text == cls._refusal_text(original):
             return False
         return text.startswith(cls._TRANSLATION_REFUSAL_MARKERS)
 
@@ -843,7 +849,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         # rewritten question may start the same way ("I can't find …; where
         # is it?") but ends with a question mark, unless the question asks
         # the user to clarify ("I'm sorry, could you clarify which contract?").
-        opening = text.lower().replace("\u2019", "'")
+        opening = cls._refusal_text(text)
         if opening.startswith(cls._REFUSAL_OPENINGS) and (
             not text.endswith("?") or cls._CLARIFICATION_REQUEST.search(opening)
         ):
