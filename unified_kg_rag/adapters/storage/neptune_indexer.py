@@ -237,12 +237,6 @@ class NeptuneIndexer(GraphIndexer):
             suffixes=suffixes,
         )
 
-    def index_relationships(self, relationships: list[Relationship]) -> IndexingStats:
-        # Full-index and incremental upsert now share one per-edge write path:
-        # both drop-by-id first (idempotency) then re-add, so there is no
-        # behavioural difference to justify two code paths.
-        return self._write_relationships(relationships)
-
     def index_communities(
         self, communities: list[Community], *, suffixes: Collection[str] = ()
     ) -> IndexingStats:
@@ -452,7 +446,8 @@ class NeptuneIndexer(GraphIndexer):
 
         Drops any existing edge with the same id before re-adding it, so the
         operation is repeatable without creating duplicate parallel edges.
-        Shares the per-edge write path with :meth:`index_relationships`.
+        The port's :meth:`index_relationships` delegates here, so a full run
+        and a delta share this per-edge write path.
         """
         return self._write_relationships(relationships)
 

@@ -199,10 +199,14 @@ class GraphIndexer(BaseIndexer):
     ) -> IndexingStats:
         pass
 
-    @abstractmethod
     def index_relationships(self, relationships: list[Relationship]) -> IndexingStats:
         """Write the edges; replacing ``index_entities`` already dropped the
-        suffix's old ones with their vertices."""
+        suffix's old ones with their vertices.
+
+        Delegates to :meth:`upsert_relationships`: each edge is replaced by id,
+        so a full run and a delta share one write path.
+        """
+        return self.upsert_relationships(relationships)
 
     @abstractmethod
     def index_communities(
