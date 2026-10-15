@@ -249,17 +249,13 @@ class ComputeStack(Stack):
             ).grant_read(role)
         if self.config.enable_cloudwatch_tracing:
             # The collector sidecar signs span uploads to the CloudWatch OTLP
-            # traces endpoint with this role. Write-only: PutTraceSegments is
-            # what the CloudWatch guide's managed policies grant for it, and
-            # PutSpans / PutSpansForIndexing are the X-Ray actions for
-            # OpenTelemetry span uploads. None has resource-level scoping.
+            # traces endpoint with this role. That endpoint authorizes
+            # xray:PutTraceSegments only (a role with just xray:PutSpans gets
+            # a 403 naming PutTraceSegments), so that is the one action
+            # granted. It has no resource-level scoping.
             role.add_to_policy(
                 iam.PolicyStatement(
-                    actions=[
-                        "xray:PutTraceSegments",
-                        "xray:PutSpans",
-                        "xray:PutSpansForIndexing",
-                    ],
+                    actions=["xray:PutTraceSegments"],
                     resources=["*"],
                 )
             )
@@ -417,7 +413,7 @@ class ComputeStack(Stack):
                 },
             },
             "exporters": {
-                "otlphttp/traces": {
+                "otlp_http/traces": {
                     "traces_endpoint": f"https://xray.{region}.{suffix}/v1/traces",
                     "compression": "gzip",
                     "auth": {"authenticator": "sigv4auth/traces"},
@@ -441,7 +437,7 @@ class ComputeStack(Stack):
                     "traces": {
                         "receivers": ["otlp"],
                         "processors": ["memory_limiter", "batch"],
-                        "exporters": ["otlphttp/traces"],
+                        "exporters": ["otlp_http/traces"],
                     }
                 },
                 # No internal metrics endpoint (:8888) in the task.

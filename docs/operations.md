@@ -533,7 +533,7 @@ processors:
     send_batch_max_size: 1000
     timeout: 5s
 exporters:
-  otlphttp/traces:
+  otlp_http/traces:
     traces_endpoint: https://xray.us-east-1.amazonaws.com/v1/traces
     compression: gzip
     auth:
@@ -549,15 +549,16 @@ service:
     traces:
       receivers: [otlp]
       processors: [memory_limiter, batch]
-      exporters: [otlphttp/traces]
+      exporters: [otlp_http/traces]
   telemetry:
     metrics:
       level: none
 ```
 
-The collector's role needs X-Ray write access (`xray:PutTraceSegments`,
-`xray:PutSpans`, `xray:PutSpansForIndexing`; the `AWSXrayWriteOnlyAccess`
-managed policy is what the CloudWatch guide names).
+The collector's role needs `xray:PutTraceSegments`, the one action the OTLP
+traces endpoint authorizes (`xray:PutSpans` alone gets a 403). The
+`AWSXrayWriteOnlyAccess` managed policy the CloudWatch guide names includes
+it.
 
 **Account-level backstop: Bedrock model invocation logging.** It records
 every `InvokeModel` / `Converse` request and response in a region, embeddings

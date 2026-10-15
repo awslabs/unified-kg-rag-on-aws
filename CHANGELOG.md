@@ -414,6 +414,13 @@ Library API (Python callers and custom backends).
   28 s. Restart the stack (`down` and `up`) to pick it up (#265).
 
 ### Fixed
+- CloudWatch tracing (`enable_cloudwatch_tracing`): the task role keeps
+  only `xray:PutTraceSegments`, the one action the X-Ray OTLP traces
+  endpoint authorizes (a role with only `xray:PutSpans` gets a 403);
+  `xray:PutSpans` and `xray:PutSpansForIndexing` are dropped. The collector
+  exporter is renamed `otlphttp/traces` to `otlp_http/traces`, so ADOT
+  v0.50.0 no longer logs the deprecated-alias warning. Verified on real
+  AWS (#PR).
 - Langfuse: the missing-host error now names the full OTLP endpoint
   (`<host>/api/public/otel`) for `OTEL_EXPORTER_OTLP_ENDPOINT`, since the host
   root alone returns 404; the runbook covers Langfuse v4 (its default

@@ -367,8 +367,8 @@ What the option changes:
   repository on the first pull (step 4); `cdk destroy` removes the rule but
   not that repository. The `GraphRagCompute` output `CollectorImageUri` is
   the cached image.
-- **IAM**: the task role gets `xray:PutTraceSegments`, `xray:PutSpans` and
-  `xray:PutSpansForIndexing` (write-only; X-Ray has no resource-level
+- **IAM**: the task role gets `xray:PutTraceSegments`, the one action the
+  OTLP traces endpoint authorizes (write-only; X-Ray has no resource-level
   scoping), and the execution role may create and import into the one cached
   repository.
 - **Network**: in `private` mode, an `xray` interface endpoint (same

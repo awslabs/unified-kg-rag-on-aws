@@ -504,7 +504,7 @@ processors:
     send_batch_max_size: 1000
     timeout: 5s
 exporters:
-  otlphttp/traces:
+  otlp_http/traces:
     traces_endpoint: https://xray.us-east-1.amazonaws.com/v1/traces
     compression: gzip
     auth:
@@ -520,15 +520,15 @@ service:
     traces:
       receivers: [otlp]
       processors: [memory_limiter, batch]
-      exporters: [otlphttp/traces]
+      exporters: [otlp_http/traces]
   telemetry:
     metrics:
       level: none
 ```
 
-수집기 역할에는 X-Ray 쓰기 권한(`xray:PutTraceSegments`, `xray:PutSpans`,
-`xray:PutSpansForIndexing`)이 필요합니다. CloudWatch 안내서는 관리형 정책
-`AWSXrayWriteOnlyAccess`를 안내합니다.
+수집기 역할에는 OTLP 트레이스 엔드포인트가 검사하는 유일한 작업인
+`xray:PutTraceSegments`가 필요합니다(`xray:PutSpans`만 있으면 403). CloudWatch
+안내서가 안내하는 관리형 정책 `AWSXrayWriteOnlyAccess`에도 들어 있습니다.
 
 **계정 수준 보조 수단: Bedrock 모델 호출 로깅.** 이 패키지의 추적과 관계없이 리전의
 모든 `InvokeModel` / `Converse` 요청과 응답(임베딩 포함)을 CloudWatch Logs나 S3에
