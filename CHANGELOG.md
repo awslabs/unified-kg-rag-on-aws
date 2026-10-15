@@ -354,6 +354,10 @@ Library API (Python callers and custom backends).
   reports `counts_via_api` (the Bedrock counter turns it off once a model
   rejects CountTokens); a custom counter without the attribute keeps the
   answer model's `supports_count_tokens` (#287).
+- `visualization_data.json` edges no longer repeat every relationship they
+  merge under `attributes.relationships` (about half of the edge bytes); no
+  renderer read it, and the edge keeps its own type, weight and description
+  (#PR).
 - `run-eval` `abstention_statistics.unanswerable` has the shape of the
   overall block (`abstained`, `answered`, `abstention_rate`); the
   `correct_abstentions` and `accuracy` keys are gone. Only the fixed

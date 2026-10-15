@@ -150,6 +150,31 @@ class TestRunVisualization:
         assert set(context.layout) == {"e1", "e2", "e3"}
         assert context.centrality["e2"].degree == 1.0
 
+    def test_exported_edges_do_not_repeat_their_relationships(self) -> None:
+        # Regression: every edge carried a copy of each relationship it merges
+        # under attributes.relationships, about half of the edge bytes, though
+        # no renderer reads it.
+        from unified_kg_rag.domain.ingestion.graph_builder import GraphBuilder
+        from unified_kg_rag.domain.ingestion.visualization_data import graph_data
+        from unified_kg_rag.domain.models import Entity, Relationship
+
+        entities = [
+            Entity(id="e1", name="Vendor", embedding=[0.1]),
+            Entity(id="e2", name="Buyer"),
+        ]
+        relationships = [
+            Relationship(id=f"r{i}", source_id="e1", target_id="e2", type="SUPPLIES")
+            for i in range(2)
+        ]
+        graph = GraphBuilder(entities, relationships).build()
+        assert len(graph.edges["e1", "e2"]["relationships"]) == 2  # live graph
+        data = graph_data(graph, {"hierarchy": []})
+        (edge,) = data["edges"]
+        assert "relationships" not in edge["attributes"]
+        assert edge["attributes"]["type"] == "SUPPLIES"
+        assert edge["attributes"]["weight"] == 2.0
+        assert "embedding" not in data["nodes"][0]["attributes"]
+
     def test_data_only_export_lays_out_only_the_drawn_nodes(
         self, tmp_path: Path, config: Config
     ) -> None:
