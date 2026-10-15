@@ -41,6 +41,8 @@ from unified_kg_rag.adapters.local.search_engine import SQLiteSearchEngine
 from unified_kg_rag.adapters.local.sqlite_doc_status import SQLiteDocStatusStore
 from unified_kg_rag.adapters.local.sqlite_graph import SQLiteGraphIndexer
 from unified_kg_rag.adapters.local.token_counter import LocalTokenCounter
+from unified_kg_rag.adapters.storage.neptune_indexer import NeptuneIndexer
+from unified_kg_rag.adapters.storage.opensearch_indexer import OpenSearchIndexer
 from unified_kg_rag.adapters.storage.search_engine import SearchEngineClient
 from unified_kg_rag.ports import (
     DocStatusPort,
@@ -71,7 +73,9 @@ def _shape(func: object) -> list[tuple[str, inspect._ParameterKind, bool]]:
 PAIRS = [
     (FakeGraphStore, GraphIndexer),
     (SQLiteGraphIndexer, GraphIndexer),
+    (NeptuneIndexer, GraphIndexer),
     (FakeVectorStore, VectorIndexer),
+    (OpenSearchIndexer, VectorIndexer),
     (FakeDocStatusStore, DocStatusPort),
     (SQLiteDocStatusStore, DocStatusPort),
     (DynamoDBDocStatusStore, DocStatusPort),
