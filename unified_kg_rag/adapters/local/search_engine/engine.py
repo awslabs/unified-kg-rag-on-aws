@@ -21,8 +21,8 @@ more than 100,000 documents logs a warning.
 
 A ``hybrid`` query is fused as the neural-search normalization processor of
 its ``search_pipeline`` does (``domain.retrieval.hybrid_normalization``), with
-the weights stored in the pipeline body ``OpenSearchIndexer.initialize``
-writes. Lexical-only and vector-only queries return raw scores; ties break by
+the weights stored in the pipeline body (``OpenSearchRetriever`` sends no
+``hybrid`` query: it fuses a lexical and a kNN search itself). Lexical-only and vector-only queries return raw scores; ties break by
 document id.
 
 Concurrency: one connection per engine behind a re-entrant lock, WAL

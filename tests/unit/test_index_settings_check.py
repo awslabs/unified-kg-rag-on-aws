@@ -92,9 +92,6 @@ class _FakeOpenSearchClient:
         self.documents.setdefault(index, []).extend(documents)
         return {"errors": False, "items": []}
 
-    def put_search_pipeline(self, pipeline_id: str, body: dict[str, Any]) -> None:
-        return None
-
     def close(self) -> None:
         return None
 

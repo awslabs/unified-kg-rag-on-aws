@@ -20,8 +20,7 @@ so one test states a store contract once and runs it on each:
   endpoints.
 
 Every harness of a shared server writes under its own
-``indexing.additional_suffix`` and a hybrid search pipeline of its own, and
-clears every suffix it handed out (``StoreHarness.suffix``) on teardown, so a
+``indexing.additional_suffix``, and clears every suffix it handed out (``StoreHarness.suffix``) on teardown, so a
 run leaves nothing behind. Embeddings come from ``HashingEmbeddingFactory``: no
 model is called on any backend.
 """
@@ -56,7 +55,7 @@ DEFAULT_SUFFIX = Constants.DEFAULT_SUFFIX.value
 # Capabilities a backend may lack; a test needing one runs only on the
 # backends that have it (``backends``).
 RETRIEVERS = "retrievers"
-# Aliases, index mappings and _meta, search pipelines (OpenSearch protocol).
+# Aliases, index mappings and _meta (OpenSearch protocol).
 INDEX_ADMIN = "index_admin"
 # Vector documents keyed by (suffix, id), so one id lives in two suffixes.
 SUFFIX_SCOPED_VECTOR_IDS = "suffix_scoped_vector_ids"
@@ -204,7 +203,7 @@ class StoreHarness:
         return derived
 
     def initialize(self) -> None:
-        """Create the hybrid search pipeline (``OpenSearchIndexer.initialize``)."""
+        """Prepare the vector store for writes (``OpenSearchIndexer.initialize``)."""
         self.vector_indexer.initialize()
 
     # --- reads ---------------------------------------------------------------
@@ -324,22 +323,12 @@ class StoreHarness:
                         indexer.clear(suffixes)
                     except Exception as e:  # noqa: BLE001 - reported below
                         errors.append(f"{name} clear failed ({e})")
-                harness._delete_pipeline()
             for store in (harness.graph_indexer, harness.vector_indexer):
                 store.close()
         if errors:
             raise AssertionError(
                 f"{self.kind} teardown left data behind: {', '.join(errors)}"
             )
-
-    def _delete_pipeline(self) -> None:
-        from opensearchpy.exceptions import NotFoundError
-
-        name = self.config.indexing.opensearch.hybrid_search_pipeline_name
-        try:
-            self.vector_indexer.opensearch_client.client.search_pipeline.delete(id=name)
-        except NotFoundError:
-            pass
 
 
 def _harness_config(kind: str, tmp_path: Path) -> Config:
@@ -360,7 +349,6 @@ def _harness_config(kind: str, tmp_path: Path) -> Config:
         config = _aws_config()
     tag = f"cf{uuid.uuid4().hex[:8]}"
     config.indexing.additional_suffix = tag
-    config.indexing.opensearch.hybrid_search_pipeline_name = f"{tag}-pipeline"
     return config
 
 

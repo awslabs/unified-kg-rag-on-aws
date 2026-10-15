@@ -87,6 +87,12 @@ ignored, so check the start-up warnings after upgrading.
   `InvalidFilterError` (#258).
 - IaC: `create_guardrail` decides whether the stack owns a guardrail; bring
   your own with `-c create_guardrail=false` (#103).
+- `indexing.opensearch.hybrid_search_pipeline_name` is removed: hybrid
+  search no longer uses an OpenSearch search pipeline, so ingestion writes
+  none and `search.hybrid` weights apply from the next query, not the next
+  ingestion run. A pipeline an earlier run wrote is left on the domain
+  unused; delete it with `DELETE _search/pipeline/<name>` if you like
+  (#PR).
 - `run-ingestion --repair-metadata` is removed. It loaded the metadata it
   was meant to repair, so on a corrupt file it failed like
   `--verify-metadata` and never repaired anything; use `--verify-metadata`
@@ -222,6 +228,10 @@ Library API (Python callers and custom backends).
     (#303).
   - `compute_hash(algorithm=)` raises `TypeError`; it always hashes with
     SHA-256 (#300).
+- `SearchEngineClient.put_search_pipeline` and
+  `OpenSearchClient.put_search_pipeline` are removed, and
+  `OpenSearchIndexer.initialize` writes nothing: a custom search engine
+  need not implement search pipelines or the `hybrid` query (#PR).
 - Removed APIs: `IncrementalIndexer.plan` / `prune_changed` /
   `remove_deleted` (use `detect_delta` and `remove_changed_and_deleted`)
   (#214); the LangChain-memory wrapper, `MemoryManager.get_langchain_memory`
@@ -552,6 +562,14 @@ Library API (Python callers and custom backends).
   saturated writer's CPU and hid a writer low on memory.
   `NeptuneGremlinErrors` stays cluster-wide. The IaC README states each
   alarm's window (#303).
+- OpenSearch hybrid search fuses its lexical and kNN hits in the retriever
+  (min-max normalization of each over its own hits, weighted by
+  `search.hybrid`), as two searches per index. OpenSearch 2.13's `hybrid`
+  query normalized the lexical side over a document outside its returned
+  hits (the last-indexed match), which skewed every fused score and the
+  order of the top hits; the one-spare-hit workaround fixed only part of
+  it. The embedded engine and OpenSearch now return the same hybrid
+  ranking (#PR).
 - Configuration errors raise `ConfigurationError` (still a `ValueError`)
   instead of a bare `ValueError`: an unknown embedding model or unsupported
   `indexing.opensearch.embedding_dimension`, a missing S3 `bucket_name`, a

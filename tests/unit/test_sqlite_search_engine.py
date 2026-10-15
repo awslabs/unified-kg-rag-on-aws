@@ -4,7 +4,7 @@
 
 The engine stands in for OpenSearch behind the unchanged ``OpenSearchIndexer``
 and ``OpenSearchRetriever``, so besides each DSL clause this runs every request
-shape ``OpenSearchRetriever._build_search_request`` builds against it, and the
+shape ``OpenSearchRetriever._build_search_bodies`` builds against it, and the
 indexer's alias swap, ``_meta`` and settings checks.
 """
 
@@ -1319,11 +1319,6 @@ _FILTERS: dict[str, dict[str, Any] | None] = {
 }
 
 
-def _hybrid_has_one_sub_query(body: dict[str, Any]) -> bool:
-    hybrid = body["query"].get("hybrid")
-    return hybrid is not None and len(hybrid["queries"]) == 1
-
-
 @pytest.mark.parametrize("filters", list(_FILTERS), ids=list(_FILTERS))
 @pytest.mark.parametrize("query", list(_QUERIES), ids=list(_QUERIES))
 @pytest.mark.parametrize("search_type", list(SearchType), ids=lambda t: t.value)
@@ -1342,26 +1337,24 @@ def test_every_retriever_request_shape_runs_on_the_engine(
     for prefix, fields in retriever._field_mappings.items():
         index_filters = retriever._filters_for_index(prefix, search_query.filters)
         index_query = search_query.model_copy(update={"filters": index_filters})
-        body, params = retriever._build_search_request(
-            index_query, search_type, fields["lexical"], fields["vector"], vector
+        bodies = retriever._build_search_bodies(
+            index_query,
+            search_type,
+            fields["lexical"],
+            fields["vector"],
+            vector,
+            size=retriever._hit_count(index_query),
         )
         alias = retriever._get_name(prefix, None)
-        if _hybrid_has_one_sub_query(body):
-            # A hybrid query of one sub-query against a two-weight pipeline:
-            # OpenSearch rejects it ("number of weights ... must match"), and so
-            # does the engine.
-            with pytest.raises(StoreRequestRejectedError, match="number of weights"):
-                engine.search(index=alias, body=body, **params)
-            continue
-        response = engine.search(index=alias, body=body, **params)
-        hits = response["hits"]["hits"]
-        assert len(hits) <= body["size"]
-        for hit in hits:
-            assert hit["_index"].startswith(alias)
-            assert not any(k.endswith("_embedding") for k in hit["_source"])
-        wanted = (index_filters or {}).get("id")
-        if wanted:
-            assert {hit["_id"] for hit in hits} <= set(wanted)
+        for body in bodies:
+            hits = engine.search(index=alias, body=body)["hits"]["hits"]
+            assert len(hits) <= body["size"]
+            for hit in hits:
+                assert hit["_index"].startswith(alias)
+                assert not any(k.endswith("_embedding") for k in hit["_source"])
+            wanted = (index_filters or {}).get("id")
+            if wanted:
+                assert {hit["_id"] for hit in hits} <= set(wanted)
 
 
 def test_retriever_parses_engine_hits(stack) -> None:

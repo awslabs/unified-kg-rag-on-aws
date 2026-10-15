@@ -527,43 +527,25 @@ def test_lineage_update_reports_failed_items(indexer, mocker) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# initialize: hybrid search pipeline
+# initialize / clear
 # --------------------------------------------------------------------------- #
 
 
-def test_initialize_rewrites_the_hybrid_pipeline_with_the_configured_weights(
-    indexer, mocker
-) -> None:
-    # An earlier run stored the pipeline with other weights: each run writes
-    # it again, so a changed search.hybrid weight takes effect.
+def test_initialize_writes_no_search_pipeline(indexer, mocker) -> None:
+    # Hybrid search fuses in the retriever: initialize writes nothing, so
+    # ingestion needs no search-pipeline permission.
     indexer.opensearch_client = mocker.MagicMock()
-    indexer.config.search.hybrid.lexical_weight = 0.2
-    indexer.config.search.hybrid.vector_weight = 0.8
-
     indexer.initialize()
-    indexer.initialize()
-
-    calls = indexer.opensearch_client.put_search_pipeline.call_args_list
-    assert len(calls) == 2
-    name, body = calls[-1].args
-    assert name == indexer.opensearch_config.hybrid_search_pipeline_name
-    (processor,) = body["phase_results_processors"]
-    combination = processor["normalization-processor"]["combination"]
-    assert combination["parameters"]["weights"] == [0.2, 0.8]
+    assert indexer.opensearch_client.mock_calls == []
 
 
-@pytest.mark.parametrize("call", ["initialize", "clear"])
-def test_store_errors_propagate_typed(indexer, mocker, call: str) -> None:
+def test_store_errors_propagate_typed(indexer, mocker) -> None:
     # They were logged and turned into False, losing the type and reason.
     indexer.opensearch_client = mocker.MagicMock()
     denied = StoreAccessDeniedError("403 denied", reason="missing es:ESHttpPut")
-    indexer.opensearch_client.put_search_pipeline.side_effect = denied
     indexer.opensearch_client.get_aliases_by_index.side_effect = denied
     with pytest.raises(StoreAccessDeniedError) as raised:
-        if call == "initialize":
-            indexer.initialize()
-        else:
-            indexer.clear(["default"])
+        indexer.clear(["default"])
     assert raised.value is denied
 
 

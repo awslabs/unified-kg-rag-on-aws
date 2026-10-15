@@ -346,9 +346,6 @@ def test_hybrid_scores_are_normalized_and_follow_the_weights(
         def change(config: Any) -> None:
             config.search.hybrid.lexical_weight = lexical
             config.search.hybrid.vector_weight = vector
-            config.indexing.opensearch.hybrid_search_pipeline_name = (
-                f"{harness.tag}-{int(lexical * 10)}-pipeline"
-            )
 
         h = harness.derive(change)
         h.initialize()
