@@ -577,6 +577,15 @@ Library API (Python callers and custom backends).
   could be dropped. A search without query text on an index with `rank` now
   asks OpenSearch to sort by `rank`, then `weight` (descending); the embedded
   engine supports that `sort` (#PR).
+- `simple` search and DRIFT's per-iteration document retrieval sweep several
+  indexes and cut the merged hits to `top_k x retrieval_multiplier` by raw
+  score, but scores of different indexes do not compare (hybrid normalizes
+  each index's best hit to about 1.0, a vector search sums the entity and
+  community indexes' two or three kNN scores, BM25 depends on each index), so
+  one index could crowd out the rest before fusion and reranking. The sweep
+  now takes each index's hits rank by rank. DRIFT's within-type ordering
+  likewise no longer sorts graph entities (distance bands) together with
+  entity-index hits (#PR).
 - LightRAG `hybrid` with no extracted keywords and a question too long for
   the raw-query fallback returned nothing without a word; it now logs a
   warning, as upstream does (#PR).

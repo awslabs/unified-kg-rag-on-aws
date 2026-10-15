@@ -901,3 +901,18 @@ async def test_evolve_query_failures_are_logged(mocker) -> None:
     assert out.query == "q"
     logged = " ".join(str(call.args) for call in warning.call_args_list)
     assert "refinement" in logged and "expansion" in logged
+
+
+def test_rank_within_type_keeps_each_store_in_its_slots() -> None:
+    # Graph entities score in distance bands; the entity index's vector hits
+    # sum two kNN scores. Sorted together, the index's hits took every slot.
+    graph = {"_node_type": "entity"}
+    index = {"_search_index": "graphrag-entities-default-1"}
+    results = [
+        _result("g-hop", score=0.45, metadata=graph, retriever_type="entity"),
+        _result("os-b", score=1.6, metadata=index, retriever_type="entity"),
+        _result("g-seed", score=0.9, metadata=graph, retriever_type="entity"),
+        _result("os-a", score=1.8, metadata=index, retriever_type="entity"),
+    ]
+    ranked = DriftSearchStrategy._rank_within_type(results)
+    assert [r.content for r in ranked] == ["g-seed", "os-a", "g-hop", "os-b"]

@@ -4,6 +4,7 @@ import asyncio
 import time
 from collections import OrderedDict
 from collections.abc import Coroutine
+from itertools import zip_longest
 from typing import Any, ClassVar
 
 from unified_kg_rag.adapters.aws.opensearch import is_index_not_found
@@ -273,12 +274,9 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                 )
                 return []
 
-            all_results = []
-            for results in await asyncio.gather(*search_tasks):
-                all_results.extend(results)
-
-            all_results.sort(key=lambda x: x.score or 0.0, reverse=True)
-            final_results = all_results[: query.top_k * query.retrieval_multiplier]
+            final_results = self._interleave(await asyncio.gather(*search_tasks))[
+                : query.top_k * query.retrieval_multiplier
+            ]
 
             processing_time = time.time() - start_time
 
@@ -349,6 +347,27 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             )
 
         return search_tasks
+
+    @staticmethod
+    def _interleave(
+        per_index: list[list[RetrievalResult]],
+    ) -> list[RetrievalResult]:
+        """The hits of several indices, each index's next best in turn.
+
+        Scores of different indices are not comparable: a hybrid search
+        normalizes each index's best hit to about 1.0, a vector search sums
+        the scores of the index's two or three embedding fields, and BM25
+        depends on each index's term statistics. Cut by raw score, one index
+        crowded the others out before fusion and reranking saw them. Taking
+        the indices' hits rank by rank keeps what an equal-weight rank fusion
+        of the indices would.
+        """
+        return [
+            hit
+            for same_rank in zip_longest(*per_index)
+            for hit in same_rank
+            if hit is not None
+        ]
 
     def _importance_sort(
         self, prefix: str, query: SearchQuery, search_type: SearchType

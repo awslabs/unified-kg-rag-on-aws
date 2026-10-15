@@ -479,6 +479,51 @@ def test_build_search_request_terms_floor_bounded_by_result_window(retriever) ->
     assert body["size"] == retriever._max_result_window
 
 
+class _Client:
+    """Answers every search with ``hits`` per index, best first."""
+
+    def __init__(self, hits: dict[str, list[tuple[str, float]]]) -> None:
+        self.hits = hits
+        self.bodies: list[dict] = []
+
+    async def asearch(self, *, index: str, body: dict, **_params) -> dict:
+        self.bodies.append(body)
+        found = next(v for k, v in self.hits.items() if index.startswith(k))
+        return {
+            "hits": {
+                "hits": [
+                    {"_index": f"{index}-1", "_id": i, "_score": s, "_source": {}}
+                    for i, s in found[: body["size"]]
+                ]
+            }
+        }
+
+
+async def test_index_sweep_takes_each_index_in_turn(retriever, config, mocker) -> None:
+    # Raw scores of two indices do not compare (here the entity index's sum of
+    # two kNN scores tops every text hit); the sweep keeps each index's best.
+    o = config.indexing.opensearch
+    client = _Client(
+        {
+            o.text_units_index_prefix: [("t0", 0.9), ("t1", 0.8), ("t2", 0.7)],
+            o.entities_index_prefix: [("e0", 1.9), ("e1", 1.8), ("e2", 1.7)],
+        }
+    )
+    object.__setattr__(retriever, "_opensearch_client", client)
+    mocker.patch.object(
+        OpenSearchRetriever, "_get_query_vector", mocker.AsyncMock(return_value=None)
+    )
+    results = await retriever.aretrieve(
+        SearchQuery(
+            query="x",
+            search_type=SearchType.LEXICAL,
+            top_k=4,
+            index_prefixes=[o.text_units_index_prefix, o.entities_index_prefix],
+        )
+    )
+    assert [r.source for r in results] == ["t0", "e0", "t1", "e1"]
+
+
 def test_text_less_search_sorts_by_importance(retriever, config) -> None:
     o = config.indexing.opensearch
     browse = SearchQuery(query="", filters={"source_id": ["e1"]})
