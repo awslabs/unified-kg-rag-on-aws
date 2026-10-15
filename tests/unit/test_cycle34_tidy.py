@@ -190,3 +190,43 @@ def test_retrieval_labels_do_not_name_a_backend(module: str) -> None:
         importlib.import_module(f"unified_kg_rag.adapters.search_strategies.{module}")
     )
     assert '"OpenSearch retrieval"' not in source
+
+
+def _loop_recording_retriever(config: Config) -> Any:
+    import asyncio
+
+    from unified_kg_rag.adapters.retrieval.base import BaseGraphRAGRetriever
+    from unified_kg_rag.domain.models import RetrievalResult
+
+    class _Retriever(BaseGraphRAGRetriever):
+        async def aretrieve(self, query: Any) -> list[RetrievalResult]:
+            loops.append(asyncio.get_running_loop())
+            return [
+                RetrievalResult(
+                    content=f"about {query.query}",
+                    score=0.5,
+                    source="doc-1",
+                    retriever_type="text_unit",
+                )
+            ]
+
+    loops: list[Any] = []
+    retriever = _Retriever(config)
+    return retriever, loops
+
+
+def test_retriever_invoke_outside_a_loop(config: Config) -> None:
+    retriever, _ = _loop_recording_retriever(config)
+    [document] = retriever.invoke("vendors")
+    assert document.page_content == "about vendors"
+    assert document.metadata["source"] == "doc-1"
+
+
+async def test_retriever_ainvoke_runs_on_the_callers_loop(config: Config) -> None:
+    """The stores' async clients are bound to the loop they were made on."""
+    import asyncio
+
+    retriever, loops = _loop_recording_retriever(config)
+    [document] = await retriever.ainvoke("vendors")
+    assert document.page_content == "about vendors"
+    assert loops == [asyncio.get_running_loop()]
