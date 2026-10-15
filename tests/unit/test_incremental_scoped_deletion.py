@@ -238,6 +238,64 @@ def test_a_file_that_fails_to_parse_is_not_deleted(tmp_path, mocker) -> None:
     assert store.get(_doc_id(context, "b.txt")) is not None
 
 
+def _load_json_corpus(
+    root: Path, store: FakeDocStatusStore, config: Config, mocker
+) -> PipelineContext:
+    """Run the loading stage over pre-parsed JSON (parsing disabled), then
+    record every loaded document the way a successful commit does."""
+    mocker.patch("boto3.Session")
+    context = PipelineContext(
+        pipeline_id="pid",
+        config={},
+        status=PipelineStageStatus.RUNNING,
+        start_time=datetime(2026, 1, 1),
+        source_directory=root,
+    )
+    DocumentLoadingStage(config, source_directory=root, doc_status=store)._execute_core(
+        context
+    )
+    lineages = build_document_lineage(
+        documents=context.documents,
+        text_units=[],
+        entities=[],
+        relationships=[],
+        communities=[],
+        claims=[],
+    )
+    IncrementalIndexer(
+        store, mocker.MagicMock(), scope=context.incremental_scope
+    )._record_processed(lineages, context.incremental_fingerprints)
+    return context
+
+
+def test_a_json_file_that_fails_to_load_is_not_deleted(tmp_path, mocker) -> None:
+    # Same guarantee as for a parse failure, on the pre-parsed JSON path the
+    # loading stage reads itself when parsing did not run.
+    root = tmp_path / "corpus"
+    root.mkdir()
+    for name, text in {"a": "Vendor ships goods.", "b": "Buyer pays invoices."}.items():
+        document = Document(
+            page_content=text,
+            document_id=name,
+            file_name=f"{name}.txt",
+            file_path=f"/source/{name}.txt",
+        )
+        (root / f"{name}.json").write_text(document.model_dump_json(), encoding="utf-8")
+    store = FakeDocStatusStore()
+    _load_json_corpus(root, store, _config(), mocker)
+    assert len(store.list_all()) == 2
+
+    (root / "b.json").write_text("{ not json", encoding="utf-8")
+    context = _load_json_corpus(root, store, _config(), mocker)
+
+    assert context.failed_source_files == [str((root / "b.json").resolve())]
+    delta = context.incremental_delta
+    assert delta.deleted == []
+    assert delta.failed == [_doc_id(context, "b.json")]
+    assert delta.unchanged == [_doc_id(context, "a.json")]
+    assert store.get(_doc_id(context, "b.json")) is not None
+
+
 def test_a_subfolder_run_does_not_delete_the_parent_corpus(tmp_path, mocker) -> None:
     root = _write(
         tmp_path / "corpus",
