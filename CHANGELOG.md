@@ -92,7 +92,7 @@ ignored, so check the start-up warnings after upgrading.
   none and `search.hybrid` weights apply from the next query, not the next
   ingestion run. A pipeline an earlier run wrote is left on the domain
   unused; delete it with `DELETE _search/pipeline/<name>` if you like
-  (#PR).
+  (#306).
 - `run-ingestion --repair-metadata` is removed. It loaded the metadata it
   was meant to repair, so on a corrupt file it failed like
   `--verify-metadata` and never repaired anything; use `--verify-metadata`
@@ -231,7 +231,7 @@ Library API (Python callers and custom backends).
 - `SearchEngineClient.put_search_pipeline` and
   `OpenSearchClient.put_search_pipeline` are removed, and
   `OpenSearchIndexer.initialize` writes nothing: a custom search engine
-  need not implement search pipelines or the `hybrid` query (#PR).
+  need not implement search pipelines or the `hybrid` query (#306).
 - Removed APIs: `IncrementalIndexer.plan` / `prune_changed` /
   `remove_deleted` (use `detect_delta` and `remove_changed_and_deleted`)
   (#214); the LangChain-memory wrapper, `MemoryManager.get_langchain_memory`
@@ -554,14 +554,14 @@ Library API (Python callers and custom backends).
   community reports of `simple`, `global`, `drift` and `local` with
   `--filters attr_category:x`. Such an index is now skipped (no document
   can match), as documented: the reports drop out of the answer instead of
-  failing it (#PR).
+  failing it (#306).
 - kNN search on the default lucene engine explores
   `indexing.opensearch.vector_search.ef_search` candidates (default 100):
   lucene ignores the `index.knn.algo_param.ef_search` index setting, so each
   query searched only as many candidates as it returned hits (10 to 40) and
   missed about 1 in 10 of its true nearest neighbours. The retriever sends
   `k = max(hits, ef_search)` on lucene and still returns the hits asked
-  for; faiss and nmslib keep reading the index setting (#PR).
+  for; faiss and nmslib keep reading the index setting (#306).
 - `processing.max_attempts` (and every `BatchProcessor`'s `max_attempts`)
   counts the first call, as documented: an item that keeps failing with a
   retryable error is called `max_attempts` times. The first call used to
@@ -583,7 +583,7 @@ Library API (Python callers and custom backends).
   hits (the last-indexed match), which skewed every fused score and the
   order of the top hits; the one-spare-hit workaround fixed only part of
   it. The embedded engine and OpenSearch now return the same hybrid
-  ranking (#PR).
+  ranking (#306).
 - Configuration errors raise `ConfigurationError` (still a `ValueError`)
   instead of a bare `ValueError`: an unknown embedding model or unsupported
   `indexing.opensearch.embedding_dimension`, a missing S3 `bucket_name`, a
