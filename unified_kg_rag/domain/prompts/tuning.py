@@ -11,12 +11,8 @@ emits a structured JSON profile. That profile then parameterizes domain-adapted
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
 from .base import BasePrompt
-
-if TYPE_CHECKING:
-    pass
 
 
 @dataclass(frozen=True)
