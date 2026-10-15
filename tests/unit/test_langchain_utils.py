@@ -22,6 +22,7 @@ import pytest
 from langchain_core.exceptions import OutputParserException
 from langchain_core.output_parsers import XMLOutputParser
 from langchain_core.runnables import RunnableLambda
+from pydantic import ValidationError
 
 import unified_kg_rag.shared.utils.langchain as langchain_module
 from unified_kg_rag.domain.models.config import ProcessingConfig
@@ -132,6 +133,12 @@ class TestExecuteWithFallback:
         )
         assert prepared_sizes == [2]
         assert out == [{"echo": 1}, {"echo": 2}]
+
+    @pytest.mark.parametrize("removed", ["batch_size", "chunk_concurrency"])
+    def test_removed_settings_are_rejected(self, removed: str) -> None:
+        # They were silently ignored after the batching they drove was removed.
+        with pytest.raises(ValidationError, match=removed):
+            BatchProcessor(**{removed: 4})
 
     def test_empty_prepared_inputs_skipped(self) -> None:
         # prepare returns [] -> nothing is called and the result is [].
