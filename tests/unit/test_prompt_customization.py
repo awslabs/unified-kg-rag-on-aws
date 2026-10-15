@@ -83,9 +83,6 @@ def test_shipped_defaults_still_validated() -> None:
     # validation guard is preserved for shipped prompts).
     with pytest.raises(ValueError, match="not found"):
 
-        from dataclasses import dataclass
-
-        @dataclass(frozen=True)
         class Bad(BasePrompt):
             input_variables = ["missing_var"]
             system_prompt_template = "no vars here"
@@ -155,3 +152,24 @@ def test_previous_answer_wording_restorable_through_custom_prompts() -> None:
     resolved = AnswerGenerationPrompt.resolve(cp)
     assert resolved.system_prompt_template == "LEGACY SYSTEM"
     assert resolved.human_prompt_template == human
+
+
+def _shipped_prompt_classes() -> list[type[BasePrompt]]:
+    import unified_kg_rag.domain.prompts as prompts
+
+    return [
+        cls
+        for cls in (getattr(prompts, n) for n in prompts.__all__)
+        if isinstance(cls, type)
+        and issubclass(cls, BasePrompt)
+        and cls is not BasePrompt
+    ]
+
+
+@pytest.mark.parametrize(
+    "prompt_class", _shipped_prompt_classes(), ids=lambda c: c.__name__
+)
+def test_every_shipped_prompt_declares_variables_its_templates_use(
+    prompt_class: type[BasePrompt],
+) -> None:
+    prompt_class.validate_templates()

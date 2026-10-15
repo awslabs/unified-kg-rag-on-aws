@@ -1,6 +1,5 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from .base import BasePrompt, chunk_output_floor
@@ -9,7 +8,6 @@ if TYPE_CHECKING:
     from unified_kg_rag.domain.models.config import Config
 
 
-@dataclass(frozen=True)
 class TextChunkingPrompt(BasePrompt):
     input_variables = [
         "numbered_text",
@@ -125,7 +123,6 @@ OUTPUT REQUIREMENTS:
 Provide ONLY the XML output with no additional text or explanations."""
 
 
-@dataclass(frozen=True)
 class DescriptionSummarizationPrompt(BasePrompt):
     """Re-summarize the merged descriptions of one entity/relationship.
 
@@ -188,7 +185,6 @@ REQUIREMENTS:
 CONSOLIDATED DESCRIPTION:"""
 
 
-@dataclass(frozen=True)
 class TextTranslationPrompt(BasePrompt):
     input_variables = ["text", "target_language"]
 
