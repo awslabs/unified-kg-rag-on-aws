@@ -4,6 +4,7 @@ import asyncio
 import time
 from collections import OrderedDict
 from collections.abc import Coroutine
+from itertools import zip_longest
 from typing import Any, ClassVar
 
 from unified_kg_rag.adapters.aws.opensearch import is_index_not_found
@@ -273,12 +274,9 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                 )
                 return []
 
-            all_results = []
-            for results in await asyncio.gather(*search_tasks):
-                all_results.extend(results)
-
-            all_results.sort(key=lambda x: x.score or 0.0, reverse=True)
-            final_results = all_results[: query.top_k * query.retrieval_multiplier]
+            final_results = self._interleave(await asyncio.gather(*search_tasks))[
+                : query.top_k * query.retrieval_multiplier
+            ]
 
             processing_time = time.time() - start_time
 
@@ -335,15 +333,72 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                     update={"filters": self._filters_for_index(prefix, query.filters)}
                 )
 
+            size = self._hit_count(index_query)
             body, params = self._build_search_request(
-                index_query, search_type, lexical_fields, vector_fields, query_vector
+                index_query,
+                search_type,
+                lexical_fields,
+                vector_fields,
+                query_vector,
+                size=size,
+                sort=self._importance_sort(prefix, index_query, search_type),
             )
             target_alias = self._get_name(prefix, query.suffix)
             search_tasks.append(
-                self._execute_search([target_alias], body, params, query.suffix)
+                self._execute_search(
+                    [target_alias], body, params, query.suffix, keep=size
+                )
             )
 
         return search_tasks
+
+    @staticmethod
+    def _interleave(
+        per_index: list[list[RetrievalResult]],
+    ) -> list[RetrievalResult]:
+        """The hits of several indices, each index's next best in turn.
+
+        Scores of different indices are not comparable: a hybrid search
+        normalizes each index's best hit to about 1.0, a vector search sums
+        the scores of the index's two or three embedding fields, and BM25
+        depends on each index's term statistics. Cut by raw score, one index
+        crowded the others out before fusion and reranking saw them. Taking
+        the indices' hits rank by rank keeps what an equal-weight rank fusion
+        of the indices would.
+        """
+        return [
+            hit
+            for same_rank in zip_longest(*per_index)
+            for hit in same_rank
+            if hit is not None
+        ]
+
+    def _importance_sort(
+        self, prefix: str, query: SearchQuery, search_type: SearchType
+    ) -> list[dict[str, Any]] | None:
+        """The order of a search without query text, on an index with ``rank``.
+
+        Such a search (a filter browse, e.g. the edges incident to some
+        entities) has no relevance to rank by, so OpenSearch returns its hits
+        in index order and a capped page kept arbitrary ones. Rank them by the
+        artifact's importance instead: ``rank`` (degree), then ``weight``,
+        then ``id`` for a stable order. A fetch by id is left alone: it asks
+        for every id it names, so no cut drops one.
+        """
+        if (
+            search_type != SearchType.LEXICAL
+            or (query.query and query.query != "*")
+            or "id" in (query.filters or {})
+        ):
+            return None
+        declared = self._index_filter_fields.get(prefix)
+        if declared is None or "rank" not in declared.fields:
+            return None
+        return [
+            {name: {"order": order}}
+            for name, order in (("rank", "desc"), ("weight", "desc"), ("id", "asc"))
+            if name in declared.fields
+        ]
 
     def _normalize_index_prefixes(self, prefixes: str | list[str] | None) -> list[str]:
         if isinstance(prefixes, str):
@@ -515,14 +570,8 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             return bool(vector_fields)
         return bool(lexical_fields or vector_fields)
 
-    def _build_search_request(
-        self,
-        query: SearchQuery,
-        search_type: SearchType,
-        lexical_fields: list[str],
-        vector_fields: list[str],
-        query_vector: list[float] | None,
-    ) -> tuple[dict[str, Any], dict[str, Any]]:
+    def _hit_count(self, query: SearchQuery) -> int:
+        """How many hits of one index a search returns."""
         size = min(query.top_k * query.retrieval_multiplier, self._max_size)
         # Fetch-by-id callers (local/mix expansion, source resolution) set
         # top_k=len(ids) and pass those ids as an ``id`` filter to retrieve
@@ -542,6 +591,33 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                     wanted,
                     size,
                 )
+        return size
+
+    def _build_search_request(
+        self,
+        query: SearchQuery,
+        search_type: SearchType,
+        lexical_fields: list[str],
+        vector_fields: list[str],
+        query_vector: list[float] | None,
+        *,
+        size: int | None = None,
+        sort: list[dict[str, Any]] | None = None,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        """The body and parameters of the search of one index.
+
+        ``size`` is the number of hits wanted (``_hit_count`` when omitted). A
+        hybrid search asks for one more, which the caller cuts: OpenSearch
+        2.13 (neural-search) was observed to drop the ``size``-th hit of a
+        lexical sub-query that matches more than ``size`` documents and to
+        min-max normalize it over another match in its place, which skewed
+        every fused score of that index. With a spare hit requested, the hit
+        it drops is the spare.
+        """
+        if size is None:
+            size = self._hit_count(query)
+        if search_type == SearchType.HYBRID:
+            size = min(size + 1, self._max_result_window)
         filters = self._build_filter_clauses(query.filters)
 
         main_query = self._build_main_query(
@@ -556,11 +632,15 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
 
         # Embedding vectors are only needed server-side for kNN scoring; never
         # ship them back (community reports alone carry three per hit).
-        search_body = {
+        search_body: dict[str, Any] = {
             "size": size,
             "query": main_query,
             "_source": {"excludes": [f"*{EMBEDDING_FIELD_SUFFIX}"]},
         }
+        if sort:
+            # Sorted hits carry no _score unless asked to track it.
+            search_body["sort"] = sort
+            search_body["track_scores"] = True
         params = {}
 
         if search_type == SearchType.HYBRID:
@@ -734,6 +814,7 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         body: dict[str, Any],
         params: dict[str, Any],
         suffix: str | None = None,
+        keep: int | None = None,
     ) -> list[RetrievalResult]:
         if not aliases:
             return []
@@ -742,7 +823,7 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             response = await self._opensearch_client.asearch(
                 index=",".join(aliases), body=body, **params
             )
-            hits = response.get("hits", {}).get("hits", [])
+            hits = response.get("hits", {}).get("hits", [])[:keep]
             return [self._parse_hit(hit) for hit in hits]
         except Exception as e:
             shown = ", ".join(aliases)

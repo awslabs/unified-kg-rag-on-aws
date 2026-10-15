@@ -610,11 +610,40 @@ def test_invalid_query_vector_dimension_is_the_opensearch_rejection(engine) -> N
             "search_pipeline": PIPELINE,
         },
         {"index": ALIAS, "body": {}, "search_pipeline": "missing"},
+        {"index": ALIAS, "body": {"sort": [{"rank": {"order": "up"}}]}},
+        {"index": ALIAS, "body": {"sort": [{"rank": {"mode": "max"}}]}},
+        # OpenSearch cannot sort a hybrid query either.
+        {
+            "index": ALIAS,
+            "body": {
+                "query": {"hybrid": {"queries": [{"match_all": {}}] * 2}},
+                "sort": [{"rank": {"order": "desc"}}],
+            },
+            "search_pipeline": PIPELINE,
+        },
     ],
 )
 def test_unsupported_requests_are_rejected(engine, kwargs: dict) -> None:
     with pytest.raises(StoreRequestRejectedError):
         engine.search(**kwargs)
+
+
+def test_sort_orders_by_each_field_in_turn_missing_last(engine) -> None:
+    engine.bulk_index(INDEX, [{"id": "d", "name": "Dock", "type": "ORG"}])
+
+    def sorted_ids(*sort: dict, query: dict | None = None) -> list[str]:
+        body = {"sort": list(sort), "track_scores": True}
+        return _ids(engine, query or {"match_all": {}}, body=body)
+
+    desc = {"rank": {"order": "desc"}}
+    assert sorted_ids(desc) == ["a", "b", "c", "d"]
+    assert sorted_ids({"rank": {"order": "asc"}}) == ["c", "b", "a", "d"]
+    assert sorted_ids({"type": {"order": "asc"}}, desc) == ["c", "a", "b", "d"]
+    # A sort applies to an id lookup too, and keeps the scores.
+    lookup = {"bool": {"filter": [{"terms": {"id": ["a", "c"]}}]}}
+    assert sorted_ids({"rank": {"order": "asc"}}, query=lookup) == ["c", "a"]
+    response = _search(engine, {"match_all": {}}, body={"sort": [desc]})
+    assert {hit["_score"] for hit in response["hits"]["hits"]} == {1.0}
 
 
 @pytest.mark.parametrize(

@@ -636,22 +636,31 @@ class DriftSearchStrategy(BaseSearchStrategy):
 
     @staticmethod
     def _rank_within_type(results: list[RetrievalResult]) -> list[RetrievalResult]:
-        """Order each section type by native score, keeping the type positions.
+        """Order each section type of each store by native score, in place.
 
         Results arrive per retrieval call (seed communities, then each
         iteration's graph and document results), so within a type the arrival
         order ranked a later iteration's best item below an earlier one's worst.
-        The slots each type occupies are kept, so the mix of types that reaches
-        the diversity cut is unchanged; only the order within a type changes.
+        The slots each group occupies are kept, so the mix of types that reaches
+        the diversity cut is unchanged; only the order within a group changes.
+        A group is one type from one store: entities come from the graph
+        (distance bands in (0, 1]) and from the entity index (BM25, or the sum
+        of two kNN scores), whose scores do not compare, so sorting them
+        together let one store's hits displace all of the other's.
         """
-        by_type: dict[str, list[RetrievalResult]] = {}
+
+        def group(result: RetrievalResult) -> tuple[str, str | None]:
+            index = (result.metadata or {}).get("_search_index")
+            return result.retriever_type, None if index is None else str(index)
+
+        by_group: dict[tuple[str, str | None], list[RetrievalResult]] = {}
         for result in results:
-            by_type.setdefault(result.retriever_type, []).append(result)
+            by_group.setdefault(group(result), []).append(result)
         ranked = {
-            section_type: iter(sorted(group, key=lambda r: r.score, reverse=True))
-            for section_type, group in by_type.items()
+            key: iter(sorted(members, key=lambda r: r.score, reverse=True))
+            for key, members in by_group.items()
         }
-        return [next(ranked[result.retriever_type]) for result in results]
+        return [next(ranked[group(result)]) for result in results]
 
     @staticmethod
     def _filter_unique_results(

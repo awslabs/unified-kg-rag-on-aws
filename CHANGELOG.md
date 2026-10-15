@@ -569,6 +569,35 @@ Library API (Python callers and custom backends).
   The `initialize()` and `clear()` methods of the `GraphIndexer` and
   `VectorIndexer` ports return `None` and raise on failure; a custom backend
   that reported failure by returning `False` must raise instead (#294).
+- The incident-edge expansion of `local` (bridge relationships) and LightRAG
+  `mix`/`hybrid` kept arbitrary edges of a hub entity: its text-less fetch of
+  the edges touching the retrieved entities returned up to
+  `max_query_size` (100) per endpoint in index order, and the `(rank,
+  weight)` order applied only after that cut, so a hub's best-connected edges
+  could be dropped. A search without query text on an index with `rank` now
+  asks OpenSearch to sort by `rank`, then `weight` (descending); the embedded
+  engine supports that `sort` (#295).
+- `simple` search and DRIFT's per-iteration document retrieval sweep several
+  indexes and cut the merged hits to `top_k x retrieval_multiplier` by raw
+  score, but scores of different indexes do not compare (hybrid normalizes
+  each index's best hit to about 1.0, a vector search sums the entity and
+  community indexes' two or three kNN scores, BM25 depends on each index), so
+  one index could crowd out the rest before fusion and reranking. The sweep
+  now takes each index's hits rank by rank. DRIFT's within-type ordering
+  likewise no longer sorts graph entities (distance bands) together with
+  entity-index hits (#295).
+- Hybrid search on OpenSearch 2.13 (the version the CDK stack deploys) was
+  observed to drop the `size`-th hit of a lexical sub-query that matches more
+  than `size` documents and to min-max normalize over a lower match in its
+  place, which skewed the fused scores of the index. The retriever now asks a
+  hybrid search for one hit more than it returns (on both engines) (#295).
+- LightRAG `hybrid` with no extracted keywords and a question too long for
+  the raw-query fallback returned nothing without a word; it now logs a
+  warning, as upstream does (#295).
+- The `indexing.opensearch.build_relationship_vector_index` description said
+  only LightRAG `mix`/`hybrid` use the relationship vector index; `local`
+  (relationship section, bridge relationships), `simple` and `drift` query it
+  too (#295).
 - CloudWatch tracing (`enable_cloudwatch_tracing`): the task role keeps
   only `xray:PutTraceSegments`, the one action the X-Ray OTLP traces
   endpoint authorizes (a role with only `xray:PutSpans` gets a 403);

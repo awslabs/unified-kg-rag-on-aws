@@ -168,6 +168,75 @@ def test_fetch_by_id_returns_every_id_above_max_query_size(
     assert len(capped) == 3
 
 
+def test_text_less_search_ranks_by_rank_then_weight(harness: StoreHarness) -> None:
+    # A filter browse (the incident edges of an entity) has no relevance: a
+    # capped page must keep the top-ranked edges, not the first indexed ones.
+    h = harness.derive(lambda c: setattr(c.indexing.opensearch, "max_query_size", 3))
+    edges = [
+        Relationship(
+            id=f"r{i}",
+            source_id="e-hub",
+            target_id=f"e{i}",
+            source_name="Hub",
+            target_name=f"Node {i}",
+            description=f"Hub relates to node {i}",
+            rank=min(i, 6),
+            weight=float(i),
+        )
+        for i in range(8)
+    ]
+    h.initialize()
+    assert h.vector_indexer.index_relationships(edges).failed_items == 0
+    (hits,) = _search(
+        h,
+        _query(
+            "",
+            _prefixes(h).relationships_index_prefix,
+            search_type=SearchType.LEXICAL,
+            top_k=3,
+            retrieval_multiplier=1,
+            filters={"source_id": ["e-hub"]},
+        ),
+    )
+    # r6 and r7 tie on rank; weight orders them.
+    assert [r.source for r in hits] == ["r7", "r6", "r5"]
+
+
+@pytest.mark.parametrize("search_type", list(SearchType), ids=lambda t: t.value)
+def test_index_sweep_keeps_each_index_best_hits(
+    harness: StoreHarness, search_type: SearchType
+) -> None:
+    # Raw scores of two indices do not compare (a vector search sums the two
+    # entity embedding fields' scores), so a sweep takes each index in turn.
+    harness.initialize()
+    units = [
+        TextUnit(
+            id=f"t{i}",
+            text="widget price " * (5 - i) + "about the Buyer contract " * (i + 1),
+        )
+        for i in range(5)
+    ]
+    entities = [
+        Entity(id="e-courier", name="Courier", type="ORG", description="price once"),
+        Entity(id="e-depot", name="Depot", type="LOCATION", description="price list"),
+    ]
+    assert harness.vector_indexer.index_text_units(units).failed_items == 0
+    assert harness.vector_indexer.index_entities(entities).failed_items == 0
+    o = _prefixes(harness)
+    (hits,) = _search(
+        harness,
+        _query(
+            "widget price",
+            [o.text_units_index_prefix, o.entities_index_prefix],
+            search_type=search_type,
+            top_k=4,
+            retrieval_multiplier=1,
+        ),
+    )
+    assert [r.retriever_type for r in hits] == ["text", "entity"] * 2
+    assert [r.source for r in hits][::2] == ["t0", "t1"]
+
+
 def test_term_terms_range_and_attribute_filters(harness: StoreHarness) -> None:
     _ingest(harness)
     o = _prefixes(harness)

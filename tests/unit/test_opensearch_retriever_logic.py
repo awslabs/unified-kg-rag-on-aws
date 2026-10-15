@@ -30,6 +30,9 @@ def retriever(config: Config) -> OpenSearchRetriever:
     object.__setattr__(inst, "_max_size", config.indexing.opensearch.max_query_size)
     object.__setattr__(inst, "_max_result_window", 10000)
     object.__setattr__(inst, "_field_mappings", inst._initialize_field_mappings())
+    object.__setattr__(
+        inst, "_index_filter_fields", inst._initialize_index_filter_fields()
+    )
     return inst
 
 
@@ -460,9 +463,10 @@ def test_build_search_request_other_list_filters_do_not_raise_size(
     body, _params = retriever._build_search_request(
         q, SearchType.HYBRID, ["name"], ["name_embedding"], [0.1]
     )
-    assert body["size"] == 10
+    # top_k plus the one spare hit a hybrid search asks for.
+    assert body["size"] == 11
     knn = body["query"]["hybrid"]["queries"][1]["knn"]["name_embedding"]
-    assert knn["k"] == 10
+    assert knn["k"] == 11
 
 
 def test_build_search_request_terms_floor_bounded_by_result_window(retriever) -> None:
@@ -474,6 +478,116 @@ def test_build_search_request_terms_floor_bounded_by_result_window(retriever) ->
         q, SearchType.LEXICAL, ["name"], [], None
     )
     assert body["size"] == retriever._max_result_window
+
+
+@pytest.mark.parametrize(
+    ("search_type", "fetched"),
+    [(SearchType.HYBRID, 6), (SearchType.LEXICAL, 5), (SearchType.VECTOR, 5)],
+)
+def test_hybrid_search_asks_for_one_spare_hit(
+    retriever, search_type: SearchType, fetched: int
+) -> None:
+    # OpenSearch 2.13 drops the size-th hit of a lexical sub-query matching
+    # more than size documents; the spare hit is the one it drops.
+    q = SearchQuery(query="x", top_k=5, search_type=search_type)
+    body, _params = retriever._build_search_request(
+        q, search_type, ["name"], ["name_embedding"], [0.1]
+    )
+    assert body["size"] == fetched
+    knn = body["query"]
+    if search_type == SearchType.HYBRID:
+        knn = knn["hybrid"]["queries"][1]
+    if search_type != SearchType.LEXICAL:
+        assert knn["knn"]["name_embedding"]["k"] == fetched
+
+
+class _Client:
+    """Answers every search with ``hits`` per index, best first."""
+
+    def __init__(self, hits: dict[str, list[tuple[str, float]]]) -> None:
+        self.hits = hits
+        self.bodies: list[dict] = []
+
+    async def asearch(self, *, index: str, body: dict, **_params) -> dict:
+        self.bodies.append(body)
+        found = next(v for k, v in self.hits.items() if index.startswith(k))
+        return {
+            "hits": {
+                "hits": [
+                    {"_index": f"{index}-1", "_id": i, "_score": s, "_source": {}}
+                    for i, s in found[: body["size"]]
+                ]
+            }
+        }
+
+
+async def test_hybrid_spare_hit_is_cut(retriever, config, mocker) -> None:
+    prefix = config.indexing.opensearch.text_units_index_prefix
+    client = _Client({prefix: [(f"t{i}", 1.0 - i / 10) for i in range(9)]})
+    object.__setattr__(retriever, "_opensearch_client", client)
+    mocker.patch.object(
+        OpenSearchRetriever, "_get_query_vector", mocker.AsyncMock(return_value=None)
+    )
+    results = await retriever.aretrieve(
+        SearchQuery(query="x", top_k=4, index_prefixes=[prefix])
+    )
+    assert client.bodies[0]["size"] == 5
+    assert [r.source for r in results] == ["t0", "t1", "t2", "t3"]
+
+
+async def test_index_sweep_takes_each_index_in_turn(retriever, config, mocker) -> None:
+    # Raw scores of two indices do not compare (here the entity index's sum of
+    # two kNN scores tops every text hit); the sweep keeps each index's best.
+    o = config.indexing.opensearch
+    client = _Client(
+        {
+            o.text_units_index_prefix: [("t0", 0.9), ("t1", 0.8), ("t2", 0.7)],
+            o.entities_index_prefix: [("e0", 1.9), ("e1", 1.8), ("e2", 1.7)],
+        }
+    )
+    object.__setattr__(retriever, "_opensearch_client", client)
+    mocker.patch.object(
+        OpenSearchRetriever, "_get_query_vector", mocker.AsyncMock(return_value=None)
+    )
+    results = await retriever.aretrieve(
+        SearchQuery(
+            query="x",
+            search_type=SearchType.LEXICAL,
+            top_k=4,
+            index_prefixes=[o.text_units_index_prefix, o.entities_index_prefix],
+        )
+    )
+    assert [r.source for r in results] == ["t0", "e0", "t1", "e1"]
+
+
+def test_text_less_search_sorts_by_importance(retriever, config) -> None:
+    o = config.indexing.opensearch
+    browse = SearchQuery(query="", filters={"source_id": ["e1"]})
+    assert retriever._importance_sort(
+        o.relationships_index_prefix, browse, SearchType.LEXICAL
+    ) == [
+        {"rank": {"order": "desc"}},
+        {"weight": {"order": "desc"}},
+        {"id": {"order": "asc"}},
+    ]
+    body, _params = retriever._build_search_request(
+        browse,
+        SearchType.LEXICAL,
+        ["description"],
+        [],
+        None,
+        sort=[{"rank": {"order": "desc"}}],
+    )
+    assert body["sort"] == [{"rank": {"order": "desc"}}]
+    assert body["track_scores"] is True
+    # Not for a search with text, a fetch by id or an index without rank.
+    by_id = SearchQuery(query="", filters={"id": ["r1"]})
+    for prefix, query in (
+        (o.relationships_index_prefix, SearchQuery(query="supplies")),
+        (o.relationships_index_prefix, by_id),
+        (o.text_units_index_prefix, browse),
+    ):
+        assert retriever._importance_sort(prefix, query, SearchType.LEXICAL) is None
 
 
 def test_build_search_request_hybrid_sets_pipeline_param(retriever, config) -> None:

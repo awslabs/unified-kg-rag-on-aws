@@ -195,6 +195,15 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
             fallback = query.model_copy(deep=True)
             fallback.ll_keywords = [query.query]
             return fallback
+        # Upstream warns here too ("low_level_keywords and high_level_keywords
+        # is empty"): hybrid then returns nothing and mix only chunks.
+        logger.warning(
+            "No keywords extracted and the query is too long (%s characters, "
+            "limit %s) for the raw-query fallback; no entities or relationships "
+            "are retrieved",
+            len(query.query),
+            max_len,
+        )
         return query
 
     async def asearch(

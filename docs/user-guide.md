@@ -293,9 +293,13 @@ Expected differences from AWS mode:
   form ("vendors" for "vendor"), matches only through the vector side. kNN
   search is exact: every document that passes the filters is scored, which
   is accurate but grows linearly with the index. Hybrid search min-max
-  normalizes each sub-query over its top `size` hits; OpenSearch 2.13 was
-  observed to normalize a sub-query that matches more documents than `size`
-  over a wider set, so fused scores and the order near the cut can differ.
+  normalizes each sub-query over its top `size` hits. OpenSearch 2.13 was
+  observed to drop the `size`-th hit of a lexical sub-query that matches more
+  documents than `size` and to normalize over a lower-ranked match in its
+  place, so the retriever asks both engines for one hit more than it returns:
+  the dropped hit is that spare one. OpenSearch's lexical minimum can still be
+  a lower match than the embedded engine's, so fused scores and the order
+  near the cut can differ.
 - The embedded vector store keeps each index it searches in memory (about
   documents x dimension x 4 bytes per vector field). It is sized for about
   100,000 documents per index and logs a warning when it loads a larger one;
@@ -642,7 +646,7 @@ LLM stages are Bedrock-I/O-bound, so concurrency can far exceed the CPU count.
 | `indexing.max_document_failures` | `3` | Incremental runs: consecutive FAILED records of unchanged content after which a document is no longer retried (§5). |
 | `indexing.retire_source_scopes` | `[]` | Incremental runs: former source scopes (an old absolute source directory, or a former `source_scope` value) whose records in the run's index suffix are treated as deleted, so their exclusive content is removed. Never the run's own scope. `--retire-source-scope` adds to it. See §5 Deletion scope. |
 | `indexing.opensearch.embedding_model_id` | `"amazon.titan-embed-text-v2:0"` | Embedding model, one of a closed list (see Model selection notes). Changing it requires a reindex. |
-| `indexing.opensearch.build_relationship_vector_index` | `true` | Relationship vector index for LightRAG `mix`/`hybrid`. Set `false` for a GraphRAG-only deployment. |
+| `indexing.opensearch.build_relationship_vector_index` | `true` | Relationship vector index. LightRAG `mix`/`hybrid` (high-level keywords, incident edges) and GraphRAG `local` (relationship section, bridge relationships) query it, and `simple`/`drift` search it with the other indexes. `false` skips the relationship embeddings at the cost of those. |
 | `indexing.opensearch.persist_embedding_cache` | `false` | Persist the embedding cache to S3 so unchanged text is not re-embedded across runs. Requires `aws.s3.bucket_name`. |
 | `indexing.opensearch.language_analyzers` | `{en: english, ko: nori}` | Text analyzer per language code; unlisted languages use `default_analyzer` (`standard`). |
 | `indexing.opensearch.vector_search.engine` | `"lucene"` | HNSW engine. `lucene` supports `cosinesimil` up to 1024 dimensions; see the template for `faiss`. |
@@ -2096,7 +2100,8 @@ graph_indexer_factory=..., retriever_builders=...)`). Without a bundle,
   `graph.community_detection.enabled: false`, `global` and `drift` have no
   community reports to use; with
   `indexing.opensearch.build_relationship_vector_index: false`, `mix` and
-  `hybrid` lose high-level keyword retrieval.
+  `hybrid` lose high-level keyword retrieval and `local` its relationship
+  section.
 - **Incremental indexing approximations** (§5). A shared entity or
   relationship keeps the description a changed or deleted document
   contributed, and delta runs append communities instead of re-clustering the

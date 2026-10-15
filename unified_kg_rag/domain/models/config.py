@@ -1626,13 +1626,15 @@ class OpenSearchIndexingConfig(BaseModel):
     build_relationship_vector_index: bool = Field(
         default=True,
         description="Build the OpenSearch relationship VECTOR index (embeds "
-        "Relationship.description). Required only for LightRAG high-level keyword "
-        "retrieval (mix/hybrid). Set false for a GraphRAG-only deployment "
-        "(auto/drift/global/local/simple use community reports + entities + the "
-        "Neptune graph, never this index) to skip the relationship embeddings. "
-        "The Neptune relationship EDGES are always indexed regardless — both "
-        "methodologies traverse them for graph expansion; this toggles only the "
-        "vector index. Symmetric with graph.community_detection.enabled.",
+        "Relationship.description). LightRAG mix/hybrid query it for high-level "
+        "keyword retrieval and incident edges; GraphRAG local for its "
+        "relationship section and bridge relationships; simple and drift search "
+        "it with the other indexes (auto routes to these strategies). Only "
+        "global does without it. Set false to skip the relationship embeddings: "
+        "mix/hybrid then lose high-level retrieval and local its relationship "
+        "section. The Neptune relationship EDGES are always indexed regardless — "
+        "both methodologies traverse them for graph expansion; this toggles only "
+        "the vector index. Symmetric with graph.community_detection.enabled.",
     )
     relationships_index_prefix: str = Field(
         default="graphrag-relationships",

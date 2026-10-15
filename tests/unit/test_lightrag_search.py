@@ -210,7 +210,9 @@ async def test_empty_keywords_fall_back_to_raw_query(config: Config) -> None:
     assert entity_calls and entity_calls[0].query == "q"
 
 
-async def test_long_empty_keyword_query_does_not_fall_back(config: Config) -> None:
+async def test_long_empty_keyword_query_does_not_fall_back(
+    config: Config, caplog: pytest.LogCaptureFixture
+) -> None:
     strategy, os_r, neptune_r = _make_strategy(config)
     # Exceeds config.search.lightrag_search.raw_query_fallback_max_len (default 50).
     long_query = "x" * 60
@@ -220,6 +222,8 @@ async def test_long_empty_keyword_query_does_not_fall_back(config: Config) -> No
     # No fallback -> no graph retrieval for a long keyword-less query.
     assert os_r.calls == []
     assert neptune_r.calls == []
+    # ... and says so, as upstream does, instead of abstaining silently.
+    assert "too long (60 characters, limit 50)" in caplog.text
 
 
 def test_relationship_endpoint_ids_collects_both_endpoints() -> None:
