@@ -150,6 +150,30 @@ def test_template_values_equal_model_defaults(
     )
 
 
+# Tuning knobs the template must keep documenting. The drift check above only
+# compares keys the template shows, so dropping one of these would pass it.
+_DOCUMENTED_KNOBS = (
+    "search.token_manager.type_budgets",
+    "search.token_manager.min_truncated_section_tokens",
+    "search.local_search.type_quota",
+    "search.lightrag_search.kg_stream_top_k",
+    "search.lightrag_search.chunk_stream_top_k",
+    "search.lightrag_search.related_chunk_number",
+    "indexing.neptune.property_max_length",
+    "evaluation.judge_effort",
+    "evaluation.ragas_timeout",
+    "evaluation.ragas_max_workers",
+    "evaluation.ragas_max_attempts",
+)
+
+
+@pytest.mark.parametrize("dotted", _DOCUMENTED_KNOBS)
+def test_tuning_knobs_are_documented_in_the_template(
+    raw_template: dict[str, Any], dotted: str
+) -> None:
+    assert _lookup(raw_template, tuple(dotted.split("."))) is not _MISSING
+
+
 def test_neptune_property_cap_exceeds_the_unsummarized_description_length() -> None:
     # Descriptions below the summarization threshold are stored as merged; a
     # Neptune property cap shorter than that (~4 characters per token) cut them
