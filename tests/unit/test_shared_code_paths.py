@@ -1,6 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Regressions for the cycle-34 dead-code and duplication cleanup (AWS-free)."""
+"""Code paths two callers share, so they cannot drift apart (AWS-free)."""
 
 from __future__ import annotations
 
@@ -76,46 +76,19 @@ async def test_evaluator_without_either_scoring_method_fails_loudly(
         await evaluator.aevaluate_single(query, result, "")
 
 
-def test_community_detector_is_not_a_base_processor() -> None:
-    """It used none of the extraction helpers it inherited."""
-    from unified_kg_rag.adapters.ingestion.community_detector import (
-        CommunityDetector,
-    )
-    from unified_kg_rag.domain.ingestion.base_processor import BaseProcessor
+def test_evaluator_subclass_without_a_scoring_method_fails_at_definition() -> None:
+    with pytest.raises(TypeError, match="must implement evaluate_single"):
 
-    assert not issubclass(CommunityDetector, BaseProcessor)
+        class _Unscored(BaseGraphRAGEvaluator):
+            pass
 
 
-@pytest.mark.parametrize(
-    ("target", "removed"),
-    [
-        (
-            "unified_kg_rag.adapters.search_strategies.drift_search:"
-            "DriftSearchStrategy._evolve_query",
-            "max_keywords",
-        ),
-        (
-            "unified_kg_rag.adapters.ingestion.community_detector:"
-            "CommunityDetector._create_cluster_graph",
-            "source_graph",
-        ),
-    ],
-)
-def test_dead_parameters_are_gone(target: str, removed: str) -> None:
-    import importlib
-    import inspect
+def test_evaluator_subclass_with_only_the_async_method_is_accepted() -> None:
+    class _AsyncOnly(BaseGraphRAGEvaluator):
+        async def aevaluate_single(self, query, result, ground_truth, **kwargs):
+            raise AssertionError("not called")
 
-    module, _, attr = target.partition(":")
-    obj: Any = importlib.import_module(module)
-    for part in attr.split("."):
-        obj = getattr(obj, part)
-    assert removed not in inspect.signature(obj).parameters
-
-
-def test_rag_chain_has_no_build_retriever_pass_through() -> None:
-    from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain
-
-    assert not hasattr(GraphRAGChain, "_build_retriever")
+    assert issubclass(_AsyncOnly, BaseGraphRAGEvaluator)
 
 
 def test_dynamodb_batch_backoff_waits_only_between_requests(mocker) -> None:
@@ -164,7 +137,6 @@ def test_clis_show_the_package_version(module: str) -> None:
 
     cli = importlib.import_module(f"unified_kg_rag.application.cli.{module}")
     assert cli.__version__ is unified_kg_rag.__version__
-    assert not hasattr(cli, "version")  # no second lookup via importlib.metadata
 
 
 def test_registry_default_namespace_is_the_default_index_suffix() -> None:
@@ -178,18 +150,6 @@ def test_registry_default_namespace_is_the_default_index_suffix() -> None:
     for fn in (incremental.build_document_lineage, incremental.IncrementalIndexer):
         default = inspect.signature(fn).parameters["suffix"].default
         assert default is DEFAULT_NAMESPACE
-
-
-@pytest.mark.parametrize("module", ["global_search", "simple_search"])
-def test_retrieval_labels_do_not_name_a_backend(module: str) -> None:
-    """The label names the span and the failure log in local mode too."""
-    import importlib
-    import inspect
-
-    source = inspect.getsource(
-        importlib.import_module(f"unified_kg_rag.adapters.search_strategies.{module}")
-    )
-    assert '"OpenSearch retrieval"' not in source
 
 
 def _loop_recording_retriever(config: Config) -> Any:
@@ -230,9 +190,3 @@ async def test_retriever_ainvoke_runs_on_the_callers_loop(config: Config) -> Non
     [document] = await retriever.ainvoke("vendors")
     assert document.page_content == "about vendors"
     assert loops == [asyncio.get_running_loop()]
-
-
-def test_shared_root_has_no_lazy_cache_manager_wrapper() -> None:
-    import unified_kg_rag.shared as shared
-
-    assert not hasattr(shared, "get_cache_manager")

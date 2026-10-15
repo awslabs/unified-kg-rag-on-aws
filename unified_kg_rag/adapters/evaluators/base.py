@@ -45,8 +45,20 @@ class BaseGraphRAGEvaluator:
 
     A subclass implements :meth:`aevaluate_single`, or the sync
     :meth:`evaluate_single` that the default :meth:`aevaluate_single` runs
-    (for deterministic, CPU-only evaluators).
+    (for deterministic, CPU-only evaluators). A subclass that implements
+    neither fails at class definition.
     """
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        base = BaseGraphRAGEvaluator
+        if (
+            cls.evaluate_single is base.evaluate_single
+            and cls.aevaluate_single is base.aevaluate_single
+        ):
+            raise TypeError(
+                f"{cls.__name__} must implement evaluate_single or aevaluate_single"
+            )
 
     def __init__(
         self,
@@ -72,8 +84,7 @@ class BaseGraphRAGEvaluator:
         **kwargs: Any,
     ) -> EvaluationReport:
         raise NotImplementedError(
-            f"{type(self).__name__} implements neither evaluate_single "
-            "nor aevaluate_single"
+            f"{type(self).__name__} does not implement evaluate_single"
         )
 
     async def aevaluate_single(

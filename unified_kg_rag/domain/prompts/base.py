@@ -8,7 +8,6 @@ adapter layer (``adapters/llm/chain_factory.py``) turns a resolved
 ``ResolvedPrompt`` into a LangChain ``ChatPromptTemplate``.
 """
 
-from abc import ABC
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, ClassVar
 
@@ -68,7 +67,7 @@ class ResolvedPrompt:
     output_variables: list[str] | None = None
 
 
-class BasePrompt(ABC):
+class BasePrompt:
     """A prompt's templates and variable contract, as class attributes.
 
     Prompt classes are never instantiated: callers pass the class itself and
