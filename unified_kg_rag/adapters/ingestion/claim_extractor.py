@@ -18,6 +18,7 @@ from unified_kg_rag.domain.ingestion.base_processor import (
     coerce_llm_text,
     format_entities_with_limit_task,
     group_by_text_unit,
+    union_document_filters,
 )
 from unified_kg_rag.domain.ingestion.claim_resolver import claim_identity_suffix
 from unified_kg_rag.domain.models import Claim, Config, Entity, ModelPurpose, TextUnit
@@ -354,6 +355,7 @@ class ClaimExtractor(BaseProcessor):
             "description": self._merge_description,
             "source_text": self._merge_description,
             "text_unit_ids": safe_list_merge,
+            "attributes": union_document_filters,
         }
         return self._merge_items(
             items=claims,

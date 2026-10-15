@@ -464,8 +464,11 @@ Library API (Python callers and custom backends).
 - Claims stated with different spellings of an entity ("Acme Inc" and
   "Acme") are one claim in incremental runs too. The stored id hashed the
   names as extracted, so an incremental run stored a second claim beside the
-  first, and in a full build the id depended on which spelling came first
-  (#PR).
+  first, and in a full build the id depended on which spelling came first.
+  Claim merges (extraction, resolution and the cross-run merge) also keep
+  the document `filters` of every instance in the claim's attributes, as
+  entity and relationship merges do; claims are not filtered at query time,
+  so retrieval does not change (#PR).
 - CloudWatch tracing (`enable_cloudwatch_tracing`): the task role keeps
   only `xray:PutTraceSegments`, the one action the X-Ray OTLP traces
   endpoint authorizes (a role with only `xray:PutSpans` gets a 403);

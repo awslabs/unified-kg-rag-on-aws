@@ -394,3 +394,21 @@ class TestResolvedClaimId:
         assert resolved_claim_id(base) != resolved_claim_id(
             base.model_copy(update={"start_date": "2024-01-01"})
         )
+
+    def test_merge_unions_document_filters(self) -> None:
+        claims = [
+            _claim(
+                f"c-{tenant}",
+                "Acme",
+                "Buyer",
+                text_unit_ids=[f"t-{tenant}"],
+                attributes={"index": "default", "filters": {"tenant": tenant}},
+            )
+            for tenant in ("a", "b")
+        ]
+        (merged,), _ = _resolver().resolve(claims, self._ENTITIES)
+
+        assert merged.attributes == {
+            "index": "default",
+            "filters": {"tenant": ["a", "b"]},
+        }

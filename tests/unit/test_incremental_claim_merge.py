@@ -203,6 +203,19 @@ def test_merge_claims_status_matches_the_resolver_for_two_claims() -> None:
     assert merged.status == resolver._merge_claims([stored, delta]).status
 
 
+def test_merge_claims_unions_document_filters() -> None:
+    stored = _claim("a.txt").model_copy(
+        update={"attributes": {"index": "default", "filters": {"tenant": "a"}}}
+    )
+    delta = _claim("b.txt").model_copy(
+        update={"attributes": {"index": "default", "filters": {"tenant": "b"}}}
+    )
+
+    (merged,) = merge_claims([stored], [delta])
+
+    assert merged.attributes == {"index": "default", "filters": {"tenant": ["a", "b"]}}
+
+
 def test_remapped_claims_are_rekeyed_and_merged() -> None:
     # Two delta claims whose subjects ("Acme" and "Acme Inc", separate
     # entities in this run) both merged into the stored entity e-acme: they

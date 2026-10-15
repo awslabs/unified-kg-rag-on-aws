@@ -220,6 +220,12 @@ class TestMergeClaims:
         assert set(merged[0].text_unit_ids) == {"t1", "t2"}
         assert "d1" in merged[0].description and "d2" in merged[0].description
 
+    def test_same_id_claims_union_document_filters(self, extractor) -> None:
+        c1 = self._claim("c1", attributes={"filters": {"tenant": "a"}})
+        c2 = self._claim("c1", attributes={"filters": {"tenant": "b"}})
+        (merged,) = extractor._merge_claims([c1, c2])
+        assert merged.attributes == {"filters": {"tenant": ["a", "b"]}}
+
     def test_distinct_ids_kept(self, extractor) -> None:
         c1 = self._claim("c1", text_unit_ids=["t1"])
         c2 = self._claim("c2", object_name="Gamma", text_unit_ids=["t2"])
