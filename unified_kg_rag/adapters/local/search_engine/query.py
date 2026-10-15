@@ -392,12 +392,14 @@ def _multi_match(index: LoadedIndex, body: Any) -> Scores:
 
 
 def vector_scores(
-    vectors: VectorField, query: np.ndarray, rows: np.ndarray
+    vectors: VectorField, query: np.ndarray, rows: np.ndarray | None = None
 ) -> np.ndarray:
-    """OpenSearch's score of ``query`` against ``rows`` of the field."""
-    matrix = vectors.matrix[rows]
+    """OpenSearch's score of ``query`` against ``rows`` of the field (every
+    row when ``None``, scored in place rather than on a copy)."""
+    matrix = vectors.matrix if rows is None else vectors.matrix[rows]
     if vectors.space_type == "cosinesimil":
-        cosine = matrix @ query / (vectors.norms[rows] * float(np.linalg.norm(query)))
+        norms = vectors.norms if rows is None else vectors.norms[rows]
+        cosine = matrix @ query / (norms * float(np.linalg.norm(query)))
         return np.asarray((1.0 + cosine) / 2.0)
     if vectors.space_type == "l2":
         return np.asarray(1.0 / (1.0 + np.sum((matrix - query) ** 2, axis=1)))
@@ -405,6 +407,20 @@ def vector_scores(
     return np.asarray(
         np.where(product >= 0, product + 1.0, 1.0 / (1.0 - np.minimum(product, 0.0)))
     )
+
+
+def _top_k(ids: list[str], scores: np.ndarray, k: int) -> Scores:
+    """The ``k`` best ``ids`` by score, ties by id: only the rows scoring at
+    least the k-th best score are sorted."""
+    if len(ids) > k and not np.isnan(scores).any():
+        kth = np.partition(scores, len(scores) - k)[len(scores) - k]
+        candidates = np.flatnonzero(scores >= kth).tolist()
+    else:
+        candidates = range(len(ids))
+    ranked = sorted(
+        ((ids[i], float(scores[i])) for i in candidates), key=lambda p: (-p[1], p[0])
+    )
+    return dict(ranked[:k])
 
 
 @_clause("knn")
@@ -429,10 +445,10 @@ def _knn(index: LoadedIndex, body: Any) -> Scores:
     stored = index.vectors.get(path)
     if stored is None:
         return {}
-    ids = stored.ids if allowed is None else [i for i in stored.ids if i in allowed]
+    if allowed is None:
+        return _top_k(stored.ids, vector_scores(stored, query), k)
+    ids = [i for i in stored.ids if i in allowed]
     if not ids:
         return {}
     rows = np.fromiter((stored.rows[i] for i in ids), dtype=np.int64, count=len(ids))
-    scores = vector_scores(stored, query, rows)
-    ranked = sorted(zip(ids, scores.tolist(), strict=True), key=lambda p: (-p[1], p[0]))
-    return dict(ranked[:k])
+    return _top_k(ids, vector_scores(stored, query, rows), k)

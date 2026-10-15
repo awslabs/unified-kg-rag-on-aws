@@ -518,6 +518,11 @@ Library API (Python callers and custom backends).
   ("I’m sorry, …") is caught like its ASCII form and the original query is
   searched; the follow-up rewrite guard and the translation guard now share
   one normalisation (#292).
+- Embedded search engine: an unfiltered kNN query scores the stored vectors
+  in place instead of copying them for every query, and sorts only the
+  documents that score at least the k-th best (ties still go by id, so the
+  hits are the same). Over 50k vectors of 1024 dimensions the kNN step went
+  from about 190 ms to 19 ms (#PR).
 - Embedded graph store: a vertex's edges are looked up through
   `(label, source_id, target_id)` and `(label, target_id, source_id)`
   indexes, and the neighbour and incident-edge reads query each endpoint

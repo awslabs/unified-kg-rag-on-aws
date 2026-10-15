@@ -18,6 +18,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pytest
 from opensearchpy.exceptions import NotFoundError
 
@@ -25,6 +26,12 @@ from tests.fixtures.fakes.embeddings import HashingEmbeddingFactory
 from unified_kg_rag.adapters.aws.opensearch import is_index_not_found
 from unified_kg_rag.adapters.local.search_engine import SQLiteSearchEngine
 from unified_kg_rag.adapters.local.search_engine import engine as engine_module
+from unified_kg_rag.adapters.local.search_engine.query import (
+    LoadedIndex,
+    VectorField,
+    evaluate,
+    vector_scores,
+)
 from unified_kg_rag.adapters.retrievers import OpenSearchRetriever
 from unified_kg_rag.adapters.storage import OpenSearchIndexer
 from unified_kg_rag.domain.models import (
@@ -373,6 +380,82 @@ def test_knn_filters_first_then_takes_top_k(engine) -> None:
         },
     )
     assert hits == {"b": pytest.approx(0.5)}
+
+
+class _NoCopyMatrix(np.ndarray):
+    """A stored matrix that fails when a query copies rows out of it."""
+
+    def __getitem__(self, key: Any) -> Any:
+        raise AssertionError("the kNN query copied the stored matrix")
+
+
+def _vector_index(space_type: str, matrix: np.ndarray) -> LoadedIndex:
+    ids = [f"d{i:03d}" for i in range(len(matrix))]
+    spec = {
+        "type": "knn_vector",
+        "dimension": matrix.shape[1],
+        "method": {"name": "hnsw", "space_type": space_type, "engine": "lucene"},
+    }
+    return LoadedIndex(
+        name="vectors",
+        generation=1,
+        mappings={
+            "properties": {"vec": spec, "group": {"type": "keyword"}},
+        },
+        settings={},
+        sources={doc_id: {"group": str(i % 3)} for i, doc_id in enumerate(ids)},
+        vectors={
+            "vec": VectorField(
+                ids=ids,
+                rows={doc_id: i for i, doc_id in enumerate(ids)},
+                matrix=matrix,
+                norms=np.linalg.norm(matrix, axis=1).astype(np.float32),
+                dimension=matrix.shape[1],
+                space_type=space_type,
+            )
+        },
+    )
+
+
+def _knn_by_full_sort(
+    index: LoadedIndex, query: list[float], k: int, group: str | None
+) -> dict[str, float]:
+    """The kNN answer as a sort of every candidate's score."""
+    stored = index.vectors["vec"]
+    ids = [i for i in stored.ids if group is None or index.sources[i]["group"] == group]
+    rows = np.array([stored.rows[i] for i in ids], dtype=np.int64)
+    scores = vector_scores(stored, np.asarray(query, dtype=np.float32), rows)
+    ranked = sorted(zip(ids, scores.tolist(), strict=True), key=lambda p: (-p[1], p[0]))
+    return dict(ranked[:k])
+
+
+@pytest.mark.parametrize("space_type", ["cosinesimil", "l2", "innerproduct"])
+def test_knn_top_k_matches_a_full_sort_with_ties(space_type: str) -> None:
+    # Few distinct vectors, so many documents tie on the k-th score: the
+    # ties are broken by id, as a sort of every score breaks them.
+    rng = np.random.default_rng(7)
+    distinct = rng.integers(-2, 3, size=(6, 4)).astype(np.float32)
+    distinct[np.all(distinct == 0, axis=1)] = 1.0
+    matrix = distinct[rng.integers(0, len(distinct), size=120)]
+    index = _vector_index(space_type, matrix)
+    for query in ([1.0, 0.0, -1.0, 2.0], distinct[0].tolist()):
+        for k in (1, 5, 17, 40, 119, 120, 500):
+            for group in (None, "1"):
+                body: dict[str, Any] = {"vector": query, "k": k}
+                if group is not None:
+                    body["filter"] = {"term": {"group": group}}
+                assert evaluate(index, {"knn": {"vec": body}}) == _knn_by_full_sort(
+                    index, query, k, group
+                ), (k, group)
+
+
+def test_unfiltered_knn_scores_the_stored_matrix_in_place() -> None:
+    # Copying the matrix for every query made a query over 50k vectors of
+    # 1024 dimensions spend most of its time in the copy.
+    matrix = np.eye(4, dtype=np.float32)[[0, 1, 2, 3, 0]].view(_NoCopyMatrix)
+    index = _vector_index("cosinesimil", matrix)
+    hits = evaluate(index, {"knn": {"vec": {"vector": [1.0, 0.0, 0.0, 0.0], "k": 2}}})
+    assert hits == {"d000": 1.0, "d004": 1.0}
 
 
 def test_bool_should_over_knn_clauses_sums_them(engine) -> None:
