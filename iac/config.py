@@ -33,7 +33,8 @@ Context keys (all optional; sensible defaults shown):
   neptune_instances   dev:1/else:2     Neptune instances (>=2 => Multi-AZ HA)
   opensearch_instance "r6g.large.search"  OpenSearch data node type (Graviton)
   opensearch_count    dev:1/else:2     OpenSearch data node count (>1 =>
-                                       zone-aware multi-node + 3 dedicated masters)
+                                       zone-aware multi-node + 3 dedicated masters;
+                                       even when the domain spans 2 AZs)
   opensearch_master_instance "m6g.large.search"  dedicated master type when
                                        opensearch_count > 1 (8 GiB Graviton; sized
                                        for <=10 nodes / 10K shards on OS 2.13)

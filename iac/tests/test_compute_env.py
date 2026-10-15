@@ -75,8 +75,8 @@ def test_corpus_bucket_is_granted_read_only() -> None:
 
 @pytest.mark.parametrize(
     ("context", "replicas"),
-    [({}, "0"), ({"env_name": "prod"}, "1"), ({"opensearch_count": 3}, "1")],
-    ids=["dev-single-node", "prod-multi-node", "three-nodes"],
+    [({}, "0"), ({"env_name": "prod"}, "1"), ({"opensearch_count": 4}, "1")],
+    ids=["dev-single-node", "prod-multi-node", "four-nodes"],
 )
 def test_opensearch_replicas_follow_node_count(
     context: dict[str, Any], replicas: str

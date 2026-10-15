@@ -103,7 +103,7 @@ def test_cache_expiry_never_applies_bucket_wide() -> None:
         ({"env_name": "prod"}, 3, 2),
         ({"opensearch_count": 3, "max_azs": 3}, 3, 3),
         ({"opensearch_count": 6, "max_azs": 3}, 3, 3),
-        ({"opensearch_count": 3, "max_azs": 2}, 3, 2),
+        ({"opensearch_count": 4, "max_azs": 2}, 3, 2),
     ],
     ids=["two-nodes", "three-nodes-three-azs", "six-nodes-three-azs", "two-azs"],
 )
@@ -123,3 +123,15 @@ def test_opensearch_spans_as_many_zones_as_nodes_and_azs_allow(
     assert cluster["ZoneAwarenessEnabled"] is True
     assert cluster["ZoneAwarenessConfig"]["AvailabilityZoneCount"] == zones
     assert len(properties["VPCOptions"]["SubnetIds"]) == zones
+
+
+@pytest.mark.parametrize("count", [3, 5])
+def test_odd_node_count_in_two_zones_fails_at_synth(count: int) -> None:
+    # OpenSearch rejects it at deploy time; a 3-AZ VPC takes the same count.
+    lookup = f"availability-zones:account={_ENV.account}:region={_ENV.region}"
+    context = {"opensearch_count": count, lookup: ["us-west-2a", "us-west-2b"]}
+    with pytest.raises(ValueError, match="needs an even number of data nodes"):
+        _storage_template(context)
+    _storage_template(
+        {**context, "max_azs": 3, lookup: [f"us-west-2{c}" for c in "abc"]}
+    )
