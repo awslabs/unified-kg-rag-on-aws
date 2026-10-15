@@ -491,6 +491,35 @@ class TestEndToEndDetection:
         )
         assert members == [[f"n{i}"] for i in range(nodes)]
 
+    @pytest.mark.parametrize("auto_resolution", [True, False])
+    def test_a_graph_whose_edges_all_weigh_zero_yields_singletons(
+        self, auto_resolution: bool
+    ) -> None:
+        # Strength-0 relationships (edge_weight clamps negative ones to 0):
+        # graspologic_native panics (a BaseException) on zero total weight.
+        g = nx.Graph()
+        g.add_edge("a", "b", weight=0.0)
+        g.add_edge("b", "c", weight=0.0)
+        cd = _detector(auto_resolution=auto_resolution, min_community_size=1)
+
+        cd(g)
+
+        members = sorted(
+            sorted(c.nodes) for c in cd.all_communities.values() if c.level == 0
+        )
+        assert members == [["a"], ["b"], ["c"]]
+
+    def test_zero_weight_edges_next_to_weighted_ones_partition(self) -> None:
+        g = _two_triangle_graph()
+        g.add_edge("n9", "n8", weight=0.0)
+        g.add_edge("n2", "n3", weight=0.0)
+        cd = _detector(min_community_size=1)
+
+        cd(g)
+
+        level0 = [c.nodes for c in cd.all_communities.values() if c.level == 0]
+        assert set().union(*level0) == set(g.nodes())
+
 
 class TestMetricsAndExport:
     def test_get_community_metrics_summarizes_l0(self) -> None:

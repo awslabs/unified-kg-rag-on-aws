@@ -1707,6 +1707,13 @@ Library API (Python callers and custom backends).
   from the loop the stores' async clients are bound to. The global and
   simple search spans and failure logs say "Document retrieval" instead of
   "OpenSearch retrieval", which local mode does not use (#300).
+- A document whose relationships all have strength 0 (or negative, which
+  parsing clamps to 0) no longer kills ingestion at community detection.
+  Leiden panics, with an exception no error handler catches, on a graph
+  whose edges all weigh 0, and an incremental run clusters only the new
+  documents' subgraph, so one such document crashed the run and every
+  resume. Such a graph now gets one community per entity, as a graph
+  without edges does (#PR).
 
 ### Removed
 - `Entity.frequency`: it counted an entity's text units in every merge path
