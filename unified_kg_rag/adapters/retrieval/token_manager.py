@@ -7,7 +7,6 @@ from typing import Any, ClassVar
 
 from pydantic import BaseModel, Field
 
-from unified_kg_rag.adapters.aws.token_counter import is_count_tokens_known_unsupported
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.models import Config, RetrievalResult
 from unified_kg_rag.domain.prompts import AnswerGenerationPrompt
@@ -87,16 +86,6 @@ class TokenManager:
     # Concurrent token counts per count_tokens_many call (each may be one
     # CountTokens request).
     COUNT_CONCURRENCY: ClassVar[int] = 8
-    PRIORITY_MULTIPLIERS: ClassVar[dict[SectionType, float]] = {
-        SectionType.TEXT: 1.3,
-        SectionType.ENTITY: 1.2,
-        SectionType.RELATIONSHIP: 1.1,
-        # Claims are evidentiary (subject/predicate/object assertions about an
-        # entity); weight them alongside relationships.
-        SectionType.CLAIM: 1.1,
-        SectionType.COMMUNITY: 1.0,
-        SectionType.GENERAL: 0.8,
-    }
 
     def __init__(
         self,
@@ -120,7 +109,6 @@ class TokenManager:
             cache_maxsize=self.config.token_count_cache_size,
             api_supported=answer_model_info.supports_count_tokens,
         )
-        self._answer_model_id = answer_model_id
         self._counts_via_api = answer_model_info.supports_count_tokens
         # Reserve what the answer request actually asks for (its max_tokens),
         # not the model maximum, so a capped output leaves room for context.
@@ -195,9 +183,10 @@ class TokenManager:
         from async code.
         """
         unique = list(dict.fromkeys(t for t in texts if t))
-        via_api = self._counts_via_api and not is_count_tokens_known_unsupported(
-            self._answer_model_id
-        )
+        # The counter knows whether its counts are round trips right now (the
+        # Bedrock one stops calling the API once the model rejects it); one
+        # without that attribute is taken at the model's capability record.
+        via_api = getattr(self._token_counter, "counts_via_api", self._counts_via_api)
         if len(unique) <= 1 or not via_api:
             counts = {t: self.count_tokens(t) for t in unique}
         else:
@@ -315,13 +304,8 @@ class TokenManager:
         except ValueError:
             # `retriever_type` is a free-form str; an out-of-enum value (a future
             # retriever, or a malformed result) must degrade to GENERAL rather
-            # than abort context-building for the whole query. The multiplier
-            # lookup below already tolerates unknowns via `.get(..., 1.0)`.
+            # than abort context-building for the whole query.
             section_type = SectionType.GENERAL
-
-        # A 0.0 score is the lowest score, not a missing one (`or 0.5` made
-        # it a mid-ranked section).
-        priority = result.score * self.PRIORITY_MULTIPLIERS.get(section_type, 1.0)
 
         return ContextSection(
             content=result.content,
@@ -330,7 +314,10 @@ class TokenManager:
                 if token_count is None
                 else token_count
             ),
-            priority=priority,
+            # Ranks sections only within their own type: each type is packed
+            # against its own share (_select_per_type), so a cross-type weight
+            # would change nothing there. A 0.0 score stays the lowest.
+            priority=result.score,
             section_type=section_type,
             source_id=source_id,
             metadata=result.metadata or {},
@@ -422,9 +409,9 @@ class TokenManager:
         #
         # This used to pack each type to its sub-budget and then run a second pass
         # that pooled ALL unused budget and offered it to the leftover sections of
-        # ANY type by raw priority. Because PRIORITY_MULTIPLIERS favors TEXT (1.3)
-        # and every leftover competed in one global pool, whichever type happened to
-        # have the most/highest-scoring leftovers absorbed the entire remainder. That
+        # ANY type by raw priority. Because every leftover competed in one global
+        # pool, whichever type happened to have the most/highest-scoring leftovers
+        # absorbed the entire remainder. That
         # made the configured shares advisory rather than binding: one type could
         # take most of the window against a 0.10 share, and once chunk candidates
         # carried real descending rank scores TEXT evicted the community and entity
@@ -491,9 +478,11 @@ class TokenManager:
         # context while evidence that fits was on the table, so seat the single
         # highest-priority section instead. This cannot reintroduce the
         # crowding-out defect above: it only runs when the per-type pass selected
-        # nothing at all, and it seats exactly one section.
+        # nothing at all, and it seats exactly one section. Ranked over the input
+        # (stable sort), so a score tie goes to the earlier-ranked result rather
+        # than to whichever type happened to appear first.
         ranked = sorted(
-            (s for lst in by_type.values() for s in lst),
+            (s for s in sections if s.token_count > 0),
             key=lambda s: s.priority,
             reverse=True,
         )

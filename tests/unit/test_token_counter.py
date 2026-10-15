@@ -202,6 +202,17 @@ def test_unsupported_error_makes_exactly_one_api_call(code: str) -> None:
     assert results == [estimate_token_count(t) for t in texts]
 
 
+def test_counts_via_api_turns_off_once_the_model_rejects_count_tokens() -> None:
+    # TokenManager reads this to choose concurrent vs inline counting.
+    client = ErrorClient(_client_error("AccessDeniedException"))
+    counter = BedrockTokenCounter("via-api-model", client)
+    assert counter.counts_via_api
+    counter.count_tokens("alpha")
+    assert not counter.counts_via_api
+    assert not BedrockTokenCounter("x", None).counts_via_api
+    assert not BedrockTokenCounter("y", client, api_supported=False).counts_via_api
+
+
 def test_negative_cache_is_shared_across_instances_of_same_model() -> None:
     first = ErrorClient(_client_error("ValidationException"))
     BedrockTokenCounter("shared-model", first).count_tokens("alpha")

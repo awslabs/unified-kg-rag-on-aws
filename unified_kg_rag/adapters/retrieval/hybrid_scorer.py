@@ -401,8 +401,8 @@ class HybridScorer:
         # Plain RRF overwrites each item's score with a flat
         # weight/(k+rank) (~0.0164 at rank1 vs 0.0143 at rank10) — so WITHIN a stream
         # the gold item is indistinguishable from noise, and downstream token_manager
-        # (priority = score*multiplier) fills quota slots with the wrong item, so a
-        # relevant item can be retrieved yet dropped from context. Upstream LightRAG keeps
+        # (which packs each type's share in score order) fills it with the wrong
+        # item, so a relevant item can be retrieved yet dropped from context. Upstream LightRAG keeps
         # the native order (entities by cosine, relations by degree). We preserve that
         # by BLENDING a per-stream min-max-normalized native score into the RRF score:
         # cross-stream fusion still comes from RRF rank; within-stream discrimination
@@ -603,18 +603,17 @@ class HybridScorer:
         return [results[i] for i in selected_indices]
 
     def _apply_bedrock_reranking(
-        self, results: list[RetrievalResult], query: str, scope: str = "all"
+        self, results: list[RetrievalResult], query: str, scope: str
     ) -> tuple[list[RetrievalResult], RerankStage]:
         """``results`` reordered by the rerank model, and the step's outcome.
+
+        The caller (``fuse_and_rerank_results``) has already checked that a
+        rerank model is set and that there are candidates and a query.
 
         A failed or empty rerank keeps ``results`` (status ``failed``) unless
         ``search.reranking.required`` is set, which raises
         ``RerankModelError`` instead.
         """
-        if not self.rerank_model:
-            return results, self._stage(scope, *self._inactive)
-        if not results:
-            return results, self._stage(scope, RerankStatus.SKIPPED, "no candidates")
         required = self.config.search.reranking.required
 
         try:

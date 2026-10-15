@@ -3,7 +3,7 @@
 """Unit tests for TokenManager — context-window budgeting/optimization shared by
 all search strategies (AWS-free: the Bedrock token counter is patched out).
 
-These exercise the real budget math, PRIORITY_MULTIPLIERS-driven ordering, the
+These exercise the real budget math, per-type share packing, the
 quality-score blend, the budget-exceeded short circuit, and the empty-context
 fallback string. The token counter is replaced with a deterministic
 word-count stub so assertions are exact and AWS is never touched.
@@ -240,18 +240,6 @@ class TestBudgeting:
 
 
 class TestPriorityOrdering:
-    def test_priority_multiplier_orders_equal_scores(self, mocker) -> None:
-        # Equal base scores; TEXT(1.3) should outrank GENERAL(0.8).
-        mgr = _make_manager(mocker)
-        results = [
-            _r("g g g g g", 0.5, "general", "gen"),
-            _r("t t t t t", 0.5, "text", "txt"),
-        ]
-        # Budget for only one section -> the higher-priority TEXT wins.
-        out = mgr.optimize_context(results, query="q", max_tokens=1 + 2 * HEADER + 6)
-        assert out.sections_included == 1
-        assert out.sections[0].section_type == SectionType.TEXT
-
     def test_a_window_too_small_for_any_share_still_yields_one_section(
         self, mocker
     ) -> None:
@@ -262,14 +250,28 @@ class TestPriorityOrdering:
         # seated instead.
         mgr = _make_manager(mocker)
         results = [
-            _r("g g g g g", 0.5, "general", "gen"),
+            _r("g g g g g", 0.6, "general", "gen"),
             _r("t t t t t", 0.5, "text", "txt"),
         ]
         out = mgr.optimize_context(results, query="q", max_tokens=1 + 2 * HEADER + 6)
         assert out.sections_included == 1
         assert out.total_tokens <= 6
-        # TEXT (1.3) outranks GENERAL (0.8) at equal base score.
-        assert out.sections[0].section_type == SectionType.TEXT
+        # The higher score wins whatever its type: a TEXT weight used to seat
+        # the lower-scored text section here.
+        assert out.sections[0].source_id == "gen"
+
+    def test_last_resort_score_tie_goes_to_the_earlier_result(self, mocker) -> None:
+        # Ranked over the input, not type by type: with the type-grouped ranking
+        # the tie went to "r2", whose type happened to appear first.
+        mgr = _make_manager(mocker)
+        results = [
+            _r("r r r r r", 0.4, "relationship", "r1"),
+            _r("c c c c c", 0.5, "claim", "c1"),
+            _r("s s s s s", 0.5, "relationship", "r2"),
+        ]
+        headers = 5 + 2  # "##### Knowledge Graph — Relationships", "##### Claims"
+        out = mgr.optimize_context(results, query="q", max_tokens=1 + headers + 6)
+        assert [s.source_id for s in out.sections] == ["c1"]
 
     def test_last_resort_section_is_truncated_when_nothing_fits_whole(
         self, mocker
@@ -293,9 +295,8 @@ class TestPriorityOrdering:
         section = mgr._create_context_section(
             _r("hello world", 0.5, "some_future_retriever", "s1"), index=0
         )
-        # GENERAL multiplier is 0.8: 0.5 * 0.8 = 0.4.
         assert section.section_type == SectionType.GENERAL
-        assert section.priority == pytest.approx(0.4)
+        assert section.priority == pytest.approx(0.5)
 
     def test_unknown_retriever_type_does_not_crash_optimize_context(
         self, mocker
@@ -309,21 +310,13 @@ class TestPriorityOrdering:
         assert out.sections[0].section_type == SectionType.GENERAL
         assert out.sections[0].content == "alpha beta gamma"
 
-    def test_claim_section_type_has_weight(self, mocker) -> None:
-        # Claims are evidentiary; weighted alongside relationships (1.1).
-        assert SectionType.CLAIM in TokenManager.PRIORITY_MULTIPLIERS
-        assert TokenManager.PRIORITY_MULTIPLIERS[SectionType.CLAIM] == pytest.approx(
-            1.1
-        )
-
     def test_claim_retriever_type_maps_to_claim_section(self, mocker) -> None:
         mgr = _make_manager(mocker)
         section = mgr._create_context_section(
             _r("a claim", 0.5, "claim", "c1"), index=0
         )
-        # CLAIM multiplier is 1.1: 0.5 * 1.1 = 0.55.
         assert section.section_type == SectionType.CLAIM
-        assert section.priority == pytest.approx(0.55)
+        assert section.priority == pytest.approx(0.5)
 
     def test_zero_score_stays_the_lowest_priority(self, mocker) -> None:
         mgr = _make_manager(mocker)
@@ -356,7 +349,7 @@ class TestPerTypeBudgetIsAHardCap:
         # TEXT prop 0.50 / COMMUNITY prop 0.10 -> renormalized over the two present
         # types: TEXT 5/6 (833), COMMUNITY 1/6 (166).
         # 40 text sections of 100 tokens each want 4000 tokens; they must not eat
-        # the community share even though TEXT has the higher priority multiplier.
+        # the community share even though every TEXT section outscores them.
         text_results = [
             _r(" ".join(["t"] * 100), 0.9, "text", f"t{i}") for i in range(40)
         ]
@@ -833,6 +826,26 @@ class TestConcurrentCounting:
         mgr = _manager_with_counter(
             mocker, counter, answer_model_id=Config().search.answer_generation_model_id
         )
+        assert mgr.count_tokens_many([f"text {i}" for i in range(20)]) == [2] * 20
+        assert threads == {threading.current_thread().name}
+
+    def test_count_tokens_many_follows_the_counter_not_the_model_record(
+        self, mocker
+    ) -> None:
+        # The answer model accepts CountTokens, but the counter says its counts
+        # are local now (the Bedrock one does once the model rejected the API):
+        # the counter decides, so counting stays inline.
+        counter = _SlowCounter(delay=0)
+        counter.counts_via_api = False  # type: ignore[attr-defined]
+        threads: set[str] = set()
+        count = counter.count_tokens
+
+        def recording_count(text: str) -> int:
+            threads.add(threading.current_thread().name)
+            return count(text)
+
+        counter.count_tokens = recording_count  # type: ignore[method-assign]
+        mgr = _manager_with_counter(mocker, counter)
         assert mgr.count_tokens_many([f"text {i}" for i in range(20)]) == [2] * 20
         assert threads == {threading.current_thread().name}
 
