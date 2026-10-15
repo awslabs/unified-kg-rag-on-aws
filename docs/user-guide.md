@@ -1816,7 +1816,8 @@ run-visualization --data-path visualization_data.json --renderers interactive --
 ## 8. Prompt tuning (`run-prompt-tuning`)
 
 Samples documents from a directory, profiles the corpus (domain / language /
-persona / entity types) via Bedrock, and writes a domain-adapted
+persona / entity types) with the configured language model
+(`processing.graph_extraction.extraction_model_id`), and writes a domain-adapted
 `custom_prompts` YAML fragment for you to review and merge into `config.yaml`.
 
 ### CLI flags

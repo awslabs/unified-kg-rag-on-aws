@@ -1683,8 +1683,9 @@ run-visualization --data-path visualization_data.json --renderers interactive --
 
 ## 8. 프롬프트 튜닝 (`run-prompt-tuning`)
 
-디렉터리에서 문서를 표본으로 뽑고 Bedrock으로 코퍼스 특성(도메인, 언어, 페르소나,
-엔티티 유형)을 분석한 뒤, 검토해서 `config.yaml`에 합칠 수 있는 도메인 맞춤
+디렉터리에서 문서를 표본으로 뽑고 설정된 언어 모델
+(`processing.graph_extraction.extraction_model_id`)로 코퍼스 특성(도메인, 언어,
+페르소나, 엔티티 유형)을 분석한 뒤, 검토해서 `config.yaml`에 합칠 수 있는 도메인 맞춤
 `custom_prompts` YAML 조각을 씁니다.
 
 ### CLI 플래그
