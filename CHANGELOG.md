@@ -67,6 +67,10 @@ ignored, so check the start-up warnings after upgrading.
   (#161), `indexing.neptune.min_entity_importance` (#155) and the
   `SearchQuery.metadata["lightrag_mode"]` alias (#212).
 - `SearchQuery.label_prefixes` is removed; no retriever read it (#260).
+- `processing.chunking.content_type` is removed with the markdown/HTML
+  header pre-splitting it selected: no parser builds a markdown or HTML body,
+  so every document was always chunked as plain text. Stage caches and
+  extraction fingerprints keep their keys (#PR).
 - A filter key that no retriever of the strategy declares raises
   `InvalidFilterError` (#123).
 - `indexing.opensearch.terms_batch_size`, `max_total_clauses` and
@@ -98,8 +102,6 @@ Defaults. Set the old value explicitly to keep the previous behaviour.
   removal and dense-script spacing. Similarity matching is opt-in
   (`processing.fuzzy_entity_resolution: true`), and
   `processing.similarity_threshold` defaults to 0.85 (was 0.6) (#214).
-- `processing.chunking.content_type` defaults to `text`; `markdown`/`html`
-  split at headers only for documents with that body (#213).
 - A memory query with conversation history is rewritten as a standalone
   question (`search.query_rewrite_model_id`, fast tier) and every step reads
   the rewrite (#212).

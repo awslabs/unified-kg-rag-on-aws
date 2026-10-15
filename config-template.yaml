@@ -317,10 +317,6 @@ processing:
   # Text Chunking
   chunking:
     chunker_type: "intelligent"
-    # Body to chunk: "text" (every document), or "markdown" / "html" for the
-    # body built from typed document elements, pre-split at headers. Documents
-    # without that body (the built-in file loaders give plain text) use text.
-    content_type: "text"
     # Chunks are embedded whole and reranked as one document, so max_chunk_size
     # must fit Titan Text Embeddings V2 (8,192 tokens) and Cohere Rerank 3.5
     # (4,096 tokens/document): 8000 chars fits Titan even at ~1 char/token (CJK)
