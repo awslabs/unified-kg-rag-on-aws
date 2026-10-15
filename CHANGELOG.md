@@ -363,6 +363,9 @@ Library API (Python callers and custom backends).
   `kg_rag.batch.chunk` spans. Each Bedrock client's connection pool is
   sized to the larger of `processing.max_concurrency` and
   `processing.io_workers` (64 by default; it was 80) (#296).
+- CI installs uv 0.12.23 in every workflow instead of whatever release
+  `setup-uv` resolves on the day, so a uv release cannot change lock
+  handling under an unchanged commit (#PR).
 - A plain `uv run pytest` no longer selects the real-AWS (`aws`-marked)
   tests: `-m "not aws"` is in pytest's `addopts`. Those tests keep the real
   environment, so with store endpoints exported a bare run used to write to
