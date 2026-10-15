@@ -71,6 +71,13 @@ ignored, so check the start-up warnings after upgrading.
   header pre-splitting it selected: no parser builds a markdown or HTML body,
   so every document was always chunked as plain text. Stage caches and
   extraction fingerprints keep their keys (#289).
+- `processing.chunk_concurrency` and `processing.batch_size` are removed
+  with the chunking they drove: an LLM stage keeps
+  `processing.max_concurrency` calls in flight and starts the next item as
+  soon as one finishes. The default (20) now is the peak; it burst to 40
+  before but averaged about 18 in flight, so set a higher value to go
+  faster. RAGAS judges run `evaluation.ragas_max_workers` jobs without
+  batching (#PR).
 - A filter key that no retriever of the strategy declares raises
   `InvalidFilterError` (#123).
 - `indexing.opensearch.terms_batch_size`, `max_total_clauses` and
@@ -346,6 +353,16 @@ Library API (Python callers and custom backends).
   fused order. Reported by @vibhupb (#83) (#284).
 
 ### Changed
+- `BatchProcessor` runs one pool of `max_concurrency` items instead of
+  chunks of `batch_size` items in parallel, each waiting for its slowest
+  item: a slow item holds only its own slot and is retried in it, and the
+  calls in flight never exceed `max_concurrency` (the defaults burst to 40,
+  averaged about 18, and `max_concurrency` above `batch_size` changed
+  nothing). The async path calls `batch_func` per item the same way, so
+  evaluation answers no longer wait chunk by chunk. A run's trace has no
+  `kg_rag.batch.chunk` spans. Each Bedrock client's connection pool is
+  sized to the larger of `processing.max_concurrency` and
+  `processing.io_workers` (64 by default; it was 80) (#PR).
 - Context packing ranks sections by their retrieval score alone; the fixed
   per-type priority weights (text 1.3 ... general 0.8) are gone. The
   per-type shares (`search.token_manager.type_budgets`) already decided the

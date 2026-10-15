@@ -50,7 +50,6 @@ def _make_translator(
     config = Config()
     config.processing.translation.target_language = target
     config.processing.translation.additional_target_languages = additional
-    config.processing.batch_size = 100
     translator = TextUnitTranslator(config, show_progress=False)
     return translator, fake_chain
 

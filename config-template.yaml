@@ -263,15 +263,13 @@ fixing:
 # Data Processing Configuration
 processing:
   # LLM stages are Bedrock-I/O-bound (CPU/memory near-idle during them), so
-  # concurrency can be well above the CPU count. max_concurrency = concurrent
-  # LLM calls within a batch; chunk_concurrency = how many mini-batch chunks run
-  # at once (overlaps their network waits instead of serial chunk-by-chunk).
-  # Each Bedrock client's connection pool is sized to max_concurrency x
-  # chunk_concurrency (floor 10, cap 200) so concurrent calls reuse connections.
+  # concurrency can be well above the CPU count. max_concurrency = LLM calls a
+  # stage keeps in flight (the next item starts as soon as one finishes).
+  # Each Bedrock client's connection pool is sized to the larger of
+  # max_concurrency and io_workers (floor 10, cap 200) so concurrent calls
+  # reuse connections.
   max_concurrency: 20
-  chunk_concurrency: 4
-  batch_size: 10
-  # Attempts for an ingestion LLM item called on its own after its batch call
+  # Attempts for an ingestion LLM item called again after its first call
   # fails (transient errors, timeouts, unparseable output); 1 = no retry.
   max_attempts: 5
   # Threads for blocking query-path I/O (Bedrock calls LangChain runs in the

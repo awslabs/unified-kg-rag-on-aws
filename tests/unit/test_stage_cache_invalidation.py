@@ -129,11 +129,10 @@ class TestSavedKeyTracksInputs:
         assert baseline.isdisjoint(changed)
 
     def test_throughput_knob_does_not_invalidate(self, tmp_path) -> None:
-        # Concurrency and batch size change how long a stage takes, not what it
+        # Concurrency and attempts change how long a stage takes, not what it
         # produces, so retuning them must not discard an expensive cache.
         retuned = Config()
         retuned.processing.max_concurrency += 7
-        retuned.processing.batch_size += 3
         retuned.processing.max_attempts += 1
         assert _save_and_list_keys(Config(), tmp_path / "base") == _save_and_list_keys(
             retuned, tmp_path / "retuned"

@@ -49,8 +49,12 @@ an empty result (``{}``, ``""``) is a real LLM output, not a failure.
 """
 
 
-def _chunk_outcome(items: list[Any], results: list[Any]) -> dict[str, Any]:
-    """Span attributes for a batch or chunk: item and failure counts."""
+# Internal marker: the item's first call failed and it is called again.
+_RETRY: Final = object()
+
+
+def _batch_outcome(items: list[Any], results: list[Any]) -> dict[str, Any]:
+    """Span attributes for a batch: item and failure counts."""
     return {
         "kg_rag.items": len(items),
         "kg_rag.results": len(results),
@@ -106,7 +110,8 @@ class BatchProcessor(BaseModel):
     max_concurrency: int = Field(
         default=5,
         ge=1,
-        description="Maximum number of operations that can run concurrently during batch processing",
+        description="Items in flight at once: the next item starts as soon as "
+        "one finishes, so this is both the peak and the steady concurrency",
     )
     retry_multiplier: float = Field(
         default=30.0,
@@ -124,18 +129,6 @@ class BatchProcessor(BaseModel):
         description="Calls an item gets after its first call fails with a "
         "retryable error: up to this many while its error stays retryable. An "
         "item whose first error is not retryable is not called again",
-    )
-    batch_size: int = Field(
-        default=10,
-        ge=1,
-        description="Size of each mini-batch when processing items in chunks for better memory management and performance",
-    )
-    chunk_concurrency: int = Field(
-        default=4,
-        ge=1,
-        description="How many mini-batch chunks to run concurrently. These stages "
-        "are Bedrock-I/O-bound (CPU/memory near-idle), so overlapping chunks' "
-        "network waits cuts wall-clock time. 1 = strictly serial (legacy).",
     )
     call_timeout_seconds: int = Field(
         default=300,
@@ -163,8 +156,6 @@ class BatchProcessor(BaseModel):
         """A processor sized by ``config.processing`` (the ingestion stages)."""
         return cls(
             max_concurrency=processing.max_concurrency,
-            batch_size=processing.batch_size,
-            chunk_concurrency=processing.chunk_concurrency,
             max_attempts=processing.max_attempts,
             **settings,
         )
@@ -223,13 +214,14 @@ class BatchProcessor(BaseModel):
         task_name: str,
         show_progress: bool = True,
     ) -> list[Any]:
-        """Call ``sequential_func once per item, in chunks, and retry failures.
+        """Call ``sequential_func`` once per item and retry failures.
 
-        Each item is its own call under its own ``call_timeout_seconds``, run
-        ``max_concurrency`` at a time within a chunk, so a slow or failed item
-        neither discards the finished results of its chunk nor makes them run
-        again: only the failed items are retried (``max_attempts``). Results
-        are 1:1 with the prepared inputs; an item that failed every attempt is
+        One pool keeps up to ``max_concurrency`` items in flight, starting the
+        next item as soon as a slot frees up, so a slow item holds only its
+        own slot. Each item is its own call under its own
+        ``call_timeout_seconds``; an item whose call fails with a retryable
+        error is retried alone, in its slot (``max_attempts``). Results are
+        1:1 with the prepared inputs; an item that failed every attempt is
         :data:`BATCH_ITEM_FAILED`.
         """
         with observability.span(
@@ -242,7 +234,7 @@ class BatchProcessor(BaseModel):
                 task_name,
                 show_progress,
             )
-            span.set_attributes(_chunk_outcome(items_to_process, results))
+            span.set_attributes(_batch_outcome(items_to_process, results))
             return results
 
     def _execute_with_fallback(
@@ -253,7 +245,8 @@ class BatchProcessor(BaseModel):
         task_name: str,
         show_progress: bool,
     ) -> list[Any]:
-        if not items_to_process:
+        inputs = self._prepare(items_to_process, prepare_inputs_func, task_name)
+        if not inputs:
             return []
 
         # Bound every item call by the wall-clock ceiling so a hung item
@@ -269,169 +262,94 @@ class BatchProcessor(BaseModel):
             timed_sequential_func
         )
 
-        num_items = len(items_to_process)
-        num_chunks = math.ceil(num_items / self.batch_size)
+        def process_one(single_input: dict[str, Any]) -> Any:
+            try:
+                return timed_sequential_func(single_input)
+            except Exception as error:
+                if not self._retry_after(task_name, error):
+                    return BATCH_ITEM_FAILED
+            try:
+                return retrying_sequential_func(single_input)
+            except Exception as error:
+                return self._failed_every_attempt(task_name, error)
 
-        logger.info(
-            "Starting processing for '%s': %s items in %s chunks (batch size: %s, "
-            "chunk concurrency: %s)",
-            task_name,
-            num_items,
-            num_chunks,
-            self.batch_size,
-            self.chunk_concurrency,
+        results: list[Any] = [BATCH_ITEM_FAILED] * len(inputs)
+        progress = ProgressLogger(task_name, len(inputs))
+        executor = ContextThreadPoolExecutor(
+            max_workers=min(self.max_concurrency, len(inputs))
         )
-
-        chunk_specs = [
-            (idx + 1, items_to_process[i : i + self.batch_size])
-            for idx, i in enumerate(range(0, num_items, self.batch_size))
-        ]
-
-        def process_chunk(chunk_num: int, chunk_items: list[Any]) -> list[Any]:
-            with observability.span(
-                "kg_rag.batch.chunk", task=task_name, chunk=chunk_num
-            ) as span:
-                results = _process_chunk(chunk_num, chunk_items)
-                span.set_attributes(_chunk_outcome(chunk_items, results))
-                return results
-
-        def _process_chunk(chunk_num: int, chunk_items: list[Any]) -> list[Any]:
-            chunk_inputs = prepare_inputs_func(chunk_items)
-            if not chunk_inputs:
-                logger.warning(
-                    "No valid inputs prepared for chunk %s, skipping", chunk_num
-                )
-                return []
-            results = self._call_each(timed_sequential_func, chunk_inputs)
-            # Keep the successful results and retry ONLY the failed positions.
-            failed = self._failed_indices(results)
-            if not failed:
-                logger.debug("Chunk %s processed successfully", chunk_num)
-                return results
-            self._log_partial_failure(task_name, chunk_num, results, failed)
-            failed = self._settle_permanent_failures(task_name, results, failed)
-            if not failed:
-                return results
-            retried = self._process_sequentially_with_fallback(
-                [chunk_inputs[i] for i in failed],
-                retrying_sequential_func,
-                f"{task_name} (chunk {chunk_num} retry)",
-                show_progress=show_progress,
-            )
-            return self._splice_retried(results, failed, retried)
-
-        # Chunks are independent Bedrock-bound batches; run them concurrently so
-        # chunk N+1's LLM calls overlap chunk N's network wait instead of
-        # blocking on it (CPU/memory are near-idle during these stages). Results
-        # are reassembled in chunk order. chunk_concurrency=1 restores the old
-        # strictly-serial behaviour.
-        chunk_results_by_idx: dict[int, list[Any]] = {}
-        progress = ProgressLogger(task_name, num_items)
-        if self.chunk_concurrency <= 1 or len(chunk_specs) <= 1:
-            for chunk_num, chunk_items in tqdm(
-                chunk_specs,
+        try:
+            futures = {
+                executor.submit(process_one, single_input): idx
+                for idx, single_input in enumerate(inputs)
+            }
+            for future in tqdm(
+                concurrent.futures.as_completed(futures),
+                total=len(futures),
                 desc=f"Processing: {task_name}",
                 disable=None if show_progress else True,
             ):
-                chunk_results_by_idx[chunk_num] = process_chunk(chunk_num, chunk_items)
-                progress.update(len(chunk_items))
-        else:
-            workers = min(self.chunk_concurrency, len(chunk_specs))
-            chunk_sizes = {num: len(items) for num, items in chunk_specs}
-            with ContextThreadPoolExecutor(max_workers=workers) as executor:
-                future_to_num = {
-                    executor.submit(process_chunk, num, items): num
-                    for num, items in chunk_specs
-                }
-                for future in tqdm(
-                    concurrent.futures.as_completed(future_to_num),
-                    total=len(future_to_num),
-                    desc=f"Processing: {task_name}",
-                    disable=None if show_progress else True,
-                ):
-                    num = future_to_num[future]
-                    chunk_results_by_idx[num] = future.result()
-                    progress.update(chunk_sizes[num])
+                results[futures[future]] = future.result()
+                progress.update()
+        except BaseException:
+            # Do not start the queued items of a batch that is being abandoned.
+            executor.shutdown(wait=False, cancel_futures=True)
+            raise
+        finally:
+            executor.shutdown(wait=True)
+        return self._completed(task_name, results)
 
-        all_results: list[Any] = []
-        for chunk_num, _ in chunk_specs:
-            all_results.extend(chunk_results_by_idx.get(chunk_num, []))
-
-        logger.info("Completed '%s': processed %s results", task_name, len(all_results))
-        return all_results
-
-    def _call_each(
-        self, func: Callable[[dict[str, Any]], Any], inputs: list[dict[str, Any]]
-    ) -> list[Any]:
-        """``func`` per input, ``max_concurrency`` at a time; errors in place."""
-        workers = min(self.max_concurrency, len(inputs))
-        with ContextThreadPoolExecutor(max_workers=workers) as executor:
-            futures = [executor.submit(func, single_input) for single_input in inputs]
-            results: list[Any] = []
-            for future in futures:
-                try:
-                    results.append(future.result())
-                except Exception as e:
-                    results.append(e)
-        return results
-
-    def _batch_kwargs(self) -> dict[str, Any]:
-        # batch_func follows the Runnable.batch/abatch signature; per-item
-        # exceptions come back in place so only the failed items are retried.
-        return {
-            "config": RunnableConfig(max_concurrency=self.max_concurrency),
-            "return_exceptions": True,
-        }
-
-    @staticmethod
-    def _failed_indices(results: list[Any]) -> list[int]:
-        return [i for i, res in enumerate(results) if isinstance(res, BaseException)]
-
-    @staticmethod
-    def _log_partial_failure(
-        task_name: str, chunk_num: int, results: list[Any], failed: list[int]
-    ) -> None:
-        logger.warning(
-            "Batch chunk %s of '%s': %s/%s items failed (first error: %s). "
-            "Retrying only the failed items whose error is retryable",
-            chunk_num,
+    def _prepare(
+        self,
+        items_to_process: list[Any],
+        prepare_inputs_func: Callable[[list[Any]], list[dict[str, Any]]],
+        task_name: str,
+    ) -> list[dict[str, Any]]:
+        if not items_to_process:
+            return []
+        inputs = prepare_inputs_func(items_to_process)
+        if not inputs:
+            logger.warning("No valid inputs prepared for '%s', skipping", task_name)
+            return []
+        logger.info(
+            "Starting processing for '%s': %s items, up to %s at a time",
             task_name,
-            len(failed),
-            len(results),
-            results[failed[0]],
+            len(inputs),
+            self.max_concurrency,
         )
+        return inputs
 
-    def _settle_permanent_failures(
-        self, task_name: str, results: list[Any], failed: list[int]
-    ) -> list[int]:
-        """Mark items whose error is not retryable as failed; return the rest.
+    def _retry_after(self, task_name: str, error: BaseException) -> bool:
+        """Whether an item whose first call raised ``error`` is called again.
 
-        The retry pass runs through the retry decorator, whose first attempt
-        is a new call: a permanent error (a truncated response, access denied)
-        would otherwise cost a second call that fails the same way.
+        The retry runs through the retry decorator, whose first attempt is a
+        new call: a permanent error (a truncated response, access denied)
+        would cost a second call that fails the same way.
         """
-        retryable = []
-        for idx in failed:
-            error = results[idx]
-            if self._is_retryable(error):
-                retryable.append(idx)
-                continue
-            logger.error(
-                "Item failed in '%s' with a non-retryable error: %s",
-                task_name,
-                error,
+        if self._is_retryable(error):
+            logger.warning(
+                "Item of '%s' failed (%s); retrying it alone", task_name, error
             )
-            results[idx] = BATCH_ITEM_FAILED
-        return retryable
+            return True
+        logger.error(
+            "Item failed in '%s' with a non-retryable error: %s", task_name, error
+        )
+        return False
 
     @staticmethod
-    def _splice_retried(
-        results: list[Any], failed: list[int], retried: list[Any]
-    ) -> list[Any]:
-        merged = list(results)
-        for idx, res in zip(failed, retried, strict=True):
-            merged[idx] = res
-        return merged
+    def _failed_every_attempt(task_name: str, error: BaseException) -> Any:
+        logger.error("Item failed every attempt in '%s': %s", task_name, error)
+        return BATCH_ITEM_FAILED
+
+    @staticmethod
+    def _completed(task_name: str, results: list[Any]) -> list[Any]:
+        logger.info(
+            "Completed '%s': %s results, %s failed",
+            task_name,
+            len(results),
+            sum(1 for result in results if result is BATCH_ITEM_FAILED),
+        )
+        return results
 
     def _is_retryable(self, exc: BaseException) -> bool:
         # The same input hits the same output-token limit again.
@@ -470,43 +388,6 @@ class BatchProcessor(BaseModel):
 
         return log_retry
 
-    @staticmethod
-    def _process_sequentially_with_fallback(
-        inputs: list[dict[str, Any]],
-        sequential_func: Callable[[dict[str, Any]], Any],
-        task_name: str,
-        show_progress: bool = True,
-    ) -> list[Any]:
-        logger.info("Processing %s items sequentially for '%s'", len(inputs), task_name)
-
-        results = []
-        progress_desc = f"Sequential Processing: '{task_name}'"
-        successful_count = 0
-
-        for single_input in tqdm(
-            inputs, desc=progress_desc, disable=None if show_progress else True
-        ):
-            try:
-                result = sequential_func(single_input)
-                results.append(result)
-                successful_count += 1
-            except Exception as e:
-                logger.error(
-                    "Sequential processing failed for single item in '%s': %s",
-                    task_name,
-                    e,
-                )
-                # Keep results 1:1 with inputs so callers can zip them back.
-                results.append(BATCH_ITEM_FAILED)
-
-        logger.info(
-            "Sequential processing completed for '%s': %s/%s items processed successfully",
-            task_name,
-            successful_count,
-            len(inputs),
-        )
-        return results
-
     async def aexecute_with_fallback(
         self,
         items_to_process: list[Any],
@@ -516,6 +397,14 @@ class BatchProcessor(BaseModel):
         task_name: str,
         show_progress: bool = True,
     ) -> list[Any]:
+        """The async :meth:`execute_with_fallback`, on the event loop.
+
+        Each item is a one-input ``batch_func`` call (``Runnable.abatch``
+        with ``return_exceptions``), up to ``max_concurrency`` in flight. An
+        item whose call failed is called again through ``sequential_func``
+        (``Runnable.ainvoke``) with retries; a call that raised instead of
+        returning the error in place is always called again.
+        """
         with observability.span(
             "kg_rag.batch", task=task_name, items=len(items_to_process)
         ) as span:
@@ -527,7 +416,7 @@ class BatchProcessor(BaseModel):
                 task_name,
                 show_progress,
             )
-            span.set_attributes(_chunk_outcome(items_to_process, results))
+            span.set_attributes(_batch_outcome(items_to_process, results))
             return results
 
     async def _aexecute_with_fallback(
@@ -539,138 +428,52 @@ class BatchProcessor(BaseModel):
         task_name: str,
         show_progress: bool,
     ) -> list[Any]:
-        if not items_to_process:
+        inputs = self._prepare(items_to_process, prepare_inputs_func, task_name)
+        if not inputs:
             return []
 
-        prepared_batch_func = self._create_async_batch_func(batch_func)
+        # batch_func follows the Runnable.batch/abatch signature; per-item
+        # exceptions come back in place.
+        batch_config = RunnableConfig(max_concurrency=self.max_concurrency)
         retrying_sequential_func = self._create_retry_decorator(task_name)(
             sequential_func
         )
+        semaphore = asyncio.Semaphore(self.max_concurrency)
+        progress = ProgressLogger(task_name, len(inputs))
 
-        all_results = []
-        num_items = len(items_to_process)
-        num_chunks = math.ceil(num_items / self.batch_size)
+        async def first_call(single_input: dict[str, Any]) -> Any:
+            try:
+                (result,) = await batch_func(
+                    [single_input], config=batch_config, return_exceptions=True
+                )
+            except Exception as error:
+                logger.warning(
+                    "Batch call of '%s' failed (%s); calling the item on its own",
+                    task_name,
+                    error,
+                )
+                return _RETRY
+            if not isinstance(result, BaseException):
+                return result
+            return _RETRY if self._retry_after(task_name, result) else BATCH_ITEM_FAILED
 
-        logger.info(
-            "Starting async processing for '%s': %s items in %s chunks (batch size: %s)",
-            task_name,
-            num_items,
-            num_chunks,
-            self.batch_size,
-        )
+        async def process_one(single_input: dict[str, Any]) -> Any:
+            async with semaphore:
+                result = await first_call(single_input)
+                if result is _RETRY:
+                    try:
+                        result = await retrying_sequential_func(single_input)
+                    except Exception as error:
+                        result = self._failed_every_attempt(task_name, error)
+            progress.update()
+            return result
 
-        chunk_iterator = async_tqdm(
-            range(0, num_items, self.batch_size),
+        results: list[Any] = await async_tqdm.gather(
+            *(process_one(single_input) for single_input in inputs),
             desc=f"Processing: {task_name}",
             disable=None if show_progress else True,
         )
-        progress = ProgressLogger(task_name, num_items)
-
-        for i in chunk_iterator:
-            chunk_items = items_to_process[i : i + self.batch_size]
-            chunk_num = (i // self.batch_size) + 1
-            logger.debug(
-                "Processing chunk %s/%s (%s items)",
-                chunk_num,
-                num_chunks,
-                len(chunk_items),
-            )
-
-            chunk_inputs = prepare_inputs_func(chunk_items)
-            if not chunk_inputs:
-                logger.warning(
-                    "No valid inputs prepared for chunk %s, skipping", chunk_num
-                )
-                continue
-
-            try:
-                chunk_results = await prepared_batch_func(chunk_inputs)
-            except Exception as e:
-                logger.warning(
-                    "Async batch processing failed for chunk %s: %s. Falling back to concurrent sequential processing",
-                    chunk_num,
-                    e,
-                )
-                chunk_results = await self._aprocess_sequentially_with_fallback(
-                    chunk_inputs,
-                    retrying_sequential_func,
-                    f"{task_name} (chunk {chunk_num})",
-                    show_progress,
-                )
-                all_results.extend(chunk_results)
-                progress.update(len(chunk_items))
-                continue
-
-            # Retry only the failed positions (see the sync path).
-            failed = self._failed_indices(chunk_results)
-            if failed:
-                self._log_partial_failure(task_name, chunk_num, chunk_results, failed)
-                failed = self._settle_permanent_failures(
-                    task_name, chunk_results, failed
-                )
-            if failed:
-                retried = await self._aprocess_sequentially_with_fallback(
-                    [chunk_inputs[idx] for idx in failed],
-                    retrying_sequential_func,
-                    f"{task_name} (chunk {chunk_num} retry)",
-                    show_progress,
-                )
-                chunk_results = self._splice_retried(chunk_results, failed, retried)
-            all_results.extend(chunk_results)
-            progress.update(len(chunk_items))
-
-        logger.info("Completed '%s': processed %s results", task_name, len(all_results))
-        return all_results
-
-    def _create_async_batch_func(self, batch_func: Callable[..., Any]) -> Callable:
-        batch_kwargs = self._batch_kwargs()
-
-        async def _batch_func(inputs: list[dict[str, Any]]) -> list[Any]:
-            result = await batch_func(inputs, **batch_kwargs)
-            return list(result)
-
-        return _batch_func
-
-    async def _aprocess_sequentially_with_fallback(
-        self,
-        inputs: list[dict[str, Any]],
-        sequential_func: Callable[[dict[str, Any]], Any],
-        task_name: str,
-        show_progress: bool = True,
-    ) -> list[Any]:
-        logger.info("Processing %s items concurrently for '%s'", len(inputs), task_name)
-        semaphore = asyncio.Semaphore(self.max_concurrency)
-
-        async def _process_one(single_input: dict[str, Any]) -> Any:
-            async with semaphore:
-                try:
-                    return await sequential_func(single_input)
-                except Exception as e:
-                    logger.error(
-                        "Concurrent sequential processing failed for item in '%s': %s",
-                        task_name,
-                        e,
-                    )
-                    return BATCH_ITEM_FAILED
-
-        tasks = [_process_one(single_input) for single_input in inputs]
-
-        progress_desc = f"Concurrent Fallback: '{task_name}'"
-        results: list[Any] = await async_tqdm.gather(
-            *tasks, disable=None if show_progress else True, desc=progress_desc
-        )
-
-        # Failed items stay in place as BATCH_ITEM_FAILED, NOT dropped: callers
-        # zip the results back against the inputs (e.g. EvaluationManager with
-        # strict=True), so a dropped item would abort the whole run.
-        successful = sum(1 for res in results if res is not BATCH_ITEM_FAILED)
-        logger.info(
-            "Concurrent sequential processing completed for '%s': %s/%s items processed successfully",
-            task_name,
-            successful,
-            len(inputs),
-        )
-        return results
+        return self._completed(task_name, results)
 
 
 _FORMAT_INSTRUCTIONS = (

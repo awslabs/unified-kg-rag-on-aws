@@ -156,7 +156,8 @@ def test_count_tokens_client_pool_is_sized_like_the_model_clients() -> None:
     Providers(config, boto_session=session).token_counter("model-a")
 
     boto_config = session.client.call_args.kwargs["config"]
-    expected = config.processing.max_concurrency * config.processing.chunk_concurrency
+    processing = config.processing
+    expected = max(processing.max_concurrency, processing.io_workers)
     assert boto_config.max_pool_connections == expected
 
 

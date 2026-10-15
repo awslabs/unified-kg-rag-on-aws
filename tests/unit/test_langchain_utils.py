@@ -4,7 +4,7 @@
 
 These exercise the pure orchestration / parsing surface of
 ``unified_kg_rag.shared.utils.langchain`` with plain fake callables (no real LLM,
-no boto3). The wall-clock timeout / chunk-ordering / concurrency cases already
+no boto3). The wall-clock timeout / ordering / concurrency cases already
 live in ``test_batch_processor_timeout.py``; this module covers the
 complementary branches: the per-item happy path, from_processing,
 empty input, the ``BATCH_ITEM_FAILED`` filler on per-item failure, the retry
@@ -63,7 +63,7 @@ class TestExecuteWithFallback:
         assert called == []  # short-circuit before any call
 
     def test_happy_path_calls_each_item_once(self) -> None:
-        bp = BatchProcessor(batch_size=10, chunk_concurrency=1, call_timeout_seconds=0)
+        bp = BatchProcessor(call_timeout_seconds=0)
         calls: list[int] = []
         lock = threading.Lock()
 
@@ -83,7 +83,7 @@ class TestExecuteWithFallback:
         assert sorted(calls) == [1, 2, 3]
 
     def test_max_concurrency_bounds_items_in_flight(self) -> None:
-        bp = BatchProcessor(max_concurrency=2, batch_size=6, call_timeout_seconds=0)
+        bp = BatchProcessor(max_concurrency=2, call_timeout_seconds=0)
         lock = threading.Lock()
         in_flight = 0
         max_in_flight = 0
@@ -112,17 +112,15 @@ class TestExecuteWithFallback:
         assert max_in_flight == 2
 
     def test_from_processing_takes_the_processing_settings(self) -> None:
-        processing = ProcessingConfig(
-            max_concurrency=3, batch_size=1, chunk_concurrency=1, max_attempts=2
-        )
+        processing = ProcessingConfig(max_concurrency=3, max_attempts=2)
         bp = BatchProcessor.from_processing(processing, call_timeout_seconds=0)
-        assert (bp.max_concurrency, bp.chunk_concurrency, bp.max_attempts) == (3, 1, 2)
+        assert (bp.max_concurrency, bp.max_attempts) == (3, 2)
         assert bp.call_timeout_seconds == 0
-        # batch_size 1 -> two chunks for two items.
-        chunk_sizes = []
+        # The inputs are prepared once, for all items.
+        prepared_sizes = []
 
         def prepare(items):  # noqa: ANN001
-            chunk_sizes.append(len(items))
+            prepared_sizes.append(len(items))
             return [{"v": i} for i in items]
 
         out = bp.execute_with_fallback(
@@ -132,13 +130,12 @@ class TestExecuteWithFallback:
             task_name="t",
             show_progress=False,
         )
-        assert chunk_sizes == [1, 1]  # split into 2 single-item chunks
+        assert prepared_sizes == [2]
         assert out == [{"echo": 1}, {"echo": 2}]
 
-    def test_empty_prepared_inputs_chunk_skipped(self) -> None:
-        # prepare returns [] for a chunk -> that chunk yields [] (skipped),
-        # contributing nothing to the assembled results.
-        bp = BatchProcessor(batch_size=10, chunk_concurrency=1, call_timeout_seconds=0)
+    def test_empty_prepared_inputs_skipped(self) -> None:
+        # prepare returns [] -> nothing is called and the result is [].
+        bp = BatchProcessor(call_timeout_seconds=0)
 
         out = bp.execute_with_fallback(
             items_to_process=[1, 2],
@@ -152,9 +149,7 @@ class TestExecuteWithFallback:
     def test_item_failure_is_marked_in_place(self) -> None:
         # One item raises on every attempt and is back-filled with
         # BATCH_ITEM_FAILED so positional zip alignment downstream is preserved.
-        bp = BatchProcessor(
-            batch_size=10, chunk_concurrency=1, call_timeout_seconds=0, **_NO_BACKOFF
-        )
+        bp = BatchProcessor(call_timeout_seconds=0, **_NO_BACKOFF)
 
         def sequential(item):  # noqa: ANN001
             if item["v"] == 2:
@@ -170,15 +165,14 @@ class TestExecuteWithFallback:
         )
         assert out == [{"echo": 1}, BATCH_ITEM_FAILED, {"echo": 3}]
 
-    def test_concurrent_chunks_use_distinct_threads(self) -> None:
-        # With chunk_concurrency>1 and >1 chunk, process_chunk runs on a pool.
-        bp = BatchProcessor(batch_size=1, chunk_concurrency=4, call_timeout_seconds=0)
+    def test_items_use_distinct_threads(self) -> None:
+        bp = BatchProcessor(max_concurrency=4, call_timeout_seconds=0)
         thread_ids: set[int] = set()
         lock = threading.Lock()
         barrier = threading.Barrier(3)
 
         def sequential(item):  # noqa: ANN001
-            barrier.wait(timeout=5)  # force genuine overlap across 3 chunks
+            barrier.wait(timeout=5)  # force genuine overlap across 3 items
             with lock:
                 thread_ids.add(threading.get_ident())
             return {"echo": item["v"]}
@@ -200,9 +194,7 @@ class TestExecuteWithFallback:
 class TestRetryDecorator:
     def test_retries_then_succeeds(self) -> None:
         # multiplier tiny so backoff sleep is negligible; succeeds on 3rd call.
-        bp = BatchProcessor(
-            max_attempts=5, retry_multiplier=1.0, retry_max_wait=0, batch_size=10
-        )
+        bp = BatchProcessor(max_attempts=5, retry_multiplier=1.0, retry_max_wait=0)
         decorator = bp._create_retry_decorator("op")
         attempts = {"n": 0}
 
@@ -217,9 +209,7 @@ class TestRetryDecorator:
         assert attempts["n"] == 3
 
     def test_reraises_after_exhausting_attempts(self) -> None:
-        bp = BatchProcessor(
-            max_attempts=2, retry_multiplier=1.0, retry_max_wait=0, batch_size=10
-        )
+        bp = BatchProcessor(max_attempts=2, retry_multiplier=1.0, retry_max_wait=0)
         decorator = bp._create_retry_decorator("op")
         attempts = {"n": 0}
 
@@ -289,7 +279,7 @@ class TestAExecuteWithFallback:
         assert out == []
 
     async def test_async_batch_happy_path(self) -> None:
-        bp = BatchProcessor(batch_size=10, max_concurrency=2)
+        bp = BatchProcessor(max_concurrency=2)
 
         async def batch(
             inputs, config=None, return_exceptions=False
@@ -308,7 +298,7 @@ class TestAExecuteWithFallback:
 
     async def test_empty_results_are_not_failures(self) -> None:
         # A real empty output ({} / None) stays distinguishable from a failure.
-        bp = BatchProcessor(batch_size=10, max_concurrency=2, **_NO_BACKOFF)
+        bp = BatchProcessor(max_concurrency=2, **_NO_BACKOFF)
 
         async def batch(
             inputs, config=None, return_exceptions=False
@@ -333,7 +323,7 @@ class TestAExecuteWithFallback:
         # as BATCH_ITEM_FAILED (NOT dropped) so the result list stays
         # positionally aligned with the inputs — callers zip it back with
         # strict=True and a dropped item would abort the whole run.
-        bp = BatchProcessor(batch_size=10, max_concurrency=2, **_NO_BACKOFF)
+        bp = BatchProcessor(max_concurrency=2, **_NO_BACKOFF)
 
         async def batch(
             inputs, config=None, return_exceptions=False
@@ -357,8 +347,8 @@ class TestAExecuteWithFallback:
         assert out == [{"echo": 1}, BATCH_ITEM_FAILED, {"echo": 3}]
         assert len(out) == 3
 
-    async def test_async_empty_prepared_chunk_skipped(self) -> None:
-        bp = BatchProcessor(batch_size=10)
+    async def test_async_empty_prepared_inputs_skipped(self) -> None:
+        bp = BatchProcessor()
 
         async def batch(
             inputs, config=None, return_exceptions=False
@@ -411,7 +401,6 @@ def _fast_bp(**kwargs: Any) -> BatchProcessor:
         retry_multiplier=1.0,
         retry_max_wait=0,
         call_timeout_seconds=0,
-        chunk_concurrency=1,
         **kwargs,
     )
 
@@ -419,7 +408,7 @@ def _fast_bp(**kwargs: Any) -> BatchProcessor:
 class TestRetryFailedItemsOnly:
     def test_one_failure_reinvokes_only_that_item(self) -> None:
         fake = _CountingRunnable(fail_first={4: 1})  # item 4 fails once
-        bp = _fast_bp(batch_size=10, max_attempts=3)
+        bp = _fast_bp(max_attempts=3)
         out = bp.execute_with_fallback(
             items_to_process=list(range(10)),
             prepare_inputs_func=lambda items: [{"v": i} for i in items],
@@ -433,7 +422,7 @@ class TestRetryFailedItemsOnly:
 
     def test_permanently_failing_item_gets_sentinel_in_place(self) -> None:
         fake = _CountingRunnable(fail_first={0: None, 7: None})
-        bp = _fast_bp(batch_size=10, max_attempts=2)
+        bp = _fast_bp(max_attempts=2)
         out = bp.execute_with_fallback(
             items_to_process=list(range(10)),
             prepare_inputs_func=lambda items: [{"v": i} for i in items],
@@ -451,7 +440,7 @@ class TestRetryFailedItemsOnly:
 
     def test_max_attempts_sets_the_retry_count(self) -> None:
         fake = _CountingRunnable(fail_first={0: None})
-        bp = _fast_bp(batch_size=10, max_attempts=1)
+        bp = _fast_bp(max_attempts=1)
         bp.execute_with_fallback(
             items_to_process=list(range(3)),
             prepare_inputs_func=lambda items: [{"v": i} for i in items],
@@ -461,11 +450,10 @@ class TestRetryFailedItemsOnly:
         )
         assert fake.calls[0] == 2  # first call + one retry
 
-    def test_order_preserved_across_concurrent_chunks(self) -> None:
+    def test_order_preserved_with_retries_in_flight(self) -> None:
         fake = _CountingRunnable(fail_first={2: 1, 9: 1, 13: 1})
         bp = BatchProcessor(
-            batch_size=4,
-            chunk_concurrency=3,
+            max_concurrency=4,
             max_attempts=3,
             retry_multiplier=1.0,
             retry_max_wait=0,
@@ -483,7 +471,7 @@ class TestRetryFailedItemsOnly:
 
     def test_all_items_failing_behaves_as_before(self) -> None:
         fake = _CountingRunnable(fail_first=dict.fromkeys(range(4)))
-        bp = _fast_bp(batch_size=10, max_attempts=2)
+        bp = _fast_bp(max_attempts=2)
         out = bp.execute_with_fallback(
             items_to_process=list(range(4)),
             prepare_inputs_func=lambda items: [{"v": i} for i in items],
@@ -518,7 +506,7 @@ class TestRetryFailedItemsOnly:
 
     async def test_async_one_failure_reinvokes_only_that_item(self) -> None:
         fake = _CountingRunnable(fail_first={3: 1})
-        bp = _fast_bp(batch_size=10, max_attempts=3)
+        bp = _fast_bp(max_attempts=3)
         out = await bp.aexecute_with_fallback(
             items_to_process=list(range(10)),
             prepare_inputs_func=lambda items: [{"v": i} for i in items],
@@ -533,7 +521,7 @@ class TestRetryFailedItemsOnly:
 
     async def test_async_all_failing_keeps_sentinels(self) -> None:
         fake = _CountingRunnable(fail_first=dict.fromkeys(range(3)))
-        bp = _fast_bp(batch_size=10, max_attempts=2)
+        bp = _fast_bp(max_attempts=2)
         out = await bp.aexecute_with_fallback(
             items_to_process=list(range(3)),
             prepare_inputs_func=lambda items: [{"v": i} for i in items],
@@ -855,7 +843,7 @@ def test_progress_logger_logs_on_interval_between_marks(mocker) -> None:
 
 def test_execute_with_fallback_reports_progress(mocker) -> None:
     log = mocker.patch.object(langchain_module, "logger")
-    processor = BatchProcessor(batch_size=2, chunk_concurrency=1)
+    processor = BatchProcessor(max_concurrency=1)
     processor.execute_with_fallback(
         items_to_process=list(range(4)),
         prepare_inputs_func=lambda chunk: [{"x": x} for x in chunk],

@@ -584,9 +584,8 @@ LLM stages are Bedrock-I/O-bound, so concurrency can far exceed the CPU count.
 
 | Key | Default | What it does / when to change |
 |---|---|---|
-| `processing.max_concurrency` | `20` | Concurrent LLM calls within a batch. Lower it if Bedrock throttles; raise it if quota allows. |
-| `processing.chunk_concurrency` | `4` | Mini-batch chunks run at once. The Bedrock connection pool is sized to `max_concurrency` × `chunk_concurrency`. |
-| `processing.max_attempts` | `5` | Attempts for an ingestion LLM item called on its own after its batch call fails. Transient Bedrock errors, call timeouts and unparseable output are retried; other errors fail fast. `1` disables the retry. |
+| `processing.max_concurrency` | `20` | LLM calls an ingestion stage keeps in flight; the next item starts as soon as one finishes. Lower it if Bedrock throttles; raise it if quota allows. |
+| `processing.max_attempts` | `5` | Attempts for an ingestion LLM item called again after its first call fails. Transient Bedrock errors, call timeouts and unparseable output are retried; other errors fail fast. `1` disables the retry. |
 | `processing.io_workers` | `64` | Threads for blocking query-path I/O (Bedrock calls, Neptune traversals, reranking) in the CLIs and the chain's sync methods. Python's default caps it at `min(32, CPUs + 4)`, six on a 2-vCPU task. An async host calls `configure_event_loop(asyncio.get_running_loop(), config.processing.io_workers)` (from `unified_kg_rag.shared.utils`) at startup. |
 | `processing.ignore_errors` | `false` | Skip items whose LLM step fails instead of failing the run. |
 | `processing.deduplicate` | `false` | Drop duplicate documents before extraction. |
@@ -879,7 +878,7 @@ spans and exported as given, so pass an opaque id, not an e-mail address.
 - Ingestion: `kg_rag.ingestion.run` (status `ERROR` when the run failed) →
   `kg_rag.ingestion.stage` (one per stage, with input/output counts, status,
   the stage's numeric metrics as `kg_rag.stage.<metric>`, such as dropped
-  units, and `error.type` plus the exception when it crashed) → `kg_rag.batch` / `kg_rag.batch.chunk`
+  units, and `error.type` plus the exception when it crashed) → `kg_rag.batch`
   (item and failure counts) → one `chat <model>` span per model call and
   `embeddings <model>` spans.
 - Query: `kg_rag.query` (with `capture_content`, the redacted query as
@@ -1965,8 +1964,8 @@ messages the CLIs report, what they mean and the fix, for AWS and local mode.
 
 ### Large / multilingual / heterogeneous corpora
 
-- **Large corpora:** raise `processing.max_concurrency` /
-  `processing.chunk_concurrency` (LLM stages are I/O-bound). For graph writes,
+- **Large corpora:** raise `processing.max_concurrency` (LLM stages are
+  I/O-bound). For graph writes,
   raise `indexing.neptune.index_concurrency`; the Gremlin connection pool grows
   with it. Enable `indexing.opensearch.persist_embedding_cache` + `--s3-sync`
   so re-runs and multi-phase jobs don't recompute.

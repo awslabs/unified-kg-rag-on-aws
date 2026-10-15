@@ -576,9 +576,7 @@ async def test_map_reduce_passes_the_callers_config_to_map_and_reduce() -> None:
     strat.global_search_config.reduce_with_llm = True
     strat.map_rater = _MapRater()
     strat.map_reducer = _AScorer("summary")
-    strat.batch_processor = BatchProcessor(
-        batch_size=1, max_concurrency=4, max_attempts=1
-    )
+    strat.batch_processor = BatchProcessor(max_concurrency=4, max_attempts=1)
     strat.token_manager = SimpleNamespace(
         count_tokens=len, count_tokens_many=lambda texts: [len(t) for t in texts]
     )
