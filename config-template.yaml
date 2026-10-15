@@ -269,8 +269,8 @@ processing:
   # max_concurrency and io_workers (floor 10, cap 200) so concurrent calls
   # reuse connections.
   max_concurrency: 20
-  # Attempts for an ingestion LLM item called again after its first call
-  # fails (transient errors, timeouts, unparseable output); 1 = no retry.
+  # Attempts per ingestion LLM item, including the first call (transient
+  # errors, timeouts and unparseable output are retried); 1 = no retry.
   max_attempts: 5
   # Threads for blocking query-path I/O (Bedrock calls LangChain runs in the
   # event loop's default executor, Neptune, reranking). Python's default is

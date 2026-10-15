@@ -106,7 +106,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         # One prepared input per map LLM call (each input already packs
         # ``map_batch_size`` reports), max_concurrency of them in flight. The
         # map chain already retries transient Bedrock errors as a query chain,
-        # so BatchProcessor adds no retry of its own (max_attempts=1).
+        # so BatchProcessor calls each input once (max_attempts=1).
         self.batch_processor = BatchProcessor(
             max_concurrency=config.processing.max_concurrency, max_attempts=1
         )

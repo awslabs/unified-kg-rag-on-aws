@@ -526,9 +526,6 @@ class _FakeChain:
     async def ainvoke(self, inputs, config=None):
         return self.outputs[inputs["query"]]
 
-    async def abatch(self, inputs, config=None, return_exceptions=False):
-        return [self.outputs[i["query"]] for i in inputs]
-
 
 class TestAnswerGenerationInputs:
     async def test_question_wins_over_query_metadata(self, config: Config) -> None:
@@ -538,10 +535,6 @@ class TestAnswerGenerationInputs:
         seen: list[dict] = []
 
         class _RecordingChain:
-            async def abatch(self, inputs, config=None, return_exceptions=False):
-                seen.extend(inputs)
-                return [_rag_output("Vendor ships.", {}) for _ in inputs]
-
             async def ainvoke(self, inputs, config=None):
                 seen.append(inputs)
                 return _rag_output("Vendor ships.", {})
@@ -562,23 +555,20 @@ class TestAnswerGenerationInputs:
 
 
 class TestErroredQueries:
-    async def test_batch_failure_is_not_retried_with_backoff(
-        self, config: Config
-    ) -> None:
+    async def test_failed_query_is_called_once(self, config: Config) -> None:
+        # max_attempts=1 is one call in total: the chain retries transient
+        # errors itself, and a deterministic failure must not run twice.
         config.processing.max_concurrency = 3
         config.evaluation.enabled_evaluators = [EvaluatorType.ANSWER_MATCH]
 
-        class _FailingBatchChain:
-            batch_calls = 0
-
-            async def abatch(self, inputs, config=None, return_exceptions=False):
-                type(self).batch_calls += 1
-                raise ValueError("invalid filter")  # deterministic, not transient
+        class _FailingChain:
+            calls = 0
 
             async def ainvoke(self, inputs, config=None):
-                return _rag_output("Vendor ships.", {"processing_time": 0.1})
+                type(self).calls += 1
+                raise ValueError("invalid filter")  # deterministic, not transient
 
-        manager = EvaluationManager(config, rag_chain=_FailingBatchChain())
+        manager = EvaluationManager(config, rag_chain=_FailingChain())
         assert manager.batch_processor.max_attempts == 1
         assert manager.batch_processor.max_concurrency == 3
         results, _, _ = await manager.evaluate_dataset(
@@ -586,9 +576,8 @@ class TestErroredQueries:
             [EvaluationGroundTruth(query_id="q1", ground_truth="Vendor")],
             show_progress=False,
         )
-        # One batch attempt, then the per-item sequential fallback answers it.
-        assert _FailingBatchChain.batch_calls == 1
-        assert results[0].generated_answer == "Vendor ships."
+        assert _FailingChain.calls == 1
+        assert results[0].error is True
 
     async def test_judge_error_keeps_answers_and_breaches_budget(
         self, config: Config

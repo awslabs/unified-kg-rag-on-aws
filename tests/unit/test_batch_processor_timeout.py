@@ -91,8 +91,8 @@ def test_one_slow_item_times_out_alone(release_hung_calls) -> None:
 
 
 def test_item_slow_on_every_attempt_fails_in_place(release_hung_calls) -> None:
-    # The first call and each of the max_attempts retries time out; only
-    # that position is marked failed.
+    # Each of the max_attempts calls times out; only that position is
+    # marked failed.
     calls: Counter[int] = Counter()
     lock = threading.Lock()
 
@@ -117,7 +117,7 @@ def test_item_slow_on_every_attempt_fails_in_place(release_hung_calls) -> None:
         show_progress=False,
     )
     assert results == [{"echo": 0}, BATCH_ITEM_FAILED, {"echo": 2}]
-    assert calls == Counter({0: 1, 1: 3, 2: 1})
+    assert calls == Counter({0: 1, 1: 2, 2: 1})
 
 
 def test_items_run_concurrently() -> None:
@@ -263,7 +263,6 @@ async def test_async_slow_item_does_not_hold_back_the_other_slots() -> None:
     results = await bp.aexecute_with_fallback(
         items_to_process=list(range(n)),
         prepare_inputs_func=lambda items: [{"v": i} for i in items],
-        batch_func=runnable.abatch,
         sequential_func=runnable.ainvoke,
         task_name="t",
         show_progress=False,

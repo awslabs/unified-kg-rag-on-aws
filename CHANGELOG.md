@@ -358,11 +358,16 @@ Library API (Python callers and custom backends).
   item: a slow item holds only its own slot and is retried in it, and the
   calls in flight never exceed `max_concurrency` (the defaults burst to 40,
   averaged about 18, and `max_concurrency` above `batch_size` changed
-  nothing). The async path calls `batch_func` per item the same way, so
+  nothing). The async path runs each item as its own call the same way, so
   evaluation answers no longer wait chunk by chunk. A run's trace has no
   `kg_rag.batch.chunk` spans. Each Bedrock client's connection pool is
   sized to the larger of `processing.max_concurrency` and
   `processing.io_workers` (64 by default; it was 80) (#296).
+- `BatchProcessor.aexecute_with_fallback` takes no `batch_func`: each item
+  is one awaited `sequential_func` call (`Runnable.ainvoke`), as on the sync
+  path. A one-input `abatch(..., return_exceptions=True)` first call was the
+  same `ainvoke` with the error returned in place; a caller still passing
+  `batch_func=` gets a `TypeError` (#PR).
 - CI installs uv 0.12.23 in every workflow instead of whatever release
   `setup-uv` resolves on the day, so a uv release cannot change lock
   handling under an unchanged commit (#297).
@@ -511,6 +516,13 @@ Library API (Python callers and custom backends).
   (#300).
 
 ### Fixed
+- `processing.max_attempts` (and every `BatchProcessor`'s `max_attempts`)
+  counts the first call, as documented: an item that keeps failing with a
+  retryable error is called `max_attempts` times. The first call used to
+  come on top of `max_attempts` retries, so default ingestion made 6 calls
+  per failing item (now at most 5), and `max_attempts: 1` still retried
+  once: the global-search map step and `run-eval` answer generation, which
+  leave retries to the query chain, ran each failed call twice (#PR).
 - Configuration errors raise `ConfigurationError` (still a `ValueError`)
   instead of a bare `ValueError`: an unknown embedding model or unsupported
   `indexing.opensearch.embedding_dimension`, a missing S3 `bucket_name`, a

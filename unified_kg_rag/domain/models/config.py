@@ -1128,8 +1128,8 @@ class ProcessingConfig(BaseModel):
     max_attempts: int = Field(
         default=5,
         ge=1,
-        description="Total attempts for an ingestion LLM item called again "
-        "after its first call fails, including the first (1 disables the retry)",
+        description="Total attempts per ingestion LLM item, including the "
+        "first call (1 disables the retry)",
     )
     io_workers: int = Field(
         default=64,

@@ -118,10 +118,10 @@ class EvaluationManager:
         )
         self.evaluators: dict[EvaluatorType, BaseGraphRAGEvaluator] = {}
         self._initialize_evaluators()
-        # One attempt per batch: the RAG chain already retries transient
+        # One call per query: the RAG chain already retries transient
         # Bedrock/store errors itself (and botocore under it), so retrying here
-        # only re-runs deterministic failures (invalid filter, validation) with
-        # minutes of backoff. A failed item still gets its sequential fallback.
+        # would only re-run deterministic failures (invalid filter, validation)
+        # with minutes of backoff.
         self.batch_processor = BatchProcessor(
             max_attempts=1, max_concurrency=config.processing.max_concurrency
         )
@@ -376,7 +376,6 @@ class EvaluationManager:
         raw_results = await self.batch_processor.aexecute_with_fallback(
             items_to_process=queries,
             prepare_inputs_func=prepare_inputs,
-            batch_func=self.rag_chain.abatch,
             sequential_func=self.rag_chain.ainvoke,
             task_name="Answer Generation",
             show_progress=show_progress,

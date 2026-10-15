@@ -271,26 +271,22 @@ class TestAExecuteWithFallback:
         out = await bp.aexecute_with_fallback(
             items_to_process=[],
             prepare_inputs_func=lambda items: [{"v": i} for i in items],
-            batch_func=None,
             sequential_func=None,
             task_name="t",
             show_progress=False,
         )
         assert out == []
 
-    async def test_async_batch_happy_path(self) -> None:
+    async def test_async_happy_path(self) -> None:
         bp = BatchProcessor(max_concurrency=2)
 
-        async def batch(
-            inputs, config=None, return_exceptions=False
-        ):  # noqa: ANN001, ARG001
-            return [{"echo": i["v"]} for i in inputs]
+        async def sequential(item):  # noqa: ANN001
+            return {"echo": item["v"]}
 
         out = await bp.aexecute_with_fallback(
             items_to_process=[1, 2, 3],
             prepare_inputs_func=lambda items: [{"v": i} for i in items],
-            batch_func=batch,
-            sequential_func=None,
+            sequential_func=sequential,
             task_name="t",
             show_progress=False,
         )
@@ -300,35 +296,23 @@ class TestAExecuteWithFallback:
         # A real empty output ({} / None) stays distinguishable from a failure.
         bp = BatchProcessor(max_concurrency=2, **_NO_BACKOFF)
 
-        async def batch(
-            inputs, config=None, return_exceptions=False
-        ):  # noqa: ANN001, ARG001
-            raise RuntimeError("async batch boom")
-
         async def sequential(item):  # noqa: ANN001
             return {} if item["v"] == 1 else None
 
         out = await bp.aexecute_with_fallback(
             items_to_process=[1, 2],
             prepare_inputs_func=lambda items: [{"v": i} for i in items],
-            batch_func=batch,
             sequential_func=sequential,
             task_name="t",
             show_progress=False,
         )
         assert out == [{}, None]
 
-    async def test_async_batch_failure_falls_back_concurrently(self) -> None:
-        # Batch raises -> concurrent sequential fallback; a failing item is kept
-        # as BATCH_ITEM_FAILED (NOT dropped) so the result list stays
-        # positionally aligned with the inputs — callers zip it back with
-        # strict=True and a dropped item would abort the whole run.
+    async def test_async_failed_item_is_marked_in_place(self) -> None:
+        # A failing item is kept as BATCH_ITEM_FAILED (NOT dropped) so the
+        # result list stays positionally aligned with the inputs — callers zip
+        # it back with strict=True and a dropped item would abort the whole run.
         bp = BatchProcessor(max_concurrency=2, **_NO_BACKOFF)
-
-        async def batch(
-            inputs, config=None, return_exceptions=False
-        ):  # noqa: ANN001, ARG001
-            raise RuntimeError("async batch boom")
 
         async def sequential(item):  # noqa: ANN001
             if item["v"] == 2:
@@ -338,7 +322,6 @@ class TestAExecuteWithFallback:
         out = await bp.aexecute_with_fallback(
             items_to_process=[1, 2, 3],
             prepare_inputs_func=lambda items: [{"v": i} for i in items],
-            batch_func=batch,
             sequential_func=sequential,
             task_name="t",
             show_progress=False,
@@ -349,16 +332,9 @@ class TestAExecuteWithFallback:
 
     async def test_async_empty_prepared_inputs_skipped(self) -> None:
         bp = BatchProcessor()
-
-        async def batch(
-            inputs, config=None, return_exceptions=False
-        ):  # noqa: ANN001, ARG001
-            return [{"x": 1}]
-
         out = await bp.aexecute_with_fallback(
             items_to_process=[1, 2],
             prepare_inputs_func=lambda items: [],
-            batch_func=batch,
             sequential_func=None,
             task_name="t",
             show_progress=False,
@@ -434,21 +410,39 @@ class TestRetryFailedItemsOnly:
         expected[0] = BATCH_ITEM_FAILED
         expected[7] = BATCH_ITEM_FAILED
         assert out == expected
-        assert fake.calls[0] == 3  # first call + max_attempts
-        assert fake.calls[7] == 3
+        assert fake.calls[0] == 2  # max_attempts calls in total
+        assert fake.calls[7] == 2
         assert all(fake.calls[i] == 1 for i in range(1, 10) if i != 7)
 
-    def test_max_attempts_sets_the_retry_count(self) -> None:
+    @pytest.mark.parametrize("max_attempts", [1, 2, 5])
+    def test_max_attempts_counts_the_first_call(self, max_attempts: int) -> None:
+        # max_attempts is the total, as documented: 1 disables the retry. The
+        # first call used to come on top of max_attempts retries (5 -> 6).
         fake = _CountingRunnable(fail_first={0: None})
-        bp = _fast_bp(max_attempts=1)
-        bp.execute_with_fallback(
+        out = _fast_bp(max_attempts=max_attempts).execute_with_fallback(
             items_to_process=list(range(3)),
             prepare_inputs_func=lambda items: [{"v": i} for i in items],
             sequential_func=fake.runnable.invoke,
             task_name="t",
             show_progress=False,
         )
-        assert fake.calls[0] == 2  # first call + one retry
+        assert out[0] is BATCH_ITEM_FAILED
+        assert fake.calls == Counter({0: max_attempts, 1: 1, 2: 1})
+
+    @pytest.mark.parametrize("max_attempts", [1, 2, 5])
+    async def test_async_max_attempts_counts_the_first_call(
+        self, max_attempts: int
+    ) -> None:
+        fake = _CountingRunnable(fail_first={0: None})
+        out = await _fast_bp(max_attempts=max_attempts).aexecute_with_fallback(
+            items_to_process=list(range(3)),
+            prepare_inputs_func=lambda items: [{"v": i} for i in items],
+            sequential_func=fake.runnable.ainvoke,
+            task_name="t",
+            show_progress=False,
+        )
+        assert out[0] is BATCH_ITEM_FAILED
+        assert fake.calls == Counter({0: max_attempts, 1: 1, 2: 1})
 
     def test_order_preserved_with_retries_in_flight(self) -> None:
         fake = _CountingRunnable(fail_first={2: 1, 9: 1, 13: 1})
@@ -480,29 +474,7 @@ class TestRetryFailedItemsOnly:
             show_progress=False,
         )
         assert out == [BATCH_ITEM_FAILED] * 4
-        assert all(fake.calls[i] == 3 for i in range(4))
-
-    async def test_async_batch_func_always_gets_return_exceptions(self) -> None:
-        seen: dict[str, Any] = {}
-
-        async def batch(inputs, config=None, return_exceptions=False):  # noqa: ANN001
-            seen["config"] = config
-            seen["return_exceptions"] = return_exceptions
-            return [{"ok": 1} for _ in inputs]
-
-        async def sequential(item):  # noqa: ANN001
-            return {}
-
-        await _fast_bp().aexecute_with_fallback(
-            items_to_process=[1],
-            prepare_inputs_func=lambda items: [{"v": i} for i in items],
-            batch_func=batch,
-            sequential_func=sequential,
-            task_name="t",
-            show_progress=False,
-        )
-        assert seen["config"] is not None
-        assert seen["return_exceptions"] is True
+        assert all(fake.calls[i] == 2 for i in range(4))
 
     async def test_async_one_failure_reinvokes_only_that_item(self) -> None:
         fake = _CountingRunnable(fail_first={3: 1})
@@ -510,7 +482,6 @@ class TestRetryFailedItemsOnly:
         out = await bp.aexecute_with_fallback(
             items_to_process=list(range(10)),
             prepare_inputs_func=lambda items: [{"v": i} for i in items],
-            batch_func=fake.runnable.abatch,
             sequential_func=fake.runnable.ainvoke,
             task_name="t",
             show_progress=False,
@@ -525,13 +496,12 @@ class TestRetryFailedItemsOnly:
         out = await bp.aexecute_with_fallback(
             items_to_process=list(range(3)),
             prepare_inputs_func=lambda items: [{"v": i} for i in items],
-            batch_func=fake.runnable.abatch,
             sequential_func=fake.runnable.ainvoke,
             task_name="t",
             show_progress=False,
         )
         assert out == [BATCH_ITEM_FAILED] * 3
-        assert all(fake.calls[i] == 3 for i in range(3))
+        assert all(fake.calls[i] == 2 for i in range(3))
 
 
 # --------------------------------------------------------------------------- #

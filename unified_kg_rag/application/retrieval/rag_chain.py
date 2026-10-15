@@ -866,7 +866,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         self, state: dict[str, Any], config: RunnableConfig | None = None
     ) -> SearchResult:
         # A single GraphRAGChain is reused for concurrent invocations (the
-        # evaluation path runs queries through `abatch`). Keep the resolved
+        # evaluation path runs its queries concurrently). Keep the resolved
         # strategy in a LOCAL — storing it on `self` lets a concurrent
         # `_search_step` overwrite it between assignment and `await`, executing
         # one query against another query's strategy (silent cross-contamination).
