@@ -586,6 +586,24 @@ class TestIntelligentChunkerHelpers:
         )
         assert out == ["body"]
 
+    def test_boundary_parsing_bug_falls_back_with_a_warning(
+        self, intelligent_chunker, mocker, caplog
+    ) -> None:
+        # A bug in the boundary parsing was swallowed at debug level and the
+        # pre-chunk kept whole as if the model had asked for no split. It
+        # reaches the one boundary handler: WARNING and the size fallback.
+        mocker.patch.object(
+            LineBasedBoundaryProcessor,
+            "_extract_from_line_number_field",
+            side_effect=RuntimeError("parser bug"),
+        )
+        with caplog.at_level("WARNING", logger=chunker_module.logger.name):
+            out = intelligent_chunker._chunk_with_llm_boundaries(
+                "body", {"chunk_boundaries": {"line_number": 2}}
+            )
+        assert out is None
+        assert "parser bug" in caplog.text
+
     def test_chunk_with_boundaries_splits(self, intelligent_chunker) -> None:
         text = "first line here\nsecond chunk begins now and is fairly long indeed"
         out = intelligent_chunker._chunk_with_llm_boundaries(

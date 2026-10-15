@@ -451,6 +451,9 @@ Library API (Python callers and custom backends).
   lost levels (#288).
 - The small-community merge moves a community into the neighbor it shares
   the most edge weight with, not the one it has the most edges to (#288).
+- Intelligent chunking: an error while reading the model's chunk
+  boundaries is logged at WARNING and the pre-chunk is split by size; it was
+  logged at DEBUG and the pre-chunk silently kept whole (#PR).
 - CloudWatch tracing (`enable_cloudwatch_tracing`): the task role keeps
   only `xray:PutTraceSegments`, the one action the X-Ray OTLP traces
   endpoint authorizes (a role with only `xray:PutSpans` gets a 403);

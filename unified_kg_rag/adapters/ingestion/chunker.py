@@ -154,23 +154,10 @@ class LineBasedBoundaryProcessor:
         self.max_line_miss_rate = max_line_miss_rate
 
     def extract_line_numbers(self, boundaries: dict[str, Any] | list[Any]) -> list[int]:
-        try:
-            if not boundaries:
-                return []
-
-            if self._is_single_chunk_request(boundaries):
-                return []
-
-            line_numbers = self._extract_line_numbers_from_response(boundaries)
-
-            valid_line_numbers = [
-                num for num in line_numbers if isinstance(num, int) and num > 1
-            ]
-            return sorted(set(valid_line_numbers))
-
-        except Exception as e:
-            logger.debug("Failed to extract line numbers: %s", e)
+        if not boundaries or self._is_single_chunk_request(boundaries):
             return []
+        line_numbers = self._extract_line_numbers_from_response(boundaries)
+        return sorted({num for num in line_numbers if isinstance(num, int) and num > 1})
 
     @staticmethod
     def _is_single_chunk_request(boundaries: dict[str, Any] | list[Any]) -> bool:
@@ -182,32 +169,24 @@ class LineBasedBoundaryProcessor:
         self, boundaries: dict[str, Any] | list[Any]
     ) -> list[int]:
         line_numbers = []
-
-        try:
-            if isinstance(boundaries, dict):
-                chunk_boundaries = boundaries.get("chunk_boundaries")
-                if chunk_boundaries:
+        if isinstance(boundaries, dict):
+            chunk_boundaries = boundaries.get("chunk_boundaries")
+            if chunk_boundaries:
+                line_numbers.extend(
+                    self._extract_from_chunk_boundaries(chunk_boundaries)
+                )
+            if "line_number" in boundaries:
+                line_numbers.extend(
+                    self._extract_from_line_number_field(boundaries["line_number"])
+                )
+        elif isinstance(boundaries, list):
+            for item in boundaries:
+                if isinstance(item, int):
+                    line_numbers.append(item)
+                elif isinstance(item, dict) and "line_number" in item:
                     line_numbers.extend(
-                        self._extract_from_chunk_boundaries(chunk_boundaries)
+                        self._extract_from_line_number_field(item["line_number"])
                     )
-
-                if "line_number" in boundaries:
-                    line_numbers.extend(
-                        self._extract_from_line_number_field(boundaries["line_number"])
-                    )
-
-            elif isinstance(boundaries, list):
-                for item in boundaries:
-                    if isinstance(item, int):
-                        line_numbers.append(item)
-                    elif isinstance(item, dict) and "line_number" in item:
-                        line_numbers.extend(
-                            self._extract_from_line_number_field(item["line_number"])
-                        )
-
-        except Exception as e:
-            logger.debug("Failed to extract line numbers from response: %s", e)
-
         return line_numbers
 
     def _extract_from_chunk_boundaries(self, chunk_boundaries: Any) -> list[int]:
@@ -932,7 +911,8 @@ class IntelligentTextChunker(BaseChunker):
             return self._extract_chunks_from_line_indices(text, indices)
 
         except Exception as e:
-            logger.debug("Failed LLM line-based boundary chunking: %s", e)
+            # The pre-chunk is split by size instead (_handle_llm_failure).
+            logger.warning("Failed LLM line-based boundary chunking: %s", e)
             return None
 
     def _extract_chunks_from_line_indices(
