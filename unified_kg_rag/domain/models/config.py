@@ -2139,7 +2139,12 @@ class DriftSearchConfig(BaseModel):
         default=0.05,
         ge=0.0,
         le=1.0,
-        description="Minimum improvement ratio required to continue iterations",
+        description=(
+            "Minimum improvement ratio (unseen / retrieved results of an "
+            "iteration) required to continue iterations. Independently, the "
+            "loop also stops once two consecutive iterations each add fewer "
+            "than 2 unseen results."
+        ),
     )
     enable_primer: bool = Field(
         default=False,

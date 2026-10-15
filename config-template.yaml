@@ -820,6 +820,9 @@ search:
     summary_char_limit: 200
     n_entities: 5
     convergence_threshold: 0.8
+    # Stop when an iteration's unseen / retrieved ratio falls below this. The
+    # loop also stops once two consecutive iterations each add fewer than 2
+    # unseen results (fixed).
     improvement_threshold: 0.05
     # MS GraphRAG primer -> follow-up flow. When true, a HyDE primer drafts a
     # hypothetical answer from the seed community reports and decomposes the

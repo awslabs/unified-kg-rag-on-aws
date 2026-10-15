@@ -73,3 +73,45 @@ async def test_evaluator_without_either_scoring_method_fails_loudly(
     )
     with pytest.raises(NotImplementedError):
         await evaluator.aevaluate_single(query, result, "")
+
+
+def test_community_detector_is_not_a_base_processor() -> None:
+    """It used none of the extraction helpers it inherited."""
+    from unified_kg_rag.adapters.ingestion.community_detector import (
+        CommunityDetector,
+    )
+    from unified_kg_rag.domain.ingestion.base_processor import BaseProcessor
+
+    assert not issubclass(CommunityDetector, BaseProcessor)
+
+
+@pytest.mark.parametrize(
+    ("target", "removed"),
+    [
+        (
+            "unified_kg_rag.adapters.search_strategies.drift_search:"
+            "DriftSearchStrategy._evolve_query",
+            "max_keywords",
+        ),
+        (
+            "unified_kg_rag.adapters.ingestion.community_detector:"
+            "CommunityDetector._create_cluster_graph",
+            "source_graph",
+        ),
+    ],
+)
+def test_dead_parameters_are_gone(target: str, removed: str) -> None:
+    import importlib
+    import inspect
+
+    module, _, attr = target.partition(":")
+    obj: Any = importlib.import_module(module)
+    for part in attr.split("."):
+        obj = getattr(obj, part)
+    assert removed not in inspect.signature(obj).parameters
+
+
+def test_rag_chain_has_no_build_retriever_pass_through() -> None:
+    from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain
+
+    assert not hasattr(GraphRAGChain, "_build_retriever")

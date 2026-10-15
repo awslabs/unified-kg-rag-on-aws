@@ -307,20 +307,20 @@ class GraphExpansionRetriever(BaseGraphRAGRetriever):
         high-degree neighbour outrank a low-degree seed.) An entity's
         importance is its ``importance_key`` value (indexed ``rank`` or
         projected ``degree``) relative to the largest one in the same result,
-        neutral 0.5 when absent. Without an ``importance_key`` the legacy
-        ``importance`` property is read (entity vertices never store it, so
-        this is the neutral 0.5). (A query-text term was dropped: graph
+        neutral 0.5 when absent or without an ``importance_key``
+        (``entity_importance_source: none``). (A query-text term was dropped: graph
         expansion passes the whole question, which never occurs inside a node
         name.)
         """
         length = len(path) or 1
-        if importance_key is not None:
-            raw = GraphExpansionRetriever._as_float(node.get(importance_key))
-            importance = (
-                raw / max_importance if raw is not None and max_importance > 0 else 0.5
-            )
-        else:
-            importance = float(node.get("importance", 0.5))
+        raw = (
+            GraphExpansionRetriever._as_float(node.get(importance_key))
+            if importance_key is not None
+            else None
+        )
+        importance = (
+            raw / max_importance if raw is not None and max_importance > 0 else 0.5
+        )
         importance = min(max(importance, 0.0), 1.0)
         near, far = 1.0 / length, 1.0 / (length + 1)
         # (1 + importance) / 2 keeps the band's lower edge open, so the most

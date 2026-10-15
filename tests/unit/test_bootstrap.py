@@ -285,8 +285,8 @@ def test_local_backend_builds_the_store_retrievers(no_aws, tmp_path, stores) -> 
         config.providers.graph.kind = "gremlin"
         config.providers.vector.kind = "opensearch"
     chain = GraphRAGChain(config)
-    graph = chain._build_retriever(RetrieverRole.GRAPH)
-    document = chain._build_retriever(RetrieverRole.DOCUMENT)
+    graph = chain.providers.build_retriever(RetrieverRole.GRAPH)
+    document = chain.providers.build_retriever(RetrieverRole.DOCUMENT)
     if stores == "embedded":
         assert isinstance(graph, SQLiteGraphRetriever)
         assert isinstance(document._opensearch_client, SQLiteSearchEngine)

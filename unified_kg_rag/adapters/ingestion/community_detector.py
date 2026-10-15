@@ -15,7 +15,7 @@ from unified_kg_rag.adapters.llm.chain_factory import (
 from unified_kg_rag.adapters.llm.retry import transient_error_predicate
 from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
 from unified_kg_rag.adapters.providers import Providers
-from unified_kg_rag.domain.ingestion.base_processor import BaseProcessor, edge_weight
+from unified_kg_rag.domain.ingestion.base_processor import edge_weight
 from unified_kg_rag.domain.ingestion.graph_builder import edge_relationships
 from unified_kg_rag.domain.models import (
     Community,
@@ -146,7 +146,7 @@ def _modularity(graph: nx.Graph, partition: list[set[str]]) -> float:
     return float(nx.community.modularity(graph, partition))
 
 
-class CommunityDetector(BaseProcessor):
+class CommunityDetector:
     def __init__(
         self,
         config: Config,
@@ -154,7 +154,7 @@ class CommunityDetector(BaseProcessor):
         *,
         providers: Providers | None = None,
     ) -> None:
-        super().__init__(config)
+        self.config = config
         self.providers = Providers.resolve(config, providers)
         self.community_detection_config = self.config.graph.community_detection
         self.ignore_errors = self.config.processing.ignore_errors
@@ -548,13 +548,11 @@ class CommunityDetector(BaseProcessor):
         return communities
 
     def _create_cluster_graph(
-        self, partition: list[set[str]], source_graph: nx.Graph | None = None
+        self, partition: list[set[str]], graph: nx.Graph
     ) -> nx.Graph:
-        # ``source_graph`` is the graph whose nodes the partition members refer
-        # to: the original entity graph at level 1, or the previous level's
-        # cluster graph at level >= 2. Defaults to the entity graph for the
-        # first coarsening / backward compatibility.
-        graph = source_graph if source_graph is not None else self.graph
+        # ``graph`` is the graph whose nodes the partition members refer to:
+        # the original entity graph at level 1, or the previous level's
+        # cluster graph at level >= 2.
         num_communities = len(partition)
         cluster_graph = nx.Graph()
 

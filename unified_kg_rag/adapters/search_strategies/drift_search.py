@@ -42,6 +42,12 @@ from unified_kg_rag.shared.utils import (
 
 logger = get_logger(__name__)
 
+# Keyword expansion asks for at most this many keywords per iteration.
+_MAX_EXPANSION_KEYWORDS = 20
+# The loop stops early once two consecutive iterations each add fewer than
+# this many unseen results (next to the ratio check of improvement_threshold).
+_MIN_UNIQUE_GAIN = 2
+
 
 # No query-side entity extraction: each iteration seeds graph expansion from
 # its own (original, refined or follow-up) query text, which the extracted
@@ -406,7 +412,7 @@ class DriftSearchStrategy(BaseSearchStrategy):
         # enforced there; this method only decides EARLY convergence.
         if iteration > 1:
             recent_gains = [m["unique_new"] for m in metrics[-2:]]
-            if all(gain < 2 for gain in recent_gains):
+            if all(gain < _MIN_UNIQUE_GAIN for gain in recent_gains):
                 return True
 
         if (
@@ -458,7 +464,6 @@ class DriftSearchStrategy(BaseSearchStrategy):
         results: list[RetrievalResult],
         iteration: int,
         entity_names: list[str] | None = None,
-        max_keywords: int = 20,
         *,
         config: RunnableConfig | None = None,
     ) -> SearchQuery:
@@ -483,7 +488,7 @@ class DriftSearchStrategy(BaseSearchStrategy):
                     "query": original_query,
                     "entities": entity_names or [],
                     "topics": [],
-                    "max_keywords": max_keywords,
+                    "max_keywords": _MAX_EXPANSION_KEYWORDS,
                     "target_language": self.target_language,
                 },
                 config,
