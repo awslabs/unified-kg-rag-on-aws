@@ -16,10 +16,14 @@ from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from tests.fixtures.fakes.stores import FakeGraphStore, FakeVectorStore
 from unified_kg_rag.application.ingestion.incremental import (
     IncrementalIndexer,
+    _remap_references,
     build_document_lineage,
 )
 from unified_kg_rag.application.storage.indexing_manager import IndexingManager
-from unified_kg_rag.domain.ingestion.claim_resolver import ClaimResolver
+from unified_kg_rag.domain.ingestion.claim_resolver import (
+    ClaimResolver,
+    resolved_claim_id,
+)
 from unified_kg_rag.domain.ingestion.delta_detector import (
     detect_delta,
     document_doc_id,
@@ -197,3 +201,39 @@ def test_merge_claims_status_matches_the_resolver_for_two_claims() -> None:
     (merged,) = merge_claims([stored], [delta])
 
     assert merged.status == resolver._merge_claims([stored, delta]).status
+
+
+def test_merge_claims_unions_document_filters() -> None:
+    stored = _claim("a.txt").model_copy(
+        update={"attributes": {"index": "default", "filters": {"tenant": "a"}}}
+    )
+    delta = _claim("b.txt").model_copy(
+        update={"attributes": {"index": "default", "filters": {"tenant": "b"}}}
+    )
+
+    (merged,) = merge_claims([stored], [delta])
+
+    assert merged.attributes == {"index": "default", "filters": {"tenant": ["a", "b"]}}
+
+
+def test_remapped_claims_are_rekeyed_and_merged() -> None:
+    # Two delta claims whose subjects ("Acme" and "Acme Inc", separate
+    # entities in this run) both merged into the stored entity e-acme: they
+    # become the one claim the full build would have, under its id.
+    def delta(subject_id: str, unit: str) -> Claim:
+        claim = _claim(unit).model_copy(update={"subject_id": subject_id})
+        claim_id = resolved_claim_id(claim)
+        return claim.model_copy(update={"id": claim_id, "short_id": claim_id[:8]})
+
+    first, second = delta("e-acme-2", "a.txt"), delta("e-acme-3", "b.txt")
+    remap = {"default": {"e-acme-2": "e-acme", "e-acme-3": "e-acme"}}
+
+    _, (claim,), claim_id_remap = _remap_references(None, [first, second], remap)
+
+    expected = resolved_claim_id(
+        _claim("x").model_copy(update={"subject_id": "e-acme"})
+    )
+    assert claim.id == expected
+    assert claim.subject_id == "e-acme"
+    assert claim.text_unit_ids == ["tu-a.txt", "tu-b.txt"]
+    assert claim_id_remap == {"default": {first.id: expected, second.id: expected}}

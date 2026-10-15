@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field
 
+from unified_kg_rag.domain.ingestion.claim_resolver import resolved_claim_id
 from unified_kg_rag.domain.ingestion.delta_detector import (
     assign_registry_source,
     detect_delta,
@@ -46,6 +47,7 @@ from unified_kg_rag.domain.ingestion.delta_detector import (
     scope_namespace,
     validate_retired_scopes,
 )
+from unified_kg_rag.domain.ingestion.merge import merge_claims
 from unified_kg_rag.domain.models import (
     PENDING_CONTENT_HASH,
     Claim,
@@ -318,7 +320,7 @@ def _lineage(doc_id: str, ids: dict[str, list[str]]) -> DocumentLineage:
 def _remap_lineage(
     lineage: DocumentLineage, id_remap: dict[str, str]
 ) -> DocumentLineage:
-    """Point a lineage's entity/relationship ids at the ids the merge kept."""
+    """Point a lineage's entity/relationship/claim ids at the ids written."""
     if not id_remap:
         return lineage
     return lineage.model_copy(
@@ -327,6 +329,7 @@ def _remap_lineage(
             "relationship_ids": sorted(
                 {id_remap.get(i, i) for i in lineage.relationship_ids}
             ),
+            "claim_ids": sorted({id_remap.get(i, i) for i in lineage.claim_ids}),
         }
     )
 
@@ -335,15 +338,60 @@ def _remap_ids(ids: list[str] | None, id_remap: dict[str, str]) -> list[str]:
     return list(dict.fromkeys(id_remap.get(i, i) for i in ids or []))
 
 
+def _remap_claims(
+    claims: list[Claim], id_remap_by_suffix: dict[str, dict[str, str]]
+) -> tuple[list[Claim], dict[str, dict[str, str]]]:
+    """Point claims' subjects/objects at the entity ids the merge kept.
+
+    A claim's id derives from its subject and object entity ids
+    (``resolved_claim_id``), so a remapped claim is re-keyed: it then has the
+    id the full build gives it and that a stored claim of the same fact has,
+    so ``merge_claims`` folds the two instead of storing a duplicate. Delta
+    claims that now share an id are merged. Returns the claims and
+    ``{suffix: {old claim id: new claim id}}`` for the lineage.
+    """
+    by_key: dict[tuple[str, str], Claim] = {}
+    claim_id_remap: dict[str, dict[str, str]] = {}
+    for claim in claims:
+        suffix = BaseIndexer.get_suffix(claim)
+        remap = id_remap_by_suffix.get(suffix, {})
+        if remap:
+            claim = claim.model_copy(
+                update={
+                    "subject_id": remap.get(claim.subject_id, claim.subject_id),
+                    "object_id": (
+                        remap.get(claim.object_id, claim.object_id)
+                        if claim.object_id
+                        else claim.object_id
+                    ),
+                }
+            )
+            claim_id = resolved_claim_id(claim)
+            if claim_id != claim.id:
+                claim_id_remap.setdefault(suffix, {})[claim.id] = claim_id
+                claim = claim.model_copy(
+                    update={"id": claim_id, "short_id": claim_id[:8]}
+                )
+        key = (suffix, claim.id)
+        if key in by_key:
+            claim = merge_claims([by_key[key]], [claim])[0]
+        by_key[key] = claim
+    return list(by_key.values()), claim_id_remap
+
+
 def _remap_references(
     communities: list[Community] | None,
     claims: list[Claim] | None,
     id_remap_by_suffix: dict[str, dict[str, str]],
-) -> tuple[list[Community] | None, list[Claim] | None]:
+) -> tuple[list[Community] | None, list[Claim] | None, dict[str, dict[str, str]]]:
     """Point communities' members and claims' subjects/objects at the ids the
-    cross-run merge kept, so none references an id that is never written."""
+    cross-run merge kept, so none references an id that is never written.
+
+    Also returns ``{suffix: {old claim id: new claim id}}`` for the claims
+    re-keyed by :func:`_remap_claims`.
+    """
     if not id_remap_by_suffix:
-        return communities, claims
+        return communities, claims, {}
     remapped_communities = None
     if communities is not None:
         remapped_communities = []
@@ -361,26 +409,10 @@ def _remap_references(
                 if remap
                 else community
             )
-    remapped_claims = None
-    if claims is not None:
-        remapped_claims = []
-        for claim in claims:
-            remap = id_remap_by_suffix.get(BaseIndexer.get_suffix(claim), {})
-            remapped_claims.append(
-                claim.model_copy(
-                    update={
-                        "subject_id": remap.get(claim.subject_id, claim.subject_id),
-                        "object_id": (
-                            remap.get(claim.object_id, claim.object_id)
-                            if claim.object_id
-                            else claim.object_id
-                        ),
-                    }
-                )
-                if remap
-                else claim
-            )
-    return remapped_communities, remapped_claims
+    if claims is None:
+        return remapped_communities, None, {}
+    remapped_claims, claim_id_remap = _remap_claims(claims, id_remap_by_suffix)
+    return remapped_communities, remapped_claims, claim_id_remap
 
 
 class IncrementalIndexer:
@@ -829,12 +861,16 @@ class IncrementalIndexer:
             entities, relationships
         )
         entities, relationships = merged.entities, merged.relationships
-        communities, claims = _remap_references(
+        communities, claims, claim_id_remap = _remap_references(
             communities, claims, merged.id_remap_by_suffix
         )
         claims = self.indexing_manager.merge_with_stored_claims(claims)
         lineages = [
-            _remap_lineage(lineage, merged.id_remap_by_suffix.get(lineage.suffix, {}))
+            _remap_lineage(
+                lineage,
+                merged.id_remap_by_suffix.get(lineage.suffix, {})
+                | claim_id_remap.get(lineage.suffix, {}),
+            )
             for lineage in lineages
         ]
         # A stored id the merge kept in place of a delta id is written too:

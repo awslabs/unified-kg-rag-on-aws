@@ -18,6 +18,7 @@ from unified_kg_rag.domain.ingestion.base_processor import (
     coerce_llm_text,
     format_entities_with_limit_task,
     group_by_text_unit,
+    union_document_filters,
 )
 from unified_kg_rag.domain.ingestion.claim_resolver import claim_identity_suffix
 from unified_kg_rag.domain.models import Claim, Config, Entity, ModelPurpose, TextUnit
@@ -328,12 +329,15 @@ class ClaimExtractor(BaseProcessor):
         start_date: str | None = None,
         end_date: str | None = None,
     ) -> str:
-        """Stable claim id from ``entity_key``-normalized endpoints and the type.
+        """Provisional claim id from the names as extracted, and the type.
 
-        Endpoints use the same identity key as entity ids, so case/whitespace/
-        quote variants of one name share an id. Known dates are part of the
-        identity (see ``claim_identity_suffix``) so same-triple claims with
-        different dates are not collapsed into one keeping a single date.
+        Only merges restatements within the extraction; ``ClaimResolver``
+        replaces it with the id of the resolved entities
+        (``resolved_claim_id``), which is the id that is stored. Endpoints use
+        the same identity key as entity ids, so case/whitespace/quote variants
+        of one name share an id. Known dates are part of the identity (see
+        ``claim_identity_suffix``) so same-triple claims with different dates
+        are not collapsed into one keeping a single date.
         """
         claim_id_content = (
             f"claim:{entity_key(subject_name)}:{entity_key(object_name)}:"
@@ -351,6 +355,7 @@ class ClaimExtractor(BaseProcessor):
             "description": self._merge_description,
             "source_text": self._merge_description,
             "text_unit_ids": safe_list_merge,
+            "attributes": union_document_filters,
         }
         return self._merge_items(
             items=claims,

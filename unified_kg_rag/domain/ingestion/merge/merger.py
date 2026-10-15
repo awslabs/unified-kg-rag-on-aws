@@ -373,8 +373,9 @@ def merge_claims(old: list[Claim], delta: list[Claim]) -> list[Claim]:
     on a tie), which for one stored and one delta claim is the same rule; the
     stored claim keeps no per-status counts, though, so over three or more
     documents the two can differ (stored ``SUSPECTED`` stays when two later
-    documents say ``TRUE``). Every other field is the delta's. Returns the
-    delta claims, merged.
+    documents say ``TRUE``). The attributes are unioned with the document
+    ``filters`` of both (see ``_merge_attributes``). Every other field is the
+    delta's. Returns the delta claims, merged.
     """
     stored = {claim.id: claim for claim in old}
     merged: list[Claim] = []
@@ -396,6 +397,7 @@ def merge_claims(old: list[Claim], delta: list[Claim]) -> list[Claim]:
                         {*(match.text_unit_ids or []), *(claim.text_unit_ids or [])}
                     ),
                     "status": match.status or claim.status,
+                    "attributes": _merge_attributes(match.attributes, claim.attributes),
                 }
             )
         )

@@ -17,6 +17,7 @@ from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from tests.fixtures.fakes.stores import FakeGraphStore, FakeVectorStore
 from unified_kg_rag.application.ingestion.incremental import IncrementalIndexer
 from unified_kg_rag.application.storage.indexing_manager import IndexingManager
+from unified_kg_rag.domain.ingestion.claim_resolver import resolved_claim_id
 from unified_kg_rag.domain.models import (
     Claim,
     Community,
@@ -345,5 +346,7 @@ def test_communities_and_claims_follow_the_merge_remap() -> None:
     community = graph.data["communities"][("default", "c1")]
     assert community.entity_ids == ["e-old", "e-buyer"]
     assert community.relationship_ids == ["r-old"]
-    claim = vector.data["claims"]["cl1"]
+    # Re-keyed to the id the full build gives a claim about e-old.
+    (claim,) = vector.data["claims"].values()
     assert (claim.subject_id, claim.object_id) == ("e-old", "e-buyer")
+    assert claim.id == resolved_claim_id(claim)
