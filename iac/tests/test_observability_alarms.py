@@ -94,6 +94,21 @@ def test_store_alarms_watch_the_paths_the_app_uses() -> None:
     assert "Operation" not in {d["Name"] for d in throttle["Dimensions"]}
 
 
+def test_neptune_resource_alarms_watch_the_writer() -> None:
+    # With neptune_instances=2 an idle reader would halve a cluster-wide
+    # average, hiding a saturated or memory-starved writer.
+    alarms = _alarms({"neptune_instances": 2})
+    for name in ("NeptuneHighCpu", "NeptuneLowFreeableMemory"):
+        dims = {d["Name"]: d["Value"] for d in alarms[name]["Dimensions"]}
+        assert dims.keys() == {"DBClusterIdentifier", "Role"}
+        assert dims["Role"] == "WRITER"
+    assert alarms["NeptuneHighCpu"]["Statistic"] == "Average"
+    assert alarms["NeptuneLowFreeableMemory"]["Statistic"] == "Minimum"
+    # Gremlin errors can come from any instance: stay cluster-wide.
+    gremlin = alarms["NeptuneGremlinErrors"]
+    assert [d["Name"] for d in gremlin["Dimensions"]] == ["DBClusterIdentifier"]
+
+
 def test_free_storage_threshold_follows_volume_size() -> None:
     alarm = _alarms({"opensearch_volume_gib": 100})["OpenSearchFreeStorageLow"]
     assert alarm["Threshold"] == 100 * 1024 * 0.4

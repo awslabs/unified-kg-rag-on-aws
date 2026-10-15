@@ -282,18 +282,25 @@ class ObservabilityStack(Stack):
         # during large edge writes, memory pressure, throttled Gremlin) is
         # invisible until a pipeline run breaks. Metrics are read from the
         # AWS/Neptune namespace keyed by the cluster id (stable across the
-        # neptune_alpha construct's API surface).
+        # neptune_alpha construct's API surface). CPU and memory are read for
+        # the WRITER role only: the cluster-wide series averages in idle
+        # readers (neptune_instances=2 halves a saturated writer's CPU), and
+        # every ingestion write lands on the writer.
         neptune_cluster = self.storage.neptune_cluster
-        neptune_dims = {
-            "DBClusterIdentifier": neptune_cluster.cluster_identifier,
-        }
+        cluster_dims = {"DBClusterIdentifier": neptune_cluster.cluster_identifier}
+        writer_dims = {**cluster_dims, "Role": "WRITER"}
 
-        def _neptune_metric(metric_name: str, minutes: int = 5) -> cw.Metric:
+        def _neptune_metric(
+            metric_name: str,
+            minutes: int = 5,
+            statistic: str = "Average",
+            writer: bool = False,
+        ) -> cw.Metric:
             return cw.Metric(
                 namespace="AWS/Neptune",
                 metric_name=metric_name,
-                dimensions_map=neptune_dims,
-                statistic="Average",
+                dimensions_map=writer_dims if writer else cluster_dims,
+                statistic=statistic,
                 period=Duration.minutes(minutes),
             )
 
@@ -303,18 +310,19 @@ class ObservabilityStack(Stack):
         # lasts three consecutive 5-minute periods.
         _alarm(
             "NeptuneHighCpu",
-            _neptune_metric("CPUUtilization"),
+            _neptune_metric("CPUUtilization", writer=True),
             90,
-            "Neptune CPU utilization is at least 90% for 15 minutes — "
+            "Neptune writer CPU utilization is at least 90% for 15 minutes — "
             "ingestion writes and queries may stall",
             evaluation_periods=3,
         )
         _alarm(
             "NeptuneLowFreeableMemory",
-            _neptune_metric("FreeableMemory"),
+            # Minimum: the lowest point in the window, not a mean that hides it.
+            _neptune_metric("FreeableMemory", statistic="Minimum", writer=True),
             # bytes; ~512 MiB. Low freeable memory precedes query/write failures.
             536870912,
-            "Neptune freeable memory is low (<512 MiB)",
+            "Neptune writer freeable memory is low (<512 MiB)",
             comparison=cw.ComparisonOperator.LESS_THAN_OR_EQUAL_TO_THRESHOLD,
         )
         # The app talks Gremlin over WebSocket, which the deprecated HTTP-only

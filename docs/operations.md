@@ -241,9 +241,9 @@ the next run breaks on it:
 | `OpenSearchFreeStorageLow` | The fullest data node has 40% or less of `opensearch_volume_gib` free | Raise `opensearch_volume_gib` (or `opensearch_count`) and redeploy before the node reaches the write-block watermark |
 | `OpenSearchJvmPressure` | JVM memory pressure is at least 95% in 3 consecutive minutes | Out-of-memory risk: use a larger `opensearch_instance` or more data nodes |
 | `DocStatusWriteThrottled` | The doc-status table throttled a write (5 minutes) | The app retries throttled registry calls with backoff; one still throttled after that fails the run with `DocStatusRegistryError`. Check for overlapping runs on the table and rerun a failed run once the throttling clears |
-| `NeptuneHighCpu` | Average CPU is at least 90% for 15 minutes | Sustained saturation, not a bulk-write peak: use a larger `neptune_instance` or lower `indexing.neptune.index_concurrency` |
-| `NeptuneLowFreeableMemory` | Average freeable memory is 512 MiB or less (5 minutes) | Queries and writes may fail with out-of-memory errors: use a larger `neptune_instance` |
-| `NeptuneGremlinErrors` | Gremlin server errors in 3 consecutive minutes | Persistent write or query failures (retried write conflicts come in short bursts and do not fire it): check the task log for the failing request |
+| `NeptuneHighCpu` | Average writer CPU is at least 90% for 15 minutes (3 × 5 minutes) | Sustained saturation, not a bulk-write peak: use a larger `neptune_instance` or lower `indexing.neptune.index_concurrency` |
+| `NeptuneLowFreeableMemory` | Writer freeable memory falls to 512 MiB or less at any point in 5 minutes (minimum) | Queries and writes may fail with out-of-memory errors: use a larger `neptune_instance` |
+| `NeptuneGremlinErrors` | Gremlin server errors on any instance in 3 consecutive minutes | Persistent write or query failures (retried write conflicts come in short bursts and do not fire it): check the task log for the failing request |
 
 The alarms have a subscriber only when the stack was deployed with
 `-c alarm_email=<address>`.
