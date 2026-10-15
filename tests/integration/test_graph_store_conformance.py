@@ -126,7 +126,7 @@ def test_list_properties_are_sets_and_an_upsert_replaces_them(
     assert read.text_unit_ids == ["c"]
 
 
-def test_upsert_is_idempotent_and_keeps_absent_properties(
+def test_upsert_is_idempotent_and_replaces_the_properties(
     harness: StoreHarness,
 ) -> None:
     graph = harness.graph_indexer
@@ -140,10 +140,15 @@ def test_upsert_is_idempotent_and_keeps_absent_properties(
     assert harness.stored_ids("graph.relationships") == {"ab"}
     assert harness.stored_ids("graph.communities") == {"c1"}
 
-    # A property the upsert's item lacks keeps its stored value.
-    graph.upsert_entities([_entity("a", type="ORG")])
+    # The write replaces the stored properties: one the item no longer has
+    # (a value now None, a removed attribute) does not keep its old value.
+    graph.upsert_entities(
+        [_entity("a", type="ORG", attributes={"role": "vendor", "region": "x"})]
+    )
+    graph.upsert_entities([_entity("a", description="new", attributes={"role": "r"})])
     (read,) = graph.read_entities(["a"])
-    assert (read.description, read.type) == ("kept", "ORG")
+    assert (read.description, read.type) == ("new", None)
+    assert read.attributes == {"role": "r"}
 
 
 def test_edge_with_a_missing_endpoint_is_a_failed_id(harness: StoreHarness) -> None:
@@ -245,7 +250,7 @@ def test_clear_keeps_sibling_namespaces(harness: StoreHarness) -> None:
         _graph(store, [("a", "b")], suffix)
         communities = [_community("c1", ["a"], suffix)]
         assert store.graph_indexer.upsert_communities(communities).failed_items == 0
-    assert harness.graph_indexer.clear([tag])
+    harness.graph_indexer.clear([tag])
     for store, suffix, left in (
         (harness, tag, set()),
         (harness, extended, {"a", "b"}),

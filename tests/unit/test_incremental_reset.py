@@ -131,8 +131,6 @@ def test_reset_records_the_full_corpus_after_rebuilding(mocker) -> None:
 
     manager = mocker.MagicMock()
     manager.config = config
-    manager.clear_all_data.return_value = True
-    manager.initialize.return_value = True
     manager.index_all_data.return_value = {
         "neptune_entities": IndexingStats(total_items=1, successful_items=1)
     }
@@ -177,8 +175,6 @@ def test_failed_reset_rebuild_does_not_record_documents(mocker) -> None:
     config = _reset_config()
     manager = mocker.MagicMock()
     manager.config = config
-    manager.clear_all_data.return_value = True
-    manager.initialize.return_value = True
     manager.index_all_data.return_value = {
         "neptune_entities": IndexingStats(total_items=1, failed_items=1)
     }
@@ -208,8 +204,6 @@ def _reset_stage(mocker, config: Config, store: FakeDocStatusStore):
 
     manager = mocker.MagicMock()
     manager.config = config
-    manager.clear_all_data.return_value = True
-    manager.initialize.return_value = True
     manager.index_all_data.return_value = {
         "neptune_entities": IndexingStats(total_items=1, successful_items=1)
     }

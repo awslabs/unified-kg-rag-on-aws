@@ -716,13 +716,20 @@ def test_clearing_fails_instead_of_looping_forever(indexer) -> None:
     assert fake.drops == 2 + neptune_indexer._EXTRA_DELETE_PASSES
 
 
-def test_clear_reports_a_failed_clear(indexer) -> None:
+def test_clear_raises_the_failure(indexer, monkeypatch) -> None:
+    # Raised, not reported as False: the caller needs the reason.
+    from unified_kg_rag.adapters.storage import neptune_indexer
+    from unified_kg_rag.shared import AWSServiceError
+
+    monkeypatch.setattr(neptune_indexer, "_sleep", lambda _s: None)
+
     class _Boom:
         def V(self):  # noqa: N802
             raise RuntimeError("gremlin exploded")
 
     indexer.neptune_client.g = _Boom()
-    assert indexer.clear(["default"]) is False
+    with pytest.raises(AWSServiceError, match="gremlin exploded"):
+        indexer.clear(["default"])
 
 
 # --------------------------------------------------------------------------- #

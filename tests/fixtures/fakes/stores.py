@@ -85,8 +85,8 @@ class FakeGraphStore:
     and counts are scoped per suffix like the label-scoped Neptune traversals.
 
     Neptune semantics kept: list properties of a vertex are set-cardinality
-    (distinct values, a re-upsert replaces the list), a property absent from an
-    upsert keeps its stored value, re-adding an edge replaces it, an edge whose
+    (distinct values), a vertex write replaces every stored property (one
+    absent from it is dropped), re-adding an edge replaces it, an edge whose
     endpoint vertex the suffix lacks is not written (a failed item, and the
     stored edge of its id is dropped), dropping a vertex drops its incident
     edges, and a full ``index_entities`` first clears the suffix's entity
@@ -104,14 +104,13 @@ class FakeGraphStore:
     def ids(self, collection: str) -> set[str]:
         return {item_id for _, item_id in self.data.get(collection, {})}
 
-    def clear(self, suffixes: list[str]) -> bool:
+    def clear(self, suffixes: list[str]) -> None:
         for bucket in self.data.values():
             for key in [key for key in bucket if key[0] in suffixes]:
                 del bucket[key]
-        return True
 
-    def initialize(self) -> bool:
-        return True
+    def initialize(self) -> None:
+        return None
 
     # --- writes ------------------------------------------------------------
 
@@ -126,12 +125,12 @@ class FakeGraphStore:
         stats = IndexingStats(total_items=len(entities))
         bucket = self.data.setdefault("entities", {})
         for entity in entities:
-            value_map = bucket.setdefault(
-                (BaseIndexer.get_suffix(entity), entity.id), {"id": [entity.id]}
-            )
+            # The write replaces the stored properties, as Neptune's does.
+            value_map: dict[str, Any] = {"id": [entity.id]}
             for key, value in entity_properties(entity, self._max_length).items():
                 values = value if isinstance(value, list) else [value]
                 value_map[key] = list(dict.fromkeys(values))
+            bucket[(BaseIndexer.get_suffix(entity), entity.id)] = value_map
             stats.add_success()
         return stats
 
@@ -295,7 +294,7 @@ class FakeVectorStore(_Recorder):
         # assert per-index routing (delete is fanned out once per index prefix).
         self.delete_calls: list[tuple[str, str]] = []
 
-    def clear(self, suffixes: list[str]) -> bool:
+    def clear(self, suffixes: list[str]) -> None:
         # Only the given suffixes' documents, like the per-alias delete.
         for bucket in self.data.values():
             for item_id in [
@@ -304,7 +303,6 @@ class FakeVectorStore(_Recorder):
                 if BaseIndexer.get_suffix(item) in suffixes
             ]:
                 del bucket[item_id]
-        return True
 
     def check_index_settings(self, suffix: str | None = None) -> None:
         # Records no index settings, so any run's match.
@@ -313,8 +311,8 @@ class FakeVectorStore(_Recorder):
     def set_doc_status_tracking(self, tracked: bool) -> None:
         return None
 
-    def initialize(self) -> bool:
-        return True
+    def initialize(self) -> None:
+        return None
 
     def _replace(
         self, collection: str, items: list[Any], suffixes: Collection[str]

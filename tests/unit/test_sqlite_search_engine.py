@@ -1113,7 +1113,7 @@ def _artifacts() -> dict[str, list[Any]]:
 
 def _index_everything(indexer: OpenSearchIndexer) -> None:
     artifacts = _artifacts()
-    assert indexer.initialize()
+    indexer.initialize()
     for stats in (
         indexer.index_text_units(artifacts["text_units"]),
         indexer.index_entities(artifacts["entities"]),
@@ -1241,7 +1241,7 @@ def test_alias_swap_reaps_stale_indices(tmp_path: Path) -> None:
     assert indices == {live[-1]: [alias], sibling: []}
     hits = engine.search(index=alias, body={"query": {"match_all": {}}})["hits"]["hits"]
     assert sorted(h["_id"] for h in hits) == ["e-buyer", "e-vendor"]
-    assert indexer.clear([config.indexing.additional_suffix or "default"])
+    indexer.clear([config.indexing.additional_suffix or "default"])
     assert engine.get_aliases_by_index(f"{alias}-*") == {sibling: []}
     indexer.close()
 

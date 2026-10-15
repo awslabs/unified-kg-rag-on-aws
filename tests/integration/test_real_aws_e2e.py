@@ -68,13 +68,13 @@ def test_opensearch_connectivity(live_config) -> None:
         config=live_config,
         embedding_factory=Providers(live_config).embedding_factory,
     )
-    assert indexer.initialize() is True
+    indexer.initialize()
 
 
 def test_neptune_connectivity(live_config) -> None:
     """A real Gremlin round-trip against the live Neptune endpoint.
 
-    NeptuneIndexer.initialize() is a no-op (returns True without touching the
+    NeptuneIndexer.initialize() is a no-op (it does not touch the
     cluster), so issue an actual traversal to verify connectivity.
     """
     from unified_kg_rag.adapters.storage.neptune_indexer import NeptuneIndexer

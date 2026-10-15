@@ -215,7 +215,8 @@ def _vertex_value_map(
 
     Applies the upsert's property steps with Neptune's semantics: ``single``
     replaces, ``set`` (and no cardinality, Neptune's default) adds a distinct
-    value, and a ``sideEffect(properties(k).drop())`` clears ``k``.
+    value, and ``sideEffect(properties().hasKey(neq('id')).drop())`` clears
+    every property but ``id``.
     """
     captured: dict[str, Any] = {}
 
@@ -229,9 +230,11 @@ def _vertex_value_map(
     value_map.setdefault("id", [entity.id])
     for step in captured["traversal"].bytecode.step_instructions:
         if step[0] == "sideEffect":
-            dropped = step[1].step_instructions[0]
-            assert dropped[0] == "properties"
-            value_map.pop(dropped[1], None)
+            properties, has_key, drop = step[1].step_instructions
+            assert (properties, drop) == (["properties"], ["drop"])
+            assert has_key[0] == "hasKey"
+            assert (has_key[1].operator, has_key[1].value) == ("neq", "id")
+            value_map = {"id": value_map["id"]}
         elif step[0] == "property":
             args = step[1:]
             cardinality = args[0] if isinstance(args[0], Cardinality) else None
@@ -297,6 +300,17 @@ def test_upsert_of_a_merged_entity_replaces_its_lists(indexer) -> None:
 
     assert read.text_unit_ids == ["t2", "t3"]
     assert read.community_ids == ["c2"]
+
+
+def test_upsert_drops_the_properties_the_entity_no_longer_has(indexer) -> None:
+    stored = _vertex_value_map(indexer, _vendor())
+    rewritten = _vendor(type=None, attributes={"index": "tenant-a"})
+    _serve(indexer, [_vertex_value_map(indexer, rewritten, stored)])
+
+    (read,) = indexer.read_entities(["e-vendor"], suffix="tenant-a")
+
+    assert read.type is None
+    assert read.attributes == {"index": "tenant-a"}
 
 
 class _FailingChain(_ReadChain):

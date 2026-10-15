@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 import re
 import time
-from array import array
 from collections.abc import Callable, Collection
 from typing import TYPE_CHECKING, Any, NamedTuple
 
@@ -96,14 +95,9 @@ class OpenSearchIndexer(VectorIndexer):
         )
         self.target_language = self.config.processing.translation.target_language.value
         self.analyzer = self._analyzer_for(self.target_language)
-        # Per-process content-hash -> embedding cache (avoids re-embedding
-        # duplicate/unchanged text within and across incremental runs). Held
-        # as float32 (what the knn field stores), an eighth of a float list;
-        # unused when the S3 tier below is on, which holds the same vectors.
-        self._embedding_cache: dict[str, array] = {}
         # Optional S3-persisted cache so unchanged text is not re-embedded across
         # separate runs/phases (each Fargate phase is a fresh process). Loaded
-        # lazily on first embed; best-effort (S3 errors degrade to in-process).
+        # lazily on first embed; best-effort (an S3 error leaves it in memory).
         self._s3_embedding_cache = self._build_s3_embedding_cache()
 
     def _analyzer_for(self, language: str) -> str:
@@ -325,68 +319,50 @@ class OpenSearchIndexer(VectorIndexer):
                 e,
             )
 
-    def clear(self, suffixes: list[str]) -> bool:
+    def clear(self, suffixes: list[str]) -> None:
         if not suffixes:
-            return True
+            return
 
-        # Initialized before the try so the except's log message cannot raise
-        # UnboundLocalError if building the alias list itself fails.
-        aliases_to_delete: list[str] = []
-        try:
-            aliases_to_delete = [
-                self._get_name(prefix, suffix)
-                for prefix in self._index_prefixes()
-                for suffix in suffixes
-            ]
+        aliases_to_delete = [
+            self._get_name(prefix, suffix)
+            for prefix in self._index_prefixes()
+            for suffix in suffixes
+        ]
 
-            # Only this namespace's own indices (``<alias>-<timestamp>``), by
-            # exact name: ``<alias>-*`` also matches the indices of a sibling
-            # namespace (``default-x`` under ``default``, ``acme-eu`` under
-            # ``acme``).
-            indices_to_delete = sorted(
-                {
-                    name
-                    for alias in aliases_to_delete
-                    for name in self.opensearch_client.get_aliases_by_index(
-                        f"{alias}-*"
-                    )
-                    if self._index_timestamp(alias, name) is not None
-                }
-            )
+        # Only this namespace's own indices (``<alias>-<timestamp>``), by
+        # exact name: ``<alias>-*`` also matches the indices of a sibling
+        # namespace (``default-x`` under ``default``, ``acme-eu`` under
+        # ``acme``).
+        indices_to_delete = sorted(
+            {
+                name
+                for alias in aliases_to_delete
+                for name in self.opensearch_client.get_aliases_by_index(f"{alias}-*")
+                if self._index_timestamp(alias, name) is not None
+            }
+        )
 
-            if indices_to_delete:
-                self.opensearch_client.delete_indices(indices_to_delete)
+        if indices_to_delete:
+            self.opensearch_client.delete_indices(indices_to_delete)
 
-            # Deleting an index drops its aliases. Only an alias still on an
-            # index is deleted: deleting aliases none of which exists (a
-            # namespace never indexed, or a store it never wrote) is a 404.
-            for alias in aliases_to_delete:
-                remaining = self.opensearch_client.get_indices_by_alias(alias)
-                if remaining:
-                    self.opensearch_client.delete_alias(
-                        index_names=remaining, alias_names=[alias]
-                    )
+        # Deleting an index drops its aliases. Only an alias still on an
+        # index is deleted: deleting aliases none of which exists (a
+        # namespace never indexed, or a store it never wrote) is a 404.
+        for alias in aliases_to_delete:
+            remaining = self.opensearch_client.get_indices_by_alias(alias)
+            if remaining:
+                self.opensearch_client.delete_alias(
+                    index_names=remaining, alias_names=[alias]
+                )
 
-            time.sleep(1)
-            logger.info("Cleared OpenSearch indices for '%s'", aliases_to_delete)
-            return True
-        except Exception as e:
-            logger.error(
-                "Failed to clear OpenSearch indices for '%s': %s", aliases_to_delete, e
-            )
-            return False
+        logger.info("Cleared OpenSearch indices for '%s'", aliases_to_delete)
 
-    def initialize(self) -> bool:
-        try:
-            # Written on every run (the PUT is idempotent), so a changed
-            # search.hybrid weight replaces the one an earlier run stored.
-            pipeline_name = self.opensearch_config.hybrid_search_pipeline_name
-            self._put_hybrid_search_pipeline(pipeline_name)
-            logger.info("Wrote hybrid search pipeline: '%s'", pipeline_name)
-            return True
-        except Exception as e:
-            logger.error("Failed to initialize OpenSearch indexer: %s", e)
-            return False
+    def initialize(self) -> None:
+        # Written on every run (the PUT is idempotent), so a changed
+        # search.hybrid weight replaces the one an earlier run stored.
+        pipeline_name = self.opensearch_config.hybrid_search_pipeline_name
+        self._put_hybrid_search_pipeline(pipeline_name)
+        logger.info("Wrote hybrid search pipeline: '%s'", pipeline_name)
 
     def _put_hybrid_search_pipeline(self, pipeline_name: str) -> None:
         lex_weight, vec_weight = (
@@ -1128,12 +1104,11 @@ class OpenSearchIndexer(VectorIndexer):
     ) -> list[list[float] | None]:
         result: list[list[float] | None] = [None] * len(texts)
 
-        # Content-hash embedding cache: identical text is embedded once,
-        # de-duplicated within a run and across indices sharing the same text.
-        # The in-process dict is the fast tier; the optional S3 tier (loaded
-        # once, lazily) persists across separate runs/phases so unchanged text
-        # is not re-embedded. Only cache-miss, de-duplicated texts hit Bedrock;
-        # the result is fanned back out to every index sharing that text.
+        # Identical texts of one call are embedded once and fanned back out.
+        # The optional S3 cache (loaded once, lazily) persists vectors across
+        # runs and phases so unchanged text is not re-embedded. No in-process
+        # tier: it held every vector of the run and texts rarely repeat
+        # across calls.
         if self._s3_embedding_cache is not None:
             self._s3_embedding_cache.load()
 
@@ -1154,11 +1129,8 @@ class OpenSearchIndexer(VectorIndexer):
                     unique.append((key, text))
 
         def _store(key: str, emb: list[float] | None) -> None:
-            if emb is not None:
-                if self._s3_embedding_cache is not None:
-                    self._s3_embedding_cache.put(key, emb)
-                else:
-                    self._embedding_cache[key] = array("f", emb)
+            if emb is not None and self._s3_embedding_cache is not None:
+                self._s3_embedding_cache.put(key, emb)
             for idx in key_to_indices[key]:
                 result[idx] = emb
 
@@ -1192,7 +1164,7 @@ class OpenSearchIndexer(VectorIndexer):
 
         # Embedding is IO-bound (Bedrock InvokeModel); fan the batches out across
         # threads instead of issuing them strictly serially. Results are stored
-        # back on the calling thread to avoid races on result/_embedding_cache.
+        # back on the calling thread to avoid races on result and the S3 cache.
         batches = [
             unique[start : start + batch_size]
             for start in range(0, len(unique), batch_size)
@@ -1217,15 +1189,14 @@ class OpenSearchIndexer(VectorIndexer):
         # NOTE: the S3 cache is intentionally NOT flushed here. _batch_embed is
         # called once per extractor per item-type, so flushing here would
         # read-merge-overwrite the whole (growing) S3 object many times per run.
-        # Newly-computed vectors are held in the in-process tier and flushed once
-        # per item-type by _flush_embedding_cache() at the indexing boundary.
+        # Newly-computed vectors are held by the S3 cache and flushed once per
+        # item-type by _flush_embedding_cache() at the indexing boundary.
         return result
 
     def _cached_embedding(self, key: str) -> list[float] | None:
-        if self._s3_embedding_cache is not None:
-            return self._s3_embedding_cache.get(key)
-        vector = self._embedding_cache.get(key)
-        return vector.tolist() if vector is not None else None
+        if self._s3_embedding_cache is None:
+            return None
+        return self._s3_embedding_cache.get(key)
 
     def _flush_embedding_cache(self) -> None:
         """Persist newly-computed vectors to the S3 tier (once per item-type).

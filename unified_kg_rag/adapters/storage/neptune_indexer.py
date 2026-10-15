@@ -73,10 +73,7 @@ class NeptuneIndexer(GraphIndexer):
         """Close the underlying Neptune websocket + thread pool (best-effort)."""
         self.neptune_client.close()
 
-    def clear(self, suffixes: list[str]) -> bool:
-        if not suffixes:
-            return True
-
+    def clear(self, suffixes: list[str]) -> None:
         labels_to_delete = {
             self._get_label(prefix, s)
             for prefix in (
@@ -85,18 +82,10 @@ class NeptuneIndexer(GraphIndexer):
             )
             for s in suffixes
         }
-
-        try:
-            if labels_to_delete:
-                logger.info("Clearing Neptune data for labels: %s", labels_to_delete)
-                for label in labels_to_delete:
-                    self._clear_existing_data_by_label(label)
-            return True
-        except Exception as e:
-            logger.error(
-                "Failed to clear Neptune data for suffixes '%s': %s", suffixes, e
-            )
-            return False
+        if labels_to_delete:
+            logger.info("Clearing Neptune data for labels: %s", labels_to_delete)
+        for label in labels_to_delete:
+            self._clear_existing_data_by_label(label)
 
     def read_entities(self, ids: list[str], suffix: str | None = None) -> list[Entity]:
         """Read existing entities by id (cross-run merge, text-unit removal).
@@ -227,8 +216,8 @@ class NeptuneIndexer(GraphIndexer):
             )
             return []
 
-    def initialize(self) -> bool:
-        return True
+    def initialize(self) -> None:
+        return None
 
     def index_entities(
         self, entities: list[Entity], *, suffixes: Collection[str] = ()
@@ -430,7 +419,7 @@ class NeptuneIndexer(GraphIndexer):
         """Build one traversal that creates or updates a batch of entity vertices.
 
         ``V().has(label, 'id', x).fold().coalesce(unfold(), addV(label))``
-        matches an existing vertex or creates it, and the properties are
+        matches an existing vertex or creates it, and its properties are
         replaced (:meth:`_set_properties_on_traversal`), so running the same
         batch twice leaves the graph as running it once.
         """
@@ -719,20 +708,20 @@ class NeptuneIndexer(GraphIndexer):
     def _set_properties_on_traversal(
         self, traversal: GraphTraversal, props: dict[str, Any]
     ) -> None:
-        """Set properties idempotently (every vertex write: full and incremental).
+        """Replace the vertex's properties with ``props`` (every vertex write).
 
-        Scalars use ``Cardinality.single`` so re-running a write overwrites
-        rather than accumulates. List values are written as multi-valued
-        ``Cardinality.set`` properties, what the read path expects. The
-        existing set is cleared first so a re-write does not grow stale
-        members.
+        Every stored property but ``id`` is dropped first, so a property the
+        item no longer has (a value now ``None``, a removed attribute) does
+        not keep its old value, and a re-write does not grow stale list
+        members. Scalars use ``Cardinality.single``; list values are written
+        as multi-valued ``Cardinality.set`` properties, what the read path
+        expects.
         """
+        traversal.sideEffect(__.properties().has_key(P.neq("id")).drop())
         for key, value in props.items():
             if value is None:
                 continue
             if isinstance(value, list):
-                # Replace the whole multi-valued property: drop then re-add.
-                traversal.sideEffect(__.properties(key).drop())
                 for item in value:
                     if item is not None:
                         traversal.property(Cardinality.set_, key, item)

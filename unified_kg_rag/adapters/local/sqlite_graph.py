@@ -120,27 +120,19 @@ def _marks(items: Collection[Any]) -> str:
     return ",".join("?" * len(items))
 
 
-def merge_vertex_properties(
-    stored: dict[str, list[Any]] | None, vertex_id: str, props: dict[str, Any]
-) -> dict[str, list[Any]]:
-    """``stored`` (a valueMap) updated with ``props`` as Neptune writes them.
+def vertex_value_map(vertex_id: str, props: dict[str, Any]) -> dict[str, list[Any]]:
+    """The valueMap of a vertex written with ``props``, as Neptune stores it.
 
-    A scalar replaces the property (single cardinality); a list replaces the
-    whole property with its distinct values (set cardinality), and an empty
-    one removes it. A property absent from ``props`` keeps its stored value.
+    The write replaces every stored property but ``id``: a scalar is a
+    one-value list (single cardinality), a list its distinct values (set
+    cardinality), and a ``None`` or empty list leaves the property out.
     """
-    value_map = dict(stored) if stored else {"id": [vertex_id]}
+    value_map: dict[str, list[Any]] = {"id": [vertex_id]}
     for key, value in props.items():
-        if value is None:
-            continue
-        if isinstance(value, list):
-            values = list(dict.fromkeys(v for v in value if v is not None))
-            if values:
-                value_map[key] = values
-            else:
-                value_map.pop(key, None)
-        else:
-            value_map[key] = [value]
+        values = value if isinstance(value, list) else [value]
+        values = list(dict.fromkeys(v for v in values if v is not None))
+        if values:
+            value_map[key] = values
     return value_map
 
 
@@ -399,8 +391,8 @@ class SQLiteGraphStore:
 class SQLiteGraphIndexer(GraphIndexer):
     """``GraphIndexer`` on :class:`SQLiteGraphStore` (Neptune semantics).
 
-    Lists are set-cardinality, an upsert keeps the stored properties its item
-    lacks, re-adding an edge replaces it, an edge whose endpoint the suffix
+    Lists are set-cardinality, a vertex write replaces the stored properties
+    (one its item lacks is dropped), re-adding an edge replaces it, an edge whose endpoint the suffix
     lacks is not written (its id is in ``failed_ids``), and dropping a vertex
     drops its edges and memberships. Each write is one transaction; a write
     the database refuses raises (``SQLiteGraphStore``) rather than counting
@@ -431,10 +423,10 @@ class SQLiteGraphIndexer(GraphIndexer):
     def close(self) -> None:
         self.store.close()
 
-    def initialize(self) -> bool:
+    def initialize(self) -> None:
         """Open the database (creating it and its schema)."""
         with self.store.read("initialize the graph store"):
-            return True
+            pass
 
     def _entity_label(self, suffix: str | None) -> str:
         return self._get_label(self.neptune_config.entity_label_prefix, suffix)
@@ -444,20 +436,13 @@ class SQLiteGraphIndexer(GraphIndexer):
 
     # --- writes --------------------------------------------------------------
 
-    def clear(self, suffixes: list[str]) -> bool:
+    def clear(self, suffixes: list[str]) -> None:
         if not suffixes:
-            return True
-        try:
-            with self.store.transaction("clear the graph") as connection:
-                for suffix in suffixes:
-                    self._drop_label(connection, self._entity_label(suffix))
-                    self._drop_label(connection, self._community_label(suffix))
-            return True
-        except GraphRAGException as e:
-            logger.error(
-                "Failed to clear graph data for suffixes '%s': %s", suffixes, e
-            )
-            return False
+            return
+        with self.store.transaction("clear the graph") as connection:
+            for suffix in suffixes:
+                self._drop_label(connection, self._entity_label(suffix))
+                self._drop_label(connection, self._community_label(suffix))
 
     def index_entities(
         self, entities: list[Entity], *, suffixes: Collection[str] = ()
@@ -660,16 +645,15 @@ class SQLiteGraphIndexer(GraphIndexer):
         label: str,
         items: list[tuple[str, dict[str, Any]]],
     ) -> None:
-        stored = self.store.vertex_maps(connection, label, (i for i, _ in items))
-        for vertex_id, props in items:
-            stored[vertex_id] = merge_vertex_properties(
-                stored.get(vertex_id), vertex_id, props
-            )
+        """Create or replace each vertex (the last write of an id wins)."""
+        written = {
+            vertex_id: vertex_value_map(vertex_id, props) for vertex_id, props in items
+        }
         connection.executemany(
             "INSERT OR REPLACE INTO vertices (label, id, props) VALUES (?, ?, ?)",
             [
-                (label, vertex_id, json.dumps(stored[vertex_id]))
-                for vertex_id in dict.fromkeys(i for i, _ in items)
+                (label, vertex_id, json.dumps(value_map))
+                for vertex_id, value_map in written.items()
             ],
         )
 

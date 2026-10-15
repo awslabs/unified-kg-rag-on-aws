@@ -303,8 +303,22 @@ def test_clear_of_a_namespace_never_indexed_succeeds(config) -> None:
     client = _FakeCluster()
     indexer = _indexer(config, client)
 
-    assert indexer.clear(["default"])
+    indexer.clear(["default"])
     assert "delete_alias" not in _op_names(client.calls)
+
+
+def test_clear_does_not_sleep(config, monkeypatch) -> None:
+    # The index and alias deletes are acknowledged before they return, and
+    # the rebuild writes new timestamped indices: there is nothing to wait for.
+    from unified_kg_rag.adapters.storage import opensearch_indexer
+
+    def _no_sleep(_seconds: float) -> None:
+        raise AssertionError("clear slept")
+
+    monkeypatch.setattr(opensearch_indexer.time, "sleep", _no_sleep)
+    live = f"{_ALIAS}-20260101000000"
+    indexer = _indexer(config, _FakeCluster({live: {_ALIAS}}))
+    indexer.clear(["default"])
 
 
 def test_clear_of_some_stores_deletes_their_indices_and_aliases(config) -> None:
@@ -314,7 +328,7 @@ def test_clear_of_some_stores_deletes_their_indices_and_aliases(config) -> None:
     client = _FakeCluster({live: {_ALIAS}, "manual-index": {_ALIAS}})
     indexer = _indexer(config, client)
 
-    assert indexer.clear(["default"])
+    indexer.clear(["default"])
 
     assert client.indices == {"manual-index": set()}
 
@@ -356,7 +370,7 @@ def test_clear_deletes_only_its_own_namespace(
     client = _FakeCluster({**existing, **kept})
     indexer = _indexer(config, client)
 
-    assert indexer.clear(["default"])
+    indexer.clear(["default"])
 
     assert client.indices == kept
     deleted = {
@@ -372,7 +386,7 @@ def test_clear_of_a_suffix_keeps_suffixes_that_extend_it(config) -> None:
     client = _FakeCluster({**existing, **kept})
     indexer = _indexer(config, client)
 
-    assert indexer.clear(["acme"])
+    indexer.clear(["acme"])
 
     assert client.indices == kept
 

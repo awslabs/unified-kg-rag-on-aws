@@ -26,6 +26,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.domain.models.config import LanguageCode
 from unified_kg_rag.ports.indexer import IndexingStats
+from unified_kg_rag.shared.exceptions import StoreAccessDeniedError
 
 pytestmark = pytest.mark.unit
 
@@ -539,8 +540,8 @@ def test_initialize_rewrites_the_hybrid_pipeline_with_the_configured_weights(
     indexer.config.search.hybrid.lexical_weight = 0.2
     indexer.config.search.hybrid.vector_weight = 0.8
 
-    assert indexer.initialize()
-    assert indexer.initialize()
+    indexer.initialize()
+    indexer.initialize()
 
     calls = indexer.opensearch_client.put_search_pipeline.call_args_list
     assert len(calls) == 2
@@ -549,6 +550,21 @@ def test_initialize_rewrites_the_hybrid_pipeline_with_the_configured_weights(
     (processor,) = body["phase_results_processors"]
     combination = processor["normalization-processor"]["combination"]
     assert combination["parameters"]["weights"] == [0.2, 0.8]
+
+
+@pytest.mark.parametrize("call", ["initialize", "clear"])
+def test_store_errors_propagate_typed(indexer, mocker, call: str) -> None:
+    # They were logged and turned into False, losing the type and reason.
+    indexer.opensearch_client = mocker.MagicMock()
+    denied = StoreAccessDeniedError("403 denied", reason="missing es:ESHttpPut")
+    indexer.opensearch_client.put_search_pipeline.side_effect = denied
+    indexer.opensearch_client.get_aliases_by_index.side_effect = denied
+    with pytest.raises(StoreAccessDeniedError) as raised:
+        if call == "initialize":
+            indexer.initialize()
+        else:
+            indexer.clear(["default"])
+    assert raised.value is denied
 
 
 # --------------------------------------------------------------------------- #

@@ -74,8 +74,8 @@ class _RecordingManager:
         self.calls: list[dict[str, Any]] = []
         self.opensearch_indexer = FakeVectorStore()
 
-    def initialize(self) -> bool:
-        return True
+    def initialize(self) -> None:
+        return None
 
     def index_all_data(self, **kwargs: Any) -> dict[str, IndexingStats]:
         self.calls.append(kwargs)

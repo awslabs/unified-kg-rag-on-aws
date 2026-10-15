@@ -121,31 +121,19 @@ class IndexingManager:
             except Exception as e:  # noqa: BLE001 - teardown must never raise
                 logger.debug("Error closing %s: %s", type(indexer).__name__, e)
 
-    def clear_all_data(self, text_units: list[TextUnit]) -> bool:
+    def clear_all_data(self, text_units: list[TextUnit]) -> None:
+        """Clear both stores for the run's suffixes; a store's error propagates."""
         suffixes = self._discover_suffixes(text_units)
         if not suffixes:
             logger.warning("No suffixes found to clear data")
-            return True
+            return
 
         logger.info("Clearing data for suffixes: '%s'", suffixes)
-        try:
-            with ContextThreadPoolExecutor(max_workers=2) as executor:
-                os_future = executor.submit(self.opensearch_indexer.clear, suffixes)
-                neptune_future = executor.submit(self.neptune_indexer.clear, suffixes)
-                opensearch_success = os_future.result()
-                neptune_success = neptune_future.result()
-
-            success = opensearch_success and neptune_success
-            if not success:
-                logger.error(
-                    "Clear operation failed - OpenSearch: %s, Neptune: %s",
-                    opensearch_success,
-                    neptune_success,
-                )
-            return success
-        except Exception as e:
-            logger.error("Clear operation failed: %s", e)
-            return False
+        with ContextThreadPoolExecutor(max_workers=2) as executor:
+            os_future = executor.submit(self.opensearch_indexer.clear, suffixes)
+            neptune_future = executor.submit(self.neptune_indexer.clear, suffixes)
+            os_future.result()
+            neptune_future.result()
 
     @staticmethod
     def _group_by_suffix(items: list[Any]) -> dict[str, list[Any]]:
@@ -160,19 +148,10 @@ class IndexingManager:
             return []
         return list({BaseIndexer.get_suffix(item) for item in items})
 
-    def initialize(self) -> bool:
-        try:
-            opensearch_ok = self.opensearch_indexer.initialize()
-            neptune_ok = self.neptune_indexer.initialize()
-
-            if not opensearch_ok or not neptune_ok:
-                logger.error("Failed to initialize indexers")
-                return False
-
-            return True
-        except Exception as e:
-            logger.error("Indexer initialization failed: %s", e)
-            return False
+    def initialize(self) -> None:
+        """Prepare both stores for writes; a store's error propagates."""
+        self.opensearch_indexer.initialize()
+        self.neptune_indexer.initialize()
 
     def index_all_data(
         self,
