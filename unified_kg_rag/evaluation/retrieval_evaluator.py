@@ -110,7 +110,6 @@ class RetrievalEvaluator(BaseGraphRAGEvaluator):
         super().__init__(config, EvaluatorType.RETRIEVAL, **kwargs)
 
     def _initialize_evaluator(self, **kwargs: Any) -> None:
-        # Pure, deterministic evaluator — no model to initialize.
         self.k = self.config.evaluation.retrieval_k
 
     def metric_types(self) -> list[EvaluationMetricType]:
@@ -203,13 +202,3 @@ class RetrievalEvaluator(BaseGraphRAGEvaluator):
             evaluation_time=datetime.now(),
             metadata=metadata,
         )
-
-    async def aevaluate_single(
-        self,
-        query: EvaluationQuery,
-        result: EvaluationResult,
-        ground_truth: str,
-        **kwargs: Any,
-    ) -> EvaluationReport:
-        # Deterministic and CPU-only; reuse the sync path.
-        return self.evaluate_single(query, result, ground_truth, **kwargs)

@@ -477,9 +477,6 @@ class SQLiteGraphIndexer(GraphIndexer):
                 stats.add_success(len(chunk))
         return stats
 
-    def index_relationships(self, relationships: list[Relationship]) -> IndexingStats:
-        return self.upsert_relationships(relationships)
-
     def upsert_relationships(self, relationships: list[Relationship]) -> IndexingStats:
         """Replace each edge by id; one whose endpoint is missing is not written.
 

@@ -10,12 +10,9 @@ emits a structured JSON profile. That profile then parameterizes domain-adapted
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 from .base import BasePrompt
 
 
-@dataclass(frozen=True)
 class CorpusProfilePrompt(BasePrompt):
     prompt_key = "corpus_profile"
     """Analyze a corpus sample and emit a domain/persona/entity-type profile."""

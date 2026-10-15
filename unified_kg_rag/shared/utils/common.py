@@ -86,18 +86,14 @@ RE_INVALID_CHARS = re.compile(r"[^\w\s]", re.UNICODE)
 RE_EXTRA_SPACES = re.compile(r"\s+")
 
 
-def compute_hash(data: str, algorithm: str = "sha256", length: int = 16) -> str:
+def compute_hash(data: str, length: int = 16) -> str:
     """Compute a truncated content hash for dedup / cache-key / id purposes.
 
     SHA-256 is used for all hashing (no MD5) — these are content fingerprints,
     not security digests, but standardizing on SHA-256 avoids weak-algorithm
-    findings and keeps one code path. ``algorithm`` is accepted for backward
-    compatibility; only "sha256" is supported.
+    findings and keeps one code path.
     """
-    if algorithm.lower() != "sha256":
-        raise ValueError(f"Unsupported algorithm: '{algorithm}'")
-    hash_obj = hashlib.sha256(data.encode("utf-8"))
-    return hash_obj.hexdigest()[:length]
+    return hashlib.sha256(data.encode("utf-8")).hexdigest()[:length]
 
 
 def text_digest(text: str | None) -> str:

@@ -977,15 +977,12 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         with self._cache_lock:
             if (cached := self._retriever_cache.get(cache_key)) is not None:
                 return cached
-            retriever = self._build_retriever(role)
+            # Injected retriever builders (the backend seam) come first, so a
+            # custom store is wired without subclassing or editing any
+            # strategy; the rest are the stores config.providers selects.
+            retriever = self.providers.build_retriever(role)
             self._retriever_cache[cache_key] = retriever
             return retriever
-
-    def _build_retriever(self, role: RetrieverRole) -> BaseGraphRAGRetriever:
-        # Injected retriever builders (the backend seam) come first, so a custom
-        # store is wired without subclassing or editing any strategy; the rest
-        # are the stores config.providers selects.
-        return self.providers.build_retriever(role)
 
     def _cache_loop(self) -> asyncio.AbstractEventLoop | None:
         """Return the cache key for the running loop (``None`` outside one).

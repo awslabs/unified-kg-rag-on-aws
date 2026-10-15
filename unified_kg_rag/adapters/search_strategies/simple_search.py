@@ -84,7 +84,7 @@ class SimpleSearchStrategy(BaseSearchStrategy):
         results = await self._safe_aretrieve(
             self.document_retriever,
             self._apply_claim_gate(query),
-            "OpenSearch retrieval",
+            "Document retrieval",
         )
         return {"opensearch_all": results} if results else {}
 

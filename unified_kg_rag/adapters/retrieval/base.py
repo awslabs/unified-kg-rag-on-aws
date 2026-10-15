@@ -4,7 +4,10 @@ import asyncio
 from abc import ABC, abstractmethod
 from typing import Any
 
-from langchain_core.callbacks import CallbackManagerForRetrieverRun
+from langchain_core.callbacks import (
+    AsyncCallbackManagerForRetrieverRun,
+    CallbackManagerForRetrieverRun,
+)
 from langchain_core.documents import Document
 from langchain_core.retrievers import BaseRetriever
 from langchain_core.runnables import RunnableConfig
@@ -55,33 +58,41 @@ class BaseGraphRAGRetriever(BaseRetriever, ABC):
         BaseRetriever.__init__(self, **kwargs)
         self._config = config
 
+    # The LangChain retriever interface (``invoke``/``ainvoke``) over
+    # :meth:`aretrieve`; the strategies call ``aretrieve`` directly.
     def _get_relevant_documents(
         self,
         query: str,
         *,
         run_manager: CallbackManagerForRetrieverRun,
     ) -> list[Document]:
-        try:
-            search_query = SearchQuery(query=query)
-            results = asyncio.run(self.aretrieve(search_query))
+        """Sync ``invoke``: runs :meth:`aretrieve` on a new event loop, so it
+        cannot be called from inside a running one (use ``ainvoke`` there)."""
+        return self._to_documents(asyncio.run(self.aretrieve(SearchQuery(query=query))))
 
-            documents = []
-            for result in results:
-                doc = Document(
-                    page_content=result.content,
-                    metadata={
-                        "score": result.score,
-                        "source": result.source,
-                        "retriever_type": result.retriever_type,
-                        **(result.metadata or {}),
-                    },
-                )
-                documents.append(doc)
+    async def _aget_relevant_documents(
+        self,
+        query: str,
+        *,
+        run_manager: AsyncCallbackManagerForRetrieverRun,
+    ) -> list[Document]:
+        """``ainvoke``: awaits :meth:`aretrieve` on the caller's event loop."""
+        return self._to_documents(await self.aretrieve(SearchQuery(query=query)))
 
-            return documents
-        except Exception as e:
-            logger.error("Document retrieval failed: %s", str(e))
-            raise
+    @staticmethod
+    def _to_documents(results: list[RetrievalResult]) -> list[Document]:
+        return [
+            Document(
+                page_content=result.content,
+                metadata={
+                    "score": result.score,
+                    "source": result.source,
+                    "retriever_type": result.retriever_type,
+                    **(result.metadata or {}),
+                },
+            )
+            for result in results
+        ]
 
     @abstractmethod
     async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:

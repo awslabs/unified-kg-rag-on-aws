@@ -38,6 +38,8 @@ import re
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import TYPE_CHECKING
 
+from unified_kg_rag.domain.models.config import Constants
+
 from .common import compute_hash, generate_stable_id
 
 if TYPE_CHECKING:
@@ -52,7 +54,9 @@ REGISTRY_NAMESPACE_KEY = "registry_namespace"
 # from (``document_parsing.source_scope``, else the resolved source directory).
 REGISTRY_SOURCE_KEY = "registry_source"
 
-DEFAULT_NAMESPACE = "default"
+# A document without an index value is registered under the default index
+# suffix.
+DEFAULT_NAMESPACE: str = Constants.DEFAULT_SUFFIX.value
 
 _ID_HASH_LENGTH = 32
 
@@ -81,7 +85,7 @@ def relative_source_path(file_path: str | Path, source_root: str | Path) -> str 
 
 def compute_text_hash(text: str) -> str:
     """Content hash used for change detection and document-version ids."""
-    return compute_hash(text, algorithm="sha256", length=_ID_HASH_LENGTH)
+    return compute_hash(text, length=_ID_HASH_LENGTH)
 
 
 def compute_document_id(source_key: str, content_hash: str) -> str:
@@ -163,7 +167,7 @@ def compute_doc_id(
         if source_scope is None
         else f"{namespace}\x00{source_scope}\x00{path}"
     )
-    return compute_hash(key, algorithm="sha256", length=_ID_HASH_LENGTH)
+    return compute_hash(key, length=_ID_HASH_LENGTH)
 
 
 def is_local_path_scope(source_scope: str) -> bool:

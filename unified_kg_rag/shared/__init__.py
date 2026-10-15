@@ -1,7 +1,5 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-from typing import TYPE_CHECKING
-
 from . import observability
 from .config import ConfigLoader, get_config
 from .exceptions import (
@@ -29,16 +27,6 @@ from .logging import get_logger, setup_logging
 from .metrics import CloudWatchEMFSink, MetricsSink, NullMetricsSink
 from .pipeline_manager import PipelineResumeManager, PipelineStateManager
 
-if TYPE_CHECKING:
-    from .cache_manager import CacheManager
-
-
-def get_cache_manager() -> "type[CacheManager]":
-    from .cache_manager import CacheManager
-
-    return CacheManager
-
-
 __all__ = [
     "AWSServiceError",
     "CacheSyncError",
@@ -65,7 +53,6 @@ __all__ = [
     "PipelineStateManager",
     "RerankModelError",
     "StoreConnectionError",
-    "get_cache_manager",
     "get_config",
     "get_logger",
     "observability",

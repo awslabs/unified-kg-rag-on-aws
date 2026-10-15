@@ -310,9 +310,8 @@ class TestClusterGraph:
         g.add_edge("c", "d", weight=5.0)  # intra-community, ignored
         g.add_edge("a", "c", weight=1.5)
         g.add_edge("b", "d", weight=2.5)
-        cd.graph = g
         partition = [{"a", "b"}, {"c", "d"}]
-        cluster = cd._create_cluster_graph(partition)
+        cluster = cd._create_cluster_graph(partition, g)
         assert cluster.number_of_nodes() == 2
         assert cluster.number_of_edges() == 1
         # The single cluster edge weight is the SUM of inter-community edges.
@@ -323,8 +322,7 @@ class TestClusterGraph:
         g = nx.Graph()
         g.add_edge("a", "b")
         g.add_edge("c", "d")
-        cd.graph = g
-        cluster = cd._create_cluster_graph([{"a", "b"}, {"c", "d"}])
+        cluster = cd._create_cluster_graph([{"a", "b"}, {"c", "d"}], g)
         assert cluster.number_of_nodes() == 2
         assert cluster.number_of_edges() == 0
 

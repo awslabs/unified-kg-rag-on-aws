@@ -100,7 +100,7 @@ def build_document_lineage(
     communities: list[Community],
     claims: list[Claim],
     community_reports: list[CommunityReport] | None = None,
-    suffix: str = "default",
+    suffix: str = DEFAULT_NAMESPACE,
 ) -> list[DocumentLineage]:
     """Attribute extracted artifacts to their source documents.
 
@@ -422,7 +422,7 @@ class IncrementalIndexer:
         self,
         doc_status: DocStatusPort,
         indexing_manager: IndexingManager,
-        suffix: str = "default",
+        suffix: str = DEFAULT_NAMESPACE,
         scope: str | None = None,
         extraction_fingerprint: str | None = None,
     ) -> None:

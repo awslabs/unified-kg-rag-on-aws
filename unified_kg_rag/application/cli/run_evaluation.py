@@ -7,7 +7,6 @@ import shutil
 import sys
 import tempfile
 import time
-from importlib.metadata import version
 from pathlib import Path
 
 import nest_asyncio
@@ -16,6 +15,7 @@ from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 
+from unified_kg_rag import __version__
 from unified_kg_rag.adapters.aws.s3_transfer import (
     download_s3_object,
     is_s3_uri,
@@ -59,11 +59,6 @@ from unified_kg_rag.shared.utils.display import console, display_ascii_art
 
 nest_asyncio.apply()
 logger = get_logger(__name__)
-
-try:
-    __version__ = version("unified-kg-rag-on-aws")
-except (FileNotFoundError, ImportError, ValueError):
-    __version__ = "unknown"
 
 
 class InvalidDatasetError(Exception):

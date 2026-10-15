@@ -227,7 +227,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         search_query = query.model_copy(deep=True)
         search_query.index_prefixes = index_prefixes
         return await self._safe_aretrieve(
-            self.document_retriever, search_query, "OpenSearch retrieval"
+            self.document_retriever, search_query, "Document retrieval"
         )
 
     async def _select_relevant_communities(

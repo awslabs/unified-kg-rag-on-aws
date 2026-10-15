@@ -220,7 +220,7 @@ def test_reset_clears_initial_release_records_of_cleared_suffixes(mocker) -> Non
     # Shaped like a record of the initial public release: keyed by a hash of
     # the file path alone, no scope, no file_path. Its file is gone.
     initial_release = DocStatusRecord(
-        doc_id=compute_hash("gone.txt", algorithm="sha256", length=32),
+        doc_id=compute_hash("gone.txt", length=32),
         content_hash="h",
         status=DocStatus.PROCESSED,
         suffix="default",
@@ -286,7 +286,7 @@ def test_reset_keeps_scopeless_records_of_another_namespace_of_the_suffix(
     )
     # No file_path (initial release): no namespace, cleared with its suffix.
     initial_release = DocStatusRecord(
-        doc_id=compute_hash("old.txt", algorithm="sha256", length=32),
+        doc_id=compute_hash("old.txt", length=32),
         content_hash="h",
         suffix="default",
     )

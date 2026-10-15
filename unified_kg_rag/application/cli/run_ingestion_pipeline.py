@@ -4,13 +4,13 @@ import argparse
 import os
 import sys
 from datetime import datetime
-from importlib.metadata import version
 from pathlib import Path
 
 from rich.markup import escape
 from rich.panel import Panel
 from rich.prompt import Confirm
 
+from unified_kg_rag import __version__
 from unified_kg_rag.application.cli.config_args import (
     config_path_arg,
     exit_on_config_error,
@@ -67,12 +67,6 @@ def _stage_name_arg(value: str) -> str:
         raise argparse.ArgumentTypeError(str(e)) from e
     assert normalized is not None
     return normalized
-
-
-try:
-    __version__ = version("unified-kg-rag-on-aws")
-except (FileNotFoundError, ImportError, ValueError):
-    __version__ = "unknown"
 
 
 class CommandLineInterface:

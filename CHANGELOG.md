@@ -505,6 +505,10 @@ Library API (Python callers and custom backends).
   graph: a full build of 10,000 entities and their communities takes about
   20 s instead of 60 s, and 5,000 relationship writes about 5 s instead of
   28 s. Restart the stack (`down` and `up`) to pick it up (#265).
+- Graph expansion with `entity_importance_source: none` scores every node
+  at the neutral importance 0.5 without reading an `importance` vertex
+  property: entity vertices never store one, so the result is unchanged
+  (#300).
 
 ### Fixed
 - Configuration errors raise `ConfigurationError` (still a `ValueError`)
@@ -1644,12 +1648,24 @@ Library API (Python callers and custom backends).
   global OpenTelemetry tracer provider is already set" when that provider
   is the one the package set itself; the user guide documents that the
   global binding happens once per process (#245).
+- A LangChain `ainvoke` on a package retriever runs `aretrieve` on the
+  caller's event loop; it ran it on a new loop in a worker thread, away
+  from the loop the stores' async clients are bound to. The global and
+  simple search spans and failure logs say "Document retrieval" instead of
+  "OpenSearch retrieval", which local mode does not use (#300).
 
 ### Removed
 - `Entity.frequency`: it counted an entity's text units in every merge path
   but no store wrote it and nothing read it (ranking uses `rank`, the local
   search frequency filter counts `text_unit_ids`). Stage caches that carry
   the key still load; it is ignored (#291).
+- Internal helpers with no remaining use: `BaseEvaluator` (subclass
+  `BaseGraphRAGEvaluator`, which now supplies the default
+  `aevaluate_single` and `_initialize_evaluator`), the `algorithm`
+  parameter of `compute_hash` (always SHA-256) and
+  `unified_kg_rag.shared.get_cache_manager` (import
+  `shared.cache_manager.CacheManager`). Prompt classes are plain classes
+  instead of frozen dataclasses; they were never instantiated (#300).
 
 ### Security
 - Prompts delimit corpus and retrieved text as data, and inputs cannot close

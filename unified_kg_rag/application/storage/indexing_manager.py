@@ -168,10 +168,6 @@ class IndexingManager:
         including a type the run has none of (no claims, no reports): its index
         is emptied rather than left serving a previous run's items.
         """
-        start_time = time.time()
-        results: dict[str, IndexingStats] = {}
-
-        self._enrich_text_units(text_units, communities)
         suffixes = self._discover_suffixes(
             [
                 *(text_units or []),
@@ -182,72 +178,15 @@ class IndexingManager:
                 *(claims or []),
             ]
         )
-
-        def replace(fn: Callable, items: list[Any] | None, key: str) -> IndexingTask:
-            return IndexingTask(
-                partial(fn, suffixes=suffixes), [items or []], key, run_empty=True
-            )
-
-        phase1_tasks = [
-            replace(
-                self.opensearch_indexer.index_text_units,
-                text_units,
-                "opensearch_text_units",
-            ),
-            replace(
-                self.opensearch_indexer.index_entities,
-                entities,
-                "opensearch_entities",
-            ),
-            replace(
-                self.opensearch_indexer.index_community_reports,
-                community_reports,
-                "opensearch_community_reports",
-            ),
-            replace(
-                self.opensearch_indexer.index_claims,
-                claims,
-                "opensearch_claims",
-            ),
-            replace(self.neptune_indexer.index_entities, entities, "neptune_entities"),
-        ]
-        # The OpenSearch relationship VECTOR index is only consumed by LightRAG
-        # high-level keyword retrieval (mix/hybrid). Skip it for a GraphRAG-only
-        # deployment (symmetric with community_detection.enabled). The Neptune
-        # relationship EDGES below are always built — both methodologies traverse
-        # them for graph expansion.
-        if self.config.indexing.opensearch.build_relationship_vector_index:
-            phase1_tasks.append(
-                replace(
-                    self.opensearch_indexer.index_relationships,
-                    relationships,
-                    "opensearch_relationships",
-                )
-            )
-
-        logger.info("--- Starting Indexing Phase 1 ---")
-        results.update(self._run_indexing_phase(phase1_tasks))
-
-        phase2_tasks = [
-            # Replacing the entity vertices already dropped the old edges.
-            IndexingTask(
-                self.neptune_indexer.index_relationships,
-                [relationships],
-                "neptune_relationships",
-            ),
-            replace(
-                self.neptune_indexer.index_communities,
-                communities,
-                "neptune_communities",
-            ),
-        ]
-
-        logger.info("--- Starting Indexing Phase 2 ---")
-        results.update(self._run_indexing_phase(phase2_tasks))
-
-        elapsed_time = time.time() - start_time
-        self._log_completion_summary(results, elapsed_time)
-        return results
+        return self._write_artifacts(
+            text_units,
+            entities,
+            relationships,
+            communities,
+            community_reports,
+            claims,
+            suffixes=suffixes,
+        )
 
     def index_delta(
         self,
@@ -267,69 +206,115 @@ class IndexingManager:
         given artifacts as they are: the cross-run merge with stored state is
         :meth:`merge_with_existing_graph`, run by the incremental commit.
         """
+        return self._write_artifacts(
+            text_units,
+            entities,
+            relationships,
+            communities,
+            community_reports,
+            claims,
+            suffixes=None,
+        )
+
+    def _write_artifacts(
+        self,
+        text_units: list[TextUnit] | None,
+        entities: list[Entity] | None,
+        relationships: list[Relationship] | None,
+        communities: list[Community] | None,
+        community_reports: list[CommunityReport] | None,
+        claims: list[Claim] | None,
+        *,
+        suffixes: list[str] | None,
+    ) -> dict[str, IndexingStats]:
+        """Write the artifacts in two phases: entities before the edges.
+
+        With ``suffixes`` (full build) each type is replaced in those
+        suffixes, even with no items. Without (delta) each is upserted: the
+        delta path MUST NOT index, because index_community_reports does a full
+        alias-swap (and index_communities a label clear) that would wipe the
+        unchanged documents' artifacts the delta does not carry.
+        """
         start_time = time.time()
-        results: dict[str, IndexingStats] = {}
-
         self._enrich_text_units(text_units, communities)
-
-        phase1_tasks = [
-            IndexingTask(
-                self.opensearch_indexer.upsert_text_units,
-                [text_units],
+        vector, graph = self.opensearch_indexer, self.neptune_indexer
+        # (full-build writer, delta writer, items, result key)
+        phase1: list[tuple[Callable, Callable, list[Any] | None, str]] = [
+            (
+                vector.index_text_units,
+                vector.upsert_text_units,
+                text_units,
                 "opensearch_text_units",
             ),
-            IndexingTask(
-                self.opensearch_indexer.upsert_entities,
-                [entities],
+            (
+                vector.index_entities,
+                vector.upsert_entities,
+                entities,
                 "opensearch_entities",
             ),
-            IndexingTask(
-                # Delta path MUST upsert, not index: index_community_reports does
-                # a full alias-swap that would wipe unchanged docs' reports (the
-                # delta only carries reports for the changed subgraph).
-                self.opensearch_indexer.upsert_community_reports,
-                [community_reports],
+            (
+                vector.index_community_reports,
+                vector.upsert_community_reports,
+                community_reports,
                 "opensearch_community_reports",
             ),
-            IndexingTask(
-                self.opensearch_indexer.upsert_claims,
-                [claims],
-                "opensearch_claims",
-            ),
-            IndexingTask(
-                self.neptune_indexer.upsert_entities, [entities], "neptune_entities"
-            ),
+            (vector.index_claims, vector.upsert_claims, claims, "opensearch_claims"),
+            (graph.index_entities, graph.upsert_entities, entities, "neptune_entities"),
         ]
-        # LightRAG-only vector index — gate symmetrically with the full build.
-        # Neptune relationship edges (phase 2) are always upserted.
+        # The OpenSearch relationship VECTOR index is only consumed by LightRAG
+        # high-level keyword retrieval (mix/hybrid). Skip it for a GraphRAG-only
+        # deployment (symmetric with community_detection.enabled). The Neptune
+        # relationship EDGES of phase 2 are always written — both methodologies
+        # traverse them for graph expansion.
         if self.config.indexing.opensearch.build_relationship_vector_index:
-            phase1_tasks.append(
-                IndexingTask(
-                    self.opensearch_indexer.upsert_relationships,
-                    [relationships],
+            phase1.append(
+                (
+                    vector.index_relationships,
+                    vector.upsert_relationships,
+                    relationships,
                     "opensearch_relationships",
                 )
             )
-        logger.info("--- Starting Delta Indexing Phase 1 (upsert) ---")
-        results.update(self._run_indexing_phase(phase1_tasks))
 
-        phase2_tasks = [
-            IndexingTask(
-                self.neptune_indexer.upsert_relationships,
-                [relationships],
-                "neptune_relationships",
-            ),
-            IndexingTask(
-                self.neptune_indexer.upsert_communities,
-                [communities],
-                "neptune_communities",
+        def tasks(
+            specs: list[tuple[Callable, Callable, list[Any] | None, str]],
+        ) -> list[IndexingTask]:
+            if suffixes is None:
+                return [IndexingTask(fn, [items], key) for _, fn, items, key in specs]
+            return [
+                IndexingTask(
+                    partial(fn, suffixes=suffixes), [items or []], key, run_empty=True
+                )
+                for fn, _, items, key in specs
+            ]
+
+        # A full build's replaced entity vertices already dropped the old edges.
+        edges = (
+            graph.upsert_relationships
+            if suffixes is None
+            else graph.index_relationships
+        )
+        phase2 = [
+            IndexingTask(edges, [relationships], "neptune_relationships"),
+            *tasks(
+                [
+                    (
+                        graph.index_communities,
+                        graph.upsert_communities,
+                        communities,
+                        "neptune_communities",
+                    )
+                ]
             ),
         ]
-        logger.info("--- Starting Delta Indexing Phase 2 (upsert) ---")
-        results.update(self._run_indexing_phase(phase2_tasks))
 
-        elapsed_time = time.time() - start_time
-        self._log_completion_summary(results, elapsed_time)
+        prefix, tail = ("", "") if suffixes is not None else ("Delta ", " (upsert)")
+        logger.info("--- Starting %sIndexing Phase 1%s ---", prefix, tail)
+        results = self._run_indexing_phase(tasks(phase1))
+        logger.info("--- Starting %sIndexing Phase 2%s ---", prefix, tail)
+        results.update(self._run_indexing_phase(phase2))
+
+        self._log_completion_summary(results, time.time() - start_time)
         return results
 
     def merge_with_existing_graph(

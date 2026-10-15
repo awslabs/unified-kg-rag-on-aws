@@ -211,14 +211,18 @@ def test_build_content_entity_with_path(retriever) -> None:
 # --------------------------------------------------------------------------- #
 
 
+def _relevance(retriever, rank: float, path: list) -> float:
+    return retriever._calculate_relevance(
+        {"rank": rank}, path, importance_key="rank", max_importance=1.0
+    )
+
+
 def test_calculate_relevance_bands_by_distance(retriever) -> None:
     # Path length L scores in (1 / (L + 1), 1 / L], importance places it inside
     # (the upper half of the band, so the open lower edge never ties).
-    seed = retriever._calculate_relevance({"importance": 1.0}, [{"name": ["a"]}])
-    weak_seed = retriever._calculate_relevance({"importance": 0.0}, [{"name": ["a"]}])
-    one_hop = retriever._calculate_relevance(
-        {"importance": 1.0}, [{"name": ["a"]}, {"name": ["b"]}]
-    )
+    seed = _relevance(retriever, 1.0, [{"name": ["a"]}])
+    weak_seed = _relevance(retriever, 0.0, [{"name": ["a"]}])
+    one_hop = _relevance(retriever, 1.0, [{"name": ["a"]}, {"name": ["b"]}])
     assert seed == pytest.approx(1.0)
     assert weak_seed == pytest.approx(0.75)
     assert one_hop == pytest.approx(0.5)
@@ -227,15 +231,23 @@ def test_calculate_relevance_bands_by_distance(retriever) -> None:
 def test_calculate_relevance_nearer_node_outranks_more_important_far_one(
     retriever,
 ) -> None:
-    near = retriever._calculate_relevance({"importance": 0.0}, [{}])
-    far = retriever._calculate_relevance({"importance": 1.0}, [{}, {}])
+    near = _relevance(retriever, 0.0, [{}])
+    far = _relevance(retriever, 1.0, [{}, {}])
     assert near > far
 
 
 def test_calculate_relevance_importance_orders_within_a_distance(retriever) -> None:
-    low = retriever._calculate_relevance({"importance": 0.2}, [{}, {}])
-    high = retriever._calculate_relevance({"importance": 0.8}, [{}, {}])
+    low = _relevance(retriever, 0.2, [{}, {}])
+    high = _relevance(retriever, 0.8, [{}, {}])
     assert high > low
+
+
+def test_calculate_relevance_without_importance_key_is_neutral(retriever) -> None:
+    """``entity_importance_source: none`` scores every node at mid-band; no
+    other vertex property stands in for importance."""
+    assert retriever._calculate_relevance({"importance": 1.0}, [{}]) == pytest.approx(
+        0.875
+    )
 
 
 # --------------------------------------------------------------------------- #

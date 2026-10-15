@@ -7,7 +7,6 @@ import re
 import sys
 import uuid
 from collections.abc import Callable
-from importlib.metadata import version
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +14,7 @@ import nest_asyncio
 from rich.markup import escape
 from rich.panel import Panel
 
+from unified_kg_rag import __version__
 from unified_kg_rag.application.cli.config_args import (
     config_path_arg,
     exit_on_config_error,
@@ -44,10 +44,6 @@ from unified_kg_rag.shared.utils.display import console, display_ascii_art
 nest_asyncio.apply()
 logger = get_logger(__name__)
 
-try:
-    __version__ = version("unified-kg-rag-on-aws")
-except (FileNotFoundError, ImportError, ValueError):
-    __version__ = "unknown"
 
 # C0 controls except tab/newline, DEL and C1 controls (incl. the 8-bit CSI).
 _CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
