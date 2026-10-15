@@ -320,7 +320,6 @@ class GraphExtractor(BaseProcessor):
 
         all_entities = self._merge_entities(all_entities)
         all_relationships = self._merge_relationships(all_relationships)
-        listed_ids = {e.id for e in all_entities}
 
         # Materialize entities referenced only by a relationship endpoint (the
         # LLM mentioned them in a relation but did not list them as an entity),
@@ -330,42 +329,6 @@ class GraphExtractor(BaseProcessor):
         all_entities = self._materialize_relationship_endpoints(
             all_entities, all_relationships
         )
-
-        kept_entities, filtered_count = self._filter_entities_by_confidence(
-            all_entities
-        )
-        self.stats.entities_filtered_by_confidence = filtered_count
-        if filtered_count:
-            # Every unit the entity cites, so gleaning none of them re-adds it.
-            kept_ids = {e.id for e in kept_entities}
-            self.rejected_entities.extend(
-                RejectedEntity(
-                    text_unit_id=unit_id,
-                    entity_key=entity_key(entity.name),
-                    reason="low_confidence",
-                )
-                for entity in all_entities
-                if entity.id not in kept_ids
-                for unit_id in entity.text_unit_ids or []
-            )
-        all_entities = kept_entities
-
-        if filtered_count > 0:
-            all_relationships, rel_filtered_count = self._filter_orphan_relationships(
-                all_relationships, all_entities
-            )
-            self.stats.relationships_filtered_by_confidence = rel_filtered_count
-            # A stub entity exists only for its relationships; one whose
-            # relationships all named a filtered entity would be left with no
-            # description and no edge.
-            endpoint_ids = {
-                ent_id
-                for rel in all_relationships
-                for ent_id in (rel.source_id, rel.target_id)
-            }
-            all_entities = [
-                e for e in all_entities if e.id in listed_ids or e.id in endpoint_ids
-            ]
 
         if all_entities:
             self.stats.average_entity_confidence = sum(
@@ -420,11 +383,20 @@ class GraphExtractor(BaseProcessor):
                 entities.append(entity)
 
         entities, dropped_keys = self._apply_entity_grounding(entities, text_unit)
+        entities, low_confidence_keys = self._apply_confidence_threshold(
+            entities, text_unit
+        )
         self.rejected_entities.extend(
             RejectedEntity(
                 text_unit_id=text_unit.id, entity_key=key, reason="ungrounded"
             )
             for key in sorted(dropped_keys)
+        )
+        self.rejected_entities.extend(
+            RejectedEntity(
+                text_unit_id=text_unit.id, entity_key=key, reason="low_confidence"
+            )
+            for key in sorted(low_confidence_keys)
         )
 
         entity_name_to_id = self.build_entity_key_index(entities)
@@ -438,6 +410,13 @@ class GraphExtractor(BaseProcessor):
         relationships = self._drop_relationships_to_dropped_entities(
             relationships, dropped_keys, text_unit
         )
+        kept_relationships = self._drop_relationships_to_dropped_entities(
+            relationships, low_confidence_keys, text_unit, reason="low confidence"
+        )
+        self.stats.relationships_filtered_by_confidence += len(relationships) - len(
+            kept_relationships
+        )
+        relationships = kept_relationships
         relationships = self._apply_relationship_grounding(
             relationships, text_unit, {e.id for e in entities}
         )
@@ -510,38 +489,42 @@ class GraphExtractor(BaseProcessor):
             apply_text_unit_weights(rel, sum_weights(weight_maps[rel.id]))
         return merged
 
-    def _filter_entities_by_confidence(
-        self, entities: list[Entity]
-    ) -> tuple[list[Entity], int]:
+    def _apply_confidence_threshold(
+        self, entities: list[Entity], text_unit: TextUnit
+    ) -> tuple[list[Entity], set[str]]:
+        """Drop the chunk's entities below ``entity_confidence_threshold``.
+
+        Per chunk, after grounding (so a ``penalize``d confidence counts), as
+        gleaning applies it to the entities it adds. Thresholding the merged
+        entity instead would test the best score over the chunks that share
+        the batch, so a full build and an incremental run would keep different
+        entities. A dropped entity's relationships in the chunk go with it,
+        else the stub step would recreate it there.
+
+        Returns the kept entities and the ``entity_key`` of every entity
+        dropped (excluding keys with a kept copy in the chunk).
+        """
         threshold = self.extraction_config.entity_confidence_threshold
-
         if threshold <= 0.0:
-            return entities, 0
-
-        filtered_entities = []
-        removed_count = 0
-
+            return entities, set()
+        kept: list[Entity] = []
+        dropped_keys: set[str] = set()
         for entity in entities:
             confidence = entity.confidence if entity.confidence is not None else 1.0
             if confidence >= threshold:
-                filtered_entities.append(entity)
-            else:
-                removed_count += 1
-                logger.debug(
-                    "Filtered entity '%s' with confidence %.2f (threshold: %s)",
-                    entity.name,
-                    confidence,
-                    threshold,
-                )
-
-        if removed_count > 0:
-            logger.info(
-                "Confidence filtering removed %s entities (threshold: %s)",
-                removed_count,
+                kept.append(entity)
+                continue
+            self.stats.entities_filtered_by_confidence += 1
+            dropped_keys.add(entity_key(entity.name))
+            logger.debug(
+                "Filtered entity '%s' with confidence %.2f (threshold: %s, chunk '%s')",
+                entity.short_id,
+                confidence,
                 threshold,
+                text_unit.short_id,
             )
-
-        return filtered_entities, removed_count
+        dropped_keys -= {entity_key(e.name) for e in kept}
+        return kept, dropped_keys
 
     def _apply_entity_grounding(
         self, entities: list[Entity], text_unit: TextUnit
@@ -604,12 +587,14 @@ class GraphExtractor(BaseProcessor):
         relationships: list[Relationship],
         dropped_keys: set[str],
         text_unit: TextUnit,
+        reason: str = "ungrounded",
     ) -> list[Relationship]:
-        """Remove relationships whose endpoint was dropped as ungrounded.
+        """Remove relationships whose endpoint the chunk dropped.
 
         Without this, ``_materialize_relationship_endpoints`` would recreate the
-        dropped (likely hallucinated) entity as a description-less stub and the
-        grounding guard would be undone.
+        dropped (ungrounded or low-confidence) entity as a description-less
+        stub and undo the guard. Only an ``ungrounded`` drop counts towards
+        ``relationships_dropped_ungrounded_endpoint``.
         """
         if not dropped_keys:
             return relationships
@@ -619,11 +604,13 @@ class GraphExtractor(BaseProcessor):
                 entity_key(rel.source_name or "") in dropped_keys
                 or entity_key(rel.target_name or "") in dropped_keys
             ):
-                self.stats.relationships_dropped_ungrounded_endpoint += 1
+                if reason == "ungrounded":
+                    self.stats.relationships_dropped_ungrounded_endpoint += 1
                 logger.info(
                     "Dropping relationship '%s' — endpoint entity was dropped "
-                    "as ungrounded in chunk '%s'",
+                    "as %s in chunk '%s'",
                     rel.short_id,
+                    reason,
                     text_unit.short_id,
                 )
                 continue
@@ -724,35 +711,6 @@ class GraphExtractor(BaseProcessor):
                 stub_count,
             )
         return result
-
-    def _filter_orphan_relationships(
-        self,
-        relationships: list[Relationship],
-        valid_entities: list[Entity],
-    ) -> tuple[list[Relationship], int]:
-        valid_entity_ids = {entity.id for entity in valid_entities}
-
-        filtered_relationships = []
-        removed_count = 0
-
-        for rel in relationships:
-            if rel.source_id in valid_entity_ids and rel.target_id in valid_entity_ids:
-                filtered_relationships.append(rel)
-            else:
-                removed_count += 1
-                logger.debug(
-                    "Filtered orphan relationship '%s' -> '%s'",
-                    rel.source_name,
-                    rel.target_name,
-                )
-
-        if removed_count > 0:
-            logger.info(
-                "Filtered %s orphan relationships (referenced entities were filtered by confidence)",
-                removed_count,
-            )
-
-        return filtered_relationships, removed_count
 
     @staticmethod
     def _log_completion_summary(stats: ExtractionStats) -> None:

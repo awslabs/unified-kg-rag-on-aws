@@ -469,6 +469,14 @@ Library API (Python callers and custom backends).
   the document `filters` of every instance in the claim's attributes, as
   entity and relationship merges do; claims are not filtered at query time,
   so retrieval does not change (#290).
+- `entity_confidence_threshold` is applied to each chunk's own extraction,
+  right after the grounding guard (as gleaning applies it), instead of to the
+  entity merged across the batch: the best score over the chunks extracted
+  together decided, so a full build and an incremental run kept different
+  entities. A chunk that scores an entity below the threshold no longer
+  cites it, and the chunk's relationships naming it are dropped; another
+  chunk's low score no longer removes a stub. Only non-default thresholds
+  are affected (#PR).
 - CloudWatch tracing (`enable_cloudwatch_tracing`): the task role keeps
   only `xray:PutTraceSegments`, the one action the X-Ray OTLP traces
   endpoint authorizes (a role with only `xray:PutSpans` gets a 403);

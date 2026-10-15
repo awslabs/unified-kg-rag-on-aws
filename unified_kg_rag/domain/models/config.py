@@ -1033,7 +1033,9 @@ class GraphExtractionConfig(BaseModel):
         ge=0.0,
         le=1.0,
         description="Minimum confidence score for filtering entities. "
-        "Entities below this threshold are excluded. Set to 0.0 to disable filtering. "
+        "Applied per text unit: an entity a chunk scored below this threshold is "
+        "dropped from that chunk, with the chunk's relationships naming it. Set to "
+        "0.0 to disable filtering. "
         "Compared against the normalized confidence: the prompt's 1-10 score / 10 "
         "(an integer 1 -> 0.1; decimal values <= 1 are taken as fractions).",
     )
