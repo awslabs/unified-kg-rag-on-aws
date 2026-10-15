@@ -293,9 +293,13 @@ Expected differences from AWS mode:
   form ("vendors" for "vendor"), matches only through the vector side. kNN
   search is exact: every document that passes the filters is scored, which
   is accurate but grows linearly with the index. Hybrid search min-max
-  normalizes each sub-query over its top `size` hits; OpenSearch 2.13 was
-  observed to normalize a sub-query that matches more documents than `size`
-  over a wider set, so fused scores and the order near the cut can differ.
+  normalizes each sub-query over its top `size` hits. OpenSearch 2.13 was
+  observed to drop the `size`-th hit of a lexical sub-query that matches more
+  documents than `size` and to normalize over a lower-ranked match in its
+  place, so the retriever asks both engines for one hit more than it returns:
+  the dropped hit is that spare one. OpenSearch's lexical minimum can still be
+  a lower match than the embedded engine's, so fused scores and the order
+  near the cut can differ.
 - The embedded vector store keeps each index it searches in memory (about
   documents x dimension x 4 bytes per vector field). It is sized for about
   100,000 documents per index and logs a warning when it loads a larger one;

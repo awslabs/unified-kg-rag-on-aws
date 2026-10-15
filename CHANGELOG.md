@@ -586,6 +586,11 @@ Library API (Python callers and custom backends).
   now takes each index's hits rank by rank. DRIFT's within-type ordering
   likewise no longer sorts graph entities (distance bands) together with
   entity-index hits (#PR).
+- Hybrid search on OpenSearch 2.13 (the version the CDK stack deploys) was
+  observed to drop the `size`-th hit of a lexical sub-query that matches more
+  than `size` documents and to min-max normalize over a lower match in its
+  place, which skewed the fused scores of the index. The retriever now asks a
+  hybrid search for one hit more than it returns (on both engines) (#PR).
 - LightRAG `hybrid` with no extracted keywords and a question too long for
   the raw-query fallback returned nothing without a word; it now logs a
   warning, as upstream does (#PR).

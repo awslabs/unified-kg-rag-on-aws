@@ -463,9 +463,10 @@ def test_build_search_request_other_list_filters_do_not_raise_size(
     body, _params = retriever._build_search_request(
         q, SearchType.HYBRID, ["name"], ["name_embedding"], [0.1]
     )
-    assert body["size"] == 10
+    # top_k plus the one spare hit a hybrid search asks for.
+    assert body["size"] == 11
     knn = body["query"]["hybrid"]["queries"][1]["knn"]["name_embedding"]
-    assert knn["k"] == 10
+    assert knn["k"] == 11
 
 
 def test_build_search_request_terms_floor_bounded_by_result_window(retriever) -> None:
@@ -477,6 +478,27 @@ def test_build_search_request_terms_floor_bounded_by_result_window(retriever) ->
         q, SearchType.LEXICAL, ["name"], [], None
     )
     assert body["size"] == retriever._max_result_window
+
+
+@pytest.mark.parametrize(
+    ("search_type", "fetched"),
+    [(SearchType.HYBRID, 6), (SearchType.LEXICAL, 5), (SearchType.VECTOR, 5)],
+)
+def test_hybrid_search_asks_for_one_spare_hit(
+    retriever, search_type: SearchType, fetched: int
+) -> None:
+    # OpenSearch 2.13 drops the size-th hit of a lexical sub-query matching
+    # more than size documents; the spare hit is the one it drops.
+    q = SearchQuery(query="x", top_k=5, search_type=search_type)
+    body, _params = retriever._build_search_request(
+        q, search_type, ["name"], ["name_embedding"], [0.1]
+    )
+    assert body["size"] == fetched
+    knn = body["query"]
+    if search_type == SearchType.HYBRID:
+        knn = knn["hybrid"]["queries"][1]
+    if search_type != SearchType.LEXICAL:
+        assert knn["knn"]["name_embedding"]["k"] == fetched
 
 
 class _Client:
@@ -497,6 +519,20 @@ class _Client:
                 ]
             }
         }
+
+
+async def test_hybrid_spare_hit_is_cut(retriever, config, mocker) -> None:
+    prefix = config.indexing.opensearch.text_units_index_prefix
+    client = _Client({prefix: [(f"t{i}", 1.0 - i / 10) for i in range(9)]})
+    object.__setattr__(retriever, "_opensearch_client", client)
+    mocker.patch.object(
+        OpenSearchRetriever, "_get_query_vector", mocker.AsyncMock(return_value=None)
+    )
+    results = await retriever.aretrieve(
+        SearchQuery(query="x", top_k=4, index_prefixes=[prefix])
+    )
+    assert client.bodies[0]["size"] == 5
+    assert [r.source for r in results] == ["t0", "t1", "t2", "t3"]
 
 
 async def test_index_sweep_takes_each_index_in_turn(retriever, config, mocker) -> None:

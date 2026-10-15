@@ -20,7 +20,9 @@ apart. A hybrid search fetches 50 hits, of which the top 10 are compared, and it
 queries match at most 50 documents lexically: OpenSearch 2.13
 (neural-search) was observed to min-max normalize a sub-query that matches more
 documents than the request's ``size`` over hits outside its top ``size``, so
-the two engines would normalize over different hits. Skipped unless
+the two engines would normalize over different hits (the retriever's spare
+hybrid hit keeps the hit 2.13 drops, but not its normalization minimum).
+Skipped unless
 ``LOCAL_STORES=1``.
 """
 
@@ -248,6 +250,28 @@ def test_hybrid_ranking_matches_opensearch(
         assert len(shared) >= 0.9 * _TOP
         for source in shared:
             assert mine[source] == pytest.approx(reference[source], abs=0.05)
+
+
+def test_hybrid_keeps_the_last_lexical_hit(tmp_path: Path) -> None:
+    # Five documents match "widget price" and the search returns four. OpenSearch
+    # 2.13 drops the size-th lexical hit of such a sub-query and normalizes
+    # over the worst match instead; the retriever's spare hit absorbs that, so
+    # both engines normalize over the same five hits.
+    units = [
+        TextUnit(
+            id=f"t{i}",
+            text="widget price " * (5 - i) + "filler about the Buyer contract " * i,
+        )
+        for i in range(5)
+    ] + [TextUnit(id="t-noise", text="Courier schedules nothing relevant here.")]
+    with _indexed_pair(tmp_path, units, "standard") as (sqlite, container):
+        (ours,), (theirs,) = (
+            _search(h, SearchType.HYBRID, ["widget price"], 4)
+            for h in (sqlite, container)
+        )
+    assert [r.source for r in theirs] == [r.source for r in ours]
+    for mine, reference in zip(ours, theirs, strict=True):
+        assert mine.score == pytest.approx(reference.score, abs=0.01)
 
 
 # In-word punctuation, possessives, stop words and inflections, in several
