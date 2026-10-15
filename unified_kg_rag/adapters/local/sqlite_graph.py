@@ -431,10 +431,10 @@ class SQLiteGraphIndexer(GraphIndexer):
     def close(self) -> None:
         self.store.close()
 
-    def initialize(self) -> bool:
+    def initialize(self) -> None:
         """Open the database (creating it and its schema)."""
         with self.store.read("initialize the graph store"):
-            return True
+            pass
 
     def _entity_label(self, suffix: str | None) -> str:
         return self._get_label(self.neptune_config.entity_label_prefix, suffix)
@@ -444,20 +444,13 @@ class SQLiteGraphIndexer(GraphIndexer):
 
     # --- writes --------------------------------------------------------------
 
-    def clear(self, suffixes: list[str]) -> bool:
+    def clear(self, suffixes: list[str]) -> None:
         if not suffixes:
-            return True
-        try:
-            with self.store.transaction("clear the graph") as connection:
-                for suffix in suffixes:
-                    self._drop_label(connection, self._entity_label(suffix))
-                    self._drop_label(connection, self._community_label(suffix))
-            return True
-        except GraphRAGException as e:
-            logger.error(
-                "Failed to clear graph data for suffixes '%s': %s", suffixes, e
-            )
-            return False
+            return
+        with self.store.transaction("clear the graph") as connection:
+            for suffix in suffixes:
+                self._drop_label(connection, self._entity_label(suffix))
+                self._drop_label(connection, self._community_label(suffix))
 
     def index_entities(
         self, entities: list[Entity], *, suffixes: Collection[str] = ()

@@ -205,7 +205,7 @@ class StoreHarness:
 
     def initialize(self) -> None:
         """Create the hybrid search pipeline (``OpenSearchIndexer.initialize``)."""
-        assert self.vector_indexer.initialize()
+        self.vector_indexer.initialize()
 
     # --- reads ---------------------------------------------------------------
 
@@ -316,10 +316,14 @@ class StoreHarness:
         errors: list[str] = []
         for harness in harnesses:
             if shared:
-                if not harness.graph_indexer.clear(suffixes):
-                    errors.append("graph clear failed")
-                if not harness.vector_indexer.clear(suffixes):
-                    errors.append("vector clear failed")
+                for name, indexer in (
+                    ("graph", harness.graph_indexer),
+                    ("vector", harness.vector_indexer),
+                ):
+                    try:
+                        indexer.clear(suffixes)
+                    except Exception as e:  # noqa: BLE001 - reported below
+                        errors.append(f"{name} clear failed ({e})")
                 harness._delete_pipeline()
             for store in (harness.graph_indexer, harness.vector_indexer):
                 store.close()

@@ -256,7 +256,7 @@ def test_full_reindex_keeps_one_index_per_alias(
             sibling: [],
         }
         assert harness.stored_ids("entities") == {"e-vendor", "e-buyer", "e-depot"}
-        assert indexer.clear(["default"])
+        indexer.clear(["default"])
         assert client.get_aliases_by_index(f"{alias}-*") == {sibling: []}
     finally:
         client.delete_indices([sibling])
@@ -272,12 +272,12 @@ def test_clear_keeps_sibling_namespaces(harness: StoreHarness) -> None:
     )
     for store, suffix in ((harness, tag), (harness, extended), (sibling, tag)):
         _write(store, "entities", "index", _entities(suffix))
-    assert harness.vector_indexer.clear([tag])
+    harness.vector_indexer.clear([tag])
     assert harness.stored_ids("entities", tag) == set()
     assert len(harness.stored_ids("entities", extended)) == 3
     assert len(sibling.stored_ids("entities", tag)) == 3
     # A namespace never indexed clears too.
-    assert harness.vector_indexer.clear([harness.suffix("never")])
+    harness.vector_indexer.clear([harness.suffix("never")])
 
 
 class _CountingFactory(HashingEmbeddingFactory):

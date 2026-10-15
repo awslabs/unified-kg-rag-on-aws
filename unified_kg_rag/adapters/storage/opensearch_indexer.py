@@ -325,68 +325,51 @@ class OpenSearchIndexer(VectorIndexer):
                 e,
             )
 
-    def clear(self, suffixes: list[str]) -> bool:
+    def clear(self, suffixes: list[str]) -> None:
         if not suffixes:
-            return True
+            return
 
-        # Initialized before the try so the except's log message cannot raise
-        # UnboundLocalError if building the alias list itself fails.
-        aliases_to_delete: list[str] = []
-        try:
-            aliases_to_delete = [
-                self._get_name(prefix, suffix)
-                for prefix in self._index_prefixes()
-                for suffix in suffixes
-            ]
+        aliases_to_delete = [
+            self._get_name(prefix, suffix)
+            for prefix in self._index_prefixes()
+            for suffix in suffixes
+        ]
 
-            # Only this namespace's own indices (``<alias>-<timestamp>``), by
-            # exact name: ``<alias>-*`` also matches the indices of a sibling
-            # namespace (``default-x`` under ``default``, ``acme-eu`` under
-            # ``acme``).
-            indices_to_delete = sorted(
-                {
-                    name
-                    for alias in aliases_to_delete
-                    for name in self.opensearch_client.get_aliases_by_index(
-                        f"{alias}-*"
-                    )
-                    if self._index_timestamp(alias, name) is not None
-                }
-            )
+        # Only this namespace's own indices (``<alias>-<timestamp>``), by
+        # exact name: ``<alias>-*`` also matches the indices of a sibling
+        # namespace (``default-x`` under ``default``, ``acme-eu`` under
+        # ``acme``).
+        indices_to_delete = sorted(
+            {
+                name
+                for alias in aliases_to_delete
+                for name in self.opensearch_client.get_aliases_by_index(f"{alias}-*")
+                if self._index_timestamp(alias, name) is not None
+            }
+        )
 
-            if indices_to_delete:
-                self.opensearch_client.delete_indices(indices_to_delete)
+        if indices_to_delete:
+            self.opensearch_client.delete_indices(indices_to_delete)
 
-            # Deleting an index drops its aliases. Only an alias still on an
-            # index is deleted: deleting aliases none of which exists (a
-            # namespace never indexed, or a store it never wrote) is a 404.
-            for alias in aliases_to_delete:
-                remaining = self.opensearch_client.get_indices_by_alias(alias)
-                if remaining:
-                    self.opensearch_client.delete_alias(
-                        index_names=remaining, alias_names=[alias]
-                    )
+        # Deleting an index drops its aliases. Only an alias still on an
+        # index is deleted: deleting aliases none of which exists (a
+        # namespace never indexed, or a store it never wrote) is a 404.
+        for alias in aliases_to_delete:
+            remaining = self.opensearch_client.get_indices_by_alias(alias)
+            if remaining:
+                self.opensearch_client.delete_alias(
+                    index_names=remaining, alias_names=[alias]
+                )
 
-            time.sleep(1)
-            logger.info("Cleared OpenSearch indices for '%s'", aliases_to_delete)
-            return True
-        except Exception as e:
-            logger.error(
-                "Failed to clear OpenSearch indices for '%s': %s", aliases_to_delete, e
-            )
-            return False
+        time.sleep(1)
+        logger.info("Cleared OpenSearch indices for '%s'", aliases_to_delete)
 
-    def initialize(self) -> bool:
-        try:
-            # Written on every run (the PUT is idempotent), so a changed
-            # search.hybrid weight replaces the one an earlier run stored.
-            pipeline_name = self.opensearch_config.hybrid_search_pipeline_name
-            self._put_hybrid_search_pipeline(pipeline_name)
-            logger.info("Wrote hybrid search pipeline: '%s'", pipeline_name)
-            return True
-        except Exception as e:
-            logger.error("Failed to initialize OpenSearch indexer: %s", e)
-            return False
+    def initialize(self) -> None:
+        # Written on every run (the PUT is idempotent), so a changed
+        # search.hybrid weight replaces the one an earlier run stored.
+        pipeline_name = self.opensearch_config.hybrid_search_pipeline_name
+        self._put_hybrid_search_pipeline(pipeline_name)
+        logger.info("Wrote hybrid search pipeline: '%s'", pipeline_name)
 
     def _put_hybrid_search_pipeline(self, pipeline_name: str) -> None:
         lex_weight, vec_weight = (

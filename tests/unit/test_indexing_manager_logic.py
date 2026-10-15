@@ -11,6 +11,8 @@ and ``_log_completion_summary``. Indexers are replaced with the in-memory
 
 from __future__ import annotations
 
+from datetime import datetime
+
 import pytest
 
 from tests.fixtures.fakes.stores import FakeGraphStore, FakeVectorStore
@@ -22,6 +24,7 @@ from unified_kg_rag.domain.models import (
     TextUnit,
 )
 from unified_kg_rag.ports.indexer import IndexingStats
+from unified_kg_rag.shared.exceptions import StoreAccessDeniedError
 
 pytestmark = pytest.mark.unit
 
@@ -409,3 +412,58 @@ def test_full_rebuild_empties_an_index_type_the_run_has_none_of(manager) -> None
     assert graph.ids("communities") == set()
     assert vector.ids("text_units") == {"t2"}
     assert graph.ids("entities") == {"e2"}
+
+
+# --- initialize / clear_all_data surface the store's error -----------------
+
+
+class _DeniedVectorStore(FakeVectorStore):
+    """A vector store whose writes are denied (e.g. a missing IAM action)."""
+
+    def initialize(self) -> None:
+        raise StoreAccessDeniedError("403 denied", reason="no es:ESHttpPut")
+
+    def clear(self, suffixes: list[str]) -> None:
+        raise StoreAccessDeniedError("403 denied", reason="no es:ESHttpDelete")
+
+
+def _denied_manager():
+    from unified_kg_rag.application.storage.indexing_manager import IndexingManager
+
+    return IndexingManager(
+        config=Config(),
+        vector_indexer=_DeniedVectorStore(),
+        graph_indexer=FakeGraphStore(),
+    )
+
+
+def test_initialize_raises_the_store_error() -> None:
+    # Was a bare False, which the stage turned into an untyped RuntimeError
+    # without the reason.
+    with pytest.raises(StoreAccessDeniedError, match="403 denied"):
+        _denied_manager().initialize()
+
+
+def test_clear_all_data_raises_the_store_error() -> None:
+    with pytest.raises(StoreAccessDeniedError, match="403 denied"):
+        _denied_manager().clear_all_data([TextUnit(id="t1", text="a")])
+
+
+@pytest.mark.parametrize("reset", [False, True])
+def test_indexing_stage_reports_the_store_error(mocker, reset: bool) -> None:
+    from unified_kg_rag.application.ingestion import pipeline_stages as ps
+    from unified_kg_rag.domain.models import PipelineContext, PipelineStageStatus
+
+    mocker.patch.object(ps, "IndexingManager", return_value=_denied_manager())
+    config = Config()
+    config.indexing.reset = reset
+    context = PipelineContext(
+        pipeline_id="pid",
+        config={},
+        status=PipelineStageStatus.RUNNING,
+        start_time=datetime(2026, 1, 1),
+        source_directory="/tmp/src",
+        text_units=[TextUnit(id="t1", text="a")],
+    )
+    with pytest.raises(StoreAccessDeniedError):
+        ps.IndexingStage(config=config)._execute_core(context)

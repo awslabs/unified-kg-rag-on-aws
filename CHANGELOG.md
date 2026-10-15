@@ -547,6 +547,14 @@ Library API (Python callers and custom backends).
   upgrading the file fails. The three embedded stores now share one SQLite
   connection, transaction and error helper (`adapters/local/sqlite_util.py`),
   so all three recognise a lock by SQLite's error code (#293).
+- Indexing stage: a store error while preparing the stores or clearing them
+  for `indexing.reset` (an access-denied, unreachable or misconfigured
+  OpenSearch, Neptune or SQLite store) now fails the stage with the store's
+  typed error and reason, logged with its traceback, instead of a bare
+  `Failed to initialize indexing pipeline` / `Failed to clear existing data`.
+  The `initialize()` and `clear()` methods of the `GraphIndexer` and
+  `VectorIndexer` ports return `None` and raise on failure; a custom backend
+  that reported failure by returning `False` must raise instead (#PR).
 - CloudWatch tracing (`enable_cloudwatch_tracing`): the task role keeps
   only `xray:PutTraceSegments`, the one action the X-Ray OTLP traces
   endpoint authorizes (a role with only `xray:PutSpans` gets a 403);

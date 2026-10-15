@@ -1400,8 +1400,7 @@ class IndexingStage(PipelineStage):
         if self.config.indexing.reset:
             logger.info("Clearing all existing data")
             text_units = context.translated_units or context.text_units
-            if not self.indexing_manager.clear_all_data(text_units=text_units):
-                raise RuntimeError("Failed to clear existing data before indexing")
+            self.indexing_manager.clear_all_data(text_units=text_units)
             # Also clear the DynamoDB doc-status registry. clear_all_data only
             # wipes OpenSearch + Neptune; leaving stale content-hash lineage would
             # make the NEXT incremental run classify re-ingested docs as
@@ -1415,8 +1414,7 @@ class IndexingStage(PipelineStage):
                     reset_suffixes(self.config, text_units),
                 )
 
-        if not self.indexing_manager.initialize():
-            raise RuntimeError("Failed to initialize indexing pipeline")
+        self.indexing_manager.initialize()
 
         text_units = context.translated_units or context.text_units
         entities = context.resolved_entities

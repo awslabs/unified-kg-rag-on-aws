@@ -93,7 +93,7 @@ def config(tmp_path: Path) -> Config:
 @pytest.fixture
 def indexer(config: Config) -> Any:
     indexer = SQLiteGraphIndexer(config)
-    assert indexer.initialize()
+    indexer.initialize()
     yield indexer
     indexer.close()
 
@@ -343,8 +343,8 @@ def test_clear_drops_the_suffixes(indexer: SQLiteGraphIndexer) -> None:
     _graph(indexer, [("a", "b")])
     indexer.upsert_entities([_entity("k", "keep")])
     indexer.upsert_communities([_community("c1", ["a"])])
-    assert indexer.clear([]) is True
-    assert indexer.clear(["default"]) is True
+    indexer.clear([])
+    indexer.clear(["default"])
     assert indexer.read_entity_names() == []
     assert _members(indexer) == set()
     assert indexer.read_entity_names("keep") == [("k", "K")]
@@ -774,7 +774,8 @@ def test_corrupt_database_is_a_configuration_error(tmp_path: Path) -> None:
     with pytest.raises(StoreConfigurationError):
         indexer.read_entities(["a"])
     assert indexer.read_entity_names() == []  # best-effort, as in Neptune
-    assert indexer.clear(["default"]) is False
+    with pytest.raises(StoreConfigurationError):
+        indexer.clear(["default"])
 
 
 async def test_locked_database_is_a_timeout(config: Config) -> None:

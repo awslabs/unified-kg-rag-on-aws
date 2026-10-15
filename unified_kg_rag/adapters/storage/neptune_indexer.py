@@ -73,10 +73,7 @@ class NeptuneIndexer(GraphIndexer):
         """Close the underlying Neptune websocket + thread pool (best-effort)."""
         self.neptune_client.close()
 
-    def clear(self, suffixes: list[str]) -> bool:
-        if not suffixes:
-            return True
-
+    def clear(self, suffixes: list[str]) -> None:
         labels_to_delete = {
             self._get_label(prefix, s)
             for prefix in (
@@ -85,18 +82,10 @@ class NeptuneIndexer(GraphIndexer):
             )
             for s in suffixes
         }
-
-        try:
-            if labels_to_delete:
-                logger.info("Clearing Neptune data for labels: %s", labels_to_delete)
-                for label in labels_to_delete:
-                    self._clear_existing_data_by_label(label)
-            return True
-        except Exception as e:
-            logger.error(
-                "Failed to clear Neptune data for suffixes '%s': %s", suffixes, e
-            )
-            return False
+        if labels_to_delete:
+            logger.info("Clearing Neptune data for labels: %s", labels_to_delete)
+        for label in labels_to_delete:
+            self._clear_existing_data_by_label(label)
 
     def read_entities(self, ids: list[str], suffix: str | None = None) -> list[Entity]:
         """Read existing entities by id (cross-run merge, text-unit removal).
@@ -227,8 +216,8 @@ class NeptuneIndexer(GraphIndexer):
             )
             return []
 
-    def initialize(self) -> bool:
-        return True
+    def initialize(self) -> None:
+        return None
 
     def index_entities(
         self, entities: list[Entity], *, suffixes: Collection[str] = ()

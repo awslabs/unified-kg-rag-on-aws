@@ -107,7 +107,6 @@ def test_prune_failure_blocks_commit_and_keeps_old_lineage(mocker) -> None:
     store.put(old)
 
     manager = mocker.MagicMock()
-    manager.initialize.return_value = True
     manager.config = Config()
     # The stale-artifact removal reports a failed delete.
     manager.delete_documents.return_value = {

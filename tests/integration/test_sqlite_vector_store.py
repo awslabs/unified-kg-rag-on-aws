@@ -189,7 +189,7 @@ def test_every_artifact_type_round_trips(tmp_path: Path) -> None:
     }
     try:
         # Full build.
-        assert indexer.initialize()
+        indexer.initialize()
         for stats in (
             indexer.index_text_units(_text_units()),
             indexer.index_entities(_entities()),
@@ -289,7 +289,7 @@ def test_retriever_search_types_through_the_registry(tmp_path: Path) -> None:
     providers = _providers(config)
     indexer = providers.build_vector_indexer()
     try:
-        assert indexer.initialize()
+        indexer.initialize()
         assert indexer.index_text_units(_text_units()).failed_items == 0
         assert indexer.index_entities(_entities()).failed_items == 0
         assert indexer.index_relationships(_relationships()).failed_items == 0

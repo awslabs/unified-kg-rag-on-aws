@@ -108,12 +108,16 @@ class BaseIndexer(ABC):
         self.stats = IndexingStats()
 
     @abstractmethod
-    def clear(self, suffixes: list[str]) -> bool:
-        pass
+    def clear(self, suffixes: list[str]) -> None:
+        """Delete the stored items of ``suffixes``.
+
+        Raises the backend's typed store error when the delete fails, so the
+        caller sees why (denied, unreachable, misconfigured).
+        """
 
     @abstractmethod
-    def initialize(self) -> bool:
-        pass
+    def initialize(self) -> None:
+        """Prepare the backend for writes; raises its typed store error."""
 
     def close(self) -> None:
         """Release any backing clients/connections. Default no-op.

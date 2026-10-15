@@ -104,14 +104,13 @@ class FakeGraphStore:
     def ids(self, collection: str) -> set[str]:
         return {item_id for _, item_id in self.data.get(collection, {})}
 
-    def clear(self, suffixes: list[str]) -> bool:
+    def clear(self, suffixes: list[str]) -> None:
         for bucket in self.data.values():
             for key in [key for key in bucket if key[0] in suffixes]:
                 del bucket[key]
-        return True
 
-    def initialize(self) -> bool:
-        return True
+    def initialize(self) -> None:
+        return None
 
     # --- writes ------------------------------------------------------------
 
@@ -295,7 +294,7 @@ class FakeVectorStore(_Recorder):
         # assert per-index routing (delete is fanned out once per index prefix).
         self.delete_calls: list[tuple[str, str]] = []
 
-    def clear(self, suffixes: list[str]) -> bool:
+    def clear(self, suffixes: list[str]) -> None:
         # Only the given suffixes' documents, like the per-alias delete.
         for bucket in self.data.values():
             for item_id in [
@@ -304,7 +303,6 @@ class FakeVectorStore(_Recorder):
                 if BaseIndexer.get_suffix(item) in suffixes
             ]:
                 del bucket[item_id]
-        return True
 
     def check_index_settings(self, suffix: str | None = None) -> None:
         # Records no index settings, so any run's match.
@@ -313,8 +311,8 @@ class FakeVectorStore(_Recorder):
     def set_doc_status_tracking(self, tracked: bool) -> None:
         return None
 
-    def initialize(self) -> bool:
-        return True
+    def initialize(self) -> None:
+        return None
 
     def _replace(
         self, collection: str, items: list[Any], suffixes: Collection[str]

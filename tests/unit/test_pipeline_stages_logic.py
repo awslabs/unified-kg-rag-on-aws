@@ -204,7 +204,6 @@ def _indexing_stage(
     from unified_kg_rag.application.ingestion import pipeline_stages as ps
 
     fake_mgr = mocker.MagicMock()
-    fake_mgr.initialize.return_value = True
     fake_mgr.index_all_data.return_value = indexing_results
     mocker.patch.object(ps, "IndexingManager", return_value=fake_mgr)
 

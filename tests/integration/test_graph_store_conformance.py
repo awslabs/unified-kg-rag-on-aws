@@ -245,7 +245,7 @@ def test_clear_keeps_sibling_namespaces(harness: StoreHarness) -> None:
         _graph(store, [("a", "b")], suffix)
         communities = [_community("c1", ["a"], suffix)]
         assert store.graph_indexer.upsert_communities(communities).failed_items == 0
-    assert harness.graph_indexer.clear([tag])
+    harness.graph_indexer.clear([tag])
     for store, suffix, left in (
         (harness, tag, set()),
         (harness, extended, {"a", "b"}),
