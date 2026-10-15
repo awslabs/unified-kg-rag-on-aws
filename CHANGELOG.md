@@ -371,6 +371,11 @@ Library API (Python callers and custom backends).
   environment, so with store endpoints exported a bare run used to write to
   the real stores. Pass `-m aws` to run them; any command-line `-m` replaces
   the default (#297).
+- CDK alarms: `OpenSearchJvmPressure` follows AWS's recommended OpenSearch
+  alarm (maximum at least 95% in 3 consecutive 1-minute periods; it was 85%
+  in one 5-minute period), and `NeptuneHighCpu` fires only after 90% CPU in
+  3 consecutive 5-minute periods, so normal bulk-indexing peaks no longer
+  page (#PR).
 - Context packing ranks sections by their retrieval score alone; the fixed
   per-type priority weights (text 1.3 ... general 0.8) are gone. The
   per-type shares (`search.token_manager.type_budgets`) already decided the

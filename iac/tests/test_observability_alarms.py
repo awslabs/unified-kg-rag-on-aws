@@ -87,3 +87,15 @@ def test_store_alarms_watch_the_paths_the_app_uses() -> None:
 def test_free_storage_threshold_follows_volume_size() -> None:
     alarm = _alarms({"opensearch_volume_gib": 100})["OpenSearchFreeStorageLow"]
     assert alarm["Threshold"] == 100 * 1024 * 0.4
+
+
+def test_resource_alarms_need_sustained_pressure() -> None:
+    alarms = _alarms()
+    # AWS's recommended OpenSearch alarm: maximum >= 95% in 3 consecutive
+    # 1-minute periods.
+    jvm = alarms["OpenSearchJvmPressure"]
+    assert (jvm["Statistic"], jvm["Threshold"]) == ("Maximum", 95)
+    assert (jvm["Period"], jvm["EvaluationPeriods"]) == (60, 3)
+    # Bulk edge writes saturate the Neptune writer briefly by design.
+    cpu = alarms["NeptuneHighCpu"]
+    assert (cpu["Period"], cpu["EvaluationPeriods"]) == (300, 3)
