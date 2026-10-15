@@ -603,18 +603,17 @@ class HybridScorer:
         return [results[i] for i in selected_indices]
 
     def _apply_bedrock_reranking(
-        self, results: list[RetrievalResult], query: str, scope: str = "all"
+        self, results: list[RetrievalResult], query: str, scope: str
     ) -> tuple[list[RetrievalResult], RerankStage]:
         """``results`` reordered by the rerank model, and the step's outcome.
+
+        The caller (``fuse_and_rerank_results``) has already checked that a
+        rerank model is set and that there are candidates and a query.
 
         A failed or empty rerank keeps ``results`` (status ``failed``) unless
         ``search.reranking.required`` is set, which raises
         ``RerankModelError`` instead.
         """
-        if not self.rerank_model:
-            return results, self._stage(scope, *self._inactive)
-        if not results:
-            return results, self._stage(scope, RerankStatus.SKIPPED, "no candidates")
         required = self.config.search.reranking.required
 
         try:

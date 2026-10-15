@@ -772,7 +772,7 @@ class TestRerankDegradation:
 
         scorer.rerank_model = _BoomModel()
         results = [_r("a", 0.9, "1"), _r("b", 0.8, "2")]
-        out, stage = scorer._apply_bedrock_reranking(results, query="q")
+        out, stage = scorer._apply_bedrock_reranking(results, query="q", scope="all")
         assert out == results  # unchanged on failure
         assert stage.status == "failed"
         assert _BoomModel.top_n == 5  # restored in finally
