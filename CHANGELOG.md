@@ -365,12 +365,12 @@ Library API (Python callers and custom backends).
   `processing.io_workers` (64 by default; it was 80) (#296).
 - CI installs uv 0.12.23 in every workflow instead of whatever release
   `setup-uv` resolves on the day, so a uv release cannot change lock
-  handling under an unchanged commit (#PR).
+  handling under an unchanged commit (#297).
 - A plain `uv run pytest` no longer selects the real-AWS (`aws`-marked)
   tests: `-m "not aws"` is in pytest's `addopts`. Those tests keep the real
   environment, so with store endpoints exported a bare run used to write to
   the real stores. Pass `-m aws` to run them; any command-line `-m` replaces
-  the default (#PR).
+  the default (#297).
 - Context packing ranks sections by their retrieval score alone; the fixed
   per-type priority weights (text 1.3 ... general 0.8) are gone. The
   per-type shares (`search.token_manager.type_budgets`) already decided the
@@ -501,16 +501,16 @@ Library API (Python callers and custom backends).
   rather than reaching index names and graph labels. An embedding model
   that reports no dimension no longer silently gets a 1024-dimension index:
   it uses `indexing.opensearch.embedding_dimension`, and without one the run
-  fails with a message naming that key (#PR).
+  fails with a message naming that key (#297).
 - `indexing.neptune.retry_delay_seconds: 0` is accepted with the default
   `max_attempts` and retries at once, as its description says; a validator
-  rejected it whenever `max_attempts` was above 1 (#PR).
+  rejected it whenever `max_attempts` was above 1 (#297).
 - `processing.ignore_errors` is documented for what it does: it decides
   whether a whole step that fails (a batch call, a translation language, an
   evaluator, global map/reduce, the DRIFT primer, the auto router) raises or
   degrades. Items whose own LLM call fails are always skipped and reported;
   the old "skip items whose LLM step fails" wording described that as the
-  flag's job (#PR).
+  flag's job (#297).
 - A NaN, infinite or negative relationship strength from the model no longer
   kills ingestion at community detection. Leiden panics on a NaN weight with
   an exception no error handler catches (and rejects infinite ones), and a
