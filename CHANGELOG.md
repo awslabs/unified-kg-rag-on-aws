@@ -484,6 +484,12 @@ Library API (Python callers and custom backends).
   28 s. Restart the stack (`down` and `up`) to pick it up (#265).
 
 ### Fixed
+- `processing.ignore_errors` is documented for what it does: it decides
+  whether a whole step that fails (a batch call, a translation language, an
+  evaluator, global map/reduce, the DRIFT primer, the auto router) raises or
+  degrades. Items whose own LLM call fails are always skipped and reported;
+  the old "skip items whose LLM step fails" wording described that as the
+  flag's job (#PR).
 - A NaN, infinite or negative relationship strength from the model no longer
   kills ingestion at community detection. Leiden panics on a NaN weight with
   an exception no error handler catches (and rejects infinite ones), and a

@@ -1143,7 +1143,10 @@ class ProcessingConfig(BaseModel):
     )
     ignore_errors: bool = Field(
         default=False,
-        description="Ignore errors and continue processing",
+        description="Degrade instead of raising when a whole step fails "
+        "(a batch call, a translation language, an evaluator, global "
+        "map/reduce, the DRIFT primer, the auto router). Items whose own LLM "
+        "call fails are always skipped and reported, whatever this says.",
     )
     deduplicate: bool = Field(
         default=False, description="Enable document deduplication"
