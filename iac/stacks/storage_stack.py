@@ -222,6 +222,17 @@ class StorageStack(Stack):
         # A multi-node domain spans as many AZs as it has nodes, up to 3 and
         # up to the AZs available, so 3 nodes in a 3-AZ VPC use all three.
         zone_count = min(self.config.opensearch_count, len(selected), 3)
+        # OpenSearch rejects an odd data node count in two AZs at deploy time
+        # ("You must choose an even number of data nodes for a two
+        # Availability Zone deployment"); fail at synth instead. Three AZs
+        # take any count (a multiple of three is only recommended).
+        if multi_node and zone_count == 2 and self.config.opensearch_count % 2:
+            raise ValueError(
+                f"opensearch_count={self.config.opensearch_count} is odd, but the "
+                "domain spans 2 AZs and OpenSearch needs an even number of data "
+                "nodes there. Use an even opensearch_count, or a VPC with 3 AZs "
+                "(max_azs=3 for a created VPC)."
+            )
         zone_awareness = (
             opensearch.ZoneAwarenessConfig(
                 enabled=True, availability_zone_count=zone_count

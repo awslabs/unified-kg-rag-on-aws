@@ -19,7 +19,8 @@ Context keys (all optional; sensible defaults shown):
                                        endpoints, NO NAT (data plane has no
                                        internet egress);
                                        "public"   -> private-with-NAT subnets
-  max_azs             2                AZs for a newly-created VPC
+  max_azs             2                AZs for a newly-created VPC (>=2:
+                                       Neptune needs subnets in two AZs)
 
   # --- Storage: reuse vs create ---
   cache_bucket_name   None             reuse an existing S3 cache bucket (else
@@ -32,7 +33,8 @@ Context keys (all optional; sensible defaults shown):
   neptune_instances   dev:1/else:2     Neptune instances (>=2 => Multi-AZ HA)
   opensearch_instance "r6g.large.search"  OpenSearch data node type (Graviton)
   opensearch_count    dev:1/else:2     OpenSearch data node count (>1 =>
-                                       zone-aware multi-node + 3 dedicated masters)
+                                       zone-aware multi-node + 3 dedicated masters;
+                                       even when the domain spans 2 AZs)
   opensearch_master_instance "m6g.large.search"  dedicated master type when
                                        opensearch_count > 1 (8 GiB Graviton; sized
                                        for <=10 nodes / 10K shards on OS 2.13)
@@ -345,7 +347,9 @@ class DeploymentConfig:
             bedrock_region=ctx("bedrock_region"),
             vpc_id=ctx("vpc_id"),
             network_mode=network_mode,
-            max_azs=as_int("max_azs", 2),
+            # The Neptune cluster needs subnets in at least two AZs, so a
+            # one-AZ VPC can never synth.
+            max_azs=as_int("max_azs", 2, minimum=2),
             cache_bucket_name=ctx("cache_bucket_name"),
             corpus_bucket_name=ctx("corpus_bucket_name"),
             neptune_instance=str(ctx("neptune_instance", "db.r6g.large")),

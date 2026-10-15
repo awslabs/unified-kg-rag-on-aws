@@ -1936,7 +1936,8 @@ review → merge the useful prompts + tune `entity_types` by hand → re-ingest.
 ### IAM permissions
 
 Grant the principal running the CLIs access to: Bedrock (InvokeModel /
-InvokeModelWithResponseStream for your model IDs, plus embeddings), Neptune
+InvokeModelWithResponseStream / CountTokens for your model IDs, plus
+embeddings; without CountTokens token counts fall back to estimates), Neptune
 (connect / SigV4 for `use_iam: true`), OpenSearch (read/write the configured
 indices), S3 (the configured bucket), and DynamoDB (when incremental indexing is
 on).

@@ -59,6 +59,7 @@ def test_booleans_accept_the_usual_spellings(value: Any, expected: bool) -> None
         ("backup_retention_days", "36", "backup_retention_days must be at most 35"),
         ("opensearch_count", "0", "opensearch_count must be at least 1"),
         ("neptune_instances", "0", "neptune_instances must be at least 1"),
+        ("max_azs", "1", "max_azs must be at least 2"),
         ("opensearch_volume_gib", "abc", "opensearch_volume_gib must be an integer"),
     ],
 )

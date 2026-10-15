@@ -75,8 +75,8 @@ def test_corpus_bucket_is_granted_read_only() -> None:
 
 @pytest.mark.parametrize(
     ("context", "replicas"),
-    [({}, "0"), ({"env_name": "prod"}, "1"), ({"opensearch_count": 3}, "1")],
-    ids=["dev-single-node", "prod-multi-node", "three-nodes"],
+    [({}, "0"), ({"env_name": "prod"}, "1"), ({"opensearch_count": 4}, "1")],
+    ids=["dev-single-node", "prod-multi-node", "four-nodes"],
 )
 def test_opensearch_replicas_follow_node_count(
     context: dict[str, Any], replicas: str
@@ -166,3 +166,26 @@ def test_foundation_model_arns_keep_the_inference_profile_grants() -> None:
 def test_listed_inference_profile_arns_are_used_exactly() -> None:
     resources = _invoke_resources({"bedrock_model_arns": f"{_MODEL},{_PROFILE}"})
     assert resources == [_MODEL, _PROFILE]
+
+
+def test_count_tokens_is_granted_on_the_model_resources() -> None:
+    # The app counts tokens with CountTokens for models that accept it; the
+    # action authorizes against foundation-model ARNs, so it sits in the
+    # InvokeModel statement. Without it every count silently degrades to an
+    # estimate (AccessDenied is caught by the counter).
+    (statement,) = [
+        s
+        for p in _compute_template().find_resources("AWS::IAM::Policy").values()
+        for s in p["Properties"]["PolicyDocument"]["Statement"]
+        if "bedrock:InvokeModel" in s["Action"]
+    ]
+    assert "bedrock:CountTokens" in statement["Action"]
+
+
+def test_cluster_keeps_container_insights_on() -> None:
+    # The only per-task CPU/memory source (README "Cost drivers"); cdk-nag
+    # AwsSolutions-ECS4 requires it.
+    (cluster,) = _compute_template().find_resources("AWS::ECS::Cluster").values()
+    assert cluster["Properties"]["ClusterSettings"] == [
+        {"Name": "containerInsights", "Value": "enabled"}
+    ]

@@ -371,6 +371,11 @@ Library API (Python callers and custom backends).
   environment, so with store endpoints exported a bare run used to write to
   the real stores. Pass `-m aws` to run them; any command-line `-m` replaces
   the default (#297).
+- CDK alarms: `OpenSearchJvmPressure` follows AWS's recommended OpenSearch
+  alarm (maximum at least 95% in 3 consecutive 1-minute periods; it was 85%
+  in one 5-minute period), and `NeptuneHighCpu` fires only after 90% CPU in
+  3 consecutive 5-minute periods, so normal bulk-indexing peaks no longer
+  page (#298).
 - Context packing ranks sections by their retrieval score alone; the fixed
   per-type priority weights (text 1.3 ... general 0.8) are gone. The
   per-type shares (`search.token_manager.type_budgets`) already decided the
@@ -642,6 +647,28 @@ Library API (Python callers and custom backends).
   only LightRAG `mix`/`hybrid` use the relationship vector index; `local`
   (relationship section, bridge relationships), `simple` and `drift` query it
   too (#295).
+- Operations guide: the CDK alarm section lists all eleven alarms, adding
+  the seven store-health alarms (OpenSearch, DynamoDB, Neptune) with what
+  each one means and what to do; it said "four alarms". An IaC test now
+  fails when an alarm or dashboard widget names an EMF metric that is not a
+  `PipelineMetrics` field, so renaming a field cannot silently blank an
+  alarm (#298).
+- `iac/README.md` cost drivers list CloudWatch Container Insights, which the
+  ECS cluster always has on (billed custom metrics and performance log
+  events), and why it stays on: it is the only per-task CPU and memory
+  source for sizing the Fargate task (#298).
+- CDK: a zone-aware OpenSearch domain that would span 2 AZs with an odd
+  `opensearch_count` (for example `3` with `max_azs=2`) fails at synth with a
+  message naming both keys; OpenSearch rejected it only at deploy time
+  ("You must choose an even number of data nodes for a two Availability Zone
+  deployment") (#298).
+- CDK: `-c max_azs=1` is rejected when the context is read ("max_azs must be
+  at least 2"); a one-AZ VPC never synthesized, because the Neptune cluster
+  needs subnets in two AZs, and failed later with a less direct error (#298).
+- CDK task role: `bedrock:CountTokens` is granted with `InvokeModel` on the
+  same model ARNs, so models that accept CountTokens get exact token counts
+  on the deployed stack instead of silently falling back to estimates after
+  an `AccessDenied` (#298).
 - CloudWatch tracing (`enable_cloudwatch_tracing`): the task role keeps
   only `xray:PutTraceSegments`, the one action the X-Ray OTLP traces
   endpoint authorizes (a role with only `xray:PutSpans` gets a 403);

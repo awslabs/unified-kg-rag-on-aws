@@ -250,11 +250,19 @@ class ObservabilityStack(Stack):
             f"(<{free_storage_mib / 1024:g} GiB on a node)",
             comparison=cw.ComparisonOperator.LESS_THAN_OR_EQUAL_TO_THRESHOLD,
         )
+        # AWS's recommended alarm ("Recommended CloudWatch alarms for Amazon
+        # OpenSearch Service"): JVMMemoryPressure maximum >= 95% for 1 minute,
+        # 3 consecutive times. Heap pressure swings with garbage collection
+        # during bulk indexing, so one high 5-minute maximum is not a fault.
         _alarm(
             "OpenSearchJvmPressure",
-            domain.metric_jvm_memory_pressure(period=Duration.minutes(5)),
-            85,
-            "OpenSearch JVM memory pressure is high (>85%)",
+            domain.metric_jvm_memory_pressure(
+                period=Duration.minutes(1), statistic="Maximum"
+            ),
+            95,
+            "OpenSearch JVM memory pressure is at least 95% for 3 consecutive "
+            "minutes (out-of-memory risk)",
+            evaluation_periods=3,
         )
         # DynamoDB doc-status registry: throttled writes mean delta/lineage
         # updates are being rejected, which silently corrupts incremental-indexing
@@ -289,11 +297,17 @@ class ObservabilityStack(Stack):
                 period=Duration.minutes(minutes),
             )
 
+        # AWS publishes no recommended Neptune CPU alarm, and Neptune's metric
+        # best practices note that high CPU can be appropriate: a bulk edge
+        # write saturates the writer by design. Alarm only on saturation that
+        # lasts three consecutive 5-minute periods.
         _alarm(
             "NeptuneHighCpu",
             _neptune_metric("CPUUtilization"),
             90,
-            "Neptune CPU utilization is high (>90%) — ingestion writes may stall",
+            "Neptune CPU utilization is at least 90% for 15 minutes — "
+            "ingestion writes and queries may stall",
+            evaluation_periods=3,
         )
         _alarm(
             "NeptuneLowFreeableMemory",
