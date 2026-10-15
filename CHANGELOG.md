@@ -366,12 +366,12 @@ Library API (Python callers and custom backends).
 - `run-eval` generates up to `processing.max_concurrency` (20 by default)
   answers at once instead of sequential chunks of 10 queries. Lower
   `processing.max_concurrency` for an evaluation run that hits Bedrock or
-  store throttling (#PR).
+  store throttling (#301).
 - `BatchProcessor.aexecute_with_fallback` takes no `batch_func`: each item
   is one awaited `sequential_func` call (`Runnable.ainvoke`), as on the sync
   path. A one-input `abatch(..., return_exceptions=True)` first call was the
   same `ainvoke` with the error returned in place; a caller still passing
-  `batch_func=` gets a `TypeError` (#PR).
+  `batch_func=` gets a `TypeError` (#301).
 - CI installs uv 0.12.23 in every workflow instead of whatever release
   `setup-uv` resolves on the day, so a uv release cannot change lock
   handling under an unchanged commit (#297).
@@ -526,7 +526,7 @@ Library API (Python callers and custom backends).
   come on top of `max_attempts` retries, so default ingestion made 6 calls
   per failing item (now at most 5), and `max_attempts: 1` still retried
   once: the global-search map step and `run-eval` answer generation, which
-  leave retries to the query chain, ran each failed call twice (#PR).
+  leave retries to the query chain, ran each failed call twice (#301).
 - Configuration errors raise `ConfigurationError` (still a `ValueError`)
   instead of a bare `ValueError`: an unknown embedding model or unsupported
   `indexing.opensearch.embedding_dimension`, a missing S3 `bucket_name`, a
