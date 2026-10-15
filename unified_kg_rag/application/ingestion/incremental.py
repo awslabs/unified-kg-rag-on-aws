@@ -1549,35 +1549,28 @@ def clear_registry_namespaces(
     ``record_in_namespaces``); else it is kept.
 
     Uses the port's list_all + delete so no new port method is needed.
-    Raises :class:`DocStatusRegistryError` when the registry cannot be
-    cleared: the stores are already wiped, and a stale record would make the
-    next incremental run skip its re-ingested document as unchanged, so the
-    reset fails here rather than leave the registry out of step.
+    The registry adapters raise :class:`DocStatusRegistryError` when the
+    registry cannot be cleared, and it propagates as is (like any other
+    typed error, e.g. a configuration error): the stores are already wiped,
+    and a stale record would make the next incremental run skip its
+    re-ingested document as unchanged, so the reset fails here rather than
+    leave the registry out of step.
     """
-    try:
-        store = doc_status()
-        records = [
-            record
-            for record in store.list_all()
-            if record_in_namespaces(record, namespaces, suffixes)
-        ]
-        # Write-ahead lineage overflow is not listed as records.
-        store.delete_lineage_overflow([record.doc_id for record in records])
-        for record in records:
-            store.delete(record.doc_id)
-        logger.info(
-            "Cleared %s doc-status registry records of namespaces %s on reset",
-            len(records),
-            ", ".join(sorted(namespaces)),
-        )
-    except DocStatusRegistryError:
-        raise
-    except Exception as e:
-        raise DocStatusRegistryError(
-            f"Doc-status registry: could not clear it on reset "
-            f"({type(e).__name__}: {e}). The stores were cleared; re-run the "
-            "reset once the registry is reachable."
-        ) from e
+    store = doc_status()
+    records = [
+        record
+        for record in store.list_all()
+        if record_in_namespaces(record, namespaces, suffixes)
+    ]
+    # Write-ahead lineage overflow is not listed as records.
+    store.delete_lineage_overflow([record.doc_id for record in records])
+    for record in records:
+        store.delete(record.doc_id)
+    logger.info(
+        "Cleared %s doc-status registry records of namespaces %s on reset",
+        len(records),
+        ", ".join(sorted(namespaces)),
+    )
 
 
 def warn_about_unapplied_retired_scopes(

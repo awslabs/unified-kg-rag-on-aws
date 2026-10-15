@@ -1731,6 +1731,10 @@ Library API (Python callers and custom backends).
   filters, and the vector store's `attr_*` fields followed. An item without
   attributes now has none (`None`) on both paths; resolution gave it `{}`
   (#304).
+- An `indexing.reset` whose doc-status registry cannot be cleared raises the
+  registry adapter's own error: a configuration error (for example a missing
+  table name) is no longer reported as a `DocStatusRegistryError` asking to
+  re-run once the registry is reachable (#PR).
 
 ### Removed
 - `Entity.frequency`: it counted an entity's text units in every merge path

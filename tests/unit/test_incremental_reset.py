@@ -320,8 +320,9 @@ def test_reset_fails_when_the_registry_cannot_be_cleared(mocker) -> None:
     from unified_kg_rag.shared.exceptions import DocStatusRegistryError
 
     class _UnreachableStore(FakeDocStatusStore):
+        # The registry adapters raise their errors as DocStatusRegistryError.
         def list_all(self):
-            raise ConnectionError("registry unreachable")
+            raise DocStatusRegistryError("registry unreachable")
 
     store = _UnreachableStore()
     config = _reset_config()
@@ -329,6 +330,29 @@ def test_reset_fails_when_the_registry_cannot_be_cleared(mocker) -> None:
     context = _context()
     context.text_units = [TextUnit(id="tu-a", text="x", document_ids=["doc-a"])]
 
-    with pytest.raises(DocStatusRegistryError, match="could not clear"):
+    with pytest.raises(DocStatusRegistryError, match="registry unreachable"):
         stage._execute_core(context)
+    stage.indexing_manager.index_all_data.assert_not_called()
+
+
+def test_reset_surfaces_a_registry_configuration_error_as_itself(mocker) -> None:
+    # A misconfigured registry is not a reachability problem: the reset must
+    # not rewrap it as a DocStatusRegistryError telling the user to re-run
+    # once the registry is reachable.
+    from unified_kg_rag.shared.exceptions import (
+        ConfigurationError,
+        DocStatusRegistryError,
+    )
+
+    class _MisconfiguredStore(FakeDocStatusStore):
+        def list_all(self):
+            raise ConfigurationError("aws.dynamodb.table_name must be set")
+
+    stage = _reset_stage(mocker, _reset_config(), _MisconfiguredStore())
+    context = _context()
+    context.text_units = [TextUnit(id="tu-a", text="x", document_ids=["doc-a"])]
+
+    with pytest.raises(ConfigurationError, match="table_name must be set") as info:
+        stage._execute_core(context)
+    assert not isinstance(info.value, DocStatusRegistryError)
     stage.indexing_manager.index_all_data.assert_not_called()
