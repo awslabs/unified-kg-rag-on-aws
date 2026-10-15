@@ -357,6 +357,27 @@ class TestSampleAndParse:
 
 
 class TestRenderExample:
+    def test_types_render_uppercase_as_the_rules_ask(self) -> None:
+        # Regression: the merge step stores entity types lower-cased, so the
+        # examples showed <type>organization</type> under rules asking for
+        # UPPERCASE types.
+        from unified_kg_rag.domain.models import Entity, Relationship
+
+        text = "Vendor supplies Buyer."
+        entities = [Entity(id="e1", name="Vendor", type="organization")]
+        rel = Relationship(
+            id="r1",
+            source_id="e1",
+            source_name="Vendor",
+            target_id="e2",
+            target_name="Buyer",
+            type="supplies",
+            text_unit_ids=[],
+        )
+        rendered = PromptTuner._render_example(text, entities, [rel])
+        assert "<type>ORGANIZATION</type>" in rendered
+        assert "<type>SUPPLIES</type>" in rendered
+
     def test_record_without_a_verbatim_span_is_left_out(self) -> None:
         from unified_kg_rag.domain.models import Entity
 

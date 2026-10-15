@@ -494,6 +494,9 @@ Library API (Python callers and custom backends).
   cites it, and the chunk's relationships naming it are dropped; another
   chunk's low score no longer removes a stub. Only non-default thresholds
   are affected (#291).
+- `run-prompt-tuning`: the corpus-grounded few-shot examples show entity and
+  relationship types UPPERCASE, as the extraction rules they follow ask;
+  entity types came out lower-cased (`<type>organization</type>`) (#PR).
 - Query translation: a refusal written with a typographic apostrophe
   ("I’m sorry, …") is caught like its ASCII form and the original query is
   searched; the follow-up rewrite guard and the translation guard now share
