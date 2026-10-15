@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -115,3 +116,39 @@ def test_rag_chain_has_no_build_retriever_pass_through() -> None:
     from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain
 
     assert not hasattr(GraphRAGChain, "_build_retriever")
+
+
+def test_dynamodb_batch_backoff_waits_only_between_requests(mocker) -> None:
+    from unified_kg_rag.adapters.aws import dynamodb
+
+    sleep = mocker.patch.object(dynamodb.time, "sleep")
+    dynamodb._backoff_before(0)
+    sleep.assert_not_called()
+    dynamodb._backoff_before(3)
+    dynamodb._backoff_before(10)
+    assert [c.args[0] for c in sleep.call_args_list] == [pytest.approx(0.4), 2.0]
+
+
+def test_full_and_delta_indexing_write_the_same_artifact_types(mocker) -> None:
+    """Both paths come from one (full writer, delta writer) table, so a type
+    cannot be indexed by one and forgotten by the other."""
+    from unified_kg_rag.application.storage.indexing_manager import IndexingManager
+
+    vector, graph = mocker.MagicMock(), mocker.MagicMock()
+    manager = IndexingManager(
+        config=Config(), vector_indexer=vector, graph_indexer=graph
+    )
+    mocker.patch.object(manager, "_log_completion_summary")
+    artifacts: dict[str, Any] = {
+        "text_units": [SimpleNamespace(id="t", community_ids=None)],
+        "entities": ["e"],
+        "relationships": ["r"],
+        "communities": [SimpleNamespace(id="c", text_unit_ids=[])],
+        "community_reports": ["cr"],
+        "claims": ["cl"],
+    }
+    full = manager.index_all_data(**artifacts)
+    delta = manager.index_delta(**artifacts)
+    assert set(full) == set(delta)
+    graph.index_relationships.assert_called_once_with(["r"])  # the full build
+    graph.upsert_relationships.assert_called_once_with(["r"])  # the delta

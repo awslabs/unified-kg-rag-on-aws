@@ -234,10 +234,7 @@ class DynamoDBDocStatusStore:
         request: dict[str, Any] = {self.table_name: table}
         items: list[dict[str, Any]] = []
         for attempt in range(_BATCH_GET_MAX_ATTEMPTS):
-            if attempt:
-                time.sleep(
-                    min(_BATCH_GET_MAX_DELAY, _BATCH_GET_BASE_DELAY * 2**attempt)
-                )
+            _backoff_before(attempt)
             with self._registry_errors("read records"):
                 response = self.client.batch_get_item(RequestItems=request)
             items.extend(response.get("Responses", {}).get(self.table_name, []))
@@ -285,10 +282,7 @@ class DynamoDBDocStatusStore:
             self.table_name: [{"PutRequest": {"Item": item}} for item in items]
         }
         for attempt in range(_BATCH_GET_MAX_ATTEMPTS):
-            if attempt:
-                time.sleep(
-                    min(_BATCH_GET_MAX_DELAY, _BATCH_GET_BASE_DELAY * 2**attempt)
-                )
+            _backoff_before(attempt)
             with self._registry_errors("write records"):
                 response = self.client.batch_write_item(RequestItems=request)
             request = dict(response.get("UnprocessedItems") or {})
@@ -699,6 +693,13 @@ class DynamoDBDocStatusStore:
             created_at=_str("created_at"),
             updated_at=_str("updated_at"),
         )
+
+
+def _backoff_before(attempt: int) -> None:
+    """Wait before re-sending a batch's unprocessed items (none before the
+    first request)."""
+    if attempt:
+        time.sleep(min(_BATCH_GET_MAX_DELAY, _BATCH_GET_BASE_DELAY * 2**attempt))
 
 
 def _is_overflow(item: dict[str, Any]) -> bool:
