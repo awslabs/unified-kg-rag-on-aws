@@ -152,3 +152,29 @@ def test_full_and_delta_indexing_write_the_same_artifact_types(mocker) -> None:
     assert set(full) == set(delta)
     graph.index_relationships.assert_called_once_with(["r"])  # the full build
     graph.upsert_relationships.assert_called_once_with(["r"])  # the delta
+
+
+@pytest.mark.parametrize(
+    "module", ["run_rag_chain", "run_evaluation", "run_ingestion_pipeline"]
+)
+def test_clis_show_the_package_version(module: str) -> None:
+    import importlib
+
+    import unified_kg_rag
+
+    cli = importlib.import_module(f"unified_kg_rag.application.cli.{module}")
+    assert cli.__version__ is unified_kg_rag.__version__
+    assert not hasattr(cli, "version")  # no second lookup via importlib.metadata
+
+
+def test_registry_default_namespace_is_the_default_index_suffix() -> None:
+    import inspect
+
+    from unified_kg_rag.application.ingestion import incremental
+    from unified_kg_rag.domain.models import Constants
+    from unified_kg_rag.shared.utils.document_identity import DEFAULT_NAMESPACE
+
+    assert DEFAULT_NAMESPACE is Constants.DEFAULT_SUFFIX.value
+    for fn in (incremental.build_document_lineage, incremental.IncrementalIndexer):
+        default = inspect.signature(fn).parameters["suffix"].default
+        assert default is DEFAULT_NAMESPACE

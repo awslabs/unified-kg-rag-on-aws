@@ -38,6 +38,8 @@ import re
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import TYPE_CHECKING
 
+from unified_kg_rag.domain.models.config import Constants
+
 from .common import compute_hash, generate_stable_id
 
 if TYPE_CHECKING:
@@ -52,7 +54,9 @@ REGISTRY_NAMESPACE_KEY = "registry_namespace"
 # from (``document_parsing.source_scope``, else the resolved source directory).
 REGISTRY_SOURCE_KEY = "registry_source"
 
-DEFAULT_NAMESPACE = "default"
+# A document without an index value is registered under the default index
+# suffix.
+DEFAULT_NAMESPACE: str = Constants.DEFAULT_SUFFIX.value
 
 _ID_HASH_LENGTH = 32
 
