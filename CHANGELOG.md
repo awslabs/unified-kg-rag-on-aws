@@ -419,7 +419,7 @@ Library API (Python callers and custom backends).
   root alone returns 404; the runbook covers Langfuse v4 (its default
   `events_only` mode serves spans from `/api/public/v2/observations`), limits
   the ingestion-version header warning to Langfuse Cloud and says sessions
-  need `conversation_id`. Verified against self-hosted Langfuse v4 and v3 (#PR).
+  need `conversation_id`. Verified against self-hosted Langfuse v4 and v3 (#285).
 - A CDK deployment indexes Korean text: an Amazon OpenSearch Service domain
   has no `nori` analyzer unless its optional Nori package is associated, so
   with the default `language_analyzers` (`ko: nori`) a Korean corpus or target
