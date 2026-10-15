@@ -205,6 +205,23 @@ Library API (Python callers and custom backends).
   `IndexingManager.index_delta` no longer merges with the stored graph
   (`merge_with_existing_graph`), and `read_entities` /
   `read_relationships` take the index `suffix` (#163).
+- Ingestion and storage call shapes:
+  - `DirectoryLoader` takes only `source_directory`. `config`, `recursive`,
+    `supported_extensions`, `deduplicate`, `similarity_threshold`,
+    `minhash_permutations`, `n_grams_size`, `compute_dir_hash` and
+    `parse_files` are removed (#299), and `exclude_patterns`, `max_workers`
+    and `DEFAULT_EXCLUDE_PATTERNS` with them, so a call such as
+    `DirectoryLoader(path, Config())` raises `TypeError` at construction
+    instead of failing later in discovery (#PR).
+  - `GraphIndexer` / `VectorIndexer` `initialize()` / `clear()` and
+    `IndexingManager.initialize()` / `clear_all_data()` return `None` and
+    raise the store's typed error instead of returning `False`; a caller that
+    tested the returned value now always sees `None` (#294).
+  - `BatchProcessor` rejects unknown settings with a `ValidationError`:
+    `batch_size=` and `chunk_concurrency=` were silently ignored after #296
+    (#PR).
+  - `compute_hash(algorithm=)` raises `TypeError`; it always hashes with
+    SHA-256 (#300).
 - Removed APIs: `IncrementalIndexer.plan` / `prune_changed` /
   `remove_deleted` (use `detect_delta` and `remove_changed_and_deleted`)
   (#214); the LangChain-memory wrapper, `MemoryManager.get_langchain_memory`
@@ -527,6 +544,13 @@ Library API (Python callers and custom backends).
   per failing item (now at most 5), and `max_attempts: 1` still retried
   once: the global-search map step and `run-eval` answer generation, which
   leave retries to the query chain, ran each failed call twice (#301).
+- IaC: the `NeptuneHighCpu` and `NeptuneLowFreeableMemory` alarms watch
+  the writer instance (`Role=WRITER`), and the memory alarm uses the
+  window's minimum. They averaged the whole cluster, so with
+  `neptune_instances=2` (the non-dev default) an idle reader halved a
+  saturated writer's CPU and hid a writer low on memory.
+  `NeptuneGremlinErrors` stays cluster-wide. The IaC README states each
+  alarm's window (#PR).
 - Configuration errors raise `ConfigurationError` (still a `ValueError`)
   instead of a bare `ValueError`: an unknown embedding model or unsupported
   `indexing.opensearch.embedding_dimension`, a missing S3 `bucket_name`, a
