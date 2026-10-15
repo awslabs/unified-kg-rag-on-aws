@@ -306,6 +306,12 @@ class TokenCounterPort(Protocol):
     through a token-counter factory called as
     ``factory(model_id, cache_maxsize=..., api_supported=...)``; like the model
     factories, it must accept and ignore keyword arguments it does not use.
+
+    A counter may also expose a ``counts_via_api`` bool: True when each count is
+    a remote round trip, so callers count many texts concurrently. It is
+    optional (not part of the structural check); without it the answer model's
+    ``LanguageModelInfo.supports_count_tokens`` decides. ``BedrockTokenCounter``
+    turns it off once the model rejects CountTokens.
     """
 
     def count_tokens(self, text: str) -> int: ...

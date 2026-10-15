@@ -829,6 +829,26 @@ class TestConcurrentCounting:
             threads.add(threading.current_thread().name)
             return count(text)
 
+    def test_count_tokens_many_follows_the_counter_not_the_model_record(
+        self, mocker
+    ) -> None:
+        # The answer model accepts CountTokens, but the counter says its counts
+        # are local now (the Bedrock one does once the model rejected the API):
+        # the counter decides, so counting stays inline.
+        counter = _SlowCounter(delay=0)
+        counter.counts_via_api = False  # type: ignore[attr-defined]
+        threads: set[str] = set()
+        count = counter.count_tokens
+
+        def recording_count(text: str) -> int:
+            threads.add(threading.current_thread().name)
+            return count(text)
+
+        counter.count_tokens = recording_count  # type: ignore[method-assign]
+        mgr = _manager_with_counter(mocker, counter)
+        assert mgr.count_tokens_many([f"text {i}" for i in range(20)]) == [2] * 20
+        assert threads == {threading.current_thread().name}
+
         counter.count_tokens = recording_count  # type: ignore[method-assign]
         mgr = _manager_with_counter(
             mocker, counter, answer_model_id=Config().search.answer_generation_model_id

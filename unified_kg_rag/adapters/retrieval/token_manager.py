@@ -7,7 +7,6 @@ from typing import Any, ClassVar
 
 from pydantic import BaseModel, Field
 
-from unified_kg_rag.adapters.aws.token_counter import is_count_tokens_known_unsupported
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.models import Config, RetrievalResult
 from unified_kg_rag.domain.prompts import AnswerGenerationPrompt
@@ -120,7 +119,6 @@ class TokenManager:
             cache_maxsize=self.config.token_count_cache_size,
             api_supported=answer_model_info.supports_count_tokens,
         )
-        self._answer_model_id = answer_model_id
         self._counts_via_api = answer_model_info.supports_count_tokens
         # Reserve what the answer request actually asks for (its max_tokens),
         # not the model maximum, so a capped output leaves room for context.
@@ -195,9 +193,10 @@ class TokenManager:
         from async code.
         """
         unique = list(dict.fromkeys(t for t in texts if t))
-        via_api = self._counts_via_api and not is_count_tokens_known_unsupported(
-            self._answer_model_id
-        )
+        # The counter knows whether its counts are round trips right now (the
+        # Bedrock one stops calling the API once the model rejects it); one
+        # without that attribute is taken at the model's capability record.
+        via_api = getattr(self._token_counter, "counts_via_api", self._counts_via_api)
         if len(unique) <= 1 or not via_api:
             counts = {t: self.count_tokens(t) for t in unique}
         else:

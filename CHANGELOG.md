@@ -323,6 +323,10 @@ Library API (Python callers and custom backends).
   fused order. Reported by @vibhupb (#83) (#284).
 
 ### Changed
+- `TokenManager` counts many texts concurrently only when its token counter
+  reports `counts_via_api` (the Bedrock counter turns it off once a model
+  rejects CountTokens); a custom counter without the attribute keeps the
+  answer model's `supports_count_tokens` (#PR).
 - `backend: local` selects the embedded SQLite graph and vector stores
   (`.unified-kg-rag/graph.sqlite3` and `vector.sqlite3` by default), so
   `--backend local` with a native Ollama needs no container.

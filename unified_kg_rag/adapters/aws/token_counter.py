@@ -124,6 +124,17 @@ class BedrockTokenCounter:
 
         self._cached_count = _cached_count
 
+    @property
+    def counts_via_api(self) -> bool:
+        """Whether a count is a CountTokens round trip (not a local estimate).
+
+        False from the start for a counter built without API support, and once
+        the model is known to reject CountTokens.
+        """
+        return self._api_supported and not is_count_tokens_known_unsupported(
+            self.model_id
+        )
+
     def count_tokens(self, text: str) -> int:
         """Count tokens via the Bedrock count_tokens API (LRU-cached).
 
@@ -137,7 +148,7 @@ class BedrockTokenCounter:
         # send one (it would also be indistinguishable from a model rejection).
         if not text.strip():
             return self._estimate(text)
-        if not self._api_supported or is_count_tokens_known_unsupported(self.model_id):
+        if not self.counts_via_api:
             return self._estimate(text)
         try:
             return self._cached_count(text)
