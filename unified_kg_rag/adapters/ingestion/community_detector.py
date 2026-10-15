@@ -380,7 +380,10 @@ class CommunityDetector(BaseProcessor):
 
         communities = self._partition_dict_to_communities(partition_dict, target_graph)
 
-        if config.min_community_size > 1:
+        # Only entity communities are held to min_community_size. A node of a
+        # coarser cluster graph is a whole community, so merging "small" ones
+        # there would fold every level into the one below it.
+        if graph is None and config.min_community_size > 1:
             communities = self._merge_small_communities(
                 communities, target_graph, config.min_community_size
             )

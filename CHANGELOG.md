@@ -432,6 +432,15 @@ Library API (Python callers and custom backends).
   finite numbers clamped to `>= 0` (NaN and infinity become the default 1.0),
   and community detection replaces such weights in a graph read back from an
   older store or cache (#PR).
+- Community detection keeps its coarser levels. The small-community merge
+  also ran on each level's cluster graph, whose nodes are whole communities,
+  so with the default `min_community_size: 3` a level of two-community groups
+  was folded away and the hierarchy often stopped at level 0. The merge now
+  applies to entity communities only. Multi-level corpora get more (level 1+)
+  communities and reports. Cache keys are unchanged, so a resumed run reuses
+  the old communities: re-run with `--force-rebuild` (and `indexing.reset:
+  true` where incremental runs keep the stored communities) to restore the
+  lost levels (#PR).
 - CloudWatch tracing (`enable_cloudwatch_tracing`): the task role keeps
   only `xray:PutTraceSegments`, the one action the X-Ray OTLP traces
   endpoint authorizes (a role with only `xray:PutSpans` gets a 403);

@@ -326,6 +326,37 @@ class TestClusterGraph:
         assert cluster[0][1]["weight"] == pytest.approx(3.0)
 
 
+class TestHierarchyKeepsCoarserLevels:
+    @staticmethod
+    def _four_cliques() -> nx.Graph:
+        # Four 6-cliques A-D; A-B and C-D are tied by 4 edges, B-C by one.
+        g = nx.Graph()
+        groups = {name: [f"{name}{i}" for i in range(6)] for name in "ABCD"}
+        for nodes in groups.values():
+            g.add_edges_from(
+                (u, v, {"weight": 1.0}) for u in nodes for v in nodes if u < v
+            )
+        for x, y, n in (("A", "B", 4), ("C", "D", 4), ("B", "C", 1)):
+            g.add_edges_from(
+                (groups[x][k], groups[y][k], {"weight": 1.0}) for k in range(n)
+            )
+        return g
+
+    def test_default_min_size_does_not_collapse_level_1(self) -> None:
+        # Level 1 has two communities of two cliques each. The small-community
+        # merge used to run on the cluster graph too, where every community has
+        # only 2 nodes (< min_community_size 3), folding level 1 into nothing.
+        cd = _detector(auto_resolution=False, min_community_size=3)
+        cd(self._four_cliques())
+        levels: dict[int, list[set[str]]] = {}
+        for community in cd.all_communities.values():
+            levels.setdefault(community.level, []).append(
+                {node[0] for node in community.nodes}
+            )
+        assert sorted(levels[0], key=sorted) == [{"A"}, {"B"}, {"C"}, {"D"}]
+        assert sorted(levels[1], key=sorted) == [{"A", "B"}, {"C", "D"}]
+
+
 class TestUnusableEdgeWeights:
     @pytest.mark.parametrize("weight", [float("nan"), float("inf"), -1.0, None])
     def test_detection_survives_a_bad_stored_weight(self, weight) -> None:
