@@ -30,10 +30,16 @@ import json
 import sqlite3
 import threading
 from collections.abc import Callable, Collection, Iterable, Iterator
-from contextlib import contextmanager
+from contextlib import AbstractContextManager, contextmanager
 from pathlib import Path
 from typing import Any
 
+from unified_kg_rag.adapters.local.sqlite_util import (
+    connect,
+    read_snapshot,
+    typed_errors,
+    write_transaction,
+)
 from unified_kg_rag.adapters.storage.neptune_codec import (
     entity_from_vertex,
     entity_properties,
@@ -90,9 +96,6 @@ _SCHEMA = (
 # statement binds at most 2 * _BATCH + 1 values, or splits its batch.
 _BATCH = 400
 
-# SQLITE_BUSY / SQLITE_LOCKED: another connection holds the lock.
-_LOCKED_CODES = {5, 6}
-
 # The vertex properties a traversal row projects (NeptuneRetriever's
 # ``value_map``).
 _NODE_KEYS = ("id", "name", "description", "rank", "text_unit_ids")
@@ -108,14 +111,6 @@ def _batches(items: list[Any], size: int = _BATCH) -> Iterator[list[Any]]:
 
 def _marks(items: Collection[Any]) -> str:
     return ",".join("?" * len(items))
-
-
-def _is_locked(error: sqlite3.Error) -> bool:
-    code = getattr(error, "sqlite_errorcode", None)
-    if code is not None:
-        return (int(code) & 0xFF) in _LOCKED_CODES
-    message = str(error).lower()
-    return "locked" in message or "busy" in message
 
 
 def merge_vertex_properties(
@@ -178,28 +173,15 @@ class SQLiteGraphStore:
             if self._connection is None:
                 with self.errors("open the database"):
                     if self.path != ":memory:":
-                        Path(self.path).parent.mkdir(parents=True, exist_ok=True)
                         logger.info(
                             "Graph store: SQLite database '%s'",
                             Path(self.path).resolve(),
                         )
-                    connection = sqlite3.connect(
+                    self._connection = connect(
                         self.path,
-                        timeout=self.timeout_seconds,
-                        check_same_thread=False,
-                        isolation_level=None,
+                        timeout_seconds=self.timeout_seconds,
+                        schema=_SCHEMA,
                     )
-                    try:
-                        connection.execute(
-                            f"PRAGMA busy_timeout = {int(self.timeout_seconds * 1000)}"
-                        )
-                        connection.execute("PRAGMA journal_mode=WAL")
-                        for statement in _SCHEMA:
-                            connection.execute(statement)
-                    except BaseException:
-                        connection.close()
-                        raise
-                self._connection = connection
             return self._connection
 
     def close(self) -> None:
@@ -209,34 +191,22 @@ class SQLiteGraphStore:
                 self._connection.close()
                 self._connection = None
 
-    @contextmanager
-    def errors(self, operation: str) -> Iterator[None]:
+    def errors(self, operation: str) -> AbstractContextManager[None]:
         """Re-raise SQLite and file errors as typed store errors."""
-        try:
-            yield
-        except GraphRAGException:
-            # Already typed (by a nested block); StoreTimeoutError is an
-            # OSError, so the OSError branch below would wrap it again.
-            raise
-        except sqlite3.Error as e:
-            if _is_locked(e):
-                raise StoreTimeoutError(
-                    f"Graph store: could not {operation}: SQLite database "
-                    f"'{self.path}' stayed locked for {self.timeout_seconds}s "
-                    f"({e}). Another process is writing to it; SQLite allows "
-                    "one writer at a time."
-                ) from e
-            raise StoreConfigurationError(
+        return typed_errors(
+            lambda e: StoreTimeoutError(
+                f"Graph store: could not {operation}: SQLite database "
+                f"'{self.path}' stayed locked for {self.timeout_seconds}s "
+                f"({e}). Another process is writing to it; SQLite allows "
+                "one writer at a time."
+            ),
+            lambda e: StoreConfigurationError(
                 f"Graph store: could not {operation} on SQLite database "
                 f"'{self.path}': {type(e).__name__}: {e}. Check the path "
                 "(providers.graph.sqlite_path) is a writable SQLite file on a "
                 "local filesystem."
-            ) from e
-        except OSError as e:
-            raise StoreConfigurationError(
-                f"Graph store: could not {operation} on SQLite database "
-                f"'{self.path}': {e}. Check providers.graph.sqlite_path."
-            ) from e
+            ),
+        )
 
     @contextmanager
     def read(self, operation: str) -> Iterator[sqlite3.Connection]:
@@ -244,30 +214,22 @@ class SQLiteGraphStore:
         transaction: every statement of the block reads the same snapshot, so
         another connection's write between two of them is not seen half way
         (a vertex a neighbour query returned is still there to read)."""
-        with self._lock, self.errors(operation):
-            connection = self.connection
-            # Inside a write transaction, that transaction is the snapshot.
-            own = not connection.in_transaction
-            if own:
-                connection.execute("BEGIN")
-            try:
-                yield connection
-            finally:
-                if own and connection.in_transaction:
-                    connection.execute("ROLLBACK")
+        with (
+            self._lock,
+            self.errors(operation),
+            read_snapshot(self.connection) as connection,
+        ):
+            yield connection
 
     @contextmanager
     def transaction(self, operation: str) -> Iterator[sqlite3.Connection]:
         """A write transaction, rolled back when the block raises."""
-        with self._lock, self.errors(operation):
-            connection = self.connection
-            connection.execute("BEGIN IMMEDIATE")
-            try:
-                yield connection
-            except BaseException:
-                connection.execute("ROLLBACK")
-                raise
-            connection.execute("COMMIT")
+        with (
+            self._lock,
+            self.errors(operation),
+            write_transaction(self.connection) as connection,
+        ):
+            yield connection
 
     # --- reads (the caller holds ``read`` or ``transaction``) ----------------
 

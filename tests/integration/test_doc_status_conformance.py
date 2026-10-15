@@ -12,6 +12,7 @@ tests drive whole interrupted incremental runs through each store.
 from __future__ import annotations
 
 import sqlite3
+import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
 
@@ -417,6 +418,28 @@ def test_sqlite_database_without_the_fingerprint_column_is_upgraded(
     store.put(record.model_copy(update={"extraction_fingerprint": "x1"}))
     delta = store.diff({"d1": "h1"}, scope="s", extraction_fingerprint="x2")
     assert delta.settings_changed == ["d1"]
+    store.close()
+
+
+def test_sqlite_locked_registry_waits_store_timeout_seconds(tmp_path: Path) -> None:
+    # Another process's write lock is waited for search.store_timeout_seconds
+    # (not sqlite3's 5 s default), then named in the error.
+    path = tmp_path / "doc-status.db"
+    config = Config(search={"store_timeout_seconds": 0.2})
+    store = SQLiteDocStatusStore(config, path)
+    store.put(_record("d1"))
+    holder = sqlite3.connect(path, isolation_level=None)
+    holder.execute("BEGIN IMMEDIATE")
+    try:
+        started = time.monotonic()
+        with pytest.raises(DocStatusRegistryError, match="stayed locked for 0.2s"):
+            store.put(_record("d2"))
+        assert time.monotonic() - started < 3
+    finally:
+        holder.execute("ROLLBACK")
+        holder.close()
+    store.put(_record("d2"))
+    assert {r.doc_id for r in store.list_all()} == {"d1", "d2"}
     store.close()
 
 

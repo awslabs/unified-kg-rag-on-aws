@@ -518,6 +518,13 @@ Library API (Python callers and custom backends).
   ("I’m sorry, …") is caught like its ASCII form and the original query is
   searched; the follow-up rewrite guard and the translation guard now share
   one normalisation (#292).
+- The SQLite doc-status registry waits `search.store_timeout_seconds` for
+  another process's write lock, as the embedded graph and vector stores do
+  (it waited sqlite3's 5 s default), says the database stayed locked in its
+  `DocStatusRegistryError`, and closes its connection when opening or
+  upgrading the file fails. The three embedded stores now share one SQLite
+  connection, transaction and error helper (`adapters/local/sqlite_util.py`),
+  so all three recognise a lock by SQLite's error code (#PR).
 - CloudWatch tracing (`enable_cloudwatch_tracing`): the task role keeps
   only `xray:PutTraceSegments`, the one action the X-Ray OTLP traces
   endpoint authorizes (a role with only `xray:PutSpans` gets a 403);

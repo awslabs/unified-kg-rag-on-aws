@@ -14,7 +14,9 @@ anyway so a run written by another store, or a test, round-trips. Each record
 is stored as its JSON dump next to the columns ``diff`` reads, so the diff
 never deserializes the artifact-id lists. Writes are transactions; a single
 connection is shared under a lock (the pipeline calls the store from worker
-threads).
+threads) and waits up to ``search.store_timeout_seconds`` for another
+writer's lock. Every SQLite error is raised as ``DocStatusRegistryError``, as
+the DynamoDB store raises its errors.
 """
 
 from __future__ import annotations
@@ -22,9 +24,14 @@ from __future__ import annotations
 import sqlite3
 import threading
 from collections.abc import Iterable, Iterator
-from contextlib import contextmanager
+from contextlib import AbstractContextManager, contextmanager
 from pathlib import Path
 
+from unified_kg_rag.adapters.local.sqlite_util import (
+    connect,
+    typed_errors,
+    write_transaction,
+)
 from unified_kg_rag.domain.models import (
     Config,
     DocStatus,
@@ -95,6 +102,7 @@ class SQLiteDocStatusStore:
         """
         self.config = config
         self.path = str(path or config.providers.doc_status.sqlite_path)
+        self.timeout_seconds = config.search.store_timeout_seconds
         self._connection: sqlite3.Connection | None = None
         self._lock = threading.RLock()
 
@@ -104,19 +112,16 @@ class SQLiteDocStatusStore:
             if self._connection is None:
                 with self._registry_errors("open the database"):
                     if self.path != ":memory:":
-                        Path(self.path).parent.mkdir(parents=True, exist_ok=True)
                         logger.info(
                             "Doc-status registry: SQLite database '%s'",
                             Path(self.path).resolve(),
                         )
-                    connection = sqlite3.connect(
-                        self.path, check_same_thread=False, isolation_level=None
+                    self._connection = connect(
+                        self.path,
+                        timeout_seconds=self.timeout_seconds,
+                        schema=_SCHEMA,
+                        migrate=_add_missing_columns,
                     )
-                    connection.execute("PRAGMA journal_mode=WAL")
-                    for statement in _SCHEMA:
-                        connection.execute(statement)
-                    _add_missing_columns(connection)
-                self._connection = connection
             return self._connection
 
     def close(self) -> None:
@@ -126,31 +131,33 @@ class SQLiteDocStatusStore:
                 self._connection.close()
                 self._connection = None
 
-    @contextmanager
-    def _registry_errors(self, operation: str) -> Iterator[None]:
-        """Re-raise SQLite errors as :class:`DocStatusRegistryError`."""
-        try:
-            yield
-        except (sqlite3.Error, OSError) as e:
-            raise DocStatusRegistryError(
+    def _registry_errors(self, operation: str) -> AbstractContextManager[None]:
+        """Re-raise SQLite and file errors as :class:`DocStatusRegistryError`."""
+        return typed_errors(
+            lambda e: DocStatusRegistryError(
+                f"Doc-status registry: could not {operation}: SQLite database "
+                f"'{self.path}' stayed locked for {self.timeout_seconds}s "
+                f"(search.store_timeout_seconds; {e}). Another process is "
+                "writing to it; SQLite allows one writer at a time: wait for "
+                "the other run, or raise the timeout."
+            ),
+            lambda e: DocStatusRegistryError(
                 f"Doc-status registry: could not {operation} on SQLite database "
                 f"'{self.path}': {type(e).__name__}: {e}. Check the path "
                 "(providers.doc_status.sqlite_path) is writable, then re-run. "
                 "Incremental indexing needs the registry; set "
                 "providers.doc_status.enabled: false to run without it."
-            ) from e
+            ),
+        )
 
     @contextmanager
     def _transaction(self, operation: str) -> Iterator[sqlite3.Connection]:
-        with self._lock, self._registry_errors(operation):
-            connection = self.connection
-            connection.execute("BEGIN IMMEDIATE")
-            try:
-                yield connection
-            except BaseException:
-                connection.execute("ROLLBACK")
-                raise
-            connection.execute("COMMIT")
+        with (
+            self._lock,
+            self._registry_errors(operation),
+            write_transaction(self.connection) as connection,
+        ):
+            yield connection
 
     # --- records -----------------------------------------------------------
 
