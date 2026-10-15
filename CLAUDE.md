@@ -143,7 +143,7 @@ Layout: `tests/{unit,integration,property,fixtures/fakes}/`. Markers: `unit`,
   monotonicity; the `DocStatusPort.diff` partition runs against every registry
   in `tests/integration/test_doc_status_conformance.py`.
 - Coverage gate ratchets up with measured coverage (the `--cov-fail-under` floor in
-  `quality.yml` sits just under it). Run:
+  `quality.yml` sits just under it: currently 95, measured ~96%). Run:
   `uv run --extra otel pytest -m "not aws" --cov=unified_kg_rag`.
 
 ## Quality gate
