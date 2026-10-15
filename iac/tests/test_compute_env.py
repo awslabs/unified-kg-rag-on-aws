@@ -180,3 +180,12 @@ def test_count_tokens_is_granted_on_the_model_resources() -> None:
         if "bedrock:InvokeModel" in s["Action"]
     ]
     assert "bedrock:CountTokens" in statement["Action"]
+
+
+def test_cluster_keeps_container_insights_on() -> None:
+    # The only per-task CPU/memory source (README "Cost drivers"); cdk-nag
+    # AwsSolutions-ECS4 requires it.
+    (cluster,) = _compute_template().find_resources("AWS::ECS::Cluster").values()
+    assert cluster["Properties"]["ClusterSettings"] == [
+        {"Name": "containerInsights", "Value": "enabled"}
+    ]

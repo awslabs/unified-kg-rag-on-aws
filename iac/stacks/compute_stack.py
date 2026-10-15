@@ -108,6 +108,12 @@ class ComputeStack(Stack):
             empty_on_delete=config.removal_destroy,
         )
 
+        # Container Insights is the only source of per-task CPU and memory
+        # use (what fargate_cpu/fargate_memory are sized and an OOM kill is
+        # diagnosed from); no alarm or dashboard here reads it. Billed as
+        # custom metrics plus performance log events (README "Cost
+        # drivers"), small for a cluster that runs only short-lived tasks, and
+        # cdk-nag AwsSolutions-ECS4 requires it, so it is not a context key.
         self.cluster = ecs.Cluster(
             self,
             "Cluster",

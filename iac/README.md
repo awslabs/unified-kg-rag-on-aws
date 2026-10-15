@@ -258,6 +258,7 @@ for your region and sizes. What scales each service's cost:
 | Amazon S3 | Stage checkpoints, embedding cache, corpus, access logs | 30-day expiry on `pipeline-runs/` and `embedding-cache/` |
 | Amazon DynamoDB | On-demand reads and writes: one full-table diff scan per ingestion plus one record per processed document; point-in-time recovery | Fewer, larger runs |
 | Amazon CloudWatch | Log ingestion and retention (task, pipeline and, with `vpc_flow_logs`, flow logs), alarms, dashboard | `vpc_flow_logs`, `flow_log_retention_days` |
+| CloudWatch Container Insights (ECS cluster, always on) | Custom metrics per cluster and task definition family, and performance log events in `/aws/ecs/containerinsights/<cluster>/performance`, for the time tasks run. It is where per-task CPU and memory use come from (sizing `fargate_cpu`/`fargate_memory`, diagnosing an out-of-memory stop); no alarm or dashboard of the stack reads it | — (cdk-nag `AwsSolutions-ECS4` requires it) |
 | AWS KMS | Customer-managed keys per month and requests: the alarm-topic key always, the data key with `use_cmk` | `use_cmk` |
 | AWS Step Functions | State transitions per ingestion run (a few per phase) | — |
 | CloudWatch traces (`enable_cloudwatch_tracing`) | Spans ingested by Transaction Search (billed as CloudWatch Logs ingestion into `aws/spans`) and the share of spans indexed beyond the free 1% | `observability.sample_rate` in the image config, the Transaction Search indexing percentage |

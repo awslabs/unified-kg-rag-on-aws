@@ -647,6 +647,10 @@ Library API (Python callers and custom backends).
   only LightRAG `mix`/`hybrid` use the relationship vector index; `local`
   (relationship section, bridge relationships), `simple` and `drift` query it
   too (#295).
+- `iac/README.md` cost drivers list CloudWatch Container Insights, which the
+  ECS cluster always has on (billed custom metrics and performance log
+  events), and why it stays on: it is the only per-task CPU and memory
+  source for sizing the Fargate task (#PR).
 - CDK: a zone-aware OpenSearch domain that would span 2 AZs with an odd
   `opensearch_count` (for example `3` with `max_azs=2`) fails at synth with a
   message naming both keys; OpenSearch rejected it only at deploy time
