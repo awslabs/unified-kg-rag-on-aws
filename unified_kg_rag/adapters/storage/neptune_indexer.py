@@ -419,7 +419,7 @@ class NeptuneIndexer(GraphIndexer):
         """Build one traversal that creates or updates a batch of entity vertices.
 
         ``V().has(label, 'id', x).fold().coalesce(unfold(), addV(label))``
-        matches an existing vertex or creates it, and the properties are
+        matches an existing vertex or creates it, and its properties are
         replaced (:meth:`_set_properties_on_traversal`), so running the same
         batch twice leaves the graph as running it once.
         """
@@ -708,20 +708,20 @@ class NeptuneIndexer(GraphIndexer):
     def _set_properties_on_traversal(
         self, traversal: GraphTraversal, props: dict[str, Any]
     ) -> None:
-        """Set properties idempotently (every vertex write: full and incremental).
+        """Replace the vertex's properties with ``props`` (every vertex write).
 
-        Scalars use ``Cardinality.single`` so re-running a write overwrites
-        rather than accumulates. List values are written as multi-valued
-        ``Cardinality.set`` properties, what the read path expects. The
-        existing set is cleared first so a re-write does not grow stale
-        members.
+        Every stored property but ``id`` is dropped first, so a property the
+        item no longer has (a value now ``None``, a removed attribute) does
+        not keep its old value, and a re-write does not grow stale list
+        members. Scalars use ``Cardinality.single``; list values are written
+        as multi-valued ``Cardinality.set`` properties, what the read path
+        expects.
         """
+        traversal.sideEffect(__.properties().has_key(P.neq("id")).drop())
         for key, value in props.items():
             if value is None:
                 continue
             if isinstance(value, list):
-                # Replace the whole multi-valued property: drop then re-add.
-                traversal.sideEffect(__.properties(key).drop())
                 for item in value:
                     if item is not None:
                         traversal.property(Cardinality.set_, key, item)

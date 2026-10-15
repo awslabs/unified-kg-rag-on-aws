@@ -550,6 +550,12 @@ Library API (Python callers and custom backends).
   upgrading the file fails. The three embedded stores now share one SQLite
   connection, transaction and error helper (`adapters/local/sqlite_util.py`),
   so all three recognise a lock by SQLite's error code (#293).
+- Graph stores (Neptune, Gremlin Server, embedded SQLite): writing an
+  entity or community vertex again replaces its stored properties, so a
+  value that became empty (an entity's `type`, a community's `parent` once
+  it is a root) or an attribute the item no longer has is dropped instead
+  of keeping the previous run's value. The incremental merge reads every
+  stored field back before it writes, so it keeps what it should (#PR).
 - Indexing stage: a store error while preparing the stores or clearing them
   for `indexing.reset` (an access-denied, unreachable or misconfigured
   OpenSearch, Neptune or SQLite store) now fails the stage with the store's

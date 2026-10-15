@@ -153,7 +153,7 @@ def test_property_max_length_truncates_strings(tmp_path: Path) -> None:
     assert read.name == "E1"[:4]
 
 
-def test_upsert_keeps_absent_properties_and_replaces_lists(
+def test_upsert_replaces_the_properties_and_lists(
     indexer: SQLiteGraphIndexer,
 ) -> None:
     indexer.upsert_entities(
@@ -163,7 +163,7 @@ def test_upsert_keeps_absent_properties_and_replaces_lists(
     assert sorted(read.text_unit_ids or []) == ["a", "b"]
     indexer.upsert_entities([_entity("e1", text_unit_ids=["c"])])
     (read,) = indexer.read_entities(["e1"])
-    assert read.description == "kept"
+    assert read.description is None
     assert read.text_unit_ids == ["c"]
 
 
