@@ -139,6 +139,9 @@ full re-index of the affected index type).
   `--pipeline-id` to apply the fixes to them (#167, #170, #171, #201, #214).
 
 Library API (Python callers and custom backends).
+- `EvaluationRunner(args, rag_chain, config)` takes the run's config (the
+  one the chain was built from) instead of loading it again from
+  `args.config_path` (#PR).
 - Custom search strategies: `BaseSearchStrategy._fuse_and_rerank` takes a
   required `rerank_trace=` (create it with `self._new_rerank_trace()` and
   pass it to `SearchResult.metadata["rerank"]`); a call without it raises

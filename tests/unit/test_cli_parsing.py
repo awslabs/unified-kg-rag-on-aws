@@ -342,16 +342,15 @@ def test_eval_parser_rejects_bad_strategy() -> None:
 def test_eval_runner_missing_file_is_an_invalid_dataset(
     config, mocker, tmp_path
 ) -> None:
-    mocker.patch.object(run_evaluation, "get_config", return_value=config)
     missing = tmp_path / "does-not-exist.json"
     args = _eval_parser().parse_args(["--eval-data-path", str(missing)])
     with pytest.raises(run_evaluation.InvalidDatasetError, match="not found"):
-        run_evaluation.EvaluationRunner(args, rag_chain=object())
+        run_evaluation.EvaluationRunner(args, object(), config)
 
 
 def test_run_eval_missing_dataset_exits_2(config, mocker, tmp_path, capsys) -> None:
     # A missing dataset is the same input error as an invalid one.
-    mocker.patch.object(run_evaluation, "get_config", return_value=config)
+    load = mocker.patch.object(run_evaluation, "get_config", return_value=config)
     mocker.patch.object(run_evaluation, "missing_endpoints_error", return_value=None)
     mocker.patch.object(run_evaluation, "GraphRAGChain", return_value=AsyncMock())
     missing = tmp_path / "does-not-exist.json"
@@ -361,14 +360,15 @@ def test_run_eval_missing_dataset_exits_2(config, mocker, tmp_path, capsys) -> N
     assert exc.value.code == 2
     out = capsys.readouterr().out
     assert "invalid evaluation dataset" in out and "unexpected" not in out
+    # The runner reuses main's config instead of loading it again.
+    load.assert_called_once()
 
 
 def test_eval_runner_existing_file_ok(config, mocker, tmp_path) -> None:
-    mocker.patch.object(run_evaluation, "get_config", return_value=config)
     data = tmp_path / "eval.json"
     data.write_text("[]", encoding="utf-8")
     args = _eval_parser().parse_args(["--eval-data-path", str(data)])
-    runner = run_evaluation.EvaluationRunner(args, rag_chain=object())  # no exit
+    runner = run_evaluation.EvaluationRunner(args, object(), config)  # no exit
     assert runner.args.eval_data_path == data
 
 
@@ -453,7 +453,6 @@ async def test_eval_runner_exit_code_and_manifest(
     import json
 
     config.evaluation.enabled_evaluators = []
-    mocker.patch.object(run_evaluation, "get_config", return_value=config)
     mocker.patch.object(run_evaluation, "display_ascii_art")
     data = tmp_path / "eval.json"
     data.write_text(json.dumps([{"question": "Who ships?", "answer": "Vendor"}]))
@@ -461,7 +460,7 @@ async def test_eval_runner_exit_code_and_manifest(
     args = _eval_parser().parse_args(
         ["--eval-data-path", str(data), "--outputs-directory", str(out)]
     )
-    runner = run_evaluation.EvaluationRunner(args, rag_chain=_DictChain(error))
+    runner = run_evaluation.EvaluationRunner(args, _DictChain(error), config)
     assert await runner.run() == code
     summary_file = next(out.glob("evaluation_summary_*.json"))
     manifest = json.loads(summary_file.read_text())["run_manifest"]

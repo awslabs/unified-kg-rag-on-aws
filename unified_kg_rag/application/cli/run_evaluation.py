@@ -39,6 +39,7 @@ from unified_kg_rag.application.cli.provider_args import (
 from unified_kg_rag.application.cli.query_args import add_query_arguments
 from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain
 from unified_kg_rag.domain.models import (
+    Config,
     EvaluationGroundTruth,
     EvaluationSummary,
     SearchStrategy,
@@ -178,11 +179,13 @@ class CommandLineInterface:
 
 
 class EvaluationRunner:
-    def __init__(self, args: argparse.Namespace, rag_chain: Runnable) -> None:
+    def __init__(
+        self, args: argparse.Namespace, rag_chain: Runnable, config: Config
+    ) -> None:
+        """``config`` is the run's configuration, provider flags applied (the
+        one ``rag_chain`` was built from)."""
         self.args = args
-        self.config = apply_provider_arguments(
-            get_config(Path(args.config_path) if args.config_path else None), args
-        )
+        self.config = config
         self.rag_chain = rag_chain
         self.evaluation_manager: EvaluationManager | None = None
         self._validate_args()
@@ -446,7 +449,7 @@ def main() -> None:
             # Release the retrievers' Neptune/OpenSearch sockets on every exit
             # path, on the loop they were opened on.
             try:
-                return await EvaluationRunner(args, rag_chain).run()
+                return await EvaluationRunner(args, rag_chain, config).run()
             finally:
                 await rag_chain.aclose()
 
