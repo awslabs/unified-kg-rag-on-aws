@@ -569,6 +569,9 @@ Library API (Python callers and custom backends).
   The `initialize()` and `clear()` methods of the `GraphIndexer` and
   `VectorIndexer` ports return `None` and raise on failure; a custom backend
   that reported failure by returning `False` must raise instead (#294).
+- LightRAG `hybrid` with no extracted keywords and a question too long for
+  the raw-query fallback returned nothing without a word; it now logs a
+  warning, as upstream does (#PR).
 - The `indexing.opensearch.build_relationship_vector_index` description said
   only LightRAG `mix`/`hybrid` use the relationship vector index; `local`
   (relationship section, bridge relationships), `simple` and `drift` query it
