@@ -178,3 +178,15 @@ def test_registry_default_namespace_is_the_default_index_suffix() -> None:
     for fn in (incremental.build_document_lineage, incremental.IncrementalIndexer):
         default = inspect.signature(fn).parameters["suffix"].default
         assert default is DEFAULT_NAMESPACE
+
+
+@pytest.mark.parametrize("module", ["global_search", "simple_search"])
+def test_retrieval_labels_do_not_name_a_backend(module: str) -> None:
+    """The label names the span and the failure log in local mode too."""
+    import importlib
+    import inspect
+
+    source = inspect.getsource(
+        importlib.import_module(f"unified_kg_rag.adapters.search_strategies.{module}")
+    )
+    assert '"OpenSearch retrieval"' not in source
