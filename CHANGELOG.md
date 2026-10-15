@@ -518,6 +518,35 @@ Library API (Python callers and custom backends).
   ("I’m sorry, …") is caught like its ASCII form and the original query is
   searched; the follow-up rewrite guard and the translation guard now share
   one normalisation (#292).
+- Embedded search engine: the analyzers no longer split an ASCII word at
+  dense-script runs (it has none), with the same tokens. Analyzing English
+  text, which the first lexical query of an index does for every document,
+  takes about a third less time with the `english` analyzer and half with
+  `standard` (#293).
+- Embedded search engine: indexing and updating no longer pass each
+  document's vectors through a JSON round trip (a vector given as a list is
+  stored as given; other values are still converted to JSON types).
+  Indexing 4,000 text units with 1024-dimension embeddings went from about
+  5.7 s to 1.3 s (#293).
+- Embedded search engine: an unfiltered kNN query scores the stored vectors
+  in place instead of copying them for every query, and sorts only the
+  documents that score at least the k-th best (ties still go by id, so the
+  hits are the same). Over 50k vectors of 1024 dimensions the kNN step went
+  from about 190 ms to 19 ms (#293).
+- Embedded graph store: a vertex's edges are looked up through
+  `(label, source_id, target_id)` and `(label, target_id, source_id)`
+  indexes, and the neighbour and incident-edge reads query each endpoint
+  separately, instead of walking every edge of the label. A graph expansion
+  over 150k edges took about 10 s and now takes milliseconds. A database an
+  earlier release wrote gets the new indexes, and loses the two it replaces,
+  the first time it is opened (#293).
+- The SQLite doc-status registry waits `search.store_timeout_seconds` for
+  another process's write lock, as the embedded graph and vector stores do
+  (it waited sqlite3's 5 s default), says the database stayed locked in its
+  `DocStatusRegistryError`, and closes its connection when opening or
+  upgrading the file fails. The three embedded stores now share one SQLite
+  connection, transaction and error helper (`adapters/local/sqlite_util.py`),
+  so all three recognise a lock by SQLite's error code (#293).
 - CloudWatch tracing (`enable_cloudwatch_tracing`): the task role keeps
   only `xray:PutTraceSegments`, the one action the X-Ray OTLP traces
   endpoint authorizes (a role with only `xray:PutSpans` gets a 403);

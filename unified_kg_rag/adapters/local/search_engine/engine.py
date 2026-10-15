@@ -45,7 +45,7 @@ import threading
 import uuid
 import weakref
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import AbstractContextManager, contextmanager
 from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Any
@@ -63,6 +63,12 @@ from unified_kg_rag.adapters.local.search_engine.query import (
     evaluate,
     field_specs,
     rejected,
+)
+from unified_kg_rag.adapters.local.sqlite_util import (
+    connect,
+    read_snapshot,
+    typed_errors,
+    write_transaction,
 )
 from unified_kg_rag.domain.retrieval.hybrid_normalization import combine_min_max
 from unified_kg_rag.shared import AWSServiceError, get_logger
@@ -108,6 +114,18 @@ _CACHE_LOCK = threading.Lock()
 
 def _dumps(value: Any) -> str:
     return json.dumps(value, default=_SERIALIZER.default, ensure_ascii=False)
+
+
+def _as_json(document: dict[str, Any], knn_fields: set[str]) -> dict[str, Any]:
+    """``document`` with its values as JSON types (numpy values, dates, ...
+    as the OpenSearch client sends them), through a JSON round trip that
+    skips a vector given as a list: it is stored as float32 either way, and
+    its round trip cost more than the rest of indexing the document."""
+    vectors = {
+        k: v for k, v in document.items() if k in knn_fields and isinstance(v, list)
+    }
+    rest = {k: v for k, v in document.items() if k not in vectors}
+    return {**json.loads(_dumps(rest)), **vectors}
 
 
 def index_not_found(name: str) -> NotFoundError:
@@ -273,34 +291,23 @@ class SQLiteSearchEngine:
 
     # --- connection and errors --------------------------------------------
 
-    @contextmanager
-    def _errors(self, operation: str) -> Iterator[None]:
+    def _errors(self, operation: str) -> AbstractContextManager[None]:
         """Re-raise SQLite and file errors as the store's typed errors."""
-        try:
-            yield
-        except sqlite3.OperationalError as e:
-            message = str(e).lower()
-            if "locked" in message or "busy" in message:
-                raise StoreTimeoutError(
-                    f"Embedded search engine: could not {operation}: the SQLite "
-                    f"database '{self.path}' stayed locked by another writer for "
-                    f"{self.timeout_seconds} s (search.store_timeout_seconds). "
-                    "SQLite allows one writer at a time: wait for the other run, "
-                    "or raise the timeout."
-                ) from e
-            raise self._configuration_error(operation, e) from e
-        except (sqlite3.Error, OSError) as e:
-            raise self._configuration_error(operation, e) from e
-
-    def _configuration_error(
-        self, operation: str, error: Exception
-    ) -> StoreConfigurationError:
-        return StoreConfigurationError(
-            f"Embedded search engine: could not {operation} on the SQLite "
-            f"database '{self.path}': {type(error).__name__}: {error}. Check "
-            "that the file (providers.vector.sqlite_path) is a database this "
-            "release wrote and that its directory is writable (network "
-            "filesystems are not supported)."
+        return typed_errors(
+            lambda e: StoreTimeoutError(
+                f"Embedded search engine: could not {operation}: the SQLite "
+                f"database '{self.path}' stayed locked by another writer for "
+                f"{self.timeout_seconds} s (search.store_timeout_seconds). "
+                "SQLite allows one writer at a time: wait for the other run, "
+                "or raise the timeout."
+            ),
+            lambda e: StoreConfigurationError(
+                f"Embedded search engine: could not {operation} on the SQLite "
+                f"database '{self.path}': {type(e).__name__}: {e}. Check "
+                "that the file (providers.vector.sqlite_path) is a database "
+                "this release wrote and that its directory is writable "
+                "(network filesystems are not supported)."
+            ),
         )
 
     @property
@@ -308,24 +315,11 @@ class SQLiteSearchEngine:
         with self._lock:
             if self._connection is None:
                 with self._errors("open the database"):
-                    if not self._memory:
-                        Path(self.path).parent.mkdir(parents=True, exist_ok=True)
-                    connection = sqlite3.connect(
+                    connection = connect(
                         self.path,
-                        timeout=self.timeout_seconds,
-                        check_same_thread=False,
-                        isolation_level=None,
+                        timeout_seconds=self.timeout_seconds,
+                        schema=_SCHEMA,
                     )
-                    try:
-                        connection.execute(
-                            f"PRAGMA busy_timeout = {int(self.timeout_seconds * 1000)}"
-                        )
-                        connection.execute("PRAGMA journal_mode=WAL")
-                        for statement in _SCHEMA:
-                            connection.execute(statement)
-                    except BaseException:
-                        connection.close()
-                        raise
                 if not self._memory:
                     logger.info(
                         "Vector store: embedded SQLite search engine '%s'",
@@ -336,31 +330,24 @@ class SQLiteSearchEngine:
 
     @contextmanager
     def _transaction(self, operation: str) -> Iterator[sqlite3.Connection]:
-        with self._lock, self._errors(operation):
-            connection = self.connection
-            connection.execute("BEGIN IMMEDIATE")
-            try:
-                yield connection
-            except BaseException:
-                connection.execute("ROLLBACK")
-                raise
-            connection.execute("COMMIT")
+        with (
+            self._lock,
+            self._errors(operation),
+            write_transaction(self.connection) as connection,
+        ):
+            yield connection
 
     @contextmanager
     def _reading(self, operation: str) -> Iterator[sqlite3.Connection]:
         """One read transaction: every read in it sees one snapshot of the
         file (in WAL mode a reader does not block the writer). A nested block
         shares the outer one."""
-        with self._lock, self._errors(operation):
-            connection = self.connection
-            outer = not connection.in_transaction
-            if outer:
-                connection.execute("BEGIN")
-            try:
-                yield connection
-            finally:
-                if outer and connection.in_transaction:
-                    connection.execute("COMMIT")
+        with (
+            self._lock,
+            self._errors(operation),
+            read_snapshot(self.connection) as connection,
+        ):
+            yield connection
 
     def close(self) -> None:
         """Close the connection (reopened on next use). Never raises."""
@@ -531,7 +518,7 @@ class SQLiteSearchEngine:
             for document in documents:
                 raw_id = document.get("id")
                 doc_id = str(raw_id) if raw_id is not None else uuid.uuid4().hex
-                document = json.loads(_dumps(document))
+                document = _as_json(document, knn_fields)
                 if reason := self._invalid_field(specs, doc_id, document):
                     failed.append(self._document_error("index", index, doc_id, reason))
                     continue
@@ -593,8 +580,8 @@ class SQLiteSearchEngine:
             knn_fields = {p for p, s in specs.items() if s.type == "knn_vector"}
             for document in documents:
                 doc_id = str(document["id"])
-                partial = json.loads(
-                    _dumps({k: v for k, v in document.items() if k != "id"})
+                partial = _as_json(
+                    {k: v for k, v in document.items() if k != "id"}, knn_fields
                 )
                 row = connection.execute(
                     "SELECT source FROM docs WHERE index_name = ? AND id = ?",
