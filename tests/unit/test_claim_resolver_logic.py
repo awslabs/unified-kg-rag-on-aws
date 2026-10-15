@@ -16,6 +16,7 @@ import pytest
 from unified_kg_rag.domain.ingestion.claim_resolver import (
     ClaimResolutionStats,
     ClaimResolver,
+    resolved_claim_id,
 )
 from unified_kg_rag.domain.models import Claim, Config, Entity
 
@@ -348,3 +349,48 @@ class TestResolveDedupIntegration:
         assert stats.resolved_claims == 1
         assert stats.claim_groups_created == 1
         assert stats.reduction_rate == pytest.approx(50.0)
+
+
+class TestResolvedClaimId:
+    """The stored id is keyed on the resolved entities, not the raw names."""
+
+    _ENTITIES = [Entity(id="e-acme", name="Acme"), Entity(id="e-buyer", name="Buyer")]
+
+    def _resolve(self, *subjects: str) -> list[Claim]:
+        claims = [
+            _claim(
+                f"raw-{subject}",
+                subject,
+                "Buyer",
+                type_="OBLIGATION",
+                text_unit_ids=[f"t-{subject}"],
+            )
+            for subject in subjects
+        ]
+        out, _ = _resolver().resolve(claims, self._ENTITIES)
+        return out
+
+    def test_spelling_variants_get_one_id_whatever_the_order(self) -> None:
+        (first,) = self._resolve("Acme Inc.", "Acme")
+        (second,) = self._resolve("Acme", "Acme Inc.")
+        (alone,) = self._resolve("Acme Inc.")
+
+        assert first.id == second.id == alone.id == resolved_claim_id(first)
+        assert first.short_id == first.id[:8]
+        assert first.subject_id == "e-acme"
+
+    def test_type_case_and_unknown_dates_do_not_split_a_claim(self) -> None:
+        base = Claim(
+            id="x",
+            subject_id="e-acme",
+            subject_name="Acme",
+            object_id="e-buyer",
+            object_name="Buyer",
+            type="OBLIGATION",
+        )
+        assert resolved_claim_id(base) == resolved_claim_id(
+            base.model_copy(update={"type": "obligation", "start_date": "unknown"})
+        )
+        assert resolved_claim_id(base) != resolved_claim_id(
+            base.model_copy(update={"start_date": "2024-01-01"})
+        )

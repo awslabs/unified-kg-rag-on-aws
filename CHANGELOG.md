@@ -126,6 +126,13 @@ full re-index of the affected index type).
   `translated_text_<language>` fields (#177).
 - NFC normalization gives documents that contained decomposed (NFD) text a
   new id; the next incremental run re-indexes them once (#177).
+- Claim ids are keyed on the entities the subject and object resolve to
+  (with the type and dates), not on the names as extracted. Only indexes
+  built with `processing.claim_extraction.enabled: true` are affected: until
+  they are rebuilt, a claim a new document restates is stored beside the old
+  one instead of merging into it. Run once with `indexing.reset: true` (and
+  `--force-rebuild` or a new `--pipeline-id` when resuming a pipeline id
+  whose `claim_resolution` stage output is cached) (#PR).
 - Most stage caches miss once after upgrading (their cache keys changed).
   A run resumed with an old `--pipeline-id` can still reuse stage outputs
   written by an earlier build; use `--force-rebuild` or a new
@@ -454,6 +461,11 @@ Library API (Python callers and custom backends).
 - Intelligent chunking: an error while reading the model's chunk
   boundaries is logged at WARNING and the pre-chunk is split by size; it was
   logged at DEBUG and the pre-chunk silently kept whole (#289).
+- Claims stated with different spellings of an entity ("Acme Inc" and
+  "Acme") are one claim in incremental runs too. The stored id hashed the
+  names as extracted, so an incremental run stored a second claim beside the
+  first, and in a full build the id depended on which spelling came first
+  (#PR).
 - CloudWatch tracing (`enable_cloudwatch_tracing`): the task role keeps
   only `xray:PutTraceSegments`, the one action the X-Ray OTLP traces
   endpoint authorizes (a role with only `xray:PutSpans` gets a 403);

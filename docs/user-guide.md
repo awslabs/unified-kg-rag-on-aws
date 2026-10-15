@@ -1479,9 +1479,11 @@ descriptions over the summarization budget are re-summarized. Setting it to
 `false` overwrites the affected fields with the delta's values instead; the
 entity then loses its lineage to the unchanged documents' chunks. Requires a
 graph adapter that supports read-back (one without it degrades to overwrite).
-Claims merge the same way: a claim id does not depend on the document, so a
-claim that several documents state keeps every document's description, source
-text and text units, read back from the OpenSearch claims index (a claim
+Claims merge the same way: a claim id is keyed on the entities its subject
+and object resolve to, its type and its dates, not on the document or the
+spelling, so a claim that several documents state (as "Acme Inc" in one and
+"Acme" in another) is one claim that keeps every document's description,
+source text and text units, read back from the OpenSearch claims index (a claim
 indexed before claims stored their text units starts from this run's).
 When a document changes or is deleted, entities, relationships and claims it shares
 with other documents lose its chunks from `text_unit_ids` (frequency and

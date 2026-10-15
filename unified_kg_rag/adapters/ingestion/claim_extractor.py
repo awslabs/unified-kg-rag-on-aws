@@ -328,12 +328,15 @@ class ClaimExtractor(BaseProcessor):
         start_date: str | None = None,
         end_date: str | None = None,
     ) -> str:
-        """Stable claim id from ``entity_key``-normalized endpoints and the type.
+        """Provisional claim id from the names as extracted, and the type.
 
-        Endpoints use the same identity key as entity ids, so case/whitespace/
-        quote variants of one name share an id. Known dates are part of the
-        identity (see ``claim_identity_suffix``) so same-triple claims with
-        different dates are not collapsed into one keeping a single date.
+        Only merges restatements within the extraction; ``ClaimResolver``
+        replaces it with the id of the resolved entities
+        (``resolved_claim_id``), which is the id that is stored. Endpoints use
+        the same identity key as entity ids, so case/whitespace/quote variants
+        of one name share an id. Known dates are part of the identity (see
+        ``claim_identity_suffix``) so same-triple claims with different dates
+        are not collapsed into one keeping a single date.
         """
         claim_id_content = (
             f"claim:{entity_key(subject_name)}:{entity_key(object_name)}:"

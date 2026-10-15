@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from unified_kg_rag.domain.ingestion.base_resolver import BaseResolver, FuzzyMatcher
 from unified_kg_rag.domain.models import Claim, Entity
 from unified_kg_rag.shared import get_logger
-from unified_kg_rag.shared.utils import entity_key
+from unified_kg_rag.shared.utils import entity_key, generate_stable_id
 
 # See graph_resolver: log progress every N items instead of pulling tqdm
 # (a terminal-UI dependency) into the technology-agnostic domain layer.
@@ -39,6 +39,23 @@ def claim_identity_suffix(start_date: str | None, end_date: str | None) -> str:
     """
     start, end = claim_date_key(start_date), claim_date_key(end_date)
     return f":{start}:{end}" if start or end else ""
+
+
+def resolved_claim_id(claim: Claim) -> str:
+    """Stable id of a claim whose subject (and object) point at entities.
+
+    Keyed on what makes two claims the same fact: the subject entity id, the
+    object entity id (or, for a literal object such as an amount or a date,
+    its ``entity_key``), the type and the known dates. The extractor's id
+    hashes the names as written, so "Acme Inc" and "Acme" gave one claim two
+    ids; keyed on the entities, the claim gets the same id whichever spelling
+    or document came first, in a full build and across incremental runs.
+    """
+    object_key = claim.object_id or f"literal:{entity_key(claim.object_name)}"
+    return generate_stable_id(
+        f"claim:{claim.subject_id}:{object_key}:{(claim.type or '').casefold()}"
+        f"{claim_identity_suffix(claim.start_date, claim.end_date)}"
+    )
 
 
 def resolve_entity_reference(
@@ -178,7 +195,12 @@ class ClaimResolver(BaseResolver):
         for group in claim_groups:
             if group:
                 merged_claim = self._merge_claims(group)
-                merged_claims.append(merged_claim)
+                claim_id = resolved_claim_id(merged_claim)
+                merged_claims.append(
+                    merged_claim.model_copy(
+                        update={"id": claim_id, "short_id": claim_id[:8]}
+                    )
+                )
 
         stats.resolved_claims = len(merged_claims)
         stats.unresolved_claims = stats.original_claims - len(resolved_claims)
@@ -224,19 +246,13 @@ class ClaimResolver(BaseResolver):
         if not claims:
             return []
 
-        groups_dict: defaultdict[tuple[str, ...], list[Claim]] = defaultdict(list)
+        # Grouped by the resolved id: a literal object (object_id None: an
+        # amount, date, status) is keyed by its value, so "$100" and "$200"
+        # claims stay distinct; dates are part of the identity for the same
+        # reason.
+        groups_dict: defaultdict[str, list[Claim]] = defaultdict(list)
         for claim in claims:
-            # A literal object (object_id None: an amount, date, status) is
-            # keyed by its value, so "$100" and "$200" claims stay distinct;
-            # dates are part of the identity for the same reason.
-            object_key = claim.object_id or f"literal:{entity_key(claim.object_name)}"
-            key = (
-                claim.subject_id,
-                object_key,
-                claim.type,
-                claim_identity_suffix(claim.start_date, claim.end_date),
-            )
-            groups_dict[key].append(claim)
+            groups_dict[resolved_claim_id(claim)].append(claim)
 
         return list(groups_dict.values())
 
