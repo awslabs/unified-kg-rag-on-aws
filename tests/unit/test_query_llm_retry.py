@@ -342,9 +342,7 @@ def test_batch_processor_chain_is_not_double_retried() -> None:
     # calls (not 3 per attempt).
     model = _ScriptedModel([_model_error() for _ in range(10)])
     chain = _query_chain(model, purpose=ModelPurpose.INGESTION)
-    processor = BatchProcessor(
-        batch_size=1, max_attempts=2, retry_multiplier=1.0, retry_max_wait=0
-    )
+    processor = BatchProcessor(max_attempts=2, retry_multiplier=1.0, retry_max_wait=0)
 
     results = processor.execute_with_fallback(
         items_to_process=["item"],

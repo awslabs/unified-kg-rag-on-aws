@@ -411,7 +411,6 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
             raise_exceptions=False,
             run_config=self._build_run_config(),
             show_progress=self.show_progress,
-            batch_size=self.config.processing.batch_size,
         )
         # ragas types `evaluate` as returning `RagasEvaluationResult |
         # Executor`; the Executor branch is only taken when the caller passes

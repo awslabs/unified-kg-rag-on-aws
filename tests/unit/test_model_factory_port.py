@@ -49,19 +49,20 @@ def test_boto_config_sets_bounded_connect_timeout(factory_cls) -> None:
 
 @pytest.mark.parametrize("factory_cls", _FACTORIES)
 @pytest.mark.parametrize(
-    ("max_concurrency", "chunk_concurrency", "expected"),
-    [(20, 4, 80), (1, 1, 10), (100, 10, 200)],
+    ("max_concurrency", "io_workers", "expected"),
+    [(20, 64, 64), (80, 64, 80), (1, 1, 10), (300, 64, 200)],
 )
 def test_boto_config_sizes_connection_pool_to_concurrency(
-    factory_cls, max_concurrency: int, chunk_concurrency: int, expected: int
+    factory_cls, max_concurrency: int, io_workers: int, expected: int
 ) -> None:
-    # Ingestion runs max_concurrency x chunk_concurrency concurrent Bedrock calls
-    # through one client; botocore's default pool of 10 would discard and
-    # re-open connections. Floor 10 (botocore default), cap 200.
+    # An ingestion stage keeps max_concurrency Bedrock calls in flight through
+    # one client, the query path up to io_workers; botocore's default pool of
+    # 10 would discard and re-open connections. Floor 10 (botocore default),
+    # cap 200.
     factory = factory_cls.__new__(factory_cls)
     factory.config = Config()
     factory.config.processing.max_concurrency = max_concurrency
-    factory.config.processing.chunk_concurrency = chunk_concurrency
+    factory.config.processing.io_workers = io_workers
     assert factory._boto_config(read_timeout=300).max_pool_connections == expected
     assert factory._boto_config().max_pool_connections == expected
 

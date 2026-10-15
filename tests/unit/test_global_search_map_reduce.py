@@ -125,13 +125,11 @@ def _strategy(
         reducer if reducer is not None else _reducer("SYNTHESIZED ANSWER")
     )
     strat.token_manager = _TokenCounter(cost=token_cost)
-    # The stub assigns outputs in call order, so run chunks serially.
-    # Chunk concurrency and result ordering have dedicated BatchProcessor tests.
+    # The stub assigns outputs in call order, so run the map calls serially.
+    # Concurrency and result ordering have dedicated BatchProcessor tests.
     from unified_kg_rag.shared.utils.langchain import BatchProcessor
 
-    strat.batch_processor = BatchProcessor(
-        batch_size=1, max_concurrency=4, chunk_concurrency=1
-    )
+    strat.batch_processor = BatchProcessor(max_concurrency=1)
     return strat
 
 
@@ -755,8 +753,7 @@ class _SlowMapChain:
 
 
 async def test_map_phase_runs_max_concurrency_calls_at_once() -> None:
-    # processing.max_concurrency is the documented map fan-out; it was capped
-    # at BatchProcessor's default chunk_concurrency (4) instead.
+    # processing.max_concurrency is the documented map fan-out.
     config = Config()
     config.processing.max_concurrency = 20
     config.search.global_search.map_batch_size = 1

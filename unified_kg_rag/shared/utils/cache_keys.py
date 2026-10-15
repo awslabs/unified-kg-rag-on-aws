@@ -22,7 +22,7 @@ inputs. Two properties matter:
   extracted from the old chunks looking fresh.
 
 Only output-determining paths are listed. Throughput knobs
-(``max_concurrency``, ``chunk_concurrency``, ``batch_size``, ``max_attempts``)
+(``max_concurrency``, ``max_attempts``)
 are deliberately excluded: they change how long a stage takes, not what it
 produces, and including them would discard an expensive cache on a tuning
 change. For the same reason a Bedrock guardrail counts only while it guards

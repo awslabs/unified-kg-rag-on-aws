@@ -147,7 +147,7 @@ def test_disabled_path_never_imports_the_otel_adapter() -> None:
         assert configure_observability(Config().observability) is False
         with observability.span("kg_rag.x", a=1) as span:
             span.set_attribute("b", 2)
-        out = BatchProcessor(chunk_concurrency=2, batch_size=1).execute_with_fallback(
+        out = BatchProcessor(max_concurrency=2).execute_with_fallback(
             [1, 2], lambda items: [{"x": i} for i in items], lambda d: d["x"], "t",
             show_progress=False,
         )
@@ -404,22 +404,27 @@ def test_ingestion_run_and_stage_spans(tracing: Tracing) -> None:
     assert run.status.status_code == StatusCode.ERROR
 
 
-def test_batch_spans_nest_chunks_across_worker_threads(tracing: Tracing) -> None:
+def test_batch_span_parents_the_calls_on_worker_threads(tracing: Tracing) -> None:
     exporter = tracing()
-    processor = BatchProcessor(batch_size=2, chunk_concurrency=2, max_attempts=1)
+    processor = BatchProcessor(max_concurrency=2, max_attempts=1)
+
+    def call(item: dict[str, int]) -> int:
+        with observability.span("kg_rag.test.item"):
+            return item["x"] * 10
+
     results = processor.execute_with_fallback(
         [1, 2, 3, 4, 5],
         lambda items: [{"x": i} for i in items],
-        lambda d: d["x"] * 10,
+        call,
         "synthetic task",
         show_progress=False,
     )
     assert results == [10, 20, 30, 40, 50]
     batch = _one(exporter, "kg_rag.batch")
-    chunks = _by_name(exporter)["kg_rag.batch.chunk"]
+    calls = _by_name(exporter)["kg_rag.test.item"]
     assert _attrs(batch)["kg_rag.task"] == "synthetic task"
     assert (_attrs(batch)["kg_rag.items"], _attrs(batch)["kg_rag.failed"]) == (5, 0)
-    assert len(chunks) == 3 and all(_is_child(c, batch) for c in chunks)
+    assert len(calls) == 5 and all(_is_child(c, batch) for c in calls)
 
 
 # --- query ------------------------------------------------------------------------

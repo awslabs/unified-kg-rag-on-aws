@@ -159,11 +159,12 @@ class BaseBedrockModelFactory(Generic[ModelIdT, ModelInfoT, WrapperT], ABC):
     # materially better for throttling-heavy Bedrock workloads than "standard".
     BOTO_RETRY_MODE: ClassVar[Literal["legacy", "standard", "adaptive"]] = "adaptive"
     # urllib3 connection-pool bounds. botocore defaults to 10 connections per
-    # client, but ingestion issues up to max_concurrency x chunk_concurrency
-    # concurrent Bedrock calls through one client; a smaller pool discards and
-    # re-opens connections ("Connection pool is full"), paying a TLS handshake
-    # per call. The cap keeps an extreme concurrency setting from opening an
-    # unbounded number of sockets.
+    # client, but an ingestion stage keeps up to processing.max_concurrency
+    # Bedrock calls in flight through one client, and the query path up to
+    # processing.io_workers; a smaller pool discards and re-opens connections
+    # ("Connection pool is full"), paying a TLS handshake per call. The cap
+    # keeps an extreme concurrency setting from opening an unbounded number of
+    # sockets.
     BOTO_MIN_POOL_CONNECTIONS: ClassVar[int] = 10
     BOTO_MAX_POOL_CONNECTIONS: ClassVar[int] = 200
 
@@ -171,7 +172,7 @@ class BaseBedrockModelFactory(Generic[ModelIdT, ModelInfoT, WrapperT], ABC):
     def max_pool_connections(cls, config: Config) -> int:
         """urllib3 pool size for a Bedrock client under ``config``'s concurrency."""
         processing = config.processing
-        wanted = processing.max_concurrency * processing.chunk_concurrency
+        wanted = max(processing.max_concurrency, processing.io_workers)
         return max(
             cls.BOTO_MIN_POOL_CONNECTIONS, min(wanted, cls.BOTO_MAX_POOL_CONNECTIONS)
         )

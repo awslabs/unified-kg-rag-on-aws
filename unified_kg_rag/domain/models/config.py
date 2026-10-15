@@ -1120,27 +1120,16 @@ class ProcessingConfig(BaseModel):
     max_concurrency: int = Field(
         default=20,
         ge=1,
-        description="Maximum number of concurrent LLM operations within a batch. "
-        "These stages are Bedrock-I/O-bound (CPU/memory near-idle), so this can be "
-        "well above the CPU count.",
-    )
-    chunk_concurrency: int = Field(
-        default=4,
-        ge=1,
-        description="How many mini-batch chunks to run concurrently. Overlaps "
-        "chunks' Bedrock network waits instead of processing them serially; 1 = "
-        "legacy strictly-serial behaviour.",
-    )
-    batch_size: int = Field(
-        default=10,
-        ge=1,
-        description="Number of items to process in each batch for optimal memory usage and performance",
+        description="LLM calls an ingestion stage keeps in flight: the next "
+        "item starts as soon as one finishes, so this is both the peak and the "
+        "steady concurrency. These stages are Bedrock-I/O-bound (CPU/memory "
+        "near-idle), so this can be well above the CPU count.",
     )
     max_attempts: int = Field(
         default=5,
         ge=1,
-        description="Total attempts for an ingestion LLM item called on its own "
-        "after its batch call fails, including the first (1 disables the retry)",
+        description="Total attempts for an ingestion LLM item called again "
+        "after its first call fails, including the first (1 disables the retry)",
     )
     io_workers: int = Field(
         default=64,

@@ -14,11 +14,15 @@ threads are joined at interpreter exit, so a plain ``time.sleep`` would keep
 the test process alive for the whole sleep after the suite finished.
 """
 
+import asyncio
+import random
 import threading
+import time
 from collections import Counter
 from collections.abc import Iterator
 
 import pytest
+from langchain_core.runnables import RunnableLambda
 
 from unified_kg_rag.adapters.aws.bedrock import BaseBedrockModelFactory
 from unified_kg_rag.shared.utils.langchain import BATCH_ITEM_FAILED, BatchProcessor
@@ -67,12 +71,10 @@ class _SlowFirstCall:
 
 def test_one_slow_item_times_out_alone(release_hung_calls) -> None:
     # Each item has its own timeout: the finished items keep their results
-    # and only the slow one is called again (it used to time out the whole
-    # chunk and re-run all ten items).
+    # and only the slow one is called again.
     fake = _SlowFirstCall(slow=3, release=release_hung_calls)
     bp = BatchProcessor(
         call_timeout_seconds=1,
-        batch_size=10,
         retry_multiplier=1.0,
         retry_max_wait=0,
     )
@@ -103,7 +105,6 @@ def test_item_slow_on_every_attempt_fails_in_place(release_hung_calls) -> None:
 
     bp = BatchProcessor(
         call_timeout_seconds=1,
-        batch_size=10,
         max_attempts=2,
         retry_multiplier=1.0,
         retry_max_wait=0,
@@ -119,15 +120,15 @@ def test_item_slow_on_every_attempt_fails_in_place(release_hung_calls) -> None:
     assert calls == Counter({0: 1, 1: 3, 2: 1})
 
 
-def test_items_of_a_chunk_run_concurrently() -> None:
-    # The items of one chunk are in flight together, up to max_concurrency.
+def test_items_run_concurrently() -> None:
+    # The items are in flight together, up to max_concurrency.
     barrier = threading.Barrier(3, timeout=10)
 
     def call(item: dict[str, int]) -> dict[str, int]:
         barrier.wait()
         return {"echo": item["v"]}
 
-    bp = BatchProcessor(batch_size=3, max_concurrency=3, call_timeout_seconds=0)
+    bp = BatchProcessor(max_concurrency=3, call_timeout_seconds=0)
     results = bp.execute_with_fallback(
         items_to_process=[1, 2, 3],
         prepare_inputs_func=lambda items: [{"v": i} for i in items],
@@ -138,19 +139,17 @@ def test_items_of_a_chunk_run_concurrently() -> None:
     assert results == [{"echo": 1}, {"echo": 2}, {"echo": 3}]
 
 
-def test_chunk_results_preserve_order_when_concurrent() -> None:
-    # With chunk_concurrency > 1 chunks run on a thread pool and complete out of
-    # order; results must still be reassembled in input order.
-    bp = BatchProcessor(batch_size=1, chunk_concurrency=4, call_timeout_seconds=0)
-    # Each chunk waits for the next one to finish, so they complete strictly in
-    # reverse submission order (the last chunk has nothing to wait for).
+def test_results_preserve_order_when_items_finish_out_of_order() -> None:
+    # Each item waits for the next one to finish, so they complete strictly in
+    # reverse submission order (the last item has nothing to wait for).
+    bp = BatchProcessor(max_concurrency=4, call_timeout_seconds=0)
     n = 4
     done = [threading.Event() for _ in range(n)]
 
     def call(item: dict[str, int]) -> dict[str, int]:
         v = item["v"]
         if v + 1 < n:
-            assert done[v + 1].wait(timeout=10), "chunks did not run concurrently"
+            assert done[v + 1].wait(timeout=10), "items did not run concurrently"
         done[v].set()
         return {"echo": v}
 
@@ -164,50 +163,113 @@ def test_chunk_results_preserve_order_when_concurrent() -> None:
     assert results == [{"echo": i} for i in range(n)]
 
 
-def test_chunks_run_concurrently() -> None:
-    # With chunk_concurrency=4, four chunks must be in flight at once. Each
-    # chunk waits at a barrier for the other three; a serial executor would
-    # never reach 4 in flight and the barrier would time out.
-    bp = BatchProcessor(batch_size=1, chunk_concurrency=4, call_timeout_seconds=0)
-    barrier = threading.Barrier(4, timeout=10)
-    lock = threading.Lock()
-    in_flight = 0
-    max_in_flight = 0
+class _InFlight:
+    """Counts the calls in flight and the peak."""
 
-    def call(item: dict[str, int]) -> dict[str, int]:
-        nonlocal in_flight, max_in_flight
-        with lock:
-            in_flight += 1
-            max_in_flight = max(max_in_flight, in_flight)
-        try:
-            barrier.wait()
-        finally:
-            with lock:
-                in_flight -= 1
-        return {"echo": item["v"]}
+    def __init__(self) -> None:
+        self.now = 0
+        self.peak = 0
+        self._lock = threading.Lock()
 
+    def __enter__(self) -> None:
+        with self._lock:
+            self.now += 1
+            self.peak = max(self.peak, self.now)
+
+    def __exit__(self, *exc: object) -> None:
+        with self._lock:
+            self.now -= 1
+
+
+def test_peak_in_flight_is_max_concurrency_under_random_latency() -> None:
+    # One pool of max_concurrency slots: never more calls in flight (chunks
+    # run in parallel used to reach max_concurrency x chunk_concurrency), and
+    # a slot is refilled as soon as it frees up, so the peak is reached.
+    rng = random.Random(0)
+    latencies = [rng.uniform(0, 0.02) for _ in range(60)]
+    in_flight = _InFlight()
+
+    def call(item: dict[str, int]) -> int:
+        with in_flight:
+            time.sleep(latencies[item["v"]])
+        return item["v"]
+
+    bp = BatchProcessor(max_concurrency=4, call_timeout_seconds=0)
     results = bp.execute_with_fallback(
-        items_to_process=[1, 2, 3, 4],
+        items_to_process=list(range(60)),
         prepare_inputs_func=lambda items: [{"v": i} for i in items],
         sequential_func=call,
         task_name="t",
         show_progress=False,
     )
-    assert results == [{"echo": i} for i in [1, 2, 3, 4]]
-    assert max_in_flight == 4
+    assert results == list(range(60))
+    assert in_flight.peak == 4
 
 
-def test_chunk_concurrency_one_is_serial() -> None:
-    # chunk_concurrency=1 keeps the strictly-serial chunk loop.
-    bp = BatchProcessor(batch_size=1, chunk_concurrency=1, call_timeout_seconds=0)
+def test_slow_item_does_not_hold_back_the_other_slots() -> None:
+    # Item 0 finishes only after every other item did: with one slot held by
+    # it, the other slot must run all of them, and no extra slot opens to make
+    # up for the held one (chunks used to run in parallel, each waiting for
+    # its slowest item).
+    others_done = threading.Event()
+    finished: list[int] = []
+    lock = threading.Lock()
+    in_flight = _InFlight()
+    n = 30
+
+    def call(item: dict[str, int]) -> int:
+        with in_flight:
+            if item["v"] == 0:
+                assert others_done.wait(timeout=10), "slow item blocked the others"
+            else:
+                time.sleep(0.002)
+                with lock:
+                    finished.append(item["v"])
+                    if len(finished) == n - 1:
+                        others_done.set()
+        return item["v"]
+
+    bp = BatchProcessor(max_concurrency=2, call_timeout_seconds=0)
     results = bp.execute_with_fallback(
-        items_to_process=[1, 2, 3],
+        items_to_process=list(range(n)),
         prepare_inputs_func=lambda items: [{"v": i} for i in items],
-        sequential_func=lambda item: {"echo": item["v"]},
+        sequential_func=call,
         task_name="t",
         show_progress=False,
     )
-    assert results == [{"echo": 1}, {"echo": 2}, {"echo": 3}]
+    assert results == list(range(n))
+    assert in_flight.peak == 2
+
+
+async def test_async_slow_item_does_not_hold_back_the_other_slots() -> None:
+    others_done = asyncio.Event()
+    finished: list[int] = []
+    in_flight = _InFlight()
+    n = 30
+
+    async def call(item: dict[str, int]) -> int:
+        with in_flight:
+            if item["v"] == 0:
+                await asyncio.wait_for(others_done.wait(), timeout=10)
+            else:
+                await asyncio.sleep(0.001)
+                finished.append(item["v"])
+                if len(finished) == n - 1:
+                    others_done.set()
+        return item["v"]
+
+    runnable = RunnableLambda(call)
+    bp = BatchProcessor(max_concurrency=2, max_attempts=1)
+    results = await bp.aexecute_with_fallback(
+        items_to_process=list(range(n)),
+        prepare_inputs_func=lambda items: [{"v": i} for i in items],
+        batch_func=runnable.abatch,
+        sequential_func=runnable.ainvoke,
+        task_name="t",
+        show_progress=False,
+    )
+    assert results == list(range(n))
+    assert in_flight.peak == 2
 
 
 def test_bedrock_read_timeout_outlasts_the_call_timeout() -> None:

@@ -537,9 +537,8 @@ LLM 단계는 Bedrock I/O가 병목이므로 동시성을 CPU 수보다 훨씬 �
 
 | 키 | 기본값 | 역할과 변경 시점 |
 |---|---|---|
-| `processing.max_concurrency` | `20` | 배치 하나에서 동시에 보내는 LLM 호출 수입니다. Bedrock이 스로틀링하면 낮추고, 할당량에 여유가 있으면 올리세요. |
-| `processing.chunk_concurrency` | `4` | 동시에 처리하는 미니 배치 청크 수입니다. Bedrock 연결 풀 크기는 `max_concurrency` × `chunk_concurrency`입니다. |
-| `processing.max_attempts` | `5` | 배치 호출이 실패한 수집 LLM 항목을 하나씩 다시 호출할 때의 시도 횟수입니다. 일시적 Bedrock 오류, 호출 시간 초과, 파싱할 수 없는 출력은 재시도하고 그 밖의 오류는 바로 실패합니다. `1`이면 재시도하지 않습니다. |
+| `processing.max_concurrency` | `20` | 수집 단계가 동시에 진행하는 LLM 호출 수입니다. 호출 하나가 끝나는 즉시 다음 항목을 시작합니다. Bedrock이 스로틀링하면 낮추고, 할당량에 여유가 있으면 올리세요. |
+| `processing.max_attempts` | `5` | 첫 호출이 실패한 수집 LLM 항목을 다시 호출할 때의 시도 횟수입니다. 일시적 Bedrock 오류, 호출 시간 초과, 파싱할 수 없는 출력은 재시도하고 그 밖의 오류는 바로 실패합니다. `1`이면 재시도하지 않습니다. |
 | `processing.io_workers` | `64` | CLI와 체인의 동기 메서드에서 질의 경로의 블로킹 I/O(Bedrock 호출, Neptune 순회, 재순위화)를 처리하는 스레드 수입니다. Python 기본값은 `min(32, CPUs + 4)`라서 vCPU 2개인 태스크에서는 6개입니다. 비동기 호스트는 시작할 때 `configure_event_loop(asyncio.get_running_loop(), config.processing.io_workers)`(`unified_kg_rag.shared.utils`)를 호출합니다. |
 | `processing.ignore_errors` | `false` | LLM 단계가 실패한 항목을 건너뛰고 실행을 계속합니다. |
 | `processing.deduplicate` | `false` | 추출 전에 중복 문서를 제거합니다. |
@@ -829,7 +828,7 @@ Secrets Manager나 태스크 시크릿에서 주입하세요.
 - 수집: `kg_rag.ingestion.run`(실행이 실패하면 상태 `ERROR`) →
   `kg_rag.ingestion.stage`(단계마다 하나, 입력·출력 수와 상태, 버린 단위 수 같은
   단계의 수치 지표를 `kg_rag.stage.<metric>`으로, 단계가 예외로 끝나면 `error.type`과
-  예외) → `kg_rag.batch` / `kg_rag.batch.chunk`(항목 수와 실패 수) → 모델
+  예외) → `kg_rag.batch`(항목 수와 실패 수) → 모델
   호출마다 `chat <model>` 스팬, 임베딩 호출마다 `embeddings <model>` 스팬
 - 질의: `kg_rag.query`(`capture_content`일 때 마스킹한 질의를 `input.value`로,
   `stream` / `astream`이 아니면 마스킹한 답변을 `output.value`로 기록하며 Langfuse와
@@ -1827,8 +1826,8 @@ CLI가 보고하는 메시지와 그 의미, 해결 방법은 AWS 모드와 로�
 
 ### 대규모, 다국어, 이질적인 코퍼스
 
-- **대규모 코퍼스:** `processing.max_concurrency` / `processing.chunk_concurrency`를
-  올리세요(LLM 단계는 I/O가 병목). 그래프 쓰기는 `indexing.neptune.index_concurrency`를
+- **대규모 코퍼스:** `processing.max_concurrency`를 올리세요(LLM 단계는 I/O가
+  병목). 그래프 쓰기는 `indexing.neptune.index_concurrency`를
   올리면 Gremlin 연결 풀도 함께 늘어납니다. `indexing.opensearch.persist_embedding_cache`와
   `--s3-sync`를 켜면 재실행과 여러 단계로 나눈 작업에서 다시 계산하지 않습니다.
 - **다국어:** `processing.translation.source_language` / `target_language`(+
