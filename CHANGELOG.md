@@ -1723,6 +1723,14 @@ Library API (Python callers and custom backends).
   the edge the id of its corrected key; an edge stated the uncorrected way
   stays a separate edge, as in a full build. Edges stored by an earlier
   version keep their id until a full rebuild (#PR).
+- Graph resolution and the cross-run merge merge attributes with one
+  function (`base_processor.merge_attributes`), so a full build and an
+  incremental build give an item the same document `filters`: the
+  incremental merge kept a delta's multi-valued filter unsorted (or a
+  one-element list instead of a scalar) when the stored item had no
+  filters, and the vector store's `attr_*` fields followed. An item without
+  attributes now has none (`None`) on both paths; resolution gave it `{}`
+  (#PR).
 
 ### Removed
 - `Entity.frequency`: it counted an entity's text units in every merge path

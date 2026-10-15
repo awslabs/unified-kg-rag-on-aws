@@ -7,8 +7,8 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from unified_kg_rag.domain.ingestion.base_processor import merge_attributes
 from unified_kg_rag.domain.ingestion.base_resolver import BaseResolver, FuzzyMatcher
-from unified_kg_rag.domain.ingestion.graph_resolver import _merged_attributes
 from unified_kg_rag.domain.models import Claim, Entity
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.utils import entity_key, generate_stable_id
@@ -283,7 +283,7 @@ class ClaimResolver(BaseResolver):
             source_text=self._merge_descriptions(
                 [c.source_text for c in claims if c.source_text]
             ),
-            attributes=_merged_attributes([c.attributes for c in claims]),
+            attributes=merge_attributes([c.attributes for c in claims]),
             # Leave created_at None when unknown (see graph_resolver) so the
             # merge stays a pure function of its inputs.
             created_at=min(

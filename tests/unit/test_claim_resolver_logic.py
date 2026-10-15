@@ -331,7 +331,7 @@ class TestMergeClaims:
         assert merged.source_text == ""
         assert merged.status == ""
         assert merged.text_unit_ids == []
-        assert merged.attributes == {}
+        assert merged.attributes is None
 
 
 class TestResolveDedupIntegration:

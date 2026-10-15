@@ -45,38 +45,75 @@ def edge_weight(value: Any, default: float = 1.0) -> float:
     return max(weight, 0.0)
 
 
+def _union_filters(
+    attribute_maps: Iterable[dict[str, Any] | None],
+) -> dict[str, Any] | None:
+    """The document ``filters`` of ``attribute_maps`` unioned per key.
+
+    A key with several distinct values holds them as a sorted list (an
+    OpenSearch ``term`` matches any element), one value stays a scalar.
+    ``None`` when no map has a ``filters`` dict.
+    """
+    key = Constants.FILTERS.value
+    values: dict[str, list[Any]] = {}
+    found = False
+    for attrs in attribute_maps:
+        filters = (attrs or {}).get(key)
+        if not isinstance(filters, dict):
+            continue
+        found = True
+        for name, value in filters.items():
+            merged = values.setdefault(name, [])
+            for item in value if isinstance(value, list) else [value]:
+                if item is not None and item not in merged:
+                    merged.append(item)
+    if not found:
+        return None
+    return {
+        name: merged[0] if len(merged) == 1 else sorted(merged, key=str)
+        for name, merged in values.items()
+        if merged
+    }
+
+
 def union_document_filters(
     current: dict[str, Any] | None, new: dict[str, Any] | None
 ) -> dict[str, Any] | None:
     """``current`` attributes with ``new``'s document ``filters`` unioned in.
 
     An item merged from several text units cites every one of them, so it
-    belongs under each of their documents' filter values: a key with several
-    distinct values holds them as a sorted list (an OpenSearch ``term``
-    matches any element), one value stays a scalar. Every other attribute is
-    left as ``current`` has it. Without this the merged item kept the filters
-    of whichever instance the merge happened to keep.
+    belongs under each of their documents' filter values (see
+    ``_union_filters``). Every other attribute is left as ``current`` has it.
+    Without this the merged item kept the filters of whichever instance the
+    merge happened to keep.
     """
     key = Constants.FILTERS.value
     new_filters = (new or {}).get(key)
     if not isinstance(new_filters, dict) or not new_filters:
         return current
-    current_filters = (current or {}).get(key)
-    values: dict[str, list[Any]] = {}
-    for filters in (current_filters, new_filters):
-        if not isinstance(filters, dict):
-            continue
-        for name, value in filters.items():
-            merged = values.setdefault(name, [])
-            for item in value if isinstance(value, list) else [value]:
-                if item is not None and item not in merged:
-                    merged.append(item)
-    union = {
-        name: merged[0] if len(merged) == 1 else sorted(merged, key=str)
-        for name, merged in values.items()
-        if merged
-    }
-    return {**(current or {}), key: union}
+    return {**(current or {}), key: _union_filters((current, new))}
+
+
+def merge_attributes(
+    attribute_maps: Iterable[dict[str, Any] | None],
+) -> dict[str, Any] | None:
+    """Union attribute maps, a later map winning on a shared key, except the
+    document ``filters``, whose values are unioned (``_union_filters``).
+
+    The one attribute rule of graph resolution and the cross-run merge, so a
+    full build over N items and an incremental merge of them two at a time
+    give the same attributes. Attributes carry the index suffix an item is
+    written under, so dropping them would move a merged item into the
+    default suffix. ``None`` when no map has attributes.
+    """
+    present = [attrs for attrs in attribute_maps if attrs]
+    if not present:
+        return None
+    merged = {name: value for attrs in present for name, value in attrs.items()}
+    filters = _union_filters(present)
+    if filters is not None:
+        merged[Constants.FILTERS.value] = filters
+    return merged
 
 
 def format_entities_with_limit_task(entities: list[Entity], max_entities: int) -> str:
