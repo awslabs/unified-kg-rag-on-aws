@@ -473,7 +473,7 @@ Library API (Python callers and custom backends).
   resolve their target among the entities and relationships citing the unit
   being refined, the ones its prompt lists, instead of the whole round's
   graph: a unit could rename, retype or reverse an item only other units
-  cite, which an incremental run without that unit cannot reproduce (#PR).
+  cite, which an incremental run without that unit cannot reproduce (#291).
 - `entity_confidence_threshold` is applied to each chunk's own extraction,
   right after the grounding guard (as gleaning applies it), instead of to the
   entity merged across the batch: the best score over the chunks extracted
@@ -481,7 +481,7 @@ Library API (Python callers and custom backends).
   entities. A chunk that scores an entity below the threshold no longer
   cites it, and the chunk's relationships naming it are dropped; another
   chunk's low score no longer removes a stub. Only non-default thresholds
-  are affected (#PR).
+  are affected (#291).
 - CloudWatch tracing (`enable_cloudwatch_tracing`): the task role keeps
   only `xray:PutTraceSegments`, the one action the X-Ray OTLP traces
   endpoint authorizes (a role with only `xray:PutSpans` gets a 403);
@@ -1447,7 +1447,7 @@ Library API (Python callers and custom backends).
 - `Entity.frequency`: it counted an entity's text units in every merge path
   but no store wrote it and nothing read it (ranking uses `rank`, the local
   search frequency filter counts `text_unit_ids`). Stage caches that carry
-  the key still load; it is ignored (#PR).
+  the key still load; it is ignored (#291).
 
 ### Security
 - Prompts delimit corpus and retrieved text as data, and inputs cannot close
