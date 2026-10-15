@@ -217,8 +217,9 @@ are not recorded, so the next run retries them. Below that rate the run
 succeeds and only the documents that own a failed artifact are recorded
 `FAILED`; a failure the backend reports without an item id marks every
 document of the run `FAILED`. On the CDK stack, a failed phase publishes a
-message with the execution id and the error to the SNS topic, and four alarms
-report problems to the same topic. `PipelineFailures` also fires for a failed
+message with the execution id and the error to the SNS topic, and the alarms
+below report to the same topic: four on pipeline runs and seven on store
+health. `PipelineFailures` also fires for a failed
 phase, so such a failure arrives twice, the second time without context; the
 alarm stays because it also covers failures the message cannot report (an
 error the phase's handler cannot catch, such as a start input without
@@ -230,6 +231,19 @@ error the phase's handler cannot catch, such as a start input without
 | `PipelineTimedOutOrAborted` | An execution hit the state machine timeout or was stopped |
 | `IndexingFailures` | Indexing reported failed items, even in a succeeded execution |
 | `ExtractionFailures` | Extraction, gleaning or claim extraction failed on some units |
+
+The store-health alarms fire between runs too, so degradation shows before
+the next run breaks on it:
+
+| Alarm | Fires when | What to do |
+|---|---|---|
+| `OpenSearchClusterRed` | A primary shard is unallocated (5 minutes) | Check the domain's cluster health and the failed node; queries on the affected index miss data, so hold ingestion until it is green or yellow |
+| `OpenSearchFreeStorageLow` | The fullest data node has 40% or less of `opensearch_volume_gib` free | Raise `opensearch_volume_gib` (or `opensearch_count`) and redeploy before the node reaches the write-block watermark |
+| `OpenSearchJvmPressure` | JVM memory pressure is at least 95% in 3 consecutive minutes | Out-of-memory risk: use a larger `opensearch_instance` or more data nodes |
+| `DocStatusWriteThrottled` | The doc-status table throttled a write (5 minutes) | The app retries throttled registry calls with backoff; one still throttled after that fails the run with `DocStatusRegistryError`. Check for overlapping runs on the table and rerun a failed run once the throttling clears |
+| `NeptuneHighCpu` | Average CPU is at least 90% for 15 minutes | Sustained saturation, not a bulk-write peak: use a larger `neptune_instance` or lower `indexing.neptune.index_concurrency` |
+| `NeptuneLowFreeableMemory` | Average freeable memory is 512 MiB or less (5 minutes) | Queries and writes may fail with out-of-memory errors: use a larger `neptune_instance` |
+| `NeptuneGremlinErrors` | Gremlin server errors in 3 consecutive minutes | Persistent write or query failures (retried write conflicts come in short bursts and do not fire it): check the task log for the failing request |
 
 The alarms have a subscriber only when the stack was deployed with
 `-c alarm_email=<address>`.

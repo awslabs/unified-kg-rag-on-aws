@@ -4,6 +4,9 @@
 
 from __future__ import annotations
 
+import ast
+import re
+from pathlib import Path
 from typing import Any
 
 import aws_cdk as cdk
@@ -12,14 +15,17 @@ from aws_cdk.assertions import Template
 from iac.config import DeploymentConfig
 from iac.stacks.compute_stack import ComputeStack
 from iac.stacks.networking_stack import NetworkingStack
-from iac.stacks.observability_stack import ObservabilityStack
+from iac.stacks.observability_stack import EMF_NAMESPACE, ObservabilityStack
 from iac.stacks.orchestration_stack import OrchestrationStack
 from iac.stacks.storage_stack import StorageStack
 
 _ENV = cdk.Environment(account="111111111111", region="us-west-2")
+# The IaC environment does not install the package, so read the emitted metric
+# names from its source instead of importing it.
+_PACKAGE = Path(__file__).resolve().parents[2] / "unified_kg_rag"
 
 
-def _alarms(context: dict[str, Any] | None = None) -> dict[str, dict[str, Any]]:
+def _template(context: dict[str, Any] | None = None) -> Template:
     app = cdk.App(context=context or {})
     config = DeploymentConfig.from_context(app)
     networking = NetworkingStack(app, "Net", config=config, env=_ENV)
@@ -44,7 +50,11 @@ def _alarms(context: dict[str, Any] | None = None) -> dict[str, dict[str, Any]]:
         storage=storage,
         env=_ENV,
     )
-    alarms = Template.from_stack(stack).find_resources("AWS::CloudWatch::Alarm")
+    return Template.from_stack(stack)
+
+
+def _alarms(context: dict[str, Any] | None = None) -> dict[str, dict[str, Any]]:
+    alarms = _template(context).find_resources("AWS::CloudWatch::Alarm")
     # Logical ids are "<construct id><hash>"; key by the construct id.
     return {logical_id[:-8]: a["Properties"] for logical_id, a in alarms.items()}
 
@@ -99,3 +109,50 @@ def test_resource_alarms_need_sustained_pressure() -> None:
     # Bulk edge writes saturate the Neptune writer briefly by design.
     cpu = alarms["NeptuneHighCpu"]
     assert (cpu["Period"], cpu["EvaluationPeriods"]) == (300, 3)
+
+
+def _pipeline_metric_fields() -> set[str]:
+    source = _PACKAGE / "domain" / "models" / "pipeline.py"
+    tree = ast.parse(source.read_text(encoding="utf-8"))
+    (model,) = (
+        node
+        for node in tree.body
+        if isinstance(node, ast.ClassDef) and node.name == "PipelineMetrics"
+    )
+    return {
+        node.target.id
+        for node in model.body
+        if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name)
+    }
+
+
+def _emf_metric_names(template: Template) -> set[str]:
+    names: set[str] = set()
+    for alarm in template.find_resources("AWS::CloudWatch::Alarm").values():
+        props = alarm["Properties"]
+        stats = [props] + [
+            m["MetricStat"]["Metric"]
+            for m in props.get("Metrics", [])
+            if "MetricStat" in m
+        ]
+        names |= {s["MetricName"] for s in stats if s.get("Namespace") == EMF_NAMESPACE}
+    for dashboard in template.find_resources("AWS::CloudWatch::Dashboard").values():
+        # The body is an Fn::Join of JSON fragments; widget metrics render as
+        # ["<namespace>","<name>",...] inside its string parts.
+        _, parts = dashboard["Properties"]["DashboardBody"]["Fn::Join"]
+        body = "".join(part for part in parts if isinstance(part, str))
+        pattern = '"' + re.escape(EMF_NAMESPACE) + r'","(\w+)"'
+        names |= set(re.findall(pattern, body))
+    return names
+
+
+def test_emf_metric_names_are_pipeline_metrics_fields() -> None:
+    # A renamed PipelineMetrics field would leave an alarm on a series nobody
+    # emits (never fires, TreatMissingData=notBreaching) or an empty widget.
+    pipeline = (_PACKAGE / "application" / "ingestion" / "pipeline.py").read_text(
+        encoding="utf-8"
+    )
+    assert f'namespace="{EMF_NAMESPACE}"' in pipeline
+    names = _emf_metric_names(_template())
+    assert {"total_items_index_failed", "total_entities_extracted"} <= names
+    assert names - _pipeline_metric_fields() == set()

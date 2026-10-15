@@ -200,7 +200,8 @@ Neptune 요청(쓰기, 삭제, 제거와 병합을 위한 읽기)은 모두 새 
 시도합니다. 그 이하이면 실행은 성공하고, 실패한 산출물을 가진 문서만 `FAILED`로
 기록됩니다. 백엔드가 항목 ID 없이 보고한 실패가 있으면 그 실행의 모든 문서를
 `FAILED`로 기록합니다. CDK 스택에서는 단계가 실패하면 실행 ID와 오류를 담은
-메시지를 SNS 토픽에 게시하고, 다음 네 경보도 같은 토픽으로 문제를 알립니다.
+메시지를 SNS 토픽에 게시하고, 아래 경보도 같은 토픽으로 문제를 알립니다.
+파이프라인 실행 경보가 네 개, 저장소 상태 경보가 일곱 개입니다.
 단계가 실패하면 `PipelineFailures`도 발생하므로 같은 실패가 두 번 오며, 두 번째
 알림에는 실행 ID와 오류가 없습니다. 이 경보를 두는 이유는 메시지로 알릴 수 없는
 실패도 잡기 때문입니다. 단계의 오류 처리기가 잡지 못하는 오류(예: `pipeline_id`가
@@ -212,6 +213,19 @@ Neptune 요청(쓰기, 삭제, 제거와 병합을 위한 읽기)은 모두 새 
 | `PipelineTimedOutOrAborted` | 실행이 상태 머신 제한 시간을 넘겼거나 중지됨 |
 | `IndexingFailures` | 실행이 성공했더라도 인덱싱에서 실패한 항목이 있음 |
 | `ExtractionFailures` | 추출, gleaning, 주장 추출이 일부 텍스트 단위에서 실패함 |
+
+저장소 상태 경보는 실행이 없을 때도 발생하므로, 다음 실행이 실패하기 전에 성능
+저하를 알 수 있습니다.
+
+| 경보 | 발생 조건 | 조치 |
+|---|---|---|
+| `OpenSearchClusterRed` | 할당되지 않은 프라이머리 샤드가 있음(5분) | 도메인의 클러스터 상태와 실패한 노드를 확인합니다. 해당 인덱스 검색에서 데이터가 빠지므로 green이나 yellow가 될 때까지 수집을 멈춥니다 |
+| `OpenSearchFreeStorageLow` | 가장 많이 찬 데이터 노드의 여유 공간이 `opensearch_volume_gib`의 40% 이하 | 쓰기 차단 기준에 이르기 전에 `opensearch_volume_gib`(또는 `opensearch_count`)를 늘려 다시 배포합니다 |
+| `OpenSearchJvmPressure` | JVM 메모리 압력이 3분 연속 95% 이상 | 메모리 부족 위험입니다. 더 큰 `opensearch_instance`를 쓰거나 데이터 노드를 늘립니다 |
+| `DocStatusWriteThrottled` | 문서 상태 테이블이 쓰기를 스로틀링함(5분) | 앱은 스로틀링된 레지스트리 호출을 백오프하며 재시도하고, 그래도 스로틀링되면 `DocStatusRegistryError`로 실행이 실패합니다. 같은 테이블에 겹쳐 실행되는 수집이 있는지 확인하고, 스로틀링이 해소된 뒤 실패한 실행을 다시 실행합니다 |
+| `NeptuneHighCpu` | 평균 CPU가 15분 동안 90% 이상 | 대량 쓰기의 일시적 최고치가 아니라 지속적인 포화입니다. 더 큰 `neptune_instance`를 쓰거나 `indexing.neptune.index_concurrency`를 낮춥니다 |
+| `NeptuneLowFreeableMemory` | 평균 가용 메모리가 512MiB 이하(5분) | 쿼리와 쓰기가 메모리 부족으로 실패할 수 있습니다. 더 큰 `neptune_instance`를 씁니다 |
+| `NeptuneGremlinErrors` | 3분 연속 Gremlin 서버 오류가 있음 | 지속적인 쓰기·쿼리 실패입니다(재시도되는 쓰기 충돌은 짧게 몰려 발생하므로 이 경보를 울리지 않음). 작업 로그에서 실패한 요청을 확인합니다 |
 
 경보를 받으려면 `-c alarm_email=<address>`로 배포해 구독자를 등록해야 합니다.
 

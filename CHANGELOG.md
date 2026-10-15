@@ -647,6 +647,12 @@ Library API (Python callers and custom backends).
   only LightRAG `mix`/`hybrid` use the relationship vector index; `local`
   (relationship section, bridge relationships), `simple` and `drift` query it
   too (#295).
+- Operations guide: the CDK alarm section lists all eleven alarms, adding
+  the seven store-health alarms (OpenSearch, DynamoDB, Neptune) with what
+  each one means and what to do; it said "four alarms". An IaC test now
+  fails when an alarm or dashboard widget names an EMF metric that is not a
+  `PipelineMetrics` field, so renaming a field cannot silently blank an
+  alarm (#PR).
 - `iac/README.md` cost drivers list CloudWatch Container Insights, which the
   ECS cluster always has on (billed custom metrics and performance log
   events), and why it stays on: it is the only per-task CPU and memory
