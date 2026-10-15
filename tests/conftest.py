@@ -107,6 +107,23 @@ _FAKE_AWS_ENV = {
 }
 
 
+@pytest.fixture(autouse=True, scope="session")
+def _scratch_working_directory(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> Iterator[None]:
+    """Run the session in a scratch working directory.
+
+    The CLIs and stages resolve their relative defaults (``logs/``,
+    ``outputs/visualization``, ``cache/``) against the working directory, so
+    tests that keep those defaults would otherwise write into the checkout;
+    a file handler a CLI test attaches keeps logging every later test there.
+    Tests read repository files relative to ``__file__``, never the CWD.
+    """
+    with pytest.MonkeyPatch.context() as patch:
+        patch.chdir(tmp_path_factory.mktemp("cwd"))
+        yield
+
+
 @pytest.fixture(autouse=True)
 def _isolated_aws_env(
     request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
