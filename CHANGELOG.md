@@ -70,7 +70,7 @@ ignored, so check the start-up warnings after upgrading.
 - `processing.chunking.content_type` is removed with the markdown/HTML
   header pre-splitting it selected: no parser builds a markdown or HTML body,
   so every document was always chunked as plain text. Stage caches and
-  extraction fingerprints keep their keys (#PR).
+  extraction fingerprints keep their keys (#289).
 - A filter key that no retriever of the strategy declares raises
   `InvalidFilterError` (#123).
 - `indexing.opensearch.terms_batch_size`, `max_total_clauses` and
@@ -234,7 +234,7 @@ Library API (Python callers and custom backends).
   `Page` models are removed. They copied the text three times (a parsed
   document's parsing and loading cache entries and parsed-output export were
   three times its text) and nothing read the page fields. Exports and caches
-  written before still load; their `content.text` is read as the text (#PR).
+  written before still load; their `content.text` is read as the text (#289).
 
 ### Upgrading from pre-release builds
 - Doc-status registries written before source scopes existed are migrated in
@@ -453,7 +453,7 @@ Library API (Python callers and custom backends).
   the most edge weight with, not the one it has the most edges to (#288).
 - Intelligent chunking: an error while reading the model's chunk
   boundaries is logged at WARNING and the pre-chunk is split by size; it was
-  logged at DEBUG and the pre-chunk silently kept whole (#PR).
+  logged at DEBUG and the pre-chunk silently kept whole (#289).
 - CloudWatch tracing (`enable_cloudwatch_tracing`): the task role keeps
   only `xray:PutTraceSegments`, the one action the X-Ray OTLP traces
   endpoint authorizes (a role with only `xray:PutSpans` gets a 403);
