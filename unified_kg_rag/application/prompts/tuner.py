@@ -128,7 +128,7 @@ class PromptTuner:
         chain = setup_chain(
             model_purpose=ModelPurpose.INGESTION,
             factory=self.factory,
-            model_id=self.config.search.entity_extraction_model_id,
+            model_id=self.config.processing.graph_extraction.extraction_model_id,
             prompt_class=CorpusProfilePrompt,
             parser=StrOutputParser(),
             custom_prompts=self.config.custom_prompts,

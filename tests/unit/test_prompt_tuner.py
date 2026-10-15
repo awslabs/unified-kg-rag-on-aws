@@ -343,6 +343,21 @@ class TestSampleAndParse:
         assert raw not in str(exc.value)
         assert f"len={len(raw)}" in str(exc.value)
 
+    async def test_profile_corpus_uses_the_ingestion_extraction_model(
+        self, tuner: PromptTuner, mocker
+    ) -> None:
+        # Regression: profiling ran on search.entity_extraction_model_id, the
+        # query-time model, instead of the model that does the extraction.
+        tuner.config.processing.graph_extraction.extraction_model_id = "extract-m"
+        tuner.config.search.entity_extraction_model_id = "query-m"
+        chain = mocker.MagicMock()
+        chain.ainvoke = mocker.AsyncMock(return_value='{"domain": "trade"}')
+        setup = mocker.patch(
+            "unified_kg_rag.application.prompts.tuner.setup_chain", return_value=chain
+        )
+        await tuner.profile_corpus(["some text"])
+        assert setup.call_args.kwargs["model_id"] == "extract-m"
+
     async def test_generate_examples_uses_the_injected_providers(
         self, tuner: PromptTuner, mocker
     ) -> None:
