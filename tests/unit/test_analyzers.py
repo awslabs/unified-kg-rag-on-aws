@@ -169,6 +169,66 @@ def test_dense_run_split_matches_a_per_character_scan() -> None:
         assert standard_analyzer(text) == _per_character_tokens(text)
 
 
+def _split_every_word(text: str, word_filter) -> list[str]:
+    """``analyzers._tokens`` splitting every word at dense-script runs."""
+    tokens: list[str] = []
+    text = text.replace("\u0130", "i").replace("\u03a3", "\u03c3").lower()
+    astral = analyzers._ASTRAL.search(text) is not None
+    for word in analyzers._word_pattern(astral).findall(text):
+        for i, run in enumerate(analyzers._dense_run(astral).split(word)):
+            if i % 2:
+                tokens.extend(analyzers._bigrams(analyzers._NOT_DENSE.sub("", run)))
+            elif run and (kept := word_filter(run)) is not None:
+                tokens.append(kept)
+    return tokens
+
+
+def test_ascii_words_tokenize_as_split_words(monkeypatch: pytest.MonkeyPatch) -> None:
+    rng = random.Random(5)
+    words = [
+        "The",
+        "Vendor's",
+        "shipped",
+        "u.s.a",
+        "1,000.50",
+        "under_score",
+        "_x",
+        "don't",
+        "İstanbul",
+        "ΣΟΦΙΑ",
+        "홍길동으로부터",
+        "AI기반",
+        "x東y",
+        "été",
+        "\U00020000b",
+        "Q3-2024",
+    ]
+    texts = [" ".join(rng.choices(words, k=rng.randint(1, 10))) for _ in range(300)]
+
+    def drop_the(word: str) -> str | None:
+        return None if word == "the" else word
+
+    expected = [_split_every_word(text, drop_the) for text in texts]
+    assert [analyzers._tokens(text, drop_the) for text in texts] == expected
+    english = [english_analyzer(text) for text in texts]
+
+    # An ASCII word has no dense-script letter, so it is not split at all
+    # (which halves the time of analyzing English text).
+    dense_run = analyzers._dense_run
+
+    class _AsciiUnsplit:
+        def __init__(self, astral: bool) -> None:
+            self.pattern = dense_run(astral)
+
+        def split(self, word: str) -> list[str]:
+            assert not word.isascii(), word
+            return self.pattern.split(word)
+
+    monkeypatch.setattr(analyzers, "_dense_run", _AsciiUnsplit)
+    assert [analyzers._tokens(text, drop_the) for text in texts] == expected
+    assert [english_analyzer(text) for text in texts] == english
+
+
 def test_english_stems_each_distinct_word_once(monkeypatch: pytest.MonkeyPatch) -> None:
     snowballstemmer = pytest.importorskip("snowballstemmer")
     calls: list[str] = []

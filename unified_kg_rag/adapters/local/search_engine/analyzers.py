@@ -240,6 +240,11 @@ def _tokens(text: str, word_filter: Callable[[str], str | None]) -> list[str]:
     text = text.replace("\u0130", "i").replace("\u03a3", "\u03c3").lower()
     astral = not text.isascii() and _ASTRAL.search(text) is not None
     for word in _word_pattern(astral).findall(text):
+        if word.isascii():
+            # No dense-script letter: the split would return the word whole.
+            if (kept := word_filter(word)) is not None:
+                tokens.append(kept)
+            continue
         for i, run in enumerate(_dense_run(astral).split(word)):
             if i % 2:
                 # The bigrams are of the letters, without the marks between.

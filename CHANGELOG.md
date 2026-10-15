@@ -518,6 +518,11 @@ Library API (Python callers and custom backends).
   ("I’m sorry, …") is caught like its ASCII form and the original query is
   searched; the follow-up rewrite guard and the translation guard now share
   one normalisation (#292).
+- Embedded search engine: the analyzers no longer split an ASCII word at
+  dense-script runs (it has none), with the same tokens. Analyzing English
+  text, which the first lexical query of an index does for every document,
+  takes about a third less time with the `english` analyzer and half with
+  `standard` (#PR).
 - Embedded search engine: indexing and updating no longer pass each
   document's vectors through a JSON round trip (a vector given as a list is
   stored as given; other values are still converted to JSON types).
