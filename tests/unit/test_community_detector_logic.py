@@ -833,6 +833,35 @@ class TestGenerateReportsGuards:
         assert cd.generate_reports([]) == ([], [])
 
 
+class TestGenerateReportsFailure:
+    @staticmethod
+    def _failing_detector(*, ignore_errors: bool) -> CommunityDetector:
+        cd = _detector(report=False)
+        cd.ignore_errors = ignore_errors
+        cd.community_detection_config.report_generation.enabled = True
+        cd.report_generator = object()
+
+        def boom(*_: object, **__: object) -> None:
+            raise RuntimeError("report backend down")
+
+        cd._generate_reports_with_rollup = boom  # type: ignore[method-assign]
+        cd._generate_reports_flat = boom  # type: ignore[method-assign]
+        return cd
+
+    def test_error_propagates_without_ignore_errors(self) -> None:
+        cd = self._failing_detector(ignore_errors=False)
+        with pytest.raises(RuntimeError, match="report backend down"):
+            cd.generate_reports([_community(["e1"])])
+
+    def test_ignore_errors_returns_every_community_as_failed(self) -> None:
+        cd = self._failing_detector(ignore_errors=True)
+        second = _community(["e1"]).model_copy(update={"id": "L0_C1"})
+        reports, failed = cd.generate_reports([_community(["e1"]), second])
+        # No reports, and every community is reported back for a retry.
+        assert reports == []
+        assert failed == ["L0_C0", "L0_C1"]
+
+
 class _StubBatchProcessor:
     """Stands in for BatchProcessor: returns a caller-supplied result list
     without touching Bedrock."""
