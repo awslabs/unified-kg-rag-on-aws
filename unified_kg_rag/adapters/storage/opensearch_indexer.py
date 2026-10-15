@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 import re
 import time
-from array import array
 from collections.abc import Callable, Collection
 from typing import TYPE_CHECKING, Any, NamedTuple
 
@@ -96,14 +95,9 @@ class OpenSearchIndexer(VectorIndexer):
         )
         self.target_language = self.config.processing.translation.target_language.value
         self.analyzer = self._analyzer_for(self.target_language)
-        # Per-process content-hash -> embedding cache (avoids re-embedding
-        # duplicate/unchanged text within and across incremental runs). Held
-        # as float32 (what the knn field stores), an eighth of a float list;
-        # unused when the S3 tier below is on, which holds the same vectors.
-        self._embedding_cache: dict[str, array] = {}
         # Optional S3-persisted cache so unchanged text is not re-embedded across
         # separate runs/phases (each Fargate phase is a fresh process). Loaded
-        # lazily on first embed; best-effort (S3 errors degrade to in-process).
+        # lazily on first embed; best-effort (an S3 error leaves it in memory).
         self._s3_embedding_cache = self._build_s3_embedding_cache()
 
     def _analyzer_for(self, language: str) -> str:
@@ -1110,12 +1104,11 @@ class OpenSearchIndexer(VectorIndexer):
     ) -> list[list[float] | None]:
         result: list[list[float] | None] = [None] * len(texts)
 
-        # Content-hash embedding cache: identical text is embedded once,
-        # de-duplicated within a run and across indices sharing the same text.
-        # The in-process dict is the fast tier; the optional S3 tier (loaded
-        # once, lazily) persists across separate runs/phases so unchanged text
-        # is not re-embedded. Only cache-miss, de-duplicated texts hit Bedrock;
-        # the result is fanned back out to every index sharing that text.
+        # Identical texts of one call are embedded once and fanned back out.
+        # The optional S3 cache (loaded once, lazily) persists vectors across
+        # runs and phases so unchanged text is not re-embedded. No in-process
+        # tier: it held every vector of the run and texts rarely repeat
+        # across calls.
         if self._s3_embedding_cache is not None:
             self._s3_embedding_cache.load()
 
@@ -1136,11 +1129,8 @@ class OpenSearchIndexer(VectorIndexer):
                     unique.append((key, text))
 
         def _store(key: str, emb: list[float] | None) -> None:
-            if emb is not None:
-                if self._s3_embedding_cache is not None:
-                    self._s3_embedding_cache.put(key, emb)
-                else:
-                    self._embedding_cache[key] = array("f", emb)
+            if emb is not None and self._s3_embedding_cache is not None:
+                self._s3_embedding_cache.put(key, emb)
             for idx in key_to_indices[key]:
                 result[idx] = emb
 
@@ -1174,7 +1164,7 @@ class OpenSearchIndexer(VectorIndexer):
 
         # Embedding is IO-bound (Bedrock InvokeModel); fan the batches out across
         # threads instead of issuing them strictly serially. Results are stored
-        # back on the calling thread to avoid races on result/_embedding_cache.
+        # back on the calling thread to avoid races on result and the S3 cache.
         batches = [
             unique[start : start + batch_size]
             for start in range(0, len(unique), batch_size)
@@ -1199,15 +1189,14 @@ class OpenSearchIndexer(VectorIndexer):
         # NOTE: the S3 cache is intentionally NOT flushed here. _batch_embed is
         # called once per extractor per item-type, so flushing here would
         # read-merge-overwrite the whole (growing) S3 object many times per run.
-        # Newly-computed vectors are held in the in-process tier and flushed once
-        # per item-type by _flush_embedding_cache() at the indexing boundary.
+        # Newly-computed vectors are held by the S3 cache and flushed once per
+        # item-type by _flush_embedding_cache() at the indexing boundary.
         return result
 
     def _cached_embedding(self, key: str) -> list[float] | None:
-        if self._s3_embedding_cache is not None:
-            return self._s3_embedding_cache.get(key)
-        vector = self._embedding_cache.get(key)
-        return vector.tolist() if vector is not None else None
+        if self._s3_embedding_cache is None:
+            return None
+        return self._s3_embedding_cache.get(key)
 
     def _flush_embedding_cache(self) -> None:
         """Persist newly-computed vectors to the S3 tier (once per item-type).

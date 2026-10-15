@@ -49,18 +49,14 @@ def test_empty_text_skipped(indexer) -> None:
     assert indexer._embedded_log == ["x"]
 
 
-def test_cross_call_cache_reuse(indexer) -> None:
+def test_without_the_s3_cache_no_vector_is_kept_across_calls(indexer) -> None:
+    # An in-process tier held every vector of the run for no measured hit:
+    # texts repeat within a call (deduplicated above), rarely across calls.
+    assert not hasattr(indexer, "_embedding_cache")
     indexer._batch_embed(["a", "b"])
     indexer._embedded_log.clear()
-    result = indexer._batch_embed(["a", "c"])
-    # "a" served from cache; only "c" hits the model.
-    assert indexer._embedded_log == ["c"]
-    assert result[0] is not None
-
-
-def test_cache_persists_in_dict(indexer) -> None:
-    indexer._batch_embed(["alpha", "beta"])
-    assert len(indexer._embedding_cache) == 2
+    assert indexer._batch_embed(["a"]) == [[1.0] * 4]
+    assert indexer._embedded_log == ["a"]
 
 
 def test_batch_embed_does_not_flush_s3_per_call(indexer) -> None:
@@ -111,14 +107,7 @@ def test_final_embedding_failures_summarized_at_warning(indexer, caplog) -> None
     assert "1 of 2" in summaries[0].getMessage()
 
 
-def test_in_process_tier_holds_float32(indexer) -> None:
-    indexer._batch_embed(["alpha"])
-    (held,) = indexer._embedding_cache.values()
-    assert held.typecode == "f"
-    assert indexer._batch_embed(["alpha"]) == [[5.0] * 4]
-
-
-def test_s3_tier_is_the_only_copy_when_enabled(indexer) -> None:
+def test_s3_cache_serves_a_later_call(indexer) -> None:
     from unified_kg_rag.adapters.aws.embedding_cache import S3EmbeddingCache
 
     s3 = S3EmbeddingCache("bucket", "key", "titan", 4)
@@ -127,6 +116,5 @@ def test_s3_tier_is_the_only_copy_when_enabled(indexer) -> None:
     indexer._batch_embed(["alpha", "beta"])
     indexer._embedded_log.clear()
 
-    assert indexer._embedding_cache == {}
     assert indexer._batch_embed(["alpha"]) == [[5.0] * 4]
     assert indexer._embedded_log == []

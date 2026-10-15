@@ -368,6 +368,11 @@ Library API (Python callers and custom backends).
   when retrieval finds nothing, so on a populated index `accuracy` stayed
   near 0 even when the model declined correctly; the rate is now documented
   as a lower bound on correct declines (#292).
+- The vector indexer no longer keeps every vector it embedded in memory for
+  the rest of the run: memory grew with the corpus and the copy was not
+  reused (identical texts of one embedding call are still embedded once).
+  `indexing.opensearch.persist_embedding_cache` and its S3 cache are
+  unchanged (#PR).
 - `indexing.reset` no longer waits a fixed second after clearing the
   OpenSearch indices: the deletes are acknowledged before they return and
   the rebuild writes new timestamped indices (#PR).
