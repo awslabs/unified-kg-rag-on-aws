@@ -61,8 +61,7 @@ def _merge_entity_fields(surviving: Entity, incoming: Entity) -> None:
 
     Shared by the exact-name and fuzzy-match paths so both converge to the same
     field semantics as the full-build resolver (``EntityResolver._merge_entities``):
-    description union, text-unit/community-id union, frequency = #text-units,
-    max confidence/rank, first-known type, attribute union.
+    description union, text-unit/community-id union, max confidence/rank, first-known type, attribute union.
 
     The name stays the surviving one, even when a gleaning correction renamed
     ``incoming`` (same id, another name): edges carry a copy of their
@@ -79,9 +78,6 @@ def _merge_entity_fields(surviving: Entity, incoming: Entity) -> None:
     surviving.community_ids = _dedupe_preserve_order(
         (surviving.community_ids or []) + (incoming.community_ids or [])
     )
-    # Frequency tracks the number of supporting text units (MS GraphRAG keeps
-    # this separate from rank/degree, which reflects graph importance).
-    surviving.frequency = len(surviving.text_unit_ids)
     # Confidence and rank are monotonic in evidence: take the max so a more
     # confident / higher-ranked delta reinforces the surviving entity. This
     # matches the full-build resolver (max over the group), keeping a full
@@ -333,9 +329,8 @@ def remove_text_units(
     Used when a changed or deleted document's artifacts are shared with
     surviving documents: they stay, but must stop citing the removed chunks.
     Returns updated copies of only the items that referenced one of
-    ``text_unit_ids``. Frequency and weight follow the same rules as the merge
-    (frequency = number of supporting text units, weight = sum of the remaining
-    per-text-unit strengths). Descriptions are left as they are:
+    ``text_unit_ids``. Weight follows the same rule as the merge (the sum of
+    the remaining per-text-unit strengths). Descriptions are left as they are:
     removing a document's contribution would need an LLM re-summary. So are
     the attributes: the document ``filters`` values the merge unioned in
     (``union_document_filters``) stay on the shared item until a full
@@ -348,9 +343,7 @@ def remove_text_units(
             continue
         kept = [t for t in entity.text_unit_ids or [] if t not in removed]
         updated_entities.append(
-            entity.model_copy(
-                deep=True, update={"text_unit_ids": kept, "frequency": len(kept)}
-            )
+            entity.model_copy(deep=True, update={"text_unit_ids": kept})
         )
     updated_relationships: list[Relationship] = []
     for rel in relationships:

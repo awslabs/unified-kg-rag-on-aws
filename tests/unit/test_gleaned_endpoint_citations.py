@@ -58,7 +58,6 @@ def _entity(name: str, unit: str) -> Entity:
         name=name,
         type="ORG",
         text_unit_ids=[unit],
-        frequency=1,
     )
 
 
@@ -134,7 +133,6 @@ def test_gleaned_edge_makes_existing_endpoint_cite_its_unit(gleaner, mocker) -> 
     )
     by_id = {e.id: e for e in entities}
     assert set(by_id[VENDOR].text_unit_ids) == {"t-/a.txt", "t-/b.txt"}
-    assert by_id[VENDOR].frequency == 2
     assert by_id[DEPOT].text_unit_ids == ["t-/b.txt"]
     assert [e.id for e in edges] == [EDGE]
 

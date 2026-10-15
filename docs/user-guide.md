@@ -1471,7 +1471,7 @@ The SQLite registry of local mode has no such limit.
 ### Cross-run merge
 
 By default (`indexing.cross_run_merge: true`) a delta run *unions* the delta
-with existing graph state (description / `text_unit_ids` / frequency / weight)
+with existing graph state (description / `text_unit_ids` / weight)
 before upsert, so an entity shared with unchanged documents keeps their
 descriptions and chunk lineage (which `mix` follows). Each delta run reads the
 touched entities and relationships back from the graph first, and merged
@@ -1486,8 +1486,8 @@ spelling, so a claim that several documents state (as "Acme Inc" in one and
 source text and text units, read back from the OpenSearch claims index (a claim
 indexed before claims stored their text units starts from this run's).
 When a document changes or is deleted, entities, relationships and claims it shares
-with other documents lose its chunks from `text_unit_ids` (frequency and
-weight follow), but keep the description it contributed until a full rebuild.
+with other documents lose its chunks from `text_unit_ids` (weight
+follows), but keep the description it contributed until a full rebuild.
 If reading the stored items back fails, nothing is overwritten: a failed read
 during the merge fails the indexing stage before any write (the documents stay
 unrecorded and are retried), and a failed read while removing a document's

@@ -153,24 +153,11 @@ class TestAdd:
         assert remap == {"dX": "e1"}
         assert set(merged[0].text_unit_ids) == {"t1", "t2"}
 
-    def test_new_entity_frequency_recomputed_on_merge(self) -> None:
+    def test_new_entity_text_units_unioned_on_merge(self) -> None:
         old = [_entity("e1", "Acme", text_unit_ids=["t1"])]
         delta = [_entity("dX", "Acme", text_unit_ids=["t2", "t3"])]
         merged, _ = merge_entities(old, delta)
-        # frequency tracks the count of supporting (deduped) text units.
-        assert merged[0].frequency == 3
-
-    def test_brand_new_entity_frequency_not_auto_set(self) -> None:
-        # SUSPECTED WEAK SPOT: a brand-new (non-merged) delta entity keeps
-        # whatever frequency it arrived with. merge_entities only recomputes
-        # frequency for entities that merged by name (merger.py:87). A delta
-        # entity with frequency=None and one text unit stays frequency=None,
-        # so "frequency == len(text_unit_ids)" is NOT an invariant for new
-        # entities. Documenting current behaviour.
-        old: list[Entity] = []
-        delta = [_entity("dX", "Brand New", text_unit_ids=["t1"])]
-        merged, _ = merge_entities(old, delta)
-        assert merged[0].frequency is None  # not coerced to len(text_unit_ids)
+        assert merged[0].text_unit_ids == ["t1", "t2", "t3"]
 
 
 # --------------------------------------------------------------------------- #

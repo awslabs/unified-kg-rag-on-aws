@@ -190,7 +190,7 @@ def test_changed_doc_replaces_its_text_units_on_shared_artifacts(harness) -> Non
 
     (vendor,) = graph.read_entities(["e-vendor"])
     assert vendor.text_unit_ids == ["tu-a", "tu-b2"]
-    assert vector.data["entities"]["e-vendor"].frequency == 2
+    assert vector.data["entities"]["e-vendor"].text_unit_ids == ["tu-a", "tu-b2"]
 
 
 def test_exclusive_deletion_is_scoped_per_suffix(harness) -> None:

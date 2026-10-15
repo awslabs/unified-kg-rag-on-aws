@@ -776,7 +776,7 @@ class IncrementalIndexer:
         failure would orphan the artifacts (record gone, artifacts still live).
 
         Artifacts the documents share with survivors are kept, but the text
-        units being removed are stripped from them and their frequency/weight
+        units being removed are stripped from them and their weight
         recomputed, so they no longer cite chunks that no longer exist. Their
         descriptions keep the removed documents' contribution: re-deriving a
         description needs an LLM call (a full rebuild does it).

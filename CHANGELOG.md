@@ -1443,6 +1443,12 @@ Library API (Python callers and custom backends).
   is the one the package set itself; the user guide documents that the
   global binding happens once per process (#245).
 
+### Removed
+- `Entity.frequency`: it counted an entity's text units in every merge path
+  but no store wrote it and nothing read it (ranking uses `rank`, the local
+  search frequency filter counts `text_unit_ids`). Stage caches that carry
+  the key still load; it is ignored (#PR).
+
 ### Security
 - Prompts delimit corpus and retrieved text as data, and inputs cannot close
   their delimiter tags (#179, #182).

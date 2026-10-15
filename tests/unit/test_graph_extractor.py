@@ -200,7 +200,7 @@ class TestParseRelationshipData:
 # _merge_entities
 # --------------------------------------------------------------------------- #
 class TestMergeEntities:
-    def test_duplicate_ids_merged_frequency_from_text_units(self, extractor) -> None:
+    def test_duplicate_ids_merged_text_units_unioned(self, extractor) -> None:
         e1 = Entity(
             id="e1", name="Alice", type="PERSON", text_unit_ids=["t1"], confidence=0.5
         )
@@ -210,8 +210,6 @@ class TestMergeEntities:
         merged = extractor._merge_entities([e1, e2])
         assert len(merged) == 1
         survivor = merged[0]
-        # frequency = count of unique text_unit_ids
-        assert survivor.frequency == 2
         assert set(survivor.text_unit_ids) == {"t1", "t2"}
 
     def test_confidence_is_max_not_mean(self, extractor) -> None:
@@ -269,13 +267,6 @@ class TestMergeEntities:
         e2 = Entity(id="e2", name="Bob", type="PERSON", text_unit_ids=["t1"])
         merged = extractor._merge_entities([e1, e2])
         assert len(merged) == 2
-
-    def test_frequency_set_from_text_units_single(self, extractor) -> None:
-        e1 = Entity(
-            id="e1", name="Alice", type="PERSON", text_unit_ids=["t1", "t2", "t3"]
-        )
-        merged = extractor._merge_entities([e1])
-        assert merged[0].frequency == 3
 
     def test_empty_input(self, extractor) -> None:
         assert extractor._merge_entities([]) == []
@@ -373,9 +364,7 @@ class TestMaterializeRelationshipEndpoints:
             for e in extractor._materialize_relationship_endpoints(existing, rels)
         }
         assert out["e1"].text_unit_ids == ["t1", "t2", "t3"]
-        assert out["e1"].frequency == 3
         assert out["e2"].text_unit_ids == ["t2", "t1", "t3"]
-        assert out["e2"].frequency == 3
         # The input entity is not mutated.
         assert existing[0].text_unit_ids == ["t1"]
 

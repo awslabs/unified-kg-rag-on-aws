@@ -442,19 +442,13 @@ class GraphExtractor(BaseProcessor):
             "attributes": union_document_filters,
         }
 
-        merged = self._merge_items(
+        return self._merge_items(
             items=entities,
             item_name="Entity",
             field_mergers=field_mergers,
             frequency_fields=["type"],
             log_message_formatter=lambda e: f"Entity '{e.name}' merged {{count}} instances",
         )
-        # frequency = number of supporting text units, the rule every merge
-        # path applies (resolver, incremental merger), so the field agrees
-        # across build paths. Ranking does not read it: rank is the degree.
-        for entity in merged:
-            entity.frequency = len(entity.text_unit_ids or [])
-        return merged
 
     def _merge_relationships(
         self, relationships: list[Relationship]

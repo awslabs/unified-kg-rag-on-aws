@@ -7,8 +7,8 @@ unified-kg-rag-on-aws's Pydantic domain models (no pandas):
 
 - entities merge by id, else by identity key (``entity_key``): union
   description lines,
-  ``text_unit_ids``, ``community_ids`` and attributes; recompute frequency;
-  keep the max rank/confidence.
+  ``text_unit_ids``, ``community_ids`` and attributes; keep the max
+  rank/confidence.
 - relationships merge by id, else by (source, target, type): union
   description lines,
   ``text_unit_ids`` and attributes; weight = sum of the per-text-unit

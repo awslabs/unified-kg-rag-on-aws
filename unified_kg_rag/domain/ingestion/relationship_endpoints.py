@@ -48,8 +48,8 @@ def cite_relationship_endpoints(
     Entities sharing an id each gain the
     endpoint citations, so a later duplicate merge keeps their own text units.
 
-    Pure: inputs are not mutated; an entity whose text units change is copied
-    with ``frequency`` set to its text-unit count. Idempotent.
+    Pure: inputs are not mutated; an entity whose text units change is
+    copied. Idempotent.
 
     Returns:
         The entities (in input order, stubs appended) and the number of stubs.
@@ -87,9 +87,7 @@ def cite_relationship_endpoints(
         own_set = set(own)
         units = own + [t for t in cited_by_edges.get(entity.id, {}) if t not in own_set]
         if units != own:
-            entity = entity.model_copy(
-                update={"text_unit_ids": units, "frequency": len(units)}
-            )
+            entity = entity.model_copy(update={"text_unit_ids": units})
         result.append(entity)
     return result, len(stubs)
 

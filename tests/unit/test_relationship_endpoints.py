@@ -49,8 +49,8 @@ def test_pure_and_idempotent() -> None:
     twice, again = cite_relationship_endpoints(once, rels)
     assert entities[0].text_unit_ids == ["t1"]
     assert (stubs, again) == (1, 0)
-    assert [(e.id, e.text_unit_ids, e.frequency) for e in once] == [
-        (e.id, e.text_unit_ids, e.frequency) for e in twice
+    assert [(e.id, e.text_unit_ids) for e in once] == [
+        (e.id, e.text_unit_ids) for e in twice
     ]
     assert [(e.id, e.text_unit_ids) for e in once] == [
         ("a", ["t1", "t2"]),

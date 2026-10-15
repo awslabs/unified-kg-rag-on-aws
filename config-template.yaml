@@ -537,7 +537,7 @@ indexing:
   reset: false
   additional_suffix: null
   # On incremental (delta) runs, union the delta with existing graph state
-  # (description/text_unit_ids/frequency/weight) before upsert instead of
+  # (description/text_unit_ids/weight) before upsert instead of
   # overwriting. Requires a graph adapter that supports read-back. On by
   # default: with false, an entity shared with unchanged documents is replaced
   # by its delta-only description and text_unit_ids (its lineage to the
