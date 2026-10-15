@@ -55,3 +55,12 @@ def test_aws_marked_tests_keep_the_real_environment(
     result = pytester.runpytest("-p", "no:cacheprovider", "--strict-markers")
 
     result.assert_outcomes(passed=2)
+
+
+def test_plain_pytest_run_deselects_aws_tests(pytestconfig: pytest.Config) -> None:
+    # aws tests keep the real environment above, so a bare `pytest` with the
+    # store endpoints exported must not select them: the ini addopts carry
+    # the selector and an explicit `-m aws` on the command line replaces it.
+    addopts = pytestconfig.getini("addopts")
+    assert "-m" in addopts
+    assert addopts[addopts.index("-m") + 1] == "not aws"

@@ -1143,7 +1143,10 @@ class ProcessingConfig(BaseModel):
     )
     ignore_errors: bool = Field(
         default=False,
-        description="Ignore errors and continue processing",
+        description="Degrade instead of raising when a whole step fails "
+        "(a batch call, a translation language, an evaluator, global "
+        "map/reduce, the DRIFT primer, the auto router). Items whose own LLM "
+        "call fails are always skipped and reported, whatever this says.",
     )
     deduplicate: bool = Field(
         default=False, description="Enable document deduplication"
@@ -1583,14 +1586,6 @@ class NeptuneIndexingConfig(BaseModel):
             "every traversed entity is kept, with no cut after ranking."
         ),
     )
-
-    @model_validator(mode="after")
-    def validate_retry_configuration(self) -> "NeptuneIndexingConfig":
-        if self.max_attempts > 1 and self.retry_delay_seconds == 0:
-            raise ValueError(
-                "retry_delay_seconds should be greater than 0 when max_attempts > 1"
-            )
-        return self
 
 
 class OpenSearchIndexingConfig(BaseModel):

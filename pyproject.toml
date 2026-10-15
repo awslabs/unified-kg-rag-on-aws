@@ -271,7 +271,10 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
-addopts = "--tb=short --strict-markers"
+# Real-AWS tests keep the real environment (tests/conftest.py), so a plain
+# `pytest` with store endpoints exported must not select them; `-m aws` on the
+# command line overrides this selector.
+addopts = '--tb=short --strict-markers -m "not aws"'
 asyncio_mode = "auto"
 # Fail a hung test (e.g. an unmocked network wait or a deadlocked pool) after
 # two minutes instead of letting it burn the whole CI job. The slowest test

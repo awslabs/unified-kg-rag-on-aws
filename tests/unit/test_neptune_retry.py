@@ -123,6 +123,20 @@ def test_succeeds_on_first_attempt_does_not_sleep(indexer, mocker) -> None:
     sleep.assert_not_called()
 
 
+def test_zero_retry_delay_is_accepted_and_retries_at_once(mocker) -> None:
+    # retry_delay_seconds is ge=0 and documented "0 retries at once"; a
+    # validator used to reject 0 whenever max_attempts > 1 (the default 4).
+    mocker.patch(_MOD + ".NeptuneClient")
+    config = Config()
+    config.indexing.neptune = type(config.indexing.neptune)(retry_delay_seconds=0)
+    indexer = NeptuneIndexer(config=config)
+    jitter = mocker.patch(_MOD + "._jitter", side_effect=lambda lo, hi: hi)
+    traversal = _FlakyTraversal(fail_times=2, exc=_CME)
+    indexer._execute_with_retries(lambda _g: traversal, "upsert entities")
+    assert traversal.calls == 3
+    assert [c.args for c in jitter.call_args_list] == [(0, 0), (0, 0)]
+
+
 def test_single_attempt_raises_immediately(indexer) -> None:
     # max_attempts = 1 -> a single attempt, no retry.
     indexer.neptune_config.max_attempts = 1

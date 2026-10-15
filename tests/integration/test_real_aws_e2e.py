@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Real-AWS end-to-end smoke tests (opt-in, never run in CI).
 
-Marked ``aws`` so they are excluded by the default ``-m "not aws"`` selector.
+Marked ``aws`` so the ``-m "not aws"`` in pytest's ``addopts`` (pyproject.toml)
+deselects them, even on a plain ``pytest`` run; a command-line ``-m`` replaces it.
 They exercise the live Bedrock + Neptune + OpenSearch (+ optional DynamoDB)
 stack against a real config, and are skipped unless that config is provided via
 ``GRAPHRAG_TEST_CONFIG`` (path to a config.yaml with real endpoints).
