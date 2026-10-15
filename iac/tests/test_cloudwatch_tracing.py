@@ -118,7 +118,10 @@ def test_enabled_runs_a_non_essential_collector_the_app_waits_for() -> None:
     assert config["receivers"]["otlp"]["protocols"] == {
         "http": {"endpoint": "127.0.0.1:4318"}
     }
-    exporter = config["exporters"]["otlphttp/traces"]
+    # ADOT v0.50.0 deprecates the "otlphttp" alias in favour of "otlp_http".
+    assert list(config["exporters"]) == ["otlp_http/traces"]
+    assert config["service"]["pipelines"]["traces"]["exporters"] == ["otlp_http/traces"]
+    exporter = config["exporters"]["otlp_http/traces"]
     assert exporter["traces_endpoint"] == (
         "https://xray.us-west-2.<AWS::URLSuffix>/v1/traces"
     )
@@ -148,10 +151,9 @@ def test_enabled_points_the_app_at_the_sidecar_without_content_capture() -> None
 def test_enabled_grants_only_xray_writes_and_the_collector_image_pull() -> None:
     _, compute = _stacks(_ON)
     task_actions = _actions(_statements(compute, "TaskRole"))
+    # The X-Ray OTLP endpoint authorizes PutTraceSegments only.
     assert {a for a in task_actions if a.startswith("xray:")} == {
-        "xray:PutTraceSegments",
-        "xray:PutSpans",
-        "xray:PutSpansForIndexing",
+        "xray:PutTraceSegments"
     }
     (import_statement,) = [
         s

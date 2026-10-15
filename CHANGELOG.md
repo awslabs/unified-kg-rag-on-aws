@@ -414,6 +414,19 @@ Library API (Python callers and custom backends).
   28 s. Restart the stack (`down` and `up`) to pick it up (#265).
 
 ### Fixed
+- CloudWatch tracing (`enable_cloudwatch_tracing`): the task role keeps
+  only `xray:PutTraceSegments`, the one action the X-Ray OTLP traces
+  endpoint authorizes (a role with only `xray:PutSpans` gets a 403);
+  `xray:PutSpans` and `xray:PutSpansForIndexing` are dropped. The collector
+  exporter is renamed `otlphttp/traces` to `otlp_http/traces`, so ADOT
+  v0.50.0 no longer logs the deprecated-alias warning. Verified on real
+  AWS (#286).
+- Tracing runbook: a `run-eval` run is one `kg_rag.batch` trace with its
+  queries as children (not one trace per query); turning on Transaction
+  Search creates the `aws/spans` and `/aws/application-signals/data` log
+  groups and a 1% indexing rule, and turning it off removes neither; and
+  `kg_rag.rerank_status` (per fusion step and per query) is documented next
+  to the Rerank call's `kg_rag.rerank.status` (#286).
 - Langfuse: the missing-host error now names the full OTLP endpoint
   (`<host>/api/public/otel`) for `OTEL_EXPORTER_OTLP_ENDPOINT`, since the host
   root alone returns 404; the runbook covers Langfuse v4 (its default
