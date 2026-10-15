@@ -15,7 +15,7 @@ from unified_kg_rag.adapters.llm.chain_factory import (
 from unified_kg_rag.adapters.llm.retry import transient_error_predicate
 from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
 from unified_kg_rag.adapters.providers import Providers
-from unified_kg_rag.domain.ingestion.base_processor import BaseProcessor
+from unified_kg_rag.domain.ingestion.base_processor import BaseProcessor, edge_weight
 from unified_kg_rag.domain.ingestion.graph_builder import edge_relationships
 from unified_kg_rag.domain.models import (
     Community,
@@ -197,7 +197,7 @@ class CommunityDetector(BaseProcessor):
             )
 
     def __call__(self, graph: nx.Graph) -> "CommunityDetector":
-        self.graph = self._entity_subgraph(graph)
+        self.graph = self._with_usable_weights(self._entity_subgraph(graph))
         graph = self.graph
         logger.info(
             "Starting community detection on graph with %s nodes and %s edges",
@@ -232,6 +232,33 @@ class CommunityDetector(BaseProcessor):
         entity_graph = graph.copy()
         entity_graph.remove_nodes_from(non_entity_nodes)
         return entity_graph
+
+    @staticmethod
+    def _with_usable_weights(graph: nx.Graph) -> nx.Graph:
+        """Return ``graph`` with every edge weight finite and ``>= 0``.
+
+        New extractions are already clean (``edge_weight`` in the parser), but
+        a graph read back from a store or cache written before that may still
+        carry a NaN, infinite or negative weight, and Leiden panics or fails on
+        one (see ``edge_weight``) every time the stage is resumed. Such weights
+        are replaced on a copy, so the caller's graph is left as it is.
+        """
+        bad = {
+            (source, target): edge_weight(weight)
+            for source, target, weight in graph.edges(data="weight", default=1.0)
+            if not (isinstance(weight, int | float) and edge_weight(weight) == weight)
+        }
+        if not bad:
+            return graph
+        logger.warning(
+            "Replacing %s non-finite or negative edge weights before community "
+            "detection",
+            len(bad),
+        )
+        graph = graph.copy()
+        for (source, target), weight in bad.items():
+            graph.edges[source, target]["weight"] = weight
+        return graph
 
     def detect_communities(self) -> None:
         if not self.graph or self.graph.number_of_nodes() == 0:
@@ -353,7 +380,10 @@ class CommunityDetector(BaseProcessor):
 
         communities = self._partition_dict_to_communities(partition_dict, target_graph)
 
-        if config.min_community_size > 1:
+        # Only entity communities are held to min_community_size. A node of a
+        # coarser cluster graph is a whole community, so merging "small" ones
+        # there would fold every level into the one below it.
+        if graph is None and config.min_community_size > 1:
             communities = self._merge_small_communities(
                 communities, target_graph, config.min_community_size
             )
@@ -484,22 +514,27 @@ class CommunityDetector(BaseProcessor):
 
                 nodes = communities[small_comm_id]
 
-                neighbor_counts: dict[int, int] = defaultdict(int)
+                # Total edge weight to each neighboring community: the merge
+                # goes where the community is most strongly tied, not where it
+                # merely has the most edges.
+                neighbor_weights: dict[int, float] = defaultdict(float)
                 for node in nodes:
-                    for neighbor in graph.neighbors(node):
+                    for neighbor, data in graph[node].items():
                         if neighbor in node_to_comm:
                             neighbor_comm = node_to_comm[neighbor]
                             if (
                                 neighbor_comm != small_comm_id
                                 and neighbor_comm in communities
                             ):
-                                neighbor_counts[neighbor_comm] += 1
+                                neighbor_weights[neighbor_comm] += data.get(
+                                    "weight", 1.0
+                                )
 
-                if neighbor_counts:
+                if neighbor_weights:
                     # Ties go to the lowest (canonical) label, not to whichever
                     # neighbor a set iteration happened to reach first.
                     target_comm = max(
-                        neighbor_counts, key=lambda x: (neighbor_counts[x], -x)
+                        neighbor_weights, key=lambda x: (neighbor_weights[x], -x)
                     )
                     communities[target_comm].update(nodes)
                     for node in nodes:

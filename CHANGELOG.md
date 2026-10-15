@@ -425,6 +425,24 @@ Library API (Python callers and custom backends).
   28 s. Restart the stack (`down` and `up`) to pick it up (#265).
 
 ### Fixed
+- A NaN, infinite or negative relationship strength from the model no longer
+  kills ingestion at community detection. Leiden panics on a NaN weight with
+  an exception no error handler catches (and rejects infinite ones), and a
+  resumed run crashed again on the same graph. Strengths are now parsed as
+  finite numbers clamped to `>= 0` (NaN and infinity become the default 1.0),
+  and community detection replaces such weights in a graph read back from an
+  older store or cache (#288).
+- Community detection keeps its coarser levels. The small-community merge
+  also ran on each level's cluster graph, whose nodes are whole communities,
+  so with the default `min_community_size: 3` a level of two-community groups
+  was folded away and the hierarchy often stopped at level 0. The merge now
+  applies to entity communities only. Multi-level corpora get more (level 1+)
+  communities and reports. Cache keys are unchanged, so a resumed run reuses
+  the old communities: re-run with `--force-rebuild` (and `indexing.reset:
+  true` where incremental runs keep the stored communities) to restore the
+  lost levels (#288).
+- The small-community merge moves a community into the neighbor it shares
+  the most edge weight with, not the one it has the most edges to (#288).
 - CloudWatch tracing (`enable_cloudwatch_tracing`): the task role keeps
   only `xray:PutTraceSegments`, the one action the X-Ray OTLP traces
   endpoint authorizes (a role with only `xray:PutSpans` gets a 403);

@@ -1381,7 +1381,8 @@ class CommunityDetectionConfig(BaseModel):
     min_community_size: int = Field(
         default=3,
         ge=1,
-        description="Minimum nodes per community (smaller ones merged to neighbors)",
+        description="Minimum entities per level-0 community (smaller ones are merged "
+        "into the neighbor they share the most edge weight with)",
     )
     auto_resolution: bool = Field(
         default=False,

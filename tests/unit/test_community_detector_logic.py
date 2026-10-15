@@ -144,6 +144,26 @@ class TestMergeSmallCommunities:
         merged = cd._merge_small_communities(dict(communities), g, min_size=2)
         assert merged == communities
 
+    def test_merges_into_the_most_strongly_tied_neighbor(self) -> None:
+        # {s1, s2} has one weak edge to A and one strong edge to B: it joins B,
+        # whatever the edge counts are.
+        cd = _detector()
+        g = nx.Graph()
+        for group in (("a1", "a2", "a3"), ("b1", "b2", "b3")):
+            g.add_edges_from(
+                (u, v, {"weight": 1.0}) for u in group for v in group if u < v
+            )
+        g.add_edge("s1", "s2", weight=1.0)
+        g.add_edge("s1", "a1", weight=0.1)
+        g.add_edge("s2", "a2", weight=0.1)
+        g.add_edge("s2", "b1", weight=50.0)
+        communities = {0: {"a1", "a2", "a3"}, 1: {"b1", "b2", "b3"}, 2: {"s1", "s2"}}
+        merged = cd._merge_small_communities(communities, g, min_size=3)
+        assert merged == {
+            0: {"a1", "a2", "a3"},
+            1: {"b1", "b2", "b3", "s1", "s2"},
+        }
+
 
 class TestBasePartition:
     def test_no_edges_each_node_is_its_own_community(self) -> None:
@@ -324,6 +344,58 @@ class TestClusterGraph:
         # The 0-2 edge crosses the two superclusters and survives with its weight.
         assert cluster.number_of_edges() == 1
         assert cluster[0][1]["weight"] == pytest.approx(3.0)
+
+
+class TestHierarchyKeepsCoarserLevels:
+    @staticmethod
+    def _four_cliques() -> nx.Graph:
+        # Four 6-cliques A-D; A-B and C-D are tied by 4 edges, B-C by one.
+        g = nx.Graph()
+        groups = {name: [f"{name}{i}" for i in range(6)] for name in "ABCD"}
+        for nodes in groups.values():
+            g.add_edges_from(
+                (u, v, {"weight": 1.0}) for u in nodes for v in nodes if u < v
+            )
+        for x, y, n in (("A", "B", 4), ("C", "D", 4), ("B", "C", 1)):
+            g.add_edges_from(
+                (groups[x][k], groups[y][k], {"weight": 1.0}) for k in range(n)
+            )
+        return g
+
+    def test_default_min_size_does_not_collapse_level_1(self) -> None:
+        # Level 1 has two communities of two cliques each. The small-community
+        # merge used to run on the cluster graph too, where every community has
+        # only 2 nodes (< min_community_size 3), folding level 1 into nothing.
+        cd = _detector(auto_resolution=False, min_community_size=3)
+        cd(self._four_cliques())
+        levels: dict[int, list[set[str]]] = {}
+        for community in cd.all_communities.values():
+            levels.setdefault(community.level, []).append(
+                {node[0] for node in community.nodes}
+            )
+        assert sorted(levels[0], key=sorted) == [{"A"}, {"B"}, {"C"}, {"D"}]
+        assert sorted(levels[1], key=sorted) == [{"A", "B"}, {"C", "D"}]
+
+
+class TestUnusableEdgeWeights:
+    @pytest.mark.parametrize("weight", [float("nan"), float("inf"), -1.0, None])
+    def test_detection_survives_a_bad_stored_weight(self, weight) -> None:
+        # A graph read back from a store written before weights were sanitized
+        # may carry NaN: graspologic_native panics on it with a BaseException
+        # that no `except Exception` catches, so every resume crashed again.
+        g = _two_triangle_graph()
+        nx.set_edge_attributes(g, 1.0, "weight")
+        g.edges["n2", "n3"]["weight"] = weight
+        cd = _detector()
+        cd(g)
+        level_0 = [c.nodes for c in cd.all_communities.values() if c.level == 0]
+        assert sorted(sorted(n) for n in level_0) == [
+            ["n0", "n1", "n2"],
+            ["n3", "n4", "n5"],
+        ]
+        # The caller's graph is left as it is.
+        stored = g.edges["n2", "n3"]["weight"]
+        assert stored is weight or (stored != stored and weight != weight)
 
 
 class TestHierarchyProcessing:
@@ -759,6 +831,35 @@ class TestGenerateReportsGuards:
     def test_returns_empty_when_no_communities(self) -> None:
         cd = _detector(report=False)
         assert cd.generate_reports([]) == ([], [])
+
+
+class TestGenerateReportsFailure:
+    @staticmethod
+    def _failing_detector(*, ignore_errors: bool) -> CommunityDetector:
+        cd = _detector(report=False)
+        cd.ignore_errors = ignore_errors
+        cd.community_detection_config.report_generation.enabled = True
+        cd.report_generator = object()
+
+        def boom(*_: object, **__: object) -> None:
+            raise RuntimeError("report backend down")
+
+        cd._generate_reports_with_rollup = boom  # type: ignore[method-assign]
+        cd._generate_reports_flat = boom  # type: ignore[method-assign]
+        return cd
+
+    def test_error_propagates_without_ignore_errors(self) -> None:
+        cd = self._failing_detector(ignore_errors=False)
+        with pytest.raises(RuntimeError, match="report backend down"):
+            cd.generate_reports([_community(["e1"])])
+
+    def test_ignore_errors_returns_every_community_as_failed(self) -> None:
+        cd = self._failing_detector(ignore_errors=True)
+        second = _community(["e1"]).model_copy(update={"id": "L0_C1"})
+        reports, failed = cd.generate_reports([_community(["e1"]), second])
+        # No reports, and every community is reported back for a retry.
+        assert reports == []
+        assert failed == ["L0_C0", "L0_C1"]
 
 
 class _StubBatchProcessor:
