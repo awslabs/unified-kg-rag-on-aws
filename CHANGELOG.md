@@ -1734,10 +1734,10 @@ Library API (Python callers and custom backends).
 - An `indexing.reset` whose doc-status registry cannot be cleared raises the
   registry adapter's own error: a configuration error (for example a missing
   table name) is no longer reported as a `DocStatusRegistryError` asking to
-  re-run once the registry is reachable (#PR).
+  re-run once the registry is reachable (#305).
 - A `BaseGraphRAGEvaluator` subclass that implements neither
   `evaluate_single` nor `aevaluate_single` fails with `TypeError` when the
-  class is defined, instead of failing every query at evaluation time (#PR).
+  class is defined, instead of failing every query at evaluation time (#305).
 
 ### Removed
 - `Entity.frequency`: it counted an entity's text units in every merge path
