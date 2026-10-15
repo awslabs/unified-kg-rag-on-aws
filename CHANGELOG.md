@@ -77,7 +77,7 @@ ignored, so check the start-up warnings after upgrading.
   soon as one finishes. The default (20) now is the peak; it burst to 40
   before but averaged about 18 in flight, so set a higher value to go
   faster. RAGAS judges run `evaluation.ragas_max_workers` jobs without
-  batching (#PR).
+  batching (#296).
 - A filter key that no retriever of the strategy declares raises
   `InvalidFilterError` (#123).
 - `indexing.opensearch.terms_batch_size`, `max_total_clauses` and
@@ -362,7 +362,7 @@ Library API (Python callers and custom backends).
   evaluation answers no longer wait chunk by chunk. A run's trace has no
   `kg_rag.batch.chunk` spans. Each Bedrock client's connection pool is
   sized to the larger of `processing.max_concurrency` and
-  `processing.io_workers` (64 by default; it was 80) (#PR).
+  `processing.io_workers` (64 by default; it was 80) (#296).
 - Context packing ranks sections by their retrieval score alone; the fixed
   per-type priority weights (text 1.3 ... general 0.8) are gone. The
   per-type shares (`search.token_manager.type_budgets`) already decided the
