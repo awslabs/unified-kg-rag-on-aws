@@ -26,10 +26,12 @@ from tests.fixtures.fakes.embeddings import HashingEmbeddingFactory
 from unified_kg_rag.adapters.aws.opensearch import is_index_not_found
 from unified_kg_rag.adapters.local.search_engine import SQLiteSearchEngine
 from unified_kg_rag.adapters.local.search_engine import engine as engine_module
+from unified_kg_rag.adapters.local.search_engine import query as query_module
 from unified_kg_rag.adapters.local.search_engine.query import (
     LoadedIndex,
     VectorField,
     evaluate,
+    resolve_path,
     vector_scores,
 )
 from unified_kg_rag.adapters.retrievers import OpenSearchRetriever
@@ -228,6 +230,106 @@ def test_filters(engine, clause: dict, expected: set) -> None:
     assert all(score == 0.0 for score in hits.values())
 
 
+def _keyword_scan(index: LoadedIndex, path: str, values: list[Any]) -> set[str]:
+    """A keyword term filter as a scan of every document (the reference)."""
+
+    def keyword(value: Any) -> str:
+        if isinstance(value, bool):
+            return "true" if value else "false"
+        if isinstance(value, float) and value.is_integer():
+            return str(int(value))
+        return str(value)
+
+    spec = index.specs.get(path)
+    source_path = spec.source_path if spec and spec.source_path else path
+    wanted = {keyword(v) for v in values}
+    return {
+        doc_id
+        for doc_id, source in index.sources.items()
+        if any(keyword(v) in wanted for v in resolve_path(source, source_path))
+    }
+
+
+def test_keyword_term_filters_match_a_scan_of_every_document() -> None:
+    rng = np.random.default_rng(11)
+    pool: list[Any] = ["x", "y", "X", "1", 1, 1.0, 2.5, True, "true", False, None]
+
+    def pick() -> Any:
+        return pool[int(rng.integers(len(pool)))]
+
+    sources: dict[str, dict[str, Any]] = {}
+    for i in range(60):
+        source: dict[str, Any] = {
+            "kw": pick(),
+            "kws": [pick() for _ in range(int(rng.integers(0, 4)))],
+            "name": str(pick()),
+            "attributes": {"region": {"code": pick()}, "tags": [pick(), [pick()]]},
+            "loose": pick(),
+        }
+        sources[f"d{i:02d}"] = {k: v for k, v in source.items() if rng.random() < 0.8}
+    index = LoadedIndex(
+        name="keywords",
+        generation=1,
+        mappings={
+            "properties": {
+                "kw": {"type": "keyword"},
+                "kws": {"type": "keyword"},
+                "name": {
+                    "type": "text",
+                    "analyzer": "standard",
+                    "fields": {"keyword": {"type": "keyword"}},
+                },
+                "attributes": {"type": "object", "dynamic": True},
+            }
+        },
+        settings={},
+        sources=sources,
+        vectors={},
+    )
+    paths = ["kw", "kws", "name.keyword", "attributes.region.code"]
+    paths += ["attributes.tags", "loose", "absent"]
+    for path in paths:
+        for value in pool:
+            if value is None:
+                continue
+            got = set(evaluate(index, {"term": {path: value}}))
+            assert got == _keyword_scan(index, path, [value]), (path, value)
+        values = [v for v in pool[:5] if v is not None]
+        got = set(evaluate(index, {"terms": {path: values}}))
+        assert got == _keyword_scan(index, path, values), path
+
+
+def test_keyword_filters_are_looked_up_not_scanned(monkeypatch) -> None:
+    # A 50-id filter over 50k documents resolved every document's field in
+    # Python on every query; now the first query builds a value -> ids map.
+    index = _vector_index("l2", np.ones((40, 2), dtype=np.float32))
+    calls = []
+    real = query_module.resolve_path
+    monkeypatch.setattr(
+        query_module,
+        "resolve_path",
+        lambda source, path: calls.append(path) or real(source, path),
+    )
+    assert set(evaluate(index, {"term": {"bucket": "3"}})) == {"d003"}
+    built = len(calls)
+    assert set(evaluate(index, {"terms": {"group": ["0", "zz"]}})) == {
+        f"d{i:03d}" for i in range(0, 40, 3)
+    }
+    assert len(calls) == 2 * built
+    assert set(evaluate(index, {"terms": {"bucket": ["5", "7"]}})) == {"d005", "d007"}
+    assert set(evaluate(index, {"term": {"group": "1"}})) == {
+        f"d{i:03d}" for i in range(1, 40, 3)
+    }
+    assert len(calls) == 2 * built
+
+
+def test_keyword_filters_see_documents_written_after_a_query(engine) -> None:
+    clause = {"bool": {"filter": [{"term": {"type": "ORG"}}]}}
+    assert set(_hits(engine, clause)) == {"a", "b"}
+    engine.bulk_index(INDEX, [{**DOCS[2], "type": "ORG"}])
+    assert set(_hits(engine, clause)) == {"a", "b", "c"}
+
+
 def test_bool_must_with_filter_scores_the_must_clause(engine) -> None:
     lexical = {"multi_match": {"query": "widgets vendor", "fields": ["description"]}}
     plain = _hits(engine, lexical)
@@ -400,10 +502,17 @@ def _vector_index(space_type: str, matrix: np.ndarray) -> LoadedIndex:
         name="vectors",
         generation=1,
         mappings={
-            "properties": {"vec": spec, "group": {"type": "keyword"}},
+            "properties": {
+                "vec": spec,
+                "group": {"type": "keyword"},
+                "bucket": {"type": "keyword"},
+            },
         },
         settings={},
-        sources={doc_id: {"group": str(i % 3)} for i, doc_id in enumerate(ids)},
+        sources={
+            doc_id: {"group": str(i % 3), "bucket": str(i % 40)}
+            for i, doc_id in enumerate(ids)
+        },
         vectors={
             "vec": VectorField(
                 ids=ids,
@@ -418,11 +527,13 @@ def _vector_index(space_type: str, matrix: np.ndarray) -> LoadedIndex:
 
 
 def _knn_by_full_sort(
-    index: LoadedIndex, query: list[float], k: int, group: str | None
+    index: LoadedIndex, query: list[float], k: int, only: tuple[str, str] | None
 ) -> dict[str, float]:
     """The kNN answer as a sort of every candidate's score."""
     stored = index.vectors["vec"]
-    ids = [i for i in stored.ids if group is None or index.sources[i]["group"] == group]
+    ids = [
+        i for i in stored.ids if only is None or index.sources[i][only[0]] == only[1]
+    ]
     rows = np.array([stored.rows[i] for i in ids], dtype=np.int64)
     scores = vector_scores(stored, np.asarray(query, dtype=np.float32), rows)
     ranked = sorted(zip(ids, scores.tolist(), strict=True), key=lambda p: (-p[1], p[0]))
@@ -438,15 +549,16 @@ def test_knn_top_k_matches_a_full_sort_with_ties(space_type: str) -> None:
     distinct[np.all(distinct == 0, axis=1)] = 1.0
     matrix = distinct[rng.integers(0, len(distinct), size=120)]
     index = _vector_index(space_type, matrix)
+    # A third of the rows (scored in place) and 2.5% of them (gathered).
     for query in ([1.0, 0.0, -1.0, 2.0], distinct[0].tolist()):
-        for k in (1, 5, 17, 40, 119, 120, 500):
-            for group in (None, "1"):
+        for k in (1, 2, 3, 5, 17, 40, 119, 120, 500):
+            for only in (None, ("group", "1"), ("bucket", "3")):
                 body: dict[str, Any] = {"vector": query, "k": k}
-                if group is not None:
-                    body["filter"] = {"term": {"group": group}}
+                if only is not None:
+                    body["filter"] = {"term": {only[0]: only[1]}}
                 assert evaluate(index, {"knn": {"vec": body}}) == _knn_by_full_sort(
-                    index, query, k, group
-                ), (k, group)
+                    index, query, k, only
+                ), (k, only)
 
 
 def test_unfiltered_knn_scores_the_stored_matrix_in_place() -> None:
@@ -456,6 +568,22 @@ def test_unfiltered_knn_scores_the_stored_matrix_in_place() -> None:
     index = _vector_index("cosinesimil", matrix)
     hits = evaluate(index, {"knn": {"vec": {"vector": [1.0, 0.0, 0.0, 0.0], "k": 2}}})
     assert hits == {"d000": 1.0, "d004": 1.0}
+
+
+@pytest.mark.parametrize("space_type", ["cosinesimil", "innerproduct"])
+def test_knn_filtered_to_most_rows_scores_the_stored_matrix_in_place(
+    space_type: str,
+) -> None:
+    # Copying 90% of 50k x 1024 rows out took 20x the product over all rows.
+    matrix = np.eye(4, dtype=np.float32)[[0, 1, 2, 3, 0, 1]].view(_NoCopyMatrix)
+    index = _vector_index(space_type, matrix)
+    body = {
+        "vector": [1.0, 0.0, 0.0, 0.0],
+        "k": 2,
+        "filter": {"terms": {"group": ["0", "1"]}},
+    }
+    hits = evaluate(index, {"knn": {"vec": body}})
+    assert list(hits) == ["d000", "d004"]
 
 
 def test_bool_should_over_knn_clauses_sums_them(engine) -> None:
