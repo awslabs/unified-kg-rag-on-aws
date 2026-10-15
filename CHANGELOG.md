@@ -368,6 +368,9 @@ Library API (Python callers and custom backends).
   when retrieval finds nothing, so on a populated index `accuracy` stayed
   near 0 even when the model declined correctly; the rate is now documented
   as a lower bound on correct declines (#292).
+- `indexing.reset` no longer waits a fixed second after clearing the
+  OpenSearch indices: the deletes are acknowledged before they return and
+  the rebuild writes new timestamped indices (#PR).
 - `backend: local` selects the embedded SQLite graph and vector stores
   (`.unified-kg-rag/graph.sqlite3` and `vector.sqlite3` by default), so
   `--backend local` with a native Ollama needs no container.

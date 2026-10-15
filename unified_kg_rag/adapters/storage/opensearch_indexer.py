@@ -361,7 +361,6 @@ class OpenSearchIndexer(VectorIndexer):
                     index_names=remaining, alias_names=[alias]
                 )
 
-        time.sleep(1)
         logger.info("Cleared OpenSearch indices for '%s'", aliases_to_delete)
 
     def initialize(self) -> None:

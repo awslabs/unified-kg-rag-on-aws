@@ -307,6 +307,20 @@ def test_clear_of_a_namespace_never_indexed_succeeds(config) -> None:
     assert "delete_alias" not in _op_names(client.calls)
 
 
+def test_clear_does_not_sleep(config, monkeypatch) -> None:
+    # The index and alias deletes are acknowledged before they return, and
+    # the rebuild writes new timestamped indices: there is nothing to wait for.
+    from unified_kg_rag.adapters.storage import opensearch_indexer
+
+    def _no_sleep(_seconds: float) -> None:
+        raise AssertionError("clear slept")
+
+    monkeypatch.setattr(opensearch_indexer.time, "sleep", _no_sleep)
+    live = f"{_ALIAS}-20260101000000"
+    indexer = _indexer(config, _FakeCluster({live: {_ALIAS}}))
+    indexer.clear(["default"])
+
+
 def test_clear_of_some_stores_deletes_their_indices_and_aliases(config) -> None:
     # Only the entities store was written; the other stores have no alias.
     # An alias left on an index outside the naming scheme is deleted too.
