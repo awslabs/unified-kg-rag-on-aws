@@ -230,3 +230,9 @@ async def test_retriever_ainvoke_runs_on_the_callers_loop(config: Config) -> Non
     [document] = await retriever.ainvoke("vendors")
     assert document.page_content == "about vendors"
     assert loops == [asyncio.get_running_loop()]
+
+
+def test_shared_root_has_no_lazy_cache_manager_wrapper() -> None:
+    import unified_kg_rag.shared as shared
+
+    assert not hasattr(shared, "get_cache_manager")

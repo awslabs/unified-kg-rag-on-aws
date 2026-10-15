@@ -51,11 +51,10 @@ from unified_kg_rag.shared import (
     PipelineResumeManager,
     PipelineStateError,
     PipelineStateManager,
-    get_cache_manager,
     get_logger,
     observability,
 )
-from unified_kg_rag.shared.cache_manager import CacheStrategy
+from unified_kg_rag.shared.cache_manager import CacheManager, CacheStrategy
 from unified_kg_rag.shared.metrics import MetricsSink, NullMetricsSink
 from unified_kg_rag.shared.pipeline_manager import STAGE_OUTPUTS
 from unified_kg_rag.shared.utils import (
@@ -284,7 +283,6 @@ class DataIngestionPipeline:
         cache_config = self.config.cache
         chunking_config = cache_config.chunking
 
-        cache_manager_class = get_cache_manager()
         # force_rebuild ignores existing cached stage outputs: FORCE_REFRESH makes
         # the cache treat every entry as a miss so stages actually re-execute.
         cache_strategy = (
@@ -292,7 +290,7 @@ class DataIngestionPipeline:
             if self.pipeline_config.force_rebuild
             else CacheStrategy.CONTENT_HASH
         )
-        self.cache_manager = cache_manager_class(
+        self.cache_manager = CacheManager(
             config=self.config,
             cache_directory=self.pipeline_config.local_directory,
             strategy=cache_strategy,

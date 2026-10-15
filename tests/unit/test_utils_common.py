@@ -42,17 +42,15 @@ class TestStripEmbeddingFields:
 
 
 class TestComputeHash:
-    def test_unsupported_algorithm_raises(self) -> None:
-        # Only sha256 is supported; md5 (and others) are rejected.
-        with pytest.raises(ValueError, match="Unsupported algorithm"):
-            compute_hash("x", algorithm="md5")
-
-    def test_sha256_is_default(self) -> None:
+    def test_is_a_truncated_sha256(self) -> None:
         import hashlib
+        import inspect
 
-        expected = hashlib.sha256(b"x").hexdigest()[:16]
-        assert compute_hash("x") == expected
-        assert compute_hash("x", algorithm="sha256") == expected
+        expected = hashlib.sha256(b"x").hexdigest()
+        assert compute_hash("x") == expected[:16]
+        assert compute_hash("x", length=32) == expected[:32]
+        # SHA-256 is the only algorithm; there is no parameter to pick another.
+        assert list(inspect.signature(compute_hash).parameters) == ["data", "length"]
 
 
 class TestEnsureList:

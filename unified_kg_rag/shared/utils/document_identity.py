@@ -85,7 +85,7 @@ def relative_source_path(file_path: str | Path, source_root: str | Path) -> str 
 
 def compute_text_hash(text: str) -> str:
     """Content hash used for change detection and document-version ids."""
-    return compute_hash(text, algorithm="sha256", length=_ID_HASH_LENGTH)
+    return compute_hash(text, length=_ID_HASH_LENGTH)
 
 
 def compute_document_id(source_key: str, content_hash: str) -> str:
@@ -167,7 +167,7 @@ def compute_doc_id(
         if source_scope is None
         else f"{namespace}\x00{source_scope}\x00{path}"
     )
-    return compute_hash(key, algorithm="sha256", length=_ID_HASH_LENGTH)
+    return compute_hash(key, length=_ID_HASH_LENGTH)
 
 
 def is_local_path_scope(source_scope: str) -> bool:
