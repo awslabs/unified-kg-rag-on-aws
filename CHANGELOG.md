@@ -501,6 +501,9 @@ Library API (Python callers and custom backends).
   cites it, and the chunk's relationships naming it are dropped; another
   chunk's low score no longer removes a stub. Only non-default thresholds
   are affected (#291).
+- `graph.visualization.interactive` set without `physics_enabled` (for
+  example only `max_nodes`) keeps physics off, the documented default; the
+  renderer fell back to physics on whenever the key was missing (#PR).
 - The graph-expansion step's `kg_rag.retrieve` span label and failure log
   say `graph expansion` instead of `Neptune graph expansion`, which was wrong
   with the embedded SQLite or Gremlin Server graph store (#PR).

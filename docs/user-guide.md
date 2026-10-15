@@ -629,7 +629,7 @@ LLM stages are Bedrock-I/O-bound, so concurrency can far exceed the CPU count.
 | `graph.visualization.export_data` | `true` | With `enabled: false`, still write `visualization_data.json` (graph and communities, no layout or centrality; one pass over the graph, no model call) so `run-visualization` can render on demand. |
 | `graph.visualization.outputs_directory` | `null` | Unset writes to `<cache dir>/<pipeline_id>/visualization`, so the data syncs to S3 with the cache. |
 | `graph.visualization.layout_method` | `"umap"` | `umap`, `tsne`, or `pca`. |
-| `graph.visualization.interactive.max_nodes` | `2000` | Top-N nodes by degree kept in `interactive_graph.html`; `0` or `null` disables the cap. Setting `interactive` replaces its default dict, so also set `physics_enabled: false` to keep physics off. |
+| `graph.visualization.interactive.max_nodes` | `2000` | Top-N nodes by degree kept in `interactive_graph.html`; `0` or `null` disables the cap. Physics stays off (`physics_enabled: false`) unless set. |
 
 ### 2.5 `indexing` — OpenSearch & Neptune write side
 

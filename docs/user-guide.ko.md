@@ -584,7 +584,7 @@ LLM 단계는 Bedrock I/O가 병목이므로 동시성을 CPU 수보다 훨씬 �
 | `graph.visualization.export_data` | `true` | `enabled: false`여도 `visualization_data.json`(그래프와 커뮤니티. 레이아웃과 중심성은 없음)을 기록해 `run-visualization`으로 필요할 때 렌더링할 수 있게 합니다. 그래프를 한 번 훑을 뿐이며 모델 호출이 없습니다. |
 | `graph.visualization.outputs_directory` | `null` | 지정하지 않으면 `<cache dir>/<pipeline_id>/visualization`에 기록하므로 데이터가 캐시와 함께 S3로 동기화됩니다. |
 | `graph.visualization.layout_method` | `"umap"` | `umap`, `tsne`, `pca` 중 하나입니다. |
-| `graph.visualization.interactive.max_nodes` | `2000` | `interactive_graph.html`에 남길 차수 기준 상위 N개 노드입니다. `0`이나 `null`이면 제한하지 않습니다. `interactive`를 지정하면 기본 딕셔너리가 통째로 대체되므로, physics를 끈 상태로 두려면 `physics_enabled: false`도 함께 지정하세요. |
+| `graph.visualization.interactive.max_nodes` | `2000` | `interactive_graph.html`에 남길 차수 기준 상위 N개 노드입니다. `0`이나 `null`이면 제한하지 않습니다. `physics_enabled`를 지정하지 않으면 physics는 꺼져 있습니다(`false`). |
 
 ### 2.5 `indexing` — OpenSearch와 Neptune 쓰기
 

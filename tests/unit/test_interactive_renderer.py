@@ -56,13 +56,15 @@ class TestInit:
     def test_defaults(self) -> None:
         r = InteractiveRenderer({})
         assert r.height == "900px"
-        assert r.physics_enabled is True
+        # Regression: the fallback was True while the config default is False,
+        # so setting only max_nodes turned physics on.
+        assert r.physics_enabled is False
         assert r.cdn_resources == "in_line"
 
     def test_overrides(self) -> None:
-        r = InteractiveRenderer({"height": "500px", "physics_enabled": False})
+        r = InteractiveRenderer({"height": "500px", "physics_enabled": True})
         assert r.height == "500px"
-        assert r.physics_enabled is False
+        assert r.physics_enabled is True
 
 
 class TestGeneratePalette:
