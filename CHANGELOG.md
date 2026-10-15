@@ -370,6 +370,7 @@ Library API (Python callers and custom backends).
   fused order. Reported by @vibhupb (#83) (#284).
 
 ### Changed
+- The data-plane image installs uv 0.12.23, the version CI uses (#PR).
 - `BatchProcessor` runs one pool of `max_concurrency` items instead of
   chunks of `batch_size` items in parallel, each waiting for its slowest
   item: a slow item holds only its own slot and is retried in it, and the
