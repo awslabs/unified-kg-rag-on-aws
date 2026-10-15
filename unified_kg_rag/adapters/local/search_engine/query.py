@@ -410,6 +410,15 @@ def vector_scores(
     )
 
 
+# Above this share of a field's rows a filtered cosine/innerproduct kNN
+# scores the whole matrix in place and keeps the allowed rows. Over 50k x 1024
+# rows gathering (copying) the rows first costs as much as the product over
+# all of them at about 10% kept with 4 BLAS threads and 20% with 1, and up to
+# 8x more at 50%; below that the gather wins (0.5 ms vs 4 ms at 1%). An l2 kNN
+# always gathers: its ``matrix - query`` copies every row it scores anyway.
+_SCORE_IN_PLACE_FRACTION = 0.1
+
+
 def _top_k(ids: list[str], scores: np.ndarray, k: int) -> Scores:
     """The ``k`` best ``ids`` by score, ties by id: only the rows scoring at
     least the k-th best score are sorted."""
@@ -448,10 +457,19 @@ def _knn(index: LoadedIndex, body: Any) -> Scores:
         return {}
     if allowed is None:
         return _top_k(stored.ids, vector_scores(stored, query), k)
-    ids = [i for i in stored.ids if i in allowed]
-    if not ids:
+    rows = np.sort(
+        np.fromiter(
+            (row for i in allowed if (row := stored.rows.get(i)) is not None),
+            dtype=np.int64,
+        )
+    )
+    if not rows.size:
         return {}
-    rows = np.fromiter((stored.rows[i] for i in ids), dtype=np.int64, count=len(ids))
+    ids = [stored.ids[row] for row in rows.tolist()]
+    kept = rows.size / len(stored.ids)
+    if stored.space_type != "l2" and kept > _SCORE_IN_PLACE_FRACTION:
+        # Copying many rows out costs more than one product over all of them.
+        return _top_k(ids, vector_scores(stored, query)[rows], k)
     return _top_k(ids, vector_scores(stored, query, rows), k)
 
 

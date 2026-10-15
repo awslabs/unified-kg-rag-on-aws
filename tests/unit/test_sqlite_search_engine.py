@@ -400,10 +400,17 @@ def _vector_index(space_type: str, matrix: np.ndarray) -> LoadedIndex:
         name="vectors",
         generation=1,
         mappings={
-            "properties": {"vec": spec, "group": {"type": "keyword"}},
+            "properties": {
+                "vec": spec,
+                "group": {"type": "keyword"},
+                "bucket": {"type": "keyword"},
+            },
         },
         settings={},
-        sources={doc_id: {"group": str(i % 3)} for i, doc_id in enumerate(ids)},
+        sources={
+            doc_id: {"group": str(i % 3), "bucket": str(i % 40)}
+            for i, doc_id in enumerate(ids)
+        },
         vectors={
             "vec": VectorField(
                 ids=ids,
@@ -418,11 +425,13 @@ def _vector_index(space_type: str, matrix: np.ndarray) -> LoadedIndex:
 
 
 def _knn_by_full_sort(
-    index: LoadedIndex, query: list[float], k: int, group: str | None
+    index: LoadedIndex, query: list[float], k: int, only: tuple[str, str] | None
 ) -> dict[str, float]:
     """The kNN answer as a sort of every candidate's score."""
     stored = index.vectors["vec"]
-    ids = [i for i in stored.ids if group is None or index.sources[i]["group"] == group]
+    ids = [
+        i for i in stored.ids if only is None or index.sources[i][only[0]] == only[1]
+    ]
     rows = np.array([stored.rows[i] for i in ids], dtype=np.int64)
     scores = vector_scores(stored, np.asarray(query, dtype=np.float32), rows)
     ranked = sorted(zip(ids, scores.tolist(), strict=True), key=lambda p: (-p[1], p[0]))
@@ -438,15 +447,16 @@ def test_knn_top_k_matches_a_full_sort_with_ties(space_type: str) -> None:
     distinct[np.all(distinct == 0, axis=1)] = 1.0
     matrix = distinct[rng.integers(0, len(distinct), size=120)]
     index = _vector_index(space_type, matrix)
+    # A third of the rows (scored in place) and 2.5% of them (gathered).
     for query in ([1.0, 0.0, -1.0, 2.0], distinct[0].tolist()):
-        for k in (1, 5, 17, 40, 119, 120, 500):
-            for group in (None, "1"):
+        for k in (1, 2, 3, 5, 17, 40, 119, 120, 500):
+            for only in (None, ("group", "1"), ("bucket", "3")):
                 body: dict[str, Any] = {"vector": query, "k": k}
-                if group is not None:
-                    body["filter"] = {"term": {"group": group}}
+                if only is not None:
+                    body["filter"] = {"term": {only[0]: only[1]}}
                 assert evaluate(index, {"knn": {"vec": body}}) == _knn_by_full_sort(
-                    index, query, k, group
-                ), (k, group)
+                    index, query, k, only
+                ), (k, only)
 
 
 def test_unfiltered_knn_scores_the_stored_matrix_in_place() -> None:
@@ -456,6 +466,22 @@ def test_unfiltered_knn_scores_the_stored_matrix_in_place() -> None:
     index = _vector_index("cosinesimil", matrix)
     hits = evaluate(index, {"knn": {"vec": {"vector": [1.0, 0.0, 0.0, 0.0], "k": 2}}})
     assert hits == {"d000": 1.0, "d004": 1.0}
+
+
+@pytest.mark.parametrize("space_type", ["cosinesimil", "innerproduct"])
+def test_knn_filtered_to_most_rows_scores_the_stored_matrix_in_place(
+    space_type: str,
+) -> None:
+    # Copying 90% of 50k x 1024 rows out took 20x the product over all rows.
+    matrix = np.eye(4, dtype=np.float32)[[0, 1, 2, 3, 0, 1]].view(_NoCopyMatrix)
+    index = _vector_index(space_type, matrix)
+    body = {
+        "vector": [1.0, 0.0, 0.0, 0.0],
+        "k": 2,
+        "filter": {"terms": {"group": ["0", "1"]}},
+    }
+    hits = evaluate(index, {"knn": {"vec": body}})
+    assert list(hits) == ["d000", "d004"]
 
 
 def test_bool_should_over_knn_clauses_sums_them(engine) -> None:

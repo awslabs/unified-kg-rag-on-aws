@@ -759,6 +759,13 @@ Library API (Python callers and custom backends).
   the `english` analyzer alone): its analyzers split CJK runs with one
   regular expression instead of testing each character twice, and stem each
   distinct word once (#277).
+- A filtered kNN query on the embedded search engine that keeps more than
+  a tenth of the vectors scores them in place instead of copying the kept
+  rows out first, and no query walks every vector id to find the kept ones:
+  over 50,000 vectors of 1,024 dimensions (4 BLAS threads) 79 ms to 21 ms
+  with 90% kept, 52 ms to 14 ms with 50%, 2 ms to 0.2 ms with 50 ids. A
+  narrower filter, or an `l2` field, still scores a copy of the kept rows
+  (#PR).
 - A kNN or hybrid query on the embedded search engine no longer returns no
   results when another process writes while it loads the index. The load
   read the generation, the documents and each vector field in separate
