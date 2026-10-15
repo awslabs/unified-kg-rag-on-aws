@@ -19,7 +19,8 @@ Context keys (all optional; sensible defaults shown):
                                        endpoints, NO NAT (data plane has no
                                        internet egress);
                                        "public"   -> private-with-NAT subnets
-  max_azs             2                AZs for a newly-created VPC
+  max_azs             2                AZs for a newly-created VPC (>=2:
+                                       Neptune needs subnets in two AZs)
 
   # --- Storage: reuse vs create ---
   cache_bucket_name   None             reuse an existing S3 cache bucket (else
@@ -345,7 +346,9 @@ class DeploymentConfig:
             bedrock_region=ctx("bedrock_region"),
             vpc_id=ctx("vpc_id"),
             network_mode=network_mode,
-            max_azs=as_int("max_azs", 2),
+            # The Neptune cluster needs subnets in at least two AZs, so a
+            # one-AZ VPC can never synth.
+            max_azs=as_int("max_azs", 2, minimum=2),
             cache_bucket_name=ctx("cache_bucket_name"),
             corpus_bucket_name=ctx("corpus_bucket_name"),
             neptune_instance=str(ctx("neptune_instance", "db.r6g.large")),

@@ -110,7 +110,7 @@ Prep (parse/load/chunk/translate) → GraphBuild (extract/glean/resolve/claims)
 | `bedrock_region` | deploy region | Bedrock runtime region: injected into the task as `BEDROCK_REGION`, and the region of the `GraphRagGuardrail` stack. With `network_mode=private`, synth fails unless it equals the deploy region (the Bedrock VPC endpoints serve the deploy region only) |
 | `network_mode` | `private` | `private` = isolated subnets + VPC endpoints, **no NAT** (no internet egress); `public` = private subnets with NAT egress |
 | `vpc_id` | _(none)_ | **reuse** an existing VPC instead of creating one. The stack adds **no** VPC endpoints or subnets to it (synth warns with the list): in `private` mode it needs `PRIVATE_ISOLATED` subnets (no NAT or internet gateway route), S3/DynamoDB gateway endpoints, and private-DNS interface endpoints for `bedrock`, `bedrock-runtime`, `bedrock-agent-runtime`, `ecr.api`, `ecr.dkr`, `logs` and `sts` (and `xray` with `enable_cloudwatch_tracing`); in `public` mode it needs `PRIVATE_WITH_EGRESS` subnets (NAT route) |
-| `max_azs` | `2` | AZs for a newly-created VPC |
+| `max_azs` | `2` | AZs for a newly-created VPC; at least `2` (the Neptune cluster needs subnets in two AZs) |
 | `cache_bucket_name` | _(none)_ | **reuse** an existing S3 cache bucket instead of creating one |
 | `corpus_bucket_name` | _(none)_ | S3 bucket the corpus is read from when it is not in the cache bucket: the task role gets read-only access and, in `private` mode, the S3 gateway endpoint policy allows it |
 | `neptune_instance` | `db.r6g.large` | Neptune instance class (Graviton) |
