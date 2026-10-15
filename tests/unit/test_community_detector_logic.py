@@ -326,6 +326,27 @@ class TestClusterGraph:
         assert cluster[0][1]["weight"] == pytest.approx(3.0)
 
 
+class TestUnusableEdgeWeights:
+    @pytest.mark.parametrize("weight", [float("nan"), float("inf"), -1.0, None])
+    def test_detection_survives_a_bad_stored_weight(self, weight) -> None:
+        # A graph read back from a store written before weights were sanitized
+        # may carry NaN: graspologic_native panics on it with a BaseException
+        # that no `except Exception` catches, so every resume crashed again.
+        g = _two_triangle_graph()
+        nx.set_edge_attributes(g, 1.0, "weight")
+        g.edges["n2", "n3"]["weight"] = weight
+        cd = _detector()
+        cd(g)
+        level_0 = [c.nodes for c in cd.all_communities.values() if c.level == 0]
+        assert sorted(sorted(n) for n in level_0) == [
+            ["n0", "n1", "n2"],
+            ["n3", "n4", "n5"],
+        ]
+        # The caller's graph is left as it is.
+        stored = g.edges["n2", "n3"]["weight"]
+        assert stored is weight or (stored != stored and weight != weight)
+
+
 class TestHierarchyProcessing:
     def test_single_level_creates_l0_communities(self) -> None:
         cd = _detector()

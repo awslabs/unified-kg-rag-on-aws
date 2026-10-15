@@ -425,6 +425,13 @@ Library API (Python callers and custom backends).
   28 s. Restart the stack (`down` and `up`) to pick it up (#265).
 
 ### Fixed
+- A NaN, infinite or negative relationship strength from the model no longer
+  kills ingestion at community detection. Leiden panics on a NaN weight with
+  an exception no error handler catches (and rejects infinite ones), and a
+  resumed run crashed again on the same graph. Strengths are now parsed as
+  finite numbers clamped to `>= 0` (NaN and infinity become the default 1.0),
+  and community detection replaces such weights in a graph read back from an
+  older store or cache (#PR).
 - CloudWatch tracing (`enable_cloudwatch_tracing`): the task role keeps
   only `xray:PutTraceSegments`, the one action the X-Ray OTLP traces
   endpoint authorizes (a role with only `xray:PutSpans` gets a 403);

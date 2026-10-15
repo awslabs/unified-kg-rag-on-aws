@@ -1,5 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
+import math
 from collections import defaultdict
 from collections.abc import Callable, Iterable
 from datetime import datetime
@@ -23,6 +24,25 @@ from unified_kg_rag.shared.utils import (
 T = TypeVar("T")
 _Cited = TypeVar("_Cited", Entity, Relationship)
 logger = get_logger(__name__)
+
+
+def edge_weight(value: Any, default: float = 1.0) -> float:
+    """``value`` as a usable edge weight: a finite number, clamped to ``>= 0``.
+
+    Missing, unparseable, NaN and infinite values give ``default``; negative
+    ones give ``0.0``. Leiden (graspologic_native) panics on a NaN weight with
+    a ``BaseException`` no ``except Exception`` catches, and rejects infinite
+    and negative ones; a stage resumed on the same graph would fail again.
+    """
+    if value is None:
+        return default
+    try:
+        weight = float(value)
+    except (ValueError, TypeError):
+        return default
+    if not math.isfinite(weight):
+        return default
+    return max(weight, 0.0)
 
 
 def union_document_filters(
@@ -308,13 +328,7 @@ class BaseProcessor:
 
     @staticmethod
     def _parse_weight(data: dict[str, Any], default: float = 1.0) -> float:
-        value = data.get("strength", data.get("weight"))
-        if value is None:
-            return default
-        try:
-            return float(value)
-        except (ValueError, TypeError):
-            return default
+        return edge_weight(data.get("strength", data.get("weight")), default)
 
     @staticmethod
     def _parse_confidence(data: dict[str, Any], default: float = 1.0) -> float:

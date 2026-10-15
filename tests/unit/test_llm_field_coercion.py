@@ -68,3 +68,23 @@ def test_entity_with_repeated_tags_is_parsed() -> None:
     assert entity is not None
     assert (entity.name, entity.type) == ("Vendor", "ORGANIZATION")
     assert entity.description == "A supplier.\nShips parts."
+
+
+@pytest.mark.parametrize(
+    ("strength", "expected"),
+    [
+        ("7", 7.0),
+        (None, 1.0),
+        ("high", 1.0),
+        ("nan", 1.0),
+        (float("nan"), 1.0),
+        ("inf", 1.0),
+        ("-inf", 1.0),
+        (-3, 0.0),
+        (0, 0.0),
+    ],
+)
+def test_parse_weight_is_finite_and_non_negative(strength, expected: float) -> None:
+    # Leiden panics (an uncatchable BaseException) on a NaN weight and rejects
+    # infinite ones, so a bad strength from the model must not reach the graph.
+    assert BaseProcessor._parse_weight({"strength": strength}) == expected
