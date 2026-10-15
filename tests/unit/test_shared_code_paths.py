@@ -76,6 +76,21 @@ async def test_evaluator_without_either_scoring_method_fails_loudly(
         await evaluator.aevaluate_single(query, result, "")
 
 
+def test_evaluator_subclass_without_a_scoring_method_fails_at_definition() -> None:
+    with pytest.raises(TypeError, match="must implement evaluate_single"):
+
+        class _Unscored(BaseGraphRAGEvaluator):
+            pass
+
+
+def test_evaluator_subclass_with_only_the_async_method_is_accepted() -> None:
+    class _AsyncOnly(BaseGraphRAGEvaluator):
+        async def aevaluate_single(self, query, result, ground_truth, **kwargs):
+            raise AssertionError("not called")
+
+    assert issubclass(_AsyncOnly, BaseGraphRAGEvaluator)
+
+
 def test_dynamodb_batch_backoff_waits_only_between_requests(mocker) -> None:
     from unified_kg_rag.adapters.aws import dynamodb
 

@@ -1735,6 +1735,9 @@ Library API (Python callers and custom backends).
   registry adapter's own error: a configuration error (for example a missing
   table name) is no longer reported as a `DocStatusRegistryError` asking to
   re-run once the registry is reachable (#PR).
+- A `BaseGraphRAGEvaluator` subclass that implements neither
+  `evaluate_single` nor `aevaluate_single` fails with `TypeError` when the
+  class is defined, instead of failing every query at evaluation time (#PR).
 
 ### Removed
 - `Entity.frequency`: it counted an entity's text units in every merge path
