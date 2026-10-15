@@ -1632,12 +1632,6 @@ class OpenSearchIndexingConfig(BaseModel):
         max_length=100,
         description="Index name prefix for claim (covariate) documents",
     )
-    hybrid_search_pipeline_name: str = Field(
-        default="graphrag-hybrid-search-pipeline",
-        min_length=1,
-        max_length=100,
-        description="OpenSearch pipeline name for combining lexical and vector search results",
-    )
     default_analyzer: str = Field(
         default="standard",
         min_length=1,
@@ -1711,7 +1705,14 @@ class OpenSearchIndexingConfig(BaseModel):
             "m": 24,
             "ef_search": 100,
         },
-        description="HNSW algorithm parameters for approximate nearest neighbor search",
+        description=(
+            "HNSW algorithm parameters for approximate nearest neighbor search. "
+            "ef_search is the candidate list size of a query: on faiss and "
+            "nmslib the index setting index.knn.algo_param.ef_search (fixed "
+            "when the index is created), on lucene, which ignores that "
+            "setting, the k of every kNN query (at least the hits requested), "
+            "read at query time."
+        ),
     )
 
 

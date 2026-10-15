@@ -278,12 +278,9 @@ AWS 모드와 다른 점:
   둡니다). 퍼지 매칭(OpenSearch의 `fuzziness: AUTO`)이 없으므로 철자가 틀린 질의어와,
   어간을 추출하지 않는 `standard` 분석기에서는 굴절형("vendor"에 대한 "vendors")도 벡터
   검색으로만 찾습니다. kNN 검색은 정확 검색입니다. 필터를 통과한 문서를 모두 채점하므로
-  정확하지만 비용이 인덱스 크기에 비례해 늘어납니다. 하이브리드 검색은 하위 질의마다 상위
-  `size`개 결과로 min-max 정규화합니다. OpenSearch 2.13은 `size`보다 많은 문서와 일치하는
-  어휘 하위 질의에서 `size`번째 결과를 빼고 그 자리에 더 낮은 순위의 일치 문서를 넣어
-  정규화하는 것으로 관찰되어, 리트리버는 두 엔진 모두에 반환할 개수보다 하나 더 요청합니다.
-  빠지는 결과는 이 여분입니다. 다만 OpenSearch의 어휘 점수 최솟값이 내장 엔진보다 낮은
-  문서일 수 있어, 결합 점수와 경계 부근의 순서가 다를 수 있습니다.
+  정확하지만 비용이 인덱스 크기에 비례해 늘어납니다. 하이브리드 검색은 두 저장소 모두에서
+  리트리버가 같은 방식으로 결합합니다(어휘 검색과 kNN 검색을 따로 실행하고 각각을 자기
+  결과 안에서 min-max 정규화). 따라서 차이는 그 두 검색이 다른 부분에서만 생깁니다.
 - 내장 벡터 저장소는 검색하는 인덱스를 메모리에 올립니다(벡터 필드마다 약 문서 수 x
   차원 x 4바이트). 인덱스당 문서 약 100,000개를 기준으로 설계했으며, 더 큰 인덱스를
   올리면 경고를 남깁니다. 그 이상은 OpenSearch를 쓰세요. 쓰기가 있으면 다음 질의에서
@@ -602,6 +599,7 @@ LLM 단계는 Bedrock I/O가 병목이므로 동시성을 CPU 수보다 훨씬 �
 | `indexing.opensearch.persist_embedding_cache` | `false` | 임베딩 캐시를 S3에 저장해, 바뀌지 않은 텍스트를 실행마다 다시 임베딩하지 않습니다. `aws.s3.bucket_name`이 필요합니다. |
 | `indexing.opensearch.language_analyzers` | `{en: english, ko: nori}` | 언어 코드별 텍스트 분석기입니다. 목록에 없는 언어는 `default_analyzer`(`standard`)를 씁니다. |
 | `indexing.opensearch.vector_search.engine` | `"lucene"` | HNSW 엔진입니다. `lucene`은 1024차원까지 `cosinesimil`을 지원합니다. `faiss`는 템플릿을 참고하세요. |
+| `indexing.opensearch.vector_search.ef_search` | `100` | kNN 질의가 탐색하는 후보 수입니다(클수록 재현율이 높고 느림). `faiss`와 `nmslib`에서는 인덱스 설정 `index.knn.algo_param.ef_search`이며 인덱스를 만들 때 정해집니다. `lucene`은 이 설정을 무시하므로 리트리버가 이 값을 kNN 질의마다 `k`로 보냅니다(반환할 결과 수 이상). 그래서 `lucene`에서는 다음 질의부터 적용됩니다. |
 | `indexing.opensearch.index_settings.refresh_interval` | `"1s"` | 대량 적재를 빠르게 하려면 늘리거나 `"-1"`로 두고, 실제 질의 전에 되돌리세요. |
 | `indexing.neptune.batch_size` | `100` | Neptune 쓰기 배치당 항목 수입니다. |
 | `indexing.neptune.index_concurrency` | `1` | 동시에 보내는 쓰기 배치(와 관계 간선) 수입니다. `aws.neptune.pool_size`가 이보다 작으면 Gremlin 연결 풀이 이 값에 맞춰 늘어납니다. |
@@ -616,7 +614,7 @@ LLM 단계는 Bedrock I/O가 병목이므로 동시성을 CPU 수보다 훨씬 �
 | 키 | 기본값 | 역할과 변경 시점 |
 |---|---|---|
 | `search.auto_routable_strategies` | `["local", "mix", "global", "drift"]` | `auto` 라우터가 고를 수 있는 전략입니다. 라우터 프롬프트는 이 전략들만 이 순서대로 설명합니다. `auto` 자체는 넣을 수 없습니다. 어떤 전략이든 직접 지정할 수는 있습니다. |
-| `search.hybrid.lexical_weight` | `0.5` | OpenSearch 하이브리드 파이프라인의 어휘 검색 가중치입니다(벡터는 `vector_weight`, 역시 `0.5`). `run-ingestion`이 실행할 때마다 파이프라인(`indexing.opensearch.hybrid_search_pipeline_name`)을 다시 쓰므로, 바꾼 값은 질의 시점이 아니라 다음 수집 실행부터 적용됩니다. 같은 이름을 쓰는 도메인의 모든 네임스페이스가 파이프라인 하나를 공유하므로, 가중치가 다른 설정에는 별도 파이프라인 이름을 지정합니다. |
+| `search.hybrid.lexical_weight` | `0.5` | 하이브리드 검색의 어휘 검색 가중치입니다(벡터는 `vector_weight`, 역시 `0.5`). 하이브리드 검색은 인덱스마다 어휘 검색과 kNN 검색을 따로 실행하고, 각각을 자기 결과 안에서 min-max 정규화한 뒤 가중 평균합니다. 가중치는 질의 시점에 읽습니다. |
 | `search.fusion.method` | `"rrf"` | `rrf`(reciprocal rank fusion) 또는 `weighted`입니다. |
 | `search.fusion.rrf_k` | `60` | RRF 상수 `k`입니다. |
 | `search.fusion.fusion_weights` | `{}`(모든 버킷 `1.0`) | 소스 버킷별 가중치입니다. `rrf`와 `weighted` 모두에서 각 버킷의 기여도에 곱합니다. 버킷 이름은 템플릿에 있습니다. |
@@ -1174,7 +1172,9 @@ OpenSearch에서 `attr_<key>`는 문서 속성입니다. 문서의 `filters` 메
 - OpenSearch는 텍스트 단위, 엔티티, 커뮤니티 리포트에 `attr_<key>`와
   `attributes.<path>`를 엄격하게 적용합니다. 속성이 없는 문서는 제외되므로, 대개 문서
   속성이 없는 커뮤니티 리포트는 속성 필터를 건 질의에서 빠집니다. 의도한
-  동작(fail-closed)입니다. 속성 필터는 보증할 수 없는 내용을 반환하지 않습니다.
+  동작(fail-closed)입니다. 속성 필터는 보증할 수 없는 내용을 반환하지 않습니다. 벡터
+  검색과 하이브리드 검색은 그 속성과 일치하는 문서가 하나도 없는 인덱스를 건너뜁니다
+  (OpenSearch 2.13은 인덱스에 매핑되지 않은 필드로 kNN을 필터링하면 거부합니다).
 - Neptune은 엔티티 정점에 `attr_<key>`를 "있는 경우" 기준으로 적용합니다. 속성이
   일치하거나 그 속성이 없는 정점은 통과합니다. 따라서 `attr_category` 같은 문서 속성
   필터는 그래프 확장에 영향을 주지 않고, `attr_role:buyer` 같은 엔티티 속성 필터는

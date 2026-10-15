@@ -292,14 +292,10 @@ Expected differences from AWS mode:
   term, and under the `standard` analyzer, which does not stem, an inflected
   form ("vendors" for "vendor"), matches only through the vector side. kNN
   search is exact: every document that passes the filters is scored, which
-  is accurate but grows linearly with the index. Hybrid search min-max
-  normalizes each sub-query over its top `size` hits. OpenSearch 2.13 was
-  observed to drop the `size`-th hit of a lexical sub-query that matches more
-  documents than `size` and to normalize over a lower-ranked match in its
-  place, so the retriever asks both engines for one hit more than it returns:
-  the dropped hit is that spare one. OpenSearch's lexical minimum can still be
-  a lower match than the embedded engine's, so fused scores and the order
-  near the cut can differ.
+  is accurate but grows linearly with the index. Hybrid search is fused by
+  the retriever the same way on both stores (a lexical and a kNN search, each
+  min-max normalized over its own hits), so it differs only where those two
+  searches do.
 - The embedded vector store keeps each index it searches in memory (about
   documents x dimension x 4 bytes per vector field). It is sized for about
   100,000 documents per index and logs a warning when it loads a larger one;
@@ -649,6 +645,7 @@ LLM stages are Bedrock-I/O-bound, so concurrency can far exceed the CPU count.
 | `indexing.opensearch.persist_embedding_cache` | `false` | Persist the embedding cache to S3 so unchanged text is not re-embedded across runs. Requires `aws.s3.bucket_name`. |
 | `indexing.opensearch.language_analyzers` | `{en: english, ko: nori}` | Text analyzer per language code; unlisted languages use `default_analyzer` (`standard`). |
 | `indexing.opensearch.vector_search.engine` | `"lucene"` | HNSW engine. `lucene` supports `cosinesimil` up to 1024 dimensions; see the template for `faiss`. |
+| `indexing.opensearch.vector_search.ef_search` | `100` | Candidates a kNN query explores (more: better recall, slower). On `faiss` and `nmslib` it is the index setting `index.knn.algo_param.ef_search`, fixed when the index is created. `lucene` ignores that setting, so the retriever sends it as the `k` of each kNN query (at least the hits it returns); there it applies from the next query. |
 | `indexing.opensearch.index_settings.refresh_interval` | `"1s"` | Raise it (or `"-1"`) for faster bulk loads, then reset for live querying. |
 | `indexing.neptune.batch_size` | `100` | Items per Neptune write batch. |
 | `indexing.neptune.index_concurrency` | `1` | Concurrent write batches (and relationship edges). The Gremlin connection pool grows to match if `aws.neptune.pool_size` is smaller. |
@@ -663,7 +660,7 @@ LLM stages are Bedrock-I/O-bound, so concurrency can far exceed the CPU count.
 | Key | Default | What it does / when to change |
 |---|---|---|
 | `search.auto_routable_strategies` | `["local", "mix", "global", "drift"]` | Strategies the `auto` router may pick; its prompt describes exactly these, in this order. `auto` itself is rejected. Any strategy can still be chosen explicitly. |
-| `search.hybrid.lexical_weight` | `0.5` | Lexical weight in the OpenSearch hybrid pipeline (vector: `vector_weight`, also `0.5`). `run-ingestion` writes the pipeline (`indexing.opensearch.hybrid_search_pipeline_name`) on every run, so a change takes effect from the next ingestion run, not at query time. One pipeline serves every namespace on the domain that uses its name: give a configuration with other weights its own pipeline name. |
+| `search.hybrid.lexical_weight` | `0.5` | Lexical weight of a hybrid search (vector: `vector_weight`, also `0.5`). A hybrid search runs a lexical and a kNN search on each index, min-max normalizes each over its own hits and takes their weighted mean. The weights are read at query time. |
 | `search.fusion.method` | `"rrf"` | `rrf` (reciprocal rank fusion) or `weighted`. |
 | `search.fusion.rrf_k` | `60` | RRF constant `k`. |
 | `search.fusion.fusion_weights` | `{}` (every bucket `1.0`) | Per-source-bucket weights; they scale each bucket's contribution under both `rrf` and `weighted`. The template lists the bucket names. |
@@ -1249,7 +1246,9 @@ units unfiltered. The two stores treat `attr_<key>` differently:
   units, entities, and community reports. A document without the attribute is
   excluded, so community reports, which usually lack document attributes, drop
   out of an attribute-filtered query. This is deliberate (fail-closed): an
-  attribute filter never returns content it cannot vouch for.
+  attribute filter never returns content it cannot vouch for. A vector or
+  hybrid search skips an index none of whose documents match the attribute
+  (OpenSearch 2.13 rejects a kNN filter on a field the index does not map).
 - Neptune applies `attr_<key>` on entity vertices where present: a vertex
   passes when the property matches or when it has no such property. A
   document-attribute filter such as `attr_category` therefore leaves graph

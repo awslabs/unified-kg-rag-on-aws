@@ -360,157 +360,140 @@ def test_build_vector_query_no_filter_when_none(retriever) -> None:
     assert "filter" not in body["knn"]["name_embedding"]
 
 
-def test_build_hybrid_query_filters_reach_knn_subquery(retriever) -> None:
-    from unified_kg_rag.domain.models import SearchQuery
+# --------------------------------------------------------------------------- #
+# _build_search_bodies
+# --------------------------------------------------------------------------- #
 
-    q = SearchQuery(query="risk", search_type=SearchType.HYBRID)
-    filters = [{"terms": {"community_id": ["c1"]}}]
-    body = retriever._build_hybrid_query(
-        q, [0.1], ["name"], ["name_embedding"], 10, filters
+
+def _bodies(retriever, query: SearchQuery, vector=None, *, size=5, sort=None):
+    return retriever._build_search_bodies(
+        query,
+        query.search_type,
+        ["name"],
+        ["name_embedding"],
+        vector,
+        size=size,
+        sort=sort,
     )
-    knn_subqueries = [sub for sub in body["hybrid"]["queries"] if "knn" in sub]
-    assert knn_subqueries, "expected a kNN sub-query"
-    assert knn_subqueries[0]["knn"]["name_embedding"]["filter"] == {
+
+
+def test_hybrid_is_a_lexical_and_a_knn_search(retriever) -> None:
+    lexical, knn = _bodies(retriever, SearchQuery(query="alice"), [0.1])
+    assert "multi_match" in lexical["query"]
+    assert knn["query"]["knn"]["name_embedding"]["vector"] == [0.1]
+    # No spare hit: each search returns exactly the hits it is fused over.
+    assert lexical["size"] == knn["size"] == 5
+
+
+def test_hybrid_filters_reach_both_searches(retriever) -> None:
+    q = SearchQuery(query="risk", filters={"community_id": ["c1"]})
+    lexical, knn = _bodies(retriever, q, [0.1])
+    filters = [{"terms": {"community_id": ["c1"]}}]
+    assert lexical["query"]["bool"]["filter"] == filters
+    assert knn["query"]["knn"]["name_embedding"]["filter"] == {
         "bool": {"filter": filters}
     }
 
 
-# --------------------------------------------------------------------------- #
-# _build_hybrid_query
-# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize(
+    ("engine", "size", "k"),
+    [("lucene", 5, 100), ("lucene", 150, 150), ("faiss", 5, 5), ("nmslib", 5, 5)],
+)
+def test_knn_k_is_ef_search_on_lucene(retriever, config, engine, size, k) -> None:
+    # lucene ignores index.knn.algo_param.ef_search and explores k candidates,
+    # so k = size (10-40) cut recall; faiss/nmslib read the index setting.
+    config.indexing.opensearch.vector_search["engine"] = engine
+    q = SearchQuery(query="alice", search_type=SearchType.HYBRID)
+    lexical, knn = _bodies(retriever, q, [0.1], size=size)
+    assert knn["query"]["knn"]["name_embedding"]["k"] == k
+    assert lexical["size"] == knn["size"] == size
 
 
-def test_build_hybrid_query_combines_lexical_and_vector(retriever) -> None:
-    q = SearchQuery(query="alice")
-    body = retriever._build_hybrid_query(
-        q, [0.1], ["name"], ["name_embedding"], 5, None
+def test_vector_search_is_one_knn_search(retriever) -> None:
+    (body,) = _bodies(
+        retriever, SearchQuery(query="alice", search_type=SearchType.VECTOR), [0.1]
     )
-    queries = body["hybrid"]["queries"]
-    # One lexical clause + one vector clause.
-    assert len(queries) == 2
-    assert "multi_match" in queries[0]
-    assert "knn" in queries[1]
+    assert "knn" in body["query"]
 
 
-def test_build_hybrid_query_empty_yields_match_none(retriever) -> None:
-    q = SearchQuery(query="alice")
-    # No lexical fields and no vector -> nothing to query.
-    body = retriever._build_hybrid_query(q, None, [], [], 5, None)
-    assert body == {"match_none": {}}
-
-
-def test_build_hybrid_query_match_all_with_filters(retriever) -> None:
-    q = SearchQuery(query="")  # lexical -> match_all
-    filters = [{"term": {"type": "PERSON"}}]
-    body = retriever._build_hybrid_query(q, None, ["name"], [], 5, filters)
-    queries = body["hybrid"]["queries"]
-    assert queries[0]["bool"]["filter"] == filters
-
-
-# --------------------------------------------------------------------------- #
-# _build_main_query / _build_search_request
-# --------------------------------------------------------------------------- #
-
-
-def test_build_main_query_lexical_wraps_filters(retriever) -> None:
-    q = SearchQuery(query="alice", search_type=SearchType.LEXICAL)
-    filters = [{"term": {"type": "PERSON"}}]
-    body = retriever._build_main_query(
-        q, SearchType.LEXICAL, ["name"], [], None, 5, filters
+def test_lexical_search_wraps_filters(retriever) -> None:
+    q = SearchQuery(
+        query="alice", search_type=SearchType.LEXICAL, filters={"type": "PERSON"}
     )
-    assert body["bool"]["filter"] == filters
-    assert body["bool"]["must"][0]["multi_match"]["query"] == "alice"
+    (body,) = _bodies(retriever, q)
+    assert body["query"]["bool"]["filter"] == [{"term": {"type": "PERSON"}}]
+    assert body["query"]["bool"]["must"][0]["multi_match"]["query"] == "alice"
 
 
-def test_build_main_query_filter_only_when_no_query(retriever) -> None:
-    q = SearchQuery(query="", search_type=SearchType.HYBRID)
-    filters = [{"term": {"type": "PERSON"}}]
-    body = retriever._build_main_query(
-        q, SearchType.HYBRID, ["name"], ["v"], None, 5, filters
-    )
-    assert body == {"bool": {"filter": filters}}
+@pytest.mark.parametrize("search_type", [SearchType.HYBRID, SearchType.VECTOR])
+def test_text_less_search_is_a_filter_browse(retriever, search_type) -> None:
+    q = SearchQuery(query="", search_type=search_type, filters={"type": "PERSON"})
+    assert [b["query"] for b in _bodies(retriever, q)] == [
+        {"bool": {"filter": [{"term": {"type": "PERSON"}}]}}
+    ]
+    q = SearchQuery(query="", search_type=search_type)
+    assert [b["query"] for b in _bodies(retriever, q)] == [{"match_all": {}}]
 
 
-def test_build_search_request_clamps_size_to_max(retriever) -> None:
+def test_hit_count_clamps_size_to_max(retriever) -> None:
     retriever_max = retriever._max_size
     q = SearchQuery(query="x", top_k=retriever_max * 10, retrieval_multiplier=1)
-    body, params = retriever._build_search_request(
-        q, SearchType.LEXICAL, ["name"], [], None
-    )
-    assert body["size"] == retriever_max
+    assert retriever._hit_count(q) == retriever_max
 
 
-def test_build_search_request_floors_size_to_terms_filter(retriever) -> None:
+def test_hit_count_floors_size_to_terms_filter(retriever) -> None:
     # Fetch-by-id: ids passed as a terms filter with top_k=len(ids). size must
     # not be clamped to max_query_size (default 100) or ids beyond 100 are
     # silently dropped. Floor size at the terms-list length.
     n = retriever._max_size + 50  # 150 > 100
     ids = [f"id-{i}" for i in range(n)]
     q = SearchQuery(query="", top_k=n, retrieval_multiplier=1, filters={"id": ids})
-    body, _params = retriever._build_search_request(
-        q, SearchType.LEXICAL, ["name"], [], None
-    )
-    assert body["size"] == n  # not clamped to _max_size
+    assert retriever._hit_count(q) == n  # not clamped to _max_size
 
 
-def test_build_search_request_other_list_filters_do_not_raise_size(
-    retriever,
-) -> None:
+def test_hit_count_other_list_filters_do_not_raise_size(retriever) -> None:
     # Only the id list names the hits to fetch; a 3,000-value type filter
     # raised size (and the kNN k of every vector field) to 3,000.
     types = [f"t{i}" for i in range(3000)]
     q = SearchQuery(query="x", top_k=10, filters={"type": types})
-    body, _params = retriever._build_search_request(
-        q, SearchType.HYBRID, ["name"], ["name_embedding"], [0.1]
-    )
-    # top_k plus the one spare hit a hybrid search asks for.
-    assert body["size"] == 11
-    knn = body["query"]["hybrid"]["queries"][1]["knn"]["name_embedding"]
-    assert knn["k"] == 11
+    assert retriever._hit_count(q) == 10
 
 
-def test_build_search_request_terms_floor_bounded_by_result_window(retriever) -> None:
+def test_hit_count_terms_floor_bounded_by_result_window(retriever) -> None:
     # The floor never exceeds max_result_window (the cluster hits ceiling).
     huge = retriever._max_result_window + 5000
     ids = [f"id-{i}" for i in range(huge)]
     q = SearchQuery(query="", top_k=huge, retrieval_multiplier=1, filters={"id": ids})
-    body, _params = retriever._build_search_request(
-        q, SearchType.LEXICAL, ["name"], [], None
-    )
-    assert body["size"] == retriever._max_result_window
-
-
-@pytest.mark.parametrize(
-    ("search_type", "fetched"),
-    [(SearchType.HYBRID, 6), (SearchType.LEXICAL, 5), (SearchType.VECTOR, 5)],
-)
-def test_hybrid_search_asks_for_one_spare_hit(
-    retriever, search_type: SearchType, fetched: int
-) -> None:
-    # OpenSearch 2.13 drops the size-th hit of a lexical sub-query matching
-    # more than size documents; the spare hit is the one it drops.
-    q = SearchQuery(query="x", top_k=5, search_type=search_type)
-    body, _params = retriever._build_search_request(
-        q, search_type, ["name"], ["name_embedding"], [0.1]
-    )
-    assert body["size"] == fetched
-    knn = body["query"]
-    if search_type == SearchType.HYBRID:
-        knn = knn["hybrid"]["queries"][1]
-    if search_type != SearchType.LEXICAL:
-        assert knn["knn"]["name_embedding"]["k"] == fetched
+    assert retriever._hit_count(q) == retriever._max_result_window
 
 
 class _Client:
-    """Answers every search with ``hits`` per index, best first."""
+    """Answers every search with ``hits`` per index, best first.
 
-    def __init__(self, hits: dict[str, list[tuple[str, float]]]) -> None:
+    A kNN search gets ``knn_hits`` of that index instead, when given.
+    """
+
+    def __init__(
+        self,
+        hits: dict[str, list[tuple[str, float]]],
+        knn_hits: dict[str, list[tuple[str, float]]] | None = None,
+    ) -> None:
         self.hits = hits
-        self.bodies: list[dict] = []
+        self.knn_hits = knn_hits or {}
+        self.requests: list[dict] = []
 
-    async def asearch(self, *, index: str, body: dict, **_params) -> dict:
-        self.bodies.append(body)
-        found = next(v for k, v in self.hits.items() if index.startswith(k))
+    @property
+    def bodies(self) -> list[dict]:
+        return [request["body"] for request in self.requests]
+
+    async def asearch(self, **request) -> dict:
+        self.requests.append(request)
+        index, body = request["index"], request["body"]
+        source = self.knn_hits if "knn" in str(body["query"]) else self.hits
+        found = next(
+            (v for k, v in source.items() if index.startswith(k)),
+            next(v for k, v in self.hits.items() if index.startswith(k)),
+        )
         return {
             "hits": {
                 "hits": [
@@ -521,18 +504,86 @@ class _Client:
         }
 
 
-async def test_hybrid_spare_hit_is_cut(retriever, config, mocker) -> None:
+async def test_hybrid_fuses_the_two_searches_client_side(
+    retriever, config, mocker
+) -> None:
+    # OpenSearch 2.13 normalized a hybrid query's lexical sub-query over a
+    # document outside its hits; the retriever now fuses two plain searches,
+    # each normalized over exactly its own hits, with no search pipeline.
     prefix = config.indexing.opensearch.text_units_index_prefix
-    client = _Client({prefix: [(f"t{i}", 1.0 - i / 10) for i in range(9)]})
+    config.search.hybrid.lexical_weight = 0.25
+    config.search.hybrid.vector_weight = 0.75
+    client = _Client(
+        {prefix: [("a", 9.0), ("b", 5.0), ("c", 1.0)]},
+        {prefix: [("c", 0.9), ("a", 0.5), ("d", 0.1)]},
+    )
     object.__setattr__(retriever, "_opensearch_client", client)
     mocker.patch.object(
-        OpenSearchRetriever, "_get_query_vector", mocker.AsyncMock(return_value=None)
+        OpenSearchRetriever, "_get_query_vector", mocker.AsyncMock(return_value=[0.1])
     )
+    mocker.patch.object(OpenSearchRetriever, "_check_embedding_settings")
     results = await retriever.aretrieve(
-        SearchQuery(query="x", top_k=4, index_prefixes=[prefix])
+        SearchQuery(query="x", top_k=3, index_prefixes=[prefix])
     )
-    assert client.bodies[0]["size"] == 5
-    assert [r.source for r in results] == ["t0", "t1", "t2", "t3"]
+    assert len(client.requests) == 2
+    assert all(set(r) == {"index", "body"} for r in client.requests)
+    # lexical a=1, b=0.5, c=min; vector c=1, a=0.5, d=min (MIN_SCORE 0.001).
+    expected = {
+        "c": 0.25 * 0.001 + 0.75 * 1.0,
+        "a": 0.25 * 1.0 + 0.75 * 0.5,
+        "b": 0.25 * 0.5,
+    }
+    assert [r.source for r in results] == ["c", "a", "b"]
+    for r in results:
+        assert r.score == pytest.approx(expected[r.source])
+
+
+@pytest.mark.parametrize(
+    ("search_type", "filters", "searches"),
+    [
+        # No document has the attribute: only the probe runs.
+        (SearchType.HYBRID, {"attr_category": "a"}, 1),
+        (SearchType.VECTOR, {"attributes.category": "a"}, 1),
+        # A lexical filter on an unmapped field matches nothing, unprobed.
+        (SearchType.LEXICAL, {"attr_category": "a"}, 1),
+        # Declared fields are always mapped: no probe.
+        (SearchType.HYBRID, {"rank": {"gte": 1}}, 2),
+    ],
+)
+async def test_attribute_filter_probes_before_a_knn_search(
+    retriever, config, mocker, search_type, filters, searches
+) -> None:
+    # OpenSearch 2.13 rejects a kNN filter on a field the index does not map
+    # (attr_* on community reports), which failed the whole query.
+    prefix = config.indexing.opensearch.community_reports_index_prefix
+
+    class _NoAttributes(_Client):
+        async def asearch(self, **request) -> dict:
+            response = await super().asearch(**request)
+            if request["body"].get("_source") is False:
+                response["hits"]["hits"] = []
+            return response
+
+    client = _NoAttributes({prefix: [("cr1", 1.0)]})
+    object.__setattr__(retriever, "_opensearch_client", client)
+    vector = None if search_type == SearchType.LEXICAL else [0.1]
+    mocker.patch.object(
+        OpenSearchRetriever, "_get_query_vector", mocker.AsyncMock(return_value=vector)
+    )
+    mocker.patch.object(OpenSearchRetriever, "_check_embedding_settings")
+    results = await retriever.aretrieve(
+        SearchQuery(
+            query="x",
+            search_type=search_type,
+            index_prefixes=[prefix],
+            filters=filters,
+        )
+    )
+    assert len(client.requests) == searches
+    probed = any(body.get("_source") is False for body in client.bodies)
+    assert probed == (searches == 1 and search_type != SearchType.LEXICAL)
+    if probed:
+        assert results == []
 
 
 async def test_index_sweep_takes_each_index_in_turn(retriever, config, mocker) -> None:
@@ -562,7 +613,9 @@ async def test_index_sweep_takes_each_index_in_turn(retriever, config, mocker) -
 
 def test_text_less_search_sorts_by_importance(retriever, config) -> None:
     o = config.indexing.opensearch
-    browse = SearchQuery(query="", filters={"source_id": ["e1"]})
+    browse = SearchQuery(
+        query="", search_type=SearchType.LEXICAL, filters={"source_id": ["e1"]}
+    )
     assert retriever._importance_sort(
         o.relationships_index_prefix, browse, SearchType.LEXICAL
     ) == [
@@ -570,14 +623,7 @@ def test_text_less_search_sorts_by_importance(retriever, config) -> None:
         {"weight": {"order": "desc"}},
         {"id": {"order": "asc"}},
     ]
-    body, _params = retriever._build_search_request(
-        browse,
-        SearchType.LEXICAL,
-        ["description"],
-        [],
-        None,
-        sort=[{"rank": {"order": "desc"}}],
-    )
+    (body,) = _bodies(retriever, browse, sort=[{"rank": {"order": "desc"}}])
     assert body["sort"] == [{"rank": {"order": "desc"}}]
     assert body["track_scores"] is True
     # Not for a search with text, a fetch by id or an index without rank.
@@ -588,25 +634,6 @@ def test_text_less_search_sorts_by_importance(retriever, config) -> None:
         (o.text_units_index_prefix, browse),
     ):
         assert retriever._importance_sort(prefix, query, SearchType.LEXICAL) is None
-
-
-def test_build_search_request_hybrid_sets_pipeline_param(retriever, config) -> None:
-    q = SearchQuery(query="x", search_type=SearchType.HYBRID)
-    body, params = retriever._build_search_request(
-        q, SearchType.HYBRID, ["name"], ["name_embedding"], [0.1]
-    )
-    assert (
-        params["search_pipeline"]
-        == config.indexing.opensearch.hybrid_search_pipeline_name
-    )
-
-
-def test_build_search_request_lexical_no_pipeline(retriever) -> None:
-    q = SearchQuery(query="x", search_type=SearchType.LEXICAL)
-    body, params = retriever._build_search_request(
-        q, SearchType.LEXICAL, ["name"], [], None
-    )
-    assert params == {}
 
 
 # --------------------------------------------------------------------------- #
@@ -630,14 +657,11 @@ def test_parse_hit_basic(retriever) -> None:
     assert "Description: researcher" in result.content
 
 
-def test_build_search_request_excludes_embedding_fields(retriever) -> None:
+def test_searches_exclude_embedding_fields(retriever) -> None:
     # Vectors are only needed server-side for kNN scoring; the response must not
     # ship them back (community reports alone carry three per hit).
-    q = SearchQuery(query="x", search_type=SearchType.HYBRID)
-    body, _params = retriever._build_search_request(
-        q, SearchType.HYBRID, ["name"], ["name_embedding"], [0.1]
-    )
-    assert body["_source"] == {"excludes": ["*_embedding"]}
+    for body in _bodies(retriever, SearchQuery(query="x"), [0.1]):
+        assert body["_source"] == {"excludes": ["*_embedding"]}
 
 
 def test_parse_hit_drops_embedding_fields_from_metadata(retriever) -> None:

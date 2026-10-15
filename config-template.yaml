@@ -598,10 +598,6 @@ indexing:
     relationships_index_prefix: "graphrag-relationships"
     # Claim (covariate) vector index — makes extracted claims searchable.
     claims_index_prefix: "graphrag-claims"
-    # OpenSearch search pipeline that fuses lexical + vector results (written on
-    # every ingestion run); its combination weights come from search.hybrid.
-    # Configurations sharing a domain with other weights need their own name.
-    hybrid_search_pipeline_name: "graphrag-hybrid-search-pipeline"
     # Text analyzer per language code (extend without code changes); unlisted
     # languages use default_analyzer. The cluster must have it: nori is the
     # analysis-nori plugin, which an Amazon OpenSearch Service domain has only
@@ -629,6 +625,10 @@ indexing:
     vector_search:
       ef_construction: 128
       m: 24
+      # Candidates a query explores. faiss/nmslib: the index setting
+      # index.knn.algo_param.ef_search, fixed at index creation. lucene ignores
+      # that setting; the retriever sends it as each kNN query's k (at least
+      # the hits it returns), so on lucene it applies from the next query.
       ef_search: 100
       space_type: "cosinesimil"
       # Engine choice is constrained by space_type + OpenSearch version:
@@ -689,7 +689,9 @@ search:
   # classification run before retrieval stays off the critical path.
   auto_routable_strategies: ["local", "mix", "global", "drift"]
 
-  # Hybrid search weights
+  # Hybrid search weights: a hybrid search runs a lexical and a kNN search
+  # per index, min-max normalizes each over its own hits and takes their
+  # weighted mean. Read at query time.
   hybrid:
     lexical_weight: 0.5
     vector_weight: 0.5

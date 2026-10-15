@@ -29,6 +29,7 @@ from unified_kg_rag.domain.models import (
     SearchQuery,
     SearchType,
 )
+from unified_kg_rag.domain.retrieval.hybrid_normalization import combine_min_max
 from unified_kg_rag.domain.retrieval.index_prefixes import configured_index_prefixes
 from unified_kg_rag.ports.model_factory import EmbeddingFactoryPort
 from unified_kg_rag.shared import (
@@ -334,7 +335,7 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                 )
 
             size = self._hit_count(index_query)
-            body, params = self._build_search_request(
+            bodies = self._build_search_bodies(
                 index_query,
                 search_type,
                 lexical_fields,
@@ -343,14 +344,47 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                 size=size,
                 sort=self._importance_sort(prefix, index_query, search_type),
             )
+            probe = (
+                self._attribute_probe(prefix, index_query.filters)
+                if query_vector is not None and search_type != SearchType.LEXICAL
+                else None
+            )
             target_alias = self._get_name(prefix, query.suffix)
             search_tasks.append(
-                self._execute_search(
-                    [target_alias], body, params, query.suffix, keep=size
-                )
+                self._search_index(target_alias, bodies, size, query.suffix, probe)
             )
 
         return search_tasks
+
+    def _attribute_probe(
+        self, prefix: str, filters: dict[str, Any] | None
+    ) -> dict[str, Any] | None:
+        """A search for one document matching the filters' attribute keys.
+
+        ``attr_<key>`` and ``attributes.<path>`` are mapped only once a
+        document carries them, and OpenSearch 2.13 rejects a kNN filter on a
+        field the index does not map (a 400, "Rewrite first"), so an
+        attribute filter failed every vector and hybrid search of an index
+        whose documents lack the attribute, community reports above all. When
+        no document matches the attribute clauses the kNN search could find
+        nothing anyway, so the index is skipped instead (fail-closed, as
+        ``filter_schema`` documents). None when the filters have no such key.
+        """
+        declared = self._index_filter_fields.get(prefix) if filters else None
+        if declared is None:
+            return None
+        attributes = {
+            key: value
+            for key, value in (filters or {}).items()
+            if key not in declared.fields
+        }
+        if not attributes:
+            return None
+        return {
+            "size": 1,
+            "query": {"bool": {"filter": self._build_filter_clauses(attributes)}},
+            "_source": False,
+        }
 
     @staticmethod
     def _interleave(
@@ -593,7 +627,7 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                 )
         return size
 
-    def _build_search_request(
+    def _build_search_bodies(
         self,
         query: SearchQuery,
         search_type: SearchType,
@@ -601,85 +635,68 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         vector_fields: list[str],
         query_vector: list[float] | None,
         *,
-        size: int | None = None,
+        size: int,
         sort: list[dict[str, Any]] | None = None,
-    ) -> tuple[dict[str, Any], dict[str, Any]]:
-        """The body and parameters of the search of one index.
+    ) -> list[dict[str, Any]]:
+        """The searches of one index: one, or for a hybrid search two.
 
-        ``size`` is the number of hits wanted (``_hit_count`` when omitted). A
-        hybrid search asks for one more, which the caller cuts: OpenSearch
-        2.13 (neural-search) was observed to drop the ``size``-th hit of a
-        lexical sub-query that matches more than ``size`` documents and to
-        min-max normalize it over another match in its place, which skewed
-        every fused score of that index. With a spare hit requested, the hit
-        it drops is the spare.
+        A hybrid search is a lexical and a kNN search whose hits
+        ``_fuse`` combines, rather than one ``hybrid`` query fused by a search
+        pipeline: OpenSearch 2.13's normalization processor min-max normalized
+        the lexical sub-query over a document outside its returned hits (the
+        last-indexed match), which skewed every fused score of the index.
+        Fused here, each search is normalized over exactly the hits it
+        returned, on OpenSearch and the embedded engine alike.
         """
-        if size is None:
-            size = self._hit_count(query)
-        if search_type == SearchType.HYBRID:
-            size = min(size + 1, self._max_result_window)
         filters = self._build_filter_clauses(query.filters)
+        lexical = self._build_lexical_query(query, lexical_fields)
+        if filters:
+            lexical = {"bool": {"must": [lexical], "filter": filters}}
+        if query_vector is not None and search_type != SearchType.LEXICAL:
+            knn = self._search_body(
+                self._build_vector_query(
+                    query_vector, self._knn_k(size), vector_fields, filters
+                ),
+                size,
+            )
+            if search_type == SearchType.VECTOR:
+                return [knn]
+            return [self._search_body(lexical, size), knn]
+        if search_type != SearchType.LEXICAL and not query.query:
+            # A filter browse: no text to score by.
+            lexical = {"bool": {"filter": filters}} if filters else {"match_all": {}}
+        return [self._search_body(lexical, size, sort)]
 
-        main_query = self._build_main_query(
-            query,
-            search_type,
-            lexical_fields,
-            vector_fields,
-            query_vector,
-            size,
-            filters,
-        )
+    def _knn_k(self, size: int) -> int:
+        """The ``k`` of a kNN search returning ``size`` hits.
 
+        The lucene engine ignores ``index.knn.algo_param.ef_search`` and
+        explores ``k`` candidates per field, so a ``k`` of ``size`` (10 to 40
+        for a query) cut recall@10 to about 0.8; it gets
+        ``vector_search.ef_search`` at least. faiss and nmslib read the index
+        setting, and ``size`` hits are kept either way.
+        """
+        vector_search = self._opensearch_config.vector_search
+        if vector_search.get("engine", "lucene") != "lucene":
+            return size
+        return max(size, int(vector_search.get("ef_search", 100)))
+
+    @staticmethod
+    def _search_body(
+        query: dict[str, Any], size: int, sort: list[dict[str, Any]] | None = None
+    ) -> dict[str, Any]:
         # Embedding vectors are only needed server-side for kNN scoring; never
         # ship them back (community reports alone carry three per hit).
-        search_body: dict[str, Any] = {
+        body: dict[str, Any] = {
             "size": size,
-            "query": main_query,
+            "query": query,
             "_source": {"excludes": [f"*{EMBEDDING_FIELD_SUFFIX}"]},
         }
         if sort:
             # Sorted hits carry no _score unless asked to track it.
-            search_body["sort"] = sort
-            search_body["track_scores"] = True
-        params = {}
-
-        if search_type == SearchType.HYBRID:
-            params["search_pipeline"] = (
-                self._opensearch_config.hybrid_search_pipeline_name
-            )
-
-        return search_body, params
-
-    def _build_main_query(
-        self,
-        query: SearchQuery,
-        search_type: SearchType,
-        lexical_fields: list[str],
-        vector_fields: list[str],
-        query_vector: list[float] | None,
-        size: int,
-        filters: list[dict[str, Any]] | None = None,
-    ) -> dict[str, Any]:
-        if search_type == SearchType.LEXICAL:
-            lexical_query = self._build_lexical_query(query, lexical_fields)
-            return (
-                {"bool": {"must": [lexical_query], "filter": filters}}
-                if filters
-                else lexical_query
-            )
-
-        if filters and not query.query:
-            return {"bool": {"filter": filters}}
-
-        if search_type == SearchType.VECTOR and query_vector:
-            return self._build_vector_query(query_vector, size, vector_fields, filters)
-
-        if search_type == SearchType.HYBRID:
-            return self._build_hybrid_query(
-                query, query_vector, lexical_fields, vector_fields, size, filters
-            )
-
-        return {"match_all": {}}
+            body["sort"] = sort
+            body["track_scores"] = True
+        return body
 
     @staticmethod
     def _build_lexical_query(query: SearchQuery, fields: list[str]) -> dict[str, Any]:
@@ -739,35 +756,6 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
 
         return {"bool": {"should": [_knn(field) for field in fields]}}
 
-    def _build_hybrid_query(
-        self,
-        query: SearchQuery,
-        vector: list[float] | None,
-        lexical_fields: list[str],
-        vector_fields: list[str],
-        size: int,
-        filters: list[dict[str, Any]] | None = None,
-    ) -> dict[str, Any]:
-        queries = []
-
-        lexical_query = self._build_lexical_query(query, lexical_fields)
-        if lexical_fields:
-            if filters:
-                queries.append({"bool": {"must": [lexical_query], "filter": filters}})
-            else:
-                queries.append(lexical_query)
-
-        if vector_fields and vector:
-            # Propagate filters to the kNN sub-query too: otherwise the lexical
-            # sub-query respects the filter but the vector sub-query returns the
-            # global nearest neighbours, polluting the fused result with
-            # documents outside the filter.
-            queries.append(
-                self._build_vector_query(vector, size, vector_fields, filters)
-            )
-
-        return {"hybrid": {"queries": queries}} if queries else {"match_none": {}}
-
     @staticmethod
     def _build_filter_clauses(filters: dict[str, Any] | None) -> list[dict[str, Any]]:
         if not filters:
@@ -808,38 +796,95 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                     "Narrow the filter."
                 )
 
-    async def _execute_search(
+    async def _search_index(
         self,
-        aliases: list[str],
-        body: dict[str, Any],
-        params: dict[str, Any],
-        suffix: str | None = None,
-        keep: int | None = None,
+        alias: str,
+        bodies: list[dict[str, Any]],
+        size: int,
+        suffix: str | None,
+        probe: dict[str, Any] | None = None,
     ) -> list[RetrievalResult]:
-        if not aliases:
-            return []
+        """The hits of ``bodies`` on ``alias``; two (hybrid) are fused.
 
+        With a ``probe`` (``_attribute_probe``) that finds nothing, none.
+        A search that failed transiently or found no index degrades the
+        index to no hits (logged once), as one hybrid search did.
+        """
+        if probe is not None:
+            found = await self._search(alias, probe)
+            if isinstance(found, Exception):
+                return await self._degraded_search(alias, suffix, found)
+            if not found:
+                logger.debug(
+                    "No document of %s matches the attribute filters; "
+                    "skipping its search",
+                    alias,
+                )
+                return []
+        outcomes = await asyncio.gather(*(self._search(alias, body) for body in bodies))
+        responses: list[list[dict[str, Any]]] = []
+        for outcome in outcomes:
+            if isinstance(outcome, Exception):
+                return await self._degraded_search(alias, suffix, outcome)
+            responses.append(outcome)
+        if len(responses) == 1:
+            return [self._parse_hit(hit) for hit in responses[0]]
+        return self._fuse(responses, size)
+
+    def _fuse(
+        self, sub_hits: list[list[dict[str, Any]]], size: int
+    ) -> list[RetrievalResult]:
+        """The lexical and kNN hits of one index fused, best ``size`` first.
+
+        Min-max normalization of each search over its own hits and their
+        weighted arithmetic mean (``search.hybrid``), as the neural-search
+        normalization processor defines it (``combine_min_max``).
+        """
+        weights = self._config.search.hybrid
+        hits: dict[str, dict[str, Any]] = {}
+        sub_results: list[list[tuple[str, float]]] = []
+        for found in sub_hits:
+            scored = []
+            for hit in found:
+                key = f"{hit.get('_index', '')}\x00{hit.get('_id', '')}"
+                hits.setdefault(key, hit)
+                scored.append((key, float(hit.get("_score") or 0.0)))
+            sub_results.append(scored)
+        fused = combine_min_max(
+            sub_results, [weights.lexical_weight, weights.vector_weight]
+        )
+        return [
+            self._parse_hit({**hits[key], "_score": score})
+            for key, score in fused[:size]
+        ]
+
+    async def _search(
+        self, alias: str, body: dict[str, Any]
+    ) -> list[dict[str, Any]] | Exception:
+        """The hits of one search, or the error when it may degrade to none.
+
+        Raises:
+            ConfigurationError: OpenSearch denied or rejected the search.
+            StoreTimeoutError: OpenSearch did not answer.
+        """
         try:
-            response = await self._opensearch_client.asearch(
-                index=",".join(aliases), body=body, **params
-            )
-            hits = response.get("hits", {}).get("hits", [])[:keep]
-            return [self._parse_hit(hit) for hit in hits]
+            response = await self._opensearch_client.asearch(index=alias, body=body)
+            hits: list[dict[str, Any]] = response.get("hits", {}).get("hits", [])
+            return hits
         except Exception as e:
-            shown = ", ".join(aliases)
             if isinstance(e, StoreAccessDeniedError):
                 raise ConfigurationError(
-                    f"OpenSearch denied the search on {shown}: {e}. Grant the "
+                    f"OpenSearch denied the search on {alias}: {e}. Grant the "
                     "query role indices:data/read/search on these indices, or "
                     "check its credentials."
                 ) from e
             if isinstance(e, StoreTimeoutError):
-                raise self._unanswered_error(shown) from e
+                raise self._unanswered_error(alias) from e
             if reason := _invalid_dimension_reason(
                 e.reason if isinstance(e, StoreRequestRejectedError) else None
             ):
                 raise ConfigurationError(
-                    f"OpenSearch rejected the query vector on {shown}: "
+                    f"OpenSearch rejected the query vector on {alias}: "
                     f"{reason}. The index was built with another embedding model "
                     f"or dimension than queries embed with ('{self._embedding_model_id}', "
                     f"dimension {self._embedding_dimension}). Query with the "
@@ -853,31 +898,35 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                 # clause limit. Degrading it answered from no (or unfiltered)
                 # context.
                 raise ConfigurationError(
-                    f"OpenSearch rejected the search on {shown}: "
+                    f"OpenSearch rejected the search on {alias}: "
                     f"{e.reason}. Check the query "
                     "filters (a value of another type than the field's) and the "
                     "OpenSearch settings the search uses, such as "
-                    "indexing.opensearch.hybrid_search_pipeline_name and "
                     "indices.query.bool.max_clause_count."
                 ) from e
             # Any other fatal error (an unreachable or overloaded cluster)
             # propagates; a failure of this one search degrades to no hits.
             if is_fatal_retrieval_error(e):
-                logger.error("Fatal search error on indices %s: %s", aliases, e)
+                logger.error("Fatal search error on %s: %s", alias, e)
                 raise
-            if is_index_not_found(e):
-                await self._require_ingested_suffix(suffix, e)
-                # A missing alias is a config/index mismatch (the index was
-                # never built), not a transient failure.
-                logger.warning(
-                    "Index not found for %s; skipping it (was it built by the "
-                    "ingestion config?): %s",
-                    aliases,
-                    e,
-                )
-                return []
-            logger.error("Search failed on indices %s: %s", aliases, e)
+            return e
+
+    async def _degraded_search(
+        self, alias: str, suffix: str | None, error: Exception
+    ) -> list[RetrievalResult]:
+        if is_index_not_found(error):
+            await self._require_ingested_suffix(suffix, error)
+            # A missing alias is a config/index mismatch (the index was
+            # never built), not a transient failure.
+            logger.warning(
+                "Index not found for %s; skipping it (was it built by the "
+                "ingestion config?): %s",
+                alias,
+                error,
+            )
             return []
+        logger.error("Search failed on %s: %s", alias, error)
+        return []
 
     async def _require_ingested_suffix(
         self, suffix: str | None, cause: Exception

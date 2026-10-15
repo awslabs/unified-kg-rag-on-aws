@@ -358,32 +358,11 @@ class OpenSearchIndexer(VectorIndexer):
         logger.info("Cleared OpenSearch indices for '%s'", aliases_to_delete)
 
     def initialize(self) -> None:
-        # Written on every run (the PUT is idempotent), so a changed
-        # search.hybrid weight replaces the one an earlier run stored.
-        pipeline_name = self.opensearch_config.hybrid_search_pipeline_name
-        self._put_hybrid_search_pipeline(pipeline_name)
-        logger.info("Wrote hybrid search pipeline: '%s'", pipeline_name)
+        """Nothing to prepare: each index is created by its first write.
 
-    def _put_hybrid_search_pipeline(self, pipeline_name: str) -> None:
-        lex_weight, vec_weight = (
-            self.config.search.hybrid.lexical_weight,
-            self.config.search.hybrid.vector_weight,
-        )
-        body = {
-            "description": "Hybrid search combining keyword and vector search",
-            "phase_results_processors": [
-                {
-                    "normalization-processor": {
-                        "normalization": {"technique": "min_max"},
-                        "combination": {
-                            "technique": "arithmetic_mean",
-                            "parameters": {"weights": [lex_weight, vec_weight]},
-                        },
-                    }
-                }
-            ],
-        }
-        self.opensearch_client.put_search_pipeline(pipeline_name, body)
+        Hybrid search fuses its lexical and kNN hits in the retriever, so no
+        search pipeline is written.
+        """
 
     def _specs(self) -> tuple[_ItemSpec, ...]:
         config = self.opensearch_config

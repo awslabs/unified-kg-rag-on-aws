@@ -1,12 +1,13 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Hybrid-query score fusion as the OpenSearch neural-search plugin does it.
+"""Hybrid score fusion as the OpenSearch neural-search plugin defines it.
 
-``OpenSearchIndexer.initialize`` writes a search pipeline with a
-``normalization-processor`` (``min_max`` normalization, ``arithmetic_mean``
-combination, ``search.hybrid.lexical_weight`` / ``vector_weight``). An engine
-that answers ``hybrid`` queries itself uses ``combine_min_max`` so its scores
-match that pipeline's:
+The ``normalization-processor`` of a search pipeline with ``min_max``
+normalization and ``arithmetic_mean`` combination. ``OpenSearchRetriever``
+fuses the hits of a hybrid search's lexical and kNN searches with
+``combine_min_max`` (weights ``search.hybrid.lexical_weight`` /
+``vector_weight``), on every engine, and the embedded engine answers a
+``hybrid`` query with it:
 
 * each sub-query's scores are min-max normalized over that sub-query's own
   hits: ``(score - min) / (max - min)``; a normalized 0 becomes

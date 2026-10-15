@@ -87,6 +87,12 @@ ignored, so check the start-up warnings after upgrading.
   `InvalidFilterError` (#258).
 - IaC: `create_guardrail` decides whether the stack owns a guardrail; bring
   your own with `-c create_guardrail=false` (#103).
+- `indexing.opensearch.hybrid_search_pipeline_name` is removed: hybrid
+  search no longer uses an OpenSearch search pipeline, so ingestion writes
+  none and `search.hybrid` weights apply from the next query, not the next
+  ingestion run. A pipeline an earlier run wrote is left on the domain
+  unused; delete it with `DELETE _search/pipeline/<name>` if you like
+  (#306).
 - `run-ingestion --repair-metadata` is removed. It loaded the metadata it
   was meant to repair, so on a corrupt file it failed like
   `--verify-metadata` and never repaired anything; use `--verify-metadata`
@@ -222,6 +228,10 @@ Library API (Python callers and custom backends).
     (#303).
   - `compute_hash(algorithm=)` raises `TypeError`; it always hashes with
     SHA-256 (#300).
+- `SearchEngineClient.put_search_pipeline` and
+  `OpenSearchClient.put_search_pipeline` are removed, and
+  `OpenSearchIndexer.initialize` writes nothing: a custom search engine
+  need not implement search pipelines or the `hybrid` query (#306).
 - Removed APIs: `IncrementalIndexer.plan` / `prune_changed` /
   `remove_deleted` (use `detect_delta` and `remove_changed_and_deleted`)
   (#214); the LangChain-memory wrapper, `MemoryManager.get_langchain_memory`
@@ -538,6 +548,20 @@ Library API (Python callers and custom backends).
   (#300).
 
 ### Fixed
+- An attribute filter (`attr_<key>`, `attributes.<path>`) no longer fails
+  vector and hybrid searches on OpenSearch 2.13 with `ConfigurationError`
+  ("Rewrite first") when an index never mapped the attribute, such as the
+  community reports of `simple`, `global`, `drift` and `local` with
+  `--filters attr_category:x`. Such an index is now skipped (no document
+  can match), as documented: the reports drop out of the answer instead of
+  failing it (#306).
+- kNN search on the default lucene engine explores
+  `indexing.opensearch.vector_search.ef_search` candidates (default 100):
+  lucene ignores the `index.knn.algo_param.ef_search` index setting, so each
+  query searched only as many candidates as it returned hits (10 to 40) and
+  missed about 1 in 10 of its true nearest neighbours. The retriever sends
+  `k = max(hits, ef_search)` on lucene and still returns the hits asked
+  for; faiss and nmslib keep reading the index setting (#306).
 - `processing.max_attempts` (and every `BatchProcessor`'s `max_attempts`)
   counts the first call, as documented: an item that keeps failing with a
   retryable error is called `max_attempts` times. The first call used to
@@ -552,6 +576,14 @@ Library API (Python callers and custom backends).
   saturated writer's CPU and hid a writer low on memory.
   `NeptuneGremlinErrors` stays cluster-wide. The IaC README states each
   alarm's window (#303).
+- OpenSearch hybrid search fuses its lexical and kNN hits in the retriever
+  (min-max normalization of each over its own hits, weighted by
+  `search.hybrid`), as two searches per index. OpenSearch 2.13's `hybrid`
+  query normalized the lexical side over a document outside its returned
+  hits (the last-indexed match), which skewed every fused score and the
+  order of the top hits; the one-spare-hit workaround fixed only part of
+  it. The embedded engine and OpenSearch now return the same hybrid
+  ranking (#306).
 - Configuration errors raise `ConfigurationError` (still a `ValueError`)
   instead of a bare `ValueError`: an unknown embedding model or unsupported
   `indexing.opensearch.embedding_dimension`, a missing S3 `bucket_name`, a

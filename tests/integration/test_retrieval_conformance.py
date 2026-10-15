@@ -270,6 +270,39 @@ def test_term_terms_range_and_attribute_filters(harness: StoreHarness) -> None:
     assert all(r.score == 0.0 for r in results[1])
 
 
+@pytest.mark.parametrize("search_type", list(SearchType), ids=lambda t: t.value)
+def test_attribute_filter_skips_an_index_without_the_attribute(
+    harness: StoreHarness, search_type: SearchType
+) -> None:
+    # Community reports and these entities carry no document attributes, so
+    # OpenSearch never maps attr_category on them; 2.13 rejected a kNN filter
+    # on it (400 "Rewrite first"), failing every vector and hybrid search.
+    _ingest(harness)
+    o = _prefixes(harness)
+    every_index = [
+        o.text_units_index_prefix,
+        o.entities_index_prefix,
+        o.community_reports_index_prefix,
+    ]
+    results = _search(
+        harness,
+        *(
+            _query("widgets", prefixes, search_type=search_type, filters=filters)
+            for prefixes in (o.community_reports_index_prefix, every_index)
+            for filters in (
+                {"attr_category": "logistics"},
+                {"attributes.filters.category": "logistics"},
+            )
+        ),
+    )
+    assert [sorted(r.source for r in hits) for hits in results] == [
+        [],
+        [],
+        ["t2"],
+        ["t2"],
+    ]
+
+
 def test_untranslated_korean_corpus_has_lexical_recall(harness: StoreHarness) -> None:
     # A Korean corpus with a Korean target is never translated, so only the
     # ``text`` field carries it, with the source-language analyzer (nori, or
@@ -346,9 +379,6 @@ def test_hybrid_scores_are_normalized_and_follow_the_weights(
         def change(config: Any) -> None:
             config.search.hybrid.lexical_weight = lexical
             config.search.hybrid.vector_weight = vector
-            config.indexing.opensearch.hybrid_search_pipeline_name = (
-                f"{harness.tag}-{int(lexical * 10)}-pipeline"
-            )
 
         h = harness.derive(change)
         h.initialize()
