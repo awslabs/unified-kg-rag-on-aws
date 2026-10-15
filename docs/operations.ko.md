@@ -339,9 +339,14 @@ Secrets Manager나 태스크 시크릿에서 `OTEL_EXPORTER_OTLP_HEADERS`로 넘
 - 질의 트레이스 아래에 `kg_rag.retrieve`, `kg_rag.fusion`, `kg_rag.context_build`,
   `chat <model>` 스팬이 있고, 모델 스팬의 `gen_ai.usage.input_tokens`가 해당 실행의
   토큰 사용량입니다.
-- `kg_rag.rerank` 스팬의 `kg_rag.rerank.status`는 Rerank 호출이 실패해 질의가 융합
-  순서로 대체되었으면 `error`, 모델이 쓸 수 있는 결과를 돌려주지 않았으면
-  `empty`입니다.
+- `kg_rag.rerank` 스팬의 `kg_rag.rerank.status`는 그 Rerank 호출 한 번의
+  결과입니다. 성공하면 `ok`, 호출이 실패해 질의가 융합 순서로 대체되었으면
+  `error`, 모델이 쓸 수 있는 결과를 돌려주지 않았으면 `empty`입니다.
+- `kg_rag.rerank_status`는 재순위화가 한 일이며 Rerank 호출이 없었어도
+  설정됩니다. `kg_rag.fusion` 스팬에는 그 융합 단계의 결과, `kg_rag.strategy`
+  스팬에는 질의 전체의 결과(가장 나쁜 단계이며 `metadata.rerank.status`와 같은
+  값)가 들어갑니다. 값은 `applied`, `disabled`, `unavailable`(재순위화 모델을
+  만들 수 없음), `skipped`(재순위화할 대상이 없음), `failed` 중 하나입니다.
 
 ### Langfuse
 
@@ -433,6 +438,12 @@ OpenTelemetry(ADOT) 수집기 사이드카가 추가되고, 앱이 그 수집기
    단계(`xray.amazonaws.com`용 CloudWatch Logs 리소스 정책을 만든 뒤
    `aws xray update-trace-segment-destination --destination CloudWatchLogs`)를
    따르세요. 켠 뒤 스팬을 검색할 수 있을 때까지 10분 정도 걸릴 수 있습니다.
+   켜면 `aws/spans` 로그 그룹(보존 기간 30일)과 `/aws/application-signals/data`
+   로그 그룹이 생기고 `Default` 색인 규칙이 1%로 설정됩니다. 끄려면
+   `aws xray update-trace-segment-destination --destination XRay`를 실행합니다.
+   끄더라도 로그 그룹과 리소스 정책은 남으므로, 다른 곳에서 쓰지 않으면 정책
+   (`aws logs delete-resource-policy --policy-name <name>`)과 두 로그 그룹을
+   직접 삭제하세요.
 2. **`otel` extra를 넣어 이미지 빌드**:
    `docker build --build-arg UV_EXTRAS="--extra otel" -f docker/Dockerfile ...`.
    빠지면 시작할 때
@@ -448,8 +459,10 @@ OpenTelemetry(ADOT) 수집기 사이드카가 추가되고, 앱이 그 수집기
 
 **확인할 곳.** 수집이나 질의를 실행한 뒤 CloudWatch 콘솔의 **Application Signals,
 Transaction Search**에서 서비스 `unified-kg-rag`로 거르세요. 수집 실행마다
-`kg_rag.ingestion.run` 트레이스 하나, 질의마다 `kg_rag.query` 트레이스 하나가
-생기며 자식 스팬은 [관측성](#관측성)에 나온 그대로입니다. 스팬은 `aws/spans` 로그
+`kg_rag.ingestion.run` 트레이스 하나, `run-rag` 질의마다 `kg_rag.query` 트레이스
+하나가 생기며 자식 스팬은 [관측성](#관측성)에 나온 그대로입니다. `run-eval`
+실행은 `kg_rag.batch` 트레이스 하나이고 질의는 그 루트 아래 `kg_rag.query` 자식
+스팬이므로, 목록에는 질의마다가 아니라 배치 하나로 나옵니다. 스팬은 `aws/spans` 로그
 그룹에도 있어 Logs Insights로 볼 수 있습니다(필드가 비어 나오면 먼저
 `fields @message | limit 5`로 정확한 필드 경로를 확인하세요).
 

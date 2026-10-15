@@ -421,6 +421,12 @@ Library API (Python callers and custom backends).
   exporter is renamed `otlphttp/traces` to `otlp_http/traces`, so ADOT
   v0.50.0 no longer logs the deprecated-alias warning. Verified on real
   AWS (#PR).
+- Tracing runbook: a `run-eval` run is one `kg_rag.batch` trace with its
+  queries as children (not one trace per query); turning on Transaction
+  Search creates the `aws/spans` and `/aws/application-signals/data` log
+  groups and a 1% indexing rule, and turning it off removes neither; and
+  `kg_rag.rerank_status` (per fusion step and per query) is documented next
+  to the Rerank call's `kg_rag.rerank.status` (#PR).
 - Langfuse: the missing-host error now names the full OTLP endpoint
   (`<host>/api/public/otel`) for `OTEL_EXPORTER_OTLP_ENDPOINT`, since the host
   root alone returns 404; the runbook covers Langfuse v4 (its default

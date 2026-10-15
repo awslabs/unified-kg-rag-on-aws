@@ -364,9 +364,15 @@ To check it works:
 - A query trace has `kg_rag.retrieve`, `kg_rag.fusion`, `kg_rag.context_build`
   and `chat <model>` children; `gen_ai.usage.input_tokens` on the model spans
   is the token usage of the run.
-- `kg_rag.rerank.status` on the `kg_rag.rerank` span is `error` when the
-  Rerank call failed and the query fell back to the fused order, and `empty`
-  when the model returned nothing usable.
+- `kg_rag.rerank.status` on the `kg_rag.rerank` span is the outcome of that
+  one Rerank call: `ok`, `error` when the call failed and the query fell back
+  to the fused order, or `empty` when the model returned nothing usable.
+- `kg_rag.rerank_status` is what reranking did, set even when no Rerank call
+  was made: on a `kg_rag.fusion` span for that fusion step, and on the
+  `kg_rag.strategy` span for the whole query (the worst step, the same value
+  as `metadata.rerank.status`). Values: `applied`, `disabled`, `unavailable`
+  (the rerank model could not be built), `skipped` (nothing to rerank) or
+  `failed`.
 
 ### Langfuse
 
@@ -460,6 +466,13 @@ the private-mode `xray` endpoint, is in
    (a CloudWatch Logs resource policy for `xray.amazonaws.com`, then
    `aws xray update-trace-segment-destination --destination CloudWatchLogs`).
    Spans can take 10 minutes to become searchable after it is turned on.
+   Turning it on creates the `aws/spans` log group (30-day retention) and the
+   `/aws/application-signals/data` log group, and sets the `Default` indexing
+   rule to 1%. To turn it off, run
+   `aws xray update-trace-segment-destination --destination XRay`; that
+   removes neither the log groups nor the resource policy, so if nothing else
+   uses them, delete the policy (`aws logs delete-resource-policy
+   --policy-name <name>`) and the two log groups yourself.
 2. **Build the image with the `otel` extra**:
    `docker build --build-arg UV_EXTRAS="--extra otel" -f docker/Dockerfile ...`.
    Without it the run fails at start-up with
@@ -475,9 +488,11 @@ the private-mode `xray` endpoint, is in
 
 **Where to look.** Run an ingestion or a query, then open the CloudWatch
 console, **Application Signals, Transaction Search**, and filter on the
-service `unified-kg-rag`. Each run is one `kg_rag.ingestion.run` trace and each
-query one `kg_rag.query` trace, with the children listed under
-[Observability](#observability). The spans are also in the `aws/spans` log
+service `unified-kg-rag`. Each ingestion run is one `kg_rag.ingestion.run`
+trace and each `run-rag` query one `kg_rag.query` trace, with the children
+listed under [Observability](#observability). A `run-eval` run is one
+`kg_rag.batch` trace: its queries are `kg_rag.query` children of that root, so
+the list shows the batch, not each query. The spans are also in the `aws/spans` log
 group, for Logs Insights (if a field comes back empty, run
 `fields @message | limit 5` first to see the exact field paths):
 
