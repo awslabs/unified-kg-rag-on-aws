@@ -55,10 +55,6 @@ class GraphAwareEvaluator(BaseGraphRAGEvaluator):
     def __init__(self, config: Config, **kwargs: Any):
         super().__init__(config, EvaluatorType.GRAPH_AWARE, **kwargs)
 
-    def _initialize_evaluator(self, **kwargs: Any) -> None:
-        # Pure, deterministic evaluator — no model to initialize.
-        pass
-
     def metric_types(self) -> list[EvaluationMetricType]:
         return [
             EvaluationMetricType.ENTITY_COVERAGE,
@@ -171,13 +167,3 @@ class GraphAwareEvaluator(BaseGraphRAGEvaluator):
             evaluation_time=datetime.now(),
             metadata=metadata,
         )
-
-    async def aevaluate_single(
-        self,
-        query: EvaluationQuery,
-        result: EvaluationResult,
-        ground_truth: str,
-        **kwargs: Any,
-    ) -> EvaluationReport:
-        # Deterministic and CPU-only; reuse the sync path.
-        return self.evaluate_single(query, result, ground_truth, **kwargs)

@@ -19,7 +19,7 @@ from pydantic import ValidationError
 from unified_kg_rag.adapters.evaluators.base import (
     FAILED_METRICS_KEY,
     SKIPPED_METRICS_KEY,
-    BaseEvaluator,
+    BaseGraphRAGEvaluator,
 )
 from unified_kg_rag.adapters.observability.endpoints import safe_url
 from unified_kg_rag.adapters.providers import Providers
@@ -64,7 +64,7 @@ class EvaluationManager:
     @staticmethod
     def _resolve_evaluator_class(
         evaluator_type: EvaluatorType,
-    ) -> Callable[..., BaseEvaluator] | None:
+    ) -> Callable[..., BaseGraphRAGEvaluator] | None:
         """The evaluator class for ``evaluator_type``.
 
         The langchain and ragas evaluators are imported here, on use: ragas
@@ -116,7 +116,7 @@ class EvaluationManager:
         self.source_resolver = source_resolver or self._default_source_resolver(
             config, rag_chain
         )
-        self.evaluators: dict[EvaluatorType, BaseEvaluator] = {}
+        self.evaluators: dict[EvaluatorType, BaseGraphRAGEvaluator] = {}
         self._initialize_evaluators()
         # One attempt per batch: the RAG chain already retries transient
         # Bedrock/store errors itself (and botocore under it), so retrying here
@@ -727,7 +727,7 @@ class EvaluationManager:
                     "Failed to run '%s' evaluation: %s", evaluator_type.value, e
                 )
                 # Every answer is already generated: record the crash per query
-                # (as the per-query path in BaseEvaluator does) so the results
+                # (as the per-query path in BaseGraphRAGEvaluator does) so the results
                 # are still saved and the summary counts the metrics as failed;
                 # --max-failure-rate then decides the exit code.
                 all_reports.extend(

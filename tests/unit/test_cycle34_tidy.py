@@ -4,10 +4,21 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+from typing import Any
+
 import pytest
 
+from unified_kg_rag.adapters.evaluators.base import BaseGraphRAGEvaluator
 from unified_kg_rag.adapters.local.sqlite_graph import SQLiteGraphIndexer
 from unified_kg_rag.adapters.storage.neptune_indexer import NeptuneIndexer
+from unified_kg_rag.domain.models import (
+    Config,
+    EvaluationQuery,
+    EvaluationReport,
+    EvaluationResult,
+    EvaluatorType,
+)
 from unified_kg_rag.ports import GraphIndexer
 
 pytestmark = pytest.mark.unit
@@ -24,3 +35,41 @@ def test_graph_index_relationships_delegates_to_upsert(mocker) -> None:
     store = mocker.Mock(upsert_relationships=upsert)
     assert GraphIndexer.index_relationships(store, ["edge"]) == "stats"
     upsert.assert_called_once_with(["edge"])
+
+
+class _SyncOnlyEvaluator(BaseGraphRAGEvaluator):
+    def evaluate_single(
+        self,
+        query: EvaluationQuery,
+        result: EvaluationResult,
+        ground_truth: str,
+        **kwargs: Any,
+    ) -> EvaluationReport:
+        return EvaluationReport(
+            query_id=query.query_id,
+            evaluator_type=self.evaluator_type,
+            metrics=[],
+            evaluation_time=datetime.now(),
+        )
+
+
+async def test_evaluator_default_async_path_runs_the_sync_one(config: Config) -> None:
+    evaluator = _SyncOnlyEvaluator(config, EvaluatorType.RETRIEVAL)
+    query = EvaluationQuery(query_id="q", question="?")
+    result = EvaluationResult(
+        query_id="q", question="?", generated_answer="a", ground_truth=""
+    )
+    report = await evaluator.aevaluate_single(query, result, "")
+    assert report.query_id == "q"
+
+
+async def test_evaluator_without_either_scoring_method_fails_loudly(
+    config: Config,
+) -> None:
+    evaluator = BaseGraphRAGEvaluator(config, EvaluatorType.RETRIEVAL)
+    query = EvaluationQuery(query_id="q", question="?")
+    result = EvaluationResult(
+        query_id="q", question="?", generated_answer="a", ground_truth=""
+    )
+    with pytest.raises(NotImplementedError):
+        await evaluator.aevaluate_single(query, result, "")

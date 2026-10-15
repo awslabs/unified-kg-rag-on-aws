@@ -1,7 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
-from abc import ABC, abstractmethod
 from collections.abc import Coroutine
 from datetime import datetime
 from typing import Any
@@ -41,7 +40,14 @@ def judge_model_kwargs(config: Config) -> dict[str, Any]:
     return {"effort": effort} if effort else {}
 
 
-class BaseEvaluator(ABC):
+class BaseGraphRAGEvaluator:
+    """Evaluator base: batch scoring, failure reports and search metadata.
+
+    A subclass implements :meth:`aevaluate_single`, or the sync
+    :meth:`evaluate_single` that the default :meth:`aevaluate_single` runs
+    (for deterministic, CPU-only evaluators).
+    """
+
     def __init__(
         self,
         config: Config,
@@ -54,11 +60,22 @@ class BaseEvaluator(ABC):
         self.show_progress = show_progress
         self._initialize_evaluator(**kwargs)
 
-    @abstractmethod
     def _initialize_evaluator(self, **kwargs: Any) -> None:
-        pass
+        """Set up models or settings; default: nothing to set up."""
+        return None
 
-    @abstractmethod
+    def evaluate_single(
+        self,
+        query: EvaluationQuery,
+        result: EvaluationResult,
+        ground_truth: str,
+        **kwargs: Any,
+    ) -> EvaluationReport:
+        raise NotImplementedError(
+            f"{type(self).__name__} implements neither evaluate_single "
+            "nor aevaluate_single"
+        )
+
     async def aevaluate_single(
         self,
         query: EvaluationQuery,
@@ -66,7 +83,7 @@ class BaseEvaluator(ABC):
         ground_truth: str,
         **kwargs: Any,
     ) -> EvaluationReport:
-        pass
+        return self.evaluate_single(query, result, ground_truth, **kwargs)
 
     async def aevaluate_batch(
         self,
@@ -148,10 +165,6 @@ class BaseEvaluator(ABC):
 
     def validate_config(self) -> bool:
         return True
-
-
-class BaseGraphRAGEvaluator(BaseEvaluator):
-    """Evaluator base with the shared search-metadata extraction."""
 
     @staticmethod
     def _extract_search_metadata(result: EvaluationResult) -> dict[str, Any]:
