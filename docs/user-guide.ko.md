@@ -597,7 +597,7 @@ LLM 단계는 Bedrock I/O가 병목이므로 동시성을 CPU 수보다 훨씬 �
 | `indexing.max_document_failures` | `3` | 증분 실행에서 내용이 바뀌지 않은 문서가 연속으로 이 횟수만큼 FAILED로 기록되면 더는 재시도하지 않습니다(§5). |
 | `indexing.retire_source_scopes` | `[]` | 증분 실행에서 이전 소스 범위(옮기기 전의 절대 소스 디렉터리나 이전 `source_scope` 값)를 지정하면, 실행 인덱스 접미사에서 그 범위의 레코드를 삭제된 문서로 처리해 그 문서에만 속한 내용을 지웁니다. 실행 자신의 범위는 지정할 수 없습니다. `--retire-source-scope`로 값을 더할 수 있습니다(§5 삭제 범위 참고). |
 | `indexing.opensearch.embedding_model_id` | `"amazon.titan-embed-text-v2:0"` | 임베딩 모델이며, 정해진 목록에서 고릅니다(모델 선택 참고 사항 참고). 바꾸면 다시 인덱싱해야 합니다. |
-| `indexing.opensearch.build_relationship_vector_index` | `true` | LightRAG `mix`/`hybrid`용 관계 벡터 인덱스입니다. GraphRAG만 쓰는 배포라면 `false`로 두세요. |
+| `indexing.opensearch.build_relationship_vector_index` | `true` | 관계 벡터 인덱스입니다. LightRAG `mix`/`hybrid`(고수준 키워드, 연결 관계)와 GraphRAG `local`(관계 섹션, 연결 고리 관계)이 조회하고, `simple`/`drift`는 다른 인덱스와 함께 검색합니다. `false`로 두면 관계 임베딩을 만들지 않는 대신 이 기능을 쓰지 못합니다. |
 | `indexing.opensearch.persist_embedding_cache` | `false` | 임베딩 캐시를 S3에 저장해, 바뀌지 않은 텍스트를 실행마다 다시 임베딩하지 않습니다. `aws.s3.bucket_name`이 필요합니다. |
 | `indexing.opensearch.language_analyzers` | `{en: english, ko: nori}` | 언어 코드별 텍스트 분석기입니다. 목록에 없는 언어는 `default_analyzer`(`standard`)를 씁니다. |
 | `indexing.opensearch.vector_search.engine` | `"lucene"` | HNSW 엔진입니다. `lucene`은 1024차원까지 `cosinesimil`을 지원합니다. `faiss`는 템플릿을 참고하세요. |
@@ -1947,7 +1947,7 @@ graph_indexer_factory=..., retriever_builders=...)`). 번들 없이 쓸 때
 - **가벼운 수집은 쓸 수 있는 전략을 제한합니다.**
   `graph.community_detection.enabled: false`이면 `global`과 `drift`가 쓸 커뮤니티
   리포트가 없고, `indexing.opensearch.build_relationship_vector_index: false`이면
-  `mix`와 `hybrid`가 고수준 키워드 검색을 쓰지 못합니다.
+  `mix`와 `hybrid`가 고수준 키워드 검색을, `local`이 관계 섹션을 쓰지 못합니다.
 - **증분 인덱싱은 근사치입니다**(§5). 공유 엔티티나 관계는 바뀌거나 삭제된 문서가
   보탠 설명을 유지하며, 증분 실행은 그래프 전체를 다시 군집화하지 않고 커뮤니티를
   덧붙입니다. 둘 다 전체 재구축(`indexing.reset: true`)을 해야만 갱신됩니다. 실행마다

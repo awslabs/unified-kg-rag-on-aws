@@ -569,6 +569,10 @@ Library API (Python callers and custom backends).
   The `initialize()` and `clear()` methods of the `GraphIndexer` and
   `VectorIndexer` ports return `None` and raise on failure; a custom backend
   that reported failure by returning `False` must raise instead (#294).
+- The `indexing.opensearch.build_relationship_vector_index` description said
+  only LightRAG `mix`/`hybrid` use the relationship vector index; `local`
+  (relationship section, bridge relationships), `simple` and `drift` query it
+  too (#PR).
 - CloudWatch tracing (`enable_cloudwatch_tracing`): the task role keeps
   only `xray:PutTraceSegments`, the one action the X-Ray OTLP traces
   endpoint authorizes (a role with only `xray:PutSpans` gets a 403);

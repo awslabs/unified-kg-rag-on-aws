@@ -583,10 +583,12 @@ indexing:
     text_units_index_prefix: "graphrag-text-units"
     entities_index_prefix: "graphrag-entities"
     community_reports_index_prefix: "graphrag-community-reports"
-    # Build the relationship VECTOR index (embeds Relationship.description). Only
-    # LightRAG high-level keyword retrieval (mix/hybrid) consumes it; GraphRAG
-    # (auto/drift/global/local/simple) never does. Set false for a GraphRAG-only
-    # deployment to skip the relationship embeddings — symmetric with
+    # Build the relationship VECTOR index (embeds Relationship.description).
+    # LightRAG mix/hybrid query it (high-level keywords, incident edges), as do
+    # GraphRAG local (relationship section, bridge relationships) and the
+    # simple/drift index sweeps; auto routes to these, only global does without
+    # it. Set false to skip the relationship embeddings (mix/hybrid lose
+    # high-level retrieval, local its relationship section) — symmetric with
     # graph.community_detection.enabled (the LightRAG-only escape hatch). The
     # Neptune relationship EDGES are always built regardless (both methodologies
     # traverse them for graph expansion); this toggles only the vector index.
