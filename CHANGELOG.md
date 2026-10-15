@@ -323,6 +323,13 @@ Library API (Python callers and custom backends).
   fused order. Reported by @vibhupb (#83) (#284).
 
 ### Changed
+- Context packing ranks sections by their retrieval score alone; the fixed
+  per-type priority weights (text 1.3 ... general 0.8) are gone. The
+  per-type shares (`search.token_manager.type_budgets`) already decided the
+  mix, so selection is unchanged except when the window is too small for any
+  type's share: the one section seated then is the highest-scoring one (a
+  tie goes to the earlier result) rather than a lower-scored text section
+  (#PR).
 - `TokenManager` counts many texts concurrently only when its token counter
   reports `counts_via_api` (the Bedrock counter turns it off once a model
   rejects CountTokens); a custom counter without the attribute keeps the
