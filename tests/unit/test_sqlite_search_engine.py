@@ -699,6 +699,39 @@ def test_bulk_update_merges_fields_and_keeps_vectors(engine) -> None:
     assert _ids(engine, {"ids": {"values": ["missing"]}}) == []
 
 
+def test_list_vectors_skip_the_json_round_trip(engine, monkeypatch) -> None:
+    # A 1024-float list through json.dumps/json.loads cost most of the
+    # indexing time; the other values are still made JSON types.
+    dumped: list[Any] = []
+    dumps = engine_module._dumps
+
+    def spy(value: Any) -> str:
+        dumped.append(value)
+        return dumps(value)
+
+    monkeypatch.setattr(engine_module, "_dumps", spy)
+    document = {
+        "id": "n",
+        "name": "Numpy",
+        "rank": np.int64(4),
+        "vec": [np.float32(0.6), np.float32(0.8)],
+        "vec_l2": np.array([2.0, 0.0], dtype=np.float32),
+    }
+    assert engine.bulk_index(INDEX, [document]) == {"errors": False, "items": []}
+    assert engine.bulk_update(INDEX, [{"id": "n", "vec": [0.0, 1.0]}]) == {
+        "errors": False,
+        "items": [],
+    }
+    assert not any(isinstance(v, dict) and "vec" in v for v in dumped)
+    (hit,) = _search(engine, {"ids": {"values": ["n"]}})["hits"]["hits"]
+    assert hit["_source"]["rank"] == 4
+    assert hit["_source"]["vec"] == [0.0, 1.0]
+    assert hit["_source"]["vec_l2"] == [2.0, 0.0]
+    assert _hits(engine, {"knn": {"vec_l2": {"vector": [2.0, 0.0], "k": 1}}}) == {
+        "n": pytest.approx(1.0)
+    }
+
+
 def test_bulk_delete_treats_missing_ids_as_deleted(engine) -> None:
     assert engine.bulk_delete(INDEX, ["a", "zz"]) == {"errors": False, "items": []}
     assert set(_hits(engine, {"match_all": {}})) == {"b", "c"}

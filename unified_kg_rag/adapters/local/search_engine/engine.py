@@ -116,6 +116,18 @@ def _dumps(value: Any) -> str:
     return json.dumps(value, default=_SERIALIZER.default, ensure_ascii=False)
 
 
+def _as_json(document: dict[str, Any], knn_fields: set[str]) -> dict[str, Any]:
+    """``document`` with its values as JSON types (numpy values, dates, ...
+    as the OpenSearch client sends them), through a JSON round trip that
+    skips a vector given as a list: it is stored as float32 either way, and
+    its round trip cost more than the rest of indexing the document."""
+    vectors = {
+        k: v for k, v in document.items() if k in knn_fields and isinstance(v, list)
+    }
+    rest = {k: v for k, v in document.items() if k not in vectors}
+    return {**json.loads(_dumps(rest)), **vectors}
+
+
 def index_not_found(name: str) -> NotFoundError:
     """The error opensearch-py raises for a missing index (a 404)."""
     return NotFoundError(
@@ -506,7 +518,7 @@ class SQLiteSearchEngine:
             for document in documents:
                 raw_id = document.get("id")
                 doc_id = str(raw_id) if raw_id is not None else uuid.uuid4().hex
-                document = json.loads(_dumps(document))
+                document = _as_json(document, knn_fields)
                 if reason := self._invalid_field(specs, doc_id, document):
                     failed.append(self._document_error("index", index, doc_id, reason))
                     continue
@@ -568,8 +580,8 @@ class SQLiteSearchEngine:
             knn_fields = {p for p, s in specs.items() if s.type == "knn_vector"}
             for document in documents:
                 doc_id = str(document["id"])
-                partial = json.loads(
-                    _dumps({k: v for k, v in document.items() if k != "id"})
+                partial = _as_json(
+                    {k: v for k, v in document.items() if k != "id"}, knn_fields
                 )
                 row = connection.execute(
                     "SELECT source FROM docs WHERE index_name = ? AND id = ?",

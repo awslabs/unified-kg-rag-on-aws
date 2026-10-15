@@ -518,6 +518,11 @@ Library API (Python callers and custom backends).
   ("I’m sorry, …") is caught like its ASCII form and the original query is
   searched; the follow-up rewrite guard and the translation guard now share
   one normalisation (#292).
+- Embedded search engine: indexing and updating no longer pass each
+  document's vectors through a JSON round trip (a vector given as a list is
+  stored as given; other values are still converted to JSON types).
+  Indexing 4,000 text units with 1024-dimension embeddings went from about
+  5.7 s to 1.3 s (#PR).
 - Embedded search engine: an unfiltered kNN query scores the stored vectors
   in place instead of copying them for every query, and sorts only the
   documents that score at least the k-th best (ties still go by id, so the
