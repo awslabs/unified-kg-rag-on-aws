@@ -8,6 +8,7 @@ import pytest
 
 from unified_kg_rag.domain.models import Constants, Entity
 from unified_kg_rag.ports.indexer import BaseIndexer, IndexingStats
+from unified_kg_rag.shared.exceptions import ConfigurationError
 
 pytestmark = pytest.mark.unit
 
@@ -72,5 +73,14 @@ class TestSuffix:
         entity = Entity(
             id="e1", name="X", attributes={Constants.INDEX.value: "Bad Suffix!"}
         )
-        with pytest.raises(ValueError, match="Invalid suffix format"):
+        with pytest.raises(ConfigurationError, match="Invalid index suffix"):
+            BaseIndexer.get_suffix(entity)
+
+    def test_suffix_with_trailing_newline_raises(self) -> None:
+        # re.match("^...$") let "tenant\n" through ($ matches before a final
+        # newline), so it reached index names and graph labels.
+        entity = Entity(
+            id="e1", name="X", attributes={Constants.INDEX.value: "tenant\n"}
+        )
+        with pytest.raises(ConfigurationError):
             BaseIndexer.get_suffix(entity)

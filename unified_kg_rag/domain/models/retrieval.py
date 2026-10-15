@@ -147,7 +147,7 @@ class SearchQuery(BaseModel):
     def _validate_suffix(cls, value: str | None) -> str | None:
         """Reject unsafe suffixes on the READ path.
 
-        The write side validates the suffix (BaseIndexer._validate_suffix_format),
+        The write side validates the suffix (BaseIndexer.get_suffix),
         but the query-path suffix flows verbatim into the OpenSearch index target
         (`f"{prefix}-{suffix}"`). An unvalidated value enables index-name
         injection / cross-tenant reads (e.g. "*", "other-tenant", or comma-joined

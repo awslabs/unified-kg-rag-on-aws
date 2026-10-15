@@ -492,6 +492,16 @@ Library API (Python callers and custom backends).
   28 s. Restart the stack (`down` and `up`) to pick it up (#265).
 
 ### Fixed
+- Configuration errors raise `ConfigurationError` (still a `ValueError`)
+  instead of a bare `ValueError`: an unknown embedding model or unsupported
+  `indexing.opensearch.embedding_dimension`, a missing S3 `bucket_name`, a
+  retriever role with no provider and an invalid index suffix. The write
+  path checks the suffix with the same `validate_safe_name` as the query
+  path, so a suffix with a trailing newline (`"tenant\n"`) is rejected
+  rather than reaching index names and graph labels. An embedding model
+  that reports no dimension no longer silently gets a 1024-dimension index:
+  it uses `indexing.opensearch.embedding_dimension`, and without one the run
+  fails with a message naming that key (#PR).
 - `indexing.neptune.retry_delay_seconds: 0` is accepted with the default
   `max_attempts` and retries at once, as its description says; a validator
   rejected it whenever `max_attempts` was above 1 (#PR).

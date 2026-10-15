@@ -10,7 +10,7 @@ from boto3.exceptions import S3UploadFailedError
 from botocore.exceptions import ClientError, NoCredentialsError
 
 from unified_kg_rag.domain.models import Config, S3EncryptionType
-from unified_kg_rag.shared import CacheSyncError, get_logger
+from unified_kg_rag.shared import CacheSyncError, ConfigurationError, get_logger
 
 if TYPE_CHECKING:
     from types_boto3_s3 import S3Client
@@ -63,7 +63,7 @@ class S3CacheManager:
         self.s3_config = config.aws.s3
         self.bucket_name = bucket_name or self.s3_config.bucket_name
         if not self.bucket_name:
-            raise ValueError("S3 'bucket_name' must be configured.")
+            raise ConfigurationError("S3 'bucket_name' must be configured.")
 
         self.prefix = (prefix or self.DEFAULT_S3_PREFIX).strip("/")
         self.boto_session = boto_session or boto3.Session(

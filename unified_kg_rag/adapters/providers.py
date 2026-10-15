@@ -52,6 +52,7 @@ from unified_kg_rag.ports.model_factory import (
     RerankFactoryPort,
     TokenCounterPort,
 )
+from unified_kg_rag.shared.exceptions import ConfigurationError
 
 if TYPE_CHECKING:
     import boto3
@@ -216,7 +217,7 @@ class Providers:
             return builder()
         provider_role = RETRIEVER_PROVIDER_ROLES.get(RetrieverRole(role))
         if provider_role is None:
-            raise ValueError(f"No retriever bound to role: '{role}'")
+            raise ConfigurationError(f"No retriever bound to role: '{role}'")
         retriever: BaseGraphRAGRetriever = self._build(provider_role)
         return retriever
 

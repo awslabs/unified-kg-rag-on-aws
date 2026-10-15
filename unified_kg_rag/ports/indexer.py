@@ -1,6 +1,5 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-import re
 from abc import ABC, abstractmethod
 from collections import defaultdict
 from collections.abc import Collection
@@ -17,8 +16,9 @@ from unified_kg_rag.domain.models import (
     Entity,
     Relationship,
     TextUnit,
+    validate_safe_name,
 )
-from unified_kg_rag.shared import get_logger
+from unified_kg_rag.shared import ConfigurationError, get_logger
 from unified_kg_rag.shared.utils.store_names import graph_label, store_name
 
 logger = get_logger(__name__)
@@ -142,22 +142,10 @@ class BaseIndexer(ABC):
         else:
             return Constants.DEFAULT_SUFFIX.value
 
-        cls._validate_suffix_format(suffix)
-        return suffix
-
-    @classmethod
-    def _validate_suffix_format(cls, suffix: str) -> None:
-        if not re.match(r"^[a-z0-9-_]+$", suffix):
-            invalid_chars = set(re.findall(r"[^a-z0-9-_]", suffix))
-            error_msg = (
-                f"Invalid suffix format: '{suffix}'. "
-                f"OpenSearch requires index names to be lowercase and only contain: "
-                f"lowercase letters (a-z), numbers (0-9), hyphens (-), and underscores (_). "
-                f"Found invalid characters: {invalid_chars}. "
-                f"Please update your configuration to use a valid suffix."
-            )
-            logger.error(error_msg)
-            raise ValueError(error_msg)
+        try:
+            return validate_safe_name(suffix, "index suffix")
+        except ValueError as e:
+            raise ConfigurationError(str(e)) from e
 
     def _get_name(
         self, base: str, suffix: str | None, add_timestamp: bool = False

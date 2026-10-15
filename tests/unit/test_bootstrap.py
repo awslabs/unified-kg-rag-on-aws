@@ -192,6 +192,17 @@ def test_injected_components_win_over_the_configured_kind(no_aws, tmp_path) -> N
     assert providers.build_retriever(RetrieverRole.GRAPH) is retriever
 
 
+def test_retriever_role_without_a_provider_is_a_configuration_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from unified_kg_rag.adapters import providers as providers_module
+
+    monkeypatch.setattr(providers_module, "RETRIEVER_PROVIDER_ROLES", {})
+    providers = build_providers(Config())
+    with pytest.raises(ConfigurationError, match="No retriever bound"):
+        providers.build_retriever(RetrieverRole.GRAPH)
+
+
 def test_llm_model_info_reads_the_catalog_without_a_client(mocker) -> None:
     llm = mocker.patch.object(bedrock_module, "BedrockLanguageModelFactory")
     config = Config()

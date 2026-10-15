@@ -17,6 +17,7 @@ from moto import mock_aws
 
 from unified_kg_rag.adapters.aws.s3_cache import S3CacheManager, sse_extra_args
 from unified_kg_rag.domain.models import Config, S3EncryptionType
+from unified_kg_rag.shared import ConfigurationError
 
 pytestmark = pytest.mark.unit
 
@@ -46,8 +47,8 @@ def _manager(config, session, prefix="cache") -> S3CacheManager:
 
 def test_requires_bucket_name() -> None:
     config = Config()
-    # config default has no s3 bucket_name -> ValueError.
-    with pytest.raises(ValueError, match="bucket_name"):
+    # config default has no s3 bucket_name -> ConfigurationError.
+    with pytest.raises(ConfigurationError, match="bucket_name"):
         S3CacheManager(config, bucket_name=None)
 
 

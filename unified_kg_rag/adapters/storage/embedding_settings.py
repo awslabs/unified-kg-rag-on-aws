@@ -16,6 +16,7 @@ from unified_kg_rag.domain.models.config import (
     model_id_value,
 )
 from unified_kg_rag.ports.model_factory import EmbeddingFactoryPort
+from unified_kg_rag.shared.exceptions import ConfigurationError
 
 # Keys of the embedding settings an index records in its mapping's _meta.
 META_MODEL = "embedding_model_id"
@@ -33,30 +34,40 @@ def resolve_embedding_dimension(
     """The vector dimension the configured embedding model produces.
 
     ``indexing.opensearch.embedding_dimension`` when set (it must be one the
-    model supports), otherwise the model's largest supported dimension.
+    model supports, if the model reports its dimensions), otherwise the
+    model's largest supported dimension.
 
     Raises:
-        ValueError: The model is unknown, or does not support the configured
-            dimension.
+        ConfigurationError: The model is unknown, does not support the
+            configured dimension, or reports no dimension while none is
+            configured.
     """
     model = configured_embedding_model(opensearch_config)
     model_info = embedding_factory.get_model_info(opensearch_config.embedding_model_id)
     if not model_info:
-        raise ValueError(f"Unsupported model: '{model}'")
+        raise ConfigurationError(f"Unsupported model: '{model}'")
     supported = model_info.dimensions
     if (dim := opensearch_config.embedding_dimension) is not None:
-        is_supported = (isinstance(supported, list) and dim in supported) or (
-            isinstance(supported, int) and dim == supported
+        is_supported = (
+            supported is None
+            or (isinstance(supported, list) and dim in supported)
+            or (isinstance(supported, int) and dim == supported)
         )
         if not is_supported:
-            raise ValueError(
+            raise ConfigurationError(
                 f"Dimension {dim} not supported by '{model}'. "
                 f"Supported: '{supported}'"
             )
         return dim
-    if isinstance(supported, list):
+    if isinstance(supported, list) and supported:
         return int(supported[-1])
-    return int(supported or 1024)
+    if isinstance(supported, int):
+        return supported
+    # Guessing a dimension would build an index the model's vectors do not fit.
+    raise ConfigurationError(
+        f"Embedding model '{model}' reports no vector dimension; set "
+        "indexing.opensearch.embedding_dimension."
+    )
 
 
 def stored_embedding_settings(
