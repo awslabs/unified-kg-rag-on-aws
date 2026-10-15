@@ -26,10 +26,12 @@ from tests.fixtures.fakes.embeddings import HashingEmbeddingFactory
 from unified_kg_rag.adapters.aws.opensearch import is_index_not_found
 from unified_kg_rag.adapters.local.search_engine import SQLiteSearchEngine
 from unified_kg_rag.adapters.local.search_engine import engine as engine_module
+from unified_kg_rag.adapters.local.search_engine import query as query_module
 from unified_kg_rag.adapters.local.search_engine.query import (
     LoadedIndex,
     VectorField,
     evaluate,
+    resolve_path,
     vector_scores,
 )
 from unified_kg_rag.adapters.retrievers import OpenSearchRetriever
@@ -226,6 +228,106 @@ def test_filters(engine, clause: dict, expected: set) -> None:
     assert set(hits) == expected
     # A filter-only bool scores 0.
     assert all(score == 0.0 for score in hits.values())
+
+
+def _keyword_scan(index: LoadedIndex, path: str, values: list[Any]) -> set[str]:
+    """A keyword term filter as a scan of every document (the reference)."""
+
+    def keyword(value: Any) -> str:
+        if isinstance(value, bool):
+            return "true" if value else "false"
+        if isinstance(value, float) and value.is_integer():
+            return str(int(value))
+        return str(value)
+
+    spec = index.specs.get(path)
+    source_path = spec.source_path if spec and spec.source_path else path
+    wanted = {keyword(v) for v in values}
+    return {
+        doc_id
+        for doc_id, source in index.sources.items()
+        if any(keyword(v) in wanted for v in resolve_path(source, source_path))
+    }
+
+
+def test_keyword_term_filters_match_a_scan_of_every_document() -> None:
+    rng = np.random.default_rng(11)
+    pool: list[Any] = ["x", "y", "X", "1", 1, 1.0, 2.5, True, "true", False, None]
+
+    def pick() -> Any:
+        return pool[int(rng.integers(len(pool)))]
+
+    sources: dict[str, dict[str, Any]] = {}
+    for i in range(60):
+        source: dict[str, Any] = {
+            "kw": pick(),
+            "kws": [pick() for _ in range(int(rng.integers(0, 4)))],
+            "name": str(pick()),
+            "attributes": {"region": {"code": pick()}, "tags": [pick(), [pick()]]},
+            "loose": pick(),
+        }
+        sources[f"d{i:02d}"] = {k: v for k, v in source.items() if rng.random() < 0.8}
+    index = LoadedIndex(
+        name="keywords",
+        generation=1,
+        mappings={
+            "properties": {
+                "kw": {"type": "keyword"},
+                "kws": {"type": "keyword"},
+                "name": {
+                    "type": "text",
+                    "analyzer": "standard",
+                    "fields": {"keyword": {"type": "keyword"}},
+                },
+                "attributes": {"type": "object", "dynamic": True},
+            }
+        },
+        settings={},
+        sources=sources,
+        vectors={},
+    )
+    paths = ["kw", "kws", "name.keyword", "attributes.region.code"]
+    paths += ["attributes.tags", "loose", "absent"]
+    for path in paths:
+        for value in pool:
+            if value is None:
+                continue
+            got = set(evaluate(index, {"term": {path: value}}))
+            assert got == _keyword_scan(index, path, [value]), (path, value)
+        values = [v for v in pool[:5] if v is not None]
+        got = set(evaluate(index, {"terms": {path: values}}))
+        assert got == _keyword_scan(index, path, values), path
+
+
+def test_keyword_filters_are_looked_up_not_scanned(monkeypatch) -> None:
+    # A 50-id filter over 50k documents resolved every document's field in
+    # Python on every query; now the first query builds a value -> ids map.
+    index = _vector_index("l2", np.ones((40, 2), dtype=np.float32))
+    calls = []
+    real = query_module.resolve_path
+    monkeypatch.setattr(
+        query_module,
+        "resolve_path",
+        lambda source, path: calls.append(path) or real(source, path),
+    )
+    assert set(evaluate(index, {"term": {"bucket": "3"}})) == {"d003"}
+    built = len(calls)
+    assert set(evaluate(index, {"terms": {"group": ["0", "zz"]}})) == {
+        f"d{i:03d}" for i in range(0, 40, 3)
+    }
+    assert len(calls) == 2 * built
+    assert set(evaluate(index, {"terms": {"bucket": ["5", "7"]}})) == {"d005", "d007"}
+    assert set(evaluate(index, {"term": {"group": "1"}})) == {
+        f"d{i:03d}" for i in range(1, 40, 3)
+    }
+    assert len(calls) == 2 * built
+
+
+def test_keyword_filters_see_documents_written_after_a_query(engine) -> None:
+    clause = {"bool": {"filter": [{"term": {"type": "ORG"}}]}}
+    assert set(_hits(engine, clause)) == {"a", "b"}
+    engine.bulk_index(INDEX, [{**DOCS[2], "type": "ORG"}])
+    assert set(_hits(engine, clause)) == {"a", "b", "c"}
 
 
 def test_bool_must_with_filter_scores_the_must_clause(engine) -> None:

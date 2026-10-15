@@ -151,7 +151,11 @@ class VectorField:
 
 @dataclass
 class LoadedIndex:
-    """One index held in memory: its documents, vectors and lazy text indexes."""
+    """One index held in memory: its documents, vectors and lazy field indexes.
+
+    A write bumps the index generation and the engine loads a new
+    ``LoadedIndex``, so the lazy indexes never outlive the documents they index.
+    """
 
     name: str
     generation: int
@@ -161,6 +165,7 @@ class LoadedIndex:
     vectors: dict[str, VectorField]
     specs: dict[str, FieldSpec] = field(init=False)
     _text: dict[str, FieldIndex] = field(init=False, default_factory=dict)
+    _keywords: dict[str, dict[str, set[str]]] = field(init=False, default_factory=dict)
     _lock: threading.Lock = field(init=False, default_factory=threading.Lock)
 
     def __post_init__(self) -> None:
@@ -177,6 +182,21 @@ class LoadedIndex:
                     texts = [str(v) for v in resolve_path(source, path)]
                     built.add(doc_id, [t for text in texts for t in analyze(text)])
                 self._text[path] = built
+            return built
+
+    def keyword_index(self, path: str) -> dict[str, set[str]]:
+        """Keyword value at ``path`` (a sub-field's parent) -> the ids of the
+        documents holding it, built on first use."""
+        with self._lock:
+            built = self._keywords.get(path)
+            if built is None:
+                spec = self.specs.get(path)
+                source_path = spec.source_path if spec and spec.source_path else path
+                built = {}
+                for doc_id, source in self.sources.items():
+                    for value in resolve_path(source, source_path):
+                        built.setdefault(_keyword(value), set()).add(doc_id)
+                self._keywords[path] = built
             return built
 
 
@@ -251,21 +271,6 @@ def _matching(
     }
 
 
-def _term_matcher(
-    index: LoadedIndex, path: str, values: list[Any]
-) -> Callable[[list[Any], FieldSpec | None], bool]:
-    spec = index.specs.get(path)
-    if spec is not None and spec.type in NUMERIC_TYPES:
-        numbers = {_number(v) for v in values}
-        if None in numbers:
-            raise rejected(f"a value of [{path}] is not a number: {values!r}")
-        return lambda doc_values, _spec: any(_number(v) in numbers for v in doc_values)
-    if spec is not None and spec.type == "knn_vector":
-        raise rejected(f"[{path}] is a knn_vector field and cannot be filtered")
-    keywords = {_keyword(v) for v in values}
-    return lambda doc_values, _spec: any(_keyword(v) in keywords for v in doc_values)
-
-
 def _term_docs(index: LoadedIndex, path: str, values: list[Any]) -> Scores:
     if path == "_id":
         return {doc_id: 1.0 for v in values if (doc_id := _keyword(v)) in index.sources}
@@ -274,7 +279,21 @@ def _term_docs(index: LoadedIndex, path: str, values: list[Any]) -> Scores:
         # A term is not analyzed: it matches a token of the field as indexed.
         text = index.text_index(path)
         return {doc_id: 1.0 for v in values for doc_id in text.docs_with(_keyword(v))}
-    return _matching(index, path, _term_matcher(index, path, values))
+    if spec is not None and spec.type == "knn_vector":
+        raise rejected(f"[{path}] is a knn_vector field and cannot be filtered")
+    if spec is not None and spec.type in NUMERIC_TYPES:
+        numbers = {_number(v) for v in values}
+        if None in numbers:
+            raise rejected(f"a value of [{path}] is not a number: {values!r}")
+        return _matching(
+            index,
+            path,
+            lambda doc_values, _spec: any(_number(v) in numbers for v in doc_values),
+        )
+    # Any other field (keyword, a keyword sub-field, an unmapped value) is
+    # looked up, not scanned: a filter on a few ids is the common case.
+    keywords = index.keyword_index(path)
+    return {doc_id: 1.0 for v in values for doc_id in keywords.get(_keyword(v), ())}
 
 
 @_clause("term")
