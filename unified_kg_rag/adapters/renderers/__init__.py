@@ -8,6 +8,7 @@ from .base import (
     get_renderer_class,
     register_renderer,
     registered_renderers,
+    render_all,
 )
 from .interactive import InteractiveRenderer
 from .static import StaticRenderer
@@ -22,4 +23,5 @@ __all__ = [
     "get_renderer_class",
     "register_renderer",
     "registered_renderers",
+    "render_all",
 ]

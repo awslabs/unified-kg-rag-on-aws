@@ -17,6 +17,7 @@ from unified_kg_rag.adapters.renderers import (
     get_renderer_class,
     register_renderer,
     registered_renderers,
+    render_all,
 )
 from unified_kg_rag.application.cli import run_visualization as cli_module
 from unified_kg_rag.application.cli.run_visualization import (
@@ -199,6 +200,37 @@ class TestRendererRegistry:
     def test_unknown_renderer_raises(self) -> None:
         with pytest.raises(ValueError, match="No renderer registered"):
             get_renderer_class("does-not-exist")
+
+    @pytest.mark.usefixtures("restore_renderer_registry")
+    def test_render_all_skips_a_failing_renderer_and_passes_each_its_block(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # The one render loop the manager and run-visualization share.
+        seen: dict[str, object] = {}
+
+        @register_renderer("broken_for_test")
+        class _Broken(BaseRenderer):
+            def render(self, context: RenderContext, output_dir: Path) -> list[Path]:
+                raise RuntimeError("cannot draw")
+
+        @register_renderer("ok_for_test")
+        class _Ok(BaseRenderer):
+            def render(self, context: RenderContext, output_dir: Path) -> list[Path]:
+                seen["config"] = self.config
+                return [output_dir / "ok.txt"]
+
+        viz_config = type("V", (), {"ok_for_test": {"size": 3}})()
+        written = render_all(
+            RenderContext(graph=nx.Graph()),
+            tmp_path,
+            ["broken_for_test", "ok_for_test"],
+            viz_config,
+        )
+        assert written == [tmp_path / "ok.txt"]
+        assert seen["config"] == {"size": 3}
+        assert "Renderer 'broken_for_test' failed: cannot draw" in caplog.text
+        with pytest.raises(ValueError, match="No renderer registered"):
+            render_all(RenderContext(graph=nx.Graph()), tmp_path, ["nope"], None)
 
 
 def _write_empty_export(tmp_path: Path) -> Path:
