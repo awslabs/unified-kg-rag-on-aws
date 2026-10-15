@@ -372,10 +372,10 @@ Library API (Python callers and custom backends).
   the rest of the run: memory grew with the corpus and the copy was not
   reused (identical texts of one embedding call are still embedded once).
   `indexing.opensearch.persist_embedding_cache` and its S3 cache are
-  unchanged (#PR).
+  unchanged (#294).
 - `indexing.reset` no longer waits a fixed second after clearing the
   OpenSearch indices: the deletes are acknowledged before they return and
-  the rebuild writes new timestamped indices (#PR).
+  the rebuild writes new timestamped indices (#294).
 - `backend: local` selects the embedded SQLite graph and vector stores
   (`.unified-kg-rag/graph.sqlite3` and `vector.sqlite3` by default), so
   `--backend local` with a native Ollama needs no container.
@@ -560,7 +560,7 @@ Library API (Python callers and custom backends).
   value that became empty (an entity's `type`, a community's `parent` once
   it is a root) or an attribute the item no longer has is dropped instead
   of keeping the previous run's value. The incremental merge reads every
-  stored field back before it writes, so it keeps what it should (#PR).
+  stored field back before it writes, so it keeps what it should (#294).
 - Indexing stage: a store error while preparing the stores or clearing them
   for `indexing.reset` (an access-denied, unreachable or misconfigured
   OpenSearch, Neptune or SQLite store) now fails the stage with the store's
@@ -568,7 +568,7 @@ Library API (Python callers and custom backends).
   `Failed to initialize indexing pipeline` / `Failed to clear existing data`.
   The `initialize()` and `clear()` methods of the `GraphIndexer` and
   `VectorIndexer` ports return `None` and raise on failure; a custom backend
-  that reported failure by returning `False` must raise instead (#PR).
+  that reported failure by returning `False` must raise instead (#294).
 - CloudWatch tracing (`enable_cloudwatch_tracing`): the task role keeps
   only `xray:PutTraceSegments`, the one action the X-Ray OTLP traces
   endpoint authorizes (a role with only `xray:PutSpans` gets a 403);
