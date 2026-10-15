@@ -150,6 +150,17 @@ def test_template_values_equal_model_defaults(
     )
 
 
+def test_neptune_property_cap_exceeds_the_unsummarized_description_length() -> None:
+    # Descriptions below the summarization threshold are stored as merged; a
+    # Neptune property cap shorter than that (~4 characters per token) cut them
+    # mid-sentence in the local/DRIFT context. The template value is held to
+    # this default by test_template_values_equal_model_defaults.
+    config = Config()
+    summarization = config.processing.graph_extraction.description_summarization
+    threshold_tokens = summarization.force_summary_threshold_tokens
+    assert config.indexing.neptune.property_max_length >= 4 * threshold_tokens
+
+
 def test_intentional_differences_are_still_present(
     raw_template: dict[str, Any],
 ) -> None:

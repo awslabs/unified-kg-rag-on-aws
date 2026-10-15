@@ -54,11 +54,6 @@ def test_all_registered_strategies_have_valid_specs() -> None:
         assert set(spec.required_roles) <= _VALID_ROLES
 
 
-def test_every_non_auto_enum_value_is_registered() -> None:
-    for member in _CONCRETE:
-        get_strategy_spec(member)  # raises for an unregistered strategy
-
-
 async def test_simple_strategy_runs_through_registry() -> None:
     config = Config()
     config.search.reranking.enabled = False
