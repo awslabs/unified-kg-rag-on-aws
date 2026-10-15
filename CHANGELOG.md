@@ -508,7 +508,7 @@ Library API (Python callers and custom backends).
 - Graph expansion with `entity_importance_source: none` scores every node
   at the neutral importance 0.5 without reading an `importance` vertex
   property: entity vertices never store one, so the result is unchanged
-  (#PR).
+  (#300).
 
 ### Fixed
 - Configuration errors raise `ConfigurationError` (still a `ValueError`)
@@ -1652,7 +1652,7 @@ Library API (Python callers and custom backends).
   caller's event loop; it ran it on a new loop in a worker thread, away
   from the loop the stores' async clients are bound to. The global and
   simple search spans and failure logs say "Document retrieval" instead of
-  "OpenSearch retrieval", which local mode does not use (#PR).
+  "OpenSearch retrieval", which local mode does not use (#300).
 
 ### Removed
 - `Entity.frequency`: it counted an entity's text units in every merge path
@@ -1665,7 +1665,7 @@ Library API (Python callers and custom backends).
   parameter of `compute_hash` (always SHA-256) and
   `unified_kg_rag.shared.get_cache_manager` (import
   `shared.cache_manager.CacheManager`). Prompt classes are plain classes
-  instead of frozen dataclasses; they were never instantiated (#PR).
+  instead of frozen dataclasses; they were never instantiated (#300).
 
 ### Security
 - Prompts delimit corpus and retrieved text as data, and inputs cannot close
