@@ -229,6 +229,12 @@ Library API (Python callers and custom backends).
 - `LocalSearchStrategy` no longer takes an `entity_focus_multiplier`
   argument; nothing passed it, so it was always 2, now the class constant
   `ENTITY_CANDIDATES_PER_FOCUS` (#247).
+- `Document` keeps its text once, in `page_content`: `Document.content`,
+  `pages`, `total_pages` and `file_type` and the `DocumentContent` and
+  `Page` models are removed. They copied the text three times (a parsed
+  document's parsing and loading cache entries and parsed-output export were
+  three times its text) and nothing read the page fields. Exports and caches
+  written before still load; their `content.text` is read as the text (#PR).
 
 ### Upgrading from pre-release builds
 - Doc-status registries written before source scopes existed are migrated in

@@ -30,10 +30,8 @@ from .document import (
     DocStatus,
     DocStatusRecord,
     Document,
-    DocumentContent,
     DocumentDelta,
     DocumentLineage,
-    Page,
 )
 from .entity import Entity, RejectedEntity
 from .evaluation import (
@@ -87,7 +85,6 @@ __all__ = [
     "DocStatus",
     "DocStatusRecord",
     "Document",
-    "DocumentContent",
     "DocumentDelta",
     "DocumentLineage",
     "EmbeddingModelId",
@@ -112,7 +109,6 @@ __all__ = [
     "ObservabilityBackend",
     "ObservabilityConfig",
     "PENDING_CONTENT_HASH",
-    "Page",
     "PipelineConfig",
     "PipelineContext",
     "PipelineMetrics",

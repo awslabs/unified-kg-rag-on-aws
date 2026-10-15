@@ -5,7 +5,7 @@ from pathlib import Path
 
 from langchain_core.documents import Document as LangChainDocument
 
-from unified_kg_rag.domain.models import Constants, Document, DocumentContent, Page
+from unified_kg_rag.domain.models import Constants, Document
 from unified_kg_rag.shared.utils.document_identity import (
     compute_document_id,
     compute_text_hash,
@@ -48,23 +48,10 @@ def convert_langchain_to_document(
         normalize_source_path(path), compute_text_hash(combined_text)
     )
 
-    pages = [
-        Page(page_number=i + 1, text_content=page_text)
-        for i, page_text in enumerate(page_texts)
-    ]
-
-    content = DocumentContent(text=combined_text)
-
-    file_type = path.suffix.lower().lstrip(".")
-
     return Document(
         document_id=document_id,
         file_name=path.name,
         file_path=str(path),
-        file_type=file_type,
-        total_pages=len(langchain_docs),
-        pages=pages,
-        content=content,
         metadata=metadata,
         page_content=combined_text,
     )

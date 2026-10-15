@@ -510,7 +510,7 @@ class BaseChunker(ABC):
     ) -> None:
         doc_start_time = time.time()
         try:
-            if doc.is_error or not doc.content:
+            if doc.is_error:
                 self.stats.num_failed_documents += 1
                 return
 
@@ -713,7 +713,7 @@ class IntelligentTextChunker(BaseChunker):
         """
         planned: dict[int, list[str]] = {}
         for doc in documents:
-            if not doc.is_error and doc.content:
+            if not doc.is_error:
                 planned[id(doc)] = self._pre_chunks_of(doc)
         responses = self._request_boundaries(list(planned.values()), "all documents")
         self._planned = {

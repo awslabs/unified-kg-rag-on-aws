@@ -9,7 +9,7 @@ import json
 import pytest
 from langchain_core.documents import Document as LangChainDocument
 
-from unified_kg_rag.domain.models import Document, Page
+from unified_kg_rag.domain.models import Document
 from unified_kg_rag.shared.utils.document_converter import (
     convert_langchain_to_document,
 )
@@ -23,8 +23,8 @@ def _lc(text: str) -> list[LangChainDocument]:
 
 def test_leading_bom_stripped_from_content() -> None:
     doc = convert_langchain_to_document(_lc("﻿Hello world"), "a.txt")
-    assert doc.content.text == "Hello world"
-    assert not doc.content.text.startswith("﻿")
+    assert doc.page_content == "Hello world"
+    assert not doc.page_content.startswith("﻿")
 
 
 def test_bom_does_not_change_document_id() -> None:
@@ -37,7 +37,7 @@ def test_bom_does_not_change_document_id() -> None:
 
 def test_non_bom_content_unchanged() -> None:
     doc = convert_langchain_to_document(_lc("Plain text"), "a.txt")
-    assert doc.content.text == "Plain text"
+    assert doc.page_content == "Plain text"
 
 
 # "보증 기간" written with conjoining jamo (NFD), as macOS file systems and
@@ -47,9 +47,8 @@ _NFD_KOREAN = "\u1107\u1169\u110c\u1173\u11bc \u1100\u1175\u1100\u1161\u11ab"
 
 def test_decomposed_hangul_is_composed() -> None:
     doc = convert_langchain_to_document(_lc(_NFD_KOREAN), "a.txt")
-    assert doc.content.text == "보증 기간"
     assert doc.page_content == "보증 기간"
-    assert doc.pages[0].text_content == "보증 기간"
+    assert doc.page_content == "보증 기간"
 
 
 def test_nfd_and_nfc_text_share_a_document_id() -> None:
@@ -61,30 +60,75 @@ def test_nfd_and_nfc_text_share_a_document_id() -> None:
 def test_compatibility_characters_are_kept() -> None:
     # NFC, not NFKC: full-width letters and circled designators stay as written.
     doc = convert_langchain_to_document(_lc("ＡＢＣ ㈜"), "a.txt")
-    assert doc.content.text == "ＡＢＣ ㈜"
+    assert doc.page_content == "ＡＢＣ ㈜"
 
 
-def test_parsed_json_with_removed_element_fields_still_loads(tmp_path) -> None:
-    # Parsed exports written while Document carried page elements, page sizes,
-    # loader raw_data and detected_language.
-    doc = convert_langchain_to_document(_lc("Vendor ships to Buyer"), "a.txt")
-    data = doc.model_dump(mode="json")
-    data |= {"detected_language": "Unknown", "elements": []}
-    data["pages"][0] |= {"elements": [], "raw_data": {}, "height": 10, "width": 5}
+def test_text_is_stored_once() -> None:
+    # A Document used to hold its text three times (page_content, every
+    # page's text_content and content.text), tripling the parsing and
+    # loading caches and the parsed-output exports.
+    text = "Vendor ships to Buyer. " * 50
+    doc = convert_langchain_to_document(_lc(text), "a.txt")
+    assert doc.to_json_file().count("Vendor ships to Buyer.") == 50
+
+
+# A parsed export as earlier versions wrote it: the text three times, page
+# elements, page sizes, loader raw_data and detected_language.
+def _old_shape_export(text: str, page_content: str) -> dict:
+    return {
+        "page_content": page_content,
+        "document_id": "doc-old",
+        "file_name": "a.txt",
+        "file_path": "a.txt",
+        "file_type": "txt",
+        "total_pages": 1,
+        "pages": [
+            {
+                "page_number": 1,
+                "text_content": text,
+                "elements": [],
+                "raw_data": {},
+                "height": 10,
+                "width": 5,
+            }
+        ],
+        "content": {"text": text, "html": None, "markdown": None},
+        "metadata": {"source": "a.txt"},
+        "error_info": None,
+        "detected_language": "Unknown",
+        "elements": [],
+    }
+
+
+def test_old_shape_export_still_loads(tmp_path) -> None:
     path = tmp_path / "a.json"
-    path.write_text(json.dumps(data), encoding="utf-8")
-    loaded = Document.from_json_file(path)
-    assert loaded == doc
-
-
-def test_content_defaults_to_the_page_text() -> None:
-    doc = Document(
-        document_id="d",
-        file_name="a.txt",
-        file_path="a.txt",
-        file_type="txt",
-        total_pages=2,
-        pages=[Page(page_number=1, text_content="one"), Page(page_number=2)],
-        page_content="one",
+    path.write_text(
+        json.dumps(_old_shape_export("Vendor ships to Buyer", "stale")),
+        encoding="utf-8",
     )
-    assert doc.content is not None and doc.content.text == "one"
+    loaded = Document.from_json_file(path)
+    # content.text was the authoritative copy in the old shape.
+    assert loaded.page_content == "Vendor ships to Buyer"
+    assert loaded.metadata == {"source": "a.txt"}
+    assert "content" not in loaded.model_dump()
+
+
+def test_old_shape_cached_document_validates() -> None:
+    # Stage caches restore documents with model_validate, not from_json_file.
+    doc = Document.model_validate(_old_shape_export("same", "same"))
+    assert doc.page_content == "same"
+    assert set(doc.model_dump()) == {
+        "page_content",
+        "document_id",
+        "file_name",
+        "file_path",
+        "metadata",
+        "error_info",
+    }
+
+
+def test_new_export_round_trips(tmp_path) -> None:
+    doc = convert_langchain_to_document(_lc("Vendor ships to Buyer"), "a.txt")
+    path = tmp_path / "a.json"
+    doc.to_json_file(path)
+    assert Document.from_json_file(path) == doc

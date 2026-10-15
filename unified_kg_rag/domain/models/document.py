@@ -5,7 +5,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator
 
 
 def _read_text_autodetect(path: Path) -> str:
@@ -38,25 +38,6 @@ def _read_text_autodetect(path: Path) -> str:
             return raw.decode("latin-1")
         logger.debug("Detected encoding '%s' for '%s'", best.encoding, path)
         return str(best)
-
-
-class DocumentContent(BaseModel):
-    text: str | None = Field(
-        default=None, description="Plain text content of the entire document"
-    )
-    html: str | None = Field(
-        default=None, description="HTML formatted content of the entire document"
-    )
-    markdown: str | None = Field(
-        default=None, description="Markdown formatted content of the entire document"
-    )
-
-
-class Page(BaseModel):
-    page_number: int = Field(ge=1, description="Page number (1-based)")
-    text_content: str | None = Field(
-        default=None, description="Extracted text content from the page"
-    )
 
 
 class DocStatus(str, Enum):
@@ -250,25 +231,17 @@ class Document(BaseModel):
 
     LangChain loader output is converted into this model at the adapter/shared
     boundary (``shared.utils.document_converter``). ``page_content`` keeps the
-    field name LangChain's Document used, so JSON written by earlier versions
-    (which also carried LangChain's ``id``/``type`` keys, and page elements,
-    now ignored) still loads.
+    field name LangChain's Document used and is the document's only copy of
+    its text. JSON written by earlier versions still loads: their extra keys
+    (LangChain's ``id``/``type``, ``file_type``, ``total_pages``, ``pages``
+    and ``content``) are ignored, except that ``content.text`` is read as
+    the text (see :meth:`from_json_file`).
     """
 
     page_content: str = Field(description="Full plain-text content of the document")
     document_id: str = Field(description="Unique identifier for the document")
     file_name: str = Field(description="Name of the source file")
     file_path: str = Field(description="Path to the source file")
-    file_type: str = Field(
-        description="Type/format of the source file (e.g., pdf, docx)"
-    )
-    total_pages: int = Field(ge=0, description="Total number of pages in the document")
-    pages: list[Page] = Field(
-        default_factory=list, description="List of pages in the document"
-    )
-    content: DocumentContent | None = Field(
-        default=None, description="Aggregated content of the entire document"
-    )
     metadata: dict[str, Any] = Field(
         default_factory=dict, description="Additional metadata about the document"
     )
@@ -288,14 +261,6 @@ class Document(BaseModel):
     def validate_file_path(cls, v: Any) -> str:
         return str(v)
 
-    @model_validator(mode="after")
-    def _content_from_pages(self) -> "Document":
-        """Without ``content``, the text is the pages' text joined."""
-        if self.content is None:
-            texts = [p.text_content for p in self.pages if p.text_content]
-            self.content = DocumentContent(text="\n\n".join(texts) or None)
-        return self
-
     @classmethod
     def from_json_file(cls, input_path: str | Path) -> "Document":
         path = Path(input_path)
@@ -303,7 +268,12 @@ class Document(BaseModel):
             raise FileNotFoundError(f"JSON file not found at '{path}'")
 
         data = json.loads(_read_text_autodetect(path))
-        data["page_content"] = data.get("content", {}).get("text", "")
+        # Earlier versions kept the text authoritative under ``content.text``
+        # (their ``page_content`` could be stale).
+        legacy_text = (data.get("content") or {}).get("text")
+        if isinstance(legacy_text, str):
+            data["page_content"] = legacy_text
+        data.setdefault("page_content", "")
         return cls.model_validate(data)
 
     def to_json_file(self, output_path: str | Path | None = None, **kwargs: Any) -> str:
@@ -323,4 +293,4 @@ class Document(BaseModel):
 
     def __str__(self) -> str:
         status = "ERROR" if self.is_error else "OK"
-        return f"Document(id={self.document_id}, file='{self.file_name}', pages={self.total_pages}, status={status})"
+        return f"Document(id={self.document_id}, file='{self.file_name}', chars={len(self.page_content)}, status={status})"

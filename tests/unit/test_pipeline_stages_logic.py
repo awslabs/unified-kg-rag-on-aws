@@ -126,8 +126,6 @@ def _delta_context_with_a_document() -> PipelineContext:
             document_id="d1",
             file_name="f.txt",
             file_path="/tmp/f.txt",
-            file_type="txt",
-            total_pages=1,
         )
     ]
     return ctx

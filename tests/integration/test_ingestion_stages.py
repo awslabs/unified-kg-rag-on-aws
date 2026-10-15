@@ -35,7 +35,6 @@ from unified_kg_rag.domain.models import (
     Config,
     DocStatus,
     Document,
-    DocumentContent,
     DocumentDelta,
     PipelineContext,
     PipelineStageStatus,
@@ -122,12 +121,9 @@ def _config() -> Config:
 def _document(name: str, text: str) -> Document:
     document = Document(
         page_content=text,
-        content=DocumentContent(text=text),
         document_id=name,
         file_name=name,
         file_path=str(_ROOT / name),
-        file_type="txt",
-        total_pages=1,
     )
     assign_document_identity(document, _ROOT)
     return document

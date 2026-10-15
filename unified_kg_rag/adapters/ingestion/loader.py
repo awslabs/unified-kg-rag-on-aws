@@ -300,9 +300,8 @@ class DirectoryLoader:
 
         with ProcessPoolExecutor(max_workers=self.max_workers) as executor:
             tasks = {
-                executor.submit(compute_func, (i, doc.content.text or "")): i
+                executor.submit(compute_func, (i, doc.page_content)): i
                 for i, doc in enumerate(documents)
-                if doc.content
             }
 
             failures = 0

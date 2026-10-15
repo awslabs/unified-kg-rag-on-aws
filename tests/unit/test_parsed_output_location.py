@@ -90,7 +90,7 @@ def _assert_only_source_documents(context) -> None:
     # file was picked up as a source) and each document holds its source text.
     parsing = _stage_result(context, PipelineStageType.DOCUMENT_PARSING)
     assert parsing.input_count == len(_DOCS)
-    texts = sorted(d.content.text.strip() for d in context.documents)
+    texts = sorted(d.page_content.strip() for d in context.documents)
     assert texts == sorted(_DOCS.values())
 
 
