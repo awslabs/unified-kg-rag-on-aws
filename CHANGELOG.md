@@ -212,14 +212,14 @@ Library API (Python callers and custom backends).
     `parse_files` are removed (#299), and `exclude_patterns`, `max_workers`
     and `DEFAULT_EXCLUDE_PATTERNS` with them, so a call such as
     `DirectoryLoader(path, Config())` raises `TypeError` at construction
-    instead of failing later in discovery (#PR).
+    instead of failing later in discovery (#303).
   - `GraphIndexer` / `VectorIndexer` `initialize()` / `clear()` and
     `IndexingManager.initialize()` / `clear_all_data()` return `None` and
     raise the store's typed error instead of returning `False`; a caller that
     tested the returned value now always sees `None` (#294).
   - `BatchProcessor` rejects unknown settings with a `ValidationError`:
     `batch_size=` and `chunk_concurrency=` were silently ignored after #296
-    (#PR).
+    (#303).
   - `compute_hash(algorithm=)` raises `TypeError`; it always hashes with
     SHA-256 (#300).
 - Removed APIs: `IncrementalIndexer.plan` / `prune_changed` /
@@ -370,7 +370,7 @@ Library API (Python callers and custom backends).
   fused order. Reported by @vibhupb (#83) (#284).
 
 ### Changed
-- The data-plane image installs uv 0.12.23, the version CI uses (#PR).
+- The data-plane image installs uv 0.12.23, the version CI uses (#303).
 - `BatchProcessor` runs one pool of `max_concurrency` items instead of
   chunks of `batch_size` items in parallel, each waiting for its slowest
   item: a slow item holds only its own slot and is retried in it, and the
@@ -551,7 +551,7 @@ Library API (Python callers and custom backends).
   `neptune_instances=2` (the non-dev default) an idle reader halved a
   saturated writer's CPU and hid a writer low on memory.
   `NeptuneGremlinErrors` stays cluster-wide. The IaC README states each
-  alarm's window (#PR).
+  alarm's window (#303).
 - Configuration errors raise `ConfigurationError` (still a `ValueError`)
   instead of a bare `ValueError`: an unknown embedding model or unsupported
   `indexing.opensearch.embedding_dimension`, a missing S3 `bucket_name`, a
