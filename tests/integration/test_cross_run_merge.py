@@ -178,9 +178,10 @@ def test_delta_entity_merges_into_a_corrected_entity_with_its_id() -> None:
 
 
 def test_delta_relationship_merges_into_a_corrected_edge_with_its_id() -> None:
-    # A RELATIONSHIP_CORRECTION changes type/direction in place and keeps the
-    # id. A later doc extracting the uncorrected edge gets that id; the merge
-    # must return one edge for it, carrying both docs' text units.
+    # An earlier version kept the id when a RELATIONSHIP_CORRECTION changed an
+    # edge's type/direction (corrections now re-key it). A later doc
+    # extracting the uncorrected edge gets that stored id; the merge must
+    # return one edge for it, carrying both docs' text units.
     incremental, _, _ = _harness(cross_run_merge=True)
     incremental.commit(
         lineages=[DocumentLineage(doc_id="doc-a", relationship_ids=["r1"])],

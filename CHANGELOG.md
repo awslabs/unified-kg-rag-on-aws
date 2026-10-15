@@ -1714,6 +1714,15 @@ Library API (Python callers and custom backends).
   documents' subgraph, so one such document crashed the run and every
   resume. Such a graph now gets one community per entity, as a graph
   without edges does (#PR).
+- An incremental run no longer stores a relationship twice when a gleaning
+  correction reversed or retyped it in one document and a later document
+  states the corrected form. The corrected edge kept the id of its original
+  (source, target, type), so the incremental read-back (by the delta's
+  ids) missed it and the two became parallel edges with split weight and
+  two vector documents, where a full build has one. A correction now gives
+  the edge the id of its corrected key; an edge stated the uncorrected way
+  stays a separate edge, as in a full build. Edges stored by an earlier
+  version keep their id until a full rebuild (#PR).
 
 ### Removed
 - `Entity.frequency`: it counted an entity's text units in every merge path

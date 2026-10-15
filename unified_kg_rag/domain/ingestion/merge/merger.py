@@ -259,9 +259,9 @@ def merge_relationships(
             # so the incremental path must too.
             continue
         key = _relationship_key(source_id, target_id, rel)
-        # Id first: a gleaning correction changes an edge's type or direction in
-        # place and keeps its id, so a later delta of the uncorrected edge
-        # carries the stored id under a different key.
+        # Id first: an edge stored before gleaning corrections re-keyed the
+        # edge they retype or reverse kept the id of its uncorrected key,
+        # which a later delta of the uncorrected edge carries.
         match = by_id.get(rel.id) or by_id.get(id_by_key.get(key, ""))
         if match is None:
             new_rel = rel.model_copy(deep=True)

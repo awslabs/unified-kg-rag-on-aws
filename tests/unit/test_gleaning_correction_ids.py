@@ -2,11 +2,14 @@
 # SPDX-License-Identifier: Apache-2.0
 """A gleaning correction keeps ids unique after a re-proposal of the old item.
 
-An ENTITY_CORRECTION renames an entity and keeps its id; a
-RELATIONSHIP_CORRECTION retypes an edge and keeps its id. A later unit that
-proposes the old name (or the old edge) again carries the same name-derived
-id. Merging by name or by (endpoints, type) alone kept both, so one id named
-two entities (two Neptune vertices) or two edges (parallel Neptune edges).
+An ENTITY_CORRECTION renames an entity and keeps its id. A later unit that
+proposes the old name again carries the same name-derived id. Merging by name
+alone kept both, so one id named two entities (two Neptune vertices).
+
+A RELATIONSHIP_CORRECTION re-keys the edge to the id of its corrected
+(source, target, type), so the uncorrected edge another unit states is a
+distinct edge with its own id, as it is when an incremental run indexes that
+unit later.
 """
 
 from __future__ import annotations
@@ -27,6 +30,9 @@ pytestmark = pytest.mark.unit
 TYPO = BaseProcessor._generate_entity_id("Acme Crop")
 DEPOT = BaseProcessor._generate_entity_id("Depot")
 EDGE = BaseProcessor._generate_relationship_id("Acme Crop", "Depot", "SUPPLIES")
+CORRECTED_EDGE = BaseProcessor._generate_relationship_id(
+    "Acme Crop", "Depot", "SHIPS_TO"
+)
 U1 = TextUnit(id="u1", text="Acme Corp supplies the Depot.")
 
 
@@ -76,7 +82,8 @@ def _corrected_round(gleaner: GraphGleaner):
     ):
         gleaner._process_issue(issue, U1, index, [], [])
     assert entities[0].name == "Acme Corp" and entities[0].id == TYPO
-    assert relationships[0].type == "SHIPS_TO" and relationships[0].id == EDGE
+    assert relationships[0].type == "SHIPS_TO"
+    assert relationships[0].id == CORRECTED_EDGE
 
     proposed_entities = [_entity(TYPO, "Acme Crop", "u2")]
     proposed_relationships = [_edge("SUPPLIES", "u2")]
@@ -93,7 +100,7 @@ def _assert_unique_ids(entities: list[Entity], relationships: list[Relationship]
     assert [i for i, n in relationship_ids.items() if n > 1] == []
 
 
-def test_merge_round_folds_the_reproposal_into_the_corrected_items(
+def test_merge_round_keeps_ids_unique_after_corrections(
     gleaner,
 ) -> None:
     entities, relationships = _corrected_round(gleaner)
@@ -106,17 +113,22 @@ def test_merge_round_folds_the_reproposal_into_the_corrected_items(
     corrected = next(e for e in merged_entities if e.id == TYPO)
     assert corrected.name == "Acme Corp"
     assert corrected.text_unit_ids == ["u1", "u2"]
-    (edge,) = merged_relationships
-    assert edge.type == "SHIPS_TO"
-    assert edge.source_name == "Acme Corp"
-    assert edge.text_unit_ids == ["u1", "u2"]
+    edges = {r.id: r for r in merged_relationships}
+    assert set(edges) == {CORRECTED_EDGE, EDGE}
+    assert edges[CORRECTED_EDGE].type == "SHIPS_TO"
+    assert edges[CORRECTED_EDGE].source_name == "Acme Corp"
+    assert edges[CORRECTED_EDGE].text_unit_ids == ["u1"]
+    assert edges[EDGE].type == "SUPPLIES"
+    assert edges[EDGE].text_unit_ids == ["u2"]
 
 
 @pytest.mark.parametrize("fuzzy", [False, True])
 def test_resolver_returns_unique_ids_for_unmerged_corrections(gleaner, fuzzy) -> None:
     # Resolution must hold the invariant on its own: a cached gleaning output
-    # (or any other producer) can carry two items with one id.
+    # (or any other producer) can carry two items with one id. A correction
+    # cached before corrections re-keyed edges kept the original edge id.
     entities, relationships = _corrected_round(gleaner)
+    relationships[0].id = EDGE
     config = Config()
     config.processing.fuzzy_entity_resolution = fuzzy
 

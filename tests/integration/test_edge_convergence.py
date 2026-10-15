@@ -2,6 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """Edges of a full build and of incremental runs converge (embedded stores).
 
+* A relationship a gleaning RELATIONSHIP_CORRECTION reverses, stated the
+  corrected way round by another document, is one edge in a full build. An
+  incremental run indexing that document later must merge into it, not store
+  a second, parallel edge.
 * A document whose only relationship has strength 0 indexes (Leiden panicked
   on a graph whose every edge weighs 0, ending the run and every resume).
 """
@@ -137,6 +141,18 @@ CORPUS = {
     "a.txt": "Acme and Buyer trade goods.",
     "b.txt": "Buyer and Acme trade parts.",
 }
+
+
+def test_a_reversed_edge_merges_with_its_corrected_form_across_runs(
+    tmp_path: Path,
+) -> None:
+    full = _edges_after(tmp_path / "full", [CORPUS])
+    incremental = _edges_after(tmp_path / "inc", [{"b.txt": CORPUS["b.txt"]}, CORPUS])
+
+    edges, documents = full
+    assert [edge[:5] for edge in edges] == [("Acme", "Buyer", "TRADES_WITH", 16.0, 2)]
+    assert documents == 1
+    assert incremental == full
 
 
 def test_a_document_whose_only_edge_has_strength_zero_indexes(
