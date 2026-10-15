@@ -492,6 +492,9 @@ Library API (Python callers and custom backends).
   28 s. Restart the stack (`down` and `up`) to pick it up (#265).
 
 ### Fixed
+- `indexing.neptune.retry_delay_seconds: 0` is accepted with the default
+  `max_attempts` and retries at once, as its description says; a validator
+  rejected it whenever `max_attempts` was above 1 (#PR).
 - `processing.ignore_errors` is documented for what it does: it decides
   whether a whole step that fails (a batch call, a translation language, an
   evaluator, global map/reduce, the DRIFT primer, the auto router) raises or

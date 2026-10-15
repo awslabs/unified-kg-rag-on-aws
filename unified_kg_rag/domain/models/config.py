@@ -1587,14 +1587,6 @@ class NeptuneIndexingConfig(BaseModel):
         ),
     )
 
-    @model_validator(mode="after")
-    def validate_retry_configuration(self) -> "NeptuneIndexingConfig":
-        if self.max_attempts > 1 and self.retry_delay_seconds == 0:
-            raise ValueError(
-                "retry_delay_seconds should be greater than 0 when max_attempts > 1"
-            )
-        return self
-
 
 class OpenSearchIndexingConfig(BaseModel):
     text_units_index_prefix: str = Field(
