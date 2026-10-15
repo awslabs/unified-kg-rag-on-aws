@@ -891,6 +891,9 @@ spans and exported as given, so pass an opaque id, not an e-mail address.
   `kg_rag.rerank` (`kg_rag.rerank.status` = `ok`, `empty` or `error`, document
   counts) → `kg_rag.context_build` (tokens used vs the token budget) → the
   answer's `chat <model>` span.
+- Evaluation (`run-eval`): one `kg_rag.batch` root for answer generation (item
+  and failure counts only) → one `kg_rag.query` per question, which carries
+  that question's input and output.
 - Model spans follow the OpenTelemetry GenAI semantic conventions (span
   kind `CLIENT`, as for embedding and Bedrock rerank spans):
   `gen_ai.request.model`, `gen_ai.request.max_tokens` / `temperature`,

@@ -363,6 +363,10 @@ Library API (Python callers and custom backends).
   `kg_rag.batch.chunk` spans. Each Bedrock client's connection pool is
   sized to the larger of `processing.max_concurrency` and
   `processing.io_workers` (64 by default; it was 80) (#296).
+- `run-eval` generates up to `processing.max_concurrency` (20 by default)
+  answers at once instead of sequential chunks of 10 queries. Lower
+  `processing.max_concurrency` for an evaluation run that hits Bedrock or
+  store throttling (#PR).
 - `BatchProcessor.aexecute_with_fallback` takes no `batch_func`: each item
   is one awaited `sequential_func` call (`Runnable.ainvoke`), as on the sync
   path. A one-input `abatch(..., return_exceptions=True)` first call was the

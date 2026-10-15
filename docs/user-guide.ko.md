@@ -838,6 +838,8 @@ Secrets Manager나 태스크 시크릿에서 주입하세요.
   `kg_rag.rerank_status`) → `kg_rag.rerank`
   (`kg_rag.rerank.status` = `ok`, `empty`, `error`와 문서 수) →
   `kg_rag.context_build`(사용한 토큰과 토큰 예산) → 답변 생성의 `chat <model>` 스팬
+- 평가(`run-eval`): 답변 생성 전체가 `kg_rag.batch` 루트 하나(항목 수와 실패 수만
+  기록) → 질문마다 `kg_rag.query` 하나이며, 질문별 입력과 출력은 이 자식 스팬에 있음
 - 모델 스팬은 OpenTelemetry GenAI 시맨틱 규약을 따릅니다(임베딩, Bedrock 재순위화
   스팬과 같이 스팬 종류는 `CLIENT`). `gen_ai.request.model`,
   `gen_ai.request.max_tokens` / `temperature`,
