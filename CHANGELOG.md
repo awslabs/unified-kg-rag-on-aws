@@ -132,7 +132,7 @@ full re-index of the affected index type).
   they are rebuilt, a claim a new document restates is stored beside the old
   one instead of merging into it. Run once with `indexing.reset: true` (and
   `--force-rebuild` or a new `--pipeline-id` when resuming a pipeline id
-  whose `claim_resolution` stage output is cached) (#PR).
+  whose `claim_resolution` stage output is cached) (#290).
 - Most stage caches miss once after upgrading (their cache keys changed).
   A run resumed with an old `--pipeline-id` can still reuse stage outputs
   written by an earlier build; use `--force-rebuild` or a new
@@ -468,7 +468,7 @@ Library API (Python callers and custom backends).
   Claim merges (extraction, resolution and the cross-run merge) also keep
   the document `filters` of every instance in the claim's attributes, as
   entity and relationship merges do; claims are not filtered at query time,
-  so retrieval does not change (#PR).
+  so retrieval does not change (#290).
 - CloudWatch tracing (`enable_cloudwatch_tracing`): the task role keeps
   only `xray:PutTraceSegments`, the one action the X-Ray OTLP traces
   endpoint authorizes (a role with only `xray:PutSpans` gets a 403);
