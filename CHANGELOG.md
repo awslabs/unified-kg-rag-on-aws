@@ -494,6 +494,9 @@ Library API (Python callers and custom backends).
   cites it, and the chunk's relationships naming it are dropped; another
   chunk's low score no longer removes a stub. Only non-default thresholds
   are affected (#291).
+- The graph-expansion step's `kg_rag.retrieve` span label and failure log
+  say `graph expansion` instead of `Neptune graph expansion`, which was wrong
+  with the embedded SQLite or Gremlin Server graph store (#PR).
 - `run-prompt-tuning` profiles the corpus with
   `processing.graph_extraction.extraction_model_id`, the ingestion model the
   tuned prompt is for, instead of the query-time

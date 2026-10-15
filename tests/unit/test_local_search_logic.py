@@ -291,12 +291,18 @@ async def test_expand_via_graph_sets_id_filter() -> None:
     assert query.filters is not None and "id" not in query.filters
 
 
-async def test_expand_via_graph_swallows_retriever_error() -> None:
+async def test_expand_via_graph_swallows_retriever_error(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     strat = _bare_strategy(
-        retrievers={"graph": _StubRetriever(raises=RuntimeError("neptune down"))}
+        retrievers={"graph": _StubRetriever(raises=RuntimeError("store down"))}
     )
     query = SearchQuery(query="q")
     assert await strat._expand_via_graph(query, ["e1"]) == []
+    # The label names the step, not one backend: the graph store may be the
+    # embedded SQLite one or Gremlin Server.
+    assert "graph expansion failed" in caplog.text
+    assert "Neptune" not in caplog.text
 
 
 # --------------------------------------------------------------------------- #
