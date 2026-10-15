@@ -67,6 +67,11 @@ def _merge_entity_fields(surviving: Entity, incoming: Entity) -> None:
     ``incoming`` (same id, another name): edges carry a copy of their
     endpoints' names, and the stored edges the delta does not rewrite would
     keep naming the old one. A full rebuild applies such a rename.
+
+    The type stays the surviving one too (``incoming``'s only fills a missing
+    type), while a full build keeps the most frequent type of a name's
+    mentions (a gleaning retype counted among them), so an incremental run
+    can keep a type a full rebuild replaces, like a rename.
     """
     surviving.description = merge_descriptions(
         (surviving.description, incoming.description)
