@@ -171,7 +171,12 @@ class TestCorrectionDescriptions:
     UNIT = TextUnit(id="t1", text="x")
 
     def test_entity_correction_description_is_appended(self, gleaner) -> None:
-        entity = Entity(id="e1", name="Acme", description="Supplier of parts.")
+        entity = Entity(
+            id="e1",
+            name="Acme",
+            description="Supplier of parts.",
+            text_unit_ids=["t1"],
+        )
         issue = {
             "issue_type": "ENTITY_CORRECTION",
             "details": {"name": "Acme", "description": "Based in Springfield."},
@@ -188,6 +193,7 @@ class TestCorrectionDescriptions:
             target_name="Depot",
             type="SHIPS_TO",
             description="Ships weekly.",
+            text_unit_ids=["t1"],
         )
         issue = {
             "issue_type": "RELATIONSHIP_CORRECTION",
@@ -201,7 +207,7 @@ class TestGleaningIndex:
     UNIT = TextUnit(id="t1", text="x")
 
     def test_renamed_entity_is_found_under_its_new_name(self, gleaner) -> None:
-        entity = Entity(id="e1", name="Acme", type="PERSON")
+        entity = Entity(id="e1", name="Acme", type="PERSON", text_unit_ids=["t1"])
         index = GleaningIndex([entity], [])
         rename = {
             "issue_type": "ENTITY_CORRECTION",
@@ -214,8 +220,28 @@ class TestGleaningIndex:
         gleaner._process_issue(rename, self.UNIT, index, [], [])
         gleaner._process_issue(retype, self.UNIT, index, [], [])
         assert (entity.name, entity.type) == ("Acme Corp", "ORGANIZATION")
-        assert index.entity_named("Acme") is None
+        assert index.entity_named("Acme", "t1") is None
         assert index.entity_ids == {"acme corp": "e1"}
+
+    def test_lookups_see_only_the_units_own_items(self) -> None:
+        # A unit's prompt lists only the items citing it; resolving a
+        # correction in the whole round let it rewrite another unit's items.
+        mine = Entity(id="e1", name="Acme", text_unit_ids=["t1"])
+        theirs = Entity(id="e2", name="Depot", text_unit_ids=["t2"])
+        edge = Relationship(
+            id="r1",
+            source_id="e2",
+            target_id="e3",
+            source_name="Depot",
+            target_name="Harbor",
+            text_unit_ids=["t2"],
+        )
+        index = GleaningIndex([mine, theirs], [edge])
+        assert index.entity_named("acme", "t1") is mine
+        assert index.entity_named("Depot", "t1") is None
+        assert index.entity_named("Depot", "t2") is theirs
+        assert index.relationships_between("Depot", "Harbor", "t1") == []
+        assert index.relationships_between("Depot", "Harbor", "t2") == [edge]
 
 
 # --------------------------------------------------------------------------- #

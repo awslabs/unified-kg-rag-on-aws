@@ -469,6 +469,11 @@ Library API (Python callers and custom backends).
   the document `filters` of every instance in the claim's attributes, as
   entity and relationship merges do; claims are not filtered at query time,
   so retrieval does not change (#290).
+- Gleaning corrections (`ENTITY_CORRECTION`, `RELATIONSHIP_CORRECTION`)
+  resolve their target among the entities and relationships citing the unit
+  being refined, the ones its prompt lists, instead of the whole round's
+  graph: a unit could rename, retype or reverse an item only other units
+  cite, which an incremental run without that unit cannot reproduce (#PR).
 - `entity_confidence_threshold` is applied to each chunk's own extraction,
   right after the grounding guard (as gleaning applies it), instead of to the
   entity merged across the batch: the best score over the chunks extracted

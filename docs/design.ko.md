@@ -233,7 +233,7 @@ class LocalSearchStrategy(BaseSearchStrategy): ...
 **파이프라인 인프라**: 단계 체크포인트 기반 재개(`shared/pipeline_manager.py`), S3 캐시 동기화(`adapters/aws/s3_cache.py`), `continue_on_error` 토글, 단계별 캐시(`shared/cache_manager.py`). `TranslationConfig.is_noop`(원본 언어 == 대상 언어이고 추가 언어 없음)이면 번역 단계를 비용 없이 건너뜁니다. LLM 출력 파싱에는 `FixingConfig` 기반 output-fixing 파서를 일관되게 씁니다. 파이프라인은 `close()`로 인덱서와 클라이언트 자원을 해제하며, `run-ingestion` CLI가 `finally`에서 이를 호출합니다(§8.6).
 
 **일반화 적용 사례**:
-- 관련성 게이트(주장 추출과 추가 추출에서 어떤 엔티티를 프롬프트에 넣을지)는 토큰 Jaccard 정규 표현식 휴리스틱이 아니라 `text_unit_ids` 계보 소속 여부로 판단합니다. 그래서 정확하고 언어에 상관없이 동작합니다.
+- 관련성 게이트(주장 추출과 추가 추출에서 어떤 엔티티를 프롬프트에 넣을지)는 토큰 Jaccard 정규 표현식 휴리스틱이 아니라 `text_unit_ids` 계보 소속 여부로 판단합니다. 그래서 정확하고 언어에 상관없이 동작합니다. 추가 추출의 보정(`ENTITY_CORRECTION`/`RELATIONSHIP_CORRECTION`)도 그 텍스트 단위를 인용하는 엔티티와 관계, 즉 프롬프트에 나열된 항목에서만 대상을 찾으므로, 다른 텍스트 단위만 언급하는 항목을 바꾸지 않습니다.
 - 추가 추출은 점수가 아니라 실제 출력을 보고 텍스트 단위마다 멈춥니다. 직전 응답이 그래프에 없던 엔티티나 관계를 더한 단위만 `max_rounds`까지 다시 보냅니다. 빈 응답은 더 빠진 것이 없다는 모델의 답이며, MS GraphRAG가 별도의 Y/N 루프 프롬프트로 묻는 신호와 같으므로 이를 위한 호출을 따로 하지 않습니다.
 
 ---

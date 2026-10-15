@@ -117,9 +117,8 @@ class GleaningIndex:
 
     Parsing a unit's answer resolves names to entities and edges; scanning
     the whole graph for each would make a round quadratic in its size. The
-    index follows the changes parsing makes: the entities an answer adds, a
-    rename (the entity moves to its new name key) and a reversal (the edge
-    moves to its new endpoint pair).
+    index follows the changes parsing makes: the entities an answer adds and
+    a rename (the entity moves to its new name key).
     """
 
     def __init__(
@@ -133,13 +132,6 @@ class GleaningIndex:
         self.entity_ids: dict[str, str] = {}
         for entity in entities:
             self._add_key(entity)
-        self._relationships_by_pair: dict[tuple[str, str], list[Relationship]] = {}
-        for rel in relationships:
-            self._relationships_by_pair.setdefault(self._pair(rel), []).append(rel)
-
-    @staticmethod
-    def _pair(rel: Relationship) -> tuple[str, str]:
-        return entity_key(rel.source_name or ""), entity_key(rel.target_name or "")
 
     def _add_key(self, entity: Entity) -> None:
         key = entity_key(entity.name)
@@ -154,18 +146,32 @@ class GleaningIndex:
         """Relationships citing the unit, in graph order."""
         return self._relationships_by_unit.get(unit_id, [])
 
-    def entity_named(self, name: Any) -> Entity | None:
-        """The first entity whose name has the same ``entity_key``."""
-        key = _name_key(name)
-        matches = self._entities_by_key.get(key, []) if key else []
-        return matches[0] if matches else None
+    def entity_named(self, name: Any, unit_id: str) -> Entity | None:
+        """The first entity citing the unit whose name has the same ``entity_key``.
 
-    def relationships_between(self, source: Any, target: Any) -> list[Relationship]:
-        """Edges whose endpoint names have these ``entity_key`` values."""
-        source_key, target_key = _name_key(source), _name_key(target)
-        if source_key is None or target_key is None:
+        Only the unit's own entities (the ones its prompt lists): a unit
+        correcting an entity only other units cite would change what those
+        units say about it, and an incremental run could not reproduce it.
+        """
+        key = _name_key(name)
+        return next(
+            (e for e in self.entities_for(unit_id) if entity_key(e.name) == key),
+            None,
+        )
+
+    def relationships_between(
+        self, source: Any, target: Any, unit_id: str
+    ) -> list[Relationship]:
+        """Edges citing the unit whose endpoint names have these keys."""
+        pair = _name_key(source), _name_key(target)
+        if None in pair:
             return []
-        return self._relationships_by_pair.get((source_key, target_key), [])
+        return [
+            rel
+            for rel in self.relationships_for(unit_id)
+            if (entity_key(rel.source_name or ""), entity_key(rel.target_name or ""))
+            == pair
+        ]
 
     def add_entity(self, entity: Entity) -> None:
         self._add_key(entity)
@@ -183,12 +189,6 @@ class GleaningIndex:
         else:
             self.entity_ids.pop(old_key, None)
         self._add_key(entity)
-
-    def move_relationship(self, rel: Relationship, old_pair: tuple[str, str]) -> None:
-        self._relationships_by_pair[old_pair] = [
-            r for r in self._relationships_by_pair.get(old_pair, []) if r is not rel
-        ]
-        self._relationships_by_pair.setdefault(self._pair(rel), []).append(rel)
 
 
 class GleaningRound(BaseModel):
@@ -945,14 +945,14 @@ class GraphGleaner(BaseProcessor):
 
         Args:
             details: The issue's ``<details>`` payload.
-            index: The round's graph (existing plus newly added entities).
+            index: The round's graph; only the entities citing ``unit`` match.
             unit: The text unit being refined, for log attribution.
 
         Returns:
             True when at least one field changed.
         """
         name = self._clean_text(details.get("name"))
-        entity = index.entity_named(name)
+        entity = index.entity_named(name, unit.id)
         if entity is None:
             logger.info(
                 "Dropping ENTITY_CORRECTION in chunk '%s': no matching current entity",
@@ -1021,7 +1021,8 @@ class GraphGleaner(BaseProcessor):
 
         Args:
             details: The issue's ``<details>`` payload.
-            index: The round's graph (the relationships carried into it).
+            index: The round's graph; only the relationships citing ``unit``
+                match.
             unit: The text unit being refined, for log attribution.
 
         Returns:
@@ -1029,7 +1030,7 @@ class GraphGleaner(BaseProcessor):
         """
         source, target = details.get("source"), details.get("target")
         relationship = self._find_relationship(
-            index.relationships_between(source, target), details.get("type")
+            index.relationships_between(source, target, unit.id), details.get("type")
         )
         if relationship is None:
             logger.info(
@@ -1051,7 +1052,6 @@ class GraphGleaner(BaseProcessor):
         if self._matches(
             details.get("corrected_source"), relationship.target_name
         ) and self._matches(details.get("corrected_target"), relationship.source_name):
-            old_pair = GleaningIndex._pair(relationship)
             relationship.source_id, relationship.target_id = (
                 relationship.target_id,
                 relationship.source_id,
@@ -1060,7 +1060,6 @@ class GraphGleaner(BaseProcessor):
                 relationship.target_name,
                 relationship.source_name,
             )
-            index.move_relationship(relationship, old_pair)
             corrected.append("direction")
 
         description = merge_descriptions(
