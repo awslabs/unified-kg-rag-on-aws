@@ -679,6 +679,11 @@ Library API (Python callers and custom backends).
   same model ARNs, so models that accept CountTokens get exact token counts
   on the deployed stack instead of silently falling back to estimates after
   an `AccessDenied` (#298).
+- `indexing.reset` with the doc-status registry enabled fails the indexing
+  stage with `DocStatusRegistryError` when the registry cannot be cleared,
+  instead of logging a warning and indexing on: the stale records would make
+  the next incremental run skip the re-ingested documents as unchanged
+  (#PR).
 - CloudWatch tracing (`enable_cloudwatch_tracing`): the task role keeps
   only `xray:PutTraceSegments`, the one action the X-Ray OTLP traces
   endpoint authorizes (a role with only `xray:PutSpans` gets a 403);

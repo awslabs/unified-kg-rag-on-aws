@@ -1549,8 +1549,10 @@ def clear_registry_namespaces(
     ``record_in_namespaces``); else it is kept.
 
     Uses the port's list_all + delete so no new port method is needed.
-    Best-effort: a registry-clear failure should not abort the reset run
-    (the graph/index were already cleared).
+    Raises :class:`DocStatusRegistryError` when the registry cannot be
+    cleared: the stores are already wiped, and a stale record would make the
+    next incremental run skip its re-ingested document as unchanged, so the
+    reset fails here rather than leave the registry out of step.
     """
     try:
         store = doc_status()
@@ -1568,8 +1570,14 @@ def clear_registry_namespaces(
             len(records),
             ", ".join(sorted(namespaces)),
         )
-    except Exception as e:  # noqa: BLE001 - reset cleanup is best-effort
-        logger.warning("Failed to clear doc-status registry on reset: %s", e)
+    except DocStatusRegistryError:
+        raise
+    except Exception as e:
+        raise DocStatusRegistryError(
+            f"Doc-status registry: could not clear it on reset "
+            f"({type(e).__name__}: {e}). The stores were cleared; re-run the "
+            "reset once the registry is reachable."
+        ) from e
 
 
 def warn_about_unapplied_retired_scopes(

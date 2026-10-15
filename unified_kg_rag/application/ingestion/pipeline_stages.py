@@ -1237,8 +1237,9 @@ class IndexingStage(PipelineStage):
             # wipes OpenSearch + Neptune; leaving stale content-hash lineage would
             # make the NEXT incremental run classify re-ingested docs as
             # "unchanged" (skipping them despite the graph having been wiped) and
-            # leave rows for docs no longer in the corpus. Only relevant when the
-            # registry is in use (incremental mode).
+            # leave rows for docs no longer in the corpus, so a registry that
+            # cannot be cleared fails the stage (DocStatusRegistryError). Only
+            # relevant when the registry is in use (incremental mode).
             if self._doc_status is not None or self.config.doc_status_enabled:
                 clear_registry_namespaces(
                     self._build_doc_status_store,
