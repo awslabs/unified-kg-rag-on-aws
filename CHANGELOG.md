@@ -765,13 +765,13 @@ Library API (Python callers and custom backends).
   over 50,000 vectors of 1,024 dimensions (4 BLAS threads) 79 ms to 21 ms
   with 90% kept, 52 ms to 14 ms with 50%, 2 ms to 0.2 ms with 50 ids. A
   narrower filter, or an `l2` field, still scores a copy of the kept rows
-  (#PR).
+  (#302).
 - A `term`/`terms` filter on a keyword (or unmapped) field of the embedded
   search engine looks the values up in a per-field map built on the
   field's first filter after a write, instead of reading the field of
   every document in Python on every query: a 50-id filter over 50,000
   documents went from 35 ms to under 0.1 ms, and fetching the edges of 10
-  entities from 150,000 relationships from 140 ms to 17 ms (#PR).
+  entities from 150,000 relationships from 140 ms to 17 ms (#302).
 - A kNN or hybrid query on the embedded search engine no longer returns no
   results when another process writes while it loads the index. The load
   read the generation, the documents and each vector field in separate
