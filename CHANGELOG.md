@@ -414,6 +414,12 @@ Library API (Python callers and custom backends).
   28 s. Restart the stack (`down` and `up`) to pick it up (#265).
 
 ### Fixed
+- Langfuse: the missing-host error now names the full OTLP endpoint
+  (`<host>/api/public/otel`) for `OTEL_EXPORTER_OTLP_ENDPOINT`, since the host
+  root alone returns 404; the runbook covers Langfuse v4 (its default
+  `events_only` mode serves spans from `/api/public/v2/observations`), limits
+  the ingestion-version header warning to Langfuse Cloud and says sessions
+  need `conversation_id`. Verified against self-hosted Langfuse v4 and v3 (#PR).
 - A CDK deployment indexes Korean text: an Amazon OpenSearch Service domain
   has no `nori` analyzer unless its optional Nori package is associated, so
   with the default `language_analyzers` (`ko: nori`) a Korean corpus or target

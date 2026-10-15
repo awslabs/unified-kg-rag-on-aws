@@ -177,7 +177,8 @@ def _langfuse(
             raise ConfigurationError(
                 "observability.backend 'langfuse' needs the Langfuse URL: set "
                 "LANGFUSE_HOST (e.g. http://localhost:3000 for a local server) "
-                "or OTEL_EXPORTER_OTLP_ENDPOINT"
+                "or OTEL_EXPORTER_OTLP_ENDPOINT=<host>/api/public/otel (the "
+                "exporter appends /v1/traces)"
             )
         endpoint = _join(host, LANGFUSE_OTLP_PATH)
         source = "LANGFUSE_HOST"

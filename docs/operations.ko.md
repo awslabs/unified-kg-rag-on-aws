@@ -345,7 +345,8 @@ Secrets Manager나 태스크 시크릿에서 `OTEL_EXPORTER_OTLP_HEADERS`로 넘
 
 ### Langfuse
 
-로컬 Langfuse(v3)는 저장소의 Docker Compose 파일로 실행합니다.
+로컬 Langfuse는 저장소의 Docker Compose 파일로 실행합니다(Langfuse v4를 받으며 v3도
+같은 방식으로 동작합니다).
 
 ```bash
 git clone --depth 1 https://github.com/langfuse/langfuse.git
@@ -367,13 +368,19 @@ observability:
   backend: "langfuse"
 ```
 
-질의마다 `kg_rag.query` 트레이스가 생기고, Sessions에서는 대화별로, Users에서는
-`RAGInput.user_id`별로 묶입니다. 모델 호출은 토큰 사용량과 함께 generation으로
-표시됩니다. Langfuse Cloud는 `LANGFUSE_HOST`를 리전 URL(예:
-`https://cloud.langfuse.com`)로 지정합니다. Langfuse는 HTTP OTLP만 받습니다. 두 키
-대신 `OTEL_EXPORTER_OTLP_HEADERS`를 직접 지정할 때는
-`x-langfuse-ingestion-version=4`를 함께 넣어야 트레이스가 몇 분씩 늦게 보이지
-않습니다.
+질의마다 `kg_rag.query` 트레이스가 생기고, `RAGInput.conversation_id`를 지정하면
+Sessions에서 대화별로, Users에서는 `RAGInput.user_id`별로 묶입니다. 모델 호출은
+토큰 사용량과 함께 generation으로 표시됩니다. Langfuse v4는 기본값인
+`events_only` 모드에서 공개 API `/api/public/traces`, `/api/public/observations`,
+`/api/public/sessions`를 막으므로 스팬은 `/api/public/v2/observations`나 UI에서
+확인합니다. Langfuse Cloud는 `LANGFUSE_HOST`를 리전 URL(예:
+`https://cloud.langfuse.com`)로 지정합니다. Langfuse는 HTTP OTLP만 받습니다.
+`LANGFUSE_HOST` 대신 `OTEL_EXPORTER_OTLP_ENDPOINT`를 쓸 때는
+`<host>/api/public/otel`을 지정합니다(익스포터가 `/v1/traces`를 붙이며, 호스트
+루트만 주면 404가 납니다). 두 키 대신 `OTEL_EXPORTER_OTLP_HEADERS`를 직접 지정할
+때는 `x-langfuse-ingestion-version=4`를 함께 넣으세요. 넣지 않으면 Langfuse
+Cloud에서 트레이스가 몇 분씩 늦게 보일 수 있습니다(자체 호스팅 v4 서버는 어느
+쪽이든 바로 기록합니다).
 
 ### Arize Phoenix
 

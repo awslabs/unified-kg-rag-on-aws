@@ -172,6 +172,13 @@ def test_langfuse_fails_fast_without_host_keys_or_on_grpc(
     assert _PUBLIC not in str(excinfo.value)
 
 
+def test_langfuse_missing_host_names_the_full_otlp_endpoint() -> None:
+    # The host root alone 404s: the generic variable needs Langfuse's OTLP path.
+    env = {"LANGFUSE_PUBLIC_KEY": _PUBLIC, "LANGFUSE_SECRET_KEY": _SECRET}
+    with pytest.raises(ConfigurationError, match="/api/public/otel"):
+        resolve_export_settings(_config("langfuse"), env)
+
+
 def test_phoenix_defaults_to_the_local_server_and_adds_bearer_key() -> None:
     cfg = _config("phoenix")
     local = resolve_export_settings(cfg, {})

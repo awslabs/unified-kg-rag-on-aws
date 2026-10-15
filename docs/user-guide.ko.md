@@ -807,7 +807,7 @@ Secrets Manager나 태스크 시크릿에서 주입하세요.
 
 | 백엔드 | 엔드포인트 | 자격 증명 |
 |---|---|---|
-| `langfuse` | `LANGFUSE_HOST`(예: `http://localhost:3000`, 익스포터는 `<host>/api/public/otel/v1/traces`로 보냄). 기본 호스트가 없으므로 필수입니다. HTTP만 지원하며 gRPC면 시작할 때 실패합니다. | `LANGFUSE_PUBLIC_KEY`와 `LANGFUSE_SECRET_KEY`(필수). Basic `Authorization` 헤더와 `x-langfuse-ingestion-version: 4`로 보냅니다. |
+| `langfuse` | `LANGFUSE_HOST`(예: `http://localhost:3000`, 익스포터는 `<host>/api/public/otel/v1/traces`로 보냄). 기본 호스트가 없으므로 필수입니다. 대신 `OTEL_EXPORTER_OTLP_ENDPOINT`를 쓰면 `<host>/api/public/otel`을 지정합니다. HTTP만 지원하며 gRPC면 시작할 때 실패합니다. | `LANGFUSE_PUBLIC_KEY`와 `LANGFUSE_SECRET_KEY`(필수). Basic `Authorization` 헤더와 `x-langfuse-ingestion-version: 4`로 보냅니다. |
 | `phoenix` | `PHOENIX_COLLECTOR_ENDPOINT`(기본값 `http://localhost:6006`, `OTEL_EXPORTER_OTLP_PROTOCOL=grpc`이면 `:4317`). | 서버가 요구할 때 `PHOENIX_API_KEY`를 Bearer `authorization` 헤더로 보냅니다. |
 
 스팬은 `gen_ai.*`, `kg_rag.*` 속성을 그대로 두고 내보낼 때 벤더 속성이 더해집니다. Langfuse에는 `langfuse.observation.type`(모델 호출은
