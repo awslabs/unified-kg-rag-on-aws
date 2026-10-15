@@ -363,6 +363,11 @@ Library API (Python callers and custom backends).
   `kg_rag.batch.chunk` spans. Each Bedrock client's connection pool is
   sized to the larger of `processing.max_concurrency` and
   `processing.io_workers` (64 by default; it was 80) (#296).
+- A plain `uv run pytest` no longer selects the real-AWS (`aws`-marked)
+  tests: `-m "not aws"` is in pytest's `addopts`. Those tests keep the real
+  environment, so with store endpoints exported a bare run used to write to
+  the real stores. Pass `-m aws` to run them; any command-line `-m` replaces
+  the default (#PR).
 - Context packing ranks sections by their retrieval score alone; the fixed
   per-type priority weights (text 1.3 ... general 0.8) are gone. The
   per-type shares (`search.token_manager.type_budgets`) already decided the
