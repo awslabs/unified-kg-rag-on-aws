@@ -441,6 +441,8 @@ Library API (Python callers and custom backends).
   the old communities: re-run with `--force-rebuild` (and `indexing.reset:
   true` where incremental runs keep the stored communities) to restore the
   lost levels (#PR).
+- The small-community merge moves a community into the neighbor it shares
+  the most edge weight with, not the one it has the most edges to (#PR).
 - CloudWatch tracing (`enable_cloudwatch_tracing`): the task role keeps
   only `xray:PutTraceSegments`, the one action the X-Ray OTLP traces
   endpoint authorizes (a role with only `xray:PutSpans` gets a 403);

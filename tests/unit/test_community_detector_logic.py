@@ -144,6 +144,26 @@ class TestMergeSmallCommunities:
         merged = cd._merge_small_communities(dict(communities), g, min_size=2)
         assert merged == communities
 
+    def test_merges_into_the_most_strongly_tied_neighbor(self) -> None:
+        # {s1, s2} has one weak edge to A and one strong edge to B: it joins B,
+        # whatever the edge counts are.
+        cd = _detector()
+        g = nx.Graph()
+        for group in (("a1", "a2", "a3"), ("b1", "b2", "b3")):
+            g.add_edges_from(
+                (u, v, {"weight": 1.0}) for u in group for v in group if u < v
+            )
+        g.add_edge("s1", "s2", weight=1.0)
+        g.add_edge("s1", "a1", weight=0.1)
+        g.add_edge("s2", "a2", weight=0.1)
+        g.add_edge("s2", "b1", weight=50.0)
+        communities = {0: {"a1", "a2", "a3"}, 1: {"b1", "b2", "b3"}, 2: {"s1", "s2"}}
+        merged = cd._merge_small_communities(communities, g, min_size=3)
+        assert merged == {
+            0: {"a1", "a2", "a3"},
+            1: {"b1", "b2", "b3", "s1", "s2"},
+        }
+
 
 class TestBasePartition:
     def test_no_edges_each_node_is_its_own_community(self) -> None:

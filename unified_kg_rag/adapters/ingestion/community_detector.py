@@ -514,22 +514,27 @@ class CommunityDetector(BaseProcessor):
 
                 nodes = communities[small_comm_id]
 
-                neighbor_counts: dict[int, int] = defaultdict(int)
+                # Total edge weight to each neighboring community: the merge
+                # goes where the community is most strongly tied, not where it
+                # merely has the most edges.
+                neighbor_weights: dict[int, float] = defaultdict(float)
                 for node in nodes:
-                    for neighbor in graph.neighbors(node):
+                    for neighbor, data in graph[node].items():
                         if neighbor in node_to_comm:
                             neighbor_comm = node_to_comm[neighbor]
                             if (
                                 neighbor_comm != small_comm_id
                                 and neighbor_comm in communities
                             ):
-                                neighbor_counts[neighbor_comm] += 1
+                                neighbor_weights[neighbor_comm] += data.get(
+                                    "weight", 1.0
+                                )
 
-                if neighbor_counts:
+                if neighbor_weights:
                     # Ties go to the lowest (canonical) label, not to whichever
                     # neighbor a set iteration happened to reach first.
                     target_comm = max(
-                        neighbor_counts, key=lambda x: (neighbor_counts[x], -x)
+                        neighbor_weights, key=lambda x: (neighbor_weights[x], -x)
                     )
                     communities[target_comm].update(nodes)
                     for node in nodes:
