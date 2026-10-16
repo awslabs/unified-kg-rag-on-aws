@@ -1502,21 +1502,21 @@ def _raise_async(exc: Exception):
 # --- rejected requests (HTTP 400) -------------------------------------------
 #
 # Regression: a 400 is the same on every retry, yet it degraded to [] like a
-# timeout, so a missing search pipeline or a filter value of the wrong type
+# timeout, so a query OpenSearch cannot parse or a filter value of the wrong type
 # answered from no context (or from the other, unfiltered indices), and the
 # log kept only "status=400, info=None".
 
 
-_MISSING_PIPELINE_BODY = {
+_UNPARSABLE_QUERY_BODY = {
     "error": {
         "root_cause": [
             {
-                "type": "illegal_argument_exception",
-                "reason": "Pipeline missing-pipeline is not defined",
+                "type": "parsing_exception",
+                "reason": "unknown query [match_phrase_infix]",
             }
         ],
-        "type": "illegal_argument_exception",
-        "reason": "Pipeline missing-pipeline is not defined",
+        "type": "parsing_exception",
+        "reason": "unknown query [match_phrase_infix]",
     },
     "status": 400,
 }
@@ -1538,19 +1538,19 @@ _BAD_FILTER_VALUE_BODY = {
 @pytest.mark.parametrize("connection_cls", _CONNECTIONS)
 def test_handler_keeps_the_server_reason(connection_cls: type[Connection]) -> None:
     handled = _through_handler(
-        _server_error(connection_cls, 400, _MISSING_PIPELINE_BODY)
+        _server_error(connection_cls, 400, _UNPARSABLE_QUERY_BODY)
     )
     assert isinstance(handled, StoreRequestRejectedError)
     assert "status=400" in str(handled)
-    assert "Pipeline missing-pipeline is not defined" in str(handled)
+    assert "unknown query [match_phrase_infix]" in str(handled)
     assert handled.reason is not None
-    assert "Pipeline missing-pipeline is not defined" in handled.reason
+    assert "unknown query [match_phrase_infix]" in handled.reason
 
 
 @pytest.mark.parametrize(
     ("body", "reason"),
     [
-        (_MISSING_PIPELINE_BODY, "Pipeline missing-pipeline is not defined"),
+        (_UNPARSABLE_QUERY_BODY, "unknown query [match_phrase_infix]"),
         (_BAD_FILTER_VALUE_BODY, 'For input string: "abc"'),
     ],
 )
