@@ -6,6 +6,10 @@
   corrected way round by another document, is one edge in a full build. An
   incremental run indexing that document later must merge into it, not store
   a second, parallel edge.
+* A correction changes only its own unit's statement of an edge. Extraction
+  merges every unit's statement before gleaning, so correcting the merged
+  edge rewrote what other documents say, which an incremental run (those
+  documents in another run, or deleted) cannot reproduce.
 * A document whose only relationship has strength 0 indexes (Leiden panicked
   on a graph whose every edge weighs 0, ending the run and every resume).
 """
@@ -71,15 +75,19 @@ def _responder(strength: int):
                 f"<entities>{entities}</entities>"
                 f"<relationships>{relationships}</relationships>"
             )
-        # Refinement: units about parts state their edge the wrong way round.
+        # Refinement: units about parts state their edge the wrong way round,
+        # units about tools give it the wrong type.
         issue = ""
-        if "parts" in text and len(names) == 2:
+        if ("parts" in text or "tools" in text) and len(names) == 2:
             a, b = names
+            source, target = (b, a) if "parts" in text else (a, b)
+            corrected_type = "SUPPLIES" if "tools" in text else "TRADES_WITH"
             issue = (
                 "<issue><issue_type>RELATIONSHIP_CORRECTION</issue_type>"
                 f"<details><source>{a}</source><target>{b}</target>"
-                f"<type>TRADES_WITH</type><corrected_source>{b}"
-                f"</corrected_source><corrected_target>{a}</corrected_target>"
+                f"<type>TRADES_WITH</type><corrected_source>{source}"
+                f"</corrected_source><corrected_target>{target}</corrected_target>"
+                f"<corrected_type>{corrected_type}</corrected_type>"
                 "</details><justification>x</justification>"
                 f"<text_evidence>{text.strip()}</text_evidence></issue>"
             )
@@ -153,6 +161,58 @@ def test_a_reversed_edge_merges_with_its_corrected_form_across_runs(
     assert [edge[:5] for edge in edges] == [("Acme", "Buyer", "TRADES_WITH", 16.0, 2)]
     assert documents == 1
     assert incremental == full
+
+
+GOODS = "Acme and Buyer trade goods."
+PARTS = "Acme and Buyer trade parts."
+TOOLS = "Acme and Buyer trade tools."
+
+
+@pytest.mark.parametrize(
+    ("runs", "expected"),
+    [
+        pytest.param(
+            [{"p.txt": PARTS}, {"p.txt": PARTS, "g.txt": GOODS}],
+            [
+                ("Acme", "Buyer", "TRADES_WITH", 8.0, 1),
+                ("Buyer", "Acme", "TRADES_WITH", 8.0, 1),
+            ],
+            id="reversal-then-uncorrected-statement",
+        ),
+        pytest.param(
+            [{"g.txt": GOODS}, {"p.txt": PARTS, "g.txt": GOODS}],
+            [
+                ("Acme", "Buyer", "TRADES_WITH", 8.0, 1),
+                ("Buyer", "Acme", "TRADES_WITH", 8.0, 1),
+            ],
+            id="uncorrected-statement-then-reversal",
+        ),
+        pytest.param(
+            [{"t.txt": TOOLS}, {"t.txt": TOOLS, "g.txt": GOODS}],
+            [
+                ("Acme", "Buyer", "SUPPLIES", 8.0, 1),
+                ("Acme", "Buyer", "TRADES_WITH", 8.0, 1),
+            ],
+            id="retype-then-uncorrected-statement",
+        ),
+        pytest.param(
+            [{"p.txt": PARTS, "g.txt": GOODS}, {"g.txt": GOODS}],
+            [("Acme", "Buyer", "TRADES_WITH", 8.0, 1)],
+            id="delete-the-correcting-document",
+        ),
+    ],
+)
+def test_a_correction_changes_only_its_own_units_statement(
+    tmp_path: Path, runs: list[dict[str, str]], expected: list[tuple]
+) -> None:
+    full, full_documents = _edges_after(tmp_path / "full", runs[-1:])
+    incremental, documents = _edges_after(tmp_path / "inc", runs)
+
+    assert [edge[:5] for edge in full] == expected
+    # Descriptions may differ: a full build's split edges keep the merged
+    # description, and a deleted document's lines stay on surviving edges.
+    assert [edge[:5] for edge in incremental] == expected
+    assert documents == full_documents == len(expected)
 
 
 def test_a_document_whose_only_edge_has_strength_zero_indexes(
