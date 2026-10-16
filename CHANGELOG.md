@@ -1764,14 +1764,14 @@ Library API (Python callers and custom backends).
   share (its text unit and strength) now moves to a corrected copy and the
   other chunks keep the uncorrected edge, so both paths store the same
   edges and weights. Both edges keep the merged description, and the
-  uncorrected one the union of the document filters (#PR).
+  uncorrected one the union of the document filters (#308).
 - One relationship with an absurd strength (such as `1e300`, or a denormal
   like `1e-320`) no longer kills ingestion and every resume at community
   detection: Leiden panics on weights near `1e154` and on denormals.
   Parsed strengths, and edge weights read back from stores before
   clustering, are now clamped to `[1e-9, 1e9]`, with smaller positive values
   read as 0. A panic in Leiden now fails the stage with a `GraphError`
-  instead of escaping the error handling (#PR).
+  instead of escaping the error handling (#308).
 - Graph resolution and the cross-run merge merge attributes with one
   function (`base_processor.merge_attributes`), so a full build and an
   incremental build give an item the same document `filters`: the
