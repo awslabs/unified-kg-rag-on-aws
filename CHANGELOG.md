@@ -396,6 +396,10 @@ Library API (Python callers and custom backends).
   searches instead of before them, so it waits for one round trip instead
   of two; when no document has the attribute the searches are cancelled
   (#PR).
+- The embedded search engine (`providers.vector.kind: sqlite`) selects the
+  `size` best matches instead of sorting every match (about 13 ms instead
+  of 120 ms for the top 10 of 100,000); the hits and their order, ties
+  included, are unchanged (#PR).
 - `BatchProcessor` runs one pool of `max_concurrency` items instead of
   chunks of `batch_size` items in parallel, each waiting for its slowest
   item: a slow item holds only its own slot and is retried in it, and the

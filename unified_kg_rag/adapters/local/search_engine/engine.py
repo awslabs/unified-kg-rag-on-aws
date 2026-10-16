@@ -57,12 +57,12 @@ from unified_kg_rag.adapters.local.search_engine.query import (
     NUMERIC_TYPES,
     SPACE_TYPES,
     LoadedIndex,
-    Scores,
     VectorField,
     evaluate,
     field_specs,
     rejected,
     sort_hits,
+    top_hits,
 )
 from unified_kg_rag.adapters.local.sqlite_util import (
     connect,
@@ -853,13 +853,16 @@ class SQLiteSearchEngine:
             if sort is None and (lookup := _id_lookup(query)) is not None:
                 return self._fetch_by_ids(names, *lookup, size, excludes)
             loaded = [self._load(name) for name in names]
-        hits = self._ranked([(index, evaluate(index, query)) for index in loaded])
-        if sort is not None:
-            hits = sort_hits(hits, sort)
+        hits = [
+            (index, doc_id, score)
+            for index in loaded
+            for doc_id, score in evaluate(index, query).items()
+        ]
+        top = top_hits(hits, size) if sort is None else sort_hits(hits, sort, size)
         return self._response(
             [
                 (index.name, doc_id, score, self._source(index, doc_id, excludes))
-                for index, doc_id, score in hits[:size]
+                for index, doc_id, score in top
             ],
             total=len(hits),
         )
@@ -963,18 +966,6 @@ class SQLiteSearchEngine:
             patterns = source.get("excludes") or []
             return [patterns] if isinstance(patterns, str) else list(patterns)
         raise rejected("[_source] supports only true, false or {excludes: [...]}")
-
-    @staticmethod
-    def _ranked(
-        results: list[tuple[LoadedIndex, Scores]],
-    ) -> list[tuple[LoadedIndex, str, float]]:
-        hits = [
-            (index, doc_id, score)
-            for index, scores in results
-            for doc_id, score in scores.items()
-        ]
-        hits.sort(key=lambda hit: (-hit[2], hit[0].name, hit[1]))
-        return hits
 
     @staticmethod
     def _response(

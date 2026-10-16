@@ -27,9 +27,11 @@ resolved as a dotted path; an unmapped string is a keyword.
 
 from __future__ import annotations
 
+import heapq
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from functools import cmp_to_key
 from typing import Any
 
 import numpy as np
@@ -508,30 +510,56 @@ def _sort_fields(sort: Any) -> list[tuple[str, bool]]:
     return fields
 
 
-def sort_hits(hits: list[Hit], sort: Any) -> list[Hit]:
-    """``hits`` in the order of a search body's ``sort``, as OpenSearch sorts.
+def rank_key(hit: Hit) -> tuple[float, str, str]:
+    """The score order of hits: best first, ties by index name then id."""
+    index, doc_id, score = hit
+    return -score, index.name, doc_id
 
-    A numeric field sorts by number, any other by keyword; a multi-valued
-    field by its smallest value ascending and its largest descending; a
-    document without the field comes last either way. Ties keep the score
-    order.
+
+def top_hits(hits: list[Hit], size: int) -> list[Hit]:
+    """The ``size`` best of ``hits`` in score order (``rank_key``).
+
+    A partial selection, not a sort of every match: the key is unique per
+    hit, so the result is the head of the full sort.
     """
-    for path, descending in reversed(_sort_fields(sort)):
+    return heapq.nsmallest(size, hits, key=rank_key)
 
-        def value(hit: Hit, path: str = path, descending: bool = descending) -> Any:
-            index, doc_id, _score = hit
-            spec = index.specs.get(path)
-            raw = resolve_path(index.sources[doc_id], path)
-            if spec is not None and spec.type in NUMERIC_TYPES:
-                values: list[Any] = [n for v in raw if (n := _number(v)) is not None]
-            else:
-                values = [_keyword(v) for v in raw]
-            if not values:
-                return None
-            return max(values) if descending else min(values)
 
-        keyed = [(value(hit), hit) for hit in hits]
-        present = [pair for pair in keyed if pair[0] is not None]
-        present.sort(key=lambda pair: pair[0], reverse=descending)
-        hits = [hit for _, hit in present] + [hit for key, hit in keyed if key is None]
-    return hits
+def sort_hits(hits: list[Hit], sort: Any, size: int) -> list[Hit]:
+    """The first ``size`` of ``hits`` in a search body's ``sort`` order.
+
+    As OpenSearch sorts: a numeric field by number, any other by keyword; a
+    multi-valued field by its smallest value ascending and its largest
+    descending; a document without the field comes last either way. Ties
+    keep the score order (``rank_key``).
+    """
+    fields = _sort_fields(sort)
+
+    def value(hit: Hit, path: str, descending: bool) -> Any:
+        index, doc_id, _score = hit
+        spec = index.specs.get(path)
+        raw = resolve_path(index.sources[doc_id], path)
+        if spec is not None and spec.type in NUMERIC_TYPES:
+            values: list[Any] = [n for v in raw if (n := _number(v)) is not None]
+        else:
+            values = [_keyword(v) for v in raw]
+        if not values:
+            return None
+        return max(values) if descending else min(values)
+
+    keyed = [
+        ([value(hit, path, descending) for path, descending in fields], hit)
+        for hit in hits
+    ]
+
+    def compare(a: tuple[list[Any], Hit], b: tuple[list[Any], Hit]) -> int:
+        for (_, descending), x, y in zip(fields, a[0], b[0], strict=True):
+            if x == y:
+                continue
+            if x is None or y is None:
+                return 1 if x is None else -1
+            return -1 if (x > y if descending else x < y) else 1
+        first, second = rank_key(a[1]), rank_key(b[1])
+        return -1 if first < second else int(first > second)
+
+    return [hit for _, hit in heapq.nsmallest(size, keyed, key=cmp_to_key(compare))]

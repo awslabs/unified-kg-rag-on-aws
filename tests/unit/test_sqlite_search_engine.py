@@ -32,6 +32,8 @@ from unified_kg_rag.adapters.local.search_engine.query import (
     VectorField,
     evaluate,
     resolve_path,
+    sort_hits,
+    top_hits,
     vector_scores,
 )
 from unified_kg_rag.adapters.retrievers import OpenSearchRetriever
@@ -683,6 +685,70 @@ def test_invalid_query_vector_dimension_is_the_opensearch_rejection(engine) -> N
 def test_unsupported_requests_are_rejected(engine, kwargs: dict) -> None:
     with pytest.raises(StoreRequestRejectedError):
         engine.search(**kwargs)
+
+
+def _sorted_in_full(hits: list, sort: list) -> list:
+    """The previous engine order: every hit sorted, one stable pass per field."""
+    hits = sorted(hits, key=lambda hit: (-hit[2], hit[0].name, hit[1]))
+    for entry in reversed(sort):
+        ((path, options),) = entry.items()
+        descending = options["order"] == "desc"
+
+        def value(hit, path=path, descending=descending):
+            index, doc_id, _ = hit
+            raw = resolve_path(index.sources[doc_id], path)
+            if index.specs[path].type == "integer":
+                values = [float(v) for v in raw]
+            else:
+                values = [str(v) for v in raw]
+            return (max(values) if descending else min(values)) if values else None
+
+        keyed = [(value(hit), hit) for hit in hits]
+        present = [pair for pair in keyed if pair[0] is not None]
+        present.sort(key=lambda pair: pair[0], reverse=descending)
+        hits = [hit for _, hit in present] + [hit for k, hit in keyed if k is None]
+    return hits
+
+
+def test_top_hits_and_sort_hits_select_the_head_of_the_full_sort() -> None:
+    # Both took a full sort of every match for a page of size hits; the
+    # partial selection must return exactly that page, ties included.
+    rng = np.random.default_rng(7)
+    mappings = {"properties": {"n": {"type": "integer"}, "k": {"type": "keyword"}}}
+
+    def source() -> dict[str, Any]:
+        doc: dict[str, Any] = {}
+        if rng.random() < 0.8:
+            doc["n"] = [int(v) for v in rng.integers(0, 4, rng.integers(1, 3))]
+        if rng.random() < 0.8:
+            doc["k"] = str(rng.choice(["a", "b", "c"]))
+        return doc
+
+    indices = [
+        LoadedIndex(
+            name=name,
+            generation=1,
+            mappings=mappings,
+            settings={},
+            sources={f"d{i:02d}": source() for i in range(40)},
+            vectors={},
+        )
+        for name in ("i1", "i2")
+    ]
+    hits = [
+        (index, doc_id, float(rng.integers(0, 3)))
+        for index in indices
+        for doc_id in index.sources
+    ]
+    sorts = [
+        [{"n": {"order": "desc"}}],
+        [{"k": {"order": "asc"}}, {"n": {"order": "asc"}}],
+        [{"k": {"order": "desc"}}, {"n": {"order": "desc"}}],
+    ]
+    for size in (0, 1, 5, 79, 80, 200):
+        assert top_hits(hits, size) == _sorted_in_full(hits, [])[:size]
+        for sort in sorts:
+            assert sort_hits(hits, sort, size) == _sorted_in_full(hits, sort)[:size]
 
 
 def test_sort_orders_by_each_field_in_turn_missing_last(engine) -> None:
