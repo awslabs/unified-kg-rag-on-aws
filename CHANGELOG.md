@@ -1826,6 +1826,8 @@ Library API (Python callers and custom backends).
   (GHSA-v5mq-3xhg-98m9, CVE-2026-104250) (#PR).
 - The containers of `docker/compose.local.yaml` drop all Linux capabilities
   and run with `no-new-privileges` (#PR).
+- The data-plane image declares `HEALTHCHECK NONE`: its tasks are batch
+  jobs tracked by exit code (#PR).
 - Retry backoff jitter draws from `random.SystemRandom`, not the seedable
   module PRNG (CWE-338 scanner finding; jitter is not a security
   boundary) (#PR).
