@@ -569,6 +569,11 @@ Library API (Python callers and custom backends).
   (#300).
 
 ### Fixed
+- A filtered vector or hybrid query no longer logs an ERROR with a traceback
+  for the kNN search it discards once the attribute probe finds no matching
+  document (the expected 400 "Rewrite first" on OpenSearch 2.13). The async
+  OpenSearch client now logs its transport errors at DEBUG and names the
+  index in the error; the retriever logs each error it keeps once (#PR).
 - A batch LLM call that raised a `TimeoutError` of its own (a socket read
   timeout, say) is no longer reported as exceeding
   `BatchProcessor.call_timeout_seconds`: its own error propagates, so the log

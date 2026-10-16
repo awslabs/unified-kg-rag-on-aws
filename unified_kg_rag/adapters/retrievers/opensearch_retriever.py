@@ -923,9 +923,10 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                     "indices.query.bool.max_clause_count."
                 ) from e
             # Any other fatal error (an unreachable or overloaded cluster)
-            # propagates; a failure of this one search degrades to no hits.
+            # propagates (aretrieve logs it); a failure of this one search
+            # degrades to no hits. A search discarded after the attribute probe
+            # logs neither.
             if is_fatal_retrieval_error(e):
-                logger.error("Fatal search error on %s: %s", alias, e)
                 raise
             return e
 
