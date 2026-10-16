@@ -17,7 +17,7 @@ import pytest
 from opensearchpy import AWSV4SignerAsyncAuth, AWSV4SignerAuth
 
 from unified_kg_rag.adapters.aws.opensearch import OpenSearchClient
-from unified_kg_rag.domain.models.config import OpenSearchConfig
+from unified_kg_rag.domain.models.config import OpenSearchConfig, ProcessingConfig
 from unified_kg_rag.shared import AWSServiceError
 
 pytestmark = pytest.mark.unit
@@ -37,6 +37,7 @@ def _client(
     client.opensearch_config = oc
     cfg = MagicMock()
     cfg.aws.region_name = "ap-northeast-2"
+    cfg.processing = ProcessingConfig()
     client.config = cfg
     session = MagicMock()
     # Dummy non-secret placeholder credentials on a MagicMock for SigV4 signing
@@ -82,6 +83,32 @@ def test_async_client_uses_async_http_connection_with_callable_signer() -> None:
     # it carries must be a callable (the signer), not a basic-auth string/tuple.
     assert callable(params["http_auth"])
     assert AsyncHttpConnection is not None
+
+
+@pytest.mark.parametrize(
+    ("io_workers", "max_concurrency", "expected"),
+    [(64, 20, 64), (8, 30, 90), (1, 1, 10), (64, 500, 200)],
+)
+def test_async_pool_covers_the_concurrent_searches(
+    io_workers: int, max_concurrency: int, expected: int
+) -> None:
+    # opensearch-py's default of 10 connections queued every query search
+    # past the tenth, and the wait counted against store_timeout_seconds.
+    client = _client(use_iam=False, allow_anonymous=True)
+    client.config.processing = ProcessingConfig(
+        io_workers=io_workers, max_concurrency=max_concurrency
+    )
+    params = client._get_base_connection_params(async_mode=True)
+    assert params["pool_maxsize"] == expected
+    # The sync (indexing) client keeps the requests default.
+    assert "pool_maxsize" not in client._get_base_connection_params(async_mode=False)
+
+
+def test_async_pool_size_reaches_the_aiohttp_connector() -> None:
+    from opensearchpy import AsyncHttpConnection
+
+    connection = AsyncHttpConnection(host="localhost", pool_maxsize=64)
+    assert connection._limit == 64
 
 
 def test_basic_auth_tuple_when_iam_disabled() -> None:

@@ -386,6 +386,16 @@ Library API (Python callers and custom backends).
 
 ### Changed
 - The data-plane image installs uv 0.12.23, the version CI uses (#303).
+- The OpenSearch query client keeps up to the larger of
+  `processing.io_workers` and three times `processing.max_concurrency`
+  connections (64 by default, between 10 and 200) instead of
+  opensearch-py's 10: a query sends up to three searches at once, and a
+  request waiting for a connection used up its `search.store_timeout_seconds`
+  under `run-eval`. A query with an attribute filter (`attr_<key>`,
+  `attributes.<path>`) runs its probe alongside the lexical and kNN
+  searches instead of before them, so it waits for one round trip instead
+  of two; when no document has the attribute the searches are cancelled
+  (#PR).
 - `BatchProcessor` runs one pool of `max_concurrency` items instead of
   chunks of `batch_size` items in parallel, each waiting for its slowest
   item: a slow item holds only its own slot and is retried in it, and the
