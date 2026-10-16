@@ -236,7 +236,7 @@ Library API (Python callers and custom backends).
   `search(search_pipeline=)`: both now raise `StoreRequestRejectedError`,
   as for any unsupported request. Nothing in the package sent them after
   #306; a database file an earlier version wrote keeps its unused
-  `pipelines` table harmlessly (#PR).
+  `pipelines` table harmlessly (#309).
 - Removed APIs: `IncrementalIndexer.plan` / `prune_changed` /
   `remove_deleted` (use `detect_delta` and `remove_changed_and_deleted`)
   (#214); the LangChain-memory wrapper, `MemoryManager.get_langchain_memory`
@@ -400,17 +400,17 @@ Library API (Python callers and custom backends).
   `attributes.<path>`) runs its probe alongside the lexical and kNN
   searches instead of before them, so it waits for one round trip instead
   of two; when no document has the attribute the searches are cancelled
-  (#PR).
+  (#309).
 - The embedded search engine (`providers.vector.kind: sqlite`) selects the
   `size` best matches instead of sorting every match (about 13 ms instead
   of 120 ms for the top 10 of 100,000); the hits and their order, ties
-  included, are unchanged (#PR).
+  included, are unchanged (#309).
 - `BaseIndexer.initialize` is a no-op by default, like `close`: a custom
   `VectorIndexer` or `GraphIndexer` with nothing to prepare need not
-  override it (#PR).
+  override it (#309).
 - Tracing: `run-eval`'s judge model calls (`langchain`, `ragas`) nest under
   one `kg_rag.evaluate` span per evaluator instead of each starting a root
-  trace of its own (#PR).
+  trace of its own (#309).
 - `BatchProcessor` runs one pool of `max_concurrency` items instead of
   chunks of `batch_size` items in parallel, each waiting for its slowest
   item: a slow item holds only its own slot and is retried in it, and the
@@ -572,7 +572,7 @@ Library API (Python callers and custom backends).
 - A batch LLM call that raised a `TimeoutError` of its own (a socket read
   timeout, say) is no longer reported as exceeding
   `BatchProcessor.call_timeout_seconds`: its own error propagates, so the log
-  names the real cause (#PR).
+  names the real cause (#309).
 - An attribute filter (`attr_<key>`, `attributes.<path>`) no longer fails
   vector and hybrid searches on OpenSearch 2.13 with `ConfigurationError`
   ("Rewrite first") when an index never mapped the attribute, such as the
