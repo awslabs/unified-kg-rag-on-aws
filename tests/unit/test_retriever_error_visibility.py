@@ -56,9 +56,11 @@ from unified_kg_rag.adapters.aws.opensearch import (
 from unified_kg_rag.adapters.retrieval.base import is_fatal_retrieval_error
 from unified_kg_rag.adapters.retrievers.neptune_retriever import NeptuneRetriever
 from unified_kg_rag.adapters.retrievers.opensearch_retriever import OpenSearchRetriever
+from unified_kg_rag.adapters.storage import neptune_indexer
 from unified_kg_rag.adapters.storage.embedding_settings import (
     configured_embedding_model,
 )
+from unified_kg_rag.adapters.storage.neptune_indexer import NeptuneIndexer
 from unified_kg_rag.domain.models import Config, Constants, SearchQuery, SearchType
 from unified_kg_rag.domain.models.config import EmbeddingModelId
 from unified_kg_rag.shared import (
@@ -615,6 +617,27 @@ async def test_a_silent_neptune_fails_the_query_within_its_timeout(
             await retriever.aretrieve(_SEEDED)
     finally:
         await asyncio.to_thread(client.close)
+
+
+@pytest.mark.timeout(30)
+def test_a_silent_neptune_fails_an_ingestion_write_within_its_timeout(
+    config: Config, silent_port: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Regression: the indexer's client had no timeout, so a Neptune that never
+    # answered blocked ingestion for good (hours in the real-AWS E2E).
+    monkeypatch.setattr(neptune_indexer, "INGESTION_REQUEST_TIMEOUT_SECONDS", 0.3)
+    config = _local_neptune_config(config, silent_port, timeout=30)
+    config.indexing.neptune.max_attempts = 1
+    indexer = NeptuneIndexer(config)
+    try:
+        # No setting named: search.store_timeout_seconds bounds queries only.
+        with pytest.raises(
+            AWSServiceError, match=r"did not answer within 0\.3 s$"
+        ) as e:
+            indexer.read_entities(["e1"])
+    finally:
+        indexer.close()
+    assert isinstance(e.value.__cause__, StoreTimeoutError)
 
 
 @pytest.fixture

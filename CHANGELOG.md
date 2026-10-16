@@ -569,6 +569,11 @@ Library API (Python callers and custom backends).
   (#300).
 
 ### Fixed
+- A Neptune that accepts the connection but never answers no longer blocks
+  ingestion forever: each ingestion request (a write, a read-back, a drop)
+  now fails after 180 s, above Neptune's own default query timeout of
+  120 s, and is retried like other transient write errors. The indexer's
+  Gremlin client had no timeout (#PR).
 - Neptune graph expansion fetches at most its per-seed budget
   (`top_k * retrieval_multiplier * indexing.neptune.traversal_fetch_multiplier`
   split over the seeds) per seed, nearest hop first. Neptune applied the
