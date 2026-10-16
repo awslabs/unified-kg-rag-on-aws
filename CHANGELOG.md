@@ -390,10 +390,18 @@ Library API (Python callers and custom backends).
   fused order. Reported by @vibhupb (#83) (#284).
 
 ### Changed
+- `processing.max_concurrency` defaults to 40 (was 20). In the real-AWS
+  E2E ingestion took 27% less time at 40 with no Bedrock throttling, and
+  under a heavier mixed load the 0.9% of calls throttled all succeeded on
+  retry. The setting also bounds the queries `run-eval` runs at once and
+  the global-search map calls in flight, and sizes the OpenSearch query
+  pool (now 120 connections). Bedrock quotas differ per account, model and
+  Region: lower it if the logs show `ThrottlingException` retries. Stage
+  caches are unaffected; the setting is not part of their keys (#PR).
 - The data-plane image installs uv 0.12.23, the version CI uses (#303).
 - The OpenSearch query client keeps up to the larger of
   `processing.io_workers` and three times `processing.max_concurrency`
-  connections (64 by default, between 10 and 200) instead of
+  connections (120 by default, between 10 and 200) instead of
   opensearch-py's 10: a query sends up to three searches at once, and a
   request waiting for a connection used up its `search.store_timeout_seconds`
   under `run-eval`. A query with an attribute filter (`attr_<key>`,

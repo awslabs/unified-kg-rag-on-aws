@@ -16,7 +16,9 @@ from unittest.mock import MagicMock
 import pytest
 from opensearchpy import AWSV4SignerAsyncAuth, AWSV4SignerAuth
 
+from unified_kg_rag.adapters.aws.bedrock import BaseBedrockModelFactory
 from unified_kg_rag.adapters.aws.opensearch import OpenSearchClient
+from unified_kg_rag.domain.models import Config
 from unified_kg_rag.domain.models.config import OpenSearchConfig, ProcessingConfig
 from unified_kg_rag.shared import AWSServiceError
 
@@ -102,6 +104,18 @@ def test_async_pool_covers_the_concurrent_searches(
     assert params["pool_maxsize"] == expected
     # The sync (indexing) client keeps the requests default.
     assert "pool_maxsize" not in client._get_base_connection_params(async_mode=False)
+
+
+def test_default_concurrency_fits_both_pools() -> None:
+    # processing.max_concurrency defaults to 40 (real-AWS E2E: ingestion 27%
+    # faster than at 20, no throttling). Its pools stay inside their bounds:
+    # Bedrock max(40, io_workers 64) = 64, OpenSearch max(64, 3 x 40) = 120.
+    config = Config()
+    assert config.processing.max_concurrency == 40
+    assert BaseBedrockModelFactory.max_pool_connections(config) == 64
+    client = _client(use_iam=False, allow_anonymous=True)
+    client.config.processing = ProcessingConfig()
+    assert client._get_base_connection_params(async_mode=True)["pool_maxsize"] == 120
 
 
 def test_async_pool_size_reaches_the_aiohttp_connector() -> None:

@@ -267,8 +267,9 @@ processing:
   # stage keeps in flight (the next item starts as soon as one finishes).
   # Each Bedrock client's connection pool is sized to the larger of
   # max_concurrency and io_workers (floor 10, cap 200) so concurrent calls
-  # reuse connections.
-  max_concurrency: 20
+  # reuse connections. Bedrock quotas differ per account, model and Region:
+  # lower it if the logs show ThrottlingException retries.
+  max_concurrency: 40
   # Attempts per ingestion LLM item, including the first call (transient
   # errors, timeouts and unparseable output are retried); 1 = no retry.
   max_attempts: 5

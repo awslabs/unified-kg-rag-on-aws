@@ -581,7 +581,7 @@ LLM stages are Bedrock-I/O-bound, so concurrency can far exceed the CPU count.
 
 | Key | Default | What it does / when to change |
 |---|---|---|
-| `processing.max_concurrency` | `20` | LLM calls an ingestion stage keeps in flight; the next item starts as soon as one finishes. Lower it if Bedrock throttles; raise it if quota allows. |
+| `processing.max_concurrency` | `40` | LLM calls an ingestion stage keeps in flight; the next item starts as soon as one finishes. Bedrock quotas differ per account, model and Region: lower it if the logs show `ThrottlingException` retries, raise it if quota allows. |
 | `processing.max_attempts` | `5` | Attempts per ingestion LLM item, including the first call. Transient Bedrock errors, call timeouts and unparseable output are retried; other errors fail fast. `1` disables the retry. |
 | `processing.io_workers` | `64` | Threads for blocking query-path I/O (Bedrock calls, Neptune traversals, reranking) in the CLIs and the chain's sync methods. Python's default caps it at `min(32, CPUs + 4)`, six on a 2-vCPU task. An async host calls `configure_event_loop(asyncio.get_running_loop(), config.processing.io_workers)` (from `unified_kg_rag.shared.utils`) at startup. |
 | `processing.ignore_errors` | `false` | When a whole step fails (a batch call, a translation language, an evaluator, global map/reduce, the DRIFT primer, the auto router), log it and continue with an empty or degraded result instead of raising. Items whose own LLM call fails are always skipped and reported, whatever this says. |
