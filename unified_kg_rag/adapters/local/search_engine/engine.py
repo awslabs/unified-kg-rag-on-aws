@@ -6,7 +6,7 @@ It implements ``SearchEngineClient``, so the unchanged ``OpenSearchIndexer``
 and ``OpenSearchRetriever`` run on it (``providers.vector.kind: sqlite``): both
 backends share one copy of the indexing and retrieval logic. One SQLite file
 holds the indices (mapping, settings and a write generation), the aliases,
-the search pipelines, the documents (``_source`` as JSON) and their vectors
+the documents (``_source`` as JSON) and their vectors
 (float32 blobs, one row per ``knn_vector`` field).
 
 Searches run in memory. An index is loaded once per process into a
@@ -19,11 +19,10 @@ analyzed by the registry in ``analyzers``, and the query DSL is the subset in
 is about documents x dimension x 4 bytes per vector field; loading an index of
 more than 100,000 documents logs a warning.
 
-A ``hybrid`` query is fused as the neural-search normalization processor of
-its ``search_pipeline`` does (``domain.retrieval.hybrid_normalization``), with
-the weights stored in the pipeline body (``OpenSearchRetriever`` sends no
-``hybrid`` query: it fuses a lexical and a kNN search itself). Lexical-only and vector-only queries return raw scores; ties break by
-document id.
+There is no ``hybrid`` query and no search pipeline: ``OpenSearchRetriever``
+fuses a lexical and a kNN search itself
+(``domain.retrieval.hybrid_normalization``). Queries return raw scores; ties
+break by document id.
 
 Concurrency: one connection per engine behind a re-entrant lock, WAL
 journaling and a busy timeout of ``timeout_seconds``
@@ -71,7 +70,6 @@ from unified_kg_rag.adapters.local.sqlite_util import (
     typed_errors,
     write_transaction,
 )
-from unified_kg_rag.domain.retrieval.hybrid_normalization import combine_min_max
 from unified_kg_rag.shared import AWSServiceError, get_logger
 from unified_kg_rag.shared.exceptions import (
     StoreConfigurationError,
@@ -93,7 +91,6 @@ _SCHEMA = (
     """CREATE TABLE IF NOT EXISTS aliases (
         alias TEXT NOT NULL, index_name TEXT NOT NULL,
         PRIMARY KEY (alias, index_name))""",
-    "CREATE TABLE IF NOT EXISTS pipelines (id TEXT PRIMARY KEY, body TEXT NOT NULL)",
     """CREATE TABLE IF NOT EXISTS docs (
         index_name TEXT NOT NULL, id TEXT NOT NULL, source TEXT NOT NULL,
         PRIMARY KEY (index_name, id))""",
@@ -167,46 +164,6 @@ def _merge(target: dict[str, Any], partial: dict[str, Any]) -> dict[str, Any]:
         else:
             merged[key] = value
     return merged
-
-
-def _pipeline_weights(pipeline_id: str, body: dict[str, Any]) -> list[float] | None:
-    """The combination weights of a supported pipeline (None: equal weights).
-
-    Raises:
-        StoreRequestRejectedError: The pipeline is not one normalization
-            processor with ``min_max`` normalization and ``arithmetic_mean``
-            combination.
-    """
-    unknown = set(body) - {"description", "phase_results_processors"}
-    if unknown:
-        raise rejected(f"search pipeline [{pipeline_id}] uses {sorted(unknown)}")
-    processors = body.get("phase_results_processors")
-    if not isinstance(processors, list) or len(processors) != 1:
-        raise rejected(
-            f"search pipeline [{pipeline_id}] must hold one normalization-processor"
-        )
-    processor = processors[0].get("normalization-processor")
-    if not isinstance(processor, dict):
-        raise rejected(
-            f"search pipeline [{pipeline_id}] has no normalization-processor"
-        )
-    normalization = (processor.get("normalization") or {}).get("technique", "min_max")
-    combination = processor.get("combination") or {}
-    technique = combination.get("technique", "arithmetic_mean")
-    if normalization != "min_max" or technique != "arithmetic_mean":
-        raise rejected(
-            f"search pipeline [{pipeline_id}] uses {normalization}/{technique}; "
-            "only min_max/arithmetic_mean is supported"
-        )
-    weights = (combination.get("parameters") or {}).get("weights")
-    if weights is None:
-        return None
-    if not isinstance(weights, list) or not all(
-        isinstance(w, int | float) and not isinstance(w, bool) and w >= 0
-        for w in weights
-    ):
-        raise rejected(f"search pipeline [{pipeline_id}] has invalid weights")
-    return [float(w) for w in weights]
 
 
 def _id_values(clause: Any) -> list[str] | None:
@@ -638,20 +595,6 @@ class SQLiteSearchEngine:
             )
         logger.info("Created index: '%s'", index)
 
-    def put_search_pipeline(self, pipeline_id: str, body: dict[str, Any]) -> None:
-        """Create or replace the search pipeline ``pipeline_id``.
-
-        Raises:
-            StoreRequestRejectedError: Not a ``min_max``/``arithmetic_mean``
-                normalization pipeline.
-        """
-        _pipeline_weights(pipeline_id, body)
-        with self._transaction("write a search pipeline") as connection:
-            connection.execute(
-                "INSERT OR REPLACE INTO pipelines (id, body) VALUES (?, ?)",
-                (pipeline_id, _dumps(body)),
-            )
-
     def delete_alias(
         self, index_names: str | list[str], alias_names: str | list[str]
     ) -> None:
@@ -878,24 +821,15 @@ class SQLiteSearchEngine:
             vectors=vectors,
         )
 
-    def _pipeline(self, pipeline_id: str) -> list[float] | None:
-        with self._reading("read a search pipeline") as connection:
-            row = connection.execute(
-                "SELECT body FROM pipelines WHERE id = ?", (pipeline_id,)
-            ).fetchone()
-        if row is None:
-            raise rejected(f"search pipeline [{pipeline_id}] does not exist")
-        return _pipeline_weights(pipeline_id, json.loads(row[0]))
-
     def search(self, **kwargs: Any) -> dict[str, Any]:
-        """Run ``search(index=..., body=..., search_pipeline=...)``.
+        """Run ``search(index=..., body=...)``.
 
         Raises:
             NotFoundError: ``index`` names a missing index or alias.
-            StoreRequestRejectedError: The body uses a clause, parameter or
-                pipeline the engine does not support.
+            StoreRequestRejectedError: The body uses a clause or parameter the
+                engine does not support.
         """
-        unknown = set(kwargs) - {"index", "body", "search_pipeline"}
+        unknown = set(kwargs) - {"index", "body"}
         if unknown:
             raise rejected(f"search does not support {sorted(unknown)}")
         body = kwargs.get("body") or {}
@@ -909,37 +843,19 @@ class SQLiteSearchEngine:
             raise rejected(f"[size] must be a non-negative integer, got {size!r}")
         excludes = self._excludes(body.get("_source", True))
         query = body.get("query") or {"match_all": {}}
-        pipeline = kwargs.get("search_pipeline")
         # Every read of one search from one snapshot: an index another
         # process deletes meanwhile is either searched whole or not found.
         with self._reading("search") as connection:
             names = self._resolve(connection, kwargs.get("index") or "*")
             for name in names:
                 self._check_window(connection, name, size)
-            hybrid = isinstance(query, dict) and "hybrid" in query
-            if hybrid and pipeline is None:
-                raise rejected(
-                    "a [hybrid] query needs a search_pipeline with a "
-                    "normalization-processor"
-                )
-            # The pipeline must exist whatever the query, as on a cluster.
-            weights = self._pipeline(pipeline) if pipeline is not None else None
             sort = body.get("sort")
-            if hybrid and sort is not None:
-                raise rejected("[sort] cannot be used with a [hybrid] query")
-            if (
-                not hybrid
-                and sort is None
-                and (lookup := _id_lookup(query)) is not None
-            ):
+            if sort is None and (lookup := _id_lookup(query)) is not None:
                 return self._fetch_by_ids(names, *lookup, size, excludes)
             loaded = [self._load(name) for name in names]
-        if hybrid:
-            hits = self._hybrid(loaded, query, size, weights)
-        else:
-            hits = self._ranked([(index, evaluate(index, query)) for index in loaded])
-            if sort is not None:
-                hits = sort_hits(hits, sort)
+        hits = self._ranked([(index, evaluate(index, query)) for index in loaded])
+        if sort is not None:
+            hits = sort_hits(hits, sort)
         return self._response(
             [
                 (index.name, doc_id, score, self._source(index, doc_id, excludes))
@@ -1058,49 +974,6 @@ class SQLiteSearchEngine:
             for doc_id, score in scores.items()
         ]
         hits.sort(key=lambda hit: (-hit[2], hit[0].name, hit[1]))
-        return hits
-
-    def _hybrid(
-        self,
-        loaded: list[LoadedIndex],
-        query: dict[str, Any],
-        size: int,
-        weights: list[float] | None,
-    ) -> list[tuple[LoadedIndex, str, float]]:
-        if len(query) != 1:
-            raise rejected("[hybrid] must be the only top-level query")
-        body = query["hybrid"]
-        if not isinstance(body, dict) or set(body) != {"queries"}:
-            raise rejected("[hybrid] takes exactly [queries]")
-        sub_queries = body["queries"]
-        if not isinstance(sub_queries, list) or not 1 <= len(sub_queries) <= 5:
-            raise rejected("[hybrid] takes 1 to 5 sub-queries")
-        if weights is None:
-            weights = [1.0] * len(sub_queries)
-        if len(weights) != len(sub_queries):
-            raise rejected(
-                f"number of weights [{len(weights)}] must match number of "
-                f"sub-queries [{len(sub_queries)}] in hybrid query"
-            )
-        by_key = {index.name: index for index in loaded}
-        sub_results: list[list[tuple[str, float]]] = []
-        for sub_query in sub_queries:
-            if isinstance(sub_query, dict) and "hybrid" in sub_query:
-                raise rejected("[hybrid] cannot be nested")
-            ranked = self._ranked(
-                [(index, evaluate(index, sub_query)) for index in loaded]
-            )
-            sub_results.append(
-                [
-                    (f"{index.name}\x00{doc_id}", score)
-                    for index, doc_id, score in ranked[:size]
-                ]
-            )
-        fused = combine_min_max(sub_results, weights)
-        hits = []
-        for key, score in fused:
-            name, doc_id = key.split("\x00", 1)
-            hits.append((by_key[name], doc_id, score))
         return hits
 
     @staticmethod

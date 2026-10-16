@@ -6,8 +6,7 @@ The ``normalization-processor`` of a search pipeline with ``min_max``
 normalization and ``arithmetic_mean`` combination. ``OpenSearchRetriever``
 fuses the hits of a hybrid search's lexical and kNN searches with
 ``combine_min_max`` (weights ``search.hybrid.lexical_weight`` /
-``vector_weight``), on every engine, and the embedded engine answers a
-``hybrid`` query with it:
+``vector_weight``), on every engine:
 
 * each sub-query's scores are min-max normalized over that sub-query's own
   hits: ``(score - min) / (max - min)``; a normalized 0 becomes

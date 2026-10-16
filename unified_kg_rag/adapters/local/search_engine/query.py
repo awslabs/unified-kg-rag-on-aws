@@ -6,8 +6,7 @@ Exactly the clauses ``OpenSearchRetriever`` and ``OpenSearchIndexer`` build:
 ``match_all``, ``match_none``, ``ids``, ``term``, ``terms``, ``range``,
 ``multi_match`` (``best_fields``; ``fuzziness``/``max_expansions`` are
 accepted and ignored), ``bool`` (``must``/``should``/``filter``) and ``knn``
-(``vector``/``k``/``filter``). The top-level ``hybrid`` query is the engine's
-(it fuses across indices). A body's ``sort`` takes ``{field: {"order":
+(``vector``/``k``/``filter``). A body's ``sort`` takes ``{field: {"order":
 ...}}`` entries (``sort_hits``). Any other clause or parameter raises
 ``StoreRequestRejectedError``, as OpenSearch answers a query it cannot parse
 with a 400, so a new query shape fails a test instead of silently matching

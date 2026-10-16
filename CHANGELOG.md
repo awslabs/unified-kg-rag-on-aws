@@ -232,6 +232,11 @@ Library API (Python callers and custom backends).
   `OpenSearchClient.put_search_pipeline` are removed, and
   `OpenSearchIndexer.initialize` writes nothing: a custom search engine
   need not implement search pipelines or the `hybrid` query (#306).
+- `SQLiteSearchEngine` no longer answers a `hybrid` query or takes
+  `search(search_pipeline=)`: both now raise `StoreRequestRejectedError`,
+  as for any unsupported request. Nothing in the package sent them after
+  #306; a database file an earlier version wrote keeps its unused
+  `pipelines` table harmlessly (#PR).
 - Removed APIs: `IncrementalIndexer.plan` / `prune_changed` /
   `remove_deleted` (use `detect_delta` and `remove_changed_and_deleted`)
   (#214); the LangChain-memory wrapper, `MemoryManager.get_langchain_memory`

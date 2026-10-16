@@ -46,7 +46,6 @@ from unified_kg_rag.domain.models import (
     SearchType,
     TextUnit,
 )
-from unified_kg_rag.domain.retrieval.hybrid_normalization import combine_min_max
 from unified_kg_rag.shared import AWSServiceError, ConfigurationError
 from unified_kg_rag.shared.exceptions import (
     StoreConfigurationError,
@@ -58,7 +57,6 @@ pytestmark = pytest.mark.unit
 
 INDEX = "things-1"
 ALIAS = "things"
-PIPELINE = "hybrid-pipeline"
 
 
 def _knn(space_type: str) -> dict[str, Any]:
@@ -146,22 +144,6 @@ def engine(tmp_path: Path) -> SQLiteSearchEngine:
     engine.create_index(INDEX, MAPPING)
     engine.update_alias(ALIAS, INDEX)
     assert engine.bulk_index(INDEX, DOCS) == {"errors": False, "items": []}
-    engine.put_search_pipeline(
-        PIPELINE,
-        {
-            "phase_results_processors": [
-                {
-                    "normalization-processor": {
-                        "normalization": {"technique": "min_max"},
-                        "combination": {
-                            "technique": "arithmetic_mean",
-                            "parameters": {"weights": [0.25, 0.75]},
-                        },
-                    }
-                }
-            ]
-        },
-    )
     yield engine
     engine.close()
 
@@ -603,43 +585,6 @@ def test_bool_should_over_knn_clauses_sums_them(engine) -> None:
     assert summed == {k: pytest.approx(one[k] + two[k]) for k in one}
 
 
-def test_hybrid_fuses_with_the_stored_pipeline_weights(engine) -> None:
-    lexical = {"multi_match": {"query": "vendor widgets", "fields": ["description"]}}
-    vector = {"knn": {"vec": {"vector": [0.0, 1.0], "k": 2}}}
-    lexical_hits = sorted(_hits(engine, lexical).items(), key=lambda p: (-p[1], p[0]))
-    vector_hits = sorted(_hits(engine, vector).items(), key=lambda p: (-p[1], p[0]))
-    keyed = [
-        [(f"{INDEX}\x00{doc_id}", score) for doc_id, score in hits]
-        for hits in (lexical_hits, vector_hits)
-    ]
-    expected = [
-        (key.split("\x00")[1], score)
-        for key, score in combine_min_max(keyed, [0.25, 0.75])
-    ]
-    response = _search(
-        engine, {"hybrid": {"queries": [lexical, vector]}}, search_pipeline=PIPELINE
-    )
-    got = [(hit["_id"], hit["_score"]) for hit in response["hits"]["hits"]]
-    assert got == [(i, pytest.approx(s)) for i, s in expected]
-    assert len(got) == 3
-
-
-def test_hybrid_normalizes_each_sub_query_over_its_top_size_hits(engine) -> None:
-    lexical = {"match_all": {}}
-    vector = {"knn": {"vec": {"vector": [1.0, 0.0], "k": 3}}}
-    response = _search(
-        engine,
-        {"hybrid": {"queries": [lexical, vector]}},
-        search_pipeline=PIPELINE,
-        size=1,
-    )
-    # Size 1: the vector sub-query keeps only "a" (max == min -> 1.0), and the
-    # all-1.0 lexical scores normalize to 1.0 too.
-    assert [(h["_id"], h["_score"]) for h in response["hits"]["hits"]] == [
-        ("a", pytest.approx(1.0))
-    ]
-
-
 def test_lexical_and_vector_queries_return_raw_scores(engine) -> None:
     lexical = _hits(engine, {"multi_match": {"query": "depot", "fields": ["name"]}})
     # BM25, not normalized: N = 3, n = 1, tf = dl = avgdl = 1.
@@ -706,6 +651,8 @@ def test_id_lookups_read_sql_without_loading_the_index(engine, monkeypatch) -> N
         {"term": {"rank": "high"}},
         {"range": {"rank": {"gte": 1, "format": "x"}}},
         {"bool": {"filter": [{"hybrid": {"queries": []}}]}},
+        # No hybrid query: OpenSearchRetriever fuses its sub-searches itself.
+        {"hybrid": {"queries": [{"match_all": {}}, {"match_all": {}}]}},
         {"term": {"type": "ORG"}, "match_all": {}},
     ],
 )
@@ -727,28 +674,10 @@ def test_invalid_query_vector_dimension_is_the_opensearch_rejection(engine) -> N
         {"index": ALIAS, "body": {"query": {"match_all": {}}}, "routing": "x"},
         {"index": ALIAS, "body": {"size": 10001}},
         {"index": ALIAS, "body": {"_source": {"includes": ["id"]}}},
-        # hybrid needs a pipeline, an existing one, with one weight per query
-        {
-            "index": ALIAS,
-            "body": {"query": {"hybrid": {"queries": [{"match_all": {}}]}}},
-        },
-        {
-            "index": ALIAS,
-            "body": {"query": {"hybrid": {"queries": [{"match_all": {}}]}}},
-            "search_pipeline": PIPELINE,
-        },
-        {"index": ALIAS, "body": {}, "search_pipeline": "missing"},
+        # No search pipelines either.
+        {"index": ALIAS, "body": {}, "search_pipeline": "p"},
         {"index": ALIAS, "body": {"sort": [{"rank": {"order": "up"}}]}},
         {"index": ALIAS, "body": {"sort": [{"rank": {"mode": "max"}}]}},
-        # OpenSearch cannot sort a hybrid query either.
-        {
-            "index": ALIAS,
-            "body": {
-                "query": {"hybrid": {"queries": [{"match_all": {}}] * 2}},
-                "sort": [{"rank": {"order": "desc"}}],
-            },
-            "search_pipeline": PIPELINE,
-        },
     ],
 )
 def test_unsupported_requests_are_rejected(engine, kwargs: dict) -> None:
@@ -772,34 +701,6 @@ def test_sort_orders_by_each_field_in_turn_missing_last(engine) -> None:
     assert sorted_ids({"rank": {"order": "asc"}}, query=lookup) == ["c", "a"]
     response = _search(engine, {"match_all": {}}, body={"sort": [desc]})
     assert {hit["_score"] for hit in response["hits"]["hits"]} == {1.0}
-
-
-@pytest.mark.parametrize(
-    "body",
-    [
-        {"phase_results_processors": []},
-        {
-            "phase_results_processors": [
-                {
-                    "normalization-processor": {
-                        "normalization": {"technique": "l2"},
-                        "combination": {"technique": "arithmetic_mean"},
-                    }
-                }
-            ]
-        },
-        {"request_processors": [{"filter_query": {}}]},
-        {
-            "request_processors": [{"filter_query": {}}],
-            "phase_results_processors": [
-                {"normalization-processor": {"normalization": {"technique": "min_max"}}}
-            ],
-        },
-    ],
-)
-def test_unsupported_pipelines_are_rejected(engine, body: dict) -> None:
-    with pytest.raises(StoreRequestRejectedError):
-        engine.put_search_pipeline("p", body)
 
 
 def test_unsupported_space_type_is_rejected_at_create(engine) -> None:
@@ -1023,7 +924,6 @@ def test_index_load_reads_one_snapshot(engine, tmp_path: Path) -> None:
     "prefix",
     [
         "SELECT settings FROM indices",  # the result window check
-        "SELECT body FROM pipelines",
         "SELECT name, generation FROM indices",  # the index load
         "SELECT id, source FROM docs",  # an id lookup
     ],
@@ -1045,14 +945,14 @@ def test_search_reads_one_snapshot(engine, tmp_path: Path, prefix: str) -> None:
         query = (
             {"ids": {"values": ["a", "z"]}}
             if prefix.startswith("SELECT id, source")
-            else {"hybrid": {"queries": [{"match_all": {}}, {"match_all": {}}]}}
+            else {"match_all": {}}
         )
         # The search resolved the alias before the swap: it reads the old
         # index whole (it read a deleted index's rows as None: TypeError).
-        hits = _hits(reader, query, search_pipeline=PIPELINE)
+        hits = _hits(reader, query)
         assert reader._connection.fired
         assert set(hits) == ({"a"} if "ids" in query else {"a", "b", "c"})
-        assert set(_hits(reader, query, search_pipeline=PIPELINE)) == {"z"}
+        assert set(_hits(reader, query)) == {"z"}
     finally:
         reader.close()
 
@@ -1093,12 +993,8 @@ def test_data_persists_after_reopen(engine, tmp_path: Path) -> None:
     reopened = SQLiteSearchEngine(tmp_path / "vector.sqlite3")
     try:
         assert set(_hits(reopened, {"match_all": {}})) == {"a", "b", "c"}
-        hybrid = _search(
-            reopened,
-            {"hybrid": {"queries": [{"match_all": {}}, {"match_all": {}}]}},
-            search_pipeline=PIPELINE,
-        )
-        assert len(hybrid["hits"]["hits"]) == 3
+        knn = _hits(reopened, {"knn": {"vec": {"vector": [1.0, 0.0], "k": 3}}})
+        assert set(knn) == {"a", "b", "c"}
         assert reopened.get_index_name_by_alias(ALIAS) == INDEX
     finally:
         reopened.close()
