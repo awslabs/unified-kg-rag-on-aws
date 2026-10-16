@@ -88,6 +88,7 @@ def leiden(
     Raises:
         ValueError: An argument is out of range, ``graph`` is directed or a
             multigraph, or two nodes have the same ``str``.
+        GraphError: ``graspologic_native`` panicked.
     """
     if graph.is_directed() or graph.is_multigraph():
         raise ValueError("Leiden supports only undirected non-multi graphs")
@@ -115,16 +116,25 @@ def leiden(
         (node_key(source), node_key(target), float(weight))
         for source, target, weight in graph.edges(data="weight", default=1.0)
     ]
-    _quality, partition = graspologic_native.leiden(
-        edges=edges,
-        starting_communities=None,
-        resolution=resolution,
-        randomness=0.001,
-        iterations=extra_forced_iterations + 1,
-        use_modularity=True,
-        seed=random_seed,
-        trials=trials,
-    )
+    try:
+        _quality, partition = graspologic_native.leiden(
+            edges=edges,
+            starting_communities=None,
+            resolution=resolution,
+            randomness=0.001,
+            iterations=extra_forced_iterations + 1,
+            use_modularity=True,
+            seed=random_seed,
+            trials=trials,
+        )
+    except BaseException as e:
+        # A Rust panic surfaces as pyo3's PanicException, a BaseException
+        # (not importable: pyo3 creates its module at runtime), so the
+        # stage's error handling would not see it and every resume would die
+        # the same way. KeyboardInterrupt and SystemExit pass through.
+        if type(e).__module__ != "pyo3_runtime":
+            raise
+        raise GraphError(f"graspologic_native panicked: {e}") from e
     return {originals[key]: label for key, label in partition.items()}
 
 
@@ -235,12 +245,12 @@ class CommunityDetector:
 
     @staticmethod
     def _with_usable_weights(graph: nx.Graph) -> nx.Graph:
-        """Return ``graph`` with every edge weight finite and ``>= 0``.
+        """Return ``graph`` with every edge weight usable (see ``edge_weight``).
 
         New extractions are already clean (``edge_weight`` in the parser), but
         a graph read back from a store or cache written before that may still
-        carry a NaN, infinite or negative weight, and Leiden panics or fails on
-        one (see ``edge_weight``) every time the stage is resumed. Such weights
+        carry a NaN, infinite, negative, denormal or huge weight, and Leiden
+        panics or fails on one every time the stage is resumed. Such weights
         are replaced on a copy, so the caller's graph is left as it is.
         """
         bad = {
@@ -251,8 +261,8 @@ class CommunityDetector:
         if not bad:
             return graph
         logger.warning(
-            "Replacing %s non-finite or negative edge weights before community "
-            "detection",
+            "Replacing %s non-finite, negative or out-of-range edge weights "
+            "before community detection",
             len(bad),
         )
         graph = graph.copy()

@@ -26,12 +26,23 @@ _Cited = TypeVar("_Cited", Entity, Relationship)
 logger = get_logger(__name__)
 
 
+# Usable edge weights: 0 or within [MIN_EDGE_WEIGHT, MAX_EDGE_WEIGHT]. Leiden
+# (graspologic_native) panics on denormal weights (below ~2.2e-308) and on
+# ones near 1e154, where its squared totals overflow. The bounds leave many
+# orders of magnitude for the sums of a graph's edges either way; extraction
+# asks for strengths on a 1-10 scale.
+MIN_EDGE_WEIGHT = 1e-9
+MAX_EDGE_WEIGHT = 1e9
+
+
 def edge_weight(value: Any, default: float = 1.0) -> float:
-    """``value`` as a usable edge weight: a finite number, clamped to ``>= 0``.
+    """``value`` as a usable edge weight: a finite number in a sane range.
 
     Missing, unparseable, NaN and infinite values give ``default``; negative
-    ones give ``0.0``. Leiden (graspologic_native) panics on a NaN weight with
-    a ``BaseException`` no ``except Exception`` catches, and rejects infinite
+    ones and positive ones below ``MIN_EDGE_WEIGHT`` give ``0.0``, and ones
+    above ``MAX_EDGE_WEIGHT`` give ``MAX_EDGE_WEIGHT``. Leiden
+    (graspologic_native) panics on a NaN, denormal or huge weight with a
+    ``BaseException`` no ``except Exception`` catches, and rejects infinite
     and negative ones; a stage resumed on the same graph would fail again.
     """
     if value is None:
@@ -42,7 +53,9 @@ def edge_weight(value: Any, default: float = 1.0) -> float:
         return default
     if not math.isfinite(weight):
         return default
-    return max(weight, 0.0)
+    if weight < MIN_EDGE_WEIGHT:
+        return 0.0
+    return min(weight, MAX_EDGE_WEIGHT)
 
 
 def _union_filters(

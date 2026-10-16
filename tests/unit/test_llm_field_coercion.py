@@ -82,9 +82,16 @@ def test_entity_with_repeated_tags_is_parsed() -> None:
         ("-inf", 1.0),
         (-3, 0.0),
         (0, 0.0),
+        ("1e300", 1e9),
+        (1e155, 1e9),
+        ("1e-320", 0.0),
+        (1e-12, 0.0),
+        (1e-9, 1e-9),
+        (0.5, 0.5),
     ],
 )
-def test_parse_weight_is_finite_and_non_negative(strength, expected: float) -> None:
-    # Leiden panics (an uncatchable BaseException) on a NaN weight and rejects
-    # infinite ones, so a bad strength from the model must not reach the graph.
+def test_parse_weight_is_finite_and_in_range(strength, expected: float) -> None:
+    # Leiden panics (an uncatchable BaseException) on a NaN, denormal or huge
+    # weight and rejects infinite ones, so a bad strength from the model must
+    # not reach the graph.
     assert BaseProcessor._parse_weight({"strength": strength}) == expected
