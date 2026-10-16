@@ -567,6 +567,10 @@ Library API (Python callers and custom backends).
   (#300).
 
 ### Fixed
+- A batch LLM call that raised a `TimeoutError` of its own (a socket read
+  timeout, say) is no longer reported as exceeding
+  `BatchProcessor.call_timeout_seconds`: its own error propagates, so the log
+  names the real cause (#PR).
 - An attribute filter (`attr_<key>`, `attributes.<path>`) no longer fails
   vector and hybrid searches on OpenSearch 2.13 with `ConfigurationError`
   ("Rewrite first") when an index never mapped the attribute, such as the

@@ -189,9 +189,13 @@ class BatchProcessor(BaseModel):
             result = future.result(timeout=timeout_seconds)
         except concurrent.futures.TimeoutError as exc:
             pool.shutdown(wait=False, cancel_futures=True)
+            if future.done():
+                # ``func`` raised a TimeoutError of its own (the builtin is
+                # concurrent.futures.TimeoutError since Python 3.11): not ours.
+                raise
             logger.warning(
                 "'%s' exceeded the %ss call timeout; the abandoned call may still "
-                "complete in the background while the fallback re-issues it",
+                "complete in the background while the item is retried",
                 label,
                 timeout_seconds,
             )
