@@ -203,7 +203,7 @@ class StoreHarness:
         return derived
 
     def initialize(self) -> None:
-        """Prepare the vector store for writes (``OpenSearchIndexer.initialize``)."""
+        """Prepare the vector store for writes (the indexer's ``initialize``)."""
         self.vector_indexer.initialize()
 
     # --- reads ---------------------------------------------------------------
