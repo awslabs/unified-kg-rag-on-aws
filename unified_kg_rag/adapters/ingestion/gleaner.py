@@ -35,6 +35,7 @@ from unified_kg_rag.domain.ingestion.relationship_weights import (
 )
 from unified_kg_rag.domain.models import (
     Config,
+    Constants,
     Entity,
     ModelPurpose,
     RejectedEntity,
@@ -125,6 +126,8 @@ class GleaningIndex:
         self, entities: list[Entity], relationships: list[Relationship]
     ) -> None:
         self._entities_by_unit = group_by_text_unit(entities)
+        # The round's own list: split_relationship appends to it.
+        self._relationships = relationships
         self._relationships_by_unit = group_by_text_unit(relationships)
         self._entities_by_key: dict[str, list[Entity]] = {}
         # entity_key -> id of the first entity with that key: the endpoint
@@ -172,6 +175,28 @@ class GleaningIndex:
             if (entity_key(rel.source_name or ""), entity_key(rel.target_name or ""))
             == pair
         ]
+
+    def split_relationship(
+        self, relationship: Relationship, unit_id: str
+    ) -> Relationship:
+        """Move the unit's share of ``relationship`` onto a copy and return it.
+
+        The copy cites only ``unit_id``, with the unit's stored strength; the
+        original keeps the other text units and their strengths. The copy is
+        added to the round's relationships and replaces the original among
+        the unit's edges.
+        """
+        weights = text_unit_weights(relationship)
+        own = {unit_id: weights.pop(unit_id)}
+        copy = relationship.model_copy(deep=True)
+        apply_text_unit_weights(relationship, weights)
+        apply_text_unit_weights(copy, own)
+        self._relationships.append(copy)
+        self._relationships_by_unit[unit_id] = [
+            copy if rel is relationship else rel
+            for rel in self._relationships_by_unit[unit_id]
+        ]
+        return copy
 
     def add_entity(self, entity: Entity) -> None:
         self._add_key(entity)
@@ -1017,7 +1042,9 @@ class GraphGleaner(BaseProcessor):
         pair of entities is not a correction and is rejected — that is a
         MISSING_RELATIONSHIP plus a deletion, which this stage cannot express.
         A proposed description is merged into the current one, which the
-        prompt does not show.
+        prompt does not show. A retype or reversal of an edge that other units
+        also state applies to a copy carrying only this unit's share (see
+        :meth:`GleaningIndex.split_relationship`).
 
         Args:
             details: The issue's ``<details>`` payload.
@@ -1043,16 +1070,41 @@ class GraphGleaner(BaseProcessor):
         original_short_id = relationship.short_id
         corrected: list[str] = []
         corrected_type = self._clean_text(details.get("corrected_type"))
-        if corrected_type and corrected_type != relationship.type:
+        if corrected_type == relationship.type:
+            corrected_type = None
+        # A reversal is the corrected endpoints naming the current pair the other
+        # way round.
+        reverse = self._matches(
+            details.get("corrected_source"), relationship.target_name
+        ) and self._matches(details.get("corrected_target"), relationship.source_name)
+        if (corrected_type or reverse) and set(relationship.text_unit_ids or []) - {
+            unit.id
+        }:
+            # Extraction merged every unit's statement of the edge, so it may
+            # cite other units too. Only this unit's statement is corrected,
+            # as an incremental run (where the other units are extracted in
+            # another run, or were deleted) would correct it: the others keep
+            # their edge. The copy is placed by this unit's index and filters.
+            # Both keep the merged description and the original keeps the
+            # union of the filters: what each unit contributed to those is no
+            # longer told apart.
+            relationship = index.split_relationship(relationship, unit.id)
+            placement = (Constants.INDEX.value, Constants.FILTERS.value)
+            relationship.attributes = {
+                **{
+                    key: value
+                    for key, value in (relationship.attributes or {}).items()
+                    if key not in placement
+                },
+                **self._parse_attributes(None, unit),
+            }
+        if corrected_type:
             relationship.type = corrected_type
             corrected.append("type")
 
-        # A reversal is the corrected endpoints naming the current pair the other
-        # way round. Both ids and names move together, or the edge would point at
-        # one entity while claiming to name another.
-        if self._matches(
-            details.get("corrected_source"), relationship.target_name
-        ) and self._matches(details.get("corrected_target"), relationship.source_name):
+        # Both ids and names move together, or the edge would point at one
+        # entity while claiming to name another.
+        if reverse:
             relationship.source_id, relationship.target_id = (
                 relationship.target_id,
                 relationship.source_id,
@@ -1194,7 +1246,8 @@ class GraphGleaner(BaseProcessor):
         relationships_map: dict[tuple, Relationship] = {}
         # Id -> key of the kept edge holding it: an edge another key already
         # holds the id of (a gleaning output cached before corrections
-        # re-keyed the edge they change) merges into that edge rather than
+        # re-keyed the edge they change; a correction now re-keys only its
+        # unit's copy, so it adds none) merges into that edge rather than
         # adding a second edge with the same id.
         key_by_id: dict[str, tuple] = {}
         dropped = 0

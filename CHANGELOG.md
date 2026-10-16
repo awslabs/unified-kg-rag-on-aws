@@ -1752,9 +1752,26 @@ Library API (Python callers and custom backends).
   (source, target, type), so the incremental read-back (by the delta's
   ids) missed it and the two became parallel edges with split weight and
   two vector documents, where a full build has one. A correction now gives
-  the edge the id of its corrected key; an edge stated the uncorrected way
-  stays a separate edge, as in a full build. Edges stored by an earlier
-  version keep their id until a full rebuild (#304).
+  the edge the id of its corrected key. Edges stored by an earlier version
+  keep their id until a full rebuild (#304).
+- A gleaning correction that reverses or retypes a relationship changes only
+  the correcting chunk's statement of it. Extraction merges every chunk's
+  statement of an edge before gleaning, so one chunk's correction rewrote
+  what other documents said: a full build stored one corrected edge citing
+  both documents where an incremental run (indexing them in separate runs)
+  stored two edges, and deleting the correcting document left the other
+  document's statement in the corrected direction. The correcting chunk's
+  share (its text unit and strength) now moves to a corrected copy and the
+  other chunks keep the uncorrected edge, so both paths store the same
+  edges and weights. Both edges keep the merged description, and the
+  uncorrected one the union of the document filters (#308).
+- One relationship with an absurd strength (such as `1e300`, or a denormal
+  like `1e-320`) no longer kills ingestion and every resume at community
+  detection: Leiden panics on weights near `1e154` and on denormals.
+  Parsed strengths, and edge weights read back from stores before
+  clustering, are now clamped to `[1e-9, 1e9]`, with smaller positive values
+  read as 0. A panic in Leiden now fails the stage with a `GraphError`
+  instead of escaping the error handling (#308).
 - Graph resolution and the cross-run merge merge attributes with one
   function (`base_processor.merge_attributes`), so a full build and an
   incremental build give an item the same document `filters`: the

@@ -156,3 +156,80 @@ def test_resolver_joins_same_id_entities_of_conflicting_types() -> None:
 
     _assert_unique_ids(result["entities"], result["relationships"])
     assert len(result["entities"]) == 2
+
+
+def test_a_correction_splits_off_its_own_units_share(gleaner) -> None:
+    # Extraction merged u1's and u2's statements of the edge before gleaning.
+    # u1 reversing it must leave u2's statement as u2 made it: an incremental
+    # run that extracts u2 in another run (or deletes u1's document) has only
+    # u1's statement to correct.
+    edge = _edge("SUPPLIES", "u1")
+    edge.text_unit_ids = ["u1", "u2"]
+    edge.weight = 8.0
+    edge.attributes = {
+        "text_unit_weights": [3.0, 5.0],
+        "filters": {"doc": ["a", "b"]},
+        "kept": True,
+    }
+    entities = [_entity(TYPO, "Acme Crop", "u1"), _entity(DEPOT, "Depot", "u1")]
+    relationships = [edge]
+    index = GleaningIndex(entities, relationships)
+    unit = TextUnit(id="u1", text=U1.text, attributes={"filters": {"doc": "a"}})
+    reverse = {
+        "issue_type": "RELATIONSHIP_CORRECTION",
+        "details": {
+            "source": "Acme Crop",
+            "target": "Depot",
+            "corrected_source": "Depot",
+            "corrected_target": "Acme Crop",
+        },
+    }
+    added: list[Relationship] = []
+
+    gleaner._process_issue(reverse, unit, index, [], added)
+
+    # A correction is not a new relationship (a gain would re-glean the unit).
+    assert added == []
+    original, copy = relationships
+    assert (original.id, original.source_name, original.type) == (
+        EDGE,
+        "Acme Crop",
+        "SUPPLIES",
+    )
+    assert (original.text_unit_ids, original.weight) == (["u2"], 5.0)
+    assert original.attributes["filters"] == {"doc": ["a", "b"]}
+    assert copy.id == BaseProcessor._generate_relationship_id(
+        "Depot", "Acme Crop", "SUPPLIES"
+    )
+    assert (copy.source_name, copy.target_name) == ("Depot", "Acme Crop")
+    assert (copy.text_unit_ids, copy.weight) == (["u1"], 3.0)
+    assert copy.attributes == {
+        "text_unit_weights": [3.0],
+        "filters": {"doc": "a"},
+        "kept": True,
+    }
+    # The unit's prompt and later issues see its own (corrected) edge.
+    assert index.relationships_for("u1") == [copy]
+    assert index.relationships_for("u2") == [original]
+
+
+def test_a_correction_of_an_edge_only_its_unit_states_is_in_place(gleaner) -> None:
+    edge = _edge("SUPPLIES", "u1")
+    relationships = [edge]
+    index = GleaningIndex(
+        [_entity(TYPO, "Acme Crop", "u1"), _entity(DEPOT, "Depot", "u1")],
+        relationships,
+    )
+    retype = {
+        "issue_type": "RELATIONSHIP_CORRECTION",
+        "details": {
+            "source": "Acme Crop",
+            "target": "Depot",
+            "corrected_type": "SHIPS_TO",
+        },
+    }
+
+    gleaner._process_issue(retype, U1, index, [], [])
+
+    assert relationships == [edge]
+    assert (edge.id, edge.type) == (CORRECTED_EDGE, "SHIPS_TO")

@@ -376,7 +376,7 @@ class TestHierarchyKeepsCoarserLevels:
 
 
 class TestUnusableEdgeWeights:
-    @pytest.mark.parametrize("weight", [float("nan"), float("inf"), -1.0, None])
+    @pytest.mark.parametrize("weight", [float("nan"), float("inf"), -1.0, None, 1e-320])
     def test_detection_survives_a_bad_stored_weight(self, weight) -> None:
         # A graph read back from a store written before weights were sanitized
         # may carry NaN: graspologic_native panics on it with a BaseException
@@ -394,6 +394,44 @@ class TestUnusableEdgeWeights:
         # The caller's graph is left as it is.
         stored = g.edges["n2", "n3"]["weight"]
         assert stored is weight or (stored != stored and weight != weight)
+
+    @pytest.mark.parametrize(
+        ("weight", "every_edge"),
+        [(1e300, False), (1e155, False), (1e300, True), (1e-320, True)],
+    )
+    def test_detection_survives_out_of_range_stored_weights(
+        self, weight: float, every_edge: bool
+    ) -> None:
+        # Leiden panics near 1e154 and on denormals. Denormals become 0 (an
+        # all-zero graph gives singletons), huge weights the upper bound.
+        g = _two_triangle_graph()
+        nx.set_edge_attributes(g, 1.0, "weight")
+        if every_edge:
+            nx.set_edge_attributes(g, weight, "weight")
+        else:
+            g.edges["n2", "n3"]["weight"] = weight
+        cd = _detector(min_community_size=1)
+        cd(g)
+        level_0 = [c.nodes for c in cd.all_communities.values() if c.level == 0]
+        assert set().union(*level_0) == set(g.nodes())
+
+    def test_a_leiden_panic_is_a_graph_error(self) -> None:
+        # graspologic_native panics with pyo3's PanicException, a
+        # BaseException the stage's `except Exception` would not see.
+        g = _two_triangle_graph()
+        nx.set_edge_attributes(g, 1e300, "weight")
+        with pytest.raises(GraphError, match="panicked"):
+            leiden(g, random_seed=1)
+
+    def test_keyboard_interrupt_is_not_converted(self, monkeypatch) -> None:
+        import graspologic_native
+
+        def interrupted(**_: object) -> None:
+            raise KeyboardInterrupt
+
+        monkeypatch.setattr(graspologic_native, "leiden", interrupted)
+        with pytest.raises(KeyboardInterrupt):
+            leiden(_two_triangle_graph(), random_seed=1)
 
 
 class TestHierarchyProcessing:
