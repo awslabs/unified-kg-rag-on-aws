@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import socket
 import threading
 import time
@@ -55,9 +56,11 @@ from unified_kg_rag.adapters.aws.opensearch import (
 from unified_kg_rag.adapters.retrieval.base import is_fatal_retrieval_error
 from unified_kg_rag.adapters.retrievers.neptune_retriever import NeptuneRetriever
 from unified_kg_rag.adapters.retrievers.opensearch_retriever import OpenSearchRetriever
+from unified_kg_rag.adapters.storage import neptune_indexer
 from unified_kg_rag.adapters.storage.embedding_settings import (
     configured_embedding_model,
 )
+from unified_kg_rag.adapters.storage.neptune_indexer import NeptuneIndexer
 from unified_kg_rag.domain.models import Config, Constants, SearchQuery, SearchType
 from unified_kg_rag.domain.models.config import EmbeddingModelId
 from unified_kg_rag.shared import (
@@ -411,6 +414,121 @@ async def test_a_persistent_429_fails_after_store_max_attempts(
     assert len(server.requests) == 3
 
 
+class _KnnRejectingOpenSearch:
+    """A local HTTP server rejecting every kNN search with a 400.
+
+    It answers an attribute probe (``_source: false``) with no hits after
+    ``probe_delay`` seconds, so the searches started alongside it fail first,
+    as OpenSearch 2.13 answers a kNN filter on an unmapped field.
+    """
+
+    def __init__(self, probe_delay: float) -> None:
+        self.paths: list[str] = []
+        owner = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(self) -> None:  # noqa: N802 - http.server API
+                raw = self.rfile.read(int(self.headers.get("Content-Length") or 0))
+                body = json.loads(raw or b"{}")
+                owner.paths.append(self.path)
+                status, answer = 200, {"hits": {"total": {"value": 0}, "hits": []}}
+                if body.get("_source") is False:
+                    time.sleep(probe_delay)
+                elif "knn" in json.dumps(body):
+                    cause = {
+                        "type": "illegal_argument_exception",
+                        "reason": "Rewrite first",
+                    }
+                    status, answer = 400, {
+                        "error": {**cause, "root_cause": [cause]},
+                        "status": 400,
+                    }
+                data = json.dumps(answer).encode()
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+            def log_message(self, *_args: object) -> None:
+                pass
+
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.port: int = self.server.server_address[1]
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def close(self) -> None:
+        self.server.shutdown()
+        self.server.server_close()
+
+
+async def _retrieve_rejecting_knn(
+    config: Config, filters: dict, caplog: pytest.LogCaptureFixture
+) -> list:
+    server = _KnnRejectingOpenSearch(probe_delay=0.3)
+    retriever = _opensearch_retriever(config)
+    object.__setattr__(
+        retriever, "_index_filter_fields", retriever._initialize_index_filter_fields()
+    )
+    client = OpenSearchClient(_local_opensearch_config(config, server.port))
+    object.__setattr__(retriever, "_opensearch_client", client)
+
+    async def _vector(*_args, **_kwargs) -> list[float]:
+        return [0.1] * _QUERY_DIMENSION
+
+    async def _checked(*_args, **_kwargs) -> None:
+        return None
+
+    object.__setattr__(retriever, "_get_query_vector", _vector)
+    object.__setattr__(retriever, "_check_embedding_settings", _checked)
+    query = SearchQuery(
+        query="hello",
+        search_type=SearchType.HYBRID,
+        index_prefixes=[config.indexing.opensearch.community_reports_index_prefix],
+        filters=filters,
+    )
+    caplog.set_level(logging.DEBUG)
+    try:
+        return await retriever.aretrieve(query)
+    finally:
+        await client.aclose()
+        server.close()
+
+
+async def test_a_search_discarded_after_the_probe_logs_no_error(
+    config: Config, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Regression: the client logged every transport error at ERROR with its
+    # traceback, so the kNN search started alongside an attribute probe drew
+    # an ERROR for its 400 although the probe then discarded it and the
+    # query was answered correctly (no document has the attribute).
+    results = await _retrieve_rejecting_knn(config, {"attr_category": "a"}, caplog)
+
+    assert results == []
+    # (opensearch-py itself still logs each 4xx as a one-line WARNING.)
+    assert [r for r in caplog.records if r.levelno >= logging.ERROR] == []
+    assert not [
+        r
+        for r in caplog.records
+        if r.levelno >= logging.WARNING and r.name.startswith("unified_kg_rag")
+    ]
+    # The rejected kNN search did run and fail before the probe answered.
+    assert any("Rewrite first" in r.getMessage() for r in caplog.records)
+
+
+async def test_a_kept_search_error_is_logged_once(
+    config: Config, caplog: pytest.LogCaptureFixture
+) -> None:
+    # A declared field draws no probe, so the kNN 400 fails the query; it is
+    # logged once (by the retriever), naming the index, not also by the client.
+    with pytest.raises(ConfigurationError, match="Rewrite first"):
+        await _retrieve_rejecting_knn(config, {"rank": {"gte": 1}}, caplog)
+
+    errors = [r for r in caplog.records if r.levelno >= logging.ERROR]
+    assert len(errors) == 1
+    assert "Rewrite first" in errors[0].getMessage()
+
+
 async def test_unreachable_opensearch_fails_the_retrieval(
     config: Config, closed_port: int
 ) -> None:
@@ -499,6 +617,27 @@ async def test_a_silent_neptune_fails_the_query_within_its_timeout(
             await retriever.aretrieve(_SEEDED)
     finally:
         await asyncio.to_thread(client.close)
+
+
+@pytest.mark.timeout(30)
+def test_a_silent_neptune_fails_an_ingestion_write_within_its_timeout(
+    config: Config, silent_port: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Regression: the indexer's client had no timeout, so a Neptune that never
+    # answered blocked ingestion for good (hours in the real-AWS E2E).
+    monkeypatch.setattr(neptune_indexer, "INGESTION_REQUEST_TIMEOUT_SECONDS", 0.3)
+    config = _local_neptune_config(config, silent_port, timeout=30)
+    config.indexing.neptune.max_attempts = 1
+    indexer = NeptuneIndexer(config)
+    try:
+        # No setting named: search.store_timeout_seconds bounds queries only.
+        with pytest.raises(
+            AWSServiceError, match=r"did not answer within 0\.3 s$"
+        ) as e:
+            indexer.read_entities(["e1"])
+    finally:
+        indexer.close()
+    assert isinstance(e.value.__cause__, StoreTimeoutError)
 
 
 @pytest.fixture

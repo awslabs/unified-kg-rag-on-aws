@@ -390,10 +390,24 @@ Library API (Python callers and custom backends).
   fused order. Reported by @vibhupb (#83) (#284).
 
 ### Changed
+- OpenSearch indexing keeps 16 embedding requests in flight (was 8), so it
+  embeds and bulk-writes 800 items of a type at a time (was 400). In the
+  real-AWS E2E 1,600 texts took 9.4 s instead of 18.8 s, with no Bedrock
+  throttling (#310).
+- `processing.max_concurrency` defaults to 40 (was 20). In the real-AWS
+  E2E ingestion took 27% less time at 40 with no Bedrock throttling, and
+  under a heavier mixed load the 0.9% of calls throttled all succeeded on
+  retry. The setting also bounds the queries `run-eval` runs at once and
+  the global-search map calls in flight, and sizes the OpenSearch query
+  pool (now 120 connections). Bedrock quotas differ per account, model and
+  Region: lower it if the logs show `ThrottlingException` retries. The
+  `backend: local` preset keeps 20, since a local model server queues the
+  calls it cannot run at once. Stage caches are unaffected; the setting is
+  not part of their keys (#310).
 - The data-plane image installs uv 0.12.23, the version CI uses (#303).
 - The OpenSearch query client keeps up to the larger of
   `processing.io_workers` and three times `processing.max_concurrency`
-  connections (64 by default, between 10 and 200) instead of
+  connections (120 by default, between 10 and 200) instead of
   opensearch-py's 10: a query sends up to three searches at once, and a
   request waiting for a connection used up its `search.store_timeout_seconds`
   under `run-eval`. A query with an attribute filter (`attr_<key>`,
@@ -569,6 +583,28 @@ Library API (Python callers and custom backends).
   (#300).
 
 ### Fixed
+- Community detection no longer logs the WARNING "Graph has no weighted
+  edges" when the hierarchy ends normally at a level whose communities no
+  edge joins; it logs that at INFO and stops, with the same communities. An
+  entity graph without weighted edges still warns (#310).
+- A Neptune that accepts the connection but never answers no longer blocks
+  ingestion forever: each ingestion request (a write, a read-back, a drop)
+  now fails after 180 s, above Neptune's own default query timeout of
+  120 s, and is retried like other transient write errors. The indexer's
+  Gremlin client had no timeout (#310).
+- Neptune graph expansion fetches at most its per-seed budget
+  (`top_k * retrieval_multiplier * indexing.neptune.traversal_fetch_multiplier`
+  split over the seeds) per seed, nearest hop first. Neptune applied the
+  budget to each traverser of each hop, so one seed on a tree of fan-out 8
+  with a budget of 5 fetched 5 + 25 entities; with
+  `traversal_fetch_multiplier: 1` (no cut after ranking) all of them reached
+  the context. Gremlin Server and the SQLite graph already capped the
+  seed's total (#310).
+- A filtered vector or hybrid query no longer logs an ERROR with a traceback
+  for the kNN search it discards once the attribute probe finds no matching
+  document (the expected 400 "Rewrite first" on OpenSearch 2.13). The async
+  OpenSearch client now logs its transport errors at DEBUG and names the
+  index in the error; the retriever logs each error it keeps once (#310).
 - A batch LLM call that raised a `TimeoutError` of its own (a socket read
   timeout, say) is no longer reported as exceeding
   `BatchProcessor.call_timeout_seconds`: its own error propagates, so the log
@@ -1343,7 +1379,7 @@ Library API (Python callers and custom backends).
   from the OpenSearch claims index, which stores their `text_unit_ids`), and a
   removed document's text units are stripped from claims shared with
   surviving documents (#252).
-- OpenSearch indexing embeds and bulk-writes each artifact type 400 items at
+- OpenSearch indexing embeds and bulk-writes each artifact type 800 items at
   a time instead of embedding the whole type before one bulk call. Memory no
   longer grows with the corpus (about 75 KB per entity before, several
   gigabytes at 50,000 entities with up to six types indexed concurrently), and

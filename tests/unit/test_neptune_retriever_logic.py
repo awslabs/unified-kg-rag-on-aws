@@ -429,7 +429,9 @@ async def test_entity_traversal_returns_the_seeds_and_expands_each_one(
     # A limit() inside repeat() counts every traverser of the traversal, so a
     # single cap let the first seeds use it up; emit() after repeat() never
     # emits the seed itself. The seeds come back via identity() and the
-    # expansion runs, with its own budget, per seed inside local().
+    # expansion runs, with its own budget, per seed inside local(). Neptune
+    # applies the limit inside repeat() per traverser and hop, so the seed's
+    # total is capped after emit().
     config.indexing.neptune.traversal_fetch_multiplier = 3
     object.__setattr__(retriever, "_max_hops", 2)
     object.__setattr__(retriever, "_max_results_per_hop", 7)
@@ -442,7 +444,7 @@ async def test_entity_traversal_returns_the_seeds_and_expands_each_one(
         ".union(__.identity(),__.local(__.repeat(__.local(__.both()"
         ".hasLabel('Entity-default').limit(7))"
         ".has('id',without(['e1','e2','e3','e4'])).dedup().limit(8))"
-        ".times(2).emit()))"
+        ".times(2).emit().dedup().limit(8)))"
     )
 
 
@@ -461,7 +463,7 @@ async def test_entity_traversal_budget_scales_with_fetch_multiplier(
     config.indexing.neptune.traversal_fetch_multiplier = multiplier
     query = SearchQuery(query="x", top_k=4, retrieval_multiplier=2)
     text = await _entity_traversal_text(retriever, ["e1", "e2"], query)
-    assert f".dedup().limit({per_seed}))" in text
+    assert f".emit().dedup().limit({per_seed})))" in text
 
 
 def test_a_node_reached_from_two_seeds_keeps_its_shortest_path(retriever) -> None:

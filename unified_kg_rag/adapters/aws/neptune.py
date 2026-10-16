@@ -102,6 +102,16 @@ def is_connection_lost(exc: BaseException) -> bool:
     return False
 
 
+# The setting a query's Neptune requests are bounded by.
+QUERY_TIMEOUT_SETTING = "search.store_timeout_seconds"
+# The bound of one ingestion request (a write, a read-back, a drop of a
+# batch). Above Neptune's own default query timeout (neptune_query_timeout,
+# 120 s), so the server ends a long but healthy request first, and the
+# OpenSearch indexing client's per-request timeout (180 s); a server that
+# does not answer at all fails the request instead of blocking ingestion.
+INGESTION_REQUEST_TIMEOUT_SECONDS = 180.0
+
+
 def is_timeout(exc: BaseException) -> bool:
     """Whether ``exc`` (or a cause) is a request that got no answer in time."""
     # asyncio.TimeoutError is not the builtin one before Python 3.11.
@@ -112,7 +122,10 @@ def is_timeout(exc: BaseException) -> bool:
 
 
 def neptune_request_error(
-    exc: Exception, timeout_seconds: float | None, url: str | None = None
+    exc: Exception,
+    timeout_seconds: float | None,
+    url: str | None = None,
+    timeout_setting: str | None = QUERY_TIMEOUT_SETTING,
 ) -> Exception:
     """The error a failed Gremlin request raises: typed when Neptune is unusable.
 
@@ -120,7 +133,8 @@ def neptune_request_error(
     request without an answer within ``timeout_seconds`` a
     ``StoreTimeoutError`` and an IAM denial a ``StoreAccessDeniedError``; this
     package's own errors and any other failure (a query Neptune failed) are
-    returned unchanged.
+    returned unchanged. ``timeout_setting`` names the setting the timeout
+    comes from, for the message.
     """
     if isinstance(exc, GraphRAGException):
         return exc
@@ -133,10 +147,9 @@ def neptune_request_error(
             "neptune-db:ReadDataViaQuery)."
         )
     if is_timeout(exc):
-        within = f"within {timeout_seconds} s " if timeout_seconds else ""
-        return StoreTimeoutError(
-            f"Neptune did not answer {within}(search.store_timeout_seconds)"
-        )
+        within = f" within {timeout_seconds} s" if timeout_seconds else ""
+        setting = f" ({timeout_setting})" if timeout_setting else ""
+        return StoreTimeoutError(f"Neptune did not answer{within}{setting}")
     if is_connection_lost(exc):
         at = f" at '{url}'" if url else ""
         return StoreConnectionError(
@@ -170,7 +183,9 @@ def run_traversal(
         traversal.iterate()
         return []
     except Exception as e:
-        error = neptune_request_error(e, client.timeout_seconds)
+        error = neptune_request_error(
+            e, client.timeout_seconds, timeout_setting=client.timeout_setting
+        )
         if isinstance(error, StoreConnectionError):
             client.reset(g)
         if error is e:
@@ -308,15 +323,18 @@ class NeptuneClient:
         boto_session: "boto3.Session | None" = None,
         *,
         timeout_seconds: float | None = None,
+        timeout_setting: str | None = QUERY_TIMEOUT_SETTING,
     ):
         """``timeout_seconds`` bounds opening a connection and each request's
-        read and write; ``None`` leaves them unbounded (the indexer's long
-        writes and drops)."""
+        read and write; ``None`` leaves them unbounded. ``timeout_setting``
+        names where it comes from in a timeout's message (``None``: no
+        setting)."""
         self.config = config
         self.neptune_config = config.aws.neptune
         if boto_session is not None:
             self.boto_session = boto_session
         self.timeout_seconds = timeout_seconds
+        self.timeout_setting = timeout_setting
         self._connection: DriverRemoteConnection | None = None
         self._g: GraphTraversalSource | None = None
         self._lock = threading.RLock()  # Reentrant lock for thread safety
@@ -431,7 +449,9 @@ class NeptuneClient:
                 except Exception as close_error:  # noqa: BLE001 - keep the cause
                     logger.debug("Error closing failed connection: %s", close_error)
             logger.error("Neptune connection probe failed: %s", e)
-            error = neptune_request_error(e, timeout, connection_url)
+            error = neptune_request_error(
+                e, timeout, connection_url, self.timeout_setting
+            )
             if error is not e:
                 raise error from e
             if isinstance(e, GraphRAGException):

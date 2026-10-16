@@ -319,6 +319,15 @@ class CommunityDetector:
                 cluster_graph.number_of_nodes(),
                 cluster_graph.number_of_edges(),
             )
+            if cluster_graph.size(weight="weight") == 0:
+                # No edge joins two communities: the normal top of the
+                # hierarchy, not the edgeless input _get_base_partition warns of.
+                logger.info(
+                    "No edges between the communities of level %s, stopping "
+                    "hierarchy construction",
+                    level - 1,
+                )
+                break
 
             next_partition = self._get_base_partition(cluster_graph)
 

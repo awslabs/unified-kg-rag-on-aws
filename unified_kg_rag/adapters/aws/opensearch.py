@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
 import json
+import logging
 import re
 import time
 from collections.abc import Awaitable, Callable
@@ -211,7 +212,9 @@ def _missing_analyzer_error(
     return StoreRequestRejectedError(msg, reason=reason)
 
 
-def _wrap_transport_error(exc: TransportError, context: str) -> AWSServiceError:
+def _wrap_transport_error(
+    exc: TransportError, context: str, log_level: int = logging.ERROR
+) -> AWSServiceError:
     """The typed error the client raises for ``exc`` (to be chained ``from exc``).
 
     The transport has already retried what a retry may fix (a timeout and
@@ -222,10 +225,15 @@ def _wrap_transport_error(exc: TransportError, context: str) -> AWSServiceError:
     over the clause limit) a ``StoreRequestRejectedError`` (both carry the
     server's reason). Any other status (a 500 for one query) stays a plain
     ``AWSServiceError``.
+
+    Logged at ``log_level`` with the traceback: the async calls serve the
+    retriever only, which logs the errors it keeps and discards the rest (a
+    search cancelled once its index's attribute probe found nothing), so they
+    log at DEBUG.
     """
     reason = error_reason(exc)
     msg = f"{context}: status={exc.status_code}, error={reason}"
-    logger.exception(msg)
+    logger.log(log_level, msg, exc_info=True)
     if isinstance(exc, ConnectionTimeout):
         return StoreTimeoutError(msg)
     if isinstance(exc, OpenSearchConnectionError):
@@ -275,8 +283,11 @@ def _handle_async_opensearch_errors(func: Callable) -> Callable:
             logger.debug("Resource not found during async '%s': %s", func.__name__, e)
             raise
         except TransportError as e:
+            index = kwargs.get("index", args[0] if args else None)
             raise _wrap_transport_error(
-                e, f"Async transport error in '{func.__name__}'"
+                e,
+                f"Async transport error in '{func.__name__}' on '{index}'",
+                logging.DEBUG,
             ) from e
         except GraphRAGException:
             raise

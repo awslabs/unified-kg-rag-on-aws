@@ -1118,12 +1118,14 @@ class ClaimExtractionConfig(BaseModel):
 
 class ProcessingConfig(BaseModel):
     max_concurrency: int = Field(
-        default=20,
+        default=40,
         ge=1,
         description="LLM calls an ingestion stage keeps in flight: the next "
         "item starts as soon as one finishes, so this is both the peak and the "
         "steady concurrency. These stages are Bedrock-I/O-bound (CPU/memory "
-        "near-idle), so this can be well above the CPU count.",
+        "near-idle), so this can be well above the CPU count. Bedrock quotas "
+        "differ per account, model and Region: lower it if the logs show "
+        "ThrottlingException retries.",
     )
     max_attempts: int = Field(
         default=5,

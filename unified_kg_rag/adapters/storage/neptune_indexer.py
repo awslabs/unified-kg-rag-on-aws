@@ -16,6 +16,7 @@ from gremlin_python.process.graph_traversal import (
 from gremlin_python.process.traversal import Cardinality, P, Traversal
 
 from unified_kg_rag.adapters.aws.neptune import (
+    INGESTION_REQUEST_TIMEOUT_SECONDS,
     NeptuneClient,
     is_permanent_neptune_error,
     run_traversal,
@@ -67,7 +68,10 @@ class NeptuneIndexer(GraphIndexer):
         super().__init__(config)
         self.neptune_config = self.config.indexing.neptune
         self.neptune_client = NeptuneClient(
-            config=self.config, boto_session=boto_session
+            config=self.config,
+            boto_session=boto_session,
+            timeout_seconds=INGESTION_REQUEST_TIMEOUT_SECONDS,
+            timeout_setting=None,
         )
 
     def close(self) -> None:
