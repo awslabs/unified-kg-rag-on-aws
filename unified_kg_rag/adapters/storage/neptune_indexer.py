@@ -217,9 +217,6 @@ class NeptuneIndexer(GraphIndexer):
             )
             return []
 
-    def initialize(self) -> None:
-        return None
-
     def index_entities(
         self, entities: list[Entity], *, suffixes: Collection[str] = ()
     ) -> IndexingStats:

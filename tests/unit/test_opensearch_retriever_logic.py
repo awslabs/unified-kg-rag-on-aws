@@ -11,12 +11,15 @@ attributes the methods touch are set.
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
 from unified_kg_rag.adapters.retrievers.opensearch_retriever import OpenSearchRetriever
 from unified_kg_rag.domain.models import Config, SearchQuery, SearchType
 from unified_kg_rag.domain.models.config import LanguageCode
+from unified_kg_rag.shared.exceptions import StoreRequestRejectedError
 from unified_kg_rag.shared.utils.scripts import is_dense_script_char
 
 pytestmark = pytest.mark.unit
@@ -539,30 +542,39 @@ async def test_hybrid_fuses_the_two_searches_client_side(
 
 
 @pytest.mark.parametrize(
-    ("search_type", "filters", "searches"),
+    ("search_type", "filters", "probed"),
     [
-        # No document has the attribute: only the probe runs.
-        (SearchType.HYBRID, {"attr_category": "a"}, 1),
-        (SearchType.VECTOR, {"attributes.category": "a"}, 1),
+        # No document has the attribute: the probe discards the searches.
+        (SearchType.HYBRID, {"attr_category": "a"}, True),
+        (SearchType.VECTOR, {"attributes.category": "a"}, True),
         # A lexical filter on an unmapped field matches nothing, unprobed.
-        (SearchType.LEXICAL, {"attr_category": "a"}, 1),
+        (SearchType.LEXICAL, {"attr_category": "a"}, False),
         # Declared fields are always mapped: no probe.
-        (SearchType.HYBRID, {"rank": {"gte": 1}}, 2),
+        (SearchType.HYBRID, {"rank": {"gte": 1}}, False),
     ],
 )
-async def test_attribute_filter_probes_before_a_knn_search(
-    retriever, config, mocker, search_type, filters, searches
+async def test_attribute_filter_probe_runs_alongside_the_searches(
+    retriever, config, mocker, search_type, filters, probed
 ) -> None:
     # OpenSearch 2.13 rejects a kNN filter on a field the index does not map
-    # (attr_* on community reports), which failed the whole query.
+    # (attr_* on community reports), which failed the whole query. The probe
+    # ran before the searches, adding a round trip to every filtered query.
     prefix = config.indexing.opensearch.community_reports_index_prefix
 
     class _NoAttributes(_Client):
+        in_flight_at_probe = 0
+
         async def asearch(self, **request) -> dict:
-            response = await super().asearch(**request)
-            if request["body"].get("_source") is False:
-                response["hits"]["hits"] = []
-            return response
+            body = request["body"]
+            if body.get("_source") is False:
+                self.requests.append(request)
+                await asyncio.sleep(0)  # the searches start meanwhile
+                self.in_flight_at_probe = len(self.requests) - 1
+                return {"hits": {"hits": []}}
+            if "knn" in str(body["query"]) and "attr" in str(body["query"]):
+                self.requests.append(request)
+                raise StoreRequestRejectedError("status=400", reason="Rewrite first")
+            return await super().asearch(**request)
 
     client = _NoAttributes({prefix: [("cr1", 1.0)]})
     object.__setattr__(retriever, "_opensearch_client", client)
@@ -579,11 +591,13 @@ async def test_attribute_filter_probes_before_a_knn_search(
             filters=filters,
         )
     )
-    assert len(client.requests) == searches
-    probed = any(body.get("_source") is False for body in client.bodies)
-    assert probed == (searches == 1 and search_type != SearchType.LEXICAL)
+    searches = 1 if search_type != SearchType.HYBRID else 2
+    assert any(body.get("_source") is False for body in client.bodies) == probed
     if probed:
         assert results == []
+        assert client.in_flight_at_probe == searches
+    else:
+        assert len(client.requests) == searches
 
 
 async def test_index_sweep_takes_each_index_in_turn(retriever, config, mocker) -> None:

@@ -357,13 +357,6 @@ class OpenSearchIndexer(VectorIndexer):
 
         logger.info("Cleared OpenSearch indices for '%s'", aliases_to_delete)
 
-    def initialize(self) -> None:
-        """Nothing to prepare: each index is created by its first write.
-
-        Hybrid search fuses its lexical and kNN hits in the retriever, so no
-        search pipeline is written.
-        """
-
     def _specs(self) -> tuple[_ItemSpec, ...]:
         config = self.opensearch_config
         return (

@@ -70,6 +70,15 @@ _CLIENT_RETRY_STATUSES = (429, 502, 503, 504)
 # burst of a few milliseconds used up every attempt.
 _QUERY_RETRY_BASE_DELAY_SECONDS = 0.5
 _QUERY_RETRY_MAX_DELAY_SECONDS = 4.0
+# aiohttp connection limit of the async (query) client. opensearch-py's default
+# of 10 queues every request past the tenth, and the wait counts against
+# search.store_timeout_seconds: a query sends up to three searches at once
+# (the attribute-filter probe, lexical and kNN), run-eval keeps
+# processing.max_concurrency queries in flight and the query path runs on
+# processing.io_workers threads. The bounds mirror the Bedrock client's pool.
+_QUERY_SEARCHES_PER_QUERY = 3
+_QUERY_POOL_MIN = 10
+_QUERY_POOL_MAX = 200
 
 _DELETE_BATCH_MAX_NAMES = 20
 _DELETE_BATCH_MAX_CHARS = 3000
@@ -542,7 +551,17 @@ class OpenSearchClient:
             "max_retries": 0 if async_mode else _CLIENT_MAX_RETRIES,
             "retry_on_timeout": True,
             "retry_on_status": _CLIENT_RETRY_STATUSES,
+            **({"pool_maxsize": self._query_pool_size()} if async_mode else {}),
         }
+
+    def _query_pool_size(self) -> int:
+        """The async client's connection limit under the configured concurrency."""
+        processing = self.config.processing
+        wanted = max(
+            processing.io_workers,
+            _QUERY_SEARCHES_PER_QUERY * processing.max_concurrency,
+        )
+        return max(_QUERY_POOL_MIN, min(wanted, _QUERY_POOL_MAX))
 
     def _get_auth(
         self, async_mode: bool

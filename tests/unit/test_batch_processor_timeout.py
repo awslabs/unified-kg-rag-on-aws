@@ -42,6 +42,18 @@ def test_run_with_timeout_aborts_hung_call(release_hung_calls) -> None:
         BatchProcessor._run_with_timeout(release_hung_calls.wait, 1, "hung")
 
 
+def test_run_with_timeout_reraises_a_timeout_the_call_raised(caplog) -> None:
+    # TimeoutError is concurrent.futures.TimeoutError since Python 3.11, so a
+    # call that raised one (a socket timeout, say) read as the call timeout:
+    # a misleading warning and a new error naming the wrong limit.
+    def times_out() -> None:
+        raise TimeoutError("read timed out")
+
+    with pytest.raises(TimeoutError, match="^read timed out$"):
+        BatchProcessor._run_with_timeout(times_out, 5, "own")
+    assert "call timeout" not in caplog.text
+
+
 def test_run_with_timeout_returns_fast_result() -> None:
     assert BatchProcessor._run_with_timeout(lambda: 42, 5, "fast") == 42
 

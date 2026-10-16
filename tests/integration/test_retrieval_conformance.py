@@ -371,7 +371,17 @@ def test_additional_target_language_is_searchable(harness: StoreHarness) -> None
 def test_hybrid_scores_are_normalized_and_follow_the_weights(
     harness: StoreHarness,
 ) -> None:
-    _ingest(harness)
+    # Lexical and vector search rank this corpus differently, so fusing with
+    # the weights swapped puts the other search's order first. BM25 favours
+    # "rare", the one document with the query's rare terms; the bag-of-words
+    # cosine favours the short documents of the common words.
+    harness.initialize()
+    units = [TextUnit(id="rare", text="Vendor ship zebra yak xylophone walrus")]
+    units += [
+        TextUnit(id=f"common{i}", text=f"which does which does filler{i}")
+        for i in range(6)
+    ]
+    assert harness.vector_indexer.index_text_units(units).failed_items == 0
     prefix = _prefixes(harness).text_units_index_prefix
     text = "Which widgets does Vendor ship?"
 
@@ -400,6 +410,8 @@ def test_hybrid_scores_are_normalized_and_follow_the_weights(
     (vector_only,) = _search(
         weighted(0.0, 1.0), _query(text, prefix, search_type=SearchType.HYBRID)
     )
+    assert lexical[0].source == "rare"
+    assert vector[0].source != "rare"
     # One sub-query weighted out: the fused order is the other's (min-max
     # keeps the order) and its best hit scores 1.
     assert [r.source for r in lexical_only][: len(lexical)] == [

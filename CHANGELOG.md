@@ -232,6 +232,11 @@ Library API (Python callers and custom backends).
   `OpenSearchClient.put_search_pipeline` are removed, and
   `OpenSearchIndexer.initialize` writes nothing: a custom search engine
   need not implement search pipelines or the `hybrid` query (#306).
+- `SQLiteSearchEngine` no longer answers a `hybrid` query or takes
+  `search(search_pipeline=)`: both now raise `StoreRequestRejectedError`,
+  as for any unsupported request. Nothing in the package sent them after
+  #306; a database file an earlier version wrote keeps its unused
+  `pipelines` table harmlessly (#309).
 - Removed APIs: `IncrementalIndexer.plan` / `prune_changed` /
   `remove_deleted` (use `detect_delta` and `remove_changed_and_deleted`)
   (#214); the LangChain-memory wrapper, `MemoryManager.get_langchain_memory`
@@ -267,6 +272,11 @@ Library API (Python callers and custom backends).
   `execute_with_fallback` no longer takes `batch_func` (sync) or
   `run_config` (#174, #216); `create_robust_xml_output_parser` requires
   `output_tags` (#174).
+- `BatchProcessor.aexecute_with_fallback` takes no `batch_func` either:
+  each item is one awaited `sequential_func` call (`Runnable.ainvoke`), as
+  on the sync path. A one-input `abatch(..., return_exceptions=True)` first
+  call was the same `ainvoke` with the error returned in place; a caller
+  still passing `batch_func=` gets a `TypeError` (#301).
 - `unified_kg_rag.visualization` exports only `GraphVisualizationManager`;
   import the renderers from `unified_kg_rag.adapters.renderers` and the
   embedder and reducer from `unified_kg_rag.visualization.embeddings` (#246).
@@ -328,8 +338,8 @@ Library API (Python callers and custom backends).
 - Embedded stores, no server needed: `providers.vector.kind: sqlite`, a
   vector and lexical store in one SQLite file (`providers.vector.sqlite_path`)
   that answers the OpenSearch queries the unchanged indexer and retriever
-  build (exact kNN, Lucene BM25, CJK bigram analyzers, neural-search hybrid
-  fusion) for about 100,000 documents per index; and
+  build (exact kNN, Lucene BM25, CJK bigram analyzers) for about 100,000
+  documents per index; and
   `providers.graph.kind: sqlite` (`SQLiteGraphIndexer`,
   `SQLiteGraphRetriever`), Neptune's write semantics and graph expansion in
   `providers.graph.sqlite_path`. Single host, one writer at a time, local
@@ -381,6 +391,26 @@ Library API (Python callers and custom backends).
 
 ### Changed
 - The data-plane image installs uv 0.12.23, the version CI uses (#303).
+- The OpenSearch query client keeps up to the larger of
+  `processing.io_workers` and three times `processing.max_concurrency`
+  connections (64 by default, between 10 and 200) instead of
+  opensearch-py's 10: a query sends up to three searches at once, and a
+  request waiting for a connection used up its `search.store_timeout_seconds`
+  under `run-eval`. A query with an attribute filter (`attr_<key>`,
+  `attributes.<path>`) runs its probe alongside the lexical and kNN
+  searches instead of before them, so it waits for one round trip instead
+  of two; when no document has the attribute the searches are cancelled
+  (#309).
+- The embedded search engine (`providers.vector.kind: sqlite`) selects the
+  `size` best matches instead of sorting every match (about 13 ms instead
+  of 120 ms for the top 10 of 100,000); the hits and their order, ties
+  included, are unchanged (#309).
+- `BaseIndexer.initialize` is a no-op by default, like `close`: a custom
+  `VectorIndexer` or `GraphIndexer` with nothing to prepare need not
+  override it (#309).
+- Tracing: `run-eval`'s judge model calls (`langchain`, `ragas`) nest under
+  one `kg_rag.evaluate` span per evaluator instead of each starting a root
+  trace of its own (#309).
 - `BatchProcessor` runs one pool of `max_concurrency` items instead of
   chunks of `batch_size` items in parallel, each waiting for its slowest
   item: a slow item holds only its own slot and is retried in it, and the
@@ -391,15 +421,6 @@ Library API (Python callers and custom backends).
   `kg_rag.batch.chunk` spans. Each Bedrock client's connection pool is
   sized to the larger of `processing.max_concurrency` and
   `processing.io_workers` (64 by default; it was 80) (#296).
-- `run-eval` generates up to `processing.max_concurrency` (20 by default)
-  answers at once instead of sequential chunks of 10 queries. Lower
-  `processing.max_concurrency` for an evaluation run that hits Bedrock or
-  store throttling (#301).
-- `BatchProcessor.aexecute_with_fallback` takes no `batch_func`: each item
-  is one awaited `sequential_func` call (`Runnable.ainvoke`), as on the sync
-  path. A one-input `abatch(..., return_exceptions=True)` first call was the
-  same `ainvoke` with the error returned in place; a caller still passing
-  `batch_func=` gets a `TypeError` (#301).
 - CI installs uv 0.12.23 in every workflow instead of whatever release
   `setup-uv` resolves on the day, so a uv release cannot change lock
   handling under an unchanged commit (#297).
@@ -548,6 +569,10 @@ Library API (Python callers and custom backends).
   (#300).
 
 ### Fixed
+- A batch LLM call that raised a `TimeoutError` of its own (a socket read
+  timeout, say) is no longer reported as exceeding
+  `BatchProcessor.call_timeout_seconds`: its own error propagates, so the log
+  names the real cause (#309).
 - An attribute filter (`attr_<key>`, `attributes.<path>`) no longer fails
   vector and hybrid searches on OpenSearch 2.13 with `ConfigurationError`
   ("Rewrite first") when an index never mapped the attribute, such as the
@@ -886,8 +911,8 @@ Library API (Python callers and custom backends).
   ("क:" + U+032A). Indexed text is analyzed when an index loads, so stored
   stores pick this up without re-indexing (#281).
 - A search on the embedded search engine reads one snapshot of the file.
-  It resolved the index, checked the result window, read the search
-  pipeline and loaded each index in separate reads, so an index another
+  It resolved the index, checked the result window and loaded each index
+  in separate reads, so an index another
   process swapped out and deleted in between (a blue/green re-index while
   queries are served) failed the query with a bare `TypeError` or answered
   from nothing. It now searches the index it resolved, whole (#280).
@@ -1229,8 +1254,8 @@ Library API (Python callers and custom backends).
   query with two or more over-long list filters searches every combination
   of their batches; batch i of one filter was paired only with batch i of
   the other, so matches across batches were missed (#249).
-- A search OpenSearch rejects with HTTP 400 (a filter value of another type
-  than its field, a `hybrid_search_pipeline_name` that does not exist) fails
+- A search OpenSearch rejects with HTTP 400 (such as a filter value of
+  another type than its field) fails
   with a `ConfigurationError` naming the server's reason. It degraded like a
   timeout, so the query was answered from no context, or from the indices
   the filter did not apply to (#249).
@@ -1323,10 +1348,6 @@ Library API (Python callers and custom backends).
   longer grows with the corpus (about 75 KB per entity before, several
   gigabytes at 50,000 entities with up to six types indexed concurrently), and
   the index is refreshed once per type as before (#252).
-- A changed `search.hybrid.lexical_weight` or `vector_weight` now takes
-  effect: `run-ingestion` writes the OpenSearch hybrid search pipeline on
-  every run. Before, it was created only when absent, so the weights of the
-  first run on a domain stayed in force (#252).
 - With `indexing.opensearch.persist_embedding_cache`, an embedding-cache
   object that exists but cannot be read (throttling, access denied, a network
   error) is no longer treated as empty: the run embeds without it and does not

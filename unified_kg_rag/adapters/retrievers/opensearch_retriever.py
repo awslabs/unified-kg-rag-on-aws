@@ -3,7 +3,7 @@
 import asyncio
 import time
 from collections import OrderedDict
-from collections.abc import Coroutine
+from collections.abc import Coroutine, Sequence
 from itertools import zip_longest
 from typing import Any, ClassVar
 
@@ -113,6 +113,13 @@ def _index_setting(settings: dict[str, Any], name: str, default: int) -> int:
     OpenSearch takes either spelling of an index setting.
     """
     return int(settings.get(name, settings.get(f"index.{name}", default)))
+
+
+async def _discard(tasks: Sequence[asyncio.Future[Any]]) -> None:
+    """Cancel ``tasks`` and wait for them, ignoring how they ended."""
+    for task in tasks:
+        task.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
 
 
 class OpenSearchRetriever(BaseGraphRAGRetriever):
@@ -806,12 +813,23 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
     ) -> list[RetrievalResult]:
         """The hits of ``bodies`` on ``alias``; two (hybrid) are fused.
 
-        With a ``probe`` (``_attribute_probe``) that finds nothing, none.
-        A search that failed transiently or found no index degrades the
-        index to no hits (logged once), as one hybrid search did.
+        With a ``probe`` (``_attribute_probe``) that finds nothing, none. The
+        searches start alongside the probe, so a filtered query waits for one
+        round trip instead of two; when the probe finds nothing they are
+        cancelled and their outcome (the 400 a kNN filter on an unmapped
+        field draws, say) ignored. A search that failed transiently or found
+        no index degrades the index to no hits (logged once), as one hybrid
+        search did.
         """
+        searches = [asyncio.ensure_future(self._search(alias, b)) for b in bodies]
         if probe is not None:
-            found = await self._search(alias, probe)
+            try:
+                found = await self._search(alias, probe)
+            except BaseException:
+                await _discard(searches)
+                raise
+            if isinstance(found, Exception) or not found:
+                await _discard(searches)
             if isinstance(found, Exception):
                 return await self._degraded_search(alias, suffix, found)
             if not found:
@@ -821,7 +839,7 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                     alias,
                 )
                 return []
-        outcomes = await asyncio.gather(*(self._search(alias, body) for body in bodies))
+        outcomes = await asyncio.gather(*searches)
         responses: list[list[dict[str, Any]]] = []
         for outcome in outcomes:
             if isinstance(outcome, Exception):

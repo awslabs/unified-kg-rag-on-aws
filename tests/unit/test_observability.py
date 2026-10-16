@@ -12,6 +12,7 @@ log records and context propagation across the executor.
 
 from __future__ import annotations
 
+import asyncio
 import itertools
 import json
 import subprocess
@@ -45,6 +46,10 @@ from unified_kg_rag.application.observability import configure_observability
 from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain, RAGInput
 from unified_kg_rag.domain.models import (
     Config,
+    EvaluationGroundTruth,
+    EvaluationQuery,
+    EvaluationResult,
+    EvaluatorType,
     ModelPurpose,
     ObservabilityBackend,
     ObservabilityConfig,
@@ -56,6 +61,8 @@ from unified_kg_rag.domain.models import (
     SearchQuery,
     SearchStrategy,
 )
+from unified_kg_rag.evaluation import EvaluationManager
+from unified_kg_rag.evaluation.evaluation_manager import GraphAwareEvaluator
 from unified_kg_rag.shared import ConfigurationError, observability
 from unified_kg_rag.shared.logging import _SHARED_PROCESSORS, add_trace_ids
 from unified_kg_rag.shared.utils.concurrency import ContextThreadPoolExecutor
@@ -1090,3 +1097,40 @@ def test_guardrail_intervention_and_invoke_model_usage_fallback(
         attrs["gen_ai.usage.input_tokens"],
         attrs["gen_ai.usage.output_tokens"],
     ) == (11, 2)
+
+
+# --- evaluation -----------------------------------------------------------------
+
+
+async def test_judge_calls_nest_under_an_evaluate_span(
+    tracing: Tracing, mocker
+) -> None:
+    # run-eval's judge model calls each started a root trace of their own.
+    exporter = tracing()
+    config = Config()
+    config.evaluation.enabled_evaluators = [EvaluatorType.GRAPH_AWARE]
+    manager = EvaluationManager(config, rag_chain=object())
+
+    async def judge(*_args: Any) -> list:
+        async def call() -> None:
+            with observability.span("chat judge"):
+                await asyncio.sleep(0)
+
+        await asyncio.gather(call(), call())
+        return []
+
+    mocker.patch.object(GraphAwareEvaluator, "aevaluate_batch", side_effect=judge)
+    await manager._evaluate_results(
+        [EvaluationQuery(query_id="q1", question="?")],
+        [
+            EvaluationResult(
+                query_id="q1", question="?", generated_answer="a", ground_truth=""
+            )
+        ],
+        [EvaluationGroundTruth(query_id="q1", ground_truth="a")],
+    )
+    evaluate = _one(exporter, "kg_rag.evaluate")
+    assert _attrs(evaluate)["kg_rag.evaluator"] == "graph_aware"
+    assert _attrs(evaluate)["kg_rag.items"] == 1
+    calls = _by_name(exporter)["chat judge"]
+    assert len(calls) == 2 and all(_is_child(c, evaluate) for c in calls)

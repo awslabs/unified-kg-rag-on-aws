@@ -115,9 +115,13 @@ class BaseIndexer(ABC):
         caller sees why (denied, unreachable, misconfigured).
         """
 
-    @abstractmethod
     def initialize(self) -> None:
-        """Prepare the backend for writes; raises its typed store error."""
+        """Prepare the backend for writes; raises its typed store error.
+
+        Default no-op: a backend that creates what it writes on the first
+        write (OpenSearch indices, Neptune vertices) has nothing to prepare.
+        """
+        return None
 
     def close(self) -> None:
         """Release any backing clients/connections. Default no-op.
