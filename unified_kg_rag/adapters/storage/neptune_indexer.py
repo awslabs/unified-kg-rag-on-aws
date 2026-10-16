@@ -46,8 +46,9 @@ logger = get_logger(__name__)
 # Retry-backoff seams: tests patch these module attributes rather than the
 # process-global ``time.sleep``/``random.uniform``, which other threads share.
 _sleep = time.sleep
-# Retry-backoff jitter only; not a security/crypto context.
-_jitter = random.uniform  # nosec B311
+# Retry-backoff jitter only; drawn from the OS so CWE-338 scanners do not
+# flag the seedable module PRNG.
+_jitter = random.SystemRandom().uniform
 
 # Vertices one clear request drops, and the passes a clear allows beyond what
 # the label's count needs.

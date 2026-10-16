@@ -137,8 +137,8 @@ extension with the install command (`Skipping 2 '.md' file(s) ... install the
 optional 'unstructured' extra`). On Python 3.11 or 3.12, install the patched
 parser with
 `uv sync --extra unstructured` or `pip install -e '.[unstructured]'`.
-The extra requires `unstructured>=0.24.0`, which fixes URL-partitioning SSRF
-and no longer depends on NLTK. On Python 3.10 the extra does not install a parser;
+The extra requires `unstructured>=0.24.1`, which fixes URL-partitioning SSRF
+and unescaped markup in generated HTML, and no longer depends on NLTK. On Python 3.10 the extra does not install a parser;
 use PDF/TXT/CSV/JSON, or upgrade Python for Markdown/HTML support.
 
 The deployed container image (`docker/Dockerfile`) leaves this extra out by
@@ -395,8 +395,9 @@ file's Gremlin Server creates a TinkerGraph index on that property for
 vertices and edges at start-up. A Gremlin Server started without it scans
 every vertex or edge per lookup and slows down as the graph grows (10,000
 entities and their communities took about 60 seconds instead of 20). Use it
-for development-sized corpora. Nothing in the compose file is hardened; it binds
-to `127.0.0.1` only.
+for development-sized corpora. The containers drop all Linux capabilities, but
+the stores have no authentication or TLS; the compose file binds them to
+`127.0.0.1` only.
 
 #### Local stores with Bedrock models
 

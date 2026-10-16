@@ -24,6 +24,10 @@ logger = get_logger(__name__)
 # Module-level indirection so tests can stub the backoff wait for this module
 # only, without catching unrelated threads that call time.sleep.
 _sleep = time.sleep
+# Backoff jitter is not a security context, but drawing it from the OS
+# (CWE-338 scanners flag the seedable module PRNG) costs nothing at retry
+# rates and keeps it independent of any random.seed() the caller makes.
+_jitter_rng = random.SystemRandom()
 
 T = TypeVar("T")
 
@@ -95,7 +99,7 @@ def backoff_delay(attempt: int, base_delay: float, max_delay: float) -> float:
     """
     ceiling: float = min(max_delay, base_delay * 2.0 ** (attempt - 1))
     half = ceiling / 2
-    return half + random.uniform(0, half)  # noqa: S311 - jitter, not crypto
+    return half + _jitter_rng.uniform(0, half)
 
 
 def next_transient_retry_delay(

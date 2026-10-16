@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import io
 import json
+import random
 from typing import Any
 
 import pytest
@@ -104,6 +105,11 @@ def test_backoff_delay_is_bounded_and_grows() -> None:
         ceiling = min(16.0, 2.0 * 2 ** (attempt - 1))
         d = backoff_delay(attempt, base_delay=2.0, max_delay=16.0)
         assert ceiling / 2 <= d <= ceiling
+
+
+def test_backoff_jitter_is_not_the_seedable_module_prng() -> None:
+    # SAST flags random.uniform (CWE-338); the jitter draws from the OS.
+    assert isinstance(llm_retry._jitter_rng, random.SystemRandom)
 
 
 # --- embedding wrapper ----------------------------------------------------

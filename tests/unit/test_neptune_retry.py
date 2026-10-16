@@ -15,6 +15,7 @@ fast and deterministic.
 from __future__ import annotations
 
 import json
+import random
 
 import aiohttp
 import pytest
@@ -303,3 +304,11 @@ def test_an_item_the_fallback_cannot_index_logs_an_error(
     assert stats.failed_items == 2
     levels = [r.levelno for r in caplog.records if "attempt(s)" in r.getMessage()]
     assert levels == [logging.WARNING, logging.ERROR, logging.ERROR]
+
+
+def test_jitter_is_not_the_seedable_module_prng(mocker) -> None:
+    # SAST flags random.uniform (CWE-338); the jitter draws from the OS.
+    from unified_kg_rag.adapters.storage import neptune_indexer
+
+    mocker.stopall()  # undo the autouse _jitter stub
+    assert isinstance(neptune_indexer._jitter.__self__, random.SystemRandom)
