@@ -1823,11 +1823,11 @@ Library API (Python callers and custom backends).
   (GHSA-r7w7-9xr2-qq2r).
 - The `unstructured` extra requires `unstructured>=0.24.1`: 0.24.0 kept a
   parsed document's markup unescaped in the HTML it generates, a stored XSS
-  (GHSA-v5mq-3xhg-98m9, CVE-2026-104250) (#PR).
+  (GHSA-v5mq-3xhg-98m9, CVE-2026-104250) (#307).
 - The containers of `docker/compose.local.yaml` drop all Linux capabilities
-  and run with `no-new-privileges` (#PR).
+  and run with `no-new-privileges` (#307).
 - The data-plane image declares `HEALTHCHECK NONE`: its tasks are batch
-  jobs tracked by exit code (#PR).
+  jobs tracked by exit code (#307).
 - Retry backoff jitter draws from `random.SystemRandom`, not the seedable
   module PRNG (CWE-338 scanner finding; jitter is not a security
-  boundary) (#PR).
+  boundary) (#307).
