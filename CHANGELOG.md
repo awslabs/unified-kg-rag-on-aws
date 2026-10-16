@@ -74,9 +74,8 @@ ignored, so check the start-up warnings after upgrading.
 - `processing.chunk_concurrency` and `processing.batch_size` are removed
   with the chunking they drove: an LLM stage keeps
   `processing.max_concurrency` calls in flight and starts the next item as
-  soon as one finishes. The default (20) now is the peak; it burst to 40
-  before but averaged about 18 in flight, so set a higher value to go
-  faster. RAGAS judges run `evaluation.ragas_max_workers` jobs without
+  soon as one finishes. The default (now 40, 20 under `backend: local`) is the peak; it
+  burst to 40 before but averaged about 18 in flight. RAGAS judges run `evaluation.ragas_max_workers` jobs without
   batching (#296).
 - A filter key that no retriever of the strategy declares raises
   `InvalidFilterError` (#123).
