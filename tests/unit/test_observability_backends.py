@@ -204,10 +204,12 @@ def test_settings_repr_and_description_hold_no_secret() -> None:
     for text in (repr(settings), settings.describe()):
         assert _SECRET not in text and token not in text and _PUBLIC not in text
     assert "headers=authorization,x-langfuse-ingestion-version" in settings.describe()
-    assert (
-        safe_url("https://user:pw@collector.example.com:4318/v1/traces?key=s#f")
-        == "https://collector.example.com:4318/v1/traces"
+    # A fake credential the test checks gets stripped.
+    url = (
+        "https://user:pw@collector.example.com:4318"  # gitleaks:allow
+        "/v1/traces?key=s#f"
     )
+    assert safe_url(url) == "https://collector.example.com:4318/v1/traces"
 
 
 # --- backend construction ----------------------------------------------------
