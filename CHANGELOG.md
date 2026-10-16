@@ -1824,3 +1824,5 @@ Library API (Python callers and custom backends).
 - The `unstructured` extra requires `unstructured>=0.24.1`: 0.24.0 kept a
   parsed document's markup unescaped in the HTML it generates, a stored XSS
   (GHSA-v5mq-3xhg-98m9, CVE-2026-104250) (#PR).
+- The containers of `docker/compose.local.yaml` drop all Linux capabilities
+  and run with `no-new-privileges` (#PR).

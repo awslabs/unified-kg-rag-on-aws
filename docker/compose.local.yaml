@@ -22,9 +22,10 @@
 #   NVIDIA GPU add a `gpus: all` key to the service (needs the NVIDIA
 #   Container Toolkit), or run Ollama on the host instead.
 #
-# docker/config.local.yaml points the framework at them. Nothing here is
-# hardened: ports bind to 127.0.0.1, the graph lives in memory, and the
-# OpenSearch and model volumes are removed by `down -v`.
+# docker/config.local.yaml points the framework at them. Each container
+# drops all Linux capabilities and cannot gain privileges, but the stores
+# have no auth or TLS: ports bind to 127.0.0.1 only, the graph lives in
+# memory, and the OpenSearch and model volumes are removed by `down -v`.
 
 name: unified-kg-rag-local
 
@@ -39,6 +40,8 @@ services:
       DISABLE_SECURITY_PLUGIN: "true"
       DISABLE_INSTALL_DEMO_CONFIG: "true"
       OPENSEARCH_JAVA_OPTS: -Xms1g -Xmx1g
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
     ports:
       - 127.0.0.1:9200:9200
     volumes:
@@ -51,6 +54,8 @@ services:
 
   gremlin-server:
     image: tinkerpop/gremlin-server:3.7.7@sha256:afc395b5e96cfeea72b6d0b59d22ad5cee502c31bfdad6f4d3b2de070d905e0f
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
     ports:
       - 127.0.0.1:8182:8182
     configs:
@@ -72,6 +77,8 @@ services:
     environment:
       # Keep a model loaded between the pipeline's bursts of calls.
       OLLAMA_KEEP_ALIVE: 30m
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
     ports:
       - 127.0.0.1:11434:11434
     volumes:

@@ -59,7 +59,7 @@ See the [User Guide §4](./docs/user-guide.md#4-querying-run-rag) for per-strate
 The AWS paths call Amazon Bedrock, so enable the
 [required models](./docs/user-guide.md#required-models) first. Local mode is
 for development and evaluation only: the embedded stores serve one host and
-about 100,000 documents per index, the containers are not hardened, and small
+about 100,000 documents per index, the containers have no authentication or TLS, and small
 local models extract weaker graphs.
 
 ### Prerequisites

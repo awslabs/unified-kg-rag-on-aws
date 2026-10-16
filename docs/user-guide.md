@@ -395,8 +395,9 @@ file's Gremlin Server creates a TinkerGraph index on that property for
 vertices and edges at start-up. A Gremlin Server started without it scans
 every vertex or edge per lookup and slows down as the graph grows (10,000
 entities and their communities took about 60 seconds instead of 20). Use it
-for development-sized corpora. Nothing in the compose file is hardened; it binds
-to `127.0.0.1` only.
+for development-sized corpora. The containers drop all Linux capabilities, but
+the stores have no authentication or TLS; the compose file binds them to
+`127.0.0.1` only.
 
 #### Local stores with Bedrock models
 
