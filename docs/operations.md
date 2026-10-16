@@ -506,7 +506,8 @@ service `unified-kg-rag`. Each ingestion run is one `kg_rag.ingestion.run`
 trace and each `run-rag` query one `kg_rag.query` trace, with the children
 listed under [Observability](#observability). A `run-eval` run is one
 `kg_rag.batch` trace: its queries are `kg_rag.query` children of that root, so
-the list shows the batch, not each query. The spans are also in the `aws/spans` log
+the list shows the batch, not each query; each evaluator adds one
+`kg_rag.evaluate` trace holding its judge model calls. The spans are also in the `aws/spans` log
 group, for Logs Insights (if a field comes back empty, run
 `fields @message | limit 5` first to see the exact field paths):
 

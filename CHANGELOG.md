@@ -403,6 +403,9 @@ Library API (Python callers and custom backends).
 - `BaseIndexer.initialize` is a no-op by default, like `close`: a custom
   `VectorIndexer` or `GraphIndexer` with nothing to prepare need not
   override it (#PR).
+- Tracing: `run-eval`'s judge model calls (`langchain`, `ragas`) nest under
+  one `kg_rag.evaluate` span per evaluator instead of each starting a root
+  trace of its own (#PR).
 - `BatchProcessor` runs one pool of `max_concurrency` items instead of
   chunks of `batch_size` items in parallel, each waiting for its slowest
   item: a slow item holds only its own slot and is retried in it, and the

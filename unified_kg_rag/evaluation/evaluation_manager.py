@@ -42,7 +42,7 @@ from unified_kg_rag.domain.models import (
     RetrieverRole,
     model_id_value,
 )
-from unified_kg_rag.shared import EvaluationException, get_logger
+from unified_kg_rag.shared import EvaluationException, get_logger, observability
 from unified_kg_rag.shared.utils.langchain import BATCH_ITEM_FAILED, BatchProcessor
 
 from .answer_match_evaluator import AnswerMatchEvaluator
@@ -717,9 +717,16 @@ class EvaluationManager:
 
         for evaluator_type, evaluator in self.evaluators.items():
             try:
-                reports = await evaluator.aevaluate_batch(
-                    scorable_queries, scorable_results, gt_list
-                )
+                # The judge model calls nest under this span instead of each
+                # starting a root trace of its own.
+                with observability.span(
+                    "kg_rag.evaluate",
+                    evaluator=evaluator_type.value,
+                    items=len(scorable_results),
+                ):
+                    reports = await evaluator.aevaluate_batch(
+                        scorable_queries, scorable_results, gt_list
+                    )
                 all_reports.extend(reports)
             except Exception as e:
                 logger.error(
