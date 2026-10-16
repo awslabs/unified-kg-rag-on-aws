@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import threading
 from unittest.mock import MagicMock
 
 import pytest
@@ -118,3 +119,28 @@ def test_s3_cache_serves_a_later_call(indexer) -> None:
 
     assert indexer._batch_embed(["alpha"]) == [[5.0] * 4]
     assert indexer._embedded_log == []
+
+
+def test_embedding_requests_run_sixteen_at_once(indexer) -> None:
+    # 8 requests in flight left Bedrock headroom unused: 16 halved the
+    # embedding time in the real-AWS E2E with no throttling.
+    lock = threading.Lock()
+    in_flight = peak = 0
+    full = threading.Event()
+
+    def _embed(texts):
+        nonlocal in_flight, peak
+        with lock:
+            in_flight += 1
+            peak = max(peak, in_flight)
+            if in_flight >= 16:
+                full.set()
+        full.wait(timeout=2)
+        with lock:
+            in_flight -= 1
+        return [[1.0] * 4 for _ in texts]
+
+    indexer.embedding_model.embed_documents = _embed
+    result = indexer._batch_embed([f"text {i}" for i in range(50 * 32)])
+    assert all(r is not None for r in result)
+    assert peak == 16

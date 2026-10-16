@@ -37,9 +37,10 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 # Texts per embedding request, and requests in flight at once (Bedrock
-# embedding calls are IO-bound).
+# embedding calls are IO-bound). In the real-AWS E2E 16 requests in flight
+# embedded 1,600 texts in half the time 8 took, with no throttling.
 _EMBED_BATCH_SIZE = 50
-_EMBED_WORKERS = 8
+_EMBED_WORKERS = 16
 # Items embedded and bulk-written at a time: one round of the concurrent
 # embedding requests. Holding a whole item type's vectors as float lists
 # before one bulk call took gigabytes on a large corpus.
