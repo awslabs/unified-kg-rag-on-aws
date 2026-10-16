@@ -21,7 +21,7 @@ section of the [user guide](docs/user-guide.md#27-memory-cache-logging).
 ## Dependency advisories
 
 Use the committed lockfile for reproducible installations. The optional
-`unstructured` extra requires Python 3.11+ and a patched parser (`>=0.24.0`).
+`unstructured` extra requires Python 3.11+ and a patched parser (`>=0.24.1`).
 Python 3.10 supports the core PDF/TXT/CSV/JSON formats; upgrade Python to use
 the Markdown/HTML extra. Do not install an older parser to bypass this limit.
 

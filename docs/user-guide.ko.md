@@ -134,8 +134,8 @@ pip install -e .
 한 번 남깁니다(`Skipping 2 '.md' file(s) ... install the
 optional 'unstructured' extra`). Python 3.11 또는 3.12에서는
 `uv sync --extra unstructured` 또는 `pip install -e '.[unstructured]'`로 패치된
-파서를 설치하세요. 이 extra는 `unstructured>=0.24.0`을 요구하며, 이 버전은 URL
-분할의 SSRF 취약점을 고쳤고 NLTK에 의존하지 않습니다. Python 3.10에서는 이 extra를
+파서를 설치하세요. 이 extra는 `unstructured>=0.24.1`을 요구하며, 이 버전은 URL
+분할의 SSRF 취약점과 생성 HTML의 마크업 미이스케이프 문제를 고쳤고 NLTK에 의존하지 않습니다. Python 3.10에서는 이 extra를
 지정해도 파서가 설치되지 않으므로 PDF/TXT/CSV/JSON을 쓰거나, Markdown/HTML이
 필요하면 Python을 올리세요.
 

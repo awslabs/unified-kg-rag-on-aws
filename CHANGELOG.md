@@ -1821,3 +1821,6 @@ Library API (Python callers and custom backends).
 - Dependency floors: `unstructured>=0.24.0` (GHSA-4mvj-m6j5-pmf7,
   GHSA-8mgp-746c-j5xp) and `langchain-openai>=1.1.14`
   (GHSA-r7w7-9xr2-qq2r).
+- The `unstructured` extra requires `unstructured>=0.24.1`: 0.24.0 kept a
+  parsed document's markup unescaped in the HTML it generates, a stored XSS
+  (GHSA-v5mq-3xhg-98m9, CVE-2026-104250) (#PR).

@@ -118,7 +118,7 @@ run-prompt-tuning = "unified_kg_rag.application.cli.run_prompt_tuning:main"
 # Patched URL partitioning requires Python 3.11+. Keep the core package usable
 # on Python 3.10 without resolving an older, vulnerable optional parser.
 unstructured = [
-    "unstructured[md]>=0.24.0; python_version >= '3.11'",
+    "unstructured[md]>=0.24.1; python_version >= '3.11'",
 ]
 # Optional: OpenTelemetry tracing (`observability.enabled: true`). The core
 # package imports none of these; the OTel adapter loads them only when
