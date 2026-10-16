@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from typing import Any
 
 import networkx as nx
@@ -432,6 +433,37 @@ class TestUnusableEdgeWeights:
         monkeypatch.setattr(graspologic_native, "leiden", interrupted)
         with pytest.raises(KeyboardInterrupt):
             leiden(_two_triangle_graph(), random_seed=1)
+
+
+class TestHierarchyStop:
+    def test_disconnected_communities_end_the_hierarchy_quietly(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # Two communities no edge joins are the normal top of the hierarchy;
+        # it was logged as a WARNING that the graph has no weighted edges.
+        cd = _detector(min_community_size=1)
+        graph = _two_triangle_graph()
+        graph.remove_edge("n2", "n3")
+        cd.graph = graph
+        with caplog.at_level(logging.INFO):
+            cd.analyze_hierarchy()
+        assert {c.level for c in cd.all_communities.values()} == {0}
+        assert len(cd.all_communities) == 2
+        assert [r for r in caplog.records if r.levelno >= logging.WARNING] == []
+        assert any("No edges between" in r.getMessage() for r in caplog.records)
+
+    def test_an_edgeless_graph_still_warns(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        cd = _detector(min_community_size=1)
+        cd.graph = nx.Graph([("a", "b"), ("c", "d")])
+        cd.graph.remove_edges_from(list(cd.graph.edges()))
+        with caplog.at_level(logging.INFO):
+            cd.analyze_hierarchy()
+        assert any(
+            r.levelno == logging.WARNING and "no weighted edges" in r.getMessage()
+            for r in caplog.records
+        )
 
 
 class TestHierarchyProcessing:

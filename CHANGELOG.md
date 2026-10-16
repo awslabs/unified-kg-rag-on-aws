@@ -569,6 +569,10 @@ Library API (Python callers and custom backends).
   (#300).
 
 ### Fixed
+- Community detection no longer logs the WARNING "Graph has no weighted
+  edges" when the hierarchy ends normally at a level whose communities no
+  edge joins; it logs that at INFO and stops, with the same communities. An
+  entity graph without weighted edges still warns (#PR).
 - A Neptune that accepts the connection but never answers no longer blocks
   ingestion forever: each ingestion request (a write, a read-back, a drop)
   now fails after 180 s, above Neptune's own default query timeout of
