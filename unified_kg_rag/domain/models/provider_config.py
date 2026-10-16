@@ -336,6 +336,10 @@ LOCAL_PRESET: dict[str, Any] = {
             "allow_anonymous": True,
         },
     },
+    # A local model server runs few requests at once and queues the rest, and
+    # a queued request's wait counts against providers.llm.timeout_seconds:
+    # the AWS default of 40 LLM calls in flight would only deepen the queue.
+    "processing": {"max_concurrency": 20},
     # The retrieval context budget the default local model accepts: its
     # 32,768-token window (providers.llm.context_window_size) minus the
     # 8,192-token output reservation, less the 10% headroom. The AWS default

@@ -204,6 +204,19 @@ def test_local_preset_fills_every_role_and_the_store_endpoints() -> None:
     assert config.aws.opensearch.port == 9200
 
 
+def test_local_preset_keeps_twenty_llm_calls_in_flight() -> None:
+    # The AWS default rose to 40; a local model server queues what it cannot
+    # run at once, and the wait counts against its request timeout.
+    assert Config().processing.max_concurrency == 40
+    assert Config(backend="local").processing.max_concurrency == 20
+    assert (
+        Config(
+            backend="local", processing={"max_concurrency": 8}
+        ).processing.max_concurrency
+        == 8
+    )
+
+
 def test_local_preset_yields_to_values_the_config_sets() -> None:
     config = Config(
         backend="local",
