@@ -160,20 +160,24 @@ class NeptuneRetriever(GraphExpansionRetriever):
         )
 
         # Over-fetch, then let `_process_traversal_results` rank and cut the
-        # non-seed entities to top_k * retrieval_multiplier. The fetch budget is split evenly across
-        # the seeds and spent inside a per-seed local(), because a limit()
-        # inside repeat() counts every traverser of the whole traversal: one
-        # global cap let the first seeds' neighbourhoods use it up and left the
-        # other seeds with none. Within a seed, local(both().limit(n)) caps how
-        # many neighbours any one node contributes per hop (max_results_per_hop)
-        # so a hub cannot fan out unbounded. The seeds come back through the
-        # identity() branch (path length 1, the top relevance band, never cut);
+        # non-seed entities to top_k * retrieval_multiplier. The fetch budget
+        # is split evenly across the seeds and spent inside a per-seed
+        # local(), so the first seeds' neighbourhoods cannot use it up. The
+        # limit() after emit() caps each seed's total, in breadth-first emit
+        # order (hop 1 first): Neptune scopes a dedup().limit() inside
+        # repeat() to each traverser's step of each hop (a limit of 5 on a
+        # tree of fan-out 8 fetched 5 + 25 entities), TinkerGraph to the
+        # seed. That inner limit stays, as a bound on the work of each hop;
+        # the outer dedup() keeps the total to distinct entities on both.
+        # Within a seed, local(both().limit(n)) caps how many neighbours any
+        # one node contributes per hop (max_results_per_hop) so a hub cannot
+        # fan out unbounded. The seeds come back through the identity()
+        # branch (path length 1, the top relevance band, never cut);
         # repeat().emit() emits from the first hop on, never the seed itself,
         # and the expansion excludes the seeds so it spends its budget on new
-        # entities. Both
-        # shapes stay Neptune-friendly: repeat().times().emit() and
-        # union(identity(), ...). An emit() before repeat() is not optimized by
-        # Neptune and times out.
+        # entities. Both shapes stay Neptune-friendly:
+        # repeat().times().emit() and union(identity(), ...). An emit()
+        # before repeat() is not optimized by Neptune and times out.
         fetch_limit = (
             query.top_k
             * query.retrieval_multiplier
@@ -206,6 +210,8 @@ class NeptuneRetriever(GraphExpansionRetriever):
                         )
                         .times(hops)
                         .emit()
+                        .dedup()
+                        .limit(per_seed_limit)
                     ),
                 )
             )

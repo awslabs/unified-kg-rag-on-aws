@@ -573,6 +573,59 @@ def test_graph_expansion_returns_seeds_first_then_distance_bands(
     assert len(wide) == 6
 
 
+def test_graph_expansion_budget_caps_each_seed_breadth_first(
+    harness: StoreHarness,
+) -> None:
+    # Neptune applied the per-seed budget (a limit() inside repeat()) to each
+    # traverser of each hop: on this tree of fan-out 8 a budget of 5 fetched
+    # 5 + 25 entities. The budget caps the seed's total, hop 1 first.
+    def change(config: Any) -> None:
+        config.indexing.neptune.traversal_fetch_multiplier = 1  # no cut
+        config.indexing.neptune.max_hops = 2
+
+    h = harness.derive(change)
+    near = [f"n{i}" for i in range(8)]
+    far = [f"{n}-f{j}" for n in near for j in range(8)]
+    entities = [
+        Entity(id=i, name=i, type="ORG", description=f"{i} description", rank=1)
+        for i in ["root", *near, *far]
+    ]
+    edges = [("root", n) for n in near] + [(f.split("-")[0], f) for f in far]
+    relationships = [
+        Relationship(
+            id=f"r-{a}-{b}",
+            source_id=a,
+            target_id=b,
+            source_name=a,
+            target_name=b,
+            description=f"{a} works with {b}",
+        )
+        for a, b in edges
+    ]
+    assert h.graph_indexer.index_entities(entities).failed_items == 0
+    assert h.graph_indexer.index_relationships(relationships).failed_items == 0
+
+    within_hop_one, across_hops = _graph_retrieve(
+        h,
+        *(
+            SearchQuery(
+                query="",
+                suffix=_SUFFIX,
+                top_k=top_k,
+                retrieval_multiplier=1,
+                filters={"id": ["root"]},
+            )
+            for top_k in (5, 12)
+        ),
+    )
+    first = [r.source for r in within_hop_one]
+    assert first[0] == "root"
+    assert len(first) == 6 and set(first[1:]) <= set(near), first
+    wide = [r.source for r in across_hops]
+    assert len(wide) == 13, wide
+    assert set(wide[1:9]) == set(near) and set(wide[9:]) <= set(far), wide
+
+
 def test_graph_expansion_filters_and_is_deterministic(harness: StoreHarness) -> None:
     entities = [
         Entity(id="a", name="A", type="ORG", rank=2, attributes={"role": "vendor"}),

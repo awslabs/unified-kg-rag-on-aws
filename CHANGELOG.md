@@ -569,6 +569,14 @@ Library API (Python callers and custom backends).
   (#300).
 
 ### Fixed
+- Neptune graph expansion fetches at most its per-seed budget
+  (`top_k * retrieval_multiplier * indexing.neptune.traversal_fetch_multiplier`
+  split over the seeds) per seed, nearest hop first. Neptune applied the
+  budget to each traverser of each hop, so one seed on a tree of fan-out 8
+  with a budget of 5 fetched 5 + 25 entities; with
+  `traversal_fetch_multiplier: 1` (no cut after ranking) all of them reached
+  the context. Gremlin Server and the SQLite graph already capped the
+  seed's total (#PR).
 - A filtered vector or hybrid query no longer logs an ERROR with a traceback
   for the kNN search it discards once the attribute probe finds no matching
   document (the expected 400 "Rewrite first" on OpenSearch 2.13). The async
