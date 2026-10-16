@@ -400,6 +400,9 @@ Library API (Python callers and custom backends).
   `size` best matches instead of sorting every match (about 13 ms instead
   of 120 ms for the top 10 of 100,000); the hits and their order, ties
   included, are unchanged (#PR).
+- `BaseIndexer.initialize` is a no-op by default, like `close`: a custom
+  `VectorIndexer` or `GraphIndexer` with nothing to prepare need not
+  override it (#PR).
 - `BatchProcessor` runs one pool of `max_concurrency` items instead of
   chunks of `batch_size` items in parallel, each waiting for its slowest
   item: a slow item holds only its own slot and is retried in it, and the

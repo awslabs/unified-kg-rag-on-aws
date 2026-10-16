@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import pytest
 
-from unified_kg_rag.domain.models import Constants, Entity
+from unified_kg_rag.domain.models import Config, Constants, Entity
 from unified_kg_rag.ports.indexer import BaseIndexer, IndexingStats
 from unified_kg_rag.shared.exceptions import ConfigurationError
 
@@ -84,3 +84,15 @@ class TestSuffix:
         )
         with pytest.raises(ConfigurationError):
             BaseIndexer.get_suffix(entity)
+
+
+def test_initialize_and_close_default_to_no_ops() -> None:
+    # Only clear is abstract: a backend that creates what it writes on the
+    # first write need not override initialize (or close).
+    class _Indexer(BaseIndexer):
+        def clear(self, suffixes: list[str]) -> None:
+            return None
+
+    indexer = _Indexer(Config())
+    assert indexer.initialize() is None
+    assert indexer.close() is None
