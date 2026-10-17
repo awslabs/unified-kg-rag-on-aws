@@ -176,7 +176,7 @@ Defaults. Set the old value explicitly to keep the previous behaviour.
   scores from earlier runs are not comparable (#315).
 - `run-eval --search-strategy` parses to a list (`args.search_strategy`
   is `["auto"]` by default); with several strategies or `--repeats` the
-  listed strategy overrides a dataset item's own `search_strategy` (#PR).
+  listed strategy overrides a dataset item's own `search_strategy` (#324).
 - The run manifest's `config_sha256` (the full resolved config, so it
   differed between environments) is replaced by `retrieval_config_sha256`
   over the settings that shape answers and scores only; compare new runs by
@@ -411,14 +411,14 @@ Library API (Python callers and custom backends).
   run-to-run spread and the strategies `auto` routed to;
   `--pairwise-judge` adds the GraphRAG/LightRAG head-to-head LLM judge
   (comprehensiveness, diversity, empowerment, directness; both orders,
-  order-stable verdicts only; `custom_prompts.pairwise_comparison_*`) (#PR).
+  order-stable verdicts only; `custom_prompts.pairwise_comparison_*`) (#324).
 - `prepare-benchmark musique` turns MuSiQue (answerable, CC BY 4.0) into a
   corpus and a `run-eval` dataset: the dev split is downloaded at run time
   from a pinned mirror revision and checked by SHA-256 (or read from a local
   official file with `--source`); no benchmark data is in the repository.
   `evaluation.answer_normalization: official_squad` scores EM/F1 with the
   official SQuAD script, for numbers comparable with published results
-  (#PR).
+  (#324).
 - Index build record: ingestion records in the vector index mappings'
   `_meta` which run last wrote each suffix (`pipeline_id`, `mode`,
   `built_at`, `documents`, `extraction_fingerprint`, `package_version`), and
