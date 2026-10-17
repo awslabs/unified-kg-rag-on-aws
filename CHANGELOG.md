@@ -779,7 +779,7 @@ changed once with the full-config keys (#332).
   release only; what a pre-release build left behind (registry tables keyed
   by `doc_id` alone, indices without recorded settings) is covered here
   under Upgrading from pre-release builds, and the entries above name the
-  current model keys (#PR).
+  current model keys (#338).
 - `indexing.reset` no longer takes the suffix offline. The stores are not
   cleared first: the vector indices are rebuilt into new indices and swap
   their aliases, as before, and the graph (Neptune, the embedded SQLite
