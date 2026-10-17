@@ -35,6 +35,7 @@ from unified_kg_rag.application.cli.config_args import (
 from unified_kg_rag.application.cli.conventions import (
     EXIT_FAILURE,
     EXIT_INTERRUPTED,
+    EXIT_USAGE,
     add_output_format_argument,
     exits_on_sigterm,
     json_output,
@@ -51,7 +52,7 @@ from unified_kg_rag.domain.ingestion.graph_analyzer import (
     GraphAnalyzer,
 )
 from unified_kg_rag.domain.models import Community, HierarchicalCommunity
-from unified_kg_rag.shared import get_logger, setup_logging
+from unified_kg_rag.shared import ConfigurationError, get_logger, setup_logging
 from unified_kg_rag.shared.config import load_cli_dotenv
 
 logger = get_logger(__name__)
@@ -241,6 +242,9 @@ def main() -> int:
     except KeyboardInterrupt:
         logger.warning("Visualization interrupted by user.")
         return EXIT_INTERRUPTED
+    except ConfigurationError as e:
+        logger.error("Visualization configuration error: %s", e)
+        return EXIT_USAGE
     except Exception as e:
         # Clean error line rather than a raw traceback (parity with the other
         # CLIs); full detail goes to the log at debug level.

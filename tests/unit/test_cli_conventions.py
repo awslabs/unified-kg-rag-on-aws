@@ -37,6 +37,7 @@ from unified_kg_rag.domain.models import (
     PipelineStageResult,
     PipelineStageStatus,
 )
+from unified_kg_rag.shared import ConfigurationError
 from unified_kg_rag.shared.utils.display import console
 
 pytestmark = pytest.mark.unit
@@ -298,3 +299,49 @@ def test_a_missing_input_file_is_a_usage_error(
     with pytest.raises(SystemExit) as exc:
         run_visualization.main()
     assert exc.value.code == 2
+
+
+def _raise_config_error(*_args: object, **_kwargs: object) -> None:
+    raise ConfigurationError("index built with the registry off")
+
+
+def test_a_configuration_error_while_running_exits_2_in_every_cli(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # run-eval exited 2 on a ConfigurationError met while running, the other
+    # CLIs 1: one exit code for one kind of error.
+    monkeypatch.setattr(run_visualization, "load_cli_config", lambda _args: Config())
+    monkeypatch.setattr(run_prompt_tuning, "load_cli_config", lambda _args: Config())
+    data = tmp_path / "graph.json"
+    data.write_text("{}")
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    (corpus / "a.txt").write_text("Vendor ships parts to Buyer.")
+    monkeypatch.setattr(run_visualization, "run_visualization", _raise_config_error)
+    monkeypatch.setattr(run_prompt_tuning, "PromptTuner", _raise_config_error)
+    monkeypatch.setattr(run_rag_chain.RAGChainRunner, "__init__", _raise_config_error)
+    monkeypatch.setattr(
+        run_ingestion_pipeline.IngestionPipelineRunner, "__init__", _raise_config_error
+    )
+    cases = [
+        (run_visualization.main, ["run-visualization", "--data-path", str(data)]),
+        (
+            run_prompt_tuning.main,
+            [
+                "run-prompt-tuning",
+                "--source-directory",
+                str(corpus),
+                "--output-path",
+                str(tmp_path / "tuned.yaml"),
+            ],
+        ),
+        (run_rag_chain.main, ["run-rag", "--query", "Who ships parts?"]),
+        (run_ingestion_pipeline.main, ["run-ingestion"]),
+    ]
+    for main, argv in cases:
+        monkeypatch.setattr(sys, "argv", argv)
+        try:
+            code = main()  # run-visualization and run-prompt-tuning return it
+        except SystemExit as exc:
+            code = exc.code
+        assert code == 2, argv[0]

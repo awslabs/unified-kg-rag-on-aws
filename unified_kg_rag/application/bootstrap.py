@@ -23,6 +23,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from pydantic import ValidationError
+
 from unified_kg_rag.adapters.provider_registry import (
     ProviderRole,
     get_provider_builder,
@@ -33,6 +35,7 @@ from unified_kg_rag.domain.models import Config
 from unified_kg_rag.domain.models.config import merge_over
 from unified_kg_rag.ports.guardrail import ContentGuardPort
 from unified_kg_rag.shared import ConfigurationError, get_logger
+from unified_kg_rag.shared.config import validation_summary
 
 if TYPE_CHECKING:
     import boto3
@@ -150,5 +153,7 @@ def with_provider_overrides(
     data = merge_over(data, overrides)
     try:
         return Config.model_validate(data)
-    except ValueError as e:
-        raise ConfigurationError(f"Invalid provider settings: {e}") from e
+    except ValidationError as e:
+        raise ConfigurationError(
+            f"Invalid provider settings: {validation_summary(e)}"
+        ) from e

@@ -9,7 +9,8 @@ Exit codes:
   upload, a breached evaluation failure budget, nothing rendered).
 - ``2`` (:data:`EXIT_USAGE`): the command line or the configuration is
   wrong (argparse errors, an invalid flag combination, a missing input, an
-  invalid configuration file, an unset store endpoint). Nothing was run.
+  invalid configuration file, an unset store endpoint: nothing was run), or
+  a ``ConfigurationError`` met while running.
 - ``128 + signal``: stopped by a signal, ``130`` for Ctrl-C (SIGINT) and
   ``143`` for SIGTERM (ECS ``StopTask``, a Step Functions timeout).
 

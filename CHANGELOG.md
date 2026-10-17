@@ -1138,6 +1138,10 @@ changed once with the full-config keys (#332).
   rank order. A test runs a full build, an incremental run and every search
   strategy in two processes with different hash seeds and requires
   identical stores, prompts, exports and answers (#343).
+- Every CLI exits 2 on a `ConfigurationError` met while running (an index
+  built with the registry off, a parsed-JSON directory equal to the corpus);
+  only `run-eval` did, the others exited 1. Invalid provider flags are
+  reported with the loader's one-line summary, not pydantic's raw text (#PR).
 - In local mode the stage cache keys, the extraction settings and the
   extraction-record keys count `aws.bedrock.default_max_output_tokens`: a
   local model is asked for that cap too, but the keys dropped it with the

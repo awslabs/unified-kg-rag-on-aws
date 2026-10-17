@@ -88,6 +88,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.ports.indexer import BaseIndexer
 from unified_kg_rag.shared import (
+    ConfigurationError,
     PipelineStageError,
     get_logger,
     observability,
@@ -515,7 +516,7 @@ class DocumentParsingStage(PipelineStage):
             self.target_directory is not None
             and self.target_directory.resolve() == self.source_directory.resolve()
         ):
-            raise ValueError(
+            raise ConfigurationError(
                 "document_parsing.target_directory must not be the source "
                 f"directory ('{self.source_directory}'): parsed .json output there "
                 "is re-ingested as new documents on the next run"

@@ -24,6 +24,7 @@ from unified_kg_rag.application.cli.config_args import (
 from unified_kg_rag.application.cli.conventions import (
     EXIT_FAILURE,
     EXIT_INTERRUPTED,
+    EXIT_USAGE,
     add_output_format_argument,
     exits_on_sigterm,
     json_output,
@@ -37,7 +38,7 @@ from unified_kg_rag.application.cli.provider_args import (
 )
 from unified_kg_rag.application.prompts.tuner import PromptTuner
 from unified_kg_rag.domain.models import Config
-from unified_kg_rag.shared import get_logger, setup_logging
+from unified_kg_rag.shared import ConfigurationError, get_logger, setup_logging
 from unified_kg_rag.shared.config import load_cli_dotenv
 from unified_kg_rag.shared.utils import event_loop
 from unified_kg_rag.shared.utils.cache_keys import is_excluded_source_path
@@ -152,6 +153,9 @@ def main() -> int:
     except KeyboardInterrupt:
         logger.warning("Prompt tuning interrupted by user.")
         return EXIT_INTERRUPTED
+    except ConfigurationError as e:
+        logger.error("Prompt tuning configuration error: %s", e)
+        return EXIT_USAGE
     except Exception as e:
         # Surface a clean error line instead of a raw traceback (parity with the
         # other CLIs); details still go to the log at debug level.

@@ -22,6 +22,7 @@ from unified_kg_rag.application.cli.config_args import (
 from unified_kg_rag.application.cli.conventions import (
     EXIT_FAILURE,
     EXIT_INTERRUPTED,
+    EXIT_USAGE,
     add_output_format_argument,
     exits_on_sigterm,
     json_output,
@@ -599,6 +600,10 @@ def main() -> None:
     except KeyboardInterrupt:
         console.print("\n[yellow]Pipeline interrupted by user.[/yellow]")
         sys.exit(EXIT_INTERRUPTED)
+    except ConfigurationError as e:
+        console.print(f"\n[red]Error: {escape(str(e))}[/red]")
+        logger.error("Ingestion configuration error: %s", e)
+        sys.exit(EXIT_USAGE)
     except PipelineExecutionError as e:
         # A failed stage, a failed metadata check or a refused prompt: say
         # which before exiting non-zero.
