@@ -1138,6 +1138,9 @@ changed once with the full-config keys (#332).
   rank order. A test runs a full build, an incremental run and every search
   strategy in two processes with different hash seeds and requires
   identical stores, prompts, exports and answers (#343).
+- Hybrid min-max fusion raises every normalized score to at least 0.001, not
+  only an exact 0: a hit just above its sub-query's minimum ranked below the
+  minimum hit itself, as in the OpenSearch plugin (#PR).
 - Every CLI exits 2 on a `ConfigurationError` met while running (an index
   built with the registry off, a parsed-JSON directory equal to the corpus);
   only `run-eval` did, the others exited 1. Invalid provider flags are

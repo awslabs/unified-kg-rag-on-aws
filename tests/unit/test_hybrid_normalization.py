@@ -42,11 +42,11 @@ def test_ties_keep_first_appearance_order() -> None:
     assert [doc_id for doc_id, _ in fused] == ["x", "y"]
 
 
-def test_min_score_floor_can_rank_the_minimum_above_a_near_minimum_hit() -> None:
-    # The plugin floors only an exact 0: a hit just above the minimum
-    # normalizes to less than the floored minimum.
+def test_the_min_score_floor_keeps_the_order_of_near_minimum_hits() -> None:
+    # The plugin floors only an exact 0, so a hit just above the minimum
+    # normalized below the floored minimum and lost its rank to it.
     fused = combine_min_max([[("top", 10.0), ("near", 0.0001), ("min", 0.0)]], [1.0])
-    assert [doc_id for doc_id, _ in fused] == ["top", "min", "near"]
+    assert [doc_id for doc_id, _ in fused] == ["top", "near", "min"]
 
 
 def test_zero_weights_score_zero() -> None:
