@@ -581,7 +581,8 @@ LLM 단계는 Bedrock I/O가 병목이므로 동시성을 CPU 수보다 훨씬 �
 | `graph.community_detection.auto_resolution` | `false` | `true`이면 계층마다 `auto_resolution_candidates`를 차례로 시험해 모듈성이 가장 높은 해상도를 고릅니다. 그렇지 않으면 `resolution`(`1.0`)을 씁니다. |
 | `graph.community_detection.auto_resolution_max_nodes` | `10000` | 노드 수가 이보다 많으면 해상도 탐색을 건너뛰고 `resolution`을 씁니다. |
 | `graph.community_detection.max_levels` | `5` | 커뮤니티 계층의 최대 깊이입니다. |
-| `graph.community_detection.min_community_size` | `3` | 엔티티 수가 이보다 작은 레벨 0 커뮤니티는 간선 가중치를 가장 많이 공유하는 이웃 커뮤니티에 합칩니다. |
+| `graph.community_detection.max_cluster_size` | `20` | 레벨 0 커뮤니티의 최대 엔티티 수입니다. 이보다 큰 커뮤니티는 그 부분 그래프에서 다시 나눕니다(더 나눌 수 없으면 그대로 둡니다). 작을수록 리프가 작고 많아져 리포트 호출이 늘어납니다. |
+| `graph.community_detection.min_community_size` | `3` | 엔티티 수가 이보다 작은 레벨 0 커뮤니티는 간선 가중치를 가장 많이 공유하는 이웃 커뮤니티에 합칩니다. 합친 결과가 `max_cluster_size`를 넘으면 합치지 않습니다. |
 | `graph.community_detection.report_generation.max_report_context_tokens` | `4000` | 리포트 프롬프트 하나에 넣는 엔티티·관계 컨텍스트의 토큰 예산입니다. |
 | `graph.community_detection.report_generation.content_length` | `"medium"` | 리포트 길이로, 리포트마다 요청할 findings 수입니다. `short`(5-7), `medium`(7-10), `long`(10-15) 중 하나입니다. |
 | `graph.analysis.centrality.calculate_betweenness` | `true` | 시각화에서 매개 중심성을 계산합니다(수집 단계는 중심성을 계산하지 않음). 노드가 `betweenness_auto_sample_threshold`(`2000`)보다 많은 그래프에서는 정확히 계산하지 않고 샘플링합니다. |
