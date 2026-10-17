@@ -775,6 +775,10 @@ changed once with the full-config keys (#332).
   fused order. Reported by @vibhupb (#83) (#284).
 
 ### Changed
+- The operator runbook is organized by task: a task index at the top,
+  routine operations, what to do when a run fails, the alarms in a section
+  of their own, observability, and the common errors grouped by area
+  instead of one 43-row table (#PR).
 - The user guide, the runbook and the design doc describe the current
   release only; what a pre-release build left behind (registry tables keyed
   by `doc_id` alone, indices without recorded settings) is covered here
