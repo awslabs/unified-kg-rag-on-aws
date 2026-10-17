@@ -660,7 +660,11 @@ are attributes of the log record.
 ### Custom prompts
 
 Every prompt has a `custom_prompts.*_system` / `*_human` override (default
-`null` = the built-in prompt in `unified_kg_rag/domain/prompts/`). Override
+`null` = the built-in prompt in `unified_kg_rag/domain/prompts/`) except
+the prompts of the intelligent chunker (`TextChunkingPrompt`), document
+translation (`TextTranslationPrompt`), query translation
+(`TranslationPrompt`), global search's community rating
+(`CommunityRelevancePrompt`) and reduce step (`MapReduceSummaryPrompt`), which are not overridable. Override
 what you need and leave the rest `null` ([§9](#9-domain-adaptation)).
 Overrides are validated at load: unknown `{variables}` and missing data
 variables (such as `{input_text}`) are errors, and a literal brace is written
@@ -2065,8 +2069,8 @@ processing:
 
 ### B. `custom_prompts` overrides
 
-Override any prompt's `*_system` / `*_human` text (defaults are `null` = use the
-built-in prompt). Variables in `{braces}` are filled by the framework — keep
+Override a prompt's `*_system` / `*_human` text (defaults are `null` = use the
+built-in prompt; five prompts have no override, see [Custom prompts](#custom-prompts)). Variables in `{braces}` are filled by the framework — keep
 them. Common overrides:
 
 ```yaml

@@ -976,7 +976,7 @@ class AWSConfig(BaseModel):
 
     @property
     def bedrock_region(self) -> str:
-        """Region Bedrock calls go to: aws.bedrock_region, else aws.region_name."""
+        """Region Bedrock calls go to: aws.bedrock.region_name, else aws.region_name."""
         return self.bedrock.region_name or self.region_name
 
 
@@ -2416,7 +2416,7 @@ class DriftSearchConfig(BaseModel):
     ``k_followups`` community reports most similar to it in ``primer_folds``
     calls and drafts intermediate answers plus follow-up queries. Each of
     ``n_depth`` rounds then runs the ``k_followups`` best-placed open follow-up
-    queries as local searches, each answered by ``action_model_id`` with its
+    queries as local searches, each answered by ``models.roles.drift_action`` with its
     own follow-up queries. The answer model reduces the ranked intermediate
     answers with the local evidence they came from.
     """

@@ -604,8 +604,11 @@ API로 검사합니다. 가드레일은 `aws.bedrock.region_name`에 있어야 �
 
 ### 사용자 정의 프롬프트
 
-모든 프롬프트에는 `custom_prompts.*_system` / `*_human` 재정의 키가 있습니다(기본값
-`null` = `unified_kg_rag/domain/prompts/`의 내장 프롬프트). 필요한 것만 재정의하고
+지능형 청커(`TextChunkingPrompt`), 문서 번역(`TextTranslationPrompt`), 질의 번역
+(`TranslationPrompt`), 전역 검색의 커뮤니티 평가(`CommunityRelevancePrompt`)와 축약 단계
+(`MapReduceSummaryPrompt`)의 프롬프트를 뺀 모든 프롬프트에는 `custom_prompts.*_system` /
+`*_human` 재정의 키가 있습니다(기본값 `null` = `unified_kg_rag/domain/prompts/`의 내장
+프롬프트). 이 다섯 개는 재정의할 수 없습니다. 필요한 것만 재정의하고
 나머지는 `null`로 두세요([§9](#9-도메인-적응)). 재정의는 설정을 읽을 때 검사합니다. 알
 수 없는 `{variables}`와 빠진 데이터 변수(`{input_text}` 등)는 오류이며, 중괄호를
 글자 그대로 쓰려면 `{{` / `}}`로 씁니다.
@@ -1868,8 +1871,8 @@ processing:
 
 ### B. `custom_prompts` 재정의
 
-어떤 프롬프트든 `*_system` / `*_human` 텍스트를 재정의할 수 있습니다(기본값 `null` =
-내장 프롬프트 사용). `{braces}` 안의 변수는 프레임워크가 채우므로 그대로 두세요. 자주
+프롬프트의 `*_system` / `*_human` 텍스트를 재정의할 수 있습니다(기본값 `null` =
+내장 프롬프트 사용. 재정의 키가 없는 프롬프트 다섯 개는 [사용자 정의 프롬프트](#사용자-정의-프롬프트) 참고). `{braces}` 안의 변수는 프레임워크가 채우므로 그대로 두세요. 자주
 쓰는 재정의는 다음과 같습니다.
 
 ```yaml

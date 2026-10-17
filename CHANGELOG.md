@@ -1141,6 +1141,11 @@ changed once with the full-config keys (#332).
 - Hybrid min-max fusion raises every normalized score to at least 0.001, not
   only an exact 0: a hit just above its sub-query's minimum ranked below the
   minimum hit itself, as in the OpenSearch plugin (#PR).
+- The user guide names the five prompts that have no `custom_prompts`
+  override (chunking, document and query translation, global search's
+  community rating and reduce step) instead of saying every prompt has one;
+  two docstrings named the removed `aws.bedrock_region` and `action_model_id`
+  keys (#PR).
 - Every CLI exits 2 on a `ConfigurationError` met while running (an index
   built with the registry off, a parsed-JSON directory equal to the corpus);
   only `run-eval` did, the others exited 1. Invalid provider flags are
