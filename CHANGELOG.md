@@ -158,7 +158,7 @@ Library API (Python callers and custom backends).
   `adapters.local.sqlite_doc_status` → `adapters.doc_status.sqlite`;
   `SQLiteGraphIndexer`: `adapters.local.sqlite_graph` →
   `adapters.storage.sqlite_graph_indexer` (`SQLiteGraphStore` stays in
-  `adapters.local.sqlite_graph`). The old paths are not kept (#PR).
+  `adapters.local.sqlite_graph`). The old paths are not kept (#312).
 - `EvaluationRunner(args, rag_chain, config)` takes the run's config (the
   one the chain was built from) instead of loading it again from
   `args.config_path` (#292).
