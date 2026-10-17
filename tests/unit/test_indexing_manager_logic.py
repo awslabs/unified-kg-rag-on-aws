@@ -16,6 +16,9 @@ from datetime import datetime
 import pytest
 
 from tests.fixtures.fakes.stores import FakeGraphStore, FakeVectorStore
+from unified_kg_rag.domain.ingestion.relationship_weights import (
+    apply_text_unit_weights,
+)
 from unified_kg_rag.domain.models import (
     Community,
     Config,
@@ -396,6 +399,181 @@ def test_a_deletion_that_dies_between_the_stores_keeps_the_graph_copy(
         mgr.delete_documents({"default": ["old"]})
 
     assert graph.ids("entities") == {"old"}
+
+
+def test_items_derivation_cannot_derive_are_counted(manager) -> None:
+    # A stored text unit naming no record (indexed before records existed):
+    # its items keep their stored content, counted for the stage's metric.
+    mgr, _, vector, _ = manager
+    vector.upsert_text_units([TextUnit(id="t-legacy", text="legacy")])
+    stored = Entity(id="e", name="E", description="stale", text_unit_ids=["t-legacy"])
+
+    derived = mgr.derive("default", [stored], [], [])
+
+    assert derived.entities[0].description == "stale"
+    assert mgr.underived_items == 1
+
+
+def test_the_stored_edges_of_a_re_keyed_entity_are_derived_with_it(
+    manager,
+) -> None:
+    # Regression: an interrupted run had written "Acme" (the delta's
+    # spelling) next to the stored "Acme Inc"; the retry merged the two and
+    # derived the delta's Acme -> Depot edge, but the stored Acme Inc -> Depot
+    # edge was only re-pointed at Acme, leaving two edges between them.
+    from unified_kg_rag.domain.ingestion.base_processor import BaseProcessor
+    from unified_kg_rag.domain.ingestion.contributions import (
+        RECORD_KEYS_ATTRIBUTE,
+        record_payload,
+    )
+    from unified_kg_rag.domain.models import TextUnitExtraction
+
+    mgr, graph, vector, _ = manager
+
+    def entity(name: str, units: list[str]) -> Entity:
+        return Entity(
+            id=BaseProcessor._generate_entity_id(name),
+            name=name,
+            type="ORG",
+            description=f"{name} in {units}",
+            text_unit_ids=units,
+        )
+
+    def edge(source: str, target: str, unit: str) -> Relationship:
+        rel = Relationship(
+            id=BaseProcessor._generate_relationship_id(source, target, "SUPPLIES"),
+            source_id=BaseProcessor._generate_entity_id(source),
+            target_id=BaseProcessor._generate_entity_id(target),
+            source_name=source,
+            target_name=target,
+            type="SUPPLIES",
+            description=f"{source} supplies {target} in {unit}",
+        )
+        apply_text_unit_weights(rel, {unit: 1.0})
+        return rel
+
+    # t-a (new) states Acme -> Depot, t-b (stored) Acme Inc -> Depot.
+    records = {
+        "t-a": TextUnitExtraction(
+            text_unit_id="t-a",
+            entities=[entity("Acme", ["t-a"]), entity("Depot", ["t-a"])],
+            relationships=[edge("Acme", "Depot", "t-a")],
+        ),
+        "t-b": TextUnitExtraction(
+            text_unit_id="t-b",
+            entities=[entity("Acme Inc", ["t-b"]), entity("Depot", ["t-b"])],
+            relationships=[edge("Acme Inc", "Depot", "t-b")],
+        ),
+    }
+    vector.write_extraction_records(
+        {f"g-{u}": record_payload(r) for u, r in records.items()}
+    )
+    units = {
+        u: TextUnit(
+            id=u, text=u, attributes={RECORD_KEYS_ATTRIBUTE: {"graph": f"g-{u}"}}
+        )
+        for u in records
+    }
+    vector.upsert_text_units([units["t-b"]])
+    graph.upsert_entities(
+        [
+            entity("Acme Inc", ["t-b"]),
+            entity("Depot", ["t-b"]),
+            # Written by the interrupted run.
+            entity("Acme", ["t-a"]),
+        ]
+    )
+    graph.upsert_relationships([edge("Acme Inc", "Depot", "t-b")])
+
+    merged = mgr.merge_with_existing_graph(
+        [entity("Acme", ["t-a"]), entity("Depot", ["t-a"])],
+        [edge("Acme", "Depot", "t-a")],
+        [units["t-a"]],
+    )
+    assert mgr.index_delta(entities=merged.entities, relationships=merged.relationships)
+    mgr.delete_retired_ids()
+
+    stored = graph.read_relationships(sorted(graph.ids("relationships")))
+    assert [(r.source_name, r.target_name) for r in stored] == [("Acme", "Depot")]
+    assert sorted(stored[0].text_unit_ids or []) == ["t-a", "t-b"]
+
+
+def test_an_entity_split_off_under_a_folded_delta_id_is_kept(manager) -> None:
+    # Regression: the delta's "Acme Inc" folded into the stored "Acme" and
+    # the derivation split it off again under its own id, but the folded
+    # delta id was then deleted with the retired ids.
+    from unified_kg_rag.domain.ingestion.base_processor import BaseProcessor
+    from unified_kg_rag.domain.ingestion.contributions import (
+        RECORD_KEYS_ATTRIBUTE,
+        record_payload,
+    )
+    from unified_kg_rag.domain.ingestion.graph_resolver import ENTITY_KEYS_ATTRIBUTE
+    from unified_kg_rag.domain.models import TextUnitExtraction
+
+    mgr, graph, vector, _ = manager
+
+    def entity(name: str, type_: str, units: list[str], **kw) -> Entity:
+        return Entity(
+            id=BaseProcessor._generate_entity_id(name),
+            name=name,
+            type=type_,
+            description=f"{name} in {units}",
+            text_unit_ids=units,
+            **kw,
+        )
+
+    # t-b (stored) states both spellings as persons; t-a (new, sorting
+    # first) states Acme as a location, so a full build keeps them apart.
+    records = {
+        "t-a": TextUnitExtraction(
+            text_unit_id="t-a",
+            entities=[
+                entity("Acme", "LOCATION", ["t-a"]),
+                entity("Acme Inc", "PERSON", ["t-a"]),
+            ],
+        ),
+        "t-b": TextUnitExtraction(
+            text_unit_id="t-b",
+            entities=[
+                entity("Acme", "PERSON", ["t-b"]),
+                entity("Acme Inc", "PERSON", ["t-b"]),
+            ],
+        ),
+    }
+    vector.write_extraction_records(
+        {f"g-{u}": record_payload(r) for u, r in records.items()}
+    )
+    units = {
+        u: TextUnit(
+            id=u, text=u, attributes={RECORD_KEYS_ATTRIBUTE: {"graph": f"g-{u}"}}
+        )
+        for u in records
+    }
+    vector.upsert_text_units([units["t-b"]])
+    graph.upsert_entities(
+        [
+            entity(
+                "Acme",
+                "person",
+                ["t-b"],
+                attributes={ENTITY_KEYS_ATTRIBUTE: ["acme", "acme inc"]},
+            )
+        ]
+    )
+
+    merged = mgr.merge_with_existing_graph(
+        [
+            entity("Acme", "location", ["t-a"]),
+            entity("Acme Inc", "person", ["t-a"]),
+        ],
+        [],
+        [units["t-a"]],
+    )
+    mgr.index_delta(entities=merged.entities, relationships=merged.relationships)
+    mgr.delete_retired_ids()
+
+    names = sorted(e.name for e in graph.read_entities(sorted(graph.ids("entities"))))
+    assert names == ["Acme", "Acme Inc"]
 
 
 def test_relationship_vector_index_built_by_default(manager) -> None:

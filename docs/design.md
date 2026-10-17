@@ -621,7 +621,31 @@ every write and check that the next run converges to a fresh full build.
   descriptions and claims, and names and types follow the current votes. An
   entity whose derived name has another id takes the full build's id
   (`Derived.id_remap`), and its edges and claims follow. An item citing a text
-  unit without a stored record keeps its stored content, with a WARNING.
+  unit without a stored record keeps its stored content, with a WARNING and
+  the indexing stage's `underived_items` metric.
+- **Merges a full build undoes.** A stored entity may hold what a full build
+  keeps apart (two spellings merged while their types agreed): every
+  resolved entity sharing a name key and a text unit with it is derived, the
+  best match under its id and each other as an entity of its own
+  (`Derived.split_from`). The stored edges of a split or re-keyed entity and
+  their other endpoints are derived with it (`Derived.rewired`), so each
+  follows the part that states it and a re-pointed edge becomes one with the
+  derived edge it now equals; an edge a full build draws between derived
+  entities that no stored edge is (an earlier merge dropped it as a
+  self-loop) is added, and a stored edge whose endpoints now resolve to one
+  entity is deleted with the retired ids (`Derived.dropped`), as is a delta id
+  the cross-run merge folded into another (a run that died between the
+  stores may have left its vector copy). Edges take the resolution's
+  per-unit strengths; the claim stage merges a claim's statements in
+  text-unit id order, as derivation does.
+- **Cost.** Derivation runs only where something is stored (a first build
+  with the registry on writes the delta as graph resolution made it, its
+  summaries included) and matches through a key index. A stored summary that
+  only grew (the item still cites every text unit it did) is summarized from
+  itself and the run's new description, as LightRAG merges a description
+  into the stored one; an item that lost a text unit is summarized from its
+  derived description, so removed text goes. A stored edge rewritten for its
+  rank only is updated in place in the vector store, not embedded again.
 - **Merge rules** (`domain/ingestion/merge/merger.py`, ported from MS GraphRAG
   `update/*`), all idempotent:
 

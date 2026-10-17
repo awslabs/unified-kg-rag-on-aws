@@ -1113,11 +1113,15 @@ class ClaimExtractionStage(PipelineStage):
                 stats.failed_text_unit_ids = sorted(
                     {*stats.failed_text_unit_ids, *unsaved}
                 )
+        # Merged in text-unit id order, as derivation merges the stored
+        # claims' units (``derivation.derive``): where the merge keeps the
+        # first statement (description line order, a status tie) a full
+        # build and an incremental run choose alike.
         claims = self.extractor.merge_claims(
             [
                 claim.model_copy(deep=True)
-                for unit in text_units
-                for claim in per_unit.get(unit.id, [])
+                for unit_id in sorted(per_unit)
+                for claim in per_unit[unit_id]
             ]
         )
         context.claims = claims
@@ -1462,6 +1466,7 @@ class IndexingStage(_RegistryStage):
             # keeps its records until the rebuild recorded the corpus (below).
 
         self.indexing_manager.initialize()
+        self.indexing_manager.underived_items = 0
 
         text_units = _with_record_keys(
             self.config, context, context.translated_units or context.text_units
@@ -1600,6 +1605,9 @@ class IndexingStage(_RegistryStage):
             "total_indexed": total_indexed,
             "total_failed": total_failed,
             "relationships_indexed": relationships_indexed,
+            # Stored items an incremental run could not derive (a text unit
+            # they cite names no stored record): stale until a rebuild.
+            "underived_items": self.indexing_manager.underived_items,
             "success_rate": (
                 total_indexed / (total_indexed + total_failed)
                 if (total_indexed + total_failed) > 0

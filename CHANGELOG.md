@@ -866,6 +866,9 @@ changed once with the full-config keys (#332).
   by `doc_id` alone, indices without recorded settings) is covered here
   under Upgrading from pre-release builds, and the entries above name the
   current model keys (#338).
+- The indexing stage reports `underived_items`, the stored items an
+  incremental run kept as they were because a text unit they cite names no
+  stored extraction record (#PR).
 - `indexing.reset` no longer takes the suffix offline. The stores are not
   cleared first: the vector indices are rebuilt into new indices and swap
   their aliases, as before, and the graph (Neptune, the embedded SQLite
@@ -1352,6 +1355,20 @@ changed once with the full-config keys (#332).
 - A run killed while it deleted items between the two stores no longer
   leaves vector copies no later run finds: the vector copies are deleted
   first, the graph copies (through which a retry finds them) last (#PR).
+- Incremental runs converge to a full build where an earlier run had merged
+  what a full build keeps apart: a stored entity holding two spellings that
+  now resolve apart is split, with its edges and claims following the part
+  that states them; the edge between them that the merge had dropped as a
+  self-loop is restored, and a stored edge whose endpoints now resolve to
+  one entity is deleted. The stored edges of a re-keyed entity are derived
+  with it, so a run retried after dying between the stores no longer keeps
+  a re-pointed copy next to the derived edge. Edges take the per-unit
+  strengths of the full build's resolution, a claim's object name follows
+  its derived entity as its subject's does, and the claim extraction stage
+  merges a claim's statements in text-unit id order, as derivation does.
+  The randomized convergence check of the review (25 sequences each over
+  three seeds, with per-chunk entity types) now finds no divergence, where
+  it found 3 to 7 per 25 (#PR).
 - The graph-expansion degree (`indexing.neptune.entity_importance_source:
   degree`) counts an entity's relationships only, not its community
   memberships, as the setting describes (#PR).
