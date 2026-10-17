@@ -1,5 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
+import hashlib
 import json
 from enum import Enum
 from pathlib import Path
@@ -64,6 +65,29 @@ class DocStatus(str, Enum):
 # changed on the next run (re-extracted, even if its content went back to the
 # last indexed version) or deleted if it is gone.
 PENDING_CONTENT_HASH = "pending"
+
+
+class ExtractionSettings(BaseModel):
+    """The settings that shaped what a document produced, field by field.
+
+    Built by ``shared.utils.cache_keys.extraction_settings``: ``values`` maps
+    a configuration path to the value in effect (long values by digest). A
+    document's registry record holds the :attr:`fingerprint`; the record
+    itself is kept once per index namespace, so a later run can tell which
+    settings changed and treat a record that differs only by fields at their
+    defaults as unchanged (``cache_keys.changed_settings``).
+    """
+
+    version: int = Field(description="Format version of the record")
+    values: dict[str, Any] = Field(
+        default_factory=dict, description="Configuration path -> value in effect"
+    )
+
+    @property
+    def fingerprint(self) -> str:
+        """Short digest of the record (``DocStatusRecord.extraction_fingerprint``)."""
+        payload = json.dumps([self.version, self.values], sort_keys=True, default=str)
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:12]
 
 
 class DocStatusRecord(BaseModel):
