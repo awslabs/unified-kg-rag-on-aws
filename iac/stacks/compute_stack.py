@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import json
 
-from aws_cdk import CfnOutput, Duration, RemovalPolicy, Stack
+from aws_cdk import Annotations, CfnOutput, Duration, RemovalPolicy, Stack
 from aws_cdk import aws_ecr as ecr
 from aws_cdk import aws_ecs as ecs
 from aws_cdk import aws_iam as iam
@@ -150,6 +150,13 @@ class ComputeStack(Stack):
             if config.corpus_bucket_name
             else None
         )
+        if self.guardrail_identifier and not config.guardrail_version:
+            Annotations.of(self).add_warning(
+                "guardrail_identifier is set without guardrail_version: the "
+                "tasks apply the guardrail's DRAFT, which changes with every "
+                "edit. Pin a published version with "
+                "-c guardrail_version=<GuardrailVersion output>."
+            )
         self.task_role = self._build_task_role(storage)
         self.task_definition = self._build_task_definition(
             storage,

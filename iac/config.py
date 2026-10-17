@@ -62,8 +62,9 @@ cannot leave its setting at the default:
                                        (UKR__AWS__BEDROCK__GUARDRAIL__IDENTIFIER); does NOT
                                        disable creation
   guardrail_version   None             published guardrail version the task
-                                       applies (UKR__AWS__BEDROCK__GUARDRAIL__VERSION);
-                                       unset = the app default, DRAFT
+                                       applies (UKR__AWS__BEDROCK__GUARDRAIL__VERSION):
+                                       the GuardrailVersion output; unset = the
+                                       app default, DRAFT (synth warns)
   use_cmk             False            customer-managed KMS key for at-rest
                                        encryption (S3/Neptune/OpenSearch/DDB); the
                                        alarm topic always has its own CMK

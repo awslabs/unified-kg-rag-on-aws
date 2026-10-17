@@ -20,7 +20,7 @@ can coexist in one account/region. Every resource also carries an `env` tag.
 | `GraphRagOrchestration` | Step Functions state machine — one resumable ingestion task on Fargate (the task definition revision deployed with it), retried only when ECS cannot start the task (a task that exits non-zero is not rerun), one JSON failure notification (execution id, error, cause; the publish is retried on throttling or transient errors) + SNS alarm topic. The topic is encrypted with its own customer-managed key whose policy lets CloudWatch alarms publish (the AWS-managed `alias/aws/sns` key cannot, so alarm notifications would be dropped) |
 | `GraphRagObservability` | CloudWatch dashboard + alarms: pipeline failed (a failed task is also published by the orchestration failure notification, so it notifies twice; the alarm also covers failures the notification cannot report, such as an invalid start input), timed out or aborted, silent indexing-failure, extraction-failure and quarantined-documents (EMF, this deployment's `Environment` series only), capacity (Bedrock throttling summed over the account and region's models, ingestion task memory at least 90% via Container Insights), and store health (OpenSearch cluster-red / free-storage / JVM pressure, DynamoDB write throttling, Neptune writer CPU at least 90% for 3 × 5 minutes, writer freeable memory at most 512 MiB in 5 minutes, and Gremlin server errors in 3 consecutive minutes, so retried write conflicts during parallel writes do not page; see [Alarms](../docs/operations.md#alarms) for the alarm table) → SNS. Synth warns if `alarm_email` is unset (alarms would have no subscriber) |
 | `GraphRagSecurity` | Shared customer-managed KMS key (optional, `use_cmk`) |
-| `GraphRagGuardrail` | Bedrock Guardrail, **pinned to `bedrock_region`** (creates and keeps a baseline PII/prompt-attack guardrail; empty with `create_guardrail=false`). It anonymizes email, phone and card numbers but not `NAME`: names are corpus content, and anonymizing them in the screened query and answer removes the name a question retrieves by and puts `{NAME}` in answers. The app applies the guardrail's `DRAFT` version unless `guardrail_version` is set |
+| `GraphRagGuardrail` | Bedrock Guardrail, **pinned to `bedrock_region`** (creates and keeps a baseline PII/prompt-attack guardrail; empty with `create_guardrail=false`). It anonymizes email, phone and card numbers but not `NAME`: names are corpus content, and anonymizing them in the screened query and answer removes the name a question retrieves by and puts `{NAME}` in answers. It also publishes the guardrail as a version (`GuardrailVersion` output) for the task to pin; the app applies the guardrail's mutable `DRAFT` unless `guardrail_version` is set |
 
 ### Resource naming
 
@@ -58,19 +58,29 @@ derived) to avoid replace-on-rename conflicts.
 > ```bash
 > # 0) once: bootstrap bedrock_region too (cdk bootstrap covers one region)
 > cdk bootstrap aws://<account>/us-west-2
-> # 1) create the guardrail in bedrock_region, note its id from the output
+> # 1) create the guardrail in bedrock_region, note its id and version from
+> #    the GuardrailIdentifier and GuardrailVersion outputs
 > cdk deploy GraphRagGuardrail -c network_mode=public -c bedrock_region=us-west-2 …
-> # 2) pass that id so compute injects UKR__AWS__BEDROCK__GUARDRAIL__IDENTIFIER
+> # 2) pass both so compute injects UKR__AWS__BEDROCK__GUARDRAIL__IDENTIFIER
+> #    and __VERSION
 > cdk deploy --all -c network_mode=public -c bedrock_region=us-west-2 \
->   -c guardrail_identifier=<id> …
+>   -c guardrail_identifier=<id> -c guardrail_version=<version> …
 > ```
 >
 > In `private` mode leave `bedrock_region` unset (it defaults to the deploy
 > region): the same two steps then create the guardrail in the deploy region,
 > and step 0 is not needed.
 >
-> Keep passing `-c guardrail_identifier=<id>` on every later deploy, or compute
-> stops injecting it. The guardrail stack keeps owning the guardrail in step 2
+> Keep passing `-c guardrail_identifier=<id>` and `-c guardrail_version=<version>`
+> on every later deploy, or compute stops injecting them (without a version
+> the task applies `DRAFT`, which every edit of the guardrail changes at once;
+> synth warns). To change the baseline policy, edit
+> `iac/stacks/guardrail_stack.py` and deploy `GraphRagGuardrail`: the policy
+> digest in the version's description changes, so CloudFormation publishes a
+> new version (new `GuardrailVersion` output) and keeps the previous one, which
+> the tasks go on applying until you redeploy with the new
+> `-c guardrail_version`. For an external guardrail, publish a version with
+> `aws bedrock create-guardrail-version` and pass its number. The guardrail stack keeps owning the guardrail in step 2
 > and afterwards: `guardrail_identifier` only selects the id compute **uses**,
 > and creation is controlled separately by `create_guardrail`. To use an
 > externally managed guardrail instead, pass
@@ -127,7 +137,7 @@ uploaded to S3 as they are produced, so an execution re-run with the same
 | `sfn_timeout_hours` | `6` | ingestion state machine timeout for a whole run (at least 1); a run that hits it is `TIMED_OUT` (alarmed) |
 | `create_guardrail` | `true` | `GraphRagGuardrail` creates and keeps a baseline PII/prompt-attack guardrail in `bedrock_region` (retained on stack deletion unless `removal_destroy`). `false` = bring your own guardrail; nothing is created |
 | `guardrail_identifier` | _(none)_ | guardrail id the compute task **uses**, injected as `UKR__AWS__BEDROCK__GUARDRAIL__IDENTIFIER`. The created guardrail's id is **not** injected automatically: pass the `GuardrailIdentifier` output of `GraphRagGuardrail` here (two-step flow above), or an external id with `create_guardrail=false`. The task role gets `bedrock:ApplyGuardrail` on this guardrail only (an id resolves to `arn:…:bedrock:<bedrock_region>:<account>:guardrail/<id>`; an ARN is used as is). Unset = no guardrail on the task and no grant |
-| `guardrail_version` | _(none)_ | published guardrail version the task applies, injected as `UKR__AWS__BEDROCK__GUARDRAIL__VERSION`. Unset = `DRAFT`, which changes whenever the guardrail is edited; publish a version and pin it outside dev |
+| `guardrail_version` | _(none)_ | published guardrail version the task applies, injected as `UKR__AWS__BEDROCK__GUARDRAIL__VERSION`: the `GuardrailVersion` output of `GraphRagGuardrail`, or a version you published for an external guardrail. Unset = `DRAFT`, which changes whenever the guardrail is edited (synth warns when `guardrail_identifier` is set without it) |
 | `use_cmk` | `false` | customer-managed KMS key for at-rest encryption (S3/Neptune/OpenSearch/DDB/ECR and every log group; the key policy lets CloudWatch Logs use it for this account's log groups, and principals in this account may use it through CloudWatch Logs (`kms:ViaService`), so log writers and readers need no KMS permissions of their own). Choose it before the first deploy: ECR sets a repository's encryption only at creation, and CloudFormation cannot replace the fixed-name repository, so turning `use_cmk` on (or off) for a deployed environment fails until the compute stack is destroyed and redeployed. The SNS alarm topic always uses its own customer-managed key (see below) |
 | `vpc_flow_logs` | `false` (dev) / `true` (non-dev) | enable VPC flow logs (created VPC only) |
 | `flow_log_retention_days` | `731` | flow-log log group retention; must be a CloudWatch Logs retention value (e.g. `30`, `90`, `365`, `731`) |

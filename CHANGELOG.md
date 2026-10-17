@@ -1143,6 +1143,13 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- IaC: the guardrail stack publishes the guardrail it creates as a version
+  (`AWS::Bedrock::GuardrailVersion`, `GuardrailVersion` output) for the
+  tasks to pin with `-c guardrail_version=<version>`; synth warns when
+  `guardrail_identifier` is set without one, since the tasks then apply the
+  mutable `DRAFT`. A change to the baseline policy publishes a new version
+  and keeps the old one until compute is redeployed with the new number
+  (iac/README.md) (#PR).
 - IaC: a misspelled CDK context key (`-c neptune_instnace=...`) fails the
   synth naming the closest setting, as an unknown app config key does,
   instead of leaving its setting silently at the default; CDK's own keys

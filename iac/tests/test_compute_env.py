@@ -137,6 +137,31 @@ def test_korean_analyzer_is_one_the_domain_has(
     )
 
 
+def test_an_unpinned_guardrail_warns_that_the_tasks_apply_draft() -> None:
+    from aws_cdk.assertions import Annotations, Match
+
+    def compute(context: dict[str, Any]) -> ComputeStack:
+        app = cdk.App(context=context)
+        config = DeploymentConfig.from_context(app)
+        net = NetworkingStack(app, "Net", config=config, env=_ENV)
+        store = StorageStack(app, "Store", config=config, networking=net, env=_ENV)
+        return ComputeStack(
+            app,
+            "Compute",
+            config=config,
+            networking=net,
+            storage=store,
+            guardrail_identifier=config.guardrail_identifier,
+            env=_ENV,
+        )
+
+    draft = Match.string_like_regexp("without guardrail_version")
+    unpinned = compute({"guardrail_identifier": "gr-1"})
+    Annotations.from_stack(unpinned).has_warning("*", draft)
+    pinned = compute({"guardrail_identifier": "gr-1", "guardrail_version": "3"})
+    Annotations.from_stack(pinned).has_no_warning("*", draft)
+
+
 def test_guardrail_version_is_injected_only_when_set() -> None:
     assert "UKR__AWS__BEDROCK__GUARDRAIL__VERSION" not in _task_environment()
     env = _task_environment({"guardrail_identifier": "gr-1", "guardrail_version": "2"})
