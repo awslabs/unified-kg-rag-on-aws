@@ -29,6 +29,19 @@ class _RecordingEvent(threading.Event):
         self.made.append(self)
 
 
+@pytest.fixture
+def sigint_raises() -> Any:
+    """Make SIGINT raise ``KeyboardInterrupt`` for the test.
+
+    A process started in the background (``nohup``, ``cmd &``) inherits SIGINT
+    as ignored, so the signal the test sends would otherwise do nothing.
+    """
+    previous = signal.signal(signal.SIGINT, signal.default_int_handler)
+    yield
+    signal.signal(signal.SIGINT, previous)
+
+
+@pytest.mark.usefixtures("sigint_raises")
 def test_an_abandoned_batch_makes_no_further_attempt(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     # A stop (SIGTERM) or Ctrl-C unwinds the calling thread; an item still
     # running must not go on retrying behind it (interpreter exit waits for
