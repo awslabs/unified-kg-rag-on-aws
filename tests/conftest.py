@@ -62,9 +62,12 @@ _AWS_ENV_TO_CLEAR = (
     "AWS_CONTAINER_AUTHORIZATION_TOKEN",
 )
 # Every UKR_ variable (UKR__<path> config overrides and the UKR_ run-ingestion
-# defaults) is cleared too (see _isolated_aws_env), so a value exported in
-# the developer's shell cannot silently change what the tests exercise.
-_ENV_PREFIX_TO_CLEAR = "UKR_"
+# defaults) and OpenTelemetry's own (OTEL_SDK_DISABLED turns tracing off,
+# OTEL_EXPORTER_* points it elsewhere) is cleared too (see _isolated_aws_env),
+# so a value exported in the developer's shell cannot silently change what
+# the tests exercise. UKR_TEST_* configure the test run itself and stay.
+_ENV_PREFIXES_TO_CLEAR = ("UKR_", "OTEL_")
+_TEST_ENV_PREFIX = "UKR_TEST_"
 # Other environment the package reads: run-ingestion argument defaults, and
 # LangSmith tracing (every name langsmith accepts), which would upload test
 # prompts and outputs and log a warning from every setup_logging() call.
@@ -125,8 +128,12 @@ def _isolated_aws_env(
         return
     for name in _AWS_ENV_TO_CLEAR + _OTHER_ENV_TO_CLEAR:
         monkeypatch.delenv(name, raising=False)
-    for name in [n for n in os.environ if n.upper().startswith(_ENV_PREFIX_TO_CLEAR)]:
-        monkeypatch.delenv(name, raising=False)
+    for name in list(os.environ):
+        upper = name.upper()
+        if upper.startswith(_ENV_PREFIXES_TO_CLEAR) and not upper.startswith(
+            _TEST_ENV_PREFIX
+        ):
+            monkeypatch.delenv(name, raising=False)
     for name, value in _FAKE_AWS_ENV.items():
         monkeypatch.setenv(name, value)
     get_env_var.cache_clear()  # langsmith caches its environment lookups

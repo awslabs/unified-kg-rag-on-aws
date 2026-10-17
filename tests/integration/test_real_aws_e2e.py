@@ -6,11 +6,11 @@ Marked ``aws`` so the ``-m "not aws"`` in pytest's ``addopts`` (pyproject.toml)
 deselects them, even on a plain ``pytest`` run; a command-line ``-m`` replaces it.
 They exercise the live Bedrock + Neptune + OpenSearch (+ optional DynamoDB)
 stack against a real config, and are skipped unless that config is provided via
-``GRAPHRAG_TEST_CONFIG`` (path to a config.yaml with real endpoints).
+``UKR_TEST_CONFIG`` (path to a config.yaml with real endpoints).
 
 Run explicitly, after provisioning resources and credentials::
 
-    GRAPHRAG_TEST_CONFIG=./config.yaml uv run pytest -m aws -v
+    UKR_TEST_CONFIG=./config.yaml uv run pytest -m aws -v
 
 These are smoke tests (connectivity + a tiny ingest→search round trip), not a
 substitute for the AWS-free integration suite.
@@ -25,7 +25,7 @@ import pytest
 
 pytestmark = [pytest.mark.aws, pytest.mark.slow]
 
-_CONFIG_ENV = "GRAPHRAG_TEST_CONFIG"
+_CONFIG_ENV = "UKR_TEST_CONFIG"
 
 
 def _require_config():
@@ -107,8 +107,8 @@ def test_neptune_relationship_read_roundtrips(live_config) -> None:
 
 
 @pytest.mark.skipif(
-    not os.getenv("GRAPHRAG_TEST_RUN_INGEST"),
-    reason="set GRAPHRAG_TEST_RUN_INGEST=1 to run the (slow, cost-incurring) "
+    not os.getenv("UKR_TEST_RUN_INGEST"),
+    reason="set UKR_TEST_RUN_INGEST=1 to run the (slow, cost-incurring) "
     "ingest->search round trip",
 )
 def test_ingest_then_search_round_trip(live_config, tmp_path) -> None:
