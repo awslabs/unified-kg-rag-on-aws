@@ -5,7 +5,7 @@ import json
 import logging
 import re
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterator
 from functools import cached_property, wraps
 from typing import TYPE_CHECKING, Any
 
@@ -40,6 +40,7 @@ from unified_kg_rag.shared.exceptions import (
     StoreRequestRejectedError,
     StoreTimeoutError,
 )
+from unified_kg_rag.shared.write_fence import check_write_fence
 
 if TYPE_CHECKING:
     import boto3
@@ -110,6 +111,15 @@ def _index_name_batches(index_names: list[str]) -> list[list[str]]:
     if batch:
         batches.append(batch)
     return batches
+
+
+def _fenced(actions: list[dict[str, Any]], chunk_size: int) -> Iterator[dict[str, Any]]:
+    """``actions``, checking the run's write fence before each bulk request's
+    first action is taken (a run that lost its write lease stops sending)."""
+    for index, action in enumerate(actions):
+        if index % chunk_size == 0:
+            check_write_fence()
+        yield action
 
 
 def _bulk_item_status(result: dict[str, Any]) -> int | None:
@@ -750,7 +760,7 @@ class OpenSearchClient:
             retry_results = []
             results = streaming_bulk(
                 client=self.client,
-                actions=iter(pending),
+                actions=_fenced(pending, self.BULK_CHUNK_SIZE),
                 chunk_size=self.BULK_CHUNK_SIZE,
                 raise_on_error=False,
             )

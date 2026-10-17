@@ -1379,6 +1379,7 @@ def clear_registry_namespaces(
     for namespace in sorted(namespaces):
         for record in store.list_namespace(namespace):
             if record.doc_id not in kept:
+                check_lease()
                 store.delete(record.doc_id)
                 cleared += 1
     logger.info(

@@ -638,7 +638,7 @@ changed once with the full-config keys (#332).
 - One writing run per index namespace: with the doc-status registry, a
   pipeline run holds its namespace's write lease from its first stage to its
   end (a conditional write in DynamoDB, a transaction in SQLite), renewed by
-  a heartbeat every third of `indexing.lease_seconds` (default 300). A second
+  a heartbeat every sixth of `indexing.lease_seconds` (default 300). A second
   run stops with `NamespaceLeaseError` naming the holder before it reads or
   writes anything; a run that dies stops renewing, and its lease expires
   (DynamoDB drops it by TTL: the CDK table and a table the library creates
@@ -1300,6 +1300,21 @@ changed once with the full-config keys (#332).
   their vertices and edges were never removed. The skipped drop is now a
   failed write (`neptune_sweep`): the rebuild fails and records nothing, and
   the next run removes what the previous graph still holds (#PR).
+- A run that lost its namespace's write lease could keep writing: the lease
+  was checked once per step, not before the commit's store writes, each
+  indexing phase or the rebuild's sweep (which could drop what the new
+  holder had written), and a renewal that answered late made the run trust
+  the lease past the store's expiry (the lease requests used the registry
+  client's 10 attempts of up to 60 s). The renewal time is now taken when
+  the renewal is sent, the run stops writing once less than a third of the
+  term is left, the heartbeat renews every sixth of
+  `indexing.lease_seconds`, and the lease is a write fence
+  (`shared.write_fence`) that every indexing phase, the sweep, every Neptune
+  batch and drop and every OpenSearch bulk request checks. The lease
+  requests use short timeouts and 3 attempts, the end of a run no longer
+  waits for a hung renewal, a stopped run uploads its checkpoint before it
+  releases the lease, and a run downloads its checkpoint only once it holds
+  the lease (#PR).
 - Two corpora written to one index namespace that hold the same file with
   the same text no longer share text units, so removing one corpus's copy
   keeps the other's (#327).

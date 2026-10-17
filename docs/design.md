@@ -639,10 +639,24 @@ report (an LLM call each) per run.
 
 With the registry, a run takes its namespace's write lease before its first
 stage and holds it to its end (`application/ingestion/namespace_lease.py`):
-one conditional registry write, renewed by a heartbeat every third of
-`indexing.lease_seconds`. A second run fails with `NamespaceLeaseError` before
-it reads or writes, and every incremental write first checks the lease, so a
-run that lost it stops instead of writing over the holder. Without the
+one conditional registry write, renewed by a heartbeat every sixth of
+`indexing.lease_seconds` (lease requests: short timeouts, 3 attempts). A
+second run fails with `NamespaceLeaseError` before it reads or writes.
+
+- **Write fence** (`shared/write_fence.py`). The lease is the run's fence:
+  every incremental registry write, indexing phase, rebuild sweep, Neptune
+  batch or drop and OpenSearch bulk request checks it first. The check fails
+  once less than a third of the term is left since the last successful
+  renewal, counted from when it was sent (the store's expiry runs from then),
+  so a run that lost the lease stops while it still holds it, provided no
+  single write request outlasts a third of the term.
+- **No conditional registry writes.** `BatchWriteItem` takes no condition and
+  the store writes cannot be conditioned on the registry, so the margin is
+  the fence for every write.
+- **Checkpoint.** The lease is taken before the S3 checkpoint is downloaded
+  and released only after a stopped run uploaded its checkpoint.
+
+Without the
 registry nothing locks, and concurrent runs on one suffix race on its aliases
 and labels. The operator view is in the
 [runbook](./operations.md#concurrent-runs).

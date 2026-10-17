@@ -570,10 +570,12 @@ indexing:
   # (total_documents_deferred) until the culprit is alone.
   max_document_attempts: 3
   # Incremental runs only: the term of the index namespace's write lease. A run
-  # holds it from its first stage to its end, renewing it every third of the
+  # holds it from its first stage to its end, renewing it every sixth of the
   # term, so no other run writes the namespace meanwhile (a second run stops
-  # with NamespaceLeaseError). A run that dies stops renewing: its lease
-  # expires at most this long after.
+  # with NamespaceLeaseError). A run stops writing once less than a third of
+  # the term is left since its last renewal, so keep it at least three times
+  # the longest store write request. A run that dies stops renewing: its
+  # lease expires at most this long after.
   lease_seconds: 300
   # Incremental runs only: former source scopes whose registry records in this
   # run's index suffix are treated as deleted, so their exclusive graph and

@@ -363,7 +363,7 @@ the same way. Runs therefore count deaths and isolate the culprit.
 
 With the doc-status registry, one run writes an index namespace at a time. A
 run takes its namespace's write lease before its first stage and holds it to
-its end, renewing it every third of `indexing.lease_seconds` (default 300 s).
+its end, renewing it every sixth of `indexing.lease_seconds` (default 300 s).
 A second run on the same namespace stops at once, before it reads or writes
 anything, with:
 
@@ -375,9 +375,22 @@ NamespaceLeaseError: Index namespace '<namespace>' is being written by
 Wait for that run to finish and start again. A run that dies (a killed task,
 a lost host) stops renewing, so its lease expires at most `lease_seconds`
 after its last renewal and the next run proceeds; nothing needs cleaning up.
-A run whose renewals keep failing until its lease expires, or whose lease
-another run then took, stops before its next write with
-`NamespaceLeaseError: This run lost the write lease ...`: re-run once the other run ended.
+A run whose renewals keep failing, or whose lease another run then took,
+stops before its next write with `NamespaceLeaseError: This run lost the
+write lease ...`: re-run once the other run ended.
+
+- **When a run stops writing.** Once less than a third of the term is left
+  since the last renewal that succeeded, counted from when that renewal was
+  sent. Every registry write, indexing phase, rebuild cleanup and store
+  write request (a Neptune batch or drop, an OpenSearch bulk request) checks
+  first, so the run stops while it still holds the lease, as long as no
+  single request takes longer than a third of `lease_seconds`. Keep
+  `lease_seconds` at least three times the longest write request.
+- **Lease requests** time out after about 10 s, with 3 attempts; a failed
+  renewal is retried by the next heartbeat.
+- **Checkpoints.** A run downloads its S3 checkpoint only once it holds the
+  lease, and a stopped run (SIGTERM) uploads its checkpoint before it
+  releases the lease.
 
 - **Where the lease lives.** In DynamoDB, the item with partition key
   `namespace` = `<namespace>` and sort key `doc_id` = `#lease` (owner in

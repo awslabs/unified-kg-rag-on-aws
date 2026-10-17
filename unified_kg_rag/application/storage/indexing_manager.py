@@ -57,8 +57,9 @@ from unified_kg_rag.ports.indexer import (
     IndexingStats,
     VectorIndexer,
 )
-from unified_kg_rag.shared import get_logger
+from unified_kg_rag.shared import NamespaceLeaseError, get_logger
 from unified_kg_rag.shared.utils.concurrency import ContextThreadPoolExecutor
+from unified_kg_rag.shared.write_fence import check_write_fence
 
 logger = get_logger(__name__)
 
@@ -382,12 +383,17 @@ class IndexingManager:
         # labels are not cleared first, so queries keep reading the previous
         # graph until the build's writes replace it, and what the build did
         # not write is dropped at the end (the vector indices swap aliases).
+        # A run that lost its write lease stops before each phase and before
+        # the sweep, which would drop what the new holder wrote.
+        check_write_fence()
         rebuilding = suffixes is not None and graph.begin_rebuild(suffixes)
         try:
             logger.info("--- Starting %sIndexing Phase 1%s ---", prefix, tail)
             results = self._run_indexing_phase(tasks(phase1))
+            check_write_fence()
             logger.info("--- Starting %sIndexing Phase 2%s ---", prefix, tail)
             results.update(self._run_indexing_phase(phase2))
+            check_write_fence()
         except BaseException:
             if rebuilding:
                 graph.end_rebuild(suffixes or [], sweep=False)
@@ -1546,6 +1552,8 @@ class IndexingManager:
                 task_name = futures_map[future]
                 try:
                     phase_results[task_name] = future.result()
+                except NamespaceLeaseError:
+                    raise
                 except Exception as e:
                     logger.error("Task '%s' failed: %s", task_name, e)
                     stats = IndexingStats()

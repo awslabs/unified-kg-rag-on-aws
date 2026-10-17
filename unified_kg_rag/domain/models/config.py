@@ -2143,8 +2143,10 @@ class IndexingConfig(BaseModel):
         ge=10.0,
         description="Incremental runs: the term of an index namespace's write "
         "lease, which a run holds from its first stage to its end so no other "
-        "run writes the namespace meanwhile. The run renews it every third of "
-        "the term; a run that dies stops renewing, so its lease expires (and "
+        "run writes the namespace meanwhile. The run renews it every sixth of "
+        "the term and stops writing once less than a third is left since its "
+        "last renewal (keep it at least three times the longest store write "
+        "request); a run that dies stops renewing, so its lease expires (and "
         "another run can start) at most this long after.",
     )
     retire_source_scopes: list[str] = Field(
