@@ -12,7 +12,7 @@ from .community import Community
 from .community_report import CommunityReport
 from .config import PipelineConfig
 from .covariate import Claim
-from .document import Document, DocumentDelta
+from .document import Document, DocumentDelta, ExtractionSettings
 from .entity import Entity
 from .extraction import TextUnitExtraction
 from .relationship import Relationship
@@ -49,6 +49,10 @@ class IndexBuildRecord(BaseModel):
     )
     extraction_fingerprint: str = Field(
         description="Fingerprint of the extraction settings (cache_keys)."
+    )
+    extraction_settings: ExtractionSettings | None = Field(
+        default=None,
+        description="The extraction settings themselves, field by field.",
     )
     package_version: str | None = Field(
         default=None, description="Version of the package that ran ingestion."
@@ -261,6 +265,12 @@ class PipelineContext(BaseModel):
         description="Fingerprint of the run's extraction settings the delta "
         "was computed with; recorded on every committed document so a later "
         "run with other settings re-extracts it.",
+    )
+    incremental_extraction_settings: ExtractionSettings | None = Field(
+        default=None,
+        description="The extraction settings the delta was computed with "
+        "(cache_keys.extraction_settings): recorded for the registry scope at "
+        "commit, and compared field by field when the run resumes.",
     )
     incremental_retired_scopes: list[str] | None = Field(
         default=None,

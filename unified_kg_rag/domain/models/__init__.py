@@ -32,6 +32,7 @@ from .document import (
     Document,
     DocumentDelta,
     DocumentLineage,
+    ExtractionSettings,
 )
 from .entity import Entity
 from .evaluation import (
@@ -112,6 +113,7 @@ __all__ = [
     "ObservabilityConfig",
     "PENDING_CONTENT_HASH",
     "PipelineConfig",
+    "ExtractionSettings",
     "IndexBuildRecord",
     "PipelineContext",
     "PipelineMetrics",

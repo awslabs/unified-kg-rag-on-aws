@@ -266,47 +266,26 @@ class TestFingerprintScope:
             Config(), PipelineStageType.GRAPH_ANALYSIS
         ) != stage_input_fingerprint(changed, PipelineStageType.GRAPH_ANALYSIS)
 
-    # Default-config fingerprints of every cached stage as released before the
-    # per-tier effort split (#128) and before the fields added since. They must
-    # not move, or every existing stage cache turns into a miss on upgrade.
-    _RELEASED_DEFAULT_FINGERPRINTS = {
-        PipelineStageType.DOCUMENT_PARSING: "1035b7a62512",
-        PipelineStageType.DOCUMENT_LOADING: "ac616352a4e7",
-        # The fast tier's default model moved to Claude Haiku 5.5, and the
-        # chunking content_type default became "text", so every stage from
-        # chunking on re-keys.
-        PipelineStageType.TEXT_CHUNKING: "727dee084af2",
-        PipelineStageType.TRANSLATION: "0db84d95651c",
-        PipelineStageType.GRAPH_EXTRACTION: "8efc8861dd06",
-        # The score-based gleaning knobs were removed, so gleaning and every
-        # later stage re-key once.
-        PipelineStageType.GLEANING: "82ece6329622",
-        # Fuzzy entity resolution became opt-in (and its threshold 0.85), so
-        # graph resolution and every later stage re-key once.
-        PipelineStageType.GRAPH_RESOLUTION: "cf1df7e60038",
-        PipelineStageType.CLAIM_EXTRACTION: "82612783b846",
-        PipelineStageType.CLAIM_RESOLUTION: "82612783b846",
-        # graph.analysis is no longer an input (it shapes nothing a later
-        # stage reads), so graph analysis shares claim resolution's inputs.
-        PipelineStageType.GRAPH_ANALYSIS: "82612783b846",
-        # The no-op report flags were removed, then max_cluster_size bounded
-        # the level-0 communities: community detection re-keys.
-        PipelineStageType.COMMUNITY_DETECTION: "6f4246487a05",
-    }
+    # Every stage that caches output (indexing caches none).
+    _CACHED_STAGES = tuple(
+        stage for stage in PipelineStageType if stage is not PipelineStageType.INDEXING
+    )
 
-    def test_default_config_fingerprints_are_unchanged(self) -> None:
-        # Derived effort (#128) and the omit-when-default fields
-        # (fast_effort, default_max_output_tokens, model_overrides) and the
-        # non-output source_scope keep the released keys for a default config.
+    def test_package_version_keys_every_stage(self, monkeypatch) -> None:
+        # Built-in prompt templates and parsing rules are code: a release
+        # that changes them must not resume from the previous one's output.
         config = Config()
-        assert {
+        before = {
             stage: stage_input_fingerprint(config, stage)
-            for stage in self._RELEASED_DEFAULT_FINGERPRINTS
-        } == self._RELEASED_DEFAULT_FINGERPRINTS
+            for stage in self._CACHED_STAGES
+        }
+        monkeypatch.setattr(cache_keys, "__version__", "0.0.0-other")
+        for stage in self._CACHED_STAGES:
+            assert stage_input_fingerprint(config, stage) != before[stage], stage
 
     def test_corpus_manifest_changes_every_cached_stage_key(self) -> None:
         config = Config()
-        for stage in self._RELEASED_DEFAULT_FINGERPRINTS:
+        for stage in self._CACHED_STAGES:
             unchanged = stage_input_fingerprint(config, stage, "corpus-v1")
             assert unchanged == stage_input_fingerprint(config, stage, "corpus-v1")
             assert unchanged != stage_input_fingerprint(config, stage, "corpus-v2")

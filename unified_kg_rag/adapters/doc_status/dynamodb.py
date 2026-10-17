@@ -28,6 +28,7 @@ from unified_kg_rag.domain.models import (
     DocStatus,
     DocStatusRecord,
     DocumentDelta,
+    ExtractionSettings,
 )
 from unified_kg_rag.shared import (
     ConfigurationError,
@@ -52,6 +53,10 @@ _SCOPE_ATTRIBUTE = "registry_scope"
 # (no doc_id is "#lease": registry keys are "<namespace>#<hash>"). Its expiry
 # is the table's TTL attribute, so DynamoDB drops a lease its run abandoned.
 _LEASE_KEY = "#lease"
+# A scope's extraction settings are an item of its namespace's partition
+# under "#settings|<scope>". Items whose sort key starts with "#" are never
+# listed as documents.
+_SETTINGS_KEY_PREFIX = "#settings|"
 LEASE_EXPIRY_ATTRIBUTE = "lease_expires_at"
 # DynamoDB rejects an item over 400 KB (attribute names plus values).
 _MAX_ITEM_BYTES = 400 * 1024
@@ -366,7 +371,7 @@ class DynamoDBDocStatusStore:
             )
         for page in pages:
             for item in page.get("Items", []):
-                if item.get(_SORT_KEY, {}).get("S") != _LEASE_KEY:
+                if not item.get(_SORT_KEY, {}).get("S", "").startswith("#"):
                     yield item
 
     # --- the namespace write lease -------------------------------------------
@@ -437,6 +442,44 @@ class DynamoDBDocStatusStore:
                 code = e.response.get("Error", {}).get("Code")
                 if code != "ConditionalCheckFailedException":
                     raise
+
+    # --- the extraction settings of a scope's last commit ---------------------
+
+    @staticmethod
+    def _settings_key(scope: str) -> dict[str, Any]:
+        return {
+            _PARTITION_KEY: {"S": scope_namespace(scope) or scope},
+            _SORT_KEY: {"S": f"{_SETTINGS_KEY_PREFIX}{scope}"},
+        }
+
+    def get_extraction_settings(
+        self, scope: str
+    ) -> tuple[str, ExtractionSettings] | None:
+        with self._registry_errors("read the extraction settings"):
+            item = self.client.get_item(
+                TableName=self.table_name,
+                Key=self._settings_key(scope),
+                ConsistentRead=True,
+            ).get("Item")
+        if not item:
+            return None
+        return (
+            item["extraction_fingerprint"]["S"],
+            ExtractionSettings.model_validate_json(item["extraction_settings"]["S"]),
+        )
+
+    def put_extraction_settings(
+        self, scope: str, fingerprint: str, settings: ExtractionSettings
+    ) -> None:
+        with self._registry_errors("record the extraction settings"):
+            self.client.put_item(
+                TableName=self.table_name,
+                Item={
+                    **self._settings_key(scope),
+                    "extraction_fingerprint": {"S": fingerprint},
+                    "extraction_settings": {"S": settings.model_dump_json()},
+                },
+            )
 
     def list_namespace(self, namespace: str) -> list[DocStatusRecord]:
         with self._registry_errors("query the records"):

@@ -63,6 +63,7 @@ from unified_kg_rag.domain.models import (
     DocumentDelta,
     DocumentLineage,
     Entity,
+    ExtractionSettings,
     PipelineContext,
     Relationship,
     TextUnit,
@@ -76,7 +77,10 @@ from unified_kg_rag.shared import (
     PipelineStageError,
     get_logger,
 )
-from unified_kg_rag.shared.utils.cache_keys import extraction_fingerprint
+from unified_kg_rag.shared.utils.cache_keys import (
+    changed_settings,
+    extraction_settings,
+)
 from unified_kg_rag.shared.utils.document_identity import (
     DEFAULT_NAMESPACE,
     RELATIVE_PATH_KEY,
@@ -246,6 +250,7 @@ class IncrementalIndexer:
         suffix: str = DEFAULT_NAMESPACE,
         scope: str | None = None,
         extraction_fingerprint: str | None = None,
+        extraction_settings: ExtractionSettings | None = None,
     ) -> None:
         self.doc_status = doc_status
         self.indexing_manager = indexing_manager
@@ -253,9 +258,11 @@ class IncrementalIndexer:
         # Registry scope (delta_detector.registry_scope) the delta is computed
         # in and recorded under; None diffs against the whole registry.
         self.scope = scope
-        # The run's extraction settings (cache_keys.extraction_fingerprint),
-        # recorded on every committed document; None records none.
+        # The run's extraction fingerprint (run_extraction_fingerprint),
+        # recorded on every committed document, and the settings it stands
+        # for, recorded once for the scope; None records none.
         self.extraction_fingerprint = extraction_fingerprint
+        self.extraction_settings = extraction_settings
         # Write-ahead state of the current run (see write_ahead): the records
         # stored before it, the PENDING records written, and the documents
         # being (re)indexed.
@@ -647,6 +654,14 @@ class IncrementalIndexer:
                 lineages, results, owners or {}
             )
             self._record_processed(lineages, fingerprints, failed_doc_ids, write_failed)
+            if (
+                self.scope is not None
+                and self.extraction_fingerprint is not None
+                and self.extraction_settings is not None
+            ):
+                self.doc_status.put_extraction_settings(
+                    self.scope, self.extraction_fingerprint, self.extraction_settings
+                )
             return True
         logger.error(
             "Indexing failed for at least one artifact type (complete failure "
@@ -971,6 +986,34 @@ def dedup_preferences(
     return indexed, lambda document: failed(document) and not indexed(document)
 
 
+def run_extraction_fingerprint(
+    store: DocStatusPort, scope: str, settings: ExtractionSettings
+) -> str:
+    """The extraction fingerprint a run in ``scope`` diffs with and records.
+
+    The fingerprint the scope's last commit recorded while its settings
+    match ``settings`` field by field (``cache_keys.changed_settings``: a
+    field a newer version added still at its default is no change), so an
+    upgrade that adds a setting does not re-extract the corpus; otherwise
+    the fingerprint of ``settings``, and a WARNING names what changed.
+    """
+    stored = store.get_extraction_settings(scope)
+    if stored is None:
+        return settings.fingerprint
+    fingerprint, recorded = stored
+    changed = changed_settings(recorded, settings)
+    if not changed:
+        return fingerprint
+    logger.warning(
+        "The extraction settings changed since this corpus was last committed "
+        "(%s%s); the documents extracted with the earlier settings are "
+        "re-extracted",
+        ", ".join(changed[:10]),
+        f" and {len(changed) - 10} more" if len(changed) > 10 else "",
+    )
+    return settings.fingerprint
+
+
 def filter_to_delta(
     documents: list[Document],
     context: PipelineContext,
@@ -1000,8 +1043,9 @@ def filter_to_delta(
     )
     for document in documents:
         assign_registry_source(document, source_scope)
-    extraction = extraction_fingerprint(config)
-    context.incremental_extraction_fingerprint = extraction
+    settings = extraction_settings(config)
+    context.incremental_extraction_settings = settings
+    context.incremental_extraction_fingerprint = settings.fingerprint
     if config.indexing.reset:
         # A reset clears the stores and the registry before indexing, so
         # every document is new: diffing against the registry here would
@@ -1024,6 +1068,8 @@ def filter_to_delta(
 
     try:
         store = doc_status()
+        extraction = run_extraction_fingerprint(store, scope, settings)
+        context.incremental_extraction_fingerprint = extraction
         delta, fingerprints = detect_delta(
             documents,
             store,
@@ -1270,6 +1316,7 @@ def run_incremental_indexer(
         suffix=suffix,
         scope=context.incremental_scope,
         extraction_fingerprint=context.incremental_extraction_fingerprint,
+        extraction_settings=context.incremental_extraction_settings,
     )
 
 

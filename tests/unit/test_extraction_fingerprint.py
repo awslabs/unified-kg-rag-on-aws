@@ -19,11 +19,14 @@ from unified_kg_rag.domain.models import (
     DocStatus,
     DocStatusRecord,
     Document,
+    ExtractionSettings,
     LanguageCode,
     PipelineStageType,
 )
 from unified_kg_rag.shared.utils.cache_keys import (
+    changed_settings,
     extraction_fingerprint,
+    extraction_settings,
     stage_input_fingerprint,
 )
 
@@ -187,16 +190,6 @@ def test_grounding_settings_count_only_while_grounding_is_on() -> None:
     assert extraction_fingerprint(config) != before
 
 
-# The default configuration's fingerprint, as recorded on doc-status records
-# by released versions. It must not move, or upgrading re-extracts every
-# incrementally indexed corpus.
-_RELEASED_DEFAULT_FINGERPRINT = "0b3882fff6d2"
-
-
-def test_default_fingerprint_is_unchanged() -> None:
-    assert extraction_fingerprint(Config()) == _RELEASED_DEFAULT_FINGERPRINT
-
-
 @pytest.mark.parametrize(
     "change",
     [
@@ -297,3 +290,80 @@ def test_settings_change_retries_a_document_that_used_up_its_retries() -> None:
         [exhausted], store, max_failures=3, extraction_fingerprint="new"
     )
     assert retried.changed == [document_doc_id(exhausted)]
+
+
+class TestChangedSettings:
+    """Extraction-settings records compare field by field."""
+
+    @staticmethod
+    def _settings(config: Config) -> ExtractionSettings:
+        return extraction_settings(config)
+
+    def test_names_the_fields_that_changed(self) -> None:
+        changed = Config()
+        changed.processing.chunking.max_chunk_size += 100
+        changed.processing.gleaning.max_rounds = 1
+        assert changed_settings(self._settings(Config()), self._settings(changed)) == [
+            "processing.chunking.max_chunk_size",
+            "processing.gleaning.max_rounds",
+        ]
+        assert (
+            changed_settings(self._settings(Config()), self._settings(Config())) == []
+        )
+
+    def test_a_field_the_old_record_lacks_counts_at_its_default(self) -> None:
+        # A field a newer version added (its default keeps the old
+        # behaviour) does not re-extract a corpus; set away from it, it does.
+        new = self._settings(Config())
+        path = "processing.graph_extraction.max_entities_per_chunk"
+        old = ExtractionSettings(
+            version=new.version,
+            values={k: v for k, v in new.values.items() if k != path},
+        )
+        assert old.fingerprint != new.fingerprint
+        assert changed_settings(old, new) == []
+
+        tuned = Config()
+        tuned.processing.graph_extraction.max_entities_per_chunk += 1
+        assert changed_settings(old, self._settings(tuned)) == [path]
+
+    def test_a_removed_field_is_ignored_and_one_out_of_effect_is_not(self) -> None:
+        new = self._settings(Config())
+        removed = ExtractionSettings(
+            version=new.version,
+            values={**new.values, "processing.chunking.content_type": "text"},
+        )
+        assert changed_settings(removed, new) == []
+
+        guarded = self._settings(
+            Config.model_validate(
+                {"aws": {"bedrock": {"guardrail": {"identifier": "gr-1"}}}}
+            )
+        )
+        guarded_ingestion = self._settings(
+            Config.model_validate(
+                {
+                    "aws": {
+                        "bedrock": {
+                            "guardrail": {"identifier": "gr-1", "apply_to": "all"}
+                        }
+                    }
+                }
+            )
+        )
+        assert changed_settings(guarded_ingestion, guarded)
+        assert changed_settings(guarded, guarded_ingestion)
+
+    def test_another_format_version_differs_as_a_whole(self) -> None:
+        new = self._settings(Config())
+        old = ExtractionSettings(version=new.version - 1, values=new.values)
+        assert changed_settings(old, new) == ["version"]
+
+    def test_long_values_are_recorded_by_digest(self) -> None:
+        config = Config()
+        config.custom_prompts.graph_extraction_system = "Extract {input_text}. " * 50
+        recorded = self._settings(config).values[
+            "custom_prompts.graph_extraction_system"
+        ]
+        assert isinstance(recorded, str) and recorded.startswith("sha256:")
+        assert self._settings(config).fingerprint == extraction_fingerprint(config)

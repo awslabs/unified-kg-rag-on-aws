@@ -31,6 +31,7 @@ from unified_kg_rag.domain.ingestion.visualization_data import (
 from unified_kg_rag.domain.models import (
     Config,
     DocStatusRecord,
+    ExtractionSettings,
     PipelineConfig,
     PipelineContext,
     PipelineStageStatus,
@@ -173,6 +174,48 @@ def test_switching_claim_extraction_on_reextracts_unchanged_documents(
     tuned_claims = with_claims.model_copy(deep=True)
     tuned_claims.custom_prompts.claim_extraction_system = "tuned claims"
     assert extraction_fingerprint(tuned_claims) != extraction_fingerprint(with_claims)
+
+
+def test_a_setting_added_at_its_default_does_not_reextract(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    # A newer version adds an extraction setting whose default keeps the
+    # earlier behaviour: its record has the field, the stored one does not,
+    # so the fingerprints differ but the settings compare equal field by
+    # field, and the run keeps the recorded fingerprint.
+    harness = _Harness(tmp_path)
+    config = _base_config()
+    harness.run(config, "first")
+    ((scope, (fingerprint, settings)),) = harness.store.extraction_settings.items()
+    assert fingerprint == extraction_fingerprint(config) == settings.fingerprint
+
+    added = "processing.graph_extraction.max_entities_per_chunk"
+    older = ExtractionSettings(
+        version=settings.version,
+        values={k: v for k, v in settings.values.items() if k != added},
+    )
+    harness.store.put_extraction_settings(scope, older.fingerprint, older)
+    harness.store.put_many(
+        [
+            record.model_copy(update={"extraction_fingerprint": older.fingerprint})
+            for record in harness.store.list_all()
+        ]
+    )
+
+    harness.extractions.clear()
+    harness.run(config, "upgraded")
+    assert harness.extractions == []
+    assert _fingerprints(harness.store) == {older.fingerprint}
+
+    # Set away from its default, the added setting re-extracts and is named.
+    tuned = config.model_copy(deep=True)
+    tuned.processing.graph_extraction.max_entities_per_chunk += 1
+    harness.extractions.clear()
+    with caplog.at_level("WARNING"):
+        harness.run(tuned, "tuned")
+    assert harness.extractions == ["builtin", "builtin"]
+    assert added in caplog.text
+    assert _fingerprints(harness.store) == {extraction_fingerprint(tuned)}
 
 
 def test_records_without_a_fingerprint_are_not_reextracted(tmp_path: Path) -> None:

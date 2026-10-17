@@ -94,7 +94,7 @@ from unified_kg_rag.shared import (
 )
 from unified_kg_rag.shared.genai import ERROR_TYPE
 from unified_kg_rag.shared.utils.cache_keys import (
-    extraction_fingerprint,
+    extraction_settings,
     is_excluded_source_path,
     unit_record_fingerprint,
 )
@@ -389,6 +389,7 @@ class DocumentLoadingStage(PipelineStage):
         context.incremental_fingerprints = {}
         context.incremental_scope = None
         context.incremental_extraction_fingerprint = None
+        context.incremental_extraction_settings = None
         context.incremental_retired_scopes = []
 
         failed_files: list[str] = []
@@ -1575,12 +1576,18 @@ class IndexingStage(PipelineStage):
         documents = {
             doc_id for unit in text_units for doc_id in unit.document_ids or []
         }
+        settings = context.incremental_extraction_settings or extraction_settings(
+            self.config
+        )
         record = IndexBuildRecord(
             pipeline_id=context.pipeline_id,
             mode="incremental" if incremental else "full",
             built_at=datetime.now(timezone.utc),
             documents=len(documents),
-            extraction_fingerprint=extraction_fingerprint(self.config),
+            extraction_fingerprint=(
+                context.incremental_extraction_fingerprint or settings.fingerprint
+            ),
+            extraction_settings=settings,
             package_version=package_version,
         )
         for suffix in sorted(suffixes):

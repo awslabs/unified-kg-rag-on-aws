@@ -43,7 +43,7 @@ from unified_kg_rag.shared.pipeline_manager import (
     PipelineResumeManager,
     PipelineStateManager,
 )
-from unified_kg_rag.shared.utils.cache_keys import extraction_fingerprint
+from unified_kg_rag.shared.utils.cache_keys import extraction_settings
 
 pytestmark = pytest.mark.unit
 
@@ -405,7 +405,9 @@ def _record_incremental_run(pipeline: DataIngestionPipeline) -> None:
     context.stage_results = [
         _result(name, PipelineStageStatus.COMPLETED) for name in completed
     ]
-    context.incremental_extraction_fingerprint = extraction_fingerprint(pipeline.config)
+    settings = extraction_settings(pipeline.config)
+    context.incremental_extraction_settings = settings
+    context.incremental_extraction_fingerprint = settings.fingerprint
     pipeline.state_manager.save_pipeline_metadata(context)
     for name in completed:
         pipeline._save_stage_outputs_to_cache(context, name)
@@ -429,12 +431,21 @@ class TestResumeAfterExtractionChange:
         ids=["claims-enabled", "model"],
     )
     def test_changed_extraction_settings_recompute_the_delta(
-        self, tmp_path, mocker, changed_config: Config
+        self, tmp_path, mocker, caplog, changed_config: Config
     ) -> None:
         _record_incremental_run(_all_stages_pipeline(Config(), tmp_path))
 
-        start, context, executed = _resume(
-            _all_stages_pipeline(changed_config, tmp_path), mocker
+        with caplog.at_level("WARNING"):
+            start, context, executed = _resume(
+                _all_stages_pipeline(changed_config, tmp_path), mocker
+            )
+        # The warning names the settings that changed.
+        assert any(
+            path in caplog.text
+            for path in (
+                "processing.claim_extraction.enabled",
+                "processing.graph_extraction.extraction_model_id",
+            )
         )
 
         loading = PipelineStageType.DOCUMENT_LOADING.value

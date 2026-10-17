@@ -257,6 +257,11 @@ Deployment (CDK stack).
   read: deploy the image and the stack together (#330).
 
 Library API (Python callers and custom backends).
+- A custom doc-status registry keeps a scope's extraction settings
+  (`DocStatusPort.get_extraction_settings` / `put_extraction_settings`,
+  never listed as a document). `cache_keys.extraction_settings` returns an
+  `ExtractionSettings` record; its `fingerprint` is the former
+  `extraction_fingerprint` value (#332).
 - A custom doc-status registry implements the namespace write lease
   (`DocStatusPort.try_acquire_lease`, `lease_holder`, `release_lease`) and
   the new `DocStatusRecord` fields (`attempt_count`, `attempted_hash`) and
@@ -439,7 +444,8 @@ dimension, a stage-cache entry holding an absolute path is a miss, a
 parsed-document JSON's `content.text` is no longer read as its text (write
 `page_content`), the SQLite graph no longer drops the edge indexes of an
 earlier schema, and a custom registry's `diff` must take
-`extraction_fingerprint`.
+`extraction_fingerprint`. Every stage cache key and extraction fingerprint
+changed once with the full-config keys (#332).
 - Hidden files and files under a hidden or `__pycache__` subdirectory of the
   corpus (any path component below the root starting with `.`, such as
   `docs/.drafts/`) are not parsed (#213).
@@ -453,6 +459,13 @@ earlier schema, and a custom registry's `diff` must take
   keep the containers.
 
 ### Added
+- The doc-status registry keeps each corpus's extraction settings field by
+  field next to the fingerprint on its documents. An incremental run whose
+  settings changed names them in its WARNING, and a setting a newer release
+  adds is no change while it holds its default, so upgrading does not by
+  itself re-extract an incrementally indexed corpus. A resumed run names the
+  changed settings the same way, and the index build record (`run-eval`
+  manifests) carries them as `extraction_settings` (#332).
 - One writing run per index namespace: with the doc-status registry, a
   pipeline run holds its namespace's write lease from its first stage to its
   end (a conditional write in DynamoDB, a transaction in SQLite), renewed by
@@ -615,6 +628,17 @@ earlier schema, and a custom registry's `diff` must take
   registry keeps its records until the rebuild recorded the corpus, so a
   failed reset leaves the previous graph and records in place for the retry
   (#331).
+- Stage cache keys cover the whole configuration: `cache_keys.CONFIG_KEYING`
+  classifies every field as keyed from the first stage whose output it
+  shapes or unkeyed with a reason, a test fails on a field left
+  unclassified, and an unclassified field keys every stage. The local model
+  knobs `providers.llm.temperature`, `max_output_tokens` and
+  `context_window_size` (and the registry, retry and retirement settings
+  that decide an incremental delta) now key the stages they shape, so
+  changing them no longer resumes from output the old values produced. The
+  package version keys every stage, so a release that changes a built-in
+  prompt template no longer resumes from the previous one's output. Settings
+  of the inactive model provider no longer key anything (#332).
 - An incremental run finds what a changed or deleted document contributed
   in the stores, by the text units every artifact cites: the graph's
   entities and communities citing them, their edges, and the vector

@@ -1,34 +1,36 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Input-aware cache keys for ingestion stage results.
+"""Input-aware cache keys for ingestion stage results, and the extraction
+settings recorded with what a document produced.
 
 A stage's cached output may only be reused when the inputs that PRODUCED it are
-unchanged. Keying purely on the context attribute name ("documents",
-"entities", ...) made every run with the same ``pipeline_id`` a cache hit, so a
-changed prompt, model id, or chunking rule silently resumed from output the old
-configuration produced — the only escapes were ``--force-rebuild``, a TTL
-expiry, or a new ``pipeline_id``.
+unchanged, so its key carries a fingerprint of those inputs:
 
-The key therefore carries a fingerprint of the stage's output-determining
-inputs. Two properties matter:
+* **Every setting counts unless declared otherwise.** ``CONFIG_KEYING``
+  classifies every configuration field: :class:`Keyed` from the first stage
+  whose output it shapes, or :class:`Unkeyed` with the reason it shapes none
+  (a throughput knob, a connection setting, a query-time setting). A stage's
+  key hashes every keyed field of it and of every upstream stage (a stage
+  consumes its predecessors' output), the package version (built-in prompt
+  templates and parsing rules are code) and the corpus manifest. A field the
+  table does not cover counts from the first stage, and
+  ``tests/unit/test_cache_key_coverage.py`` fails until it is classified.
+* **Only settings in effect count.** A block switched off (``enabled:
+  false``) contributes its switch alone, except for the fields other
+  components read whatever the switch says (``_READ_WHEN_DISABLED``); the
+  local model knobs count only while the language models are not Bedrock's
+  and the Bedrock ones only while they are; a guardrail only while it guards
+  ingestion models; a stage's prompt overrides only while the stage runs
+  (``_IN_EFFECT_WHEN``).
 
-* **Stable for an unchanged configuration**, so resume still works. The
-  fingerprint is a hash over a sorted, JSON-canonicalized projection of named
-  config paths — no timestamps, no object identity, no dict ordering.
-* **Cumulative over the stage order.** A stage consumes its predecessors'
-  output, so its result is stale if its OWN inputs changed *or* if any upstream
-  stage's inputs changed. Fingerprinting only the stage's own subtree would let
-  a chunking change invalidate ``text_units`` while leaving the entities
-  extracted from the old chunks looking fresh.
-
-Only output-determining paths are listed. Throughput knobs
-(``max_concurrency``, ``max_attempts``)
-are deliberately excluded: they change how long a stage takes, not what it
-produces, and including them would discard an expensive cache on a tuning
-change. For the same reason a Bedrock guardrail counts only while it guards
-ingestion models (``apply_to: all``), and a block switched off with
-``enabled: false`` counts as the default block, except for the fields other
-components read whatever the switch says (see ``_CONSUMED_WHEN_DISABLED``).
+The settings that shape what a document produces (its text units, entities,
+relationships and claims) form its extraction settings
+(:func:`extraction_settings`): a record of the keyed fields marked
+``per_document`` through claim extraction, without the package version, so
+an upgrade does not by itself re-extract an incrementally indexed corpus. An
+incremental run records the fingerprint of the record on each document it
+commits, and the record itself once per registry scope, so the next run can
+compare the two field by field (:func:`changed_settings`).
 
 The corpus itself is an input too: the source path alone says nothing about
 what the files contain, so with a fixed ``pipeline_id`` an edited, added, or
@@ -37,10 +39,6 @@ in incremental mode, its delta). The caller passes a corpus manifest
 fingerprint (:func:`corpus_manifest_fingerprint`: relative path + size +
 content hash per file), folded into every stage's key since parsing is the
 first stage.
-
-Known limitation: the built-in prompt templates in ``domain/prompts`` are code,
-so editing one is not visible here — only ``custom_prompts`` overrides are.
-Bump the ``pipeline_id`` or use ``--force-rebuild`` after editing a template.
 """
 
 from __future__ import annotations
@@ -48,194 +46,358 @@ from __future__ import annotations
 import functools
 import hashlib
 import json
-from collections.abc import Callable, Iterable
-from enum import Enum
+from collections.abc import Callable, Iterable, Iterator
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel
+from pydantic_core import to_jsonable_python
 
-from unified_kg_rag.domain.models import Config, ModelPurpose, PipelineStageType
-from unified_kg_rag.domain.models.config import BedrockConfig, GuardrailConfig
+from unified_kg_rag import __version__
+from unified_kg_rag.domain.models import (
+    Config,
+    ExtractionSettings,
+    ModelPurpose,
+    PipelineStageType,
+)
+from unified_kg_rag.domain.models.provider_config import BEDROCK
 
 from .common import compute_hash
-from .document_identity import store_namespace_tag
 
 FINGERPRINT_LENGTH = 12
 
 # Canonical ingestion order: PipelineStageType is declared in pipeline order.
 _STAGE_ORDER: tuple[PipelineStageType, ...] = tuple(PipelineStageType)
+_P = PipelineStageType
 
-# Config paths whose value determines a stage's OUTPUT. Each stage's model id
-# lives inside its own subtree (e.g. `processing.graph_extraction`
-# .extraction_model_id), so naming the subtree covers the model. Prompt
-# overrides are named per stage rather than taking `custom_prompts` wholesale,
-# so editing a retrieval-only prompt does not invalidate ingestion output.
-_STAGE_INPUT_PATHS: dict[PipelineStageType, tuple[str, ...]] = {
-    PipelineStageType.DOCUMENT_PARSING: (
-        "processing.document_parsing",
-        "processing.ignore_errors",
-        "fixing",
-        # LLM knobs that change generated content. Region, role and profile
-        # routing are excluded: they change WHERE the call goes, not its output.
-        "aws.bedrock.effort",
-        "aws.bedrock.fast_effort",
-        "aws.bedrock.ingestion_effort",
-        "aws.bedrock.enable_1m_context",
-        # Only while it guards ingestion models (see _ingestion_guardrail).
-        "aws.bedrock.guardrail",
-        # The per-request output cap truncates long generations, and per-model
-        # overrides change a model's capabilities (output cap, effort support).
-        "aws.bedrock.default_max_output_tokens",
-        "aws.bedrock.model_overrides",
-        # Part of every document's identity (its registry namespace).
-        "indexing.additional_suffix",
-        "indexing.store_namespace_tag",
+
+@dataclass(frozen=True)
+class Keyed:
+    """A setting that shapes the output of ``stage`` and every later stage.
+
+    ``stage`` ``None``: it shapes every model call, so every stage's output.
+    ``per_document`` ``False``: it says where a run reads or writes, or which
+    documents it runs, not what a document produces, so it keys the run's
+    stage caches but is not one of the extraction settings.
+    """
+
+    stage: PipelineStageType | None
+    per_document: bool = True
+
+
+@dataclass(frozen=True)
+class Unkeyed:
+    """A setting that shapes no cached stage output, and why."""
+
+    reason: str
+
+
+_EVERY_CALL = Keyed(None)
+_WHERE = "says where a call goes or with which credentials, not what it returns"
+_THROUGHPUT = "changes how long a stage takes, not what it produces"
+_TIER = (
+    "a tier default: it reaches a stage only through the role-model fields "
+    "it fills, which are keyed where each role runs"
+)
+_AT_INDEXING = "read while indexing or querying, and neither caches stage output"
+_QUERY = "read at query time only"
+_QUERY_PROMPT = Unkeyed("a query-time prompt")
+
+
+def _keyed_at(stage: PipelineStageType, *paths: str, **kwargs: Any) -> dict:
+    return dict.fromkeys(paths, Keyed(stage, **kwargs))
+
+
+# Path prefix -> how the settings under it key the stage caches. The longest
+# matching prefix wins. Subtree entries are for sections a stage reads as a
+# whole (a new field there is keyed with it) or that no cached stage reads
+# (a new field there is unkeyed with them); a mixed section lists its fields.
+CONFIG_KEYING: dict[str, Keyed | Unkeyed] = {
+    "backend": Unkeyed(
+        "a preset: its effect is the provider settings it fills, keyed where "
+        "they are read"
     ),
-    # A reset loads the whole corpus where an incremental run loads only its
-    # new and changed documents, so the two runs' outputs differ from here on.
-    # The source scope names the registry records the run diffs against.
-    PipelineStageType.DOCUMENT_LOADING: (
+    # --- language models: the knobs that change what any call returns ------
+    "providers.llm.kind": _EVERY_CALL,
+    "providers.llm.context_window_size": _EVERY_CALL,
+    "providers.llm.max_output_tokens": _EVERY_CALL,
+    "providers.llm.temperature": _EVERY_CALL,
+    "providers.llm.tokenizer": _EVERY_CALL,
+    "providers.llm.tiktoken_encoding": _EVERY_CALL,
+    "providers.llm.default_model_id": Unkeyed(_TIER),
+    "providers.llm.fast_model_id": Unkeyed(_TIER),
+    "providers.llm.base_url": Unkeyed(_WHERE),
+    "providers.llm.api_key": Unkeyed(_WHERE),
+    "providers.llm.timeout_seconds": Unkeyed(_THROUGHPUT),
+    "providers.llm.max_attempts": Unkeyed(_THROUGHPUT),
+    "aws.bedrock.default_max_output_tokens": _EVERY_CALL,
+    "aws.bedrock.model_overrides": _EVERY_CALL,
+    "aws.bedrock.enable_1m_context": _EVERY_CALL,
+    "aws.bedrock.default_effort": _EVERY_CALL,
+    "aws.bedrock.fast_effort": _EVERY_CALL,
+    "aws.bedrock.ingestion_effort": _EVERY_CALL,
+    "aws.bedrock.default_model_id": Unkeyed(_TIER),
+    "aws.bedrock.fast_model_id": Unkeyed(_TIER),
+    "aws.bedrock.region_name": Unkeyed(_WHERE),
+    "aws.bedrock.assumed_role_arn": Unkeyed(_WHERE),
+    "aws.bedrock.enable_global_profile": Unkeyed(_WHERE),
+    "aws.bedrock.transient_retry": Unkeyed(_THROUGHPUT),
+    "aws.bedrock.guardrail": _EVERY_CALL,
+    "aws.bedrock.guardrail.trace": Unkeyed(
+        "adds trace details to a response, not to what the model returns"
+    ),
+    "aws.bedrock.guardrail.check_input": Unkeyed("screens the user query only"),
+    "aws.bedrock.guardrail.check_output": Unkeyed("screens the answer only"),
+    # Output fixing repairs malformed model output in every stage.
+    "fixing": _EVERY_CALL,
+    # --- the corpus, its identity and the registry it is diffed against ----
+    "processing.document_parsing": Keyed(_P.DOCUMENT_PARSING, per_document=False),
+    # The registry records the loading stage diffs the corpus against.
+    "processing.document_parsing.source_scope": Keyed(
+        _P.DOCUMENT_LOADING, per_document=False
+    ),
+    "processing.ignore_errors": Keyed(_P.DOCUMENT_PARSING, per_document=False),
+    # Part of every document's identity: its registry namespace names the
+    # stores (see document_identity.store_namespace_tag).
+    **_keyed_at(
+        _P.DOCUMENT_PARSING,
+        "indexing.additional_suffix",
+        "indexing.opensearch.text_units_index_prefix",
+        "indexing.opensearch.entities_index_prefix",
+        "indexing.opensearch.community_reports_index_prefix",
+        "indexing.opensearch.relationships_index_prefix",
+        "indexing.opensearch.claims_index_prefix",
+        "indexing.opensearch.extraction_records_index_prefix",
+        "indexing.neptune.entity_label_prefix",
+        "indexing.neptune.community_label_prefix",
+        per_document=False,
+    ),
+    # A reset loads the whole corpus where an incremental run loads its
+    # delta; the registry and its retry, quarantine and retirement rules
+    # decide what the delta holds.
+    **_keyed_at(
+        _P.DOCUMENT_LOADING,
         "processing.deduplicate",
         "indexing.reset",
-        "processing.document_parsing.source_scope",
+        "indexing.retire_source_scopes",
+        "indexing.max_document_failures",
+        "indexing.max_document_attempts",
+        "providers.doc_status",
+        "aws.dynamodb.enabled",
+        "aws.dynamodb.table_name",
+        per_document=False,
     ),
-    PipelineStageType.TEXT_CHUNKING: ("processing.chunking",),
-    PipelineStageType.TRANSLATION: ("processing.translation",),
-    PipelineStageType.GRAPH_EXTRACTION: (
+    "aws.dynamodb.create_table_if_missing": Unkeyed("provisions the table"),
+    "aws.dynamodb.billing_mode": Unkeyed("provisions the table"),
+    # --- the per-document stages -------------------------------------------
+    "processing.chunking": Keyed(_P.TEXT_CHUNKING),
+    "processing.translation": Keyed(_P.TRANSLATION),
+    **_keyed_at(
+        _P.GRAPH_EXTRACTION,
         "processing.graph_extraction",
         "custom_prompts.graph_extraction_system",
         "custom_prompts.graph_extraction_human",
         "custom_prompts.description_summarization_system",
         "custom_prompts.description_summarization_human",
     ),
-    PipelineStageType.GLEANING: (
+    **_keyed_at(
+        _P.GLEANING,
         "processing.gleaning",
         "custom_prompts.graph_refinement_system",
         "custom_prompts.graph_refinement_human",
     ),
-    PipelineStageType.GRAPH_RESOLUTION: (
+    **_keyed_at(
+        _P.GRAPH_RESOLUTION,
         "processing.resolution_method",
         "processing.similarity_threshold",
         "processing.fuzzy_entity_resolution",
     ),
-    PipelineStageType.CLAIM_EXTRACTION: (
+    **_keyed_at(
+        _P.CLAIM_EXTRACTION,
         "processing.claim_extraction",
         "custom_prompts.claim_extraction_system",
         "custom_prompts.claim_extraction_human",
     ),
-    # Claim resolution reuses the resolution knobs already folded in upstream.
-    PipelineStageType.CLAIM_RESOLUTION: (),
-    # `graph.analysis` only shapes graph statistics (and the visualization's
-    # centrality), which no later stage reads, so it is not an
-    # output-determining input of this stage or any later one.
-    PipelineStageType.GRAPH_ANALYSIS: (),
-    PipelineStageType.COMMUNITY_DETECTION: (
+    "processing.max_concurrency": Unkeyed(_THROUGHPUT),
+    "processing.max_attempts": Unkeyed(_THROUGHPUT),
+    "processing.io_workers": Unkeyed(_THROUGHPUT),
+    # --- the corpus-wide stages --------------------------------------------
+    "graph.analysis": Unkeyed(
+        "shapes graph statistics and the visualization's centrality, which "
+        "no later stage reads"
+    ),
+    **_keyed_at(
+        _P.COMMUNITY_DETECTION,
         "graph.community_detection",
         "custom_prompts.community_report_system",
         "custom_prompts.community_report_human",
     ),
-    # Indexing caches no output, so it has no cache key.
+    "graph.visualization": Unkeyed("renders the finished graph"),
+    # --- indexing, stores and query time -----------------------------------
+    "indexing.cross_run_merge": Unkeyed(_AT_INDEXING),
+    "indexing.community_drift_threshold": Unkeyed(_AT_INDEXING),
+    "indexing.lease_seconds": Unkeyed(
+        "keeps concurrent runs apart, never changes what a stage produces"
+    ),
+    "indexing.max_failure_rate": Unkeyed(
+        "fails a stage or the run, never changes what a stage produces"
+    ),
+    "indexing.neptune": Unkeyed(_AT_INDEXING),
+    "indexing.opensearch": Unkeyed(_AT_INDEXING),
+    "providers.embedding": Unkeyed(_AT_INDEXING),
+    "providers.rerank": Unkeyed(_QUERY),
+    "providers.graph": Unkeyed(_AT_INDEXING),
+    "providers.vector": Unkeyed(_AT_INDEXING),
+    "aws.region_name": Unkeyed(_WHERE),
+    "aws.profile_name": Unkeyed(_WHERE),
+    "aws.neptune": Unkeyed(_WHERE),
+    "aws.opensearch": Unkeyed(_WHERE),
+    "aws.s3": Unkeyed("says where caches and exports are stored"),
+    "cache": Unkeyed("says how and how long caches are stored, not what they hold"),
+    "search": Unkeyed(_QUERY),
+    "memory": Unkeyed(_QUERY),
+    "evaluation": Unkeyed("read by run-eval only"),
+    "logging": Unkeyed("telemetry"),
+    "observability": Unkeyed("telemetry"),
+    "custom_prompts.answer_generation_system": _QUERY_PROMPT,
+    "custom_prompts.answer_generation_human": _QUERY_PROMPT,
+    "custom_prompts.entity_extraction_system": _QUERY_PROMPT,
+    "custom_prompts.entity_extraction_human": _QUERY_PROMPT,
+    "custom_prompts.keywords_extraction_system": _QUERY_PROMPT,
+    "custom_prompts.keywords_extraction_human": _QUERY_PROMPT,
+    "custom_prompts.drift_primer_system": _QUERY_PROMPT,
+    "custom_prompts.drift_primer_human": _QUERY_PROMPT,
+    "custom_prompts.drift_hyde_system": _QUERY_PROMPT,
+    "custom_prompts.drift_hyde_human": _QUERY_PROMPT,
+    "custom_prompts.drift_action_system": _QUERY_PROMPT,
+    "custom_prompts.drift_action_human": _QUERY_PROMPT,
+    "custom_prompts.query_rewrite_system": _QUERY_PROMPT,
+    "custom_prompts.query_rewrite_human": _QUERY_PROMPT,
+    "custom_prompts.strategy_selection_system": _QUERY_PROMPT,
+    "custom_prompts.strategy_selection_human": _QUERY_PROMPT,
+    "custom_prompts.global_map_system": _QUERY_PROMPT,
+    "custom_prompts.global_map_human": _QUERY_PROMPT,
+    "custom_prompts.corpus_profile_system": Unkeyed("read by run-prompt-tuning only"),
+    "custom_prompts.corpus_profile_human": Unkeyed("read by run-prompt-tuning only"),
+    "custom_prompts.pairwise_comparison_system": Unkeyed("read by run-eval only"),
+    "custom_prompts.pairwise_comparison_human": Unkeyed("read by run-eval only"),
 }
 
-
-# Query-side screening switches: they never touch an ingestion model call.
-_QUERY_ONLY_GUARDRAIL_FIELDS = {"check_input", "check_output"}
-
-
-def _ingestion_guardrail(config: Config) -> dict[str, Any]:
-    """The guardrail as ingestion models see it.
-
-    Under the default ``apply_to: query`` (or with no identifier) ingestion
-    runs unguarded, so attaching, rotating or toggling a query guardrail must
-    not re-key the stage caches or re-extract the corpus: it projects as the
-    default (absent) guardrail. When it does guard ingestion, its identifier,
-    version and scope shape the output; ``trace`` only adds trace details to
-    the response, so it is pinned to its default, and the query-side
-    ``check_input`` / ``check_output`` switches are left out.
-    """
-    guardrail = config.aws.bedrock.guardrail
-    if not guardrail.applies_to(ModelPurpose.INGESTION):
-        guardrail = GuardrailConfig()
-    return guardrail.model_dump(mode="json", exclude=_QUERY_ONLY_GUARDRAIL_FIELDS) | {
-        "trace": GuardrailConfig().trace
-    }
+# What an unclassified field gets: it counts for every stage, so forgetting
+# to classify it costs a cache miss, never a stale hit.
+_UNCLASSIFIED = _EVERY_CALL
 
 
-# Paths fingerprinted by a derived value instead of the raw attribute.
-# "aws.bedrock.effort" (the deprecated name of default_effort) stands for the
-# default tier's effort, so an unchanged configuration keeps its cache key.
-_DERIVED_PATHS: dict[str, Callable[[Config], Any]] = {
-    "aws.bedrock.effort": lambda config: config.aws.bedrock.default_effort,
-    "aws.bedrock.guardrail": _ingestion_guardrail,
-    # The index and label prefixes as the registry namespace sees them
-    # (``None`` while they are the defaults).
-    "indexing.store_namespace_tag": lambda config: store_namespace_tag(config.indexing),
-    # The removed ``content_type`` stays in at "text", the only value that
-    # ever took effect, so stage caches and extraction fingerprints keep
-    # their released keys.
-    "processing.chunking": lambda config: config.processing.chunking.model_dump(
-        mode="json"
-    )
-    | {"content_type": "text"},
-}
+def classify(path: str) -> Keyed | Unkeyed | None:
+    """The ``CONFIG_KEYING`` entry of the longest prefix of ``path``, if any."""
+    parts = path.split(".")
+    for end in range(len(parts), 0, -1):
+        entry = CONFIG_KEYING.get(".".join(parts[:end]))
+        if entry is not None:
+            return entry
+    return None
 
 
-def _resolve_path(config: Config, path: str) -> Any:
-    if path in _DERIVED_PATHS:
-        return _DERIVED_PATHS[path](config)
+def _block_on(config: Config, path: str) -> bool:
+    """Whether the block at ``path`` and every block above it are on."""
     node: Any = config
-    for attribute in path.split("."):
-        node = getattr(node, attribute)
-    return node
+    for name in path.split("."):
+        node = getattr(node, name)
+        if getattr(node, "enabled", None) is False:
+            return False
+    return True
 
 
-def _canonicalize(value: Any) -> Any:
-    if isinstance(value, BaseModel):
-        return value.model_dump(mode="json")
-    if isinstance(value, Enum):
-        return value.value
-    return value
-
-
-# Paths added after the key format shipped: folded in only when set away from
-# their default, so existing caches stay valid on upgrade.
-_OMIT_WHEN_DEFAULT: dict[str, Any] = {
-    path: _canonicalize(
-        BedrockConfig.model_fields[path.rsplit(".", 1)[1]].get_default(
-            call_default_factory=True
-        )
-    )
-    for path in (
-        "aws.bedrock.fast_effort",
-        "aws.bedrock.ingestion_effort",
-        "aws.bedrock.default_max_output_tokens",
-        "aws.bedrock.model_overrides",
-    )
-} | {
-    "indexing.reset": False,
-    "indexing.additional_suffix": None,
-    "indexing.store_namespace_tag": None,
-    "processing.document_parsing.source_scope": None,
+# Path prefix -> whether the settings under it are in effect. Their switch
+# fields (``kind``, ``enabled``) count either way.
+_IN_EFFECT_WHEN: dict[str, Callable[[Config], bool]] = {
+    "providers.llm": lambda c: c.providers.llm.kind != BEDROCK,
+    "aws.bedrock": lambda c: c.providers.llm.kind == BEDROCK,
+    "aws.bedrock.guardrail": lambda c: c.aws.bedrock.guardrail.applies_to(
+        ModelPurpose.INGESTION
+    ),
+    **{
+        f"custom_prompts.{name}_{part}": functools.partial(_block_on, path=block)
+        for name, block in {
+            "description_summarization": (
+                "processing.graph_extraction.description_summarization"
+            ),
+            "graph_refinement": "processing.gleaning",
+            "claim_extraction": "processing.claim_extraction",
+            "community_report": "graph.community_detection.report_generation",
+        }.items()
+        for part in ("system", "human")
+    },
 }
+_SWITCHES = frozenset({"enabled", "kind"})
+
+# Fields of a switchable block that other components read whatever its
+# ``enabled`` flag says. With translation off, extraction, gleaning, claim
+# and description prompts still take ``target_language`` and the indexer
+# picks its analyzers and translated-text fields from the three languages;
+# with reports off, community objects still list at most
+# ``max_entities_per_report`` entity names.
+_READ_WHEN_DISABLED = frozenset(
+    {
+        "processing.translation.source_language",
+        "processing.translation.target_language",
+        "processing.translation.additional_target_languages",
+        "graph.community_detection.report_generation.max_entities_per_report",
+    }
+)
 
 
-# Fields inside a fingerprinted subtree that are dropped from it:
-# ``source_scope`` is fingerprinted from the loading stage on (its own path),
-# not with the parsing settings, whose output it does not change.
-_NON_OUTPUT_SUBFIELDS: dict[str, frozenset[str]] = {
-    "processing.document_parsing": frozenset({"source_scope"}),
-}
+def _leaves(model: BaseModel, prefix: str = "") -> Iterator[tuple[str, Any, bool]]:
+    """``(path, value, disabled)`` of every non-section field under ``model``.
+
+    ``disabled``: the field lies in a block switched off with
+    ``enabled: false`` (the switch itself excluded).
+    """
+    off = getattr(model, "enabled", None) is False
+    for name in type(model).model_fields:
+        value = getattr(model, name)
+        path = f"{prefix}{name}"
+        if isinstance(value, BaseModel):
+            for leaf, leaf_value, disabled in _leaves(value, f"{path}."):
+                yield leaf, leaf_value, disabled or off
+        else:
+            yield path, value, off and name != "enabled"
 
 
-def _input_paths_through(stage_type: PipelineStageType) -> list[str]:
-    """Return the stage's own input paths plus every upstream stage's."""
-    cutoff = _STAGE_ORDER.index(stage_type) + 1
+def _in_effect(config: Config, path: str, disabled: bool) -> bool:
+    name = path.rsplit(".", 1)[-1]
+    if disabled and path not in _READ_WHEN_DISABLED:
+        return False
+    if name in _SWITCHES:
+        return True
+    parts = path.split(".")
+    return all(
+        _IN_EFFECT_WHEN.get(".".join(parts[:end]), lambda _c: True)(config)
+        for end in range(1, len(parts) + 1)
+    )
 
-    paths: list[str] = []
-    for stage in _STAGE_ORDER[:cutoff]:
-        paths.extend(_STAGE_INPUT_PATHS.get(stage, ()))
-    return paths
+
+def _settings(config: Config, selected: Callable[[Keyed], bool]) -> dict[str, Any]:
+    """``{path: value}`` of the keyed settings in effect that ``selected`` takes."""
+    settings: dict[str, Any] = {}
+    for path, value, disabled in _leaves(config):
+        rule = classify(path) or _UNCLASSIFIED
+        if isinstance(rule, Keyed) and selected(rule):
+            if _in_effect(config, path, disabled):
+                settings[path] = to_jsonable_python(value)
+    return settings
+
+
+def _upstream_of(stage: PipelineStageType) -> Callable[[Keyed], bool]:
+    cutoff = _STAGE_ORDER.index(stage)
+    return lambda rule: rule.stage is None or _STAGE_ORDER.index(rule.stage) <= cutoff
+
+
+def _digest(payload: Any) -> str:
+    return compute_hash(
+        json.dumps(payload, sort_keys=True, default=str), length=FINGERPRINT_LENGTH
+    )
 
 
 _HASH_READ_BYTES = 1 << 20
@@ -307,43 +469,58 @@ def corpus_manifest_fingerprint(
     return compute_hash("\n".join(entries), length=FINGERPRINT_LENGTH)
 
 
-# Through graph resolution, the stages whose settings shape what each
-# document contributes to the graph (its text units, entities and
-# relationships).
-_EXTRACTION_THROUGH = PipelineStageType.GRAPH_RESOLUTION
+# --- extraction settings -----------------------------------------------------
 
-# Later per-document stages that run only while switched on. A document's
-# claims are its own output too, so while claim extraction is on its settings
-# and prompts join the fingerprint (switching it on re-extracts the corpus);
-# while it is off they are left out, so a configuration with it off keeps the
-# fingerprint it had before claims counted. Claim resolution reuses the
-# resolution knobs and graph analysis, community detection and indexing are
-# not per-document extraction, so no other later stage is listed.
-_EXTRACTION_SWITCHED_STAGES: dict[PipelineStageType, Callable[[Config], bool]] = {
-    PipelineStageType.CLAIM_EXTRACTION: lambda config: (
-        config.processing.claim_extraction.enabled
-    ),
-}
+# Bump when the record's meaning changes in a way its fields do not show (a
+# setting removed whose old value shaped the output, say): every recorded
+# set of extraction settings then reads as changed.
+EXTRACTION_SETTINGS_VERSION = 1
+# Values whose JSON is longer than this (prompt overrides, long entity-type
+# lists) are recorded by digest, so the record stays small.
+_RECORDED_VALUE_MAX_CHARS = 200
 
-# Inputs of those stages that do not change what a document produces: the
-# corpus location and naming (the registry key already holds the document's
-# identity), and switches that only change which documents run or whether a
-# failure stops the run.
-_EXTRACTION_NON_OUTPUT_PATHS = frozenset(
-    {
-        "processing.ignore_errors",
-        "processing.deduplicate",
-        "indexing.reset",
-        "indexing.additional_suffix",
-        "indexing.store_namespace_tag",
-        "processing.document_parsing.source_scope",
-    }
-)
-_EXTRACTION_NON_OUTPUT_SUBFIELDS: dict[str, frozenset[str]] = {
-    "processing.document_parsing": frozenset(
-        {"source_directory", "target_directory", "index_value", "source_scope"}
-    ),
-}
+
+def _recorded(value: Any) -> Any:
+    text = json.dumps(value, sort_keys=True, default=str)
+    if len(text) <= _RECORDED_VALUE_MAX_CHARS:
+        return value
+    return f"sha256:{compute_hash(text)}"
+
+
+def extraction_settings(config: Config) -> ExtractionSettings:
+    """The settings that shape what a document produces, as a record.
+
+    Every keyed field marked ``per_document`` and in effect, from the model
+    knobs through claim extraction: models, prompts, entity types, chunking,
+    translation, gleaning, resolution and claims. Not the corpus location,
+    the registry or the switches that pick which documents run, and not the
+    package version.
+    """
+    values = _settings(
+        config,
+        lambda rule: rule.per_document and _upstream_of(_P.CLAIM_EXTRACTION)(rule),
+    )
+    return ExtractionSettings(
+        version=EXTRACTION_SETTINGS_VERSION,
+        values={path: _recorded(value) for path, value in sorted(values.items())},
+    )
+
+
+def extraction_fingerprint(config: Config) -> str:
+    """Fingerprint of :func:`extraction_settings` (recorded per document)."""
+    return extraction_settings(config).fingerprint
+
+
+_MISSING = object()
+
+
+def _default_value(path: str) -> Any:
+    node: Any = _default_config()
+    for name in path.split("."):
+        node = getattr(node, name, _MISSING)
+        if node is _MISSING:
+            return _MISSING
+    return _recorded(to_jsonable_python(node))
 
 
 @functools.cache
@@ -351,110 +528,39 @@ def _default_config() -> Config:
     return Config()
 
 
-# Fields of a switchable block that other components read whatever its
-# ``enabled`` flag says, so they keep shaping the output of a switched-off
-# block's neighbours. With translation off, extraction, gleaning, claim and
-# description prompts still take ``target_language`` and the OpenSearch
-# indexer picks its analyzers and translated-text fields from the three
-# languages; with reports off, community objects still list at most
-# ``max_entities_per_report`` entity names.
-_CONSUMED_WHEN_DISABLED: dict[str, frozenset[str]] = {
-    "processing.translation": frozenset(
-        {"source_language", "target_language", "additional_target_languages"}
-    ),
-    "graph.community_detection.report_generation": frozenset(
-        {"max_entities_per_report"}
-    ),
-}
+def changed_settings(old: ExtractionSettings, new: ExtractionSettings) -> list[str]:
+    """The paths whose value differs between two extraction-settings records.
 
-
-def _neutralize_disabled(value: Any, default: Any, path: str) -> Any:
-    """Project a switched-off settings block as the default block.
-
-    A block with ``enabled: false`` (fixing, translation, gleaning, claim
-    extraction, description summarization, entity grounding, community
-    detection or reports) runs nothing, so the fields only it reads (model
-    id, limits) must not move a fingerprint. They are replaced by the default
-    configuration's values, so a default configuration keeps its released
-    fingerprints. Fields other components read regardless
-    (``_CONSUMED_WHEN_DISABLED``) keep their configured value.
+    Compared field by field. A field only ``new`` records counts as
+    unchanged while it holds its default (a field a newer version added,
+    whose default keeps the earlier behaviour, or one that came into effect
+    at its default); a field only ``old`` records counts as changed while it
+    is still a configuration field (it went out of effect) and is ignored
+    once removed from the configuration. Records of another
+    ``EXTRACTION_SETTINGS_VERSION`` differ as a whole (``["version"]``).
     """
-    if not isinstance(value, dict):
-        return value
-    if value.get("enabled") is False and isinstance(default, dict):
-        kept = _CONSUMED_WHEN_DISABLED.get(path, frozenset())
-        return {
-            **default,
-            **{k: v for k, v in value.items() if k in kept},
-            "enabled": False,
-        }
-    defaults = default if isinstance(default, dict) else {}
-    return {
-        k: _neutralize_disabled(v, defaults.get(k), f"{path}.{k}")
-        for k, v in value.items()
-    }
+    if old.version != new.version:
+        return ["version"]
+    changed = []
+    for path, value in new.values.items():
+        before = old.values.get(path, _MISSING)
+        if before is _MISSING:
+            before = _default_value(path)
+        if before != value:
+            changed.append(path)
+    for path in old.values.keys() - new.values.keys():
+        if _default_value(path) is not _MISSING:
+            changed.append(path)
+    return sorted(changed)
 
 
-def _projection(
-    config: Config,
-    paths: Iterable[str],
-    drop_subfields: dict[str, frozenset[str]],
-) -> list[tuple[str, Any]]:
-    projection: list[tuple[str, Any]] = []
-    for path in paths:
-        value = _neutralize_disabled(
-            _canonicalize(_resolve_path(config, path)),
-            _canonicalize(_resolve_path(_default_config(), path)),
-            path,
-        )
-        if path in drop_subfields and isinstance(value, dict):
-            value = {k: v for k, v in value.items() if k not in drop_subfields[path]}
-        if path in _OMIT_WHEN_DEFAULT and value == _OMIT_WHEN_DEFAULT[path]:
-            continue
-        projection.append((path, value))
-    return projection
-
-
-def extraction_fingerprint(config: Config) -> str:
-    """Fingerprint the settings that determine a document's extracted artifacts.
-
-    The output-determining inputs of every stage from parsing through graph
-    resolution (models, prompts, entity types, chunking, translation,
-    gleaning, resolution) and, while it is on, claim extraction (see
-    ``_EXTRACTION_SWITCHED_STAGES``), the same paths the stage cache keys
-    use, minus the corpus location and the switches that do not change a document's output
-    (see ``_EXTRACTION_NON_OUTPUT_PATHS``), a guardrail that does not guard
-    ingestion, and the settings only a switched-off block reads. Recorded on
-    each document's doc-status record by an incremental run, so a later run with other
-    settings re-extracts documents whose content did not change.
-
-    Like the cache keys, it does not see edits to the built-in prompt
-    templates (code), only ``custom_prompts`` overrides.
-    """
-    paths = [
-        path
-        for path in _input_paths_through(_EXTRACTION_THROUGH)
-        if path not in _EXTRACTION_NON_OUTPUT_PATHS
-    ]
-    for stage, is_on in _EXTRACTION_SWITCHED_STAGES.items():
-        if is_on(config):
-            paths.extend(_STAGE_INPUT_PATHS[stage])
-    projection = _projection(config, paths, _EXTRACTION_NON_OUTPUT_SUBFIELDS)
-    payload = json.dumps(projection, sort_keys=True, default=str)
-    return compute_hash(payload, length=FINGERPRINT_LENGTH)
-
+# --- unit extraction records -------------------------------------------------
 
 # A text unit's extraction record (``TextUnitExtraction``) is keyed by its
-# text, so the settings that only shape the text (parsing, chunking,
-# translation) are not inputs of it; the language its descriptions are
-# written in is. Bump the version when the record format or its parsing rules
-# change.
+# text, so the settings that only shape the text (chunking, translation) are
+# not inputs of it; the language its descriptions are written in is. Bump the
+# version when the record format or its parsing rules change.
 _RECORD_FORMAT_VERSION = 1
-_RECORD_NON_OUTPUT_PATHS = _EXTRACTION_NON_OUTPUT_PATHS | {
-    "processing.document_parsing",
-    "processing.chunking",
-    "processing.translation",
-}
 
 
 def unit_record_fingerprint(
@@ -462,13 +568,13 @@ def unit_record_fingerprint(
 ) -> str:
     """Fingerprint the settings a text unit's extraction record depends on.
 
-    The models and LLM knobs, graph extraction (entity types, limits,
-    grounding, confidence threshold), gleaning when the record is
-    ``gleaned``, claim extraction for a unit's ``claims`` record, the
-    target language, and the prompt templates in effect: the built-in ones
-    (code) as well as ``custom_prompts`` overrides, so editing a template
-    re-keys the records it shaped. The extraction store keys a record by this
-    fingerprint and the hash of the unit's text
+    The model knobs, graph extraction (entity types, limits, grounding,
+    confidence threshold), gleaning when the record is ``gleaned``, claim
+    extraction for a unit's ``claims`` record, the target language, and the
+    prompt templates in effect: the built-in ones (code) as well as
+    ``custom_prompts`` overrides, so editing a template re-keys the records
+    it shaped. The extraction store keys a record by this fingerprint and
+    the hash of the unit's text
     (``domain.ingestion.contributions.record_key``).
     """
     from unified_kg_rag.domain.prompts import (
@@ -477,44 +583,40 @@ def unit_record_fingerprint(
         GraphRefinementPrompt,
     )
 
-    stages = [PipelineStageType.DOCUMENT_PARSING, PipelineStageType.GRAPH_EXTRACTION]
+    stages = {_P.GRAPH_EXTRACTION}
     prompts: list[Any] = [GraphExtractionPrompt]
     if gleaned:
-        stages.append(PipelineStageType.GLEANING)
+        stages.add(_P.GLEANING)
         prompts.append(GraphRefinementPrompt)
     if claims:
-        stages.append(PipelineStageType.CLAIM_EXTRACTION)
+        stages.add(_P.CLAIM_EXTRACTION)
         prompts.append(ClaimExtractionPrompt)
-    paths = [
-        path
-        for stage in stages
-        for path in _STAGE_INPUT_PATHS[stage]
-        if path not in _RECORD_NON_OUTPUT_PATHS
-    ]
-    projection = _projection(config, paths, {})
-    projection.append(
-        (
-            "record",
-            {
-                "version": _RECORD_FORMAT_VERSION,
-                "gleaned": gleaned,
-                "claims": claims,
-                "target_language": config.processing.translation.target_language.value,
-                "prompts": [
-                    compute_hash(
-                        resolved.system_prompt_template
-                        + "\n"
-                        + resolved.human_prompt_template
-                    )
-                    for resolved in (
-                        prompt.resolve(config.custom_prompts) for prompt in prompts
-                    )
-                ],
-            },
-        )
+    settings = _settings(
+        config,
+        lambda rule: rule.per_document and (rule.stage is None or rule.stage in stages),
     )
-    payload = json.dumps(projection, sort_keys=True, default=str)
-    return compute_hash(payload, length=FINGERPRINT_LENGTH)
+    return _digest(
+        {
+            "settings": settings,
+            "version": _RECORD_FORMAT_VERSION,
+            "gleaned": gleaned,
+            "claims": claims,
+            "target_language": config.processing.translation.target_language.value,
+            "prompts": [
+                compute_hash(
+                    resolved.system_prompt_template
+                    + "\n"
+                    + resolved.human_prompt_template
+                )
+                for resolved in (
+                    prompt.resolve(config.custom_prompts) for prompt in prompts
+                )
+            ],
+        }
+    )
+
+
+# --- stage cache keys --------------------------------------------------------
 
 
 def stage_input_fingerprint(
@@ -522,7 +624,10 @@ def stage_input_fingerprint(
     stage_type: PipelineStageType,
     corpus_fingerprint: str | None = None,
 ) -> str:
-    """Fingerprint the configuration that determines ``stage_type``'s output.
+    """Fingerprint the inputs that determine ``stage_type``'s output.
+
+    The keyed settings in effect of the stage and every upstream stage
+    (``CONFIG_KEYING``), the package version, and the corpus.
 
     Args:
         config: The active framework configuration.
@@ -541,13 +646,13 @@ def stage_input_fingerprint(
         >>> len(fp)
         12
     """
-    projection = _projection(
-        config, _input_paths_through(stage_type), _NON_OUTPUT_SUBFIELDS
+    return _digest(
+        {
+            "settings": _settings(config, _upstream_of(stage_type)),
+            "package_version": __version__,
+            "corpus_manifest": corpus_fingerprint,
+        }
     )
-    if corpus_fingerprint is not None:
-        projection.append(("corpus_manifest", corpus_fingerprint))
-    payload = json.dumps(projection, sort_keys=True, default=str)
-    return compute_hash(payload, length=FINGERPRINT_LENGTH)
 
 
 def stage_cache_key(
