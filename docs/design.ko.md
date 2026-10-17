@@ -42,7 +42,7 @@
 
 ## 2. 헥사고날 아키텍처 (포트와 어댑터)
 
-### 2.0 의존성 규칙과 레이어 맵
+### 2.1 의존성 규칙과 레이어 맵
 
 import는 **안쪽을 향합니다**(왼쪽이 오른쪽을 import하며 반대 방향은 허용하지 않습니다). `shared/`는 어느 레이어든 쓸 수 있는 공통 커널이므로, 이 패키지 루트가 import하는 대상은 가볍게 유지합니다. `domain/` 모듈을 import할 때 LangChain, LangSmith, boto3/botocore, lxml, opensearch-py, gremlin-python이 간접적으로도 로드되면 안 됩니다. LangChain에 묶인 도우미는 각 하위 모듈(`shared.utils.langchain`, `shared.utils.document_converter`, rich 콘솔 도우미는 `shared.utils.display`)에서 import하며 `shared.utils`에서 다시 내보내지 않습니다. `tests/unit/test_domain_purity.py`가 새 인터프리터에서 이를 검사합니다. 두 RAG 방법론(GraphRAG 커뮤니티 요약, LightRAG 이중 레벨 키워드)은 수집, 인덱싱, 캐싱, 하이브리드 검색 인프라 하나를 함께 쓰고 알고리즘 레이어에서만 갈라집니다.
 
@@ -63,16 +63,17 @@ flowchart TB
 
 ```
 unified_kg_rag/
+├─ __init__.py         # 공개 API 파사드: 지원하는 이름을 지연 재내보내기
 ├─ domain/              # 기술 중립 코어 (boto3/LangChain/백엔드 import 없음)
 │  ├─ models/           #   Pydantic 도메인 모델
-│  ├─ ingestion/        #   순수 알고리즘: delta_detector, graph_analyzer/
-│  │  └─ merge/         #   builder/resolver, claim_resolver, merge/merger
+│  ├─ ingestion/        #   순수 알고리즘: delta_detector, graph_builder/resolver/analyzer,
+│  │  └─ merge/         #   claim_resolver, contributions, derivation; merge/ = 실행 간 병합
 │                       #   (IncrementalIndexer는 오케스트레이션이므로 application/에 있음)
-│  ├─ retrieval/        #   strategy_registry, index_prefixes
+│  ├─ retrieval/        #   strategy_registry, index_prefixes, hybrid_normalization
 │  └─ prompts/          #   버전 관리되는 프롬프트 템플릿
 ├─ ports/               # 도메인이 의존하는 추상 인터페이스 (DocStatusPort,
-│                       #   BaseIndexer/GraphIndexer/VectorIndexer,
-│                       #   ModelFactoryPort — ports/__init__이 포트 카탈로그)
+│                       #   BaseIndexer/GraphIndexer/VectorIndexer, ModelFactoryPort,
+│                       #   ContentGuardPort — ports/__init__이 포트 카탈로그)
 ├─ adapters/            # 구체적인 기술 바인딩
 │  ├─ aws/              #   Bedrock 모델 팩토리, Neptune/OpenSearch 클라이언트, S3 전송과 캐시
 │  ├─ local/            #   Ollama/OpenAI 호환 모델, 크로스 인코더, 내장 SQLite 그래프·검색 저장소
@@ -81,6 +82,7 @@ unified_kg_rag/
 │  ├─ storage/          #   Neptune/OpenSearch/SQLite 그래프 인덱서 (쓰기 측 포트 구현)
 │  ├─ retrievers/       #   Neptune/OpenSearch/SQLite 그래프 리트리버
 │  ├─ doc_status/       #   DynamoDB/SQLite 문서 상태 레지스트리 (DocStatusPort)
+│  ├─ guardrail/        #   Bedrock ApplyGuardrail (ContentGuardPort)
 │  ├─ search_strategies/#   simple/local/global/drift + lightrag(mix/hybrid/naive)
 │  ├─ retrieval/        #   추상 리트리버/전략 베이스, hybrid scorer, 토큰/메모리 매니저
 │  ├─ ingestion/        #   LLM/IO 결합: chunker, *_extractor, loader, parser,
@@ -88,11 +90,13 @@ unified_kg_rag/
 │  ├─ renderers/        #   그래프 시각화 렌더러
 │  ├─ evaluators/       #   평가기 베이스 + langchain/ragas 평가기 (LLM을 쓰지 않는 graph_aware,
 │                       #   retrieval, answer_match 평가기는 evaluation/에 있음)
+│  ├─ store_errors.py   #   is_fatal_retrieval_error: 치명 오류와 부분 실패를 가르는 정책 (§8.1)
 │  ├─ providers.py      #   Providers: 실행마다 쓰는 모델·저장소 공급자 묶음
 │  └─ provider_registry.py # @register_provider: 역할과 kind별 빌더
 ├─ application/         # 오케스트레이션 + 진입점
-│  ├─ cli/              #   run-ingestion/rag/eval/visualization/prompt-tuning
-│  ├─ ingestion/        #   DataIngestionPipeline + pipeline_stages
+│  ├─ cli/              #   run-ingestion/rag/eval/visualization/prompt-tuning, prepare-benchmark
+│  ├─ ingestion/        #   DataIngestionPipeline + pipeline_stages, IncrementalIndexer,
+│  │                    #   네임스페이스 쓰기 임대, 추출 레코드 저장소
 │  ├─ storage/          #   IndexingManager (인덱서 fan-out)
 │  ├─ retrieval/        #   rag_chain (GraphRAGChain, RAGInput/Output)
 │  ├─ prompts/          #   PromptTuner (LLM 기반 코퍼스 프로파일링)
@@ -101,7 +105,8 @@ unified_kg_rag/
 ├─ shared/              # 공통 커널 (config, logging, exceptions, metrics,
 │                       #   cache/pipeline manager, utils)
 ├─ evaluation/          # 실제 로직 패키지: evaluation_manager / graph_aware /
-│                       #   retrieval / answer_match
+│                       #   retrieval / answer_match, 전략 비교 + 쌍대 평가,
+│                       #   benchmarks/ (MuSiQue)
 └─ visualization/       # 실제 로직 패키지: 렌더 루프 + embeddings/exporters
 ```
 
@@ -109,7 +114,7 @@ unified_kg_rag/
 > `evaluation/`에는 `evaluation_manager`와 LLM을 쓰지 않는
 > `graph_aware_evaluator`, `retrieval_evaluator`, `answer_match_evaluator`가 있고,
 > `visualization/`에는 렌더 루프와 `embeddings/`, `exporters/` 하위 패키지가
-> 있습니다(렌더러는 `adapters/renderers/`에 있습니다). 그 밖의 모듈은 모두 실제 위치
+> 있습니다(렌더러는 `adapters/renderers/`에 있습니다). 패키지 안의 코드는 그 밖의 모듈을 모두 실제 위치
 > (`application.retrieval.rag_chain`, `application.storage.indexing_manager`,
 > `application.ingestion.pipeline`, `adapters.*`, `domain.*`)에서 import합니다.
 
@@ -121,7 +126,7 @@ unified_kg_rag/
 > 반대 방향은 허용하지 않습니다. `NeptuneIndexer`(`storage/`)가 `NeptuneClient`(`aws/`)로
 > 쓰듯 `SQLiteGraphIndexer`(`storage/`)는 `SQLiteGraphStore`(`local/`)에 씁니다.
 
-### 2.1 포트(추상 인터페이스)
+### 2.2 포트(추상 인터페이스)
 
 | 포트 | 위치 | 어댑터 | 비고 |
 |---|---|---|---|
@@ -134,7 +139,7 @@ unified_kg_rag/
 
 > 설계 참고: 순수 포트(`DocStatusPort`, 쓰기 측 인덱서 ABC)는 `ports/`에 모았습니다. 읽기 측 추상 베이스(`BaseGraphRAGRetriever`/`BaseSearchStrategy`)는 `__init__`에서 인프라(HybridScorer/TokenManager)를 생성하는 "어댑터 베이스"이므로 `adapters/retrieval/base.py`에 두고 그곳에서 import합니다. `ports/__init__`은 이들을 export하지 않고 카탈로그 docstring에 이름만 적습니다(중복 Protocol 정의는 두지 않습니다). `BaseGraphRAGEvaluator`(`adapters/evaluators/base.py`)도 같은 종류의 어댑터 베이스입니다.
 
-### 2.2 역할 기반 리트리버 주입
+### 2.3 역할 기반 리트리버 주입
 
 검색 전략은 **구체적인 백엔드 이름이 아니라 추상 역할**로 리트리버를 주입받습니다.
 
@@ -149,7 +154,7 @@ unified_kg_rag/
 class LocalSearchStrategy(BaseSearchStrategy): ...
 ```
 
-### 2.3 레지스트리
+### 2.4 레지스트리
 
 - **검색 전략**: `domain/retrieval/strategy_registry.py` — `@register_strategy(...)`가 클래스, 필요한 역할, 질의 입력을 `SearchStrategy` enum에 등록합니다.
 - **평가기**: `EvaluationManager._resolve_evaluator_class` — `EvaluatorType`마다 명시적 분기 하나로 평가기 클래스를 반환합니다(지연 로딩, 사용할 때 import). 데코레이터 레지스트리가 아니므로 새 평가기는 enum 멤버와 분기를 추가합니다.
@@ -169,7 +174,7 @@ class LocalSearchStrategy(BaseSearchStrategy): ...
 > (`IndexingManager(vector_indexer=…, graph_indexer=…)`). 읽기 경로도 `RetrieverRole`
 > → 빌더 맵으로 같은 방식을 씁니다.
 
-### 2.4 의존성 규칙 검증 상태
+### 2.5 의존성 규칙 검증 상태
 
 `domain/`은 런타임에 `ports`/`adapters`/`application` 모듈을 import하지 않고, `ports/`와 `shared/`는 다른 레이어를 import하지 않으며, `adapters/`는 `application`, `evaluation`, `visualization` 모듈을 import하지 않습니다. `evaluation/`은 체인(`application.retrieval`, `application.bootstrap`)을 통해서만 애플리케이션 레이어에 닿습니다. `tests/unit/test_domain_purity.py`가 `TYPE_CHECKING` import까지 포함해 이 규칙을 검사합니다. 컴파일 타임에만 해당하는 예외가 두 개 있고, 테스트는 둘 다 `TYPE_CHECKING` 아래에 있는지 확인합니다. `domain/retrieval/strategy_registry.py`는 레지스트리가 전략 하위 클래스를 저장하므로 `adapters.retrieval.base.BaseSearchStrategy`를 참조하고, `domain/ingestion/delta_detector.py`는 매개변수 타입으로 `DocStatusPort`를 씁니다(포트 모듈이 도메인 모델을 import하므로 런타임 import는 순환이 됩니다). 순수한 전략·리트리버 포트를 분리하면 첫 번째 타입 수준 참조도 없어지지만, 의도적인 경계로 남겨 둡니다(이 문서 끝의 "의도적 설계 경계" 참고).
 
@@ -246,13 +251,13 @@ class LocalSearchStrategy(BaseSearchStrategy): ...
 
 **커뮤니티 리포트 계보(11단계)**: 리포트마다 `text_unit_ids`와 `document_ids`가 있으며, 커뮤니티 리포트 문서에 keyword 필드로 색인합니다(`CommunityDetector._attach_report_lineage`). 이 값은 **커뮤니티 구성원의 출처**입니다. 구성원 엔티티의 `text_unit_ids` 합집합과, 그 텍스트 단위가 나온 문서입니다. 리포트 입력의 출처는 아닙니다. `max_entities_per_report`와 토큰 예산 때문에 프롬프트에서 빠진 구성원의 출처도 계보에는 남습니다. 또한 문장 단위 인용 근거도 아닙니다. 소스 문서로 리포트를 걸러 내거나 독자에 맞춰 커뮤니티를 다시 요약할 수 있게 하려고 둔 필드입니다. 리포트에는 계층 안의 위치도 기록합니다(`level`, 루트부터의 `depth`, `parent_community_id`, `child_community_ids`, 여기서 구한 `max_cut_depth`). 리포트를 쓸 때 붙이며(`IndexingManager`, `domain/ingestion/community_hierarchy.py`), global search가 이 값으로 리포트를 고릅니다(§6.1.1).
 
-**파이프라인 인프라**: 단계 체크포인트 기반 재개(`shared/pipeline_manager.py`), S3 캐시 동기화(`adapters/aws/s3_cache.py`: 단계가 끝날 때마다 바뀐 파일을 업로드하며, 단계 데이터를 그것을 가리키는 인덱스와 실행 메타데이터보다 먼저 올립니다. SIGTERM을 받으면 `run-ingestion`이 `DataIngestionPipeline.request_stop`으로 실행 중인 단계를 멈추고(체크포인트를 쓰는 중이면 쓰기가 끝날 때까지 미루며, 메인 스레드가 업로드에 필요한 잠금을 쥔 채 핸들러가 실행될 수 있으므로 핸들러는 I/O를 하지 않습니다) 실행이 풀리는 동안 체크포인트를 업로드합니다. S3에 동기화한 체크포인트에는 TTL이 없고 버킷 수명 주기가 만료시킵니다), LLM 응답 캐시(`adapters/llm/response_cache.py`: `CachingLLMFactory`가 모든 `ModelPurpose.INGESTION` 모델에 붙이는 LangChain `BaseCache`입니다. 렌더링한 메시지와 LangChain의 모델·생성 설정 문자열을 키로 하며, 실행의 `llm-cache/` 아래 세그먼트 파일로 저장해 단계 캐시와 함께 동기화합니다. 이전 실행의 항목은 실행마다 한 번까지만 쓰고 잘린 응답은 보관하지 않으므로, 잘못된 응답 뒤의 재시도는 모델을 다시 호출합니다. 중지로 버려진 배치는 더 재시도하지 않습니다), `continue_on_error` 토글, 단계별 캐시(`shared/cache_manager.py`). `TranslationConfig.is_noop`(원본 언어 == 대상 언어이고 추가 언어 없음)이면 번역 단계를 비용 없이 건너뜁니다. LLM 출력 파싱에는 `FixingConfig` 기반 output-fixing 파서를 일관되게 씁니다. 파이프라인은 `close()`로 인덱서와 클라이언트 자원을 해제하며, `run-ingestion` CLI가 `finally`에서 이를 호출합니다(§8.6).
+**파이프라인 인프라**: 단계 체크포인트 기반 재개(`shared/pipeline_manager.py`), S3 캐시 동기화(`adapters/aws/s3_cache.py`: 단계가 끝날 때마다 바뀐 파일을 업로드하며, 단계 데이터를 그것을 가리키는 인덱스와 실행 메타데이터보다 먼저 올립니다. SIGTERM을 받으면 `run-ingestion`이 `DataIngestionPipeline.request_stop`으로 실행 중인 단계를 멈추고(체크포인트를 쓰는 중이면 쓰기가 끝날 때까지 미루며, 메인 스레드가 업로드에 필요한 잠금을 쥔 채 핸들러가 실행될 수 있으므로 핸들러는 I/O를 하지 않습니다) 실행이 풀리는 동안 체크포인트를 업로드합니다. S3에 동기화한 체크포인트에는 TTL이 없고 버킷 수명 주기가 만료시킵니다), LLM 응답 캐시(`adapters/llm/response_cache.py`: `CachingLLMFactory`가 모든 `ModelPurpose.INGESTION` 모델에 붙이는 LangChain `BaseCache`입니다. 렌더링한 메시지와 LangChain의 모델·생성 설정 문자열을 키로 하며, 실행의 `llm-cache/` 아래 세그먼트 파일로 저장해 단계 캐시와 함께 동기화합니다. 이전 실행의 항목은 실행마다 한 번까지만 쓰고 잘린 응답은 보관하지 않으므로, 잘못된 응답 뒤의 재시도는 모델을 다시 호출합니다. 중지로 버려진 배치는 더 재시도하지 않습니다), `continue_on_error` 토글, 단계별 캐시(`shared/cache_manager.py`). `TranslationConfig.is_noop`(원본 언어 == 대상 언어이고 추가 언어 없음)이면 번역 단계를 비용 없이 건너뜁니다. LLM 출력 파싱에는 `FixingConfig` 기반 output-fixing 파서를 일관되게 씁니다. 파이프라인은 `close()`로 인덱서와 클라이언트 자원을 해제하며, `run-ingestion` CLI가 `finally`에서 이를 호출합니다(§8.2).
 
 **설정 읽기**(`shared/config.py`, `Config.as_input`): 설정은 기본값 < `backend` 프리셋 < 파일 < 환경 변수 순서의 계층을 합쳐 한 번 검증합니다. 환경 변수는 일반 규칙을 따릅니다. `UKR__<SECTION>__<KEY>`로 어떤 키든 지정하며(`_env_path`가 이름을 모델 구조에서 찾고, 자유 형식 매핑 다음 마디는 그 매핑의 키를 가리킴), 필드와 맞춰 관리할 변수 표가 없습니다. `AWS_PROFILE` / `AWS_REGION`은 AWS SDK에서 명시 설정이 환경 변수보다 우선하듯 파일이 지정하지 않은 키만 채웁니다. 파일이나 `UKR__` 변수의 알 수 없는 키는 `allow_unknown_keys`(`--allow-unknown-keys`)가 없으면 로드를 실패시키고, 위치가 바뀐 키(`MOVED_KEYS`)는 대신할 키를 알려 주며 실패합니다. `Config`는 프리셋을 적용하기 전에 검증한 입력을 보관합니다(wrap validator). `with_provider_overrides`(CLI 공급자 플래그)는 그 입력에 그 뒤 객체에 바뀐 값(입력을 다시 검증한 결과와 필드별로 비교한 차이)을 더해 다시 만듭니다. 따라서 `--backend`를 바꾸면 이전 프리셋이 채운 값만 사라지고, 사용자가 프리셋과 같은 값으로 지정한 키나 라이브러리 호출자가 대입한 값은 남습니다.
 
-**모델 선택**(`domain/models/config.py`의 `ModelsConfig`): `models` 섹션 하나가 모든 모델을 정합니다. 두 계층 모델(`default`, `fast`), 역할별 재정의(`roles`, `ModelRole`이 키이며 값은 모델 ID 또는 계층 이름), 차원과 함께 정하는 하나뿐인 임베딩 모델, 재순위화 모델입니다. 각 모델 계열의 공급자는 엔드포인트 설정과 함께 `providers.<llm|embedding|rerank>.kind`에 그대로 두고, `Config._check_models`가 모델 ID를 그 공급자 기준으로 검사합니다(임베딩과 재순위화는 Bedrock 카탈로그, 그 밖의 공급자는 ID 필수). 값은 쓴 그대로 두고(`null`은 역할의 계층이나 공급자 기본값) 읽을 때 해석합니다(`Config.model_id(role)`, `tier_model_id`, `embedding_model_id`, `embedding_dimension`, `rerank_model_id`, `model_tier`). 따라서 해석한 값을 설정에 다시 쓰지 않고, `model_dump(exclude_unset=True)`로 다시 만든 설정도 계층을 계속 따릅니다. 제거된 모델 키(`REMOVED_MODEL_KEYS`)는 대신할 키를 알려 주며 검증에 실패하고, 선택하지 않은 공급자의 설정은 로드할 때 알립니다(`Config.inactive_provider_settings`). 단계 캐시 키는 각 역할을 그 역할이 실행되는 단계에서 해석한 모델로 키에 넣고, 그 단계가 켜져 있을 때만 셉니다.
+**모델 선택**(`domain/models/config.py`의 `ModelsConfig`): `models` 섹션 하나가 모든 모델을 정합니다. 두 계층 모델(`default`, `fast`), 역할별 재정의(`roles`, `ModelRole`이 키이며 값은 모델 ID 또는 계층 이름), 차원과 함께 정하는 하나뿐인 임베딩 모델, 재순위화 모델입니다. 각 모델 계열의 공급자는 엔드포인트 설정과 함께 `providers.<llm|embedding|rerank>.kind`에 그대로 두고, `Config._check_models`가 모델 ID를 그 공급자 기준으로 검사합니다(임베딩과 재순위화는 Bedrock 카탈로그, 그 밖의 공급자는 ID 필수). 값은 쓴 그대로 두고(`null`은 역할의 계층이나 공급자 기본값) 읽을 때 해석합니다(`Config.model_id(role)`, `tier_model_id`, `embedding_model_id`, `embedding_dimension`, `rerank_model_id`, `model_tier`). 따라서 해석한 값을 설정에 다시 쓰지 않고, `model_dump(exclude_unset=True)`로 다시 만든 설정도 계층을 계속 따릅니다. 옮겨진 키(`MOVED_KEYS`: 이전 모델 ID 키와 `graph.analysis.centrality`)는 대신할 키를 알려 주며 검증에 실패하고, 선택하지 않은 공급자의 설정은 로드할 때 알립니다(`Config.inactive_provider_settings`). 단계 캐시 키는 각 역할을 그 역할이 실행되는 단계에서 해석한 모델로 키에 넣고, 그 단계가 켜져 있을 때만 셉니다.
 
-**단계 캐시 키**(`shared/utils/cache_keys.py`): `CONFIG_KEYING`은 모든 설정 필드를 가장 긴 경로 접두사로 분류합니다. 출력에 영향을 주는 첫 단계부터 키에 들어가는 `Keyed`(모델 설정은 모든 단계), 또는 캐시되는 출력에 영향을 주지 않는 이유(처리량 설정, 호출 대상, 질의 시점·텔레메트리 설정)를 적은 `Unkeyed`입니다. 단계의 키는 그 단계와 모든 상류 단계에서 실제로 적용되는 `Keyed` 필드, 패키지 버전(내장 프롬프트 템플릿과 파싱 규칙은 코드입니다), 코퍼스 매니페스트를 해시합니다. 적용되는 설정만 셉니다. `enabled: false`인 블록은 스위치만 들어가고(다른 구성 요소가 그대로 읽는 언어와 보고서 엔티티 상한은 예외), 로컬 모델 설정은 언어 모델이 Bedrock이 아닐 때만, Bedrock 설정은 Bedrock일 때만, 가드레일은 수집 모델을 보호할 때만, 단계의 프롬프트 재정의는 그 단계가 실행될 때만 셉니다. 표에 없는 필드는 모든 단계의 키에 들어가므로(오래된 캐시 적중이 아니라 캐시 미스가 됩니다) `tests/unit/test_cache_key_coverage.py`가 분류될 때까지 실패합니다. claim 추출까지의 `per_document` 필드는 문서의 추출 설정(`extraction_settings`: 경로와 값의 레코드, 긴 값은 다이제스트, 패키지 버전 제외)을 이루고, 그 지문이 커밋된 문서마다 기록되고, 레코드 자체는 레지스트리 범위마다 한 번 기록됩니다(`DocStatusPort.put_extraction_settings`. DynamoDB에서는 네임스페이스 파티션의 `#settings|<scope>` 항목). 다음 증분 실행은 저장된 레코드와 자신의 레코드를 필드별로 비교합니다(`changed_settings`). 새 레코드에만 있는 필드는 기본값과 비교하므로 설정을 추가한 릴리스가 코퍼스를 다시 추출하게 만들지 않고, 이때 실행은 저장된 지문을 그대로 씁니다(`run_extraction_fingerprint`). 그렇지 않으면 새 지문으로 비교하고, 바뀐 설정을 WARNING으로 알립니다. 재개된 실행도 델타를 계산할 때의 설정과 같은 방식으로 비교합니다.
+**단계 캐시 키**(`shared/utils/cache_keys.py`): `CONFIG_KEYING`은 모든 설정 필드를 가장 긴 경로 접두사로 분류합니다. 출력에 영향을 주는 첫 단계부터 키에 들어가는 `Keyed`(모델 설정은 모든 단계), 또는 캐시되는 출력에 영향을 주지 않는 이유(처리량 설정, 호출 대상, 질의 시점·텔레메트리 설정)를 적은 `Unkeyed`입니다. 단계의 키는 그 단계와 모든 상류 단계에서 실제로 적용되는 `Keyed` 필드, 패키지 버전(내장 프롬프트 템플릿과 파싱 규칙은 코드입니다), 코퍼스 매니페스트를 해시합니다. 적용되는 설정만 셉니다. `enabled: false`인 블록은 스위치만 들어가고(다른 구성 요소가 그대로 읽는 언어와 리포트 엔티티 상한은 예외), 로컬 모델 설정은 언어 모델이 Bedrock이 아닐 때만, Bedrock 설정은 Bedrock일 때만, 가드레일은 수집 모델을 보호할 때만, 단계의 프롬프트 재정의는 그 단계가 실행될 때만 셉니다. 표에 없는 필드는 모든 단계의 키에 들어가므로(오래된 캐시 적중이 아니라 캐시 미스가 됩니다) `tests/unit/test_cache_key_coverage.py`가 분류될 때까지 실패합니다. claim 추출까지의 `per_document` 필드는 문서의 추출 설정(`extraction_settings`: 경로와 값의 레코드, 긴 값은 다이제스트, 패키지 버전 제외)을 이루고, 그 지문이 커밋된 문서마다 기록되고, 레코드 자체는 레지스트리 범위마다 한 번 기록됩니다(`DocStatusPort.put_extraction_settings`. DynamoDB에서는 네임스페이스 파티션의 `#settings|<scope>` 항목). 다음 증분 실행은 저장된 레코드와 자신의 레코드를 필드별로 비교합니다(`changed_settings`). 새 레코드에만 있는 필드는 기본값과 비교하므로 설정을 추가한 릴리스가 코퍼스를 다시 추출하게 만들지 않고, 이때 실행은 저장된 지문을 그대로 씁니다(`run_extraction_fingerprint`). 그렇지 않으면 새 지문으로 비교하고, 바뀐 설정을 WARNING으로 알립니다. 재개된 실행도 델타를 계산할 때의 설정과 같은 방식으로 비교합니다.
 
 **일반화 적용 사례**:
 - 관련성 게이트(주장 추출과 추가 추출에서 어떤 엔티티를 프롬프트에 넣을지)는 토큰 Jaccard 정규 표현식 휴리스틱이 아니라 `text_unit_ids` 계보 소속 여부로 판단합니다. 그래서 정확하고 언어에 상관없이 동작합니다. 추가 추출의 보정(`ENTITY_CORRECTION`/`RELATIONSHIP_CORRECTION`)은 그 텍스트 단위의 레코드만 고치므로(*텍스트 단위별 추출 레코드* 참조), 다른 텍스트 단위가 서술한 내용을 바꾸지 않습니다.
@@ -275,7 +280,7 @@ class LocalSearchStrategy(BaseSearchStrategy): ...
 5. **삭제 전파**(3단계의 제거에 포함, `IndexingManager.remove_text_units`): 제거되는 텍스트 단위를 인용하는 것을 저장소에서 찾습니다. 그래프의 엔티티와 커뮤니티(`GraphIndexer.find_ids_citing`, `text_unit_ids` 조회), 그 엔티티에 붙은 엣지 중 해당 관계, 벡터 저장소의 엔티티, 관계, 주장, 커뮤니티 리포트(keyword 필드 `text_unit_ids`에 대한 `VectorIndexer.find_documents`)입니다. 중단 때문에 한 저장소에만 남은 사본도 어느 쪽으로든 찾습니다. 제거되는 텍스트 단위만 인용하는 엔티티, 관계, 주장은 텍스트 단위와 함께 지웁니다(`delete_by_id`, 두 저장소 모두). 다른 텍스트 단위도 인용하는 항목은 남기되 제거되는 텍스트 단위를 빼고 weight를 다시 계산해 Neptune과 OpenSearch에 똑같이 반영하고, 남은 텍스트 단위로 내용을 다시 파생합니다(`IndexingManager.remove_text_units_from_shared`). 이때 Neptune에서 읽어 온 공유 항목을 변경 여부와 관계없이 모두 다시 쓰므로, 중단되거나 실패한 정리가 OpenSearch에 반영하지 못한 부분도 재시도에서 복구됩니다. OpenSearch는 임베딩하는 내용이 바뀌지 않았으면 다시 임베딩하지 않고 `text_unit_ids`, `weight`, `rank`만 제자리에서 갱신합니다(`VectorIndexer.update_entity_lineage`/`update_relationship_lineage`). 정리는 id가 바뀐 엔티티의 새 정점, 엣지, 나머지 엔티티 순서로 씁니다. 재시도는 제거되는 텍스트 단위를 아직 인용하는 엔티티를 통해 엣지를 찾으므로 그 엔티티를 가장 나중에 바꿉니다. 커뮤니티와 리포트는 인용하는 텍스트 단위가 하나도 저장되어 있지 않으면 지웁니다. 텍스트 단위는 레지스트리 레코드 하나에만 속하므로(아래 *문서 식별*), 다른 문서가 여전히 서술하는 것은 네임스페이스와 관계없이 지우지 않습니다. 변경된 문서도 재추출 결과를 병합하기 전에 같은 처리를 합니다. 제거가 하나라도 실패하면 재시도할 수 있도록 삭제된 문서의 레지스트리 레코드를 남기고, 인덱싱 단계를 실패 처리해 실행 결과와 `IndexingFailures` 알람에 드러나게 합니다. 델타에 변경된 문서가 있으면 커밋 전에 실패 처리하고(커밋하면 그 문서들의 레코드가 바뀌어 제거할 텍스트 단위를 잃습니다), 없으면 커밋한 뒤 실패 처리합니다.
 
    **한계**: 공유 커뮤니티와 그 리포트에는 변경되거나 삭제된 문서가 기여한 내용이 전체 재구축(`indexing.reset`) 전까지 남고(아래 *델타 실행의 커뮤니티* 참고), id가 바뀐 엔티티의 이전 id도 계속 남습니다. 설명, 이름, id, 유형, 문서 `filters`, rank, 주장은 다시 파생합니다(아래 참고).
-6. **레지스트리 갱신**(커밋): `PENDING` 레코드를 한 번의 일괄 쓰기로 `DocStatusRecord`로 바꿉니다. 각 레코드에는 문서의 텍스트 단위(`DocumentLineage`), 접미사, 실행 범위, 상대 경로가 들어갑니다. 번역, 그래프 추출, 추가 추출, 주장 추출 중 어느 것이든 텍스트 단위 하나에서라도 실패한 문서는 (텍스트 단위와 함께) `FAILED`로 기록합니다. `diff`는 해시가 같아도 `FAILED` 레코드를 changed로 분류하므로, 다음 실행이 그 문서를 정리하고 다시 추출합니다. 쓰기가 실패한 산출물을 가진 문서(산출물이 인용하는 텍스트 단위로 판단)도 같은 방식으로 `FAILED`로 기록합니다. 레코드는 같은 내용의 연속 실패 횟수(`failure_count`)를 세며, `indexing.max_document_failures`에 이르면 `detect_delta`가 그 문서를 unchanged로 분류합니다. 그래서 매번 같은 이유로 실패하는 문서를 실행마다 다시 추출하지 않습니다. 기록한 뒤에는 제거된 텍스트 단위만 가리키고 저장된 텍스트 단위는 가리키지 않는 추출 레코드를 지웁니다(`IndexingManager.collect_extraction_records`). 변경 문서에서 바뀌지 않은 청크는 제거된 사본과 같은 레코드를 가리키므로 쓰기가 끝난 뒤에 지웁니다. 최선 노력 방식이라 제거와 커밋 사이에 멈춘 실행은 그 레코드를 남기며, 공간만 차지합니다.
+6. **레지스트리 갱신**(커밋): `PENDING` 레코드를 한 번의 일괄 쓰기로 `DocStatusRecord`로 바꿉니다. 각 레코드에는 문서의 텍스트 단위(`DocumentLineage`), 접미사, 실행 범위, 상대 경로가 들어갑니다. 번역, 그래프 추출, 추가 추출, 주장 추출 중 어느 것이든 텍스트 단위 하나에서라도 실패한 문서는 (텍스트 단위와 함께) `FAILED`로 기록합니다. `diff`는 해시가 같아도 `FAILED` 레코드를 changed로 분류하므로, 다음 실행이 그 문서를 정리하고 다시 추출합니다. 쓰기가 실패한 산출물을 가진 문서(산출물이 인용하는 텍스트 단위로 판단)와 리포트가 생성되지 않은 기본 수준 커뮤니티에 텍스트 단위가 들어 있는 문서도 같은 방식으로 `FAILED`로 기록하며, `continue_on_error`로 산출물 단계(번역부터 커뮤니티 탐지까지)가 비정상 종료한 실행에서는 모든 문서를 `FAILED`로 기록합니다(`DataIngestionPipeline.ARTIFACT_STAGES`). 레코드는 같은 내용의 연속 실패 횟수(`failure_count`)를 세며, `indexing.max_document_failures`에 이르면 `detect_delta`가 그 문서를 unchanged로 분류합니다. 그래서 매번 같은 이유로 실패하는 문서를 실행마다 다시 추출하지 않습니다. 기록한 뒤에는 제거된 텍스트 단위만 가리키고 저장된 텍스트 단위는 가리키지 않는 추출 레코드를 지웁니다(`IndexingManager.collect_extraction_records`). 변경 문서에서 바뀌지 않은 청크는 제거된 사본과 같은 레코드를 가리키므로 쓰기가 끝난 뒤에 지웁니다. 최선 노력 방식이라 제거와 커밋 사이에 멈춘 실행은 그 레코드를 남기며, 공간만 차지합니다.
 
 `indexing.reset`이면 diff를 건너뛰고 전체 인덱싱 경로로 코퍼스 전체를 다시 구축하되, 접미사를 서비스에서 내리지 않습니다. 저장소를 먼저 비우지 않습니다. 모든 문서를 `PENDING`으로 선기록(2단계)하고, 벡터 인덱스는 모든 전체 구축처럼 타임스탬프가 붙은 새 인덱스에 쓴 뒤 다 만들어지면 별칭을 옮깁니다. 그래프는 제자리에서 다시 구축합니다(`GraphIndexer.begin_rebuild`). 전체 구축의 쓰기는 레이블을 지우지 않고, 쓰는 모든 정점과 엣지에 이번 구축의 태그(`build_tag`)를 붙이며, 이어 `end_rebuild`가 접미사의 엔티티에서 나가는 엣지와 태그가 없는 엔티티, 커뮤니티 정점을 일괄로 지웁니다. 재구축이 쓰는 동안 질의는 이전 그래프를 계속 읽습니다(지우기 전까지는 이전 항목과 새 항목이 섞임). 그다음 모든 문서를 다시 기록하고(재구축의 쓰기가 델타 커밋과 같은 실패 기준을 통과할 때만), 그 뒤에야 네임스페이스의 나머지 레코드, 즉 재구축이 대체한 문서의 레코드를 지웁니다(그 파티션, `DocStatusPort.list_namespace`. 테이블을 공유하는 다른 네임스페이스의 레코드는 남김). 재구축이 실패하면 아무것도 지우지 않고 그 레코드도 남기므로, 재시도가 그 문서들이 쓴 것을 여전히 찾습니다. 레지스트리를 끈 전체 구축도 그래프를 같은 방식으로 다시 구축합니다.
 
@@ -388,11 +393,11 @@ Neptune 그래프 확장은 `local`과 `drift`에 포함되어 있고, `mix`/`hy
 
 AWS 세션은 묶음의 세션(`Providers(boto_session=...)`, 기본값은 처음 쓸 때 `config.aws.profile_name`으로 생성)이므로 테스트에서 fake나 moto 세션을 넣을 수 있습니다. 세션은 AWS 클라이언트만 요청하므로 로컬 실행이나 IAM 인증을 쓰지 않는 저장소는 프로필을 읽지 않습니다.
 
-### 8.5 검색 오류 가시성
+### 8.1 검색 오류 가시성
 
 리트리버(`opensearch_retriever`/`neptune_retriever`)는 인증, 설정, 저장소 실패를 "결과 없음"으로 감추지 않습니다. 판별 규칙은 `is_fatal_retrieval_error()`(`adapters/store_errors.py`) 하나이며 메시지가 아닌 예외 형식으로만 판단합니다. 치명적 오류는 `exc_info`와 함께 다시 발생시키고 나머지만 `[]`로 대신하므로, 잘못된 IAM 권한, 잘못된 모델 ID, 중단된 저장소가 "검색 결과 0건"에 묻히지 않고 드러납니다. 저장소 클라이언트는 경계에서 실패를 형식이 있는 오류로 바꿉니다(`adapters/aws/opensearch.py`, `adapters/aws/neptune.py`). 클라이언트 자체 재시도 후에도 저장소에 연결할 수 없거나, 연결이 닫혔거나, 429/502/503/504가 계속되면 `ConnectionError`의 하위 형식인 `StoreConnectionError`가, `search.store_timeout_seconds` 안에 응답하지 않으면 그 하위 형식인 `StoreTimeoutError`가 발생합니다. 재시도해도 똑같이 거부되는 요청은 `ConfigurationError`의 하위 형식인 `StoreConfigurationError`를 일으킵니다. HTTP 401/403이나 Neptune `AccessDeniedException`은 `StoreAccessDeniedError`, HTTP 400(필드와 형식이 다른 필터 값, 차원이 다른 질의 벡터)은 서버가 밝힌 이유를 담은 `StoreRequestRejectedError`입니다. 질의 임베딩 같은 모델 호출의 botocore 오류는 코드가 일시적 Bedrock 오류(`is_transient_bedrock_error`)가 아니면 치명적입니다. 잘못되었거나 접근할 수 없는 모델 ID, 자격 증명 누락, 모델 래퍼의 재시도 후에도 연결할 수 없거나 시간 초과된 Bedrock 엔드포인트는 질의를 실패시킵니다. 질의 임베딩 실패는 원인과 관계없이(클라이언트 재시도 후에도 남은 5xx 포함) 치명적입니다(`EmbeddingModelError`). 질의의 모든 벡터 섹션이 그 임베딩 하나를 함께 쓰므로 답할 근거가 남지 않습니다. 로컬 모델 서버의 오류도 같은 규칙을 따릅니다. OpenAI 호환 서버나 Ollama의 HTTP 4xx(408/429 제외: 잘못된 키, 없는 모델)와 클라이언트 재시도 후에도 연결할 수 없거나 응답하지 않은 서버(`openai.APIConnectionError`, `httpx.TransportError`)는 치명적입니다. OpenAI, Ollama, httpx 형식은 해당 모듈을 불러온 경우에만 확인합니다. 모델의 컨텍스트보다 긴 프롬프트(`langchain_core`의 `ContextOverflowError`, Bedrock은 `ValidationException`으로 보냄)는 치명적이지 않습니다. 그 프롬프트만 겪는 오류이므로 컨텍스트를 넘은 전역 검색 맵 배치는 평가되지 않은 채로 두고 나머지 배치로 답합니다. vLLM과 llama.cpp는 컨텍스트 초과를 일반 HTTP 400(`openai.BadRequestError`)으로 보내고 LangChain은 이를 `ContextOverflowError`로 바꾸지 않으므로, 맵 단계는 400을 받은 배치도 평가되지 않은 채로 둡니다. 다만 모든 배치가 400을 받으면(서버가 지원하지 않는 매개변수, 알지 못하는 모델 id) 답변 호출이 어떤 모델을 쓰든 질의가 실패합니다. 일시적 오류로 남는 것은 검색 하나에 대한 HTTP 500처럼 요청 하나의 실패입니다. Neptune의 질의 단위 `_execute_traversal`도 치명적 오류를 다시 발생시키므로 이 최상위 판별까지 전달됩니다. 끊긴 Neptune 연결은 버리므로(`run_traversal`, `reset`) 다음 질의나 인덱서의 다음 재시도가 새 연결을 엽니다. 질의 순회는 풀 슬롯을 기다리기 전이 아니라 작업 스레드 안에서 그 시점 클라이언트의 소스로 만들고, 루프의 기본 executor가 아닌 리트리버 전용 스레드에서 실행합니다. `search.store_timeout_seconds`의 두 배인 제한은 스레드가 아니라 슬롯을 풀어 줍니다. `reset`과 `close`는 닫힌 클라이언트의 풀 연결을 기다리던 요청을 깨워(gremlinpython의 `close()`는 풀을 비우고 `pool.get()`에는 제한 시간이 없음) 끊긴 연결로 실패시킵니다. 클라이언트가 닫힐 때 쓰기가 진행 중이던 요청도 같은 방식으로 실패합니다. gremlinpython의 `close()`는 응답 읽기가 실행될 executor를 종료하므로, 닫힌 클라이언트의 executor는 늦게 들어온 읽기 작업에 실패한 future를 돌려줍니다(`_close_connection`). 그렇지 않으면 요청은 응답을 받지 못하고 스레드가 영원히 기다립니다. 응답을 멈춘 서버를 기다리는 요청은 전송 계층의 읽기 제한 시간으로 제한됩니다. 질의 쪽은 `search.store_timeout_seconds`, 인덱서 쪽은 고정 180초입니다. 180초는 Neptune 자체의 기본 질의 제한 시간(120초)보다 길어서 긴 쓰기와 삭제를 끊지 않으며, 시간 초과된 수집 요청은 다른 일시적 오류처럼 재시도합니다. 검색 전략은 모든 하위 검색에 같은 규칙을 공통 도우미 `BaseSearchStrategy._safe_aretrieve` 하나로 적용하므로, 섹션 단위 예외 처리가 리트리버가 올린 치명적 오류를 다시 삼키지 않습니다. 일시적 오류는 여전히 해당 섹션만 빈 결과로 처리하며, 그래프 확장이 빈 결과로 처리되면 로컬 검색은 엔티티 인덱스가 찾은 시드 엔티티를 유지합니다.
 
-### 8.6 클라이언트 수명 주기와 자원 해제
+### 8.2 클라이언트 수명 주기와 자원 해제
 
 리트리버를 만들 때마다 Neptune WebSocket과 스레드 풀, OpenSearch 동기/비동기 HTTP 풀이 열립니다. 이 자원은 명시적으로 닫지 않으면 GC가 수거할 때까지 남습니다. 그래서 모든 계층이 예외를 던지지 않는 best-effort `close()`/`aclose()`를 제공합니다.
 
@@ -401,7 +406,7 @@ AWS 세션은 묶음의 세션(`Providers(boto_session=...)`, 기본값은 처�
 - **체인 연결**: 리트리버와 인덱서의 해제는 `IndexingManager.close()` / `GraphRAGChain.close()`·`aclose()`(캐시된 리트리버 순회)까지 위로 위임됩니다. 체인을 만든 쪽은 다 쓴 뒤 반드시 닫아야 합니다. 버려진 체인의 리트리버와 루프는 GC 파이널라이저가 안전장치로 해제하지만, 가비지 컬렉터가 그 체인에 도달해야 실행되며 체인이 참조 순환에 있으므로 훨씬 나중일 수 있습니다. `run-rag`와 `run-eval` CLI는 `finally`에서 `await rag_chain.aclose()`를, `run-ingestion` CLI는 `finally`에서 `pipeline.close()`를 호출해 프로세스가 끝날 때 소켓을 해제합니다.
 - **이벤트 루프**: `GraphRAGChain`은 리트리버와 전략 인스턴스를 이벤트 루프별로 캐시합니다(루프는 `id()`가 아니라 참조로 추적). 동기 진입점(`invoke`, `batch`, `stream`)은 체인이 소유한 루프 스레드 하나에서 실행됩니다. 이 스레드는 처음 쓸 때 시작하고 `close()`/`aclose()`에서 멈추므로, 동기 호출을 반복해도 루프에 묶인 클라이언트 한 벌을 재사용하고, 이미 루프가 도는 스레드에서도 호출할 수 있습니다. 루프가 바뀌면 밀려난 리트리버를 닫으며, 원래 루프가 아직 돌고 있으면 그 루프에서 await합니다. 블로킹 백엔드 호출은 루프 스레드 밖에서 실행합니다. Neptune 연결·종료와 융합·재순위화 단계는 `asyncio.to_thread`로 실행하고, 재순위화의 `top_n`은 공유 모델이 아닌 호출별 복사본에 적용합니다. LangChain은 `ChatBedrockConverse.ainvoke`도 루프의 기본 executor에서 실행하므로, 이 executor 크기가 동시 Bedrock 호출 수의 상한이 됩니다. CLI와 체인 소유 루프는 이 크기를 `processing.io_workers`로 맞추며(`shared/utils/event_loop.py`), 비동기 호스트는 `configure_event_loop`로 같은 설정을 합니다.
 
-### 8.7 다국어 처리
+### 8.3 다국어 처리
 
 - **OpenSearch 분석기**: 언어→분석기 매핑은 설정(`indexing.opensearch.language_analyzers`, 기본값 `{"en": "english", "ko": "nori"}`)으로 노출되어 있어 코드를 고치지 않고 늘릴 수 있습니다. nori(한국어 형태소 분석기)는 `analysis-nori` 플러그인이 제공합니다. 로컬 OpenSearch 컨테이너에는 설치되어 있지만 Amazon OpenSearch Service 도메인에는 선택 사항인 Nori 패키지를 연결해야만 생기므로, CDK 배포는 `ko`를 OpenSearch에 내장된 `cjk` 분석기(문자 바이그램)로 매핑합니다(`opensearch_korean_analyzer`, `UKR__INDEXING__OPENSEARCH__LANGUAGE_ANALYZERS__KO`로 주입). 클러스터에 없는 분석기를 매핑에 쓰면 인덱스 생성이 그 분석기 이름을 밝힌 오류로 실패합니다. 매핑이 없는 언어는 `default_analyzer`를 씁니다.
 - **엔티티 ID 정규화**: ID는 `entity_key`(`shared/utils/common.py`)의 해시입니다. NFKC + casefold를 적용하되 기호와 모든 문자 체계의 문자·숫자는 남기고 따옴표, 쉼표, 끝 문장 부호만 지웁니다. 그래서 한국어·CJK·악센트가 있는 이름도 고유한 ID를 얻고 "C++"/"C#"도 구분되며, `Entity.name`은 표시 형태를 유지합니다(§3). 비어 있지 않은 입력이 빈 ID가 되는 일은 없습니다.
@@ -428,7 +433,7 @@ CLI: `run-eval --data-path <json> [--search-strategy ...]`.
 
 ## 10. 시각화와 분석
 
-`visualization/` — `BaseRenderer` ABC + `@register_renderer` 레지스트리 + `RenderContext`.
+`visualization/`(`GraphVisualizationManager`, 렌더 루프)이 `adapters/renderers/`의 렌더러(`BaseRenderer` ABC + `@register_renderer` 레지스트리 + `RenderContext`)를 구동합니다.
 
 - `InteractiveRenderer`(pyvis 네트워크 + 커뮤니티 계층), `StaticRenderer`(Bokeh degree/centrality/community-size)
 - 레이아웃: 노드별 `name: description` 임베딩 + UMAP 차원 축소(실패하면 spring layout)
@@ -447,7 +452,7 @@ CLI: `run-eval --data-path <json> [--search-strategy ...]`.
 
 `domain/models/config.py`의 중첩 Pydantic 트리(루트 `Config`)를 `shared/config.py`(`get_config`)가 불러옵니다. 스키마 예시는 `config-template.yaml`입니다.
 
-- 섹션: `backend`, `providers`(llm/embedding/rerank/graph/vector/doc_status), `aws`(bedrock/neptune/opensearch/s3/dynamodb), `fixing`, `processing`(document_parsing/chunking/translation/graph_extraction/gleaning/claim_extraction), `graph`(analysis/community_detection/visualization), `indexing`(opensearch/neptune), `search`(hybrid/fusion/reranking/global_search/local_search/drift_search/lightrag_search/token_manager), `memory`, `cache`(chunking), `logging`, `observability`, `evaluation`, `custom_prompts`.
+- 섹션: `backend`, `providers`(llm/embedding/rerank/graph/vector/doc_status), `models`(default/fast 계층, roles, embedding, rerank), `aws`(bedrock/neptune/opensearch/s3/dynamodb), `fixing`, `processing`(document_parsing/chunking/translation/graph_extraction/gleaning/claim_extraction), `graph`(analysis/community_detection/visualization), `indexing`(opensearch/neptune), `search`(hybrid/fusion/reranking/global_search/local_search/drift_search/lightrag_search/token_manager), `memory`, `cache`(chunking/llm_responses), `logging`, `observability`, `evaluation`, `custom_prompts`.
 - **설정 기반 일반화**: 언어→분석기 매핑(`language_analyzers`), LightRAG 대체 질의 길이, eigenvector 수렴 파라미터를 모두 설정으로 노출합니다.
 - 새 설정 섹션 추가: Pydantic `BaseModel` 정의 → `Field(default_factory=...)`로 부모에 연결 → `config-template.yaml`에 문서화.
 
@@ -459,7 +464,7 @@ CLI: `run-eval --data-path <json> [--search-strategy ...]`.
 
 - **포트 기반 fake 어댑터**(`fixtures/fakes/`): GraphStore/VectorStore/DocStatus의 인메모리 구현으로 실제 AWS 없이 도메인 로직을 검증합니다(헥사고날 아키텍처가 테스트에 주는 이점).
 - **moto**: DynamoDB/S3 어댑터를 boto3 인터페이스에 대해 검증합니다.
-- 계층: 단위(모델, 레지스트리, 병합, 이중 키워드, 평가, 토큰 카운터, 계보 관련성), 속성(hypothesis: 병합 법칙과 증분·전체 구축 수렴, 중단된 실행, 융합 단조성, MinHash·토큰 추정 동등성, 해시 길이. `DocStatusPort.diff` 분할은 `tests/integration/test_doc_status_conformance.py`가 모든 레지스트리에 대해 검사), 통합(증분 추가·변경·삭제 주기), 회귀.
+- 계층: 단위(모델, 레지스트리, 병합, 이중 키워드, 평가, 토큰 카운터, 계보 관련성), 속성(hypothesis: 병합 법칙과 증분·전체 구축 수렴, 중단된 실행, 융합 단조성, MinHash·토큰 추정 동등성, 해시 길이. `DocStatusPort.diff` 분할은 `tests/integration/test_doc_status_conformance.py`가 모든 레지스트리에 대해 검사), 통합(증분 추가·변경·삭제 주기).
 - **저장소 적합성 테스트**(`tests/integration/test_{graph_store,vector_store,retrieval}_conformance.py`): 저장소 계약을 한 번만 작성하고 `tests/fixtures/store_backends.py`의 `StoreHarness`로 모든 백엔드에서 실행합니다. 대상은 fake(쓰기 동작의 기준), 내장 SQLite 저장소, `docker/compose.local.yaml`의 Gremlin Server·OpenSearch 컨테이너(`LOCAL_STORES=1`), Neptune·OpenSearch Service(`-m aws`, 고유한 `indexing.additional_suffix`에 쓰고 끝나면 지움)입니다. 기능이 없는 백엔드는 그 기능이 필요한 테스트를 건너뜁니다(fake에는 검색기와 인덱스 관리가 없음). `tests/integration/test_store_parity.py`(컨테이너 전용)는 같은 합성 코퍼스를 SQLite 엔진과 OpenSearch 컨테이너에 색인해, 어휘 검색은 상위 10개가 같고 점수 차이가 5% 이내인지, 하이브리드 검색(검색기가 어휘 검색과 kNN 검색을 min-max로 융합)은 상위 10개가 같고 융합 점수 차이가 0.01 이내인지, 컨테이너의 근사 kNN이 정확한 상위 10개의 98% 이상을 찾는지(recall@10 ≥ 0.98) 확인합니다. CI의 `local-stores` 작업이 둘 다 컨테이너에 대해 실행합니다.
 - 마커: `unit`, `integration`, `property`, `aws`(실제 AWS, CI에서 제외), `slow`. `asyncio_mode = "auto"`.
 
@@ -479,7 +484,7 @@ CLI: `run-eval --data-path <json> [--search-strategy ...]`.
 
 ## 15. 확장 가이드
 
-프레임워크 확장 방법은 이 절 한 곳에 모았으며, README, 사용자 가이드, CONTRIBUTING.md가 여기를 가리킵니다. 전략, 렌더러, 파서는 레지스트리로, 평가기는 타입 맵의 분기 하나로, 백엔드는 생성자 주입으로 확장하며, 어느 경우에도 디스패치 코드를 고치지 않습니다. 확장 코드가 쓰는 포트, `Providers`, 레지스트리는 `unified_kg_rag`에서 내보냅니다(공개 API의 확장 묶음, §2.4).
+프레임워크 확장 방법은 이 절 한 곳에 모았으며, README, 사용자 가이드, CONTRIBUTING.md가 여기를 가리킵니다. 전략, 렌더러, 파서는 레지스트리로, 평가기는 타입 맵의 분기 하나로, 백엔드는 생성자 주입으로 확장하며, 어느 경우에도 디스패치 코드를 고치지 않습니다. 확장 코드가 쓰는 포트, `Providers`, 레지스트리는 `unified_kg_rag`에서 내보냅니다(공개 API의 확장 묶음, §2.5).
 
 - **새 검색 전략**: `SearchStrategy` enum 멤버 추가(`domain/models/retrieval.py`. 전략은 이 닫힌 enum을 키로 쓰며 CLI 선택지도 이를 따릅니다) + `BaseSearchStrategy` 상속 + `@register_strategy(SearchStrategy.X, required_roles=(...), query_inputs=frozenset({QueryInput.ENTITIES}))` + `adapters/search_strategies/__init__.py`에서 export. `query_inputs`는 전략이 읽는 질의 측 LLM 추출을 선언하며(`entity_focus`용 `ENTITIES`, `hl_keywords`/`ll_keywords`용 `DUAL_KEYWORDS`), 체인은 나머지 추출을 건너뜁니다. 커뮤니티 리포트로 답하는 전략은 `needs_community_reports=True`도 넘겨, 리포트를 만들지 않는 구성에서 `auto`가 고르지 않게 합니다. `rag_chain`은 고치지 않아도 됩니다. `auto`가 이 전략을 고를 수 있게 하려면 `search.auto_routable_strategies`에 추가하세요.
 - **새 스토리지/LLM 백엔드**: 해당 포트를 구현한 뒤, `@register_provider(ProviderRole.X, "kind")`(`adapters/provider_registry.py`)로 새 `providers.<역할>.kind`의 빌더를 등록하고 설정에서 고르거나, 그 포트를 쓰는 생성자에 넘깁니다(아래 "커스텀 백엔드" 참고). 매니저의 `__init__`에 하드코딩하지 마세요.
@@ -636,7 +641,7 @@ OpenSearch 클라이언트 호출인 `SearchEngineClient` 프로토콜(`adapters
   조합마다 이를 자기 저장 방식에 대응시키므로, SQLite 저장소는 새 추상화 없이 같은
   접두사를 읽습니다. 벡터 저장소는 OpenSearch 프로토콜로 동작하고, 그래프 저장소는 같은
   `graph_label`로 행을 구분합니다. 중요한 헥사고날 경계인 쓰기 측 인덱서 포트와 모델
-  팩토리 포트는 *이미* 추상화되어 있고 의존성 주입을 받습니다(§2.1과 `IndexingManager` /
+  팩토리 포트는 *이미* 추상화되어 있고 의존성 주입을 받습니다(§2.2와 `IndexingManager` /
   `ModelFactoryPort` 주입 지점 참고). 이 어휘를 완전히 백엔드 중립적인 질의 모델 뒤로
   옮기는 것은 동작을 바꿀 위험이 있는 큰 변경이며, 이름 붙은 컬렉션에 대응시킬 수 없는
   백엔드가 생길 때에야 정당화됩니다.

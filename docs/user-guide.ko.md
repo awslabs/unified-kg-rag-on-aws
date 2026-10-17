@@ -167,7 +167,7 @@ optional 'unstructured' extra`). Python 3.11 또는 3.12에서는
    UKR__AWS__OPENSEARCH__PASSWORD=your_opensearch_password
    ```
 
-   CLI(`run-ingestion`, `run-rag`)는 `.env` 파일을 자동으로 읽습니다.
+   `run-*` CLI는 `.env` 파일을 자동으로 읽습니다.
    `use_iam: true`이면 `.env`가 필요 없습니다.
 
 ### 로컬 모드 (AWS 없이)
@@ -267,7 +267,7 @@ Bedrock을 쓸 수 있습니다.
 AWS 모드와 다른 점:
 
 - 작은 로컬 모델은 추출 품질이 눈에 띄게 낮습니다. 형식이 잘못된 출력이 많아지고(재시도
-  후 실패한 청크로 기록), 엔티티 해소와 커뮤니티 보고서도 약해집니다. 하드웨어가 감당하는
+  후 실패한 청크로 기록), 엔티티 해석과 커뮤니티 리포트도 약해집니다. 하드웨어가 감당하는
   가장 큰 모델을 쓰세요.
 - Bedrock 프롬프트 캐싱이 없고, 로컬 공급자는 모델 호출에 가드레일을 붙이지 않습니다.
   `aws.bedrock.guardrail.identifier`를 지정하면 질의 체인은 여전히 Bedrock
@@ -319,7 +319,7 @@ HTTP 4xx) 클라이언트 재시도 후에도 연결할 수 없으면, "찾을 �
 
 | 플래그 | 설정하는 키 |
 |---|---|
-| `--backend {aws,local}` | `backend`. 프리셋은 여전히 설정에서 비워 둔 키만 채웁니다. `backend: local` 파일에 `--backend aws`를 주면 로컬 프리셋과 같은 값을 모두 버려 해당 키가 AWS 기본값으로 돌아갑니다 |
+| `--backend {aws,local}` | `backend`. 프리셋은 여전히 설정에서 비워 둔 키만 채웁니다. `backend: local` 파일에 `--backend aws`를 주면 로컬 프리셋이 채운 값을 버려 해당 키가 AWS 기본값으로 돌아갑니다. 파일이나 환경 변수로 지정한 값은 프리셋과 같더라도 유지합니다 |
 | `--llm-provider KIND` | `providers.llm.kind`: `bedrock`, `openai_compatible`, `ollama` |
 | `--llm-model MODEL` | `models.default` |
 | `--embedding-provider KIND` | `providers.embedding.kind`: `bedrock`, `openai_compatible`, `ollama` |
@@ -591,7 +591,7 @@ LLM 단계는 Bedrock I/O가 병목이므로 동시성을 CPU 수보다 훨씬 �
 | `processing.deduplicate` | `false` | 추출 전에 거의 같은 문서를 제거합니다. 두 문서의 문자 3-gram 집합 Jaccard 유사도(128개 순열 MinHash로 추정)가 0.9 이상이면 중복으로 보고, 둘 중 앞의 문서를 남깁니다(증분 실행에서는 이미 색인된 문서를 남깁니다). 이 값들은 고정입니다. |
 | `processing.resolution_method` | `"minhash"` | 엔티티 해석 방식입니다. `minhash` 또는 `sequence_matcher`입니다. |
 | `processing.fuzzy_entity_resolution` | `false` | 이름이 비슷하기만 한 엔티티도 전체 빌드와 증분 병합에서 병합합니다. 끄면 정규화, 법인 형태 표기 제거, 한자·한글·가나 옆 공백 제거 뒤 이름이 같을 때만 병합합니다. |
-| `processing.similarity_threshold` | `0.85` | 퍼지 엔티티 해석과 클레임 주체·객체의 엔티티 이름 매칭에 쓰는 임계값입니다. 서로 다른 엔티티가 합쳐지면 올리세요. |
+| `processing.similarity_threshold` | `0.85` | 퍼지 엔티티 해석과 주장 주체·객체의 엔티티 이름 매칭에 쓰는 임계값입니다. 서로 다른 엔티티가 합쳐지면 올리세요. |
 | `processing.document_parsing.source_directory` | `"source"` | 라이브러리 호출용 기본값입니다. `run-ingestion`에는 `--source-directory`(또는 `UKR_SOURCE_DIRECTORY`)가 반드시 필요합니다. |
 | `processing.document_parsing.target_directory` | `null` | 파싱한 문서를 확인용 `<stem>.json`으로 내보냅니다(`--output-directory`와 같음). 소스 디렉터리는 지정할 수 없습니다. |
 | `processing.document_parsing.index_value` | `null` | 실행이 쓰는 인덱스 접미사입니다. 모든 OpenSearch 인덱스와 Neptune 레이블 이름이 `<prefix>-<index_value>`가 됩니다(`null`이면 `default`). 이 코퍼스에 질의할 때는 같은 값을 `run-rag`/`run-eval --suffix`로 넘깁니다. `run-ingestion`에는 이 값을 지정하는 플래그가 없으므로 테넌트나 버전마다 설정 파일을 따로 두세요. |
@@ -643,12 +643,11 @@ LLM 단계는 Bedrock I/O가 병목이므로 동시성을 CPU 수보다 훨씬 �
 | `indexing.additional_suffix` | `null` | 모든 OpenSearch 인덱스 이름과 Neptune 레이블에서 실행 접미사 뒤에 붙습니다(`<prefix>-<suffix>-<additional_suffix>`). `<suffix>`는 수집 시 `processing.document_parsing.index_value`, 질의 시 `--suffix`이며 지정하지 않으면 둘 다 `default`입니다. 수집과 질의에 같은 값을 지정하세요. 버전별·테넌트별 분리에 씁니다. |
 | `indexing.cross_run_merge` | `true` | 증분 실행에서 변경분을 기존 그래프 상태에 덮어쓰지 않고 합칩니다. 그래서 바뀌지 않은 문서와 공유하는 엔티티의 계보가 유지됩니다(§5). `false`이면 덮어씁니다. |
 | `indexing.community_drift_threshold` | `0.5` | 증분 실행: 실행이 군집화한 엔티티 중 이전 레벨 0 커뮤니티에도 속한 엔티티의 비율이 이 값에 이르면 재구축을 권합니다(WARNING과 `community_rebuild_recommended`, [운영 가이드](./operations.ko.md#증분-실행) 참고). |
-| `indexing.max_failure_rate` | `0.2` | 인덱스 유형별 쓰기 실패율이 이 값을 넘으면 인덱싱 단계가, 보고서가 없는 커뮤니티 비율이 이 값을 넘으면 커뮤니티 탐지 단계가 실패합니다. `1.0`이면 부분 실패 검사를 끕니다. |
+| `indexing.max_failure_rate` | `0.2` | 인덱스 유형별 쓰기 실패율이 이 값을 넘으면 인덱싱 단계가, 리포트가 없는 커뮤니티 비율이 이 값을 넘으면 커뮤니티 탐지 단계가 실패합니다. `1.0`이면 부분 실패 검사를 끕니다. |
 | `indexing.max_document_failures` | `3` | 증분 실행에서 내용이 바뀌지 않은 문서가 연속으로 이 횟수만큼 FAILED로 기록되면 더는 재시도하지 않습니다(§5). |
 | `indexing.max_document_attempts` | `3` | 증분 실행에서 문서의 바뀌지 않은 내용을 인덱싱하기 시작하고 끝내지 못한(실행이 죽은) 실행이 연속으로 이 횟수에 이르면 문서를 격리합니다. 내용이나 추출 설정이 바뀔 때까지 건너뜁니다(§5, *격리된 문서*). |
 | `indexing.lease_seconds` | `300` | 증분 실행에서 인덱스 네임스페이스 쓰기 임대의 기간입니다. 실행은 끝날 때까지 임대를 유지하며 기간의 3분의 1마다 갱신하고, 죽은 실행의 임대는 늦어도 이 시간 뒤에 만료됩니다(§5, *동시 실행*). 최솟값은 `10`입니다. |
 | `indexing.retire_source_scopes` | `[]` | 증분 실행에서 이전 소스 범위(옮기기 전의 절대 소스 디렉터리나 이전 `source_scope` 값)를 지정하면, 실행 인덱스 접미사에서 그 범위의 레코드를 삭제된 문서로 처리해 그 문서에만 속한 내용을 지웁니다. 실행 자신의 범위는 지정할 수 없습니다. `--retire-source-scope`로 값을 더할 수 있습니다(§5 삭제 범위 참고). |
-| `models.embedding.model_id` | `"amazon.titan-embed-text-v2:0"` | 임베딩 모델이며, 정해진 목록에서 고릅니다(모델 선택 참고 사항 참고). 바꾸면 다시 인덱싱해야 합니다. |
 | `indexing.opensearch.build_relationship_vector_index` | `true` | 관계 벡터 인덱스입니다. LightRAG `mix`/`hybrid`(고수준 키워드, 연결 관계)와 GraphRAG `local`(관계 섹션, 연결 고리 관계)이 조회하고, `simple`/`drift`는 다른 인덱스와 함께 검색합니다. `false`로 두면 관계 임베딩을 만들지 않는 대신 이 기능을 쓰지 못합니다. |
 | `indexing.opensearch.persist_embedding_cache` | `false` | 임베딩 캐시를 S3에 저장해, 바뀌지 않은 텍스트를 실행마다 다시 임베딩하지 않습니다. `aws.s3.bucket_name`이 필요합니다. |
 | `indexing.opensearch.language_analyzers` | `{en: english, ko: nori}` | 언어 코드별 텍스트 분석기입니다. 목록에 없는 언어는 `default_analyzer`(`standard`)를 씁니다. |
@@ -965,7 +964,7 @@ LangChain이 콜백을 호출하지 않으므로 모델 스팬이 남지 않습�
 | `--resume-from-stage` | — | 재개할 단계 이름(대소문자 무관, `--pipeline-id` 필요). 없는 이름이면 사용법 오류(종료 코드 2) |
 | `--verify-metadata` | off | 파이프라인 메타데이터 무결성 확인(`--pipeline-id` 필요). 손상되었거나 실행을 찾지 못하면 0이 아닌 코드로 종료 |
 | `--yes`, `-y` | off | 확인 질문(무결성 검사 실패 후 계속 진행)에 모두 예로 답함. stdin이 터미널이 아니면 질문할 수 없으므로 `--yes` 없이는 실행이 실패 |
-| `--continue-on-error` | off | 단계에서 오류가 나도 계속 진행. 추출·해석·커뮤니티 단계가 비정상 종료해 산출물이 빠진 문서는 FAILED로 기록되어 다음 증분 실행이 다시 처리 |
+| `--continue-on-error` | off | 단계에서 오류가 나도 계속 진행. 산출물을 만드는 단계(번역부터 커뮤니티 탐지까지)가 비정상 종료하면 그 실행의 모든 문서가 FAILED로 기록되어 다음 증분 실행이 다시 처리 |
 | `--enabled-stages` | 전체 | 실행할 단계 목록(쉼표로 구분) |
 | `--metrics-sink` | `none` | `none` 또는 `cloudwatch`(CloudWatch EMF — Embedded Metric Format — 지표를 stdout에 출력. `UKR_METRICS_ENVIRONMENT`가 있으면 `Environment` 차원을 붙이고(CDK 태스크는 `env_name`을 설정), 없으면 차원 없음. `pipeline_id`는 차원이 아니라 로그 속성으로 기록하므로 실행마다 지표 시계열이 늘지 않음). 각 단계의 지표는 그 단계가 끝날 때, 그 단계를 실행한 실행만 내보내므로 재개한 실행이 복원한 단계의 수치를 다시 보내지 않음 |
 | `--retire-source-scope SCOPE` | — | 증분 실행에서 이전 소스 범위 `SCOPE`(이번 실행의 인덱스 접미사)의 레지스트리 레코드를 모두 삭제된 문서로 처리해 그 문서에만 속한 내용을 지웁니다. 여러 번 지정할 수 있고 `indexing.retire_source_scopes`에 더해집니다. `SCOPE`가 실행 자신의 범위이면 실패합니다(§5 삭제 범위 참고). |
@@ -1051,8 +1050,8 @@ run-ingestion --source-directory ./documents --config-path config.yaml --metrics
 `indexing.opensearch.persist_embedding_cache: true`를 설정하면 바뀌지 않은 텍스트를
 실행마다 다시 임베딩하지 않습니다.
 
-**LLM 응답 캐시**(`cache.llm_responses`, 기본값 켜짐): 수집 단계의 모델 호출(추출, 글리닝,
-클레임, 번역, 설명 요약, 커뮤니티 보고서, LLM 청킹, 출력 수정) 응답을 실행의 캐시 디렉터리
+**LLM 응답 캐시**(`cache.llm_responses`, 기본값 켜짐): 수집 단계의 모델 호출(추출, gleaning,
+주장, 번역, 설명 요약, 커뮤니티 리포트, LLM 청킹, 출력 수정) 응답을 실행의 캐시 디렉터리
 `llm-cache/`에 두고 단계 캐시와 함께 동기화합니다. 같은 pipeline id로 다시 실행하면 이미 보낸
 프롬프트는 여기서 답하므로, 중지되거나 시간 초과되거나 비정상 종료된 단계는 하지 않은 호출만
 다시 합니다. 키는 렌더링한 프롬프트와 모델 및 생성 설정(모델 ID, 최대 토큰, temperature,
@@ -1379,14 +1378,14 @@ aws:
   문서별 청크가 있고, 무엇이 그 청크를 인용하는지는 저장소에 묻습니다)을 삭제하고,
   남은 문서와 공유하는 산출물은 그 문서의 청크만 빼고 유지합니다. 커뮤니티와
   리포트는 인용하는 청크가 하나도 남지 않으면 지웁니다.
-- **추출 설정 변경**(튜닝한 `custom_prompts`, `entity_types`, 추출·글리닝·청킹 모델,
+- **추출 설정 변경**(튜닝한 `custom_prompts`, `entity_types`, 추출·gleaning·청킹 모델,
   청크 크기, 번역, 해소 설정): 각 레코드는 그 문서를 추출할 때 쓴 설정의 지문을
   저장합니다. 다음 실행은 지문이 다른 미변경 문서를 모두 다시 추출하고 그 수와
   바뀐 설정을 WARNING 로그로 남깁니다. 레지스트리는 코퍼스마다 설정 자체도 보관해
   필드별로 비교합니다. 새 릴리스가 추가한 설정은 기본값이면 변경으로 보지 않으므로
   업그레이드만으로 코퍼스를 다시 추출하지 않습니다. 내장 프롬프트 템플릿(코드)을 고친 것은
   감지하지 못하므로 고친 뒤에는 초기화하세요. 다시 추출하는 문서라도 청크의
-  레코드를 정하는 설정(모델, 추출·글리닝·주장 설정, 대상 언어, 내장 템플릿을 포함한
+  레코드를 정하는 설정(모델, 추출·gleaning·주장 설정, 대상 언어, 내장 템플릿을 포함한
   프롬프트 템플릿)이 그대로이면(예: 해소나 청킹 설정만 바꾼 경우) 청크는 저장된
   레코드를 씁니다.
 - **임베딩 모델이나 차원 변경**(`models.embedding.model_id` /
@@ -1471,12 +1470,18 @@ aws:
 
 ### 실패한 문서
 
-텍스트 단위 하나라도 번역, 그래프 추출, gleaning, 주장 추출에 실패했거나, 텍스트 단위를
-포함한 기본 수준 커뮤니티의 보고서가 생성되지 않았거나, 산출물 하나를 저장소에 쓰는 데
-실패한 문서는 `FAILED`로 기록됩니다. 상위 수준 커뮤니티의 보고서 실패는 WARNING으로
+다음 네 경우에 문서가 `FAILED`로 기록됩니다.
+
+- 텍스트 단위 하나라도 번역, 그래프 추출, gleaning, 주장 추출에 실패함
+- 텍스트 단위를 포함한 기본 수준 커뮤니티의 리포트가 생성되지 않음
+- `--continue-on-error` 실행에서 산출물을 만드는 단계(번역부터 커뮤니티 탐지까지)가
+  비정상 종료함. 이때는 그 실행의 모든 문서가 `FAILED`로 기록됨
+- 산출물(텍스트 단위, 엔티티, 관계, 주장, 커뮤니티, 리포트) 하나를 저장소에 쓰는 데 실패함
+
+상위 수준 커뮤니티의 리포트 실패는 WARNING으로
 남기고 단계의 `reports_failed` 지표에 세지만 문서를 `FAILED`로 기록하지는 않습니다. 상위
-커뮤니티는 많은 문서에 걸쳐 있어, 보고서 하나 때문에 이를 모두 재시도하면 코퍼스 대부분을
-다시 추출하게 됩니다. 보고서 실패와 쓰기 실패는 각각 커뮤니티 수와 산출물 유형별 쓰기 수의
+커뮤니티는 많은 문서에 걸쳐 있어, 리포트 하나 때문에 이를 모두 재시도하면 코퍼스 대부분을
+다시 추출하게 됩니다. 리포트 실패와 쓰기 실패는 각각 커뮤니티 수와 산출물 유형별 쓰기 수의
 `indexing.max_failure_rate`까지 허용하며, 이를 넘으면 해당 단계가 실패하고 아무것도
 기록하지 않습니다. 다음 실행은 파일이 바뀌지 않았더라도 이 문서를 변경된 문서로 처리합니다.
 실패한 실행이 쓴 내용을 제거하고 문서를 다시 처리합니다. 내용이 같은 채로
@@ -1880,7 +1885,7 @@ true`)에서는 그래프와 커뮤니티 계층만 담습니다. 그래프를 �
 spring 레이아웃과 설정한 중심성 지표를 계산합니다. `graph.visualization.enabled`가
 `true`이면(기본값은 `false`. 수집마다 노드당 임베딩 호출과 레이아웃 차원 축소가
 추가되기 때문) 이 단계가 시각화도 렌더링하고, 파일에 임베딩 기반 레이아웃과 중심성이
-들어갑니다. `outputs_directory`를 지정하지 않으면(기본값) `<cache.local_directory>/<pipeline_id>/visualization/`에
+들어갑니다. `outputs_directory`를 지정하지 않으면(기본값) `<캐시 디렉터리>/<pipeline_id>/visualization/`(`--cache-directory`, `PipelineConfig.local_directory`)에
 쓰므로, S3 캐시 동기화를 켜면 `visualization_data.json`이 캐시와 함께 업로드됩니다(동기화는
 `.json` 파일만 복사하므로 HTML은 로컬에서 `run-visualization`으로 다시 렌더링하세요).
 이 파일이 `--data-path` 입력입니다. 대화형 그래프는 큰 그래프도 브라우저에서 렌더링할 수
@@ -2078,7 +2083,7 @@ SigV4), OpenSearch(설정한 인덱스 읽기·쓰기), S3(설정한 버킷), Dy
 > ARN(`arn:aws:bedrock:<Bedrock 리전>:<계정>:guardrail/<id>`)에 대한
 > `bedrock:ApplyGuardrail`이 필요합니다.
 
-### 자주 나는 오류
+### 자주 보는 오류
 
 CLI가 보고하는 메시지와 그 의미, 해결 방법은 AWS 모드와 로컬 모드 모두
 [운영 런북: 자주 보는 오류](./operations.ko.md#자주-보는-오류)에 정리되어 있습니다.

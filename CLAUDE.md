@@ -12,9 +12,14 @@ one ingestion/indexing/caching/hybrid-search infrastructure and only differ at
 the algorithm layer. Dependencies point **inward**: `application → adapters →
 ports → domain`, with `shared` as a cross-cutting kernel any layer may use.
 
+- **Root facade (`unified_kg_rag/__init__.py`)**: the public API. It lazily
+  re-exports the names users and extenders import (`from unified_kg_rag import
+  GraphRAGChain, Providers, ...`); everything else is internal. Adding or
+  removing a name means editing `tests/unit/test_public_api.py` (and a
+  CHANGELOG "Breaking" entry for a removal or rename).
 - **`domain/`**: technology-agnostic core — `models/` (Pydantic), pure
   algorithms (`ingestion/` merge/delta/resolve/analyze, `retrieval/`
-  strategy registry + index prefixes), and `prompts/` templates. No boto3/LangChain/
+  strategy registry, index prefixes, hybrid normalization), and `prompts/` templates. No boto3/LangChain/
   backend imports, direct or transitive (`tests/unit/test_domain_purity.py`
   imports every domain module in a clean interpreter and checks
   `sys.modules`).
@@ -46,8 +51,8 @@ ports → domain`, with `shared` as a cross-cutting kernel any layer may use.
   from `shared.utils.langchain` / `shared.utils.document_converter` (and rich
   helpers from `shared.utils.display`), not from the package root.
 - **`evaluation/` and `visualization/`**: real logic packages (evaluators +
-  manager; render loop + `embeddings/`/`exporters/`). Import
-  everything else from its real location (`application.retrieval.rag_chain`,
+  manager; render loop + `embeddings/`/`exporters/`). Code inside the
+  package imports everything else from its real location (`application.retrieval.rag_chain`,
   `application.storage.indexing_manager`, `application.ingestion.pipeline`,
   `adapters.*`, `domain.*`).
 - **Registries over hardcoded dispatch**: search strategies register via
@@ -78,11 +83,13 @@ The two rules to keep in mind:
   only the retrieval algorithm differs. LightRAG `mix`/`hybrid` extract high/low
   keywords (`KeywordsExtractionPrompt`) and query a relationship vector index
   (high-level) + entity index (low-level) + Neptune expansion.
-- **Incremental indexing**: enable `aws.dynamodb` to diff a corpus by content
-  hash and only (re)index new/changed documents, merging into the live graph
+- **Incremental indexing**: enable the doc-status registry (`aws.dynamodb`,
+  or SQLite in local mode) to diff a corpus by content hash and only
+  (re)index new/changed documents, merging into the live graph
   (`IncrementalIndexer`, `ingestion/merge/`, idempotent `upsert_*`/`delete_by_id`
-  on both indexers). Deletions remove a document's *exclusive* artifacts via
-  per-document lineage in the DynamoDB registry.
+  on both indexers). The registry lists each document's text units; a
+  deletion asks the stores what cites them and removes only what no surviving
+  text unit still states.
 - **CLIs** (`pyproject` scripts): `run-ingestion`, `run-rag`, `run-eval`,
   `run-visualization` (render from exported graph data, no ingestion),
   `run-prompt-tuning` (profile a corpus → domain-adapted `custom_prompts` YAML),

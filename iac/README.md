@@ -417,7 +417,8 @@ task injects: `UKR__AWS__NEPTUNE__ENDPOINT`, `UKR__AWS__OPENSEARCH__ENDPOINT`, `
 `AWS_REGION`, `UKR__AWS__BEDROCK__REGION_NAME`, `UKR__LOGGING__LOG_FORMAT`, `UKR__INDEXING__OPENSEARCH__INDEX_SETTINGS__NUMBER_OF_REPLICAS`,
 `UKR__INDEXING__OPENSEARCH__LANGUAGE_ANALYZERS__KO` (`opensearch_korean_analyzer`),
 `UKR__AWS__DYNAMODB__TABLE_NAME`
-(the table this stack created) and `UKR__AWS__DYNAMODB__CREATE_TABLE_IF_MISSING=false`,
+(the table this stack created), `UKR__AWS__DYNAMODB__CREATE_TABLE_IF_MISSING=false` and
+`UKR_METRICS_ENVIRONMENT` (`env_name`, the Environment dimension of the metrics the alarms watch),
 plus `UKR__AWS__BEDROCK__GUARDRAIL__IDENTIFIER` when `guardrail_identifier` is set (and
 `UKR__AWS__BEDROCK__GUARDRAIL__VERSION` when `guardrail_version` is). The
 image config sets `aws.dynamodb.enabled: true`, so ingestion runs
@@ -474,9 +475,10 @@ aws logs tail /graphrag/tasks --region "$REGION" --follow
   (`cache_bucket_name`) keeps its own lifecycle rules, so check them the same
   way.
 - **Run one ingestion at a time.** The state machine does not stop a second
-  execution from starting while one is running, and two runs against the same
-  stores race on the doc-status registry and on the graph and vector writes
-  (both may index, merge or delete the same documents). See
+  execution from starting while one is running. With the doc-status registry
+  (on in the image config), the second run on the same index namespace stops
+  with `NamespaceLeaseError` before it reads or writes anything; start it
+  again once the first one ended. See
   [Concurrent runs](../docs/operations.md#concurrent-runs).
 
 ### 4. Query from inside the VPC

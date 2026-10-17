@@ -237,12 +237,19 @@ custom policy needs `dynamodb:BatchWriteItem` as well as `BatchGetItem`
 
 ## Failed documents
 
-A document is recorded `FAILED` when translation, graph extraction, gleaning
-or claim extraction failed on any of its text units, when one of the stages
-that build its artifacts (translation through community detection) crashed in
-a `--continue-on-error` run, or when the write of one
-of its artifacts (text unit, entity, relationship, claim, community, report)
-to OpenSearch or Neptune failed. The next run treats it as changed: it removes
+A document is recorded `FAILED` in four cases:
+
+- translation, graph extraction, gleaning or claim extraction failed on one
+  of its text units;
+- a base-level community covering one of its text units got no report;
+- an artifact stage (translation through community detection) crashed in a
+  `--continue-on-error` run, which records every document of the run
+  `FAILED`;
+- writing one of its artifacts (text unit, entity, relationship, claim,
+  community, report) to the stores failed.
+
+A failed parent-level community report marks no document (see
+[User Guide: Failed documents](./user-guide.md#failed-documents)). The next run treats it as changed: it removes
 what the failed run wrote and processes the document again. When parsing,
 loading or chunking crashed in a
 `--continue-on-error` run, the indexing stage does not run at all, so the
@@ -388,8 +395,8 @@ curl -X PUT "https://<OpenSearch endpoint>/_all/_settings" \
 ## Backup and restore
 
 The three stores are backed up on different schedules, and their contents
-refer to each other (the registry lists each document's graph and index
-artifacts), so restore them to one common point or not at all:
+refer to each other (the registry lists each document's text units, which the
+graph and index artifacts cite), so restore them to one common point or not at all:
 
 | Store | Backup | Window |
 |---|---|---|
@@ -420,8 +427,8 @@ The corpus in S3 is the source of truth: every store can be rebuilt from it.
 
 **Outside Neptune's window** (or when step 5 is not worth it), there is no
 common point: run one full rebuild with `indexing.reset: true` (see
-[Re-ingest](#re-ingest)). It clears this index namespace's stores and
-registry records and re-indexes the whole corpus. Restore the table first
+[Re-ingest](#re-ingest)). It re-indexes the whole corpus into this index
+namespace and drops what the rebuild did not write. Restore the table first
 only if other namespaces share it.
 
 ## Query access and tenant isolation
@@ -805,7 +812,7 @@ content to LangSmith independently of this setting.
 |---|---|---|
 | `Missing endpoint configuration for ...` | An endpoint the run needs is unset | Set the named key or environment variable |
 | `Configuration validation error: ...` | A config value has the wrong type or an unsupported value | Fix the named key |
-| `Unknown config key '<path>' is ignored` (WARNING) | Typo or removed key; the run continues without it | Correct or delete the key |
+| `ConfigurationError: Unknown config keys: '<path>' ...` (exit code 2) | A typo, or a key removed or renamed in this release | Correct or delete the key ([CHANGELOG](../CHANGELOG.md) names the replacement). `--allow-unknown-keys` loads the file anyway, logging `Unknown config key '<path>' is ignored` (WARNING) per key |
 | `No valid AWS credentials for Amazon Bedrock in region ...` | Credentials are missing or expired | Refresh credentials; check `AWS_PROFILE` / `aws.profile_name` |
 | `Model '<id>' is only available through a cross-region inference profile, but none resolved ...` | The model has no on-demand throughput and no profile was found | Keep `aws.bedrock.enable_global_profile: true`, grant `bedrock:ListInferenceProfiles`, or use another region |
 | `Reranking failed: ...` (ERROR, per query; `metadata.rerank.status: failed`) | The Rerank call was denied or the model is unavailable in the region | Grant `bedrock:Rerank` on `Resource: "*"`, move Bedrock to a region with the rerank model, or set `search.reranking.enabled: false` |
@@ -841,7 +848,7 @@ content to LangSmith independently of this setting.
 | `The doc-status registry lists indexed documents of this namespace whose text units the vector store does not hold` | The vector store lost what the registry records (local mode: `vector.sqlite3` deleted or moved, or `providers.vector.sqlite_path` changed; deleted OpenSearch indices) | Same as above; in local mode delete the three store files together or restore the vector file |
 | `... stayed locked ...` (`database is locked`) from the embedded graph or vector store or the SQLite doc-status registry (local mode) | Another process is writing to the same SQLite file (a second ingestion, say) and held its lock longer than `search.store_timeout_seconds`; SQLite allows one writer at a time | Wait for the other run and retry, run one ingestion per store file at a time, or raise `search.store_timeout_seconds`. Keep the files on a local disk: network filesystems are not supported |
 | `... processed N inputs but produced 0 outputs`, with `Connection refused` in the log (local mode) | Ollama or the OpenAI-compatible server is not reachable at `providers.llm.base_url` / `providers.embedding.base_url` | Start it (`ollama serve`, or `docker compose -f docker/compose.local.yaml --profile models up -d --wait`), check `base_url` (or `--model-base-url`), and pull the models |
-| A query fails with `AuthenticationError` / `NotFoundError` (`Error code: 401` / `404`), `APIConnectionError` / `APITimeoutError`, or `ResponseError: model ... not found` (local mode) | The OpenAI-compatible or Ollama server refused the key or does not serve the model, or could not be reached or did not answer after the client's retries; every later query would fail the same way, so the query fails instead of answering "could not find" | Check `providers.llm` / `providers.embedding` (`base_url`, `api_key`, `model_id`), that the server is running, and pull the models |
+| A query fails with `AuthenticationError` / `NotFoundError` (`Error code: 401` / `404`), `APIConnectionError` / `APITimeoutError`, or `ResponseError: model ... not found` (local mode) | The OpenAI-compatible or Ollama server refused the key or does not serve the model, or could not be reached or did not answer after the client's retries; every later query would fail the same way, so the query fails instead of answering "could not find" | Check `base_url` and `api_key` under `providers.llm` / `providers.embedding`, the model names in `models.default` / `models.embedding.model_id`, that the server is running, and pull the models |
 | `observability.enabled is true but OpenTelemetry is not installed` | Tracing is on but the `otel` extra is missing | `uv sync --extra otel`, or set `observability.enabled: false` |
 | Bedrock calls hang in a private VPC | Bedrock is called in a region the VPC endpoint does not serve | Keep `aws.bedrock.region_name` unset or equal to the VPC's region |
 | OpenSearch authentication fails with `use_iam: false` | No basic-auth credentials | Set `UKR__AWS__OPENSEARCH__USERNAME` / `UKR__AWS__OPENSEARCH__PASSWORD` (for example in `.env`) |
