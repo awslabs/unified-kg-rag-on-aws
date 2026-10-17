@@ -38,6 +38,7 @@ from unified_kg_rag.application.observability import configure_observability
 from unified_kg_rag.domain.ingestion.delta_detector import validate_retired_scopes
 from unified_kg_rag.domain.models import (
     Config,
+    ExtractionSettings,
     PipelineConfig,
     PipelineContext,
     PipelineMetrics,
@@ -68,7 +69,10 @@ from unified_kg_rag.shared.utils import (
     corpus_manifest_fingerprint,
     stage_cache_key,
 )
-from unified_kg_rag.shared.utils.cache_keys import extraction_fingerprint
+from unified_kg_rag.shared.utils.cache_keys import (
+    changed_settings,
+    extraction_settings,
+)
 from unified_kg_rag.shared.utils.document_identity import config_registry_namespace
 
 if TYPE_CHECKING:
@@ -973,13 +977,17 @@ class DataIngestionPipeline:
         ):
             return start_stage_name, completed_stages
         metadata = self.state_manager.load_pipeline_metadata(pipeline_id)
-        recorded = metadata.get("incremental_extraction_fingerprint")
+        recorded = metadata.get("incremental_extraction_settings")
         if recorded is None:
             return start_stage_name, completed_stages
+        changed = changed_settings(
+            ExtractionSettings.model_validate(recorded),
+            extraction_settings(self.config),
+        )
         if not self.providers.doc_status_enabled:
             reason = "the doc-status registry was disabled"
-        elif recorded != extraction_fingerprint(self.config):
-            reason = "the extraction settings changed"
+        elif changed:
+            reason = f"the extraction settings changed ({', '.join(changed)})"
         else:
             return start_stage_name, completed_stages
         logger.warning(

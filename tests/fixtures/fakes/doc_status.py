@@ -18,6 +18,7 @@ from unified_kg_rag.domain.models import (
     DocStatus,
     DocStatusRecord,
     DocumentDelta,
+    ExtractionSettings,
 )
 from unified_kg_rag.shared import DataProcessingError
 from unified_kg_rag.shared.utils.document_identity import doc_id_namespace
@@ -39,6 +40,7 @@ class FakeDocStatusStore:
         self.namespace_reads: list[str | None] = []
         # namespace -> (owner, expires_at); ``clock`` is replaceable in tests.
         self.leases: dict[str, tuple[str, float]] = {}
+        self.extraction_settings: dict[str, tuple[str, ExtractionSettings]] = {}
         self.clock = time.time
 
     def try_acquire_lease(self, namespace: str, owner: str, seconds: float) -> bool:
@@ -55,6 +57,16 @@ class FakeDocStatusStore:
     def release_lease(self, namespace: str, owner: str) -> None:
         if self.leases.get(namespace, ("", 0.0))[0] == owner:
             del self.leases[namespace]
+
+    def get_extraction_settings(
+        self, scope: str
+    ) -> tuple[str, ExtractionSettings] | None:
+        return self.extraction_settings.get(scope)
+
+    def put_extraction_settings(
+        self, scope: str, fingerprint: str, settings: ExtractionSettings
+    ) -> None:
+        self.extraction_settings[scope] = (fingerprint, settings)
 
     def get(self, doc_id: str) -> DocStatusRecord | None:
         return self._records.get(doc_id)

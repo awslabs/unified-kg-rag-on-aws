@@ -38,6 +38,7 @@ from unified_kg_rag.domain.models import (
     DocStatus,
     DocStatusRecord,
     DocumentDelta,
+    ExtractionSettings,
 )
 from unified_kg_rag.shared import DocStatusRegistryError, get_logger
 from unified_kg_rag.shared.utils.document_identity import doc_id_namespace
@@ -62,6 +63,13 @@ _SCHEMA = (
         namespace TEXT PRIMARY KEY,
         owner TEXT NOT NULL,
         expires_at REAL NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS extraction_settings (
+        scope TEXT PRIMARY KEY,
+        fingerprint TEXT NOT NULL,
+        settings TEXT NOT NULL
     )
     """,
 )
@@ -226,6 +234,31 @@ class SQLiteDocStatusStore:
             connection.execute(
                 "DELETE FROM leases WHERE namespace = ? AND owner = ?",
                 (namespace, owner),
+            )
+
+    # --- the extraction settings of a scope's last commit ---------------------
+
+    def get_extraction_settings(
+        self, scope: str
+    ) -> tuple[str, ExtractionSettings] | None:
+        with self._lock, self._registry_errors("read the extraction settings"):
+            row = self.connection.execute(
+                "SELECT fingerprint, settings FROM extraction_settings "
+                "WHERE scope = ?",
+                (scope,),
+            ).fetchone()
+        if row is None:
+            return None
+        return row[0], ExtractionSettings.model_validate_json(row[1])
+
+    def put_extraction_settings(
+        self, scope: str, fingerprint: str, settings: ExtractionSettings
+    ) -> None:
+        with self._transaction("record the extraction settings") as connection:
+            connection.execute(
+                "INSERT OR REPLACE INTO extraction_settings "
+                "(scope, fingerprint, settings) VALUES (?, ?, ?)",
+                (scope, fingerprint, settings.model_dump_json()),
             )
 
     def list_namespace(self, namespace: str) -> list[DocStatusRecord]:

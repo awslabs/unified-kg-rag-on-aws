@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from unified_kg_rag.domain.models.document import (
         DocStatusRecord,
         DocumentDelta,
+        ExtractionSettings,
     )
 
 
@@ -101,6 +102,21 @@ class DocStatusPort(Protocol):
 
     def release_lease(self, namespace: str, owner: str) -> None:
         """Release ``namespace``'s lease if ``owner`` holds it (no-op else)."""
+        ...
+
+    def get_extraction_settings(
+        self, scope: str
+    ) -> tuple[str, ExtractionSettings] | None:
+        """``(fingerprint, settings)`` the last commit in registry ``scope``
+        recorded (:meth:`put_extraction_settings`), or ``None``."""
+        ...
+
+    def put_extraction_settings(
+        self, scope: str, fingerprint: str, settings: ExtractionSettings
+    ) -> None:
+        """Record the extraction settings a commit in ``scope`` used, with the
+        fingerprint it wrote on the documents. One record per scope, kept in
+        its namespace's partition but never listed as a document."""
         ...
 
     def list_namespace(self, namespace: str) -> list[DocStatusRecord]:

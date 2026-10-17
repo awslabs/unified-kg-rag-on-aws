@@ -1446,7 +1446,10 @@ SQLite file instead (`providers.doc_status.kind: sqlite`, switched on by
   translation, resolution): each record stores a fingerprint of the settings
   its document was extracted with, so the next run re-extracts every
   unchanged document whose fingerprint differs and logs a WARNING with their
-  count. Edits to the built-in prompt
+  count and the settings that changed. The registry also keeps the settings
+  themselves for each corpus, compared field by field: a setting a newer
+  release adds is no change while it holds its default, so upgrading does
+  not by itself re-extract the corpus. Edits to the built-in prompt
   templates (code) are not seen: reset after editing one. A re-extracted
   document's chunks still take their stored records when the settings that
   shape a chunk's record (models, extraction, gleaning and claim settings,
@@ -1896,7 +1899,8 @@ The summary holds, per metric, mean/median/stdev/min/max/count
   last wrote its vector indices: ingestion records `pipeline_id`, `mode`
   (`full` or `incremental`), `built_at`, `documents` (documents the run
   indexed; an incremental run counts only its new and changed ones),
-  `extraction_fingerprint` and `package_version` in the index mappings'
+  `extraction_fingerprint`, `extraction_settings` (the extraction settings field by
+  field) and `package_version` in the index mappings'
   `_meta` (best-effort: a role without the mapping-update permission logs a
   warning). `null` for an index built before ingestion recorded it, or a
   backend without index metadata.

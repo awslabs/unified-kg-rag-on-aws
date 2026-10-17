@@ -257,6 +257,11 @@ Deployment (CDK stack).
   read: deploy the image and the stack together (#330).
 
 Library API (Python callers and custom backends).
+- A custom doc-status registry keeps a scope's extraction settings
+  (`DocStatusPort.get_extraction_settings` / `put_extraction_settings`,
+  never listed as a document). `cache_keys.extraction_settings` returns an
+  `ExtractionSettings` record; its `fingerprint` is the former
+  `extraction_fingerprint` value (#PR).
 - A custom doc-status registry implements the namespace write lease
   (`DocStatusPort.try_acquire_lease`, `lease_holder`, `release_lease`) and
   the new `DocStatusRecord` fields (`attempt_count`, `attempted_hash`) and
@@ -454,6 +459,13 @@ changed once with the full-config keys (#PR).
   keep the containers.
 
 ### Added
+- The doc-status registry keeps each corpus's extraction settings field by
+  field next to the fingerprint on its documents. An incremental run whose
+  settings changed names them in its WARNING, and a setting a newer release
+  adds is no change while it holds its default, so upgrading does not by
+  itself re-extract an incrementally indexed corpus. A resumed run names the
+  changed settings the same way, and the index build record (`run-eval`
+  manifests) carries them as `extraction_settings` (#PR).
 - One writing run per index namespace: with the doc-status registry, a
   pipeline run holds its namespace's write lease from its first stage to its
   end (a conditional write in DynamoDB, a transaction in SQLite), renewed by

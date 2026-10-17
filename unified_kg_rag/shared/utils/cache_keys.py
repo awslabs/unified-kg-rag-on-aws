@@ -29,8 +29,8 @@ relationships and claims) form its extraction settings
 ``per_document`` through claim extraction, without the package version, so
 an upgrade does not by itself re-extract an incrementally indexed corpus. An
 incremental run records the fingerprint of the record on each document it
-commits, and the record itself once per index namespace, so the next run can
-compare the two field by field (:func:`equivalent_settings`).
+commits, and the record itself once per registry scope, so the next run can
+compare the two field by field (:func:`changed_settings`).
 
 The corpus itself is an input too: the source path alone says nothing about
 what the files contain, so with a fixed ``pipeline_id`` an edited, added, or

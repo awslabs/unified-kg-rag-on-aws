@@ -36,6 +36,7 @@ from unified_kg_rag.domain.models import (
     Config,
     DocStatus,
     DocStatusRecord,
+    ExtractionSettings,
 )
 from unified_kg_rag.ports import DocStatusPort
 from unified_kg_rag.shared import DocStatusRegistryError
@@ -292,6 +293,26 @@ def test_a_lease_is_no_record(store: DocStatusPort) -> None:
     assert [r.doc_id for r in store.list_all()] == ["ns#d1"]
     delta = store.diff({}, scope="ns|corpus")
     assert delta.deleted == ["ns#d1"]
+
+
+def test_extraction_settings_are_kept_per_scope_and_are_no_record(
+    store: DocStatusPort,
+) -> None:
+    assert store.get_extraction_settings("ns|corpus-a") is None
+    settings = ExtractionSettings(version=1, values={"a.b": 1, "c": ["x", "y"]})
+    store.put(_record("ns#d1", scope="ns|corpus-a"))
+    store.put_extraction_settings("ns|corpus-a", "fp-1", settings)
+    store.put_extraction_settings("ns|corpus-b", "fp-2", ExtractionSettings(version=1))
+    assert store.get_extraction_settings("ns|corpus-a") == ("fp-1", settings)
+    assert store.get_extraction_settings("ns|corpus-b")[0] == "fp-2"
+
+    newer = ExtractionSettings(version=1, values={"a.b": 2})
+    store.put_extraction_settings("ns|corpus-a", "fp-3", newer)
+    assert store.get_extraction_settings("ns|corpus-a") == ("fp-3", newer)
+    # Never listed or diffed as a document.
+    assert [r.doc_id for r in store.list_namespace("ns")] == ["ns#d1"]
+    assert [r.doc_id for r in store.list_all()] == ["ns#d1"]
+    assert store.diff({}, scope="ns|corpus-a").deleted == ["ns#d1"]
 
 
 def test_namespaces_partition_the_registry(store: DocStatusPort) -> None:
