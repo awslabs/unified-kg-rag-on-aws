@@ -196,9 +196,7 @@ class HybridScorer:
             FusionMethod.WEIGHTED: self._weighted_fusion,
         }
 
-        fusion_func = fusion_methods.get(method)
-        if not fusion_func:
-            raise ValueError(f"Unknown fusion method: '{method}'")
+        fusion_func = fusion_methods[method]
 
         # RRF uses only rank order and overwrites scores, so per-bucket min-max
         # normalization is wasted work (and would be discarded) there; only the

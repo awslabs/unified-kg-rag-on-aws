@@ -330,10 +330,6 @@ class ConfigLoader:
                 ) from e
         return layer, unknown
 
-    def reload_config(self) -> Config:
-        self._config = None
-        return self.load_config()
-
     @property
     def config(self) -> Config:
         return self._config if self._config is not None else self.load_config()
@@ -451,10 +447,3 @@ def get_config(
         )
         return loader.load_config()
     return _config_loader.config
-
-
-def reload_config(config_path: str | Path | None = None) -> Config:
-    if config_path is not None:
-        loader = ConfigLoader(Path(config_path))
-        return loader.load_config()
-    return _config_loader.reload_config()

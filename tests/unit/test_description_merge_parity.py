@@ -15,14 +15,23 @@ from functools import reduce
 
 import pytest
 
-from unified_kg_rag.domain.ingestion.base_processor import BaseProcessor
 from unified_kg_rag.domain.ingestion.base_resolver import BaseResolver
+from unified_kg_rag.domain.ingestion.contributions import merge_entity_contributions
 from unified_kg_rag.domain.ingestion.merge import merge_entities
 from unified_kg_rag.domain.models import Entity
 
 pytestmark = pytest.mark.unit
 
-_merge = BaseProcessor._merge_description
+
+def _merge(current: str | None, new: str | None) -> str | None:
+    """The extraction merge of two instances' descriptions."""
+    (merged,) = merge_entity_contributions(
+        [
+            Entity(id="e", name="Vendor", description=current),
+            Entity(id="e", name="Vendor", description=new),
+        ]
+    )
+    return merged.description
 
 
 @pytest.mark.parametrize(

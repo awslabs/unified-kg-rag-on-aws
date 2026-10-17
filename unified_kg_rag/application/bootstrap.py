@@ -39,9 +39,6 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
-# Roles whose kind the run needs; the token counter follows the LLM's.
-_CHECKED_ROLES = tuple(ProviderRole)
-
 
 def check_providers(config: Config) -> dict[ProviderRole, str]:
     """``{role: kind}`` for ``config``; every kind must be registered.
@@ -50,7 +47,7 @@ def check_providers(config: Config) -> dict[ProviderRole, str]:
         ConfigurationError: A role names a kind nothing is registered for.
     """
     selected: dict[ProviderRole, str] = {}
-    for role in _CHECKED_ROLES:
+    for role in ProviderRole:
         kind = provider_kind(config, role)
         get_provider_builder(role, kind)
         selected[role] = kind

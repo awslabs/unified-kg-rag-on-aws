@@ -345,12 +345,6 @@ class TestOneContributionPerBucket:
 
 
 class TestFuseAndRerank:
-    def test_unknown_fusion_method_raises(self) -> None:
-        scorer = _scorer()
-        scorer.fusion_config.method = "nonexistent"  # type: ignore[assignment]
-        with pytest.raises(ValueError, match="Unknown fusion method"):
-            scorer.fuse_and_rerank_results({"a": [_r("x", 1.0, "1")]}, top_k=5)
-
     def test_sorted_desc_and_truncated_to_top_k(self) -> None:
         config = Config()
         config.search.reranking.enabled = False

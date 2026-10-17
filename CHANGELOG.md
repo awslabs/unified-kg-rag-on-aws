@@ -2526,6 +2526,14 @@ changed once with the full-config keys (#332).
   class is defined, instead of failing every query at evaluation time (#305).
 
 ### Removed
+- Unused code: `shared.config.reload_config` and `ConfigLoader.reload_config`
+  (build a new `ConfigLoader` instead), the `BedrockModelId` type alias,
+  `ClaimExtractor.extract_from_text_units` (`extract_units` is the stage's
+  path), `BaseProcessor._merge_description`, the `match_none` clause of the
+  embedded search engine (no query sends it) and an unreachable
+  unknown-fusion-method error. A stage-cache entry without content hashes
+  (written by pre-release builds) is now a miss instead of being read
+  unverified (#PR).
 - `aws.bedrock.guardrail.apply_to` and the attached-guardrail path behind
   `apply_to: all` (`GuardrailInterventionHandler`): the guardrail screens
   the user query and the answer with `ApplyGuardrail` only, and ingestion

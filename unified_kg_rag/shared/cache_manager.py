@@ -126,7 +126,7 @@ class CacheManager:
         if path is None or not path.is_file():
             raise _CorruptCacheEntry(f"missing file '{path}'")
         content = path.read_text(encoding="utf-8")
-        if entry.content_hash and compute_hash(content) != entry.content_hash:
+        if compute_hash(content) != entry.content_hash:
             raise _CorruptCacheEntry(f"content hash mismatch in '{path}'")
         return content
 
@@ -150,12 +150,10 @@ class CacheManager:
             or chunk_count < 1
         ):
             raise _CorruptCacheEntry(f"invalid chunk count {chunk_count!r}")
-        # Entries written by earlier versions may lack hashes; they are still
-        # checked for missing chunks and unparseable JSON.
         chunk_hashes = entry.metadata.get("chunk_hashes")
-        if chunk_hashes is not None and len(chunk_hashes) != chunk_count:
+        if not isinstance(chunk_hashes, list) or len(chunk_hashes) != chunk_count:
             raise _CorruptCacheEntry(
-                f"{len(chunk_hashes)} chunk hashes recorded for {chunk_count} chunks"
+                f"chunk hashes {chunk_hashes!r} do not cover {chunk_count} chunks"
             )
         chunk_files = [
             chunks_dir / f"{entry.key}_chunk_{i:04d}.json" for i in range(chunk_count)
@@ -163,20 +161,12 @@ class CacheManager:
         missing = [f.name for f in chunk_files if not f.is_file()]
         if missing:
             raise _CorruptCacheEntry(f"missing chunk file(s) {', '.join(missing)}")
-        for i, chunk_file in enumerate(chunk_files):
+        for chunk_file, chunk_hash in zip(chunk_files, chunk_hashes, strict=True):
             content = chunk_file.read_text(encoding="utf-8")
-            if chunk_hashes is not None:
-                if compute_hash(content) != chunk_hashes[i]:
-                    raise _CorruptCacheEntry(
-                        f"content hash mismatch in '{chunk_file.name}'"
-                    )
-            else:
-                try:
-                    json.loads(content)
-                except json.JSONDecodeError as e:
-                    raise _CorruptCacheEntry(
-                        f"unparseable chunk '{chunk_file.name}': {e}"
-                    ) from e
+            if compute_hash(content) != chunk_hash:
+                raise _CorruptCacheEntry(
+                    f"content hash mismatch in '{chunk_file.name}'"
+                )
             yield content
 
     def load_cache_index(self, pipeline_id: str) -> CacheIndex:

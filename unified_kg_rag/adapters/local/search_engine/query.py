@@ -246,12 +246,6 @@ def _match_all(index: LoadedIndex, body: Any) -> Scores:
     return dict.fromkeys(index.sources, 1.0)
 
 
-@_clause("match_none")
-def _match_none(index: LoadedIndex, body: Any) -> Scores:
-    _require_keys("match_none", body, set())
-    return {}
-
-
 @_clause("ids")
 def _ids(index: LoadedIndex, body: Any) -> Scores:
     values = _require_keys("ids", body, {"values"}).get("values")

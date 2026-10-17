@@ -225,12 +225,6 @@ def _coerce_model_id(value: Any) -> Any:
     return value.strip() if isinstance(value, str) else value
 
 
-# Any Bedrock model id (or cross-region inference-profile id) as a plain str.
-BedrockModelId = Annotated[
-    str, BeforeValidator(_coerce_model_id), StringConstraints(min_length=1)
-]
-
-
 class ModelPurpose(str, Enum):
     """Why a language model is being created, so per-path policies can differ.
 

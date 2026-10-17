@@ -740,7 +740,7 @@ class TestProcessExtractionResults:
 
 
 # --------------------------------------------------------------------------- #
-# extract_from_text_units (batch chain mocked)
+# extract_units (batch chain mocked)
 # --------------------------------------------------------------------------- #
 class TestExtractFromTextUnits:
     def test_empty_units_returns_empty(self, extractor) -> None:

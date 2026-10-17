@@ -334,17 +334,13 @@ class TestIntegrity:
         )
         assert mgr.load_stage_result("c", PIPELINE, data_type=_Item) is None
 
-    def test_entry_without_hashes_still_detects_a_truncated_chunk(
-        self, tmp_path: Path
-    ) -> None:
-        # Entries written before hashes were checked may lack them.
+    def test_an_entry_without_hashes_is_a_miss(self, tmp_path: Path) -> None:
+        # Pre-release builds wrote chunked entries without hashes; nothing
+        # this release writes lacks them, so one is not trusted.
         mgr = self._chunked(tmp_path)
         index = mgr.load_cache_index(PIPELINE)
         del index.entries["big"].metadata["chunk_hashes"]
         mgr._save_cache_index(index)
-        assert mgr.load_stage_result("big", PIPELINE) == list(range(10))
-        chunk = tmp_path / PIPELINE / STAGE / "big_chunk_0002.json"
-        chunk.write_text("[6, 7", encoding="utf-8")
         assert mgr.cache_exists("big", PIPELINE) is False
         assert mgr.load_stage_result("big", PIPELINE) is None
 
