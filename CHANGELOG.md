@@ -1225,6 +1225,13 @@ changed once with the full-config keys (#332).
   one. Local-mode stage caches and extraction records made before miss once;
   the recorded extraction settings compare unchanged, so nothing is
   re-extracted incrementally on that account (#344).
+- One failed DRIFT action (a throttled or timed-out model call) no longer
+  fails the whole query: its answer is left out, the local evidence it
+  found is kept and `degraded_error` names the failure. A query fails only
+  on a fatal error, or when every action (or every primer call) failed and
+  `processing.ignore_errors` is off; a round whose actions all failed ends
+  the rounds. When the query does fail, the actions still in flight are
+  cancelled instead of running their LLM calls to completion (#PR).
 - A paired strategy comparison no longer drops the queries a strategy
   failed to answer: a strategy that crashed on the queries it would lose
   looked as good as one that answered them. A failed answer scores 0 on

@@ -333,6 +333,85 @@ async def test_a_failed_action_raises_without_ignore_errors() -> None:
         await strat.asearch(SearchQuery(query="question"))
 
 
+async def test_one_failed_action_leaves_only_its_answer_out() -> None:
+    # Regression: one throttled action failed the whole query, after every
+    # other action had been paid for.
+    def action(inputs: dict):
+        if inputs["query"] == "about report 2?":
+            return TimeoutError("throttled")
+        return _action()(inputs)
+
+    strat = _strategy(action=action, n_depth=1)
+    result = await strat.asearch(SearchQuery(query="question"))
+    assert result.metadata["degraded_error"] == "TimeoutError"
+    text = _answers(result)
+    assert "answer to about report 0?" in text
+    assert "answer to about report 2?" not in text
+    # The failed action's local evidence is kept.
+    assert "t:about report 2?" in {r.source for r in result.results}
+
+
+async def test_a_failed_round_stops_the_rounds() -> None:
+    tree = {f"about report {i}?": (50, [f"next {i}?"]) for i in (0, 2, 4)}
+
+    def action(inputs: dict):
+        if inputs["query"].startswith("next"):
+            return TimeoutError("throttled")
+        return _action(tree)(inputs)
+
+    local = _Local()
+    strat = _strategy(local=local, action=action, n_depth=3, k_followups=6)
+    # Two follow-ups a round, so round 2 leaves one "next" query queued.
+    strat.drift_config.k_followups = 2
+    result = await strat.asearch(SearchQuery(query="question"))
+    # Round 1 answered, round 2 failed entirely: no round 3.
+    assert result.metadata["drift_depth"] == 2
+    assert result.metadata["degraded_error"] == "TimeoutError"
+
+
+async def test_one_failed_primer_fold_leaves_only_its_answer_out() -> None:
+    def primer(inputs: dict):
+        if inputs["community_reports"].startswith("report 2"):
+            return TimeoutError("throttled")
+        return _primer()(inputs)
+
+    local = _Local()
+    strat = _strategy(primer=primer, local=local, n_depth=1)
+    result = await strat.asearch(SearchQuery(query="question"))
+    assert local.queries == ["about report 0?", "about report 4?"]
+    assert result.metadata["degraded_error"] == "TimeoutError"
+
+
+async def test_every_primer_fold_failing_raises_without_ignore_errors() -> None:
+    strat = _strategy(primer=lambda _: TimeoutError("slow"))
+    with pytest.raises(TimeoutError):
+        await strat.asearch(SearchQuery(query="question"))
+
+
+async def test_a_fatal_error_cancels_the_other_actions() -> None:
+    # Regression: the query raised while its sibling actions kept running
+    # (and paying for) their LLM calls.
+    denied = ClientError(
+        {"Error": {"Code": "AccessDeniedException", "Message": "no"}}, "Converse"
+    )
+    finished: list[str] = []
+
+    class _Slow(_Chain):
+        async def ainvoke(self, inputs: dict, config: Any = None) -> str:
+            if inputs["query"] == "about report 0?":
+                raise denied
+            await asyncio.sleep(0.2)
+            finished.append(inputs["query"])
+            return _action()(inputs)
+
+    strat = _strategy(n_depth=1)
+    strat.action = _Slow(None)
+    with pytest.raises(ClientError):
+        await strat.asearch(SearchQuery(query="question"))
+    await asyncio.sleep(0.3)
+    assert finished == []
+
+
 async def test_a_fatal_action_error_raises_even_under_ignore_errors() -> None:
     denied = ClientError(
         {"Error": {"Code": "AccessDeniedException", "Message": "no"}}, "Converse"
