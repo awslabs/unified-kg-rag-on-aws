@@ -270,7 +270,6 @@ CONFIG_KEYING: dict[str, Keyed | Unkeyed] = {
     ),
     "graph.visualization": _neutral("renders the finished graph"),
     # --- indexing, stores and query time -----------------------------------
-    "indexing.cross_run_merge": Unkeyed(_AT_INDEXING),
     "indexing.community_drift_threshold": Unkeyed(_AT_INDEXING),
     "indexing.lease_seconds": _neutral(
         "keeps concurrent runs apart, never changes what a stage produces"

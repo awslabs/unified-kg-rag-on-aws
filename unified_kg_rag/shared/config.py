@@ -12,7 +12,12 @@ from dotenv import load_dotenv
 from pydantic import BaseModel, SecretStr, TypeAdapter, ValidationError
 
 from unified_kg_rag.domain.models import Config
-from unified_kg_rag.domain.models.config import MOVED_KEYS, merge_over
+from unified_kg_rag.domain.models.config import (
+    MOVED_KEYS,
+    REMOVED_KEYS,
+    merge_over,
+    removed_keys,
+)
 from unified_kg_rag.domain.models.provider_config import SQLITE
 from unified_kg_rag.shared.exceptions import ConfigurationError
 
@@ -36,8 +41,9 @@ def _nested_model(annotation: Any) -> type[BaseModel] | None:
 
 def unknown_keys(data: Any, model: type[BaseModel], prefix: str = "") -> list[str]:
     """The config keys in ``data`` the model does not define (pydantic would
-    drop them), as dotted paths. Moved keys are left out: validation refuses
-    them, naming their replacement."""
+    drop them), as dotted paths. Moved keys are left out (validation refuses
+    them, naming their replacement), and so are removed ones (ignored with a
+    warning)."""
     if not isinstance(data, dict):
         return []
     found: list[str] = []
@@ -45,7 +51,7 @@ def unknown_keys(data: Any, model: type[BaseModel], prefix: str = "") -> list[st
         path = f"{prefix}{key}"
         field = model.model_fields.get(key)
         if field is None:
-            if path not in MOVED_KEYS:
+            if path not in MOVED_KEYS and path not in REMOVED_KEYS:
                 found.append(path)
             continue
         nested = _nested_model(field.annotation)
@@ -144,6 +150,12 @@ def _env_path(name: str) -> tuple[str, ...] | None:
     return None
 
 
+def _warn_removed(where: str, path: str) -> None:
+    _logger.warning(
+        "Config key %s is removed and ignored: %s", where, REMOVED_KEYS[path]
+    )
+
+
 class ConfigLoader:
     """Loads the config from its layers: defaults < ``backend`` preset < file
     < environment (``UKR__`` variables; ``AWS_PROFILE`` / ``AWS_REGION`` only
@@ -181,6 +193,8 @@ class ConfigLoader:
         )
         where = f" (in '{self.config_path}')" if self.config_path else ""
         unknown = unknown_keys(config_data, Config)
+        for path in removed_keys(config_data):
+            _warn_removed(f"'{path}'{where}", path)
         try:
             file_config = Config(**config_data)
             env_data, unknown_env = self._environment_layer(file_config, config_data)
@@ -276,10 +290,13 @@ class ConfigLoader:
         """
         overrides: dict[str, tuple[str, ...]] = {}
         unknown: list[str] = []
+        removed = {env_var(path): path for path in REMOVED_KEYS}
         for name in sorted(os.environ):
             if name.upper().startswith(ENV_PREFIX):
                 path = _env_path(name)
-                if path is None:
+                if name.upper() in removed:
+                    _warn_removed(f"environment variable {name}", removed[name.upper()])
+                elif path is None:
                     unknown.append(name)
                 else:
                     overrides[name] = path

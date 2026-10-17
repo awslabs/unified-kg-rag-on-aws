@@ -2516,6 +2516,12 @@ changed once with the full-config keys (#332).
   class is defined, instead of failing every query at evaluation time (#305).
 
 ### Removed
+- `indexing.cross_run_merge`: an incremental run always merges its delta
+  into the stored graph. `false` overwrote an entity shared with unchanged
+  documents with the delta's text units, so removing the changed document
+  later deleted an entity the unchanged ones still stated. A config file or
+  `UKR__INDEXING__CROSS_RUN_MERGE` that still sets it loads with a WARNING
+  and the key ignored; nothing to re-index (#PR).
 - The native-score blend of RRF fusion: RRF scores are plain
   `weight / (rrf_k + rank)` sums again. The blend claimed to restore order
   within a stream, which RRF already keeps; scaled to the rank-1 step, it

@@ -549,15 +549,6 @@ graph:
 indexing:
   reset: false
   additional_suffix: null
-  # On incremental (delta) runs, union the delta with existing graph state
-  # (description/text_unit_ids/weight) before upsert instead of
-  # overwriting. Requires a graph adapter that supports read-back. On by
-  # default: with false, an entity shared with unchanged documents is replaced
-  # by its delta-only description and text_unit_ids (its lineage to the
-  # unchanged documents' chunks is lost). Delta entities match stored ones by
-  # the full build's rule (processing.fuzzy_entity_resolution), which costs an
-  # entity-name projection per delta run.
-  cross_run_merge: true
   # Incremental runs cluster only their delta, so an entity an earlier run
   # clustered joins a second level-0 community. At this share of the run's
   # clustered entities the run logs a WARNING recommending indexing.reset

@@ -124,8 +124,8 @@ When `overlap_share` reaches `indexing.community_drift_threshold` (default
 `0.5`) the run logs a WARNING recommending `indexing.reset: true` and reports
 `community_rebuild_recommended: 1` next to `community_drift_overlap_share`,
 which an alarm can watch. The counts accumulate over the runs that touch an
-entity, so read them as an upper bound. A run without communities or with
-`indexing.cross_run_merge: false` reports no overlap.
+entity, so read them as an upper bound. A run without communities reports no
+overlap.
 
 **When the registry cannot be read** (missing table, denied access,
 throttling that outlasts the client's retries), the `document_loading` stage

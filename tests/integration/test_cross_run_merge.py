@@ -2,11 +2,11 @@
 # SPDX-License-Identifier: Apache-2.0
 """Cross-run merge: a delta commit unions with existing graph state (AWS-free).
 
-When ``indexing.cross_run_merge`` is on, IncrementalIndexer.commit reads the
-existing entities/relationships back from the graph store and merges them with
-the delta (description / text_unit_ids union, frequency recompute) instead of
-overwriting, and records the surviving ids in the registry lineage. Validated
-against the in-memory fakes (which support read-back).
+IncrementalIndexer.commit reads the existing entities/relationships back
+from the graph store and merges them with the delta (description /
+text_unit_ids union, frequency recompute) instead of overwriting, and
+records the surviving ids in the registry lineage. Validated against the
+in-memory fakes (which support read-back).
 """
 
 from __future__ import annotations
@@ -15,25 +15,30 @@ import pytest
 
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from tests.fixtures.fakes.stores import FakeGraphStore, FakeVectorStore
-from unified_kg_rag.application.ingestion.incremental import IncrementalIndexer
+from unified_kg_rag.application.ingestion.incremental import (
+    IncrementalIndexer,
+    build_document_lineage,
+)
 from unified_kg_rag.application.storage.indexing_manager import IndexingManager
 from unified_kg_rag.domain.ingestion.claim_resolver import resolved_claim_id
+from unified_kg_rag.domain.ingestion.delta_detector import detect_delta
 from unified_kg_rag.domain.models import (
     Claim,
     Community,
     Config,
+    Document,
     DocumentDelta,
     DocumentLineage,
     Entity,
     Relationship,
+    TextUnit,
 )
 
 pytestmark = pytest.mark.integration
 
 
-def _harness(*, cross_run_merge: bool, fuzzy: bool = False):
+def _harness(*, fuzzy: bool = False):
     config = Config()
-    config.indexing.cross_run_merge = cross_run_merge
     config.processing.fuzzy_entity_resolution = fuzzy
     graph = FakeGraphStore()
     vector = FakeVectorStore(opensearch_config=config.indexing.opensearch)
@@ -51,7 +56,7 @@ def _commit_entity(incremental: IncrementalIndexer, doc_id: str, entity: Entity)
 
 
 def test_cross_run_merge_unions_descriptions_and_text_units() -> None:
-    incremental, graph, _ = _harness(cross_run_merge=True)
+    incremental, graph, _ = _harness()
 
     # Run 1: entity 'vendor' seen in text unit t1 with description A.
     _commit_entity(
@@ -72,31 +77,11 @@ def test_cross_run_merge_unions_descriptions_and_text_units() -> None:
     assert set(stored.text_unit_ids or []) == {"t1", "t2"}
 
 
-def test_without_flag_overwrites() -> None:
-    incremental, graph, _ = _harness(cross_run_merge=False)
-
-    _commit_entity(
-        incremental,
-        "doc-a",
-        Entity(id="e1", name="vendor", description="A", text_unit_ids=["t1"]),
-    )
-    _commit_entity(
-        incremental,
-        "doc-b",
-        Entity(id="e1", name="vendor", description="B", text_unit_ids=["t2"]),
-    )
-
-    (stored,) = graph.read_entities(["e1"])
-    # Overwrite semantics: only the latest delta's values remain.
-    assert stored.description == "B"
-    assert set(stored.text_unit_ids or []) == {"t2"}
-
-
 def test_a_fuzzy_merge_writes_only_the_kept_ids() -> None:
     # A fuzzy merge folds the delta entity "e-new" into the stored "e-old", and
     # the delta edge into the stored edge with the same (source, target, type):
     # nothing is written under the delta's ids.
-    incremental, graph, store = _harness(cross_run_merge=True, fuzzy=True)
+    incremental, graph, store = _harness(fuzzy=True)
     incremental.commit(
         lineages=[
             DocumentLineage(
@@ -150,7 +135,7 @@ def test_delta_entity_merges_into_a_corrected_entity_with_its_id() -> None:
     # derived from the old name. A later doc naming the old form gets that same
     # id; the merge must fold it into the stored entity, not keep both under
     # one id (the second write would drop the first one's text units).
-    incremental, graph, _ = _harness(cross_run_merge=True)
+    incremental, graph, _ = _harness()
     _commit_entity(
         incremental,
         "doc-a",
@@ -173,7 +158,7 @@ def test_delta_relationship_merges_into_a_corrected_edge_with_its_id() -> None:
     # edge's type/direction (corrections now re-key it). A later doc
     # extracting the uncorrected edge gets that stored id; the merge must
     # return one edge for it, carrying both docs' text units.
-    incremental, _, _ = _harness(cross_run_merge=True)
+    incremental, _, _ = _harness()
     incremental.commit(
         lineages=[DocumentLineage(doc_id="doc-a")],
         fingerprints={"doc-a": "h-a"},
@@ -214,7 +199,7 @@ def test_failed_read_back_keeps_a_deleted_docs_registry_row(mocker) -> None:
     # Deleting doc-b strips its text unit from the entity it shares with doc-a.
     # If reading that entity back fails, the strip did not happen: the removal
     # must count as failed so doc-b's row (its lineage) is kept for a retry.
-    incremental, graph, store = _harness(cross_run_merge=True)
+    incremental, graph, store = _harness()
     for doc_id, unit in (("doc-a", "t1"), ("doc-b", "t2")):
         incremental.commit(
             lineages=[DocumentLineage(doc_id=doc_id, text_unit_ids=[unit])],
@@ -234,7 +219,7 @@ def test_failed_read_back_keeps_a_deleted_docs_registry_row(mocker) -> None:
 def test_failed_read_back_fails_the_commit_before_any_write(mocker) -> None:
     # Overwriting on a failed read would drop the stored entity's lineage;
     # failing first leaves the doc unrecorded, so the next run retries it.
-    incremental, graph, store = _harness(cross_run_merge=True)
+    incremental, graph, store = _harness()
     _commit_entity(incremental, "doc-a", Entity(id="e1", name="Vendor"))
     mocker.patch.object(
         graph, "read_entities", side_effect=RuntimeError("connection reset")
@@ -250,7 +235,7 @@ def test_a_remapped_entity_rewrites_its_edges_only_for_its_new_rank() -> None:
     # "Acme Inc" merges into the stored hub "Acme": its incident edges are
     # read to find a match; the delta's edge (new here) is written, and the
     # hub's stored edges only for the rank its new edge gives them.
-    incremental, graph, _ = _harness(cross_run_merge=True)
+    incremental, graph, _ = _harness()
     spokes = [f"e-{i}" for i in range(3)]
     incremental.commit(
         lineages=[DocumentLineage(doc_id="doc-a")],
@@ -285,7 +270,7 @@ def test_communities_and_claims_follow_the_merge_remap() -> None:
     # "Acme Inc" merges into the stored "Acme" (another id), and its edge into
     # the stored edge: the delta's community and claim must reference the
     # kept ids, not ids that are never written.
-    incremental, graph, _ = _harness(cross_run_merge=True)
+    incremental, graph, _ = _harness()
     vector = incremental.indexing_manager.opensearch_indexer
     incremental.commit(
         lineages=[DocumentLineage(doc_id="doc-a")],
@@ -342,3 +327,48 @@ def test_communities_and_claims_follow_the_merge_remap() -> None:
     (claim,) = vector.data["claims"].values()
     assert (claim.subject_id, claim.object_id) == ("e-old", "e-buyer")
     assert claim.id == resolved_claim_id(claim)
+
+
+def test_an_entity_an_unchanged_document_states_survives_its_removal() -> None:
+    # With the removed indexing.cross_run_merge: false, run 2 overwrote the
+    # shared entity with b's text units only, and removing b in run 3 then
+    # deleted it although a still stated it.
+    config = Config.model_validate({"indexing": {"cross_run_merge": False}})
+    graph = FakeGraphStore()
+    vector = FakeVectorStore(opensearch_config=config.indexing.opensearch)
+    incremental = IncrementalIndexer(
+        FakeDocStatusStore(),
+        IndexingManager(config=config, vector_indexer=vector, graph_indexer=graph),
+    )
+
+    def doc(path: str, text: str) -> Document:
+        return Document(
+            page_content=text, document_id=path, file_name=path[1:], file_path=path
+        )
+
+    def run(docs: list[Document], units: list[TextUnit], entities: list[Entity]):
+        delta, fingerprints = detect_delta(docs, incremental.doc_status)
+        incremental.remove_changed_and_deleted(delta)
+        cited = {unit.document_ids[0] for unit in units}
+        incremental.commit(
+            lineages=build_document_lineage(
+                documents=[d for d in docs if d.document_id in cited],
+                text_units=units,
+            ),
+            fingerprints=fingerprints,
+            text_units=units,
+            entities=entities,
+            relationships=[],
+        )
+
+    a, b = doc("/a.txt", "x"), doc("/b.txt", "y")
+    ta = TextUnit(id="tu-a", text="x", document_ids=[a.document_id])
+    tb = TextUnit(id="tu-b", text="y", document_ids=[b.document_id])
+    run([a, b], [ta, tb], [Entity(id="e-s", name="S", text_unit_ids=["tu-a", "tu-b"])])
+    b2 = doc("/b.txt", "y2")
+    tb2 = TextUnit(id="tu-b2", text="y2", document_ids=[b2.document_id])
+    run([a, b2], [tb2], [Entity(id="e-s", name="S", text_unit_ids=["tu-b2"])])
+    delta, _ = detect_delta([a], incremental.doc_status)
+    incremental.remove_changed_and_deleted(delta)
+
+    assert "e-s" in graph.ids("entities")

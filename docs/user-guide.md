@@ -1493,15 +1493,19 @@ The SQLite registry of local mode has no such limit.
 
 ### Cross-run merge
 
-By default (`indexing.cross_run_merge: true`) a delta run reads the
-entities and relationships it touches back from the graph and merges the delta
-into them (descriptions, `text_unit_ids`, weights) before the upsert, so an
-entity shared with unchanged documents keeps their descriptions and chunk
-lineage (which `mix` follows). Merged descriptions over the summarization
-budget are re-summarized. `false` overwrites those fields with the delta's
-values, and the entity loses its lineage to the unchanged documents' chunks; a
-graph adapter without read-back degrades to that.
+A delta run reads the entities and relationships it touches back from the
+graph and merges the delta into them (descriptions, `text_unit_ids`, weights)
+before the upsert, so an entity shared with unchanged documents keeps their
+descriptions and chunk lineage (which `mix` follows). Merged descriptions over
+the summarization budget are re-summarized. A graph adapter without read-back
+degrades to overwriting those fields with the delta's values.
 
+- **Always on.** The merge cannot be turned off. A config or `UKR__` variable
+  that still sets the removed `indexing.cross_run_merge` key logs a WARNING and
+  the key is ignored.
+- **Why `false` was removed.** It overwrote a shared entity with the delta's
+  lineage, so removing the changed document later deleted an entity that
+  unchanged documents still stated.
 - **Claims** merge the same way. A claim id is keyed on the entities its
   subject and object resolve to, its type and its dates, not on the document
   or the spelling, so a claim several documents state ("Acme Inc" in one,

@@ -394,7 +394,6 @@ class IndexingManager:
         returns ``[]`` and this degenerates to the existing overwrite behaviour.
         A failed read raises: overwriting would drop the stored lineage, and
         raising before any write leaves the docs unrecorded for a retry.
-        With ``indexing.cross_run_merge`` off the delta is returned unchanged.
 
         Merges one index suffix at a time: entity and relationship ids are
         suffix-independent, so each tenant's delta must meet that tenant's stored
@@ -407,8 +406,6 @@ class IndexingManager:
         The stored edges of an entity whose name or rank changed are written
         too, with its name and their ranks.
         """
-        if not self.config.indexing.cross_run_merge:
-            return CrossRunMergeResult(entities=entities, relationships=relationships)
         entity_groups = self._group_by_suffix(entities or [])
         relationship_groups = self._group_by_suffix(relationships or [])
         merged_entities: list[Entity] = []
@@ -440,14 +437,13 @@ class IndexingManager:
         document already stored has the delta claim's id: without the merge
         the upsert replaces its descriptions and text units with this run's
         (see ``merge_claims``). Read per index suffix from the vector store; a
-        failed read raises (see :meth:`merge_with_existing_graph`). With
-        ``indexing.cross_run_merge`` off the claims are returned unchanged.
+        failed read raises (see :meth:`merge_with_existing_graph`).
 
         The stored claims about an entity the graph merge re-keyed are
         derived too, so they follow its new id (ids follow the current name,
         see ``derivation``).
         """
-        if not self.config.indexing.cross_run_merge or not (claims or self._rekeyed):
+        if not (claims or self._rekeyed):
             return claims
         groups = self._group_by_suffix(claims or [])
         merged: list[Claim] = []

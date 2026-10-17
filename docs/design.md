@@ -473,8 +473,7 @@ unless noted.
 3. **Stale cleanup** (`remove_changed_and_deleted`). The text units of changed
    and deleted documents are removed in one pass per suffix (step 5), so an
    artifact only a changed and a deleted document state goes too.
-4. **Delta upsert** (`commit`). With `indexing.cross_run_merge` (default on),
-   the stored entities and relationships the delta touches are read back and
+4. **Delta upsert** (`commit`). The stored entities and relationships the delta touches are read back and
    the delta is merged into them (§5.4), found by compact name key (all stored
    names with fuzzy matching on), together with the stored edges of the
    delta's entities. Their content is then derived from the extraction

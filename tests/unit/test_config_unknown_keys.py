@@ -118,3 +118,23 @@ def test_non_mapping_config_file_is_a_clear_error(tmp_path: Path) -> None:
     path.write_text("- a\n- b\n")
     with pytest.raises(ValueError, match="must be a YAML mapping"):
         ConfigLoader(path).load_config()
+
+
+def test_a_removed_key_loads_with_a_warning(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, monkeypatch
+) -> None:
+    # indexing.cross_run_merge is gone: false used to overwrite entities other
+    # documents still cite. A config that still sets it loads, says so, and
+    # merges anyway.
+    path = tmp_path / "config.yaml"
+    path.write_text(yaml.safe_dump({"indexing": {"cross_run_merge": False}}))
+    monkeypatch.setenv("UKR__INDEXING__CROSS_RUN_MERGE", "false")
+    with caplog.at_level(logging.WARNING):
+        config = ConfigLoader(path).load_config()
+    removed = [
+        r.getMessage() for r in caplog.records if "removed and ignored" in r.message
+    ]
+    assert len(removed) == 2
+    assert "'indexing.cross_run_merge'" in removed[0]
+    assert "UKR__INDEXING__CROSS_RUN_MERGE" in removed[1]
+    assert not hasattr(config.indexing, "cross_run_merge")

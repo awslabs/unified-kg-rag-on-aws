@@ -117,8 +117,7 @@ reset 동안에도 질의는 이전 내용을 읽습니다. 벡터 인덱스는 
 `0.5`)에 이르면 실행은 `indexing.reset: true`를 권하는 WARNING을 남기고
 `community_drift_overlap_share`와 함께 `community_rebuild_recommended: 1`을 보고하므로
 경보로 감시할 수 있습니다. 이 수치는 엔티티를 건드린 실행들에 걸쳐 누적되므로 상한으로
-읽으세요. 커뮤니티가 없거나 `indexing.cross_run_merge: false`인 실행은 겹침을 보고하지
-않습니다.
+읽으세요. 커뮤니티가 없는 실행은 겹침을 보고하지 않습니다.
 
 **레지스트리를 읽을 수 없으면**(테이블 없음, 접근 거부, 클라이언트 재시도로도 풀리지
 않는 스로틀링) `document_loading` 단계가 테이블과 원인을 밝힌

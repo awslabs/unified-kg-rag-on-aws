@@ -163,7 +163,6 @@ def test_delta_run_unions_an_entity_shared_with_unchanged_docs_by_default() -> N
     from unified_kg_rag.domain.models import DocumentLineage, Entity
 
     config = Config()
-    assert config.indexing.cross_run_merge is True
     graph = FakeGraphStore()
     vector = FakeVectorStore(opensearch_config=config.indexing.opensearch)
     manager = IndexingManager(config=config, vector_indexer=vector, graph_indexer=graph)

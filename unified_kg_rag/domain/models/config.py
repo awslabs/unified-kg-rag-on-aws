@@ -523,16 +523,31 @@ MOVED_KEYS: dict[str, str] = {
 }
 
 
+# Removed settings -> why they are gone. A config that sets one loads with
+# a WARNING and the setting ignored.
+REMOVED_KEYS: dict[str, str] = {
+    "indexing.cross_run_merge": (
+        "an incremental run always merges its delta into the stored graph; "
+        "turning that off overwrote entities other documents still cite"
+    ),
+}
+
+
+def _sets(data: Any, path: str) -> bool:
+    node = data
+    for part in path.split("."):
+        node = node.get(part, _ABSENT) if isinstance(node, dict) else _ABSENT
+    return node is not _ABSENT
+
+
 def moved_keys(data: Any) -> list[str]:
     """``"old -> new"`` for each moved setting ``data`` sets."""
-    found = []
-    for old, new in MOVED_KEYS.items():
-        node = data
-        for part in old.split("."):
-            node = node.get(part, _ABSENT) if isinstance(node, dict) else _ABSENT
-        if node is not _ABSENT:
-            found.append(f"{old} -> {new}")
-    return found
+    return [f"{old} -> {new}" for old, new in MOVED_KEYS.items() if _sets(data, old)]
+
+
+def removed_keys(data: Any) -> list[str]:
+    """The removed settings ``data`` sets (see ``REMOVED_KEYS``)."""
+    return [path for path in REMOVED_KEYS if _sets(data, path)]
 
 
 _ABSENT: Any = object()
@@ -2046,18 +2061,6 @@ class IndexingConfig(BaseModel):
             "and --suffix at query time, both 'default' when unset). Set it "
             "identically for ingestion and queries, for versioned or "
             "multi-tenant separation."
-        ),
-    )
-    cross_run_merge: bool = Field(
-        default=True,
-        description=(
-            "On incremental runs, read back the stored entities and "
-            "relationships the delta touches and merge the delta into them "
-            "(descriptions, text units, weights) before the upsert, so an "
-            "entity shared with unchanged documents keeps what they "
-            "contributed. false overwrites stored items with their delta-only "
-            "content. Delta names match stored ones by the full build's rule "
-            "(processing.fuzzy_entity_resolution)."
         ),
     )
     community_drift_threshold: float = Field(

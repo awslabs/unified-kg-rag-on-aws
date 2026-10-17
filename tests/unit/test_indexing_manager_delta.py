@@ -216,7 +216,6 @@ def test_fuzzy_cross_run_merge_collapses_near_duplicate_entity(mocker) -> None:
     neptune_indexer.read_relationships.return_value = []
 
     config = Config()
-    config.indexing.cross_run_merge = True
     config.processing.fuzzy_entity_resolution = True
     mgr = IndexingManager(
         config=config, vector_indexer=os_indexer, graph_indexer=neptune_indexer
