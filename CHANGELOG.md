@@ -787,7 +787,7 @@ changed once with the full-config keys (#332).
   filters a section of their own, presents the evaluators as a table with
   a short section each, and splits the densest paragraphs into lists. It
   also no longer advises raising `indexing.neptune.index_concurrency` for
-  large corpora, which the key's description warns against (#PR).
+  large corpora, which the key's description warns against (#342).
 - The operator runbook is organized by task: a task index at the top,
   routine operations, what to do when a run fails, the alarms in a section
   of their own, observability, and the common errors grouped by area
