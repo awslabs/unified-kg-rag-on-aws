@@ -1905,47 +1905,71 @@ class RerankingConfig(BaseModel):
 
 
 class GlobalSearchConfig(BaseModel):
-    community_relevance_model_id: BedrockModelId = role_model_field(
-        "fast",
-        description="Language model used for scoring community relevance to search queries",
+    """MS GraphRAG global search: map over a cut of the community hierarchy.
+
+    The reports of one cut (``community_depth``), or of a root-down dynamic
+    selection (``use_dynamic_selection``), are all mapped in token-sized
+    batches; similarity only caps a cut larger than ``max_reports_per_level``.
+    """
+
+    community_depth: int = Field(
+        default=2,
+        ge=0,
+        description=(
+            "The cut of the community hierarchy whose reports global search "
+            "maps over, counted from the root as MS GraphRAG's community_level "
+            "(default 2 there too): the communities at this depth plus the "
+            "leaves above it, so every entity is covered once. 0 = the root "
+            "communities (fewest, broadest reports); a large value = the "
+            "leaves. With use_dynamic_selection it bounds how deep the "
+            "selection descends."
+        ),
     )
-    map_reduce_model_id: BedrockModelId = role_model_field(
-        "fast",
-        description="Language model used for map-reduce summarization operations",
-    )
-    max_communities: int = Field(
-        default=10,
+    max_reports_per_level: int = Field(
+        default=100,
         ge=1,
-        description="Maximum number of communities to consider during global search",
-    )
-    relevance_threshold: float = Field(
-        default=0.5,
-        ge=0.0,
-        le=1.0,
-        description="Minimum relevance score required for community selection",
+        description=(
+            "Upper bound on the reports one cut (or one step of the dynamic "
+            "selection) contributes. A cut with more reports is cut to the "
+            "ones most similar to the query (a hybrid search restricted to the "
+            "cut) and the search metadata says so (global_level_capped). "
+            "Bounded by indexing.opensearch.max_query_size, the most hits one "
+            "store request returns. Each report costs map-step input tokens."
+        ),
     )
     use_dynamic_selection: bool = Field(
         default=False,
         description=(
-            "Score every retrieved community report for query relevance with an "
-            "LLM (one call per report) before map-reduce. Off by default: the map "
-            "step already rates each report's key points for the query and drops "
-            "the irrelevant ones, so this pre-filter repeats that judgement at the "
-            "cost of max_communities extra LLM calls per query (MS GraphRAG's "
-            "dynamic community selection is also off by default). Useful mainly "
-            "with enable_map_reduce=false; when off, communities are ranked by "
-            "their retrieval score, ties broken by indexed rank and rating."
+            "MS GraphRAG dynamic community selection instead of a fixed cut: "
+            "rate the root reports for the query with "
+            "community_relevance_model_id, descend into the children of the "
+            "relevant ones (dropping a parent once a child is relevant), and "
+            "rate the whole next depth when a depth yields none, down to "
+            "community_depth. One LLM call per rated report, "
+            "processing.max_concurrency at a time; the relevant reports are "
+            "then mapped. Off by default, as in MS GraphRAG."
+        ),
+    )
+    community_relevance_model_id: BedrockModelId = role_model_field(
+        "fast",
+        description="Language model that rates report relevance for dynamic "
+        "community selection",
+    )
+    relevance_threshold: float = Field(
+        default=0.2,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Dynamic selection keeps a report whose relevance (the 1-10 rating "
+            "divided by 10) is at least this. 0.2 = anything rated above "
+            "irrelevant, MS GraphRAG's threshold of 1 on its 0-5 scale: a "
+            "pruned report prunes its whole subtree."
         ),
     )
     enable_map_reduce: bool = Field(
         default=True,
-        description="Enable map-reduce processing for large-scale summarization",
-    )
-    max_text_units: int = Field(
-        default=100,
-        ge=1,
-        description="Upper bound on text units pulled into the global-search "
-        "context (caps context size regardless of top_k).",
+        description="Map the selected reports into scored key points. false = "
+        "the reports go to the answer model as they are (budget-trimmed).",
     )
     map_reduce_min_results: int = Field(
         default=3,
@@ -1959,15 +1983,14 @@ class GlobalSearchConfig(BaseModel):
         "map-reduce (rates community-report key points 0-100). Rating is cheap, "
         "so a fast/cheap model (e.g. Haiku) is the sensible default.",
     )
-    map_batch_size: int = Field(
-        default=5,
-        ge=1,
+    map_context_tokens: int = Field(
+        default=12000,
+        ge=128,
         description=(
-            "Number of community reports packed into one map-step LLM call; map "
-            "calls are fanned over batches concurrently via BatchProcessor. "
-            "Default 5 keeps a map prompt near MS GraphRAG's 12K-token map "
-            "context (data_max_tokens) for reports of 1-2K tokens, and halves the "
-            "map calls per query compared with 2. Lower it if reports are long."
+            "Report tokens packed into one map-step LLM call (MS GraphRAG's "
+            "data_max_tokens, 12000). Reports are packed in order until the "
+            "next one would exceed it; a longer report gets a call of its own. "
+            "Map calls run processing.max_concurrency at a time."
         ),
     )
     map_relevance_threshold: int = Field(
@@ -1984,6 +2007,11 @@ class GlobalSearchConfig(BaseModel):
         "reduce step; the highest-scored points are taken until this budget is "
         "reached, so the reduce LLM synthesizes from focused, ranked evidence.",
     )
+    map_reduce_model_id: BedrockModelId = role_model_field(
+        "fast",
+        description="Language model used for the reduce step (reduce_with_llm) "
+        "and the concat-and-reduce fallback",
+    )
     reduce_with_llm: bool = Field(
         default=False,
         description=(
@@ -1997,24 +2025,15 @@ class GlobalSearchConfig(BaseModel):
             "true = the previous two-step behaviour."
         ),
     )
-    reserve_report_slots: bool = Field(
-        default=True,
+    text_unit_slots: int = Field(
+        default=0,
+        ge=0,
         description=(
-            "When fusing the selected community reports with their text units, "
-            "reserve max_communities * retrieval_multiplier slots for the reports "
-            "and cap the text units at text_unit_slots, and keep the synthesized "
-            "map-reduce item in addition to (not inside) that width. false = the "
-            "previous flat top_k cut, which reranked reports and chunks together "
-            "and often kept mostly chunks, then cut to top_k after prepending the "
-            "synthesized item (dropping one more result)."
-        ),
-    )
-    text_unit_slots: int | None = Field(
-        default=None,
-        ge=1,
-        description=(
-            "Text-unit slots next to the reserved report slots "
-            "(reserve_report_slots). null = the query's top_k."
+            "Text units of the communities behind the key points added to the "
+            "context (retrieved for the query and reranked). 0 (default) = "
+            "none: MS GraphRAG's global context is community reports only, and "
+            "chunks next to them took most of the answer budget the reports "
+            "and key points need. Local and mix search cover chunk evidence."
         ),
     )
 

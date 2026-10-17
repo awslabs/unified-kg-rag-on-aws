@@ -35,6 +35,8 @@ class _FailingCrossEncoder(e2e.FakeCrossEncoder):
 def chain(tmp_path_factory: pytest.TempPathFactory):
     tmp: Path = tmp_path_factory.mktemp("rerank-status")
     config: Config = e2e._config(tmp / "stores", tmp / "viz")
+    # Global search reranks only the text units it is asked to add.
+    config.search.global_search.text_unit_slots = 5
     server = FakeOllama(e2e._respond, e2e.ANSWER, e2e.DIM)
     # Ingest with a working encoder, then query with one that always fails.
     providers = e2e._providers(config, server, e2e.FakeCrossEncoder("ok"))

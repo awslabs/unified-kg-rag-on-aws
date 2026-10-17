@@ -13,6 +13,7 @@ from unified_kg_rag.adapters.storage.embedding_settings import (
     stored_embedding_settings,
 )
 from unified_kg_rag.adapters.storage.search_engine import SearchEngineClient
+from unified_kg_rag.domain.ingestion.community_hierarchy import max_cut_depth
 from unified_kg_rag.domain.models import (
     Claim,
     CommunityReport,
@@ -432,6 +433,12 @@ class OpenSearchIndexer(VectorIndexer):
             # before these fields existed index them as [] until regenerated.
             "text_unit_ids": list(report.text_unit_ids or []),
             "document_ids": list(report.document_ids or []),
+            # The hierarchy cut global search maps over (community_hierarchy).
+            "level": report.level,
+            "depth": report.depth,
+            "max_cut_depth": max_cut_depth(report),
+            "parent_community_id": report.parent_community_id,
+            "child_community_ids": list(report.child_community_ids),
         }
 
     def index_community_reports(
@@ -1411,6 +1418,11 @@ class OpenSearchIndexer(VectorIndexer):
                 # dynamic template, so an upsert into it stays compatible.
                 "text_unit_ids": {"type": "keyword"},
                 "document_ids": {"type": "keyword"},
+                "level": {"type": "integer"},
+                "depth": {"type": "integer"},
+                "max_cut_depth": {"type": "integer"},
+                "parent_community_id": {"type": "keyword"},
+                "child_community_ids": {"type": "keyword"},
                 "attributes": {"type": "object", "dynamic": True},
             }
         )

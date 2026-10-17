@@ -1,5 +1,13 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
+"""MS GraphRAG global search over a cut of the community hierarchy.
+
+The reports of one cut (``community_depth``, see
+``domain.ingestion.community_hierarchy``), or of a root-down dynamic
+selection, are all mapped into scored key points in token-sized batches;
+the ranked points, packed into a token budget, are the answer context.
+"""
+
 import asyncio
 import math
 import time
@@ -17,6 +25,7 @@ from unified_kg_rag.adapters.retrieval.base import (
 from unified_kg_rag.adapters.retrieval.hybrid_scorer import RerankTrace
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
 from unified_kg_rag.adapters.store_errors import is_bad_request
+from unified_kg_rag.domain.ingestion.community_hierarchy import cut_filter
 from unified_kg_rag.domain.models import (
     Config,
     RetrievalResult,
@@ -24,6 +33,7 @@ from unified_kg_rag.domain.models import (
     SearchQuery,
     SearchResult,
     SearchStrategy,
+    SearchType,
     language_name,
 )
 from unified_kg_rag.domain.prompts import (
@@ -32,7 +42,7 @@ from unified_kg_rag.domain.prompts import (
     MapReduceSummaryPrompt,
 )
 from unified_kg_rag.domain.retrieval.strategy_registry import register_strategy
-from unified_kg_rag.shared import get_logger
+from unified_kg_rag.shared import ConfigurationError, get_logger, observability
 from unified_kg_rag.shared.utils import parse_llm_json, safe_float_parse, text_digest
 from unified_kg_rag.shared.utils.langchain import BatchProcessor
 
@@ -43,14 +53,16 @@ class _MapPoint:
     """A scored key point produced by the global-search map step.
 
     Lightweight value object (not a Pydantic model) so the map/filter/rank/pack
-    plumbing stays internal to this adapter.
+    plumbing stays internal to this adapter. ``batch`` is the index of the map
+    batch that produced it (-1 when unknown).
     """
 
-    __slots__ = ("description", "score")
+    __slots__ = ("batch", "description", "score")
 
-    def __init__(self, description: str, score: int) -> None:
+    def __init__(self, description: str, score: int, batch: int = -1) -> None:
         self.description = description
         self.score = score
+        self.batch = batch
 
 
 def _record(degraded: list[str] | None, error: Exception) -> None:
@@ -73,6 +85,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         super().__init__(config, retrievers, **kwargs)
         self.global_search_config = config.search.global_search
         self.ignore_errors = config.processing.ignore_errors
+        self.max_concurrency = config.processing.max_concurrency
         self.target_language = language_name(
             config.processing.translation.target_language
         )
@@ -80,7 +93,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         factory = self.providers.llm_factory
 
         str_output_parser = StrOutputParser()
-        # Built only when the opt-in per-report LLM relevance scoring is on.
+        # Built only for dynamic community selection, which rates reports.
         if self.global_search_config.use_dynamic_selection:
             self.community_relevance_scorer: Runnable = setup_chain(
                 factory=factory,
@@ -107,10 +120,10 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             parser=str_output_parser,
             custom_prompts=config.custom_prompts,
         )
-        # One prepared input per map LLM call (each input already packs
-        # ``map_batch_size`` reports), max_concurrency of them in flight. The
-        # map chain already retries transient Bedrock errors as a query chain,
-        # so BatchProcessor calls each input once (max_attempts=1).
+        # One prepared input per map LLM call (each input packs up to
+        # ``map_context_tokens`` of reports), max_concurrency of them in
+        # flight. The map chain already retries transient Bedrock errors as a
+        # query chain, so BatchProcessor calls each input once (max_attempts=1).
         self.batch_processor = BatchProcessor(
             max_concurrency=config.processing.max_concurrency, max_attempts=1
         )
@@ -125,86 +138,56 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             text_digest(query.query),
             query.search_type.value,
         )
-
-        retrieved_communities = await self._retrieve_community_reports(query)
-        if not retrieved_communities:
-            logger.warning("No results found for query: %s", text_digest(query.query))
-            return SearchResult(
-                query=query,
-                results=[],
-                total_results=0,
-                search_strategy="global_search",
-                processing_time=time.time() - start_time,
-                metadata={"rerank": rerank.summary()},
-            )
-
-        community_ids = self._get_ids(retrieved_communities, "community_id")
-        logger.debug(
-            "Found %s communities: '%s%s'",
-            len(community_ids),
-            ", ".join(community_ids[:5]),
-            "..." if len(community_ids) > 5 else "",
-        )
-
-        selected_communities = await self._select_relevant_communities(
-            retrieved_communities, query, config=config
-        )
-        community_ids = self._get_ids(selected_communities, "id")
-        logger.debug(
-            "Selected %s communities: '%s%s'",
-            len(community_ids),
-            ", ".join(community_ids[:5]),
-            "..." if len(community_ids) > 5 else "",
-        )
-
-        final_results = await self._augment_and_rerank_communities(
-            selected_communities, retrieved_communities, query, rerank
-        )
-        logger.debug(
-            "Augmented %s items: '%s%s'",
-            len(final_results),
-            ", ".join(
-                str(item.metadata.get("community_id") or item.metadata.get("id"))
-                for item in final_results[:5]
-                if item.metadata
+        # Per-query counts reported in the search metadata.
+        stats: dict[str, Any] = {
+            "global_community_depth": self.global_search_config.community_depth,
+            "global_dynamic_selection": (
+                self.global_search_config.use_dynamic_selection
             ),
-            "..." if len(final_results) > 5 else "",
-        )
-
-        no_relevant_points = False
-        # Type names of the map/reduce failures ignore_errors degraded.
+            "global_level_capped": False,
+        }
+        # Type names of the failures ignore_errors degraded.
         degraded: list[str] = []
-        if self.global_search_config.enable_map_reduce:
-            pre_map_count = len(final_results)
-            final_results = await self._apply_map_reduce(
-                final_results, query, config=config, degraded=degraded
+
+        if self.global_search_config.use_dynamic_selection:
+            reports = await self._select_dynamically(
+                query, stats, config=config, degraded=degraded
+            )
+        else:
+            reports = await self._cut_reports(query, stats)
+        stats["global_selected_report_count"] = len(reports)
+        if not reports:
+            if not stats.get("global_rated_report_count"):
+                await self._require_report_hierarchy(query)
+            logger.warning("No results found for query: %s", text_digest(query.query))
+
+        results = reports
+        no_relevant_points = False
+        if reports and self.global_search_config.enable_map_reduce:
+            results = await self._apply_map_reduce(
+                reports, query, config=config, degraded=degraded, stats=stats
             )
             # Only an all-below-threshold map phase empties a non-empty input.
-            no_relevant_points = pre_map_count > 0 and not final_results
+            no_relevant_points = not results
 
-        # With reserved report slots the fusion quota already bounds the evidence
-        # width, and the synthesized map-reduce item rides on top of it. The flat
-        # cut below runs after that item was prepended, so it cost one result.
-        if not self.global_search_config.reserve_report_slots:
-            final_results = final_results[: query.top_k]
+        if results and self.global_search_config.text_unit_slots:
+            results = results + await self._text_units(results, query, rerank)
+
         processing_time = time.time() - start_time
-
         logger.info(
             "Search completed - retrieved: %s results (%.3fs)",
-            len(final_results),
+            len(results),
             processing_time,
         )
-
         return SearchResult(
             query=query,
-            results=final_results,
-            total_results=len(final_results),
+            results=results,
+            total_results=len(results),
             search_strategy="global_search",
             processing_time=processing_time,
             metadata={
-                "retrieved_community_count": len(retrieved_communities),
-                "selected_community_count": len(selected_communities),
-                "map_reduce_applied": self._was_map_reduce_applied(final_results),
+                **stats,
+                "map_reduce_applied": self._was_map_reduce_applied(results),
                 "map_reduce_no_relevant_points": no_relevant_points,
                 "rerank": rerank.summary(),
                 # The chain sets error.type on the strategy span from it.
@@ -212,185 +195,267 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             },
         )
 
-    async def _retrieve_community_reports(
-        self, query: SearchQuery
-    ) -> list[RetrievalResult]:
-        # The candidates are not reranked here: selection reorders them and the
-        # fusion with their text units reranks the selected reports once.
-        index_prefixes = [
-            self.config.indexing.opensearch.community_reports_index_prefix
-        ]
-        return await self._retrieve_documents(query, index_prefixes)
+    # ------------------------------------------------------------------ #
+    # Report selection
+    # ------------------------------------------------------------------ #
 
-    async def _retrieve_documents(
-        self, query: SearchQuery, index_prefixes: list[str]
-    ) -> list[RetrievalResult]:
-        if not self.document_retriever:
-            return []
+    def _report_cap(self) -> int:
+        """Reports one cut or selection step contributes at most.
 
-        search_query = query.model_copy(deep=True)
-        search_query.index_prefixes = index_prefixes
-        return await self._safe_aretrieve(
-            self.document_retriever, search_query, "Document retrieval"
+        A store request returns at most ``max_query_size`` hits, so a larger
+        configured cap could not be told apart from a complete cut.
+        """
+        return min(
+            self.global_search_config.max_reports_per_level,
+            self.config.indexing.opensearch.max_query_size,
         )
 
-    async def _select_relevant_communities(
+    async def _fetch_reports(
         self,
-        all_communities: list[RetrievalResult],
         query: SearchQuery,
+        scope: dict[str, Any],
+        label: str,
+        stats: dict[str, Any],
+    ) -> list[RetrievalResult]:
+        """Every report matching ``scope`` (and the caller's filters).
+
+        A text-less browse returns them by importance (``rank``); when it
+        fills the cap, the part of the cut a query can afford is chosen by
+        similarity instead: a search for the query restricted to the same
+        reports. That is the only use of similarity in global search.
+        """
+        retriever = self.document_retriever
+        if retriever is None:
+            return []
+        cap = self._report_cap()
+        prefix = self.config.indexing.opensearch.community_reports_index_prefix
+        filters = self._scoped_filters(query, **scope)
+        browse = SearchQuery(
+            query="",
+            search_type=SearchType.LEXICAL,
+            top_k=cap,
+            index_prefixes=[prefix],
+            suffix=query.suffix,
+            filters=filters,
+        )
+        reports = await self._safe_aretrieve(retriever, browse, label)
+        if len(reports) < cap:
+            return reports
+        similar = query.model_copy(
+            update={
+                "top_k": cap,
+                "retrieval_multiplier": 1,
+                "index_prefixes": [prefix],
+                "filters": filters,
+            }
+        )
+        ranked = await self._safe_aretrieve(
+            retriever, similar, f"{label} (most similar)"
+        )
+        stats["global_level_capped"] = True
+        logger.warning(
+            "%s: at least %s community reports; mapping the %s most similar "
+            "to the query (search.global_search.max_reports_per_level, bounded "
+            "by indexing.opensearch.max_query_size). A smaller "
+            "community_depth maps fewer, broader reports.",
+            label,
+            cap,
+            cap,
+        )
+        return ranked or reports
+
+    async def _cut_reports(
+        self, query: SearchQuery, stats: dict[str, Any]
+    ) -> list[RetrievalResult]:
+        """The reports of the ``community_depth`` cut (MS GraphRAG's fixed
+        ``community_level``): every community at that depth plus the leaves
+        above it."""
+        depth = self.global_search_config.community_depth
+        with observability.span("kg_rag.global.select", depth=depth) as span:
+            reports = await self._fetch_reports(
+                query, cut_filter(depth), "Community report cut", stats
+            )
+            span.set_attributes({"kg_rag.reports": len(reports)})
+        logger.info("Global search cut at depth %s: %s reports", depth, len(reports))
+        return reports
+
+    async def _select_dynamically(
+        self,
+        query: SearchQuery,
+        stats: dict[str, Any],
         *,
         config: RunnableConfig | None = None,
+        degraded: list[str] | None = None,
     ) -> list[RetrievalResult]:
-        max_communities = self._max_communities(query)
-        if not self.global_search_config.use_dynamic_selection:
-            return self._top_by_retrieval(all_communities, max_communities)
+        """MS GraphRAG dynamic community selection, root down.
 
-        async def score_item(item: RetrievalResult) -> tuple[RetrievalResult, float]:
-            # Return the relevance on a 0-1 scale so it is comparable to
-            # relevance_threshold (config-constrained to [0.0, 1.0]). The LLM
-            # emits a 0-10 score; normalizing here was previously only done for
-            # the blended item.score, leaving the threshold filter (line below)
-            # comparing a 0-1 threshold against a 0-10 score -> a near no-op.
-            llm_output = await self.community_relevance_scorer.ainvoke(
-                {"community_summary": item.content, "query": query.query}, config
+        Rates the root reports; the children of each relevant report are
+        rated next, and a relevant child drops its parent. A depth with no
+        relevant report and nothing queued rates the whole next depth. The
+        walk stops below ``community_depth``. Returns the relevant reports,
+        most relevant first.
+        """
+        max_depth = self.global_search_config.community_depth
+        threshold = self.global_search_config.relevance_threshold
+        semaphore = asyncio.Semaphore(self.max_concurrency)
+        relevant: dict[str, tuple[float, int, RetrievalResult]] = {}
+        rated = 0
+        depth = 0
+        with observability.span(
+            "kg_rag.global.select", depth=max_depth, dynamic=True
+        ) as span:
+            queue = await self._fetch_reports(
+                query, {"depth": 0}, "Root community reports", stats
             )
-            parsed_score = safe_float_parse(llm_output, default_value=5.0)
-            relevance_score = (parsed_score / 10.0) if parsed_score is not None else 0.0
-            return item, relevance_score
-
-        # return_exceptions=True so a single throttled/failed LLM scoring call
-        # degrades that one community to score 0 rather than aborting the whole
-        # query (matching the drift/map-reduce paths' graceful degradation).
-        tasks = [score_item(item) for item in all_communities]
-        outcomes = await asyncio.gather(*tasks, return_exceptions=True)
-
-        relevance_threshold = self.global_search_config.relevance_threshold
-        evaluated_items: list[tuple[RetrievalResult, float]] = []
-        for original, outcome in zip(all_communities, outcomes, strict=True):
-            if isinstance(outcome, BaseException):
-                if not self.ignore_errors:
-                    raise outcome
-                logger.warning("Community scoring failed: %s", outcome)
-                # Admit the community ABOVE the threshold so a transient scoring
-                # failure cannot silently drop a strong hit. Its retrieval score
-                # is a raw RRF value (~1/(k+rank), e.g. 0.016) on a different
-                # scale than the 0-1 relevance the threshold filters on, so
-                # comparing it directly would drop it; assign the threshold value
-                # to keep it as a candidate (after scored ones, in retrieval order).
-                evaluated_items.append((original, relevance_threshold))
-            else:
-                evaluated_items.append(outcome)
-
-        # Rank by the LLM relevance, ties broken by retrieval rank. The old
-        # 0.4 * retrieval score + 0.6 * relevance blend mixed scales: the
-        # retrieval score is an RRF value (~1/(k+rank), ~0.016), so it was
-        # noise next to a 0-1 relevance, yet still reordered near-ties.
-        ranked = sorted(
-            (
-                (score, position, item)
-                for position, (item, score) in enumerate(evaluated_items)
-                if score >= relevance_threshold
-            ),
-            key=lambda entry: (-entry[0], entry[1]),
+            while queue:
+                scores = await asyncio.gather(
+                    *(
+                        self._rate_report(r, query, semaphore, config=config)
+                        for r in queue
+                    ),
+                    return_exceptions=True,
+                )
+                children: list[str] = []
+                for report, outcome in zip(queue, scores, strict=True):
+                    rated += 1
+                    if isinstance(outcome, BaseException):
+                        if (
+                            not isinstance(outcome, Exception)
+                            or not self.ignore_errors
+                            or is_fatal_retrieval_error(outcome)
+                        ):
+                            raise outcome
+                        logger.warning("Community rating failed: %s", outcome)
+                        _record(degraded, outcome)
+                        # MS GraphRAG keeps a report it could not rate.
+                        outcome = threshold
+                    if outcome < threshold:
+                        continue
+                    metadata = report.metadata or {}
+                    relevant[self._community_id(report)] = (outcome, rated, report)
+                    children.extend(metadata.get("child_community_ids") or [])
+                    if parent := metadata.get("parent_community_id"):
+                        relevant.pop(str(parent), None)
+                depth += 1
+                if depth > max_depth:
+                    break
+                if children:
+                    queue = await self._fetch_reports(
+                        query,
+                        {"community_id": list(dict.fromkeys(children))},
+                        "Child community reports",
+                        stats,
+                    )
+                elif not relevant:
+                    queue = await self._fetch_reports(
+                        query, {"depth": depth}, "Community reports", stats
+                    )
+                else:
+                    queue = []
+            span.set_attributes(
+                {"kg_rag.rated_reports": rated, "kg_rag.reports": len(relevant)}
+            )
+        stats["global_rated_report_count"] = rated
+        logger.info(
+            "Dynamic community selection rated %s reports, kept %s",
+            rated,
+            len(relevant),
         )
-        # Copies: the inputs are shared with the fallback list and the fusion
-        # downstream, so their scores must not be mutated in place.
-        relevant_items = [
-            item.model_copy(update={"score": score}) for score, _, item in ranked
-        ]
-        logger.debug(
-            "Filtered %s communities based on relevance threshold %s",
-            len(evaluated_items) - len(relevant_items),
-            relevance_threshold,
-        )
+        ranked = sorted(relevant.values(), key=lambda e: (-e[0], e[1]))
+        # Copies: the score is the rating, not the store's retrieval score.
+        return [report.model_copy(update={"score": s}) for s, _, report in ranked]
 
-        return relevant_items[:max_communities]
-
-    def _max_communities(self, query: SearchQuery) -> int:
-        return self.global_search_config.max_communities * query.retrieval_multiplier
+    async def _rate_report(
+        self,
+        report: RetrievalResult,
+        query: SearchQuery,
+        semaphore: asyncio.Semaphore,
+        *,
+        config: RunnableConfig | None = None,
+    ) -> float:
+        """The report's relevance to the query on a 0-1 scale (rating / 10)."""
+        async with semaphore:
+            llm_output = await self.community_relevance_scorer.ainvoke(
+                {"community_summary": report.content, "query": query.query}, config
+            )
+        parsed = safe_float_parse(llm_output, default_value=5.0)
+        return (parsed / 10.0) if parsed is not None else 0.0
 
     @staticmethod
-    def _top_by_retrieval(
-        communities: list[RetrievalResult], limit: int
-    ) -> list[RetrievalResult]:
-        """The ``limit`` reports most relevant to the query by retrieval score.
+    def _community_id(report: RetrievalResult) -> str:
+        return str((report.metadata or {}).get("community_id") or report.source)
 
-        The community-report `rank` (graph importance, set at indexing time)
-        and then the LLM-assigned `rating` only break ties; both missing sort
-        last.
+    async def _require_report_hierarchy(self, query: SearchQuery) -> None:
+        """Raise when the stored reports predate the hierarchy fields.
+
+        Such reports match no cut, so global search would answer from nothing
+        on every query rather than on this one.
+
+        Raises:
+            ConfigurationError: A report exists but carries no ``depth``.
         """
-        return sorted(
-            communities,
-            key=lambda c: (
-                c.score,
-                float(c.metadata.get("rank", 0.0) or 0.0),
-                float(c.metadata.get("rating", 0.0) or 0.0),
-            ),
-            reverse=True,
-        )[:limit]
+        retriever = self.document_retriever
+        if retriever is None:
+            return
+        probe = SearchQuery(
+            query="",
+            search_type=SearchType.LEXICAL,
+            top_k=1,
+            index_prefixes=[
+                self.config.indexing.opensearch.community_reports_index_prefix
+            ],
+            suffix=query.suffix,
+        )
+        found = await self._safe_aretrieve(retriever, probe, "Community report probe")
+        if found and (found[0].metadata or {}).get("depth") is None:
+            raise ConfigurationError(
+                "The community reports were indexed without their place in the "
+                "community hierarchy, which global search selects them by. "
+                "Re-run ingestion with indexing.reset: true to re-index them."
+            )
 
-    async def _augment_and_rerank_communities(
+    async def _text_units(
         self,
-        selected: list[RetrievalResult],
-        fallback: list[RetrievalResult],
+        results: list[RetrievalResult],
         query: SearchQuery,
         rerank: RerankTrace,
     ) -> list[RetrievalResult]:
-        if not selected:
-            # Dynamic selection kept nothing: fall back to the retrieved reports,
-            # chosen and post-processed as without dynamic selection (capped at
-            # max_communities, with their text units, fused and reranked) rather
-            # than passed through raw.
-            selected = self._top_by_retrieval(fallback, self._max_communities(query))
-            if not selected:
-                return []
-
-        context = await self._retrieve_community_context(selected, query)
+        """``text_unit_slots`` text units of the reports' communities, reranked."""
+        community_ids = [
+            self._community_id(r)
+            for r in results
+            if r.retriever_type == SectionType.COMMUNITY.value
+        ]
+        if not community_ids or self.document_retriever is None:
+            return []
+        slots = self.global_search_config.text_unit_slots
+        search_query = query.model_copy(
+            update={
+                "top_k": slots,
+                "retrieval_multiplier": 1,
+                "index_prefixes": [
+                    self.config.indexing.opensearch.text_units_index_prefix
+                ],
+                "filters": self._scoped_filters(
+                    query, community_ids=list(dict.fromkeys(community_ids))
+                ),
+            }
+        )
+        chunks = await self._safe_aretrieve(
+            self.document_retriever, search_query, "Community text units"
+        )
+        if not chunks:
+            return []
         return await self._fuse_and_rerank(
-            {
-                "opensearch_community_reports": selected,
-                "text_units": context,
-            },
+            {"text_units": chunks},
             rerank_trace=rerank,
-            top_k=query.top_k,
-            retrieval_multiplier=query.retrieval_multiplier,
+            top_k=slots,
             query=query.query,
-            per_type_quota=self._report_quota(query),
         )
 
-    def _report_quota(self, query: SearchQuery) -> dict[str, int] | None:
-        """Reserved fusion slots for the community reports vs their text units.
-
-        A flat top_k cut over reports and chunks reranked together kept mostly
-        chunks, so the community reports global search is built on rarely
-        reached the map step. ``None`` (``reserve_report_slots: false``) keeps
-        that flat cut.
-        """
-        if not self.global_search_config.reserve_report_slots:
-            return None
-        text_slots = self.global_search_config.text_unit_slots or query.top_k
-        return {
-            SectionType.COMMUNITY.value: self.global_search_config.max_communities
-            * query.retrieval_multiplier,
-            SectionType.TEXT.value: text_slots,
-        }
-
-    async def _retrieve_community_context(
-        self, communities: list[RetrievalResult], query: SearchQuery
-    ) -> list[RetrievalResult]:
-        community_ids = self._get_ids(communities, "community_id")
-        if not community_ids:
-            return []
-
-        search_query = query.model_copy(deep=True)
-        search_query.filters = {
-            **(query.filters or {}),
-            "community_ids": list(community_ids),
-        }
-        search_query.top_k = min(query.top_k, self.global_search_config.max_text_units)
-        index_prefixes = [self.config.indexing.opensearch.text_units_index_prefix]
-
-        return await self._retrieve_documents(search_query, index_prefixes)
+    # ------------------------------------------------------------------ #
+    # Map-reduce
+    # ------------------------------------------------------------------ #
 
     async def _apply_map_reduce(
         self,
@@ -399,17 +464,20 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         *,
         config: RunnableConfig | None = None,
         degraded: list[str] | None = None,
+        stats: dict[str, Any] | None = None,
     ) -> list[RetrievalResult]:
-        """MS GraphRAG global-search map-reduce.
+        """MS GraphRAG global-search map-reduce over every selected report.
 
-        MAP — rate the key points in each batch of community reports (0-100).
+        MAP — rate the key points of each token-sized batch of reports (0-100).
         FILTER+RANK — drop low-scored points, sort by score descending.
         PACK — take ranked points up to ``max_map_reduce_tokens``.
         REDUCE — synthesize the answer from the ranked, packed points.
 
-        Only the community reports are mapped; their text units pass through
-        next to the synthesized item. Below ``map_reduce_min_results`` reports
-        the results pass through unchanged (the existing direct path). If the map phase yields no usable scored points
+        The result is the synthesized item followed by the reports of the
+        batches whose points were packed, best point first: the evidence the
+        points came from, for the answer budget left over and the reported
+        sources. Below ``map_reduce_min_results`` reports the results pass
+        through unchanged. If the map phase yields no usable scored points
         (e.g. every map call failed to parse), it degrades to the legacy
         concat-and-reduce path so global search never hard-fails.
 
@@ -424,21 +492,36 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         just those unrated reports instead.
 
         The type name of each failure ``ignore_errors`` degraded is appended
-        to ``degraded``.
+        to ``degraded``; the map counts go to ``stats``.
         """
         reports = [
             r for r in results if r.retriever_type == SectionType.COMMUNITY.value
         ]
         if len(reports) < self.global_search_config.map_reduce_min_results:
             return results
-        text_units = [
-            r for r in results if r.retriever_type != SectionType.COMMUNITY.value
-        ]
+        stats = {} if stats is None else stats
 
+        # Counting can be one CountTokens request per report: off the loop.
+        batches, report_tokens = await asyncio.to_thread(self._map_batches, reports)
+        stats["global_mapped_report_count"] = len(reports)
+        stats["global_map_call_count"] = len(batches)
+        stats["global_map_report_tokens"] = report_tokens
+        logger.info(
+            "Global map: %s reports (%s report tokens) in %s map calls",
+            len(reports),
+            report_tokens,
+            len(batches),
+        )
         try:
-            map_points, unrated = await self._run_map_phase(
-                reports, query, config=config
-            )
+            with observability.span(
+                "kg_rag.global.map",
+                reports=len(reports),
+                map_calls=len(batches),
+                report_tokens=report_tokens,
+            ):
+                map_points, unrated = await self._run_map_phase(
+                    batches, query, config=config
+                )
         except Exception as e:
             if not self.ignore_errors:
                 raise
@@ -456,10 +539,9 @@ class GlobalSearchStrategy(BaseSearchStrategy):
                     len(unrated),
                     len(reports),
                 )
-                reduced = await self._concat_reduce(
+                return await self._concat_reduce(
                     unrated, query, config=config, degraded=degraded
                 )
-                return reduced + text_units
             logger.warning(
                 "All %s map key points scored at or below threshold %s; "
                 "no relevant community data for the query, returning no context.",
@@ -473,28 +555,70 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             self._pack_points_within_budget, ranked_points
         )
         return await self._reduce_from_points(
-            packed_points, results, query, config=config, degraded=degraded
+            packed_points,
+            self._evidence(packed_points, batches),
+            query,
+            config=config,
+            degraded=degraded,
         )
+
+    def _map_batches(
+        self, reports: list[RetrievalResult]
+    ) -> tuple[list[list[RetrievalResult]], int]:
+        """``reports`` packed in order into batches of ``map_context_tokens``.
+
+        A report that alone exceeds the budget gets a batch of its own (MS
+        GraphRAG's ``build_community_context``). Returns the batches and the
+        reports' token count.
+        """
+        budget = self.global_search_config.map_context_tokens
+        costs = self.token_manager.count_tokens_many(
+            [self._format_reports([r]) for r in reports]
+        )
+        batches: list[list[RetrievalResult]] = []
+        used = 0
+        for report, cost in zip(reports, costs, strict=True):
+            if not batches or used + cost > budget:
+                batches.append([])
+                used = 0
+            batches[-1].append(report)
+            used += cost
+        return batches, sum(costs)
+
+    @staticmethod
+    def _evidence(
+        points: list[_MapPoint], batches: list[list[RetrievalResult]]
+    ) -> list[RetrievalResult]:
+        """The reports of the batches the packed points came from.
+
+        A point is attributed to its batch, not to one report of it. Each
+        report scores its batch's best point (0-1), best batch first.
+        """
+        best: dict[int, int] = {}
+        for point in points:
+            if 0 <= point.batch < len(batches):
+                best[point.batch] = max(best.get(point.batch, 0), point.score)
+        return [
+            report.model_copy(update={"score": best[batch] / 100.0})
+            for batch in sorted(best, key=lambda b: (-best[b], b))
+            for report in batches[batch]
+        ]
 
     async def _run_map_phase(
         self,
-        results: list[RetrievalResult],
+        report_batches: list[list[RetrievalResult]],
         query: SearchQuery,
         *,
         config: RunnableConfig | None = None,
     ) -> tuple[list[_MapPoint], list[RetrievalResult]]:
-        """Fan map calls over batches of reports and parse the scored points.
+        """Fan one map call per batch of reports and parse the scored points.
 
-        Each batch of ``map_batch_size`` reports becomes one map LLM call;
-        BatchProcessor runs them concurrently with graceful per-item fallback.
-        Returns the scored points and the reports of every batch that was NOT
-        rated (the call failed, or its output was not parseable map JSON), so
-        the caller can tell "rated irrelevant" apart from "never rated".
+        BatchProcessor runs the calls concurrently with graceful per-item
+        fallback. Returns the scored points (each tagged with its batch) and
+        the reports of every batch that was NOT rated (the call failed, or its
+        output was not parseable map JSON), so the caller can tell "rated
+        irrelevant" apart from "never rated".
         """
-        batch_size = self.global_search_config.map_batch_size
-        report_batches = [
-            results[i : i + batch_size] for i in range(0, len(results), batch_size)
-        ]
 
         def prepare_inputs(
             batches: list[list[RetrievalResult]],
@@ -552,15 +676,18 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             if batch_points is None:
                 unrated.extend(batch)
                 continue
+            for point in batch_points:
+                point.batch = i
             points.extend(batch_points)
-        if bad_requests and len(unrated) == len(results):
+        report_count = sum(len(batch) for batch in report_batches)
+        if bad_requests and len(unrated) == report_count:
             raise bad_requests[0]
         if unrated:
             logger.warning(
                 "Global map phase left %s/%s reports unrated (failed or "
                 "unparseable map calls)",
                 len(unrated),
-                len(results),
+                report_count,
             )
         return points, unrated
 

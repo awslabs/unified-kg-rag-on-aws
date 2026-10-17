@@ -135,6 +135,11 @@ def opensearch_filter_fields(
                     "rating",
                     "text_unit_ids",
                     "document_ids",
+                    "level",
+                    "depth",
+                    "max_cut_depth",
+                    "parent_community_id",
+                    "child_community_ids",
                 }
             ),
             _OPENSEARCH_ATTRIBUTE_PREFIXES,

@@ -680,12 +680,14 @@ LLM stages are Bedrock-I/O-bound, so concurrency can far exceed the CPU count.
 | `search.lightrag_search.kg_stream_top_k` | `40` | Width of the LightRAG entity/relationship vector queries (a floor against the request's `top_k`). |
 | `search.lightrag_search.chunk_stream_top_k` | `20` | Width of the LightRAG chunk stream. |
 | `search.lightrag_search.enable_graph_expansion` | `false` | `mix`/`hybrid`: also expand matches through Neptune. |
-| `search.global_search.max_communities` | `10` | Community reports considered by `global` search. |
-| `search.global_search.map_batch_size` | `5` | Reports per map-step LLM call; lower it for long reports. |
+| `search.global_search.community_depth` | `2` | The cut of the community hierarchy `global` maps over, counted from the root as MS GraphRAG's `community_level` (default 2 there too): every community at this depth plus the leaves above it, so each entity is covered once. `0` = the root communities (fewest, broadest reports); a large value = the leaves (most, narrowest). |
+| `search.global_search.max_reports_per_level` | `100` | Most reports one cut (or one step of the dynamic selection) contributes. A larger cut is cut to the reports most similar to the query, and the search metadata says so (`global_level_capped`). Bounded by `indexing.opensearch.max_query_size`. Each mapped report costs map-step input tokens. |
+| `search.global_search.use_dynamic_selection` | `false` | MS GraphRAG dynamic community selection instead of a fixed cut: rate the root reports with `community_relevance_model_id`, descend into the relevant ones' children down to `community_depth`, and map the relevant reports. One fast-model call per rated report. |
+| `search.global_search.relevance_threshold` | `0.2` | Dynamic selection keeps a report rated at least this (its 1-10 rating / 10); 0.2 is MS GraphRAG's threshold of 1 on its 0-5 scale. A report below it prunes its subtree. |
+| `search.global_search.map_context_tokens` | `12000` | Report tokens packed into one map-step call (MS GraphRAG's `data_max_tokens`); map calls run `processing.max_concurrency` at a time. |
 | `search.global_search.max_map_reduce_tokens` | `8000` | Token budget for ranked key points fed to the reduce step. |
 | `search.global_search.reduce_with_llm` | `false` | `true` = a reduce LLM summarizes the packed key points before the answer model rewrites them (one extra LLM call). `false` passes the points straight to the answer model. |
-| `search.global_search.reserve_report_slots` | `true` | Reserve `max_communities` fusion slots for community reports and cap their text units at `text_unit_slots`. `false` = one flat `top_k` cut over reports and chunks. |
-| `search.global_search.text_unit_slots` | `null` | Text-unit slots next to the reserved report slots; `null` = the query's `top_k`. |
+| `search.global_search.text_unit_slots` | `0` | Text units of the communities behind the key points added to the context, reranked. `0` = none, as in MS GraphRAG's global search; the chunks took most of the answer budget the key points and reports need. |
 | `search.local_search.entity_frequency_threshold` | `20` | Drop graph-expanded entities that appear in more text units than this (too generic). The query's own matched entities are always kept. |
 | `search.local_search.include_bridge_relationships` | `true` | Also fetch relationships incident to the expanded entities, edges between two retrieved entities first (multi-hop bridges). Needs the relationship index. `false` = relationship vector query only. |
 | `search.drift_search.max_iterations` | `3` | DRIFT iteration budget. |
@@ -1146,7 +1148,8 @@ documents as failed so the next run translates them again (§5).
 ### Search strategies — when to use which
 
 **Choosing the methodology.** GraphRAG strategies excel at *summarization and
-thematic synthesis* over a corpus (community reports give global coverage).
+thematic synthesis* over a corpus (`global` maps over every community report of
+one level of the hierarchy).
 LightRAG strategies are faster and lean on *dual-level keyword* retrieval — good
 for keyword-driven lookups and as a low-cost baseline. Both run through the same
 hybrid scorer (BM25 lexical + vector semantic + graph traversal + RRF + Bedrock
@@ -1158,7 +1161,7 @@ rerank); only the retrieval algorithm differs.
 |---|---|---|
 | `simple` | Fast factual lookups; straightforward questions | Direct OpenSearch vector + keyword retrieval, no graph traversal. Fastest. Includes the claims index when claim extraction is on. |
 | `local` | Detailed questions about specific entities/concepts | Extracts query entities → Neptune graph traversal for neighbors/relationships → combined with vector/keyword hits. Injects claims (covariates) when enabled. |
-| `global` | Broad, thematic, "what are the main themes" questions | Uses community reports + map-reduce over dynamically selected communities. Best for high-level synthesis. |
+| `global` | Broad, thematic, "what are the main themes" questions | MS GraphRAG global search: maps every community report of one cut of the hierarchy (`search.global_search.community_depth`, default 2 from the root) into scored key points on the fast model, in token-sized batches, and answers from the ranked points. Optional dynamic selection walks the hierarchy from the roots instead. Cost grows with the cut: one map call per `map_context_tokens` of reports. Best for high-level synthesis. |
 | `drift` | Complex, multi-faceted questions needing exploration | Iterative query refinement/expansion with convergence detection across rounds. |
 | `auto` | You don't know / general use (the default) | An LLM router (`search.strategy_selection_model_id`) picks the best strategy from the query among `search.auto_routable_strategies` (default local, mix, global, drift). |
 
@@ -1240,7 +1243,7 @@ steps on Neptune. Each store accepts the fields its indexer writes:
 | Entities | `id`, `name`, `name.keyword`, `description`, `type`, `rank`, `confidence`, `text_unit_ids`, `attr_<key>`, `attributes.<path>` |
 | Relationships | `id`, `source_id`, `target_id`, `source_name`, `target_name`, `description`, `weight`, `rank`, `text_unit_ids` |
 | Claims | `id`, `subject_id`, `object_id`, `subject_name`, `object_name`, `type`, `status`, `description`, `source_text`, `text_unit_ids` |
-| Community reports | `id`, `community_id`, `name`, `summary`, `full_content`, `rank`, `rating`, `text_unit_ids`, `document_ids`, `attr_<key>`, `attributes.<path>` |
+| Community reports | `id`, `community_id`, `name`, `summary`, `full_content`, `rank`, `rating`, `text_unit_ids`, `document_ids`, `level`, `depth`, `max_cut_depth`, `parent_community_id`, `child_community_ids`, `attr_<key>`, `attributes.<path>` |
 | Neptune entity vertices | `id`, `name`, `type`, `description`, `rank`, `confidence`, `text_unit_ids`, `community_ids`, `attr_<key>` (where present) |
 | Neptune community vertices | `id`, `name`, `level`, `parent`, `size`, `period`, `children` |
 
