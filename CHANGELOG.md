@@ -249,7 +249,7 @@ Deployment (CDK stack).
   find the cluster, subnets and security groups) read `.States.Ingest`; the
   task's result is under `$.task` (was `$.last_phase`). A pipeline id
   checkpointed by the phased version resumes from the same S3 checkpoints:
-  start a new execution with the same input (#PR).
+  start a new execution with the same input (#328).
 
 Library API (Python callers and custom backends).
 - Incremental removal no longer plans from registry lineage.
@@ -457,7 +457,7 @@ Library API (Python callers and custom backends).
   (#324).
 - `ingestion_ephemeral_storage_gib` (CDK context, 21-200, default 40) sizes
   the ingestion task's disk, which holds the synced corpus, the parsed
-  documents and the stage cache (#PR).
+  documents and the stage cache (#328).
 - Index build record: ingestion records in the vector index mappings'
   `_meta` which run last wrote each suffix (`pipeline_id`, `mode`,
   `built_at`, `documents`, `extraction_fingerprint`, `package_version`), and
@@ -602,7 +602,7 @@ Library API (Python callers and custom backends).
   four corpus downloads and hashes and four checkpoint downloads, and a
   corpus or image changed mid-execution reached only the later phases. The
   state machine runs the task definition revision deployed with it rather
-  than the family's latest active revision (#PR).
+  than the family's latest active revision (#328).
 - `graph.community_detection.max_cluster_size` also caps a parent's child
   communities: a coarser-level community with more children is partitioned
   again on the cluster graph, so a parent report's roll-up covers every
