@@ -106,7 +106,7 @@ ignored, so check the start-up warnings after upgrading.
   `relevance_threshold` defaults to 0.2 (was 0.5). Global search needs
   community reports indexed with their place in the hierarchy: re-run
   ingestion once with `indexing.reset: true`; until then global search
-  raises `ConfigurationError` instead of answering from nothing (#PR).
+  raises `ConfigurationError` instead of answering from nothing (#318).
 
 Defaults. Set the old value explicitly to keep the previous behaviour.
 - `graph.visualization.enabled` defaults to `false`; set it to `true` or
@@ -477,7 +477,7 @@ Library API (Python callers and custom backends).
   synthetic 60-topic corpus on the embedded stores (27 reports of about
   2,700 tokens), the answer context named 59 of 60 topics (was 25) from all
   21 reports of the cut (was 10 retrieved reports), in 6 map calls (was 2):
-  map cost now grows with the cut, not with `top_k` (#PR).
+  map cost now grows with the cut, not with `top_k` (#318).
 - OpenSearch indexing keeps 16 embedding requests in flight (was 8), so it
   embeds and bulk-writes 800 items of a type at a time (was 400). In the
   real-AWS E2E 1,600 texts took 9.4 s instead of 18.8 s, with no Bedrock
