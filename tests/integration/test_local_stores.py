@@ -397,7 +397,9 @@ def test_local_mode_ingests_and_answers_through_the_registry(
     config.processing.claim_extraction.enabled = False
     config.fixing.enabled = False
     config.graph.visualization.enabled = False
-    server = FakeOllama(_respond, answer, config.embedding_dimension or 64)
+    # The Ollama embedding model's dimension is the configured one.
+    config.models.embedding.dimension = 64
+    server = FakeOllama(_respond, answer, config.models.embedding.dimension)
     transport = httpx.MockTransport(server)
     providers = build_providers(
         config,
