@@ -1126,6 +1126,15 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- The last outputs that followed the interpreter's hash seed
+  (`PYTHONHASHSEED`, a new salt per process) no longer do: the community
+  members in `visualization_data.json` are listed sorted rather than in set
+  order, a small community tied to two neighbours joins the lower-numbered
+  one even when a float sum in set order would split the tie by one ulp,
+  and the entity and chunk ids a strategy collects from its hits keep their
+  rank order. A test runs a full build, an incremental run and every search
+  strategy in two processes with different hash seeds and requires
+  identical stores, prompts, exports and answers (#PR).
 - A paired strategy comparison no longer drops the queries a strategy
   failed to answer: a strategy that crashed on the queries it would lose
   looked as good as one that answered them. A failed answer scores 0 on

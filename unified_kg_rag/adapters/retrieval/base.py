@@ -465,21 +465,24 @@ class BaseSearchStrategy(ABC):
 
     @staticmethod
     def _get_ids(results: list[RetrievalResult], key: str) -> list[str]:
-        ids_set: set[str] = set()
+        """The distinct ``key`` ids of ``results``, in rank order (first seen).
+
+        Not a ``set``: its order of str ids changes with ``PYTHONHASHSEED``,
+        so every caller would have to sort to stay reproducible.
+        """
+        ids: dict[str, None] = {}
         for result in results:
-            ids = result.metadata.get(key)
             # OpenSearch hits carry the canonical id in `source` and only echo
             # metadata[key] when the indexed _source happens to include that
             # field; fall back to `source` so graph expansion still gets seeds
             # (matching local/drift candidate-entity resolution).
-            if not ids and key == "id" and result.source:
-                ids = result.source
-            if ids:
-                if isinstance(ids, list):
-                    ids_set.update(str(id_val) for id_val in ids)
-                else:
-                    ids_set.add(str(ids))
-        return list(ids_set)
+            value = result.metadata.get(key)
+            if not value and key == "id" and result.source:
+                value = result.source
+            if value:
+                values = value if isinstance(value, list) else [value]
+                ids.update(dict.fromkeys(str(v) for v in values))
+        return list(ids)
 
     @staticmethod
     def _scoped_filters(query: SearchQuery, **scope: Any) -> dict[str, Any] | None:
