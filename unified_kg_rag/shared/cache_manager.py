@@ -86,7 +86,7 @@ class CacheManager:
         if entry is None:
             return False
 
-        if entry.is_expired:
+        if self._expired(entry):
             return False
 
         # A resume trusts this answer to skip the stage, so the entry must be
@@ -106,6 +106,15 @@ class CacheManager:
             )
             return False
         return True
+
+    def _expired(self, entry: CacheEntry) -> bool:
+        """Whether ``entry`` is past its expiry under this manager's TTL.
+
+        A manager without a TTL treats no entry as expired, including one
+        stamped with an expiry by an earlier writer that had a TTL: an S3-synced
+        run's checkpoints are expired by the bucket lifecycle, not here.
+        """
+        return self.ttl_seconds is not None and entry.is_expired
 
     def _read_single_file(self, entry: CacheEntry, pipeline_id: str) -> str:
         """Read a single-file entry, verifying its content hash.
@@ -244,7 +253,7 @@ class CacheManager:
                 self.stats.record_miss(cache_key)
                 return None
 
-            if self.strategy == CacheStrategy.FORCE_REFRESH or entry.is_expired:
+            if self.strategy == CacheStrategy.FORCE_REFRESH or self._expired(entry):
                 log_msg = (
                     "forcing refresh"
                     if self.strategy == CacheStrategy.FORCE_REFRESH

@@ -888,7 +888,7 @@ memory:
 
 # Cache Configuration
 cache:
-  ttl_seconds: 86400  # cache entry TTL in seconds; null = never expire
+  ttl_seconds: 86400  # cache entry TTL in seconds; null = never expire; ignored with --s3-sync (bucket lifecycle expires checkpoints)
   chunking:
     enabled: true
     chunk_size: 1000

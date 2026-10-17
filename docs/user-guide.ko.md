@@ -668,7 +668,7 @@ LLM 단계는 Bedrock I/O가 병목이므로 동시성을 CPU 수보다 훨씬 �
 | `memory.max_conversations` | `100` | 대화 메모리에 보관하는 대화 수입니다(§4 대화형 모드). |
 | `memory.max_messages_per_conversation` | `20` | 대화당 보관하는 메시지 수입니다. |
 | `memory.max_conversation_age_hours` | `168` | 대화가 쓰이지 않은 채 머물 수 있는 시간입니다. 이보다 오래된 대화는 버리고 새로 시작합니다. |
-| `cache.ttl_seconds` | `86400` | 캐시 항목 TTL입니다. `null`이면 만료하지 않습니다. |
+| `cache.ttl_seconds` | `86400` | 캐시 항목 TTL입니다. `null`이면 만료하지 않습니다. `--s3-sync`에서는 적용하지 않습니다(버킷 수명 주기가 체크포인트를 만료시킴). |
 | `logging.level` | `"INFO"` | `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL` 중 하나입니다. |
 | `logging.log_format` | `"structured"` | `structured` 또는 `plain`입니다. |
 | `logging.log_to_file` | `true` | CLI가 로그를 `log_file_path`(`logs/log.txt`, 실제 파일 이름은 `log_YYYYMMDD.txt`)에도 씁니다. 상대 경로는 작업 디렉터리 기준입니다. 패키지를 라이브러리로 import하면 핸들러나 파일을 설정하지 않으며, 호스트 애플리케이션의 로깅 설정을 따릅니다. 호스트의 포매터에는 메시지 본문만 나오고, 구조화 필드(`logger`, `level`, `pipeline_id`, `trace_id` 등)는 로그 레코드의 속성으로 들어갑니다. |
@@ -974,10 +974,15 @@ run-ingestion --source-directory ./documents --config-path config.yaml --metrics
 
 **S3 동기화**는 단계 캐시를 `s3://<bucket>/<prefix>/...`에 보관하므로, 새
 프로세스(예: 새 Fargate 태스크)가 끝난 단계를 다시 계산하지 않고 재개할 수 있습니다.
-동기화(시작 시 다운로드나 마지막 업로드)가 실패하거나 일부만 되면 `CacheSyncError`로
+실행은 단계가 끝날 때마다 바뀐 파일을 업로드하므로, 태스크가 중지되거나 죽어도 끝난 단계는
+모두 남습니다. SIGTERM(ECS StopTask, Step Functions 시간 초과)을 받으면 `run-ingestion`은
+체크포인트를 업로드하고 실행 중인 단계를 멈춘 뒤 143으로 종료하며, 같은 pipeline id로 다시
+실행하면 그 단계부터 시작합니다. 단계 사이의 업로드가 실패하면 로그를 남기고 다음 업로드에서
+다시 시도합니다. 시작 시 다운로드나 마지막 업로드가 실패하거나 일부만 되면 `CacheSyncError`로
 실행이 실패하고 `run-ingestion`은 0이 아닌 코드로 종료합니다. 따라서 Step Functions로
 나눠 실행할 때는 체크포인트를 잃은 단계가 실패로 표시됩니다. 새 pipeline id에서 원격
-캐시가 비어 있는 것은 오류가 아닙니다. 임베딩은 따로
+캐시가 비어 있는 것은 오류가 아닙니다. S3에 동기화한 체크포인트는 `cache.ttl_seconds`로
+만료되지 않고 버킷의 수명 주기 규칙이 만료시킵니다(CDK 배포에서는 30일). 임베딩은 따로
 `indexing.opensearch.persist_embedding_cache: true`를 설정하면 바뀌지 않은 텍스트를
 실행마다 다시 임베딩하지 않습니다.
 

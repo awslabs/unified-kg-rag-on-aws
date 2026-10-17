@@ -641,6 +641,20 @@ Library API (Python callers and custom backends).
   flags. An environment value is now also checked with the rest of the
   config: `OPENSEARCH_USERNAME` keeps the local preset's anonymous access
   off, as the same key in the file does (#313).
+- `run-ingestion --s3-sync` no longer loses the stages a stopped task had
+  finished. Checkpoints reached S3 only after the last stage, and the
+  container ignored SIGTERM (Python runs as PID 1 there), so a task ended by
+  StopTask or a Step Functions timeout was killed after 30 s with nothing
+  uploaded and the next execution repeated every stage of the phase. The run
+  now uploads the changed checkpoint files after every stage (stage data
+  first, the run metadata last); on SIGTERM it uploads, stops the running
+  stage and exits 143, and a re-run with the same pipeline id starts at that
+  stage. The app container's stop timeout is 120 s (was 30 s) (#316).
+- An S3-synced run resumed more than a day later no longer recomputes every
+  stage: checkpoints carried the 24 h `cache.ttl_seconds` expiry while the
+  bucket keeps them for 30 days. With `--s3-sync` checkpoints have no TTL,
+  including ones an earlier run stamped with one; the bucket lifecycle
+  expires them (#316).
 - Community detection no longer logs the WARNING "Graph has no weighted
   edges" when the hierarchy ends normally at a level whose communities no
   edge joins; it logs that at INFO and stops, with the same communities. An

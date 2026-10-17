@@ -11,6 +11,7 @@ from botocore.exceptions import ClientError, NoCredentialsError
 
 from unified_kg_rag.domain.models import Config, S3EncryptionType
 from unified_kg_rag.shared import CacheSyncError, ConfigurationError, get_logger
+from unified_kg_rag.shared.pipeline_manager import PipelineStateManager
 
 if TYPE_CHECKING:
     from types_boto3_s3 import S3Client
@@ -45,6 +46,10 @@ class S3CacheManager:
     connection, or any single object) instead of returning a partial result: a
     phased run hands checkpoints between tasks through S3, so a silent partial
     sync would surface one phase later as a misleading "missing stage" error.
+
+    The pipeline uploads after every stage, so an upload sends only the files
+    that changed since this manager last uploaded or downloaded them, stage
+    data before the index and the run metadata that refer to it.
     """
 
     DEFAULT_S3_PREFIX: ClassVar[str] = "cache"
@@ -71,6 +76,9 @@ class S3CacheManager:
             region_name=self.config.aws.region_name,
         )
         self._s3_client: S3Client | None = None
+        # Local cache file -> (size, mtime_ns) when its S3 copy was last
+        # written or read; a file that still matches is not uploaded again.
+        self._synced: dict[Path, tuple[int, int]] = {}
 
         logger.info(
             "Initialized S3CacheManager for 's3://%s/%s'", self.bucket_name, self.prefix
@@ -145,7 +153,9 @@ class S3CacheManager:
                         continue
                     local_path.parent.mkdir(parents=True, exist_ok=True)
 
-                    if not self._download_cache_file(s3_key, local_path):
+                    if self._download_cache_file(s3_key, local_path):
+                        self._synced[resolved] = self._file_state(resolved)
+                    else:
                         failed_keys.append(s3_key)
                     stages.add(self._stage_name(relative_path))
 
@@ -169,7 +179,8 @@ class S3CacheManager:
             logger.info("No cache files found for pipeline '%s' in S3", pipeline_id)
 
     def sync_pipeline_to_s3(self, pipeline_id: str, local_cache_dir: Path) -> None:
-        """Upload the pipeline's cache files; raises CacheSyncError on failure."""
+        """Upload the pipeline's changed cache files; raises CacheSyncError on
+        failure (a file that failed is uploaded again by the next call)."""
         logger.info("Syncing pipeline '%s' to S3", pipeline_id)
         if not local_cache_dir.is_dir():
             logger.warning("Local cache directory not found: '%s'", local_cache_dir)
@@ -179,13 +190,20 @@ class S3CacheManager:
         stages: set[str] = set()
         failed_keys: list[str] = []
         total_files = 0
+        unchanged = 0
 
         try:
-            for local_path in local_cache_dir.rglob("*.json"):
+            for local_path in self._upload_order(local_cache_dir):
+                state = self._file_state(local_path)
+                if self._synced.get(local_path.resolve()) == state:
+                    unchanged += 1
+                    continue
                 total_files += 1
                 relative_path = local_path.relative_to(local_cache_dir)
                 s3_key = f"{base_prefix}/{relative_path.as_posix()}"
-                if not self._upload_file_to_s3(local_path, s3_key):
+                if self._upload_file_to_s3(local_path, s3_key):
+                    self._synced[local_path.resolve()] = state
+                else:
                     failed_keys.append(s3_key)
                 stages.add(self._stage_name(relative_path))
 
@@ -199,14 +217,40 @@ class S3CacheManager:
         self._raise_on_failures("upload", pipeline_id, failed_keys, total_files)
         if total_files > 0:
             logger.info(
-                "Upload completed: %s stages, %s files to 's3://%s/%s'",
+                "Upload completed: %s stages, %s files to 's3://%s/%s' "
+                "(%s unchanged files skipped)",
                 len(stages),
                 total_files,
                 self.bucket_name,
                 base_prefix,
+                unchanged,
+            )
+        elif unchanged:
+            logger.info(
+                "S3 copy of pipeline '%s' is current (%s files)", pipeline_id, unchanged
             )
         else:
             logger.info("No cache files found for pipeline '%s' locally", pipeline_id)
+
+    @staticmethod
+    def _upload_order(local_cache_dir: Path) -> list[Path]:
+        """The cache files, stage data first, then the cache index, then the
+        run metadata: an upload cut short never leaves S3 holding an index
+        entry or a completed stage whose data was not uploaded."""
+        metadata = PipelineStateManager.PIPELINE_METADATA_FILE
+        return sorted(
+            local_cache_dir.rglob("*.json"),
+            key=lambda path: (
+                path.parent == local_cache_dir,
+                path.name == metadata,
+                path.as_posix(),
+            ),
+        )
+
+    @staticmethod
+    def _file_state(path: Path) -> tuple[int, int]:
+        stat = path.stat()
+        return stat.st_size, stat.st_mtime_ns
 
     @staticmethod
     def _stage_name(relative_path: Path) -> str:

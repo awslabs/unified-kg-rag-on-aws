@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import secrets
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar
@@ -47,6 +48,7 @@ from unified_kg_rag.shared import (
     CacheSyncError,
     ConfigurationError,
     PipelineExecutionError,
+    PipelineInterrupted,
     PipelineResumeError,
     PipelineResumeManager,
     PipelineStateError,
@@ -81,10 +83,12 @@ class DataIngestionPipeline:
     translate, extract, glean, resolve, claims, analyze, communities, index),
     skipping those ``pipeline_config.stages_enabled`` or a config section
     (``CONFIG_ENABLED``) turns off. Each stage's output is cached under the
-    run's pipeline id in ``pipeline_config.local_directory`` (and synced to S3
-    with ``s3_sync_enabled``), so a re-run with the same pipeline id resumes
-    after the last stage whose cached output is still valid. With the doc-status registry on, only new and
-    changed documents are indexed (see ``IncrementalIndexer``).
+    run's pipeline id in ``pipeline_config.local_directory`` (and, with
+    ``s3_sync_enabled``, uploaded to S3 after every stage), so a re-run with
+    the same pipeline id resumes after the last stage whose cached output is
+    still valid. ``request_stop`` ends a run early without losing its finished
+    stages. With the doc-status registry on, only new and changed documents
+    are indexed (see ``IncrementalIndexer``).
     """
 
     # Run order; kept in PipelineStageType's declaration order (tested).
@@ -193,6 +197,14 @@ class DataIngestionPipeline:
     # stage cache key so a changed corpus is a cache miss, not a stale resume.
     corpus_fingerprint: str | None = None
 
+    # Stop handling (see request_stop): the run's pipeline id once its S3
+    # checkpoint is in place, whether a checkpoint is being written, and the
+    # signal of a stop requested meanwhile.
+    s3_cache_manager: S3CacheManager | None = None
+    _checkpoint_id: str | None = None
+    _checkpointing: bool = False
+    _stop_signal: int | None = None
+
     def __init__(
         self,
         config: Config,
@@ -294,7 +306,14 @@ class DataIngestionPipeline:
             config=self.config,
             cache_directory=self.pipeline_config.local_directory,
             strategy=cache_strategy,
-            ttl_seconds=cache_config.ttl_seconds,
+            # An S3-synced run's checkpoints never expire here: the bucket
+            # lifecycle expires them, and a 24 h TTL made a resume the next
+            # day recompute every stage S3 still held.
+            ttl_seconds=(
+                None
+                if self.pipeline_config.s3_sync_enabled
+                else cache_config.ttl_seconds
+            ),
             chunk_size=chunking_config.chunk_size,
             max_file_size_mb=chunking_config.max_file_size_mb,
             enable_chunking=chunking_config.enabled,
@@ -304,7 +323,7 @@ class DataIngestionPipeline:
         # keys the save path writes, so it needs the same config.
         self.resume_manager = PipelineResumeManager(self.state_manager, self.config)
 
-        self.s3_cache_manager: S3CacheManager | None = None
+        self.s3_cache_manager = None
         if self.pipeline_config.s3_sync_enabled:
             # Imported here: a run without S3 sync never loads the AWS SDK.
             from unified_kg_rag.adapters.aws.s3_cache import S3CacheManager
@@ -436,6 +455,7 @@ class DataIngestionPipeline:
         resume_from_stage: str | None,
     ) -> PipelineContext:
         log_context: Mapping[str, Any] = {}
+        self._stop_signal = None
         try:
             source_path = Path(source_directory).resolve()
             logger.info(
@@ -462,6 +482,7 @@ class DataIngestionPipeline:
 
             if self.pipeline_config.s3_sync_enabled:
                 self._sync_cache_with_s3(resolved_pipeline_id, "download")
+                self._checkpoint_id = resolved_pipeline_id
 
             # Part of every stage cache key, so it must be set before the
             # resume decision reads the cache.
@@ -515,7 +536,65 @@ class DataIngestionPipeline:
             logger.exception("Pipeline execution failed: %s", e)
             raise PipelineExecutionError(f"Failed to run pipeline: {e}") from e
         finally:
+            self._checkpoint_id = None
             reset_contextvars(**log_context)
+
+    def request_stop(self, signum: int) -> None:
+        """End the run: upload its checkpoint, then raise ``PipelineInterrupted``.
+
+        Meant for a signal handler in the main thread; ``run-ingestion``
+        installs one for SIGTERM, which ECS sends on StopTask and when a Step
+        Functions execution times out, before it kills the task. Every stage
+        the run finished is in the checkpoint, so a re-run with the same
+        pipeline id resumes at the stage that was running. A request made while
+        a checkpoint is being written takes effect once it is written, so the
+        stage that just finished is kept too.
+        """
+        self._stop_signal = signum
+        if not self._checkpointing:
+            self._stop()
+
+    def _stop(self) -> None:
+        signum = self._stop_signal or 0
+        logger.warning(
+            "Stop requested (signal %s): uploading the checkpoint and stopping",
+            signum,
+        )
+        # A second request during this upload must not start another one.
+        self._checkpointing = True
+        try:
+            if self._checkpoint_id is not None:
+                self._upload_checkpoint(self._checkpoint_id)
+        finally:
+            self._checkpointing = False
+        raise PipelineInterrupted(signum)
+
+    @contextmanager
+    def _checkpoint_write(self) -> Iterator[None]:
+        """Defer a requested stop until the enclosed checkpoint write is done."""
+        self._checkpointing = True
+        try:
+            yield
+        finally:
+            self._checkpointing = False
+        if self._stop_signal is not None:
+            self._stop()
+
+    def _upload_checkpoint(self, pipeline_id: str) -> None:
+        """Upload the run's checkpoint to S3 (best effort).
+
+        Files that fail are uploaded again by the next upload, and the final
+        one after the last stage fails the run, so a transient S3 error does
+        not stop the stages in between.
+        """
+        try:
+            self._sync_cache_with_s3(pipeline_id, "upload")
+        except CacheSyncError as e:
+            logger.warning(
+                "Checkpoint upload failed for '%s'; the next upload retries it: %s",
+                pipeline_id,
+                e,
+            )
 
     @classmethod
     def normalize_stage_name(cls, stage_name: str | None) -> str | None:
@@ -666,7 +745,8 @@ class DataIngestionPipeline:
         return f"pipeline-{directory_hash}-{timestamp}"
 
     def _sync_cache_with_s3(self, pipeline_id: str, direction: str) -> None:
-        """Download (before) or upload (after) the run's cache via S3.
+        """Download (before the run) or upload (after each stage) the run's
+        cache via S3.
 
         A failed or partial sync raises ``CacheSyncError``; ``run()`` turns it
         into ``PipelineExecutionError`` and the CLI exits non-zero, so a phased
@@ -938,6 +1018,11 @@ class DataIngestionPipeline:
             else:
                 logger.info("Executing stage: '%s'", stage.name)
                 result = self._execute_stage(stage, context)
+                if self.s3_cache_manager is not None:
+                    # Durable now, not only after the last stage: a task
+                    # stopped later resumes from here.
+                    with self._checkpoint_write():
+                        self._upload_checkpoint(context.pipeline_id)
 
                 if self._should_stop_pipeline(result):
                     logger.warning(
@@ -1063,11 +1148,11 @@ class DataIngestionPipeline:
 
         try:
             result = stage.execute(context)
-            self.state_manager.update_stage_result(context, result)
-
-            if result.status == PipelineStageStatus.COMPLETED:
-                self._save_stage_outputs_to_cache(context, stage.name)
-            elif result.status == PipelineStageStatus.FAILED:
+            with self._checkpoint_write():
+                self.state_manager.update_stage_result(context, result)
+                if result.status == PipelineStageStatus.COMPLETED:
+                    self._save_stage_outputs_to_cache(context, stage.name)
+            if result.status == PipelineStageStatus.FAILED:
                 logger.error("Stage '%s' failed: %s", stage.name, result.error_message)
 
             return result
@@ -1213,7 +1298,8 @@ class DataIngestionPipeline:
 
         if self.pipeline_config.s3_sync_enabled:
             try:
-                self._sync_cache_with_s3(context.pipeline_id, "upload")
+                with self._checkpoint_write():
+                    self._sync_cache_with_s3(context.pipeline_id, "upload")
             except CacheSyncError:
                 # The stages (and indexing) already ran; the failure is only the
                 # checkpoint upload. Log the summary before failing the run so

@@ -2,9 +2,12 @@
 # SPDX-License-Identifier: Apache-2.0
 import argparse
 import os
+import signal
 import sys
+import threading
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from rich.markup import escape
 from rich.panel import Panel
@@ -36,6 +39,7 @@ from unified_kg_rag.shared import (
     MetricsSink,
     NullMetricsSink,
     PipelineExecutionError,
+    PipelineInterrupted,
     get_config,
     get_logger,
     setup_logging,
@@ -482,6 +486,7 @@ class IngestionPipelineRunner:
             metrics_sink=self._build_metrics_sink(),
         )
 
+        previous_handler = self._stop_on_sigterm(self.pipeline)
         try:
             if self._handle_metadata_operations():
                 return
@@ -521,6 +526,26 @@ class IngestionPipelineRunner:
             # ingest run does not leak websockets/HTTP pools until interpreter
             # exit. Best-effort: pipeline.close() never raises.
             self.pipeline.close()
+            if previous_handler is not None:
+                signal.signal(signal.SIGTERM, previous_handler)
+
+    @staticmethod
+    def _stop_on_sigterm(pipeline: DataIngestionPipeline) -> Any:
+        """Turn SIGTERM into a checkpointed stop (``request_stop``); returns
+        the handler it replaced (``None`` off the main thread, where Python
+        cannot install one).
+
+        ECS sends SIGTERM on StopTask and when a Step Functions execution times
+        out, then kills the task once the container's stop timeout has passed.
+        In the container this process is PID 1 (the entrypoint execs it), and
+        the kernel does not deliver a signal to PID 1 that it has no handler
+        for, so without one the task ran on until it was killed.
+        """
+        if threading.current_thread() is not threading.main_thread():
+            return None
+        return signal.signal(
+            signal.SIGTERM, lambda signum, _: pipeline.request_stop(signum)
+        )
 
 
 def main() -> None:
@@ -530,6 +555,13 @@ def main() -> None:
         args = cli.parse_args()
         runner = IngestionPipelineRunner(args)
         runner.run()
+    except PipelineInterrupted as e:
+        console.print(
+            f"\n[yellow]Pipeline stopped by signal {e.signum}; its finished "
+            "stages are checkpointed, rerun with the same --pipeline-id to "
+            "resume.[/yellow]"
+        )
+        sys.exit(128 + e.signum)
     except KeyboardInterrupt:
         console.print("\n[yellow]Pipeline interrupted by user.[/yellow]")
         sys.exit(130)

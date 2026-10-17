@@ -189,3 +189,13 @@ def test_cluster_keeps_container_insights_on() -> None:
     assert cluster["Properties"]["ClusterSettings"] == [
         {"Name": "containerInsights", "Value": "enabled"}
     ]
+
+
+def test_app_container_gets_the_longest_stop_timeout() -> None:
+    # run-ingestion checkpoints and unwinds on SIGTERM; the default 30 s
+    # (StopTask, a Step Functions timeout) can cut that short.
+    (task_def,) = (
+        _compute_template().find_resources("AWS::ECS::TaskDefinition").values()
+    )
+    (container,) = task_def["Properties"]["ContainerDefinitions"]
+    assert container["StopTimeout"] == 120

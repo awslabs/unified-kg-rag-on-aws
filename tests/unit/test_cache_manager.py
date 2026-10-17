@@ -182,6 +182,22 @@ class TestExpiryAndStrategy:
         assert entry.expires_at is None
         assert mgr.cache_exists("k", PIPELINE) is True
 
+    def test_a_manager_without_ttl_ignores_a_stamped_expiry(
+        self, tmp_path: Path
+    ) -> None:
+        # An S3-synced run reads its checkpoints with no TTL (the bucket
+        # lifecycle expires them): an entry an earlier writer stamped with a
+        # 24 h expiry is still a hit when the run resumes the next day.
+        writer = _manager(tmp_path, ttl_seconds=86400)
+        writer.save_stage_result({"x": 1}, "k", STAGE, PIPELINE)
+        index = writer.load_cache_index(PIPELINE)
+        index.entries["k"].expires_at = datetime.now() - timedelta(hours=1)
+        writer._save_cache_index(index)
+
+        reader = _manager(tmp_path)  # ttl_seconds None
+        assert reader.cache_exists("k", PIPELINE) is True
+        assert reader.load_stage_result("k", PIPELINE) == {"x": 1}
+
     def test_positive_ttl_sets_future_expiry(self, tmp_path: Path) -> None:
         mgr = _manager(tmp_path, ttl_seconds=3600)
         entry = mgr.save_stage_result({"x": 1}, "k", STAGE, PIPELINE)

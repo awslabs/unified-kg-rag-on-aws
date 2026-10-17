@@ -10,6 +10,7 @@ the NEXT phase fail with a misleading "missing stage" error.
 from __future__ import annotations
 
 import logging
+import signal
 import time
 from datetime import datetime
 from pathlib import Path
@@ -25,7 +26,10 @@ from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
 from unified_kg_rag.domain.models import Config
 from unified_kg_rag.domain.models.pipeline import PipelineContext, PipelineStageStatus
 from unified_kg_rag.shared import AWSServiceError, CacheSyncError
-from unified_kg_rag.shared.exceptions import PipelineExecutionError
+from unified_kg_rag.shared.exceptions import (
+    PipelineExecutionError,
+    PipelineInterrupted,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -245,3 +249,55 @@ def test_upload_failure_after_stages_logs_summary_then_raises(
     assert "Pipeline ID: pid" in text
     # Pipeline metadata was persisted locally before the upload was attempted.
     pipe.state_manager.save_pipeline_metadata.assert_called_once_with(context)
+
+
+def test_a_failed_checkpoint_upload_between_stages_does_not_stop_the_run(
+    tmp_path, mocker, caplog
+) -> None:
+    # The next upload retries the files; only the final upload fails the run.
+    pipe = _pipeline_with_failing_sync(tmp_path, mocker)
+    with caplog.at_level(logging.WARNING):
+        pipe._upload_checkpoint("pid")
+    assert "the next upload retries it" in caplog.text
+
+
+def test_a_stop_during_a_checkpoint_write_waits_for_it(tmp_path, mocker) -> None:
+    pipe = _pipeline_with_failing_sync(tmp_path, mocker)
+    pipe.s3_cache_manager.sync_pipeline_to_s3.side_effect = None
+    pipe._checkpoint_id = "pid"
+    written: list[str] = []
+
+    with pytest.raises(PipelineInterrupted) as exc:
+        with pipe._checkpoint_write():
+            pipe.request_stop(signal.SIGTERM)  # deferred: no raise here
+            written.append("stage outputs")
+    assert written == ["stage outputs"]
+    assert exc.value.signum == signal.SIGTERM
+    # The stop uploaded the checkpoint, including what the write just saved.
+    pipe.s3_cache_manager.sync_pipeline_to_s3.assert_called_once_with("pid", tmp_path)
+    assert pipe._checkpointing is False
+
+
+def test_a_stop_outside_a_checkpoint_write_uploads_then_raises(
+    tmp_path, mocker
+) -> None:
+    # A failed upload does not keep the run from stopping.
+    pipe = _pipeline_with_failing_sync(tmp_path, mocker)
+    pipe._checkpoint_id = "pid"
+    with pytest.raises(PipelineInterrupted):
+        pipe.request_stop(signal.SIGTERM)
+    pipe.s3_cache_manager.sync_pipeline_to_s3.assert_called_once()
+    # A stop is not a stage failure that ``except Exception`` would record.
+    assert not issubclass(PipelineInterrupted, Exception)
+
+
+def test_cli_exits_128_plus_the_signal_on_a_stop(mocker) -> None:
+    from unified_kg_rag.application.cli import run_ingestion_pipeline as cli
+
+    runner = mocker.MagicMock()
+    runner.run.side_effect = PipelineInterrupted(signal.SIGTERM)
+    mocker.patch.object(cli, "CommandLineInterface")
+    mocker.patch.object(cli, "IngestionPipelineRunner", return_value=runner)
+    with pytest.raises(SystemExit) as exc:
+        cli.main()
+    assert exc.value.code == 143

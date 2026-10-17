@@ -234,7 +234,7 @@ Neptune 요청(쓰기, 삭제, 제거와 병합을 위한 읽기)은 모두 새 
 | 캐시 | 위치 | 참고 |
 |---|---|---|
 | 단계 체크포인트(로컬) | `<--cache-directory>/<pipeline_id>/` (기본값 `cache/`) | 재개할 때 재사용하며, `--force-rebuild`는 읽지 않고 다시 계산한 출력을 씁니다 |
-| 단계 체크포인트(S3) | `s3://<bucket>/<--s3-prefix>/<pipeline_id>/` (기본 접두사 `pipeline-runs`) | `--s3-sync` 사용 시. Step Functions 단계 사이의 인계에 쓰이며, 동기화가 실패하면 `CacheSyncError`로 실행이 실패합니다 |
+| 단계 체크포인트(S3) | `s3://<bucket>/<--s3-prefix>/<pipeline_id>/` (기본 접두사 `pipeline-runs`) | `--s3-sync` 사용 시. 단계가 끝날 때마다, 그리고 SIGTERM을 받으면 업로드하며 Step Functions 단계 사이의 인계에 쓰입니다. 시작 시 다운로드나 마지막 업로드가 실패하면 `CacheSyncError`로 실행이 실패합니다. `cache.ttl_seconds`가 아니라 버킷 수명 주기가 만료시킵니다 |
 | 임베딩 캐시 | `s3://<aws.s3.bucket_name>/embedding-cache/cache.json` (`indexing.opensearch.embedding_cache_s3_key`) | `indexing.opensearch.persist_embedding_cache: true`일 때만 |
 | 시각화 데이터 | `graph.visualization.outputs_directory`가 없으면 `<cache directory>/<pipeline_id>/visualization/` | 단계 캐시와 함께 동기화(`.json`만) |
 
