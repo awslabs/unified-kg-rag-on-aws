@@ -282,6 +282,8 @@ def test_resolve_graph_unions_document_filters(resolver: GraphResolver) -> None:
     assert entity.attributes == {
         "filters": {"category": ["finance", "research"]},
         "index": "a",
+        # The keys of the names it was resolved from (see derivation).
+        "entity_keys": ["acme", "acme inc"],
     }
 
 

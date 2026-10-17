@@ -155,18 +155,33 @@ def test_cross_run_merge_threads_entity_id_remap_to_relationships(manager) -> No
     assert merged_rels[0].target_id == "e_other"
 
 
-def test_cross_run_merge_of_a_same_id_entity_leaves_its_other_edges_alone(
+def test_cross_run_merge_of_a_same_id_entity_rewrites_no_unchanged_edge(
     manager,
 ) -> None:
     # A delta entity that matches its own stored id has nothing to remap, so
-    # the manager must read back only the delta's own edges. Reading every
-    # incident edge would rewrite a hub entity's whole neighbourhood on each
-    # incremental run.
+    # the merge reads back only the delta's own edges; its other edges are
+    # rewritten only when the name or rank they carry changes (here neither:
+    # the stored edge already counts the vendor's new neighbour).
     mgr, _, neptune_indexer = manager
     neptune_indexer.read_entities.return_value = [
         Entity(id="e-vendor", name="Vendor", text_unit_ids=["t1"])
     ]
-    neptune_indexer.read_relationships.return_value = []
+    other = Relationship(
+        id="r-old",
+        source_id="e-vendor",
+        source_name="Vendor",
+        target_id="e-depot",
+        target_name="Depot",
+        rank=3,
+    )
+    neptune_indexer.read_relationships.side_effect = lambda ids, suffix=None: (
+        [other] if ids == ["r-old"] else []
+    )
+    neptune_indexer.find_incident_relationship_ids.return_value = ["r-old", "r-new"]
+    neptune_indexer.read_neighbor_ids.return_value = {
+        "e-vendor": ["e-depot"],
+        "e-depot": ["e-vendor"],
+    }
     delta_rel = Relationship(
         id="r-new", source_id="e-vendor", target_id="e-bank", text_unit_ids=["t2"]
     )
@@ -175,10 +190,7 @@ def test_cross_run_merge_of_a_same_id_entity_leaves_its_other_edges_alone(
         [Entity(id="e-vendor", name="Vendor", text_unit_ids=["t2"])], [delta_rel]
     )
 
-    neptune_indexer.find_incident_relationship_ids.assert_not_called()
-    neptune_indexer.read_relationships.assert_called_once_with(
-        ["r-new"], suffix="default"
-    )
+    assert neptune_indexer.read_relationships.call_args_list[0].args == (["r-new"],)
     assert [r.id for r in result.relationships or []] == ["r-new"]
     assert result.id_remap_by_suffix == {}
 

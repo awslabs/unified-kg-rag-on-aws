@@ -510,8 +510,13 @@ def test_lineage_update_sets_fields_in_place_without_embedding(indexer, mocker) 
 
     embed.assert_not_called()
     entity_call, rel_call = client.bulk_update.call_args_list
-    assert entity_call.args == ("live-index", [{"id": "e1", "text_unit_ids": ["t1"]}])
-    assert rel_call.args[1] == [{"id": "r1", "text_unit_ids": [], "weight": 2.0}]
+    assert entity_call.args == (
+        "live-index",
+        [{"id": "e1", "text_unit_ids": ["t1"], "rank": 1}],
+    )
+    assert rel_call.args[1] == [
+        {"id": "r1", "text_unit_ids": [], "weight": 2.0, "rank": 1}
+    ]
     assert entity_stats.successful_items == rel_stats.successful_items == 1
 
 

@@ -72,6 +72,10 @@ class ExtractionStore:
             self._indexer.close()
             self._indexer = None
 
+    def key(self, unit: TextUnit, fingerprint: str) -> str:
+        """The store key of ``unit``'s record under ``fingerprint``."""
+        return record_key(fingerprint, processed_text(self.config, unit))
+
     def _keys(
         self, units: Iterable[TextUnit], fingerprint: str
     ) -> dict[str, dict[str, list[TextUnit]]]:
@@ -80,8 +84,9 @@ class ExtractionStore:
             lambda: defaultdict(list)
         )
         for unit in units:
-            key = record_key(fingerprint, processed_text(self.config, unit))
-            grouped[BaseIndexer.get_suffix(unit)][key].append(unit)
+            grouped[BaseIndexer.get_suffix(unit)][self.key(unit, fingerprint)].append(
+                unit
+            )
         return grouped
 
     def load(

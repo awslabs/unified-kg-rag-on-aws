@@ -394,7 +394,18 @@ class FakeVectorStore(_Recorder):
         return stats
 
     def update_entity_lineage(self, entities: list[Any]) -> IndexingStats:
-        return self._update("entities", entities, ("text_unit_ids",))
+        return self._update("entities", entities, ("text_unit_ids", "rank"))
+
+    def read_text_unit_attributes(
+        self, ids: list[str], suffix: str | None = None
+    ) -> dict[str, dict[str, Any]]:
+        bucket = self.data.get("text_units", {})
+        wanted = suffix or Constants.DEFAULT_SUFFIX.value
+        return {
+            i: copy.deepcopy(bucket[i].attributes or {})
+            for i in ids
+            if i in bucket and BaseIndexer.get_suffix(bucket[i]) == wanted
+        }
 
     def read_text_unit_ids(
         self, ids: list[str], suffix: str | None = None
@@ -468,7 +479,9 @@ class FakeVectorStore(_Recorder):
         return self._update("claims", claims, ("text_unit_ids",))
 
     def update_relationship_lineage(self, relationships: list[Any]) -> IndexingStats:
-        return self._update("relationships", relationships, ("text_unit_ids", "weight"))
+        return self._update(
+            "relationships", relationships, ("text_unit_ids", "weight", "rank")
+        )
 
     def delete_by_id(
         self, ids: list[str], alias_prefix: str, suffix: str

@@ -450,6 +450,15 @@ class VectorIndexer(BaseIndexer):
         :meth:`read_entity_descriptions`)."""
         return {}
 
+    def read_text_unit_attributes(
+        self, ids: list[str], suffix: str | None = None
+    ) -> dict[str, dict[str, Any]]:
+        """The stored ``attributes`` of text units by id (scoped to
+        ``suffix``; a unit not stored is absent). They name the units'
+        extraction records (``contributions.record_keys``). Default returns
+        ``{}``; adapters that override it raise when the read fails."""
+        return {}
+
     def read_extraction_records(
         self, keys: list[str], suffix: str | None = None
     ) -> dict[str, dict[str, Any]]:

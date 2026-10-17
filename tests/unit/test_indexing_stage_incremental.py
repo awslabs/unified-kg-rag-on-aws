@@ -85,10 +85,10 @@ class _RecordingManager:
             )
         }
 
-    def merge_with_existing_graph(self, entities, relationships):
+    def merge_with_existing_graph(self, entities, relationships, text_units=()):
         return CrossRunMergeResult(entities=entities, relationships=relationships)
 
-    def merge_with_stored_claims(self, claims):
+    def merge_with_stored_claims(self, claims, text_units=()):
         return claims
 
     def index_delta(self, **kwargs: Any) -> dict[str, IndexingStats]:

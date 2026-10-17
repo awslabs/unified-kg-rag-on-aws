@@ -4,9 +4,10 @@
 
 Random rounds add, modify and delete documents. After every round the graph an
 incremental run leaves behind must equal the one a full build over the current
-corpus produces: the same entities citing the same text units, and the same
-edges with the same text units and weights. Nothing the corpus no longer
-mentions may survive as an orphan.
+corpus produces: the same entities citing the same text units with the same
+names, types, descriptions and ranks, and the same edges with the same text
+units, weights, descriptions and ranks. Nothing the corpus no longer mentions
+may survive, as an orphan or as a line of a description.
 
 A document is a list of text units; a text unit lists a few synthetic entity
 names, a set of weighted edges between them, and a set of edges gleaning adds
@@ -29,6 +30,7 @@ from hypothesis import strategies as st
 
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from tests.fixtures.fakes.stores import FakeGraphStore, FakeVectorStore
+from tests.fixtures.incremental_runs import edge_state, entity_state
 from unified_kg_rag.adapters.ingestion.gleaner import GraphGleaner
 from unified_kg_rag.application.ingestion.incremental import (
     IncrementalIndexer,
@@ -36,8 +38,13 @@ from unified_kg_rag.application.ingestion.incremental import (
 )
 from unified_kg_rag.application.storage.indexing_manager import IndexingManager
 from unified_kg_rag.domain.ingestion.base_processor import BaseProcessor
-from unified_kg_rag.domain.ingestion.contributions import merge_contributions
+from unified_kg_rag.domain.ingestion.contributions import (
+    RECORD_KEYS_ATTRIBUTE,
+    merge_contributions,
+    record_payload,
+)
 from unified_kg_rag.domain.ingestion.delta_detector import detect_delta, document_doc_id
+from unified_kg_rag.domain.ingestion.graph_resolver import GraphResolver
 from unified_kg_rag.domain.ingestion.relationship_weights import (
     apply_text_unit_weights,
 )
@@ -91,7 +98,9 @@ def _document(path: str, content: Content) -> Document:
     )
 
 
-def _edge(source: str, target: str, weights: dict[str, float]) -> Relationship:
+def _edge(
+    source: str, target: str, weights: dict[str, float], description: str = ""
+) -> Relationship:
     edge = Relationship(
         id=BaseProcessor._generate_relationship_id(source, target, _TYPE),
         source_id=BaseProcessor._generate_entity_id(source),
@@ -99,24 +108,36 @@ def _edge(source: str, target: str, weights: dict[str, float]) -> Relationship:
         source_name=source,
         target_name=target,
         type=_TYPE,
+        description=description or None,
     )
     apply_text_unit_weights(edge, weights)
     return edge
 
 
 def _extract(corpus: dict[str, Content]):
-    """Text units, entities and edges a build over ``corpus`` produces.
+    """Text units, their records, and the graph a build over ``corpus``
+    produces.
 
-    Each unit's record lists its entities and its extracted edges; the
-    gleaned edges are added to the record by the gleaner's own rule, and the
-    graph is the merge of the records, as in a real build.
+    Each unit's record lists its entities (a type that depends on the unit's
+    position, so types are voted on) and its extracted edges, each with text
+    naming the unit; the gleaned edges are added to the record by the
+    gleaner's own rule, and the graph is the records merged and resolved by
+    the full build's code.
     """
     units: list[TextUnit] = []
     records: list[TextUnitExtraction] = []
     for path, content in corpus.items():
         for index, unit in enumerate(content):
             unit_id = _unit_id(path, index, unit)
-            units.append(TextUnit(id=unit_id, text="...", document_ids=[path]))
+            where = f"{path}#{index}"
+            units.append(
+                TextUnit(
+                    id=unit_id,
+                    text="...",
+                    document_ids=[path],
+                    attributes={RECORD_KEYS_ATTRIBUTE: {"graph": f"g-{unit_id}"}},
+                )
+            )
             listed, unit_edges, unit_gleaned = unit
             record = TextUnitExtraction(
                 text_unit_id=unit_id,
@@ -124,13 +145,19 @@ def _extract(corpus: dict[str, Content]):
                     Entity(
                         id=BaseProcessor._generate_entity_id(name),
                         name=name,
-                        type="ORG",
+                        type="ORG" if index % 2 == 0 else "PERSON",
+                        description=f"{name} in {where}",
                         text_unit_ids=[unit_id],
                     )
                     for name in listed
                 ],
                 relationships=[
-                    _edge(source, target, {unit_id: float(strength)})
+                    _edge(
+                        source,
+                        target,
+                        {unit_id: float(strength)},
+                        f"{source} -> {target} in {where}",
+                    )
                     for source, target, strength in unit_edges
                 ],
             )
@@ -138,35 +165,36 @@ def _extract(corpus: dict[str, Content]):
                 record,
                 [],
                 [
-                    _edge(source, target, {unit_id: float(strength)})
+                    _edge(
+                        source,
+                        target,
+                        {unit_id: float(strength)},
+                        f"gleaned {source} -> {target} in {where}",
+                    )
                     for source, target, strength in unit_gleaned
                 ],
             )
             records.append(record)
-    entities, edges = merge_contributions(records)
-    return units, entities, edges
+    resolved, _ = GraphResolver(
+        Config(), max_workers=1, use_process_pool=False
+    ).resolve_graph(*merge_contributions(records))
+    return units, records, resolved["entities"], resolved["relationships"]
 
 
 def _graph_state(graph: FakeGraphStore):
     entities = graph.read_entities(sorted(graph.ids("entities")))
     edges = graph.read_relationships(sorted(graph.ids("relationships")))
     return (
-        {e.id: frozenset(e.text_unit_ids or []) for e in entities},
-        {
-            r.id: (frozenset(r.text_unit_ids or []), round(r.weight or 0.0, 9))
-            for r in edges
-        },
+        {e.id: entity_state(e) for e in entities},
+        {r.id: edge_state(r) for r in edges},
     )
 
 
 def _expected_state(corpus: dict[str, Content]):
-    _, entities, edges = _extract(corpus)
+    _, _, entities, edges = _extract(corpus)
     return (
-        {e.id: frozenset(e.text_unit_ids or []) for e in entities},
-        {
-            r.id: (frozenset(r.text_unit_ids or []), round(r.weight or 0.0, 9))
-            for r in edges
-        },
+        {e.id: entity_state(e) for e in entities},
+        {r.id: edge_state(r) for r in edges},
     )
 
 
@@ -179,8 +207,12 @@ def _run(inc: IncrementalIndexer, corpus: dict[str, Content]) -> None:
     extracted = [d for d in documents if document_doc_id(d) in to_extract]
     if not extracted:
         return
-    units, entities, edges = _extract(
+    units, records, entities, edges = _extract(
         {d.file_path: corpus[d.file_path] for d in extracted}
+    )
+    # The extraction stages store the units' records before indexing.
+    inc.indexing_manager.opensearch_indexer.write_extraction_records(
+        {f"g-{r.text_unit_id}": record_payload(r) for r in records}
     )
     lineages = build_document_lineage(
         documents=extracted,
@@ -251,7 +283,6 @@ def test_incremental_rounds_match_a_full_build(rounds) -> None:
         assert _graph_state(graph) == _expected_state(corpus)
         expected_entities, _ = _expected_state(corpus)
         assert {
-            e.id: frozenset(e.text_unit_ids or [])
-            for e in vector.data.get("entities", {}).values()
+            e.id: entity_state(e) for e in vector.data.get("entities", {}).values()
         } == expected_entities
         assert vector.ids("relationships") == set(_expected_state(corpus)[1])

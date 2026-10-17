@@ -279,7 +279,12 @@ def test_retried_shared_strip_repairs_the_store_an_earlier_one_missed(
 
     originals = {
         name: getattr(harness.vector, name)
-        for name in ("update_entity_lineage", "update_relationship_lineage")
+        for name in (
+            "update_entity_lineage",
+            "update_relationship_lineage",
+            "upsert_entities",
+            "upsert_relationships",
+        )
     }
     for name in originals:
         setattr(harness.vector, name, broken(name))

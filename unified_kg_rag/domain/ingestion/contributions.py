@@ -112,6 +112,32 @@ def merge_relationship_contributions(
     return merged
 
 
+def merge_claim_contributions(claims: list[Claim]) -> list[Claim]:
+    """Merge claim statements by id (mutates the first of each id): their
+    descriptions, source texts, text units and filters unioned, the most
+    frequent type and status."""
+
+    def union(current: list[str] | None, new: list[str] | None) -> list[str]:
+        return list(dict.fromkeys((current or []) + (new or [])))
+
+    field_mergers: dict[str, Callable[[Any, Any], Any]] = {
+        "description": _merge_description,
+        "source_text": _merge_description,
+        "text_unit_ids": union,
+        "attributes": union_document_filters,
+    }
+    return BaseProcessor._merge_items(
+        items=claims,
+        item_name="Claim",
+        field_mergers=field_mergers,
+        frequency_fields=["type", "status"],
+        log_message_formatter=lambda c: (
+            f"Claim '{c.subject_name}' -> '{c.object_name}' "
+            f"(type: '{c.type}') merged {{count}} instances"
+        ),
+    )
+
+
 def merge_contributions(
     records: Iterable[TextUnitExtraction],
 ) -> tuple[list[Entity], list[Relationship]]:
@@ -119,9 +145,13 @@ def merge_contributions(
 
     Inputs are not mutated. Every relationship endpoint becomes an entity
     citing the relationship's text units (a stub when no unit lists it, see
-    ``cite_relationship_endpoints``).
+    ``cite_relationship_endpoints``). The records are merged in text-unit id
+    order, so where a merge keeps the first statement (the display spelling
+    of a name, a type tie) the result does not depend on which records were
+    extracted together: an incremental run that merges a subset of them
+    makes the same choice.
     """
-    records = list(records)
+    records = sorted(records, key=lambda record: record.text_unit_id)
     entities = merge_entity_contributions(
         [e.model_copy(deep=True) for r in records for e in r.entities]
     )
@@ -136,6 +166,28 @@ def unit_entities(record: TextUnitExtraction) -> list[Entity]:
     """The entities citing the record's unit: its own and its endpoints'."""
     entities, _ = cite_relationship_endpoints(record.entities, record.relationships)
     return entities
+
+
+# Text-unit attribute naming the extraction-store keys of the unit's records:
+# {"graph": key, "claims": key}. Written with the text unit, so a later run
+# finds the records of a stored unit by its id.
+RECORD_KEYS_ATTRIBUTE = "extraction_records"
+
+
+def record_keys(unit: TextUnit) -> dict[str, str]:
+    """The unit's extraction-store keys by record kind ("graph", "claims")."""
+    keys = (unit.attributes or {}).get(RECORD_KEYS_ATTRIBUTE)
+    if not isinstance(keys, dict):
+        return {}
+    return {kind: key for kind, key in keys.items() if isinstance(key, str)}
+
+
+def set_record_key(unit: TextUnit, kind: str, key: str) -> None:
+    """Record the extraction-store ``key`` of the unit's ``kind`` record."""
+    unit.attributes = {
+        **(unit.attributes or {}),
+        RECORD_KEYS_ATTRIBUTE: {**record_keys(unit), kind: key},
+    }
 
 
 def text_hash(text: str) -> str:

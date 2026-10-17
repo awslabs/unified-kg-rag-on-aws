@@ -257,9 +257,10 @@ def test_failed_read_back_fails_the_commit_before_any_write(mocker) -> None:
     assert store.get("doc-b") is None
 
 
-def test_a_remapped_entity_rewrites_only_the_edges_the_delta_touches() -> None:
+def test_a_remapped_entity_rewrites_its_edges_only_for_its_new_rank() -> None:
     # "Acme Inc" merges into the stored hub "Acme": its incident edges are
-    # read to find a match, but only the delta's edge (new here) is written.
+    # read to find a match; the delta's edge (new here) is written, and the
+    # hub's stored edges only for the rank its new edge gives them.
     incremental, graph, _ = _harness(cross_run_merge=True)
     spokes = [f"e-{i}" for i in range(3)]
     incremental.commit(
@@ -282,11 +283,12 @@ def test_a_remapped_entity_rewrites_only_the_edges_the_delta_touches() -> None:
         [Relationship(id="r-bank", source_id="e-new", target_id="e-bank", type="PAYS")],
     )
 
-    (edge,) = merged.relationships or []
+    edge, *spoke_edges = merged.relationships or []
     assert (edge.id, edge.source_id) == ("r-bank", "e-hub")
-    # The hub's rank still counts its stored edges.
+    # The hub's rank still counts its stored edges, whose own rank follows.
     ranks = {e.id: e.rank for e in merged.entities or []}
     assert ranks == {"e-hub": 4, "e-bank": 1}
+    assert {(r.id, r.rank) for r in spoke_edges} == {(f"r-{s}", 5) for s in spokes}
     assert graph.ids("relationships") == {f"r-{s}" for s in spokes}
 
 

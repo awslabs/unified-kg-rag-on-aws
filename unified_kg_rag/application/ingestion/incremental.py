@@ -783,9 +783,9 @@ class IncrementalIndexer:
 
         Artifacts the documents share with survivors are kept, but the text
         units being removed are stripped from them and their weight
-        recomputed, so they no longer cite chunks that no longer exist. Their
-        descriptions keep the removed documents' contribution: re-deriving a
-        description needs an LLM call (a full rebuild does it).
+        recomputed, so they no longer cite chunks that no longer exist, and
+        their content is derived again from the text units left
+        (``IndexingManager.remove_text_units_from_shared``).
         """
         if not doc_ids:
             return True
@@ -864,14 +864,16 @@ class IncrementalIndexer:
         of the same id, which other documents may have contributed to.
         """
         merged = self.indexing_manager.merge_with_existing_graph(
-            entities, relationships
+            entities, relationships, text_units or ()
         )
         entities, relationships = merged.entities, merged.relationships
         communities, claims, claim_id_remap = _remap_references(
             communities, claims, merged.id_remap_by_suffix
         )
         self.community_drift = self._measure_drift(entities, communities)
-        claims = self.indexing_manager.merge_with_stored_claims(claims)
+        claims = self.indexing_manager.merge_with_stored_claims(
+            claims, text_units or ()
+        )
         lineages = [
             _remap_lineage(
                 lineage,

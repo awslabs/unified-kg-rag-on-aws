@@ -1560,7 +1560,10 @@ source text and text units, read back from the OpenSearch claims index (a claim
 indexed before claims stored their text units starts from this run's).
 When a document changes or is deleted, entities, relationships and claims it shares
 with other documents lose its chunks from `text_unit_ids` (weight
-follows), but keep the description it contributed until a full rebuild.
+follows), and their name, type, description, rank and claim text are derived
+again from the chunks left, so what the document contributed goes with it
+(an entity keeps the id of the name it was first indexed under until a full
+rebuild).
 If reading the stored items back fails, nothing is overwritten: a failed read
 during the merge fails the indexing stage before any write (the documents stay
 unrecorded and are retried), and a failed read while removing a document's
@@ -2289,10 +2292,11 @@ graph_indexer_factory=..., retriever_builders=...)`). Without a bundle,
   `indexing.opensearch.build_relationship_vector_index: false`, `mix` and
   `hybrid` lose high-level keyword retrieval and `local` its relationship
   section.
-- **Incremental indexing approximations** (§5). A shared entity or
-  relationship keeps the description a changed or deleted document
-  contributed, and delta runs append communities instead of re-clustering the
-  whole graph; only a full rebuild (`indexing.reset: true`) refreshes both.
+- **Incremental indexing approximations** (§5). Delta runs append
+  communities instead of re-clustering the whole graph, and an entity keeps
+  the id of the name it was first indexed under; only a full rebuild
+  (`indexing.reset: true`) refreshes both. Descriptions, names, types, ranks
+  and claims follow the current corpus.
   Each run scans the whole doc-status table, and with the DynamoDB registry
   one document's artifact ids must fit one 400 KB item.
 - **Concurrent runs are not supported.** Do not run two ingestions at once

@@ -84,7 +84,8 @@ too) after changing anything that is baked into the stored data:
 - the embedding model or `indexing.opensearch.embedding_dimension`;
 - `processing.translation.source_language` or the language analyzers (they
   change the text-unit mapping);
-- to refresh descriptions and communities that incremental runs keep (see
+- to refresh the communities incremental runs append to, and to give
+  entities the ids of their current names (see
   [Incremental runs](#incremental-runs));
 - the extraction settings (prompts, `entity_types`, extraction or chunking
   models, chunk sizes...) when the registry holds records written before
@@ -134,10 +135,11 @@ artifacts are removed. Therefore:
 Upgrading a registry written by a pre-release build: see
 [CHANGELOG: Upgrading from pre-release builds](../CHANGELOG.md#upgrading-from-pre-release-builds).
 
-What incremental runs do not refresh: a shared entity or relationship keeps
-the description text a changed or deleted document contributed, and delta
-runs append communities rather than re-clustering. A periodic full rebuild
-(`indexing.reset: true`) refreshes both. Details: [User Guide §5](./user-guide.md#5-incremental-indexing).
+What incremental runs do not refresh: delta runs append communities rather
+than re-clustering, and an entity keeps the id of the name it was first
+indexed under. A periodic full rebuild (`indexing.reset: true`) refreshes
+both. Shared descriptions, names, types, ranks and claims are derived from
+the current documents on every run. Details: [User Guide §5](./user-guide.md#5-incremental-indexing).
 
 Community drift tells you when that rebuild is due. Every entity records the
 level-0 communities it belongs to, so a delta run's indexing stage reports,
