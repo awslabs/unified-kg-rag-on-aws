@@ -25,11 +25,9 @@
 
 ## 아키텍처
 
-![수집 파이프라인](./assets/ingestion-pipeline.drawio.png)
+![아키텍처 한눈에 보기](./assets/architecture-overview.drawio.png)
 
 수집은 중단 후 재개할 수 있는 12단계 파이프라인입니다. 파싱, 로딩, 청킹, (선택) 번역, LLM 기반 엔티티·관계 추출, (선택) 추가 추출(gleaning), 중복 해소, (선택) 주장 추출, 그래프 지표 계산, Leiden 커뮤니티 탐지와 LLM 커뮤니티 리포트 작성을 거쳐 검색·그래프 저장소에 인덱싱합니다(AWS에서는 OpenSearch와 Neptune, 로컬 모드에서는 내장 SQLite 또는 컨테이너). 단계별 체크포인트는 로컬에 캐시되며 S3와 동기화할 수 있습니다.
-
-![검색 파이프라인](./assets/retrieval-pipeline.drawio.png)
 
 모든 전략은 같은 하이브리드 스코어러와 토큰 예산을 거칩니다. CLI에서는 `--search-strategy`, Python에서는 `RAGInput.search_strategy`로 전략을 고릅니다.
 
@@ -44,7 +42,7 @@
 | `hybrid` | LightRAG | 키워드 중심의 그래프 질문. 청크 검색은 더하지 않습니다 |
 | `naive` | LightRAG | 빠른 벡터 전용 기준선과 비교 실험 |
 
-전략별 동작은 [사용자 가이드 §4](./docs/user-guide.ko.md#4-질의-run-rag)를, 레이어 구조·알고리즘·데이터 모델은 [설계 문서](./docs/design.ko.md)를 참고하세요.
+전략별 동작은 [사용자 가이드 §4](./docs/user-guide.ko.md#4-질의-run-rag)를, 레이어 구조·알고리즘·데이터 모델과 [수집](./docs/design.ko.md#4-수집-파이프라인)·[증분 인덱싱](./docs/design.ko.md#5-증분-인덱싱)·[검색](./docs/design.ko.md#6-검색-두-방법론) 상세 다이어그램은 [설계 문서](./docs/design.ko.md)를 참고하세요.
 
 ## 빠른 시작
 

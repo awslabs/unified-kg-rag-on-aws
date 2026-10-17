@@ -194,31 +194,7 @@ its application logs.
 
 ## Deployment topology
 
-```mermaid
-flowchart LR
-    operator["Operator"] -->|start-execution| sfn["Step Functions<br/>Ingest"]
-    operator -->|run-task| task
-    sfn -->|RunTask| task
-    subgraph vpc["VPC (max_azs AZs)"]
-        subgraph app["app subnets: isolated (private) or NAT egress (public)"]
-            task["ECS Fargate task<br/>container app"]
-            neptune[("Neptune cluster<br/>IAM auth, port 8182")]
-            opensearch[("OpenSearch domain<br/>HTTPS 443")]
-        end
-        iface["Interface endpoints, private mode only<br/>bedrock, bedrock-runtime, bedrock-agent-runtime,<br/>ecr.api, ecr.dkr, logs, sts"]
-        gateway["Gateway endpoints<br/>S3, DynamoDB"]
-    end
-    task --> neptune
-    task --> opensearch
-    task --> iface
-    task --> gateway
-    iface --> bedrock["Amazon Bedrock<br/>models, rerank, guardrail"]
-    iface --> ecr[("ECR repository")]
-    iface --> logs["CloudWatch Logs"]
-    gateway --> s3[("S3 cache bucket")]
-    gateway --> ddb[("DynamoDB doc-status table")]
-    logs --> alarms["Dashboard and alarms"] --> sns["SNS alarm topic"]
-```
+![AWS deployment](../assets/aws-deployment.drawio.png)
 
 - One VPC holds the data plane. The Fargate task, the Neptune cluster and the
   OpenSearch domain run in the `app` subnets and share one security group that

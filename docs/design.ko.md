@@ -36,6 +36,8 @@
 - **헥사고날 경계**: 도메인과 알고리즘 코드는 추상 포트에 의존하고, 구체적인 AWS 어댑터는 그 뒤에 둡니다.
 - **레지스트리 기반 확장**: 검색 전략과 렌더러는 데코레이터 레지스트리로 등록하므로 디스패치 코드를 고치지 않고 확장할 수 있습니다. 평가기는 메서드 하나(`EvaluationManager._resolve_evaluator_class`)에서 `EvaluatorType`별 클래스로 연결하므로, 새 평가기는 그곳에 분기 하나를 추가합니다.
 
+![아키텍처 한눈에 보기](../assets/architecture-overview.drawio.png)
+
 ---
 
 ## 2. 헥사고날 아키텍처 (포트와 어댑터)
@@ -46,11 +48,11 @@ import는 **안쪽을 향합니다**(왼쪽이 오른쪽을 import하며 반대 
 
 ```mermaid
 flowchart TB
-    application["<b>application/</b> - orchestration and entry points<br/>cli (run-*) · DataIngestionPipeline + stages · IndexingManager · GraphRAGChain"]
-    adapters["<b>adapters/</b> - technology bindings<br/>vendor: aws (Bedrock, Neptune, OpenSearch, S3) · local (Ollama/OpenAI-compatible, SQLite stores)<br/>role: storage · retrievers · doc_status · guardrail · search_strategies (GraphRAG + LightRAG) · retrieval · ingestion · renderers · evaluators"]
-    ports["<b>ports/</b> - abstract interfaces<br/>DocStatusPort · model factory and TokenCounter ports · BaseIndexer / GraphIndexer / VectorIndexer"]
-    domain["<b>domain/</b> - technology-agnostic core<br/>models · ingestion (delta, merge, resolve, analyze) · retrieval (strategy_registry) · prompts"]
-    shared["<b>shared/</b> - cross-cutting kernel<br/>config · logging · exceptions · metrics · cache and pipeline managers · utils"]
+    application["<b>application/</b><br/>CLIs, ingestion pipeline, indexing manager, RAG chain"]
+    adapters["<b>adapters/</b><br/>AWS and local bindings, search strategies, retrievers"]
+    ports["<b>ports/</b><br/>abstract interfaces"]
+    domain["<b>domain/</b><br/>models, pure algorithms, prompts"]
+    shared["<b>shared/</b><br/>config, logging, exceptions, utils"]
     application --> adapters --> ports --> domain
     application -.-> shared
     adapters -.-> shared
@@ -254,27 +256,7 @@ class LocalSearchStrategy(BaseSearchStrategy): ...
 
 문서를 추가, 변경, 삭제하면 전체를 다시 인덱싱하지 않고 델타만 처리합니다.
 
-```mermaid
-flowchart LR
-    corpus["Corpus: doc_id + content hash"] --> diff["detect_delta / DocStatusPort.diff (run scope only)"]
-    registry[("Doc-status registry (DynamoDB)")] -.-> diff
-    diff --> unchanged["unchanged: skipped"]
-    diff --> work["new, changed or FAILED: stages 3-11 on these documents"]
-    diff --> deleted["deleted"]
-    subgraph indexing["indexing stage"]
-        wal["write_ahead: new + changed docs PENDING, stored + planned text units"]
-        remove["remove_changed_and_deleted: the stores are asked what cites the removed text units; items citing only them deleted, shared ones stripped, then deleted docs' registry rows"]
-        commit["commit: merge_with_existing_graph, then index_delta upserts"]
-        record["record: PENDING replaced by DocStatusRecord (text units), PROCESSED or FAILED; unused extraction records collected"]
-        wal --> remove --> commit --> record
-    end
-    work --> wal
-    deleted --> remove
-    wal -.-> registry
-    remove --> stores[("Neptune + OpenSearch")]
-    commit --> stores
-    record -.-> registry
-```
+![증분 인덱싱](../assets/incremental-indexing.drawio.png)
 
 따로 표시하지 않은 이름은 `IncrementalIndexer` 메서드(`application/ingestion/incremental.py`)입니다. `FAILED`로 기록된 문서는 `indexing.max_document_failures`에 이를 때까지 다음 실행에서 changed로 분류됩니다. 최종 레지스트리 레코드는 델타 쓰기가 인덱싱 실패 기준을 통과할 때만 기록하며, 그 전까지 델타의 문서는 `PENDING` 선기록 레코드(2단계)를 유지합니다.
 
@@ -318,7 +300,9 @@ flowchart LR
 
 `application/retrieval/rag_chain.py`의 `GraphRAGChain`(LCEL Runnable)이 메모리(대화 이력이 있는 후속 질문을 독립된 질문으로 다시 씀, `QueryRewritePrompt`) → 전략 결정 → 질의 처리(번역, 엔티티·키워드 추출) → 검색 → (RAG) 컨텍스트 구성과 답변 생성을 수행합니다. 라우팅, 검색, 답변 모두 다시 쓴 질문을 사용합니다. 방법론은 `RAGInput.search_strategy`로 고릅니다.
 
-![검색 파이프라인](../assets/retrieval-pipeline.drawio.png)
+![검색 체인](../assets/retrieval-pipeline.drawio.png)
+
+![검색 전략](../assets/retrieval-strategies.drawio.png)
 
 `ChainMode`가 체인이 끝나는 지점을 정합니다. `SEARCH`는 답변 없이 융합·정렬한 검색 결과를 돌려주고, `RAG`(기본값)는 결과를 토큰 예산(`TokenManager`, §7)에 맞춰 담은 뒤 답변을 생성해 `RAGOutput`을 돌려줍니다. 이때 출처는 답변 모델이 실제로 본 섹션과 정확히 일치합니다. 예산을 적용한 컨텍스트가 비어 있으면 LLM을 호출하지 않고 답할 수 없다고 응답합니다.
 

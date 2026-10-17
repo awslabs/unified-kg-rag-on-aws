@@ -34,6 +34,8 @@ This document is a **design reference for contributors and advanced users**, cov
 - **Hexagonal boundaries**: Domain/algorithm code depends on abstract ports, with concrete AWS adapters placed behind them.
 - **Registry-based extension**: Search strategies and renderers are registered via decorator registries, so they can be extended without modifying dispatch code. Evaluators are mapped from `EvaluatorType` in one method (`EvaluationManager._resolve_evaluator_class`), so a new evaluator adds one branch there.
 
+![Architecture at a glance](../assets/architecture-overview.drawio.png)
+
 ---
 
 ## 2. Hexagonal Architecture (Ports & Adapters)
@@ -44,11 +46,11 @@ Imports point **inward** (left imports right, never the reverse). `shared/` is a
 
 ```mermaid
 flowchart TB
-    application["<b>application/</b> - orchestration and entry points<br/>cli (run-*) · DataIngestionPipeline + stages · IndexingManager · GraphRAGChain"]
-    adapters["<b>adapters/</b> - technology bindings<br/>vendor: aws (Bedrock, Neptune, OpenSearch, S3) · local (Ollama/OpenAI-compatible, SQLite stores)<br/>role: storage · retrievers · doc_status · guardrail · search_strategies (GraphRAG + LightRAG) · retrieval · ingestion · renderers · evaluators"]
-    ports["<b>ports/</b> - abstract interfaces<br/>DocStatusPort · model factory and TokenCounter ports · BaseIndexer / GraphIndexer / VectorIndexer"]
-    domain["<b>domain/</b> - technology-agnostic core<br/>models · ingestion (delta, merge, resolve, analyze) · retrieval (strategy_registry) · prompts"]
-    shared["<b>shared/</b> - cross-cutting kernel<br/>config · logging · exceptions · metrics · cache and pipeline managers · utils"]
+    application["<b>application/</b><br/>CLIs, ingestion pipeline, indexing manager, RAG chain"]
+    adapters["<b>adapters/</b><br/>AWS and local bindings, search strategies, retrievers"]
+    ports["<b>ports/</b><br/>abstract interfaces"]
+    domain["<b>domain/</b><br/>models, pure algorithms, prompts"]
+    shared["<b>shared/</b><br/>config, logging, exceptions, utils"]
     application --> adapters --> ports --> domain
     application -.-> shared
     adapters -.-> shared
@@ -257,27 +259,7 @@ The `DataIngestionPipeline` in `application/ingestion/pipeline.py` runs 12 stage
 
 When documents are added/changed/deleted, only the delta is processed instead of a full re-index.
 
-```mermaid
-flowchart LR
-    corpus["Corpus: doc_id + content hash"] --> diff["detect_delta / DocStatusPort.diff (run scope only)"]
-    registry[("Doc-status registry (DynamoDB)")] -.-> diff
-    diff --> unchanged["unchanged: skipped"]
-    diff --> work["new, changed or FAILED: stages 3-11 on these documents"]
-    diff --> deleted["deleted"]
-    subgraph indexing["indexing stage"]
-        wal["write_ahead: new + changed docs PENDING, stored + planned text units"]
-        remove["remove_changed_and_deleted: the stores are asked what cites the removed text units; items citing only them deleted, shared ones stripped, then deleted docs' registry rows"]
-        commit["commit: merge_with_existing_graph, then index_delta upserts"]
-        record["record: PENDING replaced by DocStatusRecord (text units), PROCESSED or FAILED; unused extraction records collected"]
-        wal --> remove --> commit --> record
-    end
-    work --> wal
-    deleted --> remove
-    wal -.-> registry
-    remove --> stores[("Neptune + OpenSearch")]
-    commit --> stores
-    record -.-> registry
-```
+![Incremental indexing](../assets/incremental-indexing.drawio.png)
 
 The names are `IncrementalIndexer` methods (`application/ingestion/incremental.py`) unless noted. A document recorded `FAILED` is classified as changed on the next run until it reaches `indexing.max_document_failures`; final registry records are written only when the delta's writes pass the indexing failure gate, and until then the delta's documents keep their `PENDING` write-ahead records (step 2).
 
@@ -321,7 +303,9 @@ Enable with: `config.aws.dynamodb.enabled = true`.
 
 The `GraphRAGChain` (an LCEL Runnable) in `application/retrieval/rag_chain.py` performs memory (a follow-up with conversation history is rewritten as a standalone question, `QueryRewritePrompt`) → strategy resolution → query processing (translation, entity/keyword extraction) → retrieval → (RAG) context build + answer generation. Routing, retrieval and the answer all read the standalone question. The methodology is selected via `RAGInput.search_strategy`.
 
-![Retrieval pipeline](../assets/retrieval-pipeline.drawio.png)
+![Retrieval chain](../assets/retrieval-pipeline.drawio.png)
+
+![Search strategies](../assets/retrieval-strategies.drawio.png)
 
 `ChainMode` decides where the chain stops: `SEARCH` returns the fused, ranked retrieval results without an answer; `RAG` (the default) packs them into the token budget (`TokenManager`, §7), generates the answer, and returns a `RAGOutput` whose sources are exactly the sections the answer model saw. When the budgeted context is empty, the chain answers that it cannot answer without calling the LLM.
 

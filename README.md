@@ -25,11 +25,9 @@ Read the [AWS Open Source Blog introduction](https://aws.amazon.com/blogs/openso
 
 ## Architecture
 
-![Data ingestion pipeline](./assets/ingestion-pipeline.drawio.png)
+![Architecture at a glance](./assets/architecture-overview.drawio.png)
 
 Ingestion is a resumable 12-stage pipeline: parse, load, chunk, optionally translate, extract entities and relationships with an LLM, optionally glean, resolve duplicates, optionally extract claims, compute graph metrics, detect Leiden communities with LLM-written reports, and index into the search and graph stores (OpenSearch and Neptune on AWS; embedded SQLite or containers in local mode). Stage checkpoints are cached locally and can be synced to S3.
-
-![Retrieval pipeline](./assets/retrieval-pipeline.drawio.png)
 
 Every strategy runs through the same hybrid scorer and token budget. Pick one with `--search-strategy` (CLI) or `RAGInput.search_strategy` (Python):
 
@@ -44,7 +42,7 @@ Every strategy runs through the same hybrid scorer and token budget. Pick one wi
 | `hybrid` | LightRAG | Keyword-driven graph questions, without the extra chunk retrieval |
 | `naive` | LightRAG | A fast vector-only baseline and comparison runs |
 
-See the [User Guide §4](./docs/user-guide.md#4-querying-run-rag) for per-strategy behavior and the [Design Doc](./docs/design.md) for the layer map, algorithms, and data model.
+See the [User Guide §4](./docs/user-guide.md#4-querying-run-rag) for per-strategy behavior and the [Design Doc](./docs/design.md) for the layer map, algorithms, data model and the detailed [ingestion](./docs/design.md#4-ingestion-pipeline), [incremental](./docs/design.md#5-incremental-indexing) and [retrieval](./docs/design.md#6-retrieval-two-methodologies) diagrams.
 
 ## Quickstart
 
