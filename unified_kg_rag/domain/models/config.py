@@ -1363,6 +1363,18 @@ class CommunityDetectionConfig(BaseModel):
         ge=0,
         description="Additional optimization iterations after convergence",
     )
+    max_cluster_size: int = Field(
+        default=20,
+        ge=2,
+        description="Maximum entities per level-0 (leaf) community. A larger "
+        "Leiden community is re-partitioned on its own subgraph, recursively, "
+        "until every piece fits or Leiden finds no finer split; coarser levels "
+        "regroup the pieces. Without the bound, modularity's resolution limit "
+        "grows leaves with the corpus beyond what one report's "
+        "max_report_context_tokens can describe. MS GraphRAG's default is 10 "
+        "with a larger report budget; 20 typically keeps a leaf's entities and "
+        "relationships within the default 4000-token report context.",
+    )
     min_community_size: int = Field(
         default=3,
         ge=1,
@@ -1395,6 +1407,15 @@ class CommunityDetectionConfig(BaseModel):
         default_factory=ReportGenerationConfig,
         description="Community report generation configuration",
     )
+
+    @model_validator(mode="after")
+    def _check_cluster_size_bounds(self) -> "CommunityDetectionConfig":
+        if self.min_community_size > self.max_cluster_size:
+            raise ValueError(
+                f"min_community_size ({self.min_community_size}) must not exceed "
+                f"max_cluster_size ({self.max_cluster_size})"
+            )
+        return self
 
 
 def _coerce_visualization_embeddings(value: dict[str, Any]) -> dict[str, Any]:

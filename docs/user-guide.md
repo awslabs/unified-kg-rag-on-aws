@@ -628,7 +628,8 @@ LLM stages are Bedrock-I/O-bound, so concurrency can far exceed the CPU count.
 | `graph.community_detection.auto_resolution` | `false` | `true` sweeps `auto_resolution_candidates` at every level and keeps the most modular resolution; otherwise `resolution` (`1.0`) is used. |
 | `graph.community_detection.auto_resolution_max_nodes` | `10000` | Above this node count the sweep is skipped and `resolution` is used. |
 | `graph.community_detection.max_levels` | `5` | Maximum community hierarchy depth. |
-| `graph.community_detection.min_community_size` | `3` | Smaller level-0 communities (in entities) merge into the neighbour they share the most edge weight with. |
+| `graph.community_detection.max_cluster_size` | `20` | Maximum entities per level-0 community; a larger one is partitioned again on its own subgraph until it fits (or cannot be split). Lower gives more, smaller leaves and more report calls. |
+| `graph.community_detection.min_community_size` | `3` | Smaller level-0 communities (in entities) merge into the neighbour they share the most edge weight with, unless that would exceed `max_cluster_size`. |
 | `graph.community_detection.report_generation.max_report_context_tokens` | `4000` | Token budget for the entity/relationship context in one report prompt. |
 | `graph.community_detection.report_generation.content_length` | `"medium"` | Report length as findings per report: `short` (5-7), `medium` (7-10), `long` (10-15). |
 | `graph.analysis.centrality.calculate_betweenness` | `true` | Betweenness centrality in the visualization (ingestion computes no centrality). On graphs larger than `betweenness_auto_sample_threshold` (`2000`) nodes it is sampled instead of computed exactly. |

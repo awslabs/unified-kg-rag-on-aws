@@ -397,6 +397,18 @@ Library API (Python callers and custom backends).
   fused order. Reported by @vibhupb (#83) (#284).
 
 ### Changed
+- Level-0 communities are bounded by the new
+  `graph.community_detection.max_cluster_size` (default 20): a larger Leiden
+  community is partitioned again on its own subgraph until it fits, and the
+  coarser levels regroup the pieces. One modularity pass grew leaves with the
+  corpus (680 entities at 50,000 on a synthetic graph, where a report sees
+  at most 50), so most entities never reached a leaf report. On that graph
+  the hierarchy goes from 797 to 7,580 communities (more report calls) and
+  from 3 to 4 levels; every leaf has at most 20 entities. The community
+  stage cache re-keys by itself; re-index once with `indexing.reset: true`
+  to replace an existing index's communities (incremental runs cluster only
+  their delta). Set a large `max_cluster_size` to keep the previous
+  partition (#314).
 - OpenSearch indexing keeps 16 embedding requests in flight (was 8), so it
   embeds and bulk-writes 800 items of a type at a time (was 400). In the
   real-AWS E2E 1,600 texts took 9.4 s instead of 18.8 s, with no Bedrock

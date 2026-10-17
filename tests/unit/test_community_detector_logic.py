@@ -15,10 +15,12 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import random
 from typing import Any
 
 import networkx as nx
 import pytest
+from pydantic import ValidationError
 
 from unified_kg_rag.adapters.ingestion.community_detector import (
     CommunityDetector,
@@ -34,6 +36,7 @@ from unified_kg_rag.domain.models import (
     HierarchicalCommunity,
     Relationship,
 )
+from unified_kg_rag.domain.models.config import CommunityDetectionConfig
 from unified_kg_rag.domain.prompts import CommunityReportPrompt
 from unified_kg_rag.shared import GraphError
 
@@ -164,6 +167,84 @@ class TestMergeSmallCommunities:
             0: {"a1", "a2", "a3"},
             1: {"b1", "b2", "b3", "s1", "s2"},
         }
+
+    def test_merge_does_not_exceed_max_size(self) -> None:
+        # {z} would join the clique, but that would make 6 > max_size 5: it
+        # stays small instead of undoing the max_cluster_size split.
+        cd = _detector()
+        g = nx.complete_graph(["a", "b", "c", "d", "e"])
+        g.add_edge("z", "a")
+        communities = {0: {"a", "b", "c", "d", "e"}, 1: {"z"}}
+        merged = cd._merge_small_communities(communities, g, min_size=2, max_size=5)
+        assert merged == {0: {"a", "b", "c", "d", "e"}, 1: {"z"}}
+
+
+def _ring_of_cliques(shuffle_seed: int | None = None) -> nx.Graph:
+    """40 four-cliques in a ring: one modularity pass merges neighbouring
+    cliques into 8- and 12-node communities (the resolution limit)."""
+    ring = nx.relabel_nodes(nx.ring_of_cliques(40, 4), lambda x: f"n{x:03d}")
+    if shuffle_seed is None:
+        return ring
+    rng = random.Random(shuffle_seed)
+    nodes, edges = list(ring.nodes), list(ring.edges)
+    rng.shuffle(nodes)
+    rng.shuffle(edges)
+    shuffled = nx.Graph()
+    shuffled.add_nodes_from(nodes)
+    shuffled.add_edges_from(edges)
+    return shuffled
+
+
+class TestMaxClusterSize:
+    """Level-0 communities are bounded by max_cluster_size (recursive split)."""
+
+    @staticmethod
+    def _run(graph: nx.Graph, max_cluster_size: int) -> CommunityDetector:
+        cd = _detector(auto_resolution=False, min_community_size=3)
+        cd.community_detection_config.max_cluster_size = max_cluster_size
+        return cd(graph)
+
+    def test_oversized_leaves_are_split_and_regrouped_above(self) -> None:
+        unbounded = self._run(_ring_of_cliques(), 1000)
+        assert max(len(c.nodes) for c in unbounded.all_communities.values()) > 4
+
+        cd = self._run(_ring_of_cliques(), 4)
+        leaves = [c for c in cd.all_communities.values() if c.level == 0]
+        # Every leaf is exactly one clique.
+        assert len(leaves) == 40
+        assert all(len(c.nodes) == 4 for c in leaves)
+        # The pieces are regrouped one level up, and every parent is the
+        # union of its children with content-derived ids.
+        parents = [c for c in cd.all_communities.values() if c.children_ids]
+        assert parents and min(c.level for c in parents) == 1
+        for community in cd.all_communities.values():
+            assert community.community_id == community_content_id(
+                community.level, community.nodes
+            )
+            if community.children_ids:
+                children = [cd.all_communities[i] for i in community.children_ids]
+                assert set().union(*(c.nodes for c in children)) == community.nodes
+                assert all(c.parent_id == community.community_id for c in children)
+
+    def test_split_ignores_insertion_order(self) -> None:
+        ids = [
+            sorted(self._run(_ring_of_cliques(seed), 4).all_communities)
+            for seed in (None, 1, 2)
+        ]
+        assert ids[0] == ids[1] == ids[2]
+
+    def test_an_unsplittable_community_is_kept_whole(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        clique = nx.complete_graph([f"n{i}" for i in range(8)])
+        with caplog.at_level(logging.INFO):
+            cd = self._run(clique, 4)
+        assert [c.nodes for c in cd.all_communities.values()] == [set(clique.nodes)]
+        assert "no finer partition" in caplog.text
+
+    def test_min_size_above_max_size_is_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="must not exceed"):
+            CommunityDetectionConfig(min_community_size=5, max_cluster_size=4)
 
 
 class TestBasePartition:

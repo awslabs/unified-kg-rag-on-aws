@@ -388,9 +388,37 @@ class CommunityDetector:
         else:
             resolution = config.resolution
 
+        communities = self._leiden_communities(target_graph, resolution)
+
+        # Only entity communities are bounded by max_cluster_size and held to
+        # min_community_size. A node of a coarser cluster graph is a whole
+        # community, so splitting or merging there would undo the level below.
+        if graph is None:
+            communities = self._split_large_communities(
+                communities, target_graph, resolution, config.max_cluster_size
+            )
+            if config.min_community_size > 1:
+                communities = self._merge_small_communities(
+                    communities,
+                    target_graph,
+                    config.min_community_size,
+                    config.max_cluster_size,
+                )
+
+        return sorted(communities.values(), key=_community_sort_key)
+
+    def _leiden_communities(
+        self, graph: nx.Graph, resolution: float
+    ) -> dict[int, set[Any]]:
+        """Leiden partition of ``graph`` as canonically numbered communities.
+
+        Raises:
+            GraphError: Leiden failed.
+        """
+        config = self.community_detection_config
         try:
             partition_dict = leiden(
-                _canonical_graph(target_graph),
+                _canonical_graph(graph),
                 resolution=resolution,
                 random_seed=config.random_state,
                 trials=config.trials,
@@ -399,21 +427,60 @@ class CommunityDetector:
         except Exception as e:
             raise GraphError(
                 f"Leiden partitioning failed on a graph with "
-                f"{target_graph.number_of_nodes()} nodes and "
-                f"{target_graph.number_of_edges()} edges: {e}"
+                f"{graph.number_of_nodes()} nodes and "
+                f"{graph.number_of_edges()} edges: {e}"
             ) from e
+        return self._partition_dict_to_communities(partition_dict, graph)
 
-        communities = self._partition_dict_to_communities(partition_dict, target_graph)
+    def _split_large_communities(
+        self,
+        communities: dict[int, set[Any]],
+        graph: nx.Graph,
+        resolution: float,
+        max_size: int,
+    ) -> dict[int, set[Any]]:
+        """Re-partition every community above ``max_size`` entities, recursively.
 
-        # Only entity communities are held to min_community_size. A node of a
-        # coarser cluster graph is a whole community, so merging "small" ones
-        # there would fold every level into the one below it.
-        if graph is None and config.min_community_size > 1:
-            communities = self._merge_small_communities(
-                communities, target_graph, config.min_community_size
+        Modularity has a resolution limit: on a large graph, one Leiden pass
+        merges well-separated groups into level-0 communities that grow with
+        the corpus, and a report then sees only the ``max_entities_per_report``
+        best-connected members of such a leaf (MS GraphRAG bounds its leaves
+        with ``max_cluster_size`` the same way). Leiden run on the community's
+        own subgraph judges it against that subgraph alone, so it splits.
+        A community Leiden leaves whole (one piece) stays as it is.
+        """
+        done: list[set[Any]] = []
+        pending = list(communities.values())
+        split = 0
+        while pending:
+            nodes = pending.pop()
+            if len(nodes) <= max_size:
+                done.append(nodes)
+                continue
+            subgraph = graph.subgraph(nodes)
+            pieces = (
+                list(self._leiden_communities(subgraph, resolution).values())
+                if subgraph.size(weight="weight") > 0
+                else []
             )
-
-        return sorted(communities.values(), key=_community_sort_key)
+            if len(pieces) < 2:
+                logger.info(
+                    "Level-0 community of %s entities has no finer partition; "
+                    "keeping it above max_cluster_size %s",
+                    len(nodes),
+                    max_size,
+                )
+                done.append(nodes)
+                continue
+            split += 1
+            pending.extend(pieces)
+        if split:
+            logger.info(
+                "Split %s level-0 communities above max_cluster_size %s",
+                split,
+                max_size,
+            )
+        return dict(enumerate(sorted(done, key=_community_sort_key)))
 
     def _collect_community_text_unit_ids(self, node_ids: Any) -> list[str]:
         """Union the source text-unit ids of a community's member entities.
@@ -517,6 +584,7 @@ class CommunityDetector:
         communities: dict[int, set[str]],
         graph: nx.Graph,
         min_size: int,
+        max_size: int | None = None,
     ) -> dict[int, set[str]]:
         node_to_comm: dict[str, int] = {}
         for comm_id, nodes in communities.items():
@@ -550,6 +618,13 @@ class CommunityDetector:
                             if (
                                 neighbor_comm != small_comm_id
                                 and neighbor_comm in communities
+                                # A merge must not push a community back
+                                # above max_cluster_size.
+                                and (
+                                    max_size is None
+                                    or len(communities[neighbor_comm]) + len(nodes)
+                                    <= max_size
+                                )
                             ):
                                 neighbor_weights[neighbor_comm] += data.get(
                                     "weight", 1.0
