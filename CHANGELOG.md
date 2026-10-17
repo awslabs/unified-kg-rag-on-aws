@@ -242,6 +242,15 @@ full re-index of the affected index type).
   written by an earlier build; use `--force-rebuild` or a new
   `--pipeline-id` to apply the fixes to them (#167, #170, #171, #201, #214).
 
+Deployment (CDK stack).
+- The ingestion state machine runs one Fargate task (state `Ingest`, over
+  every stage) instead of four phases (`PrepPhase`, `GraphBuildPhase`,
+  `AnalysisPhase`, `IndexPhase`). Scripts that read `.States.PrepPhase` (to
+  find the cluster, subnets and security groups) read `.States.Ingest`; the
+  task's result is under `$.task` (was `$.last_phase`). A pipeline id
+  checkpointed by the phased version resumes from the same S3 checkpoints:
+  start a new execution with the same input (#328).
+
 Library API (Python callers and custom backends).
 - Incremental removal no longer plans from registry lineage.
   `DocStatusRecord` and `DocumentLineage` keep only `text_unit_ids`
@@ -446,6 +455,9 @@ Library API (Python callers and custom backends).
   `evaluation.answer_normalization: official_squad` scores EM/F1 with the
   official SQuAD script, for numbers comparable with published results
   (#324).
+- `ingestion_ephemeral_storage_gib` (CDK context, 21-200, default 40) sizes
+  the ingestion task's disk, which holds the synced corpus, the parsed
+  documents and the stage cache (#328).
 - Index build record: ingestion records in the vector index mappings'
   `_meta` which run last wrote each suffix (`pipeline_id`, `mode`,
   `built_at`, `documents`, `extraction_fingerprint`, `package_version`), and
@@ -583,6 +595,14 @@ Library API (Python callers and custom backends).
 - Extraction records only removed text units named are deleted after the
   run's delta is written, so the extraction store no longer grows with
   every edit and deletion (#327).
+- The CDK ingestion runs as one task per execution. The four phases ran the
+  same task definition, image, size and timeout, so they bought nothing a
+  single task lacks now that stages are checkpointed to S3 as they finish
+  and answered model calls are cached; they cost four container starts,
+  four corpus downloads and hashes and four checkpoint downloads, and a
+  corpus or image changed mid-execution reached only the later phases. The
+  state machine runs the task definition revision deployed with it rather
+  than the family's latest active revision (#328).
 - `graph.community_detection.max_cluster_size` also caps a parent's child
   communities: a coarser-level community with more children is partitioned
   again on the cluster graph, so a parent report's roll-up covers every

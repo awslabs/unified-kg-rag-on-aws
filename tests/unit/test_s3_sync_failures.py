@@ -2,9 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """S3 cache sync failures must fail the run, not degrade silently (AWS-free).
 
-In a phased Step Functions run each phase hands its stage checkpoints to the
-next one through S3. A swallowed upload/download error used to exit 0 and make
-the NEXT phase fail with a misleading "missing stage" error.
+A re-run in a fresh task (or the next ``--enabled-stages`` window) resumes from
+the stage checkpoints in S3. A swallowed upload/download error used to exit 0
+and make the NEXT run fail with a misleading "missing stage" error.
 """
 
 from __future__ import annotations

@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-# unified-kg-rag-on-aws data-plane image: the same image runs every Step Functions phase
+# unified-kg-rag-on-aws data-plane image: the same image runs the Step Functions ingestion task
 # (run-ingestion) and ad-hoc run-rag / run-eval. Built with uv for reproducible,
 # locked dependency resolution.
 # Base image pinned by tag and digest (multi-arch index) so a re-pushed tag

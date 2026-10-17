@@ -34,7 +34,8 @@ from unified_kg_rag.shared.metrics import MetricsSink
 
 pytestmark = pytest.mark.integration
 
-# The Step Functions phases (iac/stacks/orchestration_stack.PHASES).
+# A run split into --enabled-stages windows, each in its own process (the
+# Step Functions phases of earlier versions).
 _PHASES = [
     ["document_parsing", "document_loading", "text_chunking", "translation"],
     [

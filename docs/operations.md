@@ -60,7 +60,7 @@ under the untagged namespace. Delete those records once no configuration with
 the default prefixes and the same suffixes uses the table.
 
 On the CDK stack, each `start-execution` starts one execution that runs the
-four phases in sequence. The stack defines no schedule or event trigger, so
+ingestion task. The stack defines no schedule or event trigger, so
 executions start only when someone (or an automation you add) calls
 `start-execution`, but the state machine does not stop a second execution from
 starting while one is running. Check for a `RUNNING` execution first (the
@@ -74,7 +74,7 @@ Three operations look alike but act on different state:
 
 | Goal | How | Stage cache | Stores and registry |
 |---|---|---|---|
-| Finish an interrupted run | Re-run with the same `--pipeline-id` (on the CDK stack, start a new execution with the same `pipeline_id`); it resumes at the first failed or incomplete stage, and each Step Functions phase skips the stages of its window that completed. `--resume-from-stage <stage>` picks the stage. | Reused | Written by the stages that run |
+| Finish an interrupted run | Re-run with the same `--pipeline-id` (on the CDK stack, start a new execution with the same `pipeline_id`); it resumes at the first failed or incomplete stage and skips the stages that completed. `--resume-from-stage <stage>` picks the stage. | Reused | Written by the stages that run |
 | Recompute every stage | `--force-rebuild` | Ignored and rewritten | Written as usual (incremental when enabled) |
 | Rebuild the stores from scratch | `indexing.reset: true` for one run | Unchanged | Cleared for the run's index namespace (other namespaces in the table keep their records), then the whole corpus is indexed and every document recorded again |
 
@@ -244,13 +244,13 @@ artifact type's writes still fail, the indexing stage fails and the documents
 are not recorded, so the next run retries them. Below that rate the run
 succeeds and only the documents that own a failed artifact are recorded
 `FAILED`; a failure the backend reports without an item id marks every
-document of the run `FAILED`. On the CDK stack, a failed phase publishes a
+document of the run `FAILED`. On the CDK stack, a failed ingestion task publishes a
 message with the execution id and the error to the SNS topic, and the alarms
 below report to the same topic: four on pipeline runs and seven on store
 health. `PipelineFailures` also fires for a failed
-phase, so such a failure arrives twice, the second time without context; the
+task, so such a failure arrives twice, the second time without context; the
 alarm stays because it also covers failures the message cannot report (an
-error the phase's handler cannot catch, such as a start input without
+error the task's handler cannot catch, such as a start input without
 `pipeline_id`, or a publish that fails after its retries):
 
 | Alarm | Fires when |
@@ -281,7 +281,7 @@ The alarms have a subscriber only when the stack was deployed with
 | Cache | Location | Notes |
 |---|---|---|
 | Stage checkpoints (local) | `<--cache-directory>/<pipeline_id>/` (default `cache/`) | Reused on resume; `--force-rebuild` ignores it and writes the recomputed outputs |
-| Stage checkpoints (S3) | `s3://<bucket>/<--s3-prefix>/<pipeline_id>/` (default prefix `pipeline-runs`) | With `--s3-sync`; uploaded after every stage and on SIGTERM, and how the Step Functions phases hand off. A failed initial download or final upload fails the run with `CacheSyncError`. Expired by the bucket lifecycle, not `cache.ttl_seconds` |
+| Stage checkpoints (S3) | `s3://<bucket>/<--s3-prefix>/<pipeline_id>/` (default prefix `pipeline-runs`) | With `--s3-sync`; uploaded after every stage and on SIGTERM; a re-run in a fresh task resumes from it. A failed initial download or final upload fails the run with `CacheSyncError`. Expired by the bucket lifecycle, not `cache.ttl_seconds` |
 | LLM response cache | `<stage checkpoint dir>/llm-cache/` (local, and in S3 with `--s3-sync`) | Ingestion model responses reused by a re-run with the same pipeline id; `cache.llm_responses.enabled: false` turns it off, `--force-rebuild` ignores it |
 | Embedding cache | `s3://<aws.s3.bucket_name>/embedding-cache/cache.json` (`indexing.opensearch.embedding_cache_s3_key`) | Only with `indexing.opensearch.persist_embedding_cache: true` |
 | Visualization data | `<cache directory>/<pipeline_id>/visualization/` unless `graph.visualization.outputs_directory` is set | Synced with the stage cache (`.json` only) |
@@ -761,7 +761,7 @@ content to LangSmith independently of this setting.
 | `Invalid stage names provided: ...` | `--enabled-stages` names an unknown stage | Use a name from the list the CLI prints |
 | `argument --resume-from-stage: Unknown pipeline stage ...` (exit 2) | `--resume-from-stage` names an unknown stage | Use a name from the list in the message (any case) |
 | `... needs confirmation, but stdin is not a terminal` | A re-run found completed stages whose output is no longer cached under the current inputs, without a terminal to ask on | Pass `--yes` to go on (the resume recomputes those stages), or use a new `--pipeline-id` |
-| `Stage '<stage>', upstream of this run's enabled stages, has not completed` | An `--enabled-stages` window (a Step Functions phase) resumed while an earlier stage failed or lost its cached output | Run the earlier stages first; on the CDK stack, start a new execution with the same `pipeline_id` |
+| `Stage '<stage>', upstream of this run's enabled stages, has not completed` | An `--enabled-stages` window resumed while an earlier stage failed or lost its cached output | Run the earlier stages first |
 | `The doc-status registry lists indexed documents of this namespace whose entities the graph store does not hold` | The graph lost what the registry records (a restarted Gremlin Server, `docker compose ... down -v`, a restored or replaced graph): the vector store holds entities citing the probed documents' text units and the graph none (documents that state no entity do not trip it) | Re-run with `indexing.reset: true`, or delete the namespace's registry records (local mode: the SQLite file) |
 | `The doc-status registry lists indexed documents of this namespace whose text units the vector store does not hold` | The vector store lost what the registry records (local mode: `vector.sqlite3` deleted or moved, or `providers.vector.sqlite_path` changed; deleted OpenSearch indices) | Same as above; in local mode delete the three store files together or restore the vector file |
 | `... stayed locked ...` (`database is locked`) from the embedded graph or vector store or the SQLite doc-status registry (local mode) | Another process is writing to the same SQLite file (a second ingestion, say) and held its lock longer than `search.store_timeout_seconds`; SQLite allows one writer at a time | Wait for the other run and retry, run one ingestion per store file at a time, or raise `search.store_timeout_seconds`. Keep the files on a local disk: network filesystems are not supported |

@@ -937,7 +937,7 @@ LangChain이 콜백을 호출하지 않으므로 모델 스팬이 남지 않습�
 | `--yes`, `-y` | off | 확인 질문(무결성 검사 실패 후 계속 진행)에 모두 예로 답함. stdin이 터미널이 아니면 질문할 수 없으므로 `--yes` 없이는 실행이 실패 |
 | `--continue-on-error` | off | 단계에서 오류가 나도 계속 진행. 추출·해석·커뮤니티 단계가 비정상 종료해 산출물이 빠진 문서는 FAILED로 기록되어 다음 증분 실행이 다시 처리 |
 | `--enabled-stages` | 전체 | 실행할 단계 목록(쉼표로 구분) |
-| `--metrics-sink` | `none` | `none` 또는 `cloudwatch`(CloudWatch EMF — Embedded Metric Format — 지표를 차원 없는 시계열로 stdout에 출력. `pipeline_id`는 차원이 아니라 로그 속성으로 기록하므로 실행마다 지표 시계열이 늘지 않음). 실행은 자신이 실행한 단계의 지표만 내보내므로, 단계 묶음으로 나눈 실행에서 각 묶음이 서로의 수치를 다시 보내지 않음 |
+| `--metrics-sink` | `none` | `none` 또는 `cloudwatch`(CloudWatch EMF — Embedded Metric Format — 지표를 차원 없는 시계열로 stdout에 출력. `pipeline_id`는 차원이 아니라 로그 속성으로 기록하므로 실행마다 지표 시계열이 늘지 않음). 실행은 자신이 실행한 단계의 지표만 내보내므로, 재개한 실행이나 `--enabled-stages` 범위가 캐시에서 복원한 단계의 수치를 다시 보내지 않음 |
 | `--retire-source-scope SCOPE` | — | 증분 실행에서 이전 소스 범위 `SCOPE`(이번 실행의 인덱스 접미사)의 레지스트리 레코드를 모두 삭제된 문서로 처리해 그 문서에만 속한 내용을 지웁니다. 여러 번 지정할 수 있고 `indexing.retire_source_scopes`에 더해집니다. `SCOPE`가 실행 자신의 범위이면 실패합니다(§5 삭제 범위 참고). |
 | `--config-path` | — | `config.yaml` 경로. 파일이 없으면 사용법 오류(종료 코드 2) |
 | `--backend`, `--llm-provider` 등 | — | 공급자 선택. [공급자 플래그](#공급자-플래그) 참고 |
@@ -1012,8 +1012,8 @@ run-ingestion --source-directory ./documents --config-path config.yaml --metrics
 실행 중인 단계를 멈추고 체크포인트를 업로드한 뒤 143으로 종료하며, 같은 pipeline id로 다시
 실행하면 그 단계부터 시작합니다. 단계 사이의 업로드가 실패하면 로그를 남기고 다음 업로드에서
 다시 시도합니다. 시작 시 다운로드나 마지막 업로드가 실패하거나 일부만 되면 `CacheSyncError`로
-실행이 실패하고 `run-ingestion`은 0이 아닌 코드로 종료합니다. 따라서 Step Functions로
-나눠 실행할 때는 체크포인트를 잃은 단계가 실패로 표시됩니다. 새 pipeline id에서 원격
+실행이 실패하고 `run-ingestion`은 0이 아닌 코드로 종료합니다. 따라서 체크포인트를 잃은
+실행이 실패로 표시됩니다. 새 pipeline id에서 원격
 캐시가 비어 있는 것은 오류가 아닙니다. S3에 동기화한 체크포인트는 `cache.ttl_seconds`로
 만료되지 않고 버킷의 수명 주기 규칙이 만료시킵니다(CDK 배포에서는 30일). 임베딩은 따로
 `indexing.opensearch.persist_embedding_cache: true`를 설정하면 바뀌지 않은 텍스트를
@@ -2028,7 +2028,7 @@ CLI가 보고하는 메시지와 그 의미, 해결 방법은 AWS 모드와 로�
 - **대규모 코퍼스:** `processing.max_concurrency`를 올리세요(LLM 단계는 I/O가
   병목). 그래프 쓰기는 `indexing.neptune.index_concurrency`를
   올리면 Gremlin 연결 풀도 함께 늘어납니다. `indexing.opensearch.persist_embedding_cache`와
-  `--s3-sync`를 켜면 재실행과 여러 단계로 나눈 작업에서 다시 계산하지 않습니다.
+  `--s3-sync`를 켜면 다시 실행할 때 다시 계산하지 않습니다.
 - **다국어:** `processing.translation.source_language` / `target_language`(+
   `additional_target_languages`)를 지정하고 `indexing.opensearch.language_analyzers`에
   언어 분석기를 추가하세요. 단일 언어 코퍼스에서는 번역 단계가 아무 일도 하지 않습니다.

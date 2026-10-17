@@ -40,12 +40,12 @@ class ObservabilityStack(Stack):
         self.storage = storage
         sm = orchestration.state_machine
 
-        # Alarm: any failed Step Functions execution -> SNS. A failed phase is
+        # Alarm: any failed Step Functions execution -> SNS. A failed task is
         # also published, with its error, by the state machine's Catch, so such
         # a failure notifies twice (once with context, once without). The alarm
         # stays because the Catch cannot see every failure: States.ALL does not
         # catch States.DataLimitExceeded or States.Runtime (e.g. a start input
-        # without the fields a phase reads), and the publish itself can fail.
+        # without the fields the task reads), and the publish itself can fail.
         failed_alarm = cw.Alarm(
             self,
             "PipelineFailures",
@@ -58,7 +58,7 @@ class ObservabilityStack(Stack):
         failed_alarm.add_alarm_action(cw_actions.SnsAction(orchestration.alarm_topic))
 
         # Alarm: a run that hit the state machine timeout or was stopped never
-        # reaches a phase Catch and does not count as failed, so neither the
+        # reaches the task's Catch and does not count as failed, so neither the
         # failure notification nor the alarm above sees it. FILL keeps a
         # missing series from blanking the sum.
         stopped_alarm = cw.Alarm(
@@ -278,7 +278,7 @@ class ObservabilityStack(Stack):
         )
 
         # Neptune: the primary graph store and the write target of every
-        # ingestion phase. Without these, Neptune degradation (CPU saturation
+        # ingestion run. Without these, Neptune degradation (CPU saturation
         # during large edge writes, memory pressure, throttled Gremlin) is
         # invisible until a pipeline run breaks. Metrics are read from the
         # AWS/Neptune namespace keyed by the cluster id (stable across the

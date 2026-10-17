@@ -3,10 +3,11 @@
 """Compute: ECR image, ECS cluster, and two Fargate task definitions for the
 data plane, each with a least-privilege task role.
 
-- The ingestion task definition (``IngestionTask``) runs each Step Functions
-  phase; the command and ``--resume-from-stage`` are supplied as container
-  overrides by the orchestration stack. Its role writes and deletes in the
-  stores.
+- The ingestion task definition (``IngestionTask``) runs the Step Functions
+  ingestion task; the orchestration stack supplies the ``run-ingestion``
+  command and the run's source and pipeline id as container overrides. Its
+  disk is ``ingestion_ephemeral_storage_gib``. Its role writes and deletes in
+  the stores.
 - The query task definition (``QueryTask``) runs ``run-rag`` / ``run-eval``
   with a read-only role: Neptune reads, OpenSearch GET/HEAD and ``_search``,
   Bedrock, and the cache bucket's ``eval/`` prefix. No DynamoDB, no store
@@ -150,7 +151,10 @@ class ComputeStack(Stack):
         )
         self.task_role = self._build_task_role(storage)
         self.task_definition = self._build_task_definition(
-            storage, "IngestionTask", self.task_role, ephemeral_storage_gib=40
+            storage,
+            "IngestionTask",
+            self.task_role,
+            ephemeral_storage_gib=config.ingestion_ephemeral_storage_gib,
         )
         self.query_role = self._build_query_role(storage)
         # Queries keep nothing on disk: the default 20 GiB is plenty.

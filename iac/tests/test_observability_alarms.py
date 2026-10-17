@@ -70,7 +70,7 @@ def test_timed_out_and_aborted_runs_alarm() -> None:
 
 
 def test_failed_executions_alarm() -> None:
-    # The phase Catch publishes most failures with context, but it cannot catch
+    # The task's Catch publishes most failures with context, but it cannot catch
     # States.DataLimitExceeded or States.Runtime and its publish can fail, so
     # failed executions also alarm (a caught failure notifies twice).
     alarm = _alarms()["PipelineFailures"]

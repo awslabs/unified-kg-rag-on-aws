@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """S3-persisted embedding cache (perf: avoid re-embedding across runs/phases).
 
-The in-process cache dies with each Fargate phase, so without persistence the
+The in-process cache dies with each Fargate task, so without persistence the
 corpus is re-embedded every run. These tests cover the S3 tier's load/get/put/
 flush, model+dimension namespacing, and best-effort degradation on S3 errors —
 all with a fake S3 client (no AWS).

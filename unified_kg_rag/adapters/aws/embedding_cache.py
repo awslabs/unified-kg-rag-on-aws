@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """S3-persisted content-hash embedding cache.
 
-Each Step Functions phase is a fresh Fargate process, so the in-process
-embedding cache provides no cross-phase/run benefit and the corpus is re-embedded
+Each Step Functions execution is a fresh Fargate process, so the in-process
+embedding cache provides no cross-run benefit and the corpus is re-embedded
 every run. This optional cache loads a ``{content_hash: vector}`` map from a
 single S3 object once, serves lookups in memory, and flushes newly-computed
 vectors back. Keyed by the same content hash the indexer already computes, and

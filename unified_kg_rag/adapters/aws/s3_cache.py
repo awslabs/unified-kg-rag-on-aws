@@ -44,8 +44,9 @@ class S3CacheManager:
 
     Both sync directions raise :class:`CacheSyncError` on any failure (listing,
     connection, or any single object) instead of returning a partial result: a
-    phased run hands checkpoints between tasks through S3, so a silent partial
-    sync would surface one phase later as a misleading "missing stage" error.
+    re-run in another task resumes from the checkpoint in S3, so a silent
+    partial sync would surface one run later as a misleading "missing stage"
+    error.
 
     The pipeline uploads after every stage, so an upload sends only the files
     that changed since this manager last uploaded or downloaded them, stage

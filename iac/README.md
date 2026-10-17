@@ -17,8 +17,8 @@ can coexist in one account/region. Every resource also carries an `env` tag.
 | `GraphRagNetwork` | VPC (reuse or create), subnets, data-plane security group, VPC endpoints for a created VPC: S3/DynamoDB gateways always; in `private` mode also interface endpoints (own security group, 443 from the data plane only) for Bedrock (`bedrock`, `bedrock-runtime`, `bedrock-agent-runtime`), ECR (`ecr.api`, `ecr.dkr`), CloudWatch Logs and STS, each with an endpoint policy that admits only this account's principals (`aws:PrincipalAccount`) |
 | `GraphRagStorage` | Neptune cluster (IAM auth), OpenSearch domain (VPC, encrypted), DynamoDB doc-status table, S3 cache bucket |
 | `GraphRagCompute` | ECR repo (lifecycle keeps the 10 newest images and never expires the deployed `image_tag`), ECS cluster, an ingestion Fargate task definition + least-privilege task role (S3 cache read + put, no delete), and a query task definition (`run-rag` / `run-eval`) whose role only reads the stores and has no DynamoDB access. Injects `OPENSEARCH_NUMBER_OF_REPLICAS` = 1 on a multi-node domain (0 on a single node) |
-| `GraphRagOrchestration` | Step Functions state machine — 4 resumable phases on Fargate, retried only when ECS cannot start the task (a phase that exits non-zero is not rerun), one JSON failure notification (execution id, error, cause; the publish is retried on throttling or transient errors) + SNS alarm topic. The topic is encrypted with its own customer-managed key whose policy lets CloudWatch alarms publish (the AWS-managed `alias/aws/sns` key cannot, so alarm notifications would be dropped) |
-| `GraphRagObservability` | CloudWatch dashboard + alarms: pipeline failed (a failed phase is also published by the orchestration failure notification, so it notifies twice; the alarm also covers failures the notification cannot report, such as an invalid start input), timed out or aborted, silent indexing-failure and extraction-failure (EMF), and store health (OpenSearch cluster-red / free-storage / JVM pressure, DynamoDB write throttling, Neptune writer CPU at least 90% for 3 × 5 minutes, writer freeable memory at most 512 MiB in 5 minutes, and Gremlin server errors in 3 consecutive minutes, so retried write conflicts during parallel writes do not page; see [Failed documents](../docs/operations.md#failed-documents) for the alarm table) → SNS. Synth warns if `alarm_email` is unset (alarms would have no subscriber) |
+| `GraphRagOrchestration` | Step Functions state machine — one resumable ingestion task on Fargate (the task definition revision deployed with it), retried only when ECS cannot start the task (a task that exits non-zero is not rerun), one JSON failure notification (execution id, error, cause; the publish is retried on throttling or transient errors) + SNS alarm topic. The topic is encrypted with its own customer-managed key whose policy lets CloudWatch alarms publish (the AWS-managed `alias/aws/sns` key cannot, so alarm notifications would be dropped) |
+| `GraphRagObservability` | CloudWatch dashboard + alarms: pipeline failed (a failed task is also published by the orchestration failure notification, so it notifies twice; the alarm also covers failures the notification cannot report, such as an invalid start input), timed out or aborted, silent indexing-failure and extraction-failure (EMF), and store health (OpenSearch cluster-red / free-storage / JVM pressure, DynamoDB write throttling, Neptune writer CPU at least 90% for 3 × 5 minutes, writer freeable memory at most 512 MiB in 5 minutes, and Gremlin server errors in 3 consecutive minutes, so retried write conflicts during parallel writes do not page; see [Failed documents](../docs/operations.md#failed-documents) for the alarm table) → SNS. Synth warns if `alarm_email` is unset (alarms would have no subscriber) |
 | `GraphRagSecurity` | Shared customer-managed KMS key (optional, `use_cmk`) |
 | `GraphRagGuardrail` | Bedrock Guardrail, **pinned to `bedrock_region`** (creates and keeps a baseline PII/prompt-attack guardrail; empty with `create_guardrail=false`). It anonymizes email, phone and card numbers but not `NAME`: names are corpus content, and anonymizing them in the screened query and answer removes the name a question retrieves by and puts `{NAME}` in answers. The app applies the guardrail's `DRAFT` version unless `guardrail_version` is set |
 
@@ -94,13 +94,10 @@ derived) to avoid replace-on-rename conflicts.
 > into one shell variable corrupts context parsing (vpc_id is silently dropped →
 > `Vpc.from_lookup` falls back to a dummy VPC).
 
-The orchestration runs the ingestion CLI as four phases sharing one
-`--pipeline-id` (the app's S3 stage checkpoints hand off between phases):
-
-```
-Prep (parse/load/chunk/translate) → GraphBuild (extract/glean/resolve/claims)
-  → Analysis (graph_analysis/community_detection) → Index (indexing)
-```
+The orchestration runs the ingestion CLI as one Fargate task over every
+stage, with `--s3-sync`: each stage's output and the LLM response cache are
+uploaded to S3 as they are produced, so an execution re-run with the same
+`pipeline_id` resumes at the stage that was running.
 
 ## Configuration (cdk.json context / `-c key=value`)
 
@@ -125,6 +122,7 @@ Prep (parse/load/chunk/translate) → GraphBuild (extract/glean/resolve/claims)
 | `backup_retention_days` | `7` | Neptune automated backup retention, 1-35 days (see [Backup and restore](../docs/operations.md#backup-and-restore)) |
 | `fargate_cpu` | `2048` | Fargate task vCPU units (in-task ProcessPool extractors scale with vCPU): `256`, `512`, `1024`, `2048`, `4096`, `8192` or `16384` |
 | `fargate_memory` | `8192` | Fargate task memory (MiB); must be a size Fargate offers for `fargate_cpu` (with `2048`: 4096-16384 in 1024 steps), else synth fails naming the valid range |
+| `ingestion_ephemeral_storage_gib` | `40` | disk of the ingestion task (GiB, 21-200): holds the synced corpus, the parsed documents and the run's stage cache; size it to about twice the corpus plus the cache |
 | `image_tag` | `latest` | container image tag the task pulls; pin a version tag to make ECR tags immutable. The ECR lifecycle keeps this tag and the 10 newest images, so pin a tag rather than a digest |
 | `sfn_timeout_hours` | `6` | ingestion state machine timeout for a whole run (at least 1); a run that hits it is `TIMED_OUT` (alarmed) |
 | `create_guardrail` | `true` | `GraphRagGuardrail` creates and keeps a baseline PII/prompt-attack guardrail in `bedrock_region` (retained on stack deletion unless `removal_destroy`). `false` = bring your own guardrail; nothing is created |
@@ -198,9 +196,9 @@ its application logs.
 
 ```mermaid
 flowchart LR
-    operator["Operator"] -->|start-execution| sfn["Step Functions<br/>Prep, GraphBuild, Analysis, Index"]
+    operator["Operator"] -->|start-execution| sfn["Step Functions<br/>Ingest"]
     operator -->|run-task| task
-    sfn -->|RunTask per phase| task
+    sfn -->|RunTask| task
     subgraph vpc["VPC (max_azs AZs)"]
         subgraph app["app subnets: isolated (private) or NAT egress (public)"]
             task["ECS Fargate task<br/>container app"]
@@ -235,8 +233,8 @@ flowchart LR
   region). In `public` mode the
   `app` subnets route through one NAT gateway per AZ, no interface endpoints are
   created, and Bedrock may be in another region.
-- Step Functions runs the four ingestion phases as separate Fargate tasks of
-  one task definition; they hand off through the S3 stage checkpoints.
+- Step Functions runs ingestion as one Fargate task; a re-run execution
+  resumes from the S3 stage checkpoints.
   Querying (`run-rag`, `run-eval`) runs as a one-off task of a second task
   definition, same image and environment, whose role only reads the stores
   ([After deploy](#after-deploy)).
@@ -254,7 +252,7 @@ for your region and sizes. What scales each service's cost:
 | Bedrock embeddings and rerank | Embedded text units, entities, relationships and reports; one rerank call per query over up to `search.reranking.top_k` candidates | `indexing.opensearch.persist_embedding_cache`, `search.reranking.top_k` |
 | Amazon Neptune | Provisioned: instance-hours × `neptune_instances`. Serverless (`neptune_serverless_ncu`): NCU-hours of each instance at its current capacity, never below `MIN` per instance, so an idle cluster still bills `MIN` × `neptune_instances` NCU. Both: storage and I/O, backup retention | `neptune_instance` or `neptune_serverless_ncu` (a low `MIN` for an environment that is idle most of the day, such as dev or a query-only deployment between ingestions; provisioned is usually cheaper under sustained load such as long ingestions), `neptune_instances` (1 in dev), `backup_retention_days`, tear down dev |
 | Amazon OpenSearch Service | Data node-hours × `opensearch_count`, plus three dedicated masters when `opensearch_count > 1`, and 50 GiB gp3 storage per data node | `opensearch_instance`, `opensearch_master_instance`, `opensearch_count` (1 in dev) |
-| AWS Fargate | vCPU and memory per task for the run time of each phase and query task | `fargate_cpu`, `fargate_memory` |
+| AWS Fargate | vCPU, memory and ephemeral storage above 20 GiB per task for the run time of the ingestion and query tasks | `fargate_cpu`, `fargate_memory`, `ingestion_ephemeral_storage_gib` |
 | VPC interface endpoints (`private`) | Seven endpoints (eight with `enable_cloudwatch_tracing`) × `max_azs`, billed per AZ-hour, plus data processed | `max_azs`, or reuse a VPC's endpoints (`vpc_id`) |
 | NAT gateways (`public`) | One per AZ, billed per hour, plus data processed | `max_azs`, or use `private` mode |
 | Amazon S3 | Stage checkpoints, embedding cache, corpus, access logs | 30-day expiry on `pipeline-runs/` and `embedding-cache/` |
@@ -262,7 +260,7 @@ for your region and sizes. What scales each service's cost:
 | Amazon CloudWatch | Log ingestion and retention (task, pipeline and, with `vpc_flow_logs`, flow logs), alarms, dashboard | `vpc_flow_logs`, `flow_log_retention_days` |
 | CloudWatch Container Insights (ECS cluster, always on) | Custom metrics per cluster and task definition family, and performance log events in `/aws/ecs/containerinsights/<cluster>/performance`, for the time tasks run. It is where per-task CPU and memory use come from (sizing `fargate_cpu`/`fargate_memory`, diagnosing an out-of-memory stop); no alarm or dashboard of the stack reads it | — (cdk-nag `AwsSolutions-ECS4` requires it) |
 | AWS KMS | Customer-managed keys per month and requests: the alarm-topic key always, the data key with `use_cmk` | `use_cmk` |
-| AWS Step Functions | State transitions per ingestion run (a few per phase) | — |
+| AWS Step Functions | State transitions per ingestion run (a few) | — |
 | CloudWatch traces (`enable_cloudwatch_tracing`) | Spans ingested by Transaction Search (billed as CloudWatch Logs ingestion into `aws/spans`) and the share of spans indexed beyond the free 1% | `observability.sample_rate` in the image config, the Transaction Search indexing percentage |
 
 Neptune, OpenSearch, interface endpoints and NAT gateways bill while the stack
@@ -337,7 +335,7 @@ is not recorded (`observability.capture_content` stays `false`).
    comes through an ECR pull-through cache, and the first pull through it may
    need an internet route when ECR is reached through an interface endpoint,
    as the `private` data plane does. ECS fails a task when it cannot pull any
-   of its images, so until the cache holds the image every phase would fail.
+   of its images, so until the cache holds the image every ingestion would fail.
    The pull fills the cache; later pulls come from it. Repeat after an
    upgrade that changes the pinned digest. Outside `dev`, use the
    environment's stack name (for example `GraphRagProdCompute`).
@@ -470,18 +468,22 @@ aws stepfunctions describe-execution --region "$REGION" \
 aws logs tail /graphrag/tasks --region "$REGION" --follow
 ```
 
-- The input takes exactly two keys, passed to every phase as
-  `GRAPHRAG_SOURCE_DIRECTORY` / `GRAPHRAG_PIPELINE_ID`. Each phase runs in a
-  fresh Fargate task, so `source_directory` must be an `s3://` URI: the
-  container entrypoint (`docker/entrypoint.sh`) syncs it to local scratch
-  before running the CLI. `pipeline_id` accepts lowercase letters, digits,
-  hyphens and underscores; reuse an id to resume a failed run from its S3
-  checkpoints: start a new execution with the same input, and each phase
-  skips the stages of its window that already completed, so only the failed
-  stage onward runs again. Checkpoints are uploaded after every stage, and a
-  task stopped by the execution's timeout or StopTask uploads its checkpoint
-  on SIGTERM (the app container's stop timeout is 120 s), so a timed-out
-  execution also resumes at the stage that was running.
+- The input takes exactly two keys, passed to the task as
+  `GRAPHRAG_SOURCE_DIRECTORY` / `GRAPHRAG_PIPELINE_ID`. The task is a fresh
+  Fargate task, so `source_directory` must be an `s3://` URI: the container
+  entrypoint (`docker/entrypoint.sh`) syncs it to local scratch before running
+  the CLI (size the disk with `ingestion_ephemeral_storage_gib`).
+  `pipeline_id` accepts letters, digits, `.`, `_` and `-`, starting with a
+  letter or digit, without `..`, up to 128 characters; reuse an id to resume a
+  failed run from its S3 checkpoints: start a new execution with the same
+  input, and the task skips the stages that already completed, so only the
+  failed stage onward runs again. Checkpoints are uploaded after every stage,
+  and a task stopped by the execution's timeout or StopTask uploads its
+  checkpoint on SIGTERM (the app container's stop timeout is 120 s), so a
+  timed-out execution also resumes at the stage that was running. If the
+  corpus changed in between, the stages no longer match their checkpoints and
+  the task fails its integrity check instead of recomputing them; start the
+  execution with a new `pipeline_id` to rebuild.
 - The task role can read and write the cache bucket only. To read a corpus
   from another bucket, deploy with `-c corpus_bucket_name=<bucket>`. In
   `private` mode the S3 and DynamoDB gateway endpoints only allow this
@@ -510,11 +512,11 @@ security group the state machine uses:
 ```bash
 DEFINITION=$(aws stepfunctions describe-state-machine --region "$REGION" \
   --state-machine-arn "$STATE_MACHINE_ARN" --query definition --output text)
-PHASE=$(echo "$DEFINITION" | jq '.States.PrepPhase.Parameters')
-CLUSTER=$(echo "$PHASE" | jq -r '.Cluster')
+INGEST=$(echo "$DEFINITION" | jq '.States.Ingest.Parameters')
+CLUSTER=$(echo "$INGEST" | jq -r '.Cluster')
 TASK_DEFINITION=$(output GraphRagCompute QueryTaskDefinitionArn)
-SUBNETS=$(echo "$PHASE" | jq -r '.NetworkConfiguration.AwsvpcConfiguration.Subnets | join(",")')
-SECURITY_GROUPS=$(echo "$PHASE" | jq -r '.NetworkConfiguration.AwsvpcConfiguration.SecurityGroups | join(",")')
+SUBNETS=$(echo "$INGEST" | jq -r '.NetworkConfiguration.AwsvpcConfiguration.Subnets | join(",")')
+SECURITY_GROUPS=$(echo "$INGEST" | jq -r '.NetworkConfiguration.AwsvpcConfiguration.SecurityGroups | join(",")')
 
 TASK_ARN=$(aws ecs run-task --region "$REGION" --cluster "$CLUSTER" \
   --launch-type FARGATE --task-definition "$TASK_DEFINITION" \
@@ -533,7 +535,7 @@ is written to the task's log stream (`app/app/<task id>` in
 The query task's role cannot write or delete in Neptune or OpenSearch and has
 no DynamoDB access, so a query, or a compromised serving process, cannot
 change the index; do not run queries with the ingestion task definition
-(`PrepPhase.TaskDefinition`). `--suffix` selects the corpus by name only:
+(`Ingest.TaskDefinition`). `--suffix` selects the corpus by name only:
 anyone who can run this task can name any suffix. A serving layer in front of
 it must set the suffix from the authenticated caller on the server; see
 [Query access and tenant isolation](../docs/operations.md#query-access-and-tenant-isolation)

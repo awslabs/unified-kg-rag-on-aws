@@ -212,7 +212,7 @@ def test_long_env_name_is_rejected_when_enabled() -> None:
     DeploymentConfig.from_context(cdk.App(context={"env_name": "x" * 11}))
 
 
-def test_phase_overrides_target_the_app_container() -> None:
+def test_task_overrides_target_the_app_container() -> None:
     from iac.stacks.orchestration_stack import OrchestrationStack
 
     app = cdk.App(context=_ON)
