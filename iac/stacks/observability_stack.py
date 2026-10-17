@@ -4,11 +4,15 @@
 
 The application emits Embedded Metric Format (EMF) records under the
 ``unified_kg_rag/ingestion`` namespace when run with ``--metrics-sink cloudwatch``
-(see unified_kg_rag/shared/metrics.py). The alarms and widgets query the
-dimensionless aggregate series the sink always publishes. This stack surfaces
-those plus Step Functions execution health on a dashboard, and alarms on
-failed, timed-out or aborted runs, dropped artifacts and store health -> the
-orchestration SNS topic.
+(see unified_kg_rag/shared/metrics.py), each stage's as the stage finishes. The
+task gets ``GRAPHRAG_METRICS_ENVIRONMENT=<env_name>``, so the series carry an
+``Environment`` dimension and the alarms and widgets here query only this
+deployment's runs: a dev run in the same account and region does not trip prod's
+alarms. This stack surfaces those plus Step Functions execution health, Bedrock
+throttling and latency and the ingestion task's memory on a dashboard, and alarms
+on failed, timed-out or aborted runs, dropped artifacts, sustained Bedrock
+throttling, ingestion task memory pressure and store health -> the orchestration
+SNS topic.
 """
 
 from __future__ import annotations
@@ -24,6 +28,31 @@ from iac.stacks.storage_stack import StorageStack
 
 EMF_NAMESPACE = "unified_kg_rag/ingestion"
 
+# The pipeline stages, in order: each emits duration_<stage>_seconds when it
+# finishes (pinned against PipelineStageType by the tests).
+PIPELINE_STAGES: tuple[str, ...] = (
+    "document_parsing",
+    "document_loading",
+    "text_chunking",
+    "translation",
+    "graph_extraction",
+    "gleaning",
+    "graph_resolution",
+    "claim_extraction",
+    "claim_resolution",
+    "graph_analysis",
+    "community_detection",
+    "indexing",
+)
+
+# Bedrock publishes its runtime metrics per ModelId only, and the model ids
+# the app resolves (inference profiles included) are app config, not known
+# here: these Metrics Insights queries sum over every model in the account and
+# region, so other Bedrock users there count too.
+BEDROCK_THROTTLES = (
+    'SELECT SUM(InvocationThrottles) FROM SCHEMA("AWS/Bedrock", ModelId)'
+)
+
 
 class ObservabilityStack(Stack):
     def __init__(
@@ -38,6 +67,7 @@ class ObservabilityStack(Stack):
         super().__init__(scope, construct_id, **kwargs)
         self.config = config
         self.storage = storage
+        self.compute = orchestration.compute
         sm = orchestration.state_machine
 
         # Alarm: any failed Step Functions execution -> SNS. A failed task is
@@ -86,12 +116,7 @@ class ObservabilityStack(Stack):
         index_failed_alarm = cw.Alarm(
             self,
             "IndexingFailures",
-            metric=cw.Metric(
-                namespace=EMF_NAMESPACE,
-                metric_name="total_items_index_failed",
-                statistic="Sum",
-                period=Duration.minutes(5),
-            ),
+            metric=self._emf("total_items_index_failed", period=Duration.minutes(5)),
             threshold=1,
             evaluation_periods=1,
             comparison_operator=cw.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
@@ -114,12 +139,7 @@ class ObservabilityStack(Stack):
             metric=cw.MathExpression(
                 expression="FILL(e, 0) + FILL(g, 0) + FILL(c, 0)",
                 using_metrics={
-                    key: cw.Metric(
-                        namespace=EMF_NAMESPACE,
-                        metric_name=name,
-                        statistic="Sum",
-                        period=Duration.minutes(5),
-                    )
+                    key: self._emf(name, period=Duration.minutes(5))
                     for key, name in (
                         ("e", "total_extraction_failures"),
                         ("g", "total_gleaning_failures"),
@@ -145,6 +165,7 @@ class ObservabilityStack(Stack):
         # disk pressure, memory pressure, DDB throttling) that would otherwise be
         # invisible until the next run breaks. All route to the same SNS topic.
         self._add_store_health_alarms(orchestration)
+        self._add_capacity_alarms(orchestration)
 
         # All alarms route to the orchestration SNS topic, but with no subscriber
         # they fire into the void. Warn at synth (rather than silently) when no
@@ -180,7 +201,7 @@ class ObservabilityStack(Stack):
         # Metric names must match what pipeline._emit_metrics actually emits
         # (the PipelineMetrics scalar field names), or the widgets render empty.
         extracted_metrics = [
-            cw.Metric(namespace=EMF_NAMESPACE, metric_name=name, statistic="Sum")
+            self._emf(name)
             for name in (
                 "total_entities_extracted",
                 "total_relationships_extracted",
@@ -189,7 +210,7 @@ class ObservabilityStack(Stack):
             )
         ]
         indexed_metrics = [
-            cw.Metric(namespace=EMF_NAMESPACE, metric_name=name, statistic="Sum")
+            self._emf(name)
             for name in (
                 "total_items_indexed",
                 "relationships_indexed",
@@ -200,7 +221,136 @@ class ObservabilityStack(Stack):
             cw.GraphWidget(title="Extracted artifacts (EMF)", left=extracted_metrics),
             cw.GraphWidget(title="Indexed artifacts (EMF)", left=indexed_metrics),
         )
+        dashboard.add_widgets(
+            cw.GraphWidget(
+                title="Stage durations (EMF, seconds)",
+                left=[
+                    self._emf(f"duration_{stage}_seconds", statistic="Maximum")
+                    for stage in PIPELINE_STAGES
+                ],
+                stacked=True,
+            ),
+            cw.GraphWidget(
+                title="Ingestion task memory and CPU (% of reserved)",
+                left=[
+                    self._task_utilization("Memory"),
+                    self._task_utilization("Cpu"),
+                ],
+            ),
+        )
+        dashboard.add_widgets(
+            cw.GraphWidget(
+                title="Bedrock invocations and throttles (all models)",
+                left=[
+                    self._insights(
+                        'SELECT SUM(Invocations) FROM SCHEMA("AWS/Bedrock", ModelId)'
+                        " GROUP BY ModelId",
+                        "Invocations",
+                    ),
+                    self._insights(BEDROCK_THROTTLES, "Throttles"),
+                ],
+            ),
+            cw.GraphWidget(
+                title="Bedrock invocation latency by model (ms, average)",
+                left=[
+                    self._insights(
+                        'SELECT AVG(InvocationLatency) FROM SCHEMA("AWS/Bedrock",'
+                        " ModelId) GROUP BY ModelId",
+                        "Latency",
+                    )
+                ],
+            ),
+        )
         self.dashboard = dashboard
+
+    def _emf(
+        self,
+        name: str,
+        *,
+        statistic: str = "Sum",
+        period: Duration | None = None,
+    ) -> cw.Metric:
+        """An EMF metric of this deployment's runs (its Environment series)."""
+        return cw.Metric(
+            namespace=EMF_NAMESPACE,
+            metric_name=name,
+            statistic=statistic,
+            dimensions_map={"Environment": self.config.env_name},
+            period=period or Duration.minutes(5),
+        )
+
+    @staticmethod
+    def _insights(query: str, label: str) -> cw.MathExpression:
+        """A Metrics Insights query (alarms and widgets take it as math)."""
+        return cw.MathExpression(
+            expression=query, label=label, period=Duration.minutes(5)
+        )
+
+    def _task_utilization(self, resource: str) -> cw.MathExpression:
+        """Peak use of the ingestion task's CPU or memory, in % of its size.
+
+        From Container Insights (the cluster has it on), per task definition
+        family: the ingestion task's family, not the query task's.
+        """
+        dims = {
+            "ClusterName": self.compute.cluster.cluster_name,
+            "TaskDefinitionFamily": self.compute.task_definition.family,
+        }
+
+        def metric(name: str) -> cw.Metric:
+            return cw.Metric(
+                namespace="ECS/ContainerInsights",
+                metric_name=name,
+                dimensions_map=dims,
+                statistic="Maximum",
+                period=Duration.minutes(1),
+            )
+
+        # Ids unique per resource: one widget plots memory and CPU together.
+        used, reserved = f"{resource.lower()}_used", f"{resource.lower()}_reserved"
+        return cw.MathExpression(
+            expression=f"100 * {used} / {reserved}",
+            using_metrics={
+                used: metric(f"{resource}Utilized"),
+                reserved: metric(f"{resource}Reserved"),
+            },
+            label=f"{resource} %",
+            period=Duration.minutes(1),
+        )
+
+    def _add_capacity_alarms(self, orchestration: OrchestrationStack) -> None:
+        action = cw_actions.SnsAction(orchestration.alarm_topic)
+        # Sustained throttling: the batch retries each throttled call, so a
+        # burst is absorbed, but 15 minutes of it means the run's concurrency
+        # (processing.max_concurrency) exceeds the account's Bedrock quota and
+        # the run slows to the retry backoff.
+        throttles = cw.Alarm(
+            self,
+            "BedrockThrottling",
+            metric=self._insights(BEDROCK_THROTTLES, "Bedrock throttles"),
+            threshold=100,
+            evaluation_periods=3,
+            comparison_operator=cw.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+            treat_missing_data=cw.TreatMissingData.NOT_BREACHING,
+            alarm_description="Bedrock throttled at least 100 calls in each of "
+            "3 consecutive 5-minute periods (all models in the account and "
+            "region): lower processing.max_concurrency or raise the quota",
+        )
+        throttles.add_alarm_action(action)
+        # Memory pressure: Fargate kills a task that exceeds its memory (exit
+        # 137, OutOfMemoryError), which loses the running stage.
+        memory = cw.Alarm(
+            self,
+            "IngestionTaskMemory",
+            metric=self._task_utilization("Memory"),
+            threshold=90,
+            evaluation_periods=3,
+            comparison_operator=cw.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+            treat_missing_data=cw.TreatMissingData.NOT_BREACHING,
+            alarm_description="The ingestion task used at least 90% of its "
+            "memory for 3 minutes: raise fargate_memory before it is killed",
+        )
+        memory.add_alarm_action(action)
 
     def _add_store_health_alarms(self, orchestration: OrchestrationStack) -> None:
         topic = orchestration.alarm_topic

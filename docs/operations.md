@@ -246,8 +246,8 @@ succeeds and only the documents that own a failed artifact are recorded
 `FAILED`; a failure the backend reports without an item id marks every
 document of the run `FAILED`. On the CDK stack, a failed ingestion task publishes a
 message with the execution id and the error to the SNS topic, and the alarms
-below report to the same topic: four on pipeline runs and seven on store
-health. `PipelineFailures` also fires for a failed
+below report to the same topic: four on pipeline runs, seven on store
+health and two on capacity. `PipelineFailures` also fires for a failed
 task, so such a failure arrives twice, the second time without context; the
 alarm stays because it also covers failures the message cannot report (an
 error the task's handler cannot catch, such as a start input without
@@ -259,6 +259,16 @@ error the task's handler cannot catch, such as a start input without
 | `PipelineTimedOutOrAborted` | An execution hit the state machine timeout or was stopped |
 | `IndexingFailures` | Indexing reported failed items, even in a succeeded execution |
 | `ExtractionFailures` | Extraction, gleaning or claim extraction failed on some units |
+
+The pipeline-run alarms other than the Step Functions ones read the EMF metrics
+`run-ingestion --metrics-sink cloudwatch` emits, each stage's as the stage
+finishes (so a run that is stopped or times out still reports the stages it
+completed) and the run's own (duration, cache hit rate) when it ends. The
+task tags them with an `Environment` dimension, the stack's `env_name`, and
+the alarms and dashboard read only that series: a dev deployment's runs in
+the same account and region do not trip a prod deployment's alarms. Runs
+without `GRAPHRAG_METRICS_ENVIRONMENT` (outside the CDK task) publish a series
+without dimensions, which no alarm reads.
 
 The store-health alarms fire between runs too, so degradation shows before
 the next run breaks on it:
@@ -272,6 +282,16 @@ the next run breaks on it:
 | `NeptuneHighCpu` | Average writer CPU is at least 90% for 15 minutes (3 × 5 minutes) | Sustained saturation, not a bulk-write peak: use a larger `neptune_instance` (or a higher `neptune_serverless_ncu` maximum) or lower `indexing.neptune.index_concurrency` |
 | `NeptuneLowFreeableMemory` | Writer freeable memory falls to 512 MiB or less at any point in 5 minutes (minimum) | Queries and writes may fail with out-of-memory errors: use a larger `neptune_instance` (or a higher `neptune_serverless_ncu` minimum, so capacity is there before the burst) |
 | `NeptuneGremlinErrors` | Gremlin server errors on any instance in 3 consecutive minutes | Persistent write or query failures (retried write conflicts come in short bursts and do not fire it): check the task log for the failing request |
+
+The capacity alarms catch a run that slows down or is about to be killed:
+
+| Alarm | Fires when | What to do |
+|---|---|---|
+| `BedrockThrottling` | Bedrock throttled at least 100 calls in each of 3 consecutive 5-minute periods, summed over every model in the account and region (Bedrock publishes per model only, and the stack does not know which models the app resolves) | The run retries each throttled call, so it slows down rather than fails: lower `processing.max_concurrency` or ask for a higher Bedrock quota. Other Bedrock users in the account and region count too |
+| `IngestionTaskMemory` | The ingestion task used at least 90% of its memory for 3 minutes (Container Insights) | Fargate kills a task over its memory, which loses the running stage: raise `fargate_memory` |
+
+The dashboard also plots each stage's duration, the ingestion task's memory
+and CPU use, and Bedrock invocations, throttles and latency by model.
 
 The alarms have a subscriber only when the stack was deployed with
 `-c alarm_email=<address>`.

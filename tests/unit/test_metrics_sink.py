@@ -110,3 +110,30 @@ def test_emf_default_logger_construction() -> None:
     # The no-arg construction branch builds its own dedicated EMF logger.
     sink = CloudWatchEMFSink()
     assert isinstance(sink, MetricsSink)
+
+
+def test_emf_with_an_environment_publishes_only_its_series() -> None:
+    # The CDK stack's alarms filter on Environment, so a run of another
+    # deployment in the same account and region never reaches them.
+    lg, buf = _emf_logger()
+    CloudWatchEMFSink(emf_logger=lg, environment="prod").emit(
+        "ns", {"m": 1.0}, {"pipeline_id": "p1"}
+    )
+    record = json.loads(buf.getvalue())
+    (directive,) = record["_aws"]["CloudWatchMetrics"]
+    assert directive["Dimensions"] == [["Environment"]]
+    assert record["Environment"] == "prod"
+    assert record["pipeline_id"] == "p1"  # still a log property only
+
+
+def test_cli_sink_takes_the_environment_from_the_task(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    from types import SimpleNamespace
+
+    from unified_kg_rag.application.cli import run_ingestion_pipeline as cli
+
+    monkeypatch.setenv("GRAPHRAG_METRICS_ENVIRONMENT", "prod")
+    runner = cli.IngestionPipelineRunner.__new__(cli.IngestionPipelineRunner)
+    runner.args = SimpleNamespace(metrics_sink="cloudwatch")
+    sink = runner._build_metrics_sink()
+    assert isinstance(sink, CloudWatchEMFSink)
+    assert sink._environment == "prod"

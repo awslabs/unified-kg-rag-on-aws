@@ -250,6 +250,11 @@ Deployment (CDK stack).
   task's result is under `$.task` (was `$.last_phase`). A pipeline id
   checkpointed by the phased version resumes from the same S3 checkpoints:
   start a new execution with the same input (#328).
+- The pipeline EMF metrics carry an `Environment` dimension (the stack's
+  `env_name`, injected as `GRAPHRAG_METRICS_ENVIRONMENT`), and the stack's
+  alarms and dashboard read only that series. An image built before this
+  change emits the series without dimensions, which the new alarms do not
+  read: deploy the image and the stack together (#330).
 
 Library API (Python callers and custom backends).
 - Incremental removal no longer plans from registry lineage.
@@ -458,6 +463,12 @@ Library API (Python callers and custom backends).
 - `ingestion_ephemeral_storage_gib` (CDK context, 21-200, default 40) sizes
   the ingestion task's disk, which holds the synced corpus, the parsed
   documents and the stage cache (#328).
+- CDK alarms `BedrockThrottling` (at least 100 throttled Bedrock calls in
+  each of 3 consecutive 5-minute periods, summed over the account and
+  region's models) and `IngestionTaskMemory` (the ingestion task at 90% of
+  its memory for 3 minutes, from Container Insights), and dashboard widgets
+  for stage durations, the task's memory and CPU, and Bedrock invocations,
+  throttles and latency by model (#330).
 - Index build record: ingestion records in the vector index mappings'
   `_meta` which run last wrote each suffix (`pipeline_id`, `mode`,
   `built_at`, `documents`, `extraction_fingerprint`, `package_version`), and
@@ -603,6 +614,11 @@ Library API (Python callers and custom backends).
   corpus or image changed mid-execution reached only the later phases. The
   state machine runs the task definition revision deployed with it rather
   than the family's latest active revision (#328).
+- Ingestion metrics are emitted as each stage finishes instead of once at
+  the end, so a run that is stopped or times out still reports the stages it
+  completed; the run's own metrics (duration, cache hit rate) still come at
+  the end. A count several stages produce (entities after extraction and
+  gleaning) is emitted after the last of them the run has enabled (#330).
 - `graph.community_detection.max_cluster_size` also caps a parent's child
   communities: a coarser-level community with more children is partitioned
   again on the cluster graph, so a parent report's roll-up covers every
@@ -878,6 +894,11 @@ Library API (Python callers and custom backends).
 - Two corpora written to one index namespace that hold the same file with
   the same text no longer share text units, so removing one corpus's copy
   keeps the other's (#327).
+- A dev deployment's ingestion runs no longer trip a prod deployment's
+  alarms in the same account and region: the EMF metrics were published
+  without dimensions under one namespace, and every deployment's
+  `IndexingFailures` and `ExtractionFailures` alarms read the same series
+  (#330).
 - `auto` no longer routes queries to `global` or `drift` when
   `graph.community_detection.enabled` is false: without community reports
   they answered from nothing. The routable set is now

@@ -164,10 +164,11 @@ class DataIngestionPipeline:
         PipelineStageType.TEXT_CHUNKING,
     )
 
-    # Emitted metric -> the stages whose execution produces it. A phased run
-    # restores upstream outputs from the cache, so a metric is emitted only by
-    # the run that executed its stage; otherwise every phase would re-emit the
-    # cumulative counts and Sum dashboards would over-count.
+    # Emitted metric -> the stages whose execution produces it. A metric is
+    # emitted once, right after the last of its stages this run has enabled
+    # executes (a resumed run restores the others from the cache and does not
+    # re-emit their counts, or Sum dashboards would over-count). The other
+    # metrics describe the whole run and are emitted when it ends.
     METRIC_STAGES: dict[str, frozenset[str]] = {
         "total_documents_processed": frozenset(
             {"document_parsing", "document_loading"}
@@ -1088,6 +1089,7 @@ class DataIngestionPipeline:
             else:
                 logger.info("Executing stage: '%s'", stage.name)
                 result = self._execute_stage(stage, context)
+                self._emit_stage_metrics(context, stage.name)
                 with self._checkpoint_write():
                     if self.llm_response_cache is not None:
                         self.llm_response_cache.flush()
@@ -1347,9 +1349,7 @@ class DataIngestionPipeline:
         total_duration = time.time() - start_time
         context.duration_seconds = total_duration
         context.global_metrics = self._create_pipeline_metrics(context)
-        self._emit_metrics(
-            context.global_metrics, context.pipeline_id, self._executed_stages
-        )
+        self._emit_metrics(context.global_metrics, context.pipeline_id)
 
         failed_stages = [
             r for r in context.stage_results if r.status == PipelineStageStatus.FAILED
@@ -1392,7 +1392,8 @@ class DataIngestionPipeline:
 
         metric_data: dict[str, Any] = {
             "pipeline_id": context.pipeline_id,
-            "total_duration_seconds": context.duration_seconds,
+            # Not known until the run ends (a stage's metrics are built before).
+            "total_duration_seconds": context.duration_seconds or 0.0,
             "total_documents_processed": len(context.documents or []),
             "total_text_units_created": len(context.text_units or []),
             "total_translated_units": len(context.translated_units or []),
@@ -1465,23 +1466,28 @@ class DataIngestionPipeline:
         self,
         metrics: PipelineMetrics,
         pipeline_id: str,
-        executed_stages: frozenset[str] | None = None,
+        stage_name: str | None = None,
     ) -> None:
         """Forward scalar pipeline metrics to the configured sink (best-effort).
 
-        With ``executed_stages``, a stage metric (``METRIC_STAGES``) is
-        emitted only when one of its stages ran in this run: a phased run
-        restores the other phases' outputs, and re-emitting their counts
-        would make Sum widgets over-count.
+        With ``stage_name`` (right after that stage ran): the metrics it
+        completes (``METRIC_STAGES``, emitted after the last of their stages
+        this run has enabled) and its duration, so a run that is stopped or
+        times out still reports the stages it finished. Without: the metrics
+        of the whole run, when it ends.
         """
+        enabled = [stage.name for stage in getattr(self, "stages", [])]
+
+        def completes(stages: frozenset[str]) -> str | None:
+            # The last enabled stage of ``stages``, in pipeline order.
+            last = [name for name in enabled if name in stages]
+            return last[-1] if last else None
 
         def emitted(name: str) -> bool:
             stages = self.METRIC_STAGES.get(name)
-            return (
-                executed_stages is None
-                or stages is None
-                or not stages.isdisjoint(executed_stages)
-            )
+            if stage_name is None:
+                return stages is None
+            return stages is not None and completes(stages) == stage_name
 
         try:
             dumped = metrics.model_dump()
@@ -1492,14 +1498,11 @@ class DataIngestionPipeline:
                 and not isinstance(v, bool)
                 and emitted(k)
             }
-            # Flatten the per-stage duration map into individual scalar metrics so
-            # they actually reach the sink (the dict member is otherwise dropped
-            # by the scalar filter, leaving only total_duration_seconds emitted).
-            for stage_name, duration in (metrics.stage_durations or {}).items():
-                if executed_stages is not None and stage_name not in executed_stages:
-                    continue
-                if isinstance(duration, (int, float)):
-                    scalars[f"duration_{stage_name}_seconds"] = duration
+            # The per-stage duration map is flattened into scalar metrics (the
+            # dict member is otherwise dropped by the scalar filter).
+            duration = (metrics.stage_durations or {}).get(stage_name or "")
+            if isinstance(duration, (int, float)):
+                scalars[f"duration_{stage_name}_seconds"] = duration
             self.metrics_sink.emit(
                 namespace="unified_kg_rag/ingestion",
                 metrics=scalars,
@@ -1507,6 +1510,15 @@ class DataIngestionPipeline:
             )
         except Exception as e:  # never let metrics emission break a run
             logger.warning("Metrics emission failed: %s", e)
+
+    def _emit_stage_metrics(self, context: PipelineContext, stage_name: str) -> None:
+        """Emit what ``stage_name`` completes, right after it ran."""
+        try:
+            metrics = self._create_pipeline_metrics(context)
+        except Exception as e:  # never let metrics emission break a run
+            logger.warning("Metrics emission failed: %s", e)
+            return
+        self._emit_metrics(metrics, context.pipeline_id, stage_name)
 
     @staticmethod
     def _calculate_stage_performance(

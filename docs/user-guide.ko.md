@@ -937,7 +937,7 @@ LangChain이 콜백을 호출하지 않으므로 모델 스팬이 남지 않습�
 | `--yes`, `-y` | off | 확인 질문(무결성 검사 실패 후 계속 진행)에 모두 예로 답함. stdin이 터미널이 아니면 질문할 수 없으므로 `--yes` 없이는 실행이 실패 |
 | `--continue-on-error` | off | 단계에서 오류가 나도 계속 진행. 추출·해석·커뮤니티 단계가 비정상 종료해 산출물이 빠진 문서는 FAILED로 기록되어 다음 증분 실행이 다시 처리 |
 | `--enabled-stages` | 전체 | 실행할 단계 목록(쉼표로 구분) |
-| `--metrics-sink` | `none` | `none` 또는 `cloudwatch`(CloudWatch EMF — Embedded Metric Format — 지표를 차원 없는 시계열로 stdout에 출력. `pipeline_id`는 차원이 아니라 로그 속성으로 기록하므로 실행마다 지표 시계열이 늘지 않음). 실행은 자신이 실행한 단계의 지표만 내보내므로, 재개한 실행이나 `--enabled-stages` 범위가 캐시에서 복원한 단계의 수치를 다시 보내지 않음 |
+| `--metrics-sink` | `none` | `none` 또는 `cloudwatch`(CloudWatch EMF — Embedded Metric Format — 지표를 stdout에 출력. `GRAPHRAG_METRICS_ENVIRONMENT`가 있으면 `Environment` 차원을 붙이고(CDK 태스크는 `env_name`을 설정), 없으면 차원 없음. `pipeline_id`는 차원이 아니라 로그 속성으로 기록하므로 실행마다 지표 시계열이 늘지 않음). 각 단계의 지표는 그 단계가 끝날 때, 그 단계를 실행한 실행만 내보내므로 재개한 실행이 복원한 단계의 수치를 다시 보내지 않음 |
 | `--retire-source-scope SCOPE` | — | 증분 실행에서 이전 소스 범위 `SCOPE`(이번 실행의 인덱스 접미사)의 레지스트리 레코드를 모두 삭제된 문서로 처리해 그 문서에만 속한 내용을 지웁니다. 여러 번 지정할 수 있고 `indexing.retire_source_scopes`에 더해집니다. `SCOPE`가 실행 자신의 범위이면 실패합니다(§5 삭제 범위 참고). |
 | `--config-path` | — | `config.yaml` 경로. 파일이 없으면 사용법 오류(종료 코드 2) |
 | `--backend`, `--llm-provider` 등 | — | 공급자 선택. [공급자 플래그](#공급자-플래그) 참고 |

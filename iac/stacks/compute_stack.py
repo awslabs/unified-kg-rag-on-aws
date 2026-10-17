@@ -122,7 +122,8 @@ class ComputeStack(Stack):
 
         # Container Insights is the only source of per-task CPU and memory
         # use (what fargate_cpu/fargate_memory are sized and an OOM kill is
-        # diagnosed from); no alarm or dashboard here reads it. Billed as
+        # diagnosed from); the IngestionTaskMemory alarm and the dashboard
+        # read it (observability stack). Billed as
         # custom metrics plus performance log events (README "Cost
         # drivers"), small for a cluster that runs only short-lived tasks, and
         # cdk-nag AwsSolutions-ECS4 requires it, so it is not a context key.
@@ -425,6 +426,9 @@ class ComputeStack(Stack):
             # aws.dynamodb.enabled stays a config.yaml decision.
             "GRAPHRAG_DOC_STATUS_TABLE": self.config.doc_status_table,
             "GRAPHRAG_DOC_STATUS_CREATE_TABLE": "false",
+            # The Environment dimension of the EMF metrics (--metrics-sink
+            # cloudwatch): this deployment's alarms watch only its own runs.
+            "GRAPHRAG_METRICS_ENVIRONMENT": self.config.env_name,
             # "structured" => JSON-structured logs (CloudWatch-friendly); the
             # config model only accepts "structured" | "plain".
             "LOG_FORMAT": "structured",

@@ -28,11 +28,16 @@ class _RecordingSink:
 
 
 def _emit(metrics: PipelineMetrics) -> dict:
-    pipe = DataIngestionPipeline.__new__(DataIngestionPipeline)
-    sink = _RecordingSink()
-    pipe.metrics_sink = sink
-    pipe._emit_metrics(metrics, "pid")
-    return sink.metrics
+    """Everything a full run emits: each stage's metrics, then the run's."""
+    from unified_kg_rag.domain.models import PipelineStageType
+
+    stages = [stage.value for stage in PipelineStageType]
+    pipe, sink = _stage_pipeline(*stages)
+    emitted: dict = {}
+    for stage in [*stages, None]:
+        pipe._emit_metrics(metrics, "pid", stage)
+        emitted.update(sink.metrics)
+    return emitted
 
 
 def test_indexed_counts_are_emitted() -> None:
@@ -101,10 +106,17 @@ def test_relationships_indexed_zero_is_visible_when_extracted() -> None:
     assert emitted["relationships_indexed"] == 0
 
 
-def test_a_phase_emits_only_the_metrics_of_the_stages_it_ran() -> None:
-    # A phased run restores the other phases' outputs from the cache; their
-    # counts must not be emitted again, or Sum widgets over-count.
-    m = PipelineMetrics(
+def _stage_pipeline(*stage_names: str) -> tuple[DataIngestionPipeline, _RecordingSink]:
+    from types import SimpleNamespace
+
+    pipe = DataIngestionPipeline.__new__(DataIngestionPipeline)
+    pipe.metrics_sink = sink = _RecordingSink()
+    pipe.stages = [SimpleNamespace(name=name) for name in stage_names]
+    return pipe, sink
+
+
+def _metrics() -> PipelineMetrics:
+    return PipelineMetrics(
         pipeline_id="p",
         total_duration_seconds=1.0,
         total_documents_processed=2,
@@ -118,21 +130,46 @@ def test_a_phase_emits_only_the_metrics_of_the_stages_it_ran() -> None:
         total_items_indexed=30,
         stage_durations={"indexing": 2.5, "graph_extraction": 1.0},
     )
-    pipe = DataIngestionPipeline.__new__(DataIngestionPipeline)
-    sink = _RecordingSink()
-    pipe.metrics_sink = sink
-    pipe._emit_metrics(m, "pid", {"indexing"})
-    emitted = sink.metrics
-    assert emitted["total_items_indexed"] == 30
-    assert emitted["duration_indexing_seconds"] == 2.5
-    assert emitted["total_duration_seconds"] == 1.0
+
+
+def test_a_stage_emits_the_metrics_it_completes_as_it_finishes() -> None:
+    # Emitted right after the stage: a run stopped or timed out later still
+    # reports it. Counts several stages produce wait for the last enabled one.
+    pipe, sink = _stage_pipeline("graph_extraction", "gleaning", "indexing")
+    pipe._emit_metrics(_metrics(), "pid", "graph_extraction")
+    assert "total_entities_extracted" not in sink.metrics  # gleaning finishes it
+    assert sink.metrics["duration_graph_extraction_seconds"] == 1.0
+    assert "total_extraction_failures" in sink.metrics
+
+    pipe._emit_metrics(_metrics(), "pid", "gleaning")
+    assert sink.metrics["total_entities_extracted"] == 10
+
+    pipe._emit_metrics(_metrics(), "pid", "indexing")
+    assert sink.metrics["total_items_indexed"] == 30
+    assert sink.metrics["duration_indexing_seconds"] == 2.5
+    for name in ("total_duration_seconds", "total_documents_processed"):
+        assert name not in sink.metrics
+
+
+def test_with_gleaning_off_extraction_completes_the_entity_count() -> None:
+    pipe, sink = _stage_pipeline("graph_extraction", "indexing")
+    pipe._emit_metrics(_metrics(), "pid", "graph_extraction")
+    assert sink.metrics["total_entities_extracted"] == 10
+
+
+def test_the_run_end_emits_only_the_run_metrics() -> None:
+    # The stage metrics went out as their stages finished; a resumed run
+    # restores the others and must not report their counts again.
+    pipe, sink = _stage_pipeline("graph_extraction", "indexing")
+    pipe._emit_metrics(_metrics(), "pid")
+    assert sink.metrics["total_duration_seconds"] == 1.0
     for name in (
         "total_documents_processed",
         "total_entities_extracted",
-        "total_communities_detected",
-        "duration_graph_extraction_seconds",
+        "total_items_indexed",
+        "duration_indexing_seconds",
     ):
-        assert name not in emitted
+        assert name not in sink.metrics
 
 
 def test_community_drift_is_emitted() -> None:
