@@ -204,7 +204,7 @@ full re-index of the affected index type).
   vertices store their compact name key (`name_key`). To upgrade: deploy
   the CDK stack (it creates the new table; the old one is retained outside
   `dev`) or point `aws.dynamodb.table_name` at a new table, run once with
-  `indexing.reset: true`, then delete the old table (#PR).
+  `indexing.reset: true`, then delete the old table (#327).
 - Incremental runs derive the content of what they touch from the text units'
   extraction records, which text units now name
   (`attributes.extraction_records`), and resolved entities record the name
@@ -258,7 +258,7 @@ Library API (Python callers and custom backends).
   `find_entity_ids_by_name_key`), a custom vector backend
   `VectorIndexer.find_documents` and `delete_extraction_records`; without
   them a removal cannot find what a removed document stated (a WARNING
-  says so) (#PR).
+  says so) (#327).
 - Adapter modules are grouped by role: `adapters/aws/` and `adapters/local/`
   hold technology bindings (clients, embedded stores, model factories,
   caches); `storage/`, `retrievers/` and the new `doc_status/` hold the port
@@ -408,7 +408,7 @@ Library API (Python callers and custom backends).
 ### Upgrading from pre-release builds
 - Doc-status registries of any earlier build are not migrated: the
   registry has a new table format, so deploy or point at the new table and
-  run once with `indexing.reset: true` (see Breaking changes) (#PR).
+  run once with `indexing.reset: true` (see Breaking changes) (#327).
 - Hidden files and files under a hidden or `__pycache__` subdirectory of the
   corpus (any path component below the root starting with `.`, such as
   `docs/.drafts/`) are no longer parsed (#213). The first incremental run
@@ -418,7 +418,7 @@ Library API (Python callers and custom backends).
   paths).
 - Roles with a custom IAM policy need `dynamodb:BatchGetItem` and
   `dynamodb:BatchWriteItem` (#191, #194) and `dynamodb:Query` and
-  `dynamodb:DescribeTable` (#PR) on the registry table.
+  `dynamodb:DescribeTable` (#327) on the registry table.
 - A suffix indexed with the doc-status registry off by a release before
   #233 cannot be told apart from a tracked one (its indices carry no
   marker), so an incremental run takes it as tracked: run such a suffix once
@@ -569,7 +569,7 @@ Library API (Python callers and custom backends).
   run reads its namespace's records and the cross-run merge looks the
   stored entities a delta name can join up by compact name key instead of
   reading every stored name (with `processing.fuzzy_entity_resolution` off,
-  the default) (#PR).
+  the default) (#327).
 - An entity, relationship or claim takes the id a full build gives it when
   derivation changes its name: an entity whose most-supported spelling has
   another id moves to that id with its edges and claims (claims stating
@@ -579,10 +579,10 @@ Library API (Python callers and custom backends).
   copy an interrupted re-key left under the new id) is merged with it,
   never overwritten. Stored
   communities and reports keep listing the old entity id until a rebuild
-  (#PR).
+  (#327).
 - Extraction records only removed text units named are deleted after the
   run's delta is written, so the extraction store no longer grows with
-  every edit and deletion (#PR).
+  every edit and deletion (#327).
 - `graph.community_detection.max_cluster_size` also caps a parent's child
   communities: a coarser-level community with more children is partitioned
   again on the cluster graph, so a parent report's roll-up covers every
@@ -857,7 +857,7 @@ Library API (Python callers and custom backends).
 ### Fixed
 - Two corpora written to one index namespace that hold the same file with
   the same text no longer share text units, so removing one corpus's copy
-  keeps the other's (#PR).
+  keeps the other's (#327).
 - `auto` no longer routes queries to `global` or `drift` when
   `graph.community_detection.enabled` is false: without community reports
   they answered from nothing. The routable set is now
