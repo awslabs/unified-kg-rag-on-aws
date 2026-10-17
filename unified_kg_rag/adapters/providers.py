@@ -392,7 +392,7 @@ def _neptune_graph_retriever(providers: Providers) -> BaseGraphRAGRetriever:
 
 @register_provider(ProviderRole.GRAPH_INDEXER, SQLITE)
 def _sqlite_graph_indexer(providers: Providers) -> GraphIndexer:
-    from unified_kg_rag.adapters.local.sqlite_graph import SQLiteGraphIndexer
+    from unified_kg_rag.adapters.storage.sqlite_graph_indexer import SQLiteGraphIndexer
 
     return SQLiteGraphIndexer(providers.config)
 
@@ -492,13 +492,13 @@ def _sqlite_vector_retriever(providers: Providers) -> BaseGraphRAGRetriever:
 
 @register_provider(ProviderRole.DOC_STATUS, DYNAMODB)
 def _dynamodb_doc_status(providers: Providers) -> DocStatusPort:
-    from unified_kg_rag.adapters.aws.dynamodb import DynamoDBDocStatusStore
+    from unified_kg_rag.adapters.doc_status.dynamodb import DynamoDBDocStatusStore
 
     return DynamoDBDocStatusStore(providers.config, boto_session=providers.boto_session)
 
 
 @register_provider(ProviderRole.DOC_STATUS, SQLITE)
 def _sqlite_doc_status(providers: Providers) -> DocStatusPort:
-    from unified_kg_rag.adapters.local.sqlite_doc_status import SQLiteDocStatusStore
+    from unified_kg_rag.adapters.doc_status.sqlite import SQLiteDocStatusStore
 
     return SQLiteDocStatusStore(providers.config)

@@ -22,9 +22,10 @@ from unified_kg_rag.adapters.aws.bedrock import (
     BedrockLanguageModelFactory,
     BedrockRerankModelFactory,
 )
-from unified_kg_rag.adapters.aws.dynamodb import DynamoDBDocStatusStore
 from unified_kg_rag.adapters.aws.opensearch import OpenSearchClient
 from unified_kg_rag.adapters.aws.token_counter import BedrockTokenCounter
+from unified_kg_rag.adapters.doc_status.dynamodb import DynamoDBDocStatusStore
+from unified_kg_rag.adapters.doc_status.sqlite import SQLiteDocStatusStore
 from unified_kg_rag.adapters.local.embeddings import (
     OllamaEmbeddingFactory,
     OpenAICompatibleEmbeddingFactory,
@@ -38,12 +39,11 @@ from unified_kg_rag.adapters.local.rerank import (
     NoRerankFactory,
 )
 from unified_kg_rag.adapters.local.search_engine import SQLiteSearchEngine
-from unified_kg_rag.adapters.local.sqlite_doc_status import SQLiteDocStatusStore
-from unified_kg_rag.adapters.local.sqlite_graph import SQLiteGraphIndexer
 from unified_kg_rag.adapters.local.token_counter import LocalTokenCounter
 from unified_kg_rag.adapters.storage.neptune_indexer import NeptuneIndexer
 from unified_kg_rag.adapters.storage.opensearch_indexer import OpenSearchIndexer
 from unified_kg_rag.adapters.storage.search_engine import SearchEngineClient
+from unified_kg_rag.adapters.storage.sqlite_graph_indexer import SQLiteGraphIndexer
 from unified_kg_rag.ports import (
     DocStatusPort,
     GraphIndexer,

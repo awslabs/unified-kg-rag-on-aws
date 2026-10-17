@@ -29,8 +29,8 @@ from tests.fixtures.incremental_runs import (
     IncrementalRun,
     expected_state,
 )
-from unified_kg_rag.adapters.aws.dynamodb import DynamoDBDocStatusStore
-from unified_kg_rag.adapters.local.sqlite_doc_status import SQLiteDocStatusStore
+from unified_kg_rag.adapters.doc_status.dynamodb import DynamoDBDocStatusStore
+from unified_kg_rag.adapters.doc_status.sqlite import SQLiteDocStatusStore
 from unified_kg_rag.domain.models import (
     PENDING_CONTENT_HASH,
     Config,

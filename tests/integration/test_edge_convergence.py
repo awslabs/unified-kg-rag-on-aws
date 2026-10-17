@@ -35,7 +35,7 @@ from tests.integration.test_embedded_e2e import (
     _providers,
     _stored,
 )
-from unified_kg_rag.adapters.local.sqlite_graph import SQLiteGraphIndexer
+from unified_kg_rag.adapters.storage.sqlite_graph_indexer import SQLiteGraphIndexer
 from unified_kg_rag.domain.models import PipelineStageStatus
 
 pytestmark = [pytest.mark.integration, pytest.mark.usefixtures("no_aws")]

@@ -151,6 +151,14 @@ full re-index of the affected index type).
   `--pipeline-id` to apply the fixes to them (#167, #170, #171, #201, #214).
 
 Library API (Python callers and custom backends).
+- Adapter modules are grouped by role: `adapters/aws/` and `adapters/local/`
+  hold technology bindings (clients, embedded stores, model factories,
+  caches); `storage/`, `retrievers/` and the new `doc_status/` hold the port
+  implementations. `adapters.aws.dynamodb` → `adapters.doc_status.dynamodb`;
+  `adapters.local.sqlite_doc_status` → `adapters.doc_status.sqlite`;
+  `SQLiteGraphIndexer`: `adapters.local.sqlite_graph` →
+  `adapters.storage.sqlite_graph_indexer` (`SQLiteGraphStore` stays in
+  `adapters.local.sqlite_graph`). The old paths are not kept (#PR).
 - `EvaluationRunner(args, rag_chain, config)` takes the run's config (the
   one the chain was built from) instead of loading it again from
   `args.config_path` (#292).

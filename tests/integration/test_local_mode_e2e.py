@@ -24,12 +24,12 @@ from tests.fixtures.fakes.model_servers import FakeOllama
 from tests.fixtures.fakes.stores import FakeGraphStore, FakeVectorStore
 from tests.integration.test_ingestion_stages import _respond
 from unified_kg_rag.adapters.aws import bedrock as bedrock_module
-from unified_kg_rag.adapters.aws import dynamodb as dynamodb_module
 from unified_kg_rag.adapters.aws import token_counter as token_counter_module
+from unified_kg_rag.adapters.doc_status import dynamodb as dynamodb_module
+from unified_kg_rag.adapters.doc_status.sqlite import SQLiteDocStatusStore
 from unified_kg_rag.adapters.local.embeddings import OllamaEmbeddingFactory
 from unified_kg_rag.adapters.local.models import OllamaLanguageModelFactory
 from unified_kg_rag.adapters.local.rerank import CrossEncoderRerankFactory
-from unified_kg_rag.adapters.local.sqlite_doc_status import SQLiteDocStatusStore
 from unified_kg_rag.application.bootstrap import build_providers
 from unified_kg_rag.application.ingestion import pipeline_stages as ps
 from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline

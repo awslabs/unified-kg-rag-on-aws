@@ -7,8 +7,8 @@ content hash, processing status, and which graph artifacts (entities,
 relationships, text units, communities) they produced — so a re-run can compute
 a delta (new / changed / deleted) and merge instead of re-indexing everything.
 
-Adapters: DynamoDB (``unified_kg_rag.adapters.aws.dynamodb``) and SQLite for
-local mode (``unified_kg_rag.adapters.local.sqlite_doc_status``); tests use the
+Adapters: DynamoDB (``unified_kg_rag.adapters.doc_status.dynamodb``) and SQLite for
+local mode (``unified_kg_rag.adapters.doc_status.sqlite``); tests use the
 in-memory fake (``tests/fixtures/fakes``). All conform to this Protocol
 structurally and pass one conformance suite
 (``tests/integration/test_doc_status_conformance.py``).

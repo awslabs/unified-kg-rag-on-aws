@@ -11,8 +11,8 @@ from typing import Any
 import pytest
 
 from unified_kg_rag.adapters.evaluators.base import BaseGraphRAGEvaluator
-from unified_kg_rag.adapters.local.sqlite_graph import SQLiteGraphIndexer
 from unified_kg_rag.adapters.storage.neptune_indexer import NeptuneIndexer
+from unified_kg_rag.adapters.storage.sqlite_graph_indexer import SQLiteGraphIndexer
 from unified_kg_rag.domain.models import (
     Config,
     EvaluationQuery,
@@ -92,7 +92,7 @@ def test_evaluator_subclass_with_only_the_async_method_is_accepted() -> None:
 
 
 def test_dynamodb_batch_backoff_waits_only_between_requests(mocker) -> None:
-    from unified_kg_rag.adapters.aws import dynamodb
+    from unified_kg_rag.adapters.doc_status import dynamodb
 
     sleep = mocker.patch.object(dynamodb.time, "sleep")
     dynamodb._backoff_before(0)

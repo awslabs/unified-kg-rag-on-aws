@@ -20,7 +20,7 @@ import pytest
 from moto import mock_aws
 
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
-from unified_kg_rag.adapters.aws.dynamodb import DynamoDBDocStatusStore
+from unified_kg_rag.adapters.doc_status.dynamodb import DynamoDBDocStatusStore
 from unified_kg_rag.application.ingestion import pipeline_stages as ps
 from unified_kg_rag.domain.models import (
     Config,
