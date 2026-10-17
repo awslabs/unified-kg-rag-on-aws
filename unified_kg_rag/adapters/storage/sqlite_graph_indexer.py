@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import uuid
 from collections.abc import Collection
 from pathlib import Path
 from typing import Any
@@ -24,6 +25,7 @@ from unified_kg_rag.adapters.local.sqlite_graph import (
     placeholders,
 )
 from unified_kg_rag.adapters.storage.neptune_codec import (
+    BUILD_TAG_PROPERTY,
     NAME_KEY_PROPERTY,
     entity_from_vertex,
     entity_properties,
@@ -80,6 +82,8 @@ class SQLiteGraphIndexer(GraphIndexer):
         store: An open store to write to (shared with a retriever).
         """
         super().__init__(config)
+        # Set between begin_rebuild and end_rebuild (see GraphIndexer).
+        self._rebuild_tag: str | None = None
         self.neptune_config = config.indexing.neptune
         self.store = store or SQLiteGraphStore(
             path or config.providers.graph.sqlite_path,
@@ -134,7 +138,7 @@ class SQLiteGraphIndexer(GraphIndexer):
         with self.store.transaction("write entities") as connection:
             for suffix, chunk in grouped.items():
                 label = self._entity_label(suffix)
-                if clear_first:
+                if clear_first and self._rebuild_tag is None:
                     self._drop_label(connection, label)
                 self._upsert_vertices(
                     connection,
@@ -182,10 +186,9 @@ class SQLiteGraphIndexer(GraphIndexer):
                             missing[0],
                         )
                         continue
-                    props = {
-                        "id": rel.id,
-                        **relationship_properties(rel, self._max_length),
-                    }
+                    props = self._tagged(
+                        {"id": rel.id, **relationship_properties(rel, self._max_length)}
+                    )
                     connection.execute(
                         "INSERT OR REPLACE INTO edges "
                         "(label, id, type, source_id, target_id, props) "
@@ -231,7 +234,7 @@ class SQLiteGraphIndexer(GraphIndexer):
             for suffix, comms in grouped.items():
                 community_label = self._community_label(suffix)
                 entity_label = self._entity_label(suffix)
-                if not upsert:
+                if not upsert and self._rebuild_tag is None:
                     self._drop_label(connection, community_label)
                 self._upsert_vertices(
                     connection,
@@ -313,7 +316,8 @@ class SQLiteGraphIndexer(GraphIndexer):
     ) -> None:
         """Create or replace each vertex (the last write of an id wins)."""
         written = {
-            vertex_id: vertex_value_map(vertex_id, props) for vertex_id, props in items
+            vertex_id: vertex_value_map(vertex_id, self._tagged(props))
+            for vertex_id, props in items
         }
         connection.executemany(
             "INSERT OR REPLACE INTO vertices (label, id, props) VALUES (?, ?, ?)",
@@ -351,6 +355,42 @@ class SQLiteGraphIndexer(GraphIndexer):
             "DELETE FROM vertices WHERE label = ? AND id = ?",
         ):
             connection.executemany(statement, pairs)
+
+    def _tagged(self, props: dict[str, Any]) -> dict[str, Any]:
+        """``props`` with the rebuild's tag, if one is running."""
+        if self._rebuild_tag is None:
+            return props
+        return {**props, BUILD_TAG_PROPERTY: self._rebuild_tag}
+
+    # --- rebuilding a suffix in place ------------------------------------------
+
+    def begin_rebuild(self, suffixes: Collection[str]) -> bool:
+        """See ``GraphIndexer.begin_rebuild``: the full-build writes keep the
+        labels and tag what they write."""
+        self._rebuild_tag = uuid.uuid4().hex
+        return True
+
+    def end_rebuild(self, suffixes: Collection[str], sweep: bool = True) -> None:
+        """Drop what the build did not write (one transaction), and end it."""
+        tag, self._rebuild_tag = self._rebuild_tag, None
+        if not sweep or tag is None:
+            return
+        with self.store.transaction("drop the stale graph") as connection:
+            for suffix in sorted(suffixes):
+                entity_label = self._entity_label(suffix)
+                connection.execute(
+                    "DELETE FROM edges WHERE label = ? AND "
+                    "json_extract(props, '$.build_tag') IS NOT ?",
+                    (entity_label, tag),
+                )
+                for label in (entity_label, self._community_label(suffix)):
+                    stale = connection.execute(
+                        "SELECT id FROM vertices WHERE label = ? AND NOT EXISTS "
+                        "(SELECT 1 FROM json_each(vertices.props, '$.build_tag') "
+                        "WHERE value = ?)",
+                        (label, tag),
+                    ).fetchall()
+                    self._drop_vertices(connection, [(label, row[0]) for row in stale])
 
     @staticmethod
     def _drop_label(connection: sqlite3.Connection, label: str) -> None:

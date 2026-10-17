@@ -444,11 +444,6 @@ def test_initialize_raises_the_store_error() -> None:
         _denied_manager().initialize()
 
 
-def test_clear_all_data_raises_the_store_error() -> None:
-    with pytest.raises(StoreAccessDeniedError, match="403 denied"):
-        _denied_manager().clear_all_data([TextUnit(id="t1", text="a")])
-
-
 @pytest.mark.parametrize("reset", [False, True])
 def test_indexing_stage_reports_the_store_error(mocker, reset: bool) -> None:
     from unified_kg_rag.application.ingestion import pipeline_stages as ps

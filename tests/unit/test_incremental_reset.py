@@ -204,6 +204,47 @@ def _reset_stage(mocker, config: Config, store: FakeDocStatusStore):
     return ps.IndexingStage(config=config, doc_status=store)
 
 
+def _reset_context(config: Config, store: FakeDocStatusStore) -> PipelineContext:
+    a = _doc("/a.txt", "Vendor ships.")
+    context = _context()
+    context.documents, _ = _loading_stage(config, store)._apply_incremental_filter(
+        [a], context
+    )
+    context.text_units = [
+        TextUnit(id="tu-a", text="Vendor ships.", document_ids=[a.document_id])
+    ]
+    return context
+
+
+def test_a_failed_reset_keeps_the_replaced_documents_records(mocker) -> None:
+    # The rebuild failed, so what the replaced documents wrote may remain:
+    # their records stay to find it.
+    from unified_kg_rag.application.ingestion import pipeline_stages as ps
+    from unified_kg_rag.shared import PipelineStageError
+
+    store = FakeDocStatusStore()
+    stale = DocStatusRecord(
+        doc_id=compute_doc_id("gone.txt", "default", "/"),
+        content_hash="h",
+        scope="default|/",
+        text_unit_ids=["tu-gone"],
+    )
+    store.put(stale)
+    config = _reset_config()
+    manager = mocker.MagicMock()
+    manager.config = config
+    manager.index_all_data.return_value = {
+        "neptune_entities": IndexingStats(total_items=1, failed_items=1)
+    }
+    mocker.patch.object(ps, "IndexingManager", return_value=manager)
+    stage = ps.IndexingStage(config=config, doc_status=store)
+
+    with pytest.raises(PipelineStageError):
+        stage._execute_core(_reset_context(config, store))
+
+    assert store.get(stale.doc_id) == stale
+
+
 def test_reset_keeps_the_records_of_another_namespace_of_the_suffix(
     mocker,
 ) -> None:
@@ -250,9 +291,9 @@ def test_reset_keeps_the_records_of_another_namespace_of_the_suffix(
 
 
 def test_reset_fails_when_the_registry_cannot_be_cleared(mocker) -> None:
-    # The stores are already wiped: a registry left with stale records would
-    # make the next incremental run skip re-ingested documents as unchanged,
-    # so the reset fails instead of logging and indexing on.
+    # The stores were rebuilt: a registry left with the replaced documents'
+    # records would make a later incremental run remove what their files no
+    # longer state, so the reset fails instead of reporting success.
     from unified_kg_rag.shared.exceptions import DocStatusRegistryError
 
     class _UnreachableStore(FakeDocStatusStore):
@@ -263,12 +304,11 @@ def test_reset_fails_when_the_registry_cannot_be_cleared(mocker) -> None:
     store = _UnreachableStore()
     config = _reset_config()
     stage = _reset_stage(mocker, config, store)
-    context = _context()
-    context.text_units = [TextUnit(id="tu-a", text="x", document_ids=["doc-a"])]
+    context = _reset_context(config, store)
 
     with pytest.raises(DocStatusRegistryError, match="registry unreachable"):
         stage._execute_core(context)
-    stage.indexing_manager.index_all_data.assert_not_called()
+    stage.indexing_manager.index_all_data.assert_called_once()
 
 
 def test_reset_surfaces_a_registry_configuration_error_as_itself(mocker) -> None:
@@ -284,11 +324,10 @@ def test_reset_surfaces_a_registry_configuration_error_as_itself(mocker) -> None
         def list_namespace(self, namespace):
             raise ConfigurationError("aws.dynamodb.table_name must be set")
 
-    stage = _reset_stage(mocker, _reset_config(), _MisconfiguredStore())
-    context = _context()
-    context.text_units = [TextUnit(id="tu-a", text="x", document_ids=["doc-a"])]
+    store = _MisconfiguredStore()
+    stage = _reset_stage(mocker, _reset_config(), store)
+    context = _reset_context(_reset_config(), store)
 
     with pytest.raises(ConfigurationError, match="table_name must be set") as info:
         stage._execute_core(context)
     assert not isinstance(info.value, DocStatusRegistryError)
-    stage.indexing_manager.index_all_data.assert_not_called()

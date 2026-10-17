@@ -80,6 +80,15 @@ def test_failed_executions_alarm() -> None:
     assert len(alarm["AlarmActions"]) == 1
 
 
+def test_quarantined_documents_alarm() -> None:
+    # A quarantined document is no longer indexed: someone has to look.
+    alarm = _alarms()["DocumentsQuarantined"]
+    assert alarm["MetricName"] == "total_documents_quarantined"
+    assert (alarm["Threshold"], alarm["EvaluationPeriods"]) == (1, 1)
+    assert alarm["TreatMissingData"] == "notBreaching"
+    assert len(alarm["AlarmActions"]) == 1
+
+
 def test_store_alarms_watch_the_paths_the_app_uses() -> None:
     alarms = _alarms()
     # Gremlin runs over WebSocket; GremlinHttp5xx counts HTTP only.

@@ -72,9 +72,6 @@ _SCHEMA = (
     "ON edges (label, source_id, target_id)",
     "CREATE INDEX IF NOT EXISTS edges_target_source "
     "ON edges (label, target_id, source_id)",
-    # The two-column indexes of earlier releases, which the new ones cover.
-    "DROP INDEX IF EXISTS edges_source",
-    "DROP INDEX IF EXISTS edges_target",
     "CREATE INDEX IF NOT EXISTS edges_id ON edges (id)",
     """
     CREATE TABLE IF NOT EXISTS memberships (

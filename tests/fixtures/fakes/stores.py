@@ -99,9 +99,41 @@ class FakeGraphStore:
         self._max_length = (config or Config()).indexing.neptune.property_max_length
         # collection -> {(suffix, id): stored value map / edge row / model}
         self.data: dict[str, dict[tuple[str, str], Any]] = {}
+        # The keys a rebuild in place wrote (begin_rebuild .. end_rebuild).
+        self._rebuilt: set[tuple[str, str, str]] | None = None
+        # What a query would see, sampled at every write of a rebuild (for
+        # tests of the in-place rebuild): (entity ids, relationship ids).
+        self.snapshots: list[tuple[set[str], set[str]]] = []
 
     def close(self) -> None:
         return None
+
+    def begin_rebuild(self, suffixes: Collection[str]) -> bool:
+        self._rebuilt = set()
+        return True
+
+    def end_rebuild(self, suffixes: Collection[str], sweep: bool = True) -> None:
+        written, self._rebuilt = self._rebuilt or set(), None
+        if not sweep:
+            return
+        for collection in ("relationships", "entities", "communities"):
+            bucket = self.data.get(collection, {})
+            stale = [
+                key
+                for key in bucket
+                if key[0] in suffixes and (collection, *key) not in written
+            ]
+            if collection == "entities":
+                for suffix in suffixes:
+                    self._drop_vertices(suffix, [i for s, i in stale if s == suffix])
+            else:
+                for key in stale:
+                    bucket.pop(key, None)
+
+    def _wrote(self, collection: str, key: tuple[str, str]) -> None:
+        if self._rebuilt is not None:
+            self._rebuilt.add((collection, *key))
+            self.snapshots.append((self.ids("entities"), self.ids("relationships")))
 
     def ids(self, collection: str) -> set[str]:
         return {item_id for _, item_id in self.data.get(collection, {})}
@@ -119,8 +151,9 @@ class FakeGraphStore:
     def index_entities(
         self, entities: list[Any], *, suffixes: Collection[str] = ()
     ) -> IndexingStats:
-        for suffix in {BaseIndexer.get_suffix(e) for e in entities} | set(suffixes):
-            self._drop_vertices(suffix, list(self.ids("entities")))
+        if self._rebuilt is None:
+            for suffix in {BaseIndexer.get_suffix(e) for e in entities} | set(suffixes):
+                self._drop_vertices(suffix, list(self.ids("entities")))
         return self.upsert_entities(entities)
 
     def upsert_entities(self, entities: list[Any]) -> IndexingStats:
@@ -132,7 +165,9 @@ class FakeGraphStore:
             for key, value in entity_properties(entity, self._max_length).items():
                 values = value if isinstance(value, list) else [value]
                 value_map[key] = list(dict.fromkeys(values))
-            bucket[(BaseIndexer.get_suffix(entity), entity.id)] = value_map
+            key = (BaseIndexer.get_suffix(entity), entity.id)
+            bucket[key] = value_map
+            self._wrote("entities", key)
             stats.add_success()
         return stats
 
@@ -171,6 +206,7 @@ class FakeGraphStore:
                 "source_id": rel.source_id,
                 "target_id": rel.target_id,
             }
+            self._wrote("relationships", (suffix, rel.id))
             stats.add_success()
         return stats
 
@@ -179,15 +215,18 @@ class FakeGraphStore:
     ) -> IndexingStats:
         bucket = self.data.setdefault("communities", {})
         replaced = {BaseIndexer.get_suffix(c) for c in communities} | set(suffixes)
-        for key in [key for key in bucket if key[0] in replaced]:
-            del bucket[key]
+        if self._rebuilt is None:
+            for key in [key for key in bucket if key[0] in replaced]:
+                del bucket[key]
         return self.upsert_communities(communities)
 
     def upsert_communities(self, communities: list[Any]) -> IndexingStats:
         stats = IndexingStats(total_items=len(communities))
         bucket = self.data.setdefault("communities", {})
         for comm in communities:
-            bucket[(BaseIndexer.get_suffix(comm), comm.id)] = comm
+            key = (BaseIndexer.get_suffix(comm), comm.id)
+            bucket[key] = comm
+            self._wrote("communities", key)
             stats.add_success()
         return stats
 

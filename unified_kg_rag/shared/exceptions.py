@@ -95,6 +95,12 @@ class PipelineInterrupted(KeyboardInterrupt):
         self.signum = signum
 
 
+class NamespaceLeaseError(PipelineExecutionError):
+    """Another run holds the index namespace's write lease, or this run lost
+    it: two runs writing one namespace at once would corrupt the registry
+    and the stores, so the run stops before (or instead of) writing."""
+
+
 class PipelineResumeError(GraphRAGException):
     pass
 

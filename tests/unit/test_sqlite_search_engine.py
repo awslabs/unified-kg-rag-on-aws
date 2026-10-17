@@ -1378,14 +1378,14 @@ def test_check_index_settings_reads_the_engine_meta(tmp_path: Path) -> None:
     with pytest.raises(ConfigurationError, match="dimension"):
         other.check_index_settings()
 
-    # An index without recorded settings gets its dimension recorded.
+    # An index without recorded settings (an earlier release's) is refused.
     engine = indexer.opensearch_client
     index = engine.get_index_name_by_alias(
         indexer._get_name(config.indexing.opensearch.entities_index_prefix, None)
     )
     engine.put_index_meta(index, {})
-    indexer.check_index_settings()
-    assert engine.get_index_mappings(index)["_meta"] == {"embedding_dimension": 64}
+    with pytest.raises(ConfigurationError, match="earlier release"):
+        indexer.check_index_settings()
     indexer.close()
     other.close()
 

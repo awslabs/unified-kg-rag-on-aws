@@ -167,6 +167,9 @@ class StorageStack(Stack):
             sort_key=dynamodb.Attribute(
                 name="doc_id", type=dynamodb.AttributeType.STRING
             ),
+            # A namespace's write lease item expires by this attribute, so a
+            # run that died leaves no lease behind (DynamoDBDocStatusStore).
+            time_to_live_attribute="lease_expires_at",
             billing_mode=dynamodb.BillingMode.PAY_PER_REQUEST,
             point_in_time_recovery_specification=(
                 dynamodb.PointInTimeRecoverySpecification(

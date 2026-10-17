@@ -20,29 +20,49 @@ commands are in [`iac/README.md`](../iac/README.md#after-deploy).
 3. **Endpoints.** `run-ingestion`, `run-rag` and `run-eval` check at start-up,
    before any model call, that the store endpoints they need are set (see
    [Start-up endpoint check](#start-up-endpoint-check)).
-4. **No other ingestion is running** against the same stores. Concurrent runs
-   are not supported (see [Concurrent runs](#concurrent-runs)). On the CDK
-   stack:
+4. **No other ingestion is running** against the same stores. With the
+   doc-status registry a second run on one index namespace stops with
+   `NamespaceLeaseError`; without it concurrent runs are not supported (see
+   [Concurrent runs](#concurrent-runs)). On the CDK stack:
    `aws stepfunctions list-executions --state-machine-arn <arn> --status-filter RUNNING`.
 
 ## Concurrent runs
 
-Concurrent ingestion runs are not supported. Do not start a run while another
-one is running against:
+With the doc-status registry, one run writes an index namespace at a time. A
+run takes its namespace's write lease before its first stage and holds it to
+its end, renewing it every third of `indexing.lease_seconds` (default 300 s).
+A second run on the same namespace stops at once, before it reads or writes
+anything, with:
 
-- **the same index suffix** (the same OpenSearch aliases and Neptune labels).
-  A full reindex writes a new timestamped index, swaps the alias onto it and
-  deletes the alias's older indices, so one run can delete the index the other
-  is writing or leave the alias on the other run's index. A reset clears the
-  suffix's stores under the other run.
-- **the same doc-status table namespace.** An incremental run removes what
-  cites its removed text units in the stores and overwrites its documents'
-  registry records, so it can delete or strip what another run is writing and
-  replace that run's records.
+```text
+NamespaceLeaseError: Index namespace '<namespace>' is being written by
+<host>:<pid>:<id> (its lease runs until <time> unless renewed) ...
+```
 
-Runs on different index suffixes that use separate doc-status tables
-(`aws.dynamodb.table_name`) do not share either and can run side by side.
-Otherwise, wait for one run to finish before starting the next.
+Wait for that run to finish and start again. A run that dies (a killed task,
+a lost host) stops renewing, so its lease expires at most `lease_seconds`
+after its last renewal and the next run then proceeds; nothing needs
+cleaning up. In DynamoDB the lease is the item with partition key
+`namespace` = `<namespace>` and sort key `doc_id` = `#lease` (owner in
+`lease_owner`, expiry in `lease_expires_at`, the table's TTL attribute, so
+DynamoDB also deletes it once expired); in the SQLite registry it is the
+namespace's row of the `leases` table. Delete it by hand only after making
+sure the run named in it is gone. A run whose renewals keep failing until
+its lease expires, or whose lease another run then took, stops before its
+next registry or store write with `NamespaceLeaseError: This run lost the
+write lease ...`: re-run once the other run ended. A registry on a custom
+policy needs `dynamodb:PutItem`, `GetItem` and `DeleteItem` for the lease
+(the CDK stack's grant covers them), and `dynamodb:UpdateTimeToLive` when the
+library creates the table (`aws.dynamodb.create_table_if_missing`).
+
+Without the registry nothing locks, and concurrent runs are not supported.
+Do not start a run while another one is running against **the same index
+suffix** (the same OpenSearch aliases and Neptune labels): a full reindex
+writes a new timestamped index, swaps the alias onto it and deletes the
+alias's older indices, so one run can delete the index the other is writing
+or leave the alias on the other run's index. The direct `IncrementalIndexer`
+API takes no lease either. Runs on different namespaces lease apart and can
+run side by side.
 
 A doc-status table namespace is the index suffix (`index_value`, `default`
 when unset) plus `indexing.additional_suffix`, plus a tag of the
@@ -62,11 +82,11 @@ the default prefixes and the same suffixes uses the table.
 On the CDK stack, each `start-execution` starts one execution that runs the
 ingestion task. The stack defines no schedule or event trigger, so
 executions start only when someone (or an automation you add) calls
-`start-execution`, but the state machine does not stop a second execution from
-starting while one is running. Check for a `RUNNING` execution first (the
-command above) and do not start overlapping executions; a schedule you add
-should not fire while a previous execution can still be running (up to the
-state machine's timeout, `sfn_timeout_hours`, 6 hours by default).
+`start-execution`. The state machine does not stop a second execution from
+starting while one is running; the lease then fails the second one. Check for
+a `RUNNING` execution first (the command above), and let a schedule you add
+fire only when a previous execution cannot still be running (up to the state
+machine's timeout, `sfn_timeout_hours`, 6 hours by default).
 
 ## Re-ingest
 
@@ -76,7 +96,7 @@ Three operations look alike but act on different state:
 |---|---|---|---|
 | Finish an interrupted run | Re-run with the same `--pipeline-id` (on the CDK stack, start a new execution with the same `pipeline_id`); it resumes at the first failed or incomplete stage and skips the stages that completed. `--resume-from-stage <stage>` picks the stage. | Reused | Written by the stages that run |
 | Recompute every stage | `--force-rebuild` | Ignored and rewritten | Written as usual (incremental when enabled) |
-| Rebuild the stores from scratch | `indexing.reset: true` for one run | Unchanged | Cleared for the run's index namespace (other namespaces in the table keep their records), then the whole corpus is indexed and every document recorded again |
+| Rebuild the stores from scratch | `indexing.reset: true` for one run | Unchanged | Rebuilt without going offline: new vector indices replace the old ones by an alias swap, the graph is rewritten in place and what the rebuild did not write is dropped at the end; every document is recorded again, then the namespace's other records are deleted (other namespaces in the table keep theirs). A failed reset drops nothing |
 
 Use `indexing.reset: true` (and `--force-rebuild` if stage outputs must change
 too) after changing anything that is baked into the stored data:
@@ -87,15 +107,17 @@ too) after changing anything that is baked into the stored data:
 - to refresh the communities incremental runs append to, and to give
   entities the ids of their current names (see
   [Incremental runs](#incremental-runs));
-- the extraction settings (prompts, `entity_types`, extraction or chunking
-  models, chunk sizes...) when the registry holds records written before
-  records carried an extraction fingerprint, or after editing a built-in
-  prompt template (code). Otherwise an incremental run re-extracts the
-  unchanged documents whose stored fingerprint differs from the current
-  settings on its own and logs how many (see
-  [User Guide §5](./user-guide.md#workflows)); records without a fingerprint
-  are compared by content only, so they keep their old extraction until a
-  reset.
+- a built-in prompt template (code) you edited. Other extraction settings
+  (prompts, `entity_types`, extraction or chunking models, chunk sizes...)
+  need no reset: an incremental run re-extracts the unchanged documents
+  whose stored fingerprint differs from the current settings on its own and
+  logs how many (see [User Guide §5](./user-guide.md#workflows)).
+
+During a reset, queries keep reading the previous content: the vector
+indices swap aliases one index type at a time, and the graph holds a mix of
+previous and rebuilt vertices and edges until the rebuild drops what it did
+not write. A reset that fails leaves the previous graph and registry records
+in place (beside what it wrote); re-run it.
 
 Set `indexing.reset` back to `false` afterwards; otherwise every run rebuilds.
 
@@ -139,8 +161,11 @@ index namespace, so the old table is rejected at first use with a
 `graphrag-doc-status-v2`, `<env>-graphrag-doc-status-v2` outside `dev`; the
 library default is `unified-kg-rag-on-aws-doc-status-v2`) and run once with
 `indexing.reset: true`. Delete the old table once the rebuild succeeded (the
-stack retains it outside `dev`). For a registry written by a pre-release
-build, see also
+stack retains it outside `dev`). Nothing an earlier build stored is read:
+indices without recorded embedding settings are refused (`ConfigurationError`
+naming the index), and stage caches of an earlier build miss. Rebuild every
+index once with `indexing.reset: true`, and run a pipeline that resumes a
+cached `--pipeline-id` with `--force-rebuild` or a new id; see
 [CHANGELOG: Upgrading from pre-release builds](../CHANGELOG.md#upgrading-from-pre-release-builds).
 
 What incremental runs do not refresh: delta runs append communities rather
@@ -192,7 +217,10 @@ text units it had and the ones the run is about to write; the records become
 An interruption is not counted as a failure, but it resets the document's
 consecutive-failure count for `indexing.max_document_failures`: the `PENDING`
 record has `failure_count` 0, so a document that had failed before starts
-counting again from its next failure. `PENDING` records (`status` `pending`,
+counting again from its next failure. The `PENDING` record counts instead
+the consecutive runs that started the same content without finishing it
+(`attempt_count`, see [Quarantined documents](#quarantined-documents)).
+`PENDING` records (`status` `pending`,
 `content_hash` `pending`, `error_info` naming the write-ahead record) are
 expected after a failed run. Do not delete them by hand: their text units
 are what lets the next run find the interrupted run's writes (every artifact
@@ -228,9 +256,10 @@ next run processes the same new and changed documents again.
   `FAILED`, keeps what it indexed, and each run logs a WARNING naming the file.
 - To retry it, fix the cause (often an oversized or malformed file), edit the
   file so its content hash changes, or raise `indexing.max_document_failures`.
-- A document whose artifact ids exceed one DynamoDB item (400 KB, roughly
-  10,000 ids) fails the indexing stage, before anything is written for the
-  delta, with an error naming the file and its id count. Split the file.
+- A document whose text-unit ids exceed one DynamoDB item (400 KB, roughly
+  10,000 ids, half that for an edited document) fails the indexing stage,
+  before anything is written for the delta, with an error naming the file
+  and its text-unit count. Split the file.
 
 Write failures are gated separately. OpenSearch bulk items rejected with a
 retryable status (429, 502, 503, 504), and the items of a whole bulk request
@@ -246,7 +275,7 @@ succeeds and only the documents that own a failed artifact are recorded
 `FAILED`; a failure the backend reports without an item id marks every
 document of the run `FAILED`. On the CDK stack, a failed ingestion task publishes a
 message with the execution id and the error to the SNS topic, and the alarms
-below report to the same topic: four on pipeline runs, seven on store
+below report to the same topic: five on pipeline runs, seven on store
 health and two on capacity. `PipelineFailures` also fires for a failed
 task, so such a failure arrives twice, the second time without context; the
 alarm stays because it also covers failures the message cannot report (an
@@ -259,6 +288,7 @@ error the task's handler cannot catch, such as a start input without
 | `PipelineTimedOutOrAborted` | An execution hit the state machine timeout or was stopped |
 | `IndexingFailures` | Indexing reported failed items, even in a succeeded execution |
 | `ExtractionFailures` | Extraction, gleaning or claim extraction failed on some units |
+| `DocumentsQuarantined` | A run quarantined documents whose indexing kept dying (see [Quarantined documents](#quarantined-documents)) |
 
 The pipeline-run alarms other than the Step Functions ones read the EMF metrics
 `run-ingestion --metrics-sink cloudwatch` emits, each stage's as the stage
@@ -295,6 +325,27 @@ and CPU use, and Bedrock invocations, throttles and latency by model.
 
 The alarms have a subscriber only when the stack was deployed with
 `-c alarm_email=<address>`.
+
+### Quarantined documents
+
+A document whose indexing kills the run each time (the task runs out of
+memory or hits its timeout on it) would stop every later run the same way.
+Once runs have started its unchanged content `indexing.max_document_attempts`
+times in a row (default `3`) without finishing it, the next run quarantines
+it: it logs a WARNING naming the file, removes what the attempts wrote,
+records it `QUARANTINED` (no text units, the reason in `error_info`) and
+indexes the rest. The run metric `total_documents_quarantined` counts them,
+and on the CDK stack the `DocumentsQuarantined` alarm fires.
+
+- A quarantined document is skipped while its content stays. It is retried
+  when the file changes, when the extraction settings change, or when
+  `indexing.max_document_attempts` is raised.
+- Every document of a delta that keeps dying counts an attempt, so the
+  documents indexed together with the culprit are quarantined with it.
+  Retry them by touching their files (or raising the limit) once the
+  culprit is found, for example by running its folder alone.
+- A document that produces no text units stays `PENDING` and is quarantined
+  after the same number of runs.
 
 ## Caches and prefixes
 
@@ -771,6 +822,9 @@ content to LangSmith independently of this setting.
 | `Neptune refused the connection (HTTP 403)` | IAM authentication denied the websocket: the policy lacks `neptune-db:connect` on the cluster, or the request was signed for another region | Grant `neptune-db:connect` (and the `neptune-db:*` data actions the run needs); set `aws.region_name` to the cluster's region |
 | `Skipping N '.md' file(s) ...` / `No supported source files found in '<dir>'` | The `unstructured` extra is not installed | Install it (Python 3.11+) or convert the files |
 | `ConfigurationError: Doc-status registry: DynamoDB table '...' has the key schema ... of an earlier release` | The table was created by a release that keyed records by `doc_id` alone | Point `aws.dynamodb.table_name` (`GRAPHRAG_DOC_STATUS_TABLE`) at a new table or deploy the stack's new one, and run once with `indexing.reset: true` (see [Incremental runs](#incremental-runs)) |
+| `NamespaceLeaseError: Index namespace '...' is being written by ...` | Another run holds the namespace's write lease | Wait for it to finish; a dead run's lease expires within `indexing.lease_seconds` (see [Concurrent runs](#concurrent-runs)) |
+| `NamespaceLeaseError: This run lost the write lease ...` | The run's lease renewals failed until it expired, or another run took it | Re-run once the other run ended; check the registry's reachability |
+| `ConfigurationError: The OpenSearch index '...' records no embedding settings ...` | An earlier release built the index | Run once with `indexing.reset: true` |
 | `DocStatusRegistryError` | The doc-status registry table is missing, not accessible, or throttled | Create the table or fix `aws.dynamodb.table_name`, grant the DynamoDB permissions named in the message, then resume with the same `--pipeline-id` |
 | `Incremental indexing is enabled but no document delta was computed` | The indexing stage ran without a registry diff (the loading stage failed under `continue_on_error`) | Re-run from `document_loading` once the registry is reachable |
 | `CacheSyncError` | The S3 stage-cache download or upload failed | Check bucket permissions and `aws.s3.encryption`, then resume with the same `--pipeline-id` |

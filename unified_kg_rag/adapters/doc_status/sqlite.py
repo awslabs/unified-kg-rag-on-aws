@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import sqlite3
 import threading
+import time
 from collections.abc import Iterable, Iterator
 from contextlib import AbstractContextManager, contextmanager
 from pathlib import Path
@@ -54,6 +55,13 @@ _SCHEMA = (
         record TEXT NOT NULL,
         extraction_fingerprint TEXT,
         PRIMARY KEY (namespace, doc_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS leases (
+        namespace TEXT PRIMARY KEY,
+        owner TEXT NOT NULL,
+        expires_at REAL NOT NULL
     )
     """,
 )
@@ -185,6 +193,39 @@ class SQLiteDocStatusStore:
             connection.execute(
                 "DELETE FROM documents WHERE namespace = ? AND doc_id = ?",
                 (doc_id_namespace(doc_id), doc_id),
+            )
+
+    # --- the namespace write lease -------------------------------------------
+
+    def try_acquire_lease(self, namespace: str, owner: str, seconds: float) -> bool:
+        now = time.time()
+        with self._transaction("take the namespace lease") as connection:
+            row = connection.execute(
+                "SELECT owner, expires_at FROM leases WHERE namespace = ?",
+                (namespace,),
+            ).fetchone()
+            if row is not None and row[0] != owner and row[1] > now:
+                return False
+            connection.execute(
+                "INSERT OR REPLACE INTO leases (namespace, owner, expires_at) "
+                "VALUES (?, ?, ?)",
+                (namespace, owner, now + seconds),
+            )
+            return True
+
+    def lease_holder(self, namespace: str) -> tuple[str, float] | None:
+        with self._lock, self._registry_errors("read the namespace lease"):
+            row = self.connection.execute(
+                "SELECT owner, expires_at FROM leases WHERE namespace = ?",
+                (namespace,),
+            ).fetchone()
+        return (row[0], row[1]) if row else None
+
+    def release_lease(self, namespace: str, owner: str) -> None:
+        with self._transaction("release the namespace lease") as connection:
+            connection.execute(
+                "DELETE FROM leases WHERE namespace = ? AND owner = ?",
+                (namespace, owner),
             )
 
     def list_namespace(self, namespace: str) -> list[DocStatusRecord]:

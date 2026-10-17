@@ -45,12 +45,16 @@ class DocStatus(str, Enum):
 
     An incremental run records a document PENDING (the write-ahead record)
     before it touches the stores, then PROCESSED once its artifacts are
-    written, or FAILED.
+    written, or FAILED. A document whose indexing was started and never
+    finished ``indexing.max_document_attempts`` consecutive runs (the run died
+    each time) is QUARANTINED: it is skipped until its content or the
+    extraction settings change.
     """
 
     PENDING = "pending"
     PROCESSED = "processed"
     FAILED = "failed"
+    QUARANTINED = "quarantined"
 
 
 # Content hash of a write-ahead record (status PENDING): an incremental run
@@ -91,7 +95,7 @@ class DocStatusRecord(BaseModel):
         default=None,
         description="Registry scope (index namespace + corpus source) of the run "
         "that recorded the document. A run only treats documents of its own scope "
-        "as deleted; None marks a record written before scopes existed, which is "
+        "as deleted; None (a record the direct API wrote without a scope) is "
         "never deleted automatically",
     )
     file_path: str | None = Field(
@@ -110,7 +114,20 @@ class DocStatusRecord(BaseModel):
         default=0,
         ge=0,
         description="Consecutive runs that recorded this content FAILED; 0 once "
-        "processed. A record written before the field existed reads as 0",
+        "processed",
+    )
+    attempt_count: int = Field(
+        default=0,
+        ge=0,
+        description="Consecutive runs that started indexing this document "
+        "(wrote its PENDING record) and did not finish it: an interruption "
+        "counts, a FAILED or PROCESSED commit resets it to 0",
+    )
+    attempted_hash: str | None = Field(
+        default=None,
+        description="Content hash of the version the attempts indexed (a "
+        "PENDING record's ``content_hash`` is ``PENDING_CONTENT_HASH``): only "
+        "attempts at the same content count toward quarantine",
     )
     extraction_fingerprint: str | None = Field(
         default=None,
@@ -118,8 +135,8 @@ class DocStatusRecord(BaseModel):
         "artifacts (parsing through graph resolution: models, prompts, entity "
         "types, chunking...) when it was last extracted. A diff given the run's "
         "fingerprint classifies a document whose stored fingerprint differs as "
-        "changed. None marks a record written before the field existed: it is "
-        "never re-extracted for a settings change (a reset re-extracts it)",
+        "changed. None (a record written without one, e.g. by the direct API) "
+        "is never re-extracted for a settings change",
     )
     created_at: str | None = Field(
         default=None, description="ISO timestamp when first registered"
@@ -187,6 +204,13 @@ class DocumentDelta(BaseModel):
         "changes the partition. A store that does not report it leaves it "
         "empty",
     )
+    quarantined: list[str] = Field(
+        default_factory=list,
+        description="Doc ids whose indexing this content was started and never "
+        "finished ``indexing.max_document_attempts`` consecutive runs: not "
+        "processed; the run removes what the attempts wrote and records them "
+        "QUARANTINED",
+    )
     settings_changed: list[str] = Field(
         default_factory=list,
         description="The ``changed`` doc ids whose content and status alone "
@@ -197,7 +221,7 @@ class DocumentDelta(BaseModel):
     @property
     def is_empty(self) -> bool:
         """True when no documents were added, changed, or removed."""
-        return not (self.new or self.changed or self.deleted)
+        return not (self.new or self.changed or self.deleted or self.quarantined)
 
     @property
     def to_process(self) -> list[str]:
@@ -211,10 +235,7 @@ class Document(BaseModel):
     LangChain loader output is converted into this model at the adapter/shared
     boundary (``shared.utils.document_converter``). ``page_content`` keeps the
     field name LangChain's Document used and is the document's only copy of
-    its text. JSON written by earlier versions still loads: their extra keys
-    (LangChain's ``id``/``type``, ``file_type``, ``total_pages``, ``pages``
-    and ``content``) are ignored, except that ``content.text`` is read as
-    the text (see :meth:`from_json_file`).
+    its text.
     """
 
     page_content: str = Field(description="Full plain-text content of the document")
@@ -247,11 +268,6 @@ class Document(BaseModel):
             raise FileNotFoundError(f"JSON file not found at '{path}'")
 
         data = json.loads(_read_text_autodetect(path))
-        # Earlier versions kept the text authoritative under ``content.text``
-        # (their ``page_content`` could be stale).
-        legacy_text = (data.get("content") or {}).get("text")
-        if isinstance(legacy_text, str):
-            data["page_content"] = legacy_text
         data.setdefault("page_content", "")
         return cls.model_validate(data)
 

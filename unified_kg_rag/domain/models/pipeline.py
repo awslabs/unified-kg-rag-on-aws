@@ -117,6 +117,12 @@ class PipelineMetrics(BaseModel):
     total_claim_extraction_failures: int = Field(
         default=0, description="Text units whose claim extraction failed"
     )
+    total_documents_quarantined: int = Field(
+        default=0,
+        description="Incremental runs: documents quarantined this run, their "
+        "indexing having been started indexing.max_document_attempts "
+        "consecutive runs without finishing",
+    )
     gleaning_improvement_rate: float = Field(
         default=0.0,
         description="Entities plus relationships gleaning added, per entity "

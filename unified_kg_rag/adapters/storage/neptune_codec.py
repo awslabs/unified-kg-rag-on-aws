@@ -61,6 +61,11 @@ def item_properties(
     return properties
 
 
+# The tag a full build replacing a suffix in place writes on every vertex and
+# edge, so the build can then drop what it did not write
+# (GraphIndexer.begin_rebuild). Not read back.
+BUILD_TAG_PROPERTY = "build_tag"
+
 # The compact name key of an entity's name, stored with it so the cross-run
 # merge finds the stored entities a delta name links to without reading every
 # name (GraphIndexer.find_entity_ids_by_name_key). Not read back.

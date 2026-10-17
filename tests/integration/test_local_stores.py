@@ -222,6 +222,41 @@ def test_graph_writes_retried_after_a_lost_response_add_nothing_twice(
     assert counts() == (2, 1, 2, 1)
 
 
+def test_a_rebuild_in_place_on_gremlin_sweeps_only_what_it_did_not_write(
+    graph_indexer,
+) -> None:
+    graph_indexer.clear([_SUFFIX])
+    graph_indexer.index_entities(_entities())
+    graph_indexer.index_relationships(_relationships())
+    graph_indexer.index_communities(_communities())
+
+    kept = [e for e in _entities() if e.id != "e-depot"]
+    assert graph_indexer.begin_rebuild([_SUFFIX])
+    graph_indexer.index_entities(kept, suffixes=[_SUFFIX])
+    # The previous graph is still served while the build writes.
+    assert len(graph_indexer.read_entities(["e-depot"], _SUFFIX)) == 1
+    graph_indexer.index_relationships(_relationships()[:1])
+    graph_indexer.index_communities(
+        [_communities()[0].model_copy(update={"entity_ids": ["e-vendor"]})],
+        suffixes=[_SUFFIX],
+    )
+    graph_indexer.end_rebuild([_SUFFIX])
+
+    g = graph_indexer.neptune_client.g
+    entity = graph_indexer._get_label("Entity", _SUFFIX)
+    assert {
+        e.id
+        for e in graph_indexer.read_entities(
+            ["e-vendor", "e-buyer", "e-depot"], _SUFFIX
+        )
+    } == {"e-vendor", "e-buyer"}
+    assert [
+        r.id
+        for r in graph_indexer.read_relationships(["r-supplies", "r-ships"], _SUFFIX)
+    ] == ["r-supplies"]
+    assert int(g.V().hasLabel(entity).outE("MemberOf").count().next()) == 1
+
+
 def test_index_admin_requests_resent_after_a_lost_response_succeed(
     local_config: Config, monkeypatch: pytest.MonkeyPatch
 ) -> None:

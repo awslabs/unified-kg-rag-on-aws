@@ -47,6 +47,7 @@ from unified_kg_rag.application.ingestion.incremental import (
     run_incremental_indexer,
     warn_about_unapplied_retired_scopes,
 )
+from unified_kg_rag.application.ingestion.namespace_lease import check_lease
 from unified_kg_rag.application.storage.indexing_manager import IndexingManager
 from unified_kg_rag.domain.ingestion.claim_resolver import ClaimResolver
 from unified_kg_rag.domain.ingestion.community_drift import (
@@ -447,6 +448,11 @@ class DocumentLoadingStage(PipelineStage):
             "file_count": input_count,
             "success_count": output_count,
             "delta_skipped": delta_skipped,
+            "documents_quarantined": (
+                len(context.incremental_delta.quarantined)
+                if context.incremental_delta is not None
+                else 0
+            ),
             "failed_files": failed_files,
         }
 
@@ -1384,21 +1390,13 @@ class IndexingStage(PipelineStage):
         self, context: PipelineContext
     ) -> tuple[int, int, dict[str, Any] | None]:
         if self.config.indexing.reset:
-            logger.info("Clearing all existing data")
-            text_units = context.translated_units or context.text_units
-            self.indexing_manager.clear_all_data(text_units=text_units)
-            # Also clear the DynamoDB doc-status registry. clear_all_data only
-            # wipes OpenSearch + Neptune; leaving stale content-hash lineage would
-            # make the NEXT incremental run classify re-ingested docs as
-            # "unchanged" (skipping them despite the graph having been wiped) and
-            # leave rows for docs no longer in the corpus, so a registry that
-            # cannot be cleared fails the stage (DocStatusRegistryError). Only
-            # relevant when the registry is in use (incremental mode).
-            if self._doc_status is not None or self.config.doc_status_enabled:
-                clear_registry_namespaces(
-                    self._build_doc_status_store,
-                    reset_namespaces(self.config, context, text_units),
-                )
+            check_lease()
+            # The stores are not cleared first: the full build below writes
+            # new vector indices and swaps their aliases, and rewrites the
+            # graph in place before dropping what it did not write
+            # (GraphIndexer.begin_rebuild), so the suffix keeps serving its
+            # previous content until the rebuild replaced it. The registry
+            # keeps its records until the rebuild recorded the corpus (below).
 
         self.indexing_manager.initialize()
 
@@ -1461,10 +1459,10 @@ class IndexingStage(PipelineStage):
         else:
             rebuild = None
             if context.incremental_delta is not None:
-                # Reset with the registry enabled: the registry was cleared with
-                # the stores, so record the rebuilt corpus for the next delta
-                # run, PENDING first (see IncrementalIndexer.write_ahead) so an
-                # interrupted rebuild leaves nothing unreferenced.
+                # Reset with the registry enabled: record the rebuilt corpus
+                # for the next delta run, PENDING first (see
+                # IncrementalIndexer.write_ahead) so an interrupted rebuild
+                # leaves nothing unreferenced.
                 incremental = run_incremental_indexer(
                     self._build_doc_status_store(),
                     self.indexing_manager,
@@ -1472,7 +1470,11 @@ class IndexingStage(PipelineStage):
                     text_units,
                 )
                 lineages = context_lineages(context, incremental.suffix, text_units)
-                incremental.write_ahead(context.incremental_delta, lineages)
+                incremental.write_ahead(
+                    context.incremental_delta,
+                    lineages,
+                    context.incremental_fingerprints,
+                )
                 rebuild = (incremental, lineages)
             # A build the registry does not record must not be updated
             # incrementally later (see VectorIndexer.check_index_settings).
@@ -1489,7 +1491,7 @@ class IndexingStage(PipelineStage):
             )
             if rebuild is not None:
                 incremental, lineages = rebuild
-                incremental.record(
+                recorded = incremental.record(
                     lineages,
                     context.incremental_fingerprints,
                     indexing_results,
@@ -1506,6 +1508,14 @@ class IndexingStage(PipelineStage):
                         ],
                     ),
                 )
+                if recorded:
+                    # The records of documents the rebuild replaced go; a
+                    # failed rebuild keeps them (their artifacts may remain).
+                    clear_registry_namespaces(
+                        self._build_doc_status_store,
+                        reset_namespaces(self.config, context, text_units),
+                        keep=context.incremental_fingerprints,
+                    )
 
         total_indexed = sum(
             stats.successful_items for stats in indexing_results.values()

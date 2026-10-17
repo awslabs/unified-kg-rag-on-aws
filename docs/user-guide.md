@@ -666,12 +666,14 @@ LLM stages are Bedrock-I/O-bound, so concurrency can far exceed the CPU count.
 
 | Key | Default | What it does / when to change |
 |---|---|---|
-| `indexing.reset` | `false` | Clear existing indexed data before indexing. |
+| `indexing.reset` | `false` | Rebuild the run's index suffix from the whole corpus (without taking it offline: the vector indices swap aliases, the graph is rewritten in place and what the rebuild did not write is dropped at the end) and re-record its registry namespace. |
 | `indexing.additional_suffix` | `null` | Appended after the run suffix in every OpenSearch index name and Neptune label (`<prefix>-<suffix>-<additional_suffix>`, where `<suffix>` is `processing.document_parsing.index_value` at ingestion and `--suffix` at query time, both `default` when unset). Set it identically for ingestion and queries. Use it for versioned or multi-tenant separation. |
 | `indexing.cross_run_merge` | `true` | On delta runs, union the delta with existing graph state instead of overwriting, so entities shared with unchanged documents keep their lineage (§5). `false` overwrites. |
 | `indexing.community_drift_threshold` | `0.5` | Incremental runs: share of the run's clustered entities that also belong to an earlier level-0 community at which the run recommends a rebuild (WARNING and `community_rebuild_recommended`; see [Operations](./operations.md#incremental-runs)). |
 | `indexing.max_failure_rate` | `0.2` | Per-index-type write failure rate above which the indexing stage fails, and share of communities without a report above which community detection fails. `1.0` disables the partial-failure gate. |
 | `indexing.max_document_failures` | `3` | Incremental runs: consecutive FAILED records of unchanged content after which a document is no longer retried (§5). |
+| `indexing.max_document_attempts` | `3` | Incremental runs: consecutive runs that started indexing a document's unchanged content and never finished it (the run died) after which the document is quarantined: skipped until its content or the extraction settings change (§5, *Quarantined documents*). |
+| `indexing.lease_seconds` | `300` | Incremental runs: term of the index namespace's write lease, which a run holds for its whole duration and renews every third of it; a dead run's lease expires at most this long after (§5, *Concurrent runs*). Minimum `10`. |
 | `indexing.retire_source_scopes` | `[]` | Incremental runs: former source scopes (an old absolute source directory, or a former `source_scope` value) whose records in the run's index suffix are treated as deleted, so their exclusive content is removed. Never the run's own scope. `--retire-source-scope` adds to it. See §5 Deletion scope. |
 | `indexing.opensearch.embedding_model_id` | `"amazon.titan-embed-text-v2:0"` | Embedding model, one of a closed list (see Model selection notes). Changing it requires a reindex. |
 | `indexing.opensearch.build_relationship_vector_index` | `true` | Relationship vector index. LightRAG `mix`/`hybrid` (high-level keywords, incident edges) and GraphRAG `local` (relationship section, bridge relationships) query it, and `simple`/`drift` search it with the other indexes. `false` skips the relationship embeddings at the cost of those. |
@@ -1444,9 +1446,7 @@ SQLite file instead (`providers.doc_status.kind: sqlite`, switched on by
   translation, resolution): each record stores a fingerprint of the settings
   its document was extracted with, so the next run re-extracts every
   unchanged document whose fingerprint differs and logs a WARNING with their
-  count. Records written before records carried a fingerprint are compared by
-  content only (no surprise full re-extraction on upgrade); a reset
-  (`indexing.reset: true`) re-extracts them. Edits to the built-in prompt
+  count. Edits to the built-in prompt
   templates (code) are not seen: reset after editing one. A re-extracted
   document's chunks still take their stored records when the settings that
   shape a chunk's record (models, extraction, gleaning and claim settings,
@@ -1459,9 +1459,9 @@ SQLite file instead (`providers.doc_status.kind: sqlite`, switched on by
   mix two models' vectors in one index. Each OpenSearch index records the
   model and dimension it was built with, and the indexing stage stops,
   before any write, when they differ from the run's. Re-run once with
-  `indexing.reset: true` to re-embed the corpus. An index built before it
-  recorded the model is checked by its dimension only: reset after changing
-  the model of such an index.
+  `indexing.reset: true` to re-embed the corpus. An index that records no
+  embedding settings (an earlier release built it) is refused the same way:
+  reset once.
   Queries are checked the same way: `run-rag` and `run-eval` with another
   embedding model or dimension than the index was built with fail with a
   `ConfigurationError` instead of answering from empty search results.
@@ -1479,18 +1479,16 @@ SQLite file instead (`providers.doc_status.kind: sqlite`, switched on by
   index records whether the registry tracks it, and a later incremental run
   on that suffix stops before any write: re-run once with
   `indexing.reset: true` and the registry on, or keep the registry off for
-  that suffix. Indices built before they recorded their settings (before
-  #231) are not checked for languages or the registry. An incremental run
-  whose text fields match records their vector dimension, the one setting it
-  can verify (not the model, which another model of the same dimension may
-  have been), and later runs check them in full; one whose text fields do not
-  match leaves them as they are and logs a WARNING naming the fields: re-run
-  once with `indexing.reset: true` to rebuild them for the current languages.
-  Such indices carry no registry marker, so they are taken as tracked by the
-  registry. **Upgrading:** if a suffix was ever indexed with the registry off
-  by a release before #233, run it once with `indexing.reset: true` (registry
-  on) before its next incremental run; nothing can tell that run apart from
-  a tracked one.
+  that suffix.
+- **Rebuild with `indexing.reset: true`**: the run indexes the whole corpus
+  without taking the suffix offline. Nothing is cleared first: the vector
+  indices are written into new indices whose aliases are swapped as each is
+  built, and the graph is rewritten in place, every vertex and edge the
+  rebuild writes tagged with it, after which what it did not write is
+  dropped. Queries keep reading the previous content meanwhile (the graph
+  mixes previous and rebuilt items until the drop). The registry keeps its
+  records until the rebuild recorded the corpus; then the namespace's other
+  records go. A failed reset drops nothing, so re-running it is safe.
 
 ### Deletion scope
 
@@ -1567,6 +1565,30 @@ and processes the document again. A document that fails
 content is no longer retried: it stays `FAILED`, keeps what it indexed, and is
 skipped as unchanged with a WARNING naming the file. Editing the file (new
 content starts the count again) or raising the limit retries it.
+
+### Quarantined documents
+
+A document whose indexing kills the run (out of memory, a task timeout) would
+stop every later run the same way. Each run that starts indexing a
+document's content records the attempt in its in-progress record; after
+`indexing.max_document_attempts` (default `3`) such runs in a row that never
+finished, the next run quarantines it: it removes what the attempts wrote,
+records the document `QUARANTINED`, logs a WARNING naming the file and
+indexes the rest (the `total_documents_quarantined` metric counts them). A
+quarantined document is skipped until its file or the extraction settings
+change, or the limit is raised. The culprit is not isolated: every document
+of a delta that keeps dying counts an attempt and is quarantined with it.
+See [Operator Runbook: Quarantined documents](./operations.md#quarantined-documents).
+
+### Concurrent runs
+
+With the registry, a run holds its index namespace's write lease from its
+first stage to its end, renewed every third of `indexing.lease_seconds`
+(default 300 s). A second run on the same namespace stops with
+`NamespaceLeaseError`, naming the holder, before it reads or writes
+anything; a run that dies stops renewing, and its lease expires at most
+`lease_seconds` later. See
+[Operator Runbook: Concurrent runs](./operations.md#concurrent-runs).
 
 ### Document size limit
 
@@ -2058,7 +2080,7 @@ persona / entity types) with the configured language model
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--source-directory` | **required** | Directory of documents (`.txt`/`.md`/`.markdown` plus every format `run-ingestion` parses, e.g. `.pdf`); `--source-dir` is accepted as an alias |
+| `--source-directory` | **required** | Directory of documents (`.txt`/`.md`/`.markdown` plus every format `run-ingestion` parses, e.g. `.pdf`) |
 | `--output` | `tuned_prompts.yaml` | Output YAML path |
 | `--max-docs` | `20` | Max documents to sample |
 | `--config-path` | — | Path to `config.yaml` |
@@ -2342,14 +2364,14 @@ graph_indexer_factory=..., retriever_builders=...)`). Without a bundle,
   Descriptions, names, ids, types, ranks and claims follow the current
   corpus. With the DynamoDB registry one document's chunk ids must fit one
   400 KB item (§5, *Document size limit*).
-- **Concurrent runs are not supported.** Do not run two ingestions at once
-  against the same index suffix (a full reindex's alias swap and old-index
-  cleanup can delete the other run's index) or the same doc-status table
-  namespace (one run's removal can delete or strip what the other is
-  writing, and each overwrites the other's registry records). Runs on different suffixes with separate
-  doc-status tables are fine. The CDK state machine does not block an
-  overlapping execution; see
-  [Operator Runbook: Concurrent runs](./operations.md#concurrent-runs).
+- **Concurrent runs need the registry.** With it, a second run on one index
+  namespace stops with `NamespaceLeaseError` (§5, *Concurrent runs*).
+  Without it nothing locks: do not run two ingestions at once against the
+  same index suffix (a full reindex's alias swap and old-index cleanup can
+  delete the other run's index). The direct `IncrementalIndexer` API takes no
+  lease. See [Operator Runbook: Concurrent runs](./operations.md#concurrent-runs).
+- **Quarantine does not isolate the culprit** (§5). Every document of a delta
+  whose indexing keeps dying is quarantined with the one that kills it.
 - **Markdown and HTML** need the optional `unstructured` extra (Python 3.11+),
   which the container image leaves out by default.
 - **Changing the embedding model** (or its dimension) requires a reindex

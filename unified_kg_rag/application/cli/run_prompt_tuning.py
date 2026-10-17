@@ -81,10 +81,8 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
-        # Canonical flag matches run-ingestion's --source-directory; --source-dir
-        # is kept as a backward-compatible alias so existing invocations still work.
+        # The same flag as run-ingestion's.
         "--source-directory",
-        "--source-dir",
         dest="source_directory",
         required=True,
         type=Path,

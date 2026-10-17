@@ -4,8 +4,6 @@
 
 from __future__ import annotations
 
-import json
-
 import pytest
 from langchain_core.documents import Document as LangChainDocument
 
@@ -98,19 +96,6 @@ def _old_shape_export(text: str, page_content: str) -> dict:
         "detected_language": "Unknown",
         "elements": [],
     }
-
-
-def test_old_shape_export_still_loads(tmp_path) -> None:
-    path = tmp_path / "a.json"
-    path.write_text(
-        json.dumps(_old_shape_export("Vendor ships to Buyer", "stale")),
-        encoding="utf-8",
-    )
-    loaded = Document.from_json_file(path)
-    # content.text was the authoritative copy in the old shape.
-    assert loaded.page_content == "Vendor ships to Buyer"
-    assert loaded.metadata == {"source": "a.txt"}
-    assert "content" not in loaded.model_dump()
 
 
 def test_old_shape_cached_document_validates() -> None:

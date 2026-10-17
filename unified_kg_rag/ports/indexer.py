@@ -277,6 +277,23 @@ class GraphIndexer(BaseIndexer):
         the projection to one tenant/version's label."""
         return []
 
+    def begin_rebuild(self, suffixes: Collection[str]) -> bool:
+        """Start a full build that replaces ``suffixes``' graph in place,
+        so the graph keeps serving its previous content meanwhile.
+
+        Returns whether the backend can: then ``index_entities`` and
+        ``index_communities`` no longer clear the labels first, and
+        :meth:`end_rebuild` drops what the build did not write. The default
+        cannot (False): the full-build writes clear each label first.
+        """
+        return False
+
+    def end_rebuild(self, suffixes: Collection[str], sweep: bool = True) -> None:
+        """End a rebuild :meth:`begin_rebuild` started: drop the vertices and
+        edges of ``suffixes`` it did not write, unless ``sweep`` is False (a
+        write failed: the previous copies stay for a retry). Default: no-op."""
+        return None
+
     def find_ids_citing(
         self,
         text_unit_ids: list[str],

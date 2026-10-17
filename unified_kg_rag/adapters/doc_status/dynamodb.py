@@ -48,6 +48,11 @@ logger = get_logger(__name__)
 _PARTITION_KEY = "namespace"
 _SORT_KEY = "doc_id"
 _SCOPE_ATTRIBUTE = "registry_scope"
+# The namespace's write lease is an item of its partition under this sort key
+# (no doc_id is "#lease": registry keys are "<namespace>#<hash>"). Its expiry
+# is the table's TTL attribute, so DynamoDB drops a lease its run abandoned.
+_LEASE_KEY = "#lease"
+LEASE_EXPIRY_ATTRIBUTE = "lease_expires_at"
 # DynamoDB rejects an item over 400 KB (attribute names plus values).
 _MAX_ITEM_BYTES = 400 * 1024
 # botocore's standard retry mode backs off and retries throttling
@@ -201,6 +206,15 @@ class DynamoDBDocStatusStore:
             BillingMode=self.ddb_config.billing_mode,  # type: ignore[arg-type]
         )
         client.get_waiter("table_exists").wait(TableName=self.table_name)
+        # An abandoned namespace lease expires by itself (a live one is
+        # renewed long before this matters; see try_acquire_lease).
+        client.update_time_to_live(
+            TableName=self.table_name,
+            TimeToLiveSpecification={
+                "Enabled": True,
+                "AttributeName": LEASE_EXPIRY_ATTRIBUTE,
+            },
+        )
 
     def get(self, doc_id: str) -> DocStatusRecord | None:
         with self._registry_errors("read a record"):
@@ -351,7 +365,78 @@ class DynamoDBDocStatusStore:
                 **kwargs,
             )
         for page in pages:
-            yield from page.get("Items", [])
+            for item in page.get("Items", []):
+                if item.get(_SORT_KEY, {}).get("S") != _LEASE_KEY:
+                    yield item
+
+    # --- the namespace write lease -------------------------------------------
+
+    @staticmethod
+    def _lease_key(namespace: str) -> dict[str, Any]:
+        return {_PARTITION_KEY: {"S": namespace}, _SORT_KEY: {"S": _LEASE_KEY}}
+
+    def try_acquire_lease(self, namespace: str, owner: str, seconds: float) -> bool:
+        """A conditional put: it succeeds only when no lease is held, the held
+        one expired, or ``owner`` holds it."""
+        now = time.time()
+        with self._registry_errors("take the namespace lease"):
+            try:
+                self.client.put_item(
+                    TableName=self.table_name,
+                    Item={
+                        **self._lease_key(namespace),
+                        "lease_owner": {"S": owner},
+                        LEASE_EXPIRY_ATTRIBUTE: {"N": f"{now + seconds:.3f}"},
+                    },
+                    ConditionExpression=(
+                        "attribute_not_exists(#id) OR #expiry < :now "
+                        "OR #owner = :owner"
+                    ),
+                    ExpressionAttributeNames={
+                        "#id": _SORT_KEY,
+                        "#expiry": LEASE_EXPIRY_ATTRIBUTE,
+                        "#owner": "lease_owner",
+                    },
+                    ExpressionAttributeValues={
+                        ":now": {"N": f"{now:.3f}"},
+                        ":owner": {"S": owner},
+                    },
+                )
+            except ClientError as e:
+                code = e.response.get("Error", {}).get("Code")
+                if code == "ConditionalCheckFailedException":
+                    return False
+                raise
+        return True
+
+    def lease_holder(self, namespace: str) -> tuple[str, float] | None:
+        with self._registry_errors("read the namespace lease"):
+            item = self.client.get_item(
+                TableName=self.table_name,
+                Key=self._lease_key(namespace),
+                ConsistentRead=True,
+            ).get("Item")
+        if not item:
+            return None
+        return (
+            item.get("lease_owner", {}).get("S", ""),
+            float(item.get(LEASE_EXPIRY_ATTRIBUTE, {}).get("N", "0")),
+        )
+
+    def release_lease(self, namespace: str, owner: str) -> None:
+        with self._registry_errors("release the namespace lease"):
+            try:
+                self.client.delete_item(
+                    TableName=self.table_name,
+                    Key=self._lease_key(namespace),
+                    ConditionExpression="#owner = :owner",
+                    ExpressionAttributeNames={"#owner": "lease_owner"},
+                    ExpressionAttributeValues={":owner": {"S": owner}},
+                )
+            except ClientError as e:
+                code = e.response.get("Error", {}).get("Code")
+                if code != "ConditionalCheckFailedException":
+                    raise
 
     def list_namespace(self, namespace: str) -> list[DocStatusRecord]:
         with self._registry_errors("query the records"):
@@ -456,6 +541,7 @@ class DynamoDBDocStatusStore:
         for attr in (
             "file_path",
             "error_info",
+            "attempted_hash",
             "extraction_fingerprint",
             "created_at",
             "updated_at",
@@ -463,6 +549,7 @@ class DynamoDBDocStatusStore:
             value = getattr(record, attr)
             item[attr] = {"S": value} if value is not None else {"NULL": True}
         item["failure_count"] = {"N": str(record.failure_count)}
+        item["attempt_count"] = {"N": str(record.attempt_count)}
         return item
 
     @staticmethod
@@ -477,7 +564,10 @@ class DynamoDBDocStatusStore:
             # same on every scan (and compares equal to its written copy).
             return sorted(cell["SS"]) if cell and "SS" in cell else []
 
-        failure_count_cell = item.get("failure_count")
+        def _int(attr: str) -> int:
+            cell = item.get(attr)
+            return int(cell["N"]) if cell and "N" in cell else 0
+
         return DocStatusRecord(
             doc_id=item[_SORT_KEY]["S"],
             content_hash=item["content_hash"]["S"],
@@ -488,11 +578,9 @@ class DynamoDBDocStatusStore:
             text_unit_ids=_str_set("text_unit_ids"),
             error_info=_str("error_info"),
             extraction_fingerprint=_str("extraction_fingerprint"),
-            failure_count=(
-                int(failure_count_cell["N"])
-                if failure_count_cell and "N" in failure_count_cell
-                else 0
-            ),
+            failure_count=_int("failure_count"),
+            attempt_count=_int("attempt_count"),
+            attempted_hash=_str("attempted_hash"),
             created_at=_str("created_at"),
             updated_at=_str("updated_at"),
         )

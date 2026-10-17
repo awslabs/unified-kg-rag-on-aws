@@ -32,6 +32,7 @@ from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from unified_kg_rag.application.ingestion.namespace_lease import check_lease
 from unified_kg_rag.domain.ingestion.claim_resolver import resolved_claim_id
 from unified_kg_rag.domain.ingestion.community_drift import (
     CommunityDrift,
@@ -150,6 +151,11 @@ _PROBE_DOCUMENTS = 20
 _PROBE_UNITS = 100
 
 _EXTRACTION_FAILED = "extraction failed on some text units"
+_QUARANTINED_INFO = (
+    "quarantined: its indexing was started {attempts} consecutive runs and "
+    "never finished; skipped until its content or the extraction settings "
+    "change (or indexing.max_document_attempts is raised)"
+)
 _WRITE_FAILED = "writing some of its artifacts to the stores failed"
 _WRITE_AHEAD_INFO = (
     "indexing in progress (write-ahead record); a run that ends with this "
@@ -331,7 +337,10 @@ class IncrementalIndexer:
             )
 
     def write_ahead(
-        self, delta: DocumentDelta, lineages: list[DocumentLineage]
+        self,
+        delta: DocumentDelta,
+        lineages: list[DocumentLineage],
+        fingerprints: Mapping[str, str] | None = None,
     ) -> None:
         """Record the documents about to be (re)indexed PENDING, before any
         store write.
@@ -359,7 +368,14 @@ class IncrementalIndexer:
         PENDING record). The count of a failure in this run continues from
         the record stored before the PENDING one. The stored records are read
         once (batched) and kept for :meth:`commit`.
+
+        The PENDING record counts the attempt (``attempt_count``): one more
+        than the stored PENDING record's when an earlier run started this
+        same content (``attempted_hash``, from ``fingerprints``) and died
+        before committing it, else 1. ``detect_delta`` quarantines a document
+        once the count reaches ``indexing.max_document_attempts``.
         """
+        check_lease()
         planned = {lineage.doc_id: lineage for lineage in lineages}
         doc_ids = list(dict.fromkeys([*delta.to_process, *planned]))
         if not doc_ids:
@@ -368,7 +384,10 @@ class IncrementalIndexer:
         self._in_flight = set(doc_ids)
         self._pending = {
             doc_id: self._pending_record(
-                doc_id, self._prior.get(doc_id), planned.get(doc_id)
+                doc_id,
+                self._prior.get(doc_id),
+                planned.get(doc_id),
+                (fingerprints or {}).get(doc_id),
             )
             for doc_id in doc_ids
         }
@@ -396,7 +415,13 @@ class IncrementalIndexer:
         doc_id: str,
         prior: DocStatusRecord | None,
         lineage: DocumentLineage | None,
+        attempted_hash: str | None,
     ) -> DocStatusRecord:
+        retried = (
+            prior is not None
+            and prior.status is DocStatus.PENDING
+            and prior.attempted_hash == attempted_hash
+        )
         base = prior or DocStatusRecord(
             doc_id=doc_id,
             content_hash=PENDING_CONTENT_HASH,
@@ -408,6 +433,8 @@ class IncrementalIndexer:
                 "status": DocStatus.PENDING,
                 "error_info": _WRITE_AHEAD_INFO,
                 "failure_count": 0,
+                "attempt_count": (prior.attempt_count + 1 if retried and prior else 1),
+                "attempted_hash": attempted_hash,
                 # The stored suffix is kept: removal groups by it, and a
                 # changed document's old artifacts were written under it.
                 "scope": self.scope if self.scope is not None else base.scope,
@@ -437,6 +464,7 @@ class IncrementalIndexer:
         before deleting the registry record — otherwise a transient failure
         would orphan the artifacts (record gone, artifacts still live).
         """
+        check_lease()
         if not doc_ids:
             return True
         stored = self.doc_status.get_many(
@@ -505,6 +533,7 @@ class IncrementalIndexer:
         the docs are recorded, the extraction records only removed text units
         named are deleted (``IndexingManager.collect_extraction_records``).
         """
+        check_lease()
         merged = self.indexing_manager.merge_with_existing_graph(
             entities, relationships, text_units or ()
         )
@@ -612,6 +641,7 @@ class IncrementalIndexer:
         owns an artifact whose write failed is recorded FAILED (see
         :meth:`_documents_with_failed_writes`), so the next run rewrites it.
         """
+        check_lease()
         if self._delta_writes_succeeded(results):
             write_failed = self._documents_with_failed_writes(
                 lineages, results, owners or {}
@@ -736,20 +766,49 @@ class IncrementalIndexer:
         artifacts, so the old ids that failed to delete would never be
         cleaned up. Not committing keeps the old lineage (inside the PENDING
         record :meth:`write_ahead` wrote), so the next run retries.
+
+        Quarantined documents (``DocumentDelta.quarantined``) are removed in
+        the same pass, since their interrupted attempts may have written
+        artifacts, and then recorded QUARANTINED, without text units.
         """
-        doc_ids = list(dict.fromkeys(delta.changed + delta.deleted))
+        doc_ids = list(dict.fromkeys(delta.changed + delta.deleted + delta.quarantined))
         if not doc_ids:
             return True
         if not self.remove_obsolete_artifacts(doc_ids):
-            if delta.deleted:
+            if delta.deleted or delta.quarantined:
                 logger.warning(
-                    "Keeping %d deleted-doc registry records because artifact "
-                    "removal did not fully succeed; will retry next run.",
-                    len(delta.deleted),
+                    "Keeping %d deleted or quarantined documents' registry "
+                    "records because artifact removal did not fully succeed; "
+                    "will retry next run.",
+                    len(delta.deleted) + len(delta.quarantined),
                 )
             return False
         self._delete_records(delta.deleted)
+        self._record_quarantined(delta.quarantined)
         return True
+
+    def _record_quarantined(self, doc_ids: list[str]) -> None:
+        """Replace the quarantined documents' PENDING records with QUARANTINED
+        ones of the content they crashed on: unchanged while it stays."""
+        if not doc_ids:
+            return
+        self.doc_status.put_many(
+            record.model_copy(
+                update={
+                    "status": DocStatus.QUARANTINED,
+                    "content_hash": record.attempted_hash or record.content_hash,
+                    "text_unit_ids": [],
+                    "error_info": _QUARANTINED_INFO.format(
+                        attempts=record.attempt_count
+                    ),
+                    "scope": self.scope if self.scope is not None else record.scope,
+                    "extraction_fingerprint": (
+                        self.extraction_fingerprint or record.extraction_fingerprint
+                    ),
+                }
+            )
+            for record in self.doc_status.get_many(doc_ids).values()
+        )
 
     def _record_processed(
         self,
@@ -971,6 +1030,7 @@ def filter_to_delta(
             scope=scope,
             failed_doc_ids=failed_doc_ids,
             max_failures=config.indexing.max_document_failures,
+            max_attempts=config.indexing.max_document_attempts,
             retired_scopes=retired,
             extraction_fingerprint=extraction,
         )
@@ -1071,12 +1131,12 @@ def _warn_about_other_local_scopes(
 def reset_namespaces(
     config: Config, context: PipelineContext, text_units: list[TextUnit]
 ) -> set[str]:
-    """The registry namespaces whose stores a reset clears.
+    """The registry namespaces a reset rebuilds.
 
-    ``clear_all_data`` clears the suffixes of the run's text units under
+    The full build replaces the suffixes of the run's text units under
     ``indexing.additional_suffix`` (in the stores the configured prefixes
-    name); the run's own namespace (its registry
-    scope, else the configured ``index_value``) is always included.
+    name); the run's own namespace (its registry scope, else the configured
+    ``index_value``) is always included.
     """
     namespaces = {
         config_registry_namespace(config.indexing, BaseIndexer.get_suffix(unit))
@@ -1092,28 +1152,33 @@ def reset_namespaces(
 
 
 def clear_registry_namespaces(
-    doc_status: Callable[[], DocStatusPort], namespaces: set[str]
+    doc_status: Callable[[], DocStatusPort],
+    namespaces: set[str],
+    keep: Collection[str] = (),
 ) -> None:
-    """Delete the registry records of ``namespaces`` (reset path).
+    """Delete the registry records of ``namespaces`` but ``keep`` (reset path).
 
-    Only the namespaces whose stores the reset cleared: other index
-    suffixes sharing the table keep their records, which still describe
-    their intact stores. Each namespace is its own registry partition
-    (``DocStatusPort.list_namespace``).
+    A reset rebuilt the namespaces from the corpus and recorded its
+    documents (``keep``); the other records describe documents the rebuild
+    replaced. Only those namespaces: other index suffixes sharing the table
+    keep their records, which still describe their intact stores. Each
+    namespace is its own registry partition (``DocStatusPort.list_namespace``).
 
     The registry adapters raise :class:`DocStatusRegistryError` when the
     registry cannot be cleared, and it propagates as is (like any other
-    typed error, e.g. a configuration error): the stores are already wiped,
-    and a stale record would make the next incremental run skip its
-    re-ingested document as unchanged, so the reset fails here rather than
-    leave the registry out of step.
+    typed error, e.g. a configuration error): a stale record would make a
+    later incremental run remove what its document's file no longer holds,
+    so the reset fails here rather than leave the registry out of step.
     """
+    check_lease()
     store = doc_status()
+    kept = set(keep)
     cleared = 0
     for namespace in sorted(namespaces):
         for record in store.list_namespace(namespace):
-            store.delete(record.doc_id)
-            cleared += 1
+            if record.doc_id not in kept:
+                store.delete(record.doc_id)
+                cleared += 1
     logger.info(
         "Cleared %s doc-status registry records of namespaces %s on reset",
         cleared,
@@ -1255,7 +1320,7 @@ def index_delta(
     # interrupted from here on is repaired by the next one (the docs
     # read as changed, or as deleted when gone, and every artifact this
     # run may write is found by their lineage).
-    incremental.write_ahead(delta, lineages)
+    incremental.write_ahead(delta, lineages, context.incremental_fingerprints)
 
     # Drop the stale artifacts of changed and deleted docs in ONE removal
     # plan (before re-upsert): planning them separately keeps whatever a

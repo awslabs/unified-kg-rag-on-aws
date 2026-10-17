@@ -55,19 +55,12 @@ class CacheEntry(BaseModel):
 
         ``local_path`` is stored relative to the pipeline cache directory, so a
         cache directory that is moved or restored elsewhere still resolves.
-        Entries written before that hold the absolute path at write time; they
-        are re-rooted by stage and file name under the current directory
-        rather than trusted, so a stale copy at the old location is not read.
+        An absolute path (an entry of an earlier release) is not read: a miss.
         """
         if self.local_path is None:
             return None
         path = Path(self.local_path)
-        if not path.is_absolute():
-            return pipeline_cache_dir / path
-        stage_dir = pipeline_cache_dir / self.stage_name
-        if self.metadata.get("is_chunked", False):
-            return stage_dir
-        return stage_dir / path.name
+        return None if path.is_absolute() else pipeline_cache_dir / path
 
     @property
     def is_expired(self) -> bool:

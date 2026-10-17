@@ -67,6 +67,11 @@ def test_doc_status_table_is_keyed_by_namespace_then_doc_id(prod: Template) -> N
         {"AttributeName": "doc_id", "KeyType": "RANGE"},
     ]
     assert table["Properties"]["TableName"].endswith("graphrag-doc-status-v2")
+    # An abandoned namespace write lease expires by itself.
+    assert table["Properties"]["TimeToLiveSpecification"] == {
+        "AttributeName": "lease_expires_at",
+        "Enabled": True,
+    }
 
 
 def test_non_dev_buckets_do_not_auto_delete_objects(prod: Template) -> None:
