@@ -139,6 +139,23 @@ the description text a changed or deleted document contributed, and delta
 runs append communities rather than re-clustering. A periodic full rebuild
 (`indexing.reset: true`) refreshes both. Details: [User Guide §5](./user-guide.md#5-incremental-indexing).
 
+Community drift tells you when that rebuild is due. Every entity records the
+level-0 communities it belongs to, so a delta run's indexing stage reports,
+in its `community_drift` metrics: the communities it appended
+(`delta_communities`), the entities it clustered (`clustered_entities`), how
+many of those an earlier clustering already placed (`overlapping_entities`:
+they now sit in two or more level-0 communities), the earlier communities
+whose reports miss what the run added (`stale_communities`) and
+`overlap_share` (overlapping / clustered). When `overlap_share` reaches
+`indexing.community_drift_threshold` (default `0.5`) the run logs a WARNING
+recommending `indexing.reset: true`, and the run metrics carry
+`community_rebuild_recommended: 1` next to `community_drift_overlap_share`
+(an alarm can watch it). The counts are cumulative for the entities a run
+touches (an entity re-clustered by three runs counts three communities);
+communities removed with changed or deleted documents stay on shared
+entities until the rebuild, so they read as an upper bound. A run without
+communities or with `indexing.cross_run_merge: false` reports no overlap.
+
 If the registry cannot be read (missing table, denied access, throttling that
 outlasts the client's retries), the `document_loading` stage fails with
 `DocStatusRegistryError`, naming the table and the cause. The run does not fall

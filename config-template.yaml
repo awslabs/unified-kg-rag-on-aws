@@ -557,6 +557,11 @@ indexing:
   # the full build's rule (processing.fuzzy_entity_resolution), which costs an
   # entity-name projection per delta run.
   cross_run_merge: true
+  # Incremental runs cluster only their delta, so an entity an earlier run
+  # clustered joins a second level-0 community. At this share of the run's
+  # clustered entities the run logs a WARNING recommending indexing.reset
+  # and sets the community_rebuild_recommended metric.
+  community_drift_threshold: 0.5
   # Maximum tolerated per-index-type write failure rate before the indexing
   # stage is marked FAILED. A fully-failed index type (0 successes) always
   # fails; this additionally catches PARTIAL failures (e.g. most relationship

@@ -238,6 +238,25 @@ def test_indexing_stage_computes_relationships_indexed_metric(mocker) -> None:
     assert total_indexed == metrics["total_indexed"]
 
 
+def test_indexing_stage_records_each_entitys_level0_community(mocker) -> None:
+    from unified_kg_rag.domain.models import Community, Entity
+
+    stage, mgr = _indexing_stage(mocker, {})
+    ctx = _context()
+    ctx.resolved_entities = [Entity(id="e1", name="A"), Entity(id="e2", name="B")]
+    ctx.communities = [
+        Community(
+            id=cid, name=cid, level=level, parent="", children=[], entity_ids=members
+        )
+        for cid, level, members in (("c0", "0", ["e1"]), ("c1", "1", ["e1", "e2"]))
+    ]
+
+    stage._execute_core(ctx)
+
+    written = mgr.index_all_data.call_args.kwargs["entities"]
+    assert [e.community_ids for e in written] == [["c0"], None]
+
+
 def test_indexing_stage_success_rate_zero_when_nothing(mocker) -> None:
     stage, _mgr = _indexing_stage(mocker, {})
     _in, total, metrics = stage._execute_core(_context())

@@ -67,6 +67,16 @@ class PipelineMetrics(BaseModel):
         description="Relationships successfully indexed (0 while extracted>0 signals "
         "the silent-drop failure mode)",
     )
+    community_drift_overlap_share: float = Field(
+        default=0.0,
+        description="Incremental runs: share of the entities the run clustered "
+        "that also belong to an earlier level-0 community",
+    )
+    community_rebuild_recommended: int = Field(
+        default=0,
+        description="1 when community_drift_overlap_share reached "
+        "indexing.community_drift_threshold (rebuild with indexing.reset)",
+    )
     total_extraction_failures: int = Field(
         default=0,
         description="Text units whose graph extraction failed (LLM error or "

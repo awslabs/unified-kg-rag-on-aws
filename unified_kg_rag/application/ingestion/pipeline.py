@@ -185,6 +185,8 @@ class DataIngestionPipeline:
         "total_items_indexed": frozenset({"indexing"}),
         "total_items_index_failed": frozenset({"indexing"}),
         "relationships_indexed": frozenset({"indexing"}),
+        "community_drift_overlap_share": frozenset({"indexing"}),
+        "community_rebuild_recommended": frozenset({"indexing"}),
         "total_extraction_failures": frozenset({"graph_extraction"}),
         "total_gleaning_failures": frozenset({"gleaning"}),
         "total_claim_extraction_failures": frozenset({"claim_extraction"}),
@@ -1358,6 +1360,14 @@ class DataIngestionPipeline:
             or (1 if self._stage_failed(context, "indexing") else 0),
             "relationships_indexed": int(
                 self._get_stage_metric(context, "indexing", "relationships_indexed")
+            ),
+            "community_drift_overlap_share": self._get_stage_metric(
+                context, "indexing", "community_drift_overlap_share"
+            ),
+            "community_rebuild_recommended": int(
+                self._get_stage_metric(
+                    context, "indexing", "community_rebuild_recommended"
+                )
             ),
             # Per-chunk LLM failures degrade a run without failing it; surface
             # them so the ExtractionFailures alarm can catch a partial graph.

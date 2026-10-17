@@ -41,6 +41,10 @@ from unified_kg_rag.application.ingestion.incremental import (
 )
 from unified_kg_rag.application.storage.indexing_manager import IndexingManager
 from unified_kg_rag.domain.ingestion.claim_resolver import ClaimResolver
+from unified_kg_rag.domain.ingestion.community_drift import (
+    CommunityDrift,
+    with_level0_community_ids,
+)
 from unified_kg_rag.domain.ingestion.delta_detector import (
     assign_document_identity,
 )
@@ -1242,6 +1246,9 @@ class IndexingStage(PipelineStage):
         relationships = context.resolved_relationships
         communities = context.communities or []
         community_reports = context.community_reports or []
+        # Each entity records its level-0 community, so a later delta run
+        # can tell which of its entities an earlier clustering placed.
+        entities = with_level0_community_ids(entities, communities)
         claims = _resolved_claims(context)
         if context.claims and not claims:
             logger.info(
@@ -1278,9 +1285,10 @@ class IndexingStage(PipelineStage):
                 "indexing.reset: true to rebuild the stores."
             )
 
+        drift = None
         if context.incremental_delta is not None and not self.config.indexing.reset:
             warn_about_unapplied_retired_scopes(self.config, context)
-            indexing_results = self._index_incremental(
+            indexing_results, drift = self._index_incremental(
                 context,
                 text_units,
                 entities,
@@ -1363,6 +1371,10 @@ class IndexingStage(PipelineStage):
                 else 0
             ),
         }
+        if drift is not None:
+            metrics["community_drift"] = drift.model_dump()
+            metrics["community_drift_overlap_share"] = drift.overlap_share
+            metrics["community_rebuild_recommended"] = int(drift.rebuild_recommended)
 
         return input_count, total_indexed, metrics
 
@@ -1375,8 +1387,8 @@ class IndexingStage(PipelineStage):
         communities: list[Community],
         community_reports: list[CommunityReport],
         claims: list[Claim],
-    ) -> dict[str, Any]:
-        """Index the run's delta (see ``incremental.index_delta``)."""
+    ) -> tuple[dict[str, Any], CommunityDrift | None]:
+        """Index the run's delta and its community drift (``index_delta``)."""
         return index_delta(
             self._build_doc_status_store,
             self.indexing_manager,

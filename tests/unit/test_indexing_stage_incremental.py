@@ -161,7 +161,7 @@ def _delta_inputs(attributes: dict[str, Any] | None = None):
 
 
 def _run(stage, ctx, text_units, entities) -> dict[str, IndexingStats]:
-    return stage._index_incremental(
+    results, _drift = stage._index_incremental(
         ctx,
         text_units=text_units,
         entities=entities,
@@ -170,6 +170,7 @@ def _run(stage, ctx, text_units, entities) -> dict[str, IndexingStats]:
         community_reports=[],
         claims=[],
     )
+    return results
 
 
 def _full_delta() -> DocumentDelta:
@@ -420,7 +421,7 @@ def test_resumed_delta_without_retired_scopes_warns(
     manager.initialize = lambda: True  # type: ignore[attr-defined]
     stage = _stage(mocker, FakeDocStatusStore(), manager)
     stage.config.indexing.retire_source_scopes = ["/old/a/", "/old/b"]
-    index = mocker.patch.object(stage, "_index_incremental", return_value={})
+    index = mocker.patch.object(stage, "_index_incremental", return_value=({}, None))
     ctx = _context(DocumentDelta(), [])
     ctx.incremental_retired_scopes = applied
 
@@ -455,7 +456,7 @@ def test_resumed_context_saved_before_retired_scopes_warns_softly(
     manager.initialize = lambda: True  # type: ignore[attr-defined]
     stage = _stage(mocker, FakeDocStatusStore(), manager)
     stage.config.indexing.retire_source_scopes = retire
-    mocker.patch.object(stage, "_index_incremental", return_value={})
+    mocker.patch.object(stage, "_index_incremental", return_value=({}, None))
     saved = _context(DocumentDelta(), []).model_dump(mode="json")
     saved.pop("incremental_retired_scopes")
     ctx = PipelineContext.model_validate(saved)
@@ -476,3 +477,26 @@ def test_resumed_context_saved_before_retired_scopes_warns_softly(
     assert "may not have been applied" in messages[0]
     assert "NOT applied" not in messages[0]
     assert "'/old/a'" in messages[0]
+
+
+def test_delta_run_reports_its_community_drift(mocker) -> None:
+    from unified_kg_rag.domain.ingestion.community_drift import CommunityDrift
+
+    manager = _RecordingManager()
+    manager.initialize = lambda: True  # type: ignore[attr-defined]
+    stage = _stage(mocker, FakeDocStatusStore(), manager)
+    drift = CommunityDrift(
+        delta_communities=3,
+        clustered_entities=4,
+        overlapping_entities=2,
+        stale_communities=1,
+        overlap_share=0.5,
+        rebuild_recommended=True,
+    )
+    mocker.patch.object(stage, "_index_incremental", return_value=({}, drift))
+
+    _in, _total, metrics = stage._execute_core(_context(DocumentDelta(), []))
+
+    assert metrics["community_drift"] == drift.model_dump()
+    assert metrics["community_drift_overlap_share"] == 0.5
+    assert metrics["community_rebuild_recommended"] == 1

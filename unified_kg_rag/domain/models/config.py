@@ -1787,6 +1787,18 @@ class IndexingConfig(BaseModel):
         "(processing.fuzzy_entity_resolution), which costs an entity-name "
         "projection per delta run.",
     )
+    community_drift_threshold: float = Field(
+        default=0.5,
+        gt=0.0,
+        le=1.0,
+        description="On incremental runs with communities on, recommend a "
+        "rebuild (WARNING and the community_rebuild_recommended metric) when "
+        "at least this share of the entities the run clustered also belongs "
+        "to an earlier level-0 community. A delta run clusters only its own "
+        "documents, so such an entity sits in two communities and the earlier "
+        "community's report misses what the run added; indexing.reset: true "
+        "re-clusters the whole graph.",
+    )
     neptune: NeptuneIndexingConfig = Field(
         default_factory=NeptuneIndexingConfig,
         description="Configuration settings for Neptune graph database indexing",

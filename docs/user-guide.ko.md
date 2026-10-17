@@ -619,6 +619,7 @@ LLM 단계는 Bedrock I/O가 병목이므로 동시성을 CPU 수보다 훨씬 �
 | `indexing.reset` | `false` | 인덱싱 전에 기존 인덱싱 데이터를 지웁니다. |
 | `indexing.additional_suffix` | `null` | 모든 OpenSearch 인덱스 이름과 Neptune 레이블에서 실행 접미사 뒤에 붙습니다(`<prefix>-<suffix>-<additional_suffix>`). `<suffix>`는 수집 시 `processing.document_parsing.index_value`, 질의 시 `--suffix`이며 지정하지 않으면 둘 다 `default`입니다. 수집과 질의에 같은 값을 지정하세요. 버전별·테넌트별 분리에 씁니다. |
 | `indexing.cross_run_merge` | `true` | 증분 실행에서 변경분을 기존 그래프 상태에 덮어쓰지 않고 합칩니다. 그래서 바뀌지 않은 문서와 공유하는 엔티티의 계보가 유지됩니다(§5). `false`이면 덮어씁니다. |
+| `indexing.community_drift_threshold` | `0.5` | 증분 실행: 실행이 군집화한 엔티티 중 이전 레벨 0 커뮤니티에도 속한 엔티티의 비율이 이 값에 이르면 재구축을 권합니다(WARNING과 `community_rebuild_recommended`, [운영 가이드](./operations.ko.md#증분-실행) 참고). |
 | `indexing.max_failure_rate` | `0.2` | 인덱스 유형별 쓰기 실패율이 이 값을 넘으면 인덱싱 단계가, 보고서가 없는 커뮤니티 비율이 이 값을 넘으면 커뮤니티 탐지 단계가 실패합니다. `1.0`이면 부분 실패 검사를 끕니다. |
 | `indexing.max_document_failures` | `3` | 증분 실행에서 내용이 바뀌지 않은 문서가 연속으로 이 횟수만큼 FAILED로 기록되면 더는 재시도하지 않습니다(§5). |
 | `indexing.retire_source_scopes` | `[]` | 증분 실행에서 이전 소스 범위(옮기기 전의 절대 소스 디렉터리나 이전 `source_scope` 값)를 지정하면, 실행 인덱스 접미사에서 그 범위의 레코드를 삭제된 문서로 처리해 그 문서에만 속한 내용을 지웁니다. 실행 자신의 범위는 지정할 수 없습니다. `--retire-source-scope`로 값을 더할 수 있습니다(§5 삭제 범위 참고). |
