@@ -174,6 +174,8 @@ class CommunityDetector:
         self.graph: nx.Graph = nx.Graph()
         self.all_communities: dict[str, HierarchicalCommunity] = {}
         self.node_to_community_l0: dict[str, str] = {}
+        # Entities of the components too small to form a community.
+        self.unclustered: set[Any] = set()
         self.base_modularity: float = 0.0
         self.show_progress = show_progress
 
@@ -211,6 +213,7 @@ class CommunityDetector:
     def __call__(self, graph: nx.Graph) -> "CommunityDetector":
         self.graph = self._with_usable_weights(self._entity_subgraph(graph))
         graph = self.graph
+        self.unclustered = self._small_component_nodes(graph)
         logger.info(
             "Starting community detection on graph with %s nodes and %s edges",
             graph.number_of_nodes(),
@@ -244,6 +247,39 @@ class CommunityDetector:
         entity_graph = graph.copy()
         entity_graph.remove_nodes_from(non_entity_nodes)
         return entity_graph
+
+    def _small_component_nodes(self, graph: nx.Graph) -> set[Any]:
+        """The entities of ``graph``'s connected components of fewer than
+        ``min_community_size`` entities, which get no community.
+
+        An isolated entity, or a pair only linked to each other, cannot merge
+        into a neighbouring community, so each became a root community of
+        its own: a report LLM call that restates one entity, and a report in
+        every cut of the hierarchy, which pushed global search's cut past its
+        cap on medium corpora (151 of 153 roots at 10k entities). MS GraphRAG
+        clusters only the largest connected component (``use_lcc``); this
+        leaves out only the components too small to form a community. Leiden
+        still partitions the whole graph, so the other communities are the
+        ones it finds with them (``_process_hierarchical_partitions`` only
+        skips these); the left-out entities stay reachable through local
+        search.
+        """
+        min_size = self.community_detection_config.min_community_size
+        small = {
+            node
+            for component in nx.connected_components(graph)
+            if len(component) < min_size
+            for node in component
+        }
+        if small:
+            logger.info(
+                "Leaving %s entities in connected components of fewer than %s "
+                "entities (graph.community_detection.min_community_size) out "
+                "of the communities",
+                len(small),
+                min_size,
+            )
+        return small
 
     @staticmethod
     def _with_usable_weights(graph: nx.Graph) -> nx.Graph:
@@ -710,6 +746,11 @@ class CommunityDetector:
         level_0_communities: dict[Any, str] = {}
 
         for i, nodes in enumerate(l0_partition):
+            if nodes <= self.unclustered:
+                # A too-small component (or part of one): no community. It
+                # has no edge to another community, so no coarser community
+                # contains it either.
+                continue
             comm_id = community_content_id(0, nodes)
 
             for node_id in nodes:
@@ -816,7 +857,8 @@ class CommunityDetector:
         }
 
     def generate_community_objects(self) -> list[Community]:
-        if not self.graph or self.graph.number_of_nodes() == 0:
+        # No entity, or none in a component large enough for a community.
+        if len(self.unclustered) == self.graph.number_of_nodes():
             return []
 
         if not self.all_communities:

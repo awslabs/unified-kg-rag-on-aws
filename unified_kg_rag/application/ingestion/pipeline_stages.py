@@ -1279,6 +1279,17 @@ class CommunityDetectionStage(PipelineStage):
             }
         )
 
+    def _allows_empty_output(self, context: PipelineContext) -> bool:
+        """Also when every entity is in a component too small to cluster.
+
+        Such entities get no community (``CommunityDetector``), so a corpus,
+        or a delta, of only isolated entities and pairs has none to report;
+        entities without a single community mean nothing else.
+        """
+        return super()._allows_empty_output(context) or (
+            bool(context.resolved_entities) and not context.communities
+        )
+
     @staticmethod
     def _get_detection_stats_dict(metrics_obj: CommunityMetrics) -> dict[str, Any]:
         return {

@@ -220,43 +220,56 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             self.config.indexing.opensearch.max_query_size,
         )
 
-    async def _fetch_reports(
+    async def _browse_reports(
+        self, query: SearchQuery, scope: dict[str, Any], label: str
+    ) -> tuple[list[RetrievalResult], bool]:
+        """Up to the cap of the reports matching ``scope`` (and the caller's
+        filters), most important (``rank``) first, and whether that is all.
+
+        One more report than the cap is asked for, so a set of exactly the
+        cap is complete; with the cap at ``max_query_size`` the store cannot
+        return more, and a full answer counts as incomplete.
+        """
+        retriever = self.document_retriever
+        if retriever is None:
+            return [], True
+        cap = self._report_cap()
+        probe = min(cap + 1, self.config.indexing.opensearch.max_query_size)
+        browse = SearchQuery(
+            query="",
+            search_type=SearchType.LEXICAL,
+            top_k=probe,
+            index_prefixes=[
+                self.config.indexing.opensearch.community_reports_index_prefix
+            ],
+            suffix=query.suffix,
+            filters=self._scoped_filters(query, **scope),
+        )
+        reports = await self._safe_aretrieve(retriever, browse, label)
+        return reports[:cap], len(reports) < probe
+
+    async def _most_similar_reports(
         self,
         query: SearchQuery,
         scope: dict[str, Any],
         label: str,
         stats: dict[str, Any],
     ) -> list[RetrievalResult]:
-        """Every report matching ``scope`` (and the caller's filters).
-
-        A text-less browse returns them by importance (``rank``); when it
-        fills the cap, the part of the cut a query can afford is chosen by
-        similarity instead: a search for the query restricted to the same
-        reports. That is the only use of similarity in global search.
-        """
+        """The cap of the reports matching ``scope`` most similar to the query:
+        the part of a set larger than the cap a query can afford. That is the
+        only use of similarity in global search."""
         retriever = self.document_retriever
         if retriever is None:
             return []
         cap = self._report_cap()
-        prefix = self.config.indexing.opensearch.community_reports_index_prefix
-        filters = self._scoped_filters(query, **scope)
-        browse = SearchQuery(
-            query="",
-            search_type=SearchType.LEXICAL,
-            top_k=cap,
-            index_prefixes=[prefix],
-            suffix=query.suffix,
-            filters=filters,
-        )
-        reports = await self._safe_aretrieve(retriever, browse, label)
-        if len(reports) < cap:
-            return reports
         similar = query.model_copy(
             update={
                 "top_k": cap,
                 "retrieval_multiplier": 1,
-                "index_prefixes": [prefix],
-                "filters": filters,
+                "index_prefixes": [
+                    self.config.indexing.opensearch.community_reports_index_prefix
+                ],
+                "filters": self._scoped_filters(query, **scope),
             }
         )
         ranked = await self._safe_aretrieve(
@@ -264,29 +277,75 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         )
         stats["global_level_capped"] = True
         logger.warning(
-            "%s: at least %s community reports; mapping the %s most similar "
+            "%s: more than %s community reports; mapping the %s most similar "
             "to the query (search.global_search.max_reports_per_level, bounded "
-            "by indexing.opensearch.max_query_size). A smaller "
-            "community_depth maps fewer, broader reports.",
+            "by indexing.opensearch.max_query_size).",
             label,
             cap,
             cap,
         )
-        return ranked or reports
+        return ranked
+
+    async def _fetch_reports(
+        self,
+        query: SearchQuery,
+        scope: dict[str, Any],
+        label: str,
+        stats: dict[str, Any],
+    ) -> list[RetrievalResult]:
+        """Every report matching ``scope``, or the cap of them most similar
+        to the query when there are more."""
+        reports, complete = await self._browse_reports(query, scope, label)
+        if complete:
+            return reports
+        return await self._most_similar_reports(query, scope, label, stats) or reports
 
     async def _cut_reports(
         self, query: SearchQuery, stats: dict[str, Any]
     ) -> list[RetrievalResult]:
         """The reports of the ``community_depth`` cut (MS GraphRAG's fixed
         ``community_level``): every community at that depth plus the leaves
-        above it."""
+        above it.
+
+        A cut with more reports than the cap gives way to the deepest
+        shallower cut that fits, which still covers every entity, in fewer,
+        broader reports. Only when even the root cut does not fit are the
+        reports of the configured cut most similar to the query mapped.
+        """
         depth = self.global_search_config.community_depth
+        label = "Community report cut"
         with observability.span("kg_rag.global.select", depth=depth) as span:
-            reports = await self._fetch_reports(
-                query, cut_filter(depth), "Community report cut", stats
+            first, complete = await self._browse_reports(
+                query, cut_filter(depth), label
             )
-            span.set_attributes({"kg_rag.reports": len(reports)})
-        logger.info("Global search cut at depth %s: %s reports", depth, len(reports))
+            reports, used = first, depth
+            while not complete and used > 0:
+                used -= 1
+                reports, complete = await self._browse_reports(
+                    query, cut_filter(used), label
+                )
+            if not complete:
+                used = depth
+                reports = (
+                    await self._most_similar_reports(
+                        query, cut_filter(depth), label, stats
+                    )
+                    or first
+                )
+            elif used < depth:
+                logger.warning(
+                    "The depth-%s cut has more than %s community reports; "
+                    "mapping the depth-%s cut (%s reports), which covers the "
+                    "same entities in broader reports "
+                    "(search.global_search.max_reports_per_level)",
+                    depth,
+                    self._report_cap(),
+                    used,
+                    len(reports),
+                )
+            stats["global_cut_depth"] = used
+            span.set_attributes({"kg_rag.reports": len(reports), "kg_rag.cut": used})
+        logger.info("Global search cut at depth %s: %s reports", used, len(reports))
         return reports
 
     async def _select_dynamically(

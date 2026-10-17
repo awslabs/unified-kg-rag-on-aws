@@ -798,6 +798,26 @@ changed once with the full-config keys (#332).
 - The DynamoDB, SQLite and in-memory doc-status registries classify a
   corpus with one rule, `DocumentDelta.classify` (with `settings_changed`
   shared with the delta detector), instead of a copy each (#344).
+- A connected component of fewer than
+  `graph.community_detection.min_community_size` entities (an isolated
+  entity, a pair linked only to each other) gets no community or report.
+  Each became a root community of its own: a report LLM call restating one
+  entity, and a report in every cut of the hierarchy, which pushed global
+  search's cut past its cap on medium corpora (on a synthetic graph the
+  depth-2 cut went from 301 to 150 reports at 10,000 entities and from 738
+  to 96 at 50,000, with 8-10% fewer reports to generate; the 1.3-1.6% of
+  the entities in such components are left out of communities). Leiden
+  still partitions the whole graph, so every other community stays as it
+  was. Their entities stay in local search. `min_community_size: 1` clusters every
+  component. Existing indexes keep their one-entity reports until a
+  rebuild (`indexing.reset: true`) (#PR).
+- A global-search cut larger than `search.global_search.max_reports_per_level`
+  gives way to the deepest shallower cut that fits, which covers the same
+  entities in fewer, broader reports (`global_cut_depth` in the search
+  metadata); only when even the root cut does not fit are the reports most
+  similar to the query mapped (`global_level_capped`). A cut of exactly the
+  cap is no longer taken for a truncated one when
+  `indexing.opensearch.max_query_size` is larger than the cap (#PR).
 - DRIFT costs less per query: the follow-up local searches no longer rerank
   (the evidence of all of them is reranked once, at the final fusion: one
   rerank call a query instead of up to 61), the defaults are

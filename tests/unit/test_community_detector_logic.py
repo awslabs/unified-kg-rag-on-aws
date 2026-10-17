@@ -319,6 +319,61 @@ class TestBasePartition:
         assert "lonely" in set().union(*partition)
 
 
+class TestSmallComponents:
+    """Components too small to form a community get none (MS ``use_lcc``)."""
+
+    @staticmethod
+    def _graph() -> nx.Graph:
+        g = _two_triangle_graph()
+        g.add_node("lonely", name="Lonely")
+        g.add_edge("p0", "p1")
+        return g
+
+    def test_isolates_and_pairs_get_no_community(self) -> None:
+        # Regression: each isolated entity or pair became a root community
+        # of its own: one report LLM call each, and a report in every cut.
+        cd = _detector(auto_resolution=False)(self._graph())
+        clustered = {
+            n for c in cd.generate_community_objects() for n in c.entity_ids or []
+        }
+        assert clustered == {f"n{i}" for i in range(6)}
+        assert "lonely" not in cd.node_to_community_l0
+
+    def test_the_other_communities_are_the_ones_found_with_them(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The small components are skipped after partitioning: dropping them
+        # from the graph first changed its total edge weight, and with it the
+        # partition Leiden found for everything else.
+        graph = nx.relabel_nodes(nx.ring_of_cliques(6, 4), lambda n: f"e{n:02d}")
+        for i in range(30):
+            graph.add_edge(f"p{i}a", f"p{i}b", weight=5.0)
+        skipped = _detector(auto_resolution=False)(graph)
+        assert len(skipped.unclustered) == 60
+        monkeypatch.setattr(
+            CommunityDetector, "_small_component_nodes", lambda self, g: set()
+        )
+        every = _detector(auto_resolution=False)(graph).generate_community_objects()
+        assert {c.id for c in skipped.generate_community_objects()} == {
+            c.id for c in every if not str(c.entity_ids[0]).startswith("p")
+        }
+
+    def test_min_community_size_one_clusters_every_component(self) -> None:
+        cd = _detector(auto_resolution=False, min_community_size=1)(self._graph())
+        clustered = {
+            n for c in cd.generate_community_objects() for n in c.entity_ids or []
+        }
+        assert {"lonely", "p0", "p1"} <= clustered
+
+    def test_a_graph_of_only_small_components_has_no_communities(self) -> None:
+        g = nx.Graph()
+        g.add_edge("a", "b")
+        g.add_node("c")
+        cd = _detector()(g)
+        assert cd.generate_community_objects() == []
+        assert g.number_of_nodes() == 3  # the caller's graph is left as it is
+
+
 class TestCanonicalOrder:
     """Leiden's labels come from a Rust HashMap whose order changes per process;
     nothing downstream may depend on it."""

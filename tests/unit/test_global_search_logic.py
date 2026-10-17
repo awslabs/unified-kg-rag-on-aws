@@ -249,17 +249,45 @@ async def test_the_cut_is_a_browse_without_query_text() -> None:
     }
 
 
-async def test_a_cut_over_the_cap_maps_the_most_similar_reports() -> None:
+async def test_a_cut_over_the_cap_gives_way_to_the_deepest_cut_that_fits() -> None:
+    # Regression: a depth-2 cut of 5 reports over a cap of 3 mapped the 3
+    # most similar, leaving entities of the other two out; the depth-1 cut
+    # covers them all in 3 broader reports.
     store = _ReportStore(_documents())
-    strat = _strategy(store, max_reports_per_level=2)
+    strat = _strategy(store, max_reports_per_level=3)
     result = await strat.asearch(SearchQuery(query="C1 C2 themes"))
 
-    assert _mapped(strat) == {"C1", "C2"}
+    assert _mapped(strat) == {"A", "B", "C"}
+    assert result.metadata["global_level_capped"] is False
+    assert result.metadata["global_cut_depth"] == 1
+    assert [c.filters["depth"] for c in store.calls] == [{"lte": 2}, {"lte": 1}]
+    assert all(not c.query for c in store.calls)
+
+
+async def test_a_cut_no_depth_fits_maps_the_most_similar_reports() -> None:
+    store = _ReportStore(_documents())
+    strat = _strategy(store, max_reports_per_level=1)
+    result = await strat.asearch(SearchQuery(query="C1 themes"))
+
+    assert _mapped(strat) == {"C1"}
     assert result.metadata["global_level_capped"] is True
-    similar = store.calls[1]
-    assert similar.query == "C1 C2 themes"
-    assert similar.top_k == 2
+    assert result.metadata["global_cut_depth"] == 2
+    similar = store.calls[-1]
+    assert similar.query == "C1 themes"
+    assert similar.top_k == 1
     assert similar.filters == store.calls[0].filters
+
+
+async def test_a_cut_of_exactly_the_cap_is_complete() -> None:
+    # Regression: a cut of exactly max_reports_per_level reports was taken
+    # for a truncated one and re-fetched by similarity.
+    store = _ReportStore(_documents())
+    strat = _strategy(store, max_reports_per_level=5)
+    result = await strat.asearch(SearchQuery(query="themes"))
+    assert result.metadata["global_level_capped"] is False
+    assert result.metadata["global_cut_depth"] == 2
+    assert _mapped(strat) == {"A1", "A2", "B", "C1", "C2"}
+    assert store.calls[0].top_k == 6
 
 
 def test_the_cap_is_bounded_by_the_store_page() -> None:

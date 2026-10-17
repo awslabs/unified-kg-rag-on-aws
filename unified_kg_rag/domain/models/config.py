@@ -1647,7 +1647,9 @@ class CommunityDetectionConfig(BaseModel):
         description=(
             "Minimum entities per level-0 community: a smaller one merges into"
             " the neighbour it shares the most edge weight with, unless that "
-            "would exceed max_cluster_size."
+            "would exceed max_cluster_size. A connected component of fewer "
+            "entities (an isolated entity, a pair) has no neighbour and gets "
+            "no community or report. 1 = cluster every component."
         ),
     )
     auto_resolution: bool = Field(
@@ -2281,7 +2283,8 @@ class GlobalSearchConfig(BaseModel):
 
     The reports of one cut (``community_depth``), or of a root-down dynamic
     selection (``use_dynamic_selection``), are all mapped in token-sized
-    batches; similarity only caps a cut larger than ``max_reports_per_level``.
+    batches; a cut larger than ``max_reports_per_level`` gives way to a
+    shallower one, and similarity caps it only when no cut fits.
     """
 
     community_depth: int = Field(
@@ -2302,9 +2305,11 @@ class GlobalSearchConfig(BaseModel):
         ge=1,
         description=(
             "Upper bound on the reports one cut (or one step of the dynamic "
-            "selection) contributes. A cut with more reports is cut to the "
-            "ones most similar to the query (a hybrid search restricted to the "
-            "cut) and the search metadata says so (global_level_capped). "
+            "selection) contributes. A cut with more reports gives way to the "
+            "deepest shallower cut that fits (global_cut_depth in the search "
+            "metadata); when even the root cut does not fit, to the reports "
+            "of the cut most similar to the query (a hybrid search restricted "
+            "to the cut, global_level_capped). "
             "Bounded by indexing.opensearch.max_query_size, the most hits one "
             "store request returns. Each report costs map-step input tokens."
         ),

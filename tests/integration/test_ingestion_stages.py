@@ -284,6 +284,63 @@ def test_whole_pipeline_runs_without_aws_through_the_public_constructor(
     assert {r.status for r in records} == {DocStatus.PROCESSED}
 
 
+def test_a_corpus_of_only_entity_pairs_builds_without_communities(
+    tmp_path: Path,
+) -> None:
+    # Pairs are below min_community_size: they get no community, and a full
+    # build of nothing but pairs completes instead of failing community
+    # detection for producing no output.
+    from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
+    from unified_kg_rag.domain.models import PipelineConfig, PipelineStageType
+
+    names = ("Vendor", "Buyer", "Carrier", "Bank")
+    reports: list[str] = []
+
+    def respond(system: str, human: str) -> str:
+        if "knowledge graph extraction expert" in system:
+            return _extraction(_source_text(human), names)
+        if "community analysis" in system:
+            reports.append(human)
+            return _REPORT
+        return _respond(system, human)
+
+    config = _config()
+    config.processing.gleaning.enabled = False
+    config.processing.claim_extraction.enabled = False
+    source = tmp_path / "corpus"
+    source.mkdir()
+    (source / "supply.txt").write_text("Vendor supplies widgets to Buyer.")
+    (source / "freight.txt").write_text("Carrier pays Bank monthly.")
+    providers = Providers(
+        config,
+        boto_session=MagicMock(),
+        llm_factory=ScriptedLLMFactory(respond),
+        embedding_factory=HashingEmbeddingFactory(),
+        doc_status=FakeDocStatusStore(),
+        vector_indexer_factory=lambda: FakeVectorStore(config.indexing.opensearch),
+        graph_indexer_factory=FakeGraphStore,
+    )
+    pipeline = DataIngestionPipeline(
+        config,
+        PipelineConfig(
+            stages_enabled=dict.fromkeys(PipelineStageType, True),
+            local_directory=tmp_path / "cache",
+        ),
+        source_directory=source,
+        providers=providers,
+    )
+    for stage in pipeline.stages:
+        if isinstance(stage, ps.GraphResolutionStage):
+            stage.resolver.entity_resolver.use_process_pool = False
+            stage.resolver.relationship_resolver.use_process_pool = False
+    context = pipeline.run(source, pipeline_id="pairs")
+    assert context.status is PipelineStageStatus.COMPLETED, [
+        r.error_message for r in context.stage_results
+    ]
+    assert len(context.resolved_entities) == 4
+    assert context.communities == [] and reports == []
+
+
 def test_failed_community_reports_mark_documents_failed_and_are_regenerated(
     tmp_path: Path,
 ) -> None:
@@ -311,6 +368,8 @@ def test_failed_community_reports_mark_documents_failed_and_are_regenerated(
     config.graph.community_detection.report_generation.enable_sub_community_rollup = (
         False
     )
+    # Each document is a pair of entities: cluster pairs too.
+    config.graph.community_detection.min_community_size = 1
     # Tolerate every report failing so the run completes and records them.
     config.indexing.max_failure_rate = 1.0
     source = tmp_path / "corpus"

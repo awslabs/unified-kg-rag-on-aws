@@ -445,6 +445,10 @@ graph:
     # fits, so a leaf report sees all of its entities and a parent's roll-up
     # all of its child summaries (MS GraphRAG's default is 10).
     max_cluster_size: 20
+    # Minimum entities per level-0 community; a smaller one merges into its
+    # most strongly tied neighbour. A connected component of fewer entities
+    # (an isolated entity, a pair) gets no community or report. 1 = cluster
+    # every component.
     min_community_size: 3
     # When true, sweep auto_resolution_candidates and keep the resolution that
     # maximizes modularity (the static `resolution` above is used when false).
@@ -777,8 +781,9 @@ search:
     # root communities (fewest, broadest); a large value = the leaves.
     community_depth: 2
     # Most reports one cut (or one dynamic-selection step) contributes. A
-    # bigger cut is cut to the reports most similar to the query and the
-    # search metadata says so (global_level_capped). Bounded by
+    # bigger cut gives way to the deepest shallower cut that fits
+    # (global_cut_depth); when even the root cut does not fit, the reports
+    # most similar to the query are mapped (global_level_capped). Bounded by
     # indexing.opensearch.max_query_size.
     max_reports_per_level: 100
     # MS GraphRAG dynamic community selection instead of a fixed cut: rate the
