@@ -1124,11 +1124,11 @@ changed once with the full-config keys (#332).
   judge failures count against `--max-failure-rate` (all failing exits 1),
   and its judge calls nest under one `kg_rag.evaluate` span. The user guide
   says why retrieved entity coverage is skipped rather than 0 when a context
-  has no entity source, and what that costs a comparison (#PR).
+  has no entity source, and what that costs a comparison (#340).
 - A `run-eval` with an `s3://` output directory that is stopped (SIGTERM,
   Ctrl-C) or crashes part-way uploads the results of the runs that
   finished, or keeps them locally and logs where; they were deleted
-  unuploaded (#PR).
+  unuploaded (#340).
 - `run_manifest.retrieval_config_sha256` covers every setting that can
   change an answer or a score: the hand-kept section list missed
   `graph.community_detection.enabled`, `processing.claim_extraction.enabled`,
@@ -1136,21 +1136,21 @@ changed once with the full-config keys (#332).
   that answered differently hashed the same. The hash now takes every
   setting except those the stage-cache classification marks as changing no
   answer (`cache_keys.answer_settings`), so its value differs from earlier
-  manifests (#PR).
+  manifests (#340).
 - `run_manifest.dataset.content_sha256` hashes the dataset file's content:
   it included the metadata `run-eval` adds to each query, so the runs of
-  one comparison hashed the same dataset differently (#PR).
+  one comparison hashed the same dataset differently (#340).
 - The index build record of an incremental run that found the registry
   empty says `full`, and an incremental record keeps the full build it was
   applied on top of (`full_build`), so the manifest no longer reports the
-  last delta's document count as the index's (#PR).
+  last delta's document count as the index's (#340).
 - An `auto` run's result files are named `..._auto_...`, not after the one
-  strategy it happened to route every query to (#PR).
+  strategy it happened to route every query to (#340).
 - `--output-format json` prints `{"status": "interrupted", "exit_code": ...}`
-  when a signal stops a CLI before it printed its document (#PR).
+  when a signal stops a CLI before it printed its document (#340).
 - `prepare-benchmark` with a non-empty `corpus/` exits 2 (a usage error)
-  before downloading the benchmark, instead of exiting 1 after (#PR).
-- The trace-shape docs list the `global` and `drift` spans (#PR).
+  before downloading the benchmark, instead of exiting 1 after (#340).
+- The trace-shape docs list the `global` and `drift` spans (#340).
 - The docs no longer contradict the code: an unknown config key fails the
   load (not a warning), the four causes of a `FAILED` document are listed
   alike in the user guide, the runbook and the design doc, a second
