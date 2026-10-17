@@ -109,7 +109,7 @@ def _scrub(value: Any) -> Any:
 
 
 def _stores(stores: Path) -> dict[str, Any]:
-    """Every stored vertex, edge, membership and vector-store document."""
+    """Every stored vertex, edge and vector-store document."""
     graph = sqlite3.connect(stores / "graph.sqlite3")
     vector = sqlite3.connect(stores / "vector.sqlite3")
     try:
@@ -125,12 +125,6 @@ def _stores(stores: Path) -> dict[str, Any]:
                 for label, id_, source, target, props in graph.execute(
                     "SELECT label, id, source_id, target_id, props FROM edges "
                     "ORDER BY label, id"
-                )
-            ],
-            "memberships": [
-                list(row)
-                for row in graph.execute(
-                    "SELECT * FROM memberships ORDER BY 1, 2, 3, 4"
                 )
             ],
             "documents": [

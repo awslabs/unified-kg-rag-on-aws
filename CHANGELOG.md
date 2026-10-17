@@ -1352,6 +1352,9 @@ changed once with the full-config keys (#332).
 - A run killed while it deleted items between the two stores no longer
   leaves vector copies no later run finds: the vector copies are deleted
   first, the graph copies (through which a retry finds them) last (#PR).
+- The graph-expansion degree (`indexing.neptune.entity_importance_source:
+  degree`) counts an entity's relationships only, not its community
+  memberships, as the setting describes (#PR).
 - The docs no longer contradict the code: an unknown config key fails the
   load (not a warning), the four causes of a `FAILED` document are listed
   alike in the user guide, the runbook and the design doc, a second
@@ -2766,6 +2769,11 @@ changed once with the full-config keys (#332).
   `S3CacheManager` now requires `prefix=`, so a direct caller can no longer
   write checkpoints under a prefix the CDK bucket lifecycle does not
   expire (#345).
+- `MemberOf` edges from entities to communities: no query read them, a
+  re-keyed entity lost them, and they counted toward its degree. A community
+  is its vertex and an entity names its communities (`community_ids`).
+  Graphs built before keep their edges until `indexing.reset: true`; the
+  embedded graph's `memberships` table is no longer written (#PR).
 - The native-score blend of RRF fusion: RRF scores are plain
   `weight / (rrf_k + rank)` sums again. The blend claimed to restore order
   within a stream, which RRF already keeps; scaled to the rank-1 step, it

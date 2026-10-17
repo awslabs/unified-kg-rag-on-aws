@@ -326,8 +326,12 @@ def test_projection_reads_the_rank_the_indexer_writes(retriever, mocker) -> None
 
 
 def test_projection_with_degree_counts_edges(retriever) -> None:
+    # Regression: bothE().count() also counted an older build's MemberOf
+    # edges to communities; the degree counts edges to entities only.
     calls: list[tuple] = []
-    retriever._with_projection(RecordingTraversal(calls), with_degree=True)
+    retriever._with_projection(RecordingTraversal(calls), degree_label="Entity-default")
+    degree = [c for c in calls if c[0] == "by"][-1][1][0]
+    assert str(degree) == "[['both'], ['hasLabel', 'Entity-default'], ['count']]"
     assert [c for c in calls if c[0] == "project"][0][1] == (
         "node",
         "path",

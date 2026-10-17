@@ -730,7 +730,7 @@ map 호출은 `search.max_concurrency`개씩 실행합니다. `map_relevance_thr
 | 서비스 | 모듈 | 용도 |
 |---|---|---|
 | **Bedrock** | `adapters/aws/bedrock.py`, `bedrock_models.py`(기능 카탈로그) | LLM, 임베딩, 재순위화. 리전 간 추론 프로파일 해석, 공급자에 맞춘 요청 형식(Claude 4.6+의 adaptive thinking과 `effort`, OpenAI GPT의 `reasoning.effort`), 지원하는 모델의 프롬프트 캐싱. 선별 항목, 공급자 계열 기본값, `aws.bedrock.model_overrides`로 어떤 모델 ID든 받음 |
-| **Neptune** | `adapters/aws/neptune.py` | SigV4를 쓰는 `wss://` Gremlin(로컬 Gremlin Server는 `ws://`). 일괄 upsert와 삭제, `indexing.neptune.index_concurrency`로 동시 배치. 모든 인덱서 요청은 새 연결로 재시도하며 반복해도 안전함(정점과 간선은 ID로 만들거나 찾음) |
+| **Neptune** | `adapters/aws/neptune.py` | SigV4를 쓰는 `wss://` Gremlin(로컬 Gremlin Server는 `ws://`). 일괄 upsert와 삭제, `indexing.neptune.index_concurrency`로 동시 배치. 모든 인덱서 요청은 새 연결로 재시도하며 반복해도 안전함(정점과 간선은 ID로 만들거나 찾음). 끝점 정점이 없는 간선은 지우지도 쓰지도 않음(실패로 처리하고 저장된 사본은 남김). 커뮤니티는 정점만 씀(`MemberOf` 간선은 어떤 질의도 읽지 않아 쓰지 않고, 엔티티가 `community_ids`에 자기 커뮤니티를 적음) |
 | **OpenSearch** | `adapters/aws/opensearch.py` | kNN(HNSW, 기본 `lucene` 엔진은 OpenSearch 2.13에서 `cosinesimil` 지원)과 BM25, 동기·비동기 SigV4 클라이언트, 별칭 관리, 일괄 upsert와 삭제, 언어별 분석기 |
 | **S3** | `adapters/aws/s3_cache.py` | 단계 캐시 동기화(`aws.s3.encryption`이 강제하지 않으면 버킷 기본 암호화) |
 | **DynamoDB** | `adapters/doc_status/dynamodb.py` | 문서 상태 레지스트리 |
