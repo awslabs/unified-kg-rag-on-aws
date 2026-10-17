@@ -350,7 +350,24 @@ class PipelineStage(ABC):
         )
 
 
-class DocumentLoadingStage(PipelineStage):
+class _RegistryStage(PipelineStage):
+    """A stage that reads or writes the doc-status registry: the injected one
+    (``doc_status``), else the one ``config.providers`` selects."""
+
+    _doc_status: "DocStatusPort | None" = None
+
+    @property
+    def _registry_on(self) -> bool:
+        """Whether incremental indexing is on (a registry injected or enabled)."""
+        return self._doc_status is not None or self.config.doc_status_enabled
+
+    def _build_doc_status_store(self) -> "DocStatusPort":
+        if self._doc_status is not None:
+            return self._doc_status
+        return self.providers.build_doc_status()
+
+
+class DocumentLoadingStage(_RegistryStage):
     """Produce the run's document set (dedup + incremental filter).
 
     When the parsing stage completed in this pipeline, its parsed documents are
@@ -416,7 +433,7 @@ class DocumentLoadingStage(PipelineStage):
             failed_files = self.loader.failed_files
             context.failed_source_files = list(failed_files)
 
-        incremental = self._doc_status is not None or self.config.doc_status_enabled
+        incremental = self._registry_on
         if self.config.processing.deduplicate:
             keep = avoid = None
             if incremental and not self.config.indexing.reset:
@@ -479,13 +496,6 @@ class DocumentLoadingStage(PipelineStage):
             and r.status == PipelineStageStatus.COMPLETED
             for r in context.stage_results
         )
-
-    def _build_doc_status_store(self) -> "DocStatusPort":
-        if self._doc_status is not None:
-            return self._doc_status
-        # Fallback when the stage is used standalone (no pipeline injection):
-        # the registry config.providers selects.
-        return self.providers.build_doc_status()
 
 
 class DocumentParsingStage(PipelineStage):
@@ -1365,7 +1375,7 @@ class CommunityDetectionStage(PipelineStage):
         return input_count, output_count, metrics
 
 
-class IndexingStage(PipelineStage):
+class IndexingStage(_RegistryStage):
     def __init__(
         self,
         config: Config,
@@ -1382,11 +1392,6 @@ class IndexingStage(PipelineStage):
     def close(self) -> None:
         """Close the indexers' Neptune/OpenSearch clients (best-effort)."""
         self.indexing_manager.close()
-
-    def _build_doc_status_store(self) -> "DocStatusPort":
-        if self._doc_status is not None:
-            return self._doc_status
-        return self.providers.build_doc_status()
 
     def _execute_core(
         self, context: PipelineContext
@@ -1430,7 +1435,7 @@ class IndexingStage(PipelineStage):
         if (
             context.incremental_delta is None
             and not self.config.indexing.reset
-            and (self._doc_status is not None or self.config.doc_status_enabled)
+            and self._registry_on
         ):
             # Incremental indexing is on but no delta reached this stage (the
             # loading stage failed under continue_on_error, or the run was
