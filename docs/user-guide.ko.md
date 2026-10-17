@@ -1928,7 +1928,9 @@ CLI가 보고하는 메시지와 그 의미, 해결 방법은 AWS 모드와 로�
 결과(`run-rag`), 파이프라인 id·상태·단계별 결과(`run-ingestion`. 표준 출력에 함께 쓰는
 `--metrics-sink cloudwatch`와는 같이 쓸 수 없음), 실행별 요약·비교·실패 허용치
 초과(`run-eval`), 쓴 파일(`run-visualization`), 출력 경로와 감지한 프로필
-(`run-prompt-tuning`), 쓴 항목 수(`prepare-benchmark`)입니다.
+(`run-prompt-tuning`), 쓴 항목 수(`prepare-benchmark`)입니다. 문서를 출력하기 전에
+신호로 중지되면 대신 `{"status": "interrupted", "exit_code": 143}`(Ctrl-C는 `130`)을
+출력하므로 표준 출력은 항상 JSON입니다.
 
 ### 대규모, 다국어, 이질적인 코퍼스
 

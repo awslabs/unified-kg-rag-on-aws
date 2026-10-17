@@ -1146,6 +1146,8 @@ changed once with the full-config keys (#332).
   last delta's document count as the index's (#PR).
 - An `auto` run's result files are named `..._auto_...`, not after the one
   strategy it happened to route every query to (#PR).
+- `--output-format json` prints `{"status": "interrupted", "exit_code": ...}`
+  when a signal stops a CLI before it printed its document (#PR).
 - The docs no longer contradict the code: an unknown config key fails the
   load (not a warning), the four causes of a `FAILED` document are listed
   alike in the user guide, the runbook and the design doc, a second

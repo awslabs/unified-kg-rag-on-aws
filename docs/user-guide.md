@@ -2127,7 +2127,9 @@ per-stage results (`run-ingestion`; not with `--metrics-sink cloudwatch`,
 which also writes to stdout), each run's summary, the comparison and the
 failure-budget breaches (`run-eval`), the written files (`run-visualization`),
 the output path and detected profile (`run-prompt-tuning`), and the counts
-written (`prepare-benchmark`).
+written (`prepare-benchmark`). A run stopped by a signal before it printed its
+document prints `{"status": "interrupted", "exit_code": 143}` (`130` for
+Ctrl-C) instead, so stdout is always JSON.
 
 ### Large / multilingual / heterogeneous corpora
 

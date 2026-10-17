@@ -15,7 +15,8 @@ Exit codes:
 
 ``--output-format json`` prints one JSON document with the run's result to
 stdout and sends everything else (banner, progress, logs) to stderr, so the
-output pipes into ``jq``.
+output pipes into ``jq``. A run stopped by a signal before it printed one
+prints ``{"status": "interrupted", "exit_code": 143}`` (or 130) instead.
 """
 
 from __future__ import annotations
@@ -38,6 +39,10 @@ _R = TypeVar("_R")
 EXIT_FAILURE = 1
 EXIT_USAGE = 2
 EXIT_INTERRUPTED = 128 + signal.SIGINT  # 130, Ctrl-C
+EXIT_TERMINATED = 128 + signal.SIGTERM  # 143
+
+# Whether this process prints JSON, and whether it printed its document.
+_json = {"enabled": False, "printed": False}
 
 
 def usage_error(message: str) -> NoReturn:
@@ -54,7 +59,9 @@ def exits_on_sigterm(main: Callable[_P, _R]) -> Callable[_P, _R]:
     kernel does not deliver a signal to PID 1 that it has no handler for, so
     without one a stopped task ran on until it was killed. The previous
     handler is restored when ``main`` returns; off the main thread, where
-    Python cannot install a handler, ``main`` runs unchanged.
+    Python cannot install a handler, ``main`` runs unchanged. With JSON
+    output, a run stopped before it printed its document prints a status
+    document, so a consumer parsing stdout gets JSON either way.
     """
 
     def _exit(signum: int, _frame: object) -> None:
@@ -64,9 +71,17 @@ def exits_on_sigterm(main: Callable[_P, _R]) -> Callable[_P, _R]:
     def wrapper(*args: _P.args, **kwargs: _P.kwargs) -> _R:
         if threading.current_thread() is not threading.main_thread():
             return main(*args, **kwargs)
+        _json.update(enabled=False, printed=False)
         previous = signal.signal(signal.SIGTERM, _exit)
         try:
             return main(*args, **kwargs)
+        except KeyboardInterrupt:
+            _print_interrupted(EXIT_INTERRUPTED)
+            raise
+        except SystemExit as e:
+            if e.code in (EXIT_INTERRUPTED, EXIT_TERMINATED):
+                _print_interrupted(e.code)
+            raise
         finally:
             signal.signal(signal.SIGTERM, previous)
 
@@ -87,9 +102,16 @@ def json_output(args: argparse.Namespace) -> bool:
     """Whether the run prints JSON; the console writes to stderr if so."""
     as_json = getattr(args, "output_format", "text") == "json"
     console.stderr = as_json
+    _json["enabled"] = as_json
     return as_json
 
 
 def print_json(result: Any) -> None:
     """Print ``result`` as the run's one JSON document on stdout."""
+    _json["printed"] = True
     print(json.dumps(result, indent=2, ensure_ascii=False, default=str))
+
+
+def _print_interrupted(exit_code: int) -> None:
+    if _json["enabled"] and not _json["printed"]:
+        print_json({"status": "interrupted", "exit_code": exit_code})
