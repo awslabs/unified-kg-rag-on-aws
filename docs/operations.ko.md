@@ -6,7 +6,7 @@
 
 이미 배포된 환경에서 운영자가 하는 작업을 정리합니다. 다시 수집하기, 증분
 실행, 실패한 문서 처리, 캐시 관리, CLI가 내는 오류 해석이 대상입니다. 설정 키는
-[사용자 가이드](./user-guide.ko.md) §2에, 배포 스택과 명령은
+[사용자 가이드 §2](./user-guide.ko.md#2-설정)에, 배포 스택과 명령은
 [`iac/README.md`](../iac/README.md#after-deploy)에 있습니다.
 
 ## 실행 전 확인
@@ -16,7 +16,7 @@
    우선합니다(`aws.bedrock.region_name`이 비어 있으면 Bedrock도 이 리전을 따릅니다).
    `env | grep -E '^(AWS_REGION|UKR__AWS__)'`와 `aws sts get-caller-identity`로
    확인합니다.
-2. **모델.** 사용자 가이드 §1의 "필수 모델"에 있는 모델이 Bedrock 리전에서
+2. **모델.** [필수 모델](./user-guide.ko.md#필수-모델)에 있는 모델이 Bedrock 리전에서
    활성화되어 있어야 합니다.
 3. **엔드포인트.** `run-ingestion`, `run-rag`, `run-eval`은 시작할 때 모델을
    호출하기 전에 필요한 저장소 엔드포인트가 설정되어 있는지 검사합니다
@@ -69,7 +69,7 @@ NamespaceLeaseError: Index namespace '<namespace>' is being written by
 하나라도 기본값이 아니면 이 접두사들의 태그가 덧붙습니다. 접두사만 다른 두 설정은
 서로 다른 저장소에 쓰므로 테이블 하나를 함께 써도(CDK 스택은 고정된 테이블 이름
 하나를 주입합니다) 레코드를 따로 둡니다. 산출물 ID는 내용에서 만들어지므로, 그렇지
-않으면 다른 저장소 집합의 레코드 때문에 바뀐 문서의 이전 텍스트 단위와 엔터티가 이
+않으면 다른 저장소 집합의 레코드 때문에 바뀐 문서의 이전 텍스트 단위와 엔티티가 이
 실행의 저장소에 남습니다. 기본 설정의 네임스페이스는 그대로입니다. 접두사가
 네임스페이스에 포함되기 전에 레코드를 쓴, 접두사를 바꾼 설정은 코퍼스를 새 문서로
 봅니다. 첫 실행이 코퍼스를 다시 인덱싱하고(파싱 단계부터 단계 캐시 키가 바뀝니다),
@@ -123,7 +123,7 @@ reset 동안에도 질의는 이전 내용을 읽습니다. 벡터 인덱스는 
 `aws.dynamodb.enabled: true`(컨테이너 이미지의 기본값)이면 `run-ingestion`은
 실행할 때마다 콘텐츠 해시로 코퍼스와 문서 상태 레지스트리를 비교하고, 새 문서와
 바뀐 문서만 인덱싱합니다. 비교 범위는 실행의
-인덱스 접미사(사용자 가이드 §3)와 소스 범위입니다. 소스 범위는
+[인덱스 접미사](./user-guide.ko.md#인덱스-접미사)와 소스 범위입니다. 소스 범위는
 `processing.document_parsing.source_scope`이며 기본값은 해석된 소스
 디렉터리이고, 컨테이너 엔트리포인트는 `s3://` 소스 URI로 설정합니다. 둘 다 문서의
 레지스트리 키에 들어가므로, 한 접미사를 쓰는 두 코퍼스는 상대 경로가 같은 파일이
@@ -138,7 +138,7 @@ reset 동안에도 질의는 이전 내용을 읽습니다. 벡터 인덱스는 
   넘겨받거나 지우지 않으므로 이전 내용(옮기는 중에 지운 파일 포함)이 인덱스에
   남습니다. 옮기기 전에 `source_scope`를 고정하거나, 새 위치에서
   `--retire-source-scope <이전 소스 디렉터리>`로 한 번 실행하세요. 이 실행이 이전
-  범위에만 속한 내용과 레코드를 지웁니다(사용자 가이드 §5 참고). 새 문서가 있는
+  범위에만 속한 내용과 레코드를 지웁니다([사용자 가이드 §5](./user-guide.ko.md#삭제-범위) 참고). 새 문서가 있는
   실행은 같은 접미사의 다른 로컬 소스 디렉터리를 WARNING으로 알립니다.
 - 코퍼스 파일이 의도와 다르게 만료되거나 사라지지 않게 합니다. 다음 실행이 해당
   그래프·벡터 데이터를 지웁니다.
@@ -163,7 +163,7 @@ reset 동안에도 질의는 이전 내용을 읽습니다. 벡터 인덱스는 
 리포트에는 이전 id가 남습니다. 주기적인 전체 재구축(`indexing.reset: true`)으로 둘 다
 새로 고칩니다. 공유 설명, 이름, id, 유형, rank, 주장은 실행마다 현재 문서에서
 파생합니다. 자세한 내용은
-[사용자 가이드](./user-guide.ko.md) §5에 있습니다.
+[사용자 가이드 §5](./user-guide.ko.md#5-증분-인덱싱)에 있습니다.
 
 재구축할 때가 되었는지는 커뮤니티 드리프트로 판단합니다. 엔티티마다 속한 레벨 0
 커뮤니티를 기록하므로, 델타 실행의 인덱싱 단계는 `community_drift` 지표에 다음을
@@ -219,11 +219,16 @@ reset 동안에도 질의는 이전 내용을 읽습니다. 벡터 인덱스는 
 
 ## 실패한 문서
 
-번역, 그래프 추출, gleaning, 주장 추출 중 하나가 문서의 텍스트 단위 일부에서
-실패하거나, `--continue-on-error` 실행에서 문서의 산출물을 만드는 단계(번역부터
-커뮤니티 탐지까지)가 비정상 종료하거나, 문서의 산출물(텍스트 단위, 엔티티, 관계, 주장, 커뮤니티, 보고서)을
-OpenSearch나 Neptune에 쓰는 데 실패하면 그 문서는 `FAILED`로 기록됩니다. 다음
-실행은 이 문서를 바뀐 문서로 취급해 실패한 실행이 쓴 내용을 지우고 다시
+다음 네 경우에 문서가 `FAILED`로 기록됩니다.
+
+- 텍스트 단위 하나라도 번역, 그래프 추출, gleaning, 주장 추출에 실패함
+- 텍스트 단위를 포함한 기본 수준 커뮤니티의 리포트가 생성되지 않음
+- `--continue-on-error` 실행에서 산출물을 만드는 단계(번역부터 커뮤니티 탐지까지)가
+  비정상 종료함. 이때는 그 실행의 모든 문서가 `FAILED`로 기록됨
+- 산출물(텍스트 단위, 엔티티, 관계, 주장, 커뮤니티, 리포트) 하나를 저장소에 쓰는 데 실패함
+
+상위 수준 커뮤니티의 리포트 실패는 어떤 문서도 `FAILED`로 기록하지 않습니다([사용자 가이드: 실패한 문서](./user-guide.ko.md#실패한-문서)
+참고). 다음 실행은 이 문서를 바뀐 문서로 취급해 실패한 실행이 쓴 내용을 지우고 다시
 처리합니다. `--continue-on-error` 실행에서 파싱, 로딩, 청킹 단계가 비정상
 종료하면 인덱싱 단계를 아예 실행하지 않으므로 저장소와 레지스트리는 이전 상태를
 유지합니다. `--continue-on-error` 없이 어떤 단계든 실패해도 마찬가지입니다. 실행은
@@ -353,7 +358,7 @@ curl -X PUT "https://<OpenSearch endpoint>/_all/_settings" \
 ## 백업과 복원
 
 세 저장소는 백업 주기가 다르고 내용이 서로를 참조합니다(레지스트리가 문서별
-그래프·인덱스 산출물을 기록함). 따라서 세 저장소를 같은 시점으로 함께 복원하거나
+텍스트 단위를 기록하고, 그래프·인덱스 산출물이 그 텍스트 단위를 인용함). 따라서 세 저장소를 같은 시점으로 함께 복원하거나
 아예 복원하지 않습니다.
 
 | 저장소 | 백업 | 보존 기간 |
@@ -383,8 +388,8 @@ S3의 코퍼스가 원본이므로 모든 저장소는 코퍼스에서 다시 �
 
 **Neptune 보존 기간을 지났거나** 5단계를 할 만한 가치가 없으면 공통 시점이 없으므로
 `indexing.reset: true`로 전체를 한 번 다시 만듭니다([다시 수집하기](#다시-수집하기)
-참고). 이 인덱스 네임스페이스의 저장소와 레지스트리 레코드를 지우고 코퍼스 전체를
-다시 인덱싱합니다. 다른 네임스페이스가 테이블을 함께 쓸 때만 테이블을 먼저
+참고). 코퍼스 전체를 이 인덱스 네임스페이스에 다시 인덱싱하고
+다시 쓰지 않은 항목을 지웁니다. 다른 네임스페이스가 테이블을 함께 쓸 때만 테이블을 먼저
 복원합니다.
 
 ## 질의 권한과 테넌트 격리
@@ -751,7 +756,7 @@ LangSmith로 업로드합니다.
 |---|---|---|
 | `Missing endpoint configuration for ...` | 실행에 필요한 엔드포인트가 비어 있음 | 메시지에 나온 키나 환경 변수를 설정 |
 | `Configuration validation error: ...` | 설정값의 타입이나 값이 잘못됨 | 메시지에 나온 키를 수정 |
-| `Unknown config key '<path>' is ignored` (WARNING) | 오타이거나 없어진 키이며, 실행은 그 키 없이 계속됨 | 키를 고치거나 삭제 |
+| `ConfigurationError: Unknown config keys: '<path>' ...`(종료 코드 2) | 오타이거나 이번 릴리스에서 없어지거나 이름이 바뀐 키 | 키를 고치거나 삭제함(바뀐 이름은 [CHANGELOG](../CHANGELOG.md)에 있음). `--allow-unknown-keys`를 주면 키마다 `Unknown config key '<path>' is ignored`(WARNING)를 남기고 파일을 읽음 |
 | `No valid AWS credentials for Amazon Bedrock in region ...` | 자격 증명이 없거나 만료됨 | 자격 증명을 갱신하고 `AWS_PROFILE` / `aws.profile_name` 확인 |
 | `Model '<id>' is only available through a cross-region inference profile, but none resolved ...` | 온디맨드 처리량이 없는 모델인데 추론 프로파일을 찾지 못함 | `aws.bedrock.enable_global_profile: true`를 유지하고 `bedrock:ListInferenceProfiles`를 허용하거나 다른 리전 사용 |
 | `Reranking failed: ...` (질의마다 ERROR, `metadata.rerank.status: failed`) | Rerank 호출이 거부되었거나 해당 리전에 모델이 없음 | `bedrock:Rerank`를 `Resource: "*"`로 허용하거나, rerank 모델이 있는 리전으로 Bedrock을 옮기거나, `search.reranking.enabled: false` 설정 |
@@ -787,7 +792,7 @@ LangSmith로 업로드합니다.
 | `The doc-status registry lists indexed documents of this namespace whose text units the vector store does not hold` | 레지스트리에 기록된 내용을 벡터 저장소가 잃음(로컬 모드에서 `vector.sqlite3`를 지우거나 옮김, `providers.vector.sqlite_path` 변경, 삭제된 OpenSearch 인덱스) | 위와 같음. 로컬 모드에서는 저장소 파일 세 개를 함께 지우거나 벡터 파일을 복원 |
 | 내장 그래프·벡터 저장소나 SQLite 문서 상태 레지스트리의 `... stayed locked ...`(`database is locked`)(로컬 모드) | 다른 프로세스(두 번째 수집 등)가 같은 SQLite 파일에 쓰면서 `search.store_timeout_seconds`보다 오래 잠금을 잡음. SQLite는 한 번에 한 프로세스만 씀 | 다른 실행이 끝난 뒤 다시 실행하거나, 저장소 파일마다 수집을 한 번에 하나만 실행하거나, `search.store_timeout_seconds`를 늘림. 파일은 로컬 디스크에 둠(네트워크 파일 시스템은 지원하지 않음) |
 | 로그에 `Connection refused`와 함께 `... processed N inputs but produced 0 outputs`(로컬 모드) | `providers.llm.base_url` / `providers.embedding.base_url`에서 Ollama나 OpenAI 호환 서버에 연결할 수 없음 | 서버를 띄우고(`ollama serve` 또는 `docker compose -f docker/compose.local.yaml --profile models up -d --wait`), `base_url`(또는 `--model-base-url`)을 확인하고, 모델을 내려받음 |
-| 질의가 `AuthenticationError` / `NotFoundError`(`Error code: 401` / `404`), `APIConnectionError` / `APITimeoutError`, `ResponseError: model ... not found`로 실패함(로컬 모드) | OpenAI 호환 서버나 Ollama가 키를 거부했거나 그 모델을 제공하지 않음, 또는 클라이언트 재시도 후에도 연결할 수 없거나 응답하지 않음. 이후 질의도 모두 같은 이유로 실패하므로 "찾을 수 없음"으로 답하지 않고 질의를 실패시킴 | `providers.llm` / `providers.embedding`(`base_url`, `api_key`, `model_id`), 서버 실행 여부를 확인하고 모델을 내려받음 |
+| 질의가 `AuthenticationError` / `NotFoundError`(`Error code: 401` / `404`), `APIConnectionError` / `APITimeoutError`, `ResponseError: model ... not found`로 실패함(로컬 모드) | OpenAI 호환 서버나 Ollama가 키를 거부했거나 그 모델을 제공하지 않음, 또는 클라이언트 재시도 후에도 연결할 수 없거나 응답하지 않음. 이후 질의도 모두 같은 이유로 실패하므로 "찾을 수 없음"으로 답하지 않고 질의를 실패시킴 | `providers.llm` / `providers.embedding`의 `base_url`과 `api_key`, `models.default` / `models.embedding.model_id`의 모델 이름, 서버 실행 여부를 확인하고 모델을 내려받음 |
 | `observability.enabled is true but OpenTelemetry is not installed` | 추적을 켰지만 `otel` extra가 설치되지 않음 | `uv sync --extra otel`을 실행하거나 `observability.enabled: false` 설정 |
 | 프라이빗 VPC에서 Bedrock 호출이 멈춤 | VPC 엔드포인트가 처리하지 않는 리전으로 Bedrock을 호출함 | `aws.bedrock.region_name`을 비우거나 VPC 리전과 같게 설정 |
 | `use_iam: false`에서 OpenSearch 인증 실패 | 기본 인증 자격 증명이 없음 | `UKR__AWS__OPENSEARCH__USERNAME` / `UKR__AWS__OPENSEARCH__PASSWORD` 설정(예: `.env`) |

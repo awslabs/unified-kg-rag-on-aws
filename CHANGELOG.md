@@ -374,7 +374,7 @@ Deployment (CDK stack).
   checkpointed by the phased version resumes from the same S3 checkpoints:
   start a new execution with the same input (#328).
 - The pipeline EMF metrics carry an `Environment` dimension (the stack's
-  `env_name`, injected as `GRAPHRAG_METRICS_ENVIRONMENT`), and the stack's
+  `env_name`, injected as `UKR_METRICS_ENVIRONMENT`), and the stack's
   alarms and dashboard read only that series. An image built before this
   change emits the series without dimensions, which the new alarms do not
   read: deploy the image and the stack together (#330).
@@ -1096,6 +1096,13 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- The docs no longer contradict the code: an unknown config key fails the
+  load (not a warning), the four causes of a `FAILED` document are listed
+  alike in the user guide, the runbook and the design doc, a second
+  ingestion on the CDK stack stops with `NamespaceLeaseError`, `naive` is
+  BM25 + vector, and `config-template.yaml` lists
+  `evaluation.answer_normalization` and no longer mentions the removed
+  `effort` key (#PR).
 - Two corpora written to one index namespace that hold the same file with
   the same text no longer share text units, so removing one corpus's copy
   keeps the other's (#327).

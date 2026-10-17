@@ -40,7 +40,7 @@ Every strategy runs through the same hybrid scorer and token budget. Pick one wi
 | `drift` | GraphRAG | Complex questions that need iterative exploration |
 | `mix` | LightRAG | General LightRAG use; entity and relationship keyword retrieval plus chunk retrieval |
 | `hybrid` | LightRAG | Keyword-driven graph questions, without the extra chunk retrieval |
-| `naive` | LightRAG | A fast vector-only baseline and comparison runs |
+| `naive` | LightRAG | A fast chunk-only baseline (BM25 + vector, no graph) and comparison runs |
 
 See the [User Guide §4](./docs/user-guide.md#4-querying-run-rag) for per-strategy behavior and the [Design Doc](./docs/design.md) for the layer map, algorithms, data model and the detailed [ingestion](./docs/design.md#4-ingestion-pipeline), [incremental](./docs/design.md#5-incremental-indexing) and [retrieval](./docs/design.md#6-retrieval-two-methodologies) diagrams.
 

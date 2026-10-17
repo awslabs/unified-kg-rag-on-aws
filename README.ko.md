@@ -40,7 +40,7 @@
 | `drift` | GraphRAG | 반복 탐색이 필요한 복잡한 질문 |
 | `mix` | LightRAG | 일반적인 LightRAG 사용. 엔티티·관계 키워드 검색에 청크 검색을 더합니다 |
 | `hybrid` | LightRAG | 키워드 중심의 그래프 질문. 청크 검색은 더하지 않습니다 |
-| `naive` | LightRAG | 빠른 벡터 전용 기준선과 비교 실험 |
+| `naive` | LightRAG | 그래프 없이 청크만 검색하는(BM25 + 벡터) 빠른 기준선과 비교 실험 |
 
 전략별 동작은 [사용자 가이드 §4](./docs/user-guide.ko.md#4-질의-run-rag)를, 레이어 구조·알고리즘·데이터 모델과 [수집](./docs/design.ko.md#4-수집-파이프라인)·[증분 인덱싱](./docs/design.ko.md#5-증분-인덱싱)·[검색](./docs/design.ko.md#6-검색-두-방법론) 상세 다이어그램은 [설계 문서](./docs/design.ko.md)를 참고하세요.
 
@@ -114,7 +114,7 @@ uv run run-prompt-tuning --source-directory ./source --output-path tuned_prompts
 |---|---|
 | [사용자 가이드](./docs/user-guide.ko.md) ([English](./docs/user-guide.md)) | 설정, CLI 플래그, 증분 인덱싱, 평가, 라이브러리 사용법, [제한 사항](./docs/user-guide.ko.md#12-제한-사항) |
 | [모델 카탈로그](./docs/models.ko.md) ([English](./docs/models.md)) | 지원하는 Bedrock 모델과 공급자별 요청 차이 |
-| [운영 런북](./docs/operations.ko.md) ([English](./docs/operations.md)) | 재수집, 증분 실행, 실패한 문서, 캐시, 자주 나는 오류 |
+| [운영 런북](./docs/operations.ko.md) ([English](./docs/operations.md)) | 재수집, 증분 실행, 실패한 문서, 캐시, 자주 보는 오류 |
 | [설계 문서](./docs/design.ko.md) ([English](./docs/design.md)) | 헥사고날 아키텍처, 알고리즘, 데이터 모델, 확장 가이드, 참고 자료 |
 | [용어집](./docs/glossary.ko.md) | 한국어 문서와 영문 문서·코드의 용어 대응 |
 | [`iac/README.md`](./iac/README.md) | CDK 스택, 배포 토폴로지, 비용 요인, `-c key=value` 옵션, Guardrail 배포, 배포 후 명령 |

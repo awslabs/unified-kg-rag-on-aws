@@ -2,6 +2,8 @@
 
 > 🇬🇧 English version: [docs/models.md](./models.md)
 
+용어는 [용어집](./glossary.ko.md)을 따릅니다.
+
 이 문서는 프레임워크가 아는 Bedrock 모델, 공급자별 요청 형식, 프레임워크가 모르는
 모델을 기술하는 방법을 설명합니다. 처음 실행하기 전에 활성화할 모델은
 [사용자 가이드 §1 필수 모델](./user-guide.ko.md#필수-모델)을, 두 모델 계층과 역할별

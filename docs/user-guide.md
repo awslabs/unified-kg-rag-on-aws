@@ -169,8 +169,7 @@ Two independent auth concerns:
    UKR__AWS__OPENSEARCH__PASSWORD=your_opensearch_password
    ```
 
-   The `.env` file is loaded automatically by the CLIs (`run-ingestion`,
-   `run-rag`). When `use_iam: true`, no `.env` is needed.
+   The `run-*` CLIs load the `.env` file automatically. When `use_iam: true`, no `.env` is needed.
 
 ### Local mode (no AWS)
 
@@ -338,7 +337,7 @@ included; an omitted flag leaves the config as it is.
 
 | Flag | Sets |
 |---|---|
-| `--backend {aws,local}` | `backend`. The preset still fills in only the keys the config leaves unset. `--backend aws` over a `backend: local` file drops every value equal to the local preset's, so those keys return to the AWS defaults |
+| `--backend {aws,local}` | `backend`. The preset still fills in only the keys the config leaves unset. `--backend aws` over a `backend: local` file drops the values the local preset filled in, so those keys return to the AWS defaults; a value the file or the environment sets is kept, even one equal to the preset's |
 | `--llm-provider KIND` | `providers.llm.kind`: `bedrock`, `openai_compatible` or `ollama` |
 | `--llm-model MODEL` | `models.default` |
 | `--embedding-provider KIND` | `providers.embedding.kind`: `bedrock`, `openai_compatible` or `ollama` |
@@ -700,7 +699,6 @@ LLM stages are Bedrock-I/O-bound, so concurrency can far exceed the CPU count.
 | `indexing.max_document_attempts` | `3` | Incremental runs: consecutive runs that started indexing a document's unchanged content and never finished it (the run died) after which the document is quarantined: skipped until its content or the extraction settings change (§5, *Quarantined documents*). |
 | `indexing.lease_seconds` | `300` | Incremental runs: term of the index namespace's write lease, which a run holds for its whole duration and renews every third of it; a dead run's lease expires at most this long after (§5, *Concurrent runs*). Minimum `10`. |
 | `indexing.retire_source_scopes` | `[]` | Incremental runs: former source scopes (an old absolute source directory, or a former `source_scope` value) whose records in the run's index suffix are treated as deleted, so their exclusive content is removed. Never the run's own scope. `--retire-source-scope` adds to it. See §5 Deletion scope. |
-| `models.embedding.model_id` | `"amazon.titan-embed-text-v2:0"` | Embedding model, one of a closed list (see Model selection notes). Changing it requires a reindex. |
 | `indexing.opensearch.build_relationship_vector_index` | `true` | Relationship vector index. LightRAG `mix`/`hybrid` (high-level keywords, incident edges) and GraphRAG `local` (relationship section, bridge relationships) query it, and `simple`/`drift` search it with the other indexes. `false` skips the relationship embeddings at the cost of those. |
 | `indexing.opensearch.persist_embedding_cache` | `false` | Persist the embedding cache to S3 so unchanged text is not re-embedded across runs. Requires `aws.s3.bucket_name`. |
 | `indexing.opensearch.language_analyzers` | `{en: english, ko: nori}` | Text analyzer per language code; unlisted languages use `default_analyzer` (`standard`). |
@@ -1033,7 +1031,7 @@ OpenSearch + Neptune.
 | `--resume-from-stage` | — | Stage to resume from, by name, case-insensitive (requires `--pipeline-id`); an unknown name is a usage error (exit 2) |
 | `--verify-metadata` | off | Verify pipeline metadata integrity (needs `--pipeline-id`); exits non-zero when it is corrupt or the run is not found |
 | `--yes`, `-y` | off | Answer yes to confirmation prompts (continuing after a failed integrity check). Without a terminal on stdin a prompt cannot be asked, so the run fails unless `--yes` is passed |
-| `--continue-on-error` | off | Keep going when a stage errors. The documents a crashed extraction, resolution or community stage left without artifacts are recorded FAILED, so the next incremental run re-processes them |
+| `--continue-on-error` | off | Keep going when a stage errors. When an artifact stage (translation through community detection) crashes, every document of the run is recorded FAILED, so the next incremental run re-processes them |
 | `--enabled-stages` | all | Comma-separated stage list to run |
 | `--metrics-sink` | `none` | `none`, or `cloudwatch` (emits CloudWatch EMF — Embedded Metric Format — metrics to stdout, with an `Environment` dimension when `UKR_METRICS_ENVIRONMENT` is set (the CDK task sets its `env_name`) and none otherwise; `pipeline_id` is recorded as a log property, not a dimension, so runs add no new metric series). Each stage's metrics are emitted when the stage finishes, and only by a run that executed it, so a resumed run does not repeat the counts of the stages it restored |
 | `--retire-source-scope SCOPE` | — | Incremental runs: treat every registry record of the former source scope `SCOPE` (in this run's index suffix) as deleted, removing its exclusive content. Repeatable; added to `indexing.retire_source_scopes`. Fails when `SCOPE` is the run's own scope. See §5 Deletion scope. |
@@ -1593,10 +1591,18 @@ rejected at first use: switch to a new table and run once with
 
 ### Failed documents
 
-A document is recorded `FAILED` when translation, graph extraction, gleaning or
-claim extraction failed on any of its text units, when a base-level
-community covering one of its text units got no report, or when writing one
-of its artifacts to the stores failed. A failed parent-level report is logged
+A document is recorded `FAILED` in four cases:
+
+- translation, graph extraction, gleaning or claim extraction failed on one
+  of its text units;
+- a base-level community covering one of its text units got no report;
+- an artifact stage (translation through community detection) crashed in a
+  `--continue-on-error` run, which records every document of the run
+  `FAILED`;
+- writing one of its artifacts (text unit, entity, relationship, claim,
+  community, report) to the stores failed.
+
+A failed parent-level report is logged
 as a WARNING and counted in the stage's `reports_failed` metric, but marks no
 document `FAILED`: a parent covers many documents, and retrying them all for
 one report would re-extract most of the corpus. Report and write failures are tolerated up to
@@ -2057,7 +2063,7 @@ since it adds an embedding call per node and a layout reduction to every
 ingest) the stage also renders the visualizations, and the file carries the
 embedding-based layout and centrality. When
 that is unset (the default), ingestion writes to
-`<cache.local_directory>/<pipeline_id>/visualization/`, so with S3 cache sync
+`<cache directory>/<pipeline_id>/visualization/` (`--cache-directory`, `PipelineConfig.local_directory`), so with S3 cache sync
 enabled `visualization_data.json` is uploaded with the cache (the sync copies
 `.json` files only; re-render the HTML locally with `run-visualization`). That
 file is the `--data-path` input. The interactive graph keeps only the top

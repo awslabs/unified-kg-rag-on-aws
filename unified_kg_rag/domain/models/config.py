@@ -1561,8 +1561,8 @@ class VisualizationConfig(BaseModel):
     outputs_directory: str | Path | None = Field(
         default=None,
         description="Directory to save visualization files. When unset, "
-        "ingestion writes to '<cache.local_directory>/<pipeline_id>/visualization' "
-        "so visualization_data.json is synced to S3 with the cache; other callers "
+        "ingestion writes to '<cache directory>/<pipeline_id>/visualization' "
+        "(--cache-directory), so visualization_data.json is synced to S3 with the cache; other callers "
         "fall back to 'outputs/visualization'.",
     )
     embedding_method: str = Field(
