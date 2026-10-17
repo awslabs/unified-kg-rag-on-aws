@@ -1007,7 +1007,7 @@ run-ingestion --source-directory ./documents --config-path config.yaml --metrics
 프로세스(예: 새 Fargate 태스크)가 끝난 단계를 다시 계산하지 않고 재개할 수 있습니다.
 실행은 단계가 끝날 때마다 바뀐 파일을 업로드하므로, 태스크가 중지되거나 죽어도 끝난 단계는
 모두 남습니다. SIGTERM(ECS StopTask, Step Functions 시간 초과)을 받으면 `run-ingestion`은
-체크포인트를 업로드하고 실행 중인 단계를 멈춘 뒤 143으로 종료하며, 같은 pipeline id로 다시
+실행 중인 단계를 멈추고 체크포인트를 업로드한 뒤 143으로 종료하며, 같은 pipeline id로 다시
 실행하면 그 단계부터 시작합니다. 단계 사이의 업로드가 실패하면 로그를 남기고 다음 업로드에서
 다시 시도합니다. 시작 시 다운로드나 마지막 업로드가 실패하거나 일부만 되면 `CacheSyncError`로
 실행이 실패하고 `run-ingestion`은 0이 아닌 코드로 종료합니다. 따라서 Step Functions로

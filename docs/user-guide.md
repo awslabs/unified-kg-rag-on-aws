@@ -1072,8 +1072,8 @@ from them. A run without `--pipeline-id` gets a new generated id.
 process (e.g. a new Fargate task) can resume without recomputing finished
 stages. The run uploads the files that changed after every stage, so a task
 that is stopped or dies keeps every stage it finished. On SIGTERM (ECS
-StopTask, a Step Functions timeout) `run-ingestion` uploads its checkpoint,
-stops the running stage and exits 143; a re-run with the same pipeline id
+StopTask, a Step Functions timeout) `run-ingestion` stops the running stage,
+uploads its checkpoint and exits 143; a re-run with the same pipeline id
 starts at that stage. A failed upload between stages is logged and retried by
 the next one; a failed or partial initial download or final upload fails the
 run with `CacheSyncError` and `run-ingestion` exits non-zero, so in a phased

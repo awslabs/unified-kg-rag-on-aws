@@ -542,6 +542,9 @@ class DataIngestionPipeline:
                 )
             return context
 
+        except KeyboardInterrupt:
+            self._checkpoint_on_stop()
+            raise
         except Exception as e:
             logger.exception("Pipeline execution failed: %s", e)
             raise PipelineExecutionError(f"Failed to run pipeline: {e}") from e
@@ -550,7 +553,8 @@ class DataIngestionPipeline:
             reset_contextvars(**log_context)
 
     def request_stop(self, signum: int) -> None:
-        """End the run: upload its checkpoint, then raise ``PipelineInterrupted``.
+        """End the run: raise ``PipelineInterrupted``, uploading the
+        checkpoint as the run unwinds.
 
         Meant for a signal handler in the main thread; ``run-ingestion``
         installs one for SIGTERM, which ECS sends on StopTask and when a Step
@@ -559,25 +563,13 @@ class DataIngestionPipeline:
         pipeline id resumes at the stage that was running. A request made while
         a checkpoint is being written takes effect once it is written, so the
         stage that just finished is kept too.
+
+        It does no I/O itself: a handler runs wherever the main thread was,
+        possibly holding a lock (an executor's, say) the upload would wait on.
         """
         self._stop_signal = signum
         if not self._checkpointing:
-            self._stop()
-
-    def _stop(self) -> None:
-        signum = self._stop_signal or 0
-        logger.warning(
-            "Stop requested (signal %s): uploading the checkpoint and stopping",
-            signum,
-        )
-        # A second request during this upload must not start another one.
-        self._checkpointing = True
-        try:
-            if self._checkpoint_id is not None:
-                self._upload_checkpoint(self._checkpoint_id)
-        finally:
-            self._checkpointing = False
-        raise PipelineInterrupted(signum)
+            raise PipelineInterrupted(signum)
 
     @contextmanager
     def _checkpoint_write(self) -> Iterator[None]:
@@ -588,7 +580,24 @@ class DataIngestionPipeline:
         finally:
             self._checkpointing = False
         if self._stop_signal is not None:
-            self._stop()
+            raise PipelineInterrupted(self._stop_signal)
+
+    def _checkpoint_on_stop(self) -> None:
+        """Upload the checkpoint of a run that is stopping (``request_stop``
+        or Ctrl-C), once the stage it interrupted has unwound."""
+        if self._checkpoint_id is None:
+            return
+        logger.warning(
+            "Run stopped (signal %s): uploading the checkpoint of '%s'",
+            self._stop_signal or "SIGINT",
+            self._checkpoint_id,
+        )
+        # A second stop request during the upload waits for it.
+        self._checkpointing = True
+        try:
+            self._upload_checkpoint(self._checkpoint_id)
+        finally:
+            self._checkpointing = False
 
     def _upload_checkpoint(self, pipeline_id: str) -> None:
         """Upload the run's checkpoint to S3 (best effort).

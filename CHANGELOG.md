@@ -824,6 +824,11 @@ Library API (Python callers and custom backends).
   summarized again only when the text it is derived from changed. The
   property tests and the crash-recovery fixture compare descriptions,
   names, types, ranks and claims with a full build (#325).
+- A SIGTERM no longer hangs `run-ingestion --s3-sync` when it arrives while
+  a stage is handing work to a thread pool: the handler uploaded the
+  checkpoint itself, and the upload waited on a lock the interrupted code
+  held. The handler now only stops the stage; the checkpoint is uploaded as
+  the run unwinds (#PR).
 - The CLI provider flags no longer drop environment overrides. On every CLI
   (`run-ingestion`, `run-rag`, `run-eval`, `run-prompt-tuning`,
   `run-visualization`), any provider flag (`--backend`, `--llm-provider`,
