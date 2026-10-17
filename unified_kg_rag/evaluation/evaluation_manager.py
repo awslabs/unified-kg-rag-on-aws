@@ -47,7 +47,7 @@ from unified_kg_rag.shared.utils.langchain import BATCH_ITEM_FAILED, BatchProces
 
 from .answer_match_evaluator import AnswerMatchEvaluator
 from .graph_aware_evaluator import GraphAwareEvaluator
-from .retrieval_evaluator import RetrievalEvaluator
+from .retrieval_evaluator import BY_SOURCE_TYPE_KEY, RetrievalEvaluator
 from .source_resolver import SourceFileResolver, TextUnitFileResolver, file_name_of
 
 logger = get_logger(__name__)
@@ -398,6 +398,7 @@ class EvaluationManager:
                         retrieved_contexts=self._extract_from_result(
                             raw_result, "sources", []
                         ),
+                        **self._extract_source_details(raw_result),
                         enable_thinking=rag_metadata.get("enable_thinking", False),
                         search_strategy=rag_metadata.get("search_strategy"),
                         response_time=rag_metadata.get("processing_time"),
@@ -440,7 +441,8 @@ class EvaluationManager:
 
         A source that names no file directly (entity, relationship, community
         report) is attributed to the files of the text units in its lineage,
-        resolved in one batched lookup per index suffix. A source that still
+        resolved in one batched lookup per index suffix, ordered by how many of
+        those text units each file holds. A source that still
         maps to no file stays ``[]`` (unattributable).
         """
         resolved: dict[str | None, dict[str, str]] = {}
@@ -468,9 +470,19 @@ class EvaluationManager:
         for query, result, sources in zip(queries, results, provenance, strict=True):
             mapping = resolved.get(query.metadata.get("suffix"), {})
             result.retrieved_source_ids = [
-                files or sorted({mapping[u] for u in unit_ids if u in mapping})
+                files or self._files_by_support(unit_ids, mapping)
                 for files, unit_ids in sources
             ]
+
+    @staticmethod
+    def _files_by_support(unit_ids: list[str], mapping: dict[str, str]) -> list[str]:
+        """Files of a source's lineage, the most-supported first (then by name).
+
+        The retrieval evaluator ranks files, so a community report spends its
+        top-k slots on the files most of its text units come from.
+        """
+        support = Counter(mapping[u] for u in unit_ids if u in mapping)
+        return sorted(support, key=lambda name: (-support[name], name))
 
     @staticmethod
     def _is_abstention(answer: Any, rag_metadata: Any) -> bool:
@@ -503,7 +515,52 @@ class EvaluationManager:
         return str(detail) if detail else "RAG chain returned an error response"
 
     @staticmethod
-    def _extract_source_provenance(raw_result: Any) -> SourceProvenance:
+    def _raw_sources(raw_result: Any) -> list[Any]:
+        if isinstance(raw_result, RAGOutput):
+            sources: Any = raw_result.sources
+        elif isinstance(raw_result, dict):
+            sources = raw_result.get("sources")
+        else:
+            return []
+        return sources if isinstance(sources, list) else []
+
+    @classmethod
+    def _extract_source_details(cls, raw_result: Any) -> dict[str, Any]:
+        """Per-source section types and the graph elements the model was given.
+
+        Fills ``retrieved_source_types`` (parallel to the sources),
+        ``retrieved_entities`` (entity names) and ``retrieved_relationships``
+        (endpoint names and description) of an ``EvaluationResult``.
+        """
+        types: list[str] = []
+        entities: list[str] = []
+        relationships: list[dict[str, str]] = []
+        for source in cls._raw_sources(raw_result):
+            metadata = source.get("metadata") if isinstance(source, dict) else None
+            if not isinstance(metadata, dict):
+                types.append("")
+                continue
+            section_type = str(metadata.get("section_type") or "")
+            types.append(section_type)
+            if section_type == SectionType.ENTITY.value:
+                if name := str(metadata.get("name") or "").strip():
+                    entities.append(name)
+            elif section_type == SectionType.RELATIONSHIP.value:
+                relationships.append(
+                    {
+                        "source": str(metadata.get("source_name") or ""),
+                        "target": str(metadata.get("target_name") or ""),
+                        "description": str(metadata.get("description") or ""),
+                    }
+                )
+        return {
+            "retrieved_source_types": types,
+            "retrieved_entities": entities,
+            "retrieved_relationships": relationships,
+        }
+
+    @classmethod
+    def _extract_source_provenance(cls, raw_result: Any) -> SourceProvenance:
         """Per reported source, in rank order: file names and text-unit lineage.
 
         File names come from the chunk attributes the indexer stores
@@ -512,17 +569,8 @@ class EvaluationManager:
         community reports) or, for a text unit without a file name, its own id.
         Document ids are not used: they are content hashes no dataset names.
         """
-        if isinstance(raw_result, RAGOutput):
-            sources: Any = raw_result.sources
-        elif isinstance(raw_result, dict):
-            sources = raw_result.get("sources")
-        else:
-            return []
-        if not isinstance(sources, list):
-            return []
-
         provenance: SourceProvenance = []
-        for source in sources:
+        for source in cls._raw_sources(raw_result):
             files: list[str] = []
             unit_ids: list[str] = []
             if isinstance(source, dict):
@@ -793,7 +841,8 @@ class EvaluationManager:
         results: list[EvaluationResult],
         reports: list[EvaluationReport],
     ) -> dict[str, dict[str, dict[str, dict[str, float]]]]:
-        """Metric statistics per actual strategy, category and difficulty.
+        """Metric statistics per actual strategy, category and difficulty,
+        plus the retrieval metrics per source section type.
 
         A pooled mean hides that ``auto`` answers queries with different
         strategies, and mixes easy and hard questions; grouping makes runs and
@@ -819,6 +868,25 @@ class EvaluationManager:
             }
             if any(stats.values()):
                 grouped[dimension] = stats
+        # Retrieval metrics per section type, from each retrieval report's
+        # by-source-type scores (one query contributes to several types).
+        by_type: dict[str, dict[str, list[float]]] = defaultdict(
+            lambda: defaultdict(list)
+        )
+        for report in reports:
+            for source_type, scores in (
+                report.metadata.get(BY_SOURCE_TYPE_KEY) or {}
+            ).items():
+                for metric, value in scores.items():
+                    by_type[source_type][metric].append(value)
+        if by_type:
+            grouped["source_type"] = {
+                source_type: {
+                    metric: cls._value_statistics(values)
+                    for metric, values in sorted(metrics.items())
+                }
+                for source_type, metrics in sorted(by_type.items())
+            }
         return grouped
 
     _LIBRARIES = (
@@ -885,6 +953,14 @@ class EvaluationManager:
                 "answer_generation": self.config.search.answer_generation_model_id,
                 "evaluation_judge": (
                     evaluation.evaluation_model_id if uses_judge else None
+                ),
+                # LLM judges favour their own outputs (self-preference): a
+                # judge that is the answer model inflates its scores.
+                "judge_is_answer_model": (
+                    model_id_value(evaluation.evaluation_model_id)
+                    == model_id_value(self.config.search.answer_generation_model_id)
+                    if uses_judge
+                    else None
                 ),
                 "evaluation_embedding": (
                     model_id_value(evaluation.embedding_model_id)
@@ -1023,15 +1099,21 @@ class EvaluationManager:
         for metric_type, values in metric_values.items():
             if not values:
                 continue
-            statistics_dict[metric_type.value] = {
-                "mean": statistics.mean(values),
-                "median": statistics.median(values),
-                "stdev": statistics.stdev(values) if len(values) > 1 else 0.0,
-                "min": min(values),
-                "max": max(values),
-                "count": len(values),
-            }
+            statistics_dict[metric_type.value] = EvaluationManager._value_statistics(
+                values
+            )
         return statistics_dict
+
+    @staticmethod
+    def _value_statistics(values: list[float]) -> dict[str, float]:
+        return {
+            "mean": statistics.mean(values),
+            "median": statistics.median(values),
+            "stdev": statistics.stdev(values) if len(values) > 1 else 0.0,
+            "min": min(values),
+            "max": max(values),
+            "count": len(values),
+        }
 
     def save_results(
         self,

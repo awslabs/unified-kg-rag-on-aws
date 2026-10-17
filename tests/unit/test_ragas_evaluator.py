@@ -39,6 +39,7 @@ def _make_evaluator(
     max_context_tokens=8192,
     evaluation_model_id=None,
     ragas_max_contexts=20,
+    answer_context_tokens=1_000_000,
 ):
     """Build a RagasEvaluator with all Bedrock/boto wiring patched out.
 
@@ -62,6 +63,7 @@ def _make_evaluator(
 
     config = Config()
     config.evaluation.max_context_tokens = max_context_tokens
+    config.search.token_manager.max_context_tokens = answer_context_tokens
     config.evaluation.ragas_max_contexts = ragas_max_contexts
     if ragas_metrics is not None:
         config.evaluation.ragas_metrics = ragas_metrics
@@ -162,6 +164,33 @@ class TestTruncateContexts:
         # 50 whole + the second truncated into the 22 tokens left after the
         # buffer: the total stays within max_context_tokens - BUFFER_TOKENS.
         assert len(contexts) == 2 and tokens == 200 - ev.BUFFER_TOKENS
+
+    def test_judge_budget_defaults_to_answer_budget(self, mocker) -> None:
+        # The old fixed 8192 cut what the judges saw to a quarter of the
+        # answer model's 30000-token context.
+        assert Config().evaluation.max_context_tokens is None
+        ev, _ = _make_evaluator(
+            mocker, max_context_tokens=None, answer_context_tokens=200
+        )
+        assert ev._judge_context_budget == 200
+        out = _contexts(ev, [_result(contexts=[" ".join(["w"] * 100)])])
+        assert out[0][0].endswith("...")  # cut at 200 - BUFFER_TOKENS
+
+    def test_no_cap_when_answer_budget_is_derived(self, mocker) -> None:
+        ev, _ = _make_evaluator(
+            mocker, max_context_tokens=None, answer_context_tokens=None
+        )
+        assert ev._judge_context_budget is None
+        contexts = [" ".join(["w"] * 5000), "x"]
+        assert _contexts(ev, [_result(contexts=contexts)]) == [contexts]
+
+    def test_judge_budget_below_answer_budget_warns(self, mocker, caplog) -> None:
+        with caplog.at_level("WARNING"):
+            ev, _ = _make_evaluator(
+                mocker, max_context_tokens=8192, answer_context_tokens=30000
+            )
+        assert ev._judge_context_budget == 8192
+        assert "less context than the answer model" in caplog.text
 
     def test_default_cap_is_twenty(self) -> None:
         assert Config().evaluation.ragas_max_contexts == 20

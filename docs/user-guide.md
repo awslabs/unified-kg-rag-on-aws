@@ -742,8 +742,8 @@ can log request bodies too.
 | `evaluation.ragas_max_contexts` | `20` | Top-ranked contexts per sample scored by RAGAS `context_precision` (so it is "@20"); faithfulness and context_recall see the full token-budgeted context. `null` = no cap. |
 | `evaluation.ragas_max_workers` | `8` | Concurrent RAGAS jobs. Lower it if Bedrock throttles the judge. |
 | `evaluation.ragas_max_attempts` | `3` | Total attempts per judge call. |
-| `evaluation.max_context_tokens` | `8192` | Token cap on the context passed to judges. |
-| `evaluation.retrieval_k` | `5` | Cutoff for the `retrieval` evaluator's hit@k / recall@k. |
+| `evaluation.max_context_tokens` | `null` | Token cap on the context passed to the RAGAS judges; `null` = the answer budget (`search.token_manager.max_context_tokens`), a smaller value logs a warning. |
+| `evaluation.retrieval_k` | `5` | Cutoff for the `retrieval` evaluator's hit@k / recall@k: the top k distinct files of the reported sources. |
 | `evaluation.outputs_directory` | `"outputs/evaluation"` | Where results are written. |
 
 Metric lists (`langchain_metrics`, `ragas_metrics`) are in the template.
@@ -1558,7 +1558,11 @@ set `enabled_evaluators: [answer_match, retrieval, graph_aware]`.
   `context_precision@N`. Without the cap, strategies that report 100+ sources
   (e.g. LightRAG `mix`) hit `ragas_timeout`. `faithfulness` and
   `context_recall` see every source within `max_context_tokens`, so a claim
-  backed by a lower-ranked source is not marked unsupported. Each report
+  backed by a lower-ranked source is not marked unsupported. By default
+  (`evaluation.max_context_tokens: null`) the judges get the answer model's
+  budget (`search.token_manager.max_context_tokens`, 30000), so they grade the
+  answer against the context it was given; a smaller explicit value logs a
+  warning. Each report
   records what the judge saw: `judge_contexts` / `judge_context_tokens` and
   `context_precision_contexts` / `context_precision_context_tokens`. None of
   this changes what the answer model saw.
@@ -1572,15 +1576,30 @@ set `enabled_evaluators: [answer_match, retrieval, graph_aware]`.
   in the dataset. **Precision and F1 are deliberately
   NOT emitted** — enumerating every entity in a free-text answer isn't reliably
   possible, so reporting precision/F1 would only re-label the recall signal.
+  Answer-text coverage rises with answer length, so the evaluator also reports
+  `retrieved_entity_coverage` / `retrieved_relationship_coverage` (the same
+  expectations matched against the names of the entity sources and the
+  endpoints of the relationship sources the answer model was given; a pair
+  matches one relationship in either direction, another string its endpoints
+  or description; skipped when the context had no source of that type, as
+  with `global`) and `answer_length` (characters). Compare strategies on the
+  retrieved coverage, and read answer-text coverage next to the length.
 - **`retrieval`** — deterministic, LLM-free: did the sources the answer model saw
   include the gold documents? `hit_at_k`, `recall_at_k` (k =
   `evaluation.retrieval_k`, default 5) and `mrr` against `reference_sources`.
   Text-unit sources name their file directly; entity, relationship and
   community-report sources are attributed to the files of the text units in
   their lineage (`text_unit_ids`, looked up in the chain's document store in
-  one batch per suffix). A community report's lineage is its whole community,
-  so `global`/`drift` scores are an upper bound on what the answer model read.
-  Only attributable sources are ranked, and `attributable_fraction`
+  one batch per suffix), the file holding most of those text units first.
+  The sources are flattened into one list of distinct files in rank order,
+  and **k counts files, not sources**: a community report is attributed to
+  every file of its community, so counting it as one source let five random
+  reports score hit@5 0.98 on a 50-file corpus where five random text units
+  score 0.19. Each report also carries `by_source_type` (the same metrics over
+  each section type's sources alone), aggregated in
+  `grouped_statistics.source_type`; its `text` row scores only the text units
+  the answer model read verbatim, the fairest cross-strategy comparison.
+  Unattributable sources contribute no file, and `attributable_fraction`
   (attributable / reported sources, also in `grouped_statistics` per strategy)
   shows how much of the context the rank metrics cover. Matching is
   NFKC-normalized and case-insensitive (so decomposed NFD Hangul file names
@@ -1718,7 +1737,8 @@ The summary holds, per metric, mean/median/stdev/min/max/count
 
 - `grouped_statistics` — the same statistics split by `search_strategy` (the
   strategy actually used, which varies per query under `auto`), `category` and
-  `difficulty`.
+  `difficulty`, plus `source_type`: the retrieval metrics per source section
+  type (`text`, `entity`, `relationship`, `community`, ...).
 - `abstention_statistics` — how often the chain returned its fixed
   no-context reply ("I could not find relevant information…") instead of an
   answer: `abstained`, `answered`, `abstention_rate`, the same `per_strategy`,
@@ -1734,7 +1754,10 @@ The summary holds, per metric, mean/median/stdev/min/max/count
   answer generation failed first; see [Rerank status](#rerank-status)).
 - `run_manifest` — CLI arguments (a `*_url` argument such as
   `--model-base-url` without its userinfo, query and fragment), model ids (answer generation, evaluation
-  judge/embedding), package version, git commit (`git_sha`, and `git_dirty`
+  judge/embedding, and `judge_is_answer_model`: LLM judges favour their own
+  outputs, so a judge that is the answer model — the default, both use the
+  `default` tier — inflates the judge scores; set
+  `evaluation.evaluation_model_id` to another model when comparing systems), package version, git commit (`git_sha`, and `git_dirty`
   when tracked files differ from it; both `null` unless the package runs from
   a checkout that tracks it), `config_sha256` of the full resolved config, `library_versions`
   (ragas, langchain*), the dataset (path + file sha256, query count and a hash
@@ -1745,7 +1768,9 @@ The summary holds, per metric, mean/median/stdev/min/max/count
 
 Per-query reports list each evaluator's `metrics` (there is no overall
 score: an average of unrelated metrics has no meaning). Each result also records `retrieved_source_ids`: per reported source, in rank
-order, the file names it is attributed to (`[]` when unattributable).
+order, the file names it is attributed to (`[]` when unattributable), and
+`retrieved_source_types`, `retrieved_entities` and `retrieved_relationships`
+(the section type of each source and the graph elements the model was given).
 
 ---
 

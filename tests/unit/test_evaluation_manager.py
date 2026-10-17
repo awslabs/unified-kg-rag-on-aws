@@ -418,6 +418,9 @@ class TestEvaluateResults:
         assert set(reports[0].metadata["failed_metrics"]) == {
             "entity_coverage",
             "relationship_coverage",
+            "retrieved_entity_coverage",
+            "retrieved_relationship_coverage",
+            "answer_length",
         }
 
     async def test_errored_result_is_not_scored(self, config: Config) -> None:
@@ -868,6 +871,17 @@ class TestComparability:
         manager.save_results(results, reports, summary, tmp_path)
         assert len(list(tmp_path.glob("evaluation_summary_*.json"))) == 2
 
+    def test_run_manifest_records_judge_self_preference(self, config: Config) -> None:
+        config.evaluation.enabled_evaluators = [EvaluatorType.GRAPH_AWARE]
+        manager = EvaluationManager(config, rag_chain=object())
+        manager.evaluators = {}
+        manager.config.evaluation.enabled_evaluators = [EvaluatorType.RAGAS]
+        models = manager.build_run_manifest()["models"]
+        # Same tier by default: the judge grades its own answers.
+        assert models["judge_is_answer_model"] is True
+        manager.config.evaluation.evaluation_model_id = "judge.other-model-v1"
+        assert manager.build_run_manifest()["models"]["judge_is_answer_model"] is False
+
     def test_run_manifest(self, config: Config, tmp_path) -> None:
         import hashlib
 
@@ -894,6 +908,7 @@ class TestComparability:
             config.search.answer_generation_model_id
         )
         assert manifest["models"]["evaluation_judge"] is None  # no LLM judge
+        assert manifest["models"]["judge_is_answer_model"] is None
         assert manifest["enabled_evaluators"] == ["graph_aware"]
         assert manifest["package_version"] and manifest["created_at"]
         assert len(manifest["config_sha256"]) == 64

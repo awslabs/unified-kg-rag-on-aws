@@ -975,7 +975,10 @@ evaluation:
     - context_precision
     - context_recall
     - faithfulness
-  max_context_tokens: 8192
+  # Token cap on the context passed to the RAGAS judges. null = the answer
+  # model's budget (search.token_manager.max_context_tokens), so the judges see
+  # what the answer model saw; a smaller value logs a warning.
+  max_context_tokens: null
   # Reasoning effort for the LLM judge (ragas + langchain evaluators) on
   # adaptive-thinking models (Claude 4.7+). Judge calls are short
   # extraction/classification prompts; "low" keeps each RAGAS metric well inside
@@ -999,7 +1002,8 @@ evaluation:
   ragas_max_contexts: 20
   ragas_max_workers: 8
   ragas_max_attempts: 3
-  # Cutoff k for the retrieval evaluator's hit@k / recall@k.
+  # Cutoff k for the retrieval evaluator's hit@k / recall@k: the top k distinct
+  # files of the reported sources, in rank order.
   retrieval_k: 5
   save_detailed_results: true
 

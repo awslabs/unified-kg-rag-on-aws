@@ -92,10 +92,12 @@ class TestEvaluateSingle:
             ground_truth="",
         )
         types = {m.metric_type for m in report.metrics}
-        # Coverage only (no duplicated precision/F1).
+        # Coverage only (no duplicated precision/F1), plus the answer length;
+        # retrieved coverage is skipped without entity/relationship sources.
         assert types == {
             EvaluationMetricType.ENTITY_COVERAGE,
             EvaluationMetricType.RELATIONSHIP_COVERAGE,
+            EvaluationMetricType.ANSWER_LENGTH,
         }
         assert report.evaluator_type is EvaluatorType.GRAPH_AWARE
 
@@ -112,10 +114,14 @@ class TestEvaluateSingle:
         assert {m.metric_type.value: m.value for m in report.metrics} == {
             "entity_coverage": 1.0,
             "relationship_coverage": 1.0,
+            "answer_length": float(len("Alice works at Acme")),
         }
         assert report.metadata["matched_entity_count"] == 1
         assert report.metadata["matched_relationship_count"] == 1
-        assert "skipped_metrics" not in report.metadata
+        assert report.metadata["skipped_metrics"] == {
+            "retrieved_entity_coverage": "no_entity_sources",
+            "retrieved_relationship_coverage": "no_relationship_sources",
+        }
 
     def test_absent_dimension_recorded_as_skipped(
         self, evaluator: GraphAwareEvaluator
@@ -126,7 +132,9 @@ class TestEvaluateSingle:
             ground_truth="",
         )
         assert report.metadata["skipped_metrics"] == {
-            "relationship_coverage": "no_expected_relationships"
+            "relationship_coverage": "no_expected_relationships",
+            "retrieved_relationship_coverage": "no_expected_relationships",
+            "retrieved_entity_coverage": "no_entity_sources",
         }
 
     def test_missing_expectations_score_zero(
@@ -160,7 +168,12 @@ class TestEvaluateSingle:
             self._result("Alice", expected_entities=["Alice"]),
             ground_truth="",
         )
-        assert [m.value for m in report.metrics] == [1.0]
+        coverage = [
+            m.value
+            for m in report.metrics
+            if m.metric_type is not EvaluationMetricType.ANSWER_LENGTH
+        ]
+        assert coverage == [1.0]
         # No relationship metrics emitted when none are expected.
         assert all("relationship" not in m.metric_type.value for m in report.metrics)
 
@@ -237,7 +250,11 @@ class TestManagerThreading:
         reports = await manager._evaluate_results([query], [result], [gt])
         # Manager copied the expectations onto the result metadata.
         assert result.metadata["expected_entities"] == ["Alice", "Acme"]
-        assert reports and {m.value for m in reports[0].metrics} == {1.0}
+        assert reports and {
+            m.value
+            for m in reports[0].metrics
+            if m.metric_type is not EvaluationMetricType.ANSWER_LENGTH
+        } == {1.0}
 
     async def test_query_id_mismatch_is_safe(self, config: Config) -> None:
         manager = self._manager(config)
@@ -250,3 +267,78 @@ class TestManagerThreading:
         # No matching ground truth -> no expectations -> zero coverage, no crash.
         assert "expected_entities" not in result.metadata
         assert reports and reports[0].metrics == []
+
+
+class TestRetrievedCoverage:
+    def _report(self, evaluator: GraphAwareEvaluator, answer: str, **fields):
+        result = EvaluationResult(
+            query_id="q1",
+            question="?",
+            generated_answer=answer,
+            ground_truth="",
+            metadata={
+                "expected_entities": ["Vendor", "Auditor"],
+                "expected_relationships": [{"source": "Buyer", "target": "Vendor"}],
+            },
+            **fields,
+        )
+        report = evaluator.evaluate_single(
+            EvaluationQuery(query_id="q1", question="?"), result, ""
+        )
+        return {m.metric_type.value: m.value for m in report.metrics}, report.metadata
+
+    def test_scores_the_retrieved_graph_sources(
+        self, evaluator: GraphAwareEvaluator
+    ) -> None:
+        values, metadata = self._report(
+            evaluator,
+            "No.",
+            retrieved_source_types=["entity", "relationship"],
+            retrieved_entities=["VENDOR CORP"],
+            retrieved_relationships=[
+                {"source": "VENDOR", "target": "BUYER", "description": "ships to"}
+            ],
+        )
+        # The answer names nothing, but the context had Vendor and the
+        # Buyer-Vendor edge (direction-insensitive).
+        assert values["entity_coverage"] == 0.0
+        assert values["retrieved_entity_coverage"] == 0.5
+        assert values["retrieved_relationship_coverage"] == 1.0
+        assert values["answer_length"] == 3.0
+        assert metadata["retrieved_matched_entity_count"] == 1
+
+    def test_wordy_answer_does_not_raise_retrieved_coverage(
+        self, evaluator: GraphAwareEvaluator
+    ) -> None:
+        sources = {
+            "retrieved_source_types": ["entity"],
+            "retrieved_entities": ["Vendor"],
+        }
+        short, _ = self._report(evaluator, "Vendor.", **sources)
+        wordy, _ = self._report(
+            evaluator, "Vendor, Auditor, Buyer and every other party.", **sources
+        )
+        assert wordy["entity_coverage"] > short["entity_coverage"]
+        assert wordy["retrieved_entity_coverage"] == short["retrieved_entity_coverage"]
+        assert wordy["answer_length"] > short["answer_length"]
+
+    def test_skipped_without_sources_of_the_type(
+        self, evaluator: GraphAwareEvaluator
+    ) -> None:
+        values, metadata = self._report(
+            evaluator, "Vendor", retrieved_source_types=["community"]
+        )
+        assert "retrieved_entity_coverage" not in values
+        assert metadata["skipped_metrics"] == {
+            "retrieved_entity_coverage": "no_entity_sources",
+            "retrieved_relationship_coverage": "no_relationship_sources",
+        }
+
+    def test_plain_relationship_string_matches_description(
+        self, evaluator: GraphAwareEvaluator
+    ) -> None:
+        cov, matched = evaluator._retrieved_coverage(
+            ["ships spare parts"],
+            [{"source": "A", "target": "B", "description": "A ships spare parts to B"}],
+        )
+        assert (cov, matched) == (1.0, 1)

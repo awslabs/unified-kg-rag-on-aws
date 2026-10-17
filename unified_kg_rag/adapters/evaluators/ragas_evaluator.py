@@ -103,6 +103,7 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
         )
 
     def _initialize_evaluator(self, **kwargs: Any) -> None:
+        self._judge_context_budget = self._resolve_judge_context_budget()
         try:
             self._initialize_models()
             logger.info(
@@ -135,6 +136,28 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
             self.llm, bypass_temperature=not model_info.supports_sampling_params
         )
 
+    def _resolve_judge_context_budget(self) -> int | None:
+        """The judges' context cap: explicit, else the answer budget (or none).
+
+        The reported contexts are what the answer model was given, already
+        within its budget; a smaller judge cap would grade faithfulness and
+        context recall against context the answer was not limited to.
+        """
+        judge = self.config.evaluation.max_context_tokens
+        answer = self.config.search.token_manager.max_context_tokens
+        if judge is None:
+            return answer
+        if answer is not None and judge < answer:
+            logger.warning(
+                "evaluation.max_context_tokens (%d) is below the answer model's "
+                "context budget (search.token_manager.max_context_tokens=%d): "
+                "RAGAS judges will see less context than the answer model did. "
+                "Unset it to judge the full context.",
+                judge,
+                answer,
+            )
+        return judge
+
     def _build_run_config(self) -> RunConfig:
         evaluation = self.config.evaluation
         return RunConfig(
@@ -153,13 +176,16 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
         step, so a prefix of the result (``_select`` with a count cap) is the
         result for that cap: each context is counted once.
         """
-        max_tokens = self.config.evaluation.max_context_tokens
+        max_tokens = self._judge_context_budget
         processed: list[list[tuple[str, int]]] = []
         for result in results:
             kept: list[tuple[str, int]] = []
             current_tokens = 0
             for context in result.retrieved_contexts:
                 context_token_count = self._token_counter.count_tokens(context)
+                if max_tokens is None:
+                    kept.append((context, context_token_count))
+                    continue
 
                 remaining_tokens = max_tokens - self.BUFFER_TOKENS - current_tokens
                 if context_token_count > remaining_tokens:
