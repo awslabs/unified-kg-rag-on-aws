@@ -700,6 +700,12 @@ Secrets Manager나 태스크 시크릿에서 주입하세요.
   `kg_rag.rerank_status`) → `kg_rag.rerank`
   (`kg_rag.rerank.status` = `ok`, `empty`, `error`와 문서 수) →
   `kg_rag.context_build`(사용한 토큰과 토큰 예산) → 답변 생성의 `chat <model>` 스팬.
+  `global`은 `kg_rag.strategy` 아래에 `kg_rag.global.select`(읽은 커뮤니티 수준마다:
+  `kg_rag.depth`, `kg_rag.reports`, 동적 선택이면 `kg_rag.dynamic`)와
+  `kg_rag.global.map`(`kg_rag.reports`, `kg_rag.map_calls`, `kg_rag.report_tokens`)을
+  더하고, `drift`는 `kg_rag.drift.primer`(`kg_rag.reports`, `kg_rag.answers`)와 라운드마다
+  `kg_rag.drift.actions`(`kg_rag.depth`, `kg_rag.actions`)를 더하며, 각 액션의 로컬
+  검색은 그 아래에 들어갑니다.
   가드레일이 있으면 검사한 질의와 답변마다 `kg_rag.query` 아래에 `kg_rag.guardrail`
   스팬이 붙고(`aws.bedrock.guardrail.id`, `.source` = `input` 또는 `output`,
   `.action` = `none`, `masked`, `blocked`, `.intervened`, `.policies`), 질의 스팬에는

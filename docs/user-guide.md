@@ -766,7 +766,13 @@ spans and exported as given, so pass an opaque id, not an e-mail address.
   step's `kg_rag.rerank_status`) →
   `kg_rag.rerank` (`kg_rag.rerank.status` = `ok`, `empty` or `error`, document
   counts) → `kg_rag.context_build` (tokens used vs the token budget) → the
-  answer's `chat <model>` span. With a guardrail, each screened query and
+  answer's `chat <model>` span. `global` adds `kg_rag.global.select` (per
+  community level read: `kg_rag.depth`, `kg_rag.reports`, `kg_rag.dynamic`
+  with dynamic selection) and `kg_rag.global.map` (`kg_rag.reports`,
+  `kg_rag.map_calls`, `kg_rag.report_tokens`) under `kg_rag.strategy`;
+  `drift` adds `kg_rag.drift.primer` (`kg_rag.reports`, `kg_rag.answers`) and
+  one `kg_rag.drift.actions` per round (`kg_rag.depth`, `kg_rag.actions`),
+  whose local searches nest under it. With a guardrail, each screened query and
   answer adds a `kg_rag.guardrail` span under `kg_rag.query`
   (`aws.bedrock.guardrail.id`, `.source` = `input` or `output`, `.action` =
   `none`, `masked` or `blocked`, `.intervened`, `.policies`), and the query
