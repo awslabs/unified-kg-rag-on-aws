@@ -73,6 +73,24 @@ class CommunityReport(Named):
         "document; may include documents omitted from the report prompt, and does "
         "not establish sentence-level citation support",
     )
+    # The community's place in the hierarchy, which global search selects
+    # reports by (``domain.ingestion.community_hierarchy``). Set when the
+    # report is indexed, from the run's communities.
+    level: int | None = Field(
+        default=None,
+        description="Community level, counted from the finest (0) up",
+    )
+    depth: int | None = Field(
+        default=None,
+        description="Distance from the root of the community's hierarchy (a "
+        "root is 0), the level MS GraphRAG's community_level counts",
+    )
+    parent_community_id: str | None = Field(
+        default=None, description="The parent community's id; None for a root"
+    )
+    child_community_ids: list[str] = Field(
+        default_factory=list, description="The child communities' ids"
+    )
 
     def render_full_content(self) -> str:
         """Render a human/embedding-friendly report body from structured fields.

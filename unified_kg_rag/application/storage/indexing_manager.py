@@ -13,6 +13,7 @@ from unified_kg_rag.adapters.ingestion.description_summarizer import (
 )
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.ingestion.base_resolver import FuzzyMatcher
+from unified_kg_rag.domain.ingestion.community_hierarchy import attach_report_hierarchy
 from unified_kg_rag.domain.ingestion.graph_rank import with_graph_ranks
 from unified_kg_rag.domain.ingestion.merge import (
     merge_claims,
@@ -237,6 +238,7 @@ class IndexingManager:
         """
         start_time = time.time()
         self._enrich_text_units(text_units, communities)
+        attach_report_hierarchy(community_reports, communities)
         vector, graph = self.opensearch_indexer, self.neptune_indexer
         # (full-build writer, delta writer, items, result key)
         phase1: list[tuple[Callable, Callable, list[Any] | None, str]] = [

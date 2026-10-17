@@ -96,6 +96,17 @@ ignored, so check the start-up warnings after upgrading.
   was meant to repair, so on a corrupt file it failed like
   `--verify-metadata` and never repaired anything; use `--verify-metadata`
   and, for a corrupt run, `--force-rebuild` or a new `--pipeline-id` (#248).
+- `search.global_search` follows MS GraphRAG global search (see *Changed*):
+  `max_communities`, `map_batch_size`, `reserve_report_slots` and
+  `max_text_units` are removed. Use `community_depth` (which cut of the
+  community hierarchy is mapped, default 2 from the root),
+  `max_reports_per_level` (default 100) and `map_context_tokens` (report
+  tokens per map call, default 12000) instead. `text_unit_slots` is an
+  integer, default `0` (no text units; `null` is rejected), and
+  `relevance_threshold` defaults to 0.2 (was 0.5). Global search needs
+  community reports indexed with their place in the hierarchy: re-run
+  ingestion once with `indexing.reset: true`; until then global search
+  raises `ConfigurationError` instead of answering from nothing (#318).
 
 Defaults. Set the old value explicitly to keep the previous behaviour.
 - `graph.visualization.enabled` defaults to `false`; set it to `true` or
@@ -451,6 +462,22 @@ Library API (Python callers and custom backends).
   relevance against redundancy on the reranker's scores. The reranker
   receives the best `search.reranking.top_k` fused candidates of the types
   it reranks, as that setting already documented (#317).
+- Global search maps every community report of one cut of the community
+  hierarchy, as MS GraphRAG does, instead of the `top_k` reports most
+  similar to the query: the communities at `community_depth` from the root
+  plus the leaves above it, so every entity is covered once. Reports are
+  packed into map calls by tokens and mapped on the fast model
+  `processing.max_concurrency` at a time; similarity only cuts a level
+  larger than `max_reports_per_level` (flagged `global_level_capped`).
+  `use_dynamic_selection` is MS GraphRAG's dynamic community selection
+  (rate the roots, descend into the relevant ones' children) instead of
+  re-scoring retrieved reports. The context is the ranked key points and
+  the reports behind them; text units only with `text_unit_slots`. Each
+  indexed report records its `level`, `depth`, parent and children. On a
+  synthetic 60-topic corpus on the embedded stores (27 reports of about
+  2,700 tokens), the answer context named 59 of 60 topics (was 25) from all
+  21 reports of the cut (was 10 retrieved reports), in 6 map calls (was 2):
+  map cost now grows with the cut, not with `top_k` (#318).
 - OpenSearch indexing keeps 16 embedding requests in flight (was 8), so it
   embeds and bulk-writes 800 items of a type at a time (was 400). In the
   real-AWS E2E 1,600 texts took 9.4 s instead of 18.8 s, with no Bedrock

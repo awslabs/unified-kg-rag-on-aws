@@ -116,8 +116,10 @@ def test_full_and_delta_indexing_write_the_same_artifact_types(mocker) -> None:
         "text_units": [SimpleNamespace(id="t", community_ids=None)],
         "entities": ["e"],
         "relationships": ["r"],
-        "communities": [SimpleNamespace(id="c", text_unit_ids=[])],
-        "community_reports": ["cr"],
+        "communities": [
+            SimpleNamespace(id="c", text_unit_ids=[], level="0", parent="", children=[])
+        ],
+        "community_reports": [SimpleNamespace(community_id="other")],
         "claims": ["cl"],
     }
     full = manager.index_all_data(**artifacts)

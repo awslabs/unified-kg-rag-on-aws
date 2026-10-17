@@ -633,12 +633,14 @@ LLM 단계는 Bedrock I/O가 병목이므로 동시성을 CPU 수보다 훨씬 �
 | `search.lightrag_search.kg_stream_top_k` | `40` | LightRAG 엔티티·관계 벡터 질의의 폭입니다(요청의 `top_k`에 대한 하한). |
 | `search.lightrag_search.chunk_stream_top_k` | `20` | LightRAG 청크 스트림의 폭입니다. |
 | `search.lightrag_search.enable_graph_expansion` | `false` | `mix`/`hybrid`에서 일치한 항목을 Neptune으로 추가 확장합니다. |
-| `search.global_search.max_communities` | `10` | `global` 검색이 살펴보는 커뮤니티 리포트 수입니다. |
-| `search.global_search.map_batch_size` | `5` | map 단계 LLM 호출 하나에 넣는 리포트 수입니다. 리포트가 길면 낮추세요. |
+| `search.global_search.community_depth` | `2` | `global`이 map을 적용하는 커뮤니티 계층의 단면입니다. MS GraphRAG의 `community_level`처럼 루트부터 세며(그쪽 기본값도 2), 이 깊이의 모든 커뮤니티와 그보다 위에서 끝나는 리프를 포함하므로 엔티티마다 한 번씩 포함됩니다. `0`은 루트 커뮤니티(가장 적고 넓은 리포트), 큰 값은 리프(가장 많고 좁은 리포트)입니다. |
+| `search.global_search.max_reports_per_level` | `100` | 단면 하나(또는 동적 선택의 한 단계)에서 쓰는 리포트 수의 상한입니다. 단면이 더 크면 질의와 가장 비슷한 리포트만 쓰며, 검색 메타데이터에 표시합니다(`global_level_capped`). `indexing.opensearch.max_query_size`를 넘을 수 없습니다. map에 넣는 리포트마다 map 단계 입력 토큰이 듭니다. |
+| `search.global_search.use_dynamic_selection` | `false` | 고정 단면 대신 MS GraphRAG 동적 커뮤니티 선택을 씁니다. `community_relevance_model_id`로 루트 리포트를 평가하고, 관련 있는 리포트의 자식으로 `community_depth`까지 내려간 뒤 관련 리포트에 map을 적용합니다. 평가하는 리포트마다 fast 모델 호출이 1회 듭니다. |
+| `search.global_search.relevance_threshold` | `0.2` | 동적 선택에서 남기는 리포트의 최소 평가 점수(1-10 점수 / 10)입니다. 0.2는 MS GraphRAG의 임계값(0-5 척도의 1)에 해당합니다. 이 값보다 낮은 리포트는 하위 트리 전체가 빠집니다. |
+| `search.global_search.map_context_tokens` | `12000` | map 단계 호출 하나에 넣는 리포트 토큰 수입니다(MS GraphRAG의 `data_max_tokens`). map 호출은 `processing.max_concurrency`개씩 동시에 실행합니다. |
 | `search.global_search.max_map_reduce_tokens` | `8000` | reduce 단계에 넣는, 순위를 매긴 핵심 내용의 토큰 예산입니다. |
 | `search.global_search.reduce_with_llm` | `false` | `true`이면 reduce LLM이 묶은 핵심 내용을 먼저 요약하고 답변 모델이 이를 다시 씁니다(LLM 호출 1회 추가). `false`이면 핵심 내용을 답변 모델에 바로 넘깁니다. |
-| `search.global_search.reserve_report_slots` | `true` | 융합 슬롯 `max_communities`개를 커뮤니티 리포트용으로 예약하고, 텍스트 단위는 `text_unit_slots`개로 제한합니다. `false`이면 리포트와 청크를 한 번의 `top_k` 기준으로 자릅니다. |
-| `search.global_search.text_unit_slots` | `null` | 예약한 리포트 슬롯과 함께 두는 텍스트 단위 슬롯 수입니다. `null`이면 질의의 `top_k`입니다. |
+| `search.global_search.text_unit_slots` | `0` | 핵심 내용의 근거가 된 커뮤니티의 텍스트 단위를 재순위화해 컨텍스트에 더하는 개수입니다. `0`이면 더하지 않으며, MS GraphRAG global search와 같습니다. 청크를 함께 넣으면 핵심 내용과 리포트에 필요한 답변 예산 대부분을 청크가 차지했습니다. |
 | `search.local_search.entity_frequency_threshold` | `20` | 그래프 확장으로 얻은 엔티티 중 이보다 많은 텍스트 단위에 나오는 것(너무 일반적인 것)을 버립니다. 질의가 직접 찾은 엔티티는 항상 남깁니다. |
 | `search.local_search.include_bridge_relationships` | `true` | 확장된 엔티티에 연결된 관계도 가져오며, 검색된 두 엔티티를 잇는 간선(다중 홉 연결)을 먼저 둡니다. 관계 인덱스가 필요합니다. `false`이면 관계 벡터 질의만 씁니다. |
 | `search.drift_search.max_iterations` | `3` | DRIFT 반복 횟수 상한입니다. |
@@ -1073,7 +1075,7 @@ associate-package`. 블루/그린 배포가 일어남) `-c opensearch_korean_ana
 ### 검색 전략 선택
 
 **방법론 선택.** GraphRAG 전략은 코퍼스 전체를 *요약하고 주제별로 종합*하는 데
-강합니다(커뮤니티 리포트가 코퍼스 전체를 다룸). LightRAG 전략은 더 빠르고 *이중 레벨
+강합니다(`global`은 계층 한 단면의 커뮤니티 리포트 전체에 map을 적용함). LightRAG 전략은 더 빠르고 *이중 레벨
 키워드* 검색을 중심으로 동작하므로 키워드 중심 조회와 저비용 기준선에 적합합니다. 두
 방법론 모두 같은 하이브리드 스코어러(BM25 어휘 검색 + 벡터 의미 검색 + 그래프 순회 +
 RRF + Bedrock 재순위화)를 거치며, 검색 알고리즘만 다릅니다.
@@ -1084,7 +1086,7 @@ RRF + Bedrock 재순위화)를 거치며, 검색 알고리즘만 다릅니다.
 |---|---|---|
 | `simple` | 빠른 사실 조회, 단순한 질문 | OpenSearch 벡터·키워드 직접 검색이며 그래프 순회가 없습니다. 가장 빠릅니다. 주장 추출이 켜져 있으면 주장 인덱스도 포함합니다. |
 | `local` | 특정 엔티티나 개념에 관한 자세한 질문 | 질의에서 엔티티를 추출 → Neptune 그래프 순회로 이웃과 관계를 찾음 → 벡터·키워드 결과와 결합합니다. 켜져 있으면 주장(covariate)을 넣습니다. |
-| `global` | "주요 주제는 무엇인가" 같은 넓은 주제 질문 | 커뮤니티 리포트를 쓰며, 동적으로 고른 커뮤니티에 map-reduce를 적용합니다. 상위 수준 종합에 가장 적합합니다. |
+| `global` | "주요 주제는 무엇인가" 같은 넓은 주제 질문 | MS GraphRAG global search입니다. 계층의 한 단면(`search.global_search.community_depth`, 기본값은 루트부터 2)에 속한 커뮤니티 리포트 전체를 토큰 크기 배치로 나눠 fast 모델로 점수 매긴 핵심 내용으로 만들고, 순위를 매긴 핵심 내용으로 답합니다. 선택 사항인 동적 선택은 대신 루트부터 계층을 따라 내려갑니다. 비용은 단면 크기에 비례합니다(리포트 `map_context_tokens`마다 map 호출 1회). 상위 수준 종합에 가장 적합합니다. |
 | `drift` | 탐색이 필요한 복잡하고 여러 측면을 가진 질문 | 질의를 반복해서 정제·확장하며, 회차마다 수렴 여부를 감지합니다. |
 | `auto` | 어떤 전략이 맞는지 모를 때, 일반 용도(기본값) | LLM 라우터(`search.strategy_selection_model_id`)가 질의를 보고 `search.auto_routable_strategies`(기본 local, mix, global, drift) 중 가장 알맞은 전략을 고릅니다. |
 
@@ -1165,7 +1167,7 @@ run-rag --query "..." --filters attr_category:research type:person --config-path
 | 엔티티 | `id`, `name`, `name.keyword`, `description`, `type`, `rank`, `confidence`, `text_unit_ids`, `attr_<key>`, `attributes.<path>` |
 | 관계 | `id`, `source_id`, `target_id`, `source_name`, `target_name`, `description`, `weight`, `rank`, `text_unit_ids` |
 | 주장 | `id`, `subject_id`, `object_id`, `subject_name`, `object_name`, `type`, `status`, `description`, `source_text`, `text_unit_ids` |
-| 커뮤니티 리포트 | `id`, `community_id`, `name`, `summary`, `full_content`, `rank`, `rating`, `text_unit_ids`, `document_ids`, `attr_<key>`, `attributes.<path>` |
+| 커뮤니티 리포트 | `id`, `community_id`, `name`, `summary`, `full_content`, `rank`, `rating`, `text_unit_ids`, `document_ids`, `level`, `depth`, `max_cut_depth`, `parent_community_id`, `child_community_ids`, `attr_<key>`, `attributes.<path>` |
 | Neptune 엔티티 정점 | `id`, `name`, `type`, `description`, `rank`, `confidence`, `text_unit_ids`, `community_ids`, `attr_<key>`(있는 경우) |
 | Neptune 커뮤니티 정점 | `id`, `name`, `level`, `parent`, `size`, `period`, `children` |
 

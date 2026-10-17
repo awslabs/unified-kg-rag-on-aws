@@ -80,6 +80,12 @@ class _TokenCounter:
         return [self.count_tokens(t) for t in texts]
 
 
+def _batches(
+    strat: GlobalSearchStrategy, reports: list[RetrievalResult]
+) -> list[list[RetrievalResult]]:
+    return strat._map_batches(reports)[0]
+
+
 def _map_payload(*scored: tuple[str, int]) -> str:
     return json.dumps({"points": [{"description": d, "score": s} for d, s in scored]})
 
@@ -107,16 +113,19 @@ def _strategy(
 ) -> GlobalSearchStrategy:
     strat = GlobalSearchStrategy.__new__(GlobalSearchStrategy)
     strat.global_search_config = SimpleNamespace(
-        map_batch_size=map_batch_size,
+        # Every report costs token_cost tokens, so this packs map_batch_size
+        # reports into one map call.
+        map_context_tokens=map_batch_size * token_cost,
         map_relevance_threshold=map_relevance_threshold,
         max_map_reduce_tokens=max_map_reduce_tokens,
         map_reduce_min_results=map_reduce_min_results,
         enable_map_reduce=True,
         reduce_with_llm=reduce_with_llm,
-        reserve_report_slots=True,
-        text_unit_slots=None,
-        max_communities=10,
+        use_dynamic_selection=False,
+        community_depth=2,
+        text_unit_slots=0,
     )
+    strat.retrievers = {}
     strat.ignore_errors = ignore_errors
     strat.target_language = "English"
     strat.hybrid_scorer = _no_rerank_scorer()
@@ -147,7 +156,7 @@ async def test_map_phase_produces_scored_points() -> None:
         ],
     )
     points, unrated = await strat._run_map_phase(
-        _communities(2), SearchQuery(query="q")
+        _batches(strat, _communities(2)), SearchQuery(query="q")
     )
     descriptions = {p.description: p.score for p in points}
     assert descriptions == {"point A": 90, "point B": 30, "point C": 0}
@@ -162,7 +171,9 @@ async def test_map_phase_reports_unrated_batches() -> None:
         map_outputs=[json.dumps({"points": []}), "not json", BATCH_ITEM_FAILED],  # type: ignore[list-item]
     )
     communities = _communities(3)
-    points, unrated = await strat._run_map_phase(communities, SearchQuery(query="q"))
+    points, unrated = await strat._run_map_phase(
+        _batches(strat, communities), SearchQuery(query="q")
+    )
     assert points == []
     assert [r.source for r in unrated] == ["c1", "c2"]
 
@@ -173,7 +184,7 @@ async def test_map_phase_batches_reports_per_call() -> None:
         map_batch_size=2,
         map_outputs=[_map_payload(("p1", 50)), _map_payload(("p2", 60))],
     )
-    await strat._run_map_phase(_communities(3), SearchQuery(query="q"))
+    await strat._run_map_phase(_batches(strat, _communities(3)), SearchQuery(query="q"))
     # Two prepared inputs were sent (one per batch); each carries query/lang.
     assert len(strat.map_rater.batch_inputs) == 2
     first, second = strat.map_rater.batch_inputs
@@ -188,9 +199,26 @@ async def test_map_phase_batches_reports_per_call() -> None:
     assert "cid-0" not in second["reports"] and "cid-1" not in second["reports"]
 
 
-async def test_map_step_rates_only_reports_and_keeps_text_units() -> None:
-    # Text units fused next to the reports are not community reports: mapping
-    # them sent chunks to the map LLM as "reports". They pass through instead.
+def test_map_batches_pack_reports_by_tokens() -> None:
+    # MS GraphRAG packs reports by tokens (data_max_tokens), not by count; a
+    # report over the budget gets a call of its own.
+    strat = _strategy(map_batch_size=3)  # a 30-token budget
+    strat.token_manager = SimpleNamespace(  # type: ignore[assignment]
+        count_tokens_many=lambda texts: [40 if "big" in t else 10 for t in texts]
+    )
+    reports = [_community(0), _community(1, content="big"), *_communities(4)[2:]]
+    batches, tokens = strat._map_batches(reports)
+    assert [[r.source for r in batch] for batch in batches] == [
+        ["c0"],
+        ["c1"],
+        ["c2", "c3"],
+    ]
+    assert tokens == 70
+
+
+async def test_map_step_rates_only_reports() -> None:
+    # Text units are not community reports: mapping them sent chunks to the
+    # map LLM as "reports". The evidence after the points is the reports.
     strat = _strategy(map_batch_size=10, map_outputs=[_map_payload(("point", 80))])
     chunk = RetrievalResult(
         content="chunk text", score=0.4, source="t0", retriever_type="text"
@@ -201,7 +229,7 @@ async def test_map_step_rates_only_reports_and_keeps_text_units() -> None:
 
     (map_input,) = strat.map_rater.batch_inputs
     assert "chunk text" not in map_input["reports"]
-    assert [r.source for r in out] == ["synthesized_key_points", "c0", "c1", "t0"]
+    assert [r.source for r in out] == ["synthesized_key_points", "c0", "c1"]
 
 
 async def test_map_step_counts_only_reports_against_the_minimum() -> None:
@@ -319,7 +347,8 @@ async def test_apply_map_reduce_full_pipeline_prepends_synthesis() -> None:
     assert out[0].metadata["ranked_key_points"] == 1  # only the 95 survived
     # LLM synthesis, not evidence: flagged so it is never reported as a source.
     assert out[0].metadata["synthesized"] is True
-    assert [r.source for r in out[1:]] == ["c0", "c1"]
+    # Only the batch behind a packed point is evidence: c1 gave none.
+    assert [r.source for r in out[1:]] == ["c0"]
 
 
 # --------------------------------------------------------------------------- #
@@ -428,13 +457,7 @@ async def test_asearch_all_filtered_yields_empty_result_with_flag() -> None:
         map_outputs=[_map_payload(("low", 5)), _map_payload(("low", 5))],
     )
     communities = _communities(2)
-    strat._retrieve_community_reports = AsyncMock(  # type: ignore[method-assign]
-        return_value=communities
-    )
-    strat._select_relevant_communities = AsyncMock(  # type: ignore[method-assign]
-        return_value=communities
-    )
-    strat._augment_and_rerank_communities = AsyncMock(  # type: ignore[method-assign]
+    strat._cut_reports = AsyncMock(  # type: ignore[method-assign]
         return_value=communities
     )
 
@@ -464,13 +487,9 @@ async def test_asearch_marks_a_map_reduce_failure_ignore_errors_degraded(
         )
     else:
         strat.map_reducer.ainvoke = AsyncMock(side_effect=TimeoutError("down"))
-    communities = _communities(2)
-    for step in (
-        "_retrieve_community_reports",
-        "_select_relevant_communities",
-        "_augment_and_rerank_communities",
-    ):
-        setattr(strat, step, AsyncMock(return_value=communities))
+    strat._cut_reports = AsyncMock(  # type: ignore[method-assign]
+        return_value=_communities(2)
+    )
 
     result = await strat.asearch(SearchQuery(query="q"))
 
@@ -480,13 +499,9 @@ async def test_asearch_marks_a_map_reduce_failure_ignore_errors_degraded(
 
 async def test_asearch_without_a_failure_has_no_degraded_marker() -> None:
     strat = _strategy(map_batch_size=1, map_outputs=[_map_payload(("p", 50))] * 2)
-    communities = _communities(2)
-    for step in (
-        "_retrieve_community_reports",
-        "_select_relevant_communities",
-        "_augment_and_rerank_communities",
-    ):
-        setattr(strat, step, AsyncMock(return_value=communities))
+    strat._cut_reports = AsyncMock(  # type: ignore[method-assign]
+        return_value=_communities(2)
+    )
 
     result = await strat.asearch(SearchQuery(query="q"))
 
@@ -521,7 +536,8 @@ async def test_default_passes_ranked_points_without_a_reduce_call() -> None:
     assert points.content.index("strong point") < points.content.index("weaker")
     assert "relevance 95" in points.content
     assert "noise" not in points.content
-    assert [r.source for r in out[1:]] == ["c0", "c1"]
+    # The evidence follows its best point (c1's 95 before c0's 40), scored 0-1.
+    assert [(r.source, r.score) for r in out[1:]] == [("c1", 0.95), ("c0", 0.4)]
     assert strat._was_map_reduce_applied(out) is True
 
 
@@ -616,7 +632,7 @@ async def test_map_phase_one_overflowing_batch_is_left_unrated() -> None:
         [_map_payload((f"point {i}", 50)) for i in (1, 2, 3)]
     )
     points, unrated = await strat._run_map_phase(
-        _communities(4), SearchQuery(query="q")
+        _batches(strat, _communities(4)), SearchQuery(query="q")
     )
     assert [r.source for r in unrated] == ["c0"]
     assert len(points) == 3
@@ -655,7 +671,7 @@ async def test_map_phase_a_vllm_overflow_leaves_the_batch_unrated() -> None:
         [_map_payload((f"point {i}", 50)) for i in (1, 2, 3)]
     )
     points, unrated = await strat._run_map_phase(
-        _communities(4), SearchQuery(query="q")
+        _batches(strat, _communities(4)), SearchQuery(query="q")
     )
     assert [r.source for r in unrated] == ["c0"]
     assert len(points) == 3
@@ -678,7 +694,7 @@ async def test_map_phase_a_400_on_every_batch_fails_the_query() -> None:
 async def test_map_phase_a_typed_overflow_on_every_batch_answers() -> None:
     # Regression: langchain-openai's OpenAIContextOverflowError is a
     # BadRequestError too, so an overflow on every batch (a level of at most
-    # map_batch_size reports is one batch) failed the query as a refused
+    # map_context_tokens of reports is one batch) failed the query as a refused
     # request instead of answering from the unrated reports.
     base = pytest.importorskip("langchain_openai.chat_models.base")
     import httpx
@@ -756,12 +772,11 @@ async def test_map_phase_runs_max_concurrency_calls_at_once() -> None:
     # processing.max_concurrency is the documented map fan-out.
     config = Config()
     config.processing.max_concurrency = 20
-    config.search.global_search.map_batch_size = 1
     strat = GlobalSearchStrategy(config=config, retrievers={})
     strat.map_rater = _SlowMapChain(target=20)  # type: ignore[assignment]
 
     points, unrated = await strat._run_map_phase(
-        _communities(40), SearchQuery(query="q")
+        [[report] for report in _communities(40)], SearchQuery(query="q")
     )
 
     assert len(points) == 40 and unrated == []

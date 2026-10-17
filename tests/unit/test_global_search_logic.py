@@ -1,434 +1,403 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""AWS-free unit tests for GlobalSearchStrategy pure helpers + orchestration branches.
+"""AWS-free tests of global search's report selection (MS GraphRAG parity).
 
-Complements ``test_global_search_scoring.py`` (which covers the 0-10 -> 0-1
-relevance-normalization regression). Here we exercise community selection
-(static vs dynamic), map-reduce gating, the map-reduce-applied detector, the
-relevance-scorer error path, and the report / context retrieval
-guards. The strategy is built via ``__new__`` so its Bedrock-backed ``__init__``
-never runs; retriever and chain objects are replaced with fakes / AsyncMocks.
+Global search maps over every report of one cut of the community hierarchy
+(``community_depth``), or over a root-down dynamic selection, instead of the
+``top_k`` reports most similar to the query. A fake document retriever holds
+an indexed hierarchy and applies the filters the strategy sends, so the tests
+see which reports reach the map step. The map-reduce pipeline itself is
+covered in ``test_global_search_map_reduce.py``.
 """
 
 from __future__ import annotations
 
-from types import SimpleNamespace
+import json
 from typing import Any
 
 import pytest
+from botocore.exceptions import ClientError
 
+from unified_kg_rag.adapters.retrieval.hybrid_scorer import HybridScorer
 from unified_kg_rag.adapters.search_strategies.global_search import GlobalSearchStrategy
-from unified_kg_rag.domain.models import Config, RetrievalResult, SearchQuery
+from unified_kg_rag.domain.ingestion.community_hierarchy import (
+    attach_report_hierarchy,
+    max_cut_depth,
+)
+from unified_kg_rag.domain.models import (
+    Community,
+    CommunityReport,
+    Config,
+    RetrievalResult,
+    SearchQuery,
+)
+from unified_kg_rag.shared import ConfigurationError
 from unified_kg_rag.shared.utils.langchain import BatchProcessor
 
 pytestmark = pytest.mark.unit
 
+#            R0                       R1
+#          /    \                     |
+#        A        B (leaf)            C
+#      /   \                        /   \
+#    A1     A2                    C1     C2
+HIERARCHY: dict[str, tuple[str, list[str]]] = {
+    "R0": ("", ["A", "B"]),
+    "R1": ("", ["C"]),
+    "A": ("R0", ["A1", "A2"]),
+    "B": ("R0", []),
+    "C": ("R1", ["C1", "C2"]),
+    "A1": ("A", []),
+    "A2": ("A", []),
+    "C1": ("C", []),
+    "C2": ("C", []),
+}
+REPORTS_PREFIX = Config().indexing.opensearch.community_reports_index_prefix
+TEXT_PREFIX = Config().indexing.opensearch.text_units_index_prefix
 
-def _community(
-    i: int, *, score: float = 0.5, metadata: dict | None = None
-) -> RetrievalResult:
-    return RetrievalResult(
-        content=f"community {i}",
-        score=score,
-        source=f"c{i}",
-        retriever_type="community",
-        metadata=metadata or {},
-    )
+
+def _documents(*, with_hierarchy: bool = True) -> list[dict[str, Any]]:
+    communities = [
+        Community(id=cid, name=cid, level="0", parent=parent, children=children)
+        for cid, (parent, children) in HIERARCHY.items()
+    ]
+    reports = [
+        CommunityReport(id=f"r-{cid}", name=cid, community_id=cid, rank=i)
+        for i, cid in enumerate(HIERARCHY)
+    ]
+    if with_hierarchy:
+        attach_report_hierarchy(reports, communities)
+    return [
+        {
+            "community_id": r.community_id,
+            "rank": r.rank,
+            "depth": r.depth,
+            "max_cut_depth": max_cut_depth(r),
+            "parent_community_id": r.parent_community_id,
+            "child_community_ids": r.child_community_ids,
+        }
+        for r in reports
+    ]
 
 
-def _communities(n: int) -> list[RetrievalResult]:
-    return [_community(i) for i in range(n)]
+def _matches(value: Any, condition: Any) -> bool:
+    if isinstance(condition, dict):
+        if value is None:
+            return False
+        return all(
+            {"lte": value <= b, "gte": value >= b, "lt": value < b, "gt": value > b}[op]
+            for op, b in condition.items()
+        )
+    if isinstance(condition, list):
+        return value in condition
+    return value == condition
 
 
-class _AScorer:
-    """Async runnable returning a fixed string from ainvoke."""
+class _ReportStore:
+    """A document retriever over the indexed hierarchy that applies filters.
 
-    def __init__(self, value: str) -> None:
-        self._value = value
-        self.calls: list[dict] = []
-        self.configs: list = []
+    A text-less query is a browse ordered by rank; a query with text ranks
+    by the query word appearing in the report's community id (similarity).
+    """
 
-    async def ainvoke(self, inputs: dict, config=None) -> str:
-        self.calls.append(inputs)
+    def __init__(self, documents: list[dict[str, Any]]) -> None:
+        self.documents = documents
+        self.calls: list[SearchQuery] = []
+
+    async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
+        self.calls.append(query)
+        if query.index_prefixes != [REPORTS_PREFIX]:
+            return [
+                RetrievalResult(
+                    content="chunk", score=0.5, source="t0", retriever_type="text"
+                )
+            ]
+        filters = query.filters or {}
+        hits = [
+            d
+            for d in self.documents
+            if all(_matches(d.get(k), v) for k, v in filters.items())
+        ]
+        if query.query:
+            hits.sort(key=lambda d: d["community_id"] not in query.query)
+        else:
+            hits.sort(key=lambda d: -d["rank"])
+        return [
+            RetrievalResult(
+                content=f"report {d['community_id']}",
+                score=0.5,
+                source=f"r-{d['community_id']}",
+                retriever_type="community",
+                metadata=dict(d),
+            )
+            for d in hits[: query.top_k * query.retrieval_multiplier]
+        ]
+
+
+class _MapChain:
+    """Map chain recording which reports each call rated."""
+
+    def __init__(self) -> None:
+        self.reports: list[str] = []
+        self.configs: list[Any] = []
+
+    def invoke(self, single_input: dict, config: Any = None) -> str:
         self.configs.append(config)
-        return self._value
+        self.reports.append(single_input["reports"])
+        return json.dumps({"points": [{"description": "a point", "score": 50}]})
 
 
-class _RaisingScorer:
-    async def ainvoke(self, _inputs: dict, config=None) -> str:
-        raise RuntimeError("bedrock down")
+class _Rater:
+    """Rates a report 9 when its community is in ``relevant``, else 1."""
+
+    def __init__(self, relevant: set[str], fail: Exception | None = None) -> None:
+        self.relevant = relevant
+        self.fail = fail
+        self.rated: list[str] = []
+        self.configs: list[Any] = []
+
+    async def ainvoke(self, inputs: dict, config: Any = None) -> str:
+        community = inputs["community_summary"].removeprefix("report ")
+        self.rated.append(community)
+        self.configs.append(config)
+        if self.fail is not None:
+            raise self.fail
+        return "9" if community in self.relevant else "1"
 
 
-class _StubRetriever:
-    def __init__(self, results=None, raises: Exception | None = None) -> None:
-        self._results = results or []
-        self._raises = raises
-        self.last_query: SearchQuery | None = None
-
-    async def aretrieve(self, query: SearchQuery):
-        self.last_query = query
-        if self._raises is not None:
-            raise self._raises
-        return self._results
+class _Tokens:
+    def count_tokens_many(self, texts: list[str]) -> list[int]:
+        return [10] * len(texts)
 
 
-def _no_rerank_scorer() -> Any:
-    """A real scorer with reranking off (asearch asks it for a rerank trace)."""
-    from unified_kg_rag.adapters.retrieval.hybrid_scorer import HybridScorer
-
+def _strategy(
+    store: _ReportStore | None = None, **settings: Any
+) -> GlobalSearchStrategy:
     config = Config()
     config.search.reranking.enabled = False
-    return HybridScorer(config)
-
-
-def _bare_strategy(
-    *,
-    threshold: float = 0.5,
-    use_dynamic_selection: bool = True,
-    max_communities: int = 100,
-    ignore_errors: bool = False,
-    enable_map_reduce: bool = True,
-    map_reduce_min_results: int = 3,
-    retrievers: dict | None = None,
-) -> GlobalSearchStrategy:
+    config.processing.ignore_errors = settings.pop("ignore_errors", False)
+    gs = config.search.global_search
+    # Map even a cut of one or two reports.
+    gs.map_reduce_min_results = 1
+    for key, value in settings.items():
+        setattr(gs, key, value)
     strat = GlobalSearchStrategy.__new__(GlobalSearchStrategy)
-    strat.global_search_config = SimpleNamespace(
-        max_communities=max_communities,
-        use_dynamic_selection=use_dynamic_selection,
-        relevance_threshold=threshold,
-        enable_map_reduce=enable_map_reduce,
-        map_reduce_min_results=map_reduce_min_results,
-        max_text_units=10,
-        map_batch_size=2,
-        map_relevance_threshold=0,
-        max_map_reduce_tokens=8000,
-        reduce_with_llm=False,
-        reserve_report_slots=True,
-        text_unit_slots=None,
-    )
-    strat.ignore_errors = ignore_errors
-    strat.target_language = "en"
-    strat.hybrid_scorer = _no_rerank_scorer()
-    strat.retrievers = retrievers or {}
-    strat.config = SimpleNamespace(
-        indexing=SimpleNamespace(
-            opensearch=SimpleNamespace(
-                community_reports_index_prefix="community_reports",
-                text_units_index_prefix="text_units",
-            )
-        )
-    )
+    strat.config = config
+    strat.global_search_config = gs
+    strat.ignore_errors = config.processing.ignore_errors
+    strat.max_concurrency = 4
+    strat.target_language = "English"
+    strat.retrievers = {"document": store or _ReportStore(_documents())}
+    strat.hybrid_scorer = HybridScorer(config)
+    strat.token_manager = _Tokens()  # type: ignore[assignment]
+    strat.map_rater = _MapChain()
+    strat.batch_processor = BatchProcessor(max_concurrency=1, max_attempts=1)
     return strat
 
 
+def _mapped(strat: GlobalSearchStrategy) -> set[str]:
+    text = "\n".join(strat.map_rater.reports)  # type: ignore[attr-defined]
+    return {cid for cid in HIERARCHY if f"report {cid}\n" in text + "\n"}
+
+
 # --------------------------------------------------------------------------- #
-# _get_ids with the community_id key
+# Fixed cut (default)
 # --------------------------------------------------------------------------- #
 
 
-def test_get_ids_community_id_key() -> None:
-    results = [
-        _community(0, metadata={"community_id": "cid-1"}),
-        _community(1, metadata={"community_id": "cid-2"}),
-        _community(2, metadata={}),  # no community_id, no source fallback for this key
-    ]
-    assert set(GlobalSearchStrategy._get_ids(results, "community_id")) == {
-        "cid-1",
-        "cid-2",
+def test_defaults_follow_ms_graphrag() -> None:
+    config = Config()
+    gs = config.search.global_search
+    assert gs.community_depth == 2  # MS GraphRAG's community_level default
+    assert gs.use_dynamic_selection is False
+    assert gs.map_context_tokens == 12000  # data_max_tokens
+    assert gs.text_unit_slots == 0
+    strategy = GlobalSearchStrategy(config=config, retrievers={})
+    assert not hasattr(strategy, "community_relevance_scorer")
+
+
+@pytest.mark.parametrize(
+    ("depth", "cut"),
+    [(0, {"R0", "R1"}), (1, {"A", "B", "C"}), (2, {"A1", "A2", "B", "C1", "C2"})],
+)
+async def test_every_report_of_the_cut_is_mapped(depth: int, cut: set[str]) -> None:
+    # Regression: the map step saw the query.top_k reports most similar to
+    # the query, whatever the corpus, rather than a level of the hierarchy.
+    strat = _strategy(community_depth=depth, map_context_tokens=20)
+    result = await strat.asearch(SearchQuery(query="themes", top_k=1))
+
+    assert _mapped(strat) == cut
+    assert result.metadata["global_mapped_report_count"] == len(cut)
+    # Two reports of 10 tokens per 20-token map call.
+    assert result.metadata["global_map_call_count"] == (len(cut) + 1) // 2
+    assert result.metadata["global_level_capped"] is False
+    assert {r.metadata["community_id"] for r in result.results[1:]} == cut
+
+
+async def test_the_cut_is_a_browse_without_query_text() -> None:
+    store = _ReportStore(_documents())
+    strat = _strategy(store)
+    await strat.asearch(SearchQuery(query="themes", filters={"attr_x": "y"}))
+    browse = store.calls[0]
+    assert browse.query == ""
+    assert browse.index_prefixes == [REPORTS_PREFIX]
+    # The caller's filters narrow the cut.
+    assert browse.filters == {
+        "attr_x": "y",
+        "depth": {"lte": 2},
+        "max_cut_depth": {"gte": 2},
     }
 
 
-# --------------------------------------------------------------------------- #
-# _select_relevant_communities — static path
-# --------------------------------------------------------------------------- #
+async def test_a_cut_over_the_cap_maps_the_most_similar_reports() -> None:
+    store = _ReportStore(_documents())
+    strat = _strategy(store, max_reports_per_level=2)
+    result = await strat.asearch(SearchQuery(query="C1 C2 themes"))
+
+    assert _mapped(strat) == {"C1", "C2"}
+    assert result.metadata["global_level_capped"] is True
+    similar = store.calls[1]
+    assert similar.query == "C1 C2 themes"
+    assert similar.top_k == 2
+    assert similar.filters == store.calls[0].filters
 
 
-async def test_select_static_returns_top_max_communities() -> None:
-    strat = _bare_strategy(use_dynamic_selection=False, max_communities=2)
-    query = SearchQuery(query="q", retrieval_multiplier=1)
-    kept = await strat._select_relevant_communities(_communities(5), query)
-    assert [c.source for c in kept] == ["c0", "c1"]
+def test_the_cap_is_bounded_by_the_store_page() -> None:
+    strat = _strategy(max_reports_per_level=500)
+    strat.config.indexing.opensearch.max_query_size = 100
+    assert strat._report_cap() == 100
 
 
-async def test_select_static_honors_retrieval_multiplier() -> None:
-    strat = _bare_strategy(use_dynamic_selection=False, max_communities=2)
-    query = SearchQuery(query="q", retrieval_multiplier=2)
-    kept = await strat._select_relevant_communities(_communities(5), query)
-    # max = max_communities (2) * multiplier (2) = 4.
-    assert len(kept) == 4
+async def test_reports_indexed_without_the_hierarchy_fail_loudly() -> None:
+    strat = _strategy(_ReportStore(_documents(with_hierarchy=False)))
+    with pytest.raises(ConfigurationError, match="indexing.reset"):
+        await strat.asearch(SearchQuery(query="themes"))
 
 
-# --------------------------------------------------------------------------- #
-# _select_relevant_communities — dynamic path (sorting, blending, error path)
-# --------------------------------------------------------------------------- #
+async def test_no_reports_at_all_is_an_empty_result() -> None:
+    result = await _strategy(_ReportStore([])).asearch(SearchQuery(query="themes"))
+    assert result.results == []
+    assert result.metadata["global_selected_report_count"] == 0
 
 
-async def test_select_dynamic_ties_keep_retrieval_order() -> None:
-    # Equal LLM relevance: retrieval rank decides, not the (differently
-    # scaled) retrieval score.
-    strat = _bare_strategy(threshold=0.0, use_dynamic_selection=True)
-    strat.community_relevance_scorer = _AScorer("7")  # 0.7 normalized, passes
-    query = SearchQuery(query="q", retrieval_multiplier=1)
-    items = [_community(0, score=0.0), _community(1, score=1.0)]
-    kept = await strat._select_relevant_communities(items, query)
-    assert [c.source for c in kept] == ["c0", "c1"]
-    assert all(c.score == pytest.approx(0.7) for c in kept)
+async def test_without_map_reduce_the_cut_is_the_context() -> None:
+    strat = _strategy(enable_map_reduce=False, community_depth=1)
+    result = await strat.asearch(SearchQuery(query="themes"))
+    assert {r.metadata["community_id"] for r in result.results} == {"A", "B", "C"}
+    assert strat.map_rater.reports == []  # type: ignore[attr-defined]
 
 
-async def test_select_dynamic_ranks_by_llm_relevance() -> None:
-    strat = _bare_strategy(threshold=0.0, use_dynamic_selection=True)
+async def test_text_units_are_off_by_default_and_opt_in() -> None:
+    store = _ReportStore(_documents())
+    await _strategy(store).asearch(SearchQuery(query="themes"))
+    assert all(q.index_prefixes == [REPORTS_PREFIX] for q in store.calls)
 
-    class _ByContent:
-        async def ainvoke(self, inputs, config=None):
-            return "9" if "1" in inputs["community_summary"] else "3"
-
-    strat.community_relevance_scorer = _ByContent()
-    query = SearchQuery(query="q", retrieval_multiplier=1)
-    items = [_community(0, score=1.0), _community(1, score=0.0)]
-    kept = await strat._select_relevant_communities(items, query)
-    assert [c.source for c in kept] == ["c1", "c0"]
-
-
-async def test_select_dynamic_error_with_ignore_errors_keeps_at_retrieval_score() -> (
-    None
-):
-    strat = _bare_strategy(
-        threshold=0.1, use_dynamic_selection=True, ignore_errors=True
+    store = _ReportStore(_documents())
+    result = await _strategy(store, text_unit_slots=3).asearch(
+        SearchQuery(query="themes")
     )
-    strat.community_relevance_scorer = _RaisingScorer()
-    query = SearchQuery(query="q", retrieval_multiplier=1)
-    kept = await strat._select_relevant_communities(_communities(2), query)
-    # A scoring failure must NOT silently drop a community: it is admitted at
-    # the threshold relevance (ranked after scored ones) on a copy.
-    assert len(kept) == 2
-    assert all(c.score == pytest.approx(0.1) for c in kept)
-
-
-async def test_select_dynamic_does_not_mutate_input_items() -> None:
-    # The scored objects must be copies: the input list is shared with the
-    # fallback set and downstream fusion, so blending must not mutate it.
-    strat = _bare_strategy(threshold=0.0, use_dynamic_selection=True)
-    strat.community_relevance_scorer = _AScorer("9")  # 0.9 normalized
-    query = SearchQuery(query="q", retrieval_multiplier=1)
-    items = [_community(0, score=0.2)]
-    kept = await strat._select_relevant_communities(items, query)
-    assert items[0].score == 0.2  # original untouched
-    assert kept[0].score == pytest.approx(0.9)  # copy carries the relevance
-
-
-async def test_select_dynamic_error_without_ignore_errors_raises() -> None:
-    strat = _bare_strategy(use_dynamic_selection=True, ignore_errors=False)
-    strat.community_relevance_scorer = _RaisingScorer()
-    query = SearchQuery(query="q", retrieval_multiplier=1)
-    with pytest.raises(RuntimeError):
-        await strat._select_relevant_communities(_communities(1), query)
+    (chunk_query,) = [q for q in store.calls if q.index_prefixes == [TEXT_PREFIX]]
+    assert chunk_query.top_k == 3
+    assert set(chunk_query.filters["community_ids"]) == {"A1", "A2", "B", "C1", "C2"}
+    assert result.results[-1].retriever_type == "text"
 
 
 # --------------------------------------------------------------------------- #
-# _apply_map_reduce
+# Dynamic community selection
 # --------------------------------------------------------------------------- #
 
 
-async def test_apply_map_reduce_below_min_returns_unchanged() -> None:
-    strat = _bare_strategy(map_reduce_min_results=3)
-    strat.map_reducer = _AScorer("summary")
-    results = _communities(2)  # 2 < 3 -> no synthesis
-    query = SearchQuery(query="q")
-    out = await strat._apply_map_reduce(results, query)
-    assert out is results
+async def test_dynamic_selection_descends_from_the_roots() -> None:
+    # R0 relevant -> A, B rated; A relevant (drops R0) -> A1, A2 rated; A1
+    # relevant (drops A). R1 is irrelevant, so its subtree is never rated.
+    strat = _strategy(use_dynamic_selection=True)
+    rater = _Rater({"R0", "A", "A1"})
+    strat.community_relevance_scorer = rater
+    result = await strat.asearch(SearchQuery(query="themes"))
+
+    assert sorted(rater.rated) == ["A", "A1", "A2", "B", "R0", "R1"]
+    assert _mapped(strat) == {"A1"}
+    assert result.metadata["global_rated_report_count"] == 6
 
 
-async def test_apply_map_reduce_below_min_results_returns_unchanged() -> None:
-    # Below map_reduce_min_results, the map-reduce pipeline is skipped and the
-    # results pass through untouched. (The full map→filter→rank→reduce pipeline
-    # is covered in test_global_search_map_reduce.py.)
-    strat = _bare_strategy(map_reduce_min_results=5)
-    results = _communities(3)
-    out = await strat._apply_map_reduce(results, SearchQuery(query="q"))
-    assert out is results
+async def test_dynamic_selection_stops_at_community_depth() -> None:
+    strat = _strategy(use_dynamic_selection=True, community_depth=1)
+    strat.community_relevance_scorer = _Rater({"R0", "A", "A1"})
+    await strat.asearch(SearchQuery(query="themes"))
+    assert _mapped(strat) == {"A"}
 
 
-# --------------------------------------------------------------------------- #
-# _was_map_reduce_applied
-# --------------------------------------------------------------------------- #
+async def test_dynamic_selection_rates_the_next_depth_when_none_is_relevant() -> None:
+    strat = _strategy(use_dynamic_selection=True)
+    rater = _Rater({"C"})
+    strat.community_relevance_scorer = rater
+    await strat.asearch(SearchQuery(query="themes"))
+    # No root is relevant: all of depth 1 is rated, then C's children.
+    assert sorted(rater.rated) == ["A", "B", "C", "C1", "C2", "R0", "R1"]
+    assert _mapped(strat) == {"C"}
 
 
-def test_was_map_reduce_applied_disabled_is_false() -> None:
-    strat = _bare_strategy(enable_map_reduce=False)
-    results = [_community(0)]
-    results[0].source = "synthesized_summary"
-    assert strat._was_map_reduce_applied(results) is False
+async def test_dynamic_selection_with_nothing_relevant_maps_nothing() -> None:
+    strat = _strategy(use_dynamic_selection=True)
+    strat.community_relevance_scorer = _Rater(set())
+    result = await strat.asearch(SearchQuery(query="themes"))
+    assert result.results == []
+    assert strat.map_rater.reports == []  # type: ignore[attr-defined]
 
 
-def test_was_map_reduce_applied_detects_synthesized_source() -> None:
-    strat = _bare_strategy(enable_map_reduce=True)
-    summary = RetrievalResult(
-        content="s", score=1.0, source="synthesized_summary", retriever_type="general"
+async def test_a_failed_rating_keeps_the_report_under_ignore_errors() -> None:
+    strat = _strategy(use_dynamic_selection=True, ignore_errors=True)
+    strat.community_relevance_scorer = _Rater(set(), fail=TimeoutError("slow"))
+    result = await strat.asearch(SearchQuery(query="themes"))
+    # Every rating failed, so every report counts as relevant: the leaves.
+    assert _mapped(strat) == {"A1", "A2", "B", "C1", "C2"}
+    assert result.metadata["degraded_error"] == "TimeoutError"
+
+
+async def test_a_failed_rating_raises_without_ignore_errors() -> None:
+    strat = _strategy(use_dynamic_selection=True)
+    strat.community_relevance_scorer = _Rater(set(), fail=TimeoutError("slow"))
+    with pytest.raises(TimeoutError):
+        await strat.asearch(SearchQuery(query="themes"))
+
+
+async def test_a_fatal_rating_error_raises_even_under_ignore_errors() -> None:
+    denied = ClientError(
+        {"Error": {"Code": "AccessDeniedException", "Message": "no"}}, "Converse"
     )
-    assert strat._was_map_reduce_applied([summary, _community(0)]) is True
+    strat = _strategy(use_dynamic_selection=True, ignore_errors=True)
+    strat.community_relevance_scorer = _Rater(set(), fail=denied)
+    with pytest.raises(ClientError):
+        await strat.asearch(SearchQuery(query="themes"))
 
 
-def test_was_map_reduce_applied_no_synthesized_is_false() -> None:
-    strat = _bare_strategy(enable_map_reduce=True)
-    assert strat._was_map_reduce_applied(_communities(3)) is False
-
-
-# --------------------------------------------------------------------------- #
-# _retrieve_documents / _retrieve_community_context guards
-# --------------------------------------------------------------------------- #
-
-
-async def test_retrieve_documents_no_retriever_returns_empty() -> None:
-    strat = _bare_strategy(retrievers={})
-    out = await strat._retrieve_documents(SearchQuery(query="q"), ["community_reports"])
-    assert out == []
-
-
-async def test_retrieve_documents_sets_index_prefixes() -> None:
-    retriever = _StubRetriever([_community(0)])
-    strat = _bare_strategy(retrievers={"document": retriever})
-    query = SearchQuery(query="q")
-    out = await strat._retrieve_documents(query, ["community_reports"])
-    assert [c.source for c in out] == ["c0"]
-    sent = retriever.last_query
-    assert sent is not None
-    assert sent.index_prefixes == ["community_reports"]
-    # Original query untouched (deep copy).
-    assert query.index_prefixes is None
-
-
-async def test_retrieve_documents_swallows_error() -> None:
-    strat = _bare_strategy(
-        retrievers={"document": _StubRetriever(raises=RuntimeError("os"))}
-    )
-    out = await strat._retrieve_documents(SearchQuery(query="q"), ["x"])
-    assert out == []
-
-
-async def test_retrieve_community_context_no_community_ids_returns_empty() -> None:
-    strat = _bare_strategy(retrievers={"document": _StubRetriever([_community(0)])})
-    # Communities lack community_id metadata -> no ids -> empty without a call.
-    communities = [_community(0), _community(1)]
-    out = await strat._retrieve_community_context(communities, SearchQuery(query="q"))
-    assert out == []
-
-
-async def test_retrieve_community_context_caps_top_k_at_max_text_units() -> None:
-    retriever = _StubRetriever([_community(5)])
-    strat = _bare_strategy(retrievers={"document": retriever})
-    strat.global_search_config.max_text_units = 4
-    communities = [_community(0, metadata={"community_id": "cid"})]
-    query = SearchQuery(query="q", top_k=100)
-    out = await strat._retrieve_community_context(communities, query)
-    assert [c.source for c in out] == ["c5"]
-    sent = retriever.last_query
-    assert sent is not None
-    assert sent.filters is not None
-    assert sent.top_k == 4  # min(top_k=100, max_text_units=4)
-    assert sent.filters["community_ids"] == ["cid"]
+async def test_the_callers_config_reaches_rating_and_map_calls() -> None:
+    strat = _strategy(use_dynamic_selection=True)
+    rater = _Rater({"R0", "R1"})
+    strat.community_relevance_scorer = rater
+    caller_config = {"tags": ["caller"]}
+    await strat.asearch(SearchQuery(query="themes"), config=caller_config)
+    assert rater.configs and set(map(id, rater.configs)) == {id(caller_config)}
+    assert strat.map_rater.configs == [caller_config]  # type: ignore[attr-defined]
 
 
 # --------------------------------------------------------------------------- #
-# _augment_and_rerank_communities — empty-selection fallback
+# _parse_map_payload robustness to non-finite LLM scores
 # --------------------------------------------------------------------------- #
-
-
-async def test_augment_empty_selection_post_processes_the_fallback() -> None:
-    # Dynamic selection that keeps nothing used to return the raw retrieved
-    # list: no max_communities cap, no text units, no rerank.
-    strat = _bare_strategy(max_communities=2)
-    fallback = [_community(i, score=i / 10) for i in range(5)]
-    fused: list[dict] = []
-    contexts: list[list[str]] = []
-
-    async def _context(communities, _query):
-        contexts.append([c.source for c in communities])
-        return []
-
-    async def _fuse(results, **_kw):
-        fused.append(results)
-        return results["opensearch_community_reports"]
-
-    strat._retrieve_community_context = _context  # type: ignore[method-assign]
-    strat._fuse_and_rerank = _fuse  # type: ignore[method-assign]
-
-    out = await strat._augment_and_rerank_communities(
-        [], fallback, SearchQuery(query="q"), strat._new_rerank_trace()
-    )
-
-    best_two = ["c4", "c3"]
-    assert [c.source for c in out] == best_two
-    assert contexts == [best_two]
-    assert len(fused) == 1
-
-
-async def test_augment_empty_selection_and_no_fallback_is_empty() -> None:
-    strat = _bare_strategy()
-    assert (
-        await strat._augment_and_rerank_communities(
-            [], [], SearchQuery(query="q"), strat._new_rerank_trace()
-        )
-        == []
-    )
-
-
-# --------------------------------------------------------------------------- #
-# _retrieve_community_reports
-# --------------------------------------------------------------------------- #
-
-
-async def test_retrieve_community_reports_uses_community_reports_prefix() -> None:
-    retriever = _StubRetriever([_community(0)])
-    strat = _bare_strategy(retrievers={"document": retriever})
-    out = await strat._retrieve_community_reports(SearchQuery(query="q"))
-    assert [c.source for c in out] == ["c0"]
-    sent = retriever.last_query
-    assert sent is not None
-    assert sent.index_prefixes == ["community_reports"]
-
-
-async def test_reports_are_retrieved_without_a_graph_round_trip_or_rerank() -> None:
-    # The Neptune community expansion returned only the candidate communities
-    # (its limit equalled their count and they were emitted first), so it was
-    # removed. The candidates are not reranked either: selection reorders them
-    # and the fusion with their text units reranks the selected reports once.
-    candidates = [_community(0, metadata={"community_id": "cid0"}), _community(1)]
-    graph = _StubRetriever(raises=AssertionError("graph must not be queried"))
-    strat = _bare_strategy(
-        retrievers={"document": _StubRetriever(candidates), "graph": graph}
-    )
-
-    async def _no_fuse(results, **kwargs):
-        raise AssertionError("candidates must not be fused")
-
-    strat._fuse_and_rerank = _no_fuse  # type: ignore[method-assign]
-    out = await strat._retrieve_community_reports(SearchQuery(query="q"))
-    assert out == candidates
-    assert graph.last_query is None
-
-
-# --- _parse_map_payload robustness to non-finite LLM scores (R3 fix) ---
 
 
 def test_parse_map_payload_handles_infinity_and_nan() -> None:
     # parse_llm_json (json.loads) accepts Infinity/-Infinity/NaN, and "1e999"
     # overflows float() to inf; int(inf)/int(nan) would crash the whole query.
-    # Non-finite scores must be coerced to 0 (dropped), not raise.
-    import json
-
-    raw = json.dumps(
-        {"points": [{"description": "a", "score": 5}, {"description": "b", "score": 1}]}
+    raw_bad = (
+        '{"points": [{"description": "inf", "score": Infinity}, '
+        '{"description": "nan", "score": NaN}, {"description": "ok", "score": 7}]}'
     )
-    # Inject the non-standard literals json.dumps won't emit but json.loads reads.
-    raw_bad = '{"points": [{"description": "inf", "score": Infinity}, {"description": "nan", "score": NaN}, {"description": "ok", "score": 7}]}'
-
-    pts = GlobalSearchStrategy._parse_map_payload(raw_bad) or []
-    scores = {p.description: p.score for p in pts}
-    assert scores["inf"] == 0  # coerced, not crashed
-    assert scores["nan"] == 0
-    assert scores["ok"] == 7
-    # And a normal payload still parses.
-    assert len(GlobalSearchStrategy._parse_map_payload(raw) or []) == 2
+    scores = {
+        p.description: p.score
+        for p in GlobalSearchStrategy._parse_map_payload(raw_bad) or []
+    }
+    assert scores == {"inf": 0, "nan": 0, "ok": 7}
 
 
 def test_parse_map_payload_overflow_string_score() -> None:
@@ -437,155 +406,11 @@ def test_parse_map_payload_overflow_string_score() -> None:
     assert pts[0].score == 0  # 1e999 -> inf -> coerced to 0
 
 
-def test_default_global_config_skips_per_report_llm_scoring() -> None:
-    from unified_kg_rag.domain.models import Config
-
-    config = Config()
-    gs = config.search.global_search
-    # The map step already rates the reports; the per-report pre-filter is opt-in.
-    assert gs.enable_map_reduce is True
-    assert gs.use_dynamic_selection is False
-    assert gs.map_batch_size == 5
-    strategy = GlobalSearchStrategy(config=config, retrievers={})
-    assert not hasattr(strategy, "community_relevance_scorer")
-
-
-# --------------------------------------------------------------------------- #
-# Reserved community-report slots (reserve_report_slots)
-# --------------------------------------------------------------------------- #
-
-
-def _typed(prefix: str, rtype: str, n: int) -> list[RetrievalResult]:
-    return [
-        RetrievalResult(
-            content=f"{prefix} {i} " + " ".join(f"w{prefix}{i}{j}" for j in range(5)),
-            score=1.0 - i * 0.01,
-            source=f"{prefix}{i}",
-            retriever_type=rtype,
-            metadata={"community_id": f"{prefix}{i}"} if rtype == "community" else {},
-        )
-        for i in range(n)
-    ]
-
-
-def _fusing_strategy(reserve: bool) -> GlobalSearchStrategy:
-    from unified_kg_rag.adapters.retrieval.hybrid_scorer import HybridScorer
-    from unified_kg_rag.domain.models import Config
-
-    config = Config()
-    config.search.reranking.enabled = False
-    strat = _bare_strategy(max_communities=10)
-    strat.global_search_config.reserve_report_slots = reserve
-    strat.hybrid_scorer = HybridScorer(config)
-    return strat
-
-
-@pytest.mark.parametrize("reserve", [True, False])
-async def test_report_slots_keep_every_selected_report(reserve: bool) -> None:
-    strat = _fusing_strategy(reserve)
-    reports = _typed("r", "community", 10)
-    chunks = _typed("t", "text", 30)
-
-    async def _context(_communities, _query):
-        return chunks
-
-    strat._retrieve_community_context = _context  # type: ignore[method-assign]
-
-    out = await strat._augment_and_rerank_communities(
-        reports,
-        reports,
-        SearchQuery(query="q", top_k=10),
-        strat._new_rerank_trace(),
+def test_was_map_reduce_applied_detects_synthesized_source() -> None:
+    strat = _strategy()
+    summary = RetrievalResult(
+        content="s", score=1.0, source="synthesized_summary", retriever_type="general"
     )
-
-    kept_reports = [r for r in out if r.retriever_type == "community"]
-    kept_chunks = [r for r in out if r.retriever_type == "text"]
-    if reserve:
-        assert len(kept_reports) == 10
-        assert len(kept_chunks) == 10  # text_unit_slots defaults to top_k
-    else:
-        # The previous flat cut: reports and chunks share ten slots.
-        assert len(out) == 10
-        assert len(kept_reports) < 10
-
-
-def test_report_quota_honors_text_unit_slots_and_multiplier() -> None:
-    strat = _bare_strategy(max_communities=4)
-    strat.global_search_config.text_unit_slots = 3
-    quota = strat._report_quota(
-        SearchQuery(query="q", top_k=10, retrieval_multiplier=2)
-    )
-    assert quota == {"community": 8, "text": 3}
-    strat.global_search_config.reserve_report_slots = False
-    assert strat._report_quota(SearchQuery(query="q")) is None
-
-
-@pytest.mark.parametrize(("reserve", "expected"), [(True, 21), (False, 10)])
-async def test_synthesized_item_does_not_take_an_evidence_slot(
-    reserve: bool, expected: int
-) -> None:
-    from unittest.mock import AsyncMock
-
-    strat = _bare_strategy()
-    strat.global_search_config.reserve_report_slots = reserve
-    evidence = _typed("r", "community", 10) + _typed("t", "text", 10)
-    synthesized = RetrievalResult(
-        content="points",
-        score=1.0,
-        source="synthesized_key_points",
-        retriever_type="general",
-        metadata={"synthesized": True},
-    )
-    strat._retrieve_community_reports = AsyncMock(return_value=evidence)  # type: ignore[method-assign]
-    strat._select_relevant_communities = AsyncMock(return_value=evidence[:10])  # type: ignore[method-assign]
-    strat._augment_and_rerank_communities = AsyncMock(return_value=evidence)  # type: ignore[method-assign]
-    strat._apply_map_reduce = AsyncMock(return_value=[synthesized, *evidence])  # type: ignore[method-assign]
-
-    result = await strat.asearch(SearchQuery(query="q", top_k=10))
-
-    assert len(result.results) == expected
-    assert result.results[0].source == "synthesized_key_points"
-
-
-# --------------------------------------------------------------------------- #
-# The caller's RunnableConfig reaches every global-search LLM call
-# --------------------------------------------------------------------------- #
-
-
-class _MapRater:
-    def __init__(self) -> None:
-        self.configs: list = []
-
-    def invoke(self, single_input, config=None):  # noqa: ANN001
-        self.configs.append(config)
-        return '{"points": [{"description": "Vendor ships", "score": 80}]}'
-
-
-async def test_select_dynamic_passes_the_callers_config() -> None:
-    strat = _bare_strategy(use_dynamic_selection=True, threshold=0.0)
-    strat.community_relevance_scorer = _AScorer("8")
-    caller_config = {"tags": ["caller"]}
-    await strat._select_relevant_communities(
-        _communities(2), SearchQuery(query="q"), config=caller_config
-    )
-    assert strat.community_relevance_scorer.configs == [caller_config] * 2
-
-
-async def test_map_reduce_passes_the_callers_config_to_map_and_reduce() -> None:
-    strat = _bare_strategy(map_reduce_min_results=1)
-    strat.global_search_config.reduce_with_llm = True
-    strat.map_rater = _MapRater()
-    strat.map_reducer = _AScorer("summary")
-    strat.batch_processor = BatchProcessor(max_concurrency=4, max_attempts=1)
-    strat.token_manager = SimpleNamespace(
-        count_tokens=len, count_tokens_many=lambda texts: [len(t) for t in texts]
-    )
-    caller_config = {"tags": ["caller"]}
-
-    await strat._apply_map_reduce(
-        _communities(2), SearchQuery(query="q"), config=caller_config
-    )
-
-    # The map call gets the caller's config.
-    assert strat.map_rater.configs == [caller_config]
-    assert strat.map_reducer.configs == [caller_config]
+    assert strat._was_map_reduce_applied([summary]) is True
+    strat.global_search_config.enable_map_reduce = False
+    assert strat._was_map_reduce_applied([summary]) is False
