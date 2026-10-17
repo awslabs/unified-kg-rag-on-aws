@@ -408,7 +408,7 @@ Library API (Python callers and custom backends).
   stage cache re-keys by itself; re-index once with `indexing.reset: true`
   to replace an existing index's communities (incremental runs cluster only
   their delta). Set a large `max_cluster_size` to keep the previous
-  partition (#PR).
+  partition (#314).
 - OpenSearch indexing keeps 16 embedding requests in flight (was 8), so it
   embeds and bulk-writes 800 items of a type at a time (was 400). In the
   real-AWS E2E 1,600 texts took 9.4 s instead of 18.8 s, with no Bedrock
