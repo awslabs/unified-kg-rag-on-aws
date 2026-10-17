@@ -21,7 +21,7 @@ from typing import Any
 
 from unified_kg_rag.domain.ingestion.base_processor import (
     BaseProcessor,
-    union_document_filters,
+    union_all_document_filters,
 )
 from unified_kg_rag.domain.ingestion.descriptions import merge_descriptions
 from unified_kg_rag.domain.ingestion.relationship_endpoints import (
@@ -49,8 +49,10 @@ from unified_kg_rag.shared.utils import compute_hash
 _PLACEMENT = (Constants.INDEX.value, Constants.FILTERS.value)
 
 
-def _merge_description(current: str | None, new: str | None) -> str | None:
-    return merge_descriptions((current, new))
+def _union_ids(values: list[Any]) -> list[str]:
+    return list(
+        dict.fromkeys(i for ids in values if isinstance(ids, list) for i in ids)
+    )
 
 
 def merge_entity_contributions(entities: list[Entity]) -> list[Entity]:
@@ -60,19 +62,13 @@ def merge_entity_contributions(entities: list[Entity]) -> list[Entity]:
     unioned, the confidence is the max (monotonic in evidence) and the type
     the most frequent of the statements (the first on a tie).
     """
-    field_mergers: dict[str, Callable[[Any, Any], Any]] = {
-        "description": _merge_description,
-        "text_unit_ids": lambda current, new: list(
-            dict.fromkeys(
-                (current if isinstance(current, list) else [])
-                + (new if isinstance(new, list) else [])
-            )
+    field_mergers: dict[str, Callable[[list[Any]], Any]] = {
+        "description": merge_descriptions,
+        "text_unit_ids": _union_ids,
+        "confidence": lambda values: max(
+            value if value is not None else 0.0 for value in values
         ),
-        "confidence": lambda current, new: max(
-            current if current is not None else 0.0,
-            new if new is not None else 0.0,
-        ),
-        "attributes": union_document_filters,
+        "attributes": union_all_document_filters,
     }
     return BaseProcessor._merge_items(
         items=entities,
@@ -94,9 +90,9 @@ def merge_relationship_contributions(
     weight_maps: dict[str, list[dict[str, float]]] = defaultdict(list)
     for rel in relationships:
         weight_maps[rel.id].append(text_unit_weights(rel))
-    field_mergers: dict[str, Callable[[Any, Any], Any]] = {
-        "description": _merge_description,
-        "attributes": union_document_filters,
+    field_mergers: dict[str, Callable[[list[Any]], Any]] = {
+        "description": merge_descriptions,
+        "attributes": union_all_document_filters,
     }
     merged = BaseProcessor._merge_items(
         items=relationships,
@@ -117,14 +113,11 @@ def merge_claim_contributions(claims: list[Claim]) -> list[Claim]:
     descriptions, source texts, text units and filters unioned, the most
     frequent type and status."""
 
-    def union(current: list[str] | None, new: list[str] | None) -> list[str]:
-        return list(dict.fromkeys((current or []) + (new or [])))
-
-    field_mergers: dict[str, Callable[[Any, Any], Any]] = {
-        "description": _merge_description,
-        "source_text": _merge_description,
-        "text_unit_ids": union,
-        "attributes": union_document_filters,
+    field_mergers: dict[str, Callable[[list[Any]], Any]] = {
+        "description": merge_descriptions,
+        "source_text": merge_descriptions,
+        "text_unit_ids": _union_ids,
+        "attributes": union_all_document_filters,
     }
     return BaseProcessor._merge_items(
         items=claims,

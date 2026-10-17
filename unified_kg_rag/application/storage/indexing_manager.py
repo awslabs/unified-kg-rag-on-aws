@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 
 from unified_kg_rag.adapters.ingestion.description_summarizer import (
     DescriptionSummarizer,
+    extend_summaries,
     needs_summary,
     reuse_summaries,
 )
@@ -390,7 +391,7 @@ class IndexingManager:
             phase1.append(
                 (
                     vector.index_relationships,
-                    vector.upsert_relationships,
+                    self._upsert_vector_relationships,
                     relationships,
                     "opensearch_relationships",
                 )
@@ -488,6 +489,33 @@ class IndexingManager:
         self._log_completion_summary(results, time.time() - start_time)
         return results
 
+    def _upsert_vector_relationships(
+        self, relationships: list[Relationship]
+    ) -> IndexingStats:
+        """Delta upsert of the relationship vectors. An edge this run rewrites
+        for its rank only is updated in place (no embedding), unless its
+        vector copy is missing (an interrupted write): that one is upserted."""
+        rank_only, self._rank_only = self._rank_only, set()
+        vector = self.opensearch_indexer
+        candidates = [r for r in relationships if r.id in rank_only]
+        if not candidates:
+            return vector.upsert_relationships(relationships)
+        stored: set[str] = set()
+        for suffix, group in self._group_by_suffix(candidates).items():
+            stored |= set(
+                vector.read_relationship_descriptions(
+                    [r.id for r in group], suffix=suffix
+                )
+            )
+        partial = [r for r in candidates if r.id in stored]
+        kept = {r.id for r in partial}
+        full = [r for r in relationships if r.id not in kept]
+        stats = vector.update_relationship_lineage(partial)
+        if full:
+            stats.merge(vector.upsert_relationships(full))
+        stats.total_items = len(relationships)
+        return stats
+
     def merge_with_existing_graph(
         self,
         entities: list[Entity] | None,
@@ -577,6 +605,10 @@ class IndexingManager:
                 }
                 group.append(claim)
             if not group:
+                continue
+            if not stored and not about and suffix in self._fresh:
+                # Nothing stored: the delta claims are the full build's.
+                merged.extend(group)
                 continue
             merged.extend(
                 self._derive_claims(
@@ -679,16 +711,47 @@ class IndexingManager:
             # entity does.
             merged_relationships = [r.model_copy() for r in merged_relationships]
             sync_relationship_endpoint_names(merged_relationships, merged_entities)
-        derived = self.derive(
-            suffix, merged_entities, merged_relationships, (), text_units
-        )
+        if existing or existing_rels:
+            derived = self.derive(
+                suffix, merged_entities, merged_relationships, (), text_units
+            )
+        else:
+            # Nothing stored (a first build with the registry on): the delta
+            # is what a full build over its records gives, summaries included.
+            self._fresh.add(suffix)
+            derived = Derived(
+                entities=list(merged_entities),
+                relationships=list(merged_relationships),
+            )
         rekey = derived.id_remap
+        # A stored summary that only grew is summarized with what the delta
+        # added (see extend_summaries).
+        reuse_summaries(derived.entities, entities)
+        reuse_summaries(derived.relationships, relationships)
+        extend_summaries(
+            derived.entities,
+            [e.model_copy(update={"id": rekey.get(e.id, e.id)}) for e in existing],
+            {
+                rekey.get(entity_id_remap.get(e.id, e.id), e.id): e.description
+                for e in entities
+            },
+        )
+        extend_summaries(
+            derived.relationships,
+            [r.model_copy(update={"id": rekey.get(r.id, r.id)}) for r in existing_rels],
+            {
+                rekey.get(relationship_remap.get(r.id, r.id), r.id): r.description
+                for r in relationships
+            },
+        )
         merged_entities, merged_relationships = self._finish(
             suffix,
             derived.entities,
             derived.relationships,
-            stored_entities=existing,
-            stored_relationships=existing_rels,
+            # The delta's summaries (graph resolution made them) are reused
+            # as the stored ones are: by the description they were made from.
+            stored_entities=[*existing, *entities],
+            stored_relationships=[*existing_rels, *relationships],
             rekey=rekey,
             rewired=set(derived.rewired),
         )
@@ -965,6 +1028,9 @@ class IndexingManager:
         extra = [r for r in extra if before[r.id] != shown(r)]
         if not extra:
             return entities, relationships
+        # Only the rank changed (a neighbour's degree): the vector copy is
+        # updated in place, not embedded again (_upsert_vector_relationships).
+        self._rank_only.update(r.id for r in extra if before[r.id][:4] == shown(r)[:4])
         extra = self._with_full_descriptions(
             extra, self.opensearch_indexer.read_relationship_descriptions, suffix
         )
@@ -1337,7 +1403,7 @@ class IndexingManager:
                     "opensearch_relationship_lineage",
                 ),
                 IndexingTask(
-                    self.opensearch_indexer.upsert_relationships,
+                    self._upsert_vector_relationships,
                     [[r for r in new_relationships if not unchanged(r)]],
                     "opensearch_relationships",
                 ),

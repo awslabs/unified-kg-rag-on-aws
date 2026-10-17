@@ -866,6 +866,17 @@ changed once with the full-config keys (#332).
   by `doc_id` alone, indices without recorded settings) is covered here
   under Upgrading from pre-release builds, and the entries above name the
   current model keys (#338).
+- Incremental indexing is cheaper on large corpora and hub entities:
+  derivation matches stored entities to the resolved ones through a key
+  index instead of a scan (3,000 records: 147 s to 13 s), a first build with
+  the registry on skips it (nothing is stored), statements of one item are
+  merged once instead of pairwise (8,000 statements of a hub: 8.8 s to
+  3 ms), a description is summarized once per text (graph resolution's
+  summaries are reused at indexing: a first build makes half the summary
+  calls), a stored summary that only grew is summarized from the stored
+  summary and the new description, and a stored edge whose rank alone
+  changed is updated in place instead of embedded again (a hub's new
+  neighbour: 175 to 43 embedded texts) (#PR).
 - The indexing stage reports `underived_items`, the stored items an
   incremental run kept as they were because a text unit they cite names no
   stored extraction record (#PR).

@@ -330,3 +330,61 @@ class TestInputBudget:
             sum(count(line) for line in group.split("\n")) <= budget
             for group in summarizer._pack(description)
         )
+
+
+class TestSummaryReuse:
+    """Summaries are made once per description, and a grown one from the
+    stored summary."""
+
+    @staticmethod
+    def _summary(entity_id: str, made_from: str, summary: str, units: list[str]):
+        from unified_kg_rag.adapters.ingestion.description_summarizer import (
+            SUMMARIZED_FROM_ATTRIBUTE,
+        )
+        from unified_kg_rag.shared.utils import compute_hash
+
+        return Entity(
+            id=entity_id,
+            name=entity_id,
+            description=summary,
+            text_unit_ids=units,
+            attributes={SUMMARIZED_FROM_ATTRIBUTE: compute_hash(made_from)},
+        )
+
+    def test_any_copy_summarized_from_the_description_is_reused(self) -> None:
+        from unified_kg_rag.adapters.ingestion.description_summarizer import (
+            reuse_summaries,
+        )
+
+        # The stored copy and this run's graph resolution summarized other
+        # descriptions of one id; the item takes the one made from its own.
+        stored = self._summary("e", "old text", "old summary", ["t1"])
+        delta = self._summary("e", "new text", "new summary", ["t2"])
+        item = Entity(id="e", name="e", description="new text")
+
+        reuse_summaries([item], [stored, delta])
+
+        assert item.description == "new summary"
+
+    def test_a_grown_summary_is_extended_and_a_shrunk_one_is_not(self) -> None:
+        from unified_kg_rag.adapters.ingestion.description_summarizer import (
+            extend_summaries,
+        )
+
+        stored = self._summary("e", "line 1\nline 2", "summary", ["t1", "t2"])
+        grown = Entity(
+            id="e",
+            name="e",
+            description="line 1\nline 2\nline 3",
+            text_unit_ids=["t1", "t2", "t3"],
+        )
+        shrunk = Entity(
+            id="e", name="e", description="line 2\nline 3", text_unit_ids=["t2", "t3"]
+        )
+
+        extend_summaries([grown], [stored], {"e": "line 3"})
+        extend_summaries([shrunk], [stored], {"e": "line 3"})
+
+        assert grown.description == "summary\nline 3"
+        # It lost t1: only a summary of what its units state drops t1's text.
+        assert shrunk.description == "line 2\nline 3"
