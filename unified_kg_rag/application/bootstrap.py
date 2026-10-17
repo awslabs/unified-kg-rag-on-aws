@@ -31,6 +31,7 @@ from unified_kg_rag.adapters.provider_registry import (
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.models import Config
 from unified_kg_rag.domain.models.provider_config import strip_backend_preset
+from unified_kg_rag.ports.guardrail import ContentGuardPort
 from unified_kg_rag.shared import ConfigurationError, get_logger
 
 if TYPE_CHECKING:
@@ -84,6 +85,21 @@ def build_providers(
         ),
     )
     return Providers(config, boto_session, **overrides)
+
+
+def build_query_guard(config: Config, providers: Providers) -> ContentGuardPort | None:
+    """The guard that screens queries and answers, or ``None`` when off.
+
+    Built when ``aws.bedrock.guardrail.identifier`` is set and either check is
+    on; it calls Bedrock ``ApplyGuardrail`` with the bundle's session,
+    whichever providers serve the models.
+    """
+    guardrail = config.aws.bedrock.guardrail
+    if not guardrail.enabled or not (guardrail.check_input or guardrail.check_output):
+        return None
+    from unified_kg_rag.adapters.guardrail.bedrock import BedrockGuardrail
+
+    return BedrockGuardrail(config, providers.boto_session)
 
 
 def with_provider_overrides(

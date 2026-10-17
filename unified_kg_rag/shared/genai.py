@@ -32,6 +32,14 @@ GEN_AI_INPUT_MESSAGES = "gen_ai.input.messages"
 GEN_AI_OUTPUT_MESSAGES = "gen_ai.output.messages"
 
 PROVIDER_AWS_BEDROCK = "aws.bedrock"
+# Bedrock Guardrails: whether a guardrail acted on a model call or a screened
+# text, and (on a screening span) which guardrail, text side, action and
+# policies.
+GUARDRAIL_INTERVENED = "aws.bedrock.guardrail.intervened"
+GUARDRAIL_ID = "aws.bedrock.guardrail.id"
+GUARDRAIL_SOURCE = "aws.bedrock.guardrail.source"
+GUARDRAIL_ACTION = "aws.bedrock.guardrail.action"
+GUARDRAIL_POLICIES = "aws.bedrock.guardrail.policies"
 # General OpenTelemetry convention for the class of a failure.
 ERROR_TYPE = "error.type"
 

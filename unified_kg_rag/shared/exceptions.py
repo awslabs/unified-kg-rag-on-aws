@@ -42,6 +42,13 @@ class EvaluationException(GraphRAGException):
     pass
 
 
+class GuardrailError(AWSServiceError):
+    """A content guardrail could not screen a text (API error, bad reply).
+
+    The query fails closed: it is not answered unguarded.
+    """
+
+
 class GraphError(GraphRAGException):
     pass
 

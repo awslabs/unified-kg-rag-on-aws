@@ -278,8 +278,10 @@ Expected differences from AWS mode:
 - Extraction with small local models is noticeably weaker: more malformed
   output (retried, then recorded as failed chunks), weaker entity resolution
   and thinner community reports. Prefer the largest model the hardware runs.
-- No Bedrock prompt caching and no Guardrails (`aws.bedrock.guardrail` is
-  ignored by the local providers); reasoning effort settings do not apply.
+- No Bedrock prompt caching, and the local providers never attach a guardrail
+  to a model call. With `aws.bedrock.guardrail.identifier` set, the query
+  chain still screens queries and answers through Bedrock `ApplyGuardrail`
+  (AWS credentials needed). Reasoning effort settings do not apply.
 - The embedded vector store answers the queries the OpenSearch adapter
   builds, with five differences. Text mapped to `nori` (Korean), `kuromoji`
   (Japanese) or `smartcn` (Chinese) is split into overlapping CJK character
@@ -489,8 +491,10 @@ the same values.
 | `aws.bedrock.enable_1m_context` | `false` | Opt into the 1M window on models where it is a beta (premium billing). Claude 5 has a native 1M window. |
 | `aws.bedrock.model_overrides` | `{}` | Capability records for a language model the package does not know (see Model selection notes). Embedding and rerank models are a closed list. |
 | `aws.bedrock.guardrail.identifier` | `null` | Bedrock guardrail ID or ARN; setting it enables the guardrail. |
-| `aws.bedrock.guardrail.apply_to` | `"query"` | `query` guards only the user-facing query path; `all` guards every call (see the guardrail note below). |
-| `aws.bedrock.guardrail.trace` | `false` | Emit the guardrail trace. Needed to detect interventions on the InvokeModel path. |
+| `aws.bedrock.guardrail.check_input` | `true` | Screen each raw user query with `ApplyGuardrail` (source `INPUT`) before retrieval (see the guardrail note below). |
+| `aws.bedrock.guardrail.check_output` | `true` | Screen each final answer (source `OUTPUT`). A streamed answer is then delivered as one chunk after the check. |
+| `aws.bedrock.guardrail.apply_to` | `"query"` | `query`: only the query and answer are screened. `all`: also attach the guardrail to every ingestion and evaluation model call. |
+| `aws.bedrock.guardrail.trace` | `false` | Return full assessments (including non-detected entries) for auditing. |
 | `aws.bedrock.transient_retry.max_attempts` | `5` | Attempts per call for transient Bedrock errors that botocore does not retry (such as HTTP 424), on embeddings and query-time calls. `1` disables the retry. |
 | `aws.neptune.endpoint` | `null` | **Required.** Neptune cluster endpoint. |
 | `aws.neptune.use_iam` | `true` | SigV4-sign Neptune requests. |
@@ -507,27 +511,45 @@ the same values.
 | `aws.dynamodb.create_table_if_missing` | `true` | Create the table on first use. Set `false` when the table is managed by IaC. |
 
 > **Guardrail scope and placement.** The guardrail must exist in
-> `aws.bedrock.region_name`, the region LLM calls go to. With the default
-> `apply_to: "query"` it is attached to answer generation, query refinement,
-> query-time entity/keyword extraction, and global/DRIFT map-reduce. Ingestion
-> models, the prompt tuner, and evaluation judges run unguarded, because a PII
-> guardrail that anonymizes `NAME` rewrites extracted entity names to a
-> placeholder such as `{NAME}` (distinct people merge into one node), and a
-> `PROMPT_ATTACK` filter can block instruction-like corpus text. Use
-> `apply_to: "all"` only with a policy that is safe for extraction. On the
-> query path `NAME` anonymization also hurts: answers show `{NAME}` instead of
-> the people they are about, and entity-seeded search loses its seeds. The
-> baseline guardrail that `iac/` creates therefore anonymizes email, phone and
-> card numbers but not `NAME`. Each
-> intervention is logged at WARNING (`Bedrock guardrail '<id>' intervened on a
-> <purpose> model call ...`) with a running count. On the InvokeModel path
-> (`ChatBedrock`, used for non-cross-region model ids) an intervention is
-> detected only with `trace: true`; the guardrail is enforced either way.
+> `aws.bedrock.region_name`. The query chain screens two texts with the
+> `ApplyGuardrail` API: the raw user query, once, before conversation memory,
+> the follow-up rewrite, routing and retrieval (`check_input`), and the final
+> answer (`check_output`). Only those texts are evaluated and billed. A blocked
+> query is answered with the guardrail's blocked message, nothing is retrieved
+> or written to memory, and `RAGOutput.metadata.blocked` is `true`. A masked
+> query (PII anonymized) continues with the masked text, so retrieval, the
+> models and memory never see the original. A blocked or masked answer is
+> replaced by the guardrail's text. Every intervention is listed in
+> `RAGOutput.metadata.guardrail` (source, action, policies), logged at WARNING
+> with a running count, and recorded on a `kg_rag.guardrail` span. A guardrail
+> API error fails the query (with `processing.ignore_errors`, the standard
+> error answer); it is never answered unscreened.
+>
+> The model calls inside a query (rewrite, routing, keyword extraction,
+> global/DRIFT map steps, answer generation) run without a guardrail. Attached
+> to a model call, a guardrail evaluates the whole prompt: on the Converse API
+> that is the retrieved corpus text and the developer instructions, which a
+> `PROMPT_ATTACK` filter judges as user input (false blocks), at a cost that
+> grows with context size times calls; on the InvokeModel API the
+> `PROMPT_ATTACK` filter does nothing unless the user input is wrapped in input
+> tags ([Bedrock Guardrails: prompt attacks](https://docs.aws.amazon.com/bedrock/latest/userguide/guardrails-prompt-attack.html)).
+> Contextual grounding checks are not run: they need the grounding source and
+> query as qualified content, which the answer screen does not send.
+>
+> Ingestion models, the prompt tuner, and evaluation judges run unguarded by
+> default, because a PII guardrail that anonymizes `NAME` rewrites extracted
+> entity names to a placeholder such as `{NAME}` (distinct people merge into
+> one node), and a `PROMPT_ATTACK` filter can block instruction-like corpus
+> text. `apply_to: "all"` attaches the guardrail to those calls; use it only
+> with a policy that is safe for extraction. On the query path `NAME`
+> anonymization also hurts: a question about a person loses the name it
+> retrieves by, and answers show `{NAME}`. The baseline guardrail that `iac/`
+> creates therefore anonymizes email, phone and card numbers but not `NAME`.
 >
 > Custom code that builds chains with `setup_chain` or calls `get_model`
 > for non-query work should pass `model_purpose=ModelPurpose.INGESTION` (or
-> `EVALUATION`). Unmarked calls default to `QUERY`: they stay guarded and get
-> the query-time transient-error retry.
+> `EVALUATION`). Unmarked calls default to `QUERY`: they get the query-time
+> transient-error retry, and never an attached guardrail.
 
 > **S3 cache encryption.** With the CDK stack's `use_cmk=true`, the bucket
 > default is the customer-managed KMS key, so `BUCKET_DEFAULT` uses it; forcing
@@ -898,7 +920,11 @@ spans and exported as given, so pass an opaque id, not an e-mail address.
   step's `kg_rag.rerank_status`) →
   `kg_rag.rerank` (`kg_rag.rerank.status` = `ok`, `empty` or `error`, document
   counts) → `kg_rag.context_build` (tokens used vs the token budget) → the
-  answer's `chat <model>` span.
+  answer's `chat <model>` span. With a guardrail, each screened query and
+  answer adds a `kg_rag.guardrail` span under `kg_rag.query`
+  (`aws.bedrock.guardrail.id`, `.source` = `input` or `output`, `.action` =
+  `none`, `masked` or `blocked`, `.intervened`, `.policies`), and the query
+  span carries `kg_rag.blocked`.
 - Evaluation (`run-eval`): one `kg_rag.batch` root for answer generation (item
   and failure counts only) → one `kg_rag.query` per question, which carries
   that question's input and output; then one `kg_rag.evaluate` root per
@@ -2004,7 +2030,8 @@ on).
 >
 > The model resolver also calls `bedrock:ListInferenceProfiles`, an
 > account-level read that takes `Resource: "*"`, and a guardrail needs
-> `bedrock:ApplyGuardrail`.
+> `bedrock:ApplyGuardrail` on the guardrail's ARN
+> (`arn:aws:bedrock:<bedrock region>:<account>:guardrail/<id>`).
 
 ### Common errors
 

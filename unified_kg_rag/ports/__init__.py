@@ -18,6 +18,9 @@ Catalog:
   (``Protocol``; the Bedrock factories in ``adapters.aws.bedrock`` and the
   local ones in ``adapters.local`` conform structurally). Annotate against
   these for provider-agnostic call sites.
+- ``ContentGuardPort`` (+ ``GuardVerdict`` / ``GuardAction`` /
+  ``GuardSource``) — screening of the raw user query and the final answer
+  (``Protocol``; adapter: ``adapters.guardrail.bedrock.BedrockGuardrail``).
 - ``TokenCounterPort`` — token counting/truncation for one model (``Protocol``;
   ``adapters.aws.token_counter.BedrockTokenCounter`` and
   ``adapters.local.token_counter.LocalTokenCounter`` conform structurally).
@@ -32,6 +35,12 @@ imported from there directly. Listed here only as a pointer:
 """
 
 from unified_kg_rag.ports.doc_status import DocStatusPort
+from unified_kg_rag.ports.guardrail import (
+    ContentGuardPort,
+    GuardAction,
+    GuardSource,
+    GuardVerdict,
+)
 from unified_kg_rag.ports.indexer import (
     BaseIndexer,
     GraphIndexer,
@@ -48,9 +57,13 @@ from unified_kg_rag.ports.model_factory import (
 
 __all__ = [
     "BaseIndexer",
+    "ContentGuardPort",
     "DocStatusPort",
     "EmbeddingFactoryPort",
     "GraphIndexer",
+    "GuardAction",
+    "GuardSource",
+    "GuardVerdict",
     "IndexingStats",
     "LLMFactoryPort",
     "ModelFactoryPort",

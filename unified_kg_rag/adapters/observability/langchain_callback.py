@@ -56,6 +56,7 @@ from unified_kg_rag.shared.genai import (
     GEN_AI_USAGE_INPUT_TOKENS,
     GEN_AI_USAGE_OUTPUT_TOKENS,
     GEN_AI_USAGE_REASONING_OUTPUT_TOKENS,
+    GUARDRAIL_INTERVENED,
     PROVIDER_AWS_BEDROCK,
 )
 from unified_kg_rag.shared.observability import (
@@ -65,7 +66,6 @@ from unified_kg_rag.shared.observability import (
     SpanHandle,
 )
 
-GUARDRAIL_INTERVENED = "aws.bedrock.guardrail.intervened"
 MODEL_PURPOSE = "kg_rag.model.purpose"
 
 

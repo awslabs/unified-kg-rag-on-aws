@@ -138,7 +138,7 @@ def apply(stacks: dict[str, Any], config: DeploymentConfig) -> None:
             # bedrock:Rerank and ListInferenceProfiles: no resource scoping.
             "Resource::*",
             # Cross-region inference fans one call out to models in several
-            # regions, so model/profile/guardrail ARNs need region + id wildcards.
+            # regions, so model/profile ARNs need region + id wildcards.
             "Resource::arn:<AWS::Partition>:bedrock:*::foundation-model/*",
             "Resource::arn:<AWS::Partition>:bedrock:*::inference-profile/*",
             # The account renders as the <AWS::AccountId> token for an
@@ -147,7 +147,7 @@ def apply(stacks: dict[str, Any], config: DeploymentConfig) -> None:
             {
                 "regex": r"/^Resource::arn:<AWS::Partition>:bedrock:\*:"
                 r"(<AWS::AccountId>|\d{12}):"
-                r"(inference-profile|guardrail)\/\*$/"
+                r"inference-profile\/\*$/"
             },
             # Data-plane paths under this one Neptune cluster / OpenSearch domain.
             {
@@ -169,7 +169,7 @@ def apply(stacks: dict[str, Any], config: DeploymentConfig) -> None:
             "Action::kms:ReEncrypt*",
         ],
         "Task role wildcards, each scoped to this deployment's resources: "
-        "Bedrock model/profile/guardrail ARNs (cross-region inference spans "
+        "Bedrock model/profile ARNs (cross-region inference spans "
         "regions; Rerank and inference-profile reads have no resource scoping), "
         "the Neptune cluster and OpenSearch domain data paths, and CDK "
         "grant-generated S3/KMS actions on the cache bucket and CMK.",

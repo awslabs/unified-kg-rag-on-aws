@@ -211,15 +211,18 @@ class ComputeStack(Stack):
                 resources=["*"],
             )
         )
-        # Applying a Bedrock Guardrail on Converse/InvokeModel needs its own
-        # action, scoped to guardrails in this account (the guardrail lives in
-        # the Bedrock runtime region, which may differ from the deploy region).
-        role.add_to_policy(
-            iam.PolicyStatement(
-                actions=["bedrock:ApplyGuardrail"],
-                resources=[f"arn:{partition}:bedrock:*:{self.account}:guardrail/*"],
+        # The app screens each query and answer with ApplyGuardrail (and, under
+        # apply_to: all, attaches the guardrail to ingestion model calls, which
+        # authorizes the same action). Granted on the one guardrail the task
+        # is given, in the Bedrock runtime region where it lives; no guardrail,
+        # no grant.
+        guardrail_arn = self._guardrail_arn()
+        if guardrail_arn is not None:
+            role.add_to_policy(
+                iam.PolicyStatement(
+                    actions=["bedrock:ApplyGuardrail"], resources=[guardrail_arn]
+                )
             )
-        )
         # Neptune data-plane IAM auth. `connect` alone authorizes opening the
         # WebSocket but NOT running Gremlin traversals — reads/writes need the
         # explicit data-access actions, else queries return HTTP 403. Scoped to
@@ -271,6 +274,16 @@ class ComputeStack(Stack):
                 )
             )
         return role
+
+    def _guardrail_arn(self) -> str | None:
+        """ARN of the guardrail the task uses (``guardrail_identifier``)."""
+        identifier = self.guardrail_identifier
+        if not identifier:
+            return None
+        if identifier.startswith("arn:"):
+            return identifier
+        region = self.config.bedrock_region or self.region
+        return f"arn:{self.partition}:bedrock:{region}:{self.account}:guardrail/{identifier}"
 
     # ----------------------------------------------------- task definition
     def _build_task_definition(

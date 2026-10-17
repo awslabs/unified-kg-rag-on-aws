@@ -56,7 +56,7 @@ from unified_kg_rag.adapters.search_strategies import (  # noqa: F401
     SimpleSearchStrategy,
 )
 from unified_kg_rag.adapters.storage.filter_schema import union_filter_fields
-from unified_kg_rag.application.bootstrap import build_providers
+from unified_kg_rag.application.bootstrap import build_providers, build_query_guard
 from unified_kg_rag.application.observability import configure_observability
 from unified_kg_rag.domain.models import (
     Config,
@@ -83,6 +83,12 @@ from unified_kg_rag.domain.retrieval.strategy_registry import (
     QueryInput,
     get_strategy_spec,
     routable_strategies,
+)
+from unified_kg_rag.ports.guardrail import (
+    ContentGuardPort,
+    GuardAction,
+    GuardSource,
+    GuardVerdict,
 )
 from unified_kg_rag.ports.model_factory import LLMFactoryPort
 from unified_kg_rag.shared import (
@@ -231,7 +237,11 @@ class RAGOutput(BaseModel):
     ``sources`` lists the documents and graph elements the answer's context
     was built from; ``search_results`` holds the raw retrieval results.
     ``metadata["error"]`` is ``True`` on the degraded answer returned for a
-    failed query when ``processing.ignore_errors`` is set.
+    failed query when ``processing.ignore_errors`` is set. With a guardrail
+    configured, ``metadata["guardrail"]`` lists its interventions (source,
+    action, policies), and ``metadata["blocked"]`` is ``True`` when it
+    blocked the query (the answer is then its blocked message and nothing
+    was retrieved).
     """
 
     answer: str = Field(description="The generated answer to the user's query")
@@ -279,7 +289,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
 
     Backends are injectable: ``providers`` (or the ``model_factory``
     shorthand) for models, ``retriever_builders`` for the graph and document
-    stores, and ``memory_manager`` for conversation memory.
+    stores, ``memory_manager`` for conversation memory, and ``guard`` for the
+    screening of queries and answers (default: the Bedrock guardrail of
+    ``aws.bedrock.guardrail`` when an identifier is set).
     """
 
     def __init__(
@@ -294,6 +306,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         retriever_builders: (
             dict[RetrieverRole, Callable[[], BaseGraphRAGRetriever]] | None
         ) = None,
+        guard: ContentGuardPort | None = None,
     ) -> None:
         super().__init__()
         self.config = config
@@ -329,6 +342,15 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         )
         self.mode = mode
         self.ignore_errors = self.config.processing.ignore_errors
+        # Screens the raw query before anything reads it and the final answer
+        # after generation; the model calls in between run unguarded (see
+        # GuardrailConfig).
+        self.guard: ContentGuardPort | None = guard or build_query_guard(
+            config, self.providers
+        )
+        guardrail = self.config.aws.bedrock.guardrail
+        self._screen_inputs = self.guard is not None and guardrail.check_input
+        self._screen_outputs = self.guard is not None and guardrail.check_output
         # Conversation memory is process-wide by default, so history survives
         # across chain instances (e.g. a chain per request); the first chain's
         # config creates it. Inject a MemoryManager to isolate a chain's
@@ -1444,6 +1466,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         attributes: dict[str, Any] = {
             "kg_rag.error": bool(metadata.get("error")),
             "kg_rag.abstained": bool(metadata.get("abstained")),
+            "kg_rag.blocked": bool(metadata.get("blocked")),
         }
         if isinstance(output, RAGOutput):
             attributes["kg_rag.strategy"] = output.search_results.search_strategy
@@ -1461,12 +1484,32 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             query_id=uuid.uuid4().hex[:12], conversation_id=rag_input.conversation_id
         )
 
+        guard_records: list[dict[str, Any]] = []
         try:
+            blocking = await self._screen_input(rag_input, input_dict, guard_records)
+            if blocking is not None:
+                # Not written to memory: a refused turn is no history.
+                return self._short_circuit_output(
+                    rag_input,
+                    input_dict,
+                    answer=blocking.text,
+                    strategy="blocked",
+                    metadata={"blocked": True, "guardrail": guard_records},
+                )
             output: RAGOutput | dict[str, Any] = await self.chain.ainvoke(
                 input_dict, config
             )
             # RAG mode ends in _format_output_step (a RAGOutput); SEARCH mode
             # in _format_search_output_step (a dict). Both are returned as is.
+            if isinstance(output, RAGOutput):
+                output.answer = await self._screen_output(output.answer, guard_records)
+            if guard_records:
+                metadata = (
+                    output.metadata
+                    if isinstance(output, RAGOutput)
+                    else output.setdefault("metadata", {})
+                )
+                metadata["guardrail"] = guard_records
             await self._save_memory(output)
             return output
         except Exception as e:
@@ -1482,37 +1525,93 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             span.record_exception(e)
             span.set_error(type(e).__name__)
             span.set_attribute(ERROR_TYPE, type(e).__name__)
-            processing_time = time.time() - input_dict["start_time"]
-
-            search_result = SearchResult(
-                query=SearchQuery(query=rag_input.query),
-                results=[],
-                total_results=0,
-                search_strategy="error",
-                processing_time=processing_time,
-                metadata={"error": str(e)},
-            )
-            processed_query = ProcessedQuery(
-                original_query=rag_input.query, final_query=rag_input.query
-            )
-            error_metadata = {"error": True, "processing_time": processing_time}
-
-            if self.mode == ChainMode.SEARCH:
-                return {
-                    "search_results": search_result.model_dump(),
-                    "processed_query": processed_query.model_dump(),
-                    "metadata": error_metadata,
-                }
-            return RAGOutput(
+            return self._short_circuit_output(
+                rag_input,
+                input_dict,
                 answer=DEFAULT_ERROR_MESSAGE,
-                sources=[],
-                search_results=search_result,
-                conversation_id=rag_input.conversation_id,
-                processed_query=processed_query,
-                metadata=error_metadata,
+                strategy="error",
+                metadata={"error": True},
+                search_metadata={"error": str(e)},
             )
         finally:
             reset_contextvars(**tokens)
+
+    def _short_circuit_output(
+        self,
+        rag_input: RAGInput,
+        input_dict: dict[str, Any],
+        *,
+        answer: str,
+        strategy: str,
+        metadata: dict[str, Any],
+        search_metadata: dict[str, Any] | None = None,
+    ) -> RAGOutput | dict[str, Any]:
+        """The result of a query that ended before retrieval (error, block)."""
+        processing_time = time.time() - input_dict["start_time"]
+        search_result = SearchResult(
+            query=SearchQuery(query=rag_input.query),
+            results=[],
+            total_results=0,
+            search_strategy=strategy,
+            processing_time=processing_time,
+            metadata=search_metadata or {},
+        )
+        processed_query = ProcessedQuery(
+            original_query=rag_input.query, final_query=rag_input.query
+        )
+        metadata = {**metadata, "processing_time": processing_time}
+        if self.mode == ChainMode.SEARCH:
+            return {
+                "search_results": search_result.model_dump(),
+                "processed_query": processed_query.model_dump(),
+                "metadata": metadata,
+            }
+        return RAGOutput(
+            answer=answer,
+            sources=[],
+            search_results=search_result,
+            conversation_id=rag_input.conversation_id,
+            processed_query=processed_query,
+            metadata=metadata,
+        )
+
+    async def _screen_input(
+        self,
+        rag_input: RAGInput,
+        input_dict: dict[str, Any],
+        records: list[dict[str, Any]],
+    ) -> GuardVerdict | None:
+        """Screen the raw query; the blocking verdict, or ``None`` to go on.
+
+        A masked query (e.g. PII anonymized) replaces the query in
+        ``rag_input`` and ``input_dict``, so retrieval, the model calls and
+        conversation memory only ever see the masked text.
+        """
+        if not self._screen_inputs:
+            return None
+        assert self.guard is not None
+        verdict = await self.guard.acheck(rag_input.query, GuardSource.INPUT)
+        if not verdict.intervened:
+            return None
+        records.append(_guard_record(GuardSource.INPUT, verdict))
+        if verdict.action is GuardAction.BLOCKED:
+            return verdict
+        rag_input.query = input_dict["query"] = verdict.text
+        return None
+
+    async def _screen_output(self, answer: str, records: list[dict[str, Any]]) -> str:
+        """The answer as the user may see it: unchanged, masked or refused.
+
+        The fixed no-context answer is not model output and is not screened.
+        """
+        if not self._screen_outputs or not answer or answer == NO_CONTEXT_ANSWER:
+            return answer
+        assert self.guard is not None
+        verdict = await self.guard.acheck(answer, GuardSource.OUTPUT)
+        if not verdict.intervened:
+            return answer
+        records.append(_guard_record(GuardSource.OUTPUT, verdict))
+        return verdict.text
 
     @staticmethod
     def _prepare_invoke(
@@ -1592,7 +1691,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         steps ``ainvoke`` uses); only the answer-generation LLM is streamed.
         An empty context yields the standard no-data answer once without
         calling the LLM. On success the full answer is written to conversation
-        memory exactly as ``ainvoke`` would.
+        memory exactly as ``ainvoke`` would. With a guardrail, a blocked query
+        yields the blocked message once, and with ``check_output`` the answer
+        is generated in full, screened, and yielded as one chunk.
         """
         if self.mode == ChainMode.SEARCH:
             logger.warning("Streaming is not supported in SEARCH mode.")
@@ -1600,6 +1701,8 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
 
         rag_input, input_dict = self._prepare_invoke(input)
         chunks: list[str] = []
+        delivered = False
+        guard_records: list[dict[str, Any]] = []
         try:
             # Bound for retrieval and context building only: they run before
             # the first yield, in one context. Each later step of the generator
@@ -1618,11 +1721,18 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
                         "kg_rag.query", self._query_span_attributes(rag_input)
                     ),
                 ):
-                    state: dict[str, Any] = await self._stream_context_chain.ainvoke(
-                        input_dict, config
+                    blocking = await self._screen_input(
+                        rag_input, input_dict, guard_records
                     )
+                    if blocking is None:
+                        state: dict[str, Any] = (
+                            await self._stream_context_chain.ainvoke(input_dict, config)
+                        )
             finally:
                 reset_contextvars(**tokens)
+            if blocking is not None:
+                yield blocking.text
+                return
             answer_runnable = self._answer_generation_step(state)
             # The answer's model span starts after the query span has ended,
             # in a trace of its own; its run metadata carries the session and
@@ -1635,7 +1745,15 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
                 if not text:
                     continue
                 chunks.append(text)
-                yield text
+                if not self._screen_outputs:
+                    delivered = True
+                    yield text
+            if self._screen_outputs:
+                # Nothing was delivered yet: the user sees only screened text.
+                chunks = [await self._screen_output("".join(chunks), guard_records)]
+                if chunks[0]:
+                    delivered = True
+                    yield chunks[0]
         except Exception as e:
             if not self.ignore_errors:
                 logger.error(
@@ -1652,11 +1770,20 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             )
             # Mirror ainvoke's degraded answer. If part of the answer was
             # already delivered, append the notice so the truncation is visible.
-            yield f"\n\n{DEFAULT_ERROR_MESSAGE}" if chunks else DEFAULT_ERROR_MESSAGE
+            yield f"\n\n{DEFAULT_ERROR_MESSAGE}" if delivered else DEFAULT_ERROR_MESSAGE
             return
 
         state["answer"] = "".join(chunks)
         await self._save_memory(self._format_output_step(state))
+
+
+def _guard_record(source: GuardSource, verdict: GuardVerdict) -> dict[str, Any]:
+    """One guardrail intervention as reported in ``RAGOutput.metadata``."""
+    return {
+        "source": source.value,
+        "action": verdict.action.value,
+        "policies": verdict.policies,
+    }
 
 
 def _captured_content(

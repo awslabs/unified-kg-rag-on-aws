@@ -136,6 +136,21 @@ Defaults. Set the old value explicitly to keep the previous behaviour.
   to keep Haiku 4.5) (#170).
 - The Bedrock guardrail applies to the query path only
   (`aws.bedrock.guardrail.apply_to: all` restores it) (#104).
+- The Bedrock guardrail screens the raw user query and the final answer with
+  `ApplyGuardrail` (`aws.bedrock.guardrail.check_input` / `check_output`,
+  both on) instead of being attached to every query-path model call. Attached,
+  it evaluated whole prompts: on Converse the retrieved corpus and developer
+  instructions were judged as user input (false prompt-attack blocks, cost
+  growing with context × calls), and on InvokeModel the prompt-attack filter
+  did nothing without input tags. A blocked query now gets the blocked
+  message without retrieval (`RAGOutput.metadata.blocked`), a masked one
+  continues with the masked text, interventions are listed in
+  `metadata.guardrail`, and a guardrail error fails the query. With
+  `check_output`, `stream` / `astream` deliver the answer as one chunk after
+  the check. `apply_to: all` now adds the guardrail to ingestion and
+  evaluation calls only. Upgrade: a role outside the CDK stack needs
+  `bedrock:ApplyGuardrail` on the guardrail ARN; caches and indexes keep
+  their keys (#PR).
 - `graph.community_detection.auto_resolution` defaults to `false` (#141).
 - The `retrieval` evaluator's k counts distinct files, not sources: the
   reported sources are flattened into their files in rank order (a graph
@@ -1998,6 +2013,10 @@ Library API (Python callers and custom backends).
 ### Security
 - Prompts delimit corpus and retrieved text as data, and inputs cannot close
   their delimiter tags (#179, #182).
+- The CDK task role's `bedrock:ApplyGuardrail` is granted on the one
+  guardrail passed as `guardrail_identifier` (in `bedrock_region`) instead of
+  every guardrail in the account and region, and not at all without one
+  (#PR).
 - INFO-level logs no longer carry query text, entity names or model output;
   `run-rag` strips terminal control characters from output; the CLIs warn
   when LangSmith tracing is on (#156, #173).

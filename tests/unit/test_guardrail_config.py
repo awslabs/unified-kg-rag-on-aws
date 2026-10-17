@@ -41,14 +41,19 @@ def test_disabled_by_default() -> None:
     assert "guardrails" not in config
 
 
+# Only ingestion/evaluation models get an attached guardrail (apply_to: all).
+_INGESTION_MODEL = ModelPurpose.INGESTION
+
+
 def test_cross_region_uses_converse_shape() -> None:
     cfg = Config()
     cfg.aws.bedrock.guardrail.identifier = "gr-123"
     cfg.aws.bedrock.guardrail.version = "3"
     cfg.aws.bedrock.guardrail.trace = True
+    cfg.aws.bedrock.guardrail.apply_to = "all"
     f = _factory_with(cfg)
     config: dict = {}
-    f._apply_guardrail(config, is_cross_region=True)
+    f._apply_guardrail(config, is_cross_region=True, purpose=_INGESTION_MODEL)
     assert config["guardrail_config"] == {
         "guardrailIdentifier": "gr-123",
         "guardrailVersion": "3",
@@ -60,9 +65,10 @@ def test_cross_region_uses_converse_shape() -> None:
 def test_non_cross_region_uses_invoke_shape() -> None:
     cfg = Config()
     cfg.aws.bedrock.guardrail.identifier = "gr-123"
+    cfg.aws.bedrock.guardrail.apply_to = "all"
     f = _factory_with(cfg)
     config: dict = {}
-    f._apply_guardrail(config, is_cross_region=False)
+    f._apply_guardrail(config, is_cross_region=False, purpose=_INGESTION_MODEL)
     assert config["guardrails"]["guardrailIdentifier"] == "gr-123"
     # InvokeModel treats trace as a truthiness flag, so it must be a real bool
     # (a string like "disabled" would wrongly enable tracing).
@@ -74,9 +80,10 @@ def test_invoke_model_trace_enabled_is_bool_true() -> None:
     cfg = Config()
     cfg.aws.bedrock.guardrail.identifier = "gr-123"
     cfg.aws.bedrock.guardrail.trace = True
+    cfg.aws.bedrock.guardrail.apply_to = "all"
     f = _factory_with(cfg)
     config: dict = {}
-    f._apply_guardrail(config, is_cross_region=False)
+    f._apply_guardrail(config, is_cross_region=False, purpose=_INGESTION_MODEL)
     assert config["guardrails"]["trace"] is True
 
 
@@ -101,7 +108,7 @@ def test_guardrail_identifier_from_env(monkeypatch) -> None:
 # --- Guardrail scope (apply_to) and intervention visibility -----------------
 
 
-def _guarded_config(apply_to: str = "query") -> Config:
+def _guarded_config(apply_to: str = "all") -> Config:
     cfg = Config()
     cfg.aws.bedrock.guardrail.identifier = "gr-123"
     cfg.aws.bedrock.guardrail.apply_to = apply_to  # type: ignore[assignment]
@@ -124,10 +131,12 @@ def test_apply_to_rejects_unknown_value() -> None:
 @pytest.mark.parametrize(
     ("apply_to", "purpose", "expected"),
     [
-        ("query", ModelPurpose.QUERY, True),
+        # Query models are screened at the chain's edges (ApplyGuardrail on
+        # the raw query and the answer), never by an attached guardrail.
+        ("query", ModelPurpose.QUERY, False),
         ("query", ModelPurpose.INGESTION, False),
         ("query", ModelPurpose.EVALUATION, False),
-        ("all", ModelPurpose.QUERY, True),
+        ("all", ModelPurpose.QUERY, False),
         ("all", ModelPurpose.INGESTION, True),
         ("all", ModelPurpose.EVALUATION, True),
     ],
@@ -160,7 +169,7 @@ def test_get_model_purpose_kwarg_reaches_guardrail(mocker) -> None:
     f._apply_model_features({}, info, True, model_purpose=ModelPurpose.INGESTION)
     f._apply_model_features({}, info, True)
     assert spy.call_args_list[0].args[2] is ModelPurpose.INGESTION
-    # Unmarked callers default to QUERY (guarded, the pre-existing behaviour).
+    # Unmarked callers default to QUERY.
     assert spy.call_args_list[1].args[2] is ModelPurpose.QUERY
 
 
@@ -170,7 +179,7 @@ def test_handler_appended_to_existing_callbacks() -> None:
     existing = BaseCallbackHandler()
     f = _factory_with(_guarded_config())
     config: dict = {"callbacks": [existing]}
-    f._apply_guardrail(config, is_cross_region=True)
+    f._apply_guardrail(config, is_cross_region=True, purpose=_INGESTION_MODEL)
     assert config["callbacks"][0] is existing
     assert isinstance(config["callbacks"][1], GuardrailInterventionHandler)
 
@@ -182,7 +191,7 @@ def test_handler_added_to_copy_of_caller_callback_manager() -> None:
     caller_manager = CallbackManager(handlers=[existing])
     f = _factory_with(_guarded_config())
     config: dict = {"callbacks": caller_manager}
-    f._apply_guardrail(config, is_cross_region=True)
+    f._apply_guardrail(config, is_cross_region=True, purpose=_INGESTION_MODEL)
 
     # The caller's manager is untouched (it may be shared by unguarded models).
     assert caller_manager.handlers == [existing]
@@ -203,8 +212,8 @@ def test_shared_callback_manager_not_polluted_across_models() -> None:
     f = _factory_with(_guarded_config())
     first: dict = {"callbacks": shared}
     second: dict = {"callbacks": shared}
-    f._apply_guardrail(first, is_cross_region=True)
-    f._apply_guardrail(second, is_cross_region=False)
+    f._apply_guardrail(first, is_cross_region=True, purpose=_INGESTION_MODEL)
+    f._apply_guardrail(second, is_cross_region=False, purpose=_INGESTION_MODEL)
     assert shared.handlers == []
     assert len(first["callbacks"].handlers) == 1
     assert len(second["callbacks"].handlers) == 1
@@ -346,8 +355,8 @@ def test_output_fixing_llm_inherits_purpose() -> None:
 
 _INGESTION = "unified_kg_rag.adapters.ingestion"
 # Every component whose LLM chains process corpus text. Each must request
-# INGESTION models so neither the query guardrail scope nor the query retry
-# (which would stack on BatchProcessor's) is attached.
+# INGESTION models so the query retry (which would stack on BatchProcessor's)
+# is not attached and the guardrail only under apply_to: all.
 _INGESTION_COMPONENTS = {
     "chunker": (f"{_INGESTION}.chunker", "IntelligentTextChunker"),
     "translator": (f"{_INGESTION}.translator", "TextUnitTranslator"),

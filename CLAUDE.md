@@ -31,7 +31,8 @@ ports → domain`, with `shared` as a cross-cutting kernel any layer may use.
   (Bedrock, Neptune/OpenSearch clients, S3), `local/` (Ollama/OpenAI-compatible,
   graph store `sqlite_graph.py`, vector engine `search_engine/`). Role:
   `storage/` (indexers, incl. `sqlite_graph_indexer.py`), `retrievers/`,
-  `doc_status/` (DynamoDB/SQLite `DocStatusPort` impls). Also
+  `doc_status/` (DynamoDB/SQLite `DocStatusPort` impls), `guardrail/`
+  (Bedrock `ContentGuardPort` impl). Also
   `llm/` (provider-neutral chain assembly, retry, token estimate),
   `search_strategies/`, `retrieval/` (base + hybrid scorer + token/memory
   managers), `ingestion/` (LLM/IO-coupled chunker/extractor/loader/parser/

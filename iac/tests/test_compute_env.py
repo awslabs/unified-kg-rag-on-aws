@@ -19,7 +19,9 @@ from iac.stacks.storage_stack import StorageStack
 _ENV = cdk.Environment(account="111111111111", region="us-west-2")
 
 
-def _compute_template(context: dict[str, Any] | None = None) -> Template:
+def _compute_template(
+    context: dict[str, Any] | None = None, guardrail_identifier: str | None = None
+) -> Template:
     app = cdk.App(context=context or {})
     config = DeploymentConfig.from_context(app)
     networking = NetworkingStack(app, "Net", config=config, env=_ENV)
@@ -30,6 +32,7 @@ def _compute_template(context: dict[str, Any] | None = None) -> Template:
         config=config,
         networking=networking,
         storage=storage,
+        guardrail_identifier=guardrail_identifier,
         env=_ENV,
     )
     return Template.from_stack(compute)
@@ -180,6 +183,36 @@ def test_count_tokens_is_granted_on_the_model_resources() -> None:
         if "bedrock:InvokeModel" in s["Action"]
     ]
     assert "bedrock:CountTokens" in statement["Action"]
+
+
+def _apply_guardrail_resources(template: Template) -> list[Any]:
+    return [
+        resource
+        for p in template.find_resources("AWS::IAM::Policy").values()
+        for s in p["Properties"]["PolicyDocument"]["Statement"]
+        if "bedrock:ApplyGuardrail" in s["Action"]
+        for resource in (
+            s["Resource"] if isinstance(s["Resource"], list) else [s["Resource"]]
+        )
+    ]
+
+
+def test_apply_guardrail_is_granted_on_the_one_guardrail_only() -> None:
+    # No guardrail given, no grant (previously guardrail/* in every region).
+    assert _apply_guardrail_resources(_compute_template()) == []
+    resources = _apply_guardrail_resources(
+        _compute_template({"bedrock_region": "us-east-1"}, guardrail_identifier="gr-1")
+    )
+    assert len(resources) == 1
+    rendered = json.dumps(resources[0])
+    assert ":bedrock:us-east-1:111111111111:guardrail/gr-1" in rendered
+    assert "*" not in rendered
+
+
+def test_apply_guardrail_accepts_a_guardrail_arn() -> None:
+    arn = "arn:aws:bedrock:us-west-2:111111111111:guardrail/gr-2"
+    template = _compute_template(guardrail_identifier=arn)
+    assert _apply_guardrail_resources(template) == [arn]
 
 
 def test_cluster_keeps_container_insights_on() -> None:

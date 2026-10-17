@@ -3,7 +3,7 @@
 """Architecture guard: the adapter packages keep their two roles apart.
 
 Vendor packages (``adapters/aws``, ``adapters/local``) hold technology
-bindings; role packages (``storage``, ``retrievers``, ``doc_status``) hold the
+bindings; role packages (``storage``, ``retrievers``, ``doc_status``, ``guardrail``) hold the
 port implementations built on them. A role package may import a vendor one,
 never the reverse, so a binding never depends on a port implementation.
 """
@@ -19,7 +19,7 @@ pytestmark = pytest.mark.unit
 
 _ADAPTERS = Path(__file__).resolve().parents[2] / "unified_kg_rag" / "adapters"
 _VENDOR_PACKAGES = ("aws", "local")
-_ROLE_PACKAGES = ("storage", "retrievers", "doc_status")
+_ROLE_PACKAGES = ("storage", "retrievers", "doc_status", "guardrail")
 
 
 def _imported_modules(py_file: Path) -> set[str]:
