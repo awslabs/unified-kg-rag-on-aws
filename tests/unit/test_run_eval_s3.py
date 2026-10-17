@@ -154,8 +154,8 @@ def test_upload_to_missing_bucket_raises(s3, tmp_path: Path) -> None:
 async def test_runner_downloads_dataset_and_uploads_outputs(s3, eval_config) -> None:
     uri = f"s3://{BUCKET}/eval/data.json"
     s3.put_object(Bucket=BUCKET, Key="eval/data.json", Body=json.dumps(DATASET))
-    args = _args("--eval-data-path", uri, "--outputs-directory", f"s3://{BUCKET}/out/")
-    assert args.eval_data_path == uri  # not collapsed to a Path
+    args = _args("--data-path", uri, "--output-directory", f"s3://{BUCKET}/out/")
+    assert args.data_path == uri  # not collapsed to a Path
 
     assert await run_evaluation.EvaluationRunner(args, _Chain(), eval_config).run() == 0
 
@@ -167,7 +167,7 @@ async def test_runner_downloads_dataset_and_uploads_outputs(s3, eval_config) -> 
     assert saved["configuration"]["outputs_directory"] == f"s3://{BUCKET}/out/"
     manifest = saved["run_manifest"]
     assert manifest["dataset"]["path"] == uri
-    assert manifest["cli_args"]["eval_data_path"] == uri
+    assert manifest["cli_args"]["data_path"] == uri
     assert manifest["dataset"]["num_queries"] == 1
 
 
@@ -177,9 +177,9 @@ async def test_runner_s3_dataset_with_local_outputs(
     s3.put_object(Bucket=BUCKET, Key="data.json", Body=json.dumps(DATASET))
     out = tmp_path / "out"
     args = _args(
-        "--eval-data-path",
+        "--data-path",
         f"s3://{BUCKET}/data.json",
-        "--outputs-directory",
+        "--output-directory",
         str(out),
     )
     assert await run_evaluation.EvaluationRunner(args, _Chain(), eval_config).run() == 0
@@ -196,7 +196,7 @@ async def test_runner_upload_failure_exits_non_zero_and_keeps_results(
     work_dir.mkdir()
     mocker.patch.object(run_evaluation.tempfile, "mkdtemp", return_value=str(work_dir))
     args = _args(
-        "--eval-data-path", str(data), "--outputs-directory", "s3://no-such-bucket/out"
+        "--data-path", str(data), "--output-directory", "s3://no-such-bucket/out"
     )
     assert await run_evaluation.EvaluationRunner(args, _Chain(), eval_config).run() == 1
     assert list((work_dir / "outputs").glob("evaluation_summary_*.json"))
@@ -210,9 +210,9 @@ async def test_runner_cleans_up_work_dir_on_success(
     work_dir.mkdir()
     mocker.patch.object(run_evaluation.tempfile, "mkdtemp", return_value=str(work_dir))
     args = _args(
-        "--eval-data-path",
+        "--data-path",
         f"s3://{BUCKET}/data.json",
-        "--outputs-directory",
+        "--output-directory",
         f"s3://{BUCKET}/out",
     )
     assert await run_evaluation.EvaluationRunner(args, _Chain(), eval_config).run() == 0
@@ -220,7 +220,7 @@ async def test_runner_cleans_up_work_dir_on_success(
 
 
 async def test_runner_missing_s3_dataset_raises(s3, eval_config) -> None:
-    args = _args("--eval-data-path", f"s3://{BUCKET}/missing.json")
+    args = _args("--data-path", f"s3://{BUCKET}/missing.json")
     with pytest.raises(AWSServiceError, match="missing.json"):
         await run_evaluation.EvaluationRunner(args, _Chain(), eval_config).run()
 
@@ -228,15 +228,15 @@ async def test_runner_missing_s3_dataset_raises(s3, eval_config) -> None:
 @pytest.mark.parametrize(
     "argv",
     [
-        ["--eval-data-path", "s3://my-bucket/"],
-        ["--eval-data-path", "s3://Bad_Bucket/d.json"],
-        ["--eval-data-path", "s3://my-bucket/d.json", "--outputs-directory", "s3://"],
+        ["--data-path", "s3://my-bucket/"],
+        ["--data-path", "s3://Bad_Bucket/d.json"],
+        ["--data-path", "s3://my-bucket/d.json", "--output-directory", "s3://"],
     ],
 )
 def test_runner_rejects_malformed_uris_before_running(eval_config, argv) -> None:
     with pytest.raises(SystemExit) as exc:
         run_evaluation.EvaluationRunner(_args(*argv), _Chain(), eval_config)
-    assert exc.value.code == 1
+    assert exc.value.code == 2  # a usage error
 
 
 async def test_runner_local_paths_never_create_an_s3_client(
@@ -245,8 +245,8 @@ async def test_runner_local_paths_never_create_an_s3_client(
     data = tmp_path / "eval.json"
     data.write_text(json.dumps(DATASET))
     client = mocker.patch.object(run_evaluation, "s3_client_for")
-    args = _args("--eval-data-path", str(data), "--outputs-directory", str(tmp_path))
-    assert args.eval_data_path == data  # local paths still parse to a Path
+    args = _args("--data-path", str(data), "--output-directory", str(tmp_path))
+    assert args.data_path == data  # local paths still parse to a Path
     assert await run_evaluation.EvaluationRunner(args, _Chain(), eval_config).run() == 0
     client.assert_not_called()
     assert list(tmp_path.glob("evaluation_summary_*.json"))
@@ -256,7 +256,7 @@ def test_main_reports_s3_errors_and_exits_1(eval_config, mocker, monkeypatch) ->
     import sys
 
     monkeypatch.setattr(
-        sys, "argv", ["run-eval", "--eval-data-path", "s3://my-bucket/d.json"]
+        sys, "argv", ["run-eval", "--data-path", "s3://my-bucket/d.json"]
     )
     mocker.patch.object(run_evaluation, "missing_endpoints_error", return_value=None)
     mocker.patch.object(run_evaluation, "GraphRAGChain")
@@ -293,7 +293,7 @@ def test_main_reports_an_invalid_dataset_and_exits_2(
 
     dataset = tmp_path / "eval.json"
     dataset.write_text(content, encoding="utf-8")
-    monkeypatch.setattr(sys, "argv", ["run-eval", "--eval-data-path", str(dataset)])
+    monkeypatch.setattr(sys, "argv", ["run-eval", "--data-path", str(dataset)])
     mocker.patch.object(run_evaluation, "missing_endpoints_error", return_value=None)
     chain = mocker.MagicMock()
     chain.aclose = mocker.AsyncMock()

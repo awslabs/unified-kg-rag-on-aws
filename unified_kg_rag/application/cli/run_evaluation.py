@@ -30,6 +30,16 @@ from unified_kg_rag.application.cli.config_args import (
     config_path_arg,
     exit_on_config_error,
 )
+from unified_kg_rag.application.cli.conventions import (
+    EXIT_FAILURE,
+    EXIT_INTERRUPTED,
+    EXIT_USAGE,
+    add_output_format_argument,
+    exits_on_sigterm,
+    json_output,
+    print_json,
+    usage_error,
+)
 from unified_kg_rag.application.cli.help_text import doc_epilog
 from unified_kg_rag.application.cli.preflight import (
     missing_endpoints_error,
@@ -80,7 +90,7 @@ def _failure_rate(value: str) -> float:
     return rate
 
 
-def _eval_data_path(value: str) -> str | Path:
+def _data_path(value: str) -> str | Path:
     """An ``s3://`` URI stays a string (``Path`` would collapse its ``//``)."""
     return value if is_s3_uri(value) else Path(value)
 
@@ -122,17 +132,18 @@ class CommandLineInterface:
     @staticmethod
     def _setup_arguments() -> argparse.ArgumentParser:
         parser = argparse.ArgumentParser(
+            allow_abbrev=False,
             description="GraphRAG Evaluation System - Assess retrieval and generation performance",
             formatter_class=argparse.RawDescriptionHelpFormatter,
             epilog=doc_epilog(
                 "6-evaluation-run-eval",
-                "run-eval --eval-data-path eval_data.json --config-path config.yaml",
+                "run-eval --data-path eval_data.json --config-path config.yaml",
             ),
         )
 
         parser.add_argument(
-            "--eval-data-path",
-            type=_eval_data_path,
+            "--data-path",
+            type=_data_path,
             required=True,
             help=(
                 "Path to the unified evaluation data file (JSON format), containing "
@@ -141,7 +152,7 @@ class CommandLineInterface:
             ),
         )
         parser.add_argument(
-            "--outputs-directory",
+            "--output-directory",
             type=str,
             help=(
                 "Directory to save evaluation results (default: "
@@ -194,6 +205,7 @@ class CommandLineInterface:
             type=config_path_arg,
             help="Path to custom configuration file",
         )
+        add_output_format_argument(parser)
         add_provider_arguments(parser)
         return parser
 
@@ -210,25 +222,25 @@ class EvaluationRunner:
         self.args = args
         self.config = config
         self.rag_chain = rag_chain
+        self.json_output = json_output(args)
         self.evaluation_manager: EvaluationManager | None = None
         self._validate_args()
 
-    def _outputs_directory(self) -> str:
+    def _output_directory(self) -> str:
         return str(
-            self.args.outputs_directory or self.config.evaluation.outputs_directory
+            self.args.output_directory or self.config.evaluation.outputs_directory
         )
 
     def _validate_args(self) -> None:
-        eval_data_path = self.args.eval_data_path
+        eval_data_path = self.args.data_path
         # Malformed S3 URIs fail here, before any model or store is touched.
         try:
             if is_s3_uri(eval_data_path):
                 parse_s3_uri(eval_data_path, require_key=True)
-            if is_s3_uri(self._outputs_directory()):
-                parse_s3_uri(self._outputs_directory(), require_key=False)
+            if is_s3_uri(self._output_directory()):
+                parse_s3_uri(self._output_directory(), require_key=False)
         except ConfigurationError as e:
-            console.print(f"[red]Error: {e}[/red]")
-            sys.exit(1)
+            usage_error(str(e))
         if is_s3_uri(eval_data_path):
             return
         if eval_data_path and not Path(eval_data_path).exists():
@@ -380,8 +392,8 @@ class EvaluationRunner:
 
     async def _run(self, work_dir: Path) -> tuple[int, bool]:
         """Run the evaluation; returns ``(exit code, keep work_dir)``."""
-        eval_data_uri = self.args.eval_data_path
-        outputs_target = self._outputs_directory()
+        eval_data_uri = self.args.data_path
+        outputs_target = self._output_directory()
         s3_client = (
             s3_client_for(self.config)
             if is_s3_uri(eval_data_uri) or is_s3_uri(outputs_target)
@@ -439,6 +451,8 @@ class EvaluationRunner:
             work_dir / "outputs" if is_s3_uri(outputs_target) else Path(outputs_target)
         )
         runs: dict[str, list[Run]] = {}
+        summaries: list[dict[str, Any]] = []
+        comparison: dict[str, Any] | None = None
         breaches: list[str] = []
         manifest: dict[str, Any] | None = None
         start_time = time.time()
@@ -480,7 +494,7 @@ class EvaluationRunner:
                 if is_s3_uri(eval_data_uri) and summary.run_manifest:
                     # Record where the dataset came from, not the temporary copy.
                     summary.run_manifest.get("dataset", {})["path"] = eval_data_uri
-                # The directory --outputs-directory chose, not the config default.
+                # The directory --output-directory chose, not the config default.
                 summary.configuration["outputs_directory"] = outputs_target
                 self.evaluation_manager.save_results(
                     results=results,
@@ -490,6 +504,23 @@ class EvaluationRunner:
                 )
                 manifest = manifest or summary.run_manifest
                 runs.setdefault(strategy, []).append((reports, results))
+                summaries.append(
+                    {
+                        "strategy": strategy,
+                        "repeat": repeat,
+                        **summary.model_dump(
+                            mode="json",
+                            include={
+                                "total_queries",
+                                "successful_evaluations",
+                                "failed_evaluations",
+                                "average_response_time",
+                                "metric_statistics",
+                                "metric_outcomes",
+                            },
+                        ),
+                    }
+                )
                 if not comparing:
                     self._print_summary(summary, time.time() - run_start)
                 breaches.extend(
@@ -538,17 +569,30 @@ class EvaluationRunner:
                 f"[red]Error: {upload_error}. Local results kept in "
                 f"'{local_outputs}'.[/red]"
             )
-            exit_code = 1
+            exit_code = EXIT_FAILURE
 
         if breaches:
             console.print(
                 f"[red]Failure budget exceeded ({'; '.join(breaches)}; allowed "
                 f"failure rate: {self.args.max_failure_rate}).[/red]"
             )
-            exit_code = 1
+            exit_code = EXIT_FAILURE
+        if self.json_output:
+            print_json(
+                {
+                    "output_directory": str(
+                        local_outputs if upload_error else outputs_target
+                    ),
+                    "upload_error": str(upload_error) if upload_error else None,
+                    "runs": summaries,
+                    "comparison": comparison,
+                    "failure_budget_breaches": breaches,
+                }
+            )
         return exit_code, upload_error is not None
 
 
+@exits_on_sigterm
 def main() -> None:
     load_cli_dotenv()
     try:
@@ -560,7 +604,7 @@ def main() -> None:
                 get_config(Path(args.config_path) if args.config_path else None),
                 args,
             )
-        setup_logging(config)
+        setup_logging(config, stream=sys.stderr if json_output(args) else None)
         if args.verbose:
             logging.getLogger("unified_kg_rag").setLevel(logging.DEBUG)
 
@@ -574,8 +618,7 @@ def main() -> None:
             f"search strategy '{','.join(args.search_strategy)}'",
         )
         if error:
-            console.print(f"[red]Error: {error}[/red]")
-            sys.exit(1)
+            usage_error(error)
 
         rag_chain = GraphRAGChain(config)
 
@@ -595,7 +638,7 @@ def main() -> None:
 
     except KeyboardInterrupt:
         console.print("\n[yellow]Evaluation interrupted by user.[/yellow]")
-        sys.exit(130)
+        sys.exit(EXIT_INTERRUPTED)
 
     except InvalidDatasetError as e:
         # An input error, like a usage error: no traceback.
@@ -603,18 +646,23 @@ def main() -> None:
             f"\n[red]Error: invalid evaluation dataset: {escape(str(e))}[/red]"
         )
         logger.error("Invalid evaluation dataset: %s", e)
-        sys.exit(2)
+        sys.exit(EXIT_USAGE)
 
-    except (AWSServiceError, ConfigurationError) as e:
+    except ConfigurationError as e:
+        console.print(f"\n[red]Error: {e}[/red]")
+        logger.error("Evaluation configuration error: %s", e)
+        sys.exit(EXIT_USAGE)
+
+    except AWSServiceError as e:
         # e.g. an s3:// dataset that cannot be downloaded.
         console.print(f"\n[red]Error: {e}[/red]")
         logger.error("Evaluation failed: %s", e)
-        sys.exit(1)
+        sys.exit(EXIT_FAILURE)
 
     except Exception as e:
         console.print(f"\n[red]An unexpected error occurred: {e}[/red]")
         logger.exception("Unexpected error during evaluation")
-        sys.exit(1)
+        sys.exit(EXIT_FAILURE)
 
 
 if __name__ == "__main__":

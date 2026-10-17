@@ -33,7 +33,7 @@ _PARSERS = {
     "run-rag": (run_rag_chain.CommandLineInterface._setup_arguments, ["-q", "x"]),
     "run-eval": (
         run_evaluation.CommandLineInterface._setup_arguments,
-        ["--eval-data-path", "eval.json"],
+        ["--data-path", "eval.json"],
     ),
     "run-prompt-tuning": (run_prompt_tuning._build_parser, ["--source-directory", "s"]),
     "run-visualization": (run_visualization._build_parser, ["--data-path", "v.json"]),

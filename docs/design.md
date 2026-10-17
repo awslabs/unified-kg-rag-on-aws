@@ -421,7 +421,7 @@ Each retriever build opens a Neptune WebSocket + thread pool and OpenSearch (a)s
 - **Answer-match evaluator** (`answer_match_evaluator.py`): `answer_contains` (headline) plus SQuAD-style normalized `exact_match` and `token_f1` (normalization keeps decimals and `C++`-style suffixes, so not leaderboard-comparable) against `answer` plus optional `metadata.answer_aliases` (max over references). Deterministic, no LLM; whitespace tokens, so for scripts without spaces token F1 degrades to exact match.
 - **Graph-aware evaluator** (`graph_aware_evaluator.py`): Computes the rate at which the ground truth's `expected_entities`/`expected_relationships` appear in the generated answer (= coverage = recall) as `ENTITY_COVERAGE`/`RELATIONSHIP_COVERAGE`. Deterministic, no LLM required. Precision/F1 are not produced because they would require enumerating the entities in the answer (impossible from free text) — to avoid exaggerating the signal as a duplicate of recall. Latin characters use word-boundary contiguous token matching ("AI" does not match inside "airport"); CJK without whitespace falls back to substring matching. Because answer-text coverage grows with answer length, it also reports `RETRIEVED_ENTITY_COVERAGE`/`RETRIEVED_RELATIONSHIP_COVERAGE` (the expectations matched against the entity names and relationship endpoints of the sources the answer model was given) and `ANSWER_LENGTH`. The manager injects the expectations via `result.metadata`, so the abstract signature is unchanged.
 
-CLI: `run-eval --eval-data-path <json> [--search-strategy ...]`.
+CLI: `run-eval --data-path <json> [--search-strategy ...]`.
 
 ---
 

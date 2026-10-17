@@ -18,6 +18,15 @@ from unified_kg_rag.application.cli.config_args import (
     config_path_arg,
     exit_on_config_error,
 )
+from unified_kg_rag.application.cli.conventions import (
+    EXIT_FAILURE,
+    EXIT_INTERRUPTED,
+    add_output_format_argument,
+    exits_on_sigterm,
+    json_output,
+    print_json,
+    usage_error,
+)
 from unified_kg_rag.application.cli.help_text import doc_epilog
 from unified_kg_rag.application.cli.preflight import missing_endpoints_error
 from unified_kg_rag.application.cli.provider_args import (
@@ -80,6 +89,7 @@ class CommandLineInterface:
     @staticmethod
     def _setup_arguments() -> argparse.ArgumentParser:
         parser = argparse.ArgumentParser(
+            allow_abbrev=False,
             description="GraphRAG Data Ingestion Pipeline - Process documents and build knowledge graphs",
             formatter_class=argparse.RawDescriptionHelpFormatter,
             epilog=doc_epilog(
@@ -96,11 +106,11 @@ class CommandLineInterface:
             "(falls back to the GRAPHRAG_SOURCE_DIRECTORY env var)",
         )
         parser.add_argument(
-            "--target-directory",
+            "--output-directory",
             type=str,
             help="Export each parsed document as <stem>.json to this directory "
-            "for inspection (no export when omitted; must not be the source "
-            "directory)",
+            "for inspection (processing.document_parsing.target_directory; no "
+            "export when omitted; must not be the source directory)",
         )
         parser.add_argument(
             "--cache-directory",
@@ -192,11 +202,19 @@ class CommandLineInterface:
             type=config_path_arg,
             help="Path to custom configuration file",
         )
+        add_output_format_argument(parser)
         add_provider_arguments(parser)
         return parser
 
     def parse_args(self) -> argparse.Namespace:
-        return self.parser.parse_args()
+        args = self.parser.parse_args()
+        if args.output_format == "json" and args.metrics_sink == "cloudwatch":
+            # CloudWatch EMF records are printed to stdout too.
+            self.parser.error(
+                "--output-format json cannot be combined with --metrics-sink "
+                "cloudwatch, which writes its records to stdout"
+            )
+        return args
 
 
 class IngestionPipelineRunner:
@@ -215,26 +233,23 @@ class IngestionPipelineRunner:
                     [*indexing.retire_source_scopes, *(s.strip() for s in retired)]
                 )
             )
-        setup_logging(self.config)
+        self.json_output = json_output(args)
+        setup_logging(self.config, stream=sys.stderr if self.json_output else None)
         self.pipeline: DataIngestionPipeline | None = None
         self._validate_args()
 
     def _validate_args(self) -> None:
         if not self.args.verify_metadata and not self.args.source_directory:
-            console.print(
-                "[red]Error: --source-directory is required for pipeline execution.[/red]"
-            )
-            sys.exit(1)
+            usage_error("--source-directory is required for pipeline execution")
 
         if self.args.source_directory:
             self.args.source_directory = Path(self.args.source_directory)
             if not self.args.source_directory.is_dir():
-                console.print(
-                    f"[red]Error: Source directory not found: {self.args.source_directory}[/red]"
+                usage_error(
+                    f"source directory not found: '{self.args.source_directory}'"
                 )
-                sys.exit(1)
             target = (
-                self.args.target_directory
+                self.args.output_directory
                 or self.config.processing.document_parsing.target_directory
             )
             if target and (
@@ -242,31 +257,21 @@ class IngestionPipelineRunner:
             ):
                 # Parsed .json written into the corpus is re-ingested as new
                 # documents on the next run.
-                console.print(
-                    "[red]Error: --target-directory (document_parsing."
-                    "target_directory) must not be the source directory "
+                usage_error(
+                    "--output-directory (document_parsing.target_directory) "
+                    "must not be the source directory "
                     f"'{self.args.source_directory}': the parsed .json files "
-                    "would be ingested as new documents on the next run.[/red]"
+                    "would be ingested as new documents on the next run"
                 )
-                sys.exit(1)
 
         if self.args.s3_sync and not self.args.s3_bucket_name:
-            console.print(
-                "[red]Error: --s3-bucket-name must be specified for S3 sync.[/red]"
-            )
-            sys.exit(1)
+            usage_error("--s3-bucket-name must be specified for --s3-sync")
 
         if self.args.resume_from_stage and not self.args.pipeline_id:
-            console.print(
-                "[red]Error: --pipeline-id is required for --resume-from-stage.[/red]"
-            )
-            sys.exit(1)
+            usage_error("--pipeline-id is required for --resume-from-stage")
 
         if self.args.verify_metadata and not self.args.pipeline_id:
-            console.print(
-                "[red]Error: --pipeline-id is required for metadata operations.[/red]"
-            )
-            sys.exit(1)
+            usage_error("--pipeline-id is required for --verify-metadata")
 
         self.args.cache_directory = (
             Path(self.args.cache_directory)
@@ -337,13 +342,11 @@ class IngestionPipelineRunner:
             }
             invalid_stages = enabled_stages_set - set(all_stages.keys())
             if invalid_stages:
-                console.print(
-                    f"[red]Error: Invalid stage names provided: {', '.join(invalid_stages)}[/red]"
+                usage_error(
+                    f"--enabled-stages: invalid stage names "
+                    f"{', '.join(sorted(invalid_stages))} (available: "
+                    f"{', '.join(all_stages.keys())})"
                 )
-                console.print(
-                    f"[yellow]Available stages are: {', '.join(all_stages.keys())}[/yellow]"
-                )
-                sys.exit(1)
         else:
             stages = dict.fromkeys(PipelineStageType, True)
 
@@ -406,6 +409,8 @@ class IngestionPipelineRunner:
                 "corrupted or invalid"
             )
         console.print("[green]✓ Metadata file is valid[/green]")
+        if self.json_output:
+            print_json({"pipeline_id": self.args.pipeline_id, "metadata_valid": True})
         return True
 
     def _execute_pipeline(self) -> PipelineContext:
@@ -473,8 +478,7 @@ class IngestionPipelineRunner:
             "the indexing stage",
         )
         if error:
-            console.print(f"[red]Error: {error}[/red]")
-            sys.exit(1)
+            usage_error(error)
 
     def run(self) -> None:
         display_ascii_art(__version__)
@@ -487,7 +491,7 @@ class IngestionPipelineRunner:
             config=self.config,
             pipeline_config=pipeline_config,
             source_directory=self.args.source_directory,
-            target_directory=self.args.target_directory,
+            target_directory=self.args.output_directory,
             metrics_sink=self._build_metrics_sink(),
         )
 
@@ -505,6 +509,8 @@ class IngestionPipelineRunner:
                 display_pipeline_results(
                     context, executed_stages=self.pipeline.executed_stages
                 )
+                if self.json_output:
+                    print_json(self._json_result(context))
                 # A soft stage failure stops the run but does NOT raise — the
                 # pipeline returns a context with status=FAILED. Without this
                 # check the CLI would print success and exit 0, so Step Functions
@@ -534,6 +540,32 @@ class IngestionPipelineRunner:
             if previous_handler is not None:
                 signal.signal(signal.SIGTERM, previous_handler)
 
+    def _json_result(self, context: PipelineContext) -> dict[str, Any]:
+        """The run's ``--output-format json`` result."""
+        assert self.pipeline is not None
+        return {
+            "pipeline_id": context.pipeline_id,
+            "status": context.status.value,
+            "duration_seconds": context.duration_seconds,
+            "stages": [
+                {
+                    **result.model_dump(
+                        mode="json",
+                        include={
+                            "stage_name",
+                            "status",
+                            "duration_seconds",
+                            "input_count",
+                            "output_count",
+                            "error_message",
+                        },
+                    ),
+                    "executed": result.stage_name in self.pipeline.executed_stages,
+                }
+                for result in context.stage_results
+            ],
+        }
+
     @staticmethod
     def _stop_on_sigterm(pipeline: DataIngestionPipeline) -> Any:
         """Turn SIGTERM into a checkpointed stop (``request_stop``); returns
@@ -553,6 +585,7 @@ class IngestionPipelineRunner:
         )
 
 
+@exits_on_sigterm
 def main() -> None:
     load_cli_dotenv()
     try:
@@ -569,16 +602,16 @@ def main() -> None:
         sys.exit(128 + e.signum)
     except KeyboardInterrupt:
         console.print("\n[yellow]Pipeline interrupted by user.[/yellow]")
-        sys.exit(130)
+        sys.exit(EXIT_INTERRUPTED)
     except PipelineExecutionError as e:
         # A failed stage, a failed metadata check or a refused prompt: say
         # which before exiting non-zero.
         console.print(f"\n[red]Error: {escape(str(e))}[/red]")
-        sys.exit(1)
+        sys.exit(EXIT_FAILURE)
     except Exception as e:
         console.print(f"\n[red]An unexpected error occurred: {e}[/red]")
         logger.exception("Unexpected error during pipeline execution")
-        sys.exit(1)
+        sys.exit(EXIT_FAILURE)
 
 
 if __name__ == "__main__":

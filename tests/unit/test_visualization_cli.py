@@ -282,7 +282,7 @@ class TestBuiltinAdaptersReportOnlyWrittenFiles:
             "run-visualization",
             "--data-path",
             str(_write_empty_export(tmp_path)),
-            "--output-dir",
+            "--output-directory",
             str(tmp_path / "out"),
             # Explicit built-ins: other tests register extra renderers globally.
             "--renderers",

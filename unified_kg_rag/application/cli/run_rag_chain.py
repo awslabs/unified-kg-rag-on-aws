@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 import argparse
 import asyncio
-import json
 import re
 import sys
 import uuid
@@ -18,6 +17,15 @@ from unified_kg_rag import __version__
 from unified_kg_rag.application.cli.config_args import (
     config_path_arg,
     exit_on_config_error,
+)
+from unified_kg_rag.application.cli.conventions import (
+    EXIT_FAILURE,
+    EXIT_INTERRUPTED,
+    add_output_format_argument,
+    exits_on_sigterm,
+    json_output,
+    print_json,
+    usage_error,
 )
 from unified_kg_rag.application.cli.help_text import doc_epilog
 from unified_kg_rag.application.cli.preflight import (
@@ -87,6 +95,7 @@ class CommandLineInterface:
     @staticmethod
     def _setup_arguments() -> argparse.ArgumentParser:
         parser = argparse.ArgumentParser(
+            allow_abbrev=False,
             description="GraphRAG Chain - Retrieval-augmented generation using knowledge graphs",
             formatter_class=argparse.RawDescriptionHelpFormatter,
             epilog=doc_epilog(
@@ -137,12 +146,7 @@ class CommandLineInterface:
             nargs="*",
             help="Apply attribute filters using 'key:value' format",
         )
-        parser.add_argument(
-            "--output-format",
-            default="text",
-            choices=["text", "json"],
-            help="Select output format",
-        )
+        add_output_format_argument(parser)
         parser.add_argument(
             "--verbose",
             "-v",
@@ -179,9 +183,8 @@ class RAGChainRunner:
             )
         # JSON mode keeps stdout machine-parseable (pipeable to jq): the banner,
         # status lines and logs all go to stderr; only the JSON goes to stdout.
-        json_output = args.output_format == "json"
-        console.stderr = json_output
-        setup_logging(self.config, stream=sys.stderr if json_output else None)
+        self.json_output = json_output(args)
+        setup_logging(self.config, stream=sys.stderr if self.json_output else None)
         self.rag_chain: GraphRAGChain | None = None
         self.interactive_commands: dict[str, Callable] = {
             "help": self._handle_help,
@@ -215,8 +218,7 @@ class RAGChainRunner:
             f"search strategy '{self.args.search_strategy}'",
         )
         if error:
-            console.print(f"[red]Error: {error}[/red]")
-            sys.exit(1)
+            usage_error(error)
         event_loop.configure_event_loop(
             asyncio.get_running_loop(), self.config.processing.io_workers
         )
@@ -244,13 +246,13 @@ class RAGChainRunner:
                 )
 
                 result = await self._run_query(rag_input)
-                if self.args.output_format == "json":
-                    print(json.dumps(result, indent=2, ensure_ascii=False, default=str))
+                if self.json_output:
+                    print_json(result)
                 else:
                     self._print_result(result, self.args.verbose)
 
                 if not result.get("success", False):
-                    sys.exit(1)
+                    sys.exit(EXIT_FAILURE)
         finally:
             # Release Neptune/OpenSearch sockets when the query/session ends so
             # a finished process does not leak the retrievers' connection pools.
@@ -265,7 +267,7 @@ class RAGChainRunner:
         except Exception as e:
             logger.exception("Failed to initialize RAG chain: %s", e)
             console.print(f"[red]Error during initialization: {_markup_safe(e)}[/red]")
-            sys.exit(1)
+            sys.exit(EXIT_FAILURE)
 
     async def _interactive_mode(self) -> None:
         console.print(
@@ -603,16 +605,17 @@ async def async_main(args: argparse.Namespace) -> int:
         await runner.run()
         return 0
     except SystemExit as e:
-        return e.code if isinstance(e.code, int) else 1
+        return e.code if isinstance(e.code, int) else EXIT_FAILURE
     except KeyboardInterrupt:
         console.print("\n[yellow]Execution interrupted by user.[/yellow]")
-        return 130
+        return EXIT_INTERRUPTED
     except Exception as e:
         console.print(f"\n[red]An unexpected error occurred: {_markup_safe(e)}[/red]")
         logger.exception("Unexpected error during execution")
-        return 1
+        return EXIT_FAILURE
 
 
+@exits_on_sigterm
 def main() -> None:
     load_cli_dotenv()
     # Parse (and let argparse exit on --help or bad arguments) before the event

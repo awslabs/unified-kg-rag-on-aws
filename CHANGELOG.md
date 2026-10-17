@@ -242,6 +242,34 @@ full re-index of the affected index type).
   written by an earlier build; use `--force-rebuild` or a new
   `--pipeline-id` to apply the fixes to them (#167, #170, #171, #201, #214).
 
+Command line. The CLIs share one convention (user guide §10, *CLI exit
+codes and JSON output*); renamed flags have no alias, so update scripts:
+- Renamed flags: `run-ingestion --target-directory` → `--output-directory`;
+  `run-eval --eval-data-path` → `--data-path` and `--outputs-directory` →
+  `--output-directory`; `run-visualization --output-dir` →
+  `--output-directory`; `run-prompt-tuning --output` → `--output-path` (the
+  `--source-dir` alias is gone; use `--source-directory`);
+  `prepare-benchmark --output-dir` → `--output-directory` and `--source` →
+  `--data-path`. The run manifest's `cli_args` follow the new names
+  (`data_path`, `output_directory`) (#PR).
+- Flags must be spelled out: an abbreviation such as `--output-dir` or
+  `--source-dir` is rejected (exit 2) instead of matching a longer flag
+  (#PR).
+- Exit codes: `2` for every usage or configuration error before any work,
+  `1` for a failed run, `130` for Ctrl-C and `143` for SIGTERM. `run-ingestion`
+  exited 1 for a missing or invalid `--source-directory`, an
+  `--output-directory` equal to the source, `--s3-sync` without a bucket,
+  `--resume-from-stage` or `--verify-metadata` without `--pipeline-id` and
+  invalid `--enabled-stages`; every CLI exited 1 for an unset store endpoint
+  and `run-eval` for a malformed `s3://` URI. `run-visualization` and
+  `prepare-benchmark` exit 2 for a missing input file, `run-prompt-tuning`
+  for a missing source directory. The CLIs other than `run-ingestion` now
+  exit 143 on SIGTERM; as PID 1 in a container they ignored it until killed
+  (#PR).
+- Every CLI takes `--output-format json` (one JSON result on stdout, the rest
+  on stderr); `run-ingestion` rejects it with `--metrics-sink cloudwatch`
+  (#PR).
+
 Deployment (CDK stack).
 - The ingestion state machine runs one Fargate task (state `Ingest`, over
   every stage) instead of four phases (`PrepPhase`, `GraphBuildPhase`,

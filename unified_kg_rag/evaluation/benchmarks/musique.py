@@ -60,7 +60,7 @@ def download_dev(destination: Path, *, timeout: float = 120.0) -> Path:
     if digest != DEV_SHA256:
         raise EvaluationException(
             f"MuSiQue dev download has SHA-256 {digest}, expected {DEV_SHA256}; "
-            "pass the official file with --source instead."
+            "pass the official file with --data-path instead."
         )
     destination.write_bytes(data)
     return destination
@@ -99,7 +99,9 @@ def prepare(
     corpus = output_dir / "corpus"
     if corpus.exists() and any(corpus.iterdir()):
         # Files of another sample would be ingested with this one.
-        raise EvaluationException(f"'{corpus}' is not empty; choose a new --output-dir")
+        raise EvaluationException(
+            f"'{corpus}' is not empty; choose a new --output-directory"
+        )
     items = [i for i in _items(source) if i.get("answerable", True)]
     if limit is not None and limit < len(items):
         items = random.Random(seed).sample(items, limit)

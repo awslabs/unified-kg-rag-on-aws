@@ -620,7 +620,7 @@ LLM stages are Bedrock-I/O-bound, so concurrency can far exceed the CPU count.
 | `processing.fuzzy_entity_resolution` | `false` | Also merge entities whose names are only similar, in full builds and incremental merges. Off: names merge when equal after normalization, legal-form removal and dense-script spacing. |
 | `processing.similarity_threshold` | `0.85` | Threshold for fuzzy entity resolution and for matching claim subjects/objects to entity names. Raise it if distinct entities merge. |
 | `processing.document_parsing.source_directory` | `"source"` | Fallback for library callers. `run-ingestion` requires `--source-directory` (or `GRAPHRAG_SOURCE_DIRECTORY`). |
-| `processing.document_parsing.target_directory` | `null` | Export each parsed document as `<stem>.json` for inspection (same as `--target-directory`). Must not be the source directory. |
+| `processing.document_parsing.target_directory` | `null` | Export each parsed document as `<stem>.json` for inspection (same as `--output-directory`). Must not be the source directory. |
 | `processing.document_parsing.index_value` | `null` | Index suffix the run writes: every OpenSearch index and Neptune label is named `<prefix>-<index_value>` (`null` = `default`). Query the corpus with the same value as `run-rag`/`run-eval --suffix`. `run-ingestion` has no flag for it; use one config file per tenant or version. |
 | `processing.document_parsing.source_scope` | `null` | Corpus identity for incremental deletion: a run only deletes registry documents of its own index suffix and source scope. `null` = the resolved source directory; the container entrypoint sets it to the S3 URI (`GRAPHRAG_SOURCE_SCOPE`). See §5. |
 | `processing.chunking.chunker_type` | `"intelligent"` | `intelligent` lets an LLM pick semantic boundaries; `simple` splits by size. |
@@ -989,7 +989,7 @@ OpenSearch + Neptune.
 | Flag | Default | Meaning |
 |---|---|---|
 | `--source-directory` | `$GRAPHRAG_SOURCE_DIRECTORY` | Directory of source documents. Required to run; if the flag is omitted it falls back to the `GRAPHRAG_SOURCE_DIRECTORY` environment variable. |
-| `--target-directory` | none (no export) | Export parsed documents as JSON here for inspection (must not be the source directory) |
+| `--output-directory` | none (no export) | Export parsed documents as JSON here for inspection (must not be the source directory) |
 | `--cache-directory` | `cache` | Pipeline cache + intermediate results |
 | `--force-rebuild` | off | Recompute every stage, ignoring the cached stage outputs; the cache is rewritten with the new outputs |
 | `--s3-sync` | off | Sync cache to S3 (requires `--s3-bucket-name`) |
@@ -1003,6 +1003,7 @@ OpenSearch + Neptune.
 | `--enabled-stages` | all | Comma-separated stage list to run |
 | `--metrics-sink` | `none` | `none`, or `cloudwatch` (emits CloudWatch EMF — Embedded Metric Format — metrics to stdout, with an `Environment` dimension when `GRAPHRAG_METRICS_ENVIRONMENT` is set (the CDK task sets its `env_name`) and none otherwise; `pipeline_id` is recorded as a log property, not a dimension, so runs add no new metric series). Each stage's metrics are emitted when the stage finishes, and only by a run that executed it, so a resumed run does not repeat the counts of the stages it restored |
 | `--retire-source-scope SCOPE` | — | Incremental runs: treat every registry record of the former source scope `SCOPE` (in this run's index suffix) as deleted, removing its exclusive content. Repeatable; added to `indexing.retire_source_scopes`. Fails when `SCOPE` is the run's own scope. See §5 Deletion scope. |
+| `--output-format` | `text` | `text`, or `json` for one JSON result on stdout (see [Exit codes and JSON output](#cli-exit-codes-and-json-output)) |
 | `--config-path` | — | Path to `config.yaml`; a missing file is a usage error (exit 2) |
 | `--backend`, `--llm-provider`, ... | — | Provider selection; see [Provider flags](#provider-flags) |
 
@@ -1207,7 +1208,7 @@ documents as failed so the next run translates them again (§5).
 | `--retrieval-multiplier` | `1` | Increase retrieval depth |
 | `--disable-query-processing` | off | Skip translation + entity extraction |
 | `--filters` | — | `key:value` attribute filters (space-separated) |
-| `--output-format` | `text` | `text` or `json` |
+| `--output-format` | `text` | `text`, or `json` for one JSON result on stdout (see [Exit codes and JSON output](#cli-exit-codes-and-json-output)) |
 | `--verbose`, `-v` | off | Show query-processing info, sources, metrics |
 | `--config-path` | — | Path to `config.yaml` |
 | `--backend`, `--llm-provider`, ... | — | Provider selection; see [Provider flags](#provider-flags) |
@@ -1645,8 +1646,8 @@ chunks counts as a failed removal (its registry row is kept for a retry).
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--eval-data-path` | **required** | JSON file of questions + ground truths: a local path or an `s3://bucket/key` URI |
-| `--outputs-directory` | `evaluation.outputs_directory` | Where to save results: a local directory or an `s3://bucket/prefix/` URI |
+| `--data-path` | **required** | JSON file of questions + ground truths: a local path or an `s3://bucket/key` URI |
+| `--output-directory` | `evaluation.outputs_directory` | Where to save results: a local directory or an `s3://bucket/prefix/` URI |
 | `--suffix` | — (`default`) | [Index suffix](#index-suffix) to evaluate against |
 | `--enable-thinking` | off | Model reasoning, as for `run-rag` (a no-op for models that always reason) |
 | `--search-strategy` | `auto` | Strategy used to answer each question; a comma-separated list (`local,mix,global`) runs a [paired comparison](#comparing-strategies) against the first |
@@ -1657,6 +1658,7 @@ chunks counts as a failed removal (its registry row is kept for a retry).
 | `--retrieval-multiplier` | `1` | Retrieval depth |
 | `--max-failure-rate` | `1.0` | Exit non-zero when the fraction of queries whose answer generation failed, or the fraction of a metric's attempted values that failed (`metric_outcomes`; skipped values do not count), exceeds this (0.0-1.0). A run where every query, or every attempt of a metric, failed always exits non-zero |
 | `--verbose`, `-v` | off | Debug logging |
+| `--output-format` | `text` | `text`, or `json` for one JSON result on stdout (see [Exit codes and JSON output](#cli-exit-codes-and-json-output)) |
 | `--config-path` | — | Path to `config.yaml` |
 | `--backend`, `--llm-provider`, ... | — | Provider selection; see [Provider flags](#provider-flags) |
 
@@ -1824,15 +1826,15 @@ duplicate id, a wrong field type, or a `metadata` value the RAG chain rejects
 ### Examples
 
 ```bash
-run-eval --eval-data-path my_eval_data.json --config-path config.yaml
+run-eval --data-path my_eval_data.json --config-path config.yaml
 
-run-eval --eval-data-path my_eval_data.json --outputs-directory ./results --config-path config.yaml
+run-eval --data-path my_eval_data.json --output-directory ./results --config-path config.yaml
 
-run-eval --eval-data-path my_eval_data.json \
+run-eval --data-path my_eval_data.json \
   --search-strategy global --search-type vector --config-path config.yaml
 
-run-eval --eval-data-path s3://my-bucket/eval/my_eval_data.json \
-  --outputs-directory s3://my-bucket/eval/results/ --config-path config.yaml
+run-eval --data-path s3://my-bucket/eval/my_eval_data.json \
+  --output-directory s3://my-bucket/eval/results/ --config-path config.yaml
 ```
 
 Either path can be an `s3://` URI, so `run-eval` also runs as a one-off task on
@@ -1954,7 +1956,7 @@ routing and the pairwise win rates. The failure budget applies to every run.
 CC BY 4.0; Trivedi et al., TACL 2022) into a corpus and a `run-eval` dataset.
 Nothing of it is in this repository: by default it downloads the answerable
 dev split (2,417 questions) from a pinned revision of a public mirror and
-checks its SHA-256; `--source` reads a local `musique_ans_v1.0_*.jsonl` from
+checks its SHA-256; `--data-path` reads a local `musique_ans_v1.0_*.jsonl` from
 the official download instead. It writes `corpus/` (one text file per
 distinct paragraph: its title, a blank line, its text; each question brings
 2-4 supporting paragraphs and up to 18 distractors) and `eval_data.json`
@@ -1963,13 +1965,13 @@ distinct paragraph: its title, a blank line, its text; each question brings
 
 ```bash
 # 1. 100 questions (about 1,900 paragraphs), sampled with seed 0.
-prepare-benchmark musique --output-dir bench/musique --limit 100
+prepare-benchmark musique --output-directory bench/musique --limit 100
 
 # 2. Ingest the paragraphs under their own suffix.
 run-ingestion --source-directory bench/musique/corpus --config-path musique.yaml
 
 # 3. Paired comparison of both methodologies, scored like the papers.
-run-eval --eval-data-path bench/musique/eval_data.json --suffix musique \
+run-eval --data-path bench/musique/eval_data.json --suffix musique \
   --search-strategy local,mix,global,naive --repeats 2 --config-path musique.yaml
 ```
 
@@ -2054,8 +2056,9 @@ Layout and error behaviour:
 | Flag | Default | Meaning |
 |---|---|---|
 | `--data-path` | **required** | Exported visualization-data JSON |
-| `--output-dir` | `visualization_outputs` | Where to write rendered files |
+| `--output-directory` | `visualization_outputs` | Where to write rendered files |
 | `--renderers` | all registered | Renderers to run: `interactive`, `static` |
+| `--output-format` | `text` | `text`, or `json` for one JSON result on stdout (see [Exit codes and JSON output](#cli-exit-codes-and-json-output)) |
 | `--config-path` | — | Path to `config.yaml` |
 | `--backend`, `--llm-provider`, ... | — | Accepted like on the other CLIs (no model or store is called); see [Provider flags](#provider-flags) |
 
@@ -2065,7 +2068,7 @@ The two registered renderers are **`interactive`** (pyvis) and **`static`**
 
 ```bash
 # Render all renderers
-run-visualization --data-path visualization_data.json --output-dir ./viz --config-path config.yaml
+run-visualization --data-path visualization_data.json --output-directory ./viz --config-path config.yaml
 
 # Only the interactive renderer
 run-visualization --data-path visualization_data.json --renderers interactive --config-path config.yaml
@@ -2085,13 +2088,14 @@ persona / entity types) with the configured language model
 | Flag | Default | Meaning |
 |---|---|---|
 | `--source-directory` | **required** | Directory of documents (`.txt`/`.md`/`.markdown` plus every format `run-ingestion` parses, e.g. `.pdf`) |
-| `--output` | `tuned_prompts.yaml` | Output YAML path |
+| `--output-path` | `tuned_prompts.yaml` | Output YAML path |
 | `--max-docs` | `20` | Max documents to sample |
+| `--output-format` | `text` | `text`, or `json` for one JSON result on stdout (see [Exit codes and JSON output](#cli-exit-codes-and-json-output)) |
 | `--config-path` | — | Path to `config.yaml` |
 | `--backend`, `--llm-provider`, ... | — | Provider selection; see [Provider flags](#provider-flags) |
 
 ```bash
-run-prompt-tuning --source-directory ./source --output tuned_prompts.yaml --config-path config.yaml
+run-prompt-tuning --source-directory ./source --output-path tuned_prompts.yaml --config-path config.yaml
 ```
 
 The output YAML contains a `custom_prompts` block (and a `profile` with the
@@ -2221,6 +2225,34 @@ on).
 
 [Operator Runbook: Common errors](./operations.md#common-errors) lists the
 messages the CLIs report, what they mean and the fix, for AWS and local mode.
+
+### CLI exit codes and JSON output
+
+Every CLI (`run-ingestion`, `run-rag`, `run-eval`, `run-visualization`,
+`run-prompt-tuning`, `prepare-benchmark`) exits with:
+
+| Code | Meaning |
+|---|---|
+| `0` | Success |
+| `1` | The run failed: a failed stage or query, a breached `--max-failure-rate`, a failed upload, nothing rendered |
+| `2` | Usage or configuration error, before any work: an unknown or invalid flag, a missing input file or directory, an invalid configuration file or environment override, an unset store endpoint |
+| `130` | Interrupted with Ctrl-C (SIGINT) |
+| `143` | Stopped by SIGTERM (ECS `StopTask`, a Step Functions timeout); `run-ingestion` checkpoints its finished stages first |
+
+Flags name files one way across the CLIs: `--source-directory` (a corpus
+directory), `--data-path` (an input data file), `--output-directory` /
+`--output-path` (what the command writes), `--cache-directory` and
+`--config-path`. Flags must be spelled out in full: a prefix such as
+`--output` is rejected rather than matched to a longer flag.
+
+`--output-format json` prints one JSON document with the result to stdout
+and moves the banner, progress and logs to stderr, so the output pipes into
+`jq`: the answer or search results (`run-rag`), the pipeline id, status and
+per-stage results (`run-ingestion`; not with `--metrics-sink cloudwatch`,
+which also writes to stdout), each run's summary, the comparison and the
+failure-budget breaches (`run-eval`), the written files (`run-visualization`),
+the output path and detected profile (`run-prompt-tuning`), and the counts
+written (`prepare-benchmark`).
 
 ### Large / multilingual / heterogeneous corpora
 

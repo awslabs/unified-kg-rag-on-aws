@@ -283,7 +283,7 @@ def _render(
             "run-visualization",
             "--data-path",
             str(data),
-            "--output-dir",
+            "--output-directory",
             str(output),
             "--config-path",
             str(config_path),

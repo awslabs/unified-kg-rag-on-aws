@@ -532,7 +532,7 @@ aws s3 cp ./eval_data.json "s3://$CACHE_BUCKET/eval/eval_data.json" --region "$R
 OVERRIDES=$(jq -nc \
   --arg data "s3://$CACHE_BUCKET/eval/eval_data.json" \
   --arg out "s3://$CACHE_BUCKET/eval/results/run-001/" \
-  '{containerOverrides:[{name:"app",command:["run-eval","--config-path","/app/config.yaml","--eval-data-path",$data,"--outputs-directory",$out,"--search-strategy","auto"]}]}')
+  '{containerOverrides:[{name:"app",command:["run-eval","--config-path","/app/config.yaml","--data-path",$data,"--output-directory",$out,"--search-strategy","auto"]}]}')
 
 TASK_ARN=$(aws ecs run-task --region "$REGION" --cluster "$CLUSTER" \
   --launch-type FARGATE --task-definition "$TASK_DEFINITION" \
@@ -548,8 +548,11 @@ aws s3 ls "s3://$CACHE_BUCKET/eval/results/run-001/" --region "$REGION"
 
 The container's exit code is `run-eval`'s: `1` when the failure budget
 (`--max-failure-rate`) is exceeded, the dataset cannot be downloaded, or any
-result file fails to upload; the summary and errors are in the task's log
-stream. Uploads use the same `aws.s3.encryption` setting as the cache, so
+result file fails to upload; `2` for a usage or configuration error (a
+malformed `s3://` URI, an invalid dataset, an unset endpoint); `143` when the
+task is stopped. The summary and errors are in the task's log stream (see the
+user guide's
+[exit codes](../docs/user-guide.md#cli-exit-codes-and-json-output)). Uploads use the same `aws.s3.encryption` setting as the cache, so
 with `use_cmk=true` the results are encrypted with the CMK. To read a dataset
 from another bucket, deploy with `-c corpus_bucket_name=<bucket>`, which grants
 both task roles read access and, in `private` mode, allows the bucket through the

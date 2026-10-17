@@ -571,7 +571,7 @@ LLM 단계는 Bedrock I/O가 병목이므로 동시성을 CPU 수보다 훨씬 �
 | `processing.fuzzy_entity_resolution` | `false` | 이름이 비슷하기만 한 엔티티도 전체 빌드와 증분 병합에서 병합합니다. 끄면 정규화, 법인 형태 표기 제거, 한자·한글·가나 옆 공백 제거 뒤 이름이 같을 때만 병합합니다. |
 | `processing.similarity_threshold` | `0.85` | 퍼지 엔티티 해석과 클레임 주체·객체의 엔티티 이름 매칭에 쓰는 임계값입니다. 서로 다른 엔티티가 합쳐지면 올리세요. |
 | `processing.document_parsing.source_directory` | `"source"` | 라이브러리 호출용 기본값입니다. `run-ingestion`에는 `--source-directory`(또는 `GRAPHRAG_SOURCE_DIRECTORY`)가 반드시 필요합니다. |
-| `processing.document_parsing.target_directory` | `null` | 파싱한 문서를 확인용 `<stem>.json`으로 내보냅니다(`--target-directory`와 같음). 소스 디렉터리는 지정할 수 없습니다. |
+| `processing.document_parsing.target_directory` | `null` | 파싱한 문서를 확인용 `<stem>.json`으로 내보냅니다(`--output-directory`와 같음). 소스 디렉터리는 지정할 수 없습니다. |
 | `processing.document_parsing.index_value` | `null` | 실행이 쓰는 인덱스 접미사입니다. 모든 OpenSearch 인덱스와 Neptune 레이블 이름이 `<prefix>-<index_value>`가 됩니다(`null`이면 `default`). 이 코퍼스에 질의할 때는 같은 값을 `run-rag`/`run-eval --suffix`로 넘깁니다. `run-ingestion`에는 이 값을 지정하는 플래그가 없으므로 테넌트나 버전마다 설정 파일을 따로 두세요. |
 | `processing.document_parsing.source_scope` | `null` | 증분 삭제에 쓰는 코퍼스 식별값입니다. 실행은 자기 인덱스 접미사와 소스 범위에 속한 레지스트리 문서만 삭제합니다. `null`이면 해석된 소스 디렉터리 경로를 쓰며, 컨테이너 엔트리포인트는 S3 URI로 설정합니다(`GRAPHRAG_SOURCE_SCOPE`). §5를 참고하세요. |
 | `processing.chunking.chunker_type` | `"intelligent"` | `intelligent`는 LLM이 의미 경계를 고르고, `simple`은 크기로 나눕니다. |
@@ -927,7 +927,7 @@ LangChain이 콜백을 호출하지 않으므로 모델 스팬이 남지 않습�
 | 플래그 | 기본값 | 의미 |
 |---|---|---|
 | `--source-directory` | `$GRAPHRAG_SOURCE_DIRECTORY` | 소스 문서 디렉터리입니다. 실행에 필요하며, 플래그를 생략하면 환경 변수 `GRAPHRAG_SOURCE_DIRECTORY`를 씁니다. |
-| `--target-directory` | 없음(내보내지 않음) | 파싱한 문서를 확인용 JSON으로 내보낼 위치(소스 디렉터리는 지정 불가) |
+| `--output-directory` | 없음(내보내지 않음) | 파싱한 문서를 확인용 JSON으로 내보낼 위치(소스 디렉터리는 지정 불가) |
 | `--cache-directory` | `cache` | 파이프라인 캐시와 중간 결과 |
 | `--force-rebuild` | off | 캐시된 단계 출력을 무시하고 모든 단계를 다시 계산. 새 출력으로 캐시를 다시 씀 |
 | `--s3-sync` | off | 캐시를 S3에 동기화(`--s3-bucket-name` 필요) |
@@ -941,6 +941,7 @@ LangChain이 콜백을 호출하지 않으므로 모델 스팬이 남지 않습�
 | `--enabled-stages` | 전체 | 실행할 단계 목록(쉼표로 구분) |
 | `--metrics-sink` | `none` | `none` 또는 `cloudwatch`(CloudWatch EMF — Embedded Metric Format — 지표를 stdout에 출력. `GRAPHRAG_METRICS_ENVIRONMENT`가 있으면 `Environment` 차원을 붙이고(CDK 태스크는 `env_name`을 설정), 없으면 차원 없음. `pipeline_id`는 차원이 아니라 로그 속성으로 기록하므로 실행마다 지표 시계열이 늘지 않음). 각 단계의 지표는 그 단계가 끝날 때, 그 단계를 실행한 실행만 내보내므로 재개한 실행이 복원한 단계의 수치를 다시 보내지 않음 |
 | `--retire-source-scope SCOPE` | — | 증분 실행에서 이전 소스 범위 `SCOPE`(이번 실행의 인덱스 접미사)의 레지스트리 레코드를 모두 삭제된 문서로 처리해 그 문서에만 속한 내용을 지웁니다. 여러 번 지정할 수 있고 `indexing.retire_source_scopes`에 더해집니다. `SCOPE`가 실행 자신의 범위이면 실패합니다(§5 삭제 범위 참고). |
+| `--output-format` | `text` | `text`, 또는 표준 출력에 JSON 결과 하나를 쓰는 `json`([종료 코드와 JSON 출력](#cli-종료-코드와-json-출력) 참고) |
 | `--config-path` | — | `config.yaml` 경로. 파일이 없으면 사용법 오류(종료 코드 2) |
 | `--backend`, `--llm-provider` 등 | — | 공급자 선택. [공급자 플래그](#공급자-플래그) 참고 |
 
@@ -1126,7 +1127,7 @@ associate-package`. 블루/그린 배포가 일어남) `-c opensearch_korean_ana
 | `--retrieval-multiplier` | `1` | 검색 깊이 배수 |
 | `--disable-query-processing` | off | 번역과 엔티티 추출 건너뛰기 |
 | `--filters` | — | `key:value` 속성 필터(공백으로 구분) |
-| `--output-format` | `text` | `text` 또는 `json` |
+| `--output-format` | `text` | `text`, 또는 표준 출력에 JSON 결과 하나를 쓰는 `json`([종료 코드와 JSON 출력](#cli-종료-코드와-json-출력) 참고) |
 | `--verbose`, `-v` | off | 질의 처리 정보, 출처, 지표 표시 |
 | `--config-path` | — | `config.yaml` 경로 |
 | `--backend`, `--llm-provider` 등 | — | 공급자 선택. [공급자 플래그](#공급자-플래그) 참고 |
@@ -1516,8 +1517,8 @@ rank, 주장 문장은 남은 청크에서 다시 파생하므로 그 문서가 
 
 | 플래그 | 기본값 | 의미 |
 |---|---|---|
-| `--eval-data-path` | **필수** | 질문과 정답이 담긴 JSON 파일. 로컬 경로 또는 `s3://bucket/key` URI |
-| `--outputs-directory` | `evaluation.outputs_directory` | 결과 저장 위치. 로컬 디렉터리 또는 `s3://bucket/prefix/` URI |
+| `--data-path` | **필수** | 질문과 정답이 담긴 JSON 파일. 로컬 경로 또는 `s3://bucket/key` URI |
+| `--output-directory` | `evaluation.outputs_directory` | 결과 저장 위치. 로컬 디렉터리 또는 `s3://bucket/prefix/` URI |
 | `--suffix` | —(`default`) | 평가 대상 [인덱스 접미사](#인덱스-접미사) |
 | `--enable-thinking` | off | `run-rag`와 같은 모델 추론(항상 추론하는 모델에는 효과 없음) |
 | `--search-strategy` | `auto` | 각 질문에 답할 때 쓰는 전략입니다. 쉼표로 구분한 목록(`local,mix,global`)을 주면 첫 전략을 기준으로 [짝지은 비교](#전략-비교)를 실행합니다 |
@@ -1528,6 +1529,7 @@ rank, 주장 문장은 남은 청크에서 다시 파생하므로 그 문서가 
 | `--retrieval-multiplier` | `1` | 검색 깊이 |
 | `--max-failure-rate` | `1.0` | 답변 생성에 실패한 질의의 비율, 또는 어떤 지표에서 시도한 값 중 실패한 값의 비율(`metric_outcomes`. 건너뛴 값은 세지 않음)이 이 값(0.0-1.0)을 넘으면 0이 아닌 코드로 종료합니다. 모든 질의가 실패했거나 어떤 지표의 모든 시도가 실패한 실행은 항상 0이 아닌 코드로 종료합니다 |
 | `--verbose`, `-v` | off | 디버그 로깅 |
+| `--output-format` | `text` | `text`, 또는 표준 출력에 JSON 결과 하나를 쓰는 `json`([종료 코드와 JSON 출력](#cli-종료-코드와-json-출력) 참고) |
 | `--config-path` | — | `config.yaml` 경로 |
 | `--backend`, `--llm-provider` 등 | — | 공급자 선택. [공급자 플래그](#공급자-플래그) 참고 |
 
@@ -1676,15 +1678,15 @@ rank, 주장 문장은 남은 청크에서 다시 파생하므로 그 문서가 
 ### 예시
 
 ```bash
-run-eval --eval-data-path my_eval_data.json --config-path config.yaml
+run-eval --data-path my_eval_data.json --config-path config.yaml
 
-run-eval --eval-data-path my_eval_data.json --outputs-directory ./results --config-path config.yaml
+run-eval --data-path my_eval_data.json --output-directory ./results --config-path config.yaml
 
-run-eval --eval-data-path my_eval_data.json \
+run-eval --data-path my_eval_data.json \
   --search-strategy global --search-type vector --config-path config.yaml
 
-run-eval --eval-data-path s3://my-bucket/eval/my_eval_data.json \
-  --outputs-directory s3://my-bucket/eval/results/ --config-path config.yaml
+run-eval --data-path s3://my-bucket/eval/my_eval_data.json \
+  --output-directory s3://my-bucket/eval/results/ --config-path config.yaml
 ```
 
 두 경로 모두 `s3://` URI를 받으므로 `run-eval`도 CDK 스택에서 일회성 태스크로
@@ -1791,7 +1793,7 @@ run-eval --eval-data-path s3://my-bucket/eval/my_eval_data.json \
 `prepare-benchmark musique`는 [MuSiQue](https://github.com/StonyBrookNLP/musique)(답변
 가능, 다중 홉, CC BY 4.0. Trivedi 외, TACL 2022)를 코퍼스와 `run-eval` 데이터셋으로
 바꿉니다. 데이터는 이 저장소에 포함하지 않습니다. 기본적으로 공개 미러의 고정 리비전에서
-답변 가능 dev 분할(질문 2,417개)을 내려받아 SHA-256을 확인하며, `--source`로 공식 배포본의
+답변 가능 dev 분할(질문 2,417개)을 내려받아 SHA-256을 확인하며, `--data-path`로 공식 배포본의
 `musique_ans_v1.0_*.jsonl`을 대신 읽을 수 있습니다. `corpus/`(서로 다른 단락마다 텍스트
 파일 하나: 제목, 빈 줄, 본문. 질문마다 근거 단락 2-4개와 방해 단락 최대 18개)와
 `eval_data.json`(`answer`, `answer_aliases`, 근거 단락의 파일 이름인
@@ -1799,13 +1801,13 @@ run-eval --eval-data-path s3://my-bucket/eval/my_eval_data.json \
 
 ```bash
 # 1. 시드 0으로 질문 100개(단락 약 1,900개) 표집
-prepare-benchmark musique --output-dir bench/musique --limit 100
+prepare-benchmark musique --output-directory bench/musique --limit 100
 
 # 2. 단락을 별도 접미사로 수집
 run-ingestion --source-directory bench/musique/corpus --config-path musique.yaml
 
 # 3. 두 방법론을 짝지어 비교하고 논문과 같은 방식으로 채점
-run-eval --eval-data-path bench/musique/eval_data.json --suffix musique \
+run-eval --data-path bench/musique/eval_data.json --suffix musique \
   --search-strategy local,mix,global,naive --repeats 2 --config-path musique.yaml
 ```
 
@@ -1881,8 +1883,9 @@ spring 레이아웃)도 이 노드만으로 계산합니다. 파일에는
 | 플래그 | 기본값 | 의미 |
 |---|---|---|
 | `--data-path` | **필수** | 내보낸 시각화 데이터 JSON |
-| `--output-dir` | `visualization_outputs` | 렌더링한 파일을 쓸 위치 |
+| `--output-directory` | `visualization_outputs` | 렌더링한 파일을 쓸 위치 |
 | `--renderers` | 등록된 전체 | 실행할 렌더러: `interactive`, `static` |
+| `--output-format` | `text` | `text`, 또는 표준 출력에 JSON 결과 하나를 쓰는 `json`([종료 코드와 JSON 출력](#cli-종료-코드와-json-출력) 참고) |
 | `--config-path` | — | `config.yaml` 경로 |
 | `--backend`, `--llm-provider` 등 | — | 다른 CLI처럼 받기만 합니다(모델이나 저장소를 호출하지 않음). [공급자 플래그](#공급자-플래그) 참고 |
 
@@ -1892,7 +1895,7 @@ spring 레이아웃)도 이 노드만으로 계산합니다. 파일에는
 
 ```bash
 # Render all renderers
-run-visualization --data-path visualization_data.json --output-dir ./viz --config-path config.yaml
+run-visualization --data-path visualization_data.json --output-directory ./viz --config-path config.yaml
 
 # Only the interactive renderer
 run-visualization --data-path visualization_data.json --renderers interactive --config-path config.yaml
@@ -1912,13 +1915,14 @@ run-visualization --data-path visualization_data.json --renderers interactive --
 | 플래그 | 기본값 | 의미 |
 |---|---|---|
 | `--source-directory` | **필수** | 문서 디렉터리(`.txt`/`.md`/`.markdown`과 `run-ingestion`이 파싱하는 모든 형식. 예: `.pdf`) |
-| `--output` | `tuned_prompts.yaml` | 출력 YAML 경로 |
+| `--output-path` | `tuned_prompts.yaml` | 출력 YAML 경로 |
 | `--max-docs` | `20` | 표본으로 뽑을 최대 문서 수 |
+| `--output-format` | `text` | `text`, 또는 표준 출력에 JSON 결과 하나를 쓰는 `json`([종료 코드와 JSON 출력](#cli-종료-코드와-json-출력) 참고) |
 | `--config-path` | — | `config.yaml` 경로 |
 | `--backend`, `--llm-provider` 등 | — | 공급자 선택. [공급자 플래그](#공급자-플래그) 참고 |
 
 ```bash
-run-prompt-tuning --source-directory ./source --output tuned_prompts.yaml --config-path config.yaml
+run-prompt-tuning --source-directory ./source --output-path tuned_prompts.yaml --config-path config.yaml
 ```
 
 출력 YAML에는 `custom_prompts` 블록(과 감지한 도메인과 엔티티 유형이 담긴
@@ -2044,6 +2048,31 @@ SigV4), OpenSearch(설정한 인덱스 읽기·쓰기), S3(설정한 버킷), Dy
 
 CLI가 보고하는 메시지와 그 의미, 해결 방법은 AWS 모드와 로컬 모드 모두
 [운영 런북: 자주 보는 오류](./operations.ko.md#자주-보는-오류)에 정리되어 있습니다.
+
+### CLI 종료 코드와 JSON 출력
+
+모든 CLI(`run-ingestion`, `run-rag`, `run-eval`, `run-visualization`,
+`run-prompt-tuning`, `prepare-benchmark`)는 다음 코드로 종료합니다.
+
+| 코드 | 의미 |
+|---|---|
+| `0` | 성공 |
+| `1` | 실행 실패: 단계나 질의 실패, `--max-failure-rate` 초과, 업로드 실패, 렌더링한 파일 없음 |
+| `2` | 작업을 시작하기 전의 사용법·설정 오류: 알 수 없거나 잘못된 플래그, 없는 입력 파일이나 디렉터리, 잘못된 설정 파일이나 환경 변수 덮어쓰기, 설정하지 않은 저장소 엔드포인트 |
+| `130` | Ctrl-C(SIGINT)로 중단 |
+| `143` | SIGTERM으로 중지(ECS `StopTask`, Step Functions 시간 초과). `run-ingestion`은 끝난 단계를 먼저 체크포인트로 저장합니다 |
+
+파일을 가리키는 플래그 이름은 모든 CLI에서 같습니다. `--source-directory`(코퍼스
+디렉터리), `--data-path`(입력 데이터 파일), `--output-directory` / `--output-path`(명령이
+쓰는 위치), `--cache-directory`, `--config-path`입니다. 플래그는 전체 이름으로 써야 하며,
+`--output`처럼 앞부분만 쓰면 더 긴 플래그로 해석하지 않고 거부합니다.
+
+`--output-format json`은 결과를 JSON 문서 하나로 표준 출력에 쓰고, 배너·진행 상황·로그는
+표준 오류로 보내므로 출력을 `jq`로 바로 넘길 수 있습니다. 담기는 내용은 답변이나 검색
+결과(`run-rag`), 파이프라인 id·상태·단계별 결과(`run-ingestion`. 표준 출력에 함께 쓰는
+`--metrics-sink cloudwatch`와는 같이 쓸 수 없음), 실행별 요약·비교·실패 허용치
+초과(`run-eval`), 쓴 파일(`run-visualization`), 출력 경로와 감지한 프로필
+(`run-prompt-tuning`), 쓴 항목 수(`prepare-benchmark`)입니다.
 
 ### 대규모, 다국어, 이질적인 코퍼스
 

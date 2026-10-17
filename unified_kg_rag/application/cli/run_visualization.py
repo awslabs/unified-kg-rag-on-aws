@@ -31,6 +31,15 @@ from unified_kg_rag.application.cli.config_args import (
     config_path_arg,
     exit_on_config_error,
 )
+from unified_kg_rag.application.cli.conventions import (
+    EXIT_FAILURE,
+    EXIT_INTERRUPTED,
+    add_output_format_argument,
+    exits_on_sigterm,
+    json_output,
+    print_json,
+    usage_error,
+)
 from unified_kg_rag.application.cli.help_text import doc_epilog
 from unified_kg_rag.application.cli.provider_args import (
     add_provider_arguments,
@@ -163,11 +172,13 @@ def run_visualization(
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
+        allow_abbrev=False,
         description="Render graph visualizations from exported data (no ingestion).",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=doc_epilog(
             "7-visualization-run-visualization",
-            "run-visualization --data-path visualization_data.json --output-dir ./viz",
+            "run-visualization --data-path visualization_data.json "
+            "--output-directory ./viz",
         ),
     )
     parser.add_argument(
@@ -177,7 +188,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Path to exported visualization-data JSON",
     )
     parser.add_argument(
-        "--output-dir",
+        "--output-directory",
         type=Path,
         default=Path("visualization_outputs"),
         help="Directory to write visualization files",
@@ -194,35 +205,49 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--config-path", type=config_path_arg, default=None, help="Config YAML path"
     )
+    add_output_format_argument(parser)
     # Accepted like on the other CLIs, so one command line (and a config of
     # either backend) serves them all; rendering makes no model call.
     add_provider_arguments(parser)
     return parser
 
 
+@exits_on_sigterm
 def main() -> int:
     load_cli_dotenv()
     args = _build_parser().parse_args()
+    as_json = json_output(args)
     try:
         with exit_on_config_error():
             config = apply_provider_arguments(get_config(args.config_path), args)
-        setup_logging(config)
+        if not args.data_path.is_file():
+            usage_error(f"visualization data not found: '{args.data_path}'")
+        setup_logging(config, stream=sys.stderr if as_json else None)
         written = run_visualization(
-            args.data_path, args.output_dir, args.renderers, config
+            args.data_path, args.output_directory, args.renderers, config
         )
         logger.info(
-            "Visualization complete: %d files in '%s'", len(written), args.output_dir
+            "Visualization complete: %d files in '%s'",
+            len(written),
+            args.output_directory,
         )
-        return 0 if written else 1
+        if as_json:
+            print_json(
+                {
+                    "output_directory": str(args.output_directory),
+                    "files": [str(path) for path in written],
+                }
+            )
+        return 0 if written else EXIT_FAILURE
     except KeyboardInterrupt:
         logger.warning("Visualization interrupted by user.")
-        return 130
+        return EXIT_INTERRUPTED
     except Exception as e:
         # Clean error line rather than a raw traceback (parity with the other
         # CLIs); full detail goes to the log at debug level.
         logger.error("Visualization failed: %s", e)
         logger.debug("Traceback:", exc_info=True)
-        return 1
+        return EXIT_FAILURE
 
 
 if __name__ == "__main__":
