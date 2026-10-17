@@ -14,6 +14,7 @@ from unified_kg_rag.domain.models import (
     Config,
     Constants,
     Entity,
+    IndexBuildRecord,
     Relationship,
     TextUnit,
     validate_safe_name,
@@ -391,6 +392,16 @@ class VectorIndexer(BaseIndexer):
         indices a full build creates from now on (``check_index_settings``
         refuses incremental writes into an untracked one). Default does
         nothing."""
+        return None
+
+    def record_build(self, record: IndexBuildRecord, suffix: str | None) -> None:
+        """Record on ``suffix``'s indices which ingestion run last wrote them.
+
+        Read back by ``run-eval`` (``VectorRetriever`` side) so a run
+        manifest names the index it was scored against. Best-effort: a
+        failure is logged, not raised. Default does nothing (a backend that
+        keeps no index metadata).
+        """
         return None
 
     def read_text_unit_ids(

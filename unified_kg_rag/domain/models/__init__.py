@@ -45,6 +45,7 @@ from .evaluation import (
     EvaluatorType,
 )
 from .pipeline import (
+    IndexBuildRecord,
     PipelineContext,
     PipelineMetrics,
     PipelineStageResult,
@@ -110,6 +111,7 @@ __all__ = [
     "ObservabilityConfig",
     "PENDING_CONTENT_HASH",
     "PipelineConfig",
+    "IndexBuildRecord",
     "PipelineContext",
     "PipelineMetrics",
     "PipelineStageResult",

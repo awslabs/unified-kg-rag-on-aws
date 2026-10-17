@@ -1663,9 +1663,20 @@ run-eval --eval-data-path s3://my-bucket/eval/my_eval_data.json \
   모델과 같으면(기본값. 둘 다 `default` 티어) 판정 점수가 부풀려집니다. 시스템을
   비교할 때는 `evaluation.evaluation_model_id`를 다른 모델로 지정하세요), 패키지 버전,
   git 커밋(`git_sha`. 추적 파일이 커밋과 다르면 `git_dirty`도 기록. 패키지를 해당
-  커밋을 추적하는 체크아웃에서 실행하지 않으면 둘 다 `null`), 해석된 전체 설정의
-  `config_sha256`, `library_versions`(ragas, langchain*), 데이터셋(경로와 파일 sha256,
+  커밋을 추적하는 체크아웃에서 실행하지 않으면 둘 다 `null`), `retrieval_config_sha256`,
+  `index`, `library_versions`(ragas, langchain*), 데이터셋(경로와 파일 sha256,
   질의 수, 파싱한 내용의 해시), UTC 타임스탬프가 있어 두 실행을 비교할 수 있습니다.
+  `retrieval_config_sha256`은 답변과 점수에 영향을 주는 설정(`backend`, `search`,
+  `custom_prompts`, `evaluation`, `providers`, `processing.translation`,
+  `indexing.additional_suffix`, `indexing.opensearch`, `aws.bedrock`의 모델과 effort)만
+  해시합니다. 리전, 엔드포인트, 자격 증명, 파일 경로, 가드레일 ID, 출력 디렉터리,
+  재시도 설정은 빼므로 같은 평가는 어느 환경에서든 같은 해시가 됩니다. `index`에는
+  질의한 접미사마다 그 벡터 인덱스를 마지막으로 쓴 수집 실행이 기록됩니다. 수집은
+  인덱스 매핑의 `_meta`에 `pipeline_id`, `mode`(`full` 또는 `incremental`),
+  `built_at`, `documents`(실행이 색인한 문서 수. 증분 실행은 새 문서와 바뀐 문서만 셈),
+  `extraction_fingerprint`, `package_version`을 기록합니다(최선 노력 방식. 매핑 수정
+  권한이 없는 역할이면 경고만 남김). 기록하기 전에 만든 인덱스나 인덱스 메타데이터가
+  없는 백엔드는 `null`입니다.
   `dropped_evaluators`도 기록합니다. `EvaluationManager.evaluate_dataset`이 이
   매니페스트를 만들므로 라이브러리 호출자도 얻을 수 있습니다(기록하려면
   `dataset_path=` / `cli_args=`를 넘기세요).

@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 from abc import ABC, abstractmethod
 from collections import Counter
-from datetime import datetime
+from datetime import datetime, timezone
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -56,8 +57,10 @@ from unified_kg_rag.domain.models import (
     Community,
     CommunityReport,
     Config,
+    Constants,
     Document,
     Entity,
+    IndexBuildRecord,
     PipelineContext,
     PipelineStageResult,
     PipelineStageStatus,
@@ -65,13 +68,17 @@ from unified_kg_rag.domain.models import (
     Relationship,
     TextUnit,
 )
+from unified_kg_rag.ports.indexer import BaseIndexer
 from unified_kg_rag.shared import (
     PipelineStageError,
     get_logger,
     observability,
 )
 from unified_kg_rag.shared.genai import ERROR_TYPE
-from unified_kg_rag.shared.utils.cache_keys import is_excluded_source_path
+from unified_kg_rag.shared.utils.cache_keys import (
+    extraction_fingerprint,
+    is_excluded_source_path,
+)
 from unified_kg_rag.shared.utils.document_identity import store_namespace_tag
 
 if TYPE_CHECKING:
@@ -1359,6 +1366,7 @@ class IndexingStage(PipelineStage):
 
         # Validate that no backend has completely failed
         self._validate_backend_success(indexing_results)
+        self._record_build(context, text_units)
 
         metrics = {
             "indexing_results": {k: v.to_dict() for k, v in indexing_results.items()},
@@ -1377,6 +1385,40 @@ class IndexingStage(PipelineStage):
             metrics["community_rebuild_recommended"] = int(drift.rebuild_recommended)
 
         return input_count, total_indexed, metrics
+
+    def _record_build(
+        self, context: PipelineContext, text_units: list[TextUnit]
+    ) -> None:
+        """Record on each written suffix's vector indices what built them.
+
+        ``run-eval`` copies the record into its run manifest, so a score can be
+        traced to the ingestion run, its extraction settings and its corpus
+        size. Written after the backends succeeded; best-effort.
+        """
+        incremental = (
+            context.incremental_delta is not None and not self.config.indexing.reset
+        )
+        suffixes = {BaseIndexer.get_suffix(unit) for unit in text_units} or {
+            self.config.processing.document_parsing.index_value
+            or Constants.DEFAULT_SUFFIX.value
+        }
+        try:
+            package_version: str | None = version("unified-kg-rag-on-aws")
+        except PackageNotFoundError:
+            package_version = None
+        documents = {
+            doc_id for unit in text_units for doc_id in unit.document_ids or []
+        }
+        record = IndexBuildRecord(
+            pipeline_id=context.pipeline_id,
+            mode="incremental" if incremental else "full",
+            built_at=datetime.now(timezone.utc),
+            documents=len(documents),
+            extraction_fingerprint=extraction_fingerprint(self.config),
+            package_version=package_version,
+        )
+        for suffix in sorted(suffixes):
+            self.indexing_manager.opensearch_indexer.record_build(record, suffix)
 
     def _index_incremental(
         self,

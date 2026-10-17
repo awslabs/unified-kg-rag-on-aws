@@ -412,3 +412,22 @@ def test_incremental_run_after_a_registry_off_build_stops_before_any_write(
 
     assert store.list_all() == before
     assert len(client.documents) == written
+
+
+def test_record_build_failure_is_logged_not_raised(mocker, caplog) -> None:
+    from unified_kg_rag.domain.models import IndexBuildRecord
+
+    client = _FakeOpenSearchClient()
+    indexer = _indexer(mocker, client)
+    indexer.upsert_text_units([_unit()])
+    mocker.patch.object(client, "put_index_meta", side_effect=RuntimeError("denied"))
+    record = IndexBuildRecord(
+        pipeline_id="run-1",
+        mode="incremental",
+        built_at=datetime(2026, 1, 1),
+        documents=1,
+        extraction_fingerprint="abc",
+    )
+    with caplog.at_level("WARNING"):
+        indexer.record_build(record, "default")
+    assert "Could not record the build of pipeline 'run-1'" in caplog.text

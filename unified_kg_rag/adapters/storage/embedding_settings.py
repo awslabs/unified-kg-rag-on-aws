@@ -6,6 +6,9 @@
 built with in its mapping's ``_meta`` (keys below). The retriever reads them
 back to refuse a query embedded with another model or dimension, whose kNN
 search would either fail on the dimension or rank by unrelated vectors.
+
+Ingestion also records what built the index (``META_BUILD``: an
+``IndexBuildRecord``), which ``run-eval`` copies into its run manifest.
 """
 
 from collections.abc import Mapping
@@ -21,6 +24,8 @@ from unified_kg_rag.shared.exceptions import ConfigurationError
 # Keys of the embedding settings an index records in its mapping's _meta.
 META_MODEL = "embedding_model_id"
 META_DIMENSION = "embedding_dimension"
+# The latest ingestion run that wrote the index (an IndexBuildRecord dump).
+META_BUILD = "build"
 
 
 def configured_embedding_model(opensearch_config: OpenSearchIndexingConfig) -> str:
@@ -90,3 +95,9 @@ def stored_embedding_settings(
         dimensions.add(meta[META_DIMENSION])
     model = meta.get(META_MODEL)
     return (model if isinstance(model, str) else None), dimensions
+
+
+def stored_build_record(mappings: Mapping[str, Any]) -> dict[str, Any] | None:
+    """The build record an index's ``_meta`` holds (``None`` if unrecorded)."""
+    record = (mappings.get("_meta") or {}).get(META_BUILD)
+    return record if isinstance(record, dict) else None
