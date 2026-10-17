@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 from datetime import datetime
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -201,6 +201,15 @@ class EvaluationResult(BaseModel):
             "when answer generation failed before retrieval reported it."
         ),
     )
+    guardrail_blocked: Literal["input", "output"] | None = Field(
+        default=None,
+        description=(
+            "Which text the guardrail blocked: 'input' (the query; nothing was "
+            "retrieved) or 'output' (the answer, replaced by the blocked "
+            "message). None when it blocked nothing. A blocked item is scored "
+            "on the blocked message."
+        ),
+    )
 
 
 class EvaluationMetric(BaseModel):
@@ -301,6 +310,14 @@ class EvaluationSummary(BaseModel):
             "Queries per rerank status (EvaluationResult.rerank_status), e.g. "
             "{'applied': 48, 'failed': 2}; queries without a status are not "
             "counted."
+        ),
+    )
+    guardrail_blocked_counts: dict[str, int] = Field(
+        default_factory=dict,
+        description=(
+            "Queries the guardrail blocked, per blocked text "
+            "(EvaluationResult.guardrail_blocked), e.g. {'input': 2, "
+            "'output': 1}; empty when it blocked none."
         ),
     )
     run_manifest: dict[str, Any] = Field(

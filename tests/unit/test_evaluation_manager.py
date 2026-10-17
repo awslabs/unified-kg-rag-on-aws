@@ -997,6 +997,27 @@ class TestComparability:
         data.write_text('[{"question": "Who ships?",\n "answer": "Vendor"}]')
         assert _content_hash("local") == _content_hash("mix")  # formatting only
 
+    def test_config_hash_tracks_the_guardrail_but_not_its_id(
+        self, config: Config
+    ) -> None:
+        config.evaluation.enabled_evaluators = []
+        manager = EvaluationManager(config, rag_chain=object())
+
+        def digest() -> str:
+            return manager.build_run_manifest()["retrieval_config_sha256"]
+
+        unguarded = digest()
+        guardrail = config.aws.bedrock.guardrail
+        guardrail.identifier = "gr-account-a"
+        guarded = digest()
+        assert guarded != unguarded
+        # Another account's guardrail with the same settings: the same run.
+        guardrail.identifier = "gr-account-b"
+        guardrail.version = "7"
+        assert digest() == guarded
+        guardrail.check_output = False
+        assert digest() != guarded
+
     async def test_index_build_records_read_per_suffix(self, config: Config) -> None:
         from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain
 
@@ -1141,6 +1162,31 @@ class TestAbstention:
         assert "unanswerable" not in stats
         # An abstention on an answerable item is still graded (a miss).
         assert summary.metric_statistics["answer_contains"]["count"] == 3
+
+    async def test_guardrail_blocks_are_counted_per_blocked_text(
+        self, config: Config
+    ) -> None:
+        def block(source: str) -> dict:
+            record = {"source": source, "action": "blocked", "policies": []}
+            return {"guardrail": [record]}
+
+        masked = {"guardrail": [{"source": "input", "action": "masked"}]}
+        results, _, summary = await self._run(
+            config,
+            [
+                ("A?", "Vendor ships.", masked, {}),
+                ("B?", "Sorry.", {**block("input"), "blocked": True}, {}),
+                ("C?", "Sorry.", block("output"), {}),
+                ("D?", "Sorry.", block("output"), {}),
+            ],
+        )
+        assert [r.guardrail_blocked for r in results] == [
+            None,
+            "input",
+            "output",
+            "output",
+        ]
+        assert summary.guardrail_blocked_counts == {"input": 1, "output": 2}
 
     async def test_unanswerable_items_scored_on_abstention_only(
         self, config: Config

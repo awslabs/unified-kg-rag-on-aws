@@ -1143,6 +1143,12 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Evaluation counts guardrail blocks: each result records whether the
+  guardrail blocked its query or answer (`guardrail_blocked`), and the
+  summary counts them (`guardrail_blocked_counts`, also printed by
+  `run-eval`), since a blocked item is scored on the blocked message, and
+  `retrieval_config_sha256` covers whether a guardrail is on (its id stays
+  out), so a guarded and an unguarded run no longer hash the same (#PR).
 - The last outputs that followed the interpreter's hash seed
   (`PYTHONHASHSEED`, a new salt per process) no longer do: the community
   members in `visualization_data.json` are listed sorted rather than in set

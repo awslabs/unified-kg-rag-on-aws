@@ -1630,6 +1630,10 @@ run-eval --data-path s3://my-bucket/eval/my_eval_data.json \
   `{"applied": 48, "failed": 2}`). 각 결과에는 `rerank_status`(`applied`,
   `disabled`, `unavailable`, `skipped`, `failed`, 답변 생성이 먼저 실패했으면 `null`)가
   기록됩니다([재순위화 상태](#재순위화-상태) 참고).
+- `guardrail_blocked_counts` — 가드레일이 차단한 질의 수를 차단한 텍스트별로 셉니다(예:
+  `{"input": 2, "output": 1}`). 각 결과에는 `guardrail_blocked`(`input`, `output`,
+  `null`)가 기록됩니다. 차단된 항목은 차단 메시지로 채점하므로 낮은 점수가 가드레일
+  때문일 수 있습니다.
 - `run_manifest` — 무엇을 측정했는지 기록하므로 두 실행을 비교할 수 있습니다.
   - CLI 인자(`--model-base-url` 같은 `*_url` 인자는 사용자 정보·쿼리·프래그먼트를 뺌),
     패키지 버전, `library_versions`(ragas, langchain*), git 커밋(`git_sha`, 추적하는
@@ -1643,7 +1647,7 @@ run-eval --data-path s3://my-bucket/eval/my_eval_data.json \
   - `retrieval_config_sha256`. 답변이나 점수를 바꿀 수 있는 모든 설정을 해시합니다(`models`
     역할은 모델 ID로 풀어서 넣고 수집 설정도 넣음. 다르게 만든 인덱스는 다르게 답하기
     때문). 단계 캐시 분류(`CONFIG_KEYING`)가 답변에 영향이 없다고 표시한 설정, 즉 리전,
-    엔드포인트, 자격 증명, 저장소와 출력 경로, 테이블 이름, 가드레일 ID와 버전, 시간 제한,
+    엔드포인트, 자격 증명, 저장소와 출력 경로, 테이블 이름, 가드레일 ID와 버전(가드레일 사용 여부는 포함), 시간 제한,
     재시도와 동시성 설정, 캐시·로깅·텔레메트리 설정은 뺍니다. 따라서 같은 평가는 어느
     환경에서든 같은 해시가 되고, 새 설정은 답변에 영향이 없다고 분류하기 전까지 해시에
     들어갑니다.

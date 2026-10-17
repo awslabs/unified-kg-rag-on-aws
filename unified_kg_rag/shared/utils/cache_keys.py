@@ -372,12 +372,16 @@ def answer_settings(config: Config) -> dict[str, Any]:
     """``{path: value}`` of every setting that can change a query's answer
     or score (:func:`shapes_answers`), a role's model resolved through its
     tier. Ingestion settings count too: an index built otherwise answers
-    otherwise."""
-    return {
+    otherwise. Whether a guardrail screens the queries counts as well
+    (``aws.bedrock.guardrail.enabled``): its id is a location, left out, but
+    a guarded run blocks and masks what an unguarded one answers."""
+    settings = {
         path: to_jsonable_python(_resolved(config, path, value))
         for path, value, _ in _leaves(config)
         if shapes_answers(path)
     }
+    settings["aws.bedrock.guardrail.enabled"] = config.aws.bedrock.guardrail.enabled
+    return settings
 
 
 def _block_on(config: Config, path: str) -> bool:

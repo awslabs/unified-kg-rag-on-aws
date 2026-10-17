@@ -182,7 +182,8 @@ def test_answer_settings_cover_every_field_but_the_neutral_ones() -> None:
     # out, so the same evaluation hashes the same in every environment.
     hashed = set(answer_settings(Config()))
     excluded = {path for path in _FIELDS if not shapes_answers(path)}
-    assert hashed == set(_FIELDS) - excluded
+    # Plus one derived entry: whether a guardrail is on (its id is a location).
+    assert hashed == set(_FIELDS) - excluded | {"aws.bedrock.guardrail.enabled"}
     for path in excluded:
         rule = classify(path)
         assert (

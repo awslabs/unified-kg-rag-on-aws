@@ -266,6 +266,13 @@ class EvaluationRunner:
             f"Successful: [green]{summary.successful_evaluations}[/green]\n"
             f"Failed: [red]{summary.failed_evaluations}[/red]\n"
         )
+        if blocked := summary.guardrail_blocked_counts:
+            # Scored on the blocked message: a low score may be the guardrail.
+            per_text = ", ".join(f"{text} {count}" for text, count in blocked.items())
+            summary_text += (
+                f"Guardrail blocked: [yellow]{sum(blocked.values())}[/yellow]"
+                f" ({per_text})\n"
+            )
 
         if summary.total_queries > 0:
             success_rate = (
