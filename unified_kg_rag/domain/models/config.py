@@ -2296,8 +2296,9 @@ class GlobalSearchConfig(BaseModel):
             "(default 2 there too): the communities at this depth plus the "
             "leaves above it, so every entity is covered once. 0 = the root "
             "communities (fewest, broadest reports); a large value = the "
-            "leaves. With use_dynamic_selection it bounds how deep the "
-            "selection descends."
+            "leaves. With use_dynamic_selection it bounds only the depths a "
+            "selection that found nothing relevant rates whole (MS GraphRAG's "
+            "max_level); relevant reports are followed to the leaves."
         ),
     )
     max_reports_per_level: int = Field(
@@ -2320,9 +2321,10 @@ class GlobalSearchConfig(BaseModel):
             "MS GraphRAG dynamic community selection instead of a fixed cut: "
             "rate the root reports for the query with "
             "models.roles.community_relevance, descend into the children of "
-            "the relevant ones (dropping a parent once a child is relevant), "
-            "and rate the whole next depth when a depth yields none, down to "
-            "community_depth. One fast-model call per rated report, "
+            "the relevant ones down to the leaves (dropping a parent once a "
+            "child is relevant), and rate the whole next depth when a depth "
+            "yields none, down to community_depth. One fast-model call per "
+            "rated report, "
             "search.max_concurrency at a time; the relevant reports are "
             "then mapped. Off by default, as in MS GraphRAG."
         ),

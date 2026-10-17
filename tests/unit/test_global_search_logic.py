@@ -348,11 +348,31 @@ async def test_dynamic_selection_descends_from_the_roots() -> None:
     assert result.metadata["global_rated_report_count"] == 6
 
 
-async def test_dynamic_selection_stops_at_community_depth() -> None:
+async def test_dynamic_selection_follows_relevant_children_past_community_depth() -> (
+    None
+):
+    # Regression: the walk stopped at community_depth, so a relevant A kept
+    # its relevant child A1 from being rated. MS GraphRAG follows relevant
+    # children to the leaves; its max_level bounds only the fallback.
     strat = _strategy(use_dynamic_selection=True, community_depth=1)
     strat.community_relevance_scorer = _Rater({"R0", "A", "A1"})
     await strat.asearch(SearchQuery(query="themes"))
-    assert _mapped(strat) == {"A"}
+    assert _mapped(strat) == {"A1"}
+
+
+async def test_community_depth_bounds_the_whole_depth_fallback() -> None:
+    # Nothing relevant at depths 0 and 1: depth 2 is rated only when
+    # community_depth reaches it.
+    strat = _strategy(use_dynamic_selection=True, community_depth=1)
+    rater = _Rater({"C1"})
+    strat.community_relevance_scorer = rater
+    await strat.asearch(SearchQuery(query="themes"))
+    assert sorted(rater.rated) == ["A", "B", "C", "R0", "R1"]
+
+    strat = _strategy(use_dynamic_selection=True, community_depth=2)
+    strat.community_relevance_scorer = _Rater({"C1"})
+    await strat.asearch(SearchQuery(query="themes"))
+    assert _mapped(strat) == {"C1"}
 
 
 async def test_dynamic_selection_rates_the_next_depth_when_none_is_relevant() -> None:

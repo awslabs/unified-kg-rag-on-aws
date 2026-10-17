@@ -359,10 +359,11 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         """MS GraphRAG dynamic community selection, root down.
 
         Rates the root reports; the children of each relevant report are
-        rated next, and a relevant child drops its parent. A depth with no
-        relevant report and nothing queued rates the whole next depth. The
-        walk stops below ``community_depth``. Returns the relevant reports,
-        most relevant first.
+        rated next, down to the leaves, and a relevant child drops its
+        parent. A depth with no relevant report and nothing queued rates the
+        whole next depth, down to ``community_depth`` (MS GraphRAG's
+        ``max_level``, which bounds only that fallback). Returns the relevant
+        reports, most relevant first.
         """
         max_depth = self.global_search_config.community_depth
         threshold = self.global_search_config.relevance_threshold
@@ -406,8 +407,6 @@ class GlobalSearchStrategy(BaseSearchStrategy):
                     if parent := metadata.get("parent_community_id"):
                         relevant.pop(str(parent), None)
                 depth += 1
-                if depth > max_depth:
-                    break
                 if children:
                     queue = await self._fetch_reports(
                         query,
@@ -415,7 +414,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
                         "Child community reports",
                         stats,
                     )
-                elif not relevant:
+                elif not relevant and depth <= max_depth:
                     queue = await self._fetch_reports(
                         query, {"depth": depth}, "Community reports", stats
                     )

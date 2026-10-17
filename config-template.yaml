@@ -789,9 +789,10 @@ search:
     # indexing.opensearch.max_query_size.
     max_reports_per_level: 100
     # MS GraphRAG dynamic community selection instead of a fixed cut: rate the
-    # root reports, descend into the relevant ones' children (down to
-    # community_depth), then map the relevant reports. One fast-model call per
-    # rated report.
+    # root reports, descend into the relevant ones' children down to the
+    # leaves (a depth with nothing relevant rates the whole next depth, down
+    # to community_depth), then map the relevant reports. One fast-model call
+    # per rated report.
     use_dynamic_selection: false
     # Dynamic selection keeps a report rated at least this (1-10 rating / 10).
     # 0.2 = anything above irrelevant, MS GraphRAG's 1 on its 0-5 scale.

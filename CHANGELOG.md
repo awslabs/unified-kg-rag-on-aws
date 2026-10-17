@@ -1271,6 +1271,12 @@ changed once with the full-config keys (#332).
   one. Local-mode stage caches and extraction records made before miss once;
   the recorded extraction settings compare unchanged, so nothing is
   re-extracted incrementally on that account (#344).
+- Global search's dynamic community selection follows the children of a
+  relevant report down to the leaves, as MS GraphRAG does:
+  `search.global_search.community_depth` bounds only the whole-depth
+  ratings of a selection that found nothing relevant. The walk stopped at
+  `community_depth`, so a relevant report's relevant children were never
+  rated (#PR).
 - Global search credits a key point only to the reports it comes from: the
   map prompt now asks for the `report_ids` behind each point (MS GraphRAG's
   `[Data: Reports (ids)]`), and only those reports become context and
