@@ -484,3 +484,100 @@ def test_incremental_write_refuses_other_languages_or_an_untracked_build(
     client.put_index_meta(index_name, {})
     with pytest.raises(ConfigurationError, match="earlier release"):
         indexer.check_index_settings("default")
+
+
+def test_find_documents_matches_a_keyword_field_in_a_suffix(
+    harness: StoreHarness,
+) -> None:
+    indexer = harness.vector_indexer
+    tenant = harness.suffix("tenant")
+    prefixes = harness.config.indexing.opensearch
+    _write(harness, "claims", "upsert", _claims(None))
+    _write(harness, "community_reports", "upsert", _reports(tenant))
+
+    found = indexer.find_documents(
+        prefixes.claims_index_prefix, "text_unit_ids", ["t2", "t-none"], "default"
+    )
+    assert {i: sorted(units) for i, units in found.items()} == {
+        c.id: sorted(c.text_unit_ids or [])
+        for c in _claims(None)
+        if "t2" in (c.text_unit_ids or [])
+    }
+    reports = indexer.find_documents(
+        prefixes.community_reports_index_prefix, "text_unit_ids", ["t1"], tenant
+    )
+    assert {i: sorted(units) for i, units in reports.items()} == {"cr1": ["t1", "t2"]}
+    assert (
+        indexer.find_documents(
+            prefixes.community_reports_index_prefix, "text_unit_ids", ["t1"], "default"
+        )
+        == {}
+    )
+
+
+def test_text_unit_attributes_round_trip_in_a_suffix(harness: StoreHarness) -> None:
+    indexer = harness.vector_indexer
+    tenant = harness.suffix("tenant")
+    keys = {"extraction_records": {"graph": "fp:hash-1", "claims": "fp2:hash-1"}}
+    units = _tagged(
+        [TextUnit(id="t1", text="Vendor supplies widgets.", attributes=keys)], tenant
+    )
+    _write(harness, "text_units", "upsert", units)
+
+    read = indexer.read_text_unit_attributes(["t1", "t-none"], suffix=tenant)
+    assert set(read) == {"t1"}
+    assert read["t1"]["extraction_records"] == keys["extraction_records"]
+    assert indexer.read_text_unit_attributes(["t1"], suffix="default") == {}
+
+
+def test_extraction_records_are_written_read_and_deleted_per_suffix(
+    harness: StoreHarness,
+) -> None:
+    indexer = harness.vector_indexer
+    tenant = harness.suffix("tenant")
+    stats = indexer.write_extraction_records(
+        {"k1": {"entities": [1]}, "k2": {}}, suffix=tenant
+    )
+    assert (stats.total_items, stats.successful_items, stats.failed_items) == (2, 2, 0)
+    indexer.write_extraction_records({"k1": {"entities": [2]}}, suffix=tenant)
+
+    assert indexer.read_extraction_records(["k1", "k2", "k3"], suffix=tenant) == {
+        "k1": {"entities": [2]},
+        "k2": {},
+    }
+    assert indexer.read_extraction_records(["k1"], suffix="default") == {}
+    deleted = indexer.delete_extraction_records(["k1", "k9"], suffix=tenant)
+    assert deleted.failed_items == 0
+    assert indexer.read_extraction_records(["k1", "k2"], suffix=tenant) == {"k2": {}}
+
+
+@pytest.mark.parametrize("harness", backends(INDEX_ADMIN), indirect=True)
+def test_the_build_record_is_read_back_by_the_retriever(
+    harness: StoreHarness,
+) -> None:
+    import asyncio
+    from datetime import timezone
+
+    from unified_kg_rag.domain.models import IndexBuildRecord
+    from unified_kg_rag.shared.utils.cache_keys import extraction_settings
+
+    _write(harness, "text_units", "index", _text_units(None), suffixes=["default"])
+    record = IndexBuildRecord(
+        pipeline_id="run-1",
+        mode="full",
+        built_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        documents=2,
+        extraction_fingerprint="fp",
+        extraction_settings=extraction_settings(harness.config),
+        package_version="0.0.0",
+    )
+    harness.vector_indexer.record_build(record, "default")
+
+    assert harness.vector_retriever is not None
+    read = asyncio.run(harness.vector_retriever().aread_build_record("default"))
+    assert read is not None
+    assert (read["pipeline_id"], read["documents"], read["mode"]) == (
+        "run-1",
+        2,
+        "full",
+    )

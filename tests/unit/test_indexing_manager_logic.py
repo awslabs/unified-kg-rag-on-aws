@@ -401,6 +401,66 @@ def test_a_deletion_that_dies_between_the_stores_keeps_the_graph_copy(
     assert graph.ids("entities") == {"old"}
 
 
+class _RebuildingGraph(FakeGraphStore):
+    """A graph store rebuilt in place that records how each rebuild ended."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.sweeps: list[bool] = []
+
+    def end_rebuild(self, suffixes, sweep: bool = True) -> None:
+        self.sweeps.append(sweep)
+        super().end_rebuild(suffixes, sweep=sweep)
+
+
+def _rebuild_manager(graph: FakeGraphStore):
+    from unified_kg_rag.application.storage.indexing_manager import IndexingManager
+
+    return IndexingManager(
+        config=Config(), vector_indexer=FakeVectorStore(), graph_indexer=graph
+    )
+
+
+def test_a_rebuild_whose_graph_write_failed_keeps_the_previous_graph(
+    mocker,
+) -> None:
+    graph = _RebuildingGraph()
+    graph.upsert_entities([Entity(id="old", name="Old")])
+    failed = IndexingStats(total_items=1)
+    failed.add_error("rejected", ids=["new"])
+    mocker.patch.object(graph, "index_entities", return_value=failed)
+
+    _rebuild_manager(graph).index_all_data(entities=[Entity(id="new", name="New")])
+
+    assert graph.sweeps == [False]
+    assert graph.ids("entities") == {"old"}
+
+
+def test_a_rebuild_that_raised_keeps_the_previous_graph(mocker) -> None:
+    graph = _RebuildingGraph()
+    graph.upsert_entities([Entity(id="old", name="Old")])
+    manager = _rebuild_manager(graph)
+    mocker.patch.object(manager, "_run_indexing_phase", side_effect=KeyboardInterrupt)
+
+    with pytest.raises(KeyboardInterrupt):
+        manager.index_all_data(entities=[Entity(id="new", name="New")])
+
+    assert graph.sweeps == [False]
+    assert graph.ids("entities") == {"old"}
+
+
+def test_a_failed_sweep_is_reported_as_a_failed_write(mocker) -> None:
+    graph = _RebuildingGraph()
+    mocker.patch.object(graph, "end_rebuild", side_effect=RuntimeError("timeout"))
+
+    results = _rebuild_manager(graph).index_all_data(
+        entities=[Entity(id="new", name="New")]
+    )
+
+    assert results["neptune_sweep"].failed_items == 1
+    assert "timeout" in results["neptune_sweep"].errors[0]
+
+
 def test_an_edge_rewritten_for_its_rank_only_is_not_embedded_again(
     manager, mocker
 ) -> None:
