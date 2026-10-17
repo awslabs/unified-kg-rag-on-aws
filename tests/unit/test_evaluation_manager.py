@@ -942,6 +942,47 @@ class TestComparability:
         config.models.embedding.dimension = 256
         assert manager.build_run_manifest()["retrieval_config_sha256"] != before
 
+    @pytest.mark.parametrize(
+        "update",
+        [
+            # Retrieval behaviour the old hand-kept section list left out.
+            {"graph": {"community_detection": {"enabled": False}}},
+            {"processing": {"claim_extraction": {"enabled": True}}},
+            {"processing": {"ignore_errors": True}},
+            {"indexing": {"neptune": {"max_hops": 1}}},
+            {"indexing": {"neptune": {"traversal_fetch_multiplier": 7}}},
+            {"aws": {"bedrock": {"guardrail": {"check_output": False}}}},
+        ],
+    )
+    def test_config_hash_covers_settings_that_shape_answers(self, update: dict) -> None:
+        def _hash(config: Config) -> str:
+            config.evaluation.enabled_evaluators = []
+            manager = EvaluationManager(config, rag_chain=object())
+            return manager.build_run_manifest()["retrieval_config_sha256"]
+
+        assert _hash(Config.model_validate(update)) != _hash(Config())
+
+    def test_dataset_content_hash_ignores_cli_metadata(
+        self, config: Config, tmp_path
+    ) -> None:
+        # A comparison sets each run's strategy on every query; the dataset
+        # is still the same file.
+        data = tmp_path / "eval.json"
+        data.write_text('[{"question": "Who ships?", "answer": "Vendor"}]')
+        config.evaluation.enabled_evaluators = []
+        manager = EvaluationManager(config, rag_chain=object())
+
+        def _content_hash(strategy: str) -> str:
+            queries, truths = manager.load_data(data, {"search_strategy": strategy})
+            manifest = manager.build_run_manifest(
+                data, queries=queries, ground_truths=truths
+            )
+            return manifest["dataset"]["content_sha256"]
+
+        assert _content_hash("local") == _content_hash("mix")
+        data.write_text('[{"question": "Who ships?",\n "answer": "Vendor"}]')
+        assert _content_hash("local") == _content_hash("mix")  # formatting only
+
     async def test_index_build_records_read_per_suffix(self, config: Config) -> None:
         from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain
 

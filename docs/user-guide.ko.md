@@ -1576,18 +1576,22 @@ run-eval --data-path s3://my-bucket/eval/my_eval_data.json \
   git 커밋(`git_sha`. 추적 파일이 커밋과 다르면 `git_dirty`도 기록. 패키지를 해당
   커밋을 추적하는 체크아웃에서 실행하지 않으면 둘 다 `null`), `retrieval_config_sha256`,
   `index`, `library_versions`(ragas, langchain*), 데이터셋(경로와 파일 sha256,
-  질의 수, 파싱한 내용의 해시), UTC 타임스탬프가 있어 두 실행을 비교할 수 있습니다.
-  `retrieval_config_sha256`은 답변과 점수에 영향을 주는 설정(`backend`, `search`,
-  `custom_prompts`, `evaluation`, `providers`, `processing.translation`,
-  `indexing.additional_suffix`, `indexing.opensearch`, `aws.bedrock`의 모델과 effort)만
-  해시합니다. 리전, 엔드포인트, 자격 증명, 파일 경로, 가드레일 ID, 출력 디렉터리,
-  재시도 설정은 빼므로 같은 평가는 어느 환경에서든 같은 해시가 됩니다. `index`에는
-  질의한 접미사마다 그 벡터 인덱스를 마지막으로 쓴 수집 실행이 기록됩니다. 수집은
-  인덱스 매핑의 `_meta`에 `pipeline_id`, `mode`(`full` 또는 `incremental`),
-  `built_at`, `documents`(실행이 색인한 문서 수. 증분 실행은 새 문서와 바뀐 문서만 셈),
-  `extraction_fingerprint`, `extraction_settings`(필드별 추출 설정), `package_version`을 기록합니다(최선 노력 방식. 매핑 수정
-  권한이 없는 역할이면 경고만 남김). 인덱스 메타데이터가 없는 백엔드는
-  `null`입니다.
+  질의 수, 명령줄이 질의마다 덧붙이는 메타데이터를 뺀 파싱한 파일 내용의 해시),
+  UTC 타임스탬프가 있어 두 실행을 비교할 수 있습니다.
+  `retrieval_config_sha256`은 답변이나 점수를 바꿀 수 있는 모든 설정을 해시합니다.
+  `models` 역할은 모델 ID로 풀어서 넣고, 수집 설정도 넣습니다(다르게 만든 인덱스는
+  다르게 답합니다). 단계 캐시 분류(`CONFIG_KEYING`)가 답변에 영향이 없다고 표시한
+  설정은 뺍니다. 리전, 엔드포인트, 자격 증명, 저장소와 출력 경로, 테이블 이름,
+  가드레일 ID와 버전, 시간 제한, 재시도와 동시성 설정, 캐시·로깅·텔레메트리
+  설정입니다. 따라서 같은 평가는 어느 환경에서든 같은 해시가 되고, 새 설정은 답변에
+  영향이 없다고 분류하기 전까지 해시에 들어갑니다. `index`에는 질의한 접미사마다 그
+  벡터 인덱스를 마지막으로 쓴 수집 실행이 기록됩니다. 수집은 인덱스 매핑의 `_meta`에
+  `pipeline_id`, `mode`(`full`. 레지스트리가 비어 있던 증분 실행도 `full`. 또는
+  `incremental`), `built_at`, `documents`(실행이 색인한 문서 수. 증분 실행은 새 문서와
+  바뀐 문서만 셈), `extraction_fingerprint`, `extraction_settings`(필드별 추출 설정),
+  `package_version`, 그리고 증분 레코드에는 `full_build`(이 증분 실행이 올라선 전체
+  빌드의 `pipeline_id`, `built_at`, `documents`)를 기록합니다(최선 노력 방식. 매핑 수정
+  권한이 없는 역할이면 경고만 남김). 인덱스 메타데이터가 없는 백엔드는 `null`입니다.
   `dropped_evaluators`도 기록합니다. `EvaluationManager.evaluate_dataset`이 이
   매니페스트를 만들므로 라이브러리 호출자도 얻을 수 있습니다(기록하려면
   `dataset_path=` / `cli_args=`를 넘기세요).

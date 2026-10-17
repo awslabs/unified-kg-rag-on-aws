@@ -1562,8 +1562,13 @@ class IndexingStage(PipelineStage):
         traced to the ingestion run, its extraction settings and its corpus
         size. Written after the backends succeeded; best-effort.
         """
+        delta = context.incremental_delta
+        # A delta of new documents only (the registry knew none of the
+        # scope's documents) built the suffix from nothing: a full build.
         incremental = (
-            context.incremental_delta is not None and not self.config.indexing.reset
+            delta is not None
+            and not self.config.indexing.reset
+            and bool(delta.changed or delta.unchanged or delta.deleted)
         )
         suffixes = {BaseIndexer.get_suffix(unit) for unit in text_units} or {
             self.config.processing.document_parsing.index_value

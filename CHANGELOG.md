@@ -1129,6 +1129,21 @@ changed once with the full-config keys (#332).
   Ctrl-C) or crashes part-way uploads the results of the runs that
   finished, or keeps them locally and logs where; they were deleted
   unuploaded (#PR).
+- `run_manifest.retrieval_config_sha256` covers every setting that can
+  change an answer or a score: the hand-kept section list missed
+  `graph.community_detection.enabled`, `processing.claim_extraction.enabled`,
+  `processing.ignore_errors` and the Neptune traversal settings, so runs
+  that answered differently hashed the same. The hash now takes every
+  setting except those the stage-cache classification marks as changing no
+  answer (`cache_keys.answer_settings`), so its value differs from earlier
+  manifests (#PR).
+- `run_manifest.dataset.content_sha256` hashes the dataset file's content:
+  it included the metadata `run-eval` adds to each query, so the runs of
+  one comparison hashed the same dataset differently (#PR).
+- The index build record of an incremental run that found the registry
+  empty says `full`, and an incremental record keeps the full build it was
+  applied on top of (`full_build`), so the manifest no longer reports the
+  last delta's document count as the index's (#PR).
 - The docs no longer contradict the code: an unknown config key fails the
   load (not a warning), the four causes of a `FAILED` document are listed
   alike in the user guide, the runbook and the design doc, a second

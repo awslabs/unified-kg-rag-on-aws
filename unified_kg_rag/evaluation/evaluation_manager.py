@@ -45,6 +45,7 @@ from unified_kg_rag.domain.models import (
     model_id_value,
 )
 from unified_kg_rag.shared import EvaluationException, get_logger, observability
+from unified_kg_rag.shared.utils.cache_keys import answer_settings
 from unified_kg_rag.shared.utils.langchain import BATCH_ITEM_FAILED, BatchProcessor
 
 from .answer_match_evaluator import AnswerMatchEvaluator
@@ -53,60 +54,6 @@ from .retrieval_evaluator import BY_SOURCE_TYPE_KEY, RetrievalEvaluator
 from .source_resolver import SourceFileResolver, TextUnitFileResolver, file_name_of
 
 logger = get_logger(__name__)
-
-# Retrieval-relevant config, hashed into the run manifest: what shapes the
-# answers and scores of a run. Endpoints, regions, credentials, file paths,
-# the guardrail id and retry knobs are left out, so the same evaluation in two
-# environments hashes the same. Paths are (section, keys to drop).
-_RETRIEVAL_SECTIONS: tuple[tuple[str, frozenset[str]], ...] = (
-    ("backend", frozenset()),
-    ("models", frozenset()),
-    ("search", frozenset()),
-    ("custom_prompts", frozenset()),
-    ("evaluation", frozenset({"outputs_directory", "save_detailed_results"})),
-    ("providers", frozenset({"base_url", "api_key", "sqlite_path"})),
-    ("processing.translation", frozenset()),
-    ("indexing.additional_suffix", frozenset()),
-    (
-        "indexing.opensearch",
-        frozenset(
-            {"persist_embedding_cache", "embedding_cache_s3_key", "refresh_after_batch"}
-        ),
-    ),
-    (
-        "aws.bedrock",
-        frozenset(
-            {
-                "region_name",
-                "assumed_role_arn",
-                "enable_global_profile",
-                "guardrail",
-                "transient_retry",
-            }
-        ),
-    ),
-)
-
-
-def retrieval_settings(config: Config) -> dict[str, Any]:
-    """The retrieval-relevant part of ``config`` (see ``_RETRIEVAL_SECTIONS``)."""
-
-    def _drop(value: Any, keys: frozenset[str]) -> Any:
-        if isinstance(value, dict):
-            return {k: _drop(v, keys) for k, v in value.items() if k not in keys}
-        if isinstance(value, list):
-            return [_drop(v, keys) for v in value]
-        return value
-
-    dumped = config.model_dump(mode="json")
-    settings: dict[str, Any] = {}
-    for path, dropped in _RETRIEVAL_SECTIONS:
-        value: Any = dumped
-        for part in path.split("."):
-            value = value.get(part) if isinstance(value, dict) else None
-        settings[path] = _drop(value, dropped)
-    return settings
-
 
 # The installed ``unified_kg_rag`` package directory (for the run manifest).
 _PACKAGE_DIR = Path(__file__).resolve().parents[1]
@@ -982,14 +929,19 @@ class EvaluationManager:
         answer_model = self.config.model_id(ModelRole.ANSWER_GENERATION)
         judge_model = self.config.model_id(ModelRole.EVALUATION)
         dataset: dict[str, Any] = {}
+        if queries is not None:
+            dataset["num_queries"] = len(queries)
         if eval_data_path is not None:
             path = Path(eval_data_path)
+            content = path.read_bytes()
             dataset["path"] = str(path)
-            dataset["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
-        if queries is not None:
-            # Hash of the parsed dataset, so library callers that never read a
-            # file (and files differing only in formatting) are comparable.
-            dataset["num_queries"] = len(queries)
+            dataset["sha256"] = hashlib.sha256(content).hexdigest()
+            # The file's parsed JSON, so files differing only in formatting
+            # compare equal, and the metadata the CLI adds to every query
+            # (strategy, suffix, top_k) does not count as the dataset's.
+            dataset["content_sha256"] = self._sha256_json(json.loads(content))
+        elif queries is not None:
+            # A library caller that read no file: its queries as given.
             dataset["content_sha256"] = self._sha256_json(
                 {
                     "queries": [q.model_dump(mode="json") for q in queries],
@@ -1004,9 +956,9 @@ class EvaluationManager:
             "package_version": self._package_version("unified-kg-rag-on-aws"),
             "git_sha": git_sha,
             "git_dirty": git_dirty,
-            "retrieval_config_sha256": self._sha256_json(
-                retrieval_settings(self.config)
-            ),
+            # Every setting that can change an answer or a score, without
+            # the environment (cache_keys.answer_settings).
+            "retrieval_config_sha256": self._sha256_json(answer_settings(self.config)),
             "index": dict(index_builds or {}),
             "library_versions": {
                 name: self._package_version(name) for name in self._LIBRARIES

@@ -512,7 +512,13 @@ def test_delta_run_reports_its_community_drift(mocker) -> None:
 
 
 @pytest.mark.parametrize(
-    ("delta", "mode"), [(DocumentDelta(changed=["x"]), "incremental"), (None, "full")]
+    ("delta", "mode"),
+    [
+        (DocumentDelta(changed=["x"]), "incremental"),
+        (None, "full"),
+        # The registry knew no document: the run built the suffix from nothing.
+        (DocumentDelta(new=["x"]), "full"),
+    ],
 )
 def test_records_the_build_on_each_written_suffix(
     mocker, delta: DocumentDelta | None, mode: str

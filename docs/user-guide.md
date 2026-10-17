@@ -1745,21 +1745,27 @@ The summary holds, per metric, mean/median/stdev/min/max/count
   when tracked files differ from it; both `null` unless the package runs from
   a checkout that tracks it), `retrieval_config_sha256`, `index`, `library_versions`
   (ragas, langchain*), the dataset (path + file sha256, query count and a hash
-  of the parsed content) and a UTC timestamp, so two runs can be compared.
-  `retrieval_config_sha256` hashes only the settings that shape answers and
-  scores (`backend`, `search`, `custom_prompts`, `evaluation`, `providers`,
-  `processing.translation`, `indexing.additional_suffix`,
-  `indexing.opensearch` and the `aws.bedrock` models and effort), without
-  regions, endpoints, credentials, file paths, the guardrail id, output
-  directories or retry knobs, so the same evaluation hashes the same in every
-  environment. `index` names, per queried suffix, the ingestion run that
-  last wrote its vector indices: ingestion records `pipeline_id`, `mode`
-  (`full` or `incremental`), `built_at`, `documents` (documents the run
-  indexed; an incremental run counts only its new and changed ones),
-  `extraction_fingerprint`, `extraction_settings` (the extraction settings field by
-  field) and `package_version` in the index mappings'
-  `_meta` (best-effort: a role without the mapping-update permission logs a
-  warning). `null` for a backend without index metadata.
+  of the parsed file, without the metadata the command line adds to every
+  query) and a UTC timestamp, so two runs can be compared.
+  `retrieval_config_sha256` hashes every setting that can change an answer or
+  a score, the `models` roles resolved to their model ids and the ingestion
+  settings included (an index built otherwise answers otherwise). Left out
+  are the settings that change no answer, as the stage-cache classification
+  (`CONFIG_KEYING`) marks them: regions, endpoints, credentials, store and
+  output paths, table names, the guardrail id and version, timeouts, retry
+  and concurrency knobs, cache, logging and telemetry settings. So the same
+  evaluation hashes the same in every environment, and a new setting counts
+  unless it is classified as changing no answer. `index` names, per queried
+  suffix, the ingestion run that last wrote its vector indices: ingestion
+  records `pipeline_id`, `mode` (`full`, also for an incremental run that
+  found the registry empty, or `incremental`), `built_at`, `documents`
+  (documents the run indexed; an incremental run counts only its new and
+  changed ones), `extraction_fingerprint`, `extraction_settings` (the
+  extraction settings field by field), `package_version` and, on an
+  incremental record, `full_build` (the full build it was applied on top of,
+  with its own `pipeline_id`, `built_at` and `documents`) in the index
+  mappings' `_meta` (best-effort: a role without the mapping-update
+  permission logs a warning). `null` for a backend without index metadata.
   It also lists `dropped_evaluators`. `EvaluationManager.evaluate_dataset`
   builds it, so library callers get it too (pass `dataset_path=` / `cli_args=`
   to record those).

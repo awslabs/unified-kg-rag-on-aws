@@ -1,12 +1,13 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
+from collections.abc import Mapping
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
 from typing import Any
 
 import networkx as nx
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from .community import Community
 from .community_report import CommunityReport
@@ -33,7 +34,9 @@ class IndexBuildRecord(BaseModel):
 
     The vector store keeps the record of the latest run that wrote a suffix
     (its index mappings' ``_meta``), so a run manifest can name the index it
-    was scored against.
+    was scored against. An incremental record carries the full build it was
+    applied on top of (``full_build``), so the corpus size of that build
+    survives the incremental runs after it.
     """
 
     pipeline_id: str = Field(description="The ingestion run that wrote the index.")
@@ -57,6 +60,34 @@ class IndexBuildRecord(BaseModel):
     package_version: str | None = Field(
         default=None, description="Version of the package that ran ingestion."
     )
+    full_build: "IndexBuildRecord | None" = Field(
+        default=None,
+        description=(
+            "For an incremental record, the full build of the suffix it was "
+            "applied on top of (without its extraction settings); None for a "
+            "full build or when no full build was recorded."
+        ),
+    )
+
+    def over(self, previous: Mapping[str, Any] | None) -> "IndexBuildRecord":
+        """This record as it replaces ``previous`` (the stored record's dump):
+        an incremental record keeps the full build ``previous`` is or keeps."""
+        if self.mode != "incremental" or not previous:
+            return self
+        try:
+            stored = IndexBuildRecord.model_validate(previous)
+        except ValidationError:
+            return self
+        base = stored if stored.mode == "full" else stored.full_build
+        if base is None:
+            return self
+        return self.model_copy(
+            update={
+                "full_build": base.model_copy(
+                    update={"extraction_settings": None, "full_build": None}
+                )
+            }
+        )
 
 
 class PipelineMetrics(BaseModel):
