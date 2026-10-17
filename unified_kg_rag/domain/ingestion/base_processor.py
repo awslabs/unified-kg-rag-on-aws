@@ -359,9 +359,7 @@ class BaseProcessor:
         """Map each entity's identity key to its id, for endpoint resolution.
 
         Keyed by ``entity_key`` (not the display name) so a relationship
-        endpoint spelled "ACME Corp." resolves to the entity named "Acme Corp",
-        including one renamed in place by a gleaner correction (whose id is no
-        longer derivable from its new name).
+        endpoint spelled "ACME Corp." resolves to the entity named "Acme Corp".
         """
         return {entity_key(entity.name): entity.id for entity in entities}
 

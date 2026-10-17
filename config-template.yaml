@@ -614,6 +614,14 @@ indexing:
     relationships_index_prefix: "graphrag-relationships"
     # Claim (covariate) vector index — makes extracted claims searchable.
     claims_index_prefix: "graphrag-claims"
+    # Extraction store: each text unit's extracted entities, relationships and
+    # claims, keyed by a hash of its text and the extraction settings (models,
+    # prompts, grounding, gleaning, claims). A chunk whose text and settings
+    # are unchanged is never extracted again, in a full build, an incremental
+    # run or another document (--force-rebuild re-extracts and rewrites them).
+    # No embeddings; only ever added to (a full build, indexing.reset and
+    # document deletions leave it as it is).
+    extraction_records_index_prefix: "graphrag-extraction-records"
     # Text analyzer per language code (extend without code changes); unlisted
     # languages use default_analyzer. The cluster must have it: nori is the
     # analysis-nori plugin, which an Amazon OpenSearch Service domain has only

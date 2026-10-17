@@ -2,11 +2,11 @@
 # SPDX-License-Identifier: Apache-2.0
 """Unit tests for GraphGleaner pure logic (AWS-free).
 
-Covers the post-merge relationship reconciliation (orphan/self-loop drop
-counting, weight summing), the duplicate-entity merge, gleaner grounding, and
-the module-level format_entities_with_limit_task. The
-static methods are called directly; instance methods are exercised on a real
-GraphGleaner whose Bedrock/boto wiring is patched out.
+Gleaning edits one text unit's record (``TextUnitExtraction``): additions,
+corrections and the record's own dedupe; plus gleaner grounding and the
+module-level format_entities_with_limit_task. Static methods are called
+directly; instance methods run on a real GraphGleaner whose Bedrock/boto
+wiring is patched out.
 """
 
 from __future__ import annotations
@@ -16,13 +16,22 @@ import pytest
 import unified_kg_rag.adapters.ingestion.gleaner as gleaner_module
 from unified_kg_rag.adapters.aws import bedrock as bedrock_module
 from unified_kg_rag.adapters.ingestion.gleaner import (
-    GleaningIndex,
     GraphGleaner,
+    _dedupe_relationships,
     format_entities_with_limit_task,
 )
-from unified_kg_rag.domain.models import Config, Entity, Relationship, TextUnit
+from unified_kg_rag.domain.ingestion.base_processor import BaseProcessor
+from unified_kg_rag.domain.models import (
+    Config,
+    Entity,
+    Relationship,
+    TextUnit,
+    TextUnitExtraction,
+)
 
 pytestmark = pytest.mark.unit
+
+UNIT = TextUnit(id="t1", text="x")
 
 
 @pytest.fixture
@@ -37,211 +46,254 @@ def _rel(id_, src, tgt, **kw) -> Relationship:
     return Relationship(id=id_, source_id=src, target_id=tgt, type="X", **kw)
 
 
-# --------------------------------------------------------------------------- #
-# _update_relationships_after_merge
-# --------------------------------------------------------------------------- #
-class TestUpdateRelationshipsAfterMerge:
-    def test_orphan_endpoint_dropped(self) -> None:
-        rels = [_rel("r1", "e1", "GONE")]
-        out = GraphGleaner._update_relationships_after_merge(
-            rels, unique_entity_ids={"e1"}, id_remap={}
-        )
-        assert out == []  # target not in unique set -> dropped
+def _entity(name: str, **kw) -> Entity:
+    entity_id = BaseProcessor._generate_entity_id(name)
+    return Entity(id=entity_id, name=name, text_unit_ids=["t1"], **kw)
 
+
+def _edge(source: str, target: str, type_: str = "SHIPS_TO", **kw) -> Relationship:
+    return Relationship(
+        id=BaseProcessor._generate_relationship_id(source, target, type_),
+        source_id=BaseProcessor._generate_entity_id(source),
+        target_id=BaseProcessor._generate_entity_id(target),
+        source_name=source,
+        target_name=target,
+        type=type_,
+        text_unit_ids=["t1"],
+        **kw,
+    )
+
+
+def _issue(issue_type: str, **details) -> dict:
+    return {"issue_type": issue_type, "details": details}
+
+
+def _answer(gleaner: GraphGleaner, record: TextUnitExtraction, *issues) -> bool:
+    """Apply one refinement answer made of ``issues`` to ``record``."""
+    return gleaner._apply_answer(
+        {"identified_issues": {"issue": list(issues)}}, UNIT, record
+    )
+
+
+# --------------------------------------------------------------------------- #
+# A unit's relationships: one per id, no self-loops
+# --------------------------------------------------------------------------- #
+class TestDedupeRelationships:
     def test_self_loop_dropped(self) -> None:
-        rels = [_rel("r1", "e1", "e1")]
-        out = GraphGleaner._update_relationships_after_merge(
-            rels, unique_entity_ids={"e1"}, id_remap={}
-        )
-        assert out == []
+        assert _dedupe_relationships([_rel("r1", "e1", "e1")]) == []
 
-    def test_self_loop_after_remap_dropped(self) -> None:
-        # e2 remaps to e1, collapsing the edge into a self-loop -> dropped.
-        rels = [_rel("r1", "e1", "e2")]
-        out = GraphGleaner._update_relationships_after_merge(
-            rels, unique_entity_ids={"e1"}, id_remap={"e2": "e1"}
-        )
-        assert out == []
-
-    def test_surviving_edge_kept_with_remapped_endpoint(self) -> None:
-        rels = [_rel("r1", "e9", "e2")]
-        out = GraphGleaner._update_relationships_after_merge(
-            rels, unique_entity_ids={"e1", "e2"}, id_remap={"e9": "e1"}
-        )
-        assert len(out) == 1
-        assert out[0].source_id == "e1"
-        assert out[0].target_id == "e2"
-
-    def test_duplicate_edges_merged_and_weight_summed(self) -> None:
-        rels = [
-            _rel("r1", "e1", "e2", weight=1.0, description="a"),
-            _rel("r2", "e1", "e2", weight=2.0, description="b"),
-        ]
-        out = GraphGleaner._update_relationships_after_merge(
-            rels, unique_entity_ids={"e1", "e2"}, id_remap={}
-        )
-        assert len(out) == 1
-        assert out[0].weight == 3.0
-        assert "a" in out[0].description and "b" in out[0].description
-
-    def test_duplicate_edges_union_text_units_and_sum_per_unit(self) -> None:
-        rels = [
-            _rel("r1", "e1", "e2", weight=1.0, text_unit_ids=["t1"]),
-            _rel("r2", "e1", "e2", weight=2.0, text_unit_ids=["t2"]),
-        ]
-        out = GraphGleaner._update_relationships_after_merge(
-            rels, unique_entity_ids={"e1", "e2"}, id_remap={}
-        )
-        assert out[0].weight == 3.0
-        # The second edge's lineage was dropped before; it is now kept.
-        assert out[0].text_unit_ids == ["t1", "t2"]
-
-    def test_distinct_types_not_merged(self) -> None:
-        rels = [
-            Relationship(id="r1", source_id="e1", target_id="e2", type="A"),
-            Relationship(id="r2", source_id="e1", target_id="e2", type="B"),
-        ]
-        out = GraphGleaner._update_relationships_after_merge(
-            rels, unique_entity_ids={"e1", "e2"}, id_remap={}
-        )
-        assert len(out) == 2
-
-    def test_reproposed_edge_adds_no_weight_or_duplicate_text(self) -> None:
-        # The unit already cites the edge: its answer restating it is not a
-        # second instance, so the strength and description stay as they were.
-        stored = _rel(
-            "r1", "e1", "e2", weight=0.8, description="a", text_unit_ids=["t1"]
-        )
-        again = _rel(
-            "r2", "e1", "e2", weight=1.0, description="a", text_unit_ids=["t1"]
-        )
-        out = GraphGleaner._update_relationships_after_merge(
-            [stored, again], unique_entity_ids={"e1", "e2"}, id_remap={}
-        )
-        assert out[0].weight == 0.8
-        assert out[0].text_unit_ids == ["t1"]
-        assert out[0].description == "a"
-
-
-# --------------------------------------------------------------------------- #
-# _merge_duplicate_entities
-# --------------------------------------------------------------------------- #
-class TestMergeDuplicateEntities:
-    def test_name_keyed_dedup_with_id_remap(self) -> None:
-        ents = [
-            Entity(id="e1", name="Alice", type="PERSON", text_unit_ids=["t1"]),
-            Entity(id="e9", name="alice", type="PERSON", text_unit_ids=["t2"]),
-        ]
-        unique, remap = GraphGleaner._merge_duplicate_entities(ents)
-        assert len(unique) == 1
-        assert remap == {"e9": "e1"}  # e9 merged into master e1
-        assert set(unique[0].text_unit_ids) == {"t1", "t2"}
-
-    def test_most_frequent_type_wins(self) -> None:
-        ents = [
-            Entity(id="e1", name="A", type="PERSON"),
-            Entity(id="e2", name="A", type="PERSON"),
-            Entity(id="e3", name="A", type="ORG"),
-        ]
-        unique, _ = GraphGleaner._merge_duplicate_entities(ents)
-        assert len(unique) == 1
-        assert unique[0].type == "person"  # lowercased, most frequent
-
-    def test_duplicate_descriptions_and_units_merged_once(self) -> None:
-        ents = [
-            Entity(id="e1", name="A", description="d", text_unit_ids=["t2", "t1"]),
-            Entity(id="e2", name="a", description="d", text_unit_ids=["t1", "t3"]),
-        ]
-        unique, _ = GraphGleaner._merge_duplicate_entities(ents)
-        assert unique[0].description == "d"
-        assert unique[0].text_unit_ids == ["t2", "t1", "t3"]
+    def test_restated_edge_keeps_its_strength_and_gains_the_text(self) -> None:
+        # The unit already states the edge: an answer restating it is not a
+        # second statement, so the strength stays and the description joins.
+        stored = _rel("r1", "e1", "e2", weight=0.8, description="a")
+        again = _rel("r1", "e1", "e2", weight=1.0, description="b")
+        (out,) = _dedupe_relationships([stored, again])
+        assert out.weight == 0.8
+        assert out.description == "a\nb"
 
     def test_document_filters_are_unioned(self) -> None:
-        ents = [
-            Entity(id="e1", name="A", attributes={"filters": {"category": "x"}}),
-            Entity(id="e2", name="a", attributes={"filters": {"category": "y"}}),
-        ]
-        unique, _ = GraphGleaner._merge_duplicate_entities(ents)
-        assert unique[0].attributes == {"filters": {"category": ["x", "y"]}}
+        stored = _rel("r1", "e1", "e2", attributes={"filters": {"k": "x"}})
+        again = _rel("r1", "e1", "e2", attributes={"filters": {"k": "y"}})
+        (out,) = _dedupe_relationships([stored, again])
+        assert out.attributes == {"filters": {"k": ["x", "y"]}}
+
+    def test_distinct_ids_kept(self) -> None:
+        assert (
+            len(_dedupe_relationships([_rel("r1", "a", "b"), _rel("r2", "a", "b")]))
+            == 2
+        )
+
+
+class TestAddToRecord:
+    def test_entity_the_unit_lists_keeps_its_type_and_confidence(self) -> None:
+        record = TextUnitExtraction(
+            text_unit_id="t1",
+            entities=[_entity("Alice", type="PERSON", confidence=0.6, description="d")],
+        )
+        GraphGleaner._add_to_record(
+            record, [_entity("ALICE", type="ORG", confidence=1.0, description="e")], []
+        )
+        (alice,) = record.entities
+        assert (alice.name, alice.type, alice.confidence) == ("Alice", "PERSON", 0.6)
+        assert alice.description == "d\ne"
+
+    def test_new_entity_and_edge_are_added(self) -> None:
+        record = TextUnitExtraction(text_unit_id="t1", entities=[_entity("Alice")])
+        GraphGleaner._add_to_record(
+            record, [_entity("Acme")], [_edge("Alice", "Acme", "WORKS_AT")]
+        )
+        assert [e.name for e in record.entities] == ["Alice", "Acme"]
+        assert [r.type for r in record.relationships] == ["WORKS_AT"]
 
 
 class TestCorrectionDescriptions:
     """The prompt lists names only, so a correction's description is merged."""
 
-    UNIT = TextUnit(id="t1", text="x")
-
     def test_entity_correction_description_is_appended(self, gleaner) -> None:
-        entity = Entity(
-            id="e1",
-            name="Acme",
-            description="Supplier of parts.",
-            text_unit_ids=["t1"],
+        record = TextUnitExtraction(
+            text_unit_id="t1", entities=[_entity("Acme", description="Supplier.")]
         )
-        issue = {
-            "issue_type": "ENTITY_CORRECTION",
-            "details": {"name": "Acme", "description": "Based in Springfield."},
-        }
-        gleaner._process_issue(issue, self.UNIT, GleaningIndex([entity], []), [], [])
-        assert entity.description == "Supplier of parts.\nBased in Springfield."
+        issue = _issue("ENTITY_CORRECTION", name="Acme", description="In Springfield.")
+        gleaner._process_issue(issue, UNIT, record, [], [], [])
+        assert record.entities[0].description == "Supplier.\nIn Springfield."
 
     def test_relationship_correction_description_is_appended(self, gleaner) -> None:
-        rel = Relationship(
-            id="r1",
-            source_id="e1",
-            target_id="e2",
-            source_name="Acme",
-            target_name="Depot",
-            type="SHIPS_TO",
-            description="Ships weekly.",
-            text_unit_ids=["t1"],
+        record = TextUnitExtraction(
+            text_unit_id="t1",
+            relationships=[_edge("Acme", "Depot", description="Ships weekly.")],
         )
-        issue = {
-            "issue_type": "RELATIONSHIP_CORRECTION",
-            "details": {"source": "Acme", "target": "Depot", "description": "By rail."},
-        }
-        gleaner._process_issue(issue, self.UNIT, GleaningIndex([], [rel]), [], [])
-        assert rel.description == "Ships weekly.\nBy rail."
-
-
-class TestGleaningIndex:
-    UNIT = TextUnit(id="t1", text="x")
-
-    def test_renamed_entity_is_found_under_its_new_name(self, gleaner) -> None:
-        entity = Entity(id="e1", name="Acme", type="PERSON", text_unit_ids=["t1"])
-        index = GleaningIndex([entity], [])
-        rename = {
-            "issue_type": "ENTITY_CORRECTION",
-            "details": {"name": "Acme", "corrected_name": "Acme Corp"},
-        }
-        retype = {
-            "issue_type": "ENTITY_CORRECTION",
-            "details": {"name": "Acme Corp", "corrected_type": "ORGANIZATION"},
-        }
-        gleaner._process_issue(rename, self.UNIT, index, [], [])
-        gleaner._process_issue(retype, self.UNIT, index, [], [])
-        assert (entity.name, entity.type) == ("Acme Corp", "ORGANIZATION")
-        assert index.entity_named("Acme", "t1") is None
-        assert index.entity_ids == {"acme corp": "e1"}
-
-    def test_lookups_see_only_the_units_own_items(self) -> None:
-        # A unit's prompt lists only the items citing it; resolving a
-        # correction in the whole round let it rewrite another unit's items.
-        mine = Entity(id="e1", name="Acme", text_unit_ids=["t1"])
-        theirs = Entity(id="e2", name="Depot", text_unit_ids=["t2"])
-        edge = Relationship(
-            id="r1",
-            source_id="e2",
-            target_id="e3",
-            source_name="Depot",
-            target_name="Harbor",
-            text_unit_ids=["t2"],
+        issue = _issue(
+            "RELATIONSHIP_CORRECTION",
+            source="Acme",
+            target="Depot",
+            description="By rail.",
         )
-        index = GleaningIndex([mine, theirs], [edge])
-        assert index.entity_named("acme", "t1") is mine
-        assert index.entity_named("Depot", "t1") is None
-        assert index.entity_named("Depot", "t2") is theirs
-        assert index.relationships_between("Depot", "Harbor", "t1") == []
-        assert index.relationships_between("Depot", "Harbor", "t2") == [edge]
+        gleaner._process_issue(issue, UNIT, record, [], [], [])
+        assert record.relationships[0].description == "Ships weekly.\nBy rail."
+
+
+class TestEntityCorrection:
+    def test_rename_takes_the_new_names_id_and_moves_the_units_edges(
+        self, gleaner
+    ) -> None:
+        record = TextUnitExtraction(
+            text_unit_id="t1",
+            entities=[_entity("Acme", type="PERSON"), _entity("Depot")],
+            relationships=[_edge("Acme", "Depot")],
+        )
+        rename = _issue("ENTITY_CORRECTION", name="Acme", corrected_name="Acme Corp")
+        retype = _issue(
+            "ENTITY_CORRECTION", name="Acme Corp", corrected_type="ORGANIZATION"
+        )
+        _answer(gleaner, record, rename, retype)
+        acme = record.entities[0]
+        assert (acme.id, acme.name, acme.type) == (
+            BaseProcessor._generate_entity_id("Acme Corp"),
+            "Acme Corp",
+            "ORGANIZATION",
+        )
+        (edge,) = record.relationships
+        assert edge.id == _edge("Acme Corp", "Depot").id
+        assert (edge.source_id, edge.source_name) == (acme.id, "Acme Corp")
+
+    def test_rename_onto_another_entity_of_the_unit_merges_them(self, gleaner) -> None:
+        record = TextUnitExtraction(
+            text_unit_id="t1",
+            entities=[_entity("Acme"), _entity("Acme Corp"), _entity("Depot")],
+            relationships=[_edge("Acme", "Acme Corp", "OWNS"), _edge("Acme", "Depot")],
+        )
+        issue = _issue("ENTITY_CORRECTION", name="Acme", corrected_name="Acme Corp")
+        _answer(gleaner, record, issue)
+        assert sorted(e.name for e in record.entities) == ["Acme Corp", "Depot"]
+        # The edge between the two became a self-loop and is gone.
+        assert [(r.source_name, r.target_name) for r in record.relationships] == [
+            ("Acme Corp", "Depot")
+        ]
+
+    def test_an_endpoint_named_only_in_an_edge_can_be_renamed(self, gleaner) -> None:
+        # Depot is no entity of the record (a stub the prompt lists): the
+        # rename moves the edge, and its type is not the unit's to correct.
+        record = TextUnitExtraction(
+            text_unit_id="t1",
+            entities=[_entity("Acme")],
+            relationships=[_edge("Acme", "Depot")],
+        )
+        issue = _issue(
+            "ENTITY_CORRECTION",
+            name="Depot",
+            corrected_name="Depot Ltd",
+            corrected_type="ORG",
+        )
+        _answer(gleaner, record, issue)
+        assert [e.name for e in record.entities] == ["Acme"]
+        assert record.relationships[0].target_name == "Depot Ltd"
+
+    def test_an_entity_the_unit_does_not_name_is_not_corrected(self, gleaner) -> None:
+        record = TextUnitExtraction(text_unit_id="t1", entities=[_entity("Acme")])
+        issue = _issue("ENTITY_CORRECTION", name="Depot", corrected_name="Depot Ltd")
+        assert not gleaner._apply_entity_correction(issue["details"], record, UNIT)
+        _answer(gleaner, record, issue)
+        assert [e.name for e in record.entities] == ["Acme"]
+
+    def test_issues_of_one_answer_name_entities_as_the_prompt_did(
+        self, gleaner
+    ) -> None:
+        # The rename applies after the answer's other issues, which name the
+        # entity as listed (or by its new name).
+        record = TextUnitExtraction(
+            text_unit_id="t1",
+            entities=[_entity("Acme"), _entity("Depot")],
+            relationships=[_edge("Acme", "Depot", "SUPPLIES")],
+        )
+        _answer(
+            gleaner,
+            record,
+            _issue("ENTITY_CORRECTION", name="Acme", corrected_name="Acme Corp"),
+            _issue(
+                "RELATIONSHIP_CORRECTION",
+                source="Acme",
+                target="Depot",
+                corrected_type="SHIPS_TO",
+            ),
+            _issue("ENTITY_CORRECTION", name="Acme Corp", corrected_type="ORG"),
+        )
+        assert [(e.name, e.type) for e in record.entities] == [
+            ("Acme Corp", "ORG"),
+            ("Depot", None),
+        ]
+        assert [(r.source_name, r.type) for r in record.relationships] == [
+            ("Acme Corp", "SHIPS_TO")
+        ]
+
+
+class TestRelationshipCorrection:
+    def test_reversal_takes_the_reversed_edges_id(self, gleaner) -> None:
+        record = TextUnitExtraction(
+            text_unit_id="t1", relationships=[_edge("Acme", "Depot", weight=3.0)]
+        )
+        details = {
+            "source": "Acme",
+            "target": "Depot",
+            "corrected_source": "Depot",
+            "corrected_target": "Acme",
+        }
+        assert gleaner._apply_relationship_correction(details, record, UNIT)
+        (edge,) = record.relationships
+        assert edge.id == _edge("Depot", "Acme").id
+        assert (edge.source_name, edge.target_name, edge.weight) == (
+            "Depot",
+            "Acme",
+            3.0,
+        )
+
+    def test_retype_onto_a_stated_edge_merges_into_it(self, gleaner) -> None:
+        record = TextUnitExtraction(
+            text_unit_id="t1",
+            relationships=[
+                _edge("Acme", "Depot", "SUPPLIES", weight=8.0),
+                _edge("Acme", "Depot", "TRADES_WITH", weight=5.0),
+            ],
+        )
+        details = {
+            "source": "Acme",
+            "target": "Depot",
+            "type": "TRADES_WITH",
+            "corrected_type": "SUPPLIES",
+        }
+        assert gleaner._apply_relationship_correction(details, record, UNIT)
+        (edge,) = record.relationships
+        assert (edge.type, edge.weight) == ("SUPPLIES", 8.0)
+
+    def test_ambiguous_correction_is_dropped(self, gleaner) -> None:
+        record = TextUnitExtraction(
+            text_unit_id="t1",
+            relationships=[
+                _edge("Acme", "Depot", "SUPPLIES"),
+                _edge("Acme", "Depot", "TRADES_WITH"),
+            ],
+        )
+        details = {"source": "Acme", "target": "Depot", "corrected_type": "OWNS"}
+        assert not gleaner._apply_relationship_correction(details, record, UNIT)
 
 
 # --------------------------------------------------------------------------- #
@@ -290,9 +342,10 @@ class TestGleanerGrounding:
         gleaner._process_issue(
             self._missing_entity_issue("A fabricated clause never in the text."),
             self.UNIT,
-            GleaningIndex([], []),
+            TextUnitExtraction(text_unit_id="u1"),
             new_e,
             new_r,
+            [],
         )
         assert len(new_e) == 1
 
@@ -302,9 +355,10 @@ class TestGleanerGrounding:
         gleaner._process_issue(
             self._missing_entity_issue("Alice works at Acme Corp in Seattle."),
             self.UNIT,
-            GleaningIndex([], []),
+            TextUnitExtraction(text_unit_id="u1"),
             new_e,
             new_r,
+            [],
         )
         assert len(new_e) == 1
         assert new_e[0].name == "Acme Corp"
@@ -317,9 +371,10 @@ class TestGleanerGrounding:
                 "The Warranty Period from the Provisional Acceptance Date."
             ),
             self.UNIT,
-            GleaningIndex([], []),
+            TextUnitExtraction(text_unit_id="u1"),
             new_e,
             new_r,
+            [],
         )
         assert new_e == []  # hallucinated gleaner entity rejected
 
@@ -329,8 +384,9 @@ class TestGleanerGrounding:
         gleaner._process_issue(
             self._missing_entity_issue("Alice works at Acme Corp in Seattle."),
             self.UNIT,
-            GleaningIndex([], []),
+            TextUnitExtraction(text_unit_id="u1"),
             new_e,
             new_r,
+            [],
         )
         assert "_source_text" not in (new_e[0].attributes or {})

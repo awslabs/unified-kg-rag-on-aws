@@ -450,6 +450,29 @@ class VectorIndexer(BaseIndexer):
         :meth:`read_entity_descriptions`)."""
         return {}
 
+    def read_extraction_records(
+        self, keys: list[str], suffix: str | None = None
+    ) -> dict[str, dict[str, Any]]:
+        """Stored text-unit extraction records by key (the extraction store).
+
+        A key names a text's record under one extraction fingerprint
+        (``domain.ingestion.contributions.record_key``); the value is the
+        record's payload as written. Scoped to ``suffix``. A missing key is
+        absent from the result. Default returns ``{}``: the backend keeps no
+        records, and every text unit is extracted. Adapters that override it
+        raise when the read fails.
+        """
+        return {}
+
+    def write_extraction_records(
+        self, records: dict[str, dict[str, Any]], suffix: str | None = None
+    ) -> IndexingStats:
+        """Store text-unit extraction records by key (an upsert; see
+        :meth:`read_extraction_records`). The keys are content-derived, so
+        the store is only ever added to: a full build, a reset or a document
+        deletion leaves it as it is. Default stores nothing."""
+        return IndexingStats()
+
     def update_claim_lineage(self, claims: list[Claim]) -> IndexingStats:
         """Rewrite stored claims' ``text_unit_ids`` (text-unit removal); see
         :meth:`update_entity_lineage`."""

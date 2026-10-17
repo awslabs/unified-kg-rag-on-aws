@@ -5,10 +5,9 @@
 
 Covers the branches the logic suite leaves uncovered: the module-level
 ``prepare_input`` / ``format_relationships_with_limit_task`` pure helpers,
-refinement-output parsing and issue dispatch, the completion summary, the
-stop rule, and the end-to-end
-``glean_graph`` / ``_perform_llm_refinement`` orchestration driven by a mocked
-LangChain chain (no Bedrock, no boto3). The Bedrock/boto wiring is patched out
+refinement-answer parsing and issue dispatch on a unit's record, the
+completion summary, the stop rule, and the end-to-end ``glean`` orchestration
+driven by a mocked LangChain chain (no Bedrock, no boto3). The Bedrock/boto wiring is patched out
 in the ``gleaner`` fixture exactly as in the logic suite.
 """
 
@@ -22,7 +21,6 @@ import pytest
 import unified_kg_rag.adapters.ingestion.gleaner as gleaner_module
 from unified_kg_rag.adapters.aws import bedrock as bedrock_module
 from unified_kg_rag.adapters.ingestion.gleaner import (
-    GleaningIndex,
     GleaningRound,
     GleaningStats,
     GraphGleaner,
@@ -30,7 +28,18 @@ from unified_kg_rag.adapters.ingestion.gleaner import (
     prepare_input,
 )
 from unified_kg_rag.adapters.storage.opensearch_indexer import OpenSearchIndexer
-from unified_kg_rag.domain.models import Config, Entity, Relationship, TextUnit
+from unified_kg_rag.domain.ingestion.base_processor import BaseProcessor
+from unified_kg_rag.domain.ingestion.contributions import (
+    merge_contributions,
+    unit_entities,
+)
+from unified_kg_rag.domain.models import (
+    Config,
+    Entity,
+    Relationship,
+    TextUnit,
+    TextUnitExtraction,
+)
 from unified_kg_rag.shared.utils.langchain import BATCH_ITEM_FAILED
 
 pytestmark = pytest.mark.unit
@@ -52,6 +61,31 @@ def _ent(id_, name, **kw) -> Entity:
 def _rel(id_, src, tgt, **kw) -> Relationship:
     kw.setdefault("type", "REL")
     return Relationship(id=id_, source_id=src, target_id=tgt, **kw)
+
+
+def _record(unit_id: str, entities=(), relationships=()) -> TextUnitExtraction:
+    """The record of the given items that cite ``unit_id`` (not copies)."""
+    return TextUnitExtraction(
+        text_unit_id=unit_id,
+        entities=[e for e in entities if unit_id in (e.text_unit_ids or [])],
+        relationships=[r for r in relationships if unit_id in (r.text_unit_ids or [])],
+    )
+
+
+def _records(units, entities=(), relationships=()) -> list[TextUnitExtraction]:
+    return [_record(unit.id, entities, relationships) for unit in units]
+
+
+def _added(gleaner, plan, unit, entities=(), relationships=()):
+    """Apply ``plan`` to ``unit``'s record; return the entities and
+    relationships it added."""
+    record = _record(unit.id, entities, relationships)
+    before = {id(item) for item in [*record.entities, *record.relationships]}
+    gleaner._apply_answer(plan, unit, record)
+    return (
+        [e for e in record.entities if id(e) not in before],
+        [r for r in record.relationships if id(r) not in before],
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -101,7 +135,7 @@ class TestFormatRelationshipsWithLimit:
 
 
 # --------------------------------------------------------------------------- #
-# prepare_input + GleaningIndex lineage
+# prepare_input + a unit's record
 # --------------------------------------------------------------------------- #
 class TestPrepareInputTask:
     def _config(self) -> dict:
@@ -111,11 +145,13 @@ class TestPrepareInputTask:
             "target_language": "en",
         }
 
-    def test_filters_to_relevant_lineage(self) -> None:
+    def test_lists_the_units_own_items(self) -> None:
+        # The unit's entities, the endpoints of its relationships (Bob, a
+        # stub), and its relationships; nothing only another unit states.
         unit = TextUnit(id="t1", text="hello")
         ents = [
             _ent("e1", "Alice", text_unit_ids=["t1"]),
-            _ent("e2", "Bob", text_unit_ids=["other"]),  # not in t1 -> excluded
+            _ent("e3", "Carol", text_unit_ids=["other"]),
         ]
         rels = [
             _rel(
@@ -129,23 +165,19 @@ class TestPrepareInputTask:
             _rel(
                 "r2",
                 "e1",
-                "e2",
+                "e3",
                 source_name="Alice",
-                target_name="Bob",
+                target_name="Carol",
                 text_unit_ids=["other"],
-            ),  # excluded
+            ),
         ]
-        index = GleaningIndex(ents, rels)
+        record = _record(unit.id, ents, rels)
         out = prepare_input(
-            unit,
-            index.entities_for(unit.id),
-            index.relationships_for(unit.id),
-            self._config(),
+            unit, unit_entities(record), record.relationships, self._config()
         )
         assert out["text"] == "hello"
-        assert "Alice" in out["entities"]
-        assert "Bob" not in out["entities"]
-        assert out["relationships"].count("->") == 1
+        assert out["entities"].splitlines() == ["Alice", "Bob"]
+        assert out["relationships"] == "'Alice' -> 'Bob' (type: 'REL')"
 
     def test_uses_translated_text_when_available(self) -> None:
         unit = TextUnit(id="t1", text="orig", translated_texts={"en": "translated"})
@@ -164,19 +196,17 @@ class TestPrepareInputTask:
 
 
 # --------------------------------------------------------------------------- #
-# _parse_refinement_output + _process_issue
+# _apply_answer + _process_issue
 # --------------------------------------------------------------------------- #
 class TestParseRefinementOutput:
     def test_empty_plan_returns_empties(self, gleaner) -> None:
         unit = TextUnit(id="t1", text="x")
-        ents, rels = gleaner._parse_refinement_output({}, unit, GleaningIndex([], []))
+        ents, rels = _added(gleaner, {}, unit, [], [])
         assert ents == [] and rels == []
 
     def test_non_dict_plan_returns_empties(self, gleaner) -> None:
         unit = TextUnit(id="t1", text="x")
-        ents, rels = gleaner._parse_refinement_output(
-            "not a dict", unit, GleaningIndex([], [])
-        )
+        ents, rels = _added(gleaner, "not a dict", unit, [], [])
         assert ents == [] and rels == []
 
     def test_list_plan_first_element_used(self, gleaner) -> None:
@@ -189,9 +219,7 @@ class TestParseRefinementOutput:
                 }
             },
         }
-        ents, rels = gleaner._parse_refinement_output(
-            [plan], unit, GleaningIndex([], [])
-        )
+        ents, rels = _added(gleaner, [plan], unit, [], [])
         assert len(ents) == 1
         assert ents[0].name.lower().startswith("neo")
 
@@ -219,7 +247,7 @@ class TestParseRefinementOutput:
                 ]
             }
         }
-        ents, rels = gleaner._parse_refinement_output(plan, unit, GleaningIndex([], []))
+        ents, rels = _added(gleaner, plan, unit, [], [])
         assert len(ents) == 2
         assert len(rels) == 1
         # The relationship resolves its endpoints against the just-discovered
@@ -234,7 +262,7 @@ class TestParseRefinementOutput:
                 "issue": {"issue_type": "SOMETHING_ELSE", "details": {}}
             }
         }
-        ents, rels = gleaner._parse_refinement_output(plan, unit, GleaningIndex([], []))
+        ents, rels = _added(gleaner, plan, unit, [], [])
         assert ents == [] and rels == []
 
     def test_issues_as_bare_list_not_dict(self, gleaner) -> None:
@@ -245,7 +273,7 @@ class TestParseRefinementOutput:
                 {"issue_type": "MISSING_ENTITY", "details": {"name": "Zed"}}
             ]
         }
-        ents, _ = gleaner._parse_refinement_output(plan, unit, GleaningIndex([], []))
+        ents, _ = _added(gleaner, plan, unit, [], [])
         assert len(ents) == 1
 
 
@@ -254,6 +282,7 @@ class TestParseRefinementOutput:
 # --------------------------------------------------------------------------- #
 # Corrections resolve only the items citing the unit being refined.
 CITES = ["t1"]
+ACME_CORPORATION = BaseProcessor._generate_entity_id("Acme Corporation")
 
 
 class TestCorrectionIssues:
@@ -262,8 +291,8 @@ class TestCorrectionIssues:
     ``GraphRefinementPrompt`` instructs the model to emit ENTITY_CORRECTION and
     RELATIONSHIP_CORRECTION issues; the dispatch branched only on the two
     MISSING_* types, so every correction was discarded for every chunk of every
-    run. Corrections mutate the entity/relationship the round already carries,
-    so these tests assert on the input objects.
+    run. Corrections mutate the items of the unit's record in place, so these
+    tests assert on the input objects.
     """
 
     UNIT = TextUnit(id="t1", text="acme corp is a company based in seattle.")
@@ -283,48 +312,55 @@ class TestCorrectionIssues:
     def test_entity_type_correction_applied(self, gleaner) -> None:
         entity = _ent("e1", "acme corp", text_unit_ids=CITES)
         entity.type = "PERSON"
-        ents, rels = gleaner._parse_refinement_output(
+        ents, rels = _added(
+            gleaner,
             self._plan(
                 self._entity_correction(name="acme corp", corrected_type="ORGANIZATION")
             ),
             self.UNIT,
-            GleaningIndex([entity], []),
+            [entity],
+            [],
         )
         assert entity.type == "ORGANIZATION"
         # A correction is not a new artifact.
         assert ents == [] and rels == []
 
-    def test_entity_rename_keeps_display_form_and_the_id(self, gleaner) -> None:
+    def test_entity_rename_keeps_display_form_and_takes_its_id(self, gleaner) -> None:
         entity = _ent("e1", "acme", text_unit_ids=CITES)
         entity.name_embedding = [0.1, 0.2]
-        gleaner._parse_refinement_output(
+        _added(
+            gleaner,
             self._plan(
                 self._entity_correction(
                     name="acme", corrected_name="  Acme   Corporation "
                 )
             ),
             self.UNIT,
-            GleaningIndex([entity], []),
+            [entity],
+            [],
         )
         # Extracted names keep their display form (whitespace cleaned only), so
         # a corrected one is cleaned the same way.
         assert entity.name == "Acme Corporation"
-        # Relationships reference the id; re-deriving it would orphan them.
-        assert entity.id == "e1"
+        # The id of the new name, as extraction would give it (the unit's
+        # relationships naming the entity follow it).
+        assert entity.id == BaseProcessor._generate_entity_id("Acme Corporation")
         # The stored embedding described the old name.
         assert entity.name_embedding is None
 
     def test_entity_correction_for_unknown_name_is_dropped(self, gleaner) -> None:
         entity = _ent("e1", "acme corp", text_unit_ids=CITES)
         entity.type = "PERSON"
-        gleaner._parse_refinement_output(
+        _added(
+            gleaner,
             self._plan(
                 self._entity_correction(
                     name="never extracted", corrected_type="ORGANIZATION"
                 )
             ),
             self.UNIT,
-            GleaningIndex([entity], []),
+            [entity],
+            [],
         )
         assert entity.type == "PERSON"
 
@@ -338,7 +374,8 @@ class TestCorrectionIssues:
             target_name="seattle",
             type="EMPLOYS",
         )
-        gleaner._parse_refinement_output(
+        _added(
+            gleaner,
             self._plan(
                 self._relationship_correction(
                     source="acme corp",
@@ -348,7 +385,8 @@ class TestCorrectionIssues:
                 )
             ),
             self.UNIT,
-            GleaningIndex([], [rel]),
+            [],
+            [rel],
         )
         assert rel.type == "LOCATED_IN"
 
@@ -362,7 +400,8 @@ class TestCorrectionIssues:
             target_name="acme corp",
             type="LOCATED_IN",
         )
-        gleaner._parse_refinement_output(
+        _added(
+            gleaner,
             self._plan(
                 self._relationship_correction(
                     source="seattle",
@@ -372,7 +411,8 @@ class TestCorrectionIssues:
                 )
             ),
             self.UNIT,
-            GleaningIndex([], [rel]),
+            [],
+            [rel],
         )
         assert (rel.source_id, rel.source_name) == ("e-acme", "acme corp")
         assert (rel.target_id, rel.target_name) == ("e-seattle", "seattle")
@@ -387,14 +427,16 @@ class TestCorrectionIssues:
             target_name="seattle",
             type="EMPLOYS",
         )
-        gleaner._parse_refinement_output(
+        _added(
+            gleaner,
             self._plan(
                 self._relationship_correction(
                     source="nobody", target="nowhere", corrected_type="LOCATED_IN"
                 )
             ),
             self.UNIT,
-            GleaningIndex([], [rel]),
+            [],
+            [rel],
         )
         assert rel.type == "EMPLOYS"
 
@@ -412,7 +454,8 @@ class TestCorrectionIssues:
             target_name="seattle",
             type="EMPLOYS",
         )
-        gleaner._parse_refinement_output(
+        _added(
+            gleaner,
             self._plan(
                 self._entity_correction(
                     name="acme corp",
@@ -427,7 +470,8 @@ class TestCorrectionIssues:
                 ),
             ),
             self.UNIT,
-            GleaningIndex([foreign], [edge]),
+            [foreign],
+            [edge],
         )
         assert (foreign.name, foreign.type) == ("acme corp", "PERSON")
         assert (edge.source_name, edge.target_name) == ("acme corp", "seattle")
@@ -448,7 +492,8 @@ class TestCorrectionIssues:
             type="EMPLOYS",
         )
         caplog.set_level(logging.INFO, logger=gleaner_module.__name__)
-        gleaner._parse_refinement_output(
+        _added(
+            gleaner,
             self._plan(
                 self._relationship_correction(
                     source="Quokkasecret",
@@ -460,12 +505,11 @@ class TestCorrectionIssues:
                 ),
             ),
             self.UNIT,
-            GleaningIndex([], [rel]),
+            [],
+            [rel],
         )
         assert rel.type == "LOCATED_IN"
-        gleaner._parse_refinement_output(
-            ["Quokkasecret payroll"], self.UNIT, GleaningIndex([], [])
-        )
+        _added(gleaner, ["Quokkasecret payroll"], self.UNIT, [], [])
         info = "\n".join(
             r.getMessage() for r in caplog.records if r.levelno >= logging.INFO
         )
@@ -487,14 +531,16 @@ class TestCorrectionIssues:
         }
         first = Relationship(id="r1", type="EMPLOYS", **shared)
         second = Relationship(id="r2", type="FOUNDED_IN", **shared)
-        gleaner._parse_refinement_output(
+        _added(
+            gleaner,
             self._plan(
                 self._relationship_correction(
                     source="acme corp", target="seattle", corrected_type="LOCATED_IN"
                 )
             ),
             self.UNIT,
-            GleaningIndex([], [first, second]),
+            [],
+            [first, second],
         )
         assert (first.type, second.type) == ("EMPLOYS", "FOUNDED_IN")
 
@@ -508,7 +554,8 @@ class TestCorrectionIssues:
         }
         first = Relationship(id="r1", type="EMPLOYS", **shared)
         second = Relationship(id="r2", type="FOUNDED_IN", **shared)
-        gleaner._parse_refinement_output(
+        _added(
+            gleaner,
             self._plan(
                 self._relationship_correction(
                     source="acme corp",
@@ -518,7 +565,8 @@ class TestCorrectionIssues:
                 )
             ),
             self.UNIT,
-            GleaningIndex([], [first, second]),
+            [],
+            [first, second],
         )
         assert (first.type, second.type) == ("EMPLOYS", "LOCATED_IN")
 
@@ -531,9 +579,7 @@ class TestCorrectionIssues:
         entity.type = "PERSON"
         issue = self._entity_correction(name="acme corp", corrected_type="ORGANIZATION")
         issue["text_evidence"] = "A clause that appears nowhere in the chunk."
-        gleaner._parse_refinement_output(
-            self._plan(issue), self.UNIT, GleaningIndex([entity], [])
-        )
+        _added(gleaner, self._plan(issue), self.UNIT, [entity], [])
         assert entity.type == "PERSON"
 
     def test_correction_survives_a_full_gleaning_round(self, gleaner, mocker) -> None:
@@ -552,21 +598,18 @@ class TestCorrectionIssues:
             }
         }
 
-        entities, _, _ = gleaner.glean_graph(
-            text_units=[self.UNIT],
-            initial_entities=[seed],
-            initial_relationships=[],
-        )
+        records, _ = gleaner.glean([self.UNIT], _records([self.UNIT], [seed]))
+        entities, _ = merge_contributions(records)
         corrected = next(e for e in entities if e.name == "acme corp")
-        # The round's duplicate merge lowercases the winning type.
+        # The merge of the records lowercases the winning type.
         assert (corrected.type or "").upper() == "ORGANIZATION"
 
     # -- endpoint names after a rename ------------------------------------- #
     # An edge carries a denormalised copy of each endpoint's name, and the
-    # indexer writes that copy rather than resolving the id. Renaming an entity
-    # in place therefore has to be followed by rewriting the copies, or the
-    # graph the stage hands on names one thing on the node and another on the
-    # edge. These run the whole round, with only the model's answer mocked.
+    # indexer writes that copy rather than resolving the id. A rename moves
+    # the unit's edges to the new name and id, or the graph would name one
+    # thing on the node and another on the edge. These run the whole round,
+    # with only the model's answer mocked.
 
     def _glean_one_round(
         self,
@@ -582,12 +625,10 @@ class TestCorrectionIssues:
                 "identified_issues": {"issue": list(issues)},
             }
         }
-        entities, relationships, _ = gleaner.glean_graph(
-            text_units=[self.UNIT],
-            initial_entities=entities,
-            initial_relationships=relationships,
+        records, _ = gleaner.glean(
+            [self.UNIT], _records([self.UNIT], entities, relationships)
         )
-        return entities, relationships
+        return merge_contributions(records)
 
     @staticmethod
     def _assert_indexed_endpoint_names_match_entities(
@@ -623,11 +664,11 @@ class TestCorrectionIssues:
             [edge],
             self._entity_correction(name="acme", corrected_name="Acme Corporation"),
         )
-        renamed = next(e for e in entities if e.id == "e1")
-        assert renamed.name != "acme"
+        renamed = next(e for e in entities if e.id == ACME_CORPORATION)
+        assert renamed.name == "Acme Corporation"
         (out,) = relationships
-        # The id was kept, so the edge is still attached; the name must follow.
-        assert (out.source_id, out.target_id) == ("e1", "e2")
+        # The edge follows the entity's new id and name.
+        assert (out.source_id, out.target_id) == (ACME_CORPORATION, "e2")
         assert out.source_name == renamed.name
         assert out.target_name == "seattle"
         self._assert_indexed_endpoint_names_match_entities(entities, relationships)
@@ -654,9 +695,9 @@ class TestCorrectionIssues:
             [edge],
             self._entity_correction(name="acme", corrected_name="Acme Corporation"),
         )
-        renamed = next(e for e in entities if e.id == "e2")
+        renamed = next(e for e in entities if e.id == ACME_CORPORATION)
         (out,) = relationships
-        assert (out.source_id, out.target_id) == ("e1", "e2")
+        assert (out.source_id, out.target_id) == ("e1", ACME_CORPORATION)
         assert out.source_name == "jane roe"
         assert out.target_name == renamed.name
         self._assert_indexed_endpoint_names_match_entities(entities, relationships)
@@ -664,9 +705,8 @@ class TestCorrectionIssues:
     def test_rename_that_merges_into_an_existing_entity_resyncs_the_remapped_edge(
         self, gleaner, mocker
     ) -> None:
-        # A rename can make two entities share a name, at which point the round's
-        # duplicate merge re-points every edge at the surviving id. The edge must
-        # then carry the survivor's name, not the one it was extracted under.
+        # A rename can make two of the unit's entities share a name, at which
+        # point they are one entity and the edge points at it, under its name.
         canonical = _ent("e1", "acme corporation", text_unit_ids=CITES)
         edge = Relationship(
             id="r1",
@@ -697,8 +737,8 @@ class TestCorrectionIssues:
     def test_reversed_edge_takes_the_renamed_endpoint_on_its_new_side(
         self, gleaner, mocker
     ) -> None:
-        # Reversal swaps ids and names together; a rename in the same round must
-        # then land on the side the swapped id now occupies, not the old one.
+        # Reversal swaps ids and names together; a rename in the same answer
+        # then lands on the side the swapped id now occupies, not the old one.
         edge = Relationship(
             id="r1",
             text_unit_ids=CITES,
@@ -726,10 +766,10 @@ class TestCorrectionIssues:
                 name="acme corp", corrected_name="Acme Corporation"
             ),
         )
-        renamed = next(e for e in entities if e.id == "e-acme")
-        assert renamed.name != "acme corp"
+        renamed = next(e for e in entities if e.id == ACME_CORPORATION)
+        assert renamed.name == "Acme Corporation"
         (out,) = relationships
-        assert (out.source_id, out.source_name) == ("e-acme", renamed.name)
+        assert (out.source_id, out.source_name) == (ACME_CORPORATION, renamed.name)
         assert (out.target_id, out.target_name) == ("e-seattle", "seattle")
         self._assert_indexed_endpoint_names_match_entities(entities, relationships)
 
@@ -771,7 +811,7 @@ class TestLogCompletionSummary:
 
 
 # --------------------------------------------------------------------------- #
-# _perform_llm_refinement + glean_graph (mocked chain, no Bedrock)
+# glean (mocked chain, no Bedrock)
 # --------------------------------------------------------------------------- #
 def _missing_entity_plan(name: str | None) -> dict:
     """A refinement answer adding entity ``name``, or an empty answer for None."""
@@ -788,38 +828,41 @@ def _missing_entity_plan(name: str | None) -> dict:
     return {"refinement_plan": {"identified_issues": issues}}
 
 
-class TestGleanGraphOrchestration:
-    def test_perform_llm_refinement_collects_new_entities(
-        self, gleaner, mocker
-    ) -> None:
+class TestGleanOrchestration:
+    def test_glean_collects_each_units_new_entities(self, gleaner, mocker) -> None:
         units = [TextUnit(id="t1", text="a"), TextUnit(id="t2", text="b")]
         # One refinement plan per unit, keyed by the unit's text.
         plans = {"a": _missing_entity_plan("Alpha"), "b": _missing_entity_plan("Beta")}
+        gleaner.gleaning_config.max_rounds = 1
         gleaner.graph_refiner = mocker.Mock()
         gleaner.graph_refiner.invoke.side_effect = lambda inp: plans[inp["text"]]
-        new_e, new_r = gleaner._perform_llm_refinement(units, [], [])
-        assert {e.name.lower() for e in new_e} == {"alpha", "beta"}
-        assert new_r == []
+        records, _ = gleaner.glean(units, _records(units))
+        assert [[e.name for e in r.entities] for r in records] == [["Alpha"], ["Beta"]]
+        assert all(r.gleaned for r in records)
 
-    def test_perform_llm_refinement_ignore_errors_returns_empty(
-        self, gleaner, mocker
-    ) -> None:
+    def test_a_unit_without_a_record_is_not_gleaned(self, gleaner, mocker) -> None:
+        gleaner.graph_refiner = mocker.Mock()
+        records, stats = gleaner.glean([TextUnit(id="t1", text="a")], [])
+        assert records == [] and stats.total_refinement_calls == 0
+        gleaner.graph_refiner.invoke.assert_not_called()
+
+    def test_ignore_errors_glean_fails_the_units(self, gleaner, mocker) -> None:
         gleaner.ignore_errors = True
         gleaner.graph_refiner = mocker.Mock()
         # BatchProcessor is a frozen-ish Pydantic model, so swap the whole
         # instance for a Mock whose execute_with_fallback raises -> the
-        # ignore_errors branch swallows it and returns empties.
+        # ignore_errors branch swallows it and fails the units.
         gleaner.batch_processor = mocker.Mock()
         gleaner.batch_processor.execute_with_fallback.side_effect = RuntimeError(
             "hard failure"
         )
-        new_e, new_r = gleaner._perform_llm_refinement(
-            [TextUnit(id="t1", text="a")], [], []
-        )
-        assert new_e == [] and new_r == []
-        assert gleaner._failed_unit_ids == ["t1"]
+        units = [TextUnit(id="t1", text="a")]
+        records, stats = gleaner.glean(units, _records(units))
+        assert stats.failed_text_unit_ids == ["t1"]
+        # A failed unit's record is not gleaned, so it is not stored as such.
+        assert [r.gleaned for r in records] == [False]
 
-    def test_glean_graph_counts_failed_unit_refinements(self, gleaner, mocker) -> None:
+    def test_glean_counts_failed_unit_refinements(self, gleaner, mocker) -> None:
         units = [TextUnit(id="t1", text="a"), TextUnit(id="t2", text="b")]
         gleaner.gleaning_config.max_rounds = 1
         gleaner.graph_refiner = mocker.Mock()
@@ -830,10 +873,11 @@ class TestGleanGraphOrchestration:
             BATCH_ITEM_FAILED,
         ]
 
-        _, _, stats = gleaner.glean_graph(units, [], [])
+        records, stats = gleaner.glean(units, _records(units))
 
         assert stats.num_failed_units == 1
         assert stats.failed_text_unit_ids == ["t2"]
+        assert [r.gleaned for r in records] == [True, False]
 
     def test_failed_unit_is_not_regleaned_and_failures_sum_over_rounds(
         self, gleaner, mocker
@@ -852,24 +896,32 @@ class TestGleanGraphOrchestration:
             lambda **kwargs: next(answers)
         )
 
-        _, _, stats = gleaner.glean_graph(units, [], [])
+        _, stats = gleaner.glean(units, _records(units))
 
         # Round 1: t2 fails, t1 gains. Round 2: only t1, which fails -> stop.
         assert [r.units_gleaned for r in stats.rounds] == [2, 1]
         assert stats.num_failed_units == 2
         assert stats.failed_text_unit_ids == ["t1", "t2"]
 
-    def test_perform_llm_refinement_reraises_when_not_ignoring(
-        self, gleaner, mocker
-    ) -> None:
+    def test_glean_reraises_when_not_ignoring(self, gleaner, mocker) -> None:
         gleaner.ignore_errors = False
         gleaner.graph_refiner = mocker.Mock()
         gleaner.batch_processor = mocker.Mock()
         gleaner.batch_processor.execute_with_fallback.side_effect = RuntimeError(
             "hard failure"
         )
+        units = [TextUnit(id="t1", text="a")]
         with pytest.raises(RuntimeError, match="hard failure"):
-            gleaner._perform_llm_refinement([TextUnit(id="t1", text="a")], [], [])
+            gleaner.glean(units, _records(units))
+
+    def test_glean_leaves_its_input_records_alone(self, gleaner, mocker) -> None:
+        units = [TextUnit(id="t1", text="a")]
+        gleaner.gleaning_config.max_rounds = 1
+        gleaner.graph_refiner = mocker.Mock()
+        gleaner.graph_refiner.invoke.return_value = _missing_entity_plan("Alpha")
+        records = _records(units)
+        gleaner.glean(units, records)
+        assert records == _records(units)
 
 
 # --------------------------------------------------------------------------- #
@@ -878,7 +930,7 @@ class TestGleanGraphOrchestration:
 class TestStopRule:
     @staticmethod
     def _run(gleaner, mocker, answer, units, entities=(), relationships=()):
-        """Run glean_graph with ``answer(round, unit_index)`` as the model.
+        """Run glean with ``answer(round, unit_index)`` as the model.
 
         Returns how many units each round sent. A unit is re-sent only in
         consecutive rounds, so its call count is the round number.
@@ -893,7 +945,7 @@ class TestStopRule:
 
         gleaner.graph_refiner = mocker.Mock()
         gleaner.graph_refiner.invoke.side_effect = _invoke
-        _, _, stats = gleaner.glean_graph(units, list(entities), list(relationships))
+        _, stats = gleaner.glean(units, _records(units, entities, relationships))
         rounds = max(calls.values(), default=0)
         sent = [sum(n >= r for n in calls.values()) for r in range(1, rounds + 1)]
         return sent, stats
@@ -945,8 +997,8 @@ class TestStopRule:
         assert stats.total_entities_added == 0
 
     def test_reproposing_a_known_entity_is_not_a_gain(self, gleaner, mocker) -> None:
-        # The answer names an entity the graph already has (it merges away), so
-        # the unit gained nothing and is not re-sent.
+        # The answer names an entity the unit already lists (it merges away),
+        # so the unit gained nothing and is not re-sent.
         gleaner.gleaning_config.max_rounds = 3
         seed = _ent("e0", "Stable", text_unit_ids=["t1"])
         sent, stats = self._run(

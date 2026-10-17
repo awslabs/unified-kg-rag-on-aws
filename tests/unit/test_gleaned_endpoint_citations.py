@@ -5,8 +5,9 @@
 a.txt extracts Vendor in tA; gleaning b.txt's tB adds Vendor -> Depot. The
 document lineage attributes Vendor to b.txt through that edge, so unless
 Vendor also cites tB, deleting a.txt keeps Vendor as shared but strips it to
-no text units at all. Runs the real gleaning round (only the model call is
-replaced) and the incremental indexer over in-memory stores.
+no text units at all. Runs the real gleaning of the records (only the model
+call is replaced), their merge and the incremental indexer over in-memory
+stores.
 """
 
 from __future__ import annotations
@@ -24,8 +25,8 @@ from unified_kg_rag.application.ingestion.incremental import (
 )
 from unified_kg_rag.application.storage.indexing_manager import IndexingManager
 from unified_kg_rag.domain.ingestion.base_processor import BaseProcessor
+from unified_kg_rag.domain.ingestion.contributions import merge_contributions
 from unified_kg_rag.domain.ingestion.delta_detector import detect_delta, document_doc_id
-from unified_kg_rag.domain.ingestion.graph_resolver import GraphResolver
 from unified_kg_rag.domain.ingestion.relationship_weights import (
     apply_text_unit_weights,
 )
@@ -35,6 +36,7 @@ from unified_kg_rag.domain.models import (
     Entity,
     Relationship,
     TextUnit,
+    TextUnitExtraction,
 )
 
 pytestmark = pytest.mark.unit
@@ -83,17 +85,50 @@ def _document(path: str) -> Document:
     )
 
 
+_SHIPS = {
+    "refinement_plan": {
+        "identified_issues": {
+            "issue": {
+                "issue_type": "MISSING_RELATIONSHIP",
+                "details": {
+                    "source": "Vendor",
+                    "target": "Depot",
+                    "type": "SHIPS_TO",
+                    "strength": "2",
+                },
+                "text_evidence": "Vendor ships to Depot",
+            }
+        }
+    }
+}
+_NOTHING: dict = {"refinement_plan": {"identified_issues": {}}}
+
+
 def _glean(gleaner: GraphGleaner, mocker, corpus: dict[str, list[str]]):
     """Extract each document's listed entities, then glean b.txt's edge."""
     units = [
-        TextUnit(id=f"t-{path}", text="...", document_ids=[path]) for path in corpus
+        TextUnit(
+            id=f"t-{path}",
+            text="Vendor ships to Depot." if path == "/b.txt" else "Vendor.",
+            document_ids=[path],
+        )
+        for path in corpus
     ]
-    entities = [
-        _entity(name, f"t-{path}") for path, names in corpus.items() for name in names
+    records = [
+        TextUnitExtraction(
+            text_unit_id=f"t-{path}",
+            entities=[_entity(name, f"t-{path}") for name in names],
+        )
+        for path, names in corpus.items()
     ]
-    gleaned = [_gleaned_edge("t-/b.txt")] if "/b.txt" in corpus else []
-    mocker.patch.object(gleaner, "_perform_llm_refinement", return_value=([], gleaned))
-    entities, edges, _, _ = gleaner._perform_gleaning_round(units, entities, [], 1)
+    gleaner.batch_processor = mocker.MagicMock()
+    gleaner.batch_processor.execute_with_fallback.side_effect = (
+        lambda items_to_process, **_: [
+            _SHIPS if unit.id == "t-/b.txt" else _NOTHING for unit in items_to_process
+        ]
+    )
+    records, _ = gleaner.glean(units, records)
+    entities, edges = merge_contributions(records)
     return units, entities, edges
 
 
@@ -171,11 +206,17 @@ def test_deleting_the_extracting_document_keeps_the_endpoint_cited(
     assert graph.ids("relationships") == {e.id for e in fresh_edges}
 
 
-def test_resolution_cites_endpoints_of_cached_relationships() -> None:
-    # A gleaning output cached before the rule existed reaches resolution with
-    # an endpoint that does not cite its edge's unit.
-    resolver = GraphResolver(Config(), max_workers=1, use_process_pool=False)
-    entities = [_entity("Vendor", "tA"), _entity("Depot", "tB")]
-    result, _ = resolver.resolve_graph(entities, [_gleaned_edge("tB")])
-    by_id = {e.id: e for e in result["entities"]}
+def test_the_merge_cites_endpoints_another_unit_lists() -> None:
+    # Vendor is listed by tA only; tB's edge names it. The merged graph's
+    # Vendor cites both, whichever records share the batch.
+    records = [
+        TextUnitExtraction(text_unit_id="tA", entities=[_entity("Vendor", "tA")]),
+        TextUnitExtraction(
+            text_unit_id="tB",
+            entities=[_entity("Depot", "tB")],
+            relationships=[_gleaned_edge("tB")],
+        ),
+    ]
+    entities, _ = merge_contributions(records)
+    by_id = {e.id: e for e in entities}
     assert set(by_id[VENDOR].text_unit_ids) == {"tA", "tB"}

@@ -715,6 +715,84 @@ class OpenSearchIndexer(VectorIndexer):
             self.opensearch_config.relationships_index_prefix, ids, suffix
         )
 
+    def read_extraction_records(
+        self, keys: list[str], suffix: str | None = None
+    ) -> dict[str, dict[str, Any]]:
+        """Stored extraction records by key (see the port)."""
+        sources = self._read_sources(
+            self.opensearch_config.extraction_records_index_prefix, keys, suffix
+        )
+        return {
+            source["id"]: source["record"]
+            for source in sources
+            if isinstance(source.get("record"), dict)
+        }
+
+    def write_extraction_records(
+        self, records: dict[str, dict[str, Any]], suffix: str | None = None
+    ) -> IndexingStats:
+        """Upsert extraction records by key into ``suffix``'s store index.
+
+        The index has no embeddings and indexes no field but the id: the
+        record is kept in ``_source`` only. It is not one of the artifact
+        indices (``_index_prefixes``), so a full build, ``clear`` and the
+        index-settings check leave it alone.
+        """
+        stats = IndexingStats(total_items=len(records))
+        if not records:
+            return stats
+        alias_name = self._get_name(
+            self.opensearch_config.extraction_records_index_prefix, suffix
+        )
+        try:
+            index_name = self.opensearch_client.get_index_name_by_alias(alias_name)
+            if not index_name:
+                index_name = self._new_index_name(
+                    alias_name,
+                    self.opensearch_config.extraction_records_index_prefix,
+                    suffix or Constants.DEFAULT_SUFFIX.value,
+                )
+                self.opensearch_client.create_index(
+                    index_name, self._get_extraction_records_mapping()
+                )
+                self.opensearch_client.update_alias(alias_name, index_name)
+            documents = [
+                {"id": key, "record": record} for key, record in records.items()
+            ]
+            failed: list[str] = []
+            for start in range(0, len(documents), _WRITE_SLICE_SIZE):
+                response = self.opensearch_client.bulk_index(
+                    index_name, documents[start : start + _WRITE_SLICE_SIZE]
+                )
+                failed += [
+                    str(next(iter(item.values())).get("_id"))
+                    for item in response.get("items", [])
+                ]
+        except Exception as e:  # noqa: BLE001 - reported as failed items
+            logger.error("Writing extraction records to '%s' failed: %s", alias_name, e)
+            stats.add_error(str(e), len(records), ids=list(records))
+            return stats
+        if failed:
+            stats.add_error("bulk write rejected", len(failed), ids=failed)
+        stats.successful_items = len(records) - len(failed)
+        return stats
+
+    def _get_extraction_records_mapping(self) -> dict[str, Any]:
+        return {
+            "settings": {
+                key: value
+                for key, value in self._get_base_mapping({})["settings"].items()
+                if not key.startswith("index.knn")
+            },
+            "mappings": {
+                "dynamic": False,
+                "properties": {
+                    "id": {"type": "keyword"},
+                    "record": {"type": "object", "enabled": False},
+                },
+            },
+        }
+
     def _descriptions(
         self, alias_prefix: str, ids: list[str], suffix: str | None
     ) -> dict[str, str]:

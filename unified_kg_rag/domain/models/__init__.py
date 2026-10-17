@@ -33,7 +33,7 @@ from .document import (
     DocumentDelta,
     DocumentLineage,
 )
-from .entity import Entity, RejectedEntity
+from .entity import Entity
 from .evaluation import (
     EvaluationGroundTruth,
     EvaluationMetric,
@@ -44,6 +44,7 @@ from .evaluation import (
     EvaluationSummary,
     EvaluatorType,
 )
+from .extraction import RejectionReason, TextUnitExtraction
 from .pipeline import (
     IndexBuildRecord,
     PipelineContext,
@@ -117,7 +118,8 @@ __all__ = [
     "PipelineStageResult",
     "PipelineStageStatus",
     "PipelineStageType",
-    "RejectedEntity",
+    "RejectionReason",
+    "TextUnitExtraction",
     "Relationship",
     "RerankModelId",
     "ResolutionMethod",

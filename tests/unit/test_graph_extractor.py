@@ -22,6 +22,14 @@ from unified_kg_rag.adapters.ingestion.graph_extractor import (
     GraphExtractor,
 )
 from unified_kg_rag.domain.ingestion.base_processor import BaseProcessor
+from unified_kg_rag.domain.ingestion.contributions import (
+    merge_contributions,
+    merge_entity_contributions,
+    merge_relationship_contributions,
+)
+from unified_kg_rag.domain.ingestion.relationship_endpoints import (
+    cite_relationship_endpoints,
+)
 from unified_kg_rag.domain.models import Config, Entity, Relationship, TextUnit
 from unified_kg_rag.domain.models.config import LanguageCode
 from unified_kg_rag.domain.prompts.graph_extraction import (
@@ -32,6 +40,23 @@ from unified_kg_rag.shared import DataProcessingError
 from unified_kg_rag.shared.utils.langchain import BATCH_ITEM_FAILED
 
 pytestmark = pytest.mark.unit
+
+
+def _parsed(extractor, result, unit):
+    """The unit's record of ``result`` as (entities, relationships)."""
+    record = extractor._parse_extraction_result(result, unit)
+    return record.entities, record.relationships
+
+
+def _processed(extractor, units, results):
+    """The graph the units' records state (merged, endpoints cited)."""
+    return merge_contributions(extractor._process_extraction_results(units, results))
+
+
+def _extracted(extractor, units):
+    records, stats = extractor.extract_units(units)
+    entities, relationships = merge_contributions(records)
+    return entities, relationships, stats
 
 
 @pytest.fixture
@@ -207,7 +232,7 @@ class TestMergeEntities:
         e2 = Entity(
             id="e1", name="Alice", type="PERSON", text_unit_ids=["t2"], confidence=0.9
         )
-        merged = extractor._merge_entities([e1, e2])
+        merged = merge_entity_contributions([e1, e2])
         assert len(merged) == 1
         survivor = merged[0]
         assert set(survivor.text_unit_ids) == {"t1", "t2"}
@@ -219,7 +244,7 @@ class TestMergeEntities:
         e2 = Entity(
             id="e1", name="Alice", type="PERSON", text_unit_ids=["t2"], confidence=0.9
         )
-        merged = extractor._merge_entities([e1, e2])
+        merged = merge_entity_contributions([e1, e2])
         assert merged[0].confidence == 0.9  # max, not 0.6 mean
 
     @pytest.mark.parametrize("reverse", [False, True])
@@ -239,7 +264,7 @@ class TestMergeEntities:
             attributes={"filters": {"category": "finance", "year": 2024}},
         )
         entities = [e2, e1] if reverse else [e1, e2]
-        (merged,) = extractor._merge_entities(entities)
+        (merged,) = merge_entity_contributions(entities)
         assert merged.attributes["filters"] == {
             "category": ["finance", "research"],
             "year": 2024,
@@ -259,17 +284,17 @@ class TestMergeEntities:
                 "attributes": {"filters": {"category": "finance"}},
             }
         )
-        (merged,) = extractor._merge_relationships([r1, r2])
+        (merged,) = merge_relationship_contributions([r1, r2])
         assert merged.attributes["filters"] == {"category": ["finance", "research"]}
 
     def test_distinct_ids_not_merged(self, extractor) -> None:
         e1 = Entity(id="e1", name="Alice", type="PERSON", text_unit_ids=["t1"])
         e2 = Entity(id="e2", name="Bob", type="PERSON", text_unit_ids=["t1"])
-        merged = extractor._merge_entities([e1, e2])
+        merged = merge_entity_contributions([e1, e2])
         assert len(merged) == 2
 
     def test_empty_input(self, extractor) -> None:
-        assert extractor._merge_entities([]) == []
+        assert merge_entity_contributions([]) == []
 
 
 # --------------------------------------------------------------------------- #
@@ -283,7 +308,7 @@ class TestMergeRelationships:
         r2 = Relationship(
             id="r1", source_id="e1", target_id="e2", weight=3.0, text_unit_ids=["t2"]
         )
-        merged = extractor._merge_relationships([r1, r2])
+        merged = merge_relationship_contributions([r1, r2])
         assert len(merged) == 1
         assert merged[0].weight == 4.0
         assert set(merged[0].text_unit_ids) == {"t1", "t2"}
@@ -293,7 +318,7 @@ class TestMergeRelationships:
     def test_distinct_relationship_ids_not_merged(self, extractor) -> None:
         r1 = Relationship(id="r1", source_id="e1", target_id="e2")
         r2 = Relationship(id="r2", source_id="e2", target_id="e3")
-        assert len(extractor._merge_relationships([r1, r2])) == 2
+        assert len(merge_relationship_contributions([r1, r2])) == 2
 
 
 # --------------------------------------------------------------------------- #
@@ -310,7 +335,7 @@ class TestMaterializeRelationshipEndpoints:
             target_name="Bob",
             text_unit_ids=["t9"],
         )
-        out = extractor._materialize_relationship_endpoints(existing, [rel])
+        out = cite_relationship_endpoints(existing, [rel])[0]
         ids = {e.id for e in out}
         assert ids == {"e1", "e2"}
         stub = next(e for e in out if e.id == "e2")
@@ -326,7 +351,7 @@ class TestMaterializeRelationshipEndpoints:
             source_name="Alice",
             target_name="Bob",
         )
-        out = extractor._materialize_relationship_endpoints(existing, [rel])
+        out = cite_relationship_endpoints(existing, [rel])[0]
         assert len(out) == 2
 
     def test_endpoint_without_id_or_name_skipped(self, extractor) -> None:
@@ -334,7 +359,7 @@ class TestMaterializeRelationshipEndpoints:
         rel = Relationship(
             id="r1", source_id="e1", target_id="", source_name="Alice", target_name=""
         )
-        out = extractor._materialize_relationship_endpoints(existing, [rel])
+        out = cite_relationship_endpoints(existing, [rel])[0]
         assert len(out) == 1
 
     def test_endpoints_cite_their_relationships_text_units(self, extractor) -> None:
@@ -359,10 +384,7 @@ class TestMaterializeRelationshipEndpoints:
                 text_unit_ids=["t1", "t3"],
             ),
         ]
-        out = {
-            e.id: e
-            for e in extractor._materialize_relationship_endpoints(existing, rels)
-        }
+        out = {e.id: e for e in cite_relationship_endpoints(existing, rels)[0]}
         assert out["e1"].text_unit_ids == ["t1", "t2", "t3"]
         assert out["e2"].text_unit_ids == ["t2", "t1", "t3"]
         # The input entity is not mutated.
@@ -386,7 +408,7 @@ class TestMaterializeRelationshipEndpoints:
                 target_name="Dan",
             ),
         ]
-        out = extractor._materialize_relationship_endpoints(existing, rels)
+        out = cite_relationship_endpoints(existing, rels)[0]
         # e2 (Bob) appears in both rels but is materialized once.
         assert len([e for e in out if e.id == "e2"]) == 1
         assert {e.id for e in out} == {"e2", "e3", "e4"}
@@ -479,7 +501,7 @@ class TestFormatEntityTypes:
 class TestParseExtractionResult:
     def test_non_dict_is_malformed(self, extractor, text_unit) -> None:
         with pytest.raises(DataProcessingError):
-            extractor._parse_extraction_result("nope", text_unit)
+            _parsed(extractor, "nope", text_unit)
 
     @pytest.mark.parametrize(
         "result",
@@ -493,7 +515,7 @@ class TestParseExtractionResult:
         self, extractor, text_unit, result
     ) -> None:
         with pytest.raises(DataProcessingError):
-            extractor._parse_extraction_result(result, text_unit)
+            _parsed(extractor, result, text_unit)
 
     @pytest.mark.parametrize(
         "result",
@@ -502,13 +524,13 @@ class TestParseExtractionResult:
     def test_empty_entities_section_is_valid(
         self, extractor, text_unit, result
     ) -> None:
-        ents, rels = extractor._parse_extraction_result(result, text_unit)
+        ents, rels = _parsed(extractor, result, text_unit)
         assert ents == [] and rels == []
 
     def test_missing_relationships_keeps_entities(self, extractor, text_unit) -> None:
         # The XML parser drops an empty <relationships/> section.
         result = {"entities": {"entity": {"name": "Bob", "type": "PERSON"}}}
-        ents, rels = extractor._parse_extraction_result(result, text_unit)
+        ents, rels = _parsed(extractor, result, text_unit)
         assert [e.name for e in ents] == ["Bob"] and rels == []
 
     def test_entities_and_relationships_parsed(self, extractor, text_unit) -> None:
@@ -527,7 +549,7 @@ class TestParseExtractionResult:
                 }
             },
         }
-        ents, rels = extractor._parse_extraction_result(result, text_unit)
+        ents, rels = _parsed(extractor, result, text_unit)
         assert {e.name for e in ents} == {"Alice", "Acme"}
         assert len(rels) == 1
         # Relationship endpoint id resolved through the local name->id map.
@@ -539,7 +561,7 @@ class TestParseExtractionResult:
             "entities": {"entity": [{"name": ""}, {"name": "Bob"}]},
             "relationships": {},
         }
-        ents, rels = extractor._parse_extraction_result(result, text_unit)
+        ents, rels = _parsed(extractor, result, text_unit)
         assert [e.name for e in ents] == ["Bob"]
 
 
@@ -571,7 +593,7 @@ class TestPrepareExtractionInputs:
 class TestProcessExtractionResults:
     def test_none_result_counts_failure(self, extractor) -> None:
         units = [TextUnit(id="t1", text="x")]
-        ents, rels = extractor._process_extraction_results(units, [None])
+        ents, rels = _processed(extractor, units, [None])
         assert ents == [] and rels == []
         assert extractor.stats.num_failed_extractions == 1
 
@@ -586,7 +608,7 @@ class TestProcessExtractionResults:
             }
         ]
         extractor.extraction_config.entity_confidence_threshold = 0.0
-        ents, _ = extractor._process_extraction_results(units, results)
+        ents, _ = _processed(extractor, units, results)
         assert [e.name for e in ents] == ["Alice"]
         assert extractor.stats.num_successful_extractions == 1
         assert extractor.stats.average_entity_confidence == 0.9
@@ -611,7 +633,7 @@ class TestProcessExtractionResults:
                 },
             }
         ]
-        ents, rels = extractor._process_extraction_results(units, results)
+        ents, rels = _processed(extractor, units, results)
         # Alice (0.1) filtered out -> its relationship is now an orphan.
         assert "alice" not in {e.name for e in ents}
         assert extractor.stats.entities_filtered_by_confidence == 1
@@ -640,7 +662,7 @@ class TestProcessExtractionResults:
                 },
             }
         ]
-        ents, rels = extractor._process_extraction_results(units, results)
+        ents, rels = _processed(extractor, units, results)
         assert sorted(e.name for e in ents) == ["Acme", "Harbor"]
         assert [(r.source_name, r.target_name) for r in rels] == [("Acme", "Harbor")]
 
@@ -660,7 +682,7 @@ class TestProcessExtractionResults:
 
     def _lineage(self, extractor, units, results) -> tuple[dict, list]:
         extractor.stats = ExtractionStats()
-        ents, rels = extractor._process_extraction_results(units, results)
+        ents, rels = _processed(extractor, units, results)
         return (
             {e.name: e.text_unit_ids for e in ents},
             [(r.source_name, r.target_name, r.text_unit_ids) for r in rels],
@@ -684,7 +706,10 @@ class TestProcessExtractionResults:
         )
         assert alone_b == ({"Bob": ["B"]}, [])
         assert alone_a == ({"Acme": ["A"], "Bob": ["A"]}, [("Bob", "Acme", ["A"])])
-        assert extractor.rejected_entities[-1].text_unit_id == "B"
+        (record_b,) = extractor._process_extraction_results(
+            [unit_b], [self._output(0.2)]
+        )
+        assert record_b.rejected == {"acme": "low_confidence"}
 
     def test_low_confidence_elsewhere_does_not_drop_a_stub(self, extractor) -> None:
         # "X" is listed at low confidence in A only; B names it only in a
@@ -719,7 +744,7 @@ class TestProcessExtractionResults:
 # --------------------------------------------------------------------------- #
 class TestExtractFromTextUnits:
     def test_empty_units_returns_empty(self, extractor) -> None:
-        ents, rels, stats = extractor.extract_from_text_units([])
+        ents, rels, stats = _extracted(extractor, [])
         assert ents == [] and rels == []
         assert stats.num_total_units == 0
 
@@ -745,7 +770,7 @@ class TestExtractFromTextUnits:
                 }
             ]
         )
-        ents, rels, stats = extractor.extract_from_text_units(units)
+        ents, rels, stats = _extracted(extractor, units)
         assert {e.name for e in ents} == {"Alice", "Acme"}
         assert len(rels) == 1
         assert stats.total_entities_extracted == 2
@@ -762,7 +787,7 @@ class TestExtractFromTextUnits:
             {"entities": {}},
         ]
         units = [TextUnit(id=f"t{i}", text="x") for i in range(3)]
-        _, _, stats = extractor.extract_from_text_units(units)
+        _, _, stats = _extracted(extractor, units)
         assert stats.num_failed_extractions == 2
         assert stats.num_successful_extractions == 1
         assert stats.failed_text_unit_ids == ["t0", "t1"]
@@ -774,8 +799,8 @@ class TestExtractFromTextUnits:
         fake_bp = mocker.Mock()
         fake_bp.execute_with_fallback.side_effect = RuntimeError("boom")
         extractor.batch_processor = fake_bp
-        ents, rels, stats = extractor.extract_from_text_units(
-            [TextUnit(id="t1", text="x"), TextUnit(id="t2", text="y")]
+        ents, rels, stats = _extracted(
+            extractor, [TextUnit(id="t1", text="x"), TextUnit(id="t2", text="y")]
         )
         assert ents == [] and rels == []
         # Every unit failed; the stats must say so, not report zero failures.
@@ -789,7 +814,7 @@ class TestExtractFromTextUnits:
         fake_bp.execute_with_fallback.side_effect = RuntimeError("boom")
         extractor.batch_processor = fake_bp
         with pytest.raises(RuntimeError, match="boom"):
-            extractor.extract_from_text_units([TextUnit(id="t1", text="x")])
+            _extracted(extractor, [TextUnit(id="t1", text="x")])
 
 
 # --------------------------------------------------------------------------- #
@@ -847,14 +872,14 @@ class TestEntityGrounding:
 
     def test_disabled_keeps_all(self, extractor, text_unit) -> None:
         extractor.extraction_config.entity_grounding.enabled = False
-        entities, _ = extractor._parse_extraction_result(self._result(), text_unit)
+        entities, _ = _parsed(extractor, self._result(), text_unit)
         assert {e.name for e in entities} == {"Acme Corp", "24 months"}
         assert extractor.stats.entities_ungrounded == 0
 
     def test_drop_removes_ungrounded(self, extractor, text_unit) -> None:
         extractor.extraction_config.entity_grounding.enabled = True
         extractor.extraction_config.entity_grounding.action = "drop"
-        entities, _ = extractor._parse_extraction_result(self._result(), text_unit)
+        entities, _ = _parsed(extractor, self._result(), text_unit)
         names = {e.name for e in entities}
         assert "Acme Corp" in names
         assert "24 months" not in names  # hallucination dropped
@@ -865,7 +890,7 @@ class TestEntityGrounding:
         g.enabled = True
         g.action = "penalize"
         g.penalty_factor = 0.5
-        entities, _ = extractor._parse_extraction_result(self._result(), text_unit)
+        entities, _ = _parsed(extractor, self._result(), text_unit)
         by_name = {e.name: e for e in entities}
         assert "24 months" in by_name  # kept
         assert by_name["24 months"].confidence == pytest.approx(0.5)  # penalized
@@ -874,7 +899,7 @@ class TestEntityGrounding:
 
     def test_source_text_not_persisted_as_attribute(self, extractor, text_unit) -> None:
         extractor.extraction_config.entity_grounding.enabled = True
-        entities, _ = extractor._parse_extraction_result(self._result(), text_unit)
+        entities, _ = _parsed(extractor, self._result(), text_unit)
         for e in entities:
             assert "_source_text" not in (e.attributes or {})
 
@@ -920,14 +945,14 @@ class TestRelationshipGrounding:
 
     def test_disabled_keeps_all(self, extractor, text_unit) -> None:
         extractor.extraction_config.entity_grounding.enabled = False
-        _, rels = extractor._parse_extraction_result(self._result(), text_unit)
+        _, rels = _parsed(extractor, self._result(), text_unit)
         assert {r.type for r in rels} == {"WORKS_AT", "FOUNDED"}
         assert extractor.stats.relationships_ungrounded == 0
 
     def test_drop_removes_ungrounded(self, extractor, text_unit) -> None:
         extractor.extraction_config.entity_grounding.enabled = True
         extractor.extraction_config.entity_grounding.action = "drop"
-        _, rels = extractor._parse_extraction_result(self._result(), text_unit)
+        _, rels = _parsed(extractor, self._result(), text_unit)
         types = {r.type for r in rels}
         assert "WORKS_AT" in types
         assert "FOUNDED" not in types  # hallucinated relationship dropped
@@ -938,7 +963,7 @@ class TestRelationshipGrounding:
         g.enabled = True
         g.action = "penalize"
         g.penalty_factor = 0.5
-        _, rels = extractor._parse_extraction_result(self._result(), text_unit)
+        _, rels = _parsed(extractor, self._result(), text_unit)
         by_type = {r.type: r for r in rels}
         assert "FOUNDED" in by_type  # kept
         assert by_type["FOUNDED"].weight == pytest.approx(4.5)  # 9 * 0.5
@@ -947,7 +972,7 @@ class TestRelationshipGrounding:
 
     def test_source_text_not_persisted(self, extractor, text_unit) -> None:
         extractor.extraction_config.entity_grounding.enabled = True
-        _, rels = extractor._parse_extraction_result(self._result(), text_unit)
+        _, rels = _parsed(extractor, self._result(), text_unit)
         for r in rels:
             assert "_source_text" not in (r.attributes or {})
 
@@ -980,9 +1005,7 @@ class TestRelationshipGrounding:
                 "source_text": "Alice owns a garage with three bays downtown.",
             }
         )
-        entities, rels = extractor._process_extraction_results(
-            [acme_unit, text_unit], [acme, result]
-        )
+        entities, rels = _processed(extractor, [acme_unit, text_unit], [acme, result])
         by_name = {e.name: e for e in entities}
         # The grounded WORKS_AT edge still makes Acme Corp cite t1. The
         # ungrounded FOUNDED edge to it and OWNS (whose target no chunk lists)
@@ -1012,9 +1035,7 @@ class TestRelationshipGrounding:
         result = self._result()
         result["entities"] = result["entities"][:1]
         result["relationships"] = result["relationships"][1:]  # FOUNDED only
-        entities, rels = extractor._process_extraction_results(
-            [acme_unit, text_unit], [acme, result]
-        )
+        entities, rels = _processed(extractor, [acme_unit, text_unit], [acme, result])
         by_name = {e.name: e for e in entities}
         assert rels == []
         assert by_name["Acme Corp"].text_unit_ids == ["t0"]
@@ -1064,9 +1085,7 @@ class TestDroppedEntityNotResurrected:
         g = extractor.extraction_config.entity_grounding
         g.enabled = True
         g.action = "drop"
-        entities, rels = extractor._process_extraction_results(
-            [text_unit], [self._result()]
-        )
+        entities, rels = _processed(extractor, [text_unit], [self._result()])
         keys = {e.name.casefold() for e in entities}
         assert "service term" not in keys  # not recreated as a stub
         assert {r.type for r in rels} == {"WORKS_AT"}
@@ -1077,7 +1096,7 @@ class TestDroppedEntityNotResurrected:
         g = extractor.extraction_config.entity_grounding
         g.enabled = True
         g.action = "penalize"
-        _, rels = extractor._process_extraction_results([text_unit], [self._result()])
+        _, rels = _processed(extractor, [text_unit], [self._result()])
         assert {r.type for r in rels} == {"OFFERS", "WORKS_AT"}
         assert extractor.stats.relationships_dropped_ungrounded_endpoint == 0
 
@@ -1095,7 +1114,7 @@ class TestDroppedEntityNotResurrected:
                 "source_text": "Alice works at Acme Corp.",
             }
         )
-        _, rels = extractor._process_extraction_results([text_unit], [result])
+        _, rels = _processed(extractor, [text_unit], [result])
         assert {r.type for r in rels} == {"OFFERS", "WORKS_AT"}
         assert extractor.stats.relationships_dropped_ungrounded_endpoint == 0
 

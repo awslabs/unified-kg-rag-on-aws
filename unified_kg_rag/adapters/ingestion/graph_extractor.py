@@ -1,8 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 import time
-from collections import defaultdict
-from collections.abc import Callable
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -13,26 +11,19 @@ from unified_kg_rag.adapters.llm.chain_factory import (
 )
 from unified_kg_rag.adapters.llm.retry import transient_error_predicate
 from unified_kg_rag.adapters.providers import Providers
-from unified_kg_rag.domain.ingestion.base_processor import (
-    BaseProcessor,
-    union_document_filters,
+from unified_kg_rag.domain.ingestion.base_processor import BaseProcessor
+from unified_kg_rag.domain.ingestion.contributions import (
+    merge_entity_contributions,
+    merge_relationship_contributions,
 )
 from unified_kg_rag.domain.ingestion.entity_grounding import is_grounded
-from unified_kg_rag.domain.ingestion.relationship_endpoints import (
-    cite_relationship_endpoints,
-)
-from unified_kg_rag.domain.ingestion.relationship_weights import (
-    apply_text_unit_weights,
-    sum_weights,
-    text_unit_weights,
-)
 from unified_kg_rag.domain.models import (
     Config,
     Entity,
     ModelPurpose,
-    RejectedEntity,
     Relationship,
     TextUnit,
+    TextUnitExtraction,
 )
 from unified_kg_rag.domain.prompts import GraphExtractionPrompt
 from unified_kg_rag.shared import DataProcessingError, get_logger
@@ -158,19 +149,20 @@ class GraphExtractor(BaseProcessor):
         )
 
         self.stats: ExtractionStats = ExtractionStats()
-        # Entities the last extract_from_text_units call rejected, per text
-        # unit, so gleaning does not re-add them (see RejectedEntity).
-        self.rejected_entities: list[RejectedEntity] = []
 
-    def extract_from_text_units(
+    def extract_units(
         self, text_units: list[TextUnit]
-    ) -> tuple[list[Entity], list[Relationship], ExtractionStats]:
+    ) -> tuple[list[TextUnitExtraction], ExtractionStats]:
+        """Extract each text unit's record (its own entities and relationships).
+
+        A unit whose extraction failed has no record; its id is in the
+        stats' ``failed_text_unit_ids``.
+        """
         start_time = time.time()
-        self.rejected_entities = []
 
         if not text_units:
             logger.warning("No text units provided for graph extraction")
-            return [], [], ExtractionStats()
+            return [], ExtractionStats()
 
         self.stats = ExtractionStats(num_total_units=len(text_units))
         logger.info("Starting graph extraction from %s text units", len(text_units))
@@ -189,19 +181,19 @@ class GraphExtractor(BaseProcessor):
             logger.error("Error during graph extraction: %s", e)
             self.stats.num_failed_extractions = len(text_units)
             self.stats.failed_text_unit_ids = [unit.id for unit in text_units]
-            return [], [], self.stats
+            return [], self.stats
 
-        all_entities, all_relationships = self._process_extraction_results(
-            text_units, extraction_results
+        records = self._process_extraction_results(text_units, extraction_results)
+
+        self.stats.total_entities_extracted = sum(len(r.entities) for r in records)
+        self.stats.total_relationships_extracted = sum(
+            len(r.relationships) for r in records
         )
-
-        self.stats.total_entities_extracted = len(all_entities)
-        self.stats.total_relationships_extracted = len(all_relationships)
         self.stats.total_processing_time = time.time() - start_time
 
         self._log_completion_summary(self.stats)
 
-        return all_entities, all_relationships, self.stats
+        return records, self.stats
 
     @staticmethod
     def _format_entity_types(entity_types: list[str]) -> str:
@@ -289,10 +281,8 @@ class GraphExtractor(BaseProcessor):
 
     def _process_extraction_results(
         self, text_units: list[TextUnit], extraction_results: list[Any]
-    ) -> tuple[list[Entity], list[Relationship]]:
-        all_entities = []
-        all_relationships = []
-
+    ) -> list[TextUnitExtraction]:
+        records: list[TextUnitExtraction] = []
         for text_unit, result in zip(text_units, extraction_results, strict=True):
             if result is BATCH_ITEM_FAILED:
                 self.stats.num_failed_extractions += 1
@@ -300,11 +290,7 @@ class GraphExtractor(BaseProcessor):
                 logger.warning("No extraction result for text unit '%s'", text_unit.id)
                 continue
             try:
-                entities, relationships = self._parse_extraction_result(
-                    result, text_unit
-                )
-                all_entities.extend(entities)
-                all_relationships.extend(relationships)
+                records.append(self._parse_extraction_result(result, text_unit))
                 self.stats.num_successful_extractions += 1
             except Exception as e:
                 self.stats.num_failed_extractions += 1
@@ -315,50 +301,29 @@ class GraphExtractor(BaseProcessor):
                     str(e),
                 )
 
-        original_entities_count = len(all_entities)
-        original_relationships_count = len(all_relationships)
-
-        all_entities = self._merge_entities(all_entities)
-        all_relationships = self._merge_relationships(all_relationships)
-
-        # Materialize entities referenced only by a relationship endpoint (the
-        # LLM mentioned them in a relation but did not list them as an entity),
-        # so those relationships are not later skipped as orphans, and make
-        # every endpoint cite its relationships' text units. MS GraphRAG
-        # likewise lets relationships introduce entities.
-        all_entities = self._materialize_relationship_endpoints(
-            all_entities, all_relationships
-        )
-
-        if all_entities:
+        entities = [e for record in records for e in record.entities]
+        if entities:
             self.stats.average_entity_confidence = sum(
-                e.confidence or 1.0 for e in all_entities
-            ) / len(all_entities)
-
+                e.confidence or 1.0 for e in entities
+            ) / len(entities)
         self.stats.confidence_threshold_applied = (
             self.extraction_config.entity_confidence_threshold
         )
-
-        logger.info(
-            "Entity and relationship processing completed - %s -> %s entities (filtered: %s), %s -> %s relationships",
-            original_entities_count,
-            len(all_entities),
-            self.stats.entities_filtered_by_confidence,
-            original_relationships_count,
-            len(all_relationships),
-        )
-        return all_entities, all_relationships
+        return records
 
     def _parse_extraction_result(
         self,
         result: dict[str, Any],
         text_unit: TextUnit,
-    ) -> tuple[list[Entity], list[Relationship]]:
-        """Parse one chain output; raise ``DataProcessingError`` if malformed.
+    ) -> TextUnitExtraction:
+        """Parse one chain output into the unit's record; raise
+        ``DataProcessingError`` if malformed.
 
         The output must carry an ``entities`` section. ``relationships`` may be
         absent: the XML parser drops an empty section, so a unit whose entities
-        are unrelated has none.
+        are unrelated has none. A name listed twice is one entity of the unit
+        (and a relationship stated twice one relationship, its strengths
+        summed), as in the merge across units.
         """
         entities: list[Entity] = []
         relationships: list[Relationship] = []
@@ -386,18 +351,11 @@ class GraphExtractor(BaseProcessor):
         entities, low_confidence_keys = self._apply_confidence_threshold(
             entities, text_unit
         )
-        self.rejected_entities.extend(
-            RejectedEntity(
-                text_unit_id=text_unit.id, entity_key=key, reason="ungrounded"
-            )
-            for key in sorted(dropped_keys)
-        )
-        self.rejected_entities.extend(
-            RejectedEntity(
-                text_unit_id=text_unit.id, entity_key=key, reason="low_confidence"
-            )
-            for key in sorted(low_confidence_keys)
-        )
+        record = TextUnitExtraction(text_unit_id=text_unit.id)
+        for key in sorted(dropped_keys):
+            record.reject(key, "ungrounded")
+        for key in sorted(low_confidence_keys):
+            record.reject(key, "low_confidence")
 
         entity_name_to_id = self.build_entity_key_index(entities)
         relationships_data = ensure_list(raw_relationships, inner_key="relationship")
@@ -425,67 +383,11 @@ class GraphExtractor(BaseProcessor):
             relationships, text_unit, {e.id for e in entities}
         )
 
-        return entities, relationships
-
-    def _merge_entities(self, entities: list[Entity]) -> list[Entity]:
-        field_mergers: dict[str, Callable[[Any, Any], Any]] = {
-            "description": self._merge_description,
-            "text_unit_ids": lambda current, new: list(
-                dict.fromkeys(
-                    (current if isinstance(current, list) else [])
-                    + (new if isinstance(new, list) else [])
-                )
-            ),
-            # Confidence should be monotonic in evidence: an entity extracted
-            # confidently many times should be reinforced, not diluted toward a
-            # running mean (and made order-dependent). Take the max.
-            "confidence": lambda current, new: max(
-                current if current is not None else 0.0,
-                new if new is not None else 0.0,
-            ),
-            "attributes": union_document_filters,
-        }
-
-        return self._merge_items(
-            items=entities,
-            item_name="Entity",
-            field_mergers=field_mergers,
-            frequency_fields=["type"],
-            log_message_formatter=lambda e: f"Entity '{e.name}' merged {{count}} instances",
+        record.entities = merge_entity_contributions(entities)
+        record.relationships = merge_relationship_contributions(
+            [rel for rel in relationships if rel.source_id != rel.target_id]
         )
-
-    def _merge_relationships(
-        self, relationships: list[Relationship]
-    ) -> list[Relationship]:
-        # Weight = sum of the instance strengths, kept per text unit so the
-        # incremental merge can reproduce it (see relationship_weights). The
-        # maps are taken before _merge_items mutates the first instance.
-        weight_maps: dict[str, list[dict[str, float]]] = defaultdict(list)
-        for rel in relationships:
-            weight_maps[rel.id].append(text_unit_weights(rel))
-        field_mergers: dict[str, Callable[[Any, Any], Any]] = {
-            # Plain sum for instances without text-unit lineage; replaced by
-            # the per-text-unit sum below whenever lineage exists.
-            "weight": lambda current, new: (
-                current if isinstance(current, (int | float)) else 0.0
-            )
-            + (new if isinstance(new, (int | float)) else 0.0),
-            "description": self._merge_description,
-            "attributes": union_document_filters,
-        }
-
-        merged = self._merge_items(
-            items=relationships,
-            item_name="Relationship",
-            field_mergers=field_mergers,
-            log_message_formatter=lambda r: (
-                f"Relationship '{r.source_name}' -> '{r.target_name}' "
-                f"(type: '{r.type}') merged {{count}} instances"
-            ),
-        )
-        for rel in merged:
-            apply_text_unit_weights(rel, sum_weights(weight_maps[rel.id]))
-        return merged
+        return record
 
     def _apply_confidence_threshold(
         self, entities: list[Entity], text_unit: TextUnit
@@ -689,24 +591,6 @@ class GraphExtractor(BaseProcessor):
                     text_unit.short_id,
                 )
         return kept
-
-    def _materialize_relationship_endpoints(
-        self,
-        entities: list[Entity],
-        relationships: list[Relationship],
-    ) -> list[Entity]:
-        """Make every relationship endpoint an entity citing the edge's text units.
-
-        See :func:`cite_relationship_endpoints`; gleaning and graph resolution
-        apply the same step to the relationships they see.
-        """
-        result, stub_count = cite_relationship_endpoints(entities, relationships)
-        if stub_count:
-            logger.info(
-                "Materialized %s entities referenced only by relationships",
-                stub_count,
-            )
-        return result
 
     @staticmethod
     def _log_completion_summary(stats: ExtractionStats) -> None:

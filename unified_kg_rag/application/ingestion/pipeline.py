@@ -361,6 +361,14 @@ class DataIngestionPipeline:
                 "source_directory": self.source_directory,
                 "doc_status": doc_status,
             },
+            # --force-rebuild re-extracts every unit (and refreshes the
+            # extraction store) instead of reusing the stored records.
+            PipelineStageType.GRAPH_EXTRACTION: {
+                "reuse_stored": not self.pipeline_config.force_rebuild
+            },
+            PipelineStageType.CLAIM_EXTRACTION: {
+                "reuse_stored": not self.pipeline_config.force_rebuild
+            },
             PipelineStageType.COMMUNITY_DETECTION: {"cache_directory": cache_directory},
             PipelineStageType.INDEXING: {"doc_status": doc_status},
         }
@@ -1326,8 +1334,12 @@ class DataIngestionPipeline:
             "total_documents_processed": len(context.documents or []),
             "total_text_units_created": len(context.text_units or []),
             "total_translated_units": len(context.translated_units or []),
-            "total_entities_extracted": len(context.entities or []),
-            "total_relationships_extracted": len(context.relationships or []),
+            "total_entities_extracted": len(
+                {e.id for r in context.unit_extractions for e in r.entities}
+            ),
+            "total_relationships_extracted": len(
+                {rel.id for r in context.unit_extractions for rel in r.relationships}
+            ),
             "total_claims_extracted": len(context.claims or []),
             "total_communities_detected": len(context.communities or []),
             "total_community_reports_generated": len(context.community_reports or []),

@@ -174,6 +174,18 @@ Defaults. Set the old value explicitly to keep the previous behaviour.
 
 Index data. Rebuild existing indexes once with `indexing.reset: true` (or a
 full re-index of the affected index type).
+- Graph extraction and gleaning write one record per text unit (its own
+  entities, relationships and rejected names) and graph resolution merges
+  the records: `PipelineContext.unit_extractions` replaces `entities`,
+  `relationships` and `rejected_entities`, `GraphExtractor.extract_units`
+  replaces `extract_from_text_units`, `GraphGleaner.glean` replaces
+  `glean_graph`, and `RejectedEntity` and `GleaningIndex` are removed. A
+  gleaning correction now changes only what the correcting text unit says,
+  and a renamed entity takes the id of its new name (it kept the old
+  name's), so a graph indexed by an earlier build differs from what a
+  rebuild produces: run once with `indexing.reset: true`. Stage caches of
+  graph extraction and gleaning written by an earlier build are recomputed
+  (#PR).
 - Entity names keep their display form and ids use a symbol-preserving key
   (#110); community, document and registry ids hash new inputs (#134).
 - The chunk `text` field uses the source-language analyzer, and
@@ -403,6 +415,16 @@ Library API (Python callers and custom backends).
   (with `community_drift_overlap_share`). Entities indexed before record no
   community; re-index once with `indexing.reset: true` to start counting
   from a full build (#320).
+- The extraction store: each text unit's extraction record (entities,
+  relationships, claims) is kept in the vector store's extraction-records
+  index (`indexing.opensearch.extraction_records_index_prefix`), keyed by a
+  hash of the unit's text and a fingerprint of the settings that shape it
+  (models, extraction, gleaning and claim settings, target language, the
+  prompt templates in effect, built-in ones included). A chunk with a stored
+  record is not sent to the model again: an edited document re-extracts only
+  its changed chunks, and a full rebuild, a reset or another document with
+  the same chunk reuses the records; `--force-rebuild` re-extracts every
+  chunk and rewrites them. The index is only added to (#PR).
 - With `observability.capture_content`, the root `kg_rag.query` span records
   the redacted query as `input.value` and, outside `stream` / `astream`, the
   redacted answer as `output.value`, so the Langfuse and Phoenix trace lists
@@ -523,6 +545,14 @@ Library API (Python callers and custom backends).
   2,700 tokens), the answer context named 59 of 60 topics (was 25) from all
   21 reports of the cut (was 10 retrieved reports), in 6 map calls (was 2):
   map cost now grows with the cut, not with `top_k` (#318).
+- Gleaning refines each text unit's own record: its prompt lists the
+  unit's own spelling of each entity and its own strengths, an answer's
+  issues name entities as that prompt did (a rename applies after the
+  answer's other issues), and a unit is re-gleaned while its answers add
+  items its record lacked, whatever other units hold. A unit whose
+  extraction failed is not gleaned (its document is retried anyway). The
+  claim prompt lists the unit's own entities instead of the resolved ones,
+  so a unit's claims depend on the unit alone (#PR).
 - OpenSearch indexing keeps 16 embedding requests in flight (was 8), so it
   embeds and bulk-writes 800 items of a type at a time (was 400). In the
   real-AWS E2E 1,600 texts took 9.4 s instead of 18.8 s, with no Bedrock
@@ -759,6 +789,9 @@ Library API (Python callers and custom backends).
   bucket keeps them for 30 days. With `--s3-sync` checkpoints have no TTL,
   including ones an earlier run stamped with one; the bucket lifecycle
   expires them (#316).
+- A corrected relationship and the uncorrected one other text units state
+  each keep their own description and document filters; both kept the
+  merged description, and the uncorrected one every unit's filters (#PR).
 - Community detection no longer logs the WARNING "Graph has no weighted
   edges" when the hierarchy ends normally at a level whose communities no
   edge joins; it logs that at INFO and stops, with the same communities. An
@@ -2028,6 +2061,11 @@ Library API (Python callers and custom backends).
   outweighed the smaller steps deeper in a list and inverted 20 positions
   of a 60-item DRIFT bucket that mixes graph-distance and index scores
   (#317).
+- The machinery that applied gleaning corrections to the merged graph:
+  `GleaningIndex.split_relationship` and its rename index, the gleaning
+  round merge, and the id-sharing group join and endpoint-citation pass of
+  graph resolution (the merge of the records gives one item per id and
+  cites endpoints) (#PR).
 - `Entity.frequency`: it counted an entity's text units in every merge path
   but no store wrote it and nothing read it (ranking uses `rank`, the local
   search frequency filter counts `text_unit_ids`). Stage caches that carry

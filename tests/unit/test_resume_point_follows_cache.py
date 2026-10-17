@@ -35,6 +35,7 @@ from unified_kg_rag.domain.models import (
     PipelineStageStatus,
     PipelineStageType,
     Relationship,
+    TextUnitExtraction,
 )
 from unified_kg_rag.shared.cache_manager import CacheManager
 from unified_kg_rag.shared.exceptions import PipelineExecutionError
@@ -57,6 +58,10 @@ def _result(stage_name: str, status: PipelineStageStatus) -> PipelineStageResult
     )
 
 
+def _entity_ids(context: PipelineContext) -> list[str]:
+    return [e.id for record in context.unit_extractions for e in record.entities]
+
+
 def _context() -> PipelineContext:
     """graph_extraction produced one entity and completed; gleaning then failed."""
     context = PipelineContext(
@@ -66,9 +71,14 @@ def _context() -> PipelineContext:
         start_time=datetime(2026, 1, 1),
         source_directory=Path("/tmp/src"),
     )
-    context.entities = [Entity(id="e1", name="Vendor")]
-    context.relationships = [
-        Relationship(id="r1", source_id="e1", target_id="e1", type="SELF")
+    context.unit_extractions = [
+        TextUnitExtraction(
+            text_unit_id="t1",
+            entities=[Entity(id="e1", name="Vendor")],
+            relationships=[
+                Relationship(id="r1", source_id="e1", target_id="e2", type="REL")
+            ],
+        )
     ]
     context.stage_results = [
         _result(EXTRACTION, PipelineStageStatus.COMPLETED),
@@ -118,7 +128,7 @@ def _record_legacy_run(pipeline: DataIngestionPipeline) -> None:
     """
     context = _context()
     pipeline.state_manager.save_pipeline_metadata(context)
-    for attr in ("entities", "relationships"):
+    for attr in ("unit_extractions",):
         pipeline.cache_manager.save_stage_result(
             data=getattr(context, attr),
             cache_key=attr,
@@ -176,7 +186,7 @@ class TestAutoResume:
         start, context, executed = _resume(_pipeline(Config(), tmp_path), mocker)
 
         assert start == GLEANING
-        assert [entity.id for entity in context.entities] == ["e1"]
+        assert _entity_ids(context) == ["e1"]
         assert executed[0] == GLEANING
 
     @CHANGED_CONFIGS
@@ -206,10 +216,10 @@ class TestAutoResume:
         start, context, executed = _resume(_pipeline(Config(), tmp_path), mocker)
 
         recomputed = executed[0] == EXTRACTION
-        restored = [entity.id for entity in context.entities] == ["e1"]
+        restored = _entity_ids(context) == ["e1"]
         assert (
             recomputed or restored
-        ), f"resumed at '{start}' with entities={context.entities!r}"
+        ), f"resumed at '{start}' with records={context.unit_extractions!r}"
 
     def test_legacy_cache_is_recomputed_and_the_legacy_key_is_named(
         self, tmp_path, mocker, caplog
@@ -225,7 +235,7 @@ class TestAutoResume:
 
         assert start == EXTRACTION
         assert executed[0] == EXTRACTION
-        assert "'entities'" in caplog.text
+        assert "'unit_extractions'" in caplog.text
 
     def test_downstream_completion_is_invalidated_with_its_upstream(
         self, tmp_path, mocker
@@ -264,7 +274,7 @@ class TestExplicitResume:
         )
 
         assert start == GLEANING
-        assert [entity.id for entity in context.entities] == ["e1"]
+        assert _entity_ids(context) == ["e1"]
         assert executed[0] == GLEANING
 
     @CHANGED_CONFIGS
@@ -319,7 +329,12 @@ class TestEmptyOutputIsStillOutput:
 def _record_chunked_run(pipeline: DataIngestionPipeline) -> None:
     """Like ``_record_run``, but entities span several chunk files."""
     context = _context()
-    context.entities = [Entity(id=f"e{i}", name=f"Vendor {i}") for i in range(5)]
+    context.unit_extractions = [
+        TextUnitExtraction(
+            text_unit_id=f"t{i}", entities=[Entity(id=f"e{i}", name=f"Vendor {i}")]
+        )
+        for i in range(5)
+    ]
     pipeline.state_manager.save_pipeline_metadata(context)
     pipeline.cache_manager.chunk_size = 2
     pipeline._save_stage_outputs_to_cache(context, EXTRACTION)
@@ -347,14 +362,16 @@ class TestResumeReadsCacheOnce:
         start, context, _ = _resume(_pipeline(Config(), tmp_path), mocker)
 
         assert start == GLEANING
-        assert context.entities
+        assert context.unit_extractions
         assert {path: reads.get(path, 0) for path in files} == dict.fromkeys(files, 1)
 
     @pytest.mark.parametrize("record", [_record_run, _record_chunked_run])
     def test_corrupt_entry_is_recomputed(self, tmp_path, mocker, record) -> None:
         # Same size, different bytes: only the content hash can catch it.
         record(_pipeline(Config(), tmp_path))
-        target = next(f for f in _cached_files(tmp_path) if "entities" in f.name)
+        target = next(
+            f for f in _cached_files(tmp_path) if "unit_extractions" in f.name
+        )
         text = target.read_text(encoding="utf-8")
         target.write_text(text.replace("Vendor", "Vendex", 1), encoding="utf-8")
         assert len(target.read_text(encoding="utf-8")) == len(text)

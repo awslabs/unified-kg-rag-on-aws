@@ -117,9 +117,32 @@ class ClaimExtractor(BaseProcessor):
     def extract_from_text_units(
         self, text_units: list[TextUnit], entities: list[Entity] | None = None
     ) -> tuple[list[Claim], ClaimExtractionStats]:
+        """The claims of ``text_units``, merged across units (see
+        :meth:`extract_units`)."""
+        per_unit, stats = self.extract_units(text_units, entities)
+        all_claims = [claim for claims in per_unit.values() for claim in claims]
+        merged_claims = self.merge_claims(all_claims)
+        stats.total_claims_extracted = len(merged_claims)
+        logger.info(
+            "Claim extraction completed: extracted %s claims, merged to %s unique claims",
+            len(all_claims),
+            len(merged_claims),
+        )
+        return merged_claims, stats
+
+    def extract_units(
+        self, text_units: list[TextUnit], entities: list[Entity] | None = None
+    ) -> tuple[dict[str, list[Claim]], ClaimExtractionStats]:
+        """Extract each text unit's claims.
+
+        ``entities`` are listed in the prompt of each unit they cite. Returns
+        the claims by text unit id, one entry (possibly empty) per unit whose
+        extraction succeeded; the others are in the stats'
+        ``failed_text_unit_ids``.
+        """
         if not text_units:
             logger.warning("No text units provided for claim extraction")
-            return [], ClaimExtractionStats()
+            return {}, ClaimExtractionStats()
 
         all_entities = entities or []
         logger.info(
@@ -162,25 +185,15 @@ class ClaimExtractor(BaseProcessor):
             logger.error("Error during claim extraction: %s", e)
             for unit in units_to_process:
                 self._record_failure(unit)
-            return [], self.stats
+            return {}, self.stats
 
-        all_claims = self._process_extraction_results(
+        per_unit = self._process_extraction_results(
             units_to_process, extraction_results
         )
-        initial_claim_count = len(all_claims)
-        merged_claims = self._merge_claims(all_claims)
-
-        self.stats.total_claims_extracted = len(merged_claims)
+        self.stats.total_claims_extracted = sum(len(c) for c in per_unit.values())
         self.stats.total_processing_time = time.time() - start_time
-
-        logger.info(
-            "Claim extraction completed: extracted %s claims, merged to %s unique claims",
-            initial_claim_count,
-            len(merged_claims),
-        )
         self._log_completion_summary(self.stats)
-
-        return merged_claims, self.stats
+        return per_unit, self.stats
 
     def _prepare_extraction_inputs(
         self, text_units: list[TextUnit], all_entities: list[Entity]
@@ -209,16 +222,17 @@ class ClaimExtractor(BaseProcessor):
 
     def _process_extraction_results(
         self, text_units: list[TextUnit], extraction_results: list[Any]
-    ) -> list[Claim]:
-        all_claims = []
+    ) -> dict[str, list[Claim]]:
+        per_unit: dict[str, list[Claim]] = {}
 
         # The batch processor returns one result per item (BATCH_ITEM_FAILED for
         # a failed one), so a length mismatch is a bug, not lost results.
         for text_unit, result in zip(text_units, extraction_results, strict=True):
             if result and result is not BATCH_ITEM_FAILED:
                 try:
-                    claims = self._parse_extraction_result(result, text_unit)
-                    all_claims.extend(claims)
+                    per_unit[text_unit.id] = self._parse_extraction_result(
+                        result, text_unit
+                    )
                     self.stats.num_successful_extractions += 1
                 except Exception as e:
                     self._record_failure(text_unit)
@@ -232,7 +246,7 @@ class ClaimExtractor(BaseProcessor):
                 logger.debug(
                     "No claim extraction result for text unit '%s'", text_unit.id
                 )
-        return all_claims
+        return per_unit
 
     def _record_failure(self, text_unit: TextUnit) -> None:
         self.stats.num_failed_extractions += 1
@@ -345,7 +359,9 @@ class ClaimExtractor(BaseProcessor):
         )
         return generate_stable_id(claim_id_content)
 
-    def _merge_claims(self, claims: list[Claim]) -> list[Claim]:
+    def merge_claims(self, claims: list[Claim]) -> list[Claim]:
+        """Merge claim statements by id (mutates the first of each id)."""
+
         def safe_list_merge(current: list[str], new: list[str]) -> list[str]:
             merged_current = current if current is not None else []
             merged_new = new if new is not None else []

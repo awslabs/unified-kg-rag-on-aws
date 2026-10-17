@@ -17,7 +17,7 @@ from unified_kg_rag.adapters.ingestion.gleaner import GraphGleaner
 from unified_kg_rag.domain.ingestion.base_processor import BaseProcessor
 from unified_kg_rag.domain.ingestion.graph_resolver import EntityResolver
 from unified_kg_rag.domain.ingestion.merge import merge_entities
-from unified_kg_rag.domain.models import Config, Entity, TextUnit
+from unified_kg_rag.domain.models import Config, Entity, TextUnit, TextUnitExtraction
 from unified_kg_rag.shared.utils import clean_display_name, entity_key
 
 pytestmark = pytest.mark.unit
@@ -156,12 +156,13 @@ def test_incremental_merge_uses_identity_key(processor, unit) -> None:
 
 
 def test_gleaner_duplicate_merge_uses_identity_key() -> None:
-    entities = [
-        Entity(id="a", name="C++"),
-        Entity(id="b", name="C#"),
-        Entity(id="c", name="Acme Corp"),
-        Entity(id="d", name="ACME Corp."),
-    ]
-    unique, remap = GraphGleaner._merge_duplicate_entities(entities)
-    assert sorted(e.id for e in unique) == ["a", "b", "c"]
-    assert remap == {"d": "c"}
+    record = TextUnitExtraction(
+        text_unit_id="t1",
+        entities=[
+            Entity(id="a", name="C++"),
+            Entity(id="b", name="C#"),
+            Entity(id="c", name="Acme Corp"),
+        ],
+    )
+    GraphGleaner._add_to_record(record, [Entity(id="d", name="ACME Corp.")], [])
+    assert sorted(e.id for e in record.entities) == ["a", "b", "c"]
