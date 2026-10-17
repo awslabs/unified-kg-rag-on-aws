@@ -439,7 +439,7 @@ Library API (Python callers and custom backends).
   calls instead of 42. Each cached response is served at most once per run,
   truncated responses are not kept, and `--force-rebuild` serves none. A
   re-run stage with unchanged prompts (`--resume-from-stage`) now answers from
-  the cache; with a temperature above 0 it replays the earlier sample (#PR).
+  the cache; with a temperature above 0 it replays the earlier sample (#326).
 - Evaluation: `grouped_statistics.source_type` reports the retrieval metrics
   per source section type (its `text` row scores only the text units the
   answer model read); `graph_aware` adds `retrieved_entity_coverage` /
@@ -837,12 +837,12 @@ Library API (Python callers and custom backends).
 - A stopped or interrupted ingestion no longer keeps retrying the model
   calls that were running: their batch makes no further attempt and a
   backoff wait ends at once, so the task exits once the calls in flight
-  return instead of being killed after the stop timeout (#PR).
+  return instead of being killed after the stop timeout (#326).
 - A SIGTERM no longer hangs `run-ingestion --s3-sync` when it arrives while
   a stage is handing work to a thread pool: the handler uploaded the
   checkpoint itself, and the upload waited on a lock the interrupted code
   held. The handler now only stops the stage; the checkpoint is uploaded as
-  the run unwinds (#PR).
+  the run unwinds (#326).
 - The CLI provider flags no longer drop environment overrides. On every CLI
   (`run-ingestion`, `run-rag`, `run-eval`, `run-prompt-tuning`,
   `run-visualization`), any provider flag (`--backend`, `--llm-provider`,
