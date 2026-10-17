@@ -798,8 +798,8 @@ class DataIngestionPipeline:
         if not self.providers.doc_status_enabled:
             raise ConfigurationError(
                 "indexing.retire_source_scopes / --retire-source-scope needs "
-                "incremental indexing (aws.dynamodb.enabled: true, or "
-                "providers.doc_status.enabled: true): the retired records live "
+                "incremental indexing (providers.doc_status.enabled: true): the "
+                "retired records live "
                 "in the doc-status registry"
             )
         parsing = self.config.processing.document_parsing

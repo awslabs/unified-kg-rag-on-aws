@@ -1087,7 +1087,7 @@ def filter_to_delta(
             f"Doc-status registry: could not diff the corpus against the "
             f"registry ({type(e).__name__}: {e}). Incremental indexing needs "
             "the registry; fix it and re-run, or turn incremental indexing off "
-            "(aws.dynamodb.enabled / providers.doc_status.enabled: false) to "
+            "(providers.doc_status.enabled: false) to "
             "run without it."
         ) from e
     stored_spelling = _stored_spelling(source_scope, namespace, scope, delta)

@@ -417,12 +417,12 @@ class ComputeStack(Stack):
             "UKR__INDEXING__OPENSEARCH__LANGUAGE_ANALYZERS__KO": self.config.opensearch_korean_analyzer,
             # Maps to aws.dynamodb.table_name. The table is IaC-managed (KMS,
             # PITR, alarms) and the task role has no dynamodb:CreateTable, so
-            # disable app-side auto-creation. With aws.dynamodb.enabled, a
+            # disable app-side auto-creation. With the registry on, a
             # missing table (or any other registry error) fails the
             # document_loading stage with DocStatusRegistryError naming the
             # table and the ResourceNotFoundException, rather than an
             # AccessDenied on CreateTable or a silent full rebuild.
-            # aws.dynamodb.enabled stays a config.yaml decision.
+            # providers.doc_status.enabled stays a config.yaml decision.
             "UKR__AWS__DYNAMODB__TABLE_NAME": self.config.doc_status_table,
             "UKR__AWS__DYNAMODB__CREATE_TABLE_IF_MISSING": "false",
             # The Environment dimension of the EMF metrics (--metrics-sink

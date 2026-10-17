@@ -67,7 +67,7 @@ def test_env_overrides_yaml_table_name(
     cfg = ConfigLoader(config_file).load_config()
     assert cfg.aws.dynamodb.table_name == "example-doc-status"
     assert cfg.aws.dynamodb.create_table_if_missing is False
-    assert cfg.aws.dynamodb.enabled is False
+    assert cfg.providers.doc_status.enabled is False
 
 
 def test_opensearch_replicas_from_env(monkeypatch: pytest.MonkeyPatch) -> None:

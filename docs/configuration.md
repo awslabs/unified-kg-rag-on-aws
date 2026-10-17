@@ -118,7 +118,7 @@ Document-status registry
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `kind` | string (min length 1) | `"dynamodb"` | Document-status registry for incremental indexing: dynamodb \| sqlite. |
-| `enabled` | boolean \| null | `null` | Turn incremental indexing (the registry) on or off. null follows aws.dynamodb.enabled, so existing configs keep their behaviour. |
+| `enabled` | boolean | `false` | Turn on the doc-status registry, which makes ingestion incremental (only new, changed and failed documents are processed). |
 | `sqlite_path` | string (min length 1) | `".unified-kg-rag/doc-status.sqlite3"` | SQLite database file when kind is sqlite (created on first use). A relative path is resolved against the config file's directory (the working directory without a config file). |
 
 ## `models`
@@ -265,7 +265,6 @@ AWS DynamoDB document-status registry configuration
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `enabled` | boolean | `false` | Turn on the DynamoDB doc-status registry, which makes ingestion incremental (only new, changed and failed documents are processed). |
 | `table_name` | string (min length 1) | `"unified-kg-rag-on-aws-doc-status-v2"` | DynamoDB table holding each document's status and text units, partitioned by index namespace. |
 | `create_table_if_missing` | boolean | `true` | Create the doc-status table on first use. Set false when the table is managed by IaC (the CDK stack does). |
 | `billing_mode` | string | `"PAY_PER_REQUEST"` | Billing mode used when auto-creating the table |
@@ -812,4 +811,5 @@ These keys are refused at load with the key that replaced them.
 | `evaluation.embedding_model_id` | `models.embedding.model_id` |
 | `graph.visualization.embeddings` | `models.embedding.model_id` |
 | `providers.rerank.model_id` | `models.rerank` |
+| `aws.dynamodb.enabled` | `providers.doc_status.enabled` |
 | `search.reranking.rerank_model_id` | `models.rerank` |

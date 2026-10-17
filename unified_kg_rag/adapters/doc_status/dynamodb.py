@@ -162,8 +162,8 @@ class DynamoDBDocStatusStore:
         return (
             f"Doc-status registry: could not {operation} on DynamoDB table "
             f"'{self.table_name}' (region {region}): {code}: {error}. {hint} "
-            "Incremental indexing needs the registry; set aws.dynamodb.enabled: "
-            "false to run without it (every run then rebuilds the stores from "
+            "Incremental indexing needs the registry; set "
+            "providers.doc_status.enabled: false to run without it (every run then rebuilds the stores from "
             "its own documents)."
         )
 

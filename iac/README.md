@@ -421,7 +421,7 @@ task injects: `UKR__AWS__NEPTUNE__ENDPOINT`, `UKR__AWS__OPENSEARCH__ENDPOINT`, `
 `UKR_METRICS_ENVIRONMENT` (`env_name`, the Environment dimension of the metrics the alarms watch),
 plus `UKR__AWS__BEDROCK__GUARDRAIL__IDENTIFIER` when `guardrail_identifier` is set (and
 `UKR__AWS__BEDROCK__GUARDRAIL__VERSION` when `guardrail_version` is). The
-image config sets `aws.dynamodb.enabled: true`, so ingestion runs
+image config sets `providers.doc_status.enabled: true`, so ingestion runs
 incrementally. S3 cache uploads default to the bucket's own encryption
 (`aws.s3.encryption.encryption_type: BUCKET_DEFAULT`), so with `use_cmk=true`
 objects are encrypted with the CMK.

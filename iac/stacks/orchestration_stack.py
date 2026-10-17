@@ -15,8 +15,8 @@ non-zero is a pipeline failure, and rerunning it repeats the same work); its
 error is caught and published, with the execution id, to an SNS topic. The
 state machine input carries only ``source_directory`` (an s3:// URI the
 container entrypoint syncs locally) and ``pipeline_id``. There is no
-full-vs-incremental switch: a run is incremental when ``aws.dynamodb`` is
-enabled in the baked-in config.
+full-vs-incremental switch: a run is incremental when
+``providers.doc_status.enabled`` is set in the baked-in config.
 """
 
 from __future__ import annotations

@@ -43,6 +43,13 @@ details.
 ### Breaking changes
 Configuration. An unknown key fails the load (see below); a moved key fails
 naming the key that replaces it.
+- One switch turns incremental indexing on: `providers.doc_status.enabled`
+  (default `false`; `kind` picks DynamoDB or SQLite). `aws.dynamodb.enabled`
+  is a moved key: a config that sets it fails naming the replacement, so move
+  `aws.dynamodb.enabled: true` to `providers.doc_status.enabled: true`
+  (`UKR__PROVIDERS__DOC_STATUS__ENABLED`). The container image config does.
+  The document-loading stage cache keys change, so a resumed pipeline id
+  re-runs from document loading once (#PR).
 - Unknown config keys, in the file or as `UKR__` environment variables, are
   an error instead of a warning: a misspelled key (a guardrail identifier
   under `aws.bedrock.guardrail.identifer`) left its setting at the default

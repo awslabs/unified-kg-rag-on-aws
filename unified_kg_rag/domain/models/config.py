@@ -513,6 +513,7 @@ MOVED_KEYS: dict[str, str] = {
     "evaluation.embedding_model_id": "models.embedding.model_id",
     "graph.visualization.embeddings": "models.embedding.model_id",
     "providers.rerank.model_id": "models.rerank",
+    "aws.dynamodb.enabled": "providers.doc_status.enabled",
     "search.reranking.rerank_model_id": "models.rerank",
 }
 
@@ -899,14 +900,6 @@ class S3Config(BaseModel):
 
 
 class DynamoDBConfig(BaseModel):
-    enabled: bool = Field(
-        default=False,
-        description=(
-            "Turn on the DynamoDB doc-status registry, which makes ingestion "
-            "incremental (only new, changed and failed documents are "
-            "processed)."
-        ),
-    )
     table_name: str = Field(
         default="unified-kg-rag-on-aws-doc-status-v2",
         min_length=1,
@@ -3615,13 +3608,9 @@ class Config(BaseModel):
 
     @property
     def doc_status_enabled(self) -> bool:
-        """Whether incremental indexing (the doc-status registry) is on.
-
-        ``providers.doc_status.enabled`` when set, else ``aws.dynamodb.enabled``
-        (the original switch, so existing configs keep their behaviour).
-        """
-        enabled = self.providers.doc_status.enabled
-        return self.aws.dynamodb.enabled if enabled is None else enabled
+        """Whether incremental indexing (the doc-status registry) is on:
+        ``providers.doc_status.enabled``."""
+        return self.providers.doc_status.enabled
 
 
 class PipelineConfig(BaseModel):

@@ -48,7 +48,7 @@ class _FailingRegistry(FakeDocStatusStore):
 
 def _config() -> Config:
     config = Config()
-    config.aws.dynamodb.enabled = True
+    config.providers.doc_status.enabled = True
     return config
 
 
@@ -103,7 +103,7 @@ def test_registry_diff_error_fails_the_loading_stage(tmp_path, mocker) -> None:
 
     assert result.status is PipelineStageStatus.FAILED
     assert "registry offline" in (result.error_message or "")
-    assert "aws.dynamodb.enabled" in (result.error_message or "")
+    assert "providers.doc_status.enabled" in (result.error_message or "")
     assert context.incremental_delta is None
 
     with pytest.raises(DocStatusRegistryError):

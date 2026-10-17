@@ -276,8 +276,8 @@ Bedrock을 쓸 수 있습니다.
   기준으로 해석합니다. `indexing.neptune`과 `indexing.opensearch` 설정(인덱스 접두사,
   배치 크기, 임베딩 설정)은 Neptune과 OpenSearch에서처럼 이 저장소에도 적용되며, 쓰기는
   다른 프로세스의 잠금을 `search.store_timeout_seconds`까지 기다립니다.
-- **증분 인덱싱**은 `providers.doc_status.enabled: true`(또는 기존 스위치인
-  `aws.dynamodb.enabled: true`)일 때 SQLite 레지스트리를 씁니다.
+- **증분 인덱싱**은 `providers.doc_status.enabled: true`일 때 SQLite 레지스트리를
+  씁니다.
   [`docker/config.local.yaml`](../docker/config.local.yaml)은 이를 켭니다.
   상대 경로 `sqlite_path`는 저장소와 같은 방식으로 해석하며, 실행 로그에
   데이터베이스의 절대 경로를 남깁니다.
@@ -467,7 +467,7 @@ cp config-template.yaml config.yaml
 |---|---|---|
 | `aws.region_name` | `"us-west-2"` | 저장소가 다른 리전에 있을 때. `aws.bedrock.region_name`을 지정하지 않으면 Bedrock도 따름 |
 | `aws.neptune.endpoint`, `aws.opensearch.endpoint` | `null` | AWS 저장소를 쓸 때 항상(CDK 스택이 주입함) |
-| `aws.dynamodb.enabled` | `false` | 증분 인덱싱을 쓸 때([§5](#5-증분-인덱싱)) |
+| `providers.doc_status.enabled` | `false` | 증분 인덱싱을 쓸 때([§5](#5-증분-인덱싱)) |
 | `models.default`, `models.fast` | Claude Sonnet 5.5, Claude Haiku 5.5 | 다른 모델을 쓸 때([모델 선택 참고 사항](#모델-선택-참고-사항)) |
 | `processing.max_concurrency` | `40` | 로그에 `ThrottlingException` 재시도가 보일 때(낮춤), Bedrock 할당량이 허용할 때(높임) |
 | `processing.graph_extraction.entity_types` | 일반 유형 7개 | 추출을 도메인에 맞출 때([§9](#9-도메인-적응)) |
@@ -658,7 +658,7 @@ CloudShell이 그렇게 합니다) 파일에 적은 리전은 바뀌지 않습�
 직접 지정하면 플래그가 우선합니다. `UKR_METRICS_ENVIRONMENT`는
 `--metrics-sink cloudwatch`의 `Environment` 차원입니다. CDK compute 스택이 주입하는
 변수는 [`iac/README.md`](../iac/README.md#2-build-and-push-the-app-image)에 있습니다.
-그 환경에서도 증분 인덱싱을 쓰려면 설정 파일에 `aws.dynamodb.enabled: true`가 있어야
+그 환경에서도 증분 인덱싱을 쓰려면 설정 파일에 `providers.doc_status.enabled: true`가 있어야
 합니다(이미지의 설정 파일에는 들어 있습니다).
 
 CLI는 python-dotenv로 `.env` 파일도 읽습니다. 현재 작업 디렉터리의 `./.env`만 읽고
@@ -1210,9 +1210,11 @@ run-rag --interactive --conversation-id my-session --config-path config.yaml
 ### 켜기
 
 ```yaml
+providers:
+  doc_status:
+    enabled: true          # kind: dynamodb(기본값) 또는 sqlite
 aws:
   dynamodb:
-    enabled: true
     table_name: "unified-kg-rag-on-aws-doc-status-v2"
     create_table_if_missing: true
 ```

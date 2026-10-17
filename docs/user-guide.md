@@ -292,8 +292,7 @@ points at `localhost` (see [Local stores in containers](#local-stores-in-contain
   settings) apply to them as to Neptune and OpenSearch, and a write waits up
   to `search.store_timeout_seconds` for another process's lock.
 - **Incremental indexing** uses the SQLite registry when
-  `providers.doc_status.enabled: true` (or `aws.dynamodb.enabled: true`, the
-  original switch); [`docker/config.local.yaml`](../docker/config.local.yaml)
+  `providers.doc_status.enabled: true`; [`docker/config.local.yaml`](../docker/config.local.yaml)
   turns it on. A relative `sqlite_path` is resolved like the stores', and the
   run logs the database's absolute path.
 - **Token counting** uses the script-aware estimate (the same one Bedrock falls
@@ -505,7 +504,7 @@ disables the retry.
 |---|---|---|
 | `aws.region_name` | `"us-west-2"` | Your stores are in another region. Bedrock follows it unless `aws.bedrock.region_name` is set |
 | `aws.neptune.endpoint`, `aws.opensearch.endpoint` | `null` | Always, for the AWS stores (the CDK stack injects them) |
-| `aws.dynamodb.enabled` | `false` | You want incremental indexing ([§5](#5-incremental-indexing)) |
+| `providers.doc_status.enabled` | `false` | You want incremental indexing ([§5](#5-incremental-indexing)) |
 | `models.default`, `models.fast` | Claude Sonnet 5.5, Claude Haiku 5.5 | You use other models ([Model selection notes](#model-selection-notes)) |
 | `processing.max_concurrency` | `40` | The logs show `ThrottlingException` retries (lower it), or your Bedrock quota allows more |
 | `processing.graph_extraction.entity_types` | 7 generic types | You adapt extraction to a domain ([§9](#9-domain-adaptation)) |
@@ -717,7 +716,7 @@ and `--pipeline-id`; an explicit flag wins. `UKR_METRICS_ENVIRONMENT` is the
 `Environment` dimension of `--metrics-sink cloudwatch`. The variables the CDK
 compute stack injects are listed in
 [`iac/README.md`](../iac/README.md#2-build-and-push-the-app-image); incremental
-indexing there still needs `aws.dynamodb.enabled: true` in the config file
+indexing there still needs `providers.doc_status.enabled: true` in the config file
 (the image's config sets it).
 
 The CLIs also load a `.env` file with python-dotenv: only `./.env` in the
@@ -1319,9 +1318,11 @@ rebuilding everything.
 ### Enable it
 
 ```yaml
+providers:
+  doc_status:
+    enabled: true          # kind: dynamodb (the default) or sqlite
 aws:
   dynamodb:
-    enabled: true
     table_name: "unified-kg-rag-on-aws-doc-status-v2"
     create_table_if_missing: true
 ```

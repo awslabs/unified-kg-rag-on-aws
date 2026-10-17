@@ -80,7 +80,7 @@ reset 동안에도 질의는 이전 내용을 읽습니다. 벡터 인덱스는 
 
 ### 증분 실행
 
-`aws.dynamodb.enabled: true`(컨테이너 이미지에 설정되어 있음)이면 `run-ingestion`은
+`providers.doc_status.enabled: true`(컨테이너 이미지에 설정되어 있음)이면 `run-ingestion`은
 실행할 때마다 문서 상태 레지스트리와 코퍼스를 내용 해시로 비교해 새 문서와 바뀐 문서만
 인덱싱합니다. 원본에서 사라진 파일은 삭제된 것으로 보고, 그 파일만 기술하던 내용을
 지웁니다.
@@ -124,7 +124,7 @@ reset 동안에도 질의는 이전 내용을 읽습니다. 벡터 인덱스는 
 `DocStatusRegistryError`로 실패합니다. 실행은 모든 문서를 인덱싱하는 경로로 넘어가지
 않습니다. 그 경로는 접미사의 내용을 이번 실행의 문서로만 바꾸기 때문입니다.
 레지스트리를 고친 뒤 같은 `--pipeline-id`로 다시 실행하거나,
-`aws.dynamodb.enabled: false`로 증분 인덱싱 없이 실행하세요.
+`providers.doc_status.enabled: false`로 증분 인덱싱 없이 실행하세요.
 
 시험판(pre-release) 빌드에서 올 때: 그 빌드가 저장한 것은 읽지 않습니다.
 [CHANGELOG: Upgrading from pre-release builds](../CHANGELOG.md#upgrading-from-pre-release-builds)를

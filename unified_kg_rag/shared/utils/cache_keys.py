@@ -222,7 +222,6 @@ CONFIG_KEYING: dict[str, Keyed | Unkeyed] = {
         "indexing.max_document_failures",
         "indexing.max_document_attempts",
         "providers.doc_status",
-        "aws.dynamodb.enabled",
         "aws.dynamodb.table_name",
         per_document=False,
     ),

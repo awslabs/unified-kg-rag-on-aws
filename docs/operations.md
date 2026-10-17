@@ -81,7 +81,7 @@ exits non-zero when it is missing or corrupt.
 
 ### Incremental runs
 
-With `aws.dynamodb.enabled: true` (the container image sets it), every
+With `providers.doc_status.enabled: true` (the container image sets it), every
 `run-ingestion` diffs the corpus against the doc-status registry by content
 hash and indexes only the new and changed documents. A file missing from the
 source is treated as deleted, and what only it stated is removed.
@@ -132,7 +132,7 @@ throttling that outlasts the client's retries), the `document_loading` stage
 fails with `DocStatusRegistryError`, naming the table and the cause. The run
 does not fall back to indexing every document, which would replace the
 suffix's content with this run's documents only. Fix the registry and re-run
-with the same `--pipeline-id`, or set `aws.dynamodb.enabled: false` to run
+with the same `--pipeline-id`, or set `providers.doc_status.enabled: false` to run
 without incremental indexing.
 
 Coming from a pre-release build: nothing it stored is read; see

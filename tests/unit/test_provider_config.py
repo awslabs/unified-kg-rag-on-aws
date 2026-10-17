@@ -348,16 +348,13 @@ def test_preset_does_not_mutate_its_template() -> None:
     assert yaml.safe_dump(LOCAL_PRESET) == before
 
 
-def test_doc_status_switch_follows_dynamodb_unless_set() -> None:
-    config = Config()
-    config.aws.dynamodb.enabled = True
-    assert config.doc_status_enabled is True
+def test_one_switch_turns_the_registry_on() -> None:
+    # aws.dynamodb.enabled and providers.doc_status.enabled both did, the
+    # second winning when set; the first is now a moved key.
+    assert Config().doc_status_enabled is False
     assert Config(providers={"doc_status": {"enabled": True}}).doc_status_enabled
-    pinned_off = Config(
-        aws={"dynamodb": {"enabled": True}},
-        providers={"doc_status": {"enabled": False}},
-    )
-    assert pinned_off.doc_status_enabled is False
+    with pytest.raises(ValueError, match="providers.doc_status.enabled"):
+        Config(aws={"dynamodb": {"enabled": True}})
 
 
 def test_local_backend_from_yaml(tmp_path: Path) -> None:
