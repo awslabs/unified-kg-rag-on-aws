@@ -185,7 +185,7 @@ full re-index of the affected index type).
   name's), so a graph indexed by an earlier build differs from what a
   rebuild produces: run once with `indexing.reset: true`. Stage caches of
   graph extraction and gleaning written by an earlier build are recomputed
-  (#PR).
+  (#322).
 - Entity names keep their display form and ids use a symbol-preserving key
   (#110); community, document and registry ids hash new inputs (#134).
 - The chunk `text` field uses the source-language analyzer, and
@@ -424,7 +424,7 @@ Library API (Python callers and custom backends).
   record is not sent to the model again: an edited document re-extracts only
   its changed chunks, and a full rebuild, a reset or another document with
   the same chunk reuses the records; `--force-rebuild` re-extracts every
-  chunk and rewrites them. The index is only added to (#PR).
+  chunk and rewrites them. The index is only added to (#322).
 - With `observability.capture_content`, the root `kg_rag.query` span records
   the redacted query as `input.value` and, outside `stream` / `astream`, the
   redacted answer as `output.value`, so the Langfuse and Phoenix trace lists
@@ -552,7 +552,7 @@ Library API (Python callers and custom backends).
   items its record lacked, whatever other units hold. A unit whose
   extraction failed is not gleaned (its document is retried anyway). The
   claim prompt lists the unit's own entities instead of the resolved ones,
-  so a unit's claims depend on the unit alone (#PR).
+  so a unit's claims depend on the unit alone (#322).
 - OpenSearch indexing keeps 16 embedding requests in flight (was 8), so it
   embeds and bulk-writes 800 items of a type at a time (was 400). In the
   real-AWS E2E 1,600 texts took 9.4 s instead of 18.8 s, with no Bedrock
@@ -791,7 +791,7 @@ Library API (Python callers and custom backends).
   expires them (#316).
 - A corrected relationship and the uncorrected one other text units state
   each keep their own description and document filters; both kept the
-  merged description, and the uncorrected one every unit's filters (#PR).
+  merged description, and the uncorrected one every unit's filters (#322).
 - Community detection no longer logs the WARNING "Graph has no weighted
   edges" when the hierarchy ends normally at a level whose communities no
   edge joins; it logs that at INFO and stops, with the same communities. An
@@ -2065,7 +2065,7 @@ Library API (Python callers and custom backends).
   `GleaningIndex.split_relationship` and its rename index, the gleaning
   round merge, and the id-sharing group join and endpoint-citation pass of
   graph resolution (the merge of the records gives one item per id and
-  cites endpoints) (#PR).
+  cites endpoints) (#322).
 - `Entity.frequency`: it counted an entity's text units in every merge path
   but no store wrote it and nothing read it (ranking uses `rank`, the local
   search frequency filter counts `text_unit_ids`). Stage caches that carry
