@@ -1143,6 +1143,12 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- IaC: on Neptune Serverless (`neptune_serverless_ncu`) the writer's
+  low-freeable-memory alarm fires only while the writer is at its maximum
+  capacity (at its minimum, about 2 GiB, low free memory is what makes it
+  scale up, so the fixed 512 MiB floor alarmed on an idle cluster), and a
+  new `NeptuneServerlessAtMaxCapacity` alarm fires when the writer stays at
+  the maximum for 15 minutes (#PR).
 - IaC: the guardrail stack publishes the guardrail it creates as a version
   (`AWS::Bedrock::GuardrailVersion`, `GuardrailVersion` output) for the
   tasks to pin with `-c guardrail_version=<version>`; synth warns when

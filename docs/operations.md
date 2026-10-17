@@ -443,7 +443,8 @@ the next run breaks on it:
 | `OpenSearchJvmPressure` | JVM memory pressure is at least 95% in 3 consecutive minutes | Out-of-memory risk: use a larger `opensearch_instance` or more data nodes |
 | `DocStatusWriteThrottled` | The doc-status table throttled a write (5 minutes) | The app retries throttled registry calls with backoff; one still throttled after that fails the run with `DocStatusRegistryError`. Check for overlapping runs on the table and rerun a failed run once the throttling clears |
 | `NeptuneHighCpu` | Average writer CPU is at least 90% for 15 minutes (3 × 5 minutes) | Sustained saturation, not a bulk-write peak: use a larger `neptune_instance` (or a higher `neptune_serverless_ncu` maximum) or lower `indexing.neptune.index_concurrency` |
-| `NeptuneLowFreeableMemory` | Writer freeable memory falls to 512 MiB or less at any point in 5 minutes (minimum) | Queries and writes may fail with out-of-memory errors: use a larger `neptune_instance` (or a higher `neptune_serverless_ncu` minimum, so capacity is there before the burst) |
+| `NeptuneLowFreeableMemory` | Writer freeable memory falls to 512 MiB or less at any point in 5 minutes (minimum); on Neptune Serverless only while the writer is at its maximum capacity (below it, low memory makes it scale up) | Queries and writes may fail with out-of-memory errors: use a larger `neptune_instance` (or a higher `neptune_serverless_ncu` maximum) |
+| `NeptuneServerlessAtMaxCapacity` | Neptune Serverless only: the writer's capacity is at the `neptune_serverless_ncu` maximum in 3 consecutive 5-minute periods | The workload needs more than the range allows: raise the maximum (or its minimum, so capacity is there before the burst) |
 | `NeptuneGremlinErrors` | Gremlin server errors on any instance in 3 consecutive minutes | Persistent write or query failures (retried write conflicts come in short bursts and do not fire it): check the task log for the failing request |
 
 **Capacity**
