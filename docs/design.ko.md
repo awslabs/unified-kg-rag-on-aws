@@ -47,7 +47,7 @@ import는 **안쪽을 향합니다**(왼쪽이 오른쪽을 import하며 반대 
 ```mermaid
 flowchart TB
     application["<b>application/</b> - orchestration and entry points<br/>cli (run-*) · DataIngestionPipeline + stages · IndexingManager · GraphRAGChain"]
-    adapters["<b>adapters/</b> - technology bindings<br/>vendor: aws (Bedrock, Neptune, OpenSearch, S3) · local (Ollama/OpenAI-compatible, SQLite stores)<br/>role: storage · retrievers · doc_status · search_strategies (GraphRAG + LightRAG) · retrieval · ingestion · renderers · evaluators"]
+    adapters["<b>adapters/</b> - technology bindings<br/>vendor: aws (Bedrock, Neptune, OpenSearch, S3) · local (Ollama/OpenAI-compatible, SQLite stores)<br/>role: storage · retrievers · doc_status · guardrail · search_strategies (GraphRAG + LightRAG) · retrieval · ingestion · renderers · evaluators"]
     ports["<b>ports/</b> - abstract interfaces<br/>DocStatusPort · model factory and TokenCounter ports · BaseIndexer / GraphIndexer / VectorIndexer"]
     domain["<b>domain/</b> - technology-agnostic core<br/>models · ingestion (delta, merge, resolve, analyze) · retrieval (strategy_registry) · prompts"]
     shared["<b>shared/</b> - cross-cutting kernel<br/>config · logging · exceptions · metrics · cache and pipeline managers · utils"]
@@ -115,7 +115,7 @@ unified_kg_rag/
 > 즉 전송 클라이언트, 내장 엔진과 저장소, 모델 팩토리(LLM, 임베딩, 재순위화), 토큰
 > 카운터와 캐시를 둡니다. 역할 패키지에는 애플리케이션이 연결하는 포트 구현을 둡니다.
 > `adapters/storage/`(`GraphIndexer`/`VectorIndexer`), `adapters/retrievers/`(리트리버),
-> `adapters/doc_status/`(`DocStatusPort`)입니다. 역할 패키지는 벤더 패키지를 import하고
+> `adapters/doc_status/`(`DocStatusPort`), `adapters/guardrail/`(`ContentGuardPort`)입니다. 역할 패키지는 벤더 패키지를 import하고
 > 반대 방향은 허용하지 않습니다. `NeptuneIndexer`(`storage/`)가 `NeptuneClient`(`aws/`)로
 > 쓰듯 `SQLiteGraphIndexer`(`storage/`)는 `SQLiteGraphStore`(`local/`)에 씁니다.
 
@@ -124,6 +124,7 @@ unified_kg_rag/
 | 포트 | 위치 | 어댑터 | 비고 |
 |---|---|---|---|
 | `DocStatusPort` | `ports/doc_status.py` | `adapters/doc_status/dynamodb.py` (`DynamoDBDocStatusStore`), `adapters/doc_status/sqlite.py` (`SQLiteDocStatusStore`), 테스트용 `FakeDocStatusStore` | 증분 인덱싱의 문서 상태와 계보 저장 |
+| `ContentGuardPort` | `ports/guardrail.py`(`GuardVerdict` 레코드 포함) | `adapters/guardrail/bedrock.py`(`BedrockGuardrail`, Bedrock `ApplyGuardrail`) | 사용자 원본 질의와 최종 답변을 검사(§14) |
 | `GraphIndexer` (쓰기 측) | `ports/indexer.py` | `adapters/storage/neptune_indexer.py`. 로컬: `adapters/storage/sqlite_graph_indexer.py`(`adapters/local/sqlite_graph.py` 저장소 위) | 전체 인덱싱과 델타(`upsert_*`/`delete_by_id`)를 하나의 계약으로 처리 |
 | `VectorIndexer` (쓰기 측) | `ports/indexer.py` | `adapters/storage/opensearch_indexer.py`(OpenSearch, 또는 `SearchEngineClient`를 통해 `adapters/local/search_engine/` 위에서 동작) | 위와 같음 |
 | `BaseGraphRAGRetriever` (읽기 측) | `adapters/retrieval/base.py` | `adapters/retrievers/{neptune,opensearch,sqlite_graph}_retriever.py`(그래프 리트리버는 `graph_expansion.py` 기반) | 검색 어댑터 |
@@ -471,6 +472,7 @@ CLI: `run-eval --eval-data-path <json> [--search-strategy ...]`.
 - **Dependabot**(`.github/dependabot.yml`): `uv` 잠금 파일(`/`), IaC `uv` 잠금 파일(`/iac`, 별도 uv 프로젝트), SHA로 고정한 GitHub Actions를 매주 갱신합니다. 호환성을 깨는 것으로 알려진 버전은 이유를 적은 `ignore` 항목으로 보류합니다.
 - **pre-commit**(`.pre-commit-config.yaml`): CI 게이트와 같은 검사를 합니다. `pre-commit install`.
 - **보안 강화**: 콘텐츠 해시는 SHA-256만 씁니다(CWE-327 대응). 의존성 스캔에서 나온 CVE는 위 Dependabot PR로 처리합니다. 토큰은 환경 변수나 설정으로 주입하며 코드에 하드코딩하지 않습니다.
+- **질의 경계의 가드레일**(`ports/guardrail.py`, `adapters/guardrail/bedrock.py`): `GraphRAGChain`은 메모리, 재작성, 라우팅, 검색보다 먼저 사용자 원본 질의를 Bedrock `ApplyGuardrail`(source `INPUT`)로 검사하고, 생성이 끝난 최종 답변을 source `OUTPUT`으로 검사합니다. 차단되면 질의를 바로 끝내고, 마스킹되면 텍스트를 바꾸며, 가드레일 오류가 나면 질의를 실패시킵니다(fail closed). 그 사이의 모델 호출에는 가드레일을 붙이지 않습니다. 모델 호출에 붙인 가드레일은 프롬프트 전체를 평가하므로 Converse에서는 검색된 코퍼스와 개발자 지시문을 사용자 입력으로 판정하고(프롬프트 공격 오탐, 컨텍스트 크기 × 호출 수에 비례하는 비용), InvokeModel에서는 입력 태그가 없으면 프롬프트 공격 필터가 동작하지 않습니다. 사용자에게 닿는 두 텍스트만 검사하면 사용자가 쓴 것과 읽는 것을 각각 한 번씩 정확히 평가합니다. 수집·평가 모델에는 `apply_to: all`일 때만 가드레일을 붙입니다.
 
 ---
 
@@ -500,6 +502,7 @@ CLI: `run-eval --eval-data-path <json> [--search-strategy ...]`.
 | `TokenCounterPort` (`ports/model_factory.py`, `Protocol`) | `count_tokens()` / `truncate_to_token_limit()` | `BedrockTokenCounter`(`LocalTokenCounter`: 추정치 또는 tiktoken. LLM kind를 따름) | `Providers(token_counter_factory=...)` |
 | `VectorIndexer` / `GraphIndexer` (`ports/indexer.py`, ABC) | `index_*` / `upsert_*` / `delete_by_id`. `initialize()`(재정의하지 않으면 아무 작업도 하지 않음) / `clear()`는 `None`을 반환하고 실패하면 타입이 있는 저장소 예외(`StoreConnectionError`, `StoreConfigurationError` 등)를 발생시켜야 함. `False`를 반환해도 무시됨 | `OpenSearchIndexer` / `NeptuneIndexer`(`gremlin`: 같은 어댑터로 Gremlin Server 사용. `sqlite`: `SQLiteSearchEngine` 위의 `OpenSearchIndexer` / `SQLiteGraphIndexer`) | `Providers(vector_indexer_factory=..., graph_indexer_factory=...)`, `DataIngestionPipeline(..., vector_indexer=..., graph_indexer=...)` 또는 `IndexingManager(vector_indexer=..., graph_indexer=...)` |
 | 리트리버(역할별 빌더) | `BaseGraphRAGRetriever.aretrieve` | `OpenSearchRetriever` / `NeptuneRetriever`(`sqlite`: `SQLiteSearchEngine` 위의 `OpenSearchRetriever` / `SQLiteGraphRetriever`) | `Providers(retriever_builders=...)` 또는 `GraphRAGChain(retriever_builders={RetrieverRole.GRAPH: lambda: MyGraphRetriever(...)})` |
+| `ContentGuardPort` (`ports/guardrail.py`, `Protocol`) | `async acheck(text, source)`가 `GuardVerdict`(`none` / `masked` / `blocked`와 이어서 쓸 텍스트)를 반환. 판정할 수 없으면 예외를 냄 | `BedrockGuardrail`(`aws.bedrock.guardrail.identifier`를 지정하면 생성) | `GraphRAGChain(guard=...)` |
 | `DocStatusPort` (`ports/doc_status.py`, `Protocol`) | `get` / `get_many` / `put` / `put_many` / `delete` / `list_all` / `diff`와 `record_fits` / `add_lineage_overflow` / `get_lineage_overflow` / `delete_lineage_overflow`. 모두 직접 호출합니다. `DocStatusPort`를 상속하면 `get` / `put` / `delete` / `list_all` / `diff`를 뺀 나머지는 기본 구현(호출마다 레코드 하나, 크기 한도 없음, 초과분 없음)을 물려받습니다 | `DynamoDBDocStatusStore`(`SQLiteDocStatusStore`) | `Providers(doc_status=...)` 또는 `DataIngestionPipeline(..., doc_status=...)`(어느 쪽이든 증분 인덱싱이 켜짐). 구조를 맞추고 `tests/integration/test_doc_status_conformance.py`를 통과해야 함 |
 
 **커스텀 리트리버나 백엔드의 오류**는 메시지가 아니라 타입으로만 분류합니다
@@ -594,7 +597,7 @@ def _build(providers):
 > **알 수 없는 kwargs는 받아서 무시하세요.** 호출 측은 `get_model(model_id, **kwargs)`로
 > 프레임워크 전용 키워드 인자를 넘깁니다. 예를 들어
 > `model_purpose=ModelPurpose.QUERY | INGESTION | EVALUATION`은 Bedrock 팩토리가
-> 가드레일 적용 범위를 정하는 데 씁니다. 앞으로 인자가 더 늘어날 수 있습니다. 커스텀
+> `apply_to: all`일 때 수집·평가 모델에 가드레일을 붙이는 데 씁니다. 앞으로 인자가 더 늘어날 수 있습니다. 커스텀
 > 팩토리는 `**kwargs` 매개변수를 유지하고 모르는 키는 무시해야 하며, 알 수 없는 인자를
 > 거부하는 모델 생성자에 그대로 넘겨서도 안 됩니다.
 > `get_model(self, model_id, temperature=0.0)`처럼 시그니처를 엄격하게 정의하면

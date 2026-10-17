@@ -139,7 +139,11 @@ _STAGE_INPUT_PATHS: dict[PipelineStageType, tuple[str, ...]] = {
 }
 
 
-def _ingestion_guardrail(config: Config) -> GuardrailConfig:
+# Query-side screening switches: they never touch an ingestion model call.
+_QUERY_ONLY_GUARDRAIL_FIELDS = {"check_input", "check_output"}
+
+
+def _ingestion_guardrail(config: Config) -> dict[str, Any]:
     """The guardrail as ingestion models see it.
 
     Under the default ``apply_to: query`` (or with no identifier) ingestion
@@ -147,12 +151,15 @@ def _ingestion_guardrail(config: Config) -> GuardrailConfig:
     not re-key the stage caches or re-extract the corpus: it projects as the
     default (absent) guardrail. When it does guard ingestion, its identifier,
     version and scope shape the output; ``trace`` only adds trace details to
-    the response, so it is pinned to its default.
+    the response, so it is pinned to its default, and the query-side
+    ``check_input`` / ``check_output`` switches are left out.
     """
     guardrail = config.aws.bedrock.guardrail
     if not guardrail.applies_to(ModelPurpose.INGESTION):
-        return GuardrailConfig()
-    return guardrail.model_copy(update={"trace": GuardrailConfig().trace})
+        guardrail = GuardrailConfig()
+    return guardrail.model_dump(mode="json", exclude=_QUERY_ONLY_GUARDRAIL_FIELDS) | {
+        "trace": GuardrailConfig().trace
+    }
 
 
 # Paths fingerprinted by a derived value instead of the raw attribute.

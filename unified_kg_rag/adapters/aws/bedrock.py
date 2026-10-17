@@ -899,20 +899,24 @@ class BedrockLanguageModelFactory(
         is_cross_region: bool,
         purpose: ModelPurpose = ModelPurpose.QUERY,
     ) -> None:
-        """Attach Bedrock Guardrails to the model when configured.
+        """Attach the guardrail to an ingestion/evaluation model under ``apply_to: all``.
 
         ChatBedrockConverse exposes ``guardrail_config`` (Converse-API shape);
-        ChatBedrock exposes ``guardrails`` (InvokeModel shape). When no guardrail
-        identifier is set the model is created without guardrails (no-op).
-        ``purpose`` scopes it via ``guardrail.apply_to``: by default only
-        query-path models are guarded. A guarded model also gets a
-        :class:`GuardrailInterventionHandler` so interventions are logged.
+        ChatBedrock exposes ``guardrails`` (InvokeModel shape). Query models
+        never get one (``GuardrailConfig.applies_to``): an attached guardrail
+        evaluates the whole prompt, so on Converse it judges the retrieved
+        corpus and the developer instructions as user input, and on
+        InvokeModel its prompt-attack filter does nothing without input tags.
+        The query chain screens the raw query and the answer with
+        ``ApplyGuardrail`` instead (``adapters.guardrail.bedrock``). A guarded
+        model also gets a :class:`GuardrailInterventionHandler` so
+        interventions are logged.
         """
         guardrail = self.config.aws.bedrock.guardrail
         if guardrail.identifier is None or not guardrail.applies_to(purpose):
             if guardrail.enabled:
                 logger.debug(
-                    "Skipping Bedrock guardrail for %s model (apply_to='%s')",
+                    "Not attaching Bedrock guardrail to %s model (apply_to='%s')",
                     purpose.value,
                     guardrail.apply_to,
                 )

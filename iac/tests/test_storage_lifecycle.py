@@ -135,3 +135,26 @@ def test_odd_node_count_in_two_zones_fails_at_synth(count: int) -> None:
     _storage_template(
         {**context, "max_azs": 3, lookup: [f"us-west-2{c}" for c in "abc"]}
     )
+
+
+def test_neptune_serverless_runs_every_instance_serverless() -> None:
+    template = _storage_template(
+        {"neptune_serverless_ncu": "1-16", "neptune_instances": "2"}
+    )
+    template.has_resource_properties(
+        "AWS::Neptune::DBCluster",
+        {"ServerlessScalingConfiguration": {"MinCapacity": 1, "MaxCapacity": 16}},
+    )
+    instances = template.find_resources("AWS::Neptune::DBInstance").values()
+    assert [i["Properties"]["DBInstanceClass"] for i in instances] == [
+        "db.serverless",
+        "db.serverless",
+    ]
+
+
+def test_neptune_is_provisioned_by_default() -> None:
+    template = _storage_template({})
+    (cluster,) = template.find_resources("AWS::Neptune::DBCluster").values()
+    assert "ServerlessScalingConfiguration" not in cluster["Properties"]
+    (instance,) = template.find_resources("AWS::Neptune::DBInstance").values()
+    assert instance["Properties"]["DBInstanceClass"] == "db.r6g.large"

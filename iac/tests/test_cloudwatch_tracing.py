@@ -33,7 +33,12 @@ def _stacks(context: dict[str, Any]) -> tuple[Template, Template]:
 
 
 def _containers(compute: Template) -> dict[str, dict[str, Any]]:
-    (task_def,) = compute.find_resources("AWS::ECS::TaskDefinition").values()
+    # The ingestion task definition; the query one is built the same way.
+    (task_def,) = [
+        v
+        for k, v in compute.find_resources("AWS::ECS::TaskDefinition").items()
+        if k.startswith("IngestionTask")
+    ]
     return {c["Name"]: c for c in task_def["Properties"]["ContainerDefinitions"]}
 
 

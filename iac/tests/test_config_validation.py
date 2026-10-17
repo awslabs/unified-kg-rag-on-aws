@@ -93,3 +93,33 @@ def test_valid_fargate_sizes_pass() -> None:
 def test_korean_analyzer_must_be_an_analyzer_name(value: str) -> None:
     with pytest.raises(ValueError, match="opensearch_korean_analyzer"):
         _config({"opensearch_korean_analyzer": value})
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [("1-16", (1.0, 16.0)), ("2.5-32", (2.5, 32.0)), ([1, 128], (1.0, 128.0))],
+)
+def test_neptune_serverless_ncu_parses_a_range(value: Any, expected: Any) -> None:
+    assert _config({"neptune_serverless_ncu": value}).neptune_serverless_ncu == expected
+    assert _config({}).neptune_serverless_ncu is None
+
+
+@pytest.mark.parametrize(
+    ("value", "message"),
+    [
+        ("16", "MIN-MAX"),
+        ("a-b", "MIN-MAX"),
+        ("0.5-4", "1-128 NCU in steps of 0.5"),
+        ("1-200", "1-128 NCU in steps of 0.5"),
+        ("1.3-4", "1-128 NCU in steps of 0.5"),
+        ("8-2", "MIN \\(8\\) is above MAX \\(2\\)"),
+    ],
+)
+def test_neptune_serverless_ncu_rejects_bad_ranges(value: str, message: str) -> None:
+    with pytest.raises(ValueError, match=f"neptune_serverless_ncu.*{message}"):
+        _config({"neptune_serverless_ncu": value})
+
+
+def test_neptune_serverless_ncu_excludes_an_instance_class() -> None:
+    with pytest.raises(ValueError, match="exclusive"):
+        _config({"neptune_serverless_ncu": "1-8", "neptune_instance": "db.r6g.xlarge"})

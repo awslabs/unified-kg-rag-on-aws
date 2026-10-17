@@ -411,7 +411,7 @@ def create_robust_xml_output_parser(
     ``output_tags`` are the top-level elements the prompt asks for; the fixer
     is told them, so it repairs toward the prompt's structure. ``model_purpose``
     is forwarded to the fixing LLM so it gets the same per-path policy (e.g.
-    guardrail scope) as the chain it repairs, and ``min_output_tokens`` (the
+    an ingestion guardrail under ``apply_to: all``) as the chain it repairs, and ``min_output_tokens`` (the
     repaired prompt's output floor) so a long output can be re-emitted in full.
     """
     base_parser = RobustXMLOutputParser(tags=output_tags)
@@ -449,15 +449,12 @@ def setup_chain(
 ) -> Runnable:
     """Build ``prompt | llm | parser`` with the policies of ``model_purpose``.
 
-    ``QUERY`` (the default, so an unmarked call site stays on the guarded,
-    conservative side) gets the query guardrail scope (``guardrail.apply_to``,
-    applied by the factory) and, when the factory classifies transient errors
-    and has a chain retry policy (``is_transient_error`` and
+    ``QUERY`` (the default) gets, when the factory classifies transient
+    errors and has a chain retry policy (``is_transient_error`` and
     ``transient_retry``, the Bedrock and Ollama factories), a transient-error
-    retry around
-    the whole chain. Ingestion and evaluation call sites pass their
-    purpose explicitly: they run unguarded under ``apply_to: query`` and get no
-    chain-level retry, because ``BatchProcessor`` already retries them and a
+    retry around the whole chain. Ingestion and evaluation call sites pass
+    their purpose explicitly: the factory attaches a guardrail to them only
+    under ``guardrail.apply_to: all``, and they get no chain-level retry, because ``BatchProcessor`` already retries them and a
     second layer would multiply the attempts. A factory without a
     ``transient_retry`` policy (the OpenAI-compatible one) leaves query
     retries to its client. ``min_output_tokens`` overrides the prompt's static

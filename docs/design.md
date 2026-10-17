@@ -45,7 +45,7 @@ Imports point **inward** (left imports right, never the reverse). `shared/` is a
 ```mermaid
 flowchart TB
     application["<b>application/</b> - orchestration and entry points<br/>cli (run-*) · DataIngestionPipeline + stages · IndexingManager · GraphRAGChain"]
-    adapters["<b>adapters/</b> - technology bindings<br/>vendor: aws (Bedrock, Neptune, OpenSearch, S3) · local (Ollama/OpenAI-compatible, SQLite stores)<br/>role: storage · retrievers · doc_status · search_strategies (GraphRAG + LightRAG) · retrieval · ingestion · renderers · evaluators"]
+    adapters["<b>adapters/</b> - technology bindings<br/>vendor: aws (Bedrock, Neptune, OpenSearch, S3) · local (Ollama/OpenAI-compatible, SQLite stores)<br/>role: storage · retrievers · doc_status · guardrail · search_strategies (GraphRAG + LightRAG) · retrieval · ingestion · renderers · evaluators"]
     ports["<b>ports/</b> - abstract interfaces<br/>DocStatusPort · model factory and TokenCounter ports · BaseIndexer / GraphIndexer / VectorIndexer"]
     domain["<b>domain/</b> - technology-agnostic core<br/>models · ingestion (delta, merge, resolve, analyze) · retrieval (strategy_registry) · prompts"]
     shared["<b>shared/</b> - cross-cutting kernel<br/>config · logging · exceptions · metrics · cache and pipeline managers · utils"]
@@ -115,7 +115,8 @@ unified_kg_rag/
 > model factories (LLM, embedding, rerank), token counters and caches. Role
 > packages hold the port implementations the application wires:
 > `adapters/storage/` (`GraphIndexer` / `VectorIndexer`), `adapters/retrievers/`
-> (retrievers) and `adapters/doc_status/` (`DocStatusPort`). A role package
+> (retrievers), `adapters/doc_status/` (`DocStatusPort`) and
+> `adapters/guardrail/` (`ContentGuardPort`). A role package
 > imports a vendor package, never the other way round: `SQLiteGraphIndexer`
 > (`storage/`) writes to `SQLiteGraphStore` (`local/`) as `NeptuneIndexer`
 > writes through `NeptuneClient` (`aws/`).
@@ -125,6 +126,7 @@ unified_kg_rag/
 | Port | Location | Adapter | Notes |
 |---|---|---|---|
 | `DocStatusPort` | `ports/doc_status.py` | `adapters/doc_status/dynamodb.py` (`DynamoDBDocStatusStore`), `adapters/doc_status/sqlite.py` (`SQLiteDocStatusStore`), `FakeDocStatusStore` for tests | Persists incremental-indexing document status/lineage |
+| `ContentGuardPort` | `ports/guardrail.py` (with the `GuardVerdict` record) | `adapters/guardrail/bedrock.py` (`BedrockGuardrail`, Bedrock `ApplyGuardrail`) | Screens the raw query and the final answer (§14) |
 | `GraphIndexer` (write-side) | `ports/indexer.py` | `adapters/storage/neptune_indexer.py`; local: `adapters/storage/sqlite_graph_indexer.py` (on the `adapters/local/sqlite_graph.py` store) | Single contract for full + delta (`upsert_*`/`delete_by_id`) |
 | `VectorIndexer` (write-side) | `ports/indexer.py` | `adapters/storage/opensearch_indexer.py` (on OpenSearch, or on `adapters/local/search_engine/` through `SearchEngineClient`) | Same |
 | `BaseGraphRAGRetriever` (read-side) | `adapters/retrieval/base.py` | `adapters/retrievers/{neptune,opensearch,sqlite_graph}_retriever.py` (the graph ones on `graph_expansion.py`) | Retrieval adapters |
@@ -473,6 +475,7 @@ Run: `uv run pytest -m "not aws" --cov=unified_kg_rag`.
 - **Dependabot** (`.github/dependabot.yml`): weekly version updates for the `uv` lock (`/`), the IaC `uv` lock (`/iac`, a separate uv project), and the SHA-pinned GitHub Actions. Known-breaking bumps are held back with an `ignore` entry that records the reason.
 - **pre-commit** (`.pre-commit-config.yaml`): Mirrors the CI gates. `pre-commit install`.
 - **Security hardening**: Content hashes use SHA-256 exclusively (CWE-327-safe). Dependency-scan CVEs are addressed through the Dependabot pull requests above. Tokens are injected via environment/config (no hardcoding in code).
+- **Guardrail at the query's edges** (`ports/guardrail.py`, `adapters/guardrail/bedrock.py`): `GraphRAGChain` screens the raw user query with Bedrock `ApplyGuardrail` (source `INPUT`) before memory, rewrite, routing and retrieval, and the final answer (source `OUTPUT`) after generation; a block short-circuits the query, a mask replaces the text, and a guardrail error fails the query closed. The guardrail is not attached to the model calls in between: an attached guardrail evaluates the whole prompt, so on Converse it judges the retrieved corpus and the developer instructions as user input (false prompt-attack blocks, cost proportional to context × calls), and on InvokeModel its prompt-attack filter is inert without input tags. Screening the two user-facing texts evaluates exactly what the user wrote and reads, once each. Ingestion and evaluation models get an attached guardrail only under `apply_to: all`.
 
 ---
 
@@ -504,6 +507,7 @@ subclassing or editing dispatch code. The ports, their default
 | `TokenCounterPort` (`ports/model_factory.py`, `Protocol`) | `count_tokens()` / `truncate_to_token_limit()` | `BedrockTokenCounter` (`LocalTokenCounter`: estimate or tiktoken; follows the LLM kind) | `Providers(token_counter_factory=...)` |
 | `VectorIndexer` / `GraphIndexer` (`ports/indexer.py`, ABC) | `index_*` / `upsert_*` / `delete_by_id`; `initialize()` (a no-op unless overridden) / `clear()` return `None` and must raise a typed store error (`StoreConnectionError`, `StoreConfigurationError`, ...) on failure: a returned `False` is ignored | `OpenSearchIndexer` / `NeptuneIndexer` (`gremlin`: the same adapter on Gremlin Server; `sqlite`: `OpenSearchIndexer` on `SQLiteSearchEngine` / `SQLiteGraphIndexer`) | `Providers(vector_indexer_factory=..., graph_indexer_factory=...)`, `DataIngestionPipeline(..., vector_indexer=..., graph_indexer=...)` or `IndexingManager(vector_indexer=..., graph_indexer=...)` |
 | retriever (role-keyed builder) | `BaseGraphRAGRetriever.aretrieve` | `OpenSearchRetriever` / `NeptuneRetriever` (`sqlite`: `OpenSearchRetriever` on `SQLiteSearchEngine` / `SQLiteGraphRetriever`) | `Providers(retriever_builders=...)` or `GraphRAGChain(retriever_builders={RetrieverRole.GRAPH: lambda: MyGraphRetriever(...)})` |
+| `ContentGuardPort` (`ports/guardrail.py`, `Protocol`) | `async acheck(text, source)` returning a `GuardVerdict` (`none` / `masked` / `blocked` and the text to continue with); raise when it cannot decide | `BedrockGuardrail` (built when `aws.bedrock.guardrail.identifier` is set) | `GraphRAGChain(guard=...)` |
 | `DocStatusPort` (`ports/doc_status.py`, `Protocol`) | `get` / `get_many` / `put` / `put_many` / `delete` / `list_all` / `diff` and `record_fits` / `add_lineage_overflow` / `get_lineage_overflow` / `delete_lineage_overflow`, all called directly. Subclassing `DocStatusPort` inherits defaults for all but `get` / `put` / `delete` / `list_all` / `diff` (one record per call, no size limit, no overflow) | `DynamoDBDocStatusStore` (`SQLiteDocStatusStore`) | `Providers(doc_status=...)` or `DataIngestionPipeline(..., doc_status=...)` (either turns incremental indexing on); conform structurally and pass `tests/integration/test_doc_status_conformance.py` |
 
 **Errors from a custom retriever or backend** are classified by type, never
@@ -612,7 +616,8 @@ Bedrock catalog only while the Bedrock provider serves that role.
 > **Accept and ignore unknown kwargs.** Callers pass framework-specific keyword
 > arguments through `get_model(model_id, **kwargs)` — for example
 > `model_purpose=ModelPurpose.QUERY | INGESTION | EVALUATION`, which the Bedrock
-> factory uses to scope guardrails. New ones may be added in later releases. A
+> factory uses to attach a guardrail to ingestion and evaluation models under
+> `apply_to: all`. New ones may be added in later releases. A
 > custom factory must keep the `**kwargs` catch-all and ignore keys it does not
 > understand (and must not forward them blindly to a model constructor that
 > rejects unknown arguments); a strict signature such as

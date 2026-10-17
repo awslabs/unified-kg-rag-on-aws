@@ -19,7 +19,9 @@ from iac.stacks.storage_stack import StorageStack
 _ENV = cdk.Environment(account="111111111111", region="us-west-2")
 
 
-def _compute_template(context: dict[str, Any] | None = None) -> Template:
+def _compute_template(
+    context: dict[str, Any] | None = None, guardrail_identifier: str | None = None
+) -> Template:
     app = cdk.App(context=context or {})
     config = DeploymentConfig.from_context(app)
     networking = NetworkingStack(app, "Net", config=config, env=_ENV)
@@ -30,6 +32,7 @@ def _compute_template(context: dict[str, Any] | None = None) -> Template:
         config=config,
         networking=networking,
         storage=storage,
+        guardrail_identifier=guardrail_identifier,
         env=_ENV,
     )
     return Template.from_stack(compute)
@@ -37,9 +40,29 @@ def _compute_template(context: dict[str, Any] | None = None) -> Template:
 
 def _task_environment(context: dict[str, Any] | None = None) -> dict[str, Any]:
     task_defs = _compute_template(context).find_resources("AWS::ECS::TaskDefinition")
-    (task_def,) = task_defs.values()
+    (task_def,) = [v for k, v in task_defs.items() if k.startswith("IngestionTask")]
     (container,) = task_def["Properties"]["ContainerDefinitions"]
     return {e["Name"]: e["Value"] for e in container["Environment"]}
+
+
+def _role_statements(template: Template, role_id: str) -> list[dict[str, Any]]:
+    """The statements of the inline policies attached to ``role_id``'s role."""
+    return [
+        s
+        for policy in template.find_resources("AWS::IAM::Policy").values()
+        if any(
+            r.get("Ref", "").startswith(role_id) for r in policy["Properties"]["Roles"]
+        )
+        for s in policy["Properties"]["PolicyDocument"]["Statement"]
+    ]
+
+
+def _actions(statements: list[dict[str, Any]]) -> set[str]:
+    return {
+        a
+        for s in statements
+        for a in ([s["Action"]] if isinstance(s["Action"], str) else s["Action"])
+    }
 
 
 def test_doc_status_env_targets_iac_table_and_disables_auto_create() -> None:
@@ -63,14 +86,20 @@ def test_corpus_bucket_is_granted_read_only() -> None:
         app, "Compute", config=config, networking=networking, storage=storage, env=_ENV
     )
     policies = Template.from_stack(compute).find_resources("AWS::IAM::Policy")
-    (statement,) = [
+    statements = [
         s
         for p in policies.values()
         for s in p["Properties"]["PolicyDocument"]["Statement"]
         if "my-corpus" in str(s["Resource"])
     ]
-    assert "s3:GetObject*" in statement["Action"]
-    assert not [a for a in statement["Action"] if a.startswith(("s3:Put", "s3:Del"))]
+    # One read grant per task role: ingestion reads the corpus, run-eval may
+    # read a dataset kept there.
+    assert len(statements) == 2
+    for statement in statements:
+        assert "s3:GetObject*" in statement["Action"]
+        assert not [
+            a for a in statement["Action"] if a.startswith(("s3:Put", "s3:Del"))
+        ]
 
 
 @pytest.mark.parametrize(
@@ -105,17 +134,8 @@ def test_guardrail_version_is_injected_only_when_set() -> None:
     assert env["BEDROCK_GUARDRAIL_VERSION"] == "2"
 
 
-def _task_role_actions(template: Template) -> set[str]:
-    actions: set[str] = set()
-    for policy in template.find_resources("AWS::IAM::Policy").values():
-        for statement in policy["Properties"]["PolicyDocument"]["Statement"]:
-            action = statement["Action"]
-            actions.update([action] if isinstance(action, str) else action)
-    return actions
-
-
 def test_task_role_has_no_unused_delete_or_admin_actions() -> None:
-    actions = _task_role_actions(_compute_template())
+    actions = _actions(_role_statements(_compute_template(), "TaskRole"))
     assert "s3:PutObject" in actions
     assert "neptune-db:WriteDataViaQuery" in actions
     # The app never deletes cache objects or manages Neptune queries.
@@ -143,8 +163,7 @@ def _invoke_resources(context: dict[str, Any]) -> list[str]:
     template = _compute_template(context)
     (statement,) = [
         s
-        for p in template.find_resources("AWS::IAM::Policy").values()
-        for s in p["Properties"]["PolicyDocument"]["Statement"]
+        for s in _role_statements(template, "TaskRole")
         if "bedrock:InvokeModel" in s["Action"]
     ]
     return [r if isinstance(r, str) else json.dumps(r) for r in statement["Resource"]]
@@ -175,11 +194,39 @@ def test_count_tokens_is_granted_on_the_model_resources() -> None:
     # estimate (AccessDenied is caught by the counter).
     (statement,) = [
         s
-        for p in _compute_template().find_resources("AWS::IAM::Policy").values()
-        for s in p["Properties"]["PolicyDocument"]["Statement"]
+        for s in _role_statements(_compute_template(), "TaskRole")
         if "bedrock:InvokeModel" in s["Action"]
     ]
     assert "bedrock:CountTokens" in statement["Action"]
+
+
+def _apply_guardrail_resources(template: Template) -> list[Any]:
+    return [
+        resource
+        for s in _role_statements(template, "TaskRole")
+        if "bedrock:ApplyGuardrail" in s["Action"]
+        for resource in (
+            s["Resource"] if isinstance(s["Resource"], list) else [s["Resource"]]
+        )
+    ]
+
+
+def test_apply_guardrail_is_granted_on_the_one_guardrail_only() -> None:
+    # No guardrail given, no grant (previously guardrail/* in every region).
+    assert _apply_guardrail_resources(_compute_template()) == []
+    resources = _apply_guardrail_resources(
+        _compute_template({"bedrock_region": "us-east-1"}, guardrail_identifier="gr-1")
+    )
+    assert len(resources) == 1
+    rendered = json.dumps(resources[0])
+    assert ":bedrock:us-east-1:111111111111:guardrail/gr-1" in rendered
+    assert "*" not in rendered
+
+
+def test_apply_guardrail_accepts_a_guardrail_arn() -> None:
+    arn = "arn:aws:bedrock:us-west-2:111111111111:guardrail/gr-2"
+    template = _compute_template(guardrail_identifier=arn)
+    assert _apply_guardrail_resources(template) == [arn]
 
 
 def test_cluster_keeps_container_insights_on() -> None:
@@ -194,8 +241,67 @@ def test_cluster_keeps_container_insights_on() -> None:
 def test_app_container_gets_the_longest_stop_timeout() -> None:
     # run-ingestion checkpoints and unwinds on SIGTERM; the default 30 s
     # (StopTask, a Step Functions timeout) can cut that short.
-    (task_def,) = (
-        _compute_template().find_resources("AWS::ECS::TaskDefinition").values()
-    )
+    task_defs = _compute_template().find_resources("AWS::ECS::TaskDefinition")
+    task_def = next(v for k, v in task_defs.items() if k.startswith("IngestionTask"))
     (container,) = task_def["Properties"]["ContainerDefinitions"]
     assert container["StopTimeout"] == 120
+
+
+def test_query_role_cannot_write_or_delete_any_store() -> None:
+    statements = _role_statements(
+        _compute_template(guardrail_identifier="gr-1"), "QueryTaskRole"
+    )
+    actions = _actions(statements)
+    assert {"neptune-db:connect", "neptune-db:ReadDataViaQuery"} <= actions
+    assert {
+        "bedrock:InvokeModel",
+        "bedrock:Rerank",
+        "bedrock:ApplyGuardrail",
+    } <= actions
+    assert not [a for a in actions if a.startswith("dynamodb:")]
+    assert not actions & {
+        "neptune-db:WriteDataViaQuery",
+        "neptune-db:DeleteDataViaQuery",
+        "es:ESHttp*",
+        "es:ESHttpPut",
+        "es:ESHttpDelete",
+        "es:ESHttpPatch",
+    }
+    # POST (also the verb of _bulk, _doc and _delete_by_query) only on _search.
+    (post,) = [s for s in statements if "es:ESHttpPost" in _actions([s])]
+    assert json.dumps(post["Resource"]).endswith('"/*/_search"]]}')
+    # S3 only under eval/ (run-eval's dataset and results).
+    s3_resources = json.dumps(
+        [
+            s["Resource"]
+            for s in statements
+            if any(a.startswith("s3:") for a in _actions([s]))
+        ]
+    )
+    assert "/eval/*" in s3_resources
+    assert '"/*"' not in s3_resources
+
+
+def test_query_task_definition_runs_the_same_app_with_the_query_role() -> None:
+    template = _compute_template()
+    task_defs = template.find_resources("AWS::ECS::TaskDefinition")
+    query = next(v for k, v in task_defs.items() if k.startswith("QueryTask"))
+    ingestion = next(v for k, v in task_defs.items() if k.startswith("IngestionTask"))
+    assert query["Properties"]["TaskRoleArn"]["Fn::GetAtt"][0].startswith(
+        "QueryTaskRole"
+    )
+    (q_app,) = query["Properties"]["ContainerDefinitions"]
+    (i_app,) = ingestion["Properties"]["ContainerDefinitions"]
+    assert q_app["Name"] == i_app["Name"] == "app"
+    assert q_app["Environment"] == i_app["Environment"]
+    assert "EphemeralStorage" not in query["Properties"]
+    outputs = template.find_outputs("*")
+    assert {"QueryTaskDefinitionArn", "QueryTaskRoleArn"} <= set(outputs)
+
+
+def test_tracing_adds_the_collector_to_both_task_definitions() -> None:
+    template = _compute_template({"enable_cloudwatch_tracing": "true"})
+    for task_def in template.find_resources("AWS::ECS::TaskDefinition").values():
+        names = {c["Name"] for c in task_def["Properties"]["ContainerDefinitions"]}
+        assert names == {"app", "otel-collector"}
+    assert len(template.find_resources("AWS::ECR::PullThroughCacheRule")) == 1

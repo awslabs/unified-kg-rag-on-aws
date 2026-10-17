@@ -267,8 +267,10 @@ AWS 모드와 다른 점:
 - 작은 로컬 모델은 추출 품질이 눈에 띄게 낮습니다. 형식이 잘못된 출력이 많아지고(재시도
   후 실패한 청크로 기록), 엔티티 해소와 커뮤니티 보고서도 약해집니다. 하드웨어가 감당하는
   가장 큰 모델을 쓰세요.
-- Bedrock 프롬프트 캐싱과 Guardrails가 없습니다(로컬 공급자는 `aws.bedrock.guardrail`을
-  무시합니다). 추론 노력(effort) 설정도 적용되지 않습니다.
+- Bedrock 프롬프트 캐싱이 없고, 로컬 공급자는 모델 호출에 가드레일을 붙이지 않습니다.
+  `aws.bedrock.guardrail.identifier`를 지정하면 질의 체인은 여전히 Bedrock
+  `ApplyGuardrail`로 질의와 답변을 검사합니다(AWS 자격 증명 필요). 추론 노력(effort)
+  설정도 적용되지 않습니다.
 - 내장 벡터 저장소는 OpenSearch 어댑터가 만드는 질의에 답하지만 다섯 가지가 다릅니다.
   `nori`(한국어), `kuromoji`(일본어), `smartcn`(중국어)으로 매핑한 텍스트는 형태소
   분석 대신 서로 겹치는 CJK 문자 바이그램으로 나눕니다. 그래서 긴 단어 안의 이름도
@@ -447,8 +449,10 @@ WARNING을 남기고 버리므로, 파일을 고치거나 업그레이드한 뒤
 | `aws.bedrock.enable_1m_context` | `false` | 1M 컨텍스트 창이 베타인 모델에서 1M 창을 씁니다(추가 요금). Claude 5는 1M 창이 기본입니다. |
 | `aws.bedrock.model_overrides` | `{}` | 패키지가 모르는 언어 모델의 기능 정보 레코드입니다(모델 선택 참고 사항 참고). 임베딩 모델과 재순위화 모델은 정해진 목록에서만 고릅니다. |
 | `aws.bedrock.guardrail.identifier` | `null` | Bedrock 가드레일 ID 또는 ARN입니다. 지정하면 가드레일이 켜집니다. |
-| `aws.bedrock.guardrail.apply_to` | `"query"` | `query`는 사용자 질의 경로에만, `all`은 모든 호출에 가드레일을 적용합니다(아래 가드레일 참고 사항 참고). |
-| `aws.bedrock.guardrail.trace` | `false` | 가드레일 trace를 출력합니다. InvokeModel 경로에서 개입을 감지하려면 필요합니다. |
+| `aws.bedrock.guardrail.check_input` | `true` | 검색 전에 사용자 원본 질의를 `ApplyGuardrail`(source `INPUT`)로 검사합니다(아래 가드레일 참고 사항 참고). |
+| `aws.bedrock.guardrail.check_output` | `true` | 최종 답변을 검사합니다(source `OUTPUT`). 스트리밍 답변은 검사가 끝난 뒤 한 청크로 전달합니다. |
+| `aws.bedrock.guardrail.apply_to` | `"query"` | `query`는 질의와 답변만 검사합니다. `all`은 모든 수집·평가 모델 호출에도 가드레일을 붙입니다. |
+| `aws.bedrock.guardrail.trace` | `false` | 감사용으로 전체 평가 결과(감지되지 않은 항목 포함)를 받습니다. |
 | `aws.bedrock.transient_retry.max_attempts` | `5` | botocore가 재시도하지 않는 일시적 Bedrock 오류(HTTP 424 등)에 대한 호출당 시도 횟수입니다. 임베딩과 질의 시점 호출에 적용합니다. `1`이면 재시도하지 않습니다. |
 | `aws.neptune.endpoint` | `null` | **필수.** Neptune 클러스터 엔드포인트입니다. |
 | `aws.neptune.use_iam` | `true` | Neptune 요청에 SigV4 서명을 붙입니다. |
@@ -464,26 +468,42 @@ WARNING을 남기고 버리므로, 파일을 고치거나 업그레이드한 뒤
 | `aws.dynamodb.table_name` | `"unified-kg-rag-on-aws-doc-status"` | 문서 상태 테이블 이름입니다. |
 | `aws.dynamodb.create_table_if_missing` | `true` | 처음 사용할 때 테이블을 만듭니다. 테이블을 IaC로 관리한다면 `false`로 두세요. |
 
-> **가드레일 적용 범위와 위치.** 가드레일은 LLM 호출이 가는 리전인
-> `aws.bedrock.region_name`에 있어야 합니다. 기본값 `apply_to: "query"`에서는
-> 답변 생성, 질의 정제, 질의 시점 엔티티·키워드 추출, global/DRIFT map-reduce에
-> 가드레일을 붙입니다. 수집 모델, 프롬프트 튜너, 평가용 판정 모델에는 붙이지
-> 않습니다. `NAME`을 익명화하는 PII 가드레일은 추출된 엔티티 이름을 `{NAME}` 같은
-> 자리 표시자로 바꿔 서로 다른 사람을 한 노드로 합치고, `PROMPT_ATTACK` 필터는
-> 지시문처럼 보이는 코퍼스 텍스트를 차단할 수 있기 때문입니다. `apply_to: "all"`은
-> 추출에 써도 안전한 정책일 때만 쓰세요. 질의 경로에서도 `NAME` 익명화는 문제가
-> 됩니다. 답변에 해당 인물 대신 `{NAME}`이 나오고, 엔티티를 시작점으로 삼는 검색이
-> 시작점을 잃습니다. 그래서 `iac/`가 만드는 기본 가드레일은 이메일, 전화번호, 카드
-> 번호만 익명화하고 `NAME`은 익명화하지 않습니다. 가드레일이 개입할 때마다 누적
-> 횟수와 함께 WARNING
-> (`Bedrock guardrail '<id>' intervened on a <purpose> model call ...`)을 남깁니다. InvokeModel 경로(`ChatBedrock`, 교차 리전이
-> 아닌 모델 ID에 사용)에서는 `trace: true`일 때만 개입을 감지하며, 가드레일 자체는
-> 어느 경우든 적용됩니다.
+> **가드레일 적용 범위와 위치.** 가드레일은 `aws.bedrock.region_name`에 있어야
+> 합니다. 질의 체인은 `ApplyGuardrail` API로 두 텍스트를 검사합니다. 하나는 대화
+> 메모리, 후속 질문 재작성, 라우팅, 검색보다 먼저 한 번 검사하는 사용자 원본
+> 질의(`check_input`)이고, 다른 하나는 최종 답변(`check_output`)입니다. 이 두
+> 텍스트만 평가하고 과금합니다. 차단된 질의에는 가드레일의 차단 메시지로 답하고,
+> 검색도 메모리 저장도 하지 않으며 `RAGOutput.metadata.blocked`가 `true`입니다.
+> 마스킹된 질의(PII 익명화)는 마스킹된 텍스트로 계속 처리하므로 검색, 모델, 메모리
+> 어디에도 원문이 가지 않습니다. 답변이 차단되거나 마스킹되면 가드레일이 돌려준
+> 텍스트로 바꿉니다. 모든 개입은 `RAGOutput.metadata.guardrail`(source, action,
+> policies)에 남고, 누적 횟수와 함께 WARNING 로그와 `kg_rag.guardrail` span으로도
+> 기록됩니다. 가드레일 API가 실패하면 질의가 실패합니다(`processing.ignore_errors`면
+> 표준 오류 답변). 검사하지 않은 채로 답하지는 않습니다.
+>
+> 질의 안의 모델 호출(재작성, 라우팅, 키워드 추출, global/DRIFT map 단계, 답변
+> 생성)에는 가드레일을 붙이지 않습니다. 모델 호출에 붙인 가드레일은 프롬프트 전체를
+> 평가합니다. Converse API에서는 검색된 코퍼스 텍스트와 개발자 지시문까지 사용자
+> 입력처럼 `PROMPT_ATTACK` 필터가 판정해 잘못 차단하고, 비용도 컨텍스트 크기와 호출
+> 수에 비례해 늘어납니다. InvokeModel API에서는 사용자 입력을 입력 태그로 감싸지
+> 않으면 `PROMPT_ATTACK` 필터가 동작하지 않습니다([Bedrock Guardrails: 프롬프트
+> 공격](https://docs.aws.amazon.com/bedrock/latest/userguide/guardrails-prompt-attack.html)).
+> 컨텍스트 근거(contextual grounding) 검사는 하지 않습니다. 근거 자료와 질의를
+> 한정자(qualifier)가 붙은 콘텐츠로 보내야 하는데 답변 검사는 이를 보내지 않습니다.
+>
+> 수집 모델, 프롬프트 튜너, 평가용 판정 모델은 기본적으로 가드레일 없이 실행합니다.
+> `NAME`을 익명화하는 PII 가드레일은 추출된 엔티티 이름을 `{NAME}` 같은 자리
+> 표시자로 바꿔 서로 다른 사람을 한 노드로 합치고, `PROMPT_ATTACK` 필터는 지시문처럼
+> 보이는 코퍼스 텍스트를 차단할 수 있기 때문입니다. `apply_to: "all"`은 이 호출에도
+> 가드레일을 붙이므로 추출에 써도 안전한 정책일 때만 쓰세요. 질의 경로에서도 `NAME`
+> 익명화는 문제가 됩니다. 인물에 관한 질문은 검색에 쓸 이름을 잃고, 답변에는
+> `{NAME}`이 나옵니다. 그래서 `iac/`가 만드는 기본 가드레일은 이메일, 전화번호, 카드
+> 번호만 익명화하고 `NAME`은 익명화하지 않습니다.
 >
 > `setup_chain`으로 체인을 만들거나 질의가 아닌 작업에서 `get_model`을 호출하는
 > 사용자 코드는 `model_purpose=ModelPurpose.INGESTION`(또는 `EVALUATION`)을 넘겨야
-> 합니다. 표시하지 않은 호출은 `QUERY`로 간주하므로 가드레일이 적용되고 질의 시점의
-> 일시적 오류 재시도도 적용됩니다.
+> 합니다. 표시하지 않은 호출은 `QUERY`로 간주하므로 질의 시점의 일시적 오류 재시도가
+> 적용되고, 가드레일은 붙지 않습니다.
 
 > **S3 캐시 암호화.** CDK 스택에서 `use_cmk=true`이면 버킷 기본 암호화가 고객 관리형
 > KMS 키이므로 `BUCKET_DEFAULT`도 그 키를 씁니다. `AES256`을 강제하면 버킷의 CMK를
@@ -845,7 +865,11 @@ Secrets Manager나 태스크 시크릿에서 주입하세요.
   최대 50개의 소스 ID) → `kg_rag.fusion`(입력·출력 수, 해당 단계의
   `kg_rag.rerank_status`) → `kg_rag.rerank`
   (`kg_rag.rerank.status` = `ok`, `empty`, `error`와 문서 수) →
-  `kg_rag.context_build`(사용한 토큰과 토큰 예산) → 답변 생성의 `chat <model>` 스팬
+  `kg_rag.context_build`(사용한 토큰과 토큰 예산) → 답변 생성의 `chat <model>` 스팬.
+  가드레일이 있으면 검사한 질의와 답변마다 `kg_rag.query` 아래에 `kg_rag.guardrail`
+  스팬이 붙고(`aws.bedrock.guardrail.id`, `.source` = `input` 또는 `output`,
+  `.action` = `none`, `masked`, `blocked`, `.intervened`, `.policies`), 질의 스팬에는
+  `kg_rag.blocked`가 기록됩니다.
 - 평가(`run-eval`): 답변 생성 전체가 `kg_rag.batch` 루트 하나(항목 수와 실패 수만
   기록) → 질문마다 `kg_rag.query` 하나이며, 질문별 입력과 출력은 이 자식 스팬에 있음.
   이어서 평가기마다 `kg_rag.evaluate` 루트 하나(`kg_rag.evaluator`, `kg_rag.items`) →
@@ -1002,6 +1026,11 @@ run-ingestion --source-directory ./documents --config-path config.yaml --metrics
 둘 다 기본값은 `default`입니다. 테넌트나 코퍼스 버전마다 인덱스 접미사를 하나씩 쓰고
 설정 파일도 하나씩 두세요. `indexing.additional_suffix`는 양쪽에서 같아야 합니다.
 증분 인덱싱과 삭제는 인덱스 접미사 단위로 이루어집니다(§5).
+
+접미사는 이름을 나눌 뿐 접근을 막지 않습니다. 질의할 수 있는 호출자는 어떤 접미사든
+지정할 수 있습니다. 멀티 테넌트 서비스는 접미사를 요청에서 받지 말고 인증된 호출자를
+기준으로 서버에서 정해야 합니다. 인프라로 강제하는 방법은 [운영 런북: 질의 권한과
+테넌트 격리](./operations.ko.md#질의-권한과-테넌트-격리)를 참고하세요.
 
 ### 다국어 수집
 
@@ -1856,7 +1885,8 @@ SigV4), OpenSearch(설정한 인덱스 읽기·쓰기), S3(설정한 버킷), Dy
 > 없다면 `false`로 설정하세요.
 >
 > 모델 해석기는 `bedrock:ListInferenceProfiles`도 호출합니다. 이 권한은
-> `Resource: "*"`를 쓰는 계정 수준 읽기 권한입니다. 가드레일을 쓰려면
+> `Resource: "*"`를 쓰는 계정 수준 읽기 권한입니다. 가드레일을 쓰려면 해당 가드레일
+> ARN(`arn:aws:bedrock:<Bedrock 리전>:<계정>:guardrail/<id>`)에 대한
 > `bedrock:ApplyGuardrail`이 필요합니다.
 
 ### 자주 나는 오류

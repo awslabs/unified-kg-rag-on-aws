@@ -311,11 +311,10 @@ class ModelPurpose(str, Enum):
     """Why a language model is being created, so per-path policies can differ.
 
     Callers pass it to the LLM factory (``get_model(model_purpose=...)``). The
-    Bedrock factory uses it to scope guardrails (``GuardrailConfig.apply_to``):
-    a user-facing guardrail that anonymizes PII or blocks instruction-like text
-    is appropriate for queries, but corrupts graph extraction over a corpus.
-    Unspecified means ``QUERY`` so an unmarked call site keeps the guarded,
-    conservative behaviour.
+    Bedrock factory uses it to attach a guardrail to ingestion and evaluation
+    models under ``GuardrailConfig.apply_to: all`` (query models never get
+    one: the query chain screens the user's query and answer instead), and
+    query chains get a transient-error retry. Unspecified means ``QUERY``.
     """
 
     QUERY = "query"
@@ -379,21 +378,30 @@ _MODEL_ROLE_KEY = "model_role"
 
 
 class GuardrailConfig(BaseModel):
-    """Amazon Bedrock Guardrails applied to language-model invocations.
+    """Amazon Bedrock Guardrails on the user-facing query path.
 
     Disabled by default; set ``identifier`` (and optionally ``version``) to
-    enforce content/PII/grounding policies on prompts and completions — the
-    WAF security-pillar control for a user-facing LLM RAG application.
+    enforce content/PII/denied-topic/prompt-attack policies — the WAF
+    security-pillar control for a user-facing LLM RAG application.
 
-    ``apply_to`` scopes the guardrail. The default ``"query"`` guards only the
-    user-facing query path (answer generation, query refinement and
-    query-time entity/keyword extraction, global/DRIFT map-reduce). Ingestion
-    (chunking, translation, graph extraction, gleaning, claims, description
-    summarization, community reports) and evaluation judges run unguarded,
-    because a PII-anonymizing guardrail rewrites names to placeholders (every
-    person merges into one entity) and a prompt-attack filter blocks
-    instruction-like corpus text, which silently yields empty extractions.
-    ``"all"`` restores the previous guard-everything behaviour.
+    The query chain screens texts with the ``ApplyGuardrail`` API rather than
+    attaching the guardrail to its model calls: ``check_input`` screens the
+    raw user query once, before memory, rewrite, routing and retrieval, and
+    ``check_output`` the final answer. A blocked query is answered with the
+    guardrail's blocked message and never retrieved; a masked one (PII
+    anonymized) continues with the masked text. The internal query calls
+    (rewrite, routing, keyword extraction, map steps, answer generation) run
+    unguarded: their prompts carry retrieved corpus text and developer
+    instructions, which an attached guardrail would judge as user input.
+
+    ``apply_to`` scopes the guardrail beyond queries. The default ``"query"``
+    leaves ingestion (chunking, translation, graph extraction, gleaning,
+    claims, description summarization, community reports) and evaluation
+    judges unguarded, because a PII-anonymizing guardrail rewrites names to
+    placeholders (every person merges into one entity) and a prompt-attack
+    filter blocks instruction-like corpus text, which silently yields empty
+    extractions. ``"all"`` also attaches the guardrail to every ingestion and
+    evaluation model call.
     """
 
     identifier: str | None = Field(
@@ -407,14 +415,25 @@ class GuardrailConfig(BaseModel):
     )
     trace: bool = Field(
         default=False,
-        description="Emit guardrail trace details for observability/auditing",
+        description="Emit guardrail trace details for observability/auditing "
+        "(full assessments, including non-detected entries)",
+    )
+    check_input: bool = Field(
+        default=True,
+        description="Screen each raw user query (ApplyGuardrail, source INPUT) "
+        "before retrieval: prompt attacks, denied topics, PII",
+    )
+    check_output: bool = Field(
+        default=True,
+        description="Screen each final answer (ApplyGuardrail, source OUTPUT). "
+        "A streamed answer is then delivered in one chunk, after the check",
     )
     apply_to: Literal["query", "all"] = Field(
         default="query",
         description=(
-            "Which model invocations the guardrail is attached to: 'query' "
-            "(user-facing query path only; ingestion and evaluation models run "
-            "unguarded) or 'all' (every model, including ingestion)"
+            "'query': only the user query and answer are screened; ingestion "
+            "and evaluation models run unguarded. 'all': the guardrail is also "
+            "attached to every ingestion and evaluation model call"
         ),
     )
 
@@ -423,10 +442,14 @@ class GuardrailConfig(BaseModel):
         return bool(self.identifier)
 
     def applies_to(self, purpose: ModelPurpose) -> bool:
-        """Whether a model created for ``purpose`` gets this guardrail."""
-        if not self.enabled:
+        """Whether a model created for ``purpose`` gets the guardrail attached.
+
+        Never for ``QUERY`` models: the query path is screened at its edges
+        (``check_input`` / ``check_output``) instead.
+        """
+        if not self.enabled or purpose is ModelPurpose.QUERY:
             return False
-        return self.apply_to == "all" or purpose is ModelPurpose.QUERY
+        return self.apply_to == "all"
 
 
 class TransientRetryConfig(BaseModel):

@@ -30,7 +30,7 @@ from unified_kg_rag.adapters.aws.bedrock import (
 from unified_kg_rag.adapters.aws.bedrock_models import get_language_model_info
 from unified_kg_rag.adapters.aws.token_counter import BedrockTokenCounter
 from unified_kg_rag.adapters.llm.chain_factory import setup_chain
-from unified_kg_rag.domain.models import Config, LanguageModelId
+from unified_kg_rag.domain.models import Config, LanguageModelId, ModelPurpose
 from unified_kg_rag.domain.prompts.graph_extraction import GraphRefinementPrompt
 from unified_kg_rag.shared import LanguageModelError
 
@@ -312,9 +312,13 @@ def test_undocumented_effort_level_fails_fast() -> None:
 def test_guardrail_applies_to_gpt_converse_request() -> None:
     config = Config()
     config.aws.bedrock.guardrail.identifier = "gid-1"
+    config.aws.bedrock.guardrail.apply_to = "all"
     factory = _factory(config)
     cfg = factory._build_model_config(
-        _info(LanguageModelId.GPT_V6_SOL), "us.openai.gpt-6-sol", True
+        _info(LanguageModelId.GPT_V6_SOL),
+        "us.openai.gpt-6-sol",
+        True,
+        model_purpose=ModelPurpose.INGESTION,
     )
     assert cfg["guardrail_config"]["guardrailIdentifier"] == "gid-1"
 

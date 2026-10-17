@@ -78,30 +78,33 @@ aws:
     # query-time effort. Fast-tier ingestion calls keep fast_effort.
     ingestion_effort: null
     # Amazon Bedrock Guardrails (WAF security pillar). Disabled unless an
-    # identifier is set; when set, the guarded LLM calls enforce the
-    # guardrail's content/PII/grounding policies on prompts and completions.
-    # Interventions are logged at WARNING ("Bedrock guardrail ... intervened").
+    # identifier is set. The query chain then screens texts with the
+    # ApplyGuardrail API: the raw user query once, before memory, rewrite,
+    # routing and retrieval (prompt attacks, denied topics, PII), and the final
+    # answer once. A blocked query gets the guardrail's blocked message and is
+    # never retrieved (RAGOutput.metadata.blocked); a masked query (PII
+    # anonymized) continues with the masked text. The query chain's own model
+    # calls are not guarded: their prompts carry corpus text and instructions,
+    # which a guardrail would judge as user input. Interventions are logged at
+    # WARNING and listed in RAGOutput.metadata.guardrail.
     guardrail:
       identifier: null # Guardrail ID or ARN, e.g. "abcd1234efgh"
       version: "DRAFT" # "DRAFT" or a published version number
-      # Emit guardrail trace for auditing/observability. Also decides whether
-      # interventions are DETECTED on the InvokeModel path (ChatBedrock, used
-      # for non-cross-region model ids): langchain_aws only signals an
-      # intervention there when trace is true, so with trace: false the
-      # guardrail is still enforced but its interventions are neither logged
-      # nor counted. The Converse path (cross-region inference profiles)
-      # detects interventions via stopReason regardless of trace.
+      # Return full assessments (also non-detected entries) for auditing.
       trace: false
-      # Which calls are guarded:
-      #   query - (default) user-facing query path only: answer generation,
-      #           query refinement, query-time entity/keyword extraction,
-      #           global/DRIFT map-reduce. Ingestion (chunking, translation,
-      #           graph extraction, gleaning, claims, summarization, community
+      check_input: true # screen each raw user query (source INPUT)
+      # Screen each final answer (source OUTPUT). A streamed answer is then
+      # generated in full, screened, and delivered as one chunk.
+      check_output: true
+      # Which model calls get the guardrail attached as well:
+      #   query - (default) none. Ingestion (chunking, translation, graph
+      #           extraction, gleaning, claims, summarization, community
       #           reports) and evaluation judges run unguarded.
-      #   all   - every LLM call. A PII-anonymizing guardrail then rewrites
-      #           names in extraction output to placeholders (distinct people
-      #           merge into one entity) and a prompt-attack filter can block
-      #           instruction-like corpus text (that chunk yields no entities).
+      #   all   - every ingestion and evaluation call. A PII-anonymizing
+      #           guardrail then rewrites names in extraction output to
+      #           placeholders (distinct people merge into one entity) and a
+      #           prompt-attack filter can block instruction-like corpus text
+      #           (that chunk yields no entities).
       apply_to: "query"
     # Retry on transient Bedrock errors that botocore does not retry, such as
     # HTTP 424 ModelErrorException. Applies to every embedding request and to

@@ -31,6 +31,10 @@ Context keys (all optional; sensible defaults shown):
                                        unset = the corpus lives in the cache bucket
   neptune_instance    "db.r6g.large"   Neptune instance class (Graviton)
   neptune_instances   dev:1/else:2     Neptune instances (>=2 => Multi-AZ HA)
+  neptune_serverless_ncu None          "MIN-MAX" Neptune capacity units (e.g.
+                                       "1-16"; 1-128 in steps of 0.5): run every
+                                       instance as Neptune Serverless instead of
+                                       neptune_instance; unset = provisioned
   opensearch_instance "r6g.large.search"  OpenSearch data node type (Graviton)
   opensearch_count    dev:1/else:2     OpenSearch data node count (>1 =>
                                        zone-aware multi-node + 3 dedicated masters;
@@ -175,6 +179,37 @@ def _as_arn_list(key: str, value: Any) -> list[str] | None:
     return arns or None
 
 
+# Neptune Serverless capacity: 1-128 NCU in half-step increments.
+_NCU_MIN, _NCU_MAX = 1.0, 128.0
+
+
+def _as_ncu_range(key: str, value: Any) -> tuple[float, float] | None:
+    """A ``(min, max)`` NCU range: ``"MIN-MAX"`` with ``-c``, or a JSON list."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        parts: list[Any] = value.split("-")
+    elif isinstance(value, (list, tuple)):
+        parts = list(value)
+    else:
+        parts = []
+    try:
+        low, high = (float(part) for part in parts)
+    except (TypeError, ValueError):
+        raise ValueError(
+            f'{key} must be "MIN-MAX" capacity units (e.g. "1-16"), got {value!r}'
+        ) from None
+    for ncu in (low, high):
+        if not _NCU_MIN <= ncu <= _NCU_MAX or (ncu * 2) % 1:
+            raise ValueError(
+                f"{key}: capacity must be {_NCU_MIN:g}-{_NCU_MAX:g} NCU in steps "
+                f"of 0.5, got {ncu:g}"
+            )
+    if low > high:
+        raise ValueError(f"{key}: MIN ({low:g}) is above MAX ({high:g})")
+    return low, high
+
+
 def _check_fargate_size(cpu: int, memory: int) -> None:
     if cpu not in _FARGATE_MEMORY:
         raise ValueError(
@@ -256,6 +291,8 @@ class DeploymentConfig:
     # domain has no nori unless the optional analysis-nori package is
     # associated with it; cjk (character bigrams) is built into OpenSearch.
     opensearch_korean_analyzer: str = "cjk"
+    # Neptune Serverless (min, max) NCU; None = provisioned neptune_instance.
+    neptune_serverless_ncu: tuple[float, float] | None = None
 
     @property
     def collector_cache_prefix(self) -> str:
@@ -339,6 +376,14 @@ class DeploymentConfig:
                 "opensearch_korean_analyzer must be an OpenSearch analyzer name "
                 f"(e.g. cjk or nori), got {opensearch_korean_analyzer!r}"
             )
+        neptune_serverless_ncu = _as_ncu_range(
+            "neptune_serverless_ncu", ctx("neptune_serverless_ncu")
+        )
+        if neptune_serverless_ncu and ctx("neptune_instance") is not None:
+            raise ValueError(
+                "neptune_instance and neptune_serverless_ncu are exclusive: a "
+                "serverless cluster has no instance class"
+            )
         fargate_cpu = as_int("fargate_cpu", 2048)
         fargate_memory = as_int("fargate_memory", 8192)
         _check_fargate_size(fargate_cpu, fargate_memory)
@@ -409,6 +454,7 @@ class DeploymentConfig:
                 "enable_cloudwatch_tracing", default=False
             ),
             opensearch_korean_analyzer=opensearch_korean_analyzer,
+            neptune_serverless_ncu=neptune_serverless_ncu,
         )
         # ECR limits a pull-through cache repository prefix to 30 characters.
         if config.enable_cloudwatch_tracing and len(config.collector_cache_prefix) > 30:

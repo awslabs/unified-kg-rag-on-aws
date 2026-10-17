@@ -92,13 +92,13 @@ class GuardrailStack(Stack):
             description="Baseline guardrail for unified-kg-rag-on-aws (PII + prompt attack).",
             sensitive_information_policy_config=(
                 bedrock.CfnGuardrail.SensitiveInformationPolicyConfigProperty(
-                    # NAME is deliberately absent. The guardrail runs on the
-                    # query path (answer generation, query-time entity and
-                    # keyword extraction), where person names are corpus
-                    # content: anonymizing them turns answers into "{NAME}" and
-                    # strips the entity seeds that local/LightRAG search looks
-                    # up. Add it only for a corpus whose names must not leave
-                    # the model, accepting that retrieval by name stops working.
+                    # NAME is deliberately absent. The app screens the user's
+                    # query and the answer, where person names are usually
+                    # corpus content: anonymizing them turns "Who is <name>?"
+                    # into "{NAME}" before retrieval (no entity seed to look
+                    # up) and answers into "{NAME}". Add it only for a corpus
+                    # whose names must not reach users, accepting that
+                    # retrieval by name stops working.
                     pii_entities_config=[
                         bedrock.CfnGuardrail.PiiEntityConfigProperty(
                             type=t, action="ANONYMIZE"

@@ -76,8 +76,9 @@ def test_bedrock_region_sets_task_env_and_guardrail_region(
     compute = json.loads((tmp_path / "GraphRagCompute.template.json").read_text())
     (task_def,) = [
         r
-        for r in compute["Resources"].values()
+        for logical_id, r in compute["Resources"].items()
         if r["Type"] == "AWS::ECS::TaskDefinition"
+        and logical_id.startswith("IngestionTask")
     ]
     (app,) = [
         c for c in task_def["Properties"]["ContainerDefinitions"] if c["Name"] == "app"

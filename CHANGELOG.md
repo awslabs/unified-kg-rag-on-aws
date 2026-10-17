@@ -136,6 +136,21 @@ Defaults. Set the old value explicitly to keep the previous behaviour.
   to keep Haiku 4.5) (#170).
 - The Bedrock guardrail applies to the query path only
   (`aws.bedrock.guardrail.apply_to: all` restores it) (#104).
+- The Bedrock guardrail screens the raw user query and the final answer with
+  `ApplyGuardrail` (`aws.bedrock.guardrail.check_input` / `check_output`,
+  both on) instead of being attached to every query-path model call. Attached,
+  it evaluated whole prompts: on Converse the retrieved corpus and developer
+  instructions were judged as user input (false prompt-attack blocks, cost
+  growing with context × calls), and on InvokeModel the prompt-attack filter
+  did nothing without input tags. A blocked query now gets the blocked
+  message without retrieval (`RAGOutput.metadata.blocked`), a masked one
+  continues with the masked text, interventions are listed in
+  `metadata.guardrail`, and a guardrail error fails the query. With
+  `check_output`, `stream` / `astream` deliver the answer as one chunk after
+  the check. `apply_to: all` now adds the guardrail to ingestion and
+  evaluation calls only. Upgrade: a role outside the CDK stack needs
+  `bedrock:ApplyGuardrail` on the guardrail ARN; caches and indexes keep
+  their keys (#319).
 - `graph.community_detection.auto_resolution` defaults to `false` (#141).
 - The `retrieval` evaluator's k counts distinct files, not sources: the
   reported sources are flattened into their files in rank order (a graph
@@ -365,6 +380,11 @@ Library API (Python callers and custom backends).
   `retrieved_source_types`, `retrieved_entities` and
   `retrieved_relationships`; the run manifest records
   `models.judge_is_answer_model` (LLM judges favour their own outputs) (#315).
+- IaC: `-c neptune_serverless_ncu=MIN-MAX` (e.g. `1-16`) runs the Neptune
+  instances as Neptune Serverless, scaling each between the NCU bounds, for
+  environments that sit idle most of the day; unset keeps the provisioned
+  `neptune_instance`. The app is unchanged (same endpoints, IAM auth and
+  Gremlin API) (#319).
 - With `observability.capture_content`, the root `kg_rag.query` span records
   the redacted query as `input.value` and, outside `stream` / `astream`, the
   redacted answer as `output.value`, so the Langfuse and Phoenix trace lists
@@ -1998,6 +2018,22 @@ Library API (Python callers and custom backends).
 ### Security
 - Prompts delimit corpus and retrieved text as data, and inputs cannot close
   their delimiter tags (#179, #182).
+- IaC: queries get their own task definition and role
+  (`QueryTaskDefinitionArn` / `QueryTaskRoleArn` outputs of
+  `GraphRagCompute`). The role reads only: Neptune `connect` and
+  `ReadDataViaQuery`, OpenSearch `GET`/`HEAD` and `POST` on `_search` paths,
+  Bedrock, and the cache bucket's `eval/` prefix; no DynamoDB and no store
+  writes or deletes. `run-rag` / `run-eval` previously ran with the ingestion
+  role (`neptune-db:DeleteDataViaQuery`, `es:ESHttp*`, doc-status read/write).
+  Upgrade: run queries with `QueryTaskDefinitionArn` (iac/README.md, After
+  deploy) and keep `run-eval` datasets and results under `s3://<cache
+  bucket>/eval/`. The operator runbook explains that the index suffix is a
+  naming separation a serving layer must bind from the authenticated caller,
+  and how to isolate tenants in the infrastructure (#319).
+- The CDK task role's `bedrock:ApplyGuardrail` is granted on the one
+  guardrail passed as `guardrail_identifier` (in `bedrock_region`) instead of
+  every guardrail in the account and region, and not at all without one
+  (#319).
 - INFO-level logs no longer carry query text, entity names or model output;
   `run-rag` strips terminal control characters from output; the CLIs warn
   when LangSmith tracing is on (#156, #173).

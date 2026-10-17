@@ -223,8 +223,8 @@ Neptune 요청(쓰기, 삭제, 제거와 병합을 위한 읽기)은 모두 새 
 | `OpenSearchFreeStorageLow` | 가장 많이 찬 데이터 노드의 여유 공간이 `opensearch_volume_gib`의 40% 이하 | 쓰기 차단 기준에 이르기 전에 `opensearch_volume_gib`(또는 `opensearch_count`)를 늘려 다시 배포합니다 |
 | `OpenSearchJvmPressure` | JVM 메모리 압력이 3분 연속 95% 이상 | 메모리 부족 위험입니다. 더 큰 `opensearch_instance`를 쓰거나 데이터 노드를 늘립니다 |
 | `DocStatusWriteThrottled` | 문서 상태 테이블이 쓰기를 스로틀링함(5분) | 앱은 스로틀링된 레지스트리 호출을 백오프하며 재시도하고, 그래도 스로틀링되면 `DocStatusRegistryError`로 실행이 실패합니다. 같은 테이블에 겹쳐 실행되는 수집이 있는지 확인하고, 스로틀링이 해소된 뒤 실패한 실행을 다시 실행합니다 |
-| `NeptuneHighCpu` | 라이터(writer)의 평균 CPU가 15분(5분 × 3) 동안 90% 이상 | 대량 쓰기의 일시적 최고치가 아니라 지속적인 포화입니다. 더 큰 `neptune_instance`를 쓰거나 `indexing.neptune.index_concurrency`를 낮춥니다 |
-| `NeptuneLowFreeableMemory` | 5분 안에 라이터의 가용 메모리가 한 번이라도 512MiB 이하로 떨어짐(최솟값) | 쿼리와 쓰기가 메모리 부족으로 실패할 수 있습니다. 더 큰 `neptune_instance`를 씁니다 |
+| `NeptuneHighCpu` | 라이터(writer)의 평균 CPU가 15분(5분 × 3) 동안 90% 이상 | 대량 쓰기의 일시적 최고치가 아니라 지속적인 포화입니다. 더 큰 `neptune_instance`(또는 더 높은 `neptune_serverless_ncu` 최댓값)를 쓰거나 `indexing.neptune.index_concurrency`를 낮춥니다 |
+| `NeptuneLowFreeableMemory` | 5분 안에 라이터의 가용 메모리가 한 번이라도 512MiB 이하로 떨어짐(최솟값) | 쿼리와 쓰기가 메모리 부족으로 실패할 수 있습니다. 더 큰 `neptune_instance`를 쓰거나, 부하가 몰리기 전에 용량이 확보되도록 `neptune_serverless_ncu` 최솟값을 높입니다 |
 | `NeptuneGremlinErrors` | 3분 연속 어느 인스턴스에서든 Gremlin 서버 오류가 있음 | 지속적인 쓰기·쿼리 실패입니다(재시도되는 쓰기 충돌은 짧게 몰려 발생하므로 이 경보를 울리지 않음). 작업 로그에서 실패한 요청을 확인합니다 |
 
 경보를 받으려면 `-c alarm_email=<address>`로 배포해 구독자를 등록해야 합니다.
@@ -298,6 +298,40 @@ S3의 코퍼스가 원본이므로 모든 저장소는 코퍼스에서 다시 �
 참고). 이 인덱스 네임스페이스의 저장소와 레지스트리 레코드를 지우고 코퍼스 전체를
 다시 인덱싱합니다. 다른 네임스페이스가 테이블을 함께 쓸 때만 테이블을 먼저
 복원합니다.
+
+## 질의 권한과 테넌트 격리
+
+질의(`run-rag`, `run-eval`, `GraphRAGChain`을 내장한 애플리케이션)에는 수집보다
+훨씬 적은 권한이 필요합니다. CDK 스택은 질의용 태스크 정의와 역할을 따로 만듭니다
+(`GraphRagCompute`의 `QueryTaskDefinitionArn`, `QueryTaskRoleArn` 출력.
+[`iac/README.md`](../iac/README.md#4-query-from-inside-the-vpc) 참고). 이 역할은
+Neptune `connect`와 `ReadDataViaQuery`, 도메인에 대한 OpenSearch `GET`/`HEAD`와
+`_search` 경로에만 허용한 `POST`(OpenSearch는 HTTP 메서드와 URL 경로로 권한을
+판단하므로 `_bulk`, `_doc`, `_delete_by_query`, 인덱스 변경은 거부됩니다), Bedrock
+모델·재순위화·가드레일 호출, 캐시 버킷의 `eval/` 접두사만 가집니다. DynamoDB에는
+접근할 수 없고 두 저장소 어디에도 쓰거나 지울 수 없습니다. 질의는 이 태스크 정의로
+실행하세요. 수집 태스크 정의의 역할에는 `neptune-db:DeleteDataViaQuery`,
+`es:ESHttp*`, 문서 상태 테이블 읽기·쓰기 권한이 있습니다. 직접 만든 서빙 계층도 같은
+권한의 역할을 쓰도록 하세요.
+
+**인덱스 접미사는 이름 분리일 뿐 접근 제어 경계가 아닙니다.** `RAGInput.suffix` /
+`--suffix`는 질의가 읽을 인덱스와 레이블을 고르고, 체인은 이 값이 인덱스 대상을
+넓히지 못하도록 검증합니다. 하지만 질의 역할을 가진 호출자는 어떤 접미사든 지정할 수
+있습니다. 따라서 멀티 테넌트 서빙 계층은 접미사를 요청 필드에서 받지 말고, 인증된
+주체(예: 호출자 토큰의 테넌트 클레임)를 기준으로 서버에서 정해야 합니다. 코드가 아니라
+인프라로 테넌트를 격리해야 한다면 다음을 쓰세요.
+
+- OpenSearch: 테넌트마다 질의 역할을 따로 두고 `es:ESHttpGet`, `es:ESHttpHead`,
+  `es:ESHttpPost`의 리소스를 그 테넌트의 인덱스로 한정합니다. 예:
+  `<도메인 ARN>/graphrag-*-<suffix>`, `<도메인 ARN>/graphrag-*-<suffix>/*`
+  (별칭은 `<인덱스 접두사>-<suffix>`입니다. 어떤 접미사도 `-<다른 접미사>`로 끝나지
+  않게 정하거나 테넌트마다 인덱스 접두사를 다르게 두세요). 문서·필드 수준 규칙이
+  필요하면 도메인에서 세분화된 액세스 제어(fine-grained access control)를 켜고,
+  테넌트 역할마다 `*-<suffix>*` 인덱스 권한만 가진 OpenSearch 역할을 매핑하세요.
+- Neptune: IAM은 클러스터 단위로만 권한을 주고 레이블 단위 범위가 없습니다. 다른
+  테넌트가 그래프를 읽을 수 없어야 한다면 테넌트마다 Neptune 클러스터를 따로 두세요
+  (테넌트마다 배포 하나, 또는 `env_name` 하나).
+- Bedrock과 가드레일은 공유하며 테넌트 데이터를 보관하지 않습니다.
 
 ## 시작 시 엔드포인트 검사
 
