@@ -41,8 +41,52 @@ details.
   Step Functions ingestion pipeline (#157, #211).
 
 ### Breaking changes
-Configuration. Removed or renamed keys are reported as unknown keys and
-ignored, so check the start-up warnings after upgrading.
+Configuration. An unknown key fails the load (see below); a moved key fails
+naming the key that replaces it.
+- Unknown config keys, in the file or as `UKR__` environment variables, are
+  an error instead of a warning: a misspelled key (a guardrail identifier
+  under `aws.bedrock.guardrail.identifer`) left its setting at the default
+  without a word. Every CLI takes `--allow-unknown-keys` to warn and go on;
+  `get_config` and `ConfigLoader` take `allow_unknown_keys=True` (#PR).
+- Environment overrides use one prefix and name the key they set:
+  `UKR__<SECTION>__<KEY>` sets any config key (double underscores between
+  path segments, any case; JSON for list and mapping settings). The former
+  names are no longer read: `NEPTUNE_ENDPOINT` is
+  `UKR__AWS__NEPTUNE__ENDPOINT`, `OPENSEARCH_ENDPOINT` / `_USERNAME` /
+  `_PASSWORD` are `UKR__AWS__OPENSEARCH__ENDPOINT` / `__USERNAME` /
+  `__PASSWORD`, `BEDROCK_REGION` is `UKR__AWS__BEDROCK__REGION_NAME`,
+  `BEDROCK_GUARDRAIL_IDENTIFIER` / `_VERSION` are
+  `UKR__AWS__BEDROCK__GUARDRAIL__IDENTIFIER` / `__VERSION`,
+  `S3_BUCKET_NAME` is `UKR__AWS__S3__BUCKET_NAME`, `LOG_LEVEL` /
+  `LOG_FORMAT` / `LOG_TO_FILE` / `LOG_FILE_PATH` are `UKR__LOGGING__LEVEL` /
+  `__LOG_FORMAT` / `__LOG_TO_FILE` / `__LOG_FILE_PATH`,
+  `OPENSEARCH_NUMBER_OF_REPLICAS` is
+  `UKR__INDEXING__OPENSEARCH__INDEX_SETTINGS__NUMBER_OF_REPLICAS`,
+  `OPENSEARCH_KOREAN_ANALYZER` is
+  `UKR__INDEXING__OPENSEARCH__LANGUAGE_ANALYZERS__KO`,
+  `GRAPHRAG_DOC_STATUS_TABLE` / `_CREATE_TABLE` are
+  `UKR__AWS__DYNAMODB__TABLE_NAME` / `__CREATE_TABLE_IF_MISSING`,
+  `GRAPHRAG_SOURCE_SCOPE` is `UKR__PROCESSING__DOCUMENT_PARSING__SOURCE_SCOPE`,
+  `GRAPHRAG_OBSERVABILITY_ENABLED` / `_BACKEND` are
+  `UKR__OBSERVABILITY__ENABLED` / `__BACKEND`, and the run-ingestion
+  defaults `GRAPHRAG_SOURCE_DIRECTORY` / `GRAPHRAG_PIPELINE_ID` /
+  `GRAPHRAG_METRICS_ENVIRONMENT` are `UKR_SOURCE_DIRECTORY` /
+  `UKR_PIPELINE_ID` / `UKR_METRICS_ENVIRONMENT`. The CDK stacks and the
+  container entrypoint set the new names; redeploy the stacks with the image
+  (#PR).
+- `AWS_REGION` and `AWS_PROFILE` no longer override a region or profile the
+  config file sets: they fill `aws.region_name` / `aws.profile_name` only
+  when the file leaves them unset, as an explicit setting wins over the
+  environment in the AWS SDKs (a shell exporting `AWS_REGION` used to move a
+  file's region silently). Use `UKR__AWS__REGION_NAME` to override the file
+  (#PR).
+- `graph.analysis.centrality` moved to `graph.visualization.centrality`: only
+  the visualization computes centrality (#PR).
+- Switching `--backend` (or any provider flag) rebuilds the config from what
+  the file, the environment and the caller set, so a value equal to the old
+  preset's that you set yourself is kept, and a change a library caller made
+  to the `Config` object survives the flags (`Config.as_input`). The removed
+  `strip_backend_preset` dropped both (#PR).
 - Every model setting moved into one top-level `models` section: the two
   tier models (`models.default`, `models.fast`), per-role overrides
   (`models.roles.<role>`, a model id or a tier name), the one embedding model

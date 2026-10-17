@@ -94,7 +94,7 @@ def test_multi_node_opensearch_uses_smaller_dedicated_masters(prod: Template) ->
 
 
 def test_opensearch_endpoint_output_is_a_bare_host() -> None:
-    """The output feeds OPENSEARCH_ENDPOINT, which the adapter uses as a host."""
+    """The output feeds UKR__AWS__OPENSEARCH__ENDPOINT, which the adapter uses as a host."""
     output = _storage_template({}).find_outputs("OpenSearchEndpoint")
     (value,) = (o["Value"] for o in output.values())
     # A bare GetAtt of the domain endpoint, not a Fn::Join with "https://".

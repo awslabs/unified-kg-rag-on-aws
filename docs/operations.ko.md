@@ -11,10 +11,11 @@
 
 ## 실행 전 확인
 
-1. **리전과 자격 증명.** 환경 변수 `AWS_REGION`은 `aws.region_name`보다
-   우선하며, `aws.bedrock.region_name`이 비어 있으면 Bedrock 리전도 바꿉니다.
-   `env | grep -E '^(AWS_REGION|BEDROCK_REGION)='`와
-   `aws sts get-caller-identity`로 확인합니다.
+1. **리전과 자격 증명.** 설정 파일의 `aws.region_name`이 우선합니다. `AWS_REGION`은
+   파일이 지정하지 않았을 때만 값을 채우고, `UKR__AWS__REGION_NAME`은 파일보다
+   우선합니다(`aws.bedrock.region_name`이 비어 있으면 Bedrock도 이 리전을 따릅니다).
+   `env | grep -E '^(AWS_REGION|UKR__AWS__)'`와 `aws sts get-caller-identity`로
+   확인합니다.
 2. **모델.** 사용자 가이드 §1의 "필수 모델"에 있는 모델이 Bedrock 리전에서
    활성화되어 있어야 합니다.
 3. **엔드포인트.** `run-ingestion`, `run-rag`, `run-eval`은 시작할 때 모델을
@@ -271,7 +272,7 @@ Step Functions 경보를 뺀 파이프라인 실행 경보는 `run-ingestion --m
 초과된 실행도 끝낸 단계는 보고합니다), 실행 전체의 지표(소요 시간, 캐시 적중률)는 실행이
 끝날 때 내보냅니다. 태스크는 스택의 `env_name`을 `Environment` 차원으로 붙이고, 경보와
 대시보드는 그 시계열만 읽으므로 같은 계정과 리전의 dev 배포 실행이 prod 배포의 경보를
-울리지 않습니다. `GRAPHRAG_METRICS_ENVIRONMENT`가 없는 실행(CDK 태스크 밖)은 차원 없는
+울리지 않습니다. `UKR_METRICS_ENVIRONMENT`가 없는 실행(CDK 태스크 밖)은 차원 없는
 시계열을 내보내며, 이를 읽는 경보는 없습니다.
 
 저장소 상태 경보는 실행이 없을 때도 발생하므로, 다음 실행이 실패하기 전에 성능
@@ -338,7 +339,7 @@ CDK 캐시 버킷은 `pipeline-runs/`와 `embedding-cache/` 아래의 객체만 
 CDK 스택에서 다중 노드 도메인(`opensearch_count` > 1, dev가 아닌 환경의 기본값)은
 인덱스마다 복제본을 하나 두므로 노드나 AZ 하나를 잃어도 모든 샤드를 쓸 수
 있습니다. 단일 노드인 dev 도메인은 복제본이 없습니다. 컴퓨트 스택이 설정하는
-`OPENSEARCH_NUMBER_OF_REPLICAS`가 인덱스를 만들 때
+`UKR__INDEXING__OPENSEARCH__INDEX_SETTINGS__NUMBER_OF_REPLICAS`가 인덱스를 만들 때
 `indexing.opensearch.index_settings.number_of_replicas`를 덮어씁니다. 그 전에
 만든 인덱스는 복제본 수가 그대로이므로 VPC 안에서 한 번 설정합니다.
 
@@ -376,7 +377,7 @@ S3의 코퍼스가 원본이므로 모든 저장소는 코퍼스에서 다시 �
 4. 도메인의 현재 인덱스를 삭제한 뒤 스냅샷의 인덱스와 별칭을 복원합니다
    (`POST _snapshot/cs-automated-enc/<snapshot>/_restore`).
 5. 데이터 플레인이 복원한 클러스터 엔드포인트와 테이블을 쓰도록 바꿉니다
-   (`NEPTUNE_ENDPOINT`, `GRAPHRAG_DOC_STATUS_TABLE`). 태스크 역할, DynamoDB
+   (`UKR__AWS__NEPTUNE__ENDPOINT`, `UKR__AWS__DYNAMODB__TABLE_NAME`). 태스크 역할, DynamoDB
    게이트웨이 엔드포인트 정책과 경보는 스택의 클러스터와 테이블로 범위가
    정해져 있으므로 복원한 리소스에도 권한을 줍니다.
 
@@ -426,7 +427,7 @@ CLI는 첫 유료 모델 호출 전에 실행에 필요한 저장소 엔드포�
 검사하고, 없으면 종료 코드 2(설정 오류)로 끝납니다.
 
 ```text
-run-ingestion: error: Missing endpoint configuration for the indexing stage: aws.neptune.endpoint (env NEPTUNE_ENDPOINT), aws.opensearch.endpoint (env OPENSEARCH_ENDPOINT). Set them in the config file or the environment.
+run-ingestion: error: Missing endpoint configuration for the indexing stage: aws.neptune.endpoint (env UKR__AWS__NEPTUNE__ENDPOINT), aws.opensearch.endpoint (env UKR__AWS__OPENSEARCH__ENDPOINT). Set them in the config file or the environment.
 ```
 
 - `run-ingestion`은 `indexing` 단계가 켜져 있으면 두 엔드포인트를 모두
@@ -691,9 +692,9 @@ service:
 
 ```bash
 # 먼저 확인: 아래 put은 기존 설정을 대체합니다.
-aws bedrock get-model-invocation-logging-configuration --region "$BEDROCK_REGION"
+aws bedrock get-model-invocation-logging-configuration --region "$UKR__AWS__BEDROCK__REGION_NAME"
 
-aws bedrock put-model-invocation-logging-configuration --region "$BEDROCK_REGION" \
+aws bedrock put-model-invocation-logging-configuration --region "$UKR__AWS__BEDROCK__REGION_NAME" \
   --logging-config '{
     "cloudWatchConfig": {
       "logGroupName": "/aws/bedrock/model-invocation-logs",
@@ -767,7 +768,7 @@ LangSmith로 업로드합니다.
 | `EmbeddingModelError: Query embedding failed: ...` | 클라이언트 재시도 후에도 질의 임베딩 모델 호출이 실패함(멈춘 Ollama 러너, 죽은 vLLM 엔진, 계속되는 Bedrock `InternalServerException`). 질의의 모든 벡터 검색에 필요하므로 "찾을 수 없음"으로 답하지 않고 질의가 실패함 | 임베딩 서버나 모델(`providers.embedding`, `models.embedding.model_id`)과 그 로그를 확인한 뒤 다시 시도 |
 | `Neptune refused the connection (HTTP 403)` | IAM 인증이 웹소켓 연결을 거부함. 정책에 클러스터의 `neptune-db:connect`가 없거나 다른 리전으로 서명함 | `neptune-db:connect`(실행에 필요한 `neptune-db:*` 데이터 작업 포함)를 부여하고 `aws.region_name`을 클러스터의 리전으로 설정 |
 | `Skipping N '.md' file(s) ...` / `No supported source files found in '<dir>'` | `unstructured` 추가 패키지가 설치되지 않음 | 설치(Python 3.11 이상)하거나 파일 형식을 변환 |
-| `ConfigurationError: Doc-status registry: DynamoDB table '...' has the key schema ... of an earlier release` | `doc_id`만으로 레코드 키를 잡던 릴리스가 만든 테이블임 | `aws.dynamodb.table_name`(`GRAPHRAG_DOC_STATUS_TABLE`)을 새 테이블로 바꾸거나 스택의 새 테이블을 배포하고, `indexing.reset: true`로 한 번 실행([증분 실행](#증분-실행) 참고) |
+| `ConfigurationError: Doc-status registry: DynamoDB table '...' has the key schema ... of an earlier release` | `doc_id`만으로 레코드 키를 잡던 릴리스가 만든 테이블임 | `aws.dynamodb.table_name`(`UKR__AWS__DYNAMODB__TABLE_NAME`)을 새 테이블로 바꾸거나 스택의 새 테이블을 배포하고, `indexing.reset: true`로 한 번 실행([증분 실행](#증분-실행) 참고) |
 | `NamespaceLeaseError: Index namespace '...' is being written by ...` | 다른 실행이 네임스페이스의 쓰기 임대를 가지고 있음 | 그 실행이 끝날 때까지 기다립니다. 죽은 실행의 임대는 `indexing.lease_seconds` 안에 만료됩니다([동시 실행](#동시-실행) 참고) |
 | `NamespaceLeaseError: This run lost the write lease ...` | 임대 갱신이 계속 실패해 만료됐거나 다른 실행이 임대를 가져감 | 다른 실행이 끝난 뒤 다시 실행하고, 레지스트리에 연결할 수 있는지 확인합니다 |
 | `ConfigurationError: The OpenSearch index '...' records no embedding settings ...` | 이전 릴리스가 만든 인덱스 | `indexing.reset: true`로 한 번 실행합니다 |
@@ -775,7 +776,7 @@ LangSmith로 업로드합니다.
 | `Incremental indexing is enabled but no document delta was computed` | 레지스트리 비교 없이 인덱싱 단계가 실행됨(`continue_on_error`로 로딩 단계 실패 뒤 진행) | 레지스트리에 접근할 수 있게 한 뒤 `document_loading`부터 다시 실행 |
 | `CacheSyncError` | S3 단계 캐시 다운로드나 업로드가 실패함 | 버킷 권한과 `aws.s3.encryption`을 확인한 뒤 같은 `--pipeline-id`로 재개 |
 | `Pipeline failed at stage(s): ...` | 단계가 실패해 CLI가 1로 종료함 | 해당 단계 로그를 확인해 고친 뒤 같은 `--pipeline-id`로 재개. `--verify-metadata`로 실행 메타데이터를 확인하거나 `--force-rebuild`로 처음부터 시작 |
-| `--source-directory is required for pipeline execution`(아래 사용법 오류처럼 종료 코드 2) | `--source-directory`도 `$GRAPHRAG_SOURCE_DIRECTORY`도 없음 | 플래그를 넘김. `--verify-metadata`에는 대신 `--pipeline-id`가 필요 |
+| `--source-directory is required for pipeline execution`(아래 사용법 오류처럼 종료 코드 2) | `--source-directory`도 `$UKR_SOURCE_DIRECTORY`도 없음 | 플래그를 넘김. `--verify-metadata`에는 대신 `--pipeline-id`가 필요 |
 | `--s3-bucket-name must be specified for --s3-sync` | 버킷 없이 `--s3-sync`를 지정함 | `--s3-bucket-name`을 넘김 |
 | `--pipeline-id is required for --resume-from-stage` | 재개하려면 이전 실행이 필요함 | 그 실행의 `--pipeline-id`를 넘김 |
 | `--enabled-stages: invalid stage names ...` | `--enabled-stages`에 없는 단계 이름이 있음 | 메시지에 나온 목록의 이름을 사용 |
@@ -789,5 +790,5 @@ LangSmith로 업로드합니다.
 | 질의가 `AuthenticationError` / `NotFoundError`(`Error code: 401` / `404`), `APIConnectionError` / `APITimeoutError`, `ResponseError: model ... not found`로 실패함(로컬 모드) | OpenAI 호환 서버나 Ollama가 키를 거부했거나 그 모델을 제공하지 않음, 또는 클라이언트 재시도 후에도 연결할 수 없거나 응답하지 않음. 이후 질의도 모두 같은 이유로 실패하므로 "찾을 수 없음"으로 답하지 않고 질의를 실패시킴 | `providers.llm` / `providers.embedding`(`base_url`, `api_key`, `model_id`), 서버 실행 여부를 확인하고 모델을 내려받음 |
 | `observability.enabled is true but OpenTelemetry is not installed` | 추적을 켰지만 `otel` extra가 설치되지 않음 | `uv sync --extra otel`을 실행하거나 `observability.enabled: false` 설정 |
 | 프라이빗 VPC에서 Bedrock 호출이 멈춤 | VPC 엔드포인트가 처리하지 않는 리전으로 Bedrock을 호출함 | `aws.bedrock.region_name`을 비우거나 VPC 리전과 같게 설정 |
-| `use_iam: false`에서 OpenSearch 인증 실패 | 기본 인증 자격 증명이 없음 | `OPENSEARCH_USERNAME` / `OPENSEARCH_PASSWORD` 설정(예: `.env`) |
+| `use_iam: false`에서 OpenSearch 인증 실패 | 기본 인증 자격 증명이 없음 | `UKR__AWS__OPENSEARCH__USERNAME` / `UKR__AWS__OPENSEARCH__PASSWORD` 설정(예: `.env`) |
 | LightRAG `mix` / `hybrid` 결과가 없음 | 관계 인덱스가 없거나 키워드 추출이 키워드를 만들지 못함 | 수집에서 관계 인덱스를 만들었는지 확인. 아주 짧은 질의는 `raw_query_fallback_max_len` 이하일 때만 원래 질의를 씀 |

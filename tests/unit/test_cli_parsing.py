@@ -131,7 +131,7 @@ async def test_rag_async_main_turns_system_exit_into_a_return_code(
 
 
 def test_rag_runner_accepts_query(config, mocker) -> None:
-    mocker.patch.object(run_rag_chain, "get_config", return_value=config)
+    mocker.patch.object(run_rag_chain, "load_cli_config", return_value=config)
     args = _rag_parser().parse_args(["-q", "hi"])
     runner = run_rag_chain.RAGChainRunner(args)  # no SystemExit
     assert runner.args.query == "hi"
@@ -141,7 +141,7 @@ def test_rag_runner_json_mode_routes_decorations_and_logs_to_stderr(
     config, mocker
 ) -> None:
     # stdout must carry only the JSON document so it can be piped to jq.
-    mocker.patch.object(run_rag_chain, "get_config", return_value=config)
+    mocker.patch.object(run_rag_chain, "load_cli_config", return_value=config)
     setup = mocker.patch.object(run_rag_chain, "setup_logging")
     mocker.patch.object(run_rag_chain.console, "stderr", False)
     args = _rag_parser().parse_args(["-q", "hi", "--output-format", "json"])
@@ -153,7 +153,7 @@ def test_rag_runner_json_mode_routes_decorations_and_logs_to_stderr(
 
 
 def test_rag_runner_accepts_interactive(config, mocker) -> None:
-    mocker.patch.object(run_rag_chain, "get_config", return_value=config)
+    mocker.patch.object(run_rag_chain, "load_cli_config", return_value=config)
     args = _rag_parser().parse_args(["--interactive"])
     runner = run_rag_chain.RAGChainRunner(args)
     assert runner.args.interactive is True
@@ -172,7 +172,7 @@ async def test_rag_runner_leaves_the_target_language_to_the_chain(
 ) -> None:
     # An explicit target_language disables the chain's same-language skip, so
     # every CLI query paid a translation call even for a single-language corpus.
-    mocker.patch.object(run_rag_chain, "get_config", return_value=store_config)
+    mocker.patch.object(run_rag_chain, "load_cli_config", return_value=store_config)
     mocker.patch.object(run_rag_chain, "display_ascii_art")
     chain = mocker.AsyncMock()
     mocker.patch.object(run_rag_chain, "create_rag_chain", return_value=chain)
@@ -198,7 +198,7 @@ async def test_rag_runner_warns_that_a_single_query_has_no_memory(
 ) -> None:
     # Memory lives in the process: a single --query never sees an earlier
     # run's turns, whatever --conversation-id says.
-    mocker.patch.object(run_rag_chain, "get_config", return_value=store_config)
+    mocker.patch.object(run_rag_chain, "load_cli_config", return_value=store_config)
     mocker.patch.object(run_rag_chain, "display_ascii_art")
     mocker.patch.object(
         run_rag_chain, "create_rag_chain", return_value=mocker.AsyncMock()
@@ -238,7 +238,7 @@ async def test_rag_runner_error_fallback_is_not_success(config, mocker) -> None:
     )
     from unified_kg_rag.domain.models import SearchQuery, SearchResult
 
-    mocker.patch.object(run_rag_chain, "get_config", return_value=config)
+    mocker.patch.object(run_rag_chain, "load_cli_config", return_value=config)
     runner = run_rag_chain.RAGChainRunner(_rag_parser().parse_args(["-q", "hi"]))
     runner.rag_chain = mocker.AsyncMock()
     runner.rag_chain.ainvoke.return_value = RAGOutput(
@@ -264,7 +264,7 @@ async def test_rag_runner_error_fallback_is_not_success(config, mocker) -> None:
 async def test_rag_runner_exits_non_zero_on_error_fallback(
     store_config, mocker
 ) -> None:
-    mocker.patch.object(run_rag_chain, "get_config", return_value=store_config)
+    mocker.patch.object(run_rag_chain, "load_cli_config", return_value=store_config)
     mocker.patch.object(run_rag_chain, "display_ascii_art")
     mocker.patch.object(
         run_rag_chain, "create_rag_chain", return_value=mocker.AsyncMock()
@@ -356,7 +356,7 @@ def test_eval_runner_missing_file_is_an_invalid_dataset(
 
 def test_run_eval_missing_dataset_exits_2(config, mocker, tmp_path, capsys) -> None:
     # A missing dataset is the same input error as an invalid one.
-    load = mocker.patch.object(run_evaluation, "get_config", return_value=config)
+    load = mocker.patch.object(run_evaluation, "load_cli_config", return_value=config)
     mocker.patch.object(run_evaluation, "missing_endpoints_error", return_value=None)
     mocker.patch.object(run_evaluation, "GraphRAGChain", return_value=AsyncMock())
     missing = tmp_path / "does-not-exist.json"
@@ -621,7 +621,7 @@ def test_ingestion_parser_rejects_bad_metrics_sink() -> None:
 
 
 def test_ingestion_runner_requires_source_directory(config, mocker) -> None:
-    mocker.patch.object(run_ingestion_pipeline, "get_config", return_value=config)
+    mocker.patch.object(run_ingestion_pipeline, "load_cli_config", return_value=config)
     args = _ing_parser().parse_args([])  # no source dir, no metadata op
     args.source_directory = None  # ensure env var fallback didn't set it
     with pytest.raises(SystemExit) as exc:
@@ -630,7 +630,7 @@ def test_ingestion_runner_requires_source_directory(config, mocker) -> None:
 
 
 def test_ingestion_runner_missing_source_dir_exits(config, mocker, tmp_path) -> None:
-    mocker.patch.object(run_ingestion_pipeline, "get_config", return_value=config)
+    mocker.patch.object(run_ingestion_pipeline, "load_cli_config", return_value=config)
     missing = tmp_path / "nope"
     args = _ing_parser().parse_args(["--source-directory", str(missing)])
     with pytest.raises(SystemExit) as exc:
@@ -644,7 +644,7 @@ def test_ingestion_runner_rejects_the_source_as_target(
 ) -> None:
     # A clear usage error before the pipeline is built, not a traceback from
     # the parsing stage's constructor.
-    mocker.patch.object(run_ingestion_pipeline, "get_config", return_value=config)
+    mocker.patch.object(run_ingestion_pipeline, "load_cli_config", return_value=config)
     src = tmp_path / "src"
     src.mkdir()
     argv = ["--source-directory", str(src)]
@@ -663,7 +663,7 @@ def test_ingestion_runner_rejects_the_source_as_target(
 
 
 def test_ingestion_runner_s3_sync_needs_bucket(config, mocker, tmp_path) -> None:
-    mocker.patch.object(run_ingestion_pipeline, "get_config", return_value=config)
+    mocker.patch.object(run_ingestion_pipeline, "load_cli_config", return_value=config)
     src = tmp_path / "src"
     src.mkdir()
     args = _ing_parser().parse_args(["--source-directory", str(src), "--s3-sync"])
@@ -673,7 +673,7 @@ def test_ingestion_runner_s3_sync_needs_bucket(config, mocker, tmp_path) -> None
 
 
 def test_ingestion_runner_resume_needs_pipeline_id(config, mocker, tmp_path) -> None:
-    mocker.patch.object(run_ingestion_pipeline, "get_config", return_value=config)
+    mocker.patch.object(run_ingestion_pipeline, "load_cli_config", return_value=config)
     src = tmp_path / "src"
     src.mkdir()
     args = _ing_parser().parse_args(
@@ -685,7 +685,7 @@ def test_ingestion_runner_resume_needs_pipeline_id(config, mocker, tmp_path) -> 
 
 
 def test_ingestion_runner_metadata_op_needs_pipeline_id(config, mocker) -> None:
-    mocker.patch.object(run_ingestion_pipeline, "get_config", return_value=config)
+    mocker.patch.object(run_ingestion_pipeline, "load_cli_config", return_value=config)
     args = _ing_parser().parse_args(["--verify-metadata"])
     with pytest.raises(SystemExit) as exc:
         run_ingestion_pipeline.IngestionPipelineRunner(args)
@@ -693,7 +693,7 @@ def test_ingestion_runner_metadata_op_needs_pipeline_id(config, mocker) -> None:
 
 
 def test_ingestion_runner_valid_source_sets_cache_dir(config, mocker, tmp_path) -> None:
-    mocker.patch.object(run_ingestion_pipeline, "get_config", return_value=config)
+    mocker.patch.object(run_ingestion_pipeline, "load_cli_config", return_value=config)
     src = tmp_path / "src"
     src.mkdir()
     cache = tmp_path / "mycache"
@@ -710,7 +710,7 @@ def test_ingestion_retire_source_scope_is_repeatable_and_merged_into_config(
     config, mocker, tmp_path
 ) -> None:
     config.indexing.retire_source_scopes = ["s3://bucket/old/"]
-    mocker.patch.object(run_ingestion_pipeline, "get_config", return_value=config)
+    mocker.patch.object(run_ingestion_pipeline, "load_cli_config", return_value=config)
     src = tmp_path / "src"
     src.mkdir()
     assert _ing_parser().parse_args([]).retire_source_scope == []
@@ -734,7 +734,7 @@ def test_ingestion_retire_source_scope_is_repeatable_and_merged_into_config(
 def test_ingestion_create_pipeline_config_rejects_invalid_stage(
     config, mocker, tmp_path
 ) -> None:
-    mocker.patch.object(run_ingestion_pipeline, "get_config", return_value=config)
+    mocker.patch.object(run_ingestion_pipeline, "load_cli_config", return_value=config)
     src = tmp_path / "src"
     src.mkdir()
     args = _ing_parser().parse_args(
@@ -751,7 +751,7 @@ def test_ingestion_create_pipeline_config_enables_subset(
 ) -> None:
     from unified_kg_rag.domain.models import PipelineStageType
 
-    mocker.patch.object(run_ingestion_pipeline, "get_config", return_value=config)
+    mocker.patch.object(run_ingestion_pipeline, "load_cli_config", return_value=config)
     src = tmp_path / "src"
     src.mkdir()
     # Use a real stage name from the enum.
@@ -772,7 +772,7 @@ def test_ingestion_create_pipeline_config_defaults_all_stages(
 ) -> None:
     from unified_kg_rag.domain.models import PipelineStageType
 
-    mocker.patch.object(run_ingestion_pipeline, "get_config", return_value=config)
+    mocker.patch.object(run_ingestion_pipeline, "load_cli_config", return_value=config)
     src = tmp_path / "src"
     src.mkdir()
     args = _ing_parser().parse_args(["--source-directory", str(src)])
@@ -785,7 +785,7 @@ def test_ingestion_create_pipeline_config_defaults_all_stages(
 def test_ingestion_build_metrics_sink(config, mocker, tmp_path) -> None:
     from unified_kg_rag.shared import CloudWatchEMFSink, NullMetricsSink
 
-    mocker.patch.object(run_ingestion_pipeline, "get_config", return_value=config)
+    mocker.patch.object(run_ingestion_pipeline, "load_cli_config", return_value=config)
     src = tmp_path / "src"
     src.mkdir()
 
@@ -873,7 +873,7 @@ def test_load_corpus_texts_respects_max_docs(tmp_path) -> None:
 
 
 def test_prompt_tuning_main_no_texts_returns_1(config, mocker, tmp_path) -> None:
-    mocker.patch.object(run_prompt_tuning, "get_config", return_value=config)
+    mocker.patch.object(run_prompt_tuning, "load_cli_config", return_value=config)
     empty = tmp_path / "empty"
     empty.mkdir()
     mocker.patch("sys.argv", ["run-prompt-tuning", "--source-directory", str(empty)])
@@ -983,7 +983,7 @@ async def test_rag_run_query_success_wraps_result(config, mocker) -> None:
 
     from unified_kg_rag.application.cli.run_rag_chain import RAGInput
 
-    mocker.patch.object(run_rag_chain, "get_config", return_value=config)
+    mocker.patch.object(run_rag_chain, "load_cli_config", return_value=config)
     args = _rag_parser().parse_args(["-q", "hi"])
     runner = run_rag_chain.RAGChainRunner(args)
     # Stub the chain so no AWS is touched.
@@ -1002,7 +1002,7 @@ async def test_rag_search_mode_runs_retrieval_only(config, mocker) -> None:
 
     from unified_kg_rag.application.cli.run_rag_chain import RAGInput
 
-    mocker.patch.object(run_rag_chain, "get_config", return_value=config)
+    mocker.patch.object(run_rag_chain, "load_cli_config", return_value=config)
     args = _rag_parser().parse_args(["-q", "hi", "--mode", "search"])
     runner = run_rag_chain.RAGChainRunner(args)
     runner.rag_chain = mocker.MagicMock()
@@ -1022,7 +1022,7 @@ async def test_rag_run_query_error_is_captured(config, mocker) -> None:
 
     from unified_kg_rag.application.cli.run_rag_chain import RAGInput
 
-    mocker.patch.object(run_rag_chain, "get_config", return_value=config)
+    mocker.patch.object(run_rag_chain, "load_cli_config", return_value=config)
     args = _rag_parser().parse_args(["-q", "hi"])
     runner = run_rag_chain.RAGChainRunner(args)
     runner.rag_chain = mocker.MagicMock()
@@ -1037,7 +1037,7 @@ async def test_rag_run_query_error_is_captured(config, mocker) -> None:
 async def test_rag_run_query_raises_without_chain(config, mocker) -> None:
     from unified_kg_rag.application.cli.run_rag_chain import RAGInput
 
-    mocker.patch.object(run_rag_chain, "get_config", return_value=config)
+    mocker.patch.object(run_rag_chain, "load_cli_config", return_value=config)
     args = _rag_parser().parse_args(["-q", "hi"])
     runner = run_rag_chain.RAGChainRunner(args)
     runner.rag_chain = None
@@ -1049,7 +1049,7 @@ async def test_rag_run_query_raises_without_chain(config, mocker) -> None:
 
 
 def _metadata_runner(config, mocker, *flags: str):
-    mocker.patch.object(run_ingestion_pipeline, "get_config", return_value=config)
+    mocker.patch.object(run_ingestion_pipeline, "load_cli_config", return_value=config)
     mocker.patch.object(run_ingestion_pipeline.Confirm, "ask", return_value=True)
     mocker.patch.object(run_ingestion_pipeline.sys.stdin, "isatty", return_value=True)
     args = _ing_parser().parse_args([*flags, "--pipeline-id", "pid"])
@@ -1090,7 +1090,7 @@ def test_missing_config_path_is_a_usage_error(tmp_path, capsys) -> None:
 
 
 def test_force_rebuild_still_writes_the_stage_cache(config, mocker, tmp_path) -> None:
-    mocker.patch.object(run_ingestion_pipeline, "get_config", return_value=config)
+    mocker.patch.object(run_ingestion_pipeline, "load_cli_config", return_value=config)
     src = tmp_path / "src"
     src.mkdir()
     args = _ing_parser().parse_args(["--source-directory", str(src), "--force-rebuild"])
@@ -1132,7 +1132,7 @@ def test_eval_main_closes_the_chain(config, mocker, fails) -> None:
     chain = MagicMock()
     chain.aclose = AsyncMock()
     mocker.patch.object(run_evaluation, "GraphRAGChain", return_value=chain)
-    mocker.patch.object(run_evaluation, "get_config", return_value=config)
+    mocker.patch.object(run_evaluation, "load_cli_config", return_value=config)
     mocker.patch.object(run_evaluation, "setup_logging")
     # The endpoint preflight runs before the chain is built; this test is
     # about closing the chain, so let the preflight pass.

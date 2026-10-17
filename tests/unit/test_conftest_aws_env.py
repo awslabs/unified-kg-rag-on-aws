@@ -25,13 +25,13 @@ import pytest
 
 @pytest.mark.aws
 def test_aws_marked_sees_the_real_environment():
-    assert os.environ["NEPTUNE_ENDPOINT"] == "neptune.example.invalid"
+    assert os.environ["UKR__AWS__NEPTUNE__ENDPOINT"] == "neptune.example.invalid"
     assert os.environ["AWS_CONTAINER_CREDENTIALS_RELATIVE_URI"] == "/dummy-creds"
     assert "AWS_ACCESS_KEY_ID" not in os.environ
 
 
 def test_unmarked_is_isolated():
-    assert "NEPTUNE_ENDPOINT" not in os.environ
+    assert "UKR__AWS__NEPTUNE__ENDPOINT" not in os.environ
     assert "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI" not in os.environ
     assert os.environ["AWS_ACCESS_KEY_ID"] == "testing"
 """
@@ -48,7 +48,7 @@ def test_aws_marked_tests_keep_the_real_environment(
         "from tests.conftest import _block_real_aws_http, _isolated_aws_env\n"
     )
     pytester.makepyfile(_INNER_TESTS)
-    monkeypatch.setenv("NEPTUNE_ENDPOINT", "neptune.example.invalid")
+    monkeypatch.setenv("UKR__AWS__NEPTUNE__ENDPOINT", "neptune.example.invalid")
     monkeypatch.setenv("AWS_CONTAINER_CREDENTIALS_RELATIVE_URI", "/dummy-creds")
     monkeypatch.delenv("AWS_ACCESS_KEY_ID")
 

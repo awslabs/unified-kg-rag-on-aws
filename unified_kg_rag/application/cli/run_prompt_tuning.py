@@ -17,8 +17,9 @@ import yaml
 
 from unified_kg_rag.adapters.ingestion.parser import ParserFactory
 from unified_kg_rag.application.cli.config_args import (
-    config_path_arg,
+    add_config_arguments,
     exit_on_config_error,
+    load_cli_config,
 )
 from unified_kg_rag.application.cli.conventions import (
     EXIT_FAILURE,
@@ -36,7 +37,7 @@ from unified_kg_rag.application.cli.provider_args import (
 )
 from unified_kg_rag.application.prompts.tuner import PromptTuner
 from unified_kg_rag.domain.models import Config
-from unified_kg_rag.shared import get_config, get_logger, setup_logging
+from unified_kg_rag.shared import get_logger, setup_logging
 from unified_kg_rag.shared.config import load_cli_dotenv
 from unified_kg_rag.shared.utils import event_loop
 from unified_kg_rag.shared.utils.cache_keys import is_excluded_source_path
@@ -109,9 +110,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--max-docs", type=int, default=20, help="Max documents to sample"
     )
-    parser.add_argument(
-        "--config-path", type=config_path_arg, default=None, help="Config YAML path"
-    )
+    add_config_arguments(parser)
     add_output_format_argument(parser)
     add_provider_arguments(parser)
     return parser
@@ -124,7 +123,7 @@ def main() -> int:
     as_json = json_output(args)
     try:
         with exit_on_config_error():
-            config = apply_provider_arguments(get_config(args.config_path), args)
+            config = apply_provider_arguments(load_cli_config(args), args)
         if not args.source_directory.is_dir():
             usage_error(f"source directory not found: '{args.source_directory}'")
         setup_logging(config, stream=sys.stderr if as_json else None)

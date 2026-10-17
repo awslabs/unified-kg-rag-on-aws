@@ -15,8 +15,9 @@ from rich.prompt import Confirm
 
 from unified_kg_rag import __version__
 from unified_kg_rag.application.cli.config_args import (
-    config_path_arg,
+    add_config_arguments,
     exit_on_config_error,
+    load_cli_config,
 )
 from unified_kg_rag.application.cli.conventions import (
     EXIT_FAILURE,
@@ -49,7 +50,6 @@ from unified_kg_rag.shared import (
     NullMetricsSink,
     PipelineExecutionError,
     PipelineInterrupted,
-    get_config,
     get_logger,
     setup_logging,
 )
@@ -64,7 +64,7 @@ logger = get_logger(__name__)
 
 
 def _pipeline_id_arg(value: str) -> str | None:
-    if not value:  # an empty GRAPHRAG_PIPELINE_ID means "unset"
+    if not value:  # an empty UKR_PIPELINE_ID means "unset"
         return None
     try:
         return validate_path_segment(value, "pipeline_id")
@@ -101,9 +101,9 @@ class CommandLineInterface:
         parser.add_argument(
             "--source-directory",
             type=str,
-            default=os.getenv("GRAPHRAG_SOURCE_DIRECTORY"),
+            default=os.getenv("UKR_SOURCE_DIRECTORY"),
             help="Path to directory containing source documents to be processed "
-            "(falls back to the GRAPHRAG_SOURCE_DIRECTORY env var)",
+            "(falls back to the UKR_SOURCE_DIRECTORY env var)",
         )
         parser.add_argument(
             "--output-directory",
@@ -144,9 +144,9 @@ class CommandLineInterface:
             # argparse applies ``type`` to a string default too, so the env
             # var (set by the Step Functions task) is validated as well.
             type=_pipeline_id_arg,
-            default=os.getenv("GRAPHRAG_PIPELINE_ID"),
+            default=os.getenv("UKR_PIPELINE_ID"),
             help="Unique identifier of an existing pipeline run to resume or inspect "
-            "(falls back to the GRAPHRAG_PIPELINE_ID env var)",
+            "(falls back to the UKR_PIPELINE_ID env var)",
         )
         parser.add_argument(
             "--resume-from-stage",
@@ -197,11 +197,7 @@ class CommandLineInterface:
             "former document_parsing.source_scope value. Repeatable; added to "
             "indexing.retire_source_scopes. Never this run's own scope.",
         )
-        parser.add_argument(
-            "--config-path",
-            type=config_path_arg,
-            help="Path to custom configuration file",
-        )
+        add_config_arguments(parser, "Path to custom configuration file")
         add_output_format_argument(parser)
         add_provider_arguments(parser)
         return parser
@@ -222,7 +218,7 @@ class IngestionPipelineRunner:
         self.args = args
         with exit_on_config_error():
             self.config = apply_provider_arguments(
-                get_config(Path(args.config_path) if args.config_path else None),
+                load_cli_config(args),
                 args,
             )
         retired = getattr(args, "retire_source_scope", None) or []
@@ -321,7 +317,7 @@ class IngestionPipelineRunner:
     def _build_metrics_sink(self) -> MetricsSink:
         if self.args.metrics_sink == "cloudwatch":
             # Set by the CDK stack to its env_name, which its alarms filter on.
-            environment = os.getenv("GRAPHRAG_METRICS_ENVIRONMENT") or None
+            environment = os.getenv("UKR_METRICS_ENVIRONMENT") or None
             logger.info(
                 "Forwarding pipeline metrics to CloudWatch (EMF), environment '%s'",
                 environment or "-",

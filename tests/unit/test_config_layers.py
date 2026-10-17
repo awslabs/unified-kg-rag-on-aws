@@ -27,7 +27,7 @@ from unified_kg_rag.application.cli import (
 )
 from unified_kg_rag.application.cli.provider_args import apply_provider_arguments
 from unified_kg_rag.domain.models import Backend, Config
-from unified_kg_rag.shared.config import ENV_OVERRIDES, ConfigLoader
+from unified_kg_rag.shared.config import AWS_ENV_FALLBACKS, ConfigLoader, _env_path
 
 pytestmark = pytest.mark.unit
 
@@ -38,31 +38,34 @@ _IMAGE_CONFIG = Path(__file__).resolve().parents[2] / "docker" / "config.yaml"
 _SAMPLES: dict[str, tuple[str, Any]] = {
     "AWS_PROFILE": ("example-profile", "example-profile"),
     "AWS_REGION": ("eu-west-1", "eu-west-1"),
-    "LOG_LEVEL": ("debug", "DEBUG"),
-    "LOG_FORMAT": ("plain", "plain"),
-    "LOG_TO_FILE": ("true", True),
-    "LOG_FILE_PATH": ("logs/example.log", "logs/example.log"),
-    "NEPTUNE_ENDPOINT": ("neptune.example.internal", "neptune.example.internal"),
-    "OPENSEARCH_ENDPOINT": (
+    "UKR__LOGGING__LEVEL": ("debug", "DEBUG"),
+    "UKR__LOGGING__LOG_FORMAT": ("plain", "plain"),
+    "UKR__LOGGING__LOG_TO_FILE": ("true", True),
+    "UKR__LOGGING__LOG_FILE_PATH": ("logs/example.log", "logs/example.log"),
+    "UKR__AWS__NEPTUNE__ENDPOINT": (
+        "neptune.example.internal",
+        "neptune.example.internal",
+    ),
+    "UKR__AWS__OPENSEARCH__ENDPOINT": (
         "opensearch.example.internal",
         "opensearch.example.internal",
     ),
-    "OPENSEARCH_USERNAME": ("example-user", "example-user"),
-    "OPENSEARCH_PASSWORD": ("example-pass", "example-pass"),  # nosec B105
-    "BEDROCK_REGION": ("eu-central-1", "eu-central-1"),
-    "BEDROCK_GUARDRAIL_IDENTIFIER": ("gr-example", "gr-example"),
-    "BEDROCK_GUARDRAIL_VERSION": ("3", "3"),
-    "S3_BUCKET_NAME": ("example-bucket", "example-bucket"),
-    "OPENSEARCH_NUMBER_OF_REPLICAS": ("2", 2),
-    "OPENSEARCH_KOREAN_ANALYZER": ("cjk", "cjk"),
-    "GRAPHRAG_DOC_STATUS_TABLE": ("example-doc-status", "example-doc-status"),
-    "GRAPHRAG_SOURCE_SCOPE": (
+    "UKR__AWS__OPENSEARCH__USERNAME": ("example-user", "example-user"),
+    "UKR__AWS__OPENSEARCH__PASSWORD": ("example-pass", "example-pass"),  # nosec B105
+    "UKR__AWS__BEDROCK__REGION_NAME": ("eu-central-1", "eu-central-1"),
+    "UKR__AWS__BEDROCK__GUARDRAIL__IDENTIFIER": ("gr-example", "gr-example"),
+    "UKR__AWS__BEDROCK__GUARDRAIL__VERSION": ("3", "3"),
+    "UKR__AWS__S3__BUCKET_NAME": ("example-bucket", "example-bucket"),
+    "UKR__INDEXING__OPENSEARCH__INDEX_SETTINGS__NUMBER_OF_REPLICAS": ("2", 2),
+    "UKR__INDEXING__OPENSEARCH__LANGUAGE_ANALYZERS__KO": ("cjk", "cjk"),
+    "UKR__AWS__DYNAMODB__TABLE_NAME": ("example-doc-status", "example-doc-status"),
+    "UKR__PROCESSING__DOCUMENT_PARSING__SOURCE_SCOPE": (
         "s3://example-bucket/corpus/",
         "s3://example-bucket/corpus/",
     ),
-    "GRAPHRAG_DOC_STATUS_CREATE_TABLE": ("false", False),
-    "GRAPHRAG_OBSERVABILITY_ENABLED": ("true", True),
-    "GRAPHRAG_OBSERVABILITY_BACKEND": ("otlp", "otlp"),
+    "UKR__AWS__DYNAMODB__CREATE_TABLE_IF_MISSING": ("false", False),
+    "UKR__OBSERVABILITY__ENABLED": ("true", True),
+    "UKR__OBSERVABILITY__BACKEND": ("otlp", "otlp"),
 }
 
 # The environment of a deployed task (CDK compute stack + entrypoint).
@@ -70,20 +73,20 @@ _TASK_ENV = {
     var: _SAMPLES[var][0]
     for var in (
         "AWS_REGION",
-        "BEDROCK_REGION",
-        "NEPTUNE_ENDPOINT",
-        "OPENSEARCH_ENDPOINT",
-        "OPENSEARCH_NUMBER_OF_REPLICAS",
-        "OPENSEARCH_KOREAN_ANALYZER",
-        "S3_BUCKET_NAME",
-        "GRAPHRAG_DOC_STATUS_TABLE",
-        "GRAPHRAG_DOC_STATUS_CREATE_TABLE",
-        "LOG_FORMAT",
-        "BEDROCK_GUARDRAIL_IDENTIFIER",
-        "BEDROCK_GUARDRAIL_VERSION",
-        "GRAPHRAG_OBSERVABILITY_ENABLED",
-        "GRAPHRAG_OBSERVABILITY_BACKEND",
-        "GRAPHRAG_SOURCE_SCOPE",
+        "UKR__AWS__BEDROCK__REGION_NAME",
+        "UKR__AWS__NEPTUNE__ENDPOINT",
+        "UKR__AWS__OPENSEARCH__ENDPOINT",
+        "UKR__INDEXING__OPENSEARCH__INDEX_SETTINGS__NUMBER_OF_REPLICAS",
+        "UKR__INDEXING__OPENSEARCH__LANGUAGE_ANALYZERS__KO",
+        "UKR__AWS__S3__BUCKET_NAME",
+        "UKR__AWS__DYNAMODB__TABLE_NAME",
+        "UKR__AWS__DYNAMODB__CREATE_TABLE_IF_MISSING",
+        "UKR__LOGGING__LOG_FORMAT",
+        "UKR__AWS__BEDROCK__GUARDRAIL__IDENTIFIER",
+        "UKR__AWS__BEDROCK__GUARDRAIL__VERSION",
+        "UKR__OBSERVABILITY__ENABLED",
+        "UKR__OBSERVABILITY__BACKEND",
+        "UKR__PROCESSING__DOCUMENT_PARSING__SOURCE_SCOPE",
     )
 }
 
@@ -147,8 +150,14 @@ def local_file(tmp_path: Path) -> Path:
     return path
 
 
-def test_every_env_override_has_a_sample() -> None:
-    assert set(_SAMPLES) == set(ENV_OVERRIDES)
+def _path(var: str) -> tuple[str, ...]:
+    path = AWS_ENV_FALLBACKS.get(var) or _env_path(var)
+    assert path is not None, var
+    return path
+
+
+def test_every_sample_names_a_config_key() -> None:
+    assert all(_path(var) for var in _SAMPLES)
 
 
 @pytest.mark.parametrize("cli", sorted(_PARSERS))
@@ -167,7 +176,7 @@ def test_task_env_survives_rerank_provider_none_on_the_image_config(
     config = apply_provider_arguments(_load(Path(args.config_path)), args)
     assert config.providers.rerank.kind == "none"
     for var in _TASK_ENV:
-        assert _get(config, ENV_OVERRIDES[var]) == _SAMPLES[var][1], var
+        assert _get(config, _path(var)) == _SAMPLES[var][1], var
     assert config.aws.bedrock.guardrail.identifier == "gr-example"
     assert config.aws.opensearch.use_iam is True  # the file's value is kept too
 
@@ -176,7 +185,11 @@ def test_task_env_survives_rerank_provider_none_on_the_image_config(
 def test_env_survives_backend_aws_without_a_config_file(
     cli: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    for var in ("NEPTUNE_ENDPOINT", "OPENSEARCH_ENDPOINT", "LOG_LEVEL"):
+    for var in (
+        "UKR__AWS__NEPTUNE__ENDPOINT",
+        "UKR__AWS__OPENSEARCH__ENDPOINT",
+        "UKR__LOGGING__LEVEL",
+    ):
         monkeypatch.setenv(var, _SAMPLES[var][0])
     build, required = _PARSERS[cli]
     args = build().parse_args([*required, "--backend", "aws"])
@@ -186,7 +199,7 @@ def test_env_survives_backend_aws_without_a_config_file(
     assert config.logging.level == "DEBUG"
 
 
-@pytest.mark.parametrize("env_var", sorted(ENV_OVERRIDES))
+@pytest.mark.parametrize("env_var", sorted(_SAMPLES))
 @pytest.mark.parametrize("config_file", ["none", "image", "local"])
 def test_each_env_override_survives_every_flag_combination(
     env_var: str,
@@ -198,10 +211,10 @@ def test_each_env_override_survives_every_flag_combination(
     raw, expected = _SAMPLES[env_var]
     monkeypatch.setenv(env_var, raw)
     loaded = _load(path)
-    assert _get(loaded, ENV_OVERRIDES[env_var]) == expected
+    assert _get(loaded, _path(env_var)) == expected
     for args in _flag_namespaces():
         config = apply_provider_arguments(loaded, args)
-        assert _get(config, ENV_OVERRIDES[env_var]) == expected, args
+        assert _get(config, _path(env_var)) == expected, args
 
 
 def test_env_wins_over_the_file(
@@ -209,7 +222,7 @@ def test_env_wins_over_the_file(
 ) -> None:
     path = tmp_path / "config.yaml"
     path.write_text("aws:\n  neptune:\n    endpoint: file.example\n", "utf-8")
-    monkeypatch.setenv("NEPTUNE_ENDPOINT", "env.example")
+    monkeypatch.setenv("UKR__AWS__NEPTUNE__ENDPOINT", "env.example")
     args = argparse.Namespace(rerank_provider="none")
     config = apply_provider_arguments(_load(path), args)
     assert config.aws.neptune.endpoint == "env.example"
@@ -218,7 +231,7 @@ def test_env_wins_over_the_file(
 def test_env_wins_over_the_backend_preset(monkeypatch: pytest.MonkeyPatch) -> None:
     # The local preset points aws.neptune at localhost; the variable wins,
     # whether the preset comes from the file or from --backend local.
-    monkeypatch.setenv("NEPTUNE_ENDPOINT", "env.example")
+    monkeypatch.setenv("UKR__AWS__NEPTUNE__ENDPOINT", "env.example")
     config = apply_provider_arguments(_load(None), argparse.Namespace(backend="local"))
     assert config.backend is Backend.LOCAL
     assert config.aws.neptune.endpoint == "env.example"
@@ -228,7 +241,7 @@ def test_env_wins_over_the_backend_preset(monkeypatch: pytest.MonkeyPatch) -> No
 def test_backend_switch_strips_the_preset_but_keeps_the_env(
     local_file: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("OPENSEARCH_ENDPOINT", "env.example")
+    monkeypatch.setenv("UKR__AWS__OPENSEARCH__ENDPOINT", "env.example")
     config = apply_provider_arguments(
         _load(local_file), argparse.Namespace(backend="aws")
     )
@@ -241,12 +254,7 @@ def test_backend_switch_strips_the_preset_but_keeps_the_env(
 def test_cli_flag_wins_over_env_for_the_same_field(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # No shipped variable maps to a key a provider flag sets, so one is added:
-    # the order must hold for any mapping.
-    monkeypatch.setitem(
-        ENV_OVERRIDES, "EXAMPLE_LLM_BASE_URL", ("providers", "llm", "base_url")
-    )
-    monkeypatch.setenv("EXAMPLE_LLM_BASE_URL", "http://env.test/v1")
+    monkeypatch.setenv("UKR__PROVIDERS__LLM__BASE_URL", "http://env.test/v1")
     loaded = _load(None)
     assert loaded.providers.llm.base_url == "http://env.test/v1"
 
@@ -266,7 +274,102 @@ def test_env_value_is_validated_with_the_rest_of_the_config(
 ) -> None:
     # Applied before validation, a username from the environment keeps the
     # local preset's anonymous access off, as the same key in the file does.
-    monkeypatch.setenv("OPENSEARCH_USERNAME", "example-user")
+    monkeypatch.setenv("UKR__AWS__OPENSEARCH__USERNAME", "example-user")
     config = apply_provider_arguments(_load(None), argparse.Namespace(backend="local"))
     assert config.aws.opensearch.username == "example-user"
     assert config.aws.opensearch.allow_anonymous is False
+
+
+# --- provenance: what the user set survives a rebuild -------------------------
+
+
+def test_backend_switch_keeps_a_file_value_equal_to_the_preset(
+    tmp_path: Path,
+) -> None:
+    # The file pins 20 LLM calls in flight, which is also the local preset's
+    # value: switching to aws must not take it for the preset's and return
+    # it to the AWS default (40).
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        "backend: local\nprocessing:\n  max_concurrency: 20\n"
+        "providers:\n  graph:\n    kind: sqlite\n",
+        "utf-8",
+    )
+    config = apply_provider_arguments(_load(path), argparse.Namespace(backend="aws"))
+    assert config.backend is Backend.AWS
+    assert config.processing.max_concurrency == 20
+    assert config.providers.graph.kind == "sqlite"
+    # What only the preset filled in is gone.
+    assert config.providers.vector.kind == "opensearch"
+    assert config.aws.neptune.endpoint is None
+
+
+def test_a_change_made_to_the_object_survives_the_provider_flags() -> None:
+    # A library caller changes a loaded config and then applies the flags;
+    # the rebuild used to keep only what the config was validated from.
+    config = Config()
+    config.search.reranking.top_k = 7
+    config.processing.chunking.max_chunk_size = 3000
+    rebuilt = apply_provider_arguments(
+        config, argparse.Namespace(rerank_provider="none", backend="local")
+    )
+    assert rebuilt.providers.rerank.kind == "none"
+    assert rebuilt.search.reranking.top_k == 7
+    assert rebuilt.processing.chunking.max_chunk_size == 3000
+    # The preset applies to everything the caller did not set.
+    assert rebuilt.processing.max_concurrency == 20
+
+
+# --- AWS_REGION / AWS_PROFILE --------------------------------------------------
+
+
+def test_aws_region_fills_only_an_unset_region(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # As in the AWS SDKs, an explicit setting wins over the environment: a
+    # shell exporting AWS_REGION no longer moves a file's region.
+    monkeypatch.setenv("AWS_REGION", "eu-west-1")
+    monkeypatch.setenv("AWS_PROFILE", "shell-profile")
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        "aws:\n  region_name: ap-northeast-2\n  profile_name: file-profile\n", "utf-8"
+    )
+    pinned = _load(path)
+    assert pinned.aws.region_name == "ap-northeast-2"
+    assert pinned.aws.profile_name == "file-profile"
+    unset = _load(None)
+    assert unset.aws.region_name == "eu-west-1"
+    assert unset.aws.profile_name == "shell-profile"
+    # The prefixed variable is an explicit override and wins over the file.
+    monkeypatch.setenv("UKR__AWS__REGION_NAME", "us-east-2")
+    assert _load(path).aws.region_name == "us-east-2"
+
+
+# --- the UKR__ scheme ----------------------------------------------------------
+
+
+def test_any_key_can_be_set_from_the_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("UKR__SEARCH__RERANKING__TOP_K", "12")
+    monkeypatch.setenv("ukr__models__roles__answer_generation", "served-model")
+    monkeypatch.setenv("UKR__SEARCH__AUTO_ROUTABLE_STRATEGIES", '["local", "global"]')
+    config = _load(None)
+    assert config.search.reranking.top_k == 12
+    assert config.models.roles.answer_generation == "served-model"
+    assert [s.value for s in config.search.auto_routable_strategies] == [
+        "local",
+        "global",
+    ]
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "UKR__SEARCH",  # a section, not a key
+        "UKR__SEARCH__RERANKING__TOP_K__X",  # past a scalar
+        "UKR__INDEXING__OPENSEARCH__LANGUAGE_ANALYZERS__KO__X",  # two past a mapping
+    ],
+)
+def test_a_variable_naming_no_key_is_unknown(name: str) -> None:
+    assert _env_path(name) is None

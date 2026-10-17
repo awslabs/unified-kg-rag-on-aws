@@ -147,8 +147,8 @@ aws:
   dynamodb:
     enabled: false
     # On the bundled CDK app (iac/) the Fargate task injects
-    # GRAPHRAG_DOC_STATUS_TABLE (the IaC table, "graphrag-doc-status-v2" in dev) and
-    # GRAPHRAG_DOC_STATUS_CREATE_TABLE=false; these env vars override both keys
+    # UKR__AWS__DYNAMODB__TABLE_NAME (the IaC table, "graphrag-doc-status-v2" in dev) and
+    # UKR__AWS__DYNAMODB__CREATE_TABLE_IF_MISSING=false; these env vars override both keys
     # below. Elsewhere, set table_name yourself.
     table_name: "unified-kg-rag-on-aws-doc-status-v2"
     create_table_if_missing: true
@@ -305,7 +305,7 @@ processing:
   # Document Parsing
   document_parsing:
     # Fallback for library callers. run-ingestion requires --source-directory
-    # (or GRAPHRAG_SOURCE_DIRECTORY) and ignores this value.
+    # (or UKR_SOURCE_DIRECTORY) and ignores this value.
     source_directory: "source"
     # Set a directory to export each parsed document as <stem>.json for
     # inspection (or pass --output-directory); null = no export. The loading
@@ -321,7 +321,7 @@ processing:
     # Identity of the corpus source for incremental indexing: a run only
     # treats registry documents of its own index suffix AND source scope as
     # deleted. null = the resolved source directory. The container entrypoint
-    # sets it (GRAPHRAG_SOURCE_SCOPE) to the S3 URI the corpus is synced from.
+    # sets it (UKR__PROCESSING__DOCUMENT_PARSING__SOURCE_SCOPE) to the S3 URI the corpus is synced from.
     source_scope: null
 
   # Text Chunking
@@ -427,25 +427,6 @@ processing:
 graph:
   # Graph Analysis
   analysis:
-    # Centrality calculations
-    centrality:
-      calculate_degree: true
-      calculate_betweenness: true
-      calculate_pagerank: true
-      calculate_closeness: false
-      calculate_eigenvector: false
-      pagerank_alpha: 0.85
-      pagerank_max_iter: 100
-      betweenness_k: null
-      # With betweenness_k null (exact), graphs larger than this many nodes
-      # switch to sampled betweenness with this pivot count; exact all-pairs
-      # betweenness is O(V*E) and stalls on large graphs.
-      betweenness_auto_sample_threshold: 2000
-      # Seed for sampled betweenness, so centrality is reproducible.
-      betweenness_seed: 42
-      eigenvector_max_iter: 1000
-      eigenvector_tol: 0.001
-
     # Graph statistics
     statistics:
       calculate_density: true
@@ -501,6 +482,26 @@ graph:
 
   # Graph Visualization
   visualization:
+    # Centrality metrics the visualization sizes and plots nodes by (computed
+    # when it renders; no ingestion stage reads them).
+    centrality:
+      calculate_degree: true
+      calculate_betweenness: true
+      calculate_pagerank: true
+      calculate_closeness: false
+      calculate_eigenvector: false
+      pagerank_alpha: 0.85
+      pagerank_max_iter: 100
+      betweenness_k: null
+      # With betweenness_k null (exact), graphs larger than this many nodes
+      # switch to sampled betweenness with this pivot count; exact all-pairs
+      # betweenness is O(V*E) and stalls on large graphs.
+      betweenness_auto_sample_threshold: 2000
+      # Seed for sampled betweenness, so centrality is reproducible.
+      betweenness_seed: 42
+      eigenvector_max_iter: 1000
+      eigenvector_tol: 0.001
+
     # Off by default: rendering during ingestion embeds every node and reduces
     # the embeddings to a layout on each run.
     enabled: false
@@ -634,7 +635,7 @@ indexing:
     # languages use default_analyzer. The cluster must have it: nori is the
     # analysis-nori plugin, which an Amazon OpenSearch Service domain has only
     # once its optional Nori package is associated (cjk is built in; the CDK
-    # deployment sets ko through OPENSEARCH_KOREAN_ANALYZER).
+    # deployment sets ko through UKR__INDEXING__OPENSEARCH__LANGUAGE_ANALYZERS__KO).
     default_analyzer: "standard"
     language_analyzers:
       en: "english"
@@ -646,7 +647,7 @@ indexing:
     # Index settings (applied at index creation)
     index_settings:
       number_of_shards: 1
-      # Env OPENSEARCH_NUMBER_OF_REPLICAS overrides; the CDK stack sets 1 on a
+      # Env UKR__INDEXING__OPENSEARCH__INDEX_SETTINGS__NUMBER_OF_REPLICAS overrides; the CDK stack sets 1 on a
       # multi-node domain. Existing indices keep theirs (PUT <index>/_settings).
       number_of_replicas: 0
       # Search-visibility latency vs indexing throughput; raise (e.g. "30s" or
@@ -938,8 +939,8 @@ logging:
 # or for the vendor backends LANGFUSE_HOST / LANGFUSE_PUBLIC_KEY /
 # LANGFUSE_SECRET_KEY and PHOENIX_COLLECTOR_ENDPOINT / PHOENIX_API_KEY. Fill
 # the keys from Secrets Manager or ECS task secrets at runtime.
-# OTEL_SDK_DISABLED=true turns tracing off regardless. GRAPHRAG_OBSERVABILITY_ENABLED
-# and GRAPHRAG_OBSERVABILITY_BACKEND override `enabled` and `backend` (the CDK
+# OTEL_SDK_DISABLED=true turns tracing off regardless. UKR__OBSERVABILITY__ENABLED
+# and UKR__OBSERVABILITY__BACKEND override `enabled` and `backend` (the CDK
 # stacks set them with enable_cloudwatch_tracing).
 observability:
   enabled: false

@@ -19,24 +19,26 @@ pytestmark = pytest.mark.unit
 @pytest.fixture(autouse=True)
 def _clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
     for var in (
-        "GRAPHRAG_DOC_STATUS_TABLE",
-        "GRAPHRAG_DOC_STATUS_CREATE_TABLE",
-        "GRAPHRAG_SOURCE_SCOPE",
-        "GRAPHRAG_OBSERVABILITY_ENABLED",
-        "GRAPHRAG_OBSERVABILITY_BACKEND",
+        "UKR__AWS__DYNAMODB__TABLE_NAME",
+        "UKR__AWS__DYNAMODB__CREATE_TABLE_IF_MISSING",
+        "UKR__PROCESSING__DOCUMENT_PARSING__SOURCE_SCOPE",
+        "UKR__OBSERVABILITY__ENABLED",
+        "UKR__OBSERVABILITY__BACKEND",
     ):
         monkeypatch.delenv(var, raising=False)
 
 
 def test_source_scope_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
     # The container entrypoint exports the S3 URI the corpus was synced from.
-    monkeypatch.setenv("GRAPHRAG_SOURCE_SCOPE", "s3://example-bucket/corpus/")
+    monkeypatch.setenv(
+        "UKR__PROCESSING__DOCUMENT_PARSING__SOURCE_SCOPE", "s3://example-bucket/corpus/"
+    )
     cfg = ConfigLoader().load_config()
     assert cfg.processing.document_parsing.source_scope == "s3://example-bucket/corpus/"
 
 
 def test_doc_status_table_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("GRAPHRAG_DOC_STATUS_TABLE", "example-doc-status")
+    monkeypatch.setenv("UKR__AWS__DYNAMODB__TABLE_NAME", "example-doc-status")
     cfg = ConfigLoader().load_config()
     assert cfg.aws.dynamodb.table_name == "example-doc-status"
 
@@ -45,7 +47,7 @@ def test_doc_status_table_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_doc_status_create_table_from_env(
     monkeypatch: pytest.MonkeyPatch, raw: str, expected: bool
 ) -> None:
-    monkeypatch.setenv("GRAPHRAG_DOC_STATUS_CREATE_TABLE", raw)
+    monkeypatch.setenv("UKR__AWS__DYNAMODB__CREATE_TABLE_IF_MISSING", raw)
     cfg = ConfigLoader().load_config()
     assert cfg.aws.dynamodb.create_table_if_missing is expected
 
@@ -60,8 +62,8 @@ def test_env_overrides_yaml_table_name(
         yaml.safe_dump({"aws": {"dynamodb": {"table_name": "stale-table"}}}),
         encoding="utf-8",
     )
-    monkeypatch.setenv("GRAPHRAG_DOC_STATUS_TABLE", "example-doc-status")
-    monkeypatch.setenv("GRAPHRAG_DOC_STATUS_CREATE_TABLE", "false")
+    monkeypatch.setenv("UKR__AWS__DYNAMODB__TABLE_NAME", "example-doc-status")
+    monkeypatch.setenv("UKR__AWS__DYNAMODB__CREATE_TABLE_IF_MISSING", "false")
     cfg = ConfigLoader(config_file).load_config()
     assert cfg.aws.dynamodb.table_name == "example-doc-status"
     assert cfg.aws.dynamodb.create_table_if_missing is False
@@ -70,7 +72,9 @@ def test_env_overrides_yaml_table_name(
 
 def test_opensearch_replicas_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
     # The compute stack sets one replica on a multi-node domain.
-    monkeypatch.setenv("OPENSEARCH_NUMBER_OF_REPLICAS", "1")
+    monkeypatch.setenv(
+        "UKR__INDEXING__OPENSEARCH__INDEX_SETTINGS__NUMBER_OF_REPLICAS", "1"
+    )
     settings = ConfigLoader().load_config().indexing.opensearch.index_settings
     assert settings["number_of_replicas"] == 1
     assert settings["number_of_shards"] == 1
@@ -79,7 +83,7 @@ def test_opensearch_replicas_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_korean_analyzer_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
     # The compute stack maps Korean to an analyzer Amazon OpenSearch Service
     # has without the optional Nori plugin; the other languages are kept.
-    monkeypatch.setenv("OPENSEARCH_KOREAN_ANALYZER", "cjk")
+    monkeypatch.setenv("UKR__INDEXING__OPENSEARCH__LANGUAGE_ANALYZERS__KO", "cjk")
     analyzers = ConfigLoader().load_config().indexing.opensearch.language_analyzers
     assert analyzers == {"en": "english", "ko": "cjk"}
 
@@ -90,7 +94,7 @@ def test_korean_analyzer_default_without_env() -> None:
 
 
 def test_guardrail_version_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("BEDROCK_GUARDRAIL_VERSION", "3")
+    monkeypatch.setenv("UKR__AWS__BEDROCK__GUARDRAIL__VERSION", "3")
     cfg = ConfigLoader().load_config()
     assert cfg.aws.bedrock.guardrail.version == "3"
 
@@ -98,8 +102,8 @@ def test_guardrail_version_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_observability_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
     # The compute stack turns tracing on for the ADOT collector sidecar; the
     # backend must be the enum member (its .value is logged), not a string.
-    monkeypatch.setenv("GRAPHRAG_OBSERVABILITY_ENABLED", "true")
-    monkeypatch.setenv("GRAPHRAG_OBSERVABILITY_BACKEND", "otlp")
+    monkeypatch.setenv("UKR__OBSERVABILITY__ENABLED", "true")
+    monkeypatch.setenv("UKR__OBSERVABILITY__BACKEND", "otlp")
     observability = ConfigLoader().load_config().observability
     assert observability.enabled is True
     assert observability.backend is ObservabilityBackend.OTLP
@@ -109,8 +113,8 @@ def test_observability_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_invalid_observability_backend_from_env(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("GRAPHRAG_OBSERVABILITY_BACKEND", "cloudwatch")
-    with pytest.raises(ConfigurationError, match="GRAPHRAG_OBSERVABILITY_BACKEND"):
+    monkeypatch.setenv("UKR__OBSERVABILITY__BACKEND", "cloudwatch")
+    with pytest.raises(ConfigurationError, match="UKR__OBSERVABILITY__BACKEND"):
         ConfigLoader().load_config()
 
 
@@ -128,12 +132,12 @@ def test_docker_image_config_takes_endpoints_from_env(
     image_config = Path(__file__).resolve().parents[2] / "docker" / "config.yaml"
     env = {
         "AWS_REGION": "us-east-1",
-        "BEDROCK_REGION": "us-east-1",
-        "NEPTUNE_ENDPOINT": "neptune.example.internal",
-        "OPENSEARCH_ENDPOINT": "opensearch.example.internal",
-        "S3_BUCKET_NAME": "example-cache-bucket",
-        "GRAPHRAG_DOC_STATUS_TABLE": "example-doc-status",
-        "GRAPHRAG_DOC_STATUS_CREATE_TABLE": "false",
+        "UKR__AWS__BEDROCK__REGION_NAME": "us-east-1",
+        "UKR__AWS__NEPTUNE__ENDPOINT": "neptune.example.internal",
+        "UKR__AWS__OPENSEARCH__ENDPOINT": "opensearch.example.internal",
+        "UKR__AWS__S3__BUCKET_NAME": "example-cache-bucket",
+        "UKR__AWS__DYNAMODB__TABLE_NAME": "example-doc-status",
+        "UKR__AWS__DYNAMODB__CREATE_TABLE_IF_MISSING": "false",
     }
     for var, value in env.items():
         monkeypatch.setenv(var, value)
@@ -152,19 +156,21 @@ def test_docker_image_config_takes_endpoints_from_env(
 def test_bedrock_region_inherits_aws_region(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.delenv("BEDROCK_REGION", raising=False)
+    monkeypatch.delenv("UKR__AWS__BEDROCK__REGION_NAME", raising=False)
     monkeypatch.setenv("AWS_REGION", "eu-central-1")
     path = tmp_path / "config.yaml"
     path.write_text("aws:\n  region_name: us-east-1\n", encoding="utf-8")
     cfg = ConfigLoader(path).load_config()
+    # The file's region wins over AWS_REGION, and Bedrock follows it.
     assert cfg.aws.bedrock.region_name is None
-    assert cfg.aws.bedrock_region == "eu-central-1"
+    assert cfg.aws.bedrock_region == "us-east-1"
+    assert ConfigLoader(None).load_config().aws.bedrock_region == "eu-central-1"
 
 
 def test_explicit_bedrock_region_wins(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.delenv("BEDROCK_REGION", raising=False)
+    monkeypatch.delenv("UKR__AWS__BEDROCK__REGION_NAME", raising=False)
     monkeypatch.setenv("AWS_REGION", "eu-central-1")
     path = tmp_path / "config.yaml"
     path.write_text(

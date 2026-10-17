@@ -1,6 +1,12 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Unknown config keys are warned about instead of silently dropped."""
+"""Unknown config keys fail the load instead of being silently dropped.
+
+A misspelled key leaves its setting at the default: a guardrail identifier
+under ``aws.bedrock.guardrail.identifer`` left every query unscreened, with
+only a warning to show for it. ``allow_unknown_keys`` (``--allow-unknown-keys``)
+turns the error back into a warning per key.
+"""
 
 from __future__ import annotations
 
@@ -12,7 +18,8 @@ import yaml
 
 from tests.fixtures.config_template import uncommented_template
 from unified_kg_rag.domain.models import Config
-from unified_kg_rag.shared.config import ConfigLoader, warn_unknown_keys
+from unified_kg_rag.shared import ConfigurationError
+from unified_kg_rag.shared.config import ConfigLoader, unknown_keys
 
 pytestmark = pytest.mark.unit
 
@@ -23,44 +30,72 @@ def _unknown(caplog: pytest.LogCaptureFixture) -> list[str]:
     return [r.getMessage() for r in caplog.records if "Unknown config key" in r.message]
 
 
-def test_typo_in_nested_section_is_warned(
+_TYPOS = {
+    "search": {"rerankng": {"enabled": True}},
+    "logging": {"level": "INFO", "colour": True},
+    "not_a_section": 1,
+    "aws": {"bedrock": {"guardrail": {"identifer": "gr-1"}}},
+}
+
+
+def test_typo_in_nested_section_fails_the_load(tmp_path: Path) -> None:
+    path = tmp_path / "config.yaml"
+    path.write_text(yaml.safe_dump(_TYPOS))
+    with pytest.raises(ConfigurationError) as raised:
+        ConfigLoader(path).load_config()
+    message = str(raised.value)
+    for key in (
+        "aws.bedrock.guardrail.identifer",
+        "logging.colour",
+        "not_a_section",
+        "search.rerankng",
+    ):
+        assert f"'{key}'" in message
+    assert "--allow-unknown-keys" in message
+
+
+def test_allow_unknown_keys_warns_and_loads(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     path = tmp_path / "config.yaml"
-    path.write_text(
-        yaml.safe_dump(
-            {
-                "search": {"rerankng": {"enabled": True}},
-                "logging": {"level": "INFO", "colour": True},
-                "not_a_section": 1,
-            }
-        )
-    )
+    path.write_text(yaml.safe_dump(_TYPOS))
     with caplog.at_level(logging.WARNING):
-        ConfigLoader(path).load_config()
-    assert sorted(_unknown(caplog)) == [
-        "Unknown config key 'logging.colour' is ignored",
-        "Unknown config key 'not_a_section' is ignored",
-        "Unknown config key 'search.rerankng' is ignored",
-    ]
+        config = ConfigLoader(path, allow_unknown_keys=True).load_config()
+    assert len(_unknown(caplog)) == 4
+    assert config.aws.bedrock.guardrail.identifier is None
 
 
-def test_free_form_dict_fields_are_not_walked(
-    caplog: pytest.LogCaptureFixture,
+def test_an_unknown_environment_variable_fails_the_load(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setenv("UKR__AWS__NEPTUNE__ENDPOIN", "graph.example")
+    with pytest.raises(ConfigurationError, match="UKR__AWS__NEPTUNE__ENDPOIN"):
+        ConfigLoader(None).load_config()
+    assert ConfigLoader(None, allow_unknown_keys=True).load_config()
+
+
+def test_a_moved_key_names_its_replacement(tmp_path: Path) -> None:
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        yaml.safe_dump({"graph": {"analysis": {"centrality": {"pagerank_alpha": 0.5}}}})
+    )
+    with pytest.raises(
+        ConfigurationError,
+        match="graph.analysis.centrality -> graph.visualization.centrality",
+    ):
+        ConfigLoader(path).load_config()
+
+
+def test_free_form_dict_fields_are_not_walked() -> None:
     data = {
         "graph": {"visualization": {"interactive": {"any_renderer_option": 1}}},
         "logging": {"library_levels": {"some.library": "ERROR"}},
     }
-    with caplog.at_level(logging.WARNING):
-        warn_unknown_keys(data, Config)
-    assert _unknown(caplog) == []
+    assert unknown_keys(data, Config) == []
 
 
 @pytest.mark.parametrize("view", ["as_shipped", "uncommented"])
-def test_config_template_has_no_unknown_keys(
-    caplog: pytest.LogCaptureFixture, view: str
-) -> None:
+def test_config_template_has_no_unknown_keys(view: str) -> None:
     # The uncommented view also covers the keys the template shows commented
     # out (tests.fixtures.config_template).
     data = (
@@ -68,9 +103,7 @@ def test_config_template_has_no_unknown_keys(
         if view == "as_shipped"
         else uncommented_template()
     )
-    with caplog.at_level(logging.WARNING):
-        warn_unknown_keys(data, Config)
-    assert _unknown(caplog) == []
+    assert unknown_keys(data, Config) == []
 
 
 @pytest.mark.parametrize("text", ["", "# only a comment\n"])
@@ -85,21 +118,3 @@ def test_non_mapping_config_file_is_a_clear_error(tmp_path: Path) -> None:
     path.write_text("- a\n- b\n")
     with pytest.raises(ValueError, match="must be a YAML mapping"):
         ConfigLoader(path).load_config()
-
-
-def test_removed_chunking_content_type_is_warned_and_ignored(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
-) -> None:
-    # ``processing.chunking.content_type`` never took effect (no parser built
-    # a markdown or HTML body) and was removed: a config that still sets it
-    # loads, with the unknown-key warning.
-    path = tmp_path / "config.yaml"
-    path.write_text(
-        yaml.safe_dump({"processing": {"chunking": {"content_type": "markdown"}}})
-    )
-    with caplog.at_level(logging.WARNING):
-        config = ConfigLoader(path).load_config()
-    assert _unknown(caplog) == [
-        "Unknown config key 'processing.chunking.content_type' is ignored"
-    ]
-    assert "content_type" not in config.processing.chunking.model_dump()

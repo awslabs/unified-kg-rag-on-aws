@@ -70,7 +70,7 @@ class GuardrailStack(Stack):
                 Annotations.of(self).add_info(
                     "Guardrail created but not attached to compute yet: re-run "
                     "`cdk deploy --all -c guardrail_identifier=<GuardrailIdentifier "
-                    "output>` to inject BEDROCK_GUARDRAIL_IDENTIFIER."
+                    "output>` to inject UKR__AWS__BEDROCK__GUARDRAIL__IDENTIFIER."
                 )
         else:
             # Bring-your-own path: nothing is created; surface the external id.

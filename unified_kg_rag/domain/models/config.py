@@ -1,5 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
+import copy
 import logging
 import math
 import re
@@ -14,6 +15,8 @@ from pydantic import (
     BaseModel,
     BeforeValidator,
     Field,
+    ModelWrapValidatorHandler,
+    PrivateAttr,
     SecretStr,
     StringConstraints,
     field_validator,
@@ -476,8 +479,10 @@ class ModelsConfig(BaseModel):
         return _coerce_model_id(value)
 
 
-# Removed model settings -> the models key that replaces each.
-REMOVED_MODEL_KEYS: dict[str, str] = {
+# Moved settings -> the key that replaces each. A config that sets one fails
+# validation naming its replacement.
+MOVED_KEYS: dict[str, str] = {
+    "graph.analysis.centrality": "graph.visualization.centrality",
     "aws.bedrock.default_model_id": "models.default",
     "aws.bedrock.fast_model_id": "models.fast",
     "providers.llm.default_model_id": "models.default",
@@ -518,10 +523,10 @@ REMOVED_MODEL_KEYS: dict[str, str] = {
 }
 
 
-def removed_model_keys(data: Any) -> list[str]:
-    """``"old -> new"`` for each removed model setting ``data`` sets."""
+def moved_keys(data: Any) -> list[str]:
+    """``"old -> new"`` for each moved setting ``data`` sets."""
     found = []
-    for old, new in REMOVED_MODEL_KEYS.items():
+    for old, new in MOVED_KEYS.items():
         node = data
         for part in old.split("."):
             node = node.get(part, _ABSENT) if isinstance(node, dict) else _ABSENT
@@ -946,7 +951,7 @@ class DocumentParsingConfig(BaseModel):
             "treats registry documents of its own index suffix AND source scope "
             "as deleted. None = the resolved source directory. Set it when the "
             "local directory is a staging copy, e.g. the S3 URI a container "
-            "syncs from (env GRAPHRAG_SOURCE_SCOPE)."
+            "syncs from (env UKR__PROCESSING__DOCUMENT_PARSING__SOURCE_SCOPE)."
         ),
     )
 
@@ -1401,10 +1406,6 @@ class StatisticsConfig(BaseModel):
 
 
 class GraphAnalysisConfig(BaseModel):
-    centrality: CentralityConfig = Field(
-        default_factory=CentralityConfig,
-        description="Node centrality metrics configuration",
-    )
     statistics: StatisticsConfig = Field(
         default_factory=StatisticsConfig,
         description="Graph-level statistics configuration",
@@ -1537,6 +1538,11 @@ class CommunityDetectionConfig(BaseModel):
 
 
 class VisualizationConfig(BaseModel):
+    centrality: CentralityConfig = Field(
+        default_factory=CentralityConfig,
+        description="Node centrality metrics the visualization sizes nodes and "
+        "plots by (computed at render time; no ingestion stage reads them)",
+    )
     enabled: bool = Field(
         default=False,
         description="Render visualizations during ingestion. Off by default: it "
@@ -3060,6 +3066,41 @@ class EvaluationConfig(BaseModel):
     )
 
 
+def _plain(value: Any) -> Any:
+    """``value`` as plain data: a section instance as its full dump."""
+    if isinstance(value, BaseModel):
+        return value.model_dump()
+    if isinstance(value, dict):
+        return {key: _plain(item) for key, item in value.items()}
+    return copy.deepcopy(value)
+
+
+def merge_over(base: dict[str, Any], top: dict[str, Any]) -> dict[str, Any]:
+    """``base`` with every leaf of ``top`` written over it (nested dicts merge)."""
+    merged = dict(base)
+    for key, value in top.items():
+        below = merged.get(key)
+        merged[key] = (
+            merge_over(below, value)
+            if isinstance(value, dict) and isinstance(below, dict)
+            else value
+        )
+    return merged
+
+
+def _changes(before: BaseModel, after: BaseModel) -> dict[str, Any]:
+    """The fields of ``after`` that differ from ``before``, as nested data."""
+    changes: dict[str, Any] = {}
+    for name in type(after).model_fields:
+        old, new = getattr(before, name), getattr(after, name)
+        if isinstance(old, BaseModel) and type(old) is type(new):
+            if nested := _changes(old, new):
+                changes[name] = nested
+        elif old != new:
+            changes[name] = _plain(new)
+    return changes
+
+
 class Config(BaseModel):
     backend: Backend = Field(
         default=Backend.AWS,
@@ -3116,19 +3157,45 @@ class Config(BaseModel):
         default_factory=CustomPromptConfig, description="Custom prompt configuration"
     )
 
-    @model_validator(mode="before")
+    # The input this config was validated from, before its backend preset
+    # (see as_input).
+    _input: dict[str, Any] | None = PrivateAttr(default=None)
+
+    @model_validator(mode="wrap")
     @classmethod
-    def _apply_backend_preset(cls, data: Any) -> Any:
-        """Refuse the removed model keys, then fill in the ``backend`` preset
-        under the keys the config sets."""
+    def _apply_backend_preset(
+        cls, data: Any, handler: ModelWrapValidatorHandler["Config"]
+    ) -> "Config":
+        """Refuse the moved keys, fill in the ``backend`` preset under the
+        keys the config sets, and keep the input it was given."""
         if not isinstance(data, dict):
-            return data
-        if removed := removed_model_keys(data):
-            raise ValueError(
-                "model settings moved to the models section; replace "
-                + "; ".join(removed)
-            )
-        return apply_backend_preset(data)
+            return handler(data)
+        if moved := moved_keys(data):
+            raise ValueError("settings moved; replace " + "; ".join(moved))
+        config = handler(apply_backend_preset(data))
+        config._input = _plain(data)
+        return config
+
+    def __eq__(self, other: object) -> bool:
+        """Equal settings make equal configs, whatever input they came from."""
+        if not isinstance(other, Config):
+            return NotImplemented
+        return type(self) is type(other) and self.__dict__ == other.__dict__
+
+    def as_input(self) -> dict[str, Any]:
+        """Input that validates to this config again, without its preset.
+
+        The input it was validated from (the file and the environment, as
+        given; not the ``backend`` preset's values, which validation fills
+        in again), with every change made to the object since written over
+        it. Rebuilding from it under another ``backend`` or provider keeps
+        what the caller set, even a value equal to a preset's, and drops
+        only what the old preset filled in.
+        """
+        if self._input is None:
+            return self.model_dump(exclude_unset=True)
+        built = type(self).model_validate(copy.deepcopy(self._input))
+        return merge_over(copy.deepcopy(self._input), _changes(built, self))
 
     @model_validator(mode="after")
     def _check_models(self) -> "Config":

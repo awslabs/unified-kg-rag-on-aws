@@ -28,8 +28,9 @@ from unified_kg_rag.adapters.renderers import (
 )
 from unified_kg_rag.adapters.renderers.interactive import InteractiveRenderer
 from unified_kg_rag.application.cli.config_args import (
-    config_path_arg,
+    add_config_arguments,
     exit_on_config_error,
+    load_cli_config,
 )
 from unified_kg_rag.application.cli.conventions import (
     EXIT_FAILURE,
@@ -50,7 +51,7 @@ from unified_kg_rag.domain.ingestion.graph_analyzer import (
     GraphAnalyzer,
 )
 from unified_kg_rag.domain.models import Community, HierarchicalCommunity
-from unified_kg_rag.shared import get_config, get_logger, setup_logging
+from unified_kg_rag.shared import get_logger, setup_logging
 from unified_kg_rag.shared.config import load_cli_dotenv
 
 logger = get_logger(__name__)
@@ -202,9 +203,7 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="RENDERER",
         help=f"Renderers to run. Available: {', '.join(registered_renderers())}",
     )
-    parser.add_argument(
-        "--config-path", type=config_path_arg, default=None, help="Config YAML path"
-    )
+    add_config_arguments(parser)
     add_output_format_argument(parser)
     # Accepted like on the other CLIs, so one command line (and a config of
     # either backend) serves them all; rendering makes no model call.
@@ -219,7 +218,7 @@ def main() -> int:
     as_json = json_output(args)
     try:
         with exit_on_config_error():
-            config = apply_provider_arguments(get_config(args.config_path), args)
+            config = apply_provider_arguments(load_cli_config(args), args)
         if not args.data_path.is_file():
             usage_error(f"visualization data not found: '{args.data_path}'")
         setup_logging(config, stream=sys.stderr if as_json else None)

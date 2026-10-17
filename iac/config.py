@@ -43,7 +43,7 @@ Context keys (all optional; sensible defaults shown):
                                        opensearch_count > 1 (8 GiB Graviton; sized
                                        for <=10 nodes / 10K shards on OS 2.13)
   opensearch_korean_analyzer "cjk"    OpenSearch analyzer of Korean text
-                                       (OPENSEARCH_KOREAN_ANALYZER, overrides
+                                       (UKR__INDEXING__OPENSEARCH__LANGUAGE_ANALYZERS__KO, overrides
                                        language_analyzers.ko): the domain has no
                                        nori unless its optional analysis-nori
                                        package is associated; set "nori" once it
@@ -57,10 +57,10 @@ Context keys (all optional; sensible defaults shown):
   create_guardrail    True             GuardrailStack owns (creates + keeps) a
                                        baseline guardrail; false = bring your own
   guardrail_identifier None            guardrail id the compute task USES
-                                       (BEDROCK_GUARDRAIL_IDENTIFIER); does NOT
+                                       (UKR__AWS__BEDROCK__GUARDRAIL__IDENTIFIER); does NOT
                                        disable creation
   guardrail_version   None             published guardrail version the task
-                                       applies (BEDROCK_GUARDRAIL_VERSION);
+                                       applies (UKR__AWS__BEDROCK__GUARDRAIL__VERSION);
                                        unset = the app default, DRAFT
   use_cmk             False            customer-managed KMS key for at-rest
                                        encryption (S3/Neptune/OpenSearch/DDB); the
@@ -291,7 +291,7 @@ class DeploymentConfig:
     # Opt-in ADOT collector sidecar exporting traces to CloudWatch (X-Ray OTLP
     # endpoint). Off: the templates are exactly as without the feature.
     enable_cloudwatch_tracing: bool = False
-    # Analyzer the app maps Korean text to (OPENSEARCH_KOREAN_ANALYZER). The
+    # Analyzer the app maps Korean text to (UKR__INDEXING__OPENSEARCH__LANGUAGE_ANALYZERS__KO). The
     # domain has no nori unless the optional analysis-nori package is
     # associated with it; cjk (character bigrams) is built into OpenSearch.
     opensearch_korean_analyzer: str = "cjk"

@@ -97,7 +97,7 @@ def test_enabled_property() -> None:
 def test_guardrail_identifier_from_env(monkeypatch) -> None:
     # IaC injects the deployed guardrail id via this env var (4-level nested
     # config path); verify the override lands and enables guardrails.
-    monkeypatch.setenv("BEDROCK_GUARDRAIL_IDENTIFIER", "gr-from-env")
+    monkeypatch.setenv("UKR__AWS__BEDROCK__GUARDRAIL__IDENTIFIER", "gr-from-env")
     from unified_kg_rag.shared.config import ConfigLoader
 
     cfg = ConfigLoader().load_config()

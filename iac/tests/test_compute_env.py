@@ -68,13 +68,13 @@ def _actions(statements: list[dict[str, Any]]) -> set[str]:
 def test_doc_status_env_targets_iac_table_and_disables_auto_create() -> None:
     env = _task_environment()
     # Both names must match unified_kg_rag.shared.config env overrides.
-    assert env["GRAPHRAG_DOC_STATUS_TABLE"] == "graphrag-doc-status-v2"
-    assert env["GRAPHRAG_DOC_STATUS_CREATE_TABLE"] == "false"
+    assert env["UKR__AWS__DYNAMODB__TABLE_NAME"] == "graphrag-doc-status-v2"
+    assert env["UKR__AWS__DYNAMODB__CREATE_TABLE_IF_MISSING"] == "false"
 
 
 def test_doc_status_env_follows_env_scoped_table_name() -> None:
     env = _task_environment({"env_name": "prod"})
-    assert env["GRAPHRAG_DOC_STATUS_TABLE"] == "prod-graphrag-doc-status-v2"
+    assert env["UKR__AWS__DYNAMODB__TABLE_NAME"] == "prod-graphrag-doc-status-v2"
 
 
 def test_corpus_bucket_is_granted_read_only() -> None:
@@ -111,7 +111,12 @@ def test_opensearch_replicas_follow_node_count(
     context: dict[str, Any], replicas: str
 ) -> None:
     # Name must match the unified_kg_rag.shared.config env override.
-    assert _task_environment(context)["OPENSEARCH_NUMBER_OF_REPLICAS"] == replicas
+    assert (
+        _task_environment(context)[
+            "UKR__INDEXING__OPENSEARCH__INDEX_SETTINGS__NUMBER_OF_REPLICAS"
+        ]
+        == replicas
+    )
 
 
 @pytest.mark.parametrize(
@@ -125,13 +130,16 @@ def test_korean_analyzer_is_one_the_domain_has(
     # The domain has no nori unless its optional package is associated, so the
     # default maps Korean to the built-in cjk analyzer. Name must match the
     # unified_kg_rag.shared.config env override.
-    assert _task_environment(context)["OPENSEARCH_KOREAN_ANALYZER"] == analyzer
+    assert (
+        _task_environment(context)["UKR__INDEXING__OPENSEARCH__LANGUAGE_ANALYZERS__KO"]
+        == analyzer
+    )
 
 
 def test_guardrail_version_is_injected_only_when_set() -> None:
-    assert "BEDROCK_GUARDRAIL_VERSION" not in _task_environment()
+    assert "UKR__AWS__BEDROCK__GUARDRAIL__VERSION" not in _task_environment()
     env = _task_environment({"guardrail_identifier": "gr-1", "guardrail_version": "2"})
-    assert env["BEDROCK_GUARDRAIL_VERSION"] == "2"
+    assert env["UKR__AWS__BEDROCK__GUARDRAIL__VERSION"] == "2"
 
 
 def test_task_role_has_no_unused_delete_or_admin_actions() -> None:
@@ -330,4 +338,4 @@ def test_ingestion_disk_outside_fargate_range_is_rejected(gib: int) -> None:
 @pytest.mark.parametrize("env", ["dev", "prod"])
 def test_task_tags_its_metrics_with_the_environment(env: str) -> None:
     # Must match the CLI's env var and the observability stack's dimension.
-    assert _task_environment({"env_name": env})["GRAPHRAG_METRICS_ENVIRONMENT"] == env
+    assert _task_environment({"env_name": env})["UKR_METRICS_ENVIRONMENT"] == env

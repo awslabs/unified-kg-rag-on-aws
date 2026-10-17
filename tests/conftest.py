@@ -61,37 +61,14 @@ _AWS_ENV_TO_CLEAR = (
     "AWS_CONTAINER_CREDENTIALS_FULL_URI",
     "AWS_CONTAINER_AUTHORIZATION_TOKEN",
 )
-# unified_kg_rag.shared.config.ENV_OVERRIDES maps these onto the loaded Config
-# (AWS_PROFILE/AWS_REGION are cleared above),
-# so a value exported in the developer's shell would silently change what the
-# tests exercise.
-_CONFIG_ENV_OVERRIDES = (
-    "LOG_LEVEL",
-    "LOG_FORMAT",
-    "LOG_TO_FILE",
-    "LOG_FILE_PATH",
-    "NEPTUNE_ENDPOINT",
-    "OPENSEARCH_ENDPOINT",
-    "OPENSEARCH_USERNAME",
-    "OPENSEARCH_PASSWORD",
-    "BEDROCK_REGION",
-    "BEDROCK_GUARDRAIL_IDENTIFIER",
-    "BEDROCK_GUARDRAIL_VERSION",
-    "S3_BUCKET_NAME",
-    "OPENSEARCH_NUMBER_OF_REPLICAS",
-    "OPENSEARCH_KOREAN_ANALYZER",
-    "GRAPHRAG_DOC_STATUS_TABLE",
-    "GRAPHRAG_SOURCE_SCOPE",
-    "GRAPHRAG_DOC_STATUS_CREATE_TABLE",
-    "GRAPHRAG_OBSERVABILITY_ENABLED",
-    "GRAPHRAG_OBSERVABILITY_BACKEND",
-)
+# Every UKR_ variable (UKR__<path> config overrides and the UKR_ run-ingestion
+# defaults) is cleared too (see _isolated_aws_env), so a value exported in
+# the developer's shell cannot silently change what the tests exercise.
+_ENV_PREFIX_TO_CLEAR = "UKR_"
 # Other environment the package reads: run-ingestion argument defaults, and
 # LangSmith tracing (every name langsmith accepts), which would upload test
 # prompts and outputs and log a warning from every setup_logging() call.
 _OTHER_ENV_TO_CLEAR = (
-    "GRAPHRAG_SOURCE_DIRECTORY",
-    "GRAPHRAG_PIPELINE_ID",
     "LANGSMITH_TRACING",
     "LANGSMITH_TRACING_V2",
     "LANGCHAIN_TRACING",
@@ -146,7 +123,9 @@ def _isolated_aws_env(
     """
     if request.node.get_closest_marker("aws") is not None:
         return
-    for name in _AWS_ENV_TO_CLEAR + _CONFIG_ENV_OVERRIDES + _OTHER_ENV_TO_CLEAR:
+    for name in _AWS_ENV_TO_CLEAR + _OTHER_ENV_TO_CLEAR:
+        monkeypatch.delenv(name, raising=False)
+    for name in [n for n in os.environ if n.upper().startswith(_ENV_PREFIX_TO_CLEAR)]:
         monkeypatch.delenv(name, raising=False)
     for name, value in _FAKE_AWS_ENV.items():
         monkeypatch.setenv(name, value)

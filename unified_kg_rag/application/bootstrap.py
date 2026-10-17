@@ -14,9 +14,9 @@ single place to override a role.
 ``--llm-provider`` ...) to a loaded config, re-running the ``backend`` preset
 and the model-id defaults as if the file had set them; switching the backend
 drops the values the old one's preset filled in. It rebuilds the config from
-what it was built from (``model_dump(exclude_unset=True)``): the file and the
-environment overrides, which ``ConfigLoader`` merges into the input before
-validating, so the flags are the last layer over both.
+its input (``Config.as_input``): the file and the environment overrides, which
+``ConfigLoader`` merges into the input before validating, plus any change
+made to the object since, so the flags are the last layer over all of them.
 """
 
 from __future__ import annotations
@@ -30,10 +30,9 @@ from unified_kg_rag.adapters.provider_registry import (
 )
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.models import Config
-from unified_kg_rag.domain.models.provider_config import strip_backend_preset
+from unified_kg_rag.domain.models.config import merge_over
 from unified_kg_rag.ports.guardrail import ContentGuardPort
 from unified_kg_rag.shared import ConfigurationError, get_logger
-from unified_kg_rag.shared.config import merge_over
 
 if TYPE_CHECKING:
     import boto3
@@ -118,17 +117,14 @@ def with_provider_overrides(
     """``config`` re-validated with the given provider settings.
 
     ``None`` leaves a setting as configured. ``base_url`` applies to the LLM
-    and embedding servers alike. The preset and the model-id defaults are
-    re-applied, so ``backend="local"`` behaves as if the file had said
-    ``backend: local``. A ``backend`` other than the config's drops the values
-    the config's preset filled in first (any value equal to the preset's), so
-    ``backend="aws"`` over a ``backend: local`` file returns them to the AWS
-    defaults. Returns ``config`` itself when nothing is given.
-
-    Only what ``config`` was built from is kept (its set fields): a value
-    assigned to a nested field of a default section afterwards is not, so a
-    caller passes overrides through the input (as ``ConfigLoader`` does with
-    the environment), not by assignment.
+    and embedding servers alike. The config is rebuilt from its input
+    (``Config.as_input``: the file and environment it was loaded from, and
+    every change made to it since), so the preset and the model defaults are
+    applied again: ``backend="local"`` behaves as if the file had said
+    ``backend: local``, and ``backend="aws"`` over a ``backend: local`` file
+    drops what the local preset filled in, but never a value the file, the
+    environment or the caller set. Returns ``config`` itself when nothing is
+    given.
     """
     overrides: dict[str, dict[str, Any]] = {}
 
@@ -151,10 +147,8 @@ def with_provider_overrides(
     put("models.embedding.dimension", embedding_dimension)
     if backend is None and not overrides:
         return config
-    data = config.model_dump(exclude_unset=True)
+    data = config.as_input()
     if backend is not None:
-        if backend != config.backend.value:
-            data = strip_backend_preset(data, config.backend)
         data["backend"] = backend
     data = merge_over(data, overrides)
     try:

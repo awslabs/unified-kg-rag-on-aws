@@ -73,8 +73,8 @@ def test_auto_roles_skip_strategies_the_pipeline_cannot_serve() -> None:
 def test_missing_endpoints_error_names_config_key_and_env_var() -> None:
     error = missing_endpoints_error(_config(), {_DOC, _GRAPH}, "indexing")
     assert error is not None
-    assert "aws.neptune.endpoint (env NEPTUNE_ENDPOINT)" in error
-    assert "aws.opensearch.endpoint (env OPENSEARCH_ENDPOINT)" in error
+    assert "aws.neptune.endpoint (env UKR__AWS__NEPTUNE__ENDPOINT)" in error
+    assert "aws.opensearch.endpoint (env UKR__AWS__OPENSEARCH__ENDPOINT)" in error
     assert missing_endpoints_error(_config("n", "o"), {_DOC, _GRAPH}, "x") is None
     # Only the roles asked for are checked.
     assert missing_endpoints_error(_config(opensearch="o"), {_DOC}, "x") is None
@@ -137,7 +137,7 @@ def test_reregistering_a_kind_replaces_its_endpoint() -> None:
 
 
 def _ingestion_runner(mocker, tmp_path: Path, config: Config, *argv: str):
-    mocker.patch.object(run_ingestion_pipeline, "get_config", return_value=config)
+    mocker.patch.object(run_ingestion_pipeline, "load_cli_config", return_value=config)
     mocker.patch.object(run_ingestion_pipeline, "display_ascii_art")
     src = tmp_path / "src"
     src.mkdir()
@@ -174,8 +174,8 @@ def test_ingestion_checks_both_store_endpoints_through_the_retriever_kinds(
         runner.run()
     pipeline.assert_not_called()
     out = " ".join(capsys.readouterr().err.split())  # undo console wrapping
-    assert "aws.neptune.endpoint (env NEPTUNE_ENDPOINT)" in out
-    assert "aws.opensearch.endpoint (env OPENSEARCH_ENDPOINT)" in out
+    assert "aws.neptune.endpoint (env UKR__AWS__NEPTUNE__ENDPOINT)" in out
+    assert "aws.opensearch.endpoint (env UKR__AWS__OPENSEARCH__ENDPOINT)" in out
 
 
 def test_ingestion_without_the_indexing_stage_needs_no_endpoints(
@@ -196,7 +196,7 @@ def test_ingestion_without_the_indexing_stage_needs_no_endpoints(
 async def test_rag_exits_before_the_chain_when_the_strategy_lacks_endpoints(
     mocker, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    mocker.patch.object(run_rag_chain, "get_config", return_value=_config())
+    mocker.patch.object(run_rag_chain, "load_cli_config", return_value=_config())
     create = mocker.patch.object(run_rag_chain, "create_rag_chain")
     parser = run_rag_chain.CommandLineInterface._setup_arguments()
     args = parser.parse_args(["-q", "hi", "--search-strategy", "simple"])
@@ -220,7 +220,7 @@ def test_eval_exits_before_the_chain_when_the_strategy_lacks_endpoints(
     data.write_text("[]")
     monkeypatch.setattr(sys, "argv", ["run-eval", "--data-path", str(data)])
     mocker.patch.object(
-        run_evaluation, "get_config", return_value=_config(opensearch="o")
+        run_evaluation, "load_cli_config", return_value=_config(opensearch="o")
     )
     chain = mocker.patch.object(run_evaluation, "GraphRAGChain")
     with pytest.raises(SystemExit) as exc:

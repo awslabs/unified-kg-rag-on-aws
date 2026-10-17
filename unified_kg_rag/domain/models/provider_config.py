@@ -309,34 +309,6 @@ def _merge_under(preset: Any, data: Any) -> Any:
     return merged
 
 
-def _strip_preset(preset: Any, data: Any) -> Any:
-    """``data`` without the leaves equal to ``preset``'s (``_MISSING`` = none)."""
-    if isinstance(preset, dict) and isinstance(data, dict):
-        stripped = {}
-        for key, value in data.items():
-            kept = _strip_preset(preset.get(key, _MISSING), value)
-            if kept is not _MISSING:
-                stripped[key] = kept
-        return stripped or _MISSING
-    return _MISSING if preset is not _MISSING and data == preset else data
-
-
-_MISSING: Any = object()
-
-
-def strip_backend_preset(data: dict[str, Any], backend: Backend) -> dict[str, Any]:
-    """Raw config ``data`` without the values the ``backend`` preset fills in.
-
-    Undoes :func:`apply_backend_preset` on a loaded config, so switching it to
-    another backend does not keep the old preset's values. A value equal to
-    the preset's counts as the preset's, even when the file set it.
-    """
-    if backend is not Backend.LOCAL:
-        return data
-    stripped = _strip_preset(LOCAL_PRESET, data)
-    return {} if stripped is _MISSING else dict(stripped)
-
-
 def _kind_value(kind: Any) -> Any:
     return kind.value if isinstance(kind, Enum) else kind
 

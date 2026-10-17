@@ -10,10 +10,11 @@ commands are in [`iac/README.md`](../iac/README.md#after-deploy).
 
 ## Before a run
 
-1. **Region and credentials.** `AWS_REGION` in the environment overrides
-   `aws.region_name` (and Bedrock's region when `aws.bedrock.region_name` is
-   unset). Check with `env | grep -E '^(AWS_REGION|BEDROCK_REGION)='` and
-   `aws sts get-caller-identity`.
+1. **Region and credentials.** `aws.region_name` in the config file wins;
+   `AWS_REGION` sets it only when the file leaves it unset, and
+   `UKR__AWS__REGION_NAME` overrides it (Bedrock follows it while
+   `aws.bedrock.region_name` is unset). Check with
+   `env | grep -E '^(AWS_REGION|UKR__AWS__)'` and `aws sts get-caller-identity`.
 2. **Models.** The models in
    [Required models](./user-guide.md#required-models) are enabled in the
    Bedrock region.
@@ -297,7 +298,7 @@ completed) and the run's own (duration, cache hit rate) when it ends. The
 task tags them with an `Environment` dimension, the stack's `env_name`, and
 the alarms and dashboard read only that series: a dev deployment's runs in
 the same account and region do not trip a prod deployment's alarms. Runs
-without `GRAPHRAG_METRICS_ENVIRONMENT` (outside the CDK task) publish a series
+without `UKR_METRICS_ENVIRONMENT` (outside the CDK task) publish a series
 without dimensions, which no alarm reads.
 
 The store-health alarms fire between runs too, so degradation shows before
@@ -372,7 +373,7 @@ letter or digit, with no `..`.
 On the CDK stack, a multi-node domain (`opensearch_count` > 1, the non-dev
 default) gets one replica per index, so losing a node or an AZ keeps every
 shard available; a single-node dev domain gets none. The compute stack sets
-`OPENSEARCH_NUMBER_OF_REPLICAS`, which overrides
+`UKR__INDEXING__OPENSEARCH__INDEX_SETTINGS__NUMBER_OF_REPLICAS`, which overrides
 `indexing.opensearch.index_settings.number_of_replicas` when an index is
 created. Indices created before that keep their replica count, so set it on
 them once from inside the VPC:
@@ -413,7 +414,7 @@ The corpus in S3 is the source of truth: every store can be rebuilt from it.
 4. Delete the domain's current indices, then restore the snapshot's indices
    and aliases (`POST _snapshot/cs-automated-enc/<snapshot>/_restore`).
 5. Point the data plane at the restored cluster endpoint and table
-   (`NEPTUNE_ENDPOINT`, `GRAPHRAG_DOC_STATUS_TABLE`). The task role, the
+   (`UKR__AWS__NEPTUNE__ENDPOINT`, `UKR__AWS__DYNAMODB__TABLE_NAME`). The task role, the
    DynamoDB gateway-endpoint policy and the alarms are scoped to the stack's
    own cluster and table, so grant them on the restored resources too.
 
@@ -468,7 +469,7 @@ Before the first paid model call, the CLIs check that the store endpoints the
 run needs are set, and exit with status 2 (a configuration error) otherwise:
 
 ```text
-run-ingestion: error: Missing endpoint configuration for the indexing stage: aws.neptune.endpoint (env NEPTUNE_ENDPOINT), aws.opensearch.endpoint (env OPENSEARCH_ENDPOINT). Set them in the config file or the environment.
+run-ingestion: error: Missing endpoint configuration for the indexing stage: aws.neptune.endpoint (env UKR__AWS__NEPTUNE__ENDPOINT), aws.opensearch.endpoint (env UKR__AWS__OPENSEARCH__ENDPOINT). Set them in the config file or the environment.
 ```
 
 - `run-ingestion` checks both endpoints when the `indexing` stage is enabled
@@ -742,9 +743,9 @@ the account. Set it in the Bedrock runtime region (`bedrock_region`):
 
 ```bash
 # Check first: an existing configuration is replaced by the put below.
-aws bedrock get-model-invocation-logging-configuration --region "$BEDROCK_REGION"
+aws bedrock get-model-invocation-logging-configuration --region "$UKR__AWS__BEDROCK__REGION_NAME"
 
-aws bedrock put-model-invocation-logging-configuration --region "$BEDROCK_REGION" \
+aws bedrock put-model-invocation-logging-configuration --region "$UKR__AWS__BEDROCK__REGION_NAME" \
   --logging-config '{
     "cloudWatchConfig": {
       "logGroupName": "/aws/bedrock/model-invocation-logs",
@@ -821,7 +822,7 @@ content to LangSmith independently of this setting.
 | `EmbeddingModelError: Query embedding failed: ...` | The query embedding model call failed after the client's retries (a crashed Ollama runner, a dead vLLM engine, a Bedrock `InternalServerException` that persisted); every vector search of the query needs it, so the query fails instead of answering "could not find" | Check the embedding server or model (`providers.embedding`, `models.embedding.model_id`) and its logs, then retry |
 | `Neptune refused the connection (HTTP 403)` | IAM authentication denied the websocket: the policy lacks `neptune-db:connect` on the cluster, or the request was signed for another region | Grant `neptune-db:connect` (and the `neptune-db:*` data actions the run needs); set `aws.region_name` to the cluster's region |
 | `Skipping N '.md' file(s) ...` / `No supported source files found in '<dir>'` | The `unstructured` extra is not installed | Install it (Python 3.11+) or convert the files |
-| `ConfigurationError: Doc-status registry: DynamoDB table '...' has the key schema ... of an earlier release` | The table was created by a release that keyed records by `doc_id` alone | Point `aws.dynamodb.table_name` (`GRAPHRAG_DOC_STATUS_TABLE`) at a new table or deploy the stack's new one, and run once with `indexing.reset: true` (see [Incremental runs](#incremental-runs)) |
+| `ConfigurationError: Doc-status registry: DynamoDB table '...' has the key schema ... of an earlier release` | The table was created by a release that keyed records by `doc_id` alone | Point `aws.dynamodb.table_name` (`UKR__AWS__DYNAMODB__TABLE_NAME`) at a new table or deploy the stack's new one, and run once with `indexing.reset: true` (see [Incremental runs](#incremental-runs)) |
 | `NamespaceLeaseError: Index namespace '...' is being written by ...` | Another run holds the namespace's write lease | Wait for it to finish; a dead run's lease expires within `indexing.lease_seconds` (see [Concurrent runs](#concurrent-runs)) |
 | `NamespaceLeaseError: This run lost the write lease ...` | The run's lease renewals failed until it expired, or another run took it | Re-run once the other run ended; check the registry's reachability |
 | `ConfigurationError: The OpenSearch index '...' records no embedding settings ...` | An earlier release built the index | Run once with `indexing.reset: true` |
@@ -829,7 +830,7 @@ content to LangSmith independently of this setting.
 | `Incremental indexing is enabled but no document delta was computed` | The indexing stage ran without a registry diff (the loading stage failed under `continue_on_error`) | Re-run from `document_loading` once the registry is reachable |
 | `CacheSyncError` | The S3 stage-cache download or upload failed | Check bucket permissions and `aws.s3.encryption`, then resume with the same `--pipeline-id` |
 | `Pipeline failed at stage(s): ...` | A stage failed; the CLI exits 1 | Read the stage's log lines, fix, resume with the same `--pipeline-id`. `--verify-metadata` checks the run's metadata, `--force-rebuild` starts clean |
-| `--source-directory is required for pipeline execution` (exit 2, like the usage errors below) | No `--source-directory` and no `$GRAPHRAG_SOURCE_DIRECTORY` | Pass it; `--verify-metadata` needs `--pipeline-id` instead |
+| `--source-directory is required for pipeline execution` (exit 2, like the usage errors below) | No `--source-directory` and no `$UKR_SOURCE_DIRECTORY` | Pass it; `--verify-metadata` needs `--pipeline-id` instead |
 | `--s3-bucket-name must be specified for --s3-sync` | `--s3-sync` without a bucket | Pass `--s3-bucket-name` |
 | `--pipeline-id is required for --resume-from-stage` | Resuming needs the earlier run | Pass that run's `--pipeline-id` |
 | `--enabled-stages: invalid stage names ...` | `--enabled-stages` names an unknown stage | Use a name from the list in the message |
@@ -843,5 +844,5 @@ content to LangSmith independently of this setting.
 | A query fails with `AuthenticationError` / `NotFoundError` (`Error code: 401` / `404`), `APIConnectionError` / `APITimeoutError`, or `ResponseError: model ... not found` (local mode) | The OpenAI-compatible or Ollama server refused the key or does not serve the model, or could not be reached or did not answer after the client's retries; every later query would fail the same way, so the query fails instead of answering "could not find" | Check `providers.llm` / `providers.embedding` (`base_url`, `api_key`, `model_id`), that the server is running, and pull the models |
 | `observability.enabled is true but OpenTelemetry is not installed` | Tracing is on but the `otel` extra is missing | `uv sync --extra otel`, or set `observability.enabled: false` |
 | Bedrock calls hang in a private VPC | Bedrock is called in a region the VPC endpoint does not serve | Keep `aws.bedrock.region_name` unset or equal to the VPC's region |
-| OpenSearch authentication fails with `use_iam: false` | No basic-auth credentials | Set `OPENSEARCH_USERNAME` / `OPENSEARCH_PASSWORD` (for example in `.env`) |
+| OpenSearch authentication fails with `use_iam: false` | No basic-auth credentials | Set `UKR__AWS__OPENSEARCH__USERNAME` / `UKR__AWS__OPENSEARCH__PASSWORD` (for example in `.env`) |
 | LightRAG `mix` / `hybrid` returns nothing | No relationship index, or keyword extraction produced no keywords | Check that ingestion built the relationships index; very short queries fall back to the raw query only under `raw_query_fallback_max_len` |

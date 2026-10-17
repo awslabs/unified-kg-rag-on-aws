@@ -245,10 +245,7 @@ CONFIG_KEYING: dict[str, Keyed | Unkeyed] = {
     "processing.max_attempts": Unkeyed(_THROUGHPUT),
     "processing.io_workers": Unkeyed(_THROUGHPUT),
     # --- the corpus-wide stages --------------------------------------------
-    "graph.analysis": Unkeyed(
-        "shapes graph statistics and the visualization's centrality, which "
-        "no later stage reads"
-    ),
+    "graph.analysis": Unkeyed("shapes graph statistics, which no later stage reads"),
     **_keyed_at(
         _P.COMMUNITY_DETECTION,
         "graph.community_detection",

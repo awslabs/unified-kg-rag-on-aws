@@ -27,8 +27,9 @@ from unified_kg_rag.adapters.aws.s3_transfer import (
     upload_directory_to_s3,
 )
 from unified_kg_rag.application.cli.config_args import (
-    config_path_arg,
+    add_config_arguments,
     exit_on_config_error,
+    load_cli_config,
 )
 from unified_kg_rag.application.cli.conventions import (
     EXIT_FAILURE,
@@ -67,7 +68,6 @@ from unified_kg_rag.shared import (
     AWSServiceError,
     ConfigurationError,
     EvaluationException,
-    get_config,
     get_logger,
     setup_logging,
 )
@@ -200,11 +200,7 @@ class CommandLineInterface:
             action="store_true",
             help="Enable detailed logging output for debugging.",
         )
-        parser.add_argument(
-            "--config-path",
-            type=config_path_arg,
-            help="Path to custom configuration file",
-        )
+        add_config_arguments(parser, "Path to custom configuration file")
         add_output_format_argument(parser)
         add_provider_arguments(parser)
         return parser
@@ -601,7 +597,7 @@ def main() -> None:
 
         with exit_on_config_error():
             config = apply_provider_arguments(
-                get_config(Path(args.config_path) if args.config_path else None),
+                load_cli_config(args),
                 args,
             )
         setup_logging(config, stream=sys.stderr if json_output(args) else None)

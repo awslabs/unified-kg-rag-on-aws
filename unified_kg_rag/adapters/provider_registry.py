@@ -18,7 +18,7 @@ bundle itself, so it can reuse the shared session or another role (the vector
 indexer takes ``providers.embedding_factory``).
 
 A store kind that connects to a server declares its endpoint setting
-(``endpoint=("aws.neptune.endpoint", "NEPTUNE_ENDPOINT")``: the config key and
+(``endpoint=("aws.neptune.endpoint", "UKR__AWS__NEPTUNE__ENDPOINT")``: the config key and
 its environment variable), so the CLIs can reject a missing one at start-up
 (``application.cli.preflight``); an embedded kind declares none.
 """

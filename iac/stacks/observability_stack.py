@@ -5,7 +5,7 @@
 The application emits Embedded Metric Format (EMF) records under the
 ``unified_kg_rag/ingestion`` namespace when run with ``--metrics-sink cloudwatch``
 (see unified_kg_rag/shared/metrics.py), each stage's as the stage finishes. The
-task gets ``GRAPHRAG_METRICS_ENVIRONMENT=<env_name>``, so the series carry an
+task gets ``UKR_METRICS_ENVIRONMENT=<env_name>``, so the series carry an
 ``Environment`` dimension and the alarms and widgets here query only this
 deployment's runs: a dev run in the same account and region does not trip prod's
 alarms. This stack surfaces those plus Step Functions execution health, Bedrock

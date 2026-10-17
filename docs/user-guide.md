@@ -165,8 +165,8 @@ Two independent auth concerns:
 
    ```bash
    # .env — only needed when aws.opensearch.use_iam is false
-   OPENSEARCH_USERNAME=your_opensearch_username
-   OPENSEARCH_PASSWORD=your_opensearch_password
+   UKR__AWS__OPENSEARCH__USERNAME=your_opensearch_username
+   UKR__AWS__OPENSEARCH__PASSWORD=your_opensearch_password
    ```
 
    The `.env` file is loaded automatically by the CLIs (`run-ingestion`,
@@ -448,24 +448,29 @@ Values are resolved in layers, each overriding the one before:
    than merging into it.
 4. **Environment variables** (§2.10): on top of the file.
 5. **Provider flags** (`--backend`, `--llm-provider`, `--rerank-provider` ...):
-   applied last, on top of all of the above. They keep every value the file
-   and the environment set; switching `--backend` away from the file's drops
-   only the values equal to the old preset's.
+   applied last, on top of all of the above. The config is rebuilt from what
+   the file and the environment set (and, from Python, every change made to
+   the `Config` object since): switching `--backend` drops only what the old
+   preset filled in, never a value you set, even one equal to the preset's.
 
 YAML values are validated when the file loads: a wrong type or an unsupported
 value stops the CLI with `Configuration validation error: ...`, naming each
 invalid key. That, a file that is not valid YAML, and a missing
 `--config-path` file are usage errors: every CLI prints one error line and
-exits with code 2. An unknown key
-(a typo, or a key removed in a newer release) does not stop the run. It is
-logged at WARNING as `Unknown config key '<path>' is ignored` and dropped, so
-check the log after editing the file or upgrading.
+exits with code 2. So is an unknown key (a typo, or a key removed in a newer
+release), in the file or as a `UKR__` variable: the error names each one,
+because a misspelled key would leave its setting at the default without a
+word (a guardrail identifier under a wrong key leaves queries unscreened).
+`--allow-unknown-keys` (every CLI; `allow_unknown_keys=True` for
+`get_config` / `ConfigLoader`) logs each one at WARNING instead and goes on.
+A key that moved (the model settings, now under `models`, and
+`graph.analysis.centrality`, now `graph.visualization.centrality`) fails
+with the key that replaces it.
 
 Keys renamed before the first release (`search.llm_retry`,
 `aws.bedrock.effort`, `processing.max_retries`, `indexing.neptune.max_retries`,
 `evaluation.ragas_max_retries`, `providers.llm.max_retries`,
-`providers.embedding.max_retries`) are not read; each is reported as an unknown
-key. Use `aws.bedrock.transient_retry`, `aws.bedrock.default_effort`,
+`providers.embedding.max_retries`) are not read; each is an unknown key. Use `aws.bedrock.transient_retry`, `aws.bedrock.default_effort`,
 `processing.max_attempts`, `indexing.neptune.max_attempts`,
 `evaluation.ragas_max_attempts`, `providers.llm.max_attempts` and
 `providers.embedding.max_attempts` (a former `max_retries: N` is
@@ -481,7 +486,7 @@ the same values.
 
 | Key | Default | What it does / when to change |
 |---|---|---|
-| `aws.region_name` | `"us-west-2"` | Region of Neptune, OpenSearch, S3, and DynamoDB, and of Bedrock unless `aws.bedrock.region_name` is set. `AWS_REGION` overrides it (see §2.10). The default offers every default model, including both rerank models, which some regions (e.g. `ap-northeast-2`) do not. |
+| `aws.region_name` | `"us-west-2"` | Region of Neptune, OpenSearch, S3, and DynamoDB, and of Bedrock unless `aws.bedrock.region_name` is set. `AWS_REGION` fills it only when the file leaves it unset (see §2.10). The default offers every default model, including both rerank models, which some regions (e.g. `ap-northeast-2`) do not. |
 | `aws.profile_name` | `null` | Named AWS profile; `null` uses the default credential chain. |
 | `aws.bedrock.region_name` | `null` | Region for Bedrock model, embedding, and rerank calls, and where the guardrail must exist. `null` uses `aws.region_name`. Set it only when your models are enabled in another region; in a private VPC whose only Bedrock route is a VPC endpoint, leave it `null` or set the VPC's region. |
 | `aws.bedrock.enable_global_profile` | `true` | Resolve cross-region (global) inference profiles. Keep it on: Claude 4.7+ and GPT models are invocable only through a profile. |
@@ -502,7 +507,7 @@ the same values.
 | `aws.neptune.use_ssl` | `true` | Connect over `wss://`. Neptune requires it; set `false` (with `use_iam: false`) only for a local Gremlin Server (§1 Local mode). |
 | `aws.neptune.pool_size` | `4` | Gremlin connection pool size. The client raises it to `indexing.neptune.index_concurrency` when that is larger. |
 | `aws.opensearch.endpoint` | `null` | **Required.** OpenSearch domain endpoint. |
-| `aws.opensearch.use_iam` | `false` | `false` reads `OPENSEARCH_USERNAME` / `OPENSEARCH_PASSWORD` from the environment (§1 Authentication). |
+| `aws.opensearch.use_iam` | `false` | `false` reads `UKR__AWS__OPENSEARCH__USERNAME` / `UKR__AWS__OPENSEARCH__PASSWORD` from the environment (§1 Authentication). |
 | `aws.opensearch.allow_anonymous` | `false` | Connect with no auth, for a local OpenSearch with the security plugin disabled (§1 Local mode). Cannot be combined with `use_iam` or username/password. |
 | `aws.opensearch.sigv4_service_name` | `"es"` | `es` for a managed domain, `aoss` for OpenSearch Serverless. A wrong value often shows up as zero search hits. |
 | `aws.s3.bucket_name` | `null` | Bucket for cache sync and embedding-cache persistence. |
@@ -639,10 +644,10 @@ LLM stages are Bedrock-I/O-bound, so concurrency can far exceed the CPU count.
 | `processing.resolution_method` | `"minhash"` | Entity resolution: `minhash` or `sequence_matcher`. |
 | `processing.fuzzy_entity_resolution` | `false` | Also merge entities whose names are only similar, in full builds and incremental merges. Off: names merge when equal after normalization, legal-form removal and dense-script spacing. |
 | `processing.similarity_threshold` | `0.85` | Threshold for fuzzy entity resolution and for matching claim subjects/objects to entity names. Raise it if distinct entities merge. |
-| `processing.document_parsing.source_directory` | `"source"` | Fallback for library callers. `run-ingestion` requires `--source-directory` (or `GRAPHRAG_SOURCE_DIRECTORY`). |
+| `processing.document_parsing.source_directory` | `"source"` | Fallback for library callers. `run-ingestion` requires `--source-directory` (or `UKR_SOURCE_DIRECTORY`). |
 | `processing.document_parsing.target_directory` | `null` | Export each parsed document as `<stem>.json` for inspection (same as `--output-directory`). Must not be the source directory. |
 | `processing.document_parsing.index_value` | `null` | Index suffix the run writes: every OpenSearch index and Neptune label is named `<prefix>-<index_value>` (`null` = `default`). Query the corpus with the same value as `run-rag`/`run-eval --suffix`. `run-ingestion` has no flag for it; use one config file per tenant or version. |
-| `processing.document_parsing.source_scope` | `null` | Corpus identity for incremental deletion: a run only deletes registry documents of its own index suffix and source scope. `null` = the resolved source directory; the container entrypoint sets it to the S3 URI (`GRAPHRAG_SOURCE_SCOPE`). See §5. |
+| `processing.document_parsing.source_scope` | `null` | Corpus identity for incremental deletion: a run only deletes registry documents of its own index suffix and source scope. `null` = the resolved source directory; the container entrypoint sets it to the S3 URI (`UKR__PROCESSING__DOCUMENT_PARSING__SOURCE_SCOPE`). See §5. |
 | `processing.chunking.chunker_type` | `"intelligent"` | `intelligent` lets an LLM pick semantic boundaries; `simple` splits by size. |
 | `processing.chunking.min_chunk_size` | `1000` | Minimum chunk size in characters; shorter pieces merge into a neighbour. |
 | `processing.chunking.max_chunk_size` | `8000` | Maximum chunk size in characters. Must fit the embedding and rerank input limits. Sizes count characters, not tokens: English averages ~4 characters per token, but a Han/Hangul/Kana character is ~1 token, so 8,000 CJK characters is ~8K tokens. That fits Titan Text Embeddings V2 (8,192) but not the 4,096-token Cohere Rerank 3.5 document limit; for CJK corpora with reranking use about half the sizes. |
@@ -675,7 +680,7 @@ LLM stages are Bedrock-I/O-bound, so concurrency can far exceed the CPU count.
 | `graph.community_detection.min_community_size` | `3` | Smaller level-0 communities (in entities) merge into the neighbour they share the most edge weight with, unless that would exceed `max_cluster_size`. |
 | `graph.community_detection.report_generation.max_report_context_tokens` | `4000` | Token budget for the entity/relationship context in one report prompt. |
 | `graph.community_detection.report_generation.content_length` | `"medium"` | Report length as findings per report: `short` (5-7), `medium` (7-10), `long` (10-15). |
-| `graph.analysis.centrality.calculate_betweenness` | `true` | Betweenness centrality in the visualization (ingestion computes no centrality). On graphs larger than `betweenness_auto_sample_threshold` (`2000`) nodes it is sampled instead of computed exactly. |
+| `graph.visualization.centrality.calculate_betweenness` | `true` | Betweenness centrality in the visualization (ingestion computes no centrality). On graphs larger than `betweenness_auto_sample_threshold` (`2000`) nodes it is sampled instead of computed exactly. |
 | `graph.visualization.enabled` | `false` | Render visualizations during ingestion and export their data with the layout (one embedding call per node plus a layout reduction per ingest). |
 | `graph.visualization.export_data` | `true` | With `enabled: false`, still write `visualization_data.json` (graph and communities, no layout or centrality; one pass over the graph, no model call) so `run-visualization` can render on demand. |
 | `graph.visualization.outputs_directory` | `null` | Unset writes to `<cache dir>/<pipeline_id>/visualization`, so the data syncs to S3 with the cache. |
@@ -779,7 +784,7 @@ counts, ids and a short hash for user and corpus text, for example
 across records without revealing it. Query text, rewritten (DRIFT and
 translated) queries, entity names and raw model output are logged only at
 `DEBUG`, and exception messages never carry model output. Treat `DEBUG` logs
-(`logging.level: DEBUG`, `LOG_LEVEL=DEBUG` or `--verbose`) as containing user
+(`logging.level: DEBUG`, `UKR__LOGGING__LEVEL=DEBUG` or `--verbose`) as containing user
 and corpus data: do not enable them where logs are shipped to shared storage.
 Libraries set to `DEBUG` in `logging.library_levels` (for example `botocore`)
 can log request bodies too.
@@ -811,44 +816,53 @@ and a literal brace is written `{{` / `}}` (§9.B).
 
 ### 2.10 Environment variable overrides
 
-These variables override the config file (and the built-in defaults) when set.
-Values are converted to the field's type (`true`/`1`/`yes`/`on` count as true
-for booleans) and checked against the field's constraints, as the same value in
-the file would be (`LOG_LEVEL` in any case). An invalid value is a usage error:
-the CLI prints one line naming the variable and exits 2.
+Any config key can be set from the environment as `UKR__` followed by its
+path, with double underscores between the segments, in any case:
+`UKR__AWS__NEPTUNE__ENDPOINT` sets `aws.neptune.endpoint`,
+`UKR__SEARCH__RERANKING__TOP_K` sets `search.reranking.top_k`, and a segment
+past a free-form mapping names one of its keys
+(`UKR__INDEXING__OPENSEARCH__LANGUAGE_ANALYZERS__KO`). A variable wins over
+the config file and the built-in defaults. Values are converted to the field's
+type (`true`/`1`/`yes`/`on` count as true for booleans; a list or mapping
+setting takes JSON, e.g. `UKR__SEARCH__AUTO_ROUTABLE_STRATEGIES='["local", "mix"]'`)
+and checked against the field's constraints, as the same value in the file
+would be (`UKR__LOGGING__LEVEL` in any case). An invalid value, or a `UKR__`
+variable that names no config key, is a usage error: the CLI prints one line
+naming the variable and exits 2 (`--allow-unknown-keys` turns the unknown
+name into a WARNING).
 
-| Variable | Overrides | Notes |
+The AWS SDK's own `AWS_PROFILE` and `AWS_REGION` fill `aws.profile_name` and
+`aws.region_name` only when the config file leaves them unset: as in the SDKs,
+an explicit setting wins over the environment, so a shell that exports
+`AWS_REGION` (SSO helpers and CloudShell do) no longer moves a file's region.
+`AWS_DEFAULT_REGION` is not read; `UKR__AWS__REGION_NAME` overrides the file
+like any other `UKR__` variable.
+
+The variables a deployment usually sets:
+
+| Variable | Sets | Notes |
 |---|---|---|
-| `AWS_PROFILE` | `aws.profile_name` | |
-| `AWS_REGION` | `aws.region_name` | Also moves Bedrock calls when `aws.bedrock.region_name` is `null`. `AWS_DEFAULT_REGION` is not read. |
-| `BEDROCK_REGION` | `aws.bedrock.region_name` | |
-| `BEDROCK_GUARDRAIL_IDENTIFIER` | `aws.bedrock.guardrail.identifier` | |
-| `BEDROCK_GUARDRAIL_VERSION` | `aws.bedrock.guardrail.version` | |
-| `NEPTUNE_ENDPOINT` | `aws.neptune.endpoint` | |
-| `OPENSEARCH_ENDPOINT` | `aws.opensearch.endpoint` | |
-| `OPENSEARCH_USERNAME` | `aws.opensearch.username` | Basic auth when `aws.opensearch.use_iam: false`. |
-| `OPENSEARCH_PASSWORD` | `aws.opensearch.password` | Kept masked in logs. |
-| `OPENSEARCH_NUMBER_OF_REPLICAS` | `indexing.opensearch.index_settings.number_of_replicas` | Applies to indices created afterwards. |
-| `OPENSEARCH_KOREAN_ANALYZER` | `indexing.opensearch.language_analyzers.ko` | Applies to indices created afterwards. |
-| `S3_BUCKET_NAME` | `aws.s3.bucket_name` | |
-| `GRAPHRAG_DOC_STATUS_TABLE` | `aws.dynamodb.table_name` | |
-| `GRAPHRAG_DOC_STATUS_CREATE_TABLE` | `aws.dynamodb.create_table_if_missing` | |
-| `GRAPHRAG_OBSERVABILITY_ENABLED` | `observability.enabled` | |
-| `GRAPHRAG_OBSERVABILITY_BACKEND` | `observability.backend` | `none`, `otlp`, `langfuse` or `phoenix`. |
-| `LOG_LEVEL` | `logging.level` | |
-| `LOG_FORMAT` | `logging.log_format` | |
-| `LOG_TO_FILE` | `logging.log_to_file` | |
-| `LOG_FILE_PATH` | `logging.log_file_path` | |
+| `AWS_PROFILE` / `AWS_REGION` | `aws.profile_name` / `aws.region_name` | Only when the file leaves them unset. `AWS_REGION` also moves Bedrock calls while `aws.bedrock.region_name` is `null`. |
+| `UKR__AWS__BEDROCK__REGION_NAME` | `aws.bedrock.region_name` | |
+| `UKR__AWS__BEDROCK__GUARDRAIL__IDENTIFIER` / `__VERSION` | `aws.bedrock.guardrail.identifier` / `version` | |
+| `UKR__AWS__NEPTUNE__ENDPOINT` | `aws.neptune.endpoint` | |
+| `UKR__AWS__OPENSEARCH__ENDPOINT` | `aws.opensearch.endpoint` | |
+| `UKR__AWS__OPENSEARCH__USERNAME` / `__PASSWORD` | `aws.opensearch.username` / `password` | Basic auth when `aws.opensearch.use_iam: false`; the password stays masked in logs. |
+| `UKR__INDEXING__OPENSEARCH__INDEX_SETTINGS__NUMBER_OF_REPLICAS` | `indexing.opensearch.index_settings.number_of_replicas` | Applies to indices created afterwards. |
+| `UKR__INDEXING__OPENSEARCH__LANGUAGE_ANALYZERS__KO` | `indexing.opensearch.language_analyzers.ko` | Applies to indices created afterwards. |
+| `UKR__AWS__S3__BUCKET_NAME` | `aws.s3.bucket_name` | |
+| `UKR__AWS__DYNAMODB__TABLE_NAME` / `__CREATE_TABLE_IF_MISSING` | `aws.dynamodb.table_name` / `create_table_if_missing` | |
+| `UKR__PROCESSING__DOCUMENT_PARSING__SOURCE_SCOPE` | `processing.document_parsing.source_scope` | Set by the container entrypoint to the S3 URI it synced. |
+| `UKR__OBSERVABILITY__ENABLED` / `__BACKEND` | `observability.enabled` / `backend` | |
+| `UKR__LOGGING__LEVEL` / `__LOG_FORMAT` | `logging.level` / `log_format` | |
 
-`run-ingestion` also reads `GRAPHRAG_SOURCE_DIRECTORY` and `GRAPHRAG_PIPELINE_ID`
-as the defaults of `--source-directory` and `--pipeline-id`; an explicit flag
-wins.
+`run-ingestion` also reads `UKR_SOURCE_DIRECTORY` and `UKR_PIPELINE_ID` (one
+underscore: they are not config keys) as the defaults of `--source-directory`
+and `--pipeline-id`; an explicit flag wins. `UKR_METRICS_ENVIRONMENT` is the
+`Environment` dimension of `--metrics-sink cloudwatch`.
 
-> **A stray `AWS_REGION` wins over your file.** SSO credential helpers, CloudShell, and
-> shell profiles often export `AWS_REGION`, which silently replaces
-> `aws.region_name`, and the run then looks for Neptune and OpenSearch (and,
-> with `aws.bedrock.region_name` unset, Bedrock) in the wrong region. Run `env | grep -E '^(AWS_REGION|BEDROCK_REGION)='` before a run,
-> and unset or correct what you find.
+The variable names before this release (`NEPTUNE_ENDPOINT`, `LOG_LEVEL`,
+`GRAPHRAG_SOURCE_SCOPE`, ...) are no longer read.
 
 > **LangSmith tracing uploads content.** When `LANGSMITH_TRACING=true` (or the
 > older `LANGCHAIN_TRACING_V2=true`) is set, LangChain sends every traced run to
@@ -865,16 +879,16 @@ set in the environment wins over `.env`. Importing the package loads no `.env`
 and never changes `os.environ`; a Python caller that wants one loads it itself
 (for example `dotenv.load_dotenv()` before `get_config()`).
 
-The CDK compute stack injects `AWS_REGION`, `BEDROCK_REGION`,
-`NEPTUNE_ENDPOINT`, `OPENSEARCH_ENDPOINT`, `OPENSEARCH_NUMBER_OF_REPLICAS`
-(1 on a multi-node domain), `OPENSEARCH_KOREAN_ANALYZER` (`cjk` unless
-`opensearch_korean_analyzer` is set), `S3_BUCKET_NAME`,
-`GRAPHRAG_DOC_STATUS_TABLE`, `GRAPHRAG_DOC_STATUS_CREATE_TABLE=false` (the
-table is IaC-managed and the task role cannot create tables), `LOG_FORMAT`, and,
-when a guardrail is deployed, `BEDROCK_GUARDRAIL_IDENTIFIER` (and
-`BEDROCK_GUARDRAIL_VERSION` when `guardrail_version` is set). With
-`enable_cloudwatch_tracing` it also injects `GRAPHRAG_OBSERVABILITY_ENABLED=true`,
-`GRAPHRAG_OBSERVABILITY_BACKEND=otlp`, `OTEL_EXPORTER_OTLP_ENDPOINT` (the
+The CDK compute stack injects `AWS_REGION`, `UKR__AWS__BEDROCK__REGION_NAME`,
+`UKR__AWS__NEPTUNE__ENDPOINT`, `UKR__AWS__OPENSEARCH__ENDPOINT`, `UKR__INDEXING__OPENSEARCH__INDEX_SETTINGS__NUMBER_OF_REPLICAS`
+(1 on a multi-node domain), `UKR__INDEXING__OPENSEARCH__LANGUAGE_ANALYZERS__KO` (`cjk` unless
+`opensearch_korean_analyzer` is set), `UKR__AWS__S3__BUCKET_NAME`,
+`UKR__AWS__DYNAMODB__TABLE_NAME`, `UKR__AWS__DYNAMODB__CREATE_TABLE_IF_MISSING=false` (the
+table is IaC-managed and the task role cannot create tables), `UKR__LOGGING__LOG_FORMAT`, and,
+when a guardrail is deployed, `UKR__AWS__BEDROCK__GUARDRAIL__IDENTIFIER` (and
+`UKR__AWS__BEDROCK__GUARDRAIL__VERSION` when `guardrail_version` is set). With
+`enable_cloudwatch_tracing` it also injects `UKR__OBSERVABILITY__ENABLED=true`,
+`UKR__OBSERVABILITY__BACKEND=otlp`, `OTEL_EXPORTER_OTLP_ENDPOINT` (the
 collector sidecar) and `OTEL_RESOURCE_ATTRIBUTES`. Incremental
 indexing still needs `aws.dynamodb.enabled: true` in the config file.
 
@@ -1008,23 +1022,24 @@ OpenSearch + Neptune.
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--source-directory` | `$GRAPHRAG_SOURCE_DIRECTORY` | Directory of source documents. Required to run; if the flag is omitted it falls back to the `GRAPHRAG_SOURCE_DIRECTORY` environment variable. |
+| `--source-directory` | `$UKR_SOURCE_DIRECTORY` | Directory of source documents. Required to run; if the flag is omitted it falls back to the `UKR_SOURCE_DIRECTORY` environment variable. |
 | `--output-directory` | none (no export) | Export parsed documents as JSON here for inspection (must not be the source directory) |
 | `--cache-directory` | `cache` | Pipeline cache + intermediate results |
 | `--force-rebuild` | off | Recompute every stage, ignoring the cached stage outputs; the cache is rewritten with the new outputs |
 | `--s3-sync` | off | Sync cache to S3 (requires `--s3-bucket-name`) |
 | `--s3-bucket-name` | — | S3 bucket for cache sync |
 | `--s3-prefix` | `pipeline-runs` | S3 key prefix for cache files |
-| `--pipeline-id` | `$GRAPHRAG_PIPELINE_ID` | Existing run to resume/inspect. If the flag is omitted it falls back to the `GRAPHRAG_PIPELINE_ID` environment variable. The id names the run's cache directory and S3 prefix, so it accepts letters, digits, `.`, `_` and `-` only: up to 128 characters, starting with a letter or digit, with no `..`. |
+| `--pipeline-id` | `$UKR_PIPELINE_ID` | Existing run to resume/inspect. If the flag is omitted it falls back to the `UKR_PIPELINE_ID` environment variable. The id names the run's cache directory and S3 prefix, so it accepts letters, digits, `.`, `_` and `-` only: up to 128 characters, starting with a letter or digit, with no `..`. |
 | `--resume-from-stage` | — | Stage to resume from, by name, case-insensitive (requires `--pipeline-id`); an unknown name is a usage error (exit 2) |
 | `--verify-metadata` | off | Verify pipeline metadata integrity (needs `--pipeline-id`); exits non-zero when it is corrupt or the run is not found |
 | `--yes`, `-y` | off | Answer yes to confirmation prompts (continuing after a failed integrity check). Without a terminal on stdin a prompt cannot be asked, so the run fails unless `--yes` is passed |
 | `--continue-on-error` | off | Keep going when a stage errors. The documents a crashed extraction, resolution or community stage left without artifacts are recorded FAILED, so the next incremental run re-processes them |
 | `--enabled-stages` | all | Comma-separated stage list to run |
-| `--metrics-sink` | `none` | `none`, or `cloudwatch` (emits CloudWatch EMF — Embedded Metric Format — metrics to stdout, with an `Environment` dimension when `GRAPHRAG_METRICS_ENVIRONMENT` is set (the CDK task sets its `env_name`) and none otherwise; `pipeline_id` is recorded as a log property, not a dimension, so runs add no new metric series). Each stage's metrics are emitted when the stage finishes, and only by a run that executed it, so a resumed run does not repeat the counts of the stages it restored |
+| `--metrics-sink` | `none` | `none`, or `cloudwatch` (emits CloudWatch EMF — Embedded Metric Format — metrics to stdout, with an `Environment` dimension when `UKR_METRICS_ENVIRONMENT` is set (the CDK task sets its `env_name`) and none otherwise; `pipeline_id` is recorded as a log property, not a dimension, so runs add no new metric series). Each stage's metrics are emitted when the stage finishes, and only by a run that executed it, so a resumed run does not repeat the counts of the stages it restored |
 | `--retire-source-scope SCOPE` | — | Incremental runs: treat every registry record of the former source scope `SCOPE` (in this run's index suffix) as deleted, removing its exclusive content. Repeatable; added to `indexing.retire_source_scopes`. Fails when `SCOPE` is the run's own scope. See §5 Deletion scope. |
 | `--output-format` | `text` | `text`, or `json` for one JSON result on stdout (see [Exit codes and JSON output](#cli-exit-codes-and-json-output)) |
 | `--config-path` | — | Path to `config.yaml`; a missing file is a usage error (exit 2) |
+| `--allow-unknown-keys` | off | Warn on unknown config keys (and `UKR__` variables) and go on, instead of failing (see [How configuration is loaded](#how-configuration-is-loaded)) |
 | `--backend`, `--llm-provider`, ... | — | Provider selection; see [Provider flags](#provider-flags) |
 
 ### The 12 pipeline stages
@@ -1194,7 +1209,7 @@ analyzer '<name>'`. `nori` comes from the `analysis-nori` plugin, which the
 Amazon OpenSearch Service domain has only once its optional Nori package is
 associated. The [CDK deployment](../iac/README.md) therefore maps `ko` to
 OpenSearch's built-in `cjk` analyzer (overlapping character bigrams, close to
-what the embedded engine does for `nori`), through `OPENSEARCH_KOREAN_ANALYZER`,
+what the embedded engine does for `nori`), through `UKR__INDEXING__OPENSEARCH__LANGUAGE_ANALYZERS__KO`,
 which wins over the image's config file. For morphological Korean analysis on
 the domain, associate the Nori package (console **Packages**, or
 `aws opensearch associate-package`; a blue/green deployment), then deploy with
@@ -1231,6 +1246,7 @@ documents as failed so the next run translates them again (§5).
 | `--output-format` | `text` | `text`, or `json` for one JSON result on stdout (see [Exit codes and JSON output](#cli-exit-codes-and-json-output)) |
 | `--verbose`, `-v` | off | Show query-processing info, sources, metrics |
 | `--config-path` | — | Path to `config.yaml` |
+| `--allow-unknown-keys` | off | Warn on unknown config keys (and `UKR__` variables) and go on, instead of failing (see [How configuration is loaded](#how-configuration-is-loaded)) |
 | `--backend`, `--llm-provider`, ... | — | Provider selection; see [Provider flags](#provider-flags) |
 
 ### Search strategies — when to use which
@@ -1683,6 +1699,7 @@ chunks counts as a failed removal (its registry row is kept for a retry).
 | `--verbose`, `-v` | off | Debug logging |
 | `--output-format` | `text` | `text`, or `json` for one JSON result on stdout (see [Exit codes and JSON output](#cli-exit-codes-and-json-output)) |
 | `--config-path` | — | Path to `config.yaml` |
+| `--allow-unknown-keys` | off | Warn on unknown config keys (and `UKR__` variables) and go on, instead of failing (see [How configuration is loaded](#how-configuration-is-loaded)) |
 | `--backend`, `--llm-provider`, ... | — | Provider selection; see [Provider flags](#provider-flags) |
 
 ### Evaluators
@@ -2083,6 +2100,7 @@ Layout and error behaviour:
 | `--renderers` | all registered | Renderers to run: `interactive`, `static` |
 | `--output-format` | `text` | `text`, or `json` for one JSON result on stdout (see [Exit codes and JSON output](#cli-exit-codes-and-json-output)) |
 | `--config-path` | — | Path to `config.yaml` |
+| `--allow-unknown-keys` | off | Warn on unknown config keys (and `UKR__` variables) and go on, instead of failing (see [How configuration is loaded](#how-configuration-is-loaded)) |
 | `--backend`, `--llm-provider`, ... | — | Accepted like on the other CLIs (no model or store is called); see [Provider flags](#provider-flags) |
 
 The two registered renderers are **`interactive`** (pyvis) and **`static`**
@@ -2115,6 +2133,7 @@ persona / entity types) with the configured language model
 | `--max-docs` | `20` | Max documents to sample |
 | `--output-format` | `text` | `text`, or `json` for one JSON result on stdout (see [Exit codes and JSON output](#cli-exit-codes-and-json-output)) |
 | `--config-path` | — | Path to `config.yaml` |
+| `--allow-unknown-keys` | off | Warn on unknown config keys (and `UKR__` variables) and go on, instead of failing (see [How configuration is loaded](#how-configuration-is-loaded)) |
 | `--backend`, `--llm-provider`, ... | — | Provider selection; see [Provider flags](#provider-flags) |
 
 ```bash

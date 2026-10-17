@@ -290,5 +290,5 @@ class TestBuiltinAdaptersReportOnlyWrittenFiles:
             "static",
         ]
         monkeypatch.setattr(sys, "argv", argv)
-        monkeypatch.setattr(cli_module, "get_config", lambda _path=None: Config())
+        monkeypatch.setattr(cli_module, "load_cli_config", lambda _args: Config())
         assert cli_module.main() == 1

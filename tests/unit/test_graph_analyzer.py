@@ -100,7 +100,7 @@ class TestCentrality:
 
     def test_enabling_closeness_populates_it(self) -> None:
         config = Config()
-        config.graph.analysis.centrality.calculate_closeness = True
+        config.graph.visualization.centrality.calculate_closeness = True
         analyzer = GraphAnalyzer(config, graph=_triangle_graph())
         metrics = analyzer.calculate_centrality()
         assert metrics["a"].closeness == pytest.approx(1.0)

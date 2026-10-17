@@ -2,13 +2,13 @@
 #
 # Intentionally endpoint-free: the CDK compute stack injects every
 # deployment-specific value as an environment variable, and ConfigLoader
-# applies those on top of this file (AWS_REGION, BEDROCK_REGION,
-# NEPTUNE_ENDPOINT, OPENSEARCH_ENDPOINT, OPENSEARCH_NUMBER_OF_REPLICAS (1 on a
-# multi-node domain), S3_BUCKET_NAME, GRAPHRAG_DOC_STATUS_TABLE,
-# GRAPHRAG_DOC_STATUS_CREATE_TABLE, LOG_FORMAT and, when a guardrail is
-# deployed, BEDROCK_GUARDRAIL_IDENTIFIER / BEDROCK_GUARDRAIL_VERSION). The source
-# directory and pipeline id arrive per run via GRAPHRAG_SOURCE_DIRECTORY /
-# GRAPHRAG_PIPELINE_ID.
+# applies those on top of this file (AWS_REGION, UKR__AWS__BEDROCK__REGION_NAME,
+# UKR__AWS__NEPTUNE__ENDPOINT, UKR__AWS__OPENSEARCH__ENDPOINT, UKR__INDEXING__OPENSEARCH__INDEX_SETTINGS__NUMBER_OF_REPLICAS (1 on a
+# multi-node domain), UKR__AWS__S3__BUCKET_NAME, UKR__AWS__DYNAMODB__TABLE_NAME,
+# UKR__AWS__DYNAMODB__CREATE_TABLE_IF_MISSING, UKR__LOGGING__LOG_FORMAT and, when a guardrail is
+# deployed, UKR__AWS__BEDROCK__GUARDRAIL__IDENTIFIER / UKR__AWS__BEDROCK__GUARDRAIL__VERSION). The source
+# directory and pipeline id arrive per run via UKR_SOURCE_DIRECTORY /
+# UKR_PIPELINE_ID.
 #
 # Every key not listed here uses the default documented in
 # config-template.yaml. Only settings where the deployed stack differs from
@@ -21,7 +21,7 @@ aws:
     use_iam: true
   dynamodb:
     # The stack provisions the doc-status table (KMS, PITR, alarms) for
-    # incremental indexing; its name is injected via GRAPHRAG_DOC_STATUS_TABLE.
+    # incremental indexing; its name is injected via UKR__AWS__DYNAMODB__TABLE_NAME.
     enabled: true
 
 graph:

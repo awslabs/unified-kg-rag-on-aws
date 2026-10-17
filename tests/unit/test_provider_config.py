@@ -201,16 +201,16 @@ def test_a_removed_model_key_names_its_replacement(
 
 
 def test_every_removed_model_key_is_refused() -> None:
-    from unified_kg_rag.domain.models.config import REMOVED_MODEL_KEYS
+    from unified_kg_rag.domain.models.config import MOVED_KEYS
 
-    for old in REMOVED_MODEL_KEYS:
+    for old in MOVED_KEYS:
         data: dict = {}
         node = data
         *parents, leaf = old.split(".")
         for part in parents:
             node = node.setdefault(part, {})
         node[leaf] = "x"
-        with pytest.raises(ValidationError, match="models section"):
+        with pytest.raises(ValidationError, match="settings moved"):
             Config(**data)
 
 
