@@ -1,4 +1,7 @@
-# GraphRAG Framework Configuration
+# Unified Knowledge Graph RAG on AWS: configuration starting file.
+# Copy it to config.yaml and keep only the keys you change. Every key, its
+# type, default and description: docs/configuration.md (generated from the
+# code). How the configuration is loaded: docs/user-guide.md section 2.
 
 # AWS Configuration
 aws:

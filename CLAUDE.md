@@ -67,12 +67,15 @@ See `docs/design.md` §2 for the full layer map and dependency rule.
 Recipes for new strategies, backends, evaluators, renderers, parsers and
 config sections live in one place: `docs/design.md` §15 "Extension Guide"
 (read it before extending; update it, not this file, when a recipe changes).
-The two rules to keep in mind:
+The rules to keep in mind:
 - Extend through the registries and the one evaluator type map, never new
   `if/elif` dispatch.
 - Inject backends through constructors (`Providers`, `vector_indexer=`/
   `graph_indexer=`, `retriever_builders=`, `doc_status=`); never hardcode a
   backend into a manager's `__init__`.
+- A config field change means a user-facing `Field(description=...)` and
+  `uv run python scripts/gen_config_reference.py` (regenerates
+  `docs/configuration.md`; `tests/unit/test_config_reference.py` checks it).
 
 ## Capabilities & CLIs
 

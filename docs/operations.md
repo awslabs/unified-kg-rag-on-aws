@@ -5,7 +5,7 @@
 Tasks an operator runs against an existing deployment: re-ingesting, running
 incremental updates, handling failed documents, managing the caches, and
 reading the errors the CLIs report. Configuration keys are described in the
-[User Guide §2](./user-guide.md#2-configuration); the deployed stack and its
+[Configuration Reference](./configuration.md) (how they load: [User Guide §2](./user-guide.md#2-configuration)); the deployed stack and its
 commands are in [`iac/README.md`](../iac/README.md#after-deploy).
 
 ## Before a run

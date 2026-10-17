@@ -30,7 +30,7 @@ unified-kg-rag-on-aws는 대규모 다국어 문서 코퍼스로 지식 그래�
 ## 목차
 
 1. [사전 요구사항과 설치](#1-사전-요구사항과-설치)([필수 모델](#필수-모델) 포함)
-2. [설정](#2-설정)
+2. [설정](#2-설정)(모든 키: [설정 레퍼런스](./configuration.md))
 3. [수집 (`run-ingestion`)](#3-수집-run-ingestion)
 4. [질의 (`run-rag`)](#4-질의-run-rag)
 5. [증분 인덱싱](#5-증분-인덱싱)
@@ -42,7 +42,7 @@ unified-kg-rag-on-aws는 대규모 다국어 문서 코퍼스로 지식 그래�
 11. [Python 라이브러리로 사용하기](#11-python-라이브러리로-사용하기)
 12. [제한 사항](#12-제한-사항)
 
-관련 문서: [모델 카탈로그](./models.ko.md) · [운영 런북](./operations.ko.md) ·
+관련 문서: [설정 레퍼런스](./configuration.md)(영문) · [모델 카탈로그](./models.ko.md) · [운영 런북](./operations.ko.md) ·
 [설계 문서](./design.ko.md) · [`iac/README.md`](../iac/README.md)
 
 ---
@@ -103,7 +103,7 @@ AWS 모드에만 해당합니다. [로컬 모드](#로컬-모드-aws-없이)에�
   두고 모델은 Bedrock을 씁니다. 아래 [로컬 모드](#로컬-모드-aws-없이)를 참고하세요.
 
 - **기존 서비스 사용.** Neptune과 OpenSearch(쓴다면 S3와 DynamoDB도)가 이미 실행
-  중이라면 엔드포인트를 `config.yaml`(아래 §2.1)에 적고 다음 단계로 넘어가면
+  중이라면 엔드포인트를 `config.yaml`(아래 §2)에 적고 다음 단계로 넘어가면
   됩니다. 설정한 모델 ID의 Bedrock 모델 액세스가 활성화되어 있는지 확인하세요.
 - **번들 CDK 앱으로 전체 프로비저닝.** 저장소의 [`iac/`](../iac/README.md)에는
   스택 전체를 명령 하나로 만드는 선택형 Well-Architected AWS CDK 앱이 있습니다.
@@ -389,9 +389,11 @@ capability를 모두 버리지만 저장소에 인증과 TLS가 없으므로 com
 cp config-template.yaml config.yaml
 ```
 
-**모든 옵션의 기준 문서는 `config-template.yaml`입니다.** 키마다 기본값과 역할
-설명 주석이 있습니다. 이 절에서는 설정을 읽는 방식, 자주 조정하는 항목, 설정 파일을
-덮어쓰는 환경 변수를 다룹니다. 여기에 없는 항목은 템플릿을 참고하세요.
+설정 파일에는 바꿀 키만 적으면 되고, 나머지 키는 내장 기본값을 유지합니다. 모든 키의
+타입, 기본값, 설명은 [설정 레퍼런스](./configuration.md)(영문)에 있습니다. 코드에서
+생성하므로 항상 최신입니다. 이 절에서는 설정을 읽는 방식, 대부분의 실행에서 바꾸는
+설정, 표 한 줄로 설명하기 어려운 주제(모델, 가드레일, 로그, 환경 변수, 추적)를
+다룹니다.
 
 ### 설정을 읽는 순서
 
@@ -403,135 +405,55 @@ cp config-template.yaml config.yaml
    변수가 지정하지 않은 모든 키에 로컬 공급자와 저장소를 채웁니다
    ([로컬 모드](#로컬-모드-aws-없이)).
 3. **YAML 파일**: 지정한 키는 기본값을 대체하고, 지정하지 않은 키는 기본값을
-   유지합니다. 따라서 `config.yaml`에는 바꿀 키만 적어도 됩니다. 값이 딕셔너리인
-   키(예: `logging.library_levels`, `graph.visualization.interactive`)는 기본
-   딕셔너리와 병합되지 않고 통째로 대체됩니다.
-4. **환경 변수**(§2.10): 파일 위에 적용됩니다.
+   유지합니다. 값이 딕셔너리인 키(예: `logging.library_levels`,
+   `graph.visualization.interactive`)는 기본 딕셔너리와 병합되지 않고 통째로
+   대체됩니다.
+4. **환경 변수**([아래](#환경-변수로-덮어쓰기)): 파일 위에 적용됩니다.
 5. **공급자 플래그**(`--backend`, `--llm-provider`, `--rerank-provider` 등): 마지막에
-   적용되어 앞의 모든 단계를 덮어씁니다. 설정은 파일과 환경 변수가 지정한 값(파이썬에서는
-   그 뒤 `Config` 객체에 바꾼 값도)으로 다시 만들어지므로, `--backend`를 바꾸면 이전
-   프리셋이 채운 값만 사라지고 사용자가 지정한 값은 프리셋 값과 같더라도 남습니다.
+   적용됩니다. 설정은 파일과 환경 변수가 지정한 값(파이썬에서는 그 뒤 `Config` 객체에
+   바꾼 값도)으로 다시 만들어지므로, `--backend`를 바꾸면 이전 프리셋이 채운 값만
+   사라지고 사용자가 지정한 값은 프리셋 값과 같더라도 남습니다.
 
-YAML 값은 파일을 읽을 때 검증합니다. 타입이 틀리거나 지원하지 않는 값이면
-잘못된 키를 밝힌 `Configuration validation error: ...`와 함께 CLI가 멈춥니다. 이
-경우와 올바른 YAML이 아닌 파일, 존재하지 않는 `--config-path` 파일은 사용법 오류로
-처리되어 모든 CLI가 오류 한 줄을 출력하고 종료 코드 2로 끝납니다. 파일이나 `UKR__`
-변수에 있는 알 수 없는 키(오타나 새 릴리스에서 제거된 키)도 마찬가지이며, 오류가 키를
-하나하나 밝힙니다. 철자가 틀린 키는 아무 표시 없이 설정을 기본값으로 남기기 때문입니다
-(가드레일 ID를 잘못된 키에 적으면 질의를 검사하지 않습니다). `--allow-unknown-keys`(모든
-CLI, `get_config` / `ConfigLoader`에서는 `allow_unknown_keys=True`)를 주면 키마다
-WARNING만 남기고 계속합니다. 위치가 바뀐 키(이제 `models` 아래에 있는 모델 설정, 이제
-`graph.visualization.centrality`인 `graph.analysis.centrality`)는 대신할 키를 알려
-주며 실패합니다.
-
-첫 릴리스 전에 이름이 바뀐 키(`search.llm_retry`, `aws.bedrock.effort`,
-`processing.max_retries`, `indexing.neptune.max_retries`,
-`evaluation.ragas_max_retries`, `providers.llm.max_retries`,
-`providers.embedding.max_retries`)는 읽지 않으며 알 수 없는 키로 처리됩니다.
-`aws.bedrock.transient_retry`, `aws.bedrock.default_effort`,
-`processing.max_attempts`, `indexing.neptune.max_attempts`,
-`evaluation.ragas_max_attempts`, `providers.llm.max_attempts`,
-`providers.embedding.max_attempts`를 사용하세요(기존 `max_retries: N`은
-`max_attempts: N+1`입니다).
+파일은 읽을 때 검증합니다. 타입이 틀리거나 지원하지 않는 값이면 잘못된 키를 밝힌
+`Configuration validation error: ...`와 함께 CLI가 멈춥니다. 이 경우와 올바른 YAML이
+아닌 파일, 존재하지 않는 `--config-path` 파일, 알 수 없는 키(파일이나 `UKR__` 변수)는
+사용법 오류이며, 모든 CLI가 오류 한 줄을 출력하고 종료 코드 2로 끝납니다. 알 수 없는
+키를 거부하는 이유는 철자가 틀린 키가 아무 표시 없이 설정을 기본값으로 남기기
+때문입니다(가드레일 ID를 잘못된 키에 적으면 질의를 검사하지 않습니다).
+`--allow-unknown-keys`(`get_config` / `ConfigLoader`에서는 `allow_unknown_keys=True`)를
+주면 키마다 WARNING만 남기고 계속합니다. 위치가 바뀐 키는 대신할 키를 알려 주며
+실패합니다([Moved keys](./configuration.md#moved-keys)).
 
 `max_attempts` 키는 모두 첫 시도를 포함한 총 시도 횟수이며, `1`이면 재시도하지
 않습니다.
 
-아래 표의 기본값은 내장 기본값이며, `config-template.yaml`도 같은 값을 씁니다.
+### 대부분의 실행에서 바꾸는 설정
 
-### 2.1 `aws` — 서비스 엔드포인트와 자격 증명
-
-| 키 | 기본값 | 역할과 변경 시점 |
+| 키 | 기본값 | 바꿀 때 |
 |---|---|---|
-| `aws.region_name` | `"us-west-2"` | Neptune, OpenSearch, S3, DynamoDB의 리전이며, `aws.bedrock.region_name`을 지정하지 않으면 Bedrock 리전이기도 합니다. `AWS_REGION`은 파일이 이 값을 지정하지 않았을 때만 채웁니다(§2.10 참고). 기본 리전에는 재순위화 모델 두 개를 포함한 기본 모델이 모두 있지만, 일부 리전(예: `ap-northeast-2`)에는 재순위화 모델이 없습니다. |
-| `aws.profile_name` | `null` | 이름 있는 AWS 프로파일입니다. `null`이면 기본 자격 증명 체인을 씁니다. |
-| `aws.bedrock.region_name` | `null` | Bedrock 모델·임베딩·재순위화 호출을 보내는 리전이며, 가드레일도 이 리전에 있어야 합니다. `null`이면 `aws.region_name`을 씁니다. 모델을 다른 리전에서 활성화한 경우에만 지정하세요. Bedrock으로 가는 경로가 VPC 엔드포인트뿐인 프라이빗 VPC에서는 `null`로 두거나 VPC 리전을 지정하세요. |
-| `aws.bedrock.enable_global_profile` | `true` | 교차 리전(global) 추론 프로파일을 찾아 씁니다. Claude 4.7 이후 모델과 GPT 모델은 프로파일로만 호출할 수 있으므로 켜 두세요. |
-| `aws.bedrock.default_max_output_tokens` | `16384` | 요청마다 보내는 `max_tokens`이며, 모델 최대값을 넘으면 최대값으로 맞춥니다. 답변이 잘리면(`stopReason: max_tokens`) 올리세요. `null`이면 모델 최대값을 보냅니다. |
-| `aws.bedrock.default_effort` | `"high"` | 기본 계층 모델 호출(adaptive thinking을 쓰는 Claude 모델과 GPT 모델)의 추론 강도입니다. `low`, `medium`, `high`, `xhigh`, `max` 중 하나이며, 낮추면 비용과 지연 시간이 줄어듭니다. |
-| `aws.bedrock.ingestion_effort` | `null` | 기본 계층 수집 호출(그래프 추출, gleaning, 주장 추출, 커뮤니티 리포트. 출력 수정기는 `models.roles.fixing`가 기본 계층 모델일 때만)의 추론 강도입니다. `null`이면 `default_effort`를 따릅니다. 질의 시점의 추론 강도는 그대로 두고 수집 비용만 줄이려면 낮추세요(예: `"medium"`). 빠른 계층 수집 호출은 `fast_effort`를 그대로 씁니다. |
-| `aws.bedrock.fast_effort` | `"low"` | 빠른 계층 모델이 기본 계층 모델과 다를 때 빠른 계층 모델 호출의 추론 강도입니다. 기본 제공 Claude Haiku 5.5는 adaptive thinking을 하므로 이 값이 추론 강도를 정합니다. 추론하지 않는 빠른 모델에는 영향이 없습니다. |
-| `aws.bedrock.enable_1m_context` | `false` | 1M 컨텍스트 창이 베타인 모델에서 1M 창을 씁니다(추가 요금). Claude 5는 1M 창이 기본입니다. |
-| `aws.bedrock.model_overrides` | `{}` | 패키지가 모르는 언어 모델의 기능 정보 레코드입니다(모델 선택 참고 사항 참고). 임베딩 모델과 재순위화 모델은 정해진 목록에서만 고릅니다. |
-| `aws.bedrock.guardrail.identifier` | `null` | Bedrock 가드레일 ID 또는 ARN입니다. 지정하면 가드레일이 켜집니다. |
-| `aws.bedrock.guardrail.check_input` | `true` | 검색 전에 사용자 원본 질의를 `ApplyGuardrail`(source `INPUT`)로 검사합니다(아래 가드레일 참고 사항 참고). |
-| `aws.bedrock.guardrail.check_output` | `true` | 최종 답변을 검사합니다(source `OUTPUT`). 스트리밍 답변은 검사가 끝난 뒤 한 청크로 전달합니다. |
-| `aws.bedrock.guardrail.apply_to` | `"query"` | `query`는 질의와 답변만 검사합니다. `all`은 모든 수집·평가 모델 호출에도 가드레일을 붙입니다. |
-| `aws.bedrock.guardrail.trace` | `false` | 감사용으로 전체 평가 결과(감지되지 않은 항목 포함)를 받습니다. |
-| `aws.bedrock.transient_retry.max_attempts` | `5` | botocore가 재시도하지 않는 일시적 Bedrock 오류(HTTP 424 등)에 대한 호출당 시도 횟수입니다. 임베딩과 질의 시점 호출에 적용합니다. `1`이면 재시도하지 않습니다. |
-| `aws.neptune.endpoint` | `null` | **필수.** Neptune 클러스터 엔드포인트입니다. |
-| `aws.neptune.use_iam` | `true` | Neptune 요청에 SigV4 서명을 붙입니다. |
-| `aws.neptune.use_ssl` | `true` | `wss://`로 연결합니다. Neptune에서는 필수이며, 로컬 Gremlin Server에서만 `use_iam: false`와 함께 `false`로 둡니다(§1 로컬 모드). |
-| `aws.neptune.pool_size` | `4` | Gremlin 연결 풀 크기입니다. `indexing.neptune.index_concurrency`가 더 크면 클라이언트가 그 값으로 늘립니다. |
-| `aws.opensearch.endpoint` | `null` | **필수.** OpenSearch 도메인 엔드포인트입니다. |
-| `aws.opensearch.use_iam` | `false` | `false`이면 환경 변수 `UKR__AWS__OPENSEARCH__USERNAME` / `UKR__AWS__OPENSEARCH__PASSWORD`를 읽습니다(§1 인증). |
-| `aws.opensearch.allow_anonymous` | `false` | 인증 없이 연결합니다. 보안 플러그인을 끈 로컬 OpenSearch용입니다(§1 로컬 모드). `use_iam`이나 username/password와 함께 쓸 수 없습니다. |
-| `aws.opensearch.sigv4_service_name` | `"es"` | 관리형 도메인은 `es`, OpenSearch Serverless는 `aoss`입니다. 값이 틀리면 검색 결과가 0건으로 나오는 경우가 많습니다. |
-| `aws.s3.bucket_name` | `null` | 캐시 동기화와 임베딩 캐시 저장에 쓰는 버킷입니다. |
-| `aws.s3.encryption.encryption_type` | `"BUCKET_DEFAULT"` | `BUCKET_DEFAULT`는 버킷 기본 암호화를 따릅니다. `AES256`이나 `aws:kms`(`kms_key_id`와 함께)는 객체별 헤더를 강제합니다. 단계 캐시 동기화와 저장된 임베딩 캐시에 적용합니다. |
-| `aws.dynamodb.enabled` | `false` | 증분 인덱싱용 문서 상태 레지스트리를 켭니다(§5). |
-| `aws.dynamodb.table_name` | `"unified-kg-rag-on-aws-doc-status-v2"` | 문서 상태 테이블 이름입니다. |
-| `aws.dynamodb.create_table_if_missing` | `true` | 처음 사용할 때 테이블을 만듭니다. 테이블을 IaC로 관리한다면 `false`로 두세요. |
+| `aws.region_name` | `"us-west-2"` | 저장소가 다른 리전에 있을 때. `aws.bedrock.region_name`을 지정하지 않으면 Bedrock도 따름 |
+| `aws.neptune.endpoint`, `aws.opensearch.endpoint` | `null` | AWS 저장소를 쓸 때 항상(CDK 스택이 주입함) |
+| `aws.dynamodb.enabled` | `false` | 증분 인덱싱을 쓸 때([§5](#5-증분-인덱싱)) |
+| `models.default`, `models.fast` | Claude Sonnet 5.5, Claude Haiku 5.5 | 다른 모델을 쓸 때([모델 선택 참고 사항](#모델-선택-참고-사항)) |
+| `processing.max_concurrency` | `40` | 로그에 `ThrottlingException` 재시도가 보일 때(낮춤), Bedrock 할당량이 허용할 때(높임) |
+| `processing.graph_extraction.entity_types` | 일반 유형 7개 | 추출을 도메인에 맞출 때([§9](#9-도메인-적응)) |
+| `processing.translation.target_language` | `"en"` | 코퍼스나 답변을 다른 언어로 다룰 때([다국어 수집](#다국어-수집)) |
+| `processing.claim_extraction.enabled` | `false` | `local` 검색에 주장을 넣을 때(텍스트 단위마다 LLM 호출 1회 추가) |
+| `processing.document_parsing.index_value` | `null`(`default`) | 코퍼스나 테넌트를 여럿 분리할 때([인덱스 접미사](#인덱스-접미사)) |
+| `graph.community_detection.enabled` | `true` | LightRAG로만 질의하고 수집을 가볍게 할 때(`global`, `drift`에는 필요) |
+| `search.reranking.enabled` | `true` | Bedrock 리전에 재순위화 모델이 없거나 재순위화를 쓰지 않을 때 |
+| `search.token_manager.max_context_tokens` | `30000` | 답변에 검색 컨텍스트가 더(또는 비용을 줄이려고 덜) 필요할 때([컨텍스트 예산](#컨텍스트-예산)) |
+| `indexing.reset` | `false` | 코퍼스 전체로 저장소를 다시 만들 때(한 번의 실행에만) |
+| `aws.bedrock.guardrail.identifier` | `null` | Bedrock 가드레일로 질의와 답변을 검사할 때([가드레일](#가드레일)) |
+| `observability.enabled` | `false` | OpenTelemetry 트레이스를 남길 때([관측성](#관측성)) |
 
-> **가드레일 적용 범위와 위치.** 가드레일은 `aws.bedrock.region_name`에 있어야
-> 합니다. 질의 체인은 `ApplyGuardrail` API로 두 텍스트를 검사합니다. 하나는 대화
-> 메모리, 후속 질문 재작성, 라우팅, 검색보다 먼저 한 번 검사하는 사용자 원본
-> 질의(`check_input`)이고, 다른 하나는 최종 답변(`check_output`)입니다. 이 두
-> 텍스트만 평가하고 과금합니다. 차단된 질의에는 가드레일의 차단 메시지로 답하고,
-> 검색도 메모리 저장도 하지 않으며 `RAGOutput.metadata.blocked`가 `true`입니다.
-> 마스킹된 질의(PII 익명화)는 마스킹된 텍스트로 계속 처리하므로 검색, 모델, 메모리
-> 어디에도 원문이 가지 않습니다. 답변이 차단되거나 마스킹되면 가드레일이 돌려준
-> 텍스트로 바꿉니다. 모든 개입은 `RAGOutput.metadata.guardrail`(source, action,
-> policies)에 남고, 누적 횟수와 함께 WARNING 로그와 `kg_rag.guardrail` span으로도
-> 기록됩니다. 가드레일 API가 실패하면 질의가 실패합니다(`processing.ignore_errors`면
-> 표준 오류 답변). 검사하지 않은 채로 답하지는 않습니다.
->
-> 질의 안의 모델 호출(재작성, 라우팅, 키워드 추출, global/DRIFT map 단계, 답변
-> 생성)에는 가드레일을 붙이지 않습니다. 모델 호출에 붙인 가드레일은 프롬프트 전체를
-> 평가합니다. Converse API에서는 검색된 코퍼스 텍스트와 개발자 지시문까지 사용자
-> 입력처럼 `PROMPT_ATTACK` 필터가 판정해 잘못 차단하고, 비용도 컨텍스트 크기와 호출
-> 수에 비례해 늘어납니다. InvokeModel API에서는 사용자 입력을 입력 태그로 감싸지
-> 않으면 `PROMPT_ATTACK` 필터가 동작하지 않습니다([Bedrock Guardrails: 프롬프트
-> 공격](https://docs.aws.amazon.com/bedrock/latest/userguide/guardrails-prompt-attack.html)).
-> 컨텍스트 근거(contextual grounding) 검사는 하지 않습니다. 근거 자료와 질의를
-> 한정자(qualifier)가 붙은 콘텐츠로 보내야 하는데 답변 검사는 이를 보내지 않습니다.
->
-> 수집 모델, 프롬프트 튜너, 평가용 판정 모델은 기본적으로 가드레일 없이 실행합니다.
-> `NAME`을 익명화하는 PII 가드레일은 추출된 엔티티 이름을 `{NAME}` 같은 자리
-> 표시자로 바꿔 서로 다른 사람을 한 노드로 합치고, `PROMPT_ATTACK` 필터는 지시문처럼
-> 보이는 코퍼스 텍스트를 차단할 수 있기 때문입니다. `apply_to: "all"`은 이 호출에도
-> 가드레일을 붙이므로 추출에 써도 안전한 정책일 때만 쓰세요. 질의 경로에서도 `NAME`
-> 익명화는 문제가 됩니다. 인물에 관한 질문은 검색에 쓸 이름을 잃고, 답변에는
-> `{NAME}`이 나옵니다. 그래서 `iac/`가 만드는 기본 가드레일은 이메일, 전화번호, 카드
-> 번호만 익명화하고 `NAME`은 익명화하지 않습니다.
->
-> `setup_chain`으로 체인을 만들거나 질의가 아닌 작업에서 `get_model`을 호출하는
-> 사용자 코드는 `model_purpose=ModelPurpose.INGESTION`(또는 `EVALUATION`)을 넘겨야
-> 합니다. 표시하지 않은 호출은 `QUERY`로 간주하므로 질의 시점의 일시적 오류 재시도가
-> 적용되고, 가드레일은 붙지 않습니다.
-
-> **S3 캐시 암호화.** CDK 스택에서 `use_cmk=true`이면 버킷 기본 암호화가 고객 관리형
-> KMS 키이므로 `BUCKET_DEFAULT`도 그 키를 씁니다. `AES256`을 강제하면 버킷의 CMK를
-> 우회하게 됩니다. 기본 암호화가 SSE-KMS인 버킷을 재사용하면 쓰기 주체에 해당 키의
-> `kms:GenerateDataKey`와 `kms:Decrypt` 권한이 필요합니다.
-
-#### 모델 선택 참고 사항
+### 모델 선택 참고 사항
 
 최상위 `models` 섹션이 역할마다 어떤 모델을 쓸지 정합니다. 각 모델 계열의 공급자는
-`providers.llm`, `providers.embedding`, `providers.rerank`의 `kind`이며, 모델 ID는 그
-공급자를 기준으로 검사합니다.
-
-| 키 | 기본값 | 설명 |
-|---|---|---|
-| `models.default` | `null` = Bedrock에서는 `anthropic.claude-sonnet-5-5` | 기본 계층 모델입니다. 다른 LLM 공급자에서는 필수입니다. |
-| `models.fast` | `null` = Bedrock에서는 `anthropic.claude-haiku-5-5` | 빠른 계층 모델입니다. 다른 공급자에서 `null`이면 기본 계층 모델을 씁니다. |
-| `models.roles.<역할>` | `null`(역할의 계층) | 모델 ID, 또는 역할을 다른 계층으로 옮기는 `default` / `fast`입니다. |
-| `models.embedding.model_id` | `null` = Bedrock에서는 `amazon.titan-embed-text-v2:0` | 하나뿐인 임베딩 모델입니다. 인덱스, 질의, RAGAS, 시각화 레이아웃이 모두 이 모델을 씁니다. 다른 공급자에서는 필수이며, 바꾸면 다시 인덱싱해야 합니다. |
-| `models.embedding.dimension` | `null` = Bedrock 모델의 최대 차원 | 인덱스 매핑에 고정됩니다(Titan Embed V2는 256, 512도 지원). 다른 공급자에서는 필수입니다. |
-| `models.rerank` | `null` = Bedrock에서는 `cohere.rerank-v3-5:0` | 재순위화 모델입니다. `cross_encoder`에서는 sentence-transformers 모델 이름이 필수입니다. |
-
-모든 LLM 역할은 두 계층 중 하나에서 실행되므로 파이프라인 전체의 모델을 한 줄로 바꿀
-수 있습니다. `models.roles` 항목은 계층 설정보다 우선합니다.
+`providers.llm.kind`, `providers.embedding.kind`, `providers.rerank.kind`이며, 모델
+ID는 그 공급자를 기준으로 검사합니다. 모든 LLM 역할은 두 계층 중 하나에서 실행되므로
+파이프라인 전체의 모델을 한 줄로 바꿀 수 있고, `models.roles` 항목(모델 ID, 또는 다른
+계층으로 옮기는 `default` / `fast`)은 계층 설정보다 우선합니다.
 
 | 계층 | 역할 |
 | --- | --- |
@@ -546,19 +468,17 @@ models:
     query_rewrite: default                          # moved to the other tier
 ```
 
-모델 설정은 예전에 기능별 섹션에 흩어져 있었습니다(`aws.bedrock.default_model_id`,
-`search.answer_generation_model_id`, `indexing.opensearch.embedding_model_id` 등). 이런
-키가 남아 있는 설정은 대신할 `models` 키를 알려 주며 검증에 실패합니다(전체 표는
-CHANGELOG에 있습니다). 선택하지 않은 공급자의 설정(언어 모델이 Bedrock인데
-`providers.llm.temperature`를 지정했거나, 로컬 모델에서 `aws.bedrock.default_effort`를
-지정한 경우)은 무시되며 로드할 때 WARNING을 남깁니다.
+임베딩 모델(`models.embedding.model_id`)은 인덱스, 질의, RAGAS, 시각화 배치에 함께
+쓰이며, 이 모델이나 `dimension`을 바꾸면 다시 인덱싱해야 합니다. 임베딩 모델 ID와
+재순위화 모델 ID는 정해진 목록에서만 고릅니다(`amazon.titan-embed-text-v2:0`,
+`amazon.titan-embed-text-v1`, `cohere.embed-v4:0`, `cohere.embed-english-v3`,
+`cohere.embed-multilingual-v3`; `cohere.rerank-v3-5:0`, `amazon.rerank-v1:0`). 그 밖의
+ID는 검증에서 실패합니다. 선택하지 않은 공급자의 설정(언어 모델이 Bedrock인데
+`providers.llm.temperature`를 지정한 경우 등)은 무시되며 로드할 때 WARNING을 남깁니다.
 
-선별된 모델 전체 목록, Claude 세대별·OpenAI GPT 모델별 요청 차이, 프롬프트 캐싱,
-패키지가 모르는 모델을 기술하는 방법(`aws.bedrock.model_overrides`)은
-[모델 카탈로그](./models.ko.md)에 있습니다. 임베딩 모델 ID와 재순위화 모델 ID는
-정해진 목록에서만 고릅니다(`amazon.titan-embed-text-v2:0`, `amazon.titan-embed-text-v1`,
-`cohere.embed-v4:0`, `cohere.embed-english-v3`, `cohere.embed-multilingual-v3`;
-`cohere.rerank-v3-5:0`, `amazon.rerank-v1:0`). 그 밖의 ID는 설정 검증에서 실패합니다.
+선별된 모델, Claude 세대별·OpenAI GPT 모델별 요청 차이, 프롬프트 캐싱, 패키지가 모르는
+모델을 기술하는 방법(`aws.bedrock.model_overrides`)은 [모델 카탈로그](./models.ko.md)에
+있습니다.
 
 **출력 상한.** Bedrock은 요청을 시작할 때 입력 + `max_tokens`를 분당 토큰 할당량에서
 미리 확보합니다. 그래서 모델 최대값(Claude 5.x는 128K)을 요청하면 실제 사용량이
@@ -572,160 +492,67 @@ gleaning(과 그 출력 수정기)은 `max_entities_per_chunk` +
 커뮤니티 리포트는 기본 상한 안에 들어갑니다. 이 한도들을 올리면 하한도 함께
 올라갑니다.
 
-### 2.2 `fixing` — 형식이 잘못된 모델 출력 자동 복구
+### 컨텍스트 예산
 
-| 키 | 기본값 | 역할과 변경 시점 |
-|---|---|---|
-| `fixing.enabled` | `true` | 구조화된 출력을 쓰는 단계에서 모델이 형식이 잘못된 JSON을 반환하면, 실행을 실패시키는 대신 모델에게 복구를 요청합니다. 켜 두세요. |
+`search.token_manager.max_context_tokens`(`30000`)는 답변 프롬프트가 받는 검색
+컨텍스트입니다. upstream LightRAG의 전체 컨텍스트 예산과 같습니다(MS GraphRAG는
+12000). 1M 토큰 창에서 도출한 예산(약 785K)은 한도에 닿는 일이 없어서 유형별 예산도
+아무것도 잘라 내지 못합니다. 이 값은 항상 `models.roles.answer_generation`가 출력
+예약분(`aws.bedrock.default_max_output_tokens`)과 함께 받을 수 있는 크기로 줄이며, 줄일
+때는 경고를 남깁니다. `null`이면 그 모델의 컨텍스트 창에서 출력 예약분과
+`context_window_headroom_ratio`를 뺀 값으로 도출합니다. 1M이 베타인 모델에서는
+`aws.bedrock.enable_1m_context`를 켜면 예산이 넓어집니다. 섹션 유형별
+비율(`search.token_manager.type_budgets`)과 `local` 검색의 슬롯
+할당(`search.local_search.type_quota`)은 레퍼런스에 있습니다.
 
-### 2.3 `processing` — 동시성, 청킹, 번역, 추출
+### 가드레일
 
-LLM 단계는 Bedrock I/O가 병목이므로 동시성을 CPU 수보다 훨씬 높게 잡을 수 있습니다.
+`aws.bedrock.guardrail.identifier`를 지정하면 질의마다 두 텍스트를 `ApplyGuardrail`
+API로 검사합니다. 가드레일은 `aws.bedrock.region_name`에 있어야 합니다.
 
-| 키 | 기본값 | 역할과 변경 시점 |
-|---|---|---|
-| `processing.max_concurrency` | `40` | 수집 단계가 동시에 진행하는 LLM 호출 수입니다. 호출 하나가 끝나는 즉시 다음 항목을 시작합니다. Bedrock 할당량은 계정, 모델, 리전마다 다르므로 로그에 `ThrottlingException` 재시도가 보이면 낮추고, 할당량에 여유가 있으면 올리세요. `backend: local` 프리셋은 `20`으로 설정합니다. 로컬 모델 서버는 한 번에 처리하지 못하는 호출을 대기열에 쌓기 때문입니다. |
-| `processing.max_attempts` | `5` | 첫 호출을 포함한 수집 LLM 항목당 시도 횟수입니다. 일시적 Bedrock 오류, 호출 시간 초과, 파싱할 수 없는 출력은 재시도하고 그 밖의 오류는 바로 실패합니다. `1`이면 재시도하지 않습니다. |
-| `processing.io_workers` | `64` | CLI와 체인의 동기 메서드에서 질의 경로의 블로킹 I/O(Bedrock 호출, Neptune 순회, 재순위화)를 처리하는 스레드 수입니다. Python 기본값은 `min(32, CPUs + 4)`라서 vCPU 2개인 태스크에서는 6개입니다. 비동기 호스트는 시작할 때 `configure_event_loop(asyncio.get_running_loop(), config.processing.io_workers)`(`unified_kg_rag`)를 호출합니다. |
-| `processing.ignore_errors` | `false` | 단계 전체가 실패할 때(배치 호출, 번역 대상 언어, 평가기, global map/reduce, DRIFT primer, auto 라우터) 예외를 일으키지 않고 로그를 남긴 뒤 빈 결과나 저하된 결과로 계속합니다. 개별 항목의 LLM 호출 실패는 이 값과 관계없이 항상 건너뛰고 보고합니다. |
-| `processing.deduplicate` | `false` | 추출 전에 거의 같은 문서를 제거합니다. 두 문서의 문자 3-gram 집합 Jaccard 유사도(128개 순열 MinHash로 추정)가 0.9 이상이면 중복으로 보고, 둘 중 앞의 문서를 남깁니다(증분 실행에서는 이미 색인된 문서를 남깁니다). 이 값들은 고정입니다. |
-| `processing.resolution_method` | `"minhash"` | 엔티티 해석 방식입니다. `minhash` 또는 `sequence_matcher`입니다. |
-| `processing.fuzzy_entity_resolution` | `false` | 이름이 비슷하기만 한 엔티티도 전체 빌드와 증분 병합에서 병합합니다. 끄면 정규화, 법인 형태 표기 제거, 한자·한글·가나 옆 공백 제거 뒤 이름이 같을 때만 병합합니다. |
-| `processing.similarity_threshold` | `0.85` | 퍼지 엔티티 해석과 주장 주체·객체의 엔티티 이름 매칭에 쓰는 임계값입니다. 서로 다른 엔티티가 합쳐지면 올리세요. |
-| `processing.document_parsing.source_directory` | `"source"` | 라이브러리 호출용 기본값입니다. `run-ingestion`에는 `--source-directory`(또는 `UKR_SOURCE_DIRECTORY`)가 반드시 필요합니다. |
-| `processing.document_parsing.target_directory` | `null` | 파싱한 문서를 확인용 `<stem>.json`으로 내보냅니다(`--output-directory`와 같음). 소스 디렉터리는 지정할 수 없습니다. |
-| `processing.document_parsing.index_value` | `null` | 실행이 쓰는 인덱스 접미사입니다. 모든 OpenSearch 인덱스와 Neptune 레이블 이름이 `<prefix>-<index_value>`가 됩니다(`null`이면 `default`). 이 코퍼스에 질의할 때는 같은 값을 `run-rag`/`run-eval --suffix`로 넘깁니다. `run-ingestion`에는 이 값을 지정하는 플래그가 없으므로 테넌트나 버전마다 설정 파일을 따로 두세요. |
-| `processing.document_parsing.source_scope` | `null` | 증분 삭제에 쓰는 코퍼스 식별값입니다. 실행은 자기 인덱스 접미사와 소스 범위에 속한 레지스트리 문서만 삭제합니다. `null`이면 해석된 소스 디렉터리 경로를 쓰며, 컨테이너 엔트리포인트는 S3 URI로 설정합니다(`UKR__PROCESSING__DOCUMENT_PARSING__SOURCE_SCOPE`). §5를 참고하세요. |
-| `processing.chunking.chunker_type` | `"intelligent"` | `intelligent`는 LLM이 의미 경계를 고르고, `simple`은 크기로 나눕니다. |
-| `processing.chunking.min_chunk_size` | `1000` | 최소 청크 크기(문자 수)입니다. 이보다 짧은 조각은 이웃 청크에 합칩니다. |
-| `processing.chunking.max_chunk_size` | `8000` | 최대 청크 크기(문자 수)입니다. 임베딩과 재순위화 입력 한도 안에 들어야 합니다. 크기는 토큰이 아니라 문자 수입니다. 영어는 평균 약 4자가 1토큰이지만 한자·한글·가나는 1자가 약 1토큰이므로, CJK 8,000자는 약 8K 토큰입니다. Titan Text Embeddings V2(8,192)에는 들어가지만 Cohere Rerank 3.5의 문서 한도(4,096 토큰)는 넘으므로, 재순위화를 쓰는 CJK 코퍼스는 크기를 절반 정도로 줄이세요. |
-| `processing.chunking.chunk_overlap` | `500` | 청크 사이의 겹침(문자 수)입니다. |
-| `processing.chunking.fallback_chunk_size` | `4800` | 크기 기반 분할기(`simple`, 또는 intelligent 청킹이 실패할 때)의 목표 크기입니다. 문단, 줄, CJK 문장 종결 부호(`。．｡！？；`) 뒤, 공백 순으로 나눕니다. |
-| `processing.translation.enabled` | `true` | 번역 단계를 실행합니다. 원문 언어와 대상 언어가 같고 추가 대상 언어가 없으면 아무 일도 하지 않습니다(LLM 비용 0). |
-| `processing.translation.source_language` | `"en"` | 코퍼스의 주 언어입니다. 번역 생략 여부 판단에만 씁니다. |
-| `processing.translation.target_language` | `"en"` | 코퍼스를 번역할 언어입니다(§3 다국어 수집 참고). 엔티티와 관계 설명도 이 언어로 작성합니다. |
-| `processing.translation.additional_target_languages` | `null` | 추가로 번역할 대상 언어 목록입니다. 언어마다 해당 언어의 분석기를 쓰는 `translated_text_<language>` 필드에 인덱싱하고 어휘 검색에 포함합니다(질의별 `RAGInput.target_language`와 함께 쓰면 유용). 추출, 임베딩, 답변 컨텍스트는 `target_language`만 씁니다. 언어 하나마다 청크당 LLM 호출이 하나씩 늘어납니다. |
-| `processing.graph_extraction.entity_types` | 범용 유형 7개 | 추출 프롬프트에 넣는 `"LABEL: description"` 항목입니다. 도메인 적응에 가장 효과가 큰 설정입니다(§9). 빈 목록이면 모델이 유형을 고릅니다. |
-| `processing.graph_extraction.max_entities_per_chunk` | `50` | 청크당 엔티티 상한입니다(관계는 `max_relationships_per_chunk`, 역시 `50`). |
-| `processing.graph_extraction.entity_confidence_threshold` | `0.0` | 청크마다 신뢰도가 이 값보다 낮게 매겨진 엔티티를 그 청크에서 버리고, 그 청크에서 이 엔티티를 가리키는 관계도 버립니다. 청크 단위로 적용하므로 어떤 문서와 함께 인덱싱하는지에 따라 결과가 달라지지 않습니다. `0.0`이면 모두 유지합니다. |
-| `processing.graph_extraction.description_summarization.enabled` | `true` | 병합된 설명이 `force_summary_threshold_tokens`(`600`)보다 길면 LLM으로 다시 요약합니다. |
-| `processing.graph_extraction.entity_grounding.enabled` | `false` | 환각 방지 장치입니다. 원문 그대로의 `source_text` 구간이 청크에 없는 엔티티와 관계를 버리거나, `action: "penalize"`이면 가중치를 낮춥니다. 다만 `penalize`여도 청크가 추출하지 않은 엔티티를 가리키는 근거 없는 관계는 버립니다. 문장 부호는 무시하며, 한자·한글·가나 구간은 문자 바이그램으로 비교하므로 한국어 조사가 달라져도 원문에 있는 것으로 봅니다. gleaning이 추가한 항목에도 적용합니다(`penalize`이면 같은 규칙으로 버리지 않고 가중치를 낮춥니다). 그 청크에서 거부된 엔티티를 가리키는 gleaning 관계는 버리고, 청크가 나열하지 않은 엔티티를 가리키는 관계는 청크에 그 이름이 있을 때만 남깁니다. |
-| `processing.gleaning.enabled` | `true` | 놓친 엔티티와 관계를 찾는 추가 추출 패스입니다. |
-| `processing.gleaning.max_rounds` | `3` | 텍스트 단위당 gleaning 횟수입니다. 다음 회차에는 직전 응답이 새 엔티티나 관계를 추가한 단위만 다시 보내므로, 응답에 새 항목이 없으면 그 단위는 바로 멈춥니다. `1`은 MS GraphRAG 기본값과 같습니다. |
-| `processing.claim_extraction.enabled` | `false` | 주장을 추출합니다(텍스트 단위마다 LLM 호출 1회 추가). 켜면 `local` 검색이 일치하는 주장을 컨텍스트에 넣고 `simple` 검색이 주장 인덱스도 검색합니다. |
+- **검사 대상.** 대화 메모리, 후속 질문 재작성, 라우팅, 검색보다 먼저 한 번 검사하는
+  사용자 원본 질의(`check_input`)와 최종 답변(`check_output`. 스트리밍 답변은 검사 뒤
+  한 덩어리로 전달됨)입니다. 이 두 텍스트만 평가하고 과금합니다.
+- **결과.** 차단된 질의에는 가드레일의 차단 메시지로 답하고, 검색도 메모리 저장도 하지
+  않으며 `RAGOutput.metadata.blocked`가 `true`입니다. 마스킹된 질의(PII 익명화)는
+  마스킹된 텍스트로 계속 처리하므로 검색, 모델, 메모리 어디에도 원문이 가지 않습니다.
+  답변이 차단되거나 마스킹되면 가드레일이 돌려준 텍스트로 바꿉니다. 모든 개입은
+  `RAGOutput.metadata.guardrail`(source, action, policies)에 남고, 누적 횟수와 함께
+  WARNING 로그와 `kg_rag.guardrail` 스팬으로도 기록됩니다. 가드레일 API가 실패하면
+  질의가 실패합니다(`processing.ignore_errors`면 표준 오류 답변). 검사하지 않은 채로
+  답하지는 않습니다.
+- **모델 호출에 붙이지 않는 이유.** 질의 안의 모델 호출(재작성, 라우팅, 키워드 추출,
+  global/DRIFT map 단계, 답변 생성)에는 가드레일을 붙이지 않습니다. 모델 호출에 붙인
+  가드레일은 프롬프트 전체를 평가합니다. Converse API에서는 검색된 코퍼스 텍스트와
+  개발자 지시문까지 사용자 입력처럼 `PROMPT_ATTACK` 필터가 판정해 잘못 차단하고, 비용도
+  컨텍스트 크기와 호출 수에 비례해 늘어납니다. InvokeModel API에서는 사용자 입력을 입력
+  태그로 감싸지 않으면 `PROMPT_ATTACK` 필터가 동작하지 않습니다
+  ([Bedrock Guardrails: 프롬프트 공격](https://docs.aws.amazon.com/bedrock/latest/userguide/guardrails-prompt-attack.html)).
+  컨텍스트 근거(contextual grounding) 검사는 하지 않습니다. 근거 자료와 질의를
+  한정자(qualifier)가 붙은 콘텐츠로 보내야 하는데 답변 검사는 이를 보내지 않습니다.
+- **수집과 평가.** 수집 모델, 프롬프트 튜너, 평가용 판정 모델은 기본적으로
+  가드레일 없이 실행합니다(`apply_to: "query"`). `NAME`을 익명화하는 PII 가드레일은
+  추출된 엔티티 이름을 `{NAME}` 같은 자리 표시자로 바꿔 서로 다른 사람을 한 노드로
+  합치고, `PROMPT_ATTACK` 필터는 지시문처럼 보이는 코퍼스 텍스트를 차단할 수 있기
+  때문입니다. `apply_to: "all"`은 이 호출에도 가드레일을 붙이므로 추출에 써도 안전한
+  정책일 때만 쓰세요. 질의 경로에서도 `NAME` 익명화는 문제가 됩니다. 인물에 관한 질문은
+  검색에 쓸 이름을 잃고, 답변에는 `{NAME}`이 나옵니다. 그래서 `iac/`가 만드는 기본
+  가드레일은 이메일, 전화번호, 카드 번호만 익명화하고 `NAME`은 익명화하지 않습니다.
+- **사용자 코드.** `setup_chain`으로 체인을 만들거나 질의가 아닌 작업에서 `get_model`을
+  호출하는 코드는 `model_purpose=ModelPurpose.INGESTION`(또는 `EVALUATION`)을 넘겨야
+  합니다. 표시하지 않은 호출은 `QUERY`로 간주하므로 질의 시점의 일시적 오류 재시도가
+  적용되고, 가드레일은 붙지 않습니다.
 
-### 2.4 `graph` — 분석, 커뮤니티 탐지, 시각화
+### S3 캐시 암호화
 
-| 키 | 기본값 | 역할과 변경 시점 |
-|---|---|---|
-| `graph.community_detection.enabled` | `true` | Leiden 군집화와 커뮤니티 리포트 생성입니다. GraphRAG `global`/`drift`에 필요합니다. LightRAG만 쓰는 가벼운 수집이라면 `false`로 두세요. |
-| `graph.community_detection.resolution` | `1.0` | Leiden 해상도입니다. 높을수록 커뮤니티가 많아지고 작아지며(리포트 LLM 호출도 늘어남), 낮을수록 적어지고 커집니다. |
-| `graph.community_detection.random_state` | `42` | Leiden 시드로, 양의 정수입니다. 같은 그래프와 시드에서는 같은 커뮤니티가 나옵니다. |
-| `graph.community_detection.auto_resolution` | `false` | `true`이면 계층마다 `auto_resolution_candidates`를 차례로 시험해 모듈성이 가장 높은 해상도를 고릅니다. 그렇지 않으면 `resolution`(`1.0`)을 씁니다. |
-| `graph.community_detection.auto_resolution_max_nodes` | `10000` | 노드 수가 이보다 많으면 해상도 탐색을 건너뛰고 `resolution`을 씁니다. |
-| `graph.community_detection.max_levels` | `5` | 커뮤니티 계층의 최대 깊이입니다. |
-| `graph.community_detection.max_cluster_size` | `20` | 레벨 0 커뮤니티의 최대 엔티티 수이자 상위 레벨 커뮤니티의 최대 자식 수입니다. 이보다 큰 커뮤니티는 그 부분 그래프에서 다시 나눕니다(더 나눌 수 없으면 그대로 둡니다). 작을수록 리프가 작고 많아져 리포트 호출이 늘어납니다. |
-| `graph.community_detection.min_community_size` | `3` | 엔티티 수가 이보다 작은 레벨 0 커뮤니티는 간선 가중치를 가장 많이 공유하는 이웃 커뮤니티에 합칩니다. 합친 결과가 `max_cluster_size`를 넘으면 합치지 않습니다. |
-| `graph.community_detection.report_generation.max_report_context_tokens` | `4000` | 리포트 프롬프트 하나에 넣는 엔티티·관계 컨텍스트의 토큰 예산입니다. |
-| `graph.community_detection.report_generation.content_length` | `"medium"` | 리포트 길이로, 리포트마다 요청할 findings 수입니다. `short`(5-7), `medium`(7-10), `long`(10-15) 중 하나입니다. |
-| `graph.visualization.centrality.calculate_betweenness` | `true` | 시각화에서 매개 중심성을 계산합니다(수집 단계는 중심성을 계산하지 않음). 노드가 `betweenness_auto_sample_threshold`(`2000`)보다 많은 그래프에서는 정확히 계산하지 않고 샘플링합니다. |
-| `graph.visualization.enabled` | `false` | 수집 중에 시각화를 렌더링하고 레이아웃을 포함한 시각화 데이터를 내보냅니다(수집마다 노드당 임베딩 호출 한 번과 레이아웃 차원 축소가 추가됨). |
-| `graph.visualization.export_data` | `true` | `enabled: false`여도 `visualization_data.json`(그래프와 커뮤니티. 레이아웃과 중심성은 없음)을 기록해 `run-visualization`으로 필요할 때 렌더링할 수 있게 합니다. 그래프를 한 번 훑을 뿐이며 모델 호출이 없습니다. |
-| `graph.visualization.outputs_directory` | `null` | 지정하지 않으면 `<cache dir>/<pipeline_id>/visualization`에 기록하므로 데이터가 캐시와 함께 S3로 동기화됩니다. |
-| `graph.visualization.layout_method` | `"umap"` | `umap`, `tsne`, `pca` 중 하나입니다. |
-| `graph.visualization.interactive.max_nodes` | `2000` | `interactive_graph.html`에 남길 차수 기준 상위 N개 노드입니다. `0`이나 `null`이면 제한하지 않습니다. `physics_enabled`를 지정하지 않으면 physics는 꺼져 있습니다(`false`). |
+`aws.s3.encryption.encryption_type: BUCKET_DEFAULT`는 암호화 헤더를 보내지 않으므로
+버킷의 기본 암호화가 적용됩니다(CDK 스택에서 `use_cmk=true`이면 고객 관리형 KMS 키이며,
+`AES256`을 강제하면 이 키를 우회합니다). 기본 암호화가 SSE-KMS인 버킷을 재사용하면 쓰기
+주체에 해당 키의 `kms:GenerateDataKey`와 `kms:Decrypt` 권한이 필요합니다.
 
-### 2.5 `indexing` — OpenSearch와 Neptune 쓰기
+### 로그에 남는 내용
 
-| 키 | 기본값 | 역할과 변경 시점 |
-|---|---|---|
-| `indexing.reset` | `false` | 실행의 인덱스 접미사를 코퍼스 전체로 다시 구축하고(서비스를 멈추지 않습니다. 벡터 인덱스는 별칭을 옮기고, 그래프는 제자리에서 다시 쓴 뒤 재구축이 쓰지 않은 것을 마지막에 지웁니다) 레지스트리 네임스페이스를 다시 기록합니다. |
-| `indexing.additional_suffix` | `null` | 모든 OpenSearch 인덱스 이름과 Neptune 레이블에서 실행 접미사 뒤에 붙습니다(`<prefix>-<suffix>-<additional_suffix>`). `<suffix>`는 수집 시 `processing.document_parsing.index_value`, 질의 시 `--suffix`이며 지정하지 않으면 둘 다 `default`입니다. 수집과 질의에 같은 값을 지정하세요. 버전별·테넌트별 분리에 씁니다. |
-| `indexing.cross_run_merge` | `true` | 증분 실행에서 변경분을 기존 그래프 상태에 덮어쓰지 않고 합칩니다. 그래서 바뀌지 않은 문서와 공유하는 엔티티의 계보가 유지됩니다(§5). `false`이면 덮어씁니다. |
-| `indexing.community_drift_threshold` | `0.5` | 증분 실행: 실행이 군집화한 엔티티 중 이전 레벨 0 커뮤니티에도 속한 엔티티의 비율이 이 값에 이르면 재구축을 권합니다(WARNING과 `community_rebuild_recommended`, [운영 가이드](./operations.ko.md#증분-실행) 참고). |
-| `indexing.max_failure_rate` | `0.2` | 인덱스 유형별 쓰기 실패율이 이 값을 넘으면 인덱싱 단계가, 리포트가 없는 커뮤니티 비율이 이 값을 넘으면 커뮤니티 탐지 단계가 실패합니다. `1.0`이면 부분 실패 검사를 끕니다. |
-| `indexing.max_document_failures` | `3` | 증분 실행에서 내용이 바뀌지 않은 문서가 연속으로 이 횟수만큼 FAILED로 기록되면 더는 재시도하지 않습니다(§5). |
-| `indexing.max_document_attempts` | `3` | 증분 실행에서 문서의 바뀌지 않은 내용을 인덱싱하기 시작하고 끝내지 못한(실행이 죽은) 실행이 연속으로 이 횟수에 이르면 문서를 격리합니다. 내용이나 추출 설정이 바뀔 때까지 건너뜁니다(§5, *격리된 문서*). |
-| `indexing.lease_seconds` | `300` | 증분 실행에서 인덱스 네임스페이스 쓰기 임대의 기간입니다. 실행은 끝날 때까지 임대를 유지하며 기간의 3분의 1마다 갱신하고, 죽은 실행의 임대는 늦어도 이 시간 뒤에 만료됩니다(§5, *동시 실행*). 최솟값은 `10`입니다. |
-| `indexing.retire_source_scopes` | `[]` | 증분 실행에서 이전 소스 범위(옮기기 전의 절대 소스 디렉터리나 이전 `source_scope` 값)를 지정하면, 실행 인덱스 접미사에서 그 범위의 레코드를 삭제된 문서로 처리해 그 문서에만 속한 내용을 지웁니다. 실행 자신의 범위는 지정할 수 없습니다. `--retire-source-scope`로 값을 더할 수 있습니다(§5 삭제 범위 참고). |
-| `indexing.opensearch.build_relationship_vector_index` | `true` | 관계 벡터 인덱스입니다. LightRAG `mix`/`hybrid`(고수준 키워드, 연결 관계)와 GraphRAG `local`(관계 섹션, 연결 고리 관계)이 조회하고, `simple`/`drift`는 다른 인덱스와 함께 검색합니다. `false`로 두면 관계 임베딩을 만들지 않는 대신 이 기능을 쓰지 못합니다. |
-| `indexing.opensearch.persist_embedding_cache` | `false` | 임베딩 캐시를 S3에 저장해, 바뀌지 않은 텍스트를 실행마다 다시 임베딩하지 않습니다. `aws.s3.bucket_name`이 필요합니다. |
-| `indexing.opensearch.language_analyzers` | `{en: english, ko: nori}` | 언어 코드별 텍스트 분석기입니다. 목록에 없는 언어는 `default_analyzer`(`standard`)를 씁니다. |
-| `indexing.opensearch.vector_search.engine` | `"lucene"` | HNSW 엔진입니다. `lucene`은 1024차원까지 `cosinesimil`을 지원합니다. `faiss`는 템플릿을 참고하세요. |
-| `indexing.opensearch.vector_search.ef_search` | `100` | kNN 질의가 탐색하는 후보 수입니다(클수록 재현율이 높고 느림). `faiss`와 `nmslib`에서는 인덱스 설정 `index.knn.algo_param.ef_search`이며 인덱스를 만들 때 정해집니다. `lucene`은 이 설정을 무시하므로 리트리버가 이 값을 kNN 질의마다 `k`로 보냅니다(반환할 결과 수 이상). 그래서 `lucene`에서는 다음 질의부터 적용됩니다. |
-| `indexing.opensearch.index_settings.refresh_interval` | `"1s"` | 대량 적재를 빠르게 하려면 늘리거나 `"-1"`로 두고, 실제 질의 전에 되돌리세요. |
-| `indexing.neptune.batch_size` | `100` | Neptune 쓰기 배치당 항목 수입니다. |
-| `indexing.neptune.index_concurrency` | `1` | 동시에 보내는 쓰기 배치(와 관계 간선) 수입니다. `aws.neptune.pool_size`가 이보다 작으면 Gremlin 연결 풀이 이 값에 맞춰 늘어납니다. |
-| `indexing.neptune.max_attempts` | `4` | 첫 시도를 포함한 Neptune 인덱서 요청(쓰기, 다시 읽기, 삭제, 레이블 비우기)당 시도 횟수입니다. 실패하면 전체 지터 지수 백오프로 재시도하며, n번째 시도 뒤 대기 시간은 0과 `retry_delay_seconds`(`2`) x 2^(n-1)초 사이의 임의 값입니다. 단, 재시도로 해결되지 않는 오류(잘못된 쿼리, 액세스 거부, 잘못된 파라미터)는 첫 시도에서 실패합니다. `1`이면 재시도하지 않습니다. |
-| `indexing.neptune.max_hops` | `3` | 검색 시점의 이웃 확장 깊이입니다. |
-| `indexing.neptune.property_max_length` | `4000` | Neptune 속성 값당 최대 문자 수입니다. 다시 요약되지 않는 가장 긴 설명보다 크게 두세요(요약은 600토큰, 약 2,400자를 넘으면 실행). OpenSearch는 설명을 자르지 않고 저장하며, 증분 실행의 실행 간 병합은 잘린 설명을 OpenSearch에서 읽어 옵니다. 다시 수집해야 반영됩니다. |
-| `indexing.neptune.entity_importance_source` | `"rank"` | 그래프 확장 관련도에 쓰는 엔티티 중요도입니다. 시드와의 거리가 먼저이고(시드가 항상 앞) 중요도는 같은 거리의 엔티티 사이에서만 순서를 정합니다. `rank`(인덱싱된 엔티티 rank, 즉 degree), `degree`(질의 시점의 간선 수), `none`(모든 엔티티에 중립값 0.5) 중 하나입니다. |
-| `indexing.neptune.traversal_fetch_multiplier` | `3` | 그래프 확장이 결과 폭의 이 배수만큼 가져와 순위를 매긴 뒤 시드는 모두 두고 나머지를 결과 폭만큼 남깁니다. `1`이면 순회 순서대로 자릅니다. |
-
-### 2.6 `search` — 검색, 융합, 재순위화, 전략별 설정
-
-| 키 | 기본값 | 역할과 변경 시점 |
-|---|---|---|
-| `search.auto_routable_strategies` | `["local", "mix", "global", "drift"]` | `auto` 라우터가 고를 수 있는 전략입니다. 라우터 프롬프트는 이 전략들만 이 순서대로 설명합니다. `graph.community_detection.enabled: false`이면 커뮤니티 리포트가 없으므로 `global`과 `drift`는 빠지고, 남는 전략이 없으면 `local`을 씁니다. `auto` 자체는 넣을 수 없습니다. 어떤 전략이든 직접 지정할 수는 있습니다. |
-| `search.hybrid.lexical_weight` | `0.5` | 하이브리드 검색의 어휘 검색 가중치입니다(벡터는 `vector_weight`, 역시 `0.5`). 하이브리드 검색은 인덱스마다 어휘 검색과 kNN 검색을 따로 실행하고(각각 최소 50건을 가져옴), 각각을 그 결과 안에서 min-max 정규화한 뒤 가중 평균하고 요청한 개수만 남깁니다. 정규화 범위가 고정되므로 순위가 질의가 요청한 결과 수에 따라 달라지지 않습니다. 가중치는 질의 시점에 읽습니다. |
-| `search.fusion.method` | `"rrf"` | `rrf`(reciprocal rank fusion) 또는 `weighted`입니다. |
-| `search.fusion.rrf_k` | `60` | RRF 상수 `k`입니다. |
-| `search.fusion.fusion_weights` | `{}`(모든 버킷 `1.0`) | 소스 버킷별 가중치입니다. `rrf`와 `weighted` 모두에서 각 버킷의 기여도에 곱합니다. 버킷 이름은 템플릿에 있습니다. |
-| `search.fusion.diversity_lambda` | `0.5` | MMR 균형값입니다. `1.0`은 관련도만, `0.0`은 다양성을 최대로 반영합니다. |
-| `search.reranking.enabled` | `true` | 융합 결과를 `models.rerank`(`cohere.rerank-v3-5:0`)로 재순위화합니다. |
-| `search.reranking.top_k` | `100` | 재순위화 모델에 보내는 후보 수입니다. |
-| `search.reranking.required` | `false` | `true`이면 재순위화가 켜져 있는데 재순위화 모델을 만들 수 없거나, 재순위화 호출이 실패하거나, 쓸 수 있는 결과를 돌려주지 않을 때 질의를 `RerankModelError`로 실패시킵니다. `false`이면 이런 경우 융합 순서를 유지합니다(초기화 실패는 ERROR로 기록). 재순위화가 꺼져 있거나 `providers.rerank.kind`가 `none`이면 효과가 없습니다. [재순위화 상태](#재순위화-상태) 참고. |
-| `search.lightrag_search.kg_stream_top_k` | `40` | LightRAG 엔티티·관계 벡터 질의의 폭입니다(요청의 `top_k`에 대한 하한). |
-| `search.lightrag_search.chunk_stream_top_k` | `20` | LightRAG 청크 스트림의 폭입니다. |
-| `search.lightrag_search.enable_graph_expansion` | `false` | `mix`/`hybrid`에서 일치한 항목을 Neptune으로 추가 확장합니다. |
-| `search.global_search.community_depth` | `2` | `global`이 map을 적용하는 커뮤니티 계층의 단면입니다. MS GraphRAG의 `community_level`처럼 루트부터 세며(그쪽 기본값도 2), 이 깊이의 모든 커뮤니티와 그보다 위에서 끝나는 리프를 포함하므로 엔티티마다 한 번씩 포함됩니다. `0`은 루트 커뮤니티(가장 적고 넓은 리포트), 큰 값은 리프(가장 많고 좁은 리포트)입니다. |
-| `search.global_search.max_reports_per_level` | `100` | 단면 하나(또는 동적 선택의 한 단계)에서 쓰는 리포트 수의 상한입니다. 단면이 더 크면 질의와 가장 비슷한 리포트만 쓰며, 검색 메타데이터에 표시합니다(`global_level_capped`). `indexing.opensearch.max_query_size`를 넘을 수 없습니다. map에 넣는 리포트마다 map 단계 입력 토큰이 듭니다. |
-| `search.global_search.use_dynamic_selection` | `false` | 고정 단면 대신 MS GraphRAG 동적 커뮤니티 선택을 씁니다. `models.roles.community_relevance`로 루트 리포트를 평가하고, 관련 있는 리포트의 자식으로 `community_depth`까지 내려간 뒤 관련 리포트에 map을 적용합니다. 평가하는 리포트마다 fast 모델 호출이 1회 듭니다. |
-| `search.global_search.relevance_threshold` | `0.2` | 동적 선택에서 남기는 리포트의 최소 평가 점수(1-10 점수 / 10)입니다. 0.2는 MS GraphRAG의 임계값(0-5 척도의 1)에 해당합니다. 이 값보다 낮은 리포트는 하위 트리 전체가 빠집니다. |
-| `search.global_search.map_context_tokens` | `12000` | map 단계 호출 하나에 넣는 리포트 토큰 수입니다(MS GraphRAG의 `data_max_tokens`). map 호출은 `processing.max_concurrency`개씩 동시에 실행합니다. |
-| `search.global_search.max_map_reduce_tokens` | `8000` | reduce 단계에 넣는, 순위를 매긴 핵심 내용의 토큰 예산입니다. |
-| `search.global_search.reduce_with_llm` | `false` | `true`이면 reduce LLM이 묶은 핵심 내용을 먼저 요약하고 답변 모델이 이를 다시 씁니다(LLM 호출 1회 추가). `false`이면 핵심 내용을 답변 모델에 바로 넘깁니다. |
-| `search.global_search.text_unit_slots` | `0` | 핵심 내용의 근거가 된 커뮤니티의 텍스트 단위를 재순위화해 컨텍스트에 더하는 개수입니다. `0`이면 더하지 않으며, MS GraphRAG global search와 같습니다. 청크를 함께 넣으면 핵심 내용과 리포트에 필요한 답변 예산 대부분을 청크가 차지했습니다. |
-| `search.local_search.entity_frequency_threshold` | `20` | 그래프 확장으로 얻은 엔티티 중 이보다 많은 텍스트 단위에 나오는 것(너무 일반적인 것)을 버립니다. 질의가 직접 찾은 엔티티는 항상 남깁니다. |
-| `search.local_search.include_bridge_relationships` | `true` | 확장된 엔티티에 연결된 관계도 가져오며, 검색된 두 엔티티를 잇는 간선(다중 홉 연결)을 먼저 둡니다. 관계 인덱스가 필요합니다. `false`이면 관계 벡터 질의만 씁니다. |
-| `search.drift_search.k_followups` | `20` | DRIFT primer가 읽는 커뮤니티 리포트 수이자, 라운드마다 실행하는 후속 질의 수입니다(MS GraphRAG `drift_k_followups`). 후속 질의마다 local search 1회와 `models.roles.drift_action` 호출 1회가 듭니다. |
-| `search.drift_search.primer_folds` | `5` | primer 리포트를 나눠 담는 primer 호출 수입니다. 호출마다 중간 답변과 후속 질의를 만듭니다. |
-| `search.drift_search.n_depth` | `3` | 후속 질의 라운드 수입니다. 질의당 local search가 최대 `k_followups * n_depth`회 실행됩니다. |
-| `search.drift_search.local_context_tokens` | `12000` | 후속 질의 하나에 답할 때 쓰는 컨텍스트 예산입니다. |
-| `search.drift_search.max_answer_tokens` | `8000` | 답변 모델에 넘기는, 순위를 매긴 중간 답변의 토큰 예산입니다. |
-| `search.token_manager.max_context_tokens` | `30000` | 답변 프롬프트에 넣는 검색 컨텍스트의 토큰 예산입니다(아래 참고 사항 참고). |
-| `search.token_manager.context_window_headroom_ratio` | `0.1` | 예산을 도출할 때(`max_context_tokens: null`) 남겨 두는 컨텍스트 창 비율입니다. |
-| `search.store_timeout_seconds` | `30` | 질의가 OpenSearch나 Neptune 요청 하나(그리고 Neptune 연결 열기)를 기다리는 시간입니다. 풀의 연결을 기다리는 시간을 포함한 Neptune 순회 하나에는 그 두 배를 줍니다. 응답하지 않는 저장소는 컨텍스트 없이 답하지 않고 질의를 실패시킵니다. 수집은 자체 제한을 따릅니다. |
-| `search.store_max_attempts` | `3` | 시간 초과, 연결 실패, 429/502/503/504를 받은 OpenSearch 질의 요청의 시도 횟수(첫 시도 포함)입니다. 시도 사이에는 무작위 폭을 둔 대기 시간(0.25~0.5초, 다음은 0.5~1초, 두 배씩 늘어 최대 2~4초)을 두어 짧은 스로틀링은 기다려 넘깁니다. 기본값 3번이면 대기 시간은 모두 합쳐 약 0.75~1.5초입니다. 멈춘 클러스터는 약 `3 x 30`초 뒤 질의를 실패시키고, 이 횟수 뒤에도 429/5xx로 응답하는 클러스터도 질의를 실패시킵니다. Neptune 질의 요청은 재시도하지 않습니다. |
-
-섹션 유형별 비율(`search.token_manager.type_budgets`)과 `local` 검색의 유형별 슬롯
-할당(`search.local_search.type_quota`)은 템플릿을 참고하세요.
-
-> **컨텍스트 예산.** `30000`은 upstream LightRAG의 전체 컨텍스트 예산과 같습니다(MS
-> GraphRAG는 12000). 1M 토큰 창에서 도출한 예산(약 785K)은 한도에 닿는 일이 없어서
-> 유형별 예산도 아무것도 잘라 내지 못합니다. 이 값은 항상
-> `models.roles.answer_generation`가 출력 예약분
-> (`aws.bedrock.default_max_output_tokens`)과 함께 받을 수 있는 크기로 줄이며, 줄일
-> 때는 경고를 남깁니다. `null`이면 그 모델의 컨텍스트 창에서 출력 예약분과 여유 비율을
-> 뺀 값으로 예산을 도출합니다. 1M이 베타인 모델에서는 `aws.bedrock.enable_1m_context`를
-> 켜면 예산이 넓어집니다.
-
-### 2.7 `memory`, `cache`, `logging`
-
-| 키 | 기본값 | 역할과 변경 시점 |
-|---|---|---|
-| `memory.max_conversations` | `100` | 대화 메모리에 보관하는 대화 수입니다(§4 대화형 모드). |
-| `memory.max_messages_per_conversation` | `20` | 대화당 보관하는 메시지 수입니다. |
-| `memory.max_conversation_age_hours` | `168` | 대화가 쓰이지 않은 채 머물 수 있는 시간입니다. 이보다 오래된 대화는 버리고 새로 시작합니다. |
-| `cache.ttl_seconds` | `86400` | 캐시 항목 TTL입니다. `null`이면 만료하지 않습니다. `--s3-sync`에서는 적용하지 않습니다(버킷 수명 주기가 체크포인트를 만료시킴). |
-| `cache.llm_responses.enabled` | `true` | 수집 모델 응답을 단계 캐시와 함께 보관해, 같은 pipeline id로 다시 실행할 때 답을 받은 호출을 반복하지 않습니다. |
-| `cache.llm_responses.flush_every` | `100` | 캐시 세그먼트 파일 하나의 응답 수입니다(채워질 때와 단계 체크포인트마다 쓰고, `--s3-sync`면 업로드). |
-| `logging.level` | `"INFO"` | `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL` 중 하나입니다. |
-| `logging.log_format` | `"structured"` | `structured` 또는 `plain`입니다. |
-| `logging.log_to_file` | `true` | CLI가 로그를 `log_file_path`(`logs/log.txt`, 실제 파일 이름은 `log_YYYYMMDD.txt`)에도 씁니다. 상대 경로는 작업 디렉터리 기준입니다. 패키지를 라이브러리로 import하면 핸들러나 파일을 설정하지 않으며, 호스트 애플리케이션의 로깅 설정을 따릅니다. 호스트의 포매터에는 메시지 본문만 나오고, 구조화 필드(`logger`, `level`, `pipeline_id`, `trace_id` 등)는 로그 레코드의 속성으로 들어갑니다. |
-| `logging.library_levels` | `{langchain_aws: WARNING, botocore: WARNING, urllib3: WARNING, opentelemetry: ERROR}` | 로그가 많은 라이브러리의 로거별 수준입니다. 이 키를 지정하면 기본 맵 전체가 대체됩니다. |
-
-**로그에 남는 내용.** `INFO` 이상에서 패키지는 사용자 텍스트와 코퍼스 텍스트 대신
+`INFO` 이상에서 패키지는 사용자 텍스트와 코퍼스 텍스트 대신
 길이, 개수, ID, 짧은 해시만 기록합니다(예: `query: len=42 sha=1a2b3c4d`). 해시는
 항상 같은 값이 나오므로 질의 내용을 드러내지 않고도 같은 질의를 여러 레코드에서
 따라갈 수 있습니다. 질의 원문, 다시 쓴 질의(DRIFT와 번역), 엔티티 이름, 모델 원본
@@ -735,32 +562,21 @@ LLM 단계는 Bedrock I/O가 병목이므로 동시성을 CPU 수보다 훨씬 �
 마세요. `logging.library_levels`에서 `DEBUG`로 둔 라이브러리(예: `botocore`)는 요청
 본문도 기록할 수 있습니다.
 
-### 2.8 `evaluation`
+`logging.log_to_file`이 `false`가 아니면 CLI는 로그를 `logging.log_file_path`
+(`logs/log.txt`, 날짜별로 `log_YYYYMMDD.txt`)에도 씁니다. 라이브러리로 가져오면
+패키지는 핸들러나 파일을 설정하지 않습니다. 호스트 애플리케이션의 로깅 설정이 적용되고,
+그 포매터는 일반 메시지를 보여 주며, 구조화된 필드(`logger`, `level`, `pipeline_id`,
+`trace_id` 등)는 로그 레코드의 속성으로 들어갑니다.
 
-| 키 | 기본값 | 역할과 변경 시점 |
-|---|---|---|
-| `evaluation.enabled_evaluators` | `[langchain, ragas, answer_match, retrieval, graph_aware]` | 결정적 평가기(`answer_match`, `retrieval`, `graph_aware`)는 필요한 정답 필드가 없는 질의를 건너뜁니다(§6). 판정 모델 비용 없이 평가하려면 LLM 판정 평가기를 빼세요. |
-| `evaluation.judge_effort` | `"low"` | LLM 판정 모델의 추론 강도입니다. `null`이면 판정 모델이 속한 계층의 추론 강도(기본은 `aws.bedrock.default_effort`)를 따릅니다. |
-| `evaluation.ragas_timeout` | `300` | 샘플 하나의 지표 하나를 채점하는 제한 시간(초)입니다. 시간을 넘기면 NaN이 됩니다. |
-| `evaluation.ragas_max_contexts` | `20` | RAGAS `context_precision`이 샘플마다 채점하는 상위 컨텍스트 수입니다(그래서 "@20"입니다). faithfulness와 context_recall은 토큰 예산 안의 전체 컨텍스트를 봅니다. `null`이면 제한하지 않습니다. |
-| `evaluation.ragas_max_workers` | `8` | 동시에 실행하는 RAGAS 작업 수입니다. Bedrock이 판정 모델 호출을 스로틀링하면 낮추세요. |
-| `evaluation.ragas_max_attempts` | `3` | 판정 모델 호출당 총 시도 횟수입니다. |
-| `evaluation.max_context_tokens` | `null` | RAGAS 판정 모델에 넘기는 컨텍스트의 토큰 상한입니다. `null`이면 답변 예산(`search.token_manager.max_context_tokens`)을 쓰고, 그보다 작은 값이면 경고를 남깁니다. |
-| `evaluation.answer_normalization` | `default` | `exact_match` / `token_f1`의 정규화 방식입니다. `official_squad`는 공식 SQuAD v1.1 스크립트와 같아서, 공개된 MuSiQue / HotpotQA 결과와 비교할 수 있습니다. |
-| `evaluation.retrieval_k` | `5` | `retrieval` 평가기의 hit@k / recall@k 기준값입니다. 보고된 출처의 서로 다른 파일 중 상위 k개를 셉니다. |
-| `evaluation.outputs_directory` | `"outputs/evaluation"` | 결과를 쓰는 위치입니다. |
+### 사용자 정의 프롬프트
 
-지표 목록(`langchain_metrics`, `ragas_metrics`)은 템플릿을 참고하세요.
+모든 프롬프트에는 `custom_prompts.*_system` / `*_human` 재정의 키가 있습니다(기본값
+`null` = `unified_kg_rag/domain/prompts/`의 내장 프롬프트). 필요한 것만 재정의하고
+나머지는 `null`로 두세요([§9](#9-도메인-적응)). 재정의는 설정을 읽을 때 검사합니다. 알
+수 없는 `{variables}`와 빠진 데이터 변수(`{input_text}` 등)는 오류이며, 중괄호를
+글자 그대로 쓰려면 `{{` / `}}`로 씁니다.
 
-### 2.9 `custom_prompts`
-
-모든 프롬프트에는 `*_system` / `*_human` 재정의 키가 있습니다(기본값 `null` =
-`unified_kg_rag/domain/prompts/`의 내장 프롬프트 사용). §9를 참고하세요. 필요한
-것만 재정의하고 나머지는 `null`로 두세요. 재정의는 설정을 읽을 때 검사합니다. 알 수
-없는 `{variables}`와 빠진 데이터 변수(`{input_text}` 등)는 오류이며, 중괄호를 글자
-그대로 쓰려면 `{{` / `}}`로 씁니다(§9.B).
-
-### 2.10 환경 변수로 덮어쓰기
+### 환경 변수로 덮어쓰기
 
 모든 설정 키는 `UKR__` 뒤에 키 경로를 붙인 환경 변수로 지정할 수 있습니다. 경로의
 마디 사이에는 밑줄 두 개를 쓰고 대소문자는 가리지 않습니다.
@@ -803,10 +619,17 @@ CloudShell이 그렇게 합니다) 파일에 적은 리전은 바뀌지 않습�
 `run-ingestion`은 `UKR_SOURCE_DIRECTORY`와 `UKR_PIPELINE_ID`(설정 키가 아니므로
 밑줄 하나)도 `--source-directory`와 `--pipeline-id`의 기본값으로 읽습니다. 플래그를
 직접 지정하면 플래그가 우선합니다. `UKR_METRICS_ENVIRONMENT`는
-`--metrics-sink cloudwatch`의 `Environment` 차원입니다.
+`--metrics-sink cloudwatch`의 `Environment` 차원입니다. CDK compute 스택이 주입하는
+변수는 [`iac/README.md`](../iac/README.md#2-build-and-push-the-app-image)에 있습니다.
+그 환경에서도 증분 인덱싱을 쓰려면 설정 파일에 `aws.dynamodb.enabled: true`가 있어야
+합니다(이미지의 설정 파일에는 들어 있습니다).
 
-이 릴리스 이전의 변수 이름(`NEPTUNE_ENDPOINT`, `LOG_LEVEL`, `GRAPHRAG_SOURCE_SCOPE`
-등)은 더 이상 읽지 않습니다.
+CLI는 python-dotenv로 `.env` 파일도 읽습니다. 현재 작업 디렉터리의 `./.env`만 읽고
+상위 디렉터리의 파일은 찾지 않습니다(그러지 않으면 `AWS_PROFILE`을 설정한 `~/.env`가
+모르는 사이에 계정을 바꿀 수 있음). 환경에 이미 설정된 변수가 `.env`보다 우선합니다.
+패키지를 가져오는 것만으로는 `.env`를 읽지 않으며 `os.environ`을 바꾸지 않습니다.
+Python 코드에서 `.env`가 필요하면 직접 읽으세요(예: `get_config()` 전에
+`dotenv.load_dotenv()`).
 
 > **LangSmith 추적은 내용을 업로드합니다.** `LANGSMITH_TRACING=true`(또는 구형
 > 변수 `LANGCHAIN_TRACING_V2=true`)가 설정되어 있으면 LangChain은 추적한 실행을 모두
@@ -816,31 +639,11 @@ CloudShell이 그렇게 합니다) 파일에 적은 리전은 바뀌지 않습�
 > 경고는 `setup_logging`이 남기므로, 이 함수를 호출하지 않는 라이브러리 코드에서는
 > 나오지 않습니다.
 
-CLI는 python-dotenv로 `.env` 파일도 읽습니다. 현재 작업 디렉터리의 `./.env`만 읽고
-상위 디렉터리의 파일은 찾지 않습니다(그러지 않으면 `AWS_PROFILE`을 설정한 `~/.env`가
-모르는 사이에 계정을 바꿀 수 있음). 환경에 이미 설정된 변수가 `.env`보다 우선합니다.
-패키지를 가져오는 것만으로는 `.env`를 읽지 않으며 `os.environ`을 바꾸지 않습니다.
-Python 코드에서 `.env`가 필요하면 직접 읽으세요(예: `get_config()` 전에
-`dotenv.load_dotenv()`).
+### 관측성
 
-CDK compute 스택은 `AWS_REGION`, `UKR__AWS__BEDROCK__REGION_NAME`,
-`UKR__AWS__NEPTUNE__ENDPOINT`, `UKR__AWS__OPENSEARCH__ENDPOINT`, `UKR__INDEXING__OPENSEARCH__INDEX_SETTINGS__NUMBER_OF_REPLICAS`(다중 노드
-도메인이면 1), `UKR__INDEXING__OPENSEARCH__LANGUAGE_ANALYZERS__KO`(`opensearch_korean_analyzer`를 지정하지
-않으면 `cjk`), `UKR__AWS__S3__BUCKET_NAME`,
-`UKR__AWS__DYNAMODB__TABLE_NAME`, `UKR__AWS__DYNAMODB__CREATE_TABLE_IF_MISSING=false`(테이블은
-IaC가 관리하며 태스크 역할에는 테이블 생성 권한이 없음), `UKR__LOGGING__LOG_FORMAT`을 주입하고,
-가드레일을 배포했다면 `UKR__AWS__BEDROCK__GUARDRAIL__IDENTIFIER`도 주입합니다(`guardrail_version`을
-설정하면 `UKR__AWS__BEDROCK__GUARDRAIL__VERSION`도 주입). `enable_cloudwatch_tracing`을 켜면
-`UKR__OBSERVABILITY__ENABLED=true`, `UKR__OBSERVABILITY__BACKEND=otlp`,
-`OTEL_EXPORTER_OTLP_ENDPOINT`(수집기 사이드카), `OTEL_RESOURCE_ATTRIBUTES`도
-주입합니다. 증분 인덱싱을
-쓰려면 설정 파일에 `aws.dynamodb.enabled: true`가 있어야 합니다.
-
-### 2.11 `observability` — OpenTelemetry 추적
-
-추적은 기본적으로 꺼져 있습니다. 켜면 수집 실행과 질의가 각각 하나의
-OpenTelemetry 트레이스가 되며, OTLP를 받는 백엔드(Jaeger, Grafana Tempo,
-OpenTelemetry Collector 등)에서 볼 수 있습니다. `otel` extra가 필요합니다.
+추적은 기본적으로 꺼져 있습니다. `observability.enabled: true`로 켜면 수집 실행과
+질의가 각각 하나의 OpenTelemetry 트레이스가 되며, OTLP를 받는 백엔드(Jaeger, Grafana
+Tempo, OpenTelemetry Collector 등)에서 볼 수 있습니다. `otel` extra가 필요합니다.
 
 ```bash
 uv sync --extra otel          # 또는: pip install -e '.[otel]'
@@ -848,16 +651,11 @@ uv sync --extra otel          # 또는: pip install -e '.[otel]'
 
 extra 없이 추적을 켜면 시작할 때 extra 이름을 알려 주는 `ConfigurationError`로
 실패합니다. 추적이 꺼져 있으면 OpenTelemetry 관련 모듈을 전혀 불러오지 않습니다.
-
-| 키 | 기본값 | 역할과 변경 시점 |
-|---|---|---|
-| `observability.enabled` | `false` | 스팬을 기록합니다. `OTEL_SDK_DISABLED=true`이면 이 값과 관계없이 꺼집니다. |
-| `observability.backend` | `"none"` | `none`: 호스트 애플리케이션이나 `opentelemetry-instrument`가 설정한 프로세스 전역 트레이서 프로바이더로 스팬을 보냅니다. `otlp`: 패키지가 OTLP 익스포터를 직접 설치합니다. `langfuse` / `phoenix`: 같은 OTLP 익스포터를 Langfuse나 Arize Phoenix로 향하게 하고 해당 서비스의 속성 이름을 더합니다(아래 참고). |
-| `observability.capture_content` | `false` | 모델 스팬에 프롬프트와 응답 본문을, `kg_rag.query` 스팬에 질의와 답변을 기록합니다(*트레이스 구조* 참고). 기밀 코퍼스에서는 끈 채로 두세요. |
-| `observability.redact_patterns` | `[]` | `[REDACTED]`로 바꿀 정규식 목록입니다. 기록하는 본문에 적용하고, `otlp`/`langfuse`/`phoenix`에서는 내보내는 모든 문자열 속성, 이벤트 속성(예외 메시지), 상태 메시지에도 적용합니다. |
-| `observability.sample_rate` | `1.0` | 남길 루트 트레이스의 비율입니다(`otlp`, `langfuse`, `phoenix`). 하위 스팬은 루트의 결정을 따릅니다. `none`에서는 호스트의 트레이서 프로바이더가 샘플링합니다. |
-| `observability.service_name` | `"unified-kg-rag"` | `service.name` 리소스 속성이자 Phoenix 프로젝트 이름입니다. `OTEL_SERVICE_NAME`(과 `PHOENIX_PROJECT_NAME`)이 설정되어 있으면 그 값이 우선합니다. |
-| `observability.export_timeout_seconds` | `10` | 전송 요청 하나의 상한(초)입니다(`otlp`, `langfuse`, `phoenix`). `OTEL_EXPORTER_OTLP_TIMEOUT`이 있으면 그 값이 우선합니다. |
+`observability.backend`는 스팬을 보낼 곳을 정합니다(`none`: 호스트 애플리케이션이나
+`opentelemetry-instrument`가 설정하는 프로세스 전역 트레이서 공급자, `otlp`: 패키지가
+설치하는 OTLP 익스포터, `langfuse` / `phoenix`: 그 익스포터를 해당 벤더로 보냄, 아래
+참고). `capture_content`, `redact_patterns`, `sample_rate`, `service_name`,
+`export_timeout_seconds`는 [레퍼런스](./configuration.md#observability)에 있습니다.
 
 익스포터는 설정 파일이 아니라 OpenTelemetry 표준 환경 변수로 설정하므로 수집기 API
 키가 설정 파일에 들어가지 않습니다. `OTEL_EXPORTER_OTLP_ENDPOINT`(기본값

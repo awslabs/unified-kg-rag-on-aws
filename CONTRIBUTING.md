@@ -146,7 +146,9 @@ than an edit to dispatch code.
   A maintainer then updates the translation and removes the note.
 - Describe current behavior only. Do not write "previously", "now" or "(old behaviour)" in the guides; put release
   history in [CHANGELOG.md](./CHANGELOG.md).
-- `config-template.yaml` documents every configuration key; update it with any config change.
+- Every configuration key has a user-facing `Field(description=...)`. After changing a config field, run
+  `uv run python scripts/gen_config_reference.py` to regenerate [docs/configuration.md](./docs/configuration.md)
+  (a unit test fails when it is stale), and update `config-template.yaml`, the commented starting file.
 
 
 ## Finding contributions to work on
