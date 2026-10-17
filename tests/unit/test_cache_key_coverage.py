@@ -30,6 +30,7 @@ from unified_kg_rag.shared.utils.cache_keys import (
     extraction_fingerprint,
     shapes_answers,
     stage_input_fingerprint,
+    unit_record_fingerprint,
 )
 
 pytestmark = pytest.mark.unit
@@ -125,6 +126,23 @@ def test_local_model_knobs_key_every_stage(field: str, value: object) -> None:
             baseline, stage
         ), stage
     assert extraction_fingerprint(changed) != extraction_fingerprint(baseline)
+
+
+def test_the_default_output_cap_keys_local_models_too() -> None:
+    # A local model is asked for aws.bedrock.default_max_output_tokens
+    # (clamped to providers.llm.max_output_tokens); the keys dropped it with
+    # the other Bedrock settings, so a changed cap reused cached output.
+    capped = Config.model_validate(
+        {"backend": "local", "aws": {"bedrock": {"default_max_output_tokens": 512}}}
+    )
+    for stage in PipelineStageType:
+        assert stage_input_fingerprint(capped, stage) != stage_input_fingerprint(
+            _local(), stage
+        ), stage
+    assert extraction_fingerprint(capped) != extraction_fingerprint(_local())
+    assert unit_record_fingerprint(capped, gleaned=False) != (
+        unit_record_fingerprint(_local(), gleaned=False)
+    )
 
 
 def test_settings_of_the_inactive_model_provider_do_not_key() -> None:

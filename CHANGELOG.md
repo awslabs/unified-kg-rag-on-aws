@@ -1135,6 +1135,13 @@ changed once with the full-config keys (#332).
   rank order. A test runs a full build, an incremental run and every search
   strategy in two processes with different hash seeds and requires
   identical stores, prompts, exports and answers (#343).
+- In local mode the stage cache keys, the extraction settings and the
+  extraction-record keys count `aws.bedrock.default_max_output_tokens`: a
+  local model is asked for that cap too, but the keys dropped it with the
+  other Bedrock settings, so a changed cap reused output made under the old
+  one. Local-mode stage caches and extraction records made before miss once;
+  the recorded extraction settings compare unchanged, so nothing is
+  re-extracted incrementally on that account (#PR).
 - A paired strategy comparison no longer drops the queries a strategy
   failed to answer: a strategy that crashed on the queries it would lose
   looked as good as one that answered them. A failed answer scores 0 on

@@ -19,7 +19,8 @@ unchanged, so its key carries a fingerprint of those inputs:
   false``) contributes its switch alone, except for the fields other
   components read whatever the switch says (``_READ_WHEN_DISABLED``); the
   local model knobs count only while the language models are not Bedrock's
-  and the Bedrock ones only while they are; a guardrail only while it guards
+  and the Bedrock ones only while they are, except the output cap every
+  model is asked for (``_EVERY_PROVIDER``); a guardrail only while it guards
   ingestion models; a stage's prompt overrides only while the stage runs
   (``_IN_EFFECT_WHEN``).
 
@@ -432,6 +433,9 @@ _IN_EFFECT_WHEN: dict[str, Callable[[Config], bool]] = {
     },
 }
 _SWITCHES = frozenset({"enabled", "kind"})
+# Bedrock settings every language model reads: the request's output cap,
+# which a local model is asked for too (clamped to providers.llm's ceiling).
+_EVERY_PROVIDER = frozenset({"aws.bedrock.default_max_output_tokens"})
 
 # Fields of a switchable block that other components read whatever its
 # ``enabled`` flag says. With translation off, extraction, gleaning, claim
@@ -470,7 +474,7 @@ def _in_effect(config: Config, path: str, disabled: bool) -> bool:
     name = path.rsplit(".", 1)[-1]
     if disabled and path not in _READ_WHEN_DISABLED:
         return False
-    if name in _SWITCHES:
+    if name in _SWITCHES or path in _EVERY_PROVIDER:
         return True
     parts = path.split(".")
     return all(
