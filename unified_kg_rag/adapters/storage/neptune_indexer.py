@@ -636,36 +636,85 @@ class NeptuneIndexer(GraphIndexer):
             # source vertex carries THIS suffix's entity label (the scope
             # delete_by_id uses); unscoped, indexing one tenant would drop
             # another tenant's identical edges.
+            # An edge whose endpoint vertex is missing is neither dropped nor
+            # written: its stored copy (the edge an unchanged document
+            # states, before a re-key re-pointed it) stays.
             writable: list[Relationship] = []
             for batch in self._batch_iterator(rels):
+                ends = sorted(
+                    {end for rel in batch for end in (rel.source_id, rel.target_id)}
+                )
+
+                def stored_ends(
+                    g: GraphTraversalSource,
+                    entity_label: str = entity_label,
+                    ends: list[str] = ends,
+                ) -> GraphTraversal:
+                    return (
+                        g.V()
+                        .hasLabel(entity_label)
+                        .has("id", P.within(ends))
+                        .values("id")
+                    )
+
+                check_write_fence()
+                try:
+                    present = set(
+                        self._execute_with_retries(
+                            stored_ends, "Reading edge endpoints", results=True
+                        )
+                    )
+                except Exception as exc:
+                    stats.add_error(
+                        f"reading edge endpoints failed: {exc}",
+                        len(batch),
+                        ids=[rel.id for rel in batch],
+                    )
+                    logger.warning("Failed reading an edge batch's endpoints: %s", exc)
+                    continue
+                found: list[Relationship] = []
+                for rel in batch:
+                    if rel.source_id in present and rel.target_id in present:
+                        found.append(rel)
+                        continue
+                    stats.add_error("endpoint entity not found", ids=[rel.id])
+                    logger.warning(
+                        "Relationship '%s' not written: an endpoint entity is "
+                        "not stored",
+                        rel.id,
+                    )
+                if not found:
+                    continue
 
                 def drop_edges(
                     g: GraphTraversalSource,
                     entity_label: str = entity_label,
-                    batch: list[Relationship] = batch,
+                    ids: list[str] = [rel.id for rel in found],  # noqa: B006
                 ) -> GraphTraversal:
                     return (
                         g.E()
-                        .has("id", P.within([rel.id for rel in batch]))
+                        .has("id", P.within(ids))
                         .where(__.outV().hasLabel(entity_label))
                         .drop()
                     )
 
+                check_write_fence()
                 try:
                     self._execute_with_retries(drop_edges, "Dropping existing edges")
-                    writable.extend(batch)
-                except Exception as e:
+                    writable.extend(found)
+                except Exception as exc:
                     stats.add_error(
-                        f"dropping existing edges failed: {e}",
-                        len(batch),
-                        ids=[rel.id for rel in batch],
+                        f"dropping existing edges failed: {exc}",
+                        len(found),
+                        ids=[rel.id for rel in found],
                     )
-                    logger.warning("Failed dropping existing edge batch: %s", e)
+                    logger.warning("Failed dropping existing edge batch: %s", exc)
 
             def write(
                 rel: Relationship, entity_label: str = entity_label
             ) -> str | None:
                 """Write one edge; the error, or None once it is written."""
+                check_write_fence()
                 try:
                     if self._execute_with_retries(
                         lambda g: self._build_add_edge_traversal(g, rel, entity_label),
@@ -789,6 +838,7 @@ class NeptuneIndexer(GraphIndexer):
                     .drop()
                 )
 
+            check_write_fence()
             try:
                 self._execute_with_retries(drop_edges, "Deleting edges by id")
                 self._execute_with_retries(drop_vertices, "Deleting vertices by id")

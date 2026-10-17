@@ -21,6 +21,7 @@ from unified_kg_rag.domain.models import (
     EvaluatorType,
 )
 from unified_kg_rag.ports import GraphIndexer
+from unified_kg_rag.ports.indexer import IndexingStats
 
 pytestmark = pytest.mark.unit
 
@@ -108,6 +109,9 @@ def test_full_and_delta_indexing_write_the_same_artifact_types(mocker) -> None:
     from unified_kg_rag.application.storage.indexing_manager import IndexingManager
 
     vector, graph = mocker.MagicMock(), mocker.MagicMock()
+    # The entity writes succeed, so the edges are written after them.
+    graph.index_entities.return_value = IndexingStats()
+    graph.upsert_entities.return_value = IndexingStats()
     manager = IndexingManager(
         config=Config(), vector_indexer=vector, graph_indexer=graph
     )
@@ -115,7 +119,7 @@ def test_full_and_delta_indexing_write_the_same_artifact_types(mocker) -> None:
     artifacts: dict[str, Any] = {
         "text_units": [SimpleNamespace(id="t", community_ids=None)],
         "entities": ["e"],
-        "relationships": ["r"],
+        "relationships": [SimpleNamespace(id="r", source_id="e", target_id="e")],
         "communities": [
             SimpleNamespace(id="c", text_unit_ids=[], level="0", parent="", children=[])
         ],
@@ -127,8 +131,9 @@ def test_full_and_delta_indexing_write_the_same_artifact_types(mocker) -> None:
     # (The mocks' stats report failures, so the rebuild also reports its
     # skipped sweep: not an artifact type.)
     assert set(full) - {"neptune_sweep"} == set(delta)
-    graph.index_relationships.assert_called_once_with(["r"])  # the full build
-    graph.upsert_relationships.assert_called_once_with(["r"])  # the delta
+    rels = artifacts["relationships"]
+    graph.index_relationships.assert_called_once_with(rels)  # the full build
+    graph.upsert_relationships.assert_called_once_with(rels)  # the delta
 
 
 @pytest.mark.parametrize(

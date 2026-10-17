@@ -1342,6 +1342,16 @@ changed once with the full-config keys (#332).
   now fails its unit (`records_not_stored` in the graph resolution and
   claim extraction metrics): its document is recorded `FAILED` and
   extracted again (#PR).
+- A graph entity write that failed while a run re-keyed an entity no longer
+  loses an edge an unchanged document states: the edges were written after
+  their endpoints' failed writes, and a graph store dropped an edge's stored
+  copy before finding its new endpoint missing. Edges of an entity whose
+  write failed are held back (counted failed), and Neptune, Gremlin Server
+  and the embedded graph keep the stored copy of an edge whose endpoint is
+  missing (#PR).
+- A run killed while it deleted items between the two stores no longer
+  leaves vector copies no later run finds: the vector copies are deleted
+  first, the graph copies (through which a retry finds them) last (#PR).
 - The docs no longer contradict the code: an unknown config key fails the
   load (not a warning), the four causes of a `FAILED` document are listed
   alike in the user guide, the runbook and the design doc, a second

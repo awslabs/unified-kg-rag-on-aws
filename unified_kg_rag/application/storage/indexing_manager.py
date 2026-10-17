@@ -86,6 +86,40 @@ def _with_old_ids(ids: Iterable[str], rekey: Mapping[str, str]) -> list[str]:
     return sorted(wanted | {old for old, new in rekey.items() if new in wanted})
 
 
+def _edges_of_written_entities(
+    relationships: list[Relationship] | None, entity_stats: IndexingStats | None
+) -> tuple[list[Relationship] | None, IndexingStats | None]:
+    """The relationships to write after the graph entity writes, and the
+    stats of those held back.
+
+    An edge whose endpoint's write failed is not written: a re-keyed
+    entity's edges would be re-pointed at a vertex that is not there, and a
+    graph store replaces an edge by dropping its stored copy first. The held
+    back edges count as failed, so their documents are written again. A
+    failure that names no entity holds back every edge.
+    """
+    if not relationships or entity_stats is None or not entity_stats.failed_items:
+        return relationships, None
+    failed = set(entity_stats.failed_ids)
+    held = [
+        r
+        for r in relationships
+        if entity_stats.unattributed_failures
+        or r.source_id in failed
+        or r.target_id in failed
+    ]
+    if not held:
+        return relationships, None
+    logger.warning(
+        "Not writing %d relationships: an endpoint entity's graph write failed",
+        len(held),
+    )
+    stats = IndexingStats(total_items=len(held))
+    stats.add_error("endpoint entity write failed", len(held), ids=[r.id for r in held])
+    held_ids = {id(r) for r in held}
+    return [r for r in relationships if id(r) not in held_ids], stats
+
+
 class CrossRunMergeResult(BaseModel):
     """A delta merged with the stored graph state it touches."""
 
@@ -364,19 +398,6 @@ class IndexingManager:
             if suffixes is None
             else graph.index_relationships
         )
-        phase2 = [
-            IndexingTask(edges, [relationships], "neptune_relationships"),
-            *tasks(
-                [
-                    (
-                        graph.index_communities,
-                        graph.upsert_communities,
-                        communities,
-                        "neptune_communities",
-                    )
-                ]
-            ),
-        ]
 
         prefix, tail = ("", "") if suffixes is not None else ("Delta ", " (upsert)")
         # A full build replaces the graph in place where the backend can: the
@@ -391,9 +412,29 @@ class IndexingManager:
             logger.info("--- Starting %sIndexing Phase 1%s ---", prefix, tail)
             results = self._run_indexing_phase(tasks(phase1))
             check_write_fence()
+            writable, skipped = _edges_of_written_entities(
+                relationships, results.get("neptune_entities")
+            )
+            phase2 = [
+                IndexingTask(edges, [writable], "neptune_relationships"),
+                *tasks(
+                    [
+                        (
+                            graph.index_communities,
+                            graph.upsert_communities,
+                            communities,
+                            "neptune_communities",
+                        )
+                    ]
+                ),
+            ]
             logger.info("--- Starting %sIndexing Phase 2%s ---", prefix, tail)
             results.update(self._run_indexing_phase(phase2))
             check_write_fence()
+            if skipped is not None:
+                results.setdefault("neptune_relationships", IndexingStats()).merge(
+                    skipped
+                )
         except BaseException:
             if rebuilding:
                 graph.end_rebuild(suffixes or [], sweep=False)
@@ -1189,6 +1230,7 @@ class IndexingManager:
             ],
         ]
         for phase in phases:
+            check_write_fence()
             results.update(self._run_indexing_phase(phase))
         return results
 
@@ -1495,6 +1537,7 @@ class IndexingManager:
         for suffix, ids in ids_by_suffix.items():
             if not ids:
                 continue
+            check_write_fence()
             # Orphan-edge cleanup: a relationship pointing AT one of these
             # deleted entities is owned (in lineage) by a SURVIVING document, so
             # it is not in `ids`. Neptune drops the incident edge on vertex drop,
@@ -1513,13 +1556,17 @@ class IndexingManager:
                 stats.add_error(str(e), count=len(ids))
                 results[f"neptune_read_{suffix}"] = stats
                 continue
-            results[f"neptune_delete_{suffix}"] = self.neptune_indexer.delete_by_id(
-                ids, suffix=suffix
-            )
+            # The vector copies first: a retry finds what to delete (and the
+            # re-keyed items it retires) through the graph, so a run that
+            # died between the stores must leave the graph copy, not an
+            # orphaned vector copy nothing finds again.
             results.update(
                 self.opensearch_indexer.delete_document_artifacts(
                     ids, suffix, extra_relationship_ids=incident_rel_ids
                 )
+            )
+            results[f"neptune_delete_{suffix}"] = self.neptune_indexer.delete_by_id(
+                ids, suffix=suffix
             )
         return results
 

@@ -349,6 +349,55 @@ def _rel(rid: str = "r1"):
     return Relationship(id=rid, source_id="e1", target_id="e2", type="REL")
 
 
+def test_edges_of_a_failed_entity_write_are_held_back(manager, mocker) -> None:
+    # Regression: the edges were written after their endpoints' failed graph
+    # writes; a store drops an edge's stored copy before writing it, so an
+    # edge re-pointed at a re-keyed entity whose write failed was lost.
+    mgr, graph, _, _ = manager
+    entities = [Entity(id=i, name=i.upper()) for i in ("a", "b", "c")]
+    rels = [
+        Relationship(id="r-ab", source_id="a", target_id="b"),
+        Relationship(id="r-bc", source_id="b", target_id="c"),
+    ]
+    graph.upsert_entities(entities)  # stored by an earlier run
+    rejected = IndexingStats(total_items=3, successful_items=2)
+    rejected.add_error("rejected", ids=["c"])
+    mocker.patch.object(graph, "upsert_entities", return_value=rejected)
+    write = mocker.spy(graph, "upsert_relationships")
+
+    results = mgr.index_delta(entities=entities, relationships=rels)
+
+    (written,) = write.call_args.args
+    assert [r.id for r in written] == ["r-ab"]
+    assert results["neptune_relationships"].failed_ids == ["r-bc"]
+
+    # A failure naming no entity holds back every edge.
+    mocker.patch.object(graph, "upsert_entities", side_effect=RuntimeError("down"))
+    write.reset_mock()
+    results = mgr.index_delta(entities=entities, relationships=rels)
+    write.assert_not_called()
+    assert sorted(results["neptune_relationships"].failed_ids) == ["r-ab", "r-bc"]
+
+
+def test_a_deletion_that_dies_between_the_stores_keeps_the_graph_copy(
+    manager, mocker
+) -> None:
+    # Regression: the graph copy went first, so a run killed before the
+    # vector delete left a vector copy no retry finds (retries find what to
+    # delete, e.g. a re-keyed entity's old id, through the graph).
+    mgr, graph, vector, _ = manager
+    graph.upsert_entities([Entity(id="old", name="Old")])
+
+    class Killed(BaseException):
+        pass
+
+    mocker.patch.object(vector, "delete_document_artifacts", side_effect=Killed)
+    with pytest.raises(Killed):
+        mgr.delete_documents({"default": ["old"]})
+
+    assert graph.ids("entities") == {"old"}
+
+
 def test_relationship_vector_index_built_by_default(manager) -> None:
     mgr, graph, vector, _ = manager
     mgr.index_all_data(relationships=[_rel()], entities=[])

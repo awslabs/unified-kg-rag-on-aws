@@ -151,8 +151,9 @@ class SQLiteGraphIndexer(GraphIndexer):
     def upsert_relationships(self, relationships: list[Relationship]) -> IndexingStats:
         """Replace each edge by id; one whose endpoint is missing is not written.
 
-        As in Neptune the stored edge of that id is dropped first, so a
-        re-added edge whose endpoint is gone leaves no edge behind.
+        As in Neptune, such an edge fails and its stored copy stays: the
+        edge an unchanged document states is not lost to a write that
+        re-points it at a vertex that is not there.
         """
         stats = IndexingStats(total_items=len(relationships))
         if not relationships:
@@ -161,13 +162,21 @@ class SQLiteGraphIndexer(GraphIndexer):
         with self.store.transaction("write relationships") as connection:
             for suffix, rels in grouped.items():
                 label = self._entity_label(suffix)
-                self._delete_edges(connection, label, [rel.id for rel in rels])
                 stored = set(
                     self.store.vertex_maps(
                         connection,
                         label,
                         (end for rel in rels for end in (rel.source_id, rel.target_id)),
                     )
+                )
+                self._delete_edges(
+                    connection,
+                    label,
+                    [
+                        rel.id
+                        for rel in rels
+                        if rel.source_id in stored and rel.target_id in stored
+                    ],
                 )
                 for rel in rels:
                     missing = [

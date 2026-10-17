@@ -247,3 +247,45 @@ def test_a_stopped_run_uploads_its_checkpoint_before_releasing_the_lease(
         pipe.run(tmp_path, pipeline_id="pid")
     assert held_during_upload == [True]
     assert not store.leases
+
+
+def test_a_lost_lease_stops_the_deletion_of_retired_ids() -> None:
+    # The re-keyed items' old ids, merged-away edges and folded delta ids are
+    # deleted after the commit's writes: a run that lost its lease meanwhile
+    # must not delete what the new holder wrote under them.
+    config = Config()
+    graph = FakeGraphStore()
+    vector = FakeVectorStore(opensearch_config=config.indexing.opensearch)
+    manager = IndexingManager(config=config, vector_indexer=vector, graph_indexer=graph)
+    graph.upsert_entities([Entity(id="e-old", name="Old")])
+    manager._retire("default", {"e-old": "e-new"})
+    token = _fenced(_Fence(allowed=0))
+    try:
+        with pytest.raises(NamespaceLeaseError):
+            manager.delete_retired_ids()
+    finally:
+        remove_write_fence(token)
+    assert graph.ids("entities") == {"e-old"}
+
+
+def test_a_lost_lease_stops_the_next_neptune_edge_write(mocker) -> None:
+    # The relationship writes (endpoint check, drop, per-edge add) and the
+    # drop by id do not go through the batch path.
+    from unified_kg_rag.domain.models import Relationship
+
+    mocker.patch("unified_kg_rag.adapters.storage.neptune_indexer.NeptuneClient")
+    from unified_kg_rag.adapters.storage.neptune_indexer import NeptuneIndexer
+
+    indexer = NeptuneIndexer(config=Config())
+    sent = mocker.patch.object(indexer, "_execute_with_retries")
+    token = _fenced(_Fence(allowed=0))
+    try:
+        with pytest.raises(NamespaceLeaseError):
+            indexer.upsert_relationships(
+                [Relationship(id="r", source_id="a", target_id="b")]
+            )
+        with pytest.raises(NamespaceLeaseError):
+            indexer.delete_by_id(["a"], suffix="default")
+    finally:
+        remove_write_fence(token)
+    sent.assert_not_called()

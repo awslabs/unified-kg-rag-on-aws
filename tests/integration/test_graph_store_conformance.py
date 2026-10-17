@@ -160,7 +160,7 @@ def test_edge_with_a_missing_endpoint_is_a_failed_id(harness: StoreHarness) -> N
     assert [r.id for r in graph.read_relationships(["r1", "r2"])] == ["r2"]
 
 
-def test_readding_an_edge_replaces_it_even_when_it_cannot_be_written(
+def test_readding_an_edge_replaces_it_unless_it_cannot_be_written(
     harness: StoreHarness,
 ) -> None:
     graph = harness.graph_indexer
@@ -170,12 +170,14 @@ def test_readding_an_edge_replaces_it_even_when_it_cannot_be_written(
     (rel,) = graph.read_relationships(["r1"])
     assert (rel.source_id, rel.target_id, rel.description) == ("b", "a", "new")
 
-    # The stored edge of the id is dropped before the new one is written, so
-    # an edge re-added towards a missing endpoint leaves no edge behind.
+    # An edge re-pointed at a missing endpoint (a re-keyed entity whose
+    # write failed) fails and the stored edge stays: an unchanged document
+    # may still state it.
     stats = graph.upsert_relationships([_rel("r1", "a", "ghost")])
     assert stats.failed_ids == ["r1"]
-    assert graph.read_relationships(["r1"]) == []
-    assert harness.stored_ids("graph.relationships") == set()
+    (rel,) = graph.read_relationships(["r1"])
+    assert (rel.source_id, rel.target_id, rel.description) == ("b", "a", "new")
+    assert harness.stored_ids("graph.relationships") == {"r1"}
 
 
 def test_deleting_a_vertex_drops_its_edges(harness: StoreHarness) -> None:

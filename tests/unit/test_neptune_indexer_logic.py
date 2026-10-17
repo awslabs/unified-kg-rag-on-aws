@@ -810,14 +810,55 @@ def test_delete_by_id_retries_after_a_lost_connection(indexer) -> None:
 
 def test_relationship_drop_retries_after_a_lost_connection(indexer, mocker) -> None:
     # Regression: the drop-by-id before the edge writes had one attempt, so a
-    # lost connection failed the whole batch of edges.
-    g = _LostOnce(["r1"])
+    # lost connection failed the whole batch of edges. Every request answers
+    # the endpoints' ids (the endpoint read, then the edge write).
+    g = _LostOnce(["a", "b"])
     indexer.neptune_client.g = g
     rel = Relationship(id="r1", source_id="a", target_id="b")
 
     stats = indexer.upsert_relationships([rel])
 
     assert (stats.successful_items, stats.failed_items) == (1, 0)
+
+
+def test_an_edge_whose_endpoint_is_missing_keeps_its_stored_copy(
+    indexer, mocker
+) -> None:
+    # Regression: the edges were dropped by id before the write found the
+    # endpoint missing, so an edge re-pointed at a re-keyed entity whose write
+    # failed was lost, though an unchanged document still states it.
+    dropped: list[str] = []
+
+    class _Query:
+        def __init__(self) -> None:
+            self.steps: list[tuple[str, tuple]] = []
+
+        def __getattr__(self, name: str):
+            def step(*args, **kwargs):
+                self.steps.append((name, args))
+                return self
+
+            return step
+
+    def execute(build, operation, *, results=False, **kwargs):
+        query = build(_Query())
+        if operation == "Reading edge endpoints":
+            return ["a", "b"]
+        if operation == "Dropping existing edges":
+            within = next(args for name, args in query.steps if name == "has")
+            dropped.extend(within[1].value)
+            return []
+        return ["written"]
+
+    mocker.patch.object(indexer, "_execute_with_retries", side_effect=execute)
+    kept = Relationship(id="r1", source_id="a", target_id="b")
+    repointed = Relationship(id="r2", source_id="a", target_id="gone")
+
+    stats = indexer.upsert_relationships([kept, repointed])
+
+    assert dropped == ["r1"]
+    assert (stats.successful_items, stats.failed_items) == (1, 1)
+    assert stats.failed_ids == ["r2"]
 
 
 def test_member_drop_retries_after_a_lost_connection(indexer, mocker) -> None:
