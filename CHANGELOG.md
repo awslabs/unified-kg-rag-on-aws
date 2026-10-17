@@ -196,7 +196,7 @@ full re-index of the affected index type).
   (`attributes.extraction_records`), and resolved entities record the name
   keys they were resolved from (`attributes.entity_keys`). Items indexed
   before keep their stored content (a WARNING counts them) until
-  `indexing.reset: true` rebuilds the index (#PR).
+  `indexing.reset: true` rebuilds the index (#325).
 - Graph extraction and gleaning write one record per text unit (its own
   entities, relationships and rejected names) and graph resolution merges
   the records: `PipelineContext.unit_extractions` replaces `entities`,
@@ -539,7 +539,7 @@ Library API (Python callers and custom backends).
   spelling and type ties a merge keeps do not depend on which documents
   were extracted together. Removing a document's chunks from shared items
   re-embeds the ones whose text changed; the others still update lineage,
-  weight and now rank in place (#PR).
+  weight and now rank in place (#325).
 - Level-0 communities are bounded by the new
   `graph.community_detection.max_cluster_size` (default 20): a larger Leiden
   community is partitioned again on its own subgraph until it fits, and the
@@ -823,7 +823,7 @@ Library API (Python callers and custom backends).
   name changed get their new rank and endpoint name, and a description is
   summarized again only when the text it is derived from changed. The
   property tests and the crash-recovery fixture compare descriptions,
-  names, types, ranks and claims with a full build (#PR).
+  names, types, ranks and claims with a full build (#325).
 - The CLI provider flags no longer drop environment overrides. On every CLI
   (`run-ingestion`, `run-rag`, `run-eval`, `run-prompt-tuning`,
   `run-visualization`), any provider flag (`--backend`, `--llm-provider`,
