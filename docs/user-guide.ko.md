@@ -136,7 +136,7 @@ pip install -e .
 optional 'unstructured' extra`). Python 3.11 또는 3.12에서는
 `uv sync --extra unstructured` 또는 `pip install -e '.[unstructured]'`로 패치된
 파서를 설치하세요. 이 extra는 `unstructured>=0.24.1`을 요구하며, 이 버전은 URL
-분할의 SSRF 취약점과 생성 HTML의 마크업 미이스케이프 문제를 고쳤고 NLTK에 의존하지 않습니다. Python 3.10에서는 이 extra를
+분할의 SSRF 취약점과 생성 HTML의 마크업 미이스케이프 문제를 고쳤습니다. Python 3.10에서는 이 extra를
 지정해도 파서가 설치되지 않으므로 PDF/TXT/CSV/JSON을 쓰거나, Markdown/HTML이
 필요하면 Python을 올리세요.
 
@@ -1191,7 +1191,7 @@ aws:
   모델의 벡터가 섞입니다. OpenSearch 인덱스마다 만들 때 쓴 모델과 차원을 기록하고,
   인덱싱 단계는 그 값이 이번 실행과 다르면 아무것도 쓰기 전에 멈춥니다.
   `indexing.reset: true`로 한 번 다시 실행해 코퍼스 전체를 다시 임베딩하세요. 임베딩
-  설정을 기록하지 않은 인덱스(이전 릴리스가 만든 인덱스)도 같은 방식으로 거부하므로
+  설정을 기록하지 않은 인덱스도 같은 방식으로 거부하므로
   한 번 초기화하세요.
   질의도 같은 기준으로 확인합니다. 인덱스를 만들 때와 다른 임베딩 모델이나 차원으로
   `run-rag`·`run-eval`을 실행하면 빈 검색 결과로 답하지 않고 `ConfigurationError`로
@@ -1330,8 +1330,7 @@ ID와 새 청크 ID를 함께 담으므로, 수정하는 문서의 한도는 그
 목적어가 해석된 엔티티, 유형, 날짜로 정해집니다. 그래서 여러 문서가 진술한 주장은(한
 문서에서는 "Acme Inc", 다른 문서에서는 "Acme"라고 써도) 하나의 주장으로서 각 문서의
 설명, 원문, 텍스트 단위를 모두 유지하며 이 정보는
-OpenSearch 주장 인덱스에서 읽어 옵니다(주장이 텍스트 단위를 저장하기 전에 색인된 주장은
-이번 실행의 값에서 시작합니다). 문서가 바뀌거나 삭제되면, 그 문서가 다른 문서와 공유하던 엔티티, 관계, 주장은
+OpenSearch 주장 인덱스에서 읽어 옵니다. 문서가 바뀌거나 삭제되면, 그 문서가 다른 문서와 공유하던 엔티티, 관계, 주장은
 `text_unit_ids`에서 그 문서의 청크를 잃고(빈도와 가중치도 따라 바뀜), 이름, 유형, 설명,
 rank, 주장 문장은 남은 청크에서 다시 파생하므로 그 문서가 보탠 내용도 함께 사라집니다.
 엔티티 id는 현재 이름을 따릅니다. 다른 표기가 이기면(이긴 표기를 가진 문서가 사라졌거나
@@ -1582,8 +1581,8 @@ run-eval --data-path s3://my-bucket/eval/my_eval_data.json \
   인덱스 매핑의 `_meta`에 `pipeline_id`, `mode`(`full` 또는 `incremental`),
   `built_at`, `documents`(실행이 색인한 문서 수. 증분 실행은 새 문서와 바뀐 문서만 셈),
   `extraction_fingerprint`, `extraction_settings`(필드별 추출 설정), `package_version`을 기록합니다(최선 노력 방식. 매핑 수정
-  권한이 없는 역할이면 경고만 남김). 기록하기 전에 만든 인덱스나 인덱스 메타데이터가
-  없는 백엔드는 `null`입니다.
+  권한이 없는 역할이면 경고만 남김). 인덱스 메타데이터가 없는 백엔드는
+  `null`입니다.
   `dropped_evaluators`도 기록합니다. `EvaluationManager.evaluate_dataset`이 이
   매니페스트를 만들므로 라이브러리 호출자도 얻을 수 있습니다(기록하려면
   `dataset_path=` / `cli_args=`를 넘기세요).

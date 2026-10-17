@@ -338,7 +338,7 @@ Neptune 그래프 확장은 `local`과 `drift`에 포함되어 있고, `mix`/`hy
 
 - **고정 단면(기본값)** — `_cut_reports`가 호출자 필터와 함께 단면을 질의 텍스트 없이 조회합니다(`rank` 순). 조회 결과가 `max_reports_per_level`(요청 하나가 돌려주는 최대 건수인 `indexing.opensearch.max_query_size`를 넘을 수 없음)을 채우면 단면 전체에 map을 적용하기에는 너무 크므로, 같은 단면으로 제한한 하이브리드 검색으로 질의와 가장 비슷한 리포트를 그만큼 고릅니다. 검색 메타데이터의 `global_level_capped`가 이를 알립니다. global search에서 유사도를 쓰는 곳은 여기뿐입니다.
 - **동적 선택(`use_dynamic_selection`)** — MS GraphRAG의 `DynamicCommunitySelection`입니다. `models.roles.community_relevance`로 루트 리포트를 평가하고(`CommunityRelevancePrompt`, 1-10을 0-1로 정규화), `relevance_threshold`(기본값 0.2, MS GraphRAG의 0-5 척도 1) 이상인 리포트의 자식을 다음 평가 대상에 넣습니다. 자식 중 하나가 관련 있으면 부모는 빼고, 어떤 깊이에서 관련 리포트가 하나도 없으면 다음 깊이 전체를 평가합니다. `community_depth`보다 깊이 내려가지 않습니다. 평가는 `processing.max_concurrency`개씩 동시에 실행합니다. 평가에 실패한 리포트는 `ignore_errors`에서는 남기고(MS GraphRAG가 파싱하지 못한 평가를 남기는 것과 같음), 그렇지 않으면 예외를 냅니다. 모델 접근 거부 같은 치명적 오류는 어느 경우든 예외를 냅니다. 관련 리포트가 없으면 컨텍스트가 없으므로 체인은 답할 수 없다고 응답합니다.
-- 이 필드가 생기기 전에 색인한 리포트는 어떤 단면에도 맞지 않습니다. 이때 전략은 모든 질의에 빈 컨텍스트로 답하지 않고, 재색인(`indexing.reset: true`)을 요청하는 `ConfigurationError`를 냅니다.
+- `depth`가 없는 리포트는 어떤 단면에도 맞지 않습니다. 이때 전략은 모든 질의에 빈 컨텍스트로 답하지 않고, 재색인(`indexing.reset: true`)을 요청하는 `ConfigurationError`를 냅니다.
 
 **Map-reduce.** `enable_map_reduce`가 켜져 있고 고른 리포트가 `map_reduce_min_results`개 이상이면 MS GraphRAG의 표준 map-reduce를 따릅니다. 리포트가 `map_reduce_min_results`개보다 적으면 리포트를 **그대로 통과**시키고 합성 단계를 전혀 실행하지 않습니다. 커뮤니티 리포트 몇 개를 요약하는 데 map-reduce까지 필요하지 않기 때문입니다.
 
@@ -362,7 +362,7 @@ Neptune 그래프 확장은 `local`과 `drift`에 포함되어 있고, `mix`/`hy
 - **저수준 키워드(ll)** → 엔티티 인덱스(어휘 + 의미, `entities_index_prefix`)
 - **고수준 키워드(hl)** → **관계 인덱스**(LightRAG의 `relationships_vdb`에 해당. `relationships_index_prefix`, `Relationship.description` 임베딩)
 - **검색 라운드** — 서로 독립적인 엔티티, 관계, (mix의) 벡터 청크 질의를 동시에 실행하고, 이어서 연결 관계 확장과 끝점 엔티티 확장을 동시에 실행한 뒤, 둘 모두에 의존하는 인용 청크를 마지막에 가져옵니다. 원본 LightRAG에는 다중 홉 탐색이 없으므로 Neptune 이웃 확장(= GRAPH 역할, `indexing.neptune.max_hops`)은 `search.lightrag_search.enable_graph_expansion`(기본값 `false`)으로 켜는 선택 사항입니다.
-- **mix 연결 청크** — 엔티티와 관계는 `text_unit_ids` 청크 계보와 함께 색인되므로, `mix`는 매칭된 엔티티·관계에서 이를 뒷받침하는 청크로 거슬러 올라갑니다(`_collect_linked_chunk_ids`가 매칭된 항목 중 몇 개가 각 청크를 인용하는지로 청크 id 순위를 정하며, LightRAG의 `_find_related_text_unit_from_entities` / `_from_relationships`와 같은 방식). 이 청크를 id로 가져와 naive 벡터 청크와 함께 섞습니다. 계보 필드가 생기기 전에 만든 인덱스에서는 naive 결과만 섞는 방식으로 동작합니다.
+- **mix 연결 청크** — 엔티티와 관계는 `text_unit_ids` 청크 계보와 함께 색인되므로, `mix`는 매칭된 엔티티·관계에서 이를 뒷받침하는 청크로 거슬러 올라갑니다(`_collect_linked_chunk_ids`가 매칭된 항목 중 몇 개가 각 청크를 인용하는지로 청크 id 순위를 정하며, LightRAG의 `_find_related_text_unit_from_entities` / `_from_relationships`와 같은 방식). 이 청크를 id로 가져와 naive 벡터 청크와 함께 섞습니다. 매칭된 항목에 `text_unit_ids`가 없으면 naive 결과만 섞는 방식으로 동작합니다.
 - 키워드 추출 결과가 비어 있으면, 짧은 질의는 원본 질의를 ll 키워드로 대신 씁니다(설정 `search.lightrag_search.raw_query_fallback_max_len`).
 - 모든 소스는 공유 `HybridScorer`로 융합합니다.
 

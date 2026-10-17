@@ -73,12 +73,6 @@ only in those prefixes write different stores, so they keep separate records
 even in one table (the CDK stack injects one fixed table name): artifact ids
 are derived from content, and records of the other store set would otherwise
 keep a changed document's old text units and entities in this run's stores.
-A default configuration keeps the namespace it always had. A configuration
-with custom prefixes whose records were written before the prefixes joined
-the namespace sees its corpus as new: its first run re-indexes it (the stage
-cache is re-keyed from parsing on), and the old records stay in the table
-under the untagged namespace. Delete those records once no configuration with
-the default prefixes and the same suffixes uses the table.
 
 On the CDK stack, each `start-execution` starts one execution that runs the
 ingestion task. The stack defines no schedule or event trigger, so
@@ -155,18 +149,7 @@ artifacts are removed. Therefore:
 - index each tenant or corpus version under its own index suffix, with its own
   config file.
 
-Upgrading from a release whose registry table was keyed by `doc_id` alone:
-the registry now lists each document's text units only and is partitioned by
-index namespace, so the old table is rejected at first use with a
-`ConfigurationError`. Point the run at a new table (the CDK stack creates
-`graphrag-doc-status-v2`, `<env>-graphrag-doc-status-v2` outside `dev`; the
-library default is `unified-kg-rag-on-aws-doc-status-v2`) and run once with
-`indexing.reset: true`. Delete the old table once the rebuild succeeded (the
-stack retains it outside `dev`). Nothing an earlier build stored is read:
-indices without recorded embedding settings are refused (`ConfigurationError`
-naming the index), and stage caches of an earlier build miss. Rebuild every
-index once with `indexing.reset: true`, and run a pipeline that resumes a
-cached `--pipeline-id` with `--force-rebuild` or a new id; see
+Coming from a pre-release build: nothing it stored is read; see
 [CHANGELOG: Upgrading from pre-release builds](../CHANGELOG.md#upgrading-from-pre-release-builds).
 
 What incremental runs do not refresh: delta runs append communities rather

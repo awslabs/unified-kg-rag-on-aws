@@ -139,7 +139,7 @@ optional 'unstructured' extra`). On Python 3.11 or 3.12, install the patched
 parser with
 `uv sync --extra unstructured` or `pip install -e '.[unstructured]'`.
 The extra requires `unstructured>=0.24.1`, which fixes URL-partitioning SSRF
-and unescaped markup in generated HTML, and no longer depends on NLTK. On Python 3.10 the extra does not install a parser;
+and unescaped markup in generated HTML. On Python 3.10 the extra does not install a parser;
 use PDF/TXT/CSV/JSON, or upgrade Python for Markdown/HTML support.
 
 The deployed container image (`docker/Dockerfile`) leaves this extra out by
@@ -1306,8 +1306,7 @@ SQLite file instead (`providers.doc_status.kind: sqlite`, switched on by
   model and dimension it was built with, and the indexing stage stops,
   before any write, when they differ from the run's. Re-run once with
   `indexing.reset: true` to re-embed the corpus. An index that records no
-  embedding settings (an earlier release built it) is refused the same way:
-  reset once.
+  embedding settings is refused the same way: reset once.
   Queries are checked the same way: `run-rag` and `run-eval` with another
   embedding model or dimension than the index was built with fail with a
   `ConfigurationError` instead of answering from empty search results.
@@ -1469,8 +1468,7 @@ Claims merge the same way: a claim id is keyed on the entities its subject
 and object resolve to, its type and its dates, not on the document or the
 spelling, so a claim that several documents state (as "Acme Inc" in one and
 "Acme" in another) is one claim that keeps every document's description,
-source text and text units, read back from the OpenSearch claims index (a claim
-indexed before claims stored their text units starts from this run's).
+source text and text units, read back from the OpenSearch claims index.
 When a document changes or is deleted, entities, relationships and claims it shares
 with other documents lose its chunks from `text_unit_ids` (weight
 follows), and their name, type, description, rank and claim text are derived
@@ -1755,8 +1753,7 @@ The summary holds, per metric, mean/median/stdev/min/max/count
   `extraction_fingerprint`, `extraction_settings` (the extraction settings field by
   field) and `package_version` in the index mappings'
   `_meta` (best-effort: a role without the mapping-update permission logs a
-  warning). `null` for an index built before ingestion recorded it, or a
-  backend without index metadata.
+  warning). `null` for a backend without index metadata.
   It also lists `dropped_evaluators`. `EvaluationManager.evaluate_dataset`
   builds it, so library callers get it too (pass `dataset_path=` / `cli_args=`
   to record those).
