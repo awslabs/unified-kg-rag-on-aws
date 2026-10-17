@@ -59,7 +59,7 @@ ignored, so check the start-up warnings after upgrading.
   (the preset's 1024 was silently kept). Library callers read the models
   through `Config.model_id(ModelRole.X)` (`ModelRole` is exported from
   `unified_kg_rag`), `tier_model_id`, `model_tier`,
-  `embedding_model_id`, `embedding_dimension` and `rerank_model_id` (#PR).
+  `embedding_model_id`, `embedding_dimension` and `rerank_model_id` (#334).
 
   | Removed key | Replacement |
   |---|---|
