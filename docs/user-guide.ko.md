@@ -1044,7 +1044,7 @@ RRF + Bedrock 재순위화)를 거치며, 검색 알고리즘만 다릅니다.
 | `local` | 특정 엔티티나 개념에 관한 자세한 질문 | 질의에서 엔티티를 추출 → Neptune 그래프 순회로 이웃과 관계를 찾음 → 벡터·키워드 결과와 결합합니다. 켜져 있으면 주장(covariate)을 넣습니다. |
 | `global` | "주요 주제는 무엇인가" 같은 넓은 주제 질문 | MS GraphRAG global search입니다. 계층의 한 단면(`search.global_search.community_depth`, 기본값은 루트부터 2)에 속한 커뮤니티 리포트 전체를 토큰 크기 배치로 나눠 fast 모델로 점수 매긴 핵심 내용으로 만들고, 순위를 매긴 핵심 내용으로 답합니다. 선택 사항인 동적 선택은 대신 루트부터 계층을 따라 내려갑니다. 비용은 단면 크기에 비례합니다(리포트 `map_context_tokens`마다 map 호출 1회). 상위 수준 종합에 가장 적합합니다. |
 | `drift` | 큰 그림과 거기서 몇 단계 떨어진 구체적 사실이 함께 필요한 여러 부분으로 된 질문 | MS GraphRAG DRIFT search입니다. 가상 답변(HyDE)과 가장 비슷한 커뮤니티 리포트로 중간 답변과 후속 질의를 만들고, 후속 질의마다 local search를 실행해 fast 모델로 답하며 새 후속 질의를 얻는 과정을 `n_depth` 라운드 반복합니다. 답변 모델이 순위를 매긴 중간 답변과 그 근거를 종합합니다. 질의당 LLM 호출이 전략 중 가장 많습니다(약 `primer_folds + k_followups * n_depth`회). |
-| `auto` | 어떤 전략이 맞는지 모를 때, 일반 용도(기본값) | LLM 라우터(`models.roles.strategy_selection`)가 질의를 보고 `search.auto_routable_strategies`(기본 local, mix, global, drift) 중 가장 알맞은 전략을 고릅니다. |
+| `auto` | 어떤 전략이 맞는지 모를 때, 일반 용도(기본값) | LLM 라우터(`models.roles.strategy_selection`)가 질의를 보고 `search.auto_routable_strategies`(기본 local, mix, global. 질의마다 LLM 호출이 최대 27번인 drift는 추가했을 때만 고름) 중 가장 알맞은 전략을 고릅니다. |
 
 **LightRAG(이중 레벨 키워드):**
 

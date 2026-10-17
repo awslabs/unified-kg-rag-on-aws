@@ -709,12 +709,14 @@ indexing:
 
 # Search Configuration
 search:
-  # Strategies the AUTO router may pick (simple is left out; any strategy can
-  # still be selected explicitly). global and drift are skipped when
-  # graph.community_detection.enabled is false (no community reports). The router model
-  # (models.roles.strategy_selection) is on the fast tier: a one-word
+  # Strategies the AUTO router may pick (any strategy can still be selected
+  # explicitly). simple is left out, and drift, which costs up to 27 LLM
+  # calls a query (local: 2); add "drift" to route to it. global and drift
+  # are skipped when graph.community_detection.enabled is false (no community
+  # reports); with one strategy left the router is not called. The router
+  # model (models.roles.strategy_selection) is on the fast tier: a one-word
   # classification run before retrieval stays off the critical path.
-  auto_routable_strategies: ["local", "mix", "global", "drift"]
+  auto_routable_strategies: ["local", "mix", "global"]
 
   # LLM calls and sub-searches one query keeps in flight (global map calls,
   # dynamic-selection ratings, DRIFT primer calls and follow-up searches).

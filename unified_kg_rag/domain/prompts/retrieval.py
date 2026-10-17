@@ -463,10 +463,13 @@ STRATEGY_ROUTING_GUIDE: dict[SearchStrategy, str] = {
    - Optimal for: Definitions, basic facts, simple lookups, clear keyword-based queries
    - Examples: "Define machine learning", "What is Docker?", "Explain RESTful APIs\"""",
     SearchStrategy.LOCAL: """LOCAL SEARCH
-   - Method: Graph traversal focusing on specific entities and immediate neighborhood relationships
-   - Purpose: Detailed entity information and direct relationship exploration
-   - Optimal for: Entity-specific queries, relationship mapping, property exploration
-   - Examples: "AWS S3 features and integrations", "Tesla's partnerships", "React component relationships\"""",
+   - Method: Graph traversal from the entities the question names through their relationships, with the source
+     passages of the entities it reaches
+   - Purpose: Detailed entity information, and facts that chain from a named entity through other entities
+   - Optimal for: Entity-specific queries, multi-hop questions that start from a named entity ("where was the founder
+     of X born"), bridge-entity lookups, relationship mapping
+   - Examples: "AWS S3 features and integrations", "Where was the founder of the company that acquired the startup
+     born", "Which region contains the city the supplier is based in\"""",
     SearchStrategy.GLOBAL: """GLOBAL SEARCH
    - Method: Community detection and high-level pattern analysis across knowledge graph
    - Purpose: Broad thematic exploration and domain-wide pattern identification
@@ -482,9 +485,11 @@ STRATEGY_ROUTING_GUIDE: dict[SearchStrategy, str] = {
     SearchStrategy.MIX: """MIX SEARCH
    - Method: Keyword-driven entity and relationship retrieval with their one-hop graph neighbourhood, blended with
      the source passages those items cite and a direct passage search
-   - Purpose: Questions that chain facts across several entities and need the supporting passages
-   - Optimal for: Multi-hop factual questions, "which X of the Y that did Z" questions, bridge-entity lookups
-   - Examples: "Who founded the company that acquired the startup", "Where was the author of the report born\"""",
+   - Purpose: Questions about a topic or kind of relationship rather than one named starting entity, that need the
+     supporting passages
+   - Optimal for: Questions led by themes and keywords, "which X did Z" questions over many entities, questions that
+     mix a concept with a few named items
+   - Examples: "Which suppliers had delivery disputes", "What risks do the maintenance reports mention for pumps\"""",
     SearchStrategy.HYBRID: """HYBRID SEARCH
    - Method: Keyword-driven entity and relationship retrieval with their one-hop graph neighbourhood and the
      source passages those items cite (no direct passage search)

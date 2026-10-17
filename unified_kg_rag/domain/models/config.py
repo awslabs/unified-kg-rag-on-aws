@@ -2695,17 +2695,19 @@ class SearchConfig(BaseModel):
             SearchStrategy.LOCAL,
             SearchStrategy.MIX,
             SearchStrategy.GLOBAL,
-            SearchStrategy.DRIFT,
         ],
         min_length=1,
         description=(
             "Strategies the auto router may pick; its prompt describes exactly"
             " these, in this order. simple is left out by default because the "
-            "graph strategies cover its direct lookups with graph context. "
-            "global and drift are skipped when "
+            "graph strategies cover its direct lookups with graph context, and"
+            " drift because it costs up to 27 LLM calls a query (local: 2), a "
+            "price one misrouted question should not pay; add it to route to "
+            "it. global and drift are skipped when "
             "graph.community_detection.enabled is false (no community "
-            "reports), and local is used when nothing is left. auto itself is "
-            "rejected; every strategy stays selectable explicitly."
+            "reports), and local is used when nothing is left; with one "
+            "strategy left no router call is made. auto itself is rejected; "
+            "every strategy stays selectable explicitly."
         ),
     )
     hybrid: HybridConfig = Field(

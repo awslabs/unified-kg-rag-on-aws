@@ -804,6 +804,14 @@ changed once with the full-config keys (#332).
 - The DynamoDB, SQLite and in-memory doc-status registries classify a
   corpus with one rule, `DocumentDelta.classify` (with `settings_changed`
   shared with the delta detector), instead of a copy each (#344).
+- `auto` no longer routes to `drift` by default: `search.auto_routable_strategies`
+  is `local`, `mix`, `global`. DRIFT costs up to 27 LLM calls a query
+  (local: 2), a price one misrouted question should not pay; add `drift` to
+  the list to route to it. With one routable strategy left, `auto` uses it
+  without a router call. The router guide sends questions that chain facts
+  from a named entity ("where was the founder of X born") to `local`
+  instead of `mix`: on the synthetic multi-hop harness `local` answers them
+  (exact match 0.925) and `mix` does not (0.40) (#PR).
 - A connected component of fewer than
   `graph.community_detection.min_community_size` entities (an isolated
   entity, a pair linked only to each other) gets no community or report.
