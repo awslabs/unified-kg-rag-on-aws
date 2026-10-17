@@ -109,7 +109,7 @@ ignored, so check the start-up warnings after upgrading.
   `local_context_tokens` and `max_answer_tokens`, with `primer_model_id` and
   the new `action_model_id` (both fast tier). `custom_prompts.drift_primer_*`
   overrides must emit a 0-100 integer `score`; `drift_hyde_*` and
-  `drift_action_*` are new (#PR).
+  `drift_action_*` are new (#323).
 - `search.global_search` follows MS GraphRAG global search (see *Changed*):
   `max_communities`, `map_batch_size`, `reserve_report_slots` and
   `max_text_units` are removed. Use `community_depth` (which cut of the
@@ -553,7 +553,7 @@ Library API (Python callers and custom backends).
   calls (was 5). On a synthetic corpus of seven-fact chains on the embedded
   stores (12 questions, fake model), the answer context held 6.75 of 7 facts
   per question (was 1.17; 2.92 with the old primer; local search 3.08), at
-  15.3 LLM calls per question (#PR).
+  15.3 LLM calls per question (#323).
 - Global search maps every community report of one cut of the community
   hierarchy, as MS GraphRAG does, instead of the `top_k` reports most
   similar to the query: the communities at `community_depth` from the root
