@@ -480,14 +480,15 @@ def test_extraction_stage_records_failed_units_and_rerun_replaces_them(
 ) -> None:
     from unified_kg_rag.adapters.ingestion.graph_extractor import ExtractionStats
     from unified_kg_rag.application.ingestion import pipeline_stages as ps
+    from unified_kg_rag.domain.models import TextUnit
 
     extractor = mocker.MagicMock()
     mocker.patch.object(ps, "GraphExtractor", return_value=extractor)
     stage = ps.GraphExtractionStage(config=Config())
     ctx = _context()
+    ctx.text_units = [TextUnit(id="t1", text="x")]
 
-    extractor.extract_from_text_units.return_value = (
-        [],
+    extractor.extract_units.return_value = (
         [],
         ExtractionStats(num_failed_extractions=1, failed_text_unit_ids=["t1"]),
     )
@@ -495,7 +496,7 @@ def test_extraction_stage_records_failed_units_and_rerun_replaces_them(
     assert ctx.failed_text_unit_ids == {"graph_extraction": ["t1"]}
 
     # A re-run of the stage replaces its entry rather than accumulating.
-    extractor.extract_from_text_units.return_value = ([], [], ExtractionStats())
+    extractor.extract_units.return_value = ([], ExtractionStats())
     stage._execute_core(ctx)
     assert ctx.failed_text_unit_ids == {"graph_extraction": []}
 
@@ -525,17 +526,25 @@ def test_translation_stage_records_failed_units(mocker) -> None:
 def test_gleaning_stage_improvement_rate_is_graph_growth(mocker) -> None:
     from unified_kg_rag.adapters.ingestion.gleaner import GleaningStats
     from unified_kg_rag.application.ingestion import pipeline_stages as ps
-    from unified_kg_rag.domain.models import Entity, Relationship
+    from unified_kg_rag.domain.models import (
+        Entity,
+        Relationship,
+        TextUnitExtraction,
+    )
 
     gleaner = mocker.MagicMock()
     mocker.patch.object(ps, "GraphGleaner", return_value=gleaner)
     stage = ps.GleaningStage(config=Config())
     ctx = _context()
-    ctx.entities = [Entity(id=f"e{i}", name=f"n{i}") for i in range(3)]
-    ctx.relationships = [Relationship(id="r1", source_id="e0", target_id="e1")]
-    gleaner.glean_graph.return_value = (
-        ctx.entities,
-        ctx.relationships,
+    ctx.unit_extractions = [
+        TextUnitExtraction(
+            text_unit_id="t1",
+            entities=[Entity(id=f"e{i}", name=f"n{i}") for i in range(3)],
+            relationships=[Relationship(id="r1", source_id="e0", target_id="e1")],
+        )
+    ]
+    gleaner.glean.return_value = (
+        ctx.unit_extractions,
         GleaningStats(total_entities_added=1, total_relationships_added=1),
     )
 

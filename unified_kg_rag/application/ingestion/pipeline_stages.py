@@ -10,7 +10,10 @@ from typing import TYPE_CHECKING, Any
 from structlog.contextvars import bind_contextvars, reset_contextvars
 
 from unified_kg_rag.adapters.ingestion.chunker import ChunkerFactory
-from unified_kg_rag.adapters.ingestion.claim_extractor import ClaimExtractor
+from unified_kg_rag.adapters.ingestion.claim_extractor import (
+    ClaimExtractionStats,
+    ClaimExtractor,
+)
 from unified_kg_rag.adapters.ingestion.community_detector import (
     CommunityDetector,
     CommunityMetrics,
@@ -19,7 +22,10 @@ from unified_kg_rag.adapters.ingestion.description_summarizer import (
     DescriptionSummarizer,
 )
 from unified_kg_rag.adapters.ingestion.gleaner import GraphGleaner
-from unified_kg_rag.adapters.ingestion.graph_extractor import GraphExtractor
+from unified_kg_rag.adapters.ingestion.graph_extractor import (
+    ExtractionStats,
+    GraphExtractor,
+)
 from unified_kg_rag.adapters.ingestion.loader import DirectoryLoader
 from unified_kg_rag.adapters.ingestion.parser import (
     UNSTRUCTURED_EXTENSIONS,
@@ -28,6 +34,7 @@ from unified_kg_rag.adapters.ingestion.parser import (
 )
 from unified_kg_rag.adapters.ingestion.translator import TextUnitTranslator
 from unified_kg_rag.adapters.providers import Providers
+from unified_kg_rag.application.ingestion.extraction_store import ExtractionStore
 from unified_kg_rag.application.ingestion.incremental import (
     clear_registry_namespaces,
     context_lineages,
@@ -45,6 +52,14 @@ from unified_kg_rag.domain.ingestion.claim_resolver import ClaimResolver
 from unified_kg_rag.domain.ingestion.community_drift import (
     CommunityDrift,
     with_level0_community_ids,
+)
+from unified_kg_rag.domain.ingestion.contributions import (
+    claims_from_payload,
+    claims_payload,
+    merge_contributions,
+    record_from_payload,
+    record_payload,
+    unit_entities,
 )
 from unified_kg_rag.domain.ingestion.delta_detector import (
     assign_document_identity,
@@ -67,6 +82,7 @@ from unified_kg_rag.domain.models import (
     PipelineStageType,
     Relationship,
     TextUnit,
+    TextUnitExtraction,
 )
 from unified_kg_rag.ports.indexer import BaseIndexer
 from unified_kg_rag.shared import (
@@ -78,6 +94,7 @@ from unified_kg_rag.shared.genai import ERROR_TYPE
 from unified_kg_rag.shared.utils.cache_keys import (
     extraction_fingerprint,
     is_excluded_source_path,
+    unit_record_fingerprint,
 )
 from unified_kg_rag.shared.utils.document_identity import store_namespace_tag
 
@@ -732,33 +749,76 @@ class TranslationStage(PipelineStage):
         return len(context.text_units), len(translated_units), metrics
 
 
+def _failed_record_units(context: PipelineContext) -> set[str]:
+    """The text units whose extraction or gleaning failed: their records
+    (if any) are not final, so they are neither stored nor their claims."""
+    return {
+        unit_id
+        for stage in (PipelineStageType.GRAPH_EXTRACTION, PipelineStageType.GLEANING)
+        for unit_id in context.failed_text_unit_ids.get(stage.value, [])
+    }
+
+
+def _distinct_counts(records: list[TextUnitExtraction]) -> tuple[int, int]:
+    """Distinct entity and relationship ids over the records."""
+    return (
+        len({e.id for r in records for e in r.entities}),
+        len({rel.id for r in records for rel in r.relationships}),
+    )
+
+
 class GraphExtractionStage(PipelineStage):
+    """Extract each text unit's record, reusing the stored ones.
+
+    A unit whose text and extraction settings have a record in the
+    extraction store takes it (already gleaned when gleaning is on) instead of
+    an LLM call; the others are extracted. Graph resolution stores the new
+    records once gleaning has refined them.
+    """
+
     def __init__(
         self,
         config: Config,
         providers: Providers | None = None,
+        reuse_stored: bool = True,
     ):
         super().__init__(PipelineStageType.GRAPH_EXTRACTION, config, providers)
         self.extractor = GraphExtractor(self.config, providers=self.providers)
+        self.store = ExtractionStore(
+            self.config, self.providers.build_vector_indexer, reuse=reuse_stored
+        )
+
+    def close(self) -> None:
+        self.store.close()
 
     def _execute_core(
         self, context: PipelineContext
     ) -> tuple[int, int, dict[str, Any] | None]:
         text_units = context.translated_units or context.text_units
-
-        entities, relationships, stats = self.extractor.extract_from_text_units(
-            text_units
+        fingerprint = unit_record_fingerprint(
+            self.config, gleaned=self.config.processing.gleaning.enabled
         )
-        context.entities = entities
-        context.relationships = relationships
-        context.rejected_entities = list(self.extractor.rejected_entities)
+        by_unit = self.store.load(text_units, fingerprint, record_from_payload)
+        to_extract = [unit for unit in text_units if unit.id not in by_unit]
+        stats = ExtractionStats()
+        if to_extract:
+            records, stats = self.extractor.extract_units(to_extract)
+            by_unit.update((record.text_unit_id, record) for record in records)
+        logger.info(
+            "Graph extraction: %s text units reused from the extraction store, "
+            "%s extracted",
+            len(text_units) - len(to_extract),
+            len(to_extract),
+        )
+        context.unit_extractions = [
+            by_unit[unit.id] for unit in text_units if unit.id in by_unit
+        ]
         context.failed_text_unit_ids[self.name] = stats.failed_text_unit_ids
 
-        entities_count = len(context.entities)
-        relationships_count = len(context.relationships)
-
+        entities_count, relationships_count = _distinct_counts(context.unit_extractions)
         metrics = {
             "text_units_processed": len(text_units),
+            "text_units_reused": len(text_units) - len(to_extract),
             "entities_extracted": entities_count,
             "relationships_extracted": relationships_count,
             "failed_units": stats.num_failed_extractions,
@@ -781,24 +841,20 @@ class GleaningStage(PipelineStage):
         self, context: PipelineContext
     ) -> tuple[int, int, dict[str, Any] | None]:
         text_units = context.translated_units or context.text_units
-        initial_entities = context.entities
-        initial_relationships = context.relationships
-
-        entities, relationships, gleaning_stats = self.gleaner.glean_graph(
-            text_units,
-            initial_entities,
-            initial_relationships,
-            rejected_entities=context.rejected_entities,
+        initial_entities, initial_relationships = _distinct_counts(
+            context.unit_extractions
         )
 
-        context.entities = entities
-        context.relationships = relationships
+        records, gleaning_stats = self.gleaner.glean(
+            text_units, context.unit_extractions
+        )
+
+        context.unit_extractions = records
         context.failed_text_unit_ids[self.name] = gleaning_stats.failed_text_unit_ids
-        final_entities_count = len(context.entities)
-        final_relationships_count = len(context.relationships)
+        final_entities, final_relationships = _distinct_counts(records)
 
         # Graph growth from gleaning: items it added per extracted item.
-        initial_items = len(initial_entities) + len(initial_relationships)
+        initial_items = initial_entities + initial_relationships
         improvement_rate = 0.0
         if initial_items > 0:
             improvement_rate = (
@@ -808,13 +864,12 @@ class GleaningStage(PipelineStage):
 
         metrics = {
             "text_units_processed": len(text_units),
-            "initial_entities": len(initial_entities),
-            "final_entities": final_entities_count,
-            "initial_relationships": len(initial_relationships),
-            "final_relationships": final_relationships_count,
-            "entity_improvement": final_entities_count - len(initial_entities),
-            "relationship_improvement": final_relationships_count
-            - len(initial_relationships),
+            "initial_entities": initial_entities,
+            "final_entities": final_entities,
+            "initial_relationships": initial_relationships,
+            "final_relationships": final_relationships,
+            "entity_improvement": final_entities - initial_entities,
+            "relationship_improvement": final_relationships - initial_relationships,
             "improvement_rate": improvement_rate,
             "iterations_completed": gleaning_stats.total_rounds,
             "refinement_calls": gleaning_stats.total_refinement_calls,
@@ -822,10 +877,8 @@ class GleaningStage(PipelineStage):
             "gleaning_stats": gleaning_stats.model_dump(),
         }
 
-        input_count = (
-            len(text_units) + len(initial_entities) + len(initial_relationships)
-        )
-        output_count = final_entities_count + final_relationships_count
+        input_count = len(text_units) + initial_items
+        output_count = final_entities + final_relationships
         return input_count, output_count, metrics
 
 
@@ -842,16 +895,43 @@ class GraphResolutionStage(PipelineStage):
         self.description_summarizer = DescriptionSummarizer(
             config, providers=self.providers
         )
+        self.store = ExtractionStore(self.config, self.providers.build_vector_indexer)
+
+    def close(self) -> None:
+        self.store.close()
+
+    def _store_records(self, context: PipelineContext) -> None:
+        """Store the run's new records: the final ones, not a failed unit's."""
+        failed = _failed_record_units(context)
+        units = {u.id: u for u in context.translated_units or context.text_units}
+        fresh = [
+            record
+            for record in context.unit_extractions
+            if not record.stored
+            and record.text_unit_id not in failed
+            and record.text_unit_id in units
+        ]
+        for gleaned in (False, True):
+            items = [
+                (units[record.text_unit_id], record_payload(record))
+                for record in fresh
+                if record.gleaned is gleaned
+            ]
+            self.store.save(
+                items, unit_record_fingerprint(self.config, gleaned=gleaned)
+            )
+        for record in fresh:
+            record.stored = True
 
     def _execute_core(
         self, context: PipelineContext
     ) -> tuple[int, int, dict[str, Any] | None]:
-        resolution_result, stats = self.resolver.resolve_graph(
-            context.entities, context.relationships
-        )
+        self._store_records(context)
+        entities, relationships = merge_contributions(context.unit_extractions)
+        resolution_result, stats = self.resolver.resolve_graph(entities, relationships)
 
-        original_entities_count = len(context.entities)
-        original_relationships_count = len(context.relationships)
+        original_entities_count = len(entities)
+        original_relationships_count = len(relationships)
 
         context.resolved_entities = self.description_summarizer.summarize_entities(
             resolution_result["entities"]
@@ -889,29 +969,87 @@ class GraphResolutionStage(PipelineStage):
 
 
 class ClaimExtractionStage(PipelineStage):
+    """Extract each text unit's claims, reusing the stored ones.
+
+    A unit's prompt lists the entities its own record names, so its claims
+    depend on the unit alone and are stored per unit like its record (under
+    the record's fingerprint plus the claim settings).
+    """
+
     def __init__(
         self,
         config: Config,
         providers: Providers | None = None,
+        reuse_stored: bool = True,
     ):
         super().__init__(PipelineStageType.CLAIM_EXTRACTION, config, providers)
         self.extractor = ClaimExtractor(self.config, providers=self.providers)
+        self.store = ExtractionStore(
+            self.config, self.providers.build_vector_indexer, reuse=reuse_stored
+        )
+
+    def close(self) -> None:
+        self.store.close()
 
     def _execute_core(
         self, context: PipelineContext
     ) -> tuple[int, int, dict[str, Any] | None]:
         text_units = context.translated_units or context.text_units
-        claims, extraction_stats = self.extractor.extract_from_text_units(
-            text_units, context.resolved_entities
+        records = {r.text_unit_id: r for r in context.unit_extractions}
+        failed = _failed_record_units(context)
+        # Only a final record's claims are a function of the unit's text and
+        # settings, so only those are reused and stored.
+        storable = {
+            unit.id: unit
+            for unit in text_units
+            if unit.id in records and unit.id not in failed
+        }
+        per_unit: dict[str, list[Claim]] = {}
+        for gleaned in (False, True):
+            units = [u for u in storable.values() if records[u.id].gleaned is gleaned]
+            fingerprint = unit_record_fingerprint(
+                self.config, gleaned=gleaned, claims=True
+            )
+            per_unit.update(self.store.load(units, fingerprint, claims_from_payload))
+        reused = len(per_unit)
+
+        to_extract = [unit for unit in text_units if unit.id not in per_unit]
+        stats = ClaimExtractionStats()
+        if to_extract:
+            entities = [
+                entity
+                for unit in to_extract
+                if unit.id in records
+                for entity in unit_entities(records[unit.id])
+            ]
+            extracted, stats = self.extractor.extract_units(to_extract, entities)
+            per_unit.update(extracted)
+            for gleaned in (False, True):
+                self.store.save(
+                    [
+                        (storable[unit_id], claims_payload(claims))
+                        for unit_id, claims in extracted.items()
+                        if unit_id in storable and records[unit_id].gleaned is gleaned
+                    ],
+                    unit_record_fingerprint(self.config, gleaned=gleaned, claims=True),
+                )
+
+        claims = self.extractor.merge_claims(
+            [
+                claim.model_copy(deep=True)
+                for unit in text_units
+                for claim in per_unit.get(unit.id, [])
+            ]
         )
         context.claims = claims
-        context.failed_text_unit_ids[self.name] = extraction_stats.failed_text_unit_ids
+        context.failed_text_unit_ids[self.name] = stats.failed_text_unit_ids
 
         metrics = {
             "text_units_processed": len(text_units),
+            "text_units_reused": reused,
             "claims_extracted": len(claims),
-            "failed_units": extraction_stats.num_failed_extractions,
-            "extraction_stats": extraction_stats.model_dump(),
+            "failed_units": stats.num_failed_extractions,
+            "extraction_stats": stats.model_dump(),
         }
 
         return len(text_units), len(claims), metrics

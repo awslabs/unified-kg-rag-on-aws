@@ -157,12 +157,14 @@ def test_switching_claim_extraction_on_reextracts_unchanged_documents(
 
     # Claims are per-document output: documents extracted without them are
     # stale once claim extraction is on, although their content is unchanged.
+    # Their graph records do not depend on the claim settings, so the
+    # extraction store serves them and only the claims are extracted.
     with_claims = without_claims.model_copy(deep=True)
     with_claims.processing.claim_extraction.enabled = True
     harness.extractions.clear()
     with caplog.at_level("WARNING"):
         harness.run(with_claims, "claims")
-    assert harness.extractions == ["builtin", "builtin"]
+    assert harness.extractions == []
     assert harness.claim_calls > 0
     assert "Re-extracting 2 documents" in caplog.text
     assert _fingerprints(harness.store) == {extraction_fingerprint(with_claims)}

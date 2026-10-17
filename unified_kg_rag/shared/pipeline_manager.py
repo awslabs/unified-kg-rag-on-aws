@@ -17,9 +17,9 @@ from unified_kg_rag.domain.models import (
     PipelineStageResult,
     PipelineStageStatus,
     PipelineStageType,
-    RejectedEntity,
     Relationship,
     TextUnit,
+    TextUnitExtraction,
 )
 
 from .exceptions import PipelineResumeError, PipelineStateError
@@ -58,16 +58,14 @@ class PipelineStateManager:
         "communities",
         "community_reports",
         "documents",
-        "entities",
         "graph",
         "knowledge_graph",
-        "rejected_entities",
-        "relationships",
         "resolved_claims",
         "resolved_entities",
         "resolved_relationships",
         "text_units",
         "translated_units",
+        "unit_extractions",
     }
 
     def __init__(self, cache_manager: "CacheManager") -> None:
@@ -346,12 +344,8 @@ STAGE_OUTPUTS: dict[PipelineStageType, dict[str, type[Any]]] = {
     PipelineStageType.DOCUMENT_LOADING: {"documents": Document},
     PipelineStageType.TEXT_CHUNKING: {"text_units": TextUnit},
     PipelineStageType.TRANSLATION: {"translated_units": TextUnit},
-    PipelineStageType.GRAPH_EXTRACTION: {
-        "entities": Entity,
-        "relationships": Relationship,
-        "rejected_entities": RejectedEntity,
-    },
-    PipelineStageType.GLEANING: {"entities": Entity, "relationships": Relationship},
+    PipelineStageType.GRAPH_EXTRACTION: {"unit_extractions": TextUnitExtraction},
+    PipelineStageType.GLEANING: {"unit_extractions": TextUnitExtraction},
     PipelineStageType.GRAPH_RESOLUTION: {
         "resolved_entities": Entity,
         "resolved_relationships": Relationship,

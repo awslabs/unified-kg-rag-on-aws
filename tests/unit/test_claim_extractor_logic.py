@@ -4,7 +4,7 @@
 
 Covers _get_string_value coercion, _parse_claim_data (missing-field rejection,
 stable id, attributes), _parse_extraction_result (malformed/empty handling),
-_merge_claims, and _prepare_extraction_inputs returning a dict keyed by unit id
+merge_claims, and _prepare_extraction_inputs returning a dict keyed by unit id
 (the as_completed ordering fix). Bedrock/boto wiring is patched out so __init__
 never touches AWS, and a single-worker thread pool keeps the executor cheap.
 """
@@ -153,7 +153,7 @@ class TestParseClaimData:
             {**base, "start_date": "2024-06-01", "end_date": "2024-06-30"}, text_unit
         )
         assert first.id != second.id
-        merged = extractor._merge_claims([first, second])
+        merged = extractor.merge_claims([first, second])
         assert {c.start_date for c in merged} == {"2024-01-01", "2024-06-01"}
 
     def test_unknown_dates_keep_date_free_id(self, extractor, text_unit) -> None:
@@ -197,7 +197,7 @@ class TestParseExtractionResult:
 
 
 # --------------------------------------------------------------------------- #
-# _merge_claims
+# merge_claims
 # --------------------------------------------------------------------------- #
 class TestMergeClaims:
     def _claim(self, id_, **kw) -> Claim:
@@ -215,7 +215,7 @@ class TestMergeClaims:
     def test_same_id_claims_merged(self, extractor) -> None:
         c1 = self._claim("c1", description="d1", text_unit_ids=["t1"])
         c2 = self._claim("c1", description="d2", text_unit_ids=["t2"])
-        merged = extractor._merge_claims([c1, c2])
+        merged = extractor.merge_claims([c1, c2])
         assert len(merged) == 1
         assert set(merged[0].text_unit_ids) == {"t1", "t2"}
         assert "d1" in merged[0].description and "d2" in merged[0].description
@@ -223,16 +223,16 @@ class TestMergeClaims:
     def test_same_id_claims_union_document_filters(self, extractor) -> None:
         c1 = self._claim("c1", attributes={"filters": {"tenant": "a"}})
         c2 = self._claim("c1", attributes={"filters": {"tenant": "b"}})
-        (merged,) = extractor._merge_claims([c1, c2])
+        (merged,) = extractor.merge_claims([c1, c2])
         assert merged.attributes == {"filters": {"tenant": ["a", "b"]}}
 
     def test_distinct_ids_kept(self, extractor) -> None:
         c1 = self._claim("c1", text_unit_ids=["t1"])
         c2 = self._claim("c2", object_name="Gamma", text_unit_ids=["t2"])
-        assert len(extractor._merge_claims([c1, c2])) == 2
+        assert len(extractor.merge_claims([c1, c2])) == 2
 
     def test_empty(self, extractor) -> None:
-        assert extractor._merge_claims([]) == []
+        assert extractor.merge_claims([]) == []
 
 
 # --------------------------------------------------------------------------- #
@@ -351,7 +351,7 @@ class TestProcessExtractionResults:
     def test_none_result_counts_failure(self, extractor) -> None:
         units = [TextUnit(id="t1", text="x")]
         claims = extractor._process_extraction_results(units, [None])
-        assert claims == []
+        assert claims == {}
         assert extractor.stats.num_failed_extractions == 1
 
     def test_success_accumulates_claims(self, extractor) -> None:
@@ -360,7 +360,7 @@ class TestProcessExtractionResults:
             {"claims": {"claim": {"subject": "A", "object": "B", "claim_type": "X"}}}
         ]
         claims = extractor._process_extraction_results(units, results)
-        assert len(claims) == 1
+        assert [len(c) for c in claims.values()] == [1]
         assert extractor.stats.num_successful_extractions == 1
 
     def test_length_mismatch_raises(self, extractor) -> None:
@@ -379,7 +379,7 @@ class TestProcessExtractionResults:
             extractor, "_parse_extraction_result", side_effect=ValueError("bad")
         )
         claims = extractor._process_extraction_results(units, [{"claims": {}}])
-        assert claims == []
+        assert claims == {}
         assert extractor.stats.num_failed_extractions == 1
 
 

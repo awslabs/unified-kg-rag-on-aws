@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """A stub endpoint entity is written under its relationship's index suffix.
 
-A relationship can name an endpoint no entity of the batch has; resolution
-turns it into a stub entity. The stub must carry the relationship's ``index``
+A relationship can name an endpoint no entity of the batch has; the merge of
+the text units' records turns it into a stub entity. The stub must carry the relationship's ``index``
 (and ``filters``) attribute, or it lands in the default index while the edge is
 written under the relationship's suffix, where Neptune finds no endpoint vertex
 and the edge write fails on every retry.
@@ -15,11 +15,17 @@ import pytest
 
 from tests.fixtures.fakes.stores import FakeGraphStore
 from unified_kg_rag.domain.ingestion.base_processor import BaseProcessor
+from unified_kg_rag.domain.ingestion.contributions import merge_contributions
 from unified_kg_rag.domain.ingestion.graph_resolver import GraphResolver
 from unified_kg_rag.domain.ingestion.relationship_endpoints import (
     cite_relationship_endpoints,
 )
-from unified_kg_rag.domain.models import Config, Entity, Relationship
+from unified_kg_rag.domain.models import (
+    Config,
+    Entity,
+    Relationship,
+    TextUnitExtraction,
+)
 from unified_kg_rag.ports.indexer import BaseIndexer
 
 pytestmark = pytest.mark.unit
@@ -74,7 +80,11 @@ def test_stub_without_placement_keeps_no_attributes() -> None:
 
 
 def test_resolved_stub_and_edge_share_a_suffix_and_the_edge_is_written() -> None:
-    entities, relationships = _graph()
+    # Resolution starts from the merged records, whose merge adds the stub.
+    vendor, edge = _graph()
+    entities, relationships = merge_contributions(
+        [TextUnitExtraction(text_unit_id="t1", entities=vendor, relationships=edge)]
+    )
 
     result, _ = GraphResolver(Config(), use_process_pool=False).resolve_graph(
         entities, relationships

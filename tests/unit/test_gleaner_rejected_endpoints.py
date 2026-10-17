@@ -7,8 +7,8 @@ stub for an endpoint the batch lacks. The grounding check on a relationship
 covers only its quote, which need not name its endpoints, so without a guard a
 relationship naming an entity rejected as ungrounded (by extraction, or in the
 same gleaning answer) recreates it as a stub. Runs the real
-``_parse_refinement_output`` -> ``_merge_round`` path; only the model is
-replaced.
+``_apply_answer`` on the unit's record, then the merge of the records; only
+the model is replaced.
 """
 
 from __future__ import annotations
@@ -18,16 +18,17 @@ import pytest
 import unified_kg_rag.adapters.ingestion.gleaner as gleaner_module
 import unified_kg_rag.adapters.ingestion.graph_extractor as extractor_module
 from unified_kg_rag.adapters.aws import bedrock as bedrock_module
-from unified_kg_rag.adapters.ingestion.gleaner import GleaningIndex, GraphGleaner
+from unified_kg_rag.adapters.ingestion.gleaner import GraphGleaner
 from unified_kg_rag.adapters.ingestion.graph_extractor import GraphExtractor
 from unified_kg_rag.domain.ingestion.base_processor import BaseProcessor
+from unified_kg_rag.domain.ingestion.contributions import merge_contributions
 from unified_kg_rag.domain.ingestion.entity_grounding import is_name_grounded
 from unified_kg_rag.domain.models import (
     Config,
     Entity,
-    RejectedEntity,
     Relationship,
     TextUnit,
+    TextUnitExtraction,
 )
 
 pytestmark = pytest.mark.unit
@@ -79,17 +80,28 @@ def _relationship_issue(source: str, target: str, evidence: str) -> dict:
     }
 
 
-def _glean(gleaner, issues, entities=None, unit=UNIT):
-    """Parse one refinement answer for ``unit`` and merge it as a round does."""
-    entities = [_vendor()] if entities is None else entities
-    plan = {"identified_issues": {"issue": issues}}
-    new_entities, new_relationships = gleaner._parse_refinement_output(
-        plan, unit, GleaningIndex(entities, [])
-    )
-    merged_entities, merged_relationships = GraphGleaner._merge_round(
-        entities + new_entities, new_relationships
-    )
+def _glean(gleaner, issues, entities=None, unit=UNIT, record=None):
+    """Apply one refinement answer to ``unit``'s record and merge the record.
+
+    The record lists the given entities that cite ``unit``; pass ``record``
+    to apply a later round's answer to the same record.
+    """
+    if record is None:
+        entities = [_vendor()] if entities is None else entities
+        record = TextUnitExtraction(
+            text_unit_id=unit.id,
+            entities=[e for e in entities if unit.id in (e.text_unit_ids or [])],
+        )
+    gleaner._apply_answer({"identified_issues": {"issue": issues}}, unit, record)
+    merged_entities, merged_relationships = merge_contributions([record])
     return {e.id: e for e in merged_entities}, merged_relationships
+
+
+def _glean_records(gleaner, units, records):
+    """Glean ``records`` and return the graph they state, and the stats."""
+    records, stats = gleaner.glean(units, records)
+    entities, relationships = merge_contributions(records)
+    return entities, relationships, stats
 
 
 def test_relationship_to_a_rejected_gleaned_entity_is_dropped(gleaner) -> None:
@@ -123,11 +135,18 @@ def test_rejection_carries_into_later_rounds(gleaner) -> None:
     # The name is in this chunk, so only the earlier rejection stops the stub.
     _ground(gleaner)
     unit = TextUnit(id="t1", text=f"{TEXT} Phantom Holdings is named once.")
-    _glean(gleaner, [_entity_issue("Phantom Holdings", FABRICATED_QUOTE)], unit=unit)
+    record = TextUnitExtraction(text_unit_id="t1", entities=[_vendor()])
+    _glean(
+        gleaner,
+        [_entity_issue("Phantom Holdings", FABRICATED_QUOTE)],
+        unit=unit,
+        record=record,
+    )
     entities, relationships = _glean(
         gleaner,
         [_relationship_issue("Vendor", "Phantom Holdings", GROUNDED_QUOTE)],
         unit=unit,
+        record=record,
     )
     assert PHANTOM not in entities
     assert relationships == []
@@ -169,8 +188,8 @@ def test_stub_needs_its_name_in_the_chunk(gleaner, action) -> None:
 
 
 def test_unnamed_endpoint_listed_by_another_unit_is_dropped_too(gleaner) -> None:
-    # Ghost Ltd is extracted from another unit; keeping the edge only then
-    # would make the result depend on which units share the batch.
+    # Ghost Ltd is extracted from another unit, whose record this unit's
+    # answer never sees: the edge is dropped as when that unit is absent.
     _ground(gleaner)
     ghost = Entity(
         id=BaseProcessor._generate_entity_id("Ghost Ltd"),
@@ -223,7 +242,7 @@ def _extract(extractor: GraphExtractor, mocker, unit: TextUnit):
     }
     extractor.batch_processor = mocker.Mock()
     extractor.batch_processor.execute_with_fallback.return_value = [answer]
-    return extractor.extract_from_text_units([unit])
+    return extractor.extract_units([unit])
 
 
 @pytest.mark.parametrize("named_in_chunk", [False, True])
@@ -234,13 +253,9 @@ def test_entity_extraction_dropped_is_not_regleaned(
     if named_in_chunk:
         unit = TextUnit(id="t1", text=f"{TEXT} Phantom Holdings is named once.")
     extractor.extraction_config.entity_grounding.enabled = True
-    entities, relationships, _ = _extract(extractor, mocker, unit)
-    assert [e.name for e in entities] == ["Vendor"]
-    assert extractor.rejected_entities == [
-        RejectedEntity(
-            text_unit_id="t1", entity_key="phantom holdings", reason="ungrounded"
-        )
-    ]
+    records, _ = _extract(extractor, mocker, unit)
+    assert [e.name for e in records[0].entities] == ["Vendor"]
+    assert records[0].rejected == {"phantom holdings": "ungrounded"}
 
     gleaner.gleaning_config.max_rounds = 1
     gleaner.graph_refiner = mocker.Mock()
@@ -253,12 +268,7 @@ def test_entity_extraction_dropped_is_not_regleaned(
             }
         }
     }
-    entities, relationships, stats = gleaner.glean_graph(
-        [unit],
-        entities,
-        relationships,
-        rejected_entities=extractor.rejected_entities,
-    )
+    entities, relationships, stats = _glean_records(gleaner, [unit], records)
     assert PHANTOM not in {e.id for e in entities}
     assert relationships == []
     assert stats.relationships_dropped_rejected_endpoint == 1
@@ -271,15 +281,12 @@ def test_rejected_entities_reach_gleaning_through_the_stages(mocker) -> None:
     from unified_kg_rag.domain.models import PipelineConfig, PipelineContext
     from unified_kg_rag.domain.models.pipeline import PipelineStageStatus
 
-    rejected = [
-        RejectedEntity(text_unit_id="t1", entity_key="phantom", reason="ungrounded")
-    ]
+    record = TextUnitExtraction(text_unit_id="t1", rejected={"phantom": "ungrounded"})
     extractor = mocker.MagicMock()
-    extractor.extract_from_text_units.return_value = ([], [], ExtractionStats())
-    extractor.rejected_entities = rejected
+    extractor.extract_units.return_value = ([record], ExtractionStats())
     mocker.patch.object(ps, "GraphExtractor", return_value=extractor)
     gleaner = mocker.MagicMock()
-    gleaner.glean_graph.return_value = ([], [], GleaningStats())
+    gleaner.glean.return_value = ([record], GleaningStats())
     mocker.patch.object(ps, "GraphGleaner", return_value=gleaner)
     context = PipelineContext(
         pipeline_id="p",
@@ -293,8 +300,8 @@ def test_rejected_entities_reach_gleaning_through_the_stages(mocker) -> None:
     ps.GraphExtractionStage(config=Config())._execute_core(context)
     ps.GleaningStage(config=Config())._execute_core(context)
 
-    assert context.rejected_entities == rejected
-    assert gleaner.glean_graph.call_args.kwargs["rejected_entities"] == rejected
+    (passed,) = gleaner.glean.call_args.args[1]
+    assert passed.rejected == {"phantom": "ungrounded"}
 
 
 @pytest.mark.parametrize(
@@ -328,7 +335,12 @@ def test_relationship_list_is_not_mutated(gleaner) -> None:
         )
     ]
     kept = gleaner._drop_unsupported_relationships(
-        relationships, UNIT, [_vendor()], {"phantom holdings"}
+        relationships,
+        UNIT,
+        [_vendor()],
+        TextUnitExtraction(
+            text_unit_id="t1", rejected={"phantom holdings": "ungrounded"}
+        ),
     )
     assert kept == [] and len(relationships) == 1
 
@@ -347,7 +359,7 @@ def _extract_low_confidence(extractor: GraphExtractor, mocker):
     }
     extractor.batch_processor = mocker.Mock()
     extractor.batch_processor.execute_with_fallback.return_value = [answer]
-    return extractor.extract_from_text_units([UNIT])
+    return extractor.extract_units([UNIT])
 
 
 def _glean_answer(gleaner, mocker, issues) -> None:
@@ -363,23 +375,17 @@ def test_low_confidence_entity_is_not_resurrected_by_a_stub(
     extractor, gleaner, mocker, grounding
 ) -> None:
     gleaner.extraction_config.entity_grounding.enabled = grounding
-    entities, relationships, stats = _extract_low_confidence(extractor, mocker)
-    assert [e.name for e in entities] == ["Vendor"]
+    records, stats = _extract_low_confidence(extractor, mocker)
+    assert [e.name for e in records[0].entities] == ["Vendor"]
     assert stats.entities_filtered_by_confidence == 1
-    assert extractor.rejected_entities == [
-        RejectedEntity(
-            text_unit_id="t1", entity_key="phantom holdings", reason="low_confidence"
-        )
-    ]
+    assert records[0].rejected == {"phantom holdings": "low_confidence"}
 
     _glean_answer(
         gleaner,
         mocker,
         [_relationship_issue("Vendor", "Phantom Holdings", GROUNDED_QUOTE)],
     )
-    entities, relationships, gleaning_stats = gleaner.glean_graph(
-        [UNIT], entities, relationships, rejected_entities=extractor.rejected_entities
-    )
+    entities, relationships, gleaning_stats = _glean_records(gleaner, [UNIT], records)
     assert PHANTOM not in {e.id for e in entities}
     assert relationships == []
     assert gleaning_stats.relationships_dropped_rejected_endpoint == 1
@@ -390,7 +396,7 @@ def test_low_confidence_entity_is_not_regleaned_as_an_entity(
 ) -> None:
     # The gleaner's answer carries no score, so it cannot overturn the
     # extraction's; without this the entity would come back at 1.0.
-    entities, relationships, _ = _extract_low_confidence(extractor, mocker)
+    records, _ = _extract_low_confidence(extractor, mocker)
     _glean_answer(
         gleaner,
         mocker,
@@ -399,9 +405,7 @@ def test_low_confidence_entity_is_not_regleaned_as_an_entity(
             _relationship_issue("Vendor", "Phantom Holdings", GROUNDED_QUOTE),
         ],
     )
-    entities, relationships, stats = gleaner.glean_graph(
-        [UNIT], entities, relationships, rejected_entities=extractor.rejected_entities
-    )
+    entities, relationships, stats = _glean_records(gleaner, [UNIT], records)
     assert PHANTOM not in {e.id for e in entities}
     assert relationships == []
     assert stats.entities_dropped_low_confidence == 1
@@ -409,16 +413,15 @@ def test_low_confidence_entity_is_not_regleaned_as_an_entity(
 
 def test_the_low_confidence_rejection_is_per_unit(extractor, gleaner, mocker) -> None:
     # Another unit naming the entity is not bound by t1's low score.
-    entities, relationships, _ = _extract_low_confidence(extractor, mocker)
+    records, _ = _extract_low_confidence(extractor, mocker)
     other = TextUnit(id="t2", text="Vendor and Phantom Holdings sign the lease.")
     _glean_answer(
         gleaner,
         mocker,
         [_relationship_issue("Vendor", "Phantom Holdings", other.text)],
     )
-    entities, relationships, _ = gleaner.glean_graph(
-        [other], entities, relationships, rejected_entities=extractor.rejected_entities
-    )
+    gleaned, _ = gleaner.glean([other], [TextUnitExtraction(text_unit_id="t2")])
+    entities, relationships = merge_contributions(records + gleaned)
     by_id = {e.id: e for e in entities}
     assert by_id[PHANTOM].text_unit_ids == ["t2"]
     assert by_id[PHANTOM].confidence == 1.0

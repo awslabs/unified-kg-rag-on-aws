@@ -245,7 +245,11 @@ class TestSampleAndParse:
     ) -> None:
         # Few-shots are the REAL GraphExtractor output over sampled chunks,
         # rendered in the extraction prompt's XML shape — not LLM-invented.
-        from unified_kg_rag.domain.models import Entity, Relationship
+        from unified_kg_rag.domain.models import (
+            Entity,
+            Relationship,
+            TextUnitExtraction,
+        )
 
         captured: dict = {}
 
@@ -283,10 +287,13 @@ class TestSampleAndParse:
                     text_unit_ids=[uid],
                 )
             ]
-            return entities, relationships, None
+            record = TextUnitExtraction(
+                text_unit_id=uid, entities=entities, relationships=relationships
+            )
+            return [record], None
 
         extractor = mocker.MagicMock()
-        extractor.extract_from_text_units.side_effect = _fake_extract
+        extractor.extract_units.side_effect = _fake_extract
         mocker.patch(
             "unified_kg_rag.application.prompts.tuner.GraphExtractor",
             return_value=extractor,
@@ -317,7 +324,7 @@ class TestSampleAndParse:
     ) -> None:
         # Extractor finds nothing -> no examples (graceful, no crash).
         extractor = mocker.MagicMock()
-        extractor.extract_from_text_units.return_value = ([], [], None)
+        extractor.extract_units.return_value = ([], None)
         mocker.patch(
             "unified_kg_rag.application.prompts.tuner.GraphExtractor",
             return_value=extractor,
@@ -362,7 +369,7 @@ class TestSampleAndParse:
         self, tuner: PromptTuner, mocker
     ) -> None:
         extractor = mocker.MagicMock()
-        extractor.extract_from_text_units.return_value = ([], [], None)
+        extractor.extract_units.return_value = ([], None)
         cls = mocker.patch(
             "unified_kg_rag.application.prompts.tuner.GraphExtractor",
             return_value=extractor,

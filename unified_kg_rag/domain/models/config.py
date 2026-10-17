@@ -1680,6 +1680,16 @@ class OpenSearchIndexingConfig(BaseModel):
         max_length=100,
         description="Index name prefix for claim (covariate) documents",
     )
+    extraction_records_index_prefix: str = Field(
+        default="graphrag-extraction-records",
+        min_length=1,
+        max_length=100,
+        description="Index name prefix for the extraction store: each text "
+        "unit's extracted entities, relationships and claims, keyed by its "
+        "text and the extraction settings, so an unchanged chunk is not "
+        "extracted again (no embeddings; never cleared by a full build or a "
+        "reset)",
+    )
     default_analyzer: str = Field(
         default="standard",
         min_length=1,

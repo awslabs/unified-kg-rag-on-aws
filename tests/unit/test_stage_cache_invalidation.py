@@ -28,6 +28,7 @@ from unified_kg_rag.domain.models import (
     PipelineStageStatus,
     PipelineStageType,
     Relationship,
+    TextUnitExtraction,
 )
 from unified_kg_rag.shared.cache_manager import CacheManager
 from unified_kg_rag.shared.pipeline_manager import (
@@ -58,9 +59,14 @@ def _context() -> PipelineContext:
         start_time=datetime(2026, 1, 1),
         source_directory=Path("/tmp/src"),
     )
-    context.entities = [Entity(id="e1", name="Vendor")]
-    context.relationships = [
-        Relationship(id="r1", source_id="e1", target_id="e1", type="SELF")
+    context.unit_extractions = [
+        TextUnitExtraction(
+            text_unit_id="t1",
+            entities=[Entity(id="e1", name="Vendor")],
+            relationships=[
+                Relationship(id="r1", source_id="e1", target_id="e2", type="REL")
+            ],
+        )
     ]
     context.stage_results = [
         PipelineStageResult(
@@ -156,7 +162,7 @@ class TestResumeRoundTrip:
         )
 
         restored = self._restore(Config(), cache_manager)
-        assert [entity.id for entity in restored.entities] == ["e1"]
+        assert [e.id for r in restored.unit_extractions for e in r.entities] == ["e1"]
 
     @pytest.mark.parametrize(
         "changed_config", [_changed_model_config(), _changed_prompt_config()]
@@ -174,7 +180,7 @@ class TestResumeRoundTrip:
         # the stage directly, bypassing determine_resume_strategy, which is what
         # keeps a run from continuing on this empty context (see
         # test_resume_point_follows_cache for the orchestration-level cases).
-        assert restored.entities == []
+        assert restored.unit_extractions == []
 
     def test_integrity_check_reports_the_stale_entry_as_missing(self, tmp_path) -> None:
         # validate_pipeline_integrity must judge against the same key the save
@@ -525,11 +531,14 @@ class TestCorpusManifest:
         same = PipelineResumeManager(state, Config())
         same.corpus_fingerprint = "corpus-v1"
         restored = same.restore_pipeline_context(PIPELINE_ID, [STAGE])
-        assert [entity.id for entity in restored.entities] == ["e1"]
+        assert [e.id for r in restored.unit_extractions for e in r.entities] == ["e1"]
 
         changed = PipelineResumeManager(state, Config())
         changed.corpus_fingerprint = "corpus-v2"
-        assert changed.restore_pipeline_context(PIPELINE_ID, [STAGE]).entities == []
+        assert (
+            changed.restore_pipeline_context(PIPELINE_ID, [STAGE]).unit_extractions
+            == []
+        )
         ok, errors = changed.validate_pipeline_integrity(PIPELINE_ID)
         assert ok is False and errors
 

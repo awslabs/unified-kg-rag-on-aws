@@ -26,6 +26,7 @@ from tests.fixtures.fakes.stores import FakeGraphStore, FakeVectorStore
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.application.ingestion import pipeline_stages as ps
 from unified_kg_rag.application.storage.indexing_manager import IndexingManager
+from unified_kg_rag.domain.ingestion.contributions import merge_contributions
 from unified_kg_rag.domain.ingestion.delta_detector import (
     assign_document_identity,
     document_doc_id,
@@ -168,8 +169,9 @@ def test_stages_run_end_to_end_and_report_a_failed_extraction() -> None:
     assert len(context.text_units) == 3
 
     metrics = _run(ps.GraphExtractionStage(config, providers=providers), context)
-    assert {e.name for e in context.entities} == set(_NAMES)
-    assert len(context.relationships) == 2
+    entities, relationships = merge_contributions(context.unit_extractions)
+    assert {e.name for e in entities} == set(_NAMES)
+    assert len(relationships) == 2
     assert metrics["failed_units"] == 1
     failed_unit = next(u for u in context.text_units if _UNREADABLE in u.text)
     assert context.failed_text_unit_ids["graph_extraction"] == [failed_unit.id]
@@ -177,10 +179,12 @@ def test_stages_run_end_to_end_and_report_a_failed_extraction() -> None:
     gleaning = ps.GleaningStage(config, providers=providers)
     metrics = _run(gleaning, context)
     assert metrics["failed_units"] == 0
-    # The empty answer adds nothing, so every unit is gleaned exactly once.
+    # The empty answer adds nothing, so every unit with a record is gleaned
+    # exactly once (the failed one has none).
     assert metrics["improvement_rate"] == 0.0
-    assert metrics["refinement_calls"] == metrics["text_units_processed"]
-    assert len(context.entities) == 3 and len(context.relationships) == 2
+    assert metrics["refinement_calls"] == len(context.unit_extractions) == 2
+    entities, relationships = merge_contributions(context.unit_extractions)
+    assert len(entities) == 3 and len(relationships) == 2
 
     # The resolver's process pool uses threads here: forking the
     # multi-threaded test process can deadlock the child.

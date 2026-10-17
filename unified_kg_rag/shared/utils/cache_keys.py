@@ -444,6 +444,79 @@ def extraction_fingerprint(config: Config) -> str:
     return compute_hash(payload, length=FINGERPRINT_LENGTH)
 
 
+# A text unit's extraction record (``TextUnitExtraction``) is keyed by its
+# text, so the settings that only shape the text (parsing, chunking,
+# translation) are not inputs of it; the language its descriptions are
+# written in is. Bump the version when the record format or its parsing rules
+# change.
+_RECORD_FORMAT_VERSION = 1
+_RECORD_NON_OUTPUT_PATHS = _EXTRACTION_NON_OUTPUT_PATHS | {
+    "processing.document_parsing",
+    "processing.chunking",
+    "processing.translation",
+}
+
+
+def unit_record_fingerprint(
+    config: Config, *, gleaned: bool, claims: bool = False
+) -> str:
+    """Fingerprint the settings a text unit's extraction record depends on.
+
+    The models and LLM knobs, graph extraction (entity types, limits,
+    grounding, confidence threshold), gleaning when the record is
+    ``gleaned``, claim extraction for a unit's ``claims`` record, the
+    target language, and the prompt templates in effect: the built-in ones
+    (code) as well as ``custom_prompts`` overrides, so editing a template
+    re-keys the records it shaped. The extraction store keys a record by this
+    fingerprint and the hash of the unit's text
+    (``domain.ingestion.contributions.record_key``).
+    """
+    from unified_kg_rag.domain.prompts import (
+        ClaimExtractionPrompt,
+        GraphExtractionPrompt,
+        GraphRefinementPrompt,
+    )
+
+    stages = [PipelineStageType.DOCUMENT_PARSING, PipelineStageType.GRAPH_EXTRACTION]
+    prompts: list[Any] = [GraphExtractionPrompt]
+    if gleaned:
+        stages.append(PipelineStageType.GLEANING)
+        prompts.append(GraphRefinementPrompt)
+    if claims:
+        stages.append(PipelineStageType.CLAIM_EXTRACTION)
+        prompts.append(ClaimExtractionPrompt)
+    paths = [
+        path
+        for stage in stages
+        for path in _STAGE_INPUT_PATHS[stage]
+        if path not in _RECORD_NON_OUTPUT_PATHS
+    ]
+    projection = _projection(config, paths, {})
+    projection.append(
+        (
+            "record",
+            {
+                "version": _RECORD_FORMAT_VERSION,
+                "gleaned": gleaned,
+                "claims": claims,
+                "target_language": config.processing.translation.target_language.value,
+                "prompts": [
+                    compute_hash(
+                        resolved.system_prompt_template
+                        + "\n"
+                        + resolved.human_prompt_template
+                    )
+                    for resolved in (
+                        prompt.resolve(config.custom_prompts) for prompt in prompts
+                    )
+                ],
+            },
+        )
+    )
+    payload = json.dumps(projection, sort_keys=True, default=str)
+    return compute_hash(payload, length=FINGERPRINT_LENGTH)
+
+
 def stage_input_fingerprint(
     config: Config,
     stage_type: PipelineStageType,

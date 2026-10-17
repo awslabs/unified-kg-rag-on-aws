@@ -79,6 +79,7 @@ def _pipeline_for_init(config: Config) -> DataIngestionPipeline:
     pipe.pipeline_config = SimpleNamespace(
         stages_enabled=dict.fromkeys(PipelineStageType, True),
         local_directory="/tmp/cache",
+        force_rebuild=False,
     )
     pipe.source_directory = Path("/tmp/src")
     pipe.target_directory = Path("/tmp/out")
@@ -177,6 +178,11 @@ def test_initialize_stages_injects_directories_and_config() -> None:
     assert parsing.kwargs["cache_directory"] == Path("/tmp/cache")
     loading = by_name["document_loading"]
     assert loading.kwargs["source_directory"] == pipe.source_directory
+    # The extraction stages reuse stored records unless forced to rebuild.
+    assert by_name["graph_extraction"].kwargs["reuse_stored"] is True
+    pipe.pipeline_config.force_rebuild = True
+    forced = {s.name: s for s in pipe._initialize_stages()[0]}
+    assert forced["graph_extraction"].kwargs["reuse_stored"] is False
     # Every stage receives the config.
     assert all(s.kwargs["config"] is cfg for s in stages)
 
@@ -435,7 +441,13 @@ def test_calculate_stage_performance_durations_and_throughput() -> None:
 def test_create_pipeline_metrics_populates_counts_and_stage_metrics(
     tmp_path,
 ) -> None:
-    from unified_kg_rag.domain.models import Config, Entity, Relationship, TextUnit
+    from unified_kg_rag.domain.models import (
+        Config,
+        Entity,
+        Relationship,
+        TextUnit,
+        TextUnitExtraction,
+    )
     from unified_kg_rag.shared.cache_manager import CacheManager
 
     pipe = object.__new__(DataIngestionPipeline)
@@ -463,8 +475,13 @@ def test_create_pipeline_metrics_populates_counts_and_stage_metrics(
     )
     ctx.duration_seconds = 12.5
     ctx.text_units = [TextUnit(id="t1", text="a")]
-    ctx.entities = [Entity(id="e1", name="A"), Entity(id="e2", name="B")]
-    ctx.relationships = [Relationship(id="r1", source_id="e1", target_id="e2")]
+    ctx.unit_extractions = [
+        TextUnitExtraction(
+            text_unit_id="t1",
+            entities=[Entity(id="e1", name="A"), Entity(id="e2", name="B")],
+            relationships=[Relationship(id="r1", source_id="e1", target_id="e2")],
+        )
+    ]
 
     metrics = DataIngestionPipeline._create_pipeline_metrics(pipe, ctx)
 

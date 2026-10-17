@@ -61,9 +61,10 @@ def test_still_dropped_when_names_or_type_missing() -> None:
 
 
 def test_materialize_endpoints_creates_stub_entities() -> None:
-    from unified_kg_rag.adapters.ingestion.graph_extractor import GraphExtractor
+    from unified_kg_rag.domain.ingestion.relationship_endpoints import (
+        cite_relationship_endpoints,
+    )
 
-    extractor = GraphExtractor.__new__(GraphExtractor)
     # Only 'alice' was extracted; 'acme' is referenced only by the relationship.
     entities = [Entity(id=BaseProcessor._generate_entity_id("alice"), name="alice")]
     acme_id = BaseProcessor._generate_entity_id("acme")
@@ -78,7 +79,7 @@ def test_materialize_endpoints_creates_stub_entities() -> None:
             text_unit_ids=["tu1"],
         )
     ]
-    result = extractor._materialize_relationship_endpoints(entities, rels)
+    result, _ = cite_relationship_endpoints(entities, rels)
     ids = {e.id for e in result}
     assert acme_id in ids  # stub created for the relationship-only endpoint
     assert len(result) == 2

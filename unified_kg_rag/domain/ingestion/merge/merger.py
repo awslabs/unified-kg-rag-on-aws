@@ -47,15 +47,16 @@ def _merge_entity_fields(surviving: Entity, incoming: Entity) -> None:
     field semantics as the full-build resolver (``EntityResolver._merge_entities``):
     description union, text-unit/community-id union, max confidence/rank, first-known type, attribute union.
 
-    The name stays the surviving one, even when a gleaning correction renamed
-    ``incoming`` (same id, another name): edges carry a copy of their
-    endpoints' names, and the stored edges the delta does not rewrite would
-    keep naming the old one. A full rebuild applies such a rename.
+    The name stays the surviving one (``incoming`` may spell the same key
+    otherwise, or be a name variant the matcher joined): edges carry a copy
+    of their endpoints' names, and the stored edges the delta does not
+    rewrite would keep naming the old one. A full rebuild takes the name
+    cited by the most text units instead.
 
     The type stays the surviving one too (``incoming``'s only fills a missing
     type), while a full build keeps the most frequent type of a name's
-    mentions (a gleaning retype counted among them), so an incremental run
-    can keep a type a full rebuild replaces, like a rename.
+    mentions, so an incremental run can keep a type a full rebuild replaces,
+    like a name.
     """
     surviving.description = merge_descriptions(
         (surviving.description, incoming.description)
@@ -91,8 +92,9 @@ def merge_entities(
 ) -> tuple[list[Entity], dict[str, str]]:
     """Merge delta entities into old ones by id, else by identity key.
 
-    The identity key is ``entity_key(name)``. Matching the id first matters
-    when a gleaning correction renamed a stored entity and kept its id.
+    The identity key is ``entity_key(name)``, which extraction derives the id
+    from; matching the key as well covers items whose id was assigned
+    otherwise (the direct API).
 
     Returns the merged entity list and ``{delta_id: surviving_id}`` for entities
     that merged into an existing one under a different id (so relationships can
@@ -127,9 +129,6 @@ def merge_entities(
 
     for entity in delta:
         key = entity_key(entity.name)
-        # Id first: a gleaning correction renames an entity in place and keeps
-        # the id derived from its old name, so a later delta naming the old form
-        # carries the stored id under a different key.
         existing = by_id.get(entity.id) or by_id.get(id_by_key.get(key, ""))
         if existing is None and fuzzy_matcher is not None:
             existing = _find_fuzzy_old_match(
@@ -248,9 +247,8 @@ def merge_relationships(
             # so the incremental path must too.
             continue
         key = _relationship_key(source_id, target_id, rel)
-        # Id first: an edge stored before gleaning corrections re-keyed the
-        # edge they retype or reverse kept the id of its uncorrected key,
-        # which a later delta of the uncorrected edge carries.
+        # By id (the same statement), else by key: an edge re-pointed at a
+        # merged entity keeps the id its extracted names derive.
         match = by_id.get(rel.id) or by_id.get(id_by_key.get(key, ""))
         if match is None:
             new_rel = rel.model_copy(deep=True)

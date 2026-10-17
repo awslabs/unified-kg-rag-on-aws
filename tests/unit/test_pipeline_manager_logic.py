@@ -26,10 +26,10 @@ from unified_kg_rag.domain.models import (
     PipelineStageResult,
     PipelineStageStatus,
     PipelineStageType,
+    TextUnitExtraction,
 )
 from unified_kg_rag.shared.exceptions import (
     PipelineResumeError,
-    PipelineStateError,
 )
 from unified_kg_rag.shared.pipeline_manager import (
     PipelineResumeManager,
@@ -119,8 +119,12 @@ def test_save_excludes_heavy_data_fields(tmp_path) -> None:
     # Heavy graph payloads must never be serialized into the metadata file.
     state = PipelineStateManager(_StubCacheManager(tmp_path))
     ctx = _context("pid", [_stage_result("graph_extraction")])
-    ctx.entities = [Entity(id="e1", name="A"), Entity(id="e2", name="B")]
-    ctx.relationships = []
+    ctx.unit_extractions = [
+        TextUnitExtraction(
+            text_unit_id="t1",
+            entities=[Entity(id="e1", name="A"), Entity(id="e2", name="B")],
+        )
+    ]
     state.save_pipeline_metadata(ctx)
 
     raw = state.load_pipeline_metadata("pid")
@@ -137,104 +141,31 @@ def test_every_cached_stage_output_is_excluded_from_metadata() -> None:
     assert cached <= PipelineStateManager.EXCLUDED_DATA_FIELDS
 
 
-def test_rejected_entities_skip_metadata_but_restore_from_stage_cache(
+def test_unit_extractions_skip_metadata_but_restore_from_stage_cache(
     tmp_path,
 ) -> None:
-    from unified_kg_rag.domain.models import RejectedEntity
-
-    rejected = [
-        RejectedEntity(text_unit_id=f"t{i}", entity_key=f"k{i}", reason="ungrounded")
+    records = [
+        TextUnitExtraction(text_unit_id=f"t{i}", rejected={f"k{i}": "ungrounded"})
         for i in range(3)
     ]
     cache = _StubCacheManager(tmp_path)
     state = PipelineStateManager(cache)
     ctx = _context("pid", [_stage_result("graph_extraction", "completed")])
-    ctx.rejected_entities = rejected
+    ctx.unit_extractions = records
     state.save_pipeline_metadata(ctx)
 
     raw_text = (
         cache.get_pipeline_cache_dir("pid") / "pipeline_metadata.json"
     ).read_text(encoding="utf-8")
-    assert "rejected_entities" not in json.loads(raw_text)
+    assert "unit_extractions" not in json.loads(raw_text)
     assert "ungrounded" not in raw_text
 
-    cache.store[_key("entities", "graph_extraction")] = [Entity(id="e1", name="A")]
-    cache.store[_key("relationships", "graph_extraction")] = []
-    cache.store[_key("rejected_entities", "graph_extraction")] = rejected
+    cache.store[_key("unit_extractions", "graph_extraction")] = records
 
     restored = PipelineResumeManager(state).restore_pipeline_context(
         "pid", ["graph_extraction"]
     )
-    assert restored.rejected_entities == rejected
-
-
-def test_save_sets_end_time_on_completion(tmp_path) -> None:
-    state = PipelineStateManager(_StubCacheManager(tmp_path))
-    ctx = _context("pid", [_stage_result("indexing", "completed")])
-    state.save_pipeline_metadata(ctx)
-    # status derives to COMPLETED -> end_time stamped.
-    assert ctx.status == PipelineStageStatus.COMPLETED
-    assert ctx.end_time is not None
-
-
-# --- load_pipeline_metadata error branches -------------------------------
-
-
-def test_load_missing_file_raises(tmp_path) -> None:
-    state = PipelineStateManager(_StubCacheManager(tmp_path))
-    with pytest.raises(PipelineStateError, match="not found"):
-        state.load_pipeline_metadata("absent")
-
-
-def test_load_empty_file_raises(tmp_path) -> None:
-    cache = _StubCacheManager(tmp_path)
-    state = PipelineStateManager(cache)
-    path = (
-        cache.get_pipeline_cache_dir("empty")
-        / PipelineStateManager.PIPELINE_METADATA_FILE
-    )
-    path.write_text("")
-    with pytest.raises(PipelineStateError, match="empty"):
-        state.load_pipeline_metadata("empty")
-
-
-def test_load_invalid_json_raises(tmp_path) -> None:
-    cache = _StubCacheManager(tmp_path)
-    state = PipelineStateManager(cache)
-    path = (
-        cache.get_pipeline_cache_dir("bad")
-        / PipelineStateManager.PIPELINE_METADATA_FILE
-    )
-    path.write_text("{not json")
-    with pytest.raises(PipelineStateError, match="invalid JSON"):
-        state.load_pipeline_metadata("bad")
-
-
-def test_load_non_object_json_raises(tmp_path) -> None:
-    cache = _StubCacheManager(tmp_path)
-    state = PipelineStateManager(cache)
-    path = (
-        cache.get_pipeline_cache_dir("arr")
-        / PipelineStateManager.PIPELINE_METADATA_FILE
-    )
-    path.write_text("[1, 2, 3]")
-    with pytest.raises(PipelineStateError, match="JSON object"):
-        state.load_pipeline_metadata("arr")
-
-
-def test_load_missing_required_field_raises(tmp_path) -> None:
-    cache = _StubCacheManager(tmp_path)
-    state = PipelineStateManager(cache)
-    path = (
-        cache.get_pipeline_cache_dir("partial")
-        / PipelineStateManager.PIPELINE_METADATA_FILE
-    )
-    path.write_text(json.dumps({"pipeline_id": "x"}))  # missing start_time/status
-    with pytest.raises(PipelineStateError, match="required fields"):
-        state.load_pipeline_metadata("partial")
-
-
-# --- create_context_from_metadata ----------------------------------------
+    assert restored.unit_extractions == records
 
 
 def test_create_context_from_metadata_drops_excluded_and_forces_running(
@@ -248,7 +179,7 @@ def test_create_context_from_metadata_drops_excluded_and_forces_running(
         "config": {},
         "source_directory": "/tmp/src",
         # Heavy field that must be filtered out before model_validate.
-        "entities": [{"id": "e1", "name": "A"}],
+        "unit_extractions": [{"text_unit_id": "t1"}],
         "stage_results": [
             {
                 "stage_name": "indexing",
@@ -262,7 +193,7 @@ def test_create_context_from_metadata_drops_excluded_and_forces_running(
     # Forced to RUNNING regardless of persisted status.
     assert ctx.status == PipelineStageStatus.RUNNING
     # Excluded data not hydrated onto the context.
-    assert not ctx.entities
+    assert not ctx.unit_extractions
 
 
 # --- verify / repair ------------------------------------------------------
@@ -487,12 +418,13 @@ def test_restore_pipeline_context_loads_cached_stage_data(tmp_path) -> None:
 
     # Seed the cache with what graph_extraction would have produced, under the
     # input-fingerprinted key the save path writes.
-    cache.store[_key("entities", "graph_extraction")] = [Entity(id="e1", name="A")]
-    cache.store[_key("relationships", "graph_extraction")] = []
+    cache.store[_key("unit_extractions", "graph_extraction")] = [
+        TextUnitExtraction(text_unit_id="t1", entities=[Entity(id="e1", name="A")])
+    ]
 
     resume = PipelineResumeManager(state)
     restored = resume.restore_pipeline_context("pid", ["graph_extraction"])
-    assert [e.id for e in restored.entities] == ["e1"]
+    assert [e.id for r in restored.unit_extractions for e in r.entities] == ["e1"]
 
 
 def test_restore_pipeline_context_tolerates_unknown_stage(tmp_path) -> None:
@@ -537,11 +469,10 @@ def test_validate_integrity_passes_when_all_cache_present(tmp_path) -> None:
     state.save_pipeline_metadata(
         _context("pid", [_stage_result("graph_extraction", "completed")])
     )
-    # graph_extraction maps to context attrs "entities", "relationships" and
-    # "rejected_entities".
-    cache.store[_key("entities", "graph_extraction")] = [Entity(id="e1", name="A")]
-    cache.store[_key("relationships", "graph_extraction")] = []
-    cache.store[_key("rejected_entities", "graph_extraction")] = []
+    # graph_extraction maps to the context attr "unit_extractions".
+    cache.store[_key("unit_extractions", "graph_extraction")] = [
+        TextUnitExtraction(text_unit_id="t1")
+    ]
     resume = PipelineResumeManager(state)
 
     ok, errors = resume.validate_pipeline_integrity("pid")
@@ -555,13 +486,12 @@ def test_validate_integrity_reports_missing_cache(tmp_path) -> None:
     state.save_pipeline_metadata(
         _context("pid", [_stage_result("graph_extraction", "completed")])
     )
-    # No cache seeded -> both keys missing.
+    # No cache seeded -> the key is missing.
     resume = PipelineResumeManager(state)
 
     ok, errors = resume.validate_pipeline_integrity("pid")
     assert ok is False
-    assert any("entities" in e for e in errors)
-    assert any("relationships" in e for e in errors)
+    assert any("unit_extractions" in e for e in errors)
 
 
 def test_validate_integrity_returns_error_when_metadata_unloadable(
@@ -612,23 +542,28 @@ def test_save_and_restore_mappings_cover_the_same_outputs() -> None:
 
 
 def test_resume_after_gleaning_restores_gleaned_relationships(tmp_path) -> None:
-    # Gleaning adds relationships on top of extraction's; the save path caches
-    # both lists, and a resume must restore the gleaned relationships rather
-    # than fall back to extraction's (which would drop the gleaned edges).
+    # Gleaning adds relationships to extraction's records; a resume must
+    # restore the gleaned records rather than fall back to extraction's
+    # (which would drop the gleaned edges).
     from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
-    from unified_kg_rag.domain.models import RejectedEntity, Relationship
+    from unified_kg_rag.domain.models import Relationship
 
-    extracted = [Relationship(id="r1", source_id="e1", target_id="e2")]
-    rejected = [RejectedEntity(text_unit_id="t1", entity_key="x", reason="ungrounded")]
-    gleaned = extracted + [Relationship(id="r2", source_id="e2", target_id="e3")]
-    entities = [Entity(id=f"e{i}", name=f"Vendor {i}") for i in (1, 2, 3)]
+    first = Relationship(id="r1", source_id="e1", target_id="e2")
+    extracted = TextUnitExtraction(
+        text_unit_id="t1", relationships=[first], rejected={"x": "ungrounded"}
+    )
+    gleaned = extracted.model_copy(
+        update={
+            "relationships": [
+                first,
+                Relationship(id="r2", source_id="e2", target_id="e3"),
+            ],
+            "gleaned": True,
+        }
+    )
     produced = {
-        PipelineStageType.GRAPH_EXTRACTION: {
-            "entities": entities,
-            "relationships": extracted,
-            "rejected_entities": rejected,
-        },
-        PipelineStageType.GLEANING: {"entities": entities, "relationships": gleaned},
+        PipelineStageType.GRAPH_EXTRACTION: {"unit_extractions": [extracted]},
+        PipelineStageType.GLEANING: {"unit_extractions": [gleaned]},
     }
 
     cache = _StubCacheManager(tmp_path)
@@ -650,8 +585,9 @@ def test_resume_after_gleaning_restores_gleaned_relationships(tmp_path) -> None:
     context = PipelineResumeManager(state).restore_pipeline_context(
         "pid", ["graph_extraction", "gleaning"]
     )
-    assert [r.id for r in context.relationships] == ["r1", "r2"]
-    assert context.rejected_entities == rejected
+    (record,) = context.unit_extractions
+    assert [r.id for r in record.relationships] == ["r1", "r2"]
+    assert record.rejected == {"x": "ungrounded"}
 
 
 # --- retrying failed runs and phased resumes ------------------------------

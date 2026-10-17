@@ -1395,7 +1395,11 @@ SQLite file instead (`providers.doc_status.kind: sqlite`, switched on by
   and relationships merge into the existing graph (idempotent `upsert_*`).
 - **Modify a document:** edit the file and re-run. The content hash changes, so
   the document is treated as changed: its old artifacts are removed and the new
-  version is re-indexed.
+  version is re-indexed. Only its changed chunks are sent to the model: the
+  extraction store (`indexing.opensearch.extraction_records_index_prefix`)
+  serves every chunk whose text and extraction settings it already holds a
+  record for, in this or any other document (`--force-rebuild` re-extracts
+  them all and refreshes the store).
 - **Delete a document:** remove it from the source directory and re-run. Its
   **exclusive** artifacts (entities/relationships seen only in that document,
   tracked via per-document lineage in the registry) are deleted; artifacts
@@ -1408,7 +1412,11 @@ SQLite file instead (`providers.doc_status.kind: sqlite`, switched on by
   count. Records written before records carried a fingerprint are compared by
   content only (no surprise full re-extraction on upgrade); a reset
   (`indexing.reset: true`) re-extracts them. Edits to the built-in prompt
-  templates (code) are not seen: reset after editing one.
+  templates (code) are not seen: reset after editing one. A re-extracted
+  document's chunks still take their stored records when the settings that
+  shape a chunk's record (models, extraction, gleaning and claim settings,
+  the target language, the prompt templates, built-in ones included) are
+  unchanged, e.g. after a resolution or chunking change.
 - **Change the embedding model or its dimension**
   (`indexing.opensearch.embedding_model_id` / `embedding_dimension`, or
   `providers.embedding.model_id` / `dimension` in local mode): an

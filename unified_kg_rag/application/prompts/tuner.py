@@ -23,6 +23,7 @@ from langchain_core.output_parsers import StrOutputParser
 from unified_kg_rag.adapters.ingestion.graph_extractor import GraphExtractor
 from unified_kg_rag.adapters.llm.chain_factory import setup_chain
 from unified_kg_rag.adapters.providers import Providers
+from unified_kg_rag.domain.ingestion.contributions import unit_entities
 from unified_kg_rag.domain.models import (
     Config,
     Entity,
@@ -208,23 +209,23 @@ class PromptTuner:
         try:
             extractor = GraphExtractor(self.config, providers=self.providers)
             extractor.show_progress = False
-            entities, relationships, _ = extractor.extract_from_text_units(text_units)
+            records, _ = extractor.extract_units(text_units)
         except Exception as exc:  # noqa: BLE001 - examples are best-effort
             logger.warning("Corpus-grounded example extraction failed: %s", exc)
             return ""
 
-        # Group the real extraction output back by source chunk so each rendered
-        # example pairs a genuine passage with what was actually extracted from it.
+        # Each rendered example pairs a genuine passage with what was actually
+        # extracted from it (its unit's record).
+        by_unit = {record.text_unit_id: record for record in records}
         rendered: list[str] = []
         for unit in text_units:
-            unit_entities = [e for e in entities if unit.id in (e.text_unit_ids or [])]
-            unit_relationships = [
-                r for r in relationships if unit.id in (r.text_unit_ids or [])
-            ]
-            if not unit_entities and not unit_relationships:
+            record = by_unit.get(unit.id)
+            if record is None or not (record.entities or record.relationships):
                 continue
             rendered.append(
-                self._render_example(unit.text, unit_entities, unit_relationships)
+                self._render_example(
+                    unit.text, unit_entities(record), record.relationships
+                )
             )
             if len(rendered) >= self.MAX_EXAMPLES:
                 break

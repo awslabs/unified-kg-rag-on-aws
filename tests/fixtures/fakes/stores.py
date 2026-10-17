@@ -11,6 +11,7 @@ OpenSearch.
 
 from __future__ import annotations
 
+import copy
 from collections.abc import Collection
 from typing import Any
 
@@ -294,6 +295,8 @@ class FakeVectorStore(_Recorder):
         # assert per-index routing (delete is fanned out once per index prefix).
         self.delete_calls: list[tuple[str, str]] = []
         self.builds: dict[str, IndexBuildRecord] = {}
+        # The extraction store: (suffix, key) -> record payload.
+        self.extraction_records: dict[tuple[str, str], dict[str, Any]] = {}
 
     def clear(self, suffixes: list[str]) -> None:
         # Only the given suffixes' documents, like the per-alias delete.
@@ -429,6 +432,24 @@ class FakeVectorStore(_Recorder):
         self, ids: list[str], suffix: str | None = None
     ) -> dict[str, str]:
         return self._descriptions("relationships", ids, suffix)
+
+    def read_extraction_records(
+        self, keys: list[str], suffix: str | None = None
+    ) -> dict[str, dict[str, Any]]:
+        wanted = suffix or Constants.DEFAULT_SUFFIX.value
+        return {
+            key: copy.deepcopy(self.extraction_records[(wanted, key)])
+            for key in keys
+            if (wanted, key) in self.extraction_records
+        }
+
+    def write_extraction_records(
+        self, records: dict[str, dict[str, Any]], suffix: str | None = None
+    ) -> IndexingStats:
+        wanted = suffix or Constants.DEFAULT_SUFFIX.value
+        for key, record in records.items():
+            self.extraction_records[(wanted, key)] = copy.deepcopy(record)
+        return IndexingStats(total_items=len(records), successful_items=len(records))
 
     def _descriptions(
         self, collection: str, ids: list[str], suffix: str | None

@@ -13,7 +13,8 @@ from .community_report import CommunityReport
 from .config import PipelineConfig
 from .covariate import Claim
 from .document import Document, DocumentDelta
-from .entity import Entity, RejectedEntity
+from .entity import Entity
+from .extraction import TextUnitExtraction
 from .relationship import Relationship
 from .text_unit import TextUnit
 
@@ -197,16 +198,11 @@ class PipelineContext(BaseModel):
     translated_units: "list[TextUnit]" = Field(
         default_factory=list, description="Text units after translation."
     )
-    entities: "list[Entity]" = Field(
-        default_factory=list, description="Entities extracted from text units."
-    )
-    relationships: "list[Relationship]" = Field(
-        default_factory=list, description="Relationships extracted between entities."
-    )
-    rejected_entities: "list[RejectedEntity]" = Field(
+    unit_extractions: "list[TextUnitExtraction]" = Field(
         default_factory=list,
-        description="Entities graph extraction rejected, per text unit; "
-        "gleaning does not re-add them through a gleaned relationship.",
+        description="Each text unit's extraction record (its own entities and "
+        "relationships), from graph extraction and gleaning; graph resolution "
+        "merges them.",
     )
     claims: "list[Claim]" = Field(
         default_factory=list, description="Claims and covariates extracted from text."
