@@ -35,10 +35,10 @@ one is running against:
   deletes the alias's older indices, so one run can delete the index the other
   is writing or leave the alias on the other run's index. A reset clears the
   suffix's stores under the other run.
-- **the same doc-status table namespace.** An incremental run reads the
-  registry once to plan what to remove and which records to keep, so records
-  another run writes in the meantime can be pruned and their artifacts removed
-  or kept against the plan.
+- **the same doc-status table namespace.** An incremental run removes what
+  cites its removed text units in the stores and overwrites its documents'
+  registry records, so it can delete or strip what another run is writing and
+  replace that run's records.
 
 Runs on different index suffixes that use separate doc-status tables
 (`aws.dynamodb.table_name`) do not share either and can run side by side.
@@ -132,14 +132,23 @@ artifacts are removed. Therefore:
 - index each tenant or corpus version under its own index suffix, with its own
   config file.
 
-Upgrading a registry written by a pre-release build: see
+Upgrading from a release whose registry table was keyed by `doc_id` alone:
+the registry now lists each document's text units only and is partitioned by
+index namespace, so the old table is rejected at first use with a
+`ConfigurationError`. Point the run at a new table (the CDK stack creates
+`graphrag-doc-status-v2`, `<env>-graphrag-doc-status-v2` outside `dev`; the
+library default is `unified-kg-rag-on-aws-doc-status-v2`) and run once with
+`indexing.reset: true`. Delete the old table once the rebuild succeeded (the
+stack retains it outside `dev`). For a registry written by a pre-release
+build, see also
 [CHANGELOG: Upgrading from pre-release builds](../CHANGELOG.md#upgrading-from-pre-release-builds).
 
 What incremental runs do not refresh: delta runs append communities rather
-than re-clustering, and an entity keeps the id of the name it was first
-indexed under. A periodic full rebuild (`indexing.reset: true`) refreshes
-both. Shared descriptions, names, types, ranks and claims are derived from
-the current documents on every run. Details: [User Guide §5](./user-guide.md#5-incremental-indexing).
+than re-clustering, and stored communities and reports keep listing an
+entity's old id after the entity took its current name's id. A periodic full
+rebuild (`indexing.reset: true`) refreshes both. Shared descriptions, names,
+ids, types, ranks and claims are derived from the current documents on every
+run. Details: [User Guide §5](./user-guide.md#5-incremental-indexing).
 
 Community drift tells you when that rebuild is due. Every entity records the
 level-0 communities it belongs to, so a delta run's indexing stage reports,
@@ -172,7 +181,7 @@ An incremental run that stops inside the indexing stage (the task is killed,
 a store or the registry becomes unreachable, the failure gate trips) needs no
 manual repair: re-run. Before it removes or writes anything, the indexing
 stage records every new and changed document `PENDING`, listing both the
-artifacts it had and the ones the run is about to write; the records become
+text units it had and the ones the run is about to write; the records become
 `PROCESSED` (or `FAILED`) only after the writes. The next run therefore:
 
 - re-extracts each `PENDING` document still in the corpus, even if its file
@@ -185,15 +194,15 @@ consecutive-failure count for `indexing.max_document_failures`: the `PENDING`
 record has `failure_count` 0, so a document that had failed before starts
 counting again from its next failure. `PENDING` records (`status` `pending`,
 `content_hash` `pending`, `error_info` naming the write-ahead record) are
-expected after a failed run. Do not delete them by hand: their lineage is what
-lets the next run find the interrupted run's writes. When a large document's
-old and new artifact ids do not fit one DynamoDB item together, the ids the
-record lacks are kept in overflow items of the same table, keyed
-`<doc_id>#pending#<n>` with `record_kind` `lineage_overflow`; leave them too.
-The run deletes them when it commits or removes the document; overflow a
-run left next to a committed record (it stopped between the commit and the
-delete) is deleted by the next incremental run of the same namespace, even
-when the document is unchanged. The stage writes the registry in batches, so a role with a
+expected after a failed run. Do not delete them by hand: their text units
+are what lets the next run find the interrupted run's writes (every artifact
+cites the text units it was stated in). A document with more text units than
+one DynamoDB item holds (about 10,000; half that for an edited document,
+whose `PENDING` record lists the old and the new ones) fails the run before
+anything is written: split it. After each successful commit, the extraction
+records that only removed text units named are deleted; a run that stops
+between its removal and its commit leaves them behind, which costs space
+only. The stage writes the registry in batches, so a role with a
 custom policy needs `dynamodb:BatchWriteItem` as well as `BatchGetItem`
 (the CDK stack's `grant_read_write_data` covers both).
 
@@ -741,6 +750,7 @@ content to LangSmith independently of this setting.
 | `EmbeddingModelError: Query embedding failed: ...` | The query embedding model call failed after the client's retries (a crashed Ollama runner, a dead vLLM engine, a Bedrock `InternalServerException` that persisted); every vector search of the query needs it, so the query fails instead of answering "could not find" | Check the embedding server or model (`providers.embedding`, `indexing.opensearch.embedding_model_id`) and its logs, then retry |
 | `Neptune refused the connection (HTTP 403)` | IAM authentication denied the websocket: the policy lacks `neptune-db:connect` on the cluster, or the request was signed for another region | Grant `neptune-db:connect` (and the `neptune-db:*` data actions the run needs); set `aws.region_name` to the cluster's region |
 | `Skipping N '.md' file(s) ...` / `No supported source files found in '<dir>'` | The `unstructured` extra is not installed | Install it (Python 3.11+) or convert the files |
+| `ConfigurationError: Doc-status registry: DynamoDB table '...' has the key schema ... of an earlier release` | The table was created by a release that keyed records by `doc_id` alone | Point `aws.dynamodb.table_name` (`GRAPHRAG_DOC_STATUS_TABLE`) at a new table or deploy the stack's new one, and run once with `indexing.reset: true` (see [Incremental runs](#incremental-runs)) |
 | `DocStatusRegistryError` | The doc-status registry table is missing, not accessible, or throttled | Create the table or fix `aws.dynamodb.table_name`, grant the DynamoDB permissions named in the message, then resume with the same `--pipeline-id` |
 | `Incremental indexing is enabled but no document delta was computed` | The indexing stage ran without a registry diff (the loading stage failed under `continue_on_error`) | Re-run from `document_loading` once the registry is reachable |
 | `CacheSyncError` | The S3 stage-cache download or upload failed | Check bucket permissions and `aws.s3.encryption`, then resume with the same `--pipeline-id` |
@@ -752,7 +762,7 @@ content to LangSmith independently of this setting.
 | `argument --resume-from-stage: Unknown pipeline stage ...` (exit 2) | `--resume-from-stage` names an unknown stage | Use a name from the list in the message (any case) |
 | `... needs confirmation, but stdin is not a terminal` | A re-run found completed stages whose output is no longer cached under the current inputs, without a terminal to ask on | Pass `--yes` to go on (the resume recomputes those stages), or use a new `--pipeline-id` |
 | `Stage '<stage>', upstream of this run's enabled stages, has not completed` | An `--enabled-stages` window (a Step Functions phase) resumed while an earlier stage failed or lost its cached output | Run the earlier stages first; on the CDK stack, start a new execution with the same `pipeline_id` |
-| `The doc-status registry lists indexed documents of this namespace whose entities the graph store does not hold` | The graph lost what the registry records (a restarted Gremlin Server, `docker compose ... down -v`, a restored or replaced graph) | Re-run with `indexing.reset: true`, or delete the namespace's registry records (local mode: the SQLite file) |
+| `The doc-status registry lists indexed documents of this namespace whose entities the graph store does not hold` | The graph lost what the registry records (a restarted Gremlin Server, `docker compose ... down -v`, a restored or replaced graph): the vector store holds entities citing the probed documents' text units and the graph none (documents that state no entity do not trip it) | Re-run with `indexing.reset: true`, or delete the namespace's registry records (local mode: the SQLite file) |
 | `The doc-status registry lists indexed documents of this namespace whose text units the vector store does not hold` | The vector store lost what the registry records (local mode: `vector.sqlite3` deleted or moved, or `providers.vector.sqlite_path` changed; deleted OpenSearch indices) | Same as above; in local mode delete the three store files together or restore the vector file |
 | `... stayed locked ...` (`database is locked`) from the embedded graph or vector store or the SQLite doc-status registry (local mode) | Another process is writing to the same SQLite file (a second ingestion, say) and held its lock longer than `search.store_timeout_seconds`; SQLite allows one writer at a time | Wait for the other run and retry, run one ingestion per store file at a time, or raise `search.store_timeout_seconds`. Keep the files on a local disk: network filesystems are not supported |
 | `... processed N inputs but produced 0 outputs`, with `Connection refused` in the log (local mode) | Ollama or the OpenAI-compatible server is not reachable at `providers.llm.base_url` / `providers.embedding.base_url` | Start it (`ollama serve`, or `docker compose -f docker/compose.local.yaml --profile models up -d --wait`), check `base_url` (or `--model-base-url`), and pull the models |

@@ -13,8 +13,6 @@ from unified_kg_rag.domain.ingestion.delta_detector import (
     compute_content_hash,
     detect_delta,
     document_doc_id,
-    legacy_doc_id,
-    registry_scope,
 )
 from unified_kg_rag.domain.models import (
     Config,
@@ -322,27 +320,3 @@ def test_store_without_fingerprint_support_is_diffed_by_content(
 
     assert delta.unchanged == [document_doc_id(document)]
     assert "takes no extraction_fingerprint" in caplog.text
-
-
-def test_adopted_legacy_record_of_other_settings_reads_changed() -> None:
-    store = FakeDocStatusStore()
-    document = _doc("/a.txt", "a")
-    document.metadata["registry_source"] = "/corpus"
-    scope = registry_scope("default", "/corpus")
-    # Keyed without the source scope, as before scopes joined the key.
-    store.put(
-        _record(document, extraction_fingerprint="old").model_copy(
-            update={"doc_id": legacy_doc_id(document), "scope": scope}
-        )
-    )
-
-    delta, _ = detect_delta(
-        [document],
-        store,
-        scope=scope,
-        legacy_doc_ids={document_doc_id(document): legacy_doc_id(document)},
-        extraction_fingerprint="new",
-    )
-
-    assert delta.changed == delta.settings_changed == [document_doc_id(document)]
-    assert store.get(document_doc_id(document)) is not None

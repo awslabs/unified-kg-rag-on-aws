@@ -36,6 +36,7 @@ from unified_kg_rag.adapters.ingestion.translator import TextUnitTranslator
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.application.ingestion.extraction_store import ExtractionStore
 from unified_kg_rag.application.ingestion.incremental import (
+    artifact_owners,
     clear_registry_namespaces,
     context_lineages,
     dedup_preferences,
@@ -43,7 +44,6 @@ from unified_kg_rag.application.ingestion.incremental import (
     filter_to_delta,
     index_delta,
     reset_namespaces,
-    reset_suffixes,
     run_incremental_indexer,
     warn_about_unapplied_retired_scopes,
 )
@@ -1398,7 +1398,6 @@ class IndexingStage(PipelineStage):
                 clear_registry_namespaces(
                     self._build_doc_status_store,
                     reset_namespaces(self.config, context, text_units),
-                    reset_suffixes(self.config, text_units),
                 )
 
         self.indexing_manager.initialize()
@@ -1472,16 +1471,7 @@ class IndexingStage(PipelineStage):
                     context,
                     text_units,
                 )
-                lineages = context_lineages(
-                    context,
-                    incremental.suffix,
-                    text_units,
-                    entities,
-                    relationships,
-                    communities,
-                    community_reports,
-                    claims,
-                )
+                lineages = context_lineages(context, incremental.suffix, text_units)
                 incremental.write_ahead(context.incremental_delta, lineages)
                 rebuild = (incremental, lineages)
             # A build the registry does not record must not be updated
@@ -1504,6 +1494,17 @@ class IndexingStage(PipelineStage):
                     context.incremental_fingerprints,
                     indexing_results,
                     documents_with_failed_units(context, text_units),
+                    artifact_owners(
+                        lineages,
+                        [
+                            *text_units,
+                            *entities,
+                            *relationships,
+                            *communities,
+                            *community_reports,
+                            *claims,
+                        ],
+                    ),
                 )
 
         total_indexed = sum(

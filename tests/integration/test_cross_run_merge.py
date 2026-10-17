@@ -44,7 +44,7 @@ def _harness(*, cross_run_merge: bool, fuzzy: bool = False):
 
 def _commit_entity(incremental: IncrementalIndexer, doc_id: str, entity: Entity):
     incremental.commit(
-        lineages=[DocumentLineage(doc_id=doc_id, entity_ids=[entity.id])],
+        lineages=[DocumentLineage(doc_id=doc_id)],
         fingerprints={doc_id: f"hash-{doc_id}"},
         entities=[entity],
     )
@@ -92,18 +92,15 @@ def test_without_flag_overwrites() -> None:
     assert set(stored.text_unit_ids or []) == {"t2"}
 
 
-def test_lineage_records_the_ids_the_merge_kept() -> None:
+def test_a_fuzzy_merge_writes_only_the_kept_ids() -> None:
     # A fuzzy merge folds the delta entity "e-new" into the stored "e-old", and
-    # the delta edge into the stored edge with the same (source, target, type).
-    # The registry must point at the ids actually written, or deleting the doc
-    # later would miss them.
+    # the delta edge into the stored edge with the same (source, target, type):
+    # nothing is written under the delta's ids.
     incremental, graph, store = _harness(cross_run_merge=True, fuzzy=True)
     incremental.commit(
         lineages=[
             DocumentLineage(
                 doc_id="doc-old",
-                entity_ids=["e-old", "e-buyer"],
-                relationship_ids=["r-old"],
             )
         ],
         fingerprints={"doc-old": "h-old"},
@@ -126,8 +123,6 @@ def test_lineage_records_the_ids_the_merge_kept() -> None:
         lineages=[
             DocumentLineage(
                 doc_id="doc-new",
-                entity_ids=["e-buyer", "e-new"],
-                relationship_ids=["r-new"],
             )
         ],
         fingerprints={"doc-new": "h-new"},
@@ -148,10 +143,6 @@ def test_lineage_records_the_ids_the_merge_kept() -> None:
 
     assert graph.ids("entities") == {"e-old", "e-buyer"}
     assert graph.ids("relationships") == {"r-old"}
-    record = store.get("doc-new")
-    assert record is not None
-    assert record.entity_ids == ["e-buyer", "e-old"]
-    assert record.relationship_ids == ["r-old"]
 
 
 def test_delta_entity_merges_into_a_corrected_entity_with_its_id() -> None:
@@ -184,7 +175,7 @@ def test_delta_relationship_merges_into_a_corrected_edge_with_its_id() -> None:
     # return one edge for it, carrying both docs' text units.
     incremental, _, _ = _harness(cross_run_merge=True)
     incremental.commit(
-        lineages=[DocumentLineage(doc_id="doc-a", relationship_ids=["r1"])],
+        lineages=[DocumentLineage(doc_id="doc-a")],
         fingerprints={"doc-a": "h-a"},
         entities=[
             Entity(id="e-v", name="Vendor", text_unit_ids=["t1"]),
@@ -226,9 +217,7 @@ def test_failed_read_back_keeps_a_deleted_docs_registry_row(mocker) -> None:
     incremental, graph, store = _harness(cross_run_merge=True)
     for doc_id, unit in (("doc-a", "t1"), ("doc-b", "t2")):
         incremental.commit(
-            lineages=[
-                DocumentLineage(doc_id=doc_id, entity_ids=["e1"], text_unit_ids=[unit])
-            ],
+            lineages=[DocumentLineage(doc_id=doc_id, text_unit_ids=[unit])],
             fingerprints={doc_id: f"h-{doc_id}"},
             entities=[Entity(id="e1", name="Vendor", text_unit_ids=[unit])],
         )
@@ -264,7 +253,7 @@ def test_a_remapped_entity_rewrites_its_edges_only_for_its_new_rank() -> None:
     incremental, graph, _ = _harness(cross_run_merge=True)
     spokes = [f"e-{i}" for i in range(3)]
     incremental.commit(
-        lineages=[DocumentLineage(doc_id="doc-a", entity_ids=["e-hub", *spokes])],
+        lineages=[DocumentLineage(doc_id="doc-a")],
         fingerprints={"doc-a": "h-a"},
         entities=[
             Entity(id="e-hub", name="Acme", text_unit_ids=["t1"]),
@@ -299,7 +288,7 @@ def test_communities_and_claims_follow_the_merge_remap() -> None:
     incremental, graph, _ = _harness(cross_run_merge=True)
     vector = incremental.indexing_manager.opensearch_indexer
     incremental.commit(
-        lineages=[DocumentLineage(doc_id="doc-a", entity_ids=["e-old", "e-buyer"])],
+        lineages=[DocumentLineage(doc_id="doc-a")],
         fingerprints={"doc-a": "h-a"},
         entities=[
             Entity(id="e-old", name="Acme", text_unit_ids=["t1"]),
@@ -312,7 +301,7 @@ def test_communities_and_claims_follow_the_merge_remap() -> None:
         ],
     )
     incremental.commit(
-        lineages=[DocumentLineage(doc_id="doc-b", entity_ids=["e-new", "e-buyer"])],
+        lineages=[DocumentLineage(doc_id="doc-b")],
         fingerprints={"doc-b": "h-b"},
         entities=[
             Entity(id="e-new", name="Acme Inc", text_unit_ids=["t2"]),

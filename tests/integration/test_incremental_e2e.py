@@ -24,7 +24,6 @@ from unified_kg_rag.application.storage.indexing_manager import IndexingManager
 from unified_kg_rag.domain.ingestion.delta_detector import compute_doc_id, detect_delta
 from unified_kg_rag.domain.models import (
     Config,
-    DocStatusRecord,
     Document,
     DocumentLineage,
     Entity,
@@ -66,14 +65,7 @@ def _artifacts_for(doc: Document, entity_ids: list[str]):
 
 def _commit(inc, docs, all_text_units, all_entities, all_relationships=None):
     delta, fingerprints = detect_delta(docs, inc.doc_status)
-    lineages = build_document_lineage(
-        documents=docs,
-        text_units=all_text_units,
-        entities=all_entities,
-        relationships=all_relationships or [],
-        communities=[],
-        claims=[],
-    )
+    lineages = build_document_lineage(documents=docs, text_units=all_text_units)
     inc.commit(
         lineages=lineages,
         fingerprints=fingerprints,
@@ -204,7 +196,6 @@ def test_exclusive_deletion_is_scoped_per_suffix(harness) -> None:
                 DocumentLineage(
                     doc_id=f"doc-{suffix}",
                     suffix=suffix,
-                    entity_ids=["e-vendor"],
                     text_unit_ids=[f"tu-{suffix}"],
                 )
             ],
@@ -229,128 +220,24 @@ def test_exclusive_deletion_is_scoped_per_suffix(harness) -> None:
     assert [r.doc_id for r in store.list_all()] == ["doc-tenant-b"]
 
 
-@pytest.mark.parametrize(
-    ("survivor_scope", "kept"),
-    [
-        # Another additional_suffix: same item suffix, another namespace.
-        ("default-y|/corpus", False),
-        # The same namespace, another source scope.
-        ("default-x|/other", True),
-        # Written before scopes existed: its namespace is unknown, so it keeps
-        # the id rather than risk deleting what it references.
-        (None, True),
-    ],
-)
-def test_survivors_retain_artifacts_only_in_their_namespace(
-    harness, survivor_scope, kept
-) -> None:
-    inc, store, _, _ = harness
-    store.put(
-        DocStatusRecord(
-            doc_id="doc-x",
-            content_hash="h",
-            scope="default-x|/corpus",
-            entity_ids=["e-vendor"],
-            text_unit_ids=["tu-x"],
+def test_an_entity_another_namespace_cites_is_stripped_not_deleted(harness) -> None:
+    # Two namespaces (additional suffixes) can write one item suffix: the
+    # removal finds what cites the removed text units in the stores, so an
+    # entity a document of the other namespace also states is kept.
+    inc, store, graph, vector = harness
+    for doc_id, unit in (("default-x#x", "tu-x"), ("default-y#y", "tu-y")):
+        inc.commit(
+            lineages=[DocumentLineage(doc_id=doc_id, text_unit_ids=[unit])],
+            fingerprints={doc_id: "h"},
+            text_units=[TextUnit(id=unit, text="...", document_ids=[doc_id])],
+            entities=[Entity(id="e-vendor", name="Vendor", text_unit_ids=[unit])],
         )
-    )
-    store.put(
-        DocStatusRecord(
-            doc_id="doc-survivor",
-            content_hash="h",
-            scope=survivor_scope,
-            entity_ids=["e-vendor"],
-            text_unit_ids=["tu-survivor"],
-        )
-    )
 
-    (removal,) = inc._plan_removal(["doc-x"]).values()
+    assert inc.remove_obsolete_artifacts(["default-x#x"])
 
-    assert ("e-vendor" in removal.exclusive_ids) is not kept
-    assert removal.shared_entity_ids == (["e-vendor"] if kept else [])
-    assert "tu-x" in removal.exclusive_ids
-
-
-@pytest.mark.parametrize(
-    ("survivor_namespace", "file_path", "visible", "kept"),
-    [
-        # Written before scopes existed under the legacy key of another
-        # namespace a scope in the registry names.
-        ("default-y", "a.txt", True, False),
-        # Under the legacy key of a namespace no scope names: its namespace
-        # is unknown, so it retains.
-        ("default-y", "a.txt", False, True),
-        # Under the removed record's namespace's legacy key.
-        ("default-x", "a.txt", False, True),
-        # Under the run's namespace's legacy key: not the removed record's.
-        ("default-run", "a.txt", False, False),
-        # No file_path (initial release): namespace unknown, so it retains.
-        ("default-y", None, True, True),
-    ],
-)
-def test_a_scopeless_survivor_retains_only_in_its_legacy_namespace(
-    harness, survivor_namespace, file_path, visible, kept
-) -> None:
-    inc, store, _, _ = harness
-    inc.scope = "default-run|/corpus"
-    store.put(
-        DocStatusRecord(
-            doc_id="doc-x",
-            content_hash="h",
-            scope="default-x|/corpus",
-            entity_ids=["e-vendor"],
-            text_unit_ids=["tu-x"],
-        )
-    )
-    if visible:
-        # A record of the survivor's namespace that a run since the upgrade
-        # wrote with a scope (it lists nothing the removal touches).
-        store.put(
-            DocStatusRecord(doc_id="doc-y", content_hash="h", scope="default-y|/new")
-        )
-    store.put(
-        DocStatusRecord(
-            doc_id=compute_doc_id("a.txt", survivor_namespace),
-            content_hash="h",
-            file_path=file_path,
-            entity_ids=["e-vendor"],
-            text_unit_ids=["tu-survivor"],
-        )
-    )
-    (removal,) = inc._plan_removal(["doc-x"]).values()
-
-    assert ("e-vendor" in removal.exclusive_ids) is not kept
-    assert removal.shared_entity_ids == (["e-vendor"] if kept else [])
-
-
-def test_a_scopeless_survivor_under_a_custom_doc_id_retains(harness) -> None:
-    inc, store, _, _ = harness
-    inc.scope = "default-x|/corpus"
-    store.put(
-        DocStatusRecord(
-            doc_id="doc-x",
-            content_hash="h",
-            scope="default-x|/corpus",
-            entity_ids=["e-vendor"],
-            text_unit_ids=["tu-x"],
-        )
-    )
-    # Committed through the direct API under the caller's own doc id: no
-    # namespace's legacy key, so its namespace is unknown.
-    store.put(
-        DocStatusRecord(
-            doc_id="contract-42",
-            content_hash="h",
-            file_path="contracts/42.txt",
-            entity_ids=["e-vendor"],
-            text_unit_ids=["tu-42"],
-        )
-    )
-
-    (removal,) = inc._plan_removal(["doc-x"]).values()
-
-    assert removal.shared_entity_ids == ["e-vendor"]
-    assert "e-vendor" not in removal.exclusive_ids
+    (vendor,) = graph.read_entities(["e-vendor"])
+    assert vendor.text_unit_ids == ["tu-y"]
+    assert vector.ids("text_units") == {"tu-y"}
 
 
 def test_a_direct_api_record_retains_for_a_scoped_run_of_its_namespace(
@@ -393,36 +280,6 @@ def test_a_direct_api_record_retains_for_a_scoped_run_of_its_namespace(
 
     assert "e-shared" in graph.ids("entities")
     assert "e-shared" in vector.ids("entities")
-
-
-def test_a_removed_scopeless_record_of_no_known_namespace_is_retained_for(
-    harness,
-) -> None:
-    inc, store, _, _ = harness
-    # Removed: no scope, legacy key of a namespace no candidate names.
-    store.put(
-        DocStatusRecord(
-            doc_id=compute_doc_id("a.txt", "default-y"),
-            content_hash="h",
-            file_path="a.txt",
-            entity_ids=["e-vendor"],
-            text_unit_ids=["tu-a"],
-        )
-    )
-    store.put(
-        DocStatusRecord(
-            doc_id="doc-y",
-            content_hash="h",
-            scope="default-z|/corpus",
-            entity_ids=["e-vendor"],
-            text_unit_ids=["tu-y"],
-        )
-    )
-
-    (removal,) = inc._plan_removal([compute_doc_id("a.txt", "default-y")]).values()
-
-    assert removal.shared_entity_ids == ["e-vendor"]
-    assert "tu-a" in removal.exclusive_ids
 
 
 def test_a_graph_that_lost_the_registrys_documents_fails_fast(harness) -> None:
@@ -521,7 +378,7 @@ def test_the_graph_probe_reads_past_documents_without_entities(
     _commit(inc, [parties], tus, ents)
     delta, _ = detect_delta([*blanks, parties, _doc("/new.txt", "y")], store)
     first = [*delta.unchanged, *delta.changed][:2]
-    assert not any(r.entity_ids for r in store.get_many(first).values())
+    assert not any(r.text_unit_ids for r in store.get_many(first).values())
 
     inc.check_graph_holds_registry(delta)
 
@@ -544,7 +401,7 @@ def test_the_graph_probe_reads_every_record_until_it_finds_entities(
     delta, _ = detect_delta([*blanks, parties, _doc("/new.txt", "y")], store)
     stored = [*delta.unchanged, *delta.changed]
     records = store.get_many(stored)
-    assert [d for d in stored if records[d].entity_ids] == stored[1001:]
+    assert [d for d in stored if records[d].text_unit_ids] == stored[1001:]
 
     inc.check_graph_holds_registry(delta)
 
@@ -581,13 +438,7 @@ def test_the_vector_probe_reads_the_records_suffix(harness) -> None:
     _, fingerprints = detect_delta([a], store)
     inc.commit(
         lineages=build_document_lineage(
-            documents=[a],
-            text_units=[tu],
-            entities=[vendor],
-            relationships=[],
-            communities=[],
-            claims=[],
-            suffix="tenant-a",
+            documents=[a], text_units=[tu], suffix="tenant-a"
         ),
         fingerprints=fingerprints,
         text_units=[tu],
@@ -612,10 +463,20 @@ def test_the_vector_probe_covers_documents_without_entities(harness) -> None:
     tus, _ = _artifacts_for(a, [])
     _commit(inc, [a], tus, [])
     delta, _ = detect_delta([a, _doc("/b.txt", "y")], store)
-    assert not any(r.entity_ids for r in store.list_all())
 
     inc.check_graph_holds_registry(delta)
 
     vector.clear(["default"])
     with pytest.raises(DataProcessingError, match="vector store"):
         inc.check_graph_holds_registry(delta)
+
+
+def test_the_graph_probe_accepts_documents_that_state_no_entity(harness) -> None:
+    # Cover pages: their text units are stored, but nothing cites them in
+    # either store, so an empty graph answer is not a lost graph.
+    inc, store, _, _ = harness
+    a = _doc("/a.txt", "x")
+    tus, _ = _artifacts_for(a, [])
+    _commit(inc, [a], tus, [])
+
+    inc.check_graph_holds_registry(detect_delta([a, _doc("/b.txt", "y")], store)[0])

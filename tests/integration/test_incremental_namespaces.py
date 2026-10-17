@@ -33,7 +33,6 @@ from tests.integration.test_incremental_source_scopes import (
 from unified_kg_rag.adapters.doc_status.dynamodb import DynamoDBDocStatusStore
 from unified_kg_rag.adapters.doc_status.sqlite import SQLiteDocStatusStore
 from unified_kg_rag.domain.ingestion.delta_detector import (
-    compute_doc_id,
     scope_namespace,
 )
 from unified_kg_rag.domain.models import Config
@@ -147,8 +146,10 @@ def test_another_namespaces_documents_do_not_keep_deleted_artifacts(
     assert x.texts() == {X2_TEXT}
     assert (_store_ids(y), _records(table, "y")) == y_before
 
+    # Text-unit ids derive from the registry key, which holds the source
+    # scope: the fresh build reads the same directory.
     fresh = _stack(FakeDocStatusStore(), tmp_path / "fresh", "x")
-    fresh.run(write_corpus(tmp_path / "fresh-src", {"x2.txt": X2_TEXT}))
+    fresh.run(source_x)
     assert _store_ids(x) == _store_ids(fresh)
 
 
@@ -201,29 +202,6 @@ def test_another_namespaces_directories_are_not_reported(
         for r in caplog.records
         if "other local source directories" in r.getMessage()
     ]
-
-
-def test_a_legacy_record_of_another_namespace_is_not_adopted(table, tmp_path) -> None:
-    x = _stack(table, tmp_path, "x")
-    y = _stack(table, tmp_path, "y")
-    # Both namespaces hold a file at the same relative path.
-    source_y = write_corpus(tmp_path / "src-y", {"contract.txt": Y1_TEXT})
-    y.run(source_y)
-    (record,) = table.list_all()
-    legacy_id = compute_doc_id("contract.txt", "default-y")
-    table.delete(record.doc_id)
-    table.put(record.model_copy(update={"doc_id": legacy_id, "scope": None}))
-    legacy = table.get(legacy_id)
-
-    context = x.run(write_corpus(tmp_path / "src-x", {"contract.txt": X1_TEXT}))
-
-    assert len(context.incremental_delta.new) == 1
-    assert table.get(legacy_id) == legacy
-    # Y's own next run adopts it without re-extracting.
-    rerun = y.run(source_y)
-    assert len(rerun.incremental_delta.unchanged) == 1
-    assert not y.model.extractions
-    assert table.get(legacy_id) is None
 
 
 # --- index/label prefixes ------------------------------------------------------

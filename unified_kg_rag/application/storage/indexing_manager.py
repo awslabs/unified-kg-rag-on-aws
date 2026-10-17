@@ -1,7 +1,8 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 import time
-from collections.abc import Callable, Sequence
+from collections import defaultdict
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from concurrent.futures import as_completed
 from functools import partial
 from typing import Any, NamedTuple, TypeVar
@@ -14,9 +15,14 @@ from unified_kg_rag.adapters.ingestion.description_summarizer import (
     reuse_summaries,
 )
 from unified_kg_rag.adapters.providers import Providers
-from unified_kg_rag.domain.ingestion.base_resolver import FuzzyMatcher
+from unified_kg_rag.domain.ingestion.base_resolver import (
+    FuzzyMatcher,
+    compact_name_key,
+)
 from unified_kg_rag.domain.ingestion.community_hierarchy import attach_report_hierarchy
 from unified_kg_rag.domain.ingestion.contributions import (
+    RECORD_KEYS_ATTRIBUTE,
+    attribute_record_keys,
     claims_from_payload,
     record_from_payload,
     record_keys,
@@ -70,6 +76,13 @@ def _vector_content(item: Entity | Relationship) -> tuple[Any, ...]:
 
 def _claim_text(claim: Claim) -> tuple[Any, ...]:
     return claim.type, claim.status, claim.description, claim.source_text
+
+
+def _with_old_ids(ids: Iterable[str], rekey: Mapping[str, str]) -> list[str]:
+    """``ids`` and the stored ids ``rekey`` replaced by them (an item merged
+    from several stored copies has its edges under each)."""
+    wanted = set(ids)
+    return sorted(wanted | {old for old, new in rekey.items() if new in wanted})
 
 
 class CrossRunMergeResult(BaseModel):
@@ -126,6 +139,16 @@ class IndexingManager:
         # Built lazily on first cross-run merge so a manager only used for
         # indexing (no incremental read-back) never constructs a Bedrock client.
         self._description_summarizer: DescriptionSummarizer | None = None
+        # Extraction-store keys named by removed text units, by suffix: the
+        # candidates of collect_extraction_records.
+        self._removed_record_keys: dict[str, set[str]] = {}
+        # By suffix, the stored ids derivation re-keyed to follow the current
+        # name -> their new ids: the items are written under the new ids,
+        # then the old ones are deleted (delete_retired_ids).
+        self._rekeyed: dict[str, dict[str, str]] = {}
+        # By suffix, the entities this run's graph merge or strip derived (to
+        # be written): the claims about them are derived against these.
+        self._derived_entities: dict[str, dict[str, Entity]] = {}
 
     @property
     def description_summarizer(self) -> DescriptionSummarizer:
@@ -403,15 +426,35 @@ class IndexingManager:
         (see ``merge_claims``). Read per index suffix from the vector store; a
         failed read raises (see :meth:`merge_with_existing_graph`). With
         ``indexing.cross_run_merge`` off the claims are returned unchanged.
+
+        The stored claims about an entity the graph merge re-keyed are
+        derived too, so they follow its new id (ids follow the current name,
+        see ``derivation``).
         """
-        if not claims or not self.config.indexing.cross_run_merge:
+        if not self.config.indexing.cross_run_merge or not (claims or self._rekeyed):
             return claims
+        groups = self._group_by_suffix(claims or [])
         merged: list[Claim] = []
-        for suffix, group in sorted(self._group_by_suffix(claims).items()):
+        for suffix in sorted(groups.keys() | self._rekeyed.keys()):
+            group = groups.get(suffix, [])
             stored = self.opensearch_indexer.read_claims(
                 sorted({c.id for c in group}), suffix=suffix
             )
             group = merge_claims(stored, group) if stored else group
+            # The stored claims about an entity the graph merge re-keyed
+            # follow it (see merge_with_existing_graph).
+            about = sorted(
+                set(self._claims_about(suffix, self._rekeyed.get(suffix, {})))
+                - {c.id for c in group}
+            )
+            for claim in self.opensearch_indexer.read_claims(about, suffix=suffix):
+                claim.attributes = {
+                    **(claim.attributes or {}),
+                    Constants.INDEX.value: suffix,
+                }
+                group.append(claim)
+            if not group:
+                continue
             merged.extend(
                 self._derive_claims(
                     suffix,
@@ -419,7 +462,7 @@ class IndexingManager:
                     [u for u in text_units if BaseIndexer.get_suffix(u) == suffix],
                 )
             )
-        return merged
+        return merged if claims is not None or merged else claims
 
     def _merge_suffix(
         self,
@@ -459,17 +502,32 @@ class IndexingManager:
         relationship_remap: dict[str, str] = {}
         if relationships:
             rel_ids = {r.id for r in relationships}
-            if entity_id_remap:
-                # A delta edge whose endpoint merged into a stored entity can only
-                # match a stored edge of that entity: its id derives from the
-                # stored names, not the delta's, so read the incident edges too.
+            if merged_entities:
+                # A delta edge can match a stored edge of other id between the
+                # same entities (extracted with other spellings, or with an
+                # endpoint that merged into a stored entity): the full build
+                # merges them, so the entities' stored edges are read too.
                 rel_ids |= set(
                     self.neptune_indexer.find_incident_relationship_ids(
-                        sorted(set(entity_id_remap.values())), suffix=suffix
+                        sorted({e.id for e in merged_entities}), suffix=suffix
                     )
                 )
+            delta_ids = {r.id for r in relationships}
+            pairs = {
+                (
+                    entity_id_remap.get(r.source_id, r.source_id),
+                    entity_id_remap.get(r.target_id, r.target_id),
+                )
+                for r in relationships
+            }
             existing_rels = self._with_full_descriptions(
-                self.neptune_indexer.read_relationships(sorted(rel_ids), suffix=suffix),
+                [
+                    r
+                    for r in self.neptune_indexer.read_relationships(
+                        sorted(rel_ids), suffix=suffix
+                    )
+                    if r.id in delta_ids or (r.source_id, r.target_id) in pairs
+                ],
                 self.opensearch_indexer.read_relationship_descriptions,
                 suffix,
             )
@@ -501,17 +559,34 @@ class IndexingManager:
         derived = self.derive(
             suffix, merged_entities, merged_relationships, (), text_units
         )
+        rekey = derived.id_remap
         merged_entities, merged_relationships = self._finish(
             suffix,
             derived.entities,
             derived.relationships,
             stored_entities=existing,
             stored_relationships=existing_rels,
+            rekey=rekey,
         )
+        self._retire(suffix, rekey)
+        self._derived_entities.setdefault(suffix, {}).update(
+            {e.id: e for e in merged_entities}
+        )
+        # A delta id that merged into a stored one follows that one's re-key;
+        # the stored ids map to their new ids for what else references them.
         return (
             merged_entities,
             merged_relationships,
-            {**entity_id_remap, **relationship_remap},
+            {
+                **rekey,
+                **{
+                    delta_id: rekey.get(kept, kept)
+                    for delta_id, kept in {
+                        **entity_id_remap,
+                        **relationship_remap,
+                    }.items()
+                },
+            },
         )
 
     def derive(
@@ -521,21 +596,67 @@ class IndexingManager:
         relationships: Sequence[Relationship],
         claims: Sequence[Claim],
         text_units: Sequence[TextUnit] = (),
+        rekeyed: Mapping[str, str] | None = None,
     ) -> Derived:
         """``derivation.derive`` over the records of the items' text units:
         ``text_units`` carry their record keys, the others are read from the
         vector store. A failed read raises (see merge_with_existing_graph)."""
-        unit_ids = sorted(
-            {
-                unit_id
-                for items in (entities, relationships, claims)
-                for item in items
-                for unit_id in item.text_unit_ids or []
+        items = (list(entities), list(relationships), list(claims))
+        blocked: set[str] = set()
+        # A new id another stored item holds: that item is a copy an
+        # interrupted re-key left, or another spelling a full build merges
+        # with this one, so it is derived with them (and merged when it is
+        # the same item). One still held after that keeps its holder: the
+        # item keeps its id rather than overwrite another.
+        for attempt in range(3):
+            unit_ids = sorted(
+                {
+                    u
+                    for group in items
+                    for item in group
+                    for u in item.text_unit_ids or []
+                }
+            )
+            records, claim_records = self._unit_records(suffix, unit_ids, text_units)
+            derived = derive(
+                self.config,
+                *items,
+                records,
+                claim_records,
+                rekeyed=rekeyed,
+                blocked=blocked,
+            )
+            given = {item.id for group in items for item in group}
+            targets = sorted(set(derived.id_remap.values()) - given - blocked)
+            if not targets:
+                return derived
+            held = self._read_held(suffix, targets)
+            if not any(held):
+                return derived
+            if attempt == 0:
+                items = (
+                    [*items[0], *held[0]],
+                    [*items[1], *held[1]],
+                    [*items[2], *held[2]],
+                )
+            else:
+                blocked |= {item.id for group in held for item in group}
+        return derived
+
+    def _read_held(
+        self, suffix: str, ids: list[str]
+    ) -> tuple[list[Entity], list[Relationship], list[Claim]]:
+        """The stored entities, relationships and claims of ``ids``."""
+        claims = self.opensearch_indexer.read_claims(ids, suffix=suffix)
+        for claim in claims:
+            claim.attributes = {
+                **(claim.attributes or {}),
+                Constants.INDEX.value: suffix,
             }
-        )
-        records, claim_records = self._unit_records(suffix, unit_ids, text_units)
-        return derive(
-            self.config, entities, relationships, claims, records, claim_records
+        return (
+            self.neptune_indexer.read_entities(ids, suffix=suffix),
+            self.neptune_indexer.read_relationships(ids, suffix=suffix),
+            claims,
         )
 
     def _unit_records(
@@ -586,6 +707,7 @@ class IndexingManager:
         *,
         stored_entities: Sequence[Entity] = (),
         stored_relationships: Sequence[Relationship] = (),
+        rekey: Mapping[str, str] | None = None,
     ) -> tuple[list[Entity], list[Relationship]]:
         """Summarize, rank and complete derived items for writing.
 
@@ -594,8 +716,11 @@ class IndexingManager:
         Ranks are recomputed over the stored graph. The stored edges of the
         entities whose names or ranks now differ (an entity renamed, or its
         degree or a neighbour's changed) are returned with the items, with
-        the entities' names and their recomputed rank.
+        the entities' names and their recomputed rank; ``rekey`` (stored id
+        -> derived id, see ``Derived.id_remap``) re-points the stored edges
+        of a re-keyed entity at its new id.
         """
+        rekey = rekey or {}
         reuse_summaries(entities, stored_entities)
         reuse_summaries(relationships, stored_relationships)
         if any(needs_summary(self.config, i.description) for i in entities):
@@ -605,13 +730,13 @@ class IndexingManager:
                 relationships
             )
         entities, relationships = self._rank_with_stored_graph(
-            suffix, entities, relationships
+            suffix, entities, relationships, rekey
         )
-        written = {r.id for r in relationships}
+        written = {r.id for r in relationships} | set(rekey)
         extra_ids = sorted(
             set(
                 self.neptune_indexer.find_incident_relationship_ids(
-                    sorted(e.id for e in entities), suffix=suffix
+                    _with_old_ids([e.id for e in entities], rekey), suffix=suffix
                 )
             )
             - written
@@ -623,21 +748,32 @@ class IndexingManager:
         # copies): a run that wrote the entities but died before their edges
         # leaves edges a retry still finds stale.
         stored_extra = self.neptune_indexer.read_relationships(extra_ids, suffix=suffix)
-        extra = [r.model_copy(deep=True) for r in stored_extra]
+        extra = [
+            r.model_copy(
+                deep=True,
+                update={
+                    "source_id": rekey.get(r.source_id, r.source_id),
+                    "target_id": rekey.get(r.target_id, r.target_id),
+                },
+            )
+            for r in stored_extra
+        ]
         sync_relationship_endpoint_names(extra, entities)
         endpoints = sorted({i for r in extra for i in (r.source_id, r.target_id)})
         _, ranked = with_graph_ranks(
             [],
             [*relationships, *extra],
-            self.neptune_indexer.read_neighbor_ids(endpoints, suffix=suffix),
+            self._stored_neighbors(suffix, endpoints, rekey),
         )
         ranks = {r.id: r.rank for r in ranked}
         for rel in extra:
             rel.rank = ranks[rel.id]
-        before = {r.id: (r.source_name, r.target_name, r.rank) for r in stored_extra}
-        extra = [
-            r for r in extra if before[r.id] != (r.source_name, r.target_name, r.rank)
-        ]
+
+        def shown(r: Relationship) -> tuple[Any, ...]:
+            return r.source_id, r.target_id, r.source_name, r.target_name, r.rank
+
+        before = {r.id: shown(r) for r in stored_extra}
+        extra = [r for r in extra if before[r.id] != shown(r)]
         if not extra:
             return entities, relationships
         extra = self._with_full_descriptions(
@@ -677,6 +813,7 @@ class IndexingManager:
         suffix: str,
         entities: list[Entity],
         relationships: list[Relationship],
+        rekey: Mapping[str, str],
     ) -> tuple[list[Entity], list[Relationship]]:
         """Recompute the ranks (degrees) of the items the delta writes over the
         stored graph plus the delta's relationships.
@@ -688,8 +825,55 @@ class IndexingManager:
             {e.id for e in entities}
             | {i for r in relationships for i in (r.source_id, r.target_id)}
         )
-        stored_neighbors = self.neptune_indexer.read_neighbor_ids(ids, suffix=suffix)
-        return with_graph_ranks(entities, relationships, stored_neighbors)
+        return with_graph_ranks(
+            entities, relationships, self._stored_neighbors(suffix, ids, rekey)
+        )
+
+    def _stored_neighbors(
+        self, suffix: str, ids: Sequence[str], rekey: Mapping[str, str]
+    ) -> dict[str, list[str]]:
+        """``read_neighbor_ids`` of ``ids``, some of which may be re-keyed
+        (``rekey``: stored id -> new id), stated in the new ids."""
+        stored = self.neptune_indexer.read_neighbor_ids(
+            _with_old_ids(ids, rekey), suffix=suffix
+        )
+        merged: dict[str, set[str]] = defaultdict(set)
+        for i, neighbors in stored.items():
+            merged[rekey.get(i, i)].update(rekey.get(n, n) for n in neighbors)
+        return {i: sorted(neighbors - {i}) for i, neighbors in merged.items()}
+
+    def _retire(self, suffix: str, rekey: Mapping[str, str]) -> None:
+        """Mark the stored ids ``rekey`` replaced for deletion once the items
+        are written under their new ids (:meth:`delete_retired_ids`)."""
+        if rekey:
+            self._rekeyed.setdefault(suffix, {}).update(rekey)
+
+    def delete_retired_ids(self) -> dict[str, IndexingStats]:
+        """Delete the items whose ids a derivation replaced (see
+        ``Derived.id_remap``) from both stores.
+
+        Run after their items are written under the new ids: the re-pointed
+        edges then hold the new endpoints, and deleting the old entity vertex
+        drops no edge still in use.
+        """
+        retired = {
+            suffix: sorted(set(rekey) - set(rekey.values()))
+            for suffix, rekey in self._rekeyed.items()
+        }
+        self._rekeyed.clear()
+        self._derived_entities.clear()
+        if retired:
+            logger.info(
+                "Deleting %d items re-keyed to follow their current name",
+                sum(len(ids) for ids in retired.values()),
+            )
+        return self.delete_documents(retired)
+
+    def discard_retired_ids(self) -> None:
+        """Keep the re-keyed items' old ids (their writes failed: deleting
+        them would lose the items)."""
+        self._rekeyed.clear()
+        self._derived_entities.clear()
 
     def _match_stored_names(
         self, suffix: str, entities: list[Entity]
@@ -700,14 +884,33 @@ class IndexingManager:
         settings) and the ids of the stored entities some delta name matches.
         Returns ``(None, set())`` when the adapter projects no names, which
         leaves the merge to ids and exact keys.
+
+        Without ``fuzzy_entity_resolution`` names match by their
+        ``compact_name_key`` only, so just the stored entities with a delta
+        name's key are read (``GraphIndexer.find_entity_ids_by_name_key``);
+        fuzzy matching, or a graph store that cannot look keys up, reads
+        every stored name.
         """
+        processing = self.config.processing
+        graph = self.neptune_indexer
+        keyed = (
+            None
+            if processing.fuzzy_entity_resolution
+            else graph.find_entity_ids_by_name_key(
+                sorted({compact_name_key(e.name) for e in entities}), suffix
+            )
+        )
+        stored_names = (
+            graph.read_entity_names(suffix)
+            if keyed is None
+            else [(e.id, e.name) for e in graph.read_entities(keyed, suffix=suffix)]
+        )
         id_by_name: dict[str, str] = {}
-        for eid, name in self.neptune_indexer.read_entity_names(suffix):
+        for eid, name in stored_names:
             id_by_name.setdefault(name, eid)
         if not id_by_name:
             return None, set()
 
-        processing = self.config.processing
         matcher = FuzzyMatcher(
             candidates=list(id_by_name.keys()),
             resolution_method=processing.resolution_method,
@@ -748,9 +951,36 @@ class IndexingManager:
         Claims live in the vector store only: they are read back from it,
         stripped and derived the same way.
 
+        An item whose derived name has another id takes it (with its edges
+        and claims, see ``derivation``); the old ids are deleted once every
+        write succeeded, else kept (a retry re-keys them).
+
         A failed read is reported as failed items, so the caller keeps the
         documents' registry rows and retries the removal.
         """
+        results = self._strip_shared(
+            suffix,
+            entity_ids=entity_ids,
+            relationship_ids=relationship_ids,
+            text_unit_ids=text_unit_ids,
+            claim_ids=claim_ids,
+        )
+        if any(stats.failed_items for stats in results.values() if stats):
+            self.discard_retired_ids()
+            return results
+        return {**results, **self.delete_retired_ids()}
+
+    def _strip_shared(
+        self,
+        suffix: str,
+        *,
+        entity_ids: list[str],
+        relationship_ids: list[str],
+        text_unit_ids: list[str],
+        claim_ids: Sequence[str] = (),
+    ) -> dict[str, IndexingStats]:
+        """:meth:`remove_text_units_from_shared` before the old ids of the
+        re-keyed items are deleted."""
         results: dict[str, IndexingStats] = {}
         try:
             entities = (
@@ -792,6 +1022,15 @@ class IndexingManager:
                 derived.relationships,
                 stored_entities=entities,
                 stored_relationships=relationships,
+                rekey=derived.id_remap,
+            )
+            self._retire(suffix, derived.id_remap)
+            self._derived_entities.setdefault(suffix, {}).update(
+                {e.id: e for e in new_entities}
+            )
+            # The stored claims about a re-keyed entity follow it.
+            claim_ids = sorted(
+                {*claim_ids, *self._claims_about(suffix, derived.id_remap)}
             )
         except Exception as e:  # noqa: BLE001 - reported as failed items
             logger.error("Reading shared artifacts in '%s' failed: %s", suffix, e)
@@ -834,23 +1073,22 @@ class IndexingManager:
                 vector_text.get(item.id) or None
             ) == (item.description or None)
 
-        phase1 = [
+        # Written so an interruption never hides an edge still citing a
+        # removed text unit: a retry finds the edges through the entities
+        # that cite it, so those are rewritten last. A re-keyed entity's new
+        # vertex comes first (its edges are re-pointed at it); its old
+        # vertex still cites the text units until it is deleted.
+        rekeyed = [e for e in new_entities if e.id not in graph_copy]
+        kept = [e for e in new_entities if e.id in graph_copy]
+        relationship_tasks = [
             IndexingTask(
-                self.neptune_indexer.upsert_entities, [new_entities], "neptune_entities"
-            ),
-            IndexingTask(
-                self.opensearch_indexer.update_entity_lineage,
-                [[e for e in new_entities if unchanged(e)]],
-                "opensearch_entity_lineage",
-            ),
-            IndexingTask(
-                self.opensearch_indexer.upsert_entities,
-                [[e for e in new_entities if not unchanged(e)]],
-                "opensearch_entities",
-            ),
+                self.neptune_indexer.upsert_relationships,
+                [new_relationships],
+                "neptune_relationships",
+            )
         ]
         if self.config.indexing.opensearch.build_relationship_vector_index:
-            phase1 += [
+            relationship_tasks += [
                 IndexingTask(
                     self.opensearch_indexer.update_relationship_lineage,
                     [[r for r in new_relationships if unchanged(r)]],
@@ -862,18 +1100,33 @@ class IndexingManager:
                     "opensearch_relationships",
                 ),
             ]
-        results.update(self._run_indexing_phase(phase1))
-        results.update(
-            self._run_indexing_phase(
-                [
-                    IndexingTask(
-                        self.neptune_indexer.upsert_relationships,
-                        [new_relationships],
-                        "neptune_relationships",
-                    )
-                ]
-            )
-        )
+        phases = [
+            [
+                IndexingTask(
+                    self.neptune_indexer.upsert_entities,
+                    [rekeyed],
+                    "neptune_rekeyed_entities",
+                )
+            ],
+            relationship_tasks,
+            [
+                IndexingTask(
+                    self.neptune_indexer.upsert_entities, [kept], "neptune_entities"
+                ),
+                IndexingTask(
+                    self.opensearch_indexer.update_entity_lineage,
+                    [[e for e in new_entities if unchanged(e)]],
+                    "opensearch_entity_lineage",
+                ),
+                IndexingTask(
+                    self.opensearch_indexer.upsert_entities,
+                    [[e for e in new_entities if not unchanged(e)]],
+                    "opensearch_entities",
+                ),
+            ],
+        ]
+        for phase in phases:
+            results.update(self._run_indexing_phase(phase))
         return results
 
     def _remove_text_units_from_claims(
@@ -888,20 +1141,26 @@ class IndexingManager:
                     **(claim.attributes or {}),
                     Constants.INDEX.value: suffix,
                 }
-            stripped = remove_claim_text_units(claims, text_unit_ids)
-            if not stripped:
+            # The claims citing none of them were read because their subject
+            # or object was re-keyed: they are derived again too.
+            stripped = {c.id: c for c in remove_claim_text_units(claims, text_unit_ids)}
+            claims = [stripped.get(c.id, c) for c in claims]
+            if not claims:
                 return {}
-            derived = self._derive_claims(suffix, stripped, removed=text_unit_ids)
+            derived = self._derive_claims(suffix, claims, removed=text_unit_ids)
         except Exception as e:  # noqa: BLE001 - reported as failed items
             logger.error("Reading shared claims in '%s' failed: %s", suffix, e)
             stats = IndexingStats(total_items=len(claim_ids))
             stats.add_error(str(e), count=len(claim_ids), ids=claim_ids)
             return {f"opensearch_read_claims_{suffix}": stats}
-        by_id = {c.id: c for c in stripped}
+        before = {c.id: c for c in claims}
         lineage_only = [
-            c for c in derived if _claim_text(c) == _claim_text(by_id[c.id])
+            d
+            for d in derived
+            if d.id in before and _claim_text(d) == _claim_text(before[d.id])
         ]
-        changed = [c for c in derived if _claim_text(c) != _claim_text(by_id[c.id])]
+        kept = {d.id for d in lineage_only}
+        changed = [d for d in derived if d.id not in kept]
         results: dict[str, IndexingStats] = {}
         if lineage_only:
             results[f"opensearch_claims_{suffix}"] = (
@@ -913,6 +1172,22 @@ class IndexingManager:
             )
         return results
 
+    def _claims_about(self, suffix: str, rekey: Mapping[str, str]) -> list[str]:
+        """Ids of the stored claims whose subject or object is one of the
+        re-keyed ids (``rekey``'s keys)."""
+        if not rekey:
+            return []
+        prefix = self.config.indexing.opensearch.claims_index_prefix
+        found: set[str] = set()
+        for field in ("subject_id", "object_id"):
+            found.update(
+                self.opensearch_indexer.find_documents(
+                    prefix, field, sorted(rekey), suffix
+                )
+                or {}
+            )
+        return sorted(found)
+
     def _derive_claims(
         self,
         suffix: str,
@@ -921,16 +1196,229 @@ class IndexingManager:
         removed: Sequence[str] = (),
     ) -> list[Claim]:
         """``claims`` with their content derived from their text units'
-        records, resolved against their stored subject and object entities
-        (stripped of ``removed`` text units)."""
-        entity_ids = sorted(
-            {i for c in claims for i in (c.subject_id, c.object_id) if i}
+        records, resolved against their subject and object entities: as this
+        run derived them, else as stored (stripped of ``removed`` text
+        units). A claim whose derived id differs is retired (see
+        :meth:`delete_retired_ids`)."""
+        rekeyed = self._rekeyed.get(suffix, {})
+        derived_entities = self._derived_entities.get(suffix, {})
+        entity_ids = {
+            rekeyed.get(i, i) for c in claims for i in (c.subject_id, c.object_id) if i
+        }
+        entities = self.neptune_indexer.read_entities(
+            sorted(entity_ids - set(derived_entities)), suffix=suffix
         )
-        entities = self.neptune_indexer.read_entities(entity_ids, suffix=suffix)
         if removed:
             stripped = {e.id: e for e in remove_text_units(entities, [], removed)[0]}
             entities = [stripped.get(e.id, e) for e in entities]
-        return self.derive(suffix, entities, [], claims, text_units).claims
+        entities += [
+            derived_entities[i] for i in sorted(entity_ids) if i in derived_entities
+        ]
+        derived = self.derive(suffix, entities, [], claims, text_units, rekeyed=rekeyed)
+        claim_ids = {c.id for c in claims}
+        self._retire(
+            suffix,
+            {old: new for old, new in derived.id_remap.items() if old in claim_ids},
+        )
+        return derived.claims
+
+    def remove_text_units(
+        self, suffix: str, text_unit_ids: list[str]
+    ) -> dict[str, IndexingStats]:
+        """Remove removed documents' text units and what only they stated.
+
+        The items citing a removed text unit are found in the stores: the
+        entities and communities in the graph store
+        (``GraphIndexer.find_ids_citing``), the relationships among their
+        incident edges, and the entities, relationships, claims and community
+        reports in the vector store (``VectorIndexer.find_documents``). An entity, relationship or claim
+        citing only removed text units is deleted with them; one citing others
+        too is stripped of them and its content derived again
+        (:meth:`remove_text_units_from_shared`). A community or report is
+        deleted once none of the text units it cites is stored any more (its
+        content is not derived again: see the docs on delta communities).
+        The extraction-store keys the removed text units named are kept for
+        :meth:`collect_extraction_records`.
+
+        A failed read is reported as failed items, so the caller keeps the
+        documents' registry rows and retries the removal.
+        """
+        removed = set(text_unit_ids)
+        graph, vector = self.neptune_indexer, self.opensearch_indexer
+        prefixes = self.config.indexing.opensearch
+        try:
+            found = graph.find_ids_citing(text_unit_ids, suffix=suffix)
+            if found is None:
+                logger.warning(
+                    "The graph store cannot find what text units state: the "
+                    "removed documents' entities and relationships stay"
+                )
+            # The vector store's copies are searched too: an interrupted run
+            # may have written one without its graph copy.
+            cited = {
+                **self._vector_citing(
+                    prefixes.entities_index_prefix, text_unit_ids, suffix
+                ),
+                **(found or {}),
+            }
+            incident = (
+                graph.find_incident_relationship_ids(sorted(cited), suffix=suffix)
+                if cited
+                else []
+            )
+            relationships = {
+                **self._vector_citing(
+                    prefixes.relationships_index_prefix, text_unit_ids, suffix
+                ),
+                **{
+                    r.id: list(r.text_unit_ids or [])
+                    for r in graph.read_relationships(incident, suffix=suffix)
+                    if removed.intersection(r.text_unit_ids or [])
+                },
+            }
+            communities = (
+                graph.find_ids_citing(text_unit_ids, suffix=suffix, communities=True)
+                or {}
+            )
+            claims = self._vector_citing(
+                prefixes.claims_index_prefix, text_unit_ids, suffix
+            )
+            reports = self._vector_citing(
+                prefixes.community_reports_index_prefix, text_unit_ids, suffix
+            )
+            other_units = sorted(
+                {
+                    unit_id
+                    for units in (*communities.values(), *reports.values())
+                    for unit_id in units
+                }
+                - removed
+            )
+            stored = vector.read_text_unit_ids(other_units, suffix=suffix)
+            # A backend that cannot tell keeps every community still citing
+            # other text units.
+            live = set(other_units if stored is None else stored)
+            self._removed_record_keys.setdefault(suffix, set()).update(
+                key
+                for attributes in vector.read_text_unit_attributes(
+                    text_unit_ids, suffix=suffix
+                ).values()
+                for key in attribute_record_keys(attributes).values()
+            )
+        except Exception as e:  # noqa: BLE001 - reported as failed items
+            logger.error("Finding the removed text units' items failed: %s", e)
+            stats = IndexingStats(total_items=len(text_unit_ids))
+            stats.add_error(str(e), count=stats.total_items)
+            return {f"find_removed_{suffix}": stats}
+
+        def exclusive(units: Iterable[str]) -> bool:
+            return set(units) <= removed
+
+        def gone(units: Iterable[str]) -> bool:
+            return not (set(units) - removed) & live
+
+        shared_entities = sorted(
+            i for i, units in cited.items() if not exclusive(units)
+        )
+        shared_relationships = sorted(
+            i for i, units in relationships.items() if not exclusive(units)
+        )
+        shared_claims = sorted(i for i, units in claims.items() if not exclusive(units))
+        doomed = sorted(
+            {
+                *text_unit_ids,
+                *(i for i, units in cited.items() if exclusive(units)),
+                *(i for i, units in relationships.items() if exclusive(units)),
+                *(i for i, units in claims.items() if exclusive(units)),
+                *(i for i, units in communities.items() if gone(units)),
+                *(i for i, units in reports.items() if gone(units)),
+            }
+        )
+        logger.info(
+            "Removing %d artifacts of %d text units in '%s'; stripping %d "
+            "shared entities, %d relationships and %d claims",
+            len(doomed),
+            len(text_unit_ids),
+            suffix,
+            len(shared_entities),
+            len(shared_relationships),
+            len(shared_claims),
+        )
+        results = self.delete_documents({suffix: doomed})
+        if shared_entities or shared_relationships or shared_claims:
+            results.update(
+                self.remove_text_units_from_shared(
+                    suffix,
+                    entity_ids=shared_entities,
+                    relationship_ids=shared_relationships,
+                    text_unit_ids=text_unit_ids,
+                    claim_ids=shared_claims,
+                )
+            )
+        return results
+
+    def _vector_citing(
+        self, alias_prefix: str, text_unit_ids: list[str], suffix: str
+    ) -> dict[str, list[str]]:
+        """``{id: text_unit_ids}`` of the documents of ``alias_prefix`` citing
+        any of ``text_unit_ids`` (``{}`` for a backend that cannot tell)."""
+        return (
+            self.opensearch_indexer.find_documents(
+                alias_prefix, "text_unit_ids", text_unit_ids, suffix
+            )
+            or {}
+        )
+
+    def collect_extraction_records(self) -> dict[str, IndexingStats]:
+        """Delete the extraction records the removed text units named that no
+        stored text unit names any more (see :meth:`remove_text_units`).
+
+        Run after the delta is written: a changed document's unchanged chunk
+        names the same record as its removed copy. Best-effort: a failure
+        leaves records no text unit names, which cost space only.
+        """
+        results: dict[str, IndexingStats] = {}
+        vector = self.opensearch_indexer
+        prefix = self.config.indexing.opensearch.text_units_index_prefix
+        for suffix, keys in sorted(self._removed_record_keys.items()):
+            try:
+                naming: set[str] = set()
+                for kind in ("graph", "claims"):
+                    naming.update(
+                        vector.find_documents(
+                            prefix,
+                            f"attributes.{RECORD_KEYS_ATTRIBUTE}.{kind}",
+                            sorted(keys),
+                            suffix,
+                        )
+                        or {}
+                    )
+                still_named = {
+                    key
+                    for attributes in vector.read_text_unit_attributes(
+                        sorted(naming), suffix=suffix
+                    ).values()
+                    for key in attribute_record_keys(attributes).values()
+                }
+                unused = sorted(keys - still_named)
+                if unused:
+                    logger.info(
+                        "Deleting %d extraction records no text unit of '%s' "
+                        "names any more",
+                        len(unused),
+                        suffix,
+                    )
+                    results[f"extraction_records_{suffix}"] = (
+                        vector.delete_extraction_records(unused, suffix=suffix)
+                    )
+            except Exception as e:  # noqa: BLE001 - garbage only costs space
+                logger.warning(
+                    "Collecting the unused extraction records of '%s' failed: %s",
+                    suffix,
+                    e,
+                )
+        self._removed_record_keys.clear()
+        return results
 
     def delete_documents(
         self, ids_by_suffix: dict[str, list[str]]

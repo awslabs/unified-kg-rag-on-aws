@@ -21,7 +21,10 @@ from pytest_mock import MockerFixture
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from unified_kg_rag.adapters.storage.neptune_indexer import NeptuneIndexer
 from unified_kg_rag.adapters.storage.opensearch_indexer import OpenSearchIndexer
-from unified_kg_rag.application.ingestion.incremental import IncrementalIndexer
+from unified_kg_rag.application.ingestion.incremental import (
+    IncrementalIndexer,
+    artifact_owners,
+)
 from unified_kg_rag.domain.ingestion.delta_detector import detect_delta
 from unified_kg_rag.domain.models import (
     Community,
@@ -30,6 +33,8 @@ from unified_kg_rag.domain.models import (
     DocStatusRecord,
     Document,
     DocumentLineage,
+    Entity,
+    Relationship,
 )
 from unified_kg_rag.ports.indexer import IndexingStats
 
@@ -43,19 +48,22 @@ class _Manager:
 
 def _lineages() -> list[DocumentLineage]:
     return [
-        DocumentLineage(
-            doc_id="doc-a",
-            text_unit_ids=["t-a"],
-            entity_ids=["e-vendor", "e-shared"],
-            relationship_ids=["r-a"],
-        ),
-        DocumentLineage(
-            doc_id="doc-b",
-            text_unit_ids=["t-b"],
-            entity_ids=["e-buyer", "e-shared"],
-        ),
-        DocumentLineage(doc_id="doc-c", text_unit_ids=["t-c"], entity_ids=["e-x"]),
+        DocumentLineage(doc_id="doc-a", text_unit_ids=["t-a"]),
+        DocumentLineage(doc_id="doc-b", text_unit_ids=["t-b"]),
+        DocumentLineage(doc_id="doc-c", text_unit_ids=["t-c"]),
     ]
+
+
+# The commit's artifacts, owned through the text units they cite.
+_ARTIFACTS = [
+    Entity(id="e-vendor", name="Vendor", text_unit_ids=["t-a"]),
+    Entity(id="e-shared", name="Shared", text_unit_ids=["t-a", "t-b"]),
+    Entity(id="e-buyer", name="Buyer", text_unit_ids=["t-b"]),
+    Entity(id="e-x", name="X", text_unit_ids=["t-c"]),
+    Relationship(
+        id="r-a", source_id="e-vendor", target_id="e-shared", text_unit_ids=["t-a"]
+    ),
+]
 
 
 _FINGERPRINTS = {"doc-a": "hash-a", "doc-b": "hash-b", "doc-c": "hash-c"}
@@ -73,7 +81,10 @@ def _stats(total: int, failed_ids: list[str], unattributed: int = 0) -> Indexing
 
 def _record(store: FakeDocStatusStore, results: dict[str, IndexingStats]) -> bool:
     indexer = IncrementalIndexer(store, _Manager())  # type: ignore[arg-type]
-    return indexer.record(_lineages(), _FINGERPRINTS, results)
+    lineages = _lineages()
+    return indexer.record(
+        lineages, _FINGERPRINTS, results, owners=artifact_owners(lineages, _ARTIFACTS)
+    )
 
 
 def _statuses(store: FakeDocStatusStore) -> dict[str, DocStatus]:
@@ -100,8 +111,8 @@ def test_documents_owning_a_failed_write_are_recorded_failed() -> None:
     assert failed is not None
     assert failed.failure_count == 1
     assert "artifacts" in (failed.error_info or "")
-    # The lineage is kept so the retry first prunes what this run wrote.
-    assert failed.relationship_ids == ["r-a"]
+    # The text units are kept so the retry first prunes what this run wrote.
+    assert failed.text_unit_ids == ["t-a"]
 
 
 def test_a_failed_shared_artifact_fails_every_owner() -> None:
@@ -153,12 +164,15 @@ def test_repeated_write_failures_honour_max_document_failures() -> None:
     document = _document("a.txt")
     _, fingerprints = detect_delta([document], store)
     (doc_id,) = fingerprints
-    lineage = DocumentLineage(doc_id=doc_id, entity_ids=["e-1"])
+    lineage = DocumentLineage(doc_id=doc_id, text_unit_ids=["t-1"])
     indexer = IncrementalIndexer(store, _Manager())  # type: ignore[arg-type]
     results = {"opensearch_entities": _stats(10, ["e-1"])}
+    owners = artifact_owners(
+        [lineage], [Entity(id="e-1", name="E", text_unit_ids=["t-1"])]
+    )
 
     for expected_count in (1, 2, 3):
-        indexer.record([lineage], fingerprints, results)
+        indexer.record([lineage], fingerprints, results, owners=owners)
         record = store.get(doc_id)
         assert record is not None
         assert record.status is DocStatus.FAILED
@@ -279,15 +293,22 @@ def test_one_community_failing_in_several_edge_batches_fails_only_its_owner(
     assert stats.failed_ids == ["c1", "c1"]
     assert stats.unattributed_failures == 0
 
-    lineages = [DocumentLineage(doc_id="doc-owner", community_ids=["c1"])] + [
-        DocumentLineage(doc_id=f"doc-{i}", community_ids=[f"c{i}"])
+    lineages = [DocumentLineage(doc_id="doc-owner", text_unit_ids=["t-1"])] + [
+        DocumentLineage(doc_id=f"doc-{i}", text_unit_ids=[f"t-{i}"])
         for i in range(2, 32)
     ]
+    for comm, lineage in zip(communities, lineages, strict=True):
+        comm.text_unit_ids = list(lineage.text_unit_ids)
     fingerprints = {lineage.doc_id: f"hash-{lineage.doc_id}" for lineage in lineages}
     store = FakeDocStatusStore()
     incremental = IncrementalIndexer(store, _Manager())  # type: ignore[arg-type]
 
-    assert incremental.record(lineages, fingerprints, {"neptune_communities": stats})
+    assert incremental.record(
+        lineages,
+        fingerprints,
+        {"neptune_communities": stats},
+        owners=artifact_owners(lineages, communities),
+    )
     statuses = _statuses(store)
     assert statuses.pop("doc-owner") is DocStatus.FAILED
     assert len(statuses) == 30

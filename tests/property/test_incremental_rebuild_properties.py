@@ -214,14 +214,7 @@ def _run(inc: IncrementalIndexer, corpus: dict[str, Content]) -> None:
     inc.indexing_manager.opensearch_indexer.write_extraction_records(
         {f"g-{r.text_unit_id}": record_payload(r) for r in records}
     )
-    lineages = build_document_lineage(
-        documents=extracted,
-        text_units=units,
-        entities=entities,
-        relationships=edges,
-        communities=[],
-        claims=[],
-    )
+    lineages = build_document_lineage(documents=extracted, text_units=units)
     inc.commit(
         lineages=lineages,
         fingerprints=fingerprints,

@@ -22,6 +22,7 @@ from unified_kg_rag.adapters.aws.neptune import (
     run_traversal,
 )
 from unified_kg_rag.adapters.storage.neptune_codec import (
+    NAME_KEY_PROPERTY,
     entity_from_vertex,
     entity_properties,
     item_properties,
@@ -165,6 +166,74 @@ class NeptuneIndexer(GraphIndexer):
         except Exception as e:
             raise AWSServiceError(f"Neptune read_relationships failed: {e}") from e
 
+    def find_ids_citing(
+        self,
+        text_unit_ids: list[str],
+        suffix: str | None = None,
+        *,
+        communities: bool = False,
+    ) -> dict[str, list[str]] | None:
+        """Entity (or community) vertices of ``suffix`` citing any of
+        ``text_unit_ids``, with their text units (see the port).
+
+        Raises:
+            AWSServiceError: The read failed.
+        """
+        if not text_unit_ids:
+            return {}
+        prefix = (
+            self.neptune_config.community_label_prefix
+            if communities
+            else self.neptune_config.entity_label_prefix
+        )
+        label = self._get_label(prefix, suffix)
+        try:
+            rows = self._read_batches(
+                text_unit_ids,
+                lambda g, batch: g.V()
+                .hasLabel(label)
+                .has("text_unit_ids", P.within(batch))
+                .dedup()
+                .project("id", "text_unit_ids")
+                .by("id")
+                .by(__.values("text_unit_ids").fold()),
+                "find_ids_citing",
+            )
+        except Exception as e:
+            raise AWSServiceError(f"Neptune find_ids_citing failed: {e}") from e
+        return {
+            str(row["id"]): [str(u) for u in row.get("text_unit_ids") or []]
+            for row in rows
+            if isinstance(row, dict) and "id" in row
+        }
+
+    def find_entity_ids_by_name_key(
+        self, name_keys: list[str], suffix: str | None = None
+    ) -> list[str] | None:
+        """Entities of ``suffix`` whose stored ``name_key`` is one of
+        ``name_keys`` (see the port).
+
+        Raises:
+            AWSServiceError: The read failed.
+        """
+        if not name_keys:
+            return []
+        label = self._get_label(self.neptune_config.entity_label_prefix, suffix)
+        try:
+            rows = self._read_batches(
+                name_keys,
+                lambda g, batch: g.V()
+                .hasLabel(label)
+                .has(NAME_KEY_PROPERTY, P.within(batch))
+                .values("id"),
+                "find_entity_ids_by_name_key",
+            )
+        except Exception as e:
+            raise AWSServiceError(
+                f"Neptune find_entity_ids_by_name_key failed: {e}"
+            ) from e
+        return sorted({str(row) for row in rows})
+
     def read_neighbor_ids(
         self, entity_ids: list[str], suffix: str | None = None
     ) -> dict[str, list[str]]:
@@ -304,6 +373,8 @@ class NeptuneIndexer(GraphIndexer):
                                 "size": comm.size,
                                 "period": comm.period,
                                 "children": comm.children,
+                                # Found by them when its documents are removed.
+                                "text_unit_ids": comm.text_unit_ids,
                             },
                         ),
                     )

@@ -5,8 +5,8 @@
 The in-memory fake is the reference; the SQLite store (local mode) and the
 DynamoDB store (moto-mocked, AWS-free) must behave identically on the port
 surface: round trips, batch reads and writes, the diff partition with
-``stored_scopes`` and ``orphan_overflow``, and lineage overflow. The last
-tests drive whole interrupted incremental runs through each store.
+``stored_scopes``, and the namespace partitions. The last tests drive whole
+interrupted incremental runs through each store.
 """
 
 from __future__ import annotations
@@ -36,7 +36,6 @@ from unified_kg_rag.domain.models import (
     Config,
     DocStatus,
     DocStatusRecord,
-    DocumentLineage,
 )
 from unified_kg_rag.ports import DocStatusPort
 from unified_kg_rag.shared import DocStatusRegistryError
@@ -94,12 +93,7 @@ def test_round_trip_keeps_every_field(store: DocStatusPort) -> None:
         suffix="tenant-a",
         scope="ns|corpus-a",
         file_path="docs/d1.txt",
-        entity_ids=["e1", "e2"],
-        relationship_ids=["r1"],
-        text_unit_ids=["t1"],
-        community_ids=[],
-        claim_ids=["c1"],
-        community_report_ids=["cr1"],
+        text_unit_ids=["t2", "t1"],
         error_info=None,
         extraction_fingerprint="x1",
         updated_at="2026-01-01T00:00:00",
@@ -107,11 +101,11 @@ def test_round_trip_keeps_every_field(store: DocStatusPort) -> None:
     store.put(record)
     fetched = store.get("d1")
     assert fetched is not None
-    # DynamoDB stores the id lists as sets; compare them order-free.
-    assert fetched.model_dump(exclude={"entity_ids"}) == record.model_dump(
-        exclude={"entity_ids"}
+    # DynamoDB stores the id list as a set; compare it order-free.
+    assert fetched.model_dump(exclude={"text_unit_ids"}) == record.model_dump(
+        exclude={"text_unit_ids"}
     )
-    assert sorted(fetched.entity_ids) == ["e1", "e2"]
+    assert sorted(fetched.text_unit_ids) == ["t1", "t2"]
 
 
 def test_missing_and_deleted_records(store: DocStatusPort) -> None:
@@ -249,44 +243,32 @@ def test_diff_reextracts_records_of_other_extraction_settings(
 def test_diff_of_an_empty_registry_marks_everything_new(store: DocStatusPort) -> None:
     delta = store.diff({"a": "1", "b": "2"}, scope="s")
     assert sorted(delta.new) == ["a", "b"]
-    assert delta.deleted == delta.stored_scopes == delta.orphan_overflow == []
+    assert delta.deleted == delta.stored_scopes == []
 
 
-def test_lineage_overflow_round_trips_and_appends(store: DocStatusPort) -> None:
-    store.add_lineage_overflow(
-        [DocumentLineage(doc_id="d1", entity_ids=["e2", "e1"], claim_ids=["c1"])]
-    )
-    store.add_lineage_overflow(
+def test_namespaces_partition_the_registry(store: DocStatusPort) -> None:
+    # A registry key names its index namespace (compute_doc_id): a scoped
+    # diff and list_namespace read that namespace's records only.
+    store.put_many(
         [
-            DocumentLineage(doc_id="d1", entity_ids=["e3", "e1"]),
-            DocumentLineage(doc_id="d2", text_unit_ids=["t1"]),
+            _record("tenant-a#1", scope="tenant-a|corpus"),
+            _record("tenant-a#2", scope="tenant-a|other"),
+            _record("tenant-b#1", scope="tenant-b|corpus"),
+            _record("plain", scope="default|corpus"),
         ]
     )
-    overflow = store.get_lineage_overflow(["d1", "d2", "d3"])
-    assert set(overflow) == {"d1", "d2"}
-    assert sorted(overflow["d1"].entity_ids) == ["e1", "e2", "e3"]
-    assert overflow["d1"].claim_ids == ["c1"]
-    assert overflow["d2"].text_unit_ids == ["t1"]
-    # Overflow is not a record.
-    assert store.get("d1") is None and store.list_all() == []
 
-    store.delete_lineage_overflow(["d1", "d3"])
-    assert set(store.get_lineage_overflow(["d1", "d2"])) == {"d2"}
-
-
-def test_diff_reports_orphan_overflow(store: DocStatusPort) -> None:
-    store.put(_record("done", status=DocStatus.PROCESSED))
-    store.put(_record("busy", PENDING_CONTENT_HASH))
-    store.add_lineage_overflow(
-        [
-            DocumentLineage(doc_id=doc_id, entity_ids=["e"])
-            for doc_id in ("done", "busy", "gone")
-        ]
-    )
-    delta = store.diff({})
-    assert delta.orphan_overflow == ["done", "gone"]
-    # Overflow is never a document of the partition.
-    assert sorted(delta.deleted) == ["busy", "done"]
+    delta = store.diff({"tenant-a#1": "h"}, scope="tenant-a|corpus")
+    assert delta.unchanged == ["tenant-a#1"] and delta.deleted == []
+    assert delta.stored_scopes == ["tenant-a|corpus", "tenant-a|other"]
+    assert sorted(r.doc_id for r in store.list_namespace("tenant-a")) == [
+        "tenant-a#1",
+        "tenant-a#2",
+    ]
+    # A key without a namespace belongs to the default one.
+    assert [r.doc_id for r in store.list_namespace("default")] == ["plain"]
+    assert store.list_namespace("tenant-c") == []
+    assert len(store.list_all()) == 4
 
 
 # --- diff partition properties ----------------------------------------------
@@ -383,42 +365,12 @@ def test_sqlite_registry_persists_across_instances(tmp_path: Path) -> None:
     path = tmp_path / "doc-status.db"
     first = SQLiteDocStatusStore(Config(), path)
     first.put(_record("d1", "h1", status=DocStatus.PROCESSED, scope="s"))
-    first.add_lineage_overflow([DocumentLineage(doc_id="d1", entity_ids=["e"])])
     first.close()
 
     second = SQLiteDocStatusStore(Config(), path)
     assert second.get("d1") is not None
     assert second.diff({"d1": "h1"}, scope="s").unchanged == ["d1"]
-    assert set(second.get_lineage_overflow(["d1"])) == {"d1"}
     second.close()
-
-
-def test_sqlite_database_without_the_fingerprint_column_is_upgraded(
-    tmp_path: Path,
-) -> None:
-    path = tmp_path / "old.sqlite3"
-    record = _record("d1", "h1", status=DocStatus.PROCESSED, scope="s")
-    connection = sqlite3.connect(path)
-    # The table as the first release created it.
-    connection.execute(
-        "CREATE TABLE doc_status (doc_id TEXT PRIMARY KEY, content_hash TEXT "
-        "NOT NULL, status TEXT NOT NULL, scope TEXT, record TEXT NOT NULL)"
-    )
-    connection.execute(
-        "INSERT INTO doc_status VALUES (?, ?, ?, ?, ?)",
-        ("d1", "h1", "processed", "s", record.model_dump_json()),
-    )
-    connection.commit()
-    connection.close()
-
-    store = SQLiteDocStatusStore(Config(), path)
-    # The existing record has no fingerprint: compared by content only.
-    delta = store.diff({"d1": "h1"}, scope="s", extraction_fingerprint="x1")
-    assert delta.unchanged == ["d1"]
-    store.put(record.model_copy(update={"extraction_fingerprint": "x1"}))
-    delta = store.diff({"d1": "h1"}, scope="s", extraction_fingerprint="x2")
-    assert delta.settings_changed == ["d1"]
-    store.close()
 
 
 def test_sqlite_locked_registry_waits_store_timeout_seconds(tmp_path: Path) -> None:
@@ -466,7 +418,7 @@ def test_sqlite_interrupted_write_is_rolled_back(tmp_path: Path) -> None:
     store = SQLiteDocStatusStore(Config(), tmp_path / "db.sqlite3")
     store.put(_record("kept"))
     with pytest.raises(RuntimeError), store._transaction("write") as connection:
-        connection.execute("DELETE FROM doc_status")
+        connection.execute("DELETE FROM documents")
         raise RuntimeError("interrupted")
     assert [r.doc_id for r in store.list_all()] == ["kept"]
     store.close()

@@ -2,18 +2,28 @@
 # SPDX-License-Identifier: Apache-2.0
 """Unit tests for per-document lineage attribution (incremental indexing, AWS-free).
 
-`build_document_lineage` is the pure logic that lets the production pipeline
-record which artifacts each document produced, so a later run removes only a
-document's *exclusive* artifacts.
+`build_document_lineage` records each document's text units, by which a later
+run finds what the document contributed in the stores; `artifact_owners`
+attributes a run's artifacts to its documents through the text units they
+cite (a failed write marks its owners FAILED).
 """
 
 from __future__ import annotations
 
 import pytest
 
-from unified_kg_rag.application.ingestion.incremental import build_document_lineage
+from unified_kg_rag.application.ingestion.incremental import (
+    artifact_owners,
+    build_document_lineage,
+)
 from unified_kg_rag.domain.ingestion.delta_detector import compute_doc_id
-from unified_kg_rag.domain.models import Document, Entity, Relationship, TextUnit
+from unified_kg_rag.domain.models import (
+    CommunityReport,
+    Document,
+    Entity,
+    Relationship,
+    TextUnit,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -27,98 +37,53 @@ def _doc(doc_id: str, path: str) -> Document:
     )
 
 
-def test_lineage_attributes_artifacts_to_source_document() -> None:
-    docs = [_doc("d1", "/a.txt"), _doc("d2", "/b.txt")]
-    text_units = [
-        TextUnit(id="t1", text="...", document_ids=["d1"]),
-        TextUnit(id="t2", text="...", document_ids=["d2"]),
-    ]
-    entities = [
-        Entity(id="e1", name="A", text_unit_ids=["t1"]),
-        Entity(id="e2", name="B", text_unit_ids=["t2"]),
-    ]
-    relationships = [
-        Relationship(id="r1", source_id="e1", target_id="e1", text_unit_ids=["t1"]),
-    ]
+_DOCS = [_doc("d1", "/a.txt"), _doc("d2", "/b.txt")]
+_UNITS = [
+    TextUnit(id="t1", text="...", document_ids=["d1"]),
+    TextUnit(id="t2", text="...", document_ids=["d2"]),
+    TextUnit(id="t3", text="...", document_ids=["d1"]),
+]
 
-    lineages = build_document_lineage(docs, text_units, entities, relationships, [], [])
+
+def test_lineage_lists_each_documents_text_units() -> None:
+    lineages = build_document_lineage(_DOCS, _UNITS, "tenant-a")
     by_doc = {ln.doc_id: ln for ln in lineages}
 
     a, b = compute_doc_id("/a.txt"), compute_doc_id("/b.txt")
-    assert by_doc[a].entity_ids == ["e1"]
-    assert by_doc[a].text_unit_ids == ["t1"]
-    assert by_doc[a].relationship_ids == ["r1"]
-    assert by_doc[b].entity_ids == ["e2"]
-    assert by_doc[b].relationship_ids == []
-
-
-def test_shared_artifact_attributed_to_both_documents() -> None:
-    # An entity spanning text units from two documents is attributed to each;
-    # the registry's exclusive-id computation later protects the shared id.
-    docs = [_doc("d1", "/a.txt"), _doc("d2", "/b.txt")]
-    text_units = [
-        TextUnit(id="t1", text="...", document_ids=["d1"]),
-        TextUnit(id="t2", text="...", document_ids=["d2"]),
-    ]
-    shared = Entity(id="shared", name="S", text_unit_ids=["t1", "t2"])
-
-    lineages = build_document_lineage(docs, text_units, [shared], [], [], [])
-    for ln in lineages:
-        assert "shared" in ln.entity_ids
+    assert by_doc[a].text_unit_ids == ["t1", "t3"]
+    assert by_doc[b].text_unit_ids == ["t2"]
+    assert {ln.suffix for ln in lineages} == {"tenant-a"}
+    assert by_doc[a].file_path == "/a.txt"
 
 
 def test_lineage_uses_stable_doc_id_not_runtime_document_id() -> None:
     # Same file, different per-run document_id -> same stable doc_id.
     docs = [_doc("run-specific-uuid", "/a.txt")]
     text_units = [TextUnit(id="t1", text="...", document_ids=["run-specific-uuid"])]
-    lineages = build_document_lineage(docs, text_units, [], [], [], [])
+    lineages = build_document_lineage(docs, text_units)
     assert lineages[0].doc_id == compute_doc_id("/a.txt")
 
 
-def test_community_report_attributed_via_its_community() -> None:
-    # A community report attaches to a document through its community's member
-    # text units, so deleting the document can prune the report.
-    from unified_kg_rag.domain.models import Community, CommunityReport
-
-    docs = [_doc("d1", "/a.txt")]
-    text_units = [TextUnit(id="t1", text="...", document_ids=["d1"])]
-    community = Community(
-        id="comm1", name="C", level="0", parent="", children=[], text_unit_ids=["t1"]
-    )
-    report = CommunityReport(id="rep1", community_id="comm1", name="R")
-
-    lineages = build_document_lineage(
-        docs, text_units, [], [], [community], [], community_reports=[report]
-    )
-    a = compute_doc_id("/a.txt")
-    by_doc = {ln.doc_id: ln for ln in lineages}
-    assert by_doc[a].community_ids == ["comm1"]
-    assert by_doc[a].community_report_ids == ["rep1"]
-
-
-def test_relationship_endpoints_attributed_to_the_relationships_documents() -> None:
-    # "Vendor" is extracted from a.txt only; b.txt names it only inside its
-    # Vendor -> Depot relationship. b.txt must retain Vendor, or deleting a.txt
-    # would delete Vendor and with it b.txt's edge.
-    docs = [_doc("d1", "/a.txt"), _doc("d2", "/b.txt")]
-    text_units = [
-        TextUnit(id="t1", text="...", document_ids=["d1"]),
-        TextUnit(id="t2", text="...", document_ids=["d2"]),
-    ]
-    entities = [
-        Entity(id="vendor", name="Vendor", text_unit_ids=["t1"]),
-        Entity(id="depot", name="Depot", text_unit_ids=["t2"]),
-    ]
-    relationships = [
-        Relationship(
-            id="r1", source_id="vendor", target_id="depot", text_unit_ids=["t2"]
-        ),
-    ]
-
-    lineages = build_document_lineage(docs, text_units, entities, relationships, [], [])
-    by_doc = {ln.doc_id: ln for ln in lineages}
-
+def test_artifacts_are_owned_by_the_documents_of_the_units_they_cite() -> None:
+    lineages = build_document_lineage(_DOCS, _UNITS)
     a, b = compute_doc_id("/a.txt"), compute_doc_id("/b.txt")
-    assert by_doc[a].entity_ids == ["vendor"]
-    assert by_doc[b].entity_ids == ["depot", "vendor"]
-    assert by_doc[b].relationship_ids == ["r1"]
+    owners = artifact_owners(
+        lineages,
+        [
+            _UNITS[1],
+            Entity(id="e1", name="A", text_unit_ids=["t1"]),
+            Entity(id="shared", name="S", text_unit_ids=["t1", "t2"]),
+            Relationship(id="r1", source_id="e1", target_id="e1", text_unit_ids=["t3"]),
+            CommunityReport(
+                id="cr1", name="r", community_id="c1", text_unit_ids=["t2"]
+            ),
+            Entity(id="stray", name="X", text_unit_ids=["t-other-run"]),
+        ],
+    )
+
+    assert owners["t2"] == {b}
+    assert owners["e1"] == owners["r1"] == {a}
+    assert owners["shared"] == {a, b}
+    assert owners["cr1"] == {b}
+    # A text unit no document of the run holds owns nothing.
+    assert "stray" not in owners

@@ -5,7 +5,8 @@
 These run AWS-free via ``moto`` (no ``aws`` marker needed). The port behaviour
 shared with the other registries lives in ``test_doc_status_conformance.py``;
 this file keeps what is DynamoDB-specific: table creation, empty string sets,
-projection scans, batch sizes, unprocessed keys and the item size limit.
+projected per-namespace reads, batch sizes, unprocessed keys, the item
+size limit and the key schema check.
 """
 
 from __future__ import annotations
@@ -22,7 +23,11 @@ from unified_kg_rag.domain.models import (
     DocStatus,
     DocStatusRecord,
 )
-from unified_kg_rag.shared import DataProcessingError, DocStatusRegistryError
+from unified_kg_rag.shared import (
+    ConfigurationError,
+    DataProcessingError,
+    DocStatusRegistryError,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -54,8 +59,7 @@ def test_roundtrip_all_empty_lists_and_none_scalars(
     fetched = ddb_store.get("empty")
     assert fetched is not None
     assert fetched.status is DocStatus.PENDING
-    assert fetched.entity_ids == []
-    assert fetched.relationship_ids == []
+    assert fetched.text_unit_ids == []
     assert fetched.file_path is None
     assert fetched.suffix == "default"
 
@@ -78,36 +82,40 @@ def test_roundtrip_failed_status(
     assert fetched.suffix == "tenant-a"
 
 
-def test_scan_fingerprints_returns_doc_id_and_hash_only(
-    ddb_store: DynamoDBDocStatusStore,
+def test_stored_states_are_projected_and_read_per_namespace(
+    ddb_store: DynamoDBDocStatusStore, mocker
 ) -> None:
-    # The projection-scan helper backing diff() returns just {doc_id: (hash,
-    # scope, failed, pending, extraction fingerprint)}, even for records
-    # carrying full artifact-id lineage.
+    # The projected read backing diff() returns just {doc_id: (hash, scope,
+    # failed, extraction fingerprint)}, even for records listing text units,
+    # and Queries the namespace's partition rather than scanning the table.
     ddb_store.put(
-        DocStatusRecord(
-            doc_id="d1",
-            content_hash="h1",
-            entity_ids=["e1", "e2"],
-            relationship_ids=["r1"],
-            text_unit_ids=["t1"],
-        )
+        DocStatusRecord(doc_id="ns#d1", content_hash="h1", text_unit_ids=["t1"])
     )
-    ddb_store.put(DocStatusRecord(doc_id="d2", content_hash="h2", status="processed"))
-    ddb_store.put(DocStatusRecord(doc_id="d3", content_hash="h3", status="failed"))
+    ddb_store.put(DocStatusRecord(doc_id="ns#d2", content_hash="h2", status="failed"))
     ddb_store.put(
         DocStatusRecord(
-            doc_id="d4",
-            content_hash="h4",
+            doc_id="ns#d3",
+            content_hash="h3",
             status="processed",
+            scope="ns|src",
             extraction_fingerprint="x1",
         )
     )
-    assert ddb_store._scan_fingerprints() == {
-        "d1": ("h1", None, False, True, None),
-        "d2": ("h2", None, False, False, None),
-        "d3": ("h3", None, True, False, None),
-        "d4": ("h4", None, False, False, "x1"),
+    ddb_store.put(DocStatusRecord(doc_id="other#d1", content_hash="h4"))
+    scan = mocker.spy(ddb_store.client, "scan")
+
+    assert ddb_store._stored_states("ns") == {
+        "ns#d1": ("h1", None, False, None),
+        "ns#d2": ("h2", None, True, None),
+        "ns#d3": ("h3", "ns|src", False, "x1"),
+    }
+    assert ddb_store.diff({}, scope="ns|src").deleted == ["ns#d3"]
+    scan.assert_not_called()
+    assert set(ddb_store._stored_states(None)) == {
+        "ns#d1",
+        "ns#d2",
+        "ns#d3",
+        "other#d1",
     }
 
 
@@ -185,14 +193,12 @@ def test_string_sets_read_back_sorted(ddb_store: DynamoDBDocStatusStore) -> None
         DocStatusRecord(
             doc_id="a",
             content_hash="h",
-            entity_ids=["e3", "e1", "e2"],
-            text_unit_ids=["t2", "t1"],
+            text_unit_ids=["t3", "t1", "t2"],
         )
     )
 
     read = ddb_store.get("a")
-    assert read.entity_ids == ["e1", "e2", "e3"]
-    assert read.text_unit_ids == ["t1", "t2"]
+    assert read.text_unit_ids == ["t1", "t2", "t3"]
     assert ddb_store.list_all() == [read]
     assert ddb_store.get_many(["a"]) == {"a": read}
 
@@ -269,7 +275,7 @@ def test_put_many_rejects_an_oversized_record_before_writing_any(
     huge = DocStatusRecord(
         doc_id="huge",
         content_hash="h",
-        entity_ids=[f"entity-{i:08d}-{'x' * 40}" for i in range(9000)],
+        text_unit_ids=[f"unit-{i:08d}-{'x' * 40}" for i in range(9000)],
     )
 
     with pytest.raises(DataProcessingError, match="400 KB"):
@@ -282,14 +288,37 @@ def test_write_ahead_record_round_trips_and_diffs_as_changed(
     ddb_store: DynamoDBDocStatusStore,
 ) -> None:
     pending = DocStatusRecord(
-        doc_id="d",
+        doc_id="ns#d",
         content_hash=PENDING_CONTENT_HASH,
         status=DocStatus.PENDING,
         scope="ns|src",
-        entity_ids=["e1"],
+        text_unit_ids=["t1"],
     )
     ddb_store.put_many([pending])
 
-    assert ddb_store.get("d") == pending
-    assert ddb_store.diff({"d": "any-hash"}, scope="ns|src").changed == ["d"]
-    assert ddb_store.diff({}, scope="ns|src").deleted == ["d"]
+    assert ddb_store.get("ns#d") == pending
+    assert ddb_store.diff({"ns#d": "any-hash"}, scope="ns|src").changed == ["ns#d"]
+    assert ddb_store.diff({}, scope="ns|src").deleted == ["ns#d"]
+
+
+@pytest.mark.parametrize("create_table_if_missing", [True, False])
+def test_a_table_of_the_earlier_key_schema_is_rejected(
+    create_table_if_missing: bool,
+) -> None:
+    # Keyed by doc_id alone, its records hold per-artifact lineage this
+    # release does not read: fail before any read or write, naming the fix.
+    with mock_aws():
+        session = boto3.Session(region_name="us-east-1")
+        session.client("dynamodb").create_table(
+            TableName="old-doc-status",
+            KeySchema=[{"AttributeName": "doc_id", "KeyType": "HASH"}],
+            AttributeDefinitions=[{"AttributeName": "doc_id", "AttributeType": "S"}],
+            BillingMode="PAY_PER_REQUEST",
+        )
+        config = Config()
+        config.aws.dynamodb.table_name = "old-doc-status"
+        config.aws.dynamodb.create_table_if_missing = create_table_if_missing
+        store = DynamoDBDocStatusStore(config, boto_session=session)
+
+        with pytest.raises(ConfigurationError, match="indexing.reset"):
+            store.get("d")

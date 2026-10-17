@@ -24,6 +24,7 @@ from unified_kg_rag.adapters.local.sqlite_graph import (
     placeholders,
 )
 from unified_kg_rag.adapters.storage.neptune_codec import (
+    NAME_KEY_PROPERTY,
     entity_from_vertex,
     entity_properties,
     item_properties,
@@ -269,6 +270,8 @@ class SQLiteGraphIndexer(GraphIndexer):
                 "size": comm.size,
                 "period": comm.period,
                 "children": comm.children,
+                # Found by them when its documents are removed.
+                "text_unit_ids": comm.text_unit_ids,
             },
             self._max_length,
         )
@@ -449,6 +452,56 @@ class SQLiteGraphIndexer(GraphIndexer):
         return {
             i: sorted(neighbors[i]) for i in dict.fromkeys(entity_ids) if i in neighbors
         }
+
+    def find_ids_citing(
+        self,
+        text_unit_ids: list[str],
+        suffix: str | None = None,
+        *,
+        communities: bool = False,
+    ) -> dict[str, list[str]] | None:
+        """Entity (or community) vertices of ``suffix`` citing any of
+        ``text_unit_ids``, with their text units (see the port). One pass over
+        the label's vertices per batch (the embedded store's scale)."""
+        if not text_unit_ids:
+            return {}
+        label = (
+            self._community_label(suffix) if communities else self._entity_label(suffix)
+        )
+        found: dict[str, list[str]] = {}
+        with self.store.read("find vertices citing text units") as connection:
+            for batch in batches(list(dict.fromkeys(text_unit_ids))):
+                rows = connection.execute(
+                    "SELECT id, props FROM vertices WHERE label = ? AND EXISTS "
+                    "(SELECT 1 FROM json_each(vertices.props, '$.text_unit_ids') "
+                    f"WHERE value IN ({placeholders(batch)}))",
+                    [label, *batch],
+                ).fetchall()
+                for vertex_id, props in rows:
+                    found[vertex_id] = list(
+                        json.loads(props).get("text_unit_ids") or []
+                    )
+        return found
+
+    def find_entity_ids_by_name_key(
+        self, name_keys: list[str], suffix: str | None = None
+    ) -> list[str] | None:
+        """Entities of ``suffix`` whose stored ``name_key`` is one of
+        ``name_keys`` (see the port)."""
+        if not name_keys:
+            return []
+        label = self._entity_label(suffix)
+        found: set[str] = set()
+        with self.store.read("find entities by name key") as connection:
+            for batch in batches(list(dict.fromkeys(name_keys))):
+                rows = connection.execute(
+                    "SELECT id FROM vertices WHERE label = ? AND EXISTS "
+                    f"(SELECT 1 FROM json_each(vertices.props, '$.{NAME_KEY_PROPERTY}') "
+                    f"WHERE value IN ({placeholders(batch)}))",
+                    [label, *batch],
+                ).fetchall()
+                found.update(row[0] for row in rows)
+        return sorted(found)
 
     def find_incident_relationship_ids(
         self, entity_ids: list[str], suffix: str | None = None

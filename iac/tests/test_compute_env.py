@@ -68,13 +68,13 @@ def _actions(statements: list[dict[str, Any]]) -> set[str]:
 def test_doc_status_env_targets_iac_table_and_disables_auto_create() -> None:
     env = _task_environment()
     # Both names must match unified_kg_rag.shared.config env overrides.
-    assert env["GRAPHRAG_DOC_STATUS_TABLE"] == "graphrag-doc-status"
+    assert env["GRAPHRAG_DOC_STATUS_TABLE"] == "graphrag-doc-status-v2"
     assert env["GRAPHRAG_DOC_STATUS_CREATE_TABLE"] == "false"
 
 
 def test_doc_status_env_follows_env_scoped_table_name() -> None:
     env = _task_environment({"env_name": "prod"})
-    assert env["GRAPHRAG_DOC_STATUS_TABLE"] == "prod-graphrag-doc-status"
+    assert env["GRAPHRAG_DOC_STATUS_TABLE"] == "prod-graphrag-doc-status-v2"
 
 
 def test_corpus_bucket_is_granted_read_only() -> None:

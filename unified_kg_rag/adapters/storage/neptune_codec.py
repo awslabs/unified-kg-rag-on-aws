@@ -26,6 +26,7 @@ import json
 from collections.abc import Mapping
 from typing import Any
 
+from unified_kg_rag.domain.ingestion.base_resolver import compact_name_key
 from unified_kg_rag.domain.models import Constants, Entity, Relationship
 from unified_kg_rag.shared import get_logger
 
@@ -60,11 +61,18 @@ def item_properties(
     return properties
 
 
+# The compact name key of an entity's name, stored with it so the cross-run
+# merge finds the stored entities a delta name links to without reading every
+# name (GraphIndexer.find_entity_ids_by_name_key). Not read back.
+NAME_KEY_PROPERTY = "name_key"
+
+
 def entity_properties(entity: Entity, max_length: int) -> dict[str, Any]:
     """Vertex properties of an entity (lists stay lists: multi-valued)."""
     return item_properties(
         entity,
         {
+            NAME_KEY_PROPERTY: compact_name_key(entity.name),
             "name": entity.name,
             "type": entity.type,
             "description": entity.description,

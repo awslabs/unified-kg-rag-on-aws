@@ -8,29 +8,33 @@ loss, orphan artifacts, double-counting, or non-idempotency, and pin down how
 the pure delta/merge logic plus the :class:`IncrementalIndexer` orchestrator
 actually behave under them.
 
-Everything here runs against the in-memory ``FakeDocStatusStore`` + a recording
-fake indexing manager and the pure ``merge_*`` / ``detect_delta`` functions —
-no AWS clients. Cases that document a SUSPECTED BUG are flagged in-line with a
-``SUSPECTED BUG`` comment and assert the *current* behaviour (source is not
-modified).
+Everything here runs against the in-memory ``FakeDocStatusStore`` and a real
+:class:`IndexingManager` over the in-memory graph and vector stores, plus the
+pure ``merge_*`` / ``detect_delta`` functions: no AWS clients. A document's
+registry record lists its text units; a removal finds what cites them in the
+stores, deletes what only removed text units state and strips the rest.
 """
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
+from tests.fixtures.fakes.stores import FakeGraphStore, FakeVectorStore
 from unified_kg_rag.application.ingestion.incremental import (
     IncrementalIndexer,
     build_document_lineage,
 )
-from unified_kg_rag.application.storage.indexing_manager import CrossRunMergeResult
+from unified_kg_rag.application.storage.indexing_manager import IndexingManager
 from unified_kg_rag.domain.ingestion.delta_detector import compute_doc_id, detect_delta
 from unified_kg_rag.domain.ingestion.merge import (
     merge_entities,
     merge_relationships,
 )
 from unified_kg_rag.domain.models import (
+    Config,
     Document,
     DocumentLineage,
     Entity,
@@ -45,45 +49,6 @@ pytestmark = pytest.mark.unit
 # --------------------------------------------------------------------------- #
 # Test doubles / helpers
 # --------------------------------------------------------------------------- #
-class _FakeIndexingCfg:
-    """Minimal stand-in exposing config.indexing.max_failure_rate."""
-
-    def __init__(self, max_failure_rate: float = 0.2) -> None:
-        self.indexing = type("Ix", (), {"max_failure_rate": max_failure_rate})()
-
-
-class FakeIndexingManager:
-    """Records index_delta / delete_documents calls instead of touching stores."""
-
-    def __init__(self, max_failure_rate: float = 0.2) -> None:
-        self.delta_calls: list[dict] = []
-        self.delete_calls: list[dict] = []
-        self.strip_calls: list[tuple] = []
-        self.config = _FakeIndexingCfg(max_failure_rate)
-
-    def merge_with_existing_graph(self, entities, relationships, text_units=()):
-        return CrossRunMergeResult(entities=entities, relationships=relationships)
-
-    def merge_with_stored_claims(self, claims, text_units=()):
-        return claims
-
-    def index_delta(self, **kwargs) -> dict[str, IndexingStats]:
-        self.delta_calls.append(kwargs)
-        return {}
-
-    def remove_text_units_from_shared(
-        self, suffix, *, entity_ids, relationship_ids, text_unit_ids, claim_ids=()
-    ) -> dict[str, IndexingStats]:
-        self.strip_calls.append(
-            (suffix, list(entity_ids), list(relationship_ids), list(text_unit_ids))
-        )
-        return {}
-
-    def delete_documents(self, ids_by_suffix) -> dict[str, IndexingStats]:
-        self.delete_calls.append(ids_by_suffix)
-        return {}
-
-
 def _doc(path: str, text: str, *, metadata: dict | None = None) -> Document:
     return Document(
         page_content=text,
@@ -94,28 +59,63 @@ def _doc(path: str, text: str, *, metadata: dict | None = None) -> Document:
     )
 
 
-def _lineage(path: str, **artifacts) -> DocumentLineage:
-    return DocumentLineage(doc_id=compute_doc_id(path), **artifacts)
-
-
 def _entity(id_: str, name: str, **kw) -> Entity:
     return Entity(id=id_, name=name, **kw)
 
 
-def _all_deleted_ids(manager: FakeIndexingManager) -> list[str]:
-    return [
-        artifact_id
-        for call in manager.delete_calls
-        for ids in call.values()
-        for artifact_id in ids
-    ]
+def _unit_id(path: str, version: str = "") -> str:
+    return f"tu-{path.strip('/')}{version}"
+
+
+class _Rig:
+    """Registry + manager over in-memory graph and vector stores."""
+
+    def __init__(self) -> None:
+        config = Config()
+        self.graph = FakeGraphStore()
+        self.vector = FakeVectorStore(opensearch_config=config.indexing.opensearch)
+        self.manager = IndexingManager(
+            config=config, vector_indexer=self.vector, graph_indexer=self.graph
+        )
+        self.store = FakeDocStatusStore()
+        self.inc = IncrementalIndexer(self.store, self.manager)
+
+    def commit(
+        self,
+        fps: dict[str, str],
+        path: str,
+        names: dict[str, str],
+        *,
+        version: str = "",
+        relationships: list[Relationship] = (),  # type: ignore[assignment]
+    ) -> str:
+        """Commit ``path`` as one text unit stating the ``{id: name}``
+        entities (and ``relationships``); returns the text unit id."""
+        unit_id = _unit_id(path, version)
+        self.inc.commit(
+            lineages=[
+                DocumentLineage(doc_id=compute_doc_id(path), text_unit_ids=[unit_id])
+            ],
+            fingerprints=fps,
+            text_units=[TextUnit(id=unit_id, text="...", document_ids=["x"])],
+            entities=[_entity(i, n, text_unit_ids=[unit_id]) for i, n in names.items()],
+            relationships=[
+                r.model_copy(update={"text_unit_ids": [unit_id]}) for r in relationships
+            ],
+        )
+        return unit_id
+
+    def entity_units(self) -> dict[str, list[str]]:
+        entities = self.graph.read_entities(sorted(self.graph.ids("entities")))
+        return {e.id: sorted(e.text_unit_ids or []) for e in entities}
+
+    def stored_ids(self) -> set[str]:
+        return self.graph.ids("entities") | self.vector.ids("entities")
 
 
 @pytest.fixture
-def rig() -> tuple[IncrementalIndexer, FakeDocStatusStore, FakeIndexingManager]:
-    store = FakeDocStatusStore()
-    manager = FakeIndexingManager()
-    return IncrementalIndexer(store, manager), store, manager  # type: ignore[arg-type]
+def rig() -> _Rig:
+    return _Rig()
 
 
 # --------------------------------------------------------------------------- #
@@ -136,9 +136,8 @@ class TestAdd:
         assert compute_doc_id("corpus\\a.txt") == compute_doc_id("corpus/a.txt")
 
     def test_new_docs_only_all_classified_new(self, rig) -> None:
-        inc, _store, _manager = rig
         docs = [_doc("/a.txt", "A"), _doc("/b.txt", "B"), _doc("/c.txt", "C")]
-        delta, fps = detect_delta(docs, inc.doc_status)
+        delta, fps = detect_delta(docs, rig.inc.doc_status)
         assert set(delta.new) == set(fps)
         assert not delta.changed and not delta.deleted and not delta.unchanged
 
@@ -165,88 +164,60 @@ class TestAdd:
 # --------------------------------------------------------------------------- #
 class TestModify:
     def test_content_change_classified_changed(self, rig) -> None:
-        inc, _store, _manager = rig
-        docs = [_doc("/a.txt", "original")]
-        _, fps = detect_delta(docs, inc.doc_status)
-        inc.commit(
-            [_lineage("/a.txt", entity_ids=["e1"])],
-            fps,
-            entities=[_entity("e1", "A")],
-        )
+        _, fps = detect_delta([_doc("/a.txt", "original")], rig.inc.doc_status)
+        rig.commit(fps, "/a.txt", {"e1": "A"})
 
         edited = [_doc("/a.txt", "EDITED CONTENT")]
-        delta, _ = detect_delta(edited, inc.doc_status)
+        delta, _ = detect_delta(edited, rig.inc.doc_status)
         assert delta.changed == [compute_doc_id("/a.txt")]
         assert not delta.new and not delta.deleted
 
     def test_modify_prunes_old_exclusive_keeps_shared(self, rig) -> None:
-        inc, _store, manager = rig
         a, b = _doc("/a.txt", "A"), _doc("/b.txt", "B")
-        _, fps = detect_delta([a, b], inc.doc_status)
-        inc.commit(
-            [_lineage("/a.txt", entity_ids=["shared", "only_a"])],
-            fps,
-            entities=[_entity("shared", "S"), _entity("only_a", "A")],
-        )
-        inc.commit(
-            [_lineage("/b.txt", entity_ids=["shared"])],
-            fps,
-            entities=[_entity("shared", "S")],
-        )
+        _, fps = detect_delta([a, b], rig.inc.doc_status)
+        rig.commit(fps, "/a.txt", {"shared": "S", "only_a": "A"})
+        rig.commit(fps, "/b.txt", {"shared": "S"})
 
         edited = [_doc("/a.txt", "EDITED"), b]
-        delta, _ = detect_delta(edited, inc.doc_status)
-        inc.remove_changed_and_deleted(delta)
+        delta, _ = detect_delta(edited, rig.inc.doc_status)
+        assert rig.inc.remove_changed_and_deleted(delta)
 
-        pruned = _all_deleted_ids(manager)
-        assert "only_a" in pruned  # exclusive to changed doc -> pruned
-        assert "shared" not in pruned  # survivor /b.txt still references it -> kept
+        # Exclusive to the changed doc -> pruned; survivor /b.txt still states
+        # 'shared' -> kept, citing only b's text unit.
+        assert rig.entity_units() == {"shared": [_unit_id("/b.txt")]}
+        assert rig.vector.ids("entities") == {"shared"}
 
     def test_modify_drops_an_entity_it_used_to_mention(self, rig) -> None:
         # A doc that previously produced e1+e2 is edited to mention only e1.
-        # the removal drops BOTH old artifacts; commit then re-adds only e1,
+        # The removal drops BOTH old artifacts; commit then re-adds only e1,
         # so e2 does not leak as an orphan after re-extraction.
-        inc, _store, manager = rig
         _, fps = detect_delta(
-            [_doc("/a.txt", "v1 mentions Bob and Carol")], inc.doc_status
+            [_doc("/a.txt", "v1 mentions Bob and Carol")], rig.inc.doc_status
         )
-        inc.commit(
-            [_lineage("/a.txt", entity_ids=["e1", "e2"])],
-            fps,
-            entities=[_entity("e1", "Bob"), _entity("e2", "Carol")],
-        )
+        rig.commit(fps, "/a.txt", {"e1": "Bob", "e2": "Carol"})
 
         edited = [_doc("/a.txt", "v2 mentions only Bob")]
-        delta, fps2 = detect_delta(edited, inc.doc_status)
-        inc.remove_changed_and_deleted(delta)
-        pruned = _all_deleted_ids(manager)
-        assert "e1" in pruned and "e2" in pruned
+        delta, fps2 = detect_delta(edited, rig.inc.doc_status)
+        assert rig.inc.remove_changed_and_deleted(delta)
+        assert rig.stored_ids() == set()
 
-        # Re-extract: only e1 survives in the new lineage.
-        inc.commit(
-            [_lineage("/a.txt", entity_ids=["e1"])],
-            fps2,
-            entities=[_entity("e1", "Bob")],
-        )
-        rec = _store.get(compute_doc_id("/a.txt"))
-        assert rec is not None and rec.entity_ids == ["e1"]  # e2 no longer tracked
+        # Re-extract: only e1 is stated by the new version.
+        new_unit = rig.commit(fps2, "/a.txt", {"e1": "Bob"}, version="-v2")
+        assert rig.entity_units() == {"e1": [new_unit]}
+        rec = rig.store.get(compute_doc_id("/a.txt"))
+        assert rec is not None and rec.text_unit_ids == [new_unit]
 
     def test_metadata_only_change_is_noop_delta(self, rig) -> None:
-        # content_hash is computed over document TEXT only (delta_detector.py:38).
+        # content_hash is computed over document TEXT only (delta_detector.py).
         # Changing only metadata leaves the hash identical -> no-op delta. This
         # is correct (don't reindex on a metadata touch), pinned here so a future
         # hash change that folds metadata in doesn't silently regress it.
-        inc, _store, _manager = rig
         original = _doc("/a.txt", "same text", metadata={"author": "alice"})
-        _, fps = detect_delta([original], inc.doc_status)
-        inc.commit(
-            [_lineage("/a.txt", entity_ids=["e1"])],
-            fps,
-            entities=[_entity("e1", "A")],
-        )
+        _, fps = detect_delta([original], rig.inc.doc_status)
+        rig.commit(fps, "/a.txt", {"e1": "A"})
 
         touched = _doc("/a.txt", "same text", metadata={"author": "BOB", "tag": "x"})
-        delta, _ = detect_delta([touched], inc.doc_status)
+        delta, _ = detect_delta([touched], rig.inc.doc_status)
         assert delta.is_empty
         assert delta.unchanged == [compute_doc_id("/a.txt")]
 
@@ -255,135 +226,87 @@ class TestModify:
         # other. They share a content_hash but are DIFFERENT documents (different
         # paths -> different doc_ids), so both remain registered. A content-hash
         # collision must not collapse two files into one registry entry.
-        inc, _store, _manager = rig
         a, b = _doc("/a.txt", "unique A"), _doc("/b.txt", "unique B")
-        _, fps = detect_delta([a, b], inc.doc_status)
-        inc.commit(
-            [
-                _lineage("/a.txt", entity_ids=["ea"]),
-                _lineage("/b.txt", entity_ids=["eb"]),
-            ],
-            fps,
-            entities=[_entity("ea", "A"), _entity("eb", "B")],
-        )
+        _, fps = detect_delta([a, b], rig.inc.doc_status)
+        rig.commit(fps, "/a.txt", {"ea": "A"})
+        rig.commit(fps, "/b.txt", {"eb": "B"})
 
-        # Edit b to be textually identical to a.
         b2 = _doc("/b.txt", "unique A")
-        delta, fps2 = detect_delta([a, b2], inc.doc_status)
+        delta, fps2 = detect_delta([a, b2], rig.inc.doc_status)
         assert compute_doc_id("/a.txt") in delta.unchanged
         assert compute_doc_id("/b.txt") in delta.changed
         # Same content hash for the two distinct docs, but two registry entries.
         assert fps2[compute_doc_id("/a.txt")] == fps2[compute_doc_id("/b.txt")]
-        assert len({compute_doc_id("/a.txt"), compute_doc_id("/b.txt")}) == 2
+        assert len(rig.store.list_all()) == 2
 
 
 # --------------------------------------------------------------------------- #
 # 3. DELETE scenarios
 # --------------------------------------------------------------------------- #
 class TestDelete:
-    def test_delete_removes_exclusive_entities_relationships_claims(self, rig) -> None:
-        inc, store, manager = rig
+    def test_delete_removes_exclusive_entities_relationships(self, rig) -> None:
         a, b = _doc("/a.txt", "A"), _doc("/b.txt", "B")
-        _, fps = detect_delta([a, b], inc.doc_status)
-        inc.commit(
-            [
-                _lineage(
-                    "/a.txt",
-                    entity_ids=["ea"],
-                    relationship_ids=["ra"],
-                    claim_ids=["cla"],
-                )
-            ],
+        _, fps = detect_delta([a, b], rig.inc.doc_status)
+        rig.commit(
             fps,
-            entities=[_entity("ea", "A")],
+            "/a.txt",
+            {"ea": "A", "ea2": "A2"},
+            relationships=[Relationship(id="ra", source_id="ea", target_id="ea2")],
         )
-        inc.commit(
-            [
-                _lineage(
-                    "/b.txt",
-                    entity_ids=["eb"],
-                    relationship_ids=["rb"],
-                    claim_ids=["clb"],
-                    community_report_ids=["crb"],
-                )
-            ],
+        rig.commit(
             fps,
-            entities=[_entity("eb", "B")],
+            "/b.txt",
+            {"eb": "B", "eb2": "B2"},
+            relationships=[Relationship(id="rb", source_id="eb", target_id="eb2")],
         )
 
-        delta, _ = detect_delta([a], inc.doc_status)  # b deleted
+        delta, _ = detect_delta([a], rig.inc.doc_status)  # b deleted
         assert delta.deleted == [compute_doc_id("/b.txt")]
-        inc.remove_changed_and_deleted(delta)
+        assert rig.inc.remove_changed_and_deleted(delta)
 
-        deleted = _all_deleted_ids(manager)
-        for exclusive in ("eb", "rb", "clb", "crb"):
-            assert exclusive in deleted
-        for survivor in ("ea", "ra", "cla"):
-            assert survivor not in deleted
-        assert {r.doc_id for r in store.list_all()} == {compute_doc_id("/a.txt")}
+        assert rig.stored_ids() == {"ea", "ea2"}
+        assert rig.graph.ids("relationships") == {"ra"}
+        assert rig.vector.ids("relationships") == {"ra"}
+        assert rig.vector.ids("text_units") == {_unit_id("/a.txt")}
+        assert {r.doc_id for r in rig.store.list_all()} == {compute_doc_id("/a.txt")}
 
     def test_delete_preserves_shared_artifacts(self, rig) -> None:
-        inc, store, manager = rig
         a, b = _doc("/a.txt", "A"), _doc("/b.txt", "B")
-        _, fps = detect_delta([a, b], inc.doc_status)
-        inc.commit(
-            [_lineage("/a.txt", entity_ids=["shared"])],
-            fps,
-            entities=[_entity("shared", "S")],
-        )
-        inc.commit(
-            [_lineage("/b.txt", entity_ids=["shared"])],
-            fps,
-            entities=[_entity("shared", "S")],
-        )
+        _, fps = detect_delta([a, b], rig.inc.doc_status)
+        rig.commit(fps, "/a.txt", {"shared": "S"})
+        rig.commit(fps, "/b.txt", {"shared": "S"})
 
-        delta, _ = detect_delta([a], inc.doc_status)  # delete b
-        inc.remove_changed_and_deleted(delta)
-        assert "shared" not in _all_deleted_ids(manager)
-        assert {r.doc_id for r in store.list_all()} == {compute_doc_id("/a.txt")}
+        delta, _ = detect_delta([a], rig.inc.doc_status)  # delete b
+        assert rig.inc.remove_changed_and_deleted(delta)
+        assert rig.entity_units() == {"shared": [_unit_id("/a.txt")]}
+        assert {r.doc_id for r in rig.store.list_all()} == {compute_doc_id("/a.txt")}
 
     def test_delete_last_referencing_doc_removes_the_entity(self, rig) -> None:
-        # Two docs both reference 'shared'. Delete one -> kept (still shared).
-        # Delete the second -> now exclusive to it -> removed. Lineage shrinks to
-        # one referrer between the two deletes.
-        inc, store, manager = rig
+        # Two docs both state 'shared'. Delete one -> kept (still stated).
+        # Delete the second -> nothing states it any more -> removed.
         a, b = _doc("/a.txt", "A"), _doc("/b.txt", "B")
-        _, fps = detect_delta([a, b], inc.doc_status)
-        inc.commit(
-            [_lineage("/a.txt", entity_ids=["shared"])],
-            fps,
-            entities=[_entity("shared", "S")],
-        )
-        inc.commit(
-            [_lineage("/b.txt", entity_ids=["shared"])],
-            fps,
-            entities=[_entity("shared", "S")],
-        )
+        _, fps = detect_delta([a, b], rig.inc.doc_status)
+        rig.commit(fps, "/a.txt", {"shared": "S"})
+        rig.commit(fps, "/b.txt", {"shared": "S"})
 
-        # Delete a first: 'shared' still referenced by b -> preserved.
-        d1, _ = detect_delta([b], inc.doc_status)
-        inc.remove_changed_and_deleted(d1)
-        assert "shared" not in _all_deleted_ids(manager)
+        d1, _ = detect_delta([b], rig.inc.doc_status)
+        assert rig.inc.remove_changed_and_deleted(d1)
+        assert rig.entity_units() == {"shared": [_unit_id("/b.txt")]}
 
-        # Delete b (the last referrer): now 'shared' is exclusive -> removed.
-        d2, _ = detect_delta([], inc.doc_status)
-        inc.remove_changed_and_deleted(d2)
-        assert "shared" in _all_deleted_ids(manager)
-        assert store.list_all() == []
+        d2, _ = detect_delta([], rig.inc.doc_status)
+        assert rig.inc.remove_changed_and_deleted(d2)
+        assert rig.stored_ids() == set()
+        assert rig.store.list_all() == []
 
     def test_delete_empty_corpus_removes_everything(self, rig) -> None:
-        inc, store, manager = rig
-        _, fps = detect_delta([_doc("/a.txt", "A")], inc.doc_status)
-        inc.commit(
-            [_lineage("/a.txt", entity_ids=["ea"])],
-            fps,
-            entities=[_entity("ea", "A")],
-        )
-        delta, _ = detect_delta([], inc.doc_status)  # entire corpus gone
+        _, fps = detect_delta([_doc("/a.txt", "A")], rig.inc.doc_status)
+        rig.commit(fps, "/a.txt", {"ea": "A"})
+        delta, _ = detect_delta([], rig.inc.doc_status)  # entire corpus gone
         assert delta.deleted == [compute_doc_id("/a.txt")]
-        inc.remove_changed_and_deleted(delta)
-        assert store.list_all() == []
-        assert "ea" in _all_deleted_ids(manager)
+        assert rig.inc.remove_changed_and_deleted(delta)
+        assert rig.store.list_all() == []
+        assert rig.stored_ids() == set()
+        assert rig.vector.ids("text_units") == set()
 
 
 # --------------------------------------------------------------------------- #
@@ -391,19 +314,16 @@ class TestDelete:
 # --------------------------------------------------------------------------- #
 class TestCombinations:
     def test_add_modify_delete_in_one_delta(self, rig) -> None:
-        inc, store, manager = rig
         a, b, c = _doc("/a.txt", "A"), _doc("/b.txt", "B"), _doc("/c.txt", "C")
-        _, fps = detect_delta([a, b, c], inc.doc_status)
+        _, fps = detect_delta([a, b, c], rig.inc.doc_status)
         for path, eid in (("/a.txt", "ea"), ("/b.txt", "eb"), ("/c.txt", "ec")):
-            inc.commit(
-                [_lineage(path, entity_ids=[eid])], fps, entities=[_entity(eid, eid)]
-            )
+            rig.commit(fps, path, {eid: eid})
 
         # Next corpus: a unchanged, b modified, c deleted, d added.
-        a2 = _doc("/a.txt", "A")  # unchanged
-        b2 = _doc("/b.txt", "B EDITED")  # modified
-        d = _doc("/d.txt", "D")  # new
-        delta, fps2 = detect_delta([a2, b2, d], inc.doc_status)
+        a2 = _doc("/a.txt", "A")
+        b2 = _doc("/b.txt", "B EDITED")
+        d = _doc("/d.txt", "D")
+        delta, fps2 = detect_delta([a2, b2, d], rig.inc.doc_status)
 
         assert delta.unchanged == [compute_doc_id("/a.txt")]
         assert delta.changed == [compute_doc_id("/b.txt")]
@@ -411,53 +331,35 @@ class TestCombinations:
         assert delta.deleted == [compute_doc_id("/c.txt")]
 
         # Apply: prune changed, remove deleted, commit new+changed re-extraction.
-        inc.remove_changed_and_deleted(delta)
-        deleted = _all_deleted_ids(manager)
-        assert "eb" in deleted  # b's stale artifact pruned
-        assert "ec" in deleted  # c deleted
-        assert "ea" not in deleted  # a untouched
+        assert rig.inc.remove_changed_and_deleted(delta)
+        assert rig.stored_ids() == {"ea"}
 
-        inc.commit(
-            [
-                _lineage("/b.txt", entity_ids=["eb2"]),
-                _lineage("/d.txt", entity_ids=["ed"]),
-            ],
-            fps2,
-            entities=[_entity("eb2", "B2"), _entity("ed", "D")],
-        )
-        live = {r.doc_id for r in store.list_all()}
+        rig.commit(fps2, "/b.txt", {"eb2": "B2"}, version="-v2")
+        rig.commit(fps2, "/d.txt", {"ed": "D"})
+        assert rig.stored_ids() == {"ea", "eb2", "ed"}
+        live = {r.doc_id for r in rig.store.list_all()}
         assert live == {compute_doc_id(p) for p in ("/a.txt", "/b.txt", "/d.txt")}
 
     def test_delete_then_readd_same_doc_id(self, rig) -> None:
-        inc, store, manager = rig
-        _, fps = detect_delta([_doc("/a.txt", "v1")], inc.doc_status)
-        inc.commit(
-            [_lineage("/a.txt", entity_ids=["e_old"])],
-            fps,
-            entities=[_entity("e_old", "Old")],
-        )
+        _, fps = detect_delta([_doc("/a.txt", "v1")], rig.inc.doc_status)
+        rig.commit(fps, "/a.txt", {"e_old": "Old"})
 
-        # Delete it.
-        del_delta, _ = detect_delta([], inc.doc_status)
-        inc.remove_changed_and_deleted(del_delta)
-        assert store.get(compute_doc_id("/a.txt")) is None
+        del_delta, _ = detect_delta([], rig.inc.doc_status)
+        assert rig.inc.remove_changed_and_deleted(del_delta)
+        assert rig.store.get(compute_doc_id("/a.txt")) is None
 
         # Re-add the same path with new content -> classified new again (clean
-        # slate), and its registry record reflects only the new artifacts.
-        readd, fps2 = detect_delta([_doc("/a.txt", "v2")], inc.doc_status)
+        # slate), and its registry record lists only the new text units.
+        readd, fps2 = detect_delta([_doc("/a.txt", "v2")], rig.inc.doc_status)
         assert readd.new == [compute_doc_id("/a.txt")]
-        inc.commit(
-            [_lineage("/a.txt", entity_ids=["e_new"])],
-            fps2,
-            entities=[_entity("e_new", "New")],
-        )
-        rec = store.get(compute_doc_id("/a.txt"))
-        assert rec is not None and rec.entity_ids == ["e_new"]
+        unit = rig.commit(fps2, "/a.txt", {"e_new": "New"}, version="-v2")
+        rec = rig.store.get(compute_doc_id("/a.txt"))
+        assert rec is not None and rec.text_unit_ids == [unit]
+        assert rig.stored_ids() == {"e_new"}
 
     def test_entity_spanning_deleted_and_surviving_doc_survives(self, rig) -> None:
         # An entity whose text_unit_ids span a deleted doc AND a surviving doc
-        # must survive; only the deleted doc's registry record/lineage goes away.
-        inc, store, manager = rig
+        # must survive, stripped of the deleted doc's text unit.
         docs = [_doc("/a.txt", "Alice and Bob"), _doc("/b.txt", "Alice again")]
         d1, d2 = docs
         d1.document_id = "rd1"
@@ -469,107 +371,64 @@ class TestCombinations:
         # 'alice' spans both docs (t1 from a, t2 from b); 'bob' is exclusive to a.
         alice = _entity("e_alice", "Alice", text_unit_ids=["t1", "t2"])
         bob = _entity("e_bob", "Bob", text_unit_ids=["t1"])
-        lineages = build_document_lineage(docs, text_units, [alice, bob], [], [], [])
-        _, fps = detect_delta(docs, inc.doc_status)
-        inc.commit(lineages, fps, entities=[alice, bob])
+        lineages = build_document_lineage(docs, text_units)
+        _, fps = detect_delta(docs, rig.inc.doc_status)
+        rig.inc.commit(lineages, fps, text_units=text_units, entities=[alice, bob])
 
-        # Both docs recorded 'alice' in their lineage.
-        for path in ("/a.txt", "/b.txt"):
-            rec = store.get(compute_doc_id(path))
-            assert rec is not None and "e_alice" in rec.entity_ids
+        delta, _ = detect_delta([d2], rig.inc.doc_status)  # delete /a.txt
+        assert rig.inc.remove_changed_and_deleted(delta)
+        assert rig.entity_units() == {"e_alice": ["t2"]}
+        assert rig.vector.ids("entities") == {"e_alice"}
+        assert rig.vector.ids("text_units") == {"t2"}
 
-        # Delete /a.txt -> bob exclusive (removed), alice shared (kept).
-        delta, _ = detect_delta([d2], inc.doc_status)
-        inc.remove_changed_and_deleted(delta)
-        deleted = _all_deleted_ids(manager)
-        assert "e_bob" in deleted
-        assert "e_alice" not in deleted
-        # The kept 'alice' loses the deleted doc's chunk t1.
-        assert manager.strip_calls == [("default", ["e_alice"], [], ["t1"])]
-        # Surviving record's lineage still references alice.
-        surviving = store.get(compute_doc_id("/b.txt"))
-        assert surviving is not None and "e_alice" in surviving.entity_ids
-
-    def test_relationship_endpoint_entity_deleted_orphan_edge(self, rig) -> None:
-        # SUSPECTED WEAK SPOT (orphan handling): a relationship whose endpoint
-        # entity gets deleted. Lineage attribution is purely id-set based
-        # (incremental.py:_collect_exclusive_artifact_ids) and tracks artifact
-        # ids per doc; it does NOT inspect relationship endpoints. If the
-        # surviving doc's lineage records the EDGE but the deleted doc owned the
-        # endpoint ENTITY exclusively, the entity is removed while the edge
-        # survives -> a dangling endpoint. We construct that and assert the edge
-        # is NOT removed (current behaviour: orphan edge can occur).
-        inc, store, manager = rig
+    def test_relationship_to_a_deleted_entity_is_removed(self, rig) -> None:
+        # A relationship whose endpoint entity gets deleted: doc a states
+        # 'e_target' exclusively, doc b states an edge pointing AT it. Removing
+        # a deletes e_target, and with it the incident edge, from both stores
+        # (no dangling endpoint), although the edge cites b's text unit.
         a, b = _doc("/a.txt", "A"), _doc("/b.txt", "B")
-        _, fps = detect_delta([a, b], inc.doc_status)
-        # Doc a owns entity 'e_target' exclusively. Doc b owns edge 'r1' that
-        # points AT e_target. (Plausible when an extraction in b references an
-        # entity first seen in a.)
-        inc.commit(
-            [_lineage("/a.txt", entity_ids=["e_target"])],
+        _, fps = detect_delta([a, b], rig.inc.doc_status)
+        rig.commit(fps, "/a.txt", {"e_target": "Target"})
+        rig.commit(
             fps,
-            entities=[_entity("e_target", "Target")],
-        )
-        inc.commit(
-            [_lineage("/b.txt", entity_ids=["e_src"], relationship_ids=["r1"])],
-            fps,
-            entities=[_entity("e_src", "Src")],
+            "/b.txt",
+            {"e_src": "Src"},
             relationships=[
                 Relationship(id="r1", source_id="e_src", target_id="e_target")
             ],
         )
+        assert rig.graph.ids("relationships") == {"r1"}
 
-        delta, _ = detect_delta([b], inc.doc_status)  # delete a
-        inc.remove_changed_and_deleted(delta)
-        deleted = _all_deleted_ids(manager)
-        # e_target is removed (exclusive to deleted doc a)...
-        assert "e_target" in deleted
-        # ...and r1 is NOT in the lineage-derived exclusive id-set (it is owned
-        # by surviving doc b). The orphan-edge cascade does not happen at THIS
-        # (lineage) layer — it is handled downstream in
-        # IndexingManager.delete_documents, which queries Neptune for edges
-        # incident to the deleted entities and folds them into the relationship-
-        # index deletion (see test_indexing_manager_orphan_cleanup). So at the
-        # incremental layer r1 stays out of the exclusive set by design.
-        assert "r1" not in deleted
+        delta, _ = detect_delta([b], rig.inc.doc_status)  # delete a
+        assert rig.inc.remove_changed_and_deleted(delta)
+        assert rig.stored_ids() == {"e_src"}
+        assert rig.graph.ids("relationships") == set()
+        assert rig.vector.ids("relationships") == set()
 
-    def test_empty_delta_is_clean_noop(self, rig) -> None:
-        inc, _store, manager = rig
+    def test_empty_delta_is_clean_noop(self, rig, mocker) -> None:
         docs = [_doc("/a.txt", "A")]
-        _, fps = detect_delta(docs, inc.doc_status)
-        inc.commit(
-            [_lineage("/a.txt", entity_ids=["e1"])],
-            fps,
-            entities=[_entity("e1", "A")],
-        )
-        before = len(manager.delete_calls)
+        _, fps = detect_delta(docs, rig.inc.doc_status)
+        rig.commit(fps, "/a.txt", {"e1": "A"})
+        remove = mocker.spy(rig.manager, "remove_text_units")
 
-        delta, _ = detect_delta(docs, inc.doc_status)  # identical corpus
+        delta, _ = detect_delta(docs, rig.inc.doc_status)  # identical corpus
         assert delta.is_empty
-        inc.remove_changed_and_deleted(delta)
+        assert rig.inc.remove_changed_and_deleted(delta)
         # No prune/remove side effects when nothing changed.
-        assert len(manager.delete_calls) == before
+        remove.assert_not_called()
+        assert rig.stored_ids() == {"e1"}
 
     def test_rerunning_same_delta_twice_is_idempotent(self, rig) -> None:
-        # Re-running an identical add commit twice must not duplicate entities in
-        # the merged graph or grow the registry lineage. Pure merge is the unit
-        # of idempotency here.
-        inc, store, _manager = rig
+        # Re-running an identical add commit twice must not duplicate entities
+        # in the merged graph or grow the registry record.
         docs = [_doc("/a.txt", "A")]
-        _, fps = detect_delta(docs, inc.doc_status)
-        inc.commit(
-            [_lineage("/a.txt", entity_ids=["e1"])],
-            fps,
-            entities=[_entity("e1", "A")],
-        )
-        inc.commit(
-            [_lineage("/a.txt", entity_ids=["e1"])],
-            fps,
-            entities=[_entity("e1", "A")],
-        )
-        rec = store.get(compute_doc_id("/a.txt"))
-        assert rec is not None and rec.entity_ids == ["e1"]
-        assert len(store.list_all()) == 1
+        _, fps = detect_delta(docs, rig.inc.doc_status)
+        rig.commit(fps, "/a.txt", {"e1": "A"})
+        rig.commit(fps, "/a.txt", {"e1": "A"})
+        rec = rig.store.get(compute_doc_id("/a.txt"))
+        assert rec is not None and rec.text_unit_ids == [_unit_id("/a.txt")]
+        assert len(rig.store.list_all()) == 1
+        assert rig.entity_units() == {"e1": [_unit_id("/a.txt")]}
 
 
 # --------------------------------------------------------------------------- #
@@ -631,12 +490,9 @@ class TestMergeLaws:
         m2, _ = merge_entities(old, d_ba)
         assert {e.name for e in m1} == {e.name for e in m2} == {"Alice", "Bob", "Carol"}
 
-    def test_lineage_union_then_trim_on_partial_delete(self, rig) -> None:
-        # Lineage union (shared artifact attributed to both docs) followed by a
-        # trim on partial delete: deleting one referrer must leave the shared id
-        # referenced by the survivor (so it is preserved), and the survivor's
-        # exclusive-id computation correctly excludes it from removal.
-        inc, _store, manager = rig
+    def test_union_then_trim_on_partial_delete(self, rig) -> None:
+        # A shared entity cites both docs' text units; deleting one referrer
+        # keeps it for the survivor, stripped of the deleted doc's unit.
         docs = [_doc("/a.txt", "A"), _doc("/b.txt", "B")]
         a, b = docs
         a.document_id, b.document_id = "ra", "rb"
@@ -645,17 +501,14 @@ class TestMergeLaws:
             TextUnit(id="t2", text="x", document_ids=["rb"]),
         ]
         shared = _entity("shared", "S", text_unit_ids=["t1", "t2"])
-        lineages = build_document_lineage(docs, tus, [shared], [], [], [])
-        # union: both lineages carry 'shared'
-        assert all("shared" in ln.entity_ids for ln in lineages)
+        lineages = build_document_lineage(docs, tus)
+        assert [ln.text_unit_ids for ln in lineages] == [["t1"], ["t2"]]
 
-        _, fps = detect_delta(docs, inc.doc_status)
-        inc.commit(lineages, fps, entities=[shared])
-        delta, _ = detect_delta(
-            [b], inc.doc_status
-        )  # delete a; trim shared from removal set
-        inc.remove_changed_and_deleted(delta)
-        assert "shared" not in _all_deleted_ids(manager)
+        _, fps = detect_delta(docs, rig.inc.doc_status)
+        rig.inc.commit(lineages, fps, text_units=tus, entities=[shared])
+        delta, _ = detect_delta([b], rig.inc.doc_status)  # delete a
+        assert rig.inc.remove_changed_and_deleted(delta)
+        assert rig.entity_units() == {"shared": ["t2"]}
 
 
 class TestDeltaWriteGate:
@@ -671,9 +524,11 @@ class TestDeltaWriteGate:
 
     @staticmethod
     def _inc(max_failure_rate: float = 0.2) -> IncrementalIndexer:
+        config = Config()
+        config.indexing.max_failure_rate = max_failure_rate
         return IncrementalIndexer(
             FakeDocStatusStore(),
-            FakeIndexingManager(max_failure_rate),  # type: ignore[arg-type]
+            SimpleNamespace(config=config),  # type: ignore[arg-type]
         )
 
     def test_complete_success_records_processed(self) -> None:

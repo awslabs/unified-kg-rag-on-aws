@@ -56,6 +56,19 @@ def test_non_dev_enables_deletion_protection(prod: Template) -> None:
     assert cluster["Properties"]["DeletionProtection"] is True
 
 
+def test_doc_status_table_is_keyed_by_namespace_then_doc_id(prod: Template) -> None:
+    # The registry reads one index namespace per run (a Query): the
+    # namespace is the partition key (DynamoDBDocStatusStore). The table of
+    # the earlier doc_id-only key schema had another name, so the schema
+    # change replaces it instead of failing on the custom name.
+    (table,) = prod.find_resources("AWS::DynamoDB::Table").values()
+    assert table["Properties"]["KeySchema"] == [
+        {"AttributeName": "namespace", "KeyType": "HASH"},
+        {"AttributeName": "doc_id", "KeyType": "RANGE"},
+    ]
+    assert table["Properties"]["TableName"].endswith("graphrag-doc-status-v2")
+
+
 def test_non_dev_buckets_do_not_auto_delete_objects(prod: Template) -> None:
     assert not prod.find_resources("Custom::S3AutoDeleteObjects")
 

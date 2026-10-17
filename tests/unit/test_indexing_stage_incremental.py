@@ -58,7 +58,7 @@ class _RecordingManager:
         self._delete_failures = delete_failures
         # The graph still holds what the registry lists.
         self.neptune_indexer = SimpleNamespace(
-            read_entities=lambda ids, suffix=None: ids
+            find_ids_citing=lambda ids, suffix=None: {"e": list(ids)}
         )
         # The live indices were built for this run's settings.
         self.opensearch_indexer = SimpleNamespace(
@@ -72,11 +72,11 @@ class _RecordingManager:
         self.calls.append(("index_all_data", kwargs))
         return {}
 
-    def delete_documents(
-        self, ids_by_suffix: dict[str, list[str]]
+    def remove_text_units(
+        self, suffix: str, text_unit_ids: list[str]
     ) -> dict[str, IndexingStats]:
-        self.calls.append(("delete_documents", ids_by_suffix))
-        removed = sum(len(ids) for ids in ids_by_suffix.values())
+        self.calls.append(("remove_text_units", {suffix: text_unit_ids}))
+        removed = len(text_unit_ids)
         return {
             "store": IndexingStats(
                 total_items=removed,
@@ -84,6 +84,15 @@ class _RecordingManager:
                 failed_items=self._delete_failures,
             )
         }
+
+    def delete_retired_ids(self) -> dict[str, IndexingStats]:
+        return {}
+
+    def discard_retired_ids(self) -> None:
+        return None
+
+    def collect_extraction_records(self) -> dict[str, IndexingStats]:
+        return {}
 
     def merge_with_existing_graph(self, entities, relationships, text_units=()):
         return CrossRunMergeResult(entities=entities, relationships=relationships)
@@ -134,7 +143,6 @@ def _seed_registry(store: FakeDocStatusStore, suffix: str = "default") -> None:
             content_hash="hash-v1",
             status=DocStatus.PROCESSED,
             suffix=suffix,
-            entity_ids=["e-stale"],
             text_unit_ids=["t-old"],
         )
     )
@@ -144,7 +152,7 @@ def _seed_registry(store: FakeDocStatusStore, suffix: str = "default") -> None:
             content_hash="hash-gone",
             status=DocStatus.PROCESSED,
             suffix=suffix,
-            entity_ids=["e-deleted"],
+            text_unit_ids=["t-gone"],
         )
     )
 
@@ -192,10 +200,10 @@ def test_removes_changed_and_deleted_in_one_pass_then_commits(mocker) -> None:
     results = _run(stage, ctx, text_units, entities)
 
     assert [name for name, _ in manager.calls] == [
-        "delete_documents",  # stale artifacts of the changed + deleted docs
+        "remove_text_units",  # stale text units of the changed + deleted docs
         "index_delta",  # upsert the freshly extracted delta
     ]
-    assert manager.calls[0][1] == {"default": ["e-deleted", "e-stale", "t-old"]}
+    assert manager.calls[0][1] == {"default": ["t-gone", "t-old"]}
     assert results["entities"].successful_items == 1
 
     # Registry: changed doc re-recorded with the new hash and lineage; deleted
@@ -203,7 +211,6 @@ def test_removes_changed_and_deleted_in_one_pass_then_commits(mocker) -> None:
     changed = store.get(compute_doc_id(_CHANGED))
     assert changed is not None
     assert changed.content_hash == "hash-v2"
-    assert changed.entity_ids == ["e-new"]
     assert changed.text_unit_ids == ["t-new"]
     assert store.get(compute_doc_id(_DELETED)) is None
 
@@ -223,7 +230,7 @@ def test_suffix_is_taken_from_first_text_unit(mocker) -> None:
     assert all(
         set(ids_by_suffix) == {"tenant1"}
         for name, ids_by_suffix in manager.calls
-        if name == "delete_documents"
+        if name == "remove_text_units"
     )
 
 
@@ -374,7 +381,6 @@ def _assert_pending_with_old_lineage(store: FakeDocStatusStore) -> None:
     assert record is not None
     assert record.status is DocStatus.PENDING
     assert record.content_hash == PENDING_CONTENT_HASH
-    assert {"e-stale", "e-new"} <= set(record.entity_ids)
     assert {"t-old", "t-new"} <= set(record.text_unit_ids)
     assert store.diff({compute_doc_id(_CHANGED): "hash-v1"}).changed == [
         compute_doc_id(_CHANGED)
@@ -401,7 +407,7 @@ def test_doc_with_failed_extraction_is_recorded_failed_and_retried(mocker) -> No
     assert record is not None
     assert record.status is DocStatus.FAILED
     assert record.content_hash == "hash-v2"
-    assert record.entity_ids == ["e-new"]
+    assert record.text_unit_ids == ["t-new"]
     assert store.diff({compute_doc_id(_CHANGED): "hash-v2"}).changed == [
         compute_doc_id(_CHANGED)
     ]

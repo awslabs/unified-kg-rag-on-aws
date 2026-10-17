@@ -277,6 +277,38 @@ class GraphIndexer(BaseIndexer):
         the projection to one tenant/version's label."""
         return []
 
+    def find_ids_citing(
+        self,
+        text_unit_ids: list[str],
+        suffix: str | None = None,
+        *,
+        communities: bool = False,
+    ) -> dict[str, list[str]] | None:
+        """``{vertex id: its text_unit_ids}`` of the entities (or, with
+        ``communities``, the community vertices) of ``suffix`` citing any of
+        ``text_unit_ids``.
+
+        An incremental run finds what a removed document contributed by its
+        text units (every artifact cites the units it was stated in). Default
+        returns ``None``: the backend cannot tell (nothing is removed through
+        it); adapters that override it raise when the read fails.
+        """
+        return None
+
+    def find_entity_ids_by_name_key(
+        self, name_keys: list[str], suffix: str | None = None
+    ) -> list[str] | None:
+        """Ids of the entities of ``suffix`` whose ``compact_name_key`` is one
+        of ``name_keys`` (stored with the entity).
+
+        The cross-run merge links names by that key (``FuzzyMatcher`` without
+        fuzzy resolution), so the stored entities a delta can merge into are
+        found by its names' keys instead of reading every name. Default
+        returns ``None`` (the merge then reads every name,
+        :meth:`read_entity_names`).
+        """
+        return None
+
     def read_neighbor_ids(
         self, entity_ids: list[str], suffix: str | None = None
     ) -> dict[str, list[str]]:
@@ -472,6 +504,31 @@ class VectorIndexer(BaseIndexer):
         raise when the read fails.
         """
         return {}
+
+    def find_documents(
+        self,
+        alias_prefix: str,
+        field: str,
+        values: list[str],
+        suffix: str | None = None,
+    ) -> dict[str, list[str]] | None:
+        """``{document id: its text_unit_ids}`` of the documents of
+        ``suffix``'s ``alias_prefix`` index whose keyword ``field`` (dotted
+        for a nested one) holds any of ``values``.
+
+        Finds the claims and community reports citing removed text units and
+        the text units naming an extraction record. Default returns ``None``:
+        the backend cannot tell; adapters that override it raise when the read
+        fails.
+        """
+        return None
+
+    def delete_extraction_records(
+        self, keys: list[str], suffix: str | None = None
+    ) -> IndexingStats:
+        """Delete extraction records by key (no text unit names them any
+        more). Default deletes nothing."""
+        return IndexingStats()
 
     def write_extraction_records(
         self, records: dict[str, dict[str, Any]], suffix: str | None = None

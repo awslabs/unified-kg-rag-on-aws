@@ -3,45 +3,39 @@
 """In-memory fake implementing ``DocStatusPort`` for fast, AWS-free tests.
 
 Structurally conforms to ``unified_kg_rag.ports.DocStatusPort``. The diff
-logic here is the reference behaviour the production DynamoDB adapter (M2) must
-match; both are exercised by the same test suite.
+logic here is the reference behaviour the production adapters must match;
+all are exercised by the same conformance suite. Records are kept by index
+namespace (``doc_id_namespace``), like the DynamoDB partitions.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterable
 
+from unified_kg_rag.domain.ingestion.delta_detector import scope_namespace
 from unified_kg_rag.domain.models import (
     DocStatus,
     DocStatusRecord,
     DocumentDelta,
-    DocumentLineage,
 )
 from unified_kg_rag.shared import DataProcessingError
-
-_LINEAGE_FIELDS = (
-    "entity_ids",
-    "relationship_ids",
-    "text_unit_ids",
-    "community_ids",
-    "claim_ids",
-    "community_report_ids",
-)
+from unified_kg_rag.shared.utils.document_identity import doc_id_namespace
 
 
 class FakeDocStatusStore:
     """Dict-backed document-status registry.
 
     ``max_record_ids`` emulates a backend item limit (DynamoDB's 400 KB): a
-    record listing more artifact ids does not fit (:meth:`record_fits`) and
-    :meth:`put` rejects it. ``None`` means no limit.
+    record listing more text units does not fit (:meth:`record_fits`) and
+    :meth:`put` rejects it. ``None`` means no limit. ``namespace_reads``
+    counts :meth:`diff` and :meth:`list_namespace` reads by namespace (``None``
+    for a read of every namespace).
     """
 
     def __init__(self, max_record_ids: int | None = None) -> None:
         self._records: dict[str, DocStatusRecord] = {}
         self.max_record_ids = max_record_ids
-        # Lineage overflow by doc_id: {lineage field: ids}.
-        self.overflow: dict[str, dict[str, set[str]]] = {}
+        self.namespace_reads: list[str | None] = []
 
     def get(self, doc_id: str) -> DocStatusRecord | None:
         return self._records.get(doc_id)
@@ -72,40 +66,21 @@ class FakeDocStatusStore:
             self.put(record)
 
     def record_fits(self, record: DocStatusRecord) -> bool:
-        if self.max_record_ids is None:
-            return True
-        size = sum(len(getattr(record, name)) for name in _LINEAGE_FIELDS)
-        return size <= self.max_record_ids
-
-    def add_lineage_overflow(self, lineages: Iterable[DocumentLineage]) -> None:
-        for lineage in lineages:
-            stored = self.overflow.setdefault(lineage.doc_id, {})
-            for name in _LINEAGE_FIELDS:
-                ids = getattr(lineage, name)
-                if ids:
-                    stored.setdefault(name, set()).update(ids)
-
-    def get_lineage_overflow(
-        self, doc_ids: Iterable[str]
-    ) -> dict[str, DocumentLineage]:
-        return {
-            doc_id: DocumentLineage(
-                doc_id=doc_id,
-                **{
-                    name: sorted(self.overflow[doc_id].get(name, ()))
-                    for name in _LINEAGE_FIELDS
-                },
-            )
-            for doc_id in dict.fromkeys(doc_ids)
-            if doc_id in self.overflow
-        }
-
-    def delete_lineage_overflow(self, doc_ids: Iterable[str]) -> None:
-        for doc_id in doc_ids:
-            self.overflow.pop(doc_id, None)
+        return (
+            self.max_record_ids is None
+            or len(record.text_unit_ids) <= self.max_record_ids
+        )
 
     def delete(self, doc_id: str) -> None:
         self._records.pop(doc_id, None)
+
+    def list_namespace(self, namespace: str) -> list[DocStatusRecord]:
+        self.namespace_reads.append(namespace)
+        return [
+            record
+            for doc_id, record in self._records.items()
+            if doc_id_namespace(doc_id) == namespace
+        ]
 
     def list_all(self) -> list[DocStatusRecord]:
         return list(self._records.values())
@@ -116,9 +91,16 @@ class FakeDocStatusStore:
         scope: str | None = None,
         extraction_fingerprint: str | None = None,
     ) -> DocumentDelta:
+        namespace = scope_namespace(scope) if scope is not None else None
+        self.namespace_reads.append(namespace)
+        stored = {
+            doc_id: record
+            for doc_id, record in self._records.items()
+            if namespace is None or doc_id_namespace(doc_id) == namespace
+        }
         delta = DocumentDelta()
         for doc_id, content_hash in incoming.items():
-            existing = self._records.get(doc_id)
+            existing = stored.get(doc_id)
             if existing is None:
                 delta.new.append(doc_id)
             elif (
@@ -136,16 +118,10 @@ class FakeDocStatusStore:
         incoming_ids = set(incoming)
         delta.deleted = [
             doc_id
-            for doc_id, record in self._records.items()
+            for doc_id, record in stored.items()
             if doc_id not in incoming_ids and (scope is None or record.scope == scope)
         ]
         delta.stored_scopes = sorted(
-            {r.scope for r in self._records.values() if r.scope is not None}
-        )
-        delta.orphan_overflow = sorted(
-            doc_id
-            for doc_id in self.overflow
-            if doc_id not in self._records
-            or self._records[doc_id].status is not DocStatus.PENDING
+            {r.scope for r in stored.values() if r.scope is not None}
         )
         return delta

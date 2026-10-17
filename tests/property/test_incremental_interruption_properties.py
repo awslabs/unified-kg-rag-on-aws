@@ -7,8 +7,8 @@ random write step, and the run after that sees a follow-up corpus: the
 interrupted run's corpus again, that corpus with the documents it changed
 restored to their indexed content, or that corpus without the documents it
 added. The follow-up run must leave exactly what a fresh full build of the
-follow-up corpus stores, with every registry row PROCESSED and its lineage
-matching the stores.
+follow-up corpus stores, with every registry row PROCESSED and its text
+units matching the stores.
 
 A random case can name a point its run never reaches (no removal, fewer
 writes than ``k``), so each case records whether the interruption fired
@@ -28,7 +28,6 @@ from tests.fixtures.incremental_runs import (
     Corpus,
     IncrementalRun,
     expected_state,
-    largest_lineage,
 )
 
 pytestmark = pytest.mark.property
@@ -59,28 +58,48 @@ _CHANGED_AND_REMOVED: Corpus = {
     "/corpus/a.txt": [[(_V, _D, 2), (_D, _C, 1)]],
     "/corpus/c.txt": [[(_V, _C, 3)], [(_B, _D, 1)]],
 }
-# Changes a and removes the other three: three record deletes and, under the
-# tight item limit, a write-ahead record spilled into lineage overflow.
+# Changes a and removes the other three: three record deletes.
 _ONE_CHANGED: Corpus = {"/corpus/a.txt": [[(_V, _D, 2), (_D, _C, 1)]]}
 
 
-def _case(interrupted: Corpus, point: str, k: int, tight: bool) -> dict:
+def _case(interrupted: Corpus, point: str, k: int) -> dict:
     return {
         "before": _BEFORE,
         "interrupted": interrupted,
         "point": point,
         "k": k,
         "follow": "same",
-        "tight": tight,
     }
 
 
 _FIRING_CASES = [
-    *(_case(_CHANGED_AND_REMOVED, point, 1, False) for point in POINTS),
-    _case(_CHANGED_AND_REMOVED, "mid_commit", 1, True),
-    _case(_CHANGED_AND_REMOVED, "mid_record_deletes", 2, False),
-    _case(_ONE_CHANGED, "mid_record_deletes", 3, True),
-    _case(_ONE_CHANGED, "after_removal", 1, True),
+    *(_case(_CHANGED_AND_REMOVED, point, 1) for point in POINTS),
+    _case(_CHANGED_AND_REMOVED, "mid_record_deletes", 2),
+    _case(_ONE_CHANGED, "mid_record_deletes", 3),
+    _case(_ONE_CHANGED, "after_removal", 1),
+    # A new document's delta interrupted at its first store write leaves a
+    # vector copy without its graph copy; removing the document finds it.
+    {
+        "before": {},
+        "interrupted": {"/corpus/d.txt": [[(_V, _D, 1)]]},
+        "point": "mid_index_delta",
+        "k": 1,
+        "follow": "new_docs_removed",
+    },
+    # Stripping a shared edge interrupted after its endpoints were stripped:
+    # the retry still finds the edge through an endpoint citing the unit.
+    {
+        "before": {
+            "/corpus/c.txt": [[(_V, _D, 1)]],
+            "/corpus/d.txt": [[(_C, _V, 2), (_V, _C, 1)], [(_V, _D, 1), (_D, _V, 1)]],
+        },
+        "interrupted": {
+            "/corpus/d.txt": [[(_C, _V, 2), (_V, _C, 1)], [(_V, _D, 1), (_D, _V, 1)]]
+        },
+        "point": "mid_index_delta",
+        "k": 2,
+        "follow": "same",
+    },
 ]
 
 
@@ -112,7 +131,6 @@ def _follow_up(kind: str, before: Corpus, interrupted: Corpus) -> Corpus:
     point=st.sampled_from(POINTS),
     k=st.integers(1, 3),
     follow=st.sampled_from(["same", "reverted", "new_docs_removed"]),
-    tight=st.booleans(),
 )
 @_with_firing_examples
 def test_follow_up_run_after_an_interruption_matches_a_full_build(
@@ -121,9 +139,8 @@ def test_follow_up_run_after_an_interruption_matches_a_full_build(
     point: str,
     k: int,
     follow: str,
-    tight: bool,
 ) -> None:
-    fired, _ = _check_follow_up(before, interrupted, point, k, follow, tight)
+    fired = _check_follow_up(before, interrupted, point, k, follow)
     event(f"{point}: {'interrupted' if fired else 'not reached'}")
 
 
@@ -133,22 +150,13 @@ def _check_follow_up(
     point: str,
     k: int,
     follow: str,
-    tight: bool,
-) -> tuple[bool, bool]:
-    """Run the three runs and check the follow-up.
-
-    Returns whether the interruption fired and whether the interrupted run
-    left lineage overflow.
-    """
+) -> bool:
+    """Run the three runs and check the follow-up; return whether the
+    interruption fired."""
     corpus = _follow_up(follow, before, interrupted)
-    # A tight registry item limit: every record a commit writes fits, but a
-    # write-ahead record (stored + planned ids) may spill into overflow.
-    limit = largest_lineage(before, interrupted, corpus) if tight else None
-    store = FakeDocStatusStore(max_record_ids=limit)
-    harness = IncrementalRun(store)
+    harness = IncrementalRun(FakeDocStatusStore())
     harness.run(before)
     fired = harness.run(interrupted, interrupt=point, k=k)
-    left_overflow = bool(store.overflow)
 
     harness.run(corpus)
 
@@ -156,20 +164,15 @@ def _check_follow_up(
     assert harness.registry_problems(corpus) == []
     harness.run(corpus)
     assert harness.extracted == []
-    return fired, left_overflow
+    return fired
 
 
 @pytest.mark.parametrize(
     "case",
     _FIRING_CASES,
-    ids=[
-        f"{c['point']}-k{c['k']}{'-tight' if c['tight'] else ''}" for c in _FIRING_CASES
-    ],
+    ids=[f"{c['point']}-k{c['k']}" for c in _FIRING_CASES],
 )
 def test_each_interruption_point_fires(case: dict) -> None:
     # The examples above reach their point, so every point is exercised
     # whatever the random cases draw.
-    fired, left_overflow = _check_follow_up(**case)
-    assert fired
-    if case["interrupted"] is _ONE_CHANGED and case["tight"]:
-        assert left_overflow
+    assert _check_follow_up(**case)

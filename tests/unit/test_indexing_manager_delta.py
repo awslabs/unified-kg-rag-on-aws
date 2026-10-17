@@ -158,10 +158,11 @@ def test_cross_run_merge_threads_entity_id_remap_to_relationships(manager) -> No
 def test_cross_run_merge_of_a_same_id_entity_rewrites_no_unchanged_edge(
     manager,
 ) -> None:
-    # A delta entity that matches its own stored id has nothing to remap, so
-    # the merge reads back only the delta's own edges; its other edges are
-    # rewritten only when the name or rank they carry changes (here neither:
-    # the stored edge already counts the vendor's new neighbour).
+    # The merge reads the delta entity's stored edges to find one of another
+    # id between the same entities (none here: r-old joins another pair);
+    # its other edges are rewritten only when the name or rank they carry
+    # changes (here neither: the stored edge already counts the vendor's new
+    # neighbour).
     mgr, _, neptune_indexer = manager
     neptune_indexer.read_entities.return_value = [
         Entity(id="e-vendor", name="Vendor", text_unit_ids=["t1"])
@@ -190,7 +191,9 @@ def test_cross_run_merge_of_a_same_id_entity_rewrites_no_unchanged_edge(
         [Entity(id="e-vendor", name="Vendor", text_unit_ids=["t2"])], [delta_rel]
     )
 
-    assert neptune_indexer.read_relationships.call_args_list[0].args == (["r-new"],)
+    assert neptune_indexer.read_relationships.call_args_list[0].args == (
+        ["r-new", "r-old"],
+    )
     assert [r.id for r in result.relationships or []] == ["r-new"]
     assert result.id_remap_by_suffix == {}
 
@@ -268,9 +271,9 @@ def test_cross_run_merge_is_scoped_per_suffix(manager) -> None:
     assert set(by_suffix) == {"tenant-a", "tenant-b"}
     for suffix, entity in by_suffix.items():
         assert entity.text_unit_ids == [f"{suffix}-old", f"{suffix}-new"]
-    assert sorted(
+    assert {
         call.kwargs["suffix"] for call in neptune_indexer.read_entities.call_args_list
-    ) == ["tenant-a", "tenant-b"]
+    } == {"tenant-a", "tenant-b"}
 
 
 def test_read_back_entity_without_attributes_keeps_the_delta_suffix(manager) -> None:

@@ -35,11 +35,9 @@ from unified_kg_rag.application.ingestion.pipeline_stages import (
 from unified_kg_rag.domain.ingestion.delta_detector import (
     assign_document_identity,
     assign_registry_source,
-    compute_content_hash,
     compute_doc_id,
     detect_delta,
     document_doc_id,
-    legacy_doc_id,
     other_local_scopes,
     retire_source_scopes,
     validate_retired_scopes,
@@ -92,14 +90,7 @@ def _run(
     kept, _ = loading._apply_incremental_filter(list(context.documents), context)
     context.documents = kept
 
-    lineages = build_document_lineage(
-        documents=kept,
-        text_units=[],
-        entities=[],
-        relationships=[],
-        communities=[],
-        claims=[],
-    )
+    lineages = build_document_lineage(documents=kept, text_units=[])
     indexer = IncrementalIndexer(
         store, mocker.MagicMock(), scope=context.incremental_scope
     )
@@ -254,14 +245,7 @@ def _load_json_corpus(
     DocumentLoadingStage(config, source_directory=root, doc_status=store)._execute_core(
         context
     )
-    lineages = build_document_lineage(
-        documents=context.documents,
-        text_units=[],
-        entities=[],
-        relationships=[],
-        communities=[],
-        claims=[],
-    )
+    lineages = build_document_lineage(documents=context.documents, text_units=[])
     IncrementalIndexer(
         store, mocker.MagicMock(), scope=context.incremental_scope
     )._record_processed(lineages, context.incremental_fingerprints)
@@ -391,7 +375,7 @@ def test_scoped_diff_only_deletes_records_of_the_same_scope(registry) -> None:
     assert registry.get("legacy").scope is None
 
 
-# --- adopting records keyed without the source scope ------------------------
+# --- source scopes in the registry key ----------------------------------------
 
 _SCOPE = "default|s3://bucket/corpus-1/"
 _SOURCE = "s3://bucket/corpus-1/"
@@ -409,18 +393,6 @@ def _scoped_document(relative: str, text: str) -> Document:
     return document
 
 
-def _legacy_record(document: Document, scope: str | None) -> DocStatusRecord:
-    return DocStatusRecord(
-        doc_id=legacy_doc_id(document),
-        content_hash=compute_content_hash(document),
-        status=DocStatus.PROCESSED,
-        scope=scope,
-        file_path="a.txt",
-        entity_ids=["e1"],
-        text_unit_ids=["t1"],
-    )
-
-
 def test_source_scope_is_part_of_the_doc_id() -> None:
     assert compute_doc_id("a.txt", "default", "s1") != compute_doc_id(
         "a.txt", "default", "s2"
@@ -428,274 +400,6 @@ def test_source_scope_is_part_of_the_doc_id() -> None:
     assert compute_doc_id("a.txt", "default", "s1") != compute_doc_id("a.txt")
     document = _scoped_document("a.txt", "Vendor ships goods.")
     assert document_doc_id(document) == compute_doc_id("a.txt", "default", _SOURCE)
-    assert legacy_doc_id(document) == compute_doc_id("a.txt", "default")
-
-
-def test_a_legacy_record_of_the_scope_is_adopted(registry) -> None:
-    document = _scoped_document("a.txt", "Vendor ships goods.")
-    registry.put(_legacy_record(document, _SCOPE))
-    doc_id = document_doc_id(document)
-
-    delta, _ = detect_delta(
-        [document],
-        registry,
-        scope=_SCOPE,
-        legacy_doc_ids={doc_id: legacy_doc_id(document)},
-    )
-
-    assert delta.unchanged == [doc_id]
-    assert delta.new == delta.deleted == []
-    assert registry.get(legacy_doc_id(document)) is None
-    adopted = registry.get(doc_id)
-    assert adopted.entity_ids == ["e1"] and adopted.text_unit_ids == ["t1"]
-    assert adopted.scope == _SCOPE
-
-
-def test_a_failed_files_legacy_record_is_adopted_not_deleted(registry) -> None:
-    document = _scoped_document("a.txt", "Vendor ships goods.")
-    registry.put(_legacy_record(document, _SCOPE))
-    doc_id = document_doc_id(document)
-
-    # a.txt failed to parse this run, so no document reaches the diff.
-    delta, _ = detect_delta(
-        [],
-        registry,
-        scope=_SCOPE,
-        failed_doc_ids=[doc_id],
-        legacy_doc_ids={doc_id: legacy_doc_id(document)},
-    )
-
-    assert delta.deleted == []
-    assert delta.failed == [doc_id]
-    assert registry.get(doc_id).entity_ids == ["e1"]
-    assert registry.get(legacy_doc_id(document)) is None
-
-
-def test_an_interrupted_adoption_only_drops_the_stale_legacy_key(registry) -> None:
-    document = _scoped_document("a.txt", "Vendor ships goods.")
-    legacy = _legacy_record(document, _SCOPE)
-    doc_id = document_doc_id(document)
-    registry.put(legacy)
-    registry.put(legacy.model_copy(update={"doc_id": doc_id}))
-
-    delta, _ = detect_delta(
-        [document],
-        registry,
-        scope=_SCOPE,
-        legacy_doc_ids={doc_id: legacy_doc_id(document)},
-    )
-
-    assert delta.unchanged == [doc_id]
-    assert delta.deleted == []
-    assert [r.doc_id for r in registry.list_all()] == [doc_id]
-
-
-@pytest.mark.parametrize("edited", [False, True])
-def test_an_interrupted_adoption_of_a_scopeless_record_drops_it(
-    registry, edited
-) -> None:
-    # Written before scopes existed (scope None), adopted under the current
-    # key, then interrupted before the legacy key was deleted. A scope-None
-    # record is never a deletion candidate, so only the adoption cleanup can
-    # remove it; left behind, it keeps the old version's artifacts referenced.
-    document = _scoped_document("a.txt", "Vendor ships goods.")
-    legacy = _legacy_record(document, None)
-    doc_id = document_doc_id(document)
-    registry.put(legacy)
-    registry.put(legacy.model_copy(update={"doc_id": doc_id, "scope": _SCOPE}))
-    if edited:
-        document = _scoped_document("a.txt", "Vendor ships other goods.")
-
-    delta, _ = detect_delta(
-        [document],
-        registry,
-        scope=_SCOPE,
-        legacy_doc_ids={doc_id: legacy_doc_id(document)},
-    )
-
-    assert (delta.changed if edited else delta.unchanged) == [doc_id]
-    assert delta.new == delta.deleted == []
-    assert [r.doc_id for r in registry.list_all()] == [doc_id]
-    assert registry.get(doc_id).entity_ids == ["e1"]
-
-
-def test_an_interrupted_adoption_of_a_failed_file_drops_the_legacy_key(
-    registry,
-) -> None:
-    document = _scoped_document("a.txt", "Vendor ships goods.")
-    legacy = _legacy_record(document, None)
-    doc_id = document_doc_id(document)
-    registry.put(legacy)
-    current = legacy.model_copy(
-        update={"doc_id": doc_id, "scope": _SCOPE, "entity_ids": ["e2"]}
-    )
-    registry.put(current)
-
-    delta, _ = detect_delta(
-        [],
-        registry,
-        scope=_SCOPE,
-        failed_doc_ids=[doc_id],
-        legacy_doc_ids={doc_id: legacy_doc_id(document)},
-    )
-
-    # The current record is kept as is (not overwritten by the legacy copy).
-    assert delta.failed == [doc_id] and delta.deleted == []
-    assert registry.list_all() == [current]
-
-
-def test_a_legacy_record_of_another_scope_is_not_adopted(registry) -> None:
-    document = _scoped_document("a.txt", "Vendor ships goods.")
-    other = _legacy_record(document, "default|s3://bucket/corpus-2/")
-    registry.put(other)
-    doc_id = document_doc_id(document)
-
-    delta, _ = detect_delta(
-        [document],
-        registry,
-        scope=_SCOPE,
-        legacy_doc_ids={doc_id: legacy_doc_id(document)},
-    )
-
-    assert delta.new == [doc_id]
-    assert delta.deleted == []
-    assert registry.get(legacy_doc_id(document)) == other
-    assert registry.get(doc_id) is None
-
-
-def test_without_a_scope_nothing_is_adopted(registry) -> None:
-    document = _scoped_document("a.txt", "Vendor ships goods.")
-    registry.put(_legacy_record(document, None))
-    doc_id = document_doc_id(document)
-
-    delta, _ = detect_delta(
-        [document], registry, legacy_doc_ids={doc_id: legacy_doc_id(document)}
-    )
-
-    assert delta.new == [doc_id]
-    assert registry.get(legacy_doc_id(document)) is not None
-
-
-# --- legacy adoption adjusts the delta instead of diffing again --------------
-
-
-class _StaleDiffStore(FakeDocStatusStore):
-    """Registry whose scan lags its writes, like an eventually consistent
-    DynamoDB ``Scan``: every diff and listing answers from the records as
-    they were at the first diff. Counts the diffs."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.diffs = 0
-        self._snapshot: dict[str, DocStatusRecord] | None = None
-
-    def diff(
-        self,
-        incoming: dict[str, str],
-        scope: str | None = None,
-        extraction_fingerprint: str | None = None,
-    ):
-        self.diffs += 1
-        if self._snapshot is None:
-            self._snapshot = dict(self._records)
-        current, self._records = self._records, self._snapshot
-        try:
-            return super().diff(
-                incoming, scope=scope, extraction_fingerprint=extraction_fingerprint
-            )
-        finally:
-            self._records = current
-
-    def list_all(self) -> list[DocStatusRecord]:
-        return list((self._snapshot or self._records).values())
-
-
-def _no_removal_manager() -> MagicMock:
-    """An indexing manager that fails the test if any artifact is touched."""
-    manager = MagicMock()
-    manager.delete_documents.side_effect = AssertionError("nothing to delete")
-    manager.remove_text_units_from_shared.side_effect = AssertionError(
-        "nothing to strip"
-    )
-    return manager
-
-
-@pytest.mark.parametrize(
-    ("text", "status", "expected"),
-    [
-        ("Vendor ships goods.", DocStatus.PROCESSED, "unchanged"),
-        ("Vendor ships other goods.", DocStatus.PROCESSED, "changed"),
-        ("Vendor ships goods.", DocStatus.FAILED, "changed"),
-    ],
-)
-def test_legacy_adoption_diffs_once_and_classifies_in_memory(
-    text, status, expected
-) -> None:
-    store = _StaleDiffStore()
-    stored = _scoped_document("a.txt", "Vendor ships goods.")
-    legacy = _legacy_record(stored, _SCOPE).model_copy(update={"status": status})
-    store.put(legacy)
-    document = _scoped_document("a.txt", text)
-    doc_id = document_doc_id(document)
-
-    delta, _ = detect_delta(
-        [document],
-        store,
-        scope=_SCOPE,
-        legacy_doc_ids={doc_id: legacy_doc_id(document)},
-    )
-
-    assert store.diffs == 1
-    assert getattr(delta, expected) == [doc_id]
-    assert delta.new == delta.deleted == []
-    assert store.get(legacy.doc_id) is None
-    assert store.get(doc_id).text_unit_ids == ["t1"]
-
-
-def test_a_stale_scan_after_adoption_deletes_nothing() -> None:
-    # Diffing again after the re-key, a scan that still returned the legacy
-    # key (scope = this run's) and not the new one read it as deleted and
-    # pruned the artifacts the adopted document now owns.
-    store = _StaleDiffStore()
-    document = _scoped_document("a.txt", "Vendor ships goods.")
-    store.put(_legacy_record(document, _SCOPE))
-    doc_id = document_doc_id(document)
-
-    delta, _ = detect_delta(
-        [document],
-        store,
-        scope=_SCOPE,
-        legacy_doc_ids={doc_id: legacy_doc_id(document)},
-    )
-
-    assert delta.deleted == [] and delta.unchanged == [doc_id]
-    indexer = IncrementalIndexer(store, _no_removal_manager(), scope=_SCOPE)
-    assert indexer.remove_changed_and_deleted(delta)
-    assert store.get(doc_id).entity_ids == ["e1"]
-
-
-def test_an_exhausted_adopted_document_is_not_read_back() -> None:
-    # The retry limit uses the adopted record as written: a store that does
-    # not return it yet would otherwise make it retry once more.
-    store = _StaleDiffStore()
-    document = _scoped_document("a.txt", "Vendor ships goods.")
-    store.put(
-        _legacy_record(document, _SCOPE).model_copy(
-            update={"status": DocStatus.FAILED, "failure_count": 3}
-        )
-    )
-    doc_id = document_doc_id(document)
-    store.get = MagicMock(side_effect=AssertionError("read back"))  # type: ignore[method-assign]
-
-    delta, _ = detect_delta(
-        [document],
-        store,
-        scope=_SCOPE,
-        max_failures=3,
-        legacy_doc_ids={doc_id: legacy_doc_id(document)},
-    )
-
-    assert delta.unchanged == [doc_id] and delta.changed == []
 
 
 # --- retiring source scopes ---------------------------------------------------

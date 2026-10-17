@@ -185,7 +185,7 @@ def test_private_mode_scopes_gateway_endpoints_to_deployment_resources() -> None
     assert ":s3:::graphrag-cache-111111111111-us-west-2/*" in s3
     # Without the ECR layer bucket, Fargate cannot pull the image.
     assert ":s3:::prod-us-west-2-starport-layer-bucket/*" in s3
-    assert ":dynamodb:us-west-2:111111111111:table/graphrag-doc-status" in ddb
+    assert ":dynamodb:us-west-2:111111111111:table/graphrag-doc-status-v2" in ddb
     # Only the deployment's own resources: no wildcard bucket or table.
     for doc in (s3_doc, json.loads(ddb)):
         for statement in doc["Statement"]:
