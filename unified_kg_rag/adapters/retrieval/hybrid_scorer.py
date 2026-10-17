@@ -174,7 +174,14 @@ class HybridScorer:
         rerank_only_types: set[str] | None = None,
         rerank_trace: RerankTrace | None = None,
     ) -> list[RetrievalResult]:
-        """Fuse, diversify, rerank and cut ``results_dict`` to ``top_k``.
+        """Fuse, rerank, diversify and cut ``results_dict`` to ``top_k``.
+
+        The stages run in that order, as upstream LightRAG reranks every chunk
+        candidate before it truncates: diversity filtering before the rerank
+        cut each type to its quota on fused (rank-only) scores, so up to half
+        of what the reranker would have ranked first never reached it. Run
+        after the rerank, MMR trades relevance against redundancy on the
+        reranker's own scores.
 
         The rerank step's outcome is recorded on ``rerank_trace`` when given.
         """
@@ -205,11 +212,6 @@ class HybridScorer:
             fusion_input = results_dict
 
         combined_results = fusion_func(fusion_input)
-
-        if self.fusion_config.diversity_lambda < 1.0:
-            combined_results = self._diversify(
-                combined_results, top_k, retrieval_multiplier, per_type_quota
-            )
 
         scope = (
             "all" if rerank_only_types is None else ",".join(sorted(rerank_only_types))
@@ -248,6 +250,11 @@ class HybridScorer:
         if rerank_trace is not None:
             rerank_trace.record(stage)
 
+        if self.fusion_config.diversity_lambda < 1.0:
+            combined_results = self._diversify(
+                combined_results, top_k, retrieval_multiplier, per_type_quota
+            )
+
         combined_results.sort(key=lambda x: x.score, reverse=True)
         # A single cross-type [:top_k] cut lets one type (usually entities, with many
         # near-tie RRF scores) crowd out text chunks — which is where LightRAG/GraphRAG
@@ -280,7 +287,7 @@ class HybridScorer:
         retrieval_multiplier: int,
         per_type_quota: dict[str, int] | None,
     ) -> list[RetrievalResult]:
-        """MMR diversity cut, run BEFORE rerank and the per-type quota.
+        """MMR diversity cut, run AFTER the rerank and before the per-type quota.
 
         Without a quota it is one cut to ``top_k * retrieval_multiplier``. With
         a quota, a single cross-type cut would let one type's near-ties take
@@ -608,7 +615,9 @@ class HybridScorer:
         """``results`` reordered by the rerank model, and the step's outcome.
 
         The caller (``fuse_and_rerank_results``) has already checked that a
-        rerank model is set and that there are candidates and a query.
+        rerank model is set and that there are candidates and a query. The
+        model sees the best ``search.reranking.top_k`` candidates by fused
+        score (its ``top_n``) and returns at most that many; the rest are cut.
 
         A failed or empty rerank keeps ``results`` (status ``failed``) unless
         ``search.reranking.required`` is set, which raises
@@ -619,7 +628,15 @@ class HybridScorer:
         try:
             start_time = time.time()
 
-            result_map = {self._get_result_key(res): res for res in results}
+            # top_n is set on a per-call copy, never on the shared model:
+            # strategies (and their scorer) are reused by concurrent queries and
+            # this runs in a worker thread, so a temporary mutation would leak
+            # one query's limit into another's rerank.
+            original_top_n = getattr(self.rerank_model, "top_n", None)
+            candidates = sorted(results, key=lambda r: r.score, reverse=True)
+            if original_top_n:
+                candidates = candidates[:original_top_n]
+            result_map = {self._get_result_key(res): res for res in candidates}
             documents = []
             for key, result in result_map.items():
                 doc = Document(
@@ -632,11 +649,6 @@ class HybridScorer:
                 )
                 documents.append(doc)
 
-            # top_n is set on a per-call copy, never on the shared model:
-            # strategies (and their scorer) are reused by concurrent queries and
-            # this runs in a worker thread, so a temporary mutation would leak
-            # one query's limit into another's rerank.
-            original_top_n = getattr(self.rerank_model, "top_n", None)
             adjusted_top_n = (
                 min(len(documents), original_top_n)
                 if original_top_n

@@ -431,6 +431,13 @@ Library API (Python callers and custom backends).
   to replace an existing index's communities (incremental runs cluster only
   their delta). Set a large `max_cluster_size` to keep the previous
   partition (#314).
+- Fusion reranks before it diversifies: fuse, rerank, MMR diversity
+  filtering, then the per-type quota (or `top_k`) cut. MMR used to cut each
+  type to its quota on fused scores first, so 16-50% of the reranker's top
+  20 chunks never reached it; now about 97% are kept, and MMR trades
+  relevance against redundancy on the reranker's scores. The reranker
+  receives the best `search.reranking.top_k` fused candidates of the types
+  it reranks, as that setting already documented (#PR).
 - OpenSearch indexing keeps 16 embedding requests in flight (was 8), so it
   embeds and bulk-writes 800 items of a type at a time (was 400). In the
   real-AWS E2E 1,600 texts took 9.4 s instead of 18.8 s, with no Bedrock

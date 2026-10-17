@@ -776,3 +776,73 @@ class TestRerankDegradation:
         assert out == results  # unchanged on failure
         assert stage.status == "failed"
         assert _BoomModel.top_n == 5  # restored in finally
+
+
+class TestRerankBeforeDiversity:
+    """Fusion runs fuse -> rerank -> MMR -> quota.
+
+    MMR used to cut each type to its quota on the fused (rank-only) scores
+    before the rerank, so the item the reranker ranks first could be cut
+    before the reranker ever saw it.
+    """
+
+    class _ScoreModel:
+        """A rerank model that scores by a fixed table and records its input."""
+
+        top_n = 100
+
+        def __init__(self, scores: dict[str, float]) -> None:
+            self.scores = scores
+            self.seen: list[str] = []
+
+        def compress_documents(self, documents, query):  # noqa: ANN001
+            # A per-call copy runs this (top_n is never set on the shared
+            # model), so record into the list the copy shares.
+            self.seen[:] = [d.metadata["source"] for d in documents]
+            ranked = sorted(documents, key=lambda d: -self.scores[d.metadata["source"]])
+            for doc in ranked:
+                doc.metadata["relevance_score"] = self.scores[doc.metadata["source"]]
+            return ranked[: self.top_n]
+
+    @staticmethod
+    def _chunks() -> list[RetrievalResult]:
+        # Fused order a > b > c > d; c and d repeat a's words, b does not.
+        return [
+            RetrievalResult(
+                content=text, score=score, source=src, retriever_type="text"
+            )
+            for src, text, score in (
+                ("a", "x y", 0.9),
+                ("b", "p q", 0.8),
+                ("c", "x y z", 0.7),
+                ("d", "x y w", 0.6),
+            )
+        ]
+
+    def _scorer(self, scores: dict[str, float], top_n: int = 100) -> HybridScorer:
+        config = Config()
+        config.search.reranking.enabled = False
+        config.search.fusion.method = FusionMethod.WEIGHTED
+        config.search.fusion.diversity_lambda = 0.5
+        scorer = HybridScorer(config)
+        scorer.rerank_model = self._ScoreModel(scores)
+        scorer.rerank_model.top_n = top_n
+        return scorer
+
+    def test_the_rerankers_best_item_is_not_cut_by_diversity(self) -> None:
+        scorer = self._scorer({"a": 0.6, "b": 0.7, "c": 0.8, "d": 0.9})
+        out = scorer.fuse_and_rerank_results(
+            {"chunks": self._chunks()},
+            top_k=2,
+            query="q",
+            per_type_quota={"text": 2},
+            rerank_only_types={"text"},
+        )
+        # Every candidate reached the reranker, and its best one survives.
+        assert sorted(scorer.rerank_model.seen) == ["a", "b", "c", "d"]
+        assert [r.source for r in out] == ["d", "b"]
+
+    def test_the_reranker_sees_at_most_its_top_n_best_fused(self) -> None:
+        scorer = self._scorer({"a": 0.6, "b": 0.7, "c": 0.8, "d": 0.9}, top_n=3)
+        scorer.fuse_and_rerank_results({"chunks": self._chunks()}, top_k=4, query="q")
+        assert scorer.rerank_model.seen == ["a", "b", "c"]
