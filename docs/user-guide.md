@@ -1097,6 +1097,11 @@ with one config file each; `indexing.additional_suffix` must be the same on
 both sides. Incremental indexing and deletion are scoped to the index suffix
 (§5).
 
+The suffix separates names, not access: whoever can query can name any
+suffix. A multi-tenant service must derive it from the authenticated caller
+on the server, never take it from the request; infrastructure-enforced
+options are in [Operator Runbook: Query access and tenant isolation](./operations.md#query-access-and-tenant-isolation).
+
 ### Multilingual ingestion
 
 Set the corpus's predominant language and the target you want to index in:

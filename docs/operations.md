@@ -323,6 +323,45 @@ common point: run one full rebuild with `indexing.reset: true` (see
 registry records and re-indexes the whole corpus. Restore the table first
 only if other namespaces share it.
 
+## Query access and tenant isolation
+
+Queries (`run-rag`, `run-eval`, or an application that embeds
+`GraphRAGChain`) need far less than ingestion. The CDK stack gives them their
+own task definition and role (`QueryTaskDefinitionArn`, `QueryTaskRoleArn`
+outputs of `GraphRagCompute`; see
+[`iac/README.md`](../iac/README.md#4-query-from-inside-the-vpc)): Neptune
+`connect` and `ReadDataViaQuery`, OpenSearch `GET`/`HEAD` on the domain and
+`POST` only on `_search` paths (OpenSearch authorizes by HTTP method and URL
+path, so `_bulk`, `_doc`, `_delete_by_query` and index changes are denied),
+Bedrock model, rerank and guardrail calls, and the cache bucket's `eval/`
+prefix. It has no DynamoDB access and cannot write or delete in either store.
+Run queries with it, not with the ingestion task definition, whose role
+holds `neptune-db:DeleteDataViaQuery`, `es:ESHttp*` and read/write on the
+doc-status table. A serving layer of your own should assume a role with the
+same grants.
+
+**The index suffix is a naming separation, not an access-control boundary.**
+`RAGInput.suffix` / `--suffix` selects which indices and labels a query
+reads, and the chain validates it so it cannot widen the index target, but
+any caller that holds the query role can name any suffix. A multi-tenant
+serving layer must therefore set the suffix server-side from the
+authenticated principal (for example a tenant claim in the caller's token),
+never from a request field. When tenants must be isolated by the
+infrastructure rather than by that code:
+
+- OpenSearch: give each tenant its own query role whose `es:ESHttpGet`,
+  `es:ESHttpHead` and `es:ESHttpPost` resources name only its indices, such
+  as `<domain ARN>/graphrag-*-<suffix>` and `<domain ARN>/graphrag-*-<suffix>/*`
+  (aliases are `<index prefix>-<suffix>`; pick suffixes that never end in
+  `-<another suffix>`, or set distinct index prefixes per tenant). For
+  document- or field-level rules, enable fine-grained access control on the
+  domain and map each tenant role to an OpenSearch role whose index
+  permissions cover only `*-<suffix>*`.
+- Neptune: IAM authorizes a whole cluster, with no per-label scope, so a
+  tenant whose graph must be unreadable by others needs its own Neptune
+  cluster (one deployment, or one `env_name`, per tenant).
+- Bedrock and the guardrail are shared and hold no tenant data.
+
 ## Start-up endpoint check
 
 Before the first paid model call, the CLIs check that the store endpoints the

@@ -299,6 +299,40 @@ S3의 코퍼스가 원본이므로 모든 저장소는 코퍼스에서 다시 �
 다시 인덱싱합니다. 다른 네임스페이스가 테이블을 함께 쓸 때만 테이블을 먼저
 복원합니다.
 
+## 질의 권한과 테넌트 격리
+
+질의(`run-rag`, `run-eval`, `GraphRAGChain`을 내장한 애플리케이션)에는 수집보다
+훨씬 적은 권한이 필요합니다. CDK 스택은 질의용 태스크 정의와 역할을 따로 만듭니다
+(`GraphRagCompute`의 `QueryTaskDefinitionArn`, `QueryTaskRoleArn` 출력.
+[`iac/README.md`](../iac/README.md#4-query-from-inside-the-vpc) 참고). 이 역할은
+Neptune `connect`와 `ReadDataViaQuery`, 도메인에 대한 OpenSearch `GET`/`HEAD`와
+`_search` 경로에만 허용한 `POST`(OpenSearch는 HTTP 메서드와 URL 경로로 권한을
+판단하므로 `_bulk`, `_doc`, `_delete_by_query`, 인덱스 변경은 거부됩니다), Bedrock
+모델·재순위화·가드레일 호출, 캐시 버킷의 `eval/` 접두사만 가집니다. DynamoDB에는
+접근할 수 없고 두 저장소 어디에도 쓰거나 지울 수 없습니다. 질의는 이 태스크 정의로
+실행하세요. 수집 태스크 정의의 역할에는 `neptune-db:DeleteDataViaQuery`,
+`es:ESHttp*`, 문서 상태 테이블 읽기·쓰기 권한이 있습니다. 직접 만든 서빙 계층도 같은
+권한의 역할을 쓰도록 하세요.
+
+**인덱스 접미사는 이름 분리일 뿐 접근 제어 경계가 아닙니다.** `RAGInput.suffix` /
+`--suffix`는 질의가 읽을 인덱스와 레이블을 고르고, 체인은 이 값이 인덱스 대상을
+넓히지 못하도록 검증합니다. 하지만 질의 역할을 가진 호출자는 어떤 접미사든 지정할 수
+있습니다. 따라서 멀티 테넌트 서빙 계층은 접미사를 요청 필드에서 받지 말고, 인증된
+주체(예: 호출자 토큰의 테넌트 클레임)를 기준으로 서버에서 정해야 합니다. 코드가 아니라
+인프라로 테넌트를 격리해야 한다면 다음을 쓰세요.
+
+- OpenSearch: 테넌트마다 질의 역할을 따로 두고 `es:ESHttpGet`, `es:ESHttpHead`,
+  `es:ESHttpPost`의 리소스를 그 테넌트의 인덱스로 한정합니다. 예:
+  `<도메인 ARN>/graphrag-*-<suffix>`, `<도메인 ARN>/graphrag-*-<suffix>/*`
+  (별칭은 `<인덱스 접두사>-<suffix>`입니다. 어떤 접미사도 `-<다른 접미사>`로 끝나지
+  않게 정하거나 테넌트마다 인덱스 접두사를 다르게 두세요). 문서·필드 수준 규칙이
+  필요하면 도메인에서 세분화된 액세스 제어(fine-grained access control)를 켜고,
+  테넌트 역할마다 `*-<suffix>*` 인덱스 권한만 가진 OpenSearch 역할을 매핑하세요.
+- Neptune: IAM은 클러스터 단위로만 권한을 주고 레이블 단위 범위가 없습니다. 다른
+  테넌트가 그래프를 읽을 수 없어야 한다면 테넌트마다 Neptune 클러스터를 따로 두세요
+  (테넌트마다 배포 하나, 또는 `env_name` 하나).
+- Bedrock과 가드레일은 공유하며 테넌트 데이터를 보관하지 않습니다.
+
 ## 시작 시 엔드포인트 검사
 
 CLI는 첫 유료 모델 호출 전에 실행에 필요한 저장소 엔드포인트가 설정되어 있는지

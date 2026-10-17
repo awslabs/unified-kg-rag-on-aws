@@ -1,11 +1,18 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Compute: ECR image, ECS cluster, and a Fargate task definition for the data
-plane (run-ingestion / run-rag), plus a least-privilege task role.
+"""Compute: ECR image, ECS cluster, and two Fargate task definitions for the
+data plane, each with a least-privilege task role.
 
-The same task definition runs each Step Functions phase; the command and
-``--resume-from-stage`` are supplied as container overrides by the orchestration
-stack. Store endpoints are injected as the env vars the app reads
+- The ingestion task definition (``IngestionTask``) runs each Step Functions
+  phase; the command and ``--resume-from-stage`` are supplied as container
+  overrides by the orchestration stack. Its role writes and deletes in the
+  stores.
+- The query task definition (``QueryTask``) runs ``run-rag`` / ``run-eval``
+  with a read-only role: Neptune reads, OpenSearch GET/HEAD and ``_search``,
+  Bedrock, and the cache bucket's ``eval/`` prefix. No DynamoDB, no store
+  writes.
+
+Both run the same image with the same environment. Store endpoints are injected as the env vars the app reads
 (NEPTUNE_ENDPOINT / OPENSEARCH_ENDPOINT / BEDROCK_REGION / S3_BUCKET_NAME).
 
 With ``enable_cloudwatch_tracing`` the task also runs an AWS Distro for
@@ -29,6 +36,10 @@ from constructs import Construct
 from iac.config import DeploymentConfig
 from iac.stacks.networking_stack import NetworkingStack
 from iac.stacks.storage_stack import StorageStack
+
+# Cache-bucket prefix the query role may read and write: run-eval's datasets
+# and result files.
+EVAL_PREFIX = "eval/"
 
 # ADOT collector v0.50.0, pinned by the multi-arch index digest so a re-pushed
 # tag cannot change the sidecar. Bump both together (`docker buildx imagetools
@@ -131,13 +142,39 @@ class ComputeStack(Stack):
             removal_policy=removal_policy,
         )
 
+        self._collector_repository: ecr.IRepository | None = None
+        self.corpus_bucket: s3.IBucket | None = (
+            s3.Bucket.from_bucket_name(self, "CorpusBucket", config.corpus_bucket_name)
+            if config.corpus_bucket_name
+            else None
+        )
         self.task_role = self._build_task_role(storage)
-        self.task_definition = self._build_task_definition(networking, storage)
+        self.task_definition = self._build_task_definition(
+            storage, "IngestionTask", self.task_role, ephemeral_storage_gib=40
+        )
+        self.query_role = self._build_query_role(storage)
+        # Queries keep nothing on disk: the default 20 GiB is plenty.
+        self.query_task_definition = self._build_task_definition(
+            storage, "QueryTask", self.query_role
+        )
+        CfnOutput(
+            self,
+            "QueryTaskDefinitionArn",
+            value=self.query_task_definition.task_definition_arn,
+            description="Read-only task definition for run-rag / run-eval",
+        )
+        CfnOutput(
+            self,
+            "QueryTaskRoleArn",
+            value=self.query_role.role_arn,
+            description="Read-only query role (no store writes, no DynamoDB)",
+        )
 
-        # Let the task role use the shared CMK for the resources encrypted with
-        # it (S3 cache, DynamoDB), so reads/writes can decrypt.
+        # Let the task roles use the shared CMK for the resources encrypted
+        # with it (S3 cache, DynamoDB), so reads/writes can decrypt.
         if self.kms_key is not None:
             self.kms_key.grant_encrypt_decrypt(self.task_role)
+            self.kms_key.grant_encrypt_decrypt(self.query_role)
 
     # ------------------------------------------------------------ IAM role
     def _build_task_role(self, storage: StorageStack) -> iam.Role:
@@ -147,6 +184,110 @@ class ComputeStack(Stack):
             assumed_by=iam.ServicePrincipal("ecs-tasks.amazonaws.com"),
             description="unified-kg-rag-on-aws Fargate task role (least privilege)",
         )
+        self._grant_model_access(role)
+        # Neptune data-plane IAM auth. `connect` alone authorizes opening the
+        # WebSocket but NOT running Gremlin traversals — reads/writes need the
+        # explicit data-access actions, else queries return HTTP 403. Scoped to
+        # this cluster's resource id.
+        role.add_to_policy(
+            iam.PolicyStatement(
+                actions=[
+                    "neptune-db:connect",
+                    "neptune-db:ReadDataViaQuery",
+                    "neptune-db:WriteDataViaQuery",
+                    "neptune-db:DeleteDataViaQuery",
+                ],
+                resources=[self._neptune_data_arn(storage)],
+            )
+        )
+        # OpenSearch HTTP(S) operations on the domain.
+        role.add_to_policy(
+            iam.PolicyStatement(
+                actions=["es:ESHttp*"],
+                resources=[f"{storage.opensearch_domain.domain_arn}/*"],
+            )
+        )
+        # DynamoDB doc-status registry + S3 cache (scoped to our resources).
+        # The app only reads and writes cache objects (stage checkpoints,
+        # embedding cache); expiry is the bucket lifecycle's job, so the role
+        # gets no s3:DeleteObject*.
+        storage.doc_status_table.grant_read_write_data(role)
+        storage.cache_bucket.grant_read(role)
+        storage.cache_bucket.grant_put(role)
+        if self.corpus_bucket is not None:
+            # A corpus kept outside the cache bucket is only read (entrypoint
+            # `aws s3 sync`); the S3 endpoint policy allows it too.
+            self.corpus_bucket.grant_read(role)
+        self._grant_tracing(role)
+        return role
+
+    def _build_query_role(self, storage: StorageStack) -> iam.Role:
+        """The read-only role of ``run-rag`` / ``run-eval``.
+
+        A query reads the graph (Gremlin reads), searches the vector indices
+        (``HEAD`` index exists, ``GET`` mappings, ``POST <index>/_search``) and
+        calls Bedrock; it never touches the doc-status table. OpenSearch
+        authorizes by HTTP method and URL path, so ``POST`` is granted only on
+        ``_search`` paths: ``_bulk``, ``_doc``, ``_delete_by_query`` and index
+        creation stay denied. ``run-eval`` reads its dataset from and writes
+        its results to the cache bucket's ``eval/`` prefix (and may read an
+        evaluation dataset kept in ``corpus_bucket_name``).
+        """
+        role = iam.Role(
+            self,
+            "QueryTaskRole",
+            assumed_by=iam.ServicePrincipal("ecs-tasks.amazonaws.com"),
+            description="unified-kg-rag-on-aws query task role (read-only stores)",
+        )
+        self._grant_model_access(role)
+        role.add_to_policy(
+            iam.PolicyStatement(
+                actions=["neptune-db:connect", "neptune-db:ReadDataViaQuery"],
+                resources=[self._neptune_data_arn(storage)],
+            )
+        )
+        domain_arn = storage.opensearch_domain.domain_arn
+        role.add_to_policy(
+            iam.PolicyStatement(
+                actions=["es:ESHttpGet", "es:ESHttpHead"],
+                resources=[domain_arn, f"{domain_arn}/*"],
+            )
+        )
+        role.add_to_policy(
+            iam.PolicyStatement(
+                actions=["es:ESHttpPost"],
+                resources=[f"{domain_arn}/*/_search"],
+            )
+        )
+        storage.cache_bucket.grant_read(role, f"{EVAL_PREFIX}*")
+        storage.cache_bucket.grant_put(role, f"{EVAL_PREFIX}*")
+        if self.corpus_bucket is not None:
+            self.corpus_bucket.grant_read(role)
+        self._grant_tracing(role)
+        return role
+
+    def _neptune_data_arn(self, storage: StorageStack) -> str:
+        """Data-plane paths under this one Neptune cluster."""
+        return (
+            f"arn:{self.partition}:neptune-db:{self.region}:{self.account}:"
+            f"{storage.neptune_cluster.cluster_resource_identifier}/*"
+        )
+
+    def _grant_tracing(self, role: iam.Role) -> None:
+        if self.config.enable_cloudwatch_tracing:
+            # The collector sidecar signs span uploads to the CloudWatch OTLP
+            # traces endpoint with this role. That endpoint authorizes
+            # xray:PutTraceSegments only (a role with just xray:PutSpans gets
+            # a 403 naming PutTraceSegments), so that is the one action
+            # granted. It has no resource-level scoping.
+            role.add_to_policy(
+                iam.PolicyStatement(
+                    actions=["xray:PutTraceSegments"],
+                    resources=["*"],
+                )
+            )
+
+    def _grant_model_access(self, role: iam.Role) -> None:
         # Bedrock model invocation (LLM/embedding/rerank). Cross-region and
         # global inference profiles fan a single InvokeModel out to foundation
         # models in *several* regions, so the foundation-model resource must span
@@ -223,57 +364,6 @@ class ComputeStack(Stack):
                     actions=["bedrock:ApplyGuardrail"], resources=[guardrail_arn]
                 )
             )
-        # Neptune data-plane IAM auth. `connect` alone authorizes opening the
-        # WebSocket but NOT running Gremlin traversals — reads/writes need the
-        # explicit data-access actions, else queries return HTTP 403. Scoped to
-        # this cluster's resource id.
-        role.add_to_policy(
-            iam.PolicyStatement(
-                actions=[
-                    "neptune-db:connect",
-                    "neptune-db:ReadDataViaQuery",
-                    "neptune-db:WriteDataViaQuery",
-                    "neptune-db:DeleteDataViaQuery",
-                ],
-                resources=[
-                    f"arn:{partition}:neptune-db:{self.region}:{self.account}:"
-                    f"{storage.neptune_cluster.cluster_resource_identifier}/*"
-                ],
-            )
-        )
-        # OpenSearch HTTP(S) operations on the domain.
-        role.add_to_policy(
-            iam.PolicyStatement(
-                actions=["es:ESHttp*"],
-                resources=[f"{storage.opensearch_domain.domain_arn}/*"],
-            )
-        )
-        # DynamoDB doc-status registry + S3 cache (scoped to our resources).
-        # The app only reads and writes cache objects (stage checkpoints,
-        # embedding cache); expiry is the bucket lifecycle's job, so the role
-        # gets no s3:DeleteObject*.
-        storage.doc_status_table.grant_read_write_data(role)
-        storage.cache_bucket.grant_read(role)
-        storage.cache_bucket.grant_put(role)
-        if self.config.corpus_bucket_name:
-            # A corpus kept outside the cache bucket is only read (entrypoint
-            # `aws s3 sync`); the S3 endpoint policy allows it too.
-            s3.Bucket.from_bucket_name(
-                self, "CorpusBucket", self.config.corpus_bucket_name
-            ).grant_read(role)
-        if self.config.enable_cloudwatch_tracing:
-            # The collector sidecar signs span uploads to the CloudWatch OTLP
-            # traces endpoint with this role. That endpoint authorizes
-            # xray:PutTraceSegments only (a role with just xray:PutSpans gets
-            # a 403 naming PutTraceSegments), so that is the one action
-            # granted. It has no resource-level scoping.
-            role.add_to_policy(
-                iam.PolicyStatement(
-                    actions=["xray:PutTraceSegments"],
-                    resources=["*"],
-                )
-            )
-        return role
 
     def _guardrail_arn(self) -> str | None:
         """ARN of the guardrail the task uses (``guardrail_identifier``)."""
@@ -287,17 +377,21 @@ class ComputeStack(Stack):
 
     # ----------------------------------------------------- task definition
     def _build_task_definition(
-        self, networking: NetworkingStack, storage: StorageStack
+        self,
+        storage: StorageStack,
+        construct_id: str,
+        role: iam.Role,
+        ephemeral_storage_gib: int | None = None,
     ) -> ecs.FargateTaskDefinition:
         # CPU/memory are config-driven: the in-task ProcessPool extractors scale
         # with vCPU count, so a larger corpus benefits from more CPU.
         task_def = ecs.FargateTaskDefinition(
             self,
-            "IngestionTask",
+            construct_id,
             cpu=self.config.fargate_cpu,
             memory_limit_mib=self.config.fargate_memory,
-            task_role=self.task_role,
-            ephemeral_storage_gib=40,
+            task_role=role,
+            ephemeral_storage_gib=ephemeral_storage_gib,
         )
         environment = {
             "AWS_REGION": self.region,
@@ -377,10 +471,10 @@ class ComputeStack(Stack):
         return task_def
 
     # ------------------------------------------------ trace collector sidecar
-    def _add_trace_collector(
-        self, task_def: ecs.FargateTaskDefinition
-    ) -> ecs.ContainerDefinition:
-        """The ADOT collector: OTLP/HTTP on localhost in, CloudWatch out."""
+    def _collector_image_repository(self) -> ecr.IRepository:
+        """The pull-through-cache repository of the collector image (once)."""
+        if self._collector_repository is not None:
+            return self._collector_repository
         # Pulled through an ECR pull-through cache of ECR Public: the private
         # (no-NAT) data plane has no route to public.ecr.aws, but it reaches
         # this account's ECR through the VPC endpoints, and ECR fetches the
@@ -391,7 +485,7 @@ class ComputeStack(Stack):
         # cannot pull, so the README has the operator warm the cache from a
         # workstation after deploy: CollectorImageUri is the image to pull.
         prefix = self.config.collector_cache_prefix
-        cache_rule = ecr.CfnPullThroughCacheRule(
+        ecr.CfnPullThroughCacheRule(
             self,
             "CollectorImageCache",
             ecr_repository_prefix=prefix,
@@ -401,6 +495,20 @@ class ComputeStack(Stack):
         repository = ecr.Repository.from_repository_name(
             self, "CollectorRepo", f"{prefix}/{COLLECTOR_REPOSITORY}"
         )
+        CfnOutput(
+            self,
+            "CollectorImageUri",
+            value=repository.repository_uri_for_digest(COLLECTOR_DIGEST),
+            description="Pull once after deploy to fill the collector image cache",
+        )
+        self._collector_repository = repository
+        return repository
+
+    def _add_trace_collector(
+        self, task_def: ecs.FargateTaskDefinition
+    ) -> ecs.ContainerDefinition:
+        """The ADOT collector: OTLP/HTTP on localhost in, CloudWatch out."""
+        repository = self._collector_image_repository()
         # The first pull through the cache creates the repository and imports
         # the image, on this one repository only.
         task_def.add_to_execution_role_policy(
@@ -409,13 +517,7 @@ class ComputeStack(Stack):
                 resources=[repository.repository_arn],
             )
         )
-        task_def.node.add_dependency(cache_rule)
-        CfnOutput(
-            self,
-            "CollectorImageUri",
-            value=repository.repository_uri_for_digest(COLLECTOR_DIGEST),
-            description="Pull once after deploy to fill the collector image cache",
-        )
+        task_def.node.add_dependency(self.node.find_child("CollectorImageCache"))
 
         region, suffix = self.region, self.url_suffix
         collector_config = {

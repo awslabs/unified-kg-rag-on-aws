@@ -2013,6 +2013,18 @@ Library API (Python callers and custom backends).
 ### Security
 - Prompts delimit corpus and retrieved text as data, and inputs cannot close
   their delimiter tags (#179, #182).
+- IaC: queries get their own task definition and role
+  (`QueryTaskDefinitionArn` / `QueryTaskRoleArn` outputs of
+  `GraphRagCompute`). The role reads only: Neptune `connect` and
+  `ReadDataViaQuery`, OpenSearch `GET`/`HEAD` and `POST` on `_search` paths,
+  Bedrock, and the cache bucket's `eval/` prefix; no DynamoDB and no store
+  writes or deletes. `run-rag` / `run-eval` previously ran with the ingestion
+  role (`neptune-db:DeleteDataViaQuery`, `es:ESHttp*`, doc-status read/write).
+  Upgrade: run queries with `QueryTaskDefinitionArn` (iac/README.md, After
+  deploy) and keep `run-eval` datasets and results under `s3://<cache
+  bucket>/eval/`. The operator runbook explains that the index suffix is a
+  naming separation a serving layer must bind from the authenticated caller,
+  and how to isolate tenants in the infrastructure (#PR).
 - The CDK task role's `bedrock:ApplyGuardrail` is granted on the one
   guardrail passed as `guardrail_identifier` (in `bedrock_region`) instead of
   every guardrail in the account and region, and not at all without one

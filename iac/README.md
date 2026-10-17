@@ -16,7 +16,7 @@ can coexist in one account/region. Every resource also carries an `env` tag.
 |---|---|
 | `GraphRagNetwork` | VPC (reuse or create), subnets, data-plane security group, VPC endpoints for a created VPC: S3/DynamoDB gateways always; in `private` mode also interface endpoints (own security group, 443 from the data plane only) for Bedrock (`bedrock`, `bedrock-runtime`, `bedrock-agent-runtime`), ECR (`ecr.api`, `ecr.dkr`), CloudWatch Logs and STS, each with an endpoint policy that admits only this account's principals (`aws:PrincipalAccount`) |
 | `GraphRagStorage` | Neptune cluster (IAM auth), OpenSearch domain (VPC, encrypted), DynamoDB doc-status table, S3 cache bucket |
-| `GraphRagCompute` | ECR repo (lifecycle keeps the 10 newest images and never expires the deployed `image_tag`), ECS cluster, Fargate task definition + least-privilege task role (S3 cache read + put, no delete). Injects `OPENSEARCH_NUMBER_OF_REPLICAS` = 1 on a multi-node domain (0 on a single node) |
+| `GraphRagCompute` | ECR repo (lifecycle keeps the 10 newest images and never expires the deployed `image_tag`), ECS cluster, an ingestion Fargate task definition + least-privilege task role (S3 cache read + put, no delete), and a query task definition (`run-rag` / `run-eval`) whose role only reads the stores and has no DynamoDB access. Injects `OPENSEARCH_NUMBER_OF_REPLICAS` = 1 on a multi-node domain (0 on a single node) |
 | `GraphRagOrchestration` | Step Functions state machine — 4 resumable phases on Fargate, retried only when ECS cannot start the task (a phase that exits non-zero is not rerun), one JSON failure notification (execution id, error, cause; the publish is retried on throttling or transient errors) + SNS alarm topic. The topic is encrypted with its own customer-managed key whose policy lets CloudWatch alarms publish (the AWS-managed `alias/aws/sns` key cannot, so alarm notifications would be dropped) |
 | `GraphRagObservability` | CloudWatch dashboard + alarms: pipeline failed (a failed phase is also published by the orchestration failure notification, so it notifies twice; the alarm also covers failures the notification cannot report, such as an invalid start input), timed out or aborted, silent indexing-failure and extraction-failure (EMF), and store health (OpenSearch cluster-red / free-storage / JVM pressure, DynamoDB write throttling, Neptune writer CPU at least 90% for 3 × 5 minutes, writer freeable memory at most 512 MiB in 5 minutes, and Gremlin server errors in 3 consecutive minutes, so retried write conflicts during parallel writes do not page; see [Failed documents](../docs/operations.md#failed-documents) for the alarm table) → SNS. Synth warns if `alarm_email` is unset (alarms would have no subscriber) |
 | `GraphRagSecurity` | Shared customer-managed KMS key (optional, `use_cmk`) |
@@ -236,8 +236,9 @@ flowchart LR
   created, and Bedrock may be in another region.
 - Step Functions runs the four ingestion phases as separate Fargate tasks of
   one task definition; they hand off through the S3 stage checkpoints.
-  Querying (`run-rag`, `run-eval`) runs as a one-off task of the same task
-  definition ([After deploy](#after-deploy)).
+  Querying (`run-rag`, `run-eval`) runs as a one-off task of a second task
+  definition, same image and environment, whose role only reads the stores
+  ([After deploy](#after-deploy)).
 - The optional guardrail stack lives in `bedrock_region`, outside the deploy
   region's stacks.
 
@@ -409,6 +410,7 @@ OPENSEARCH_ENDPOINT=$(output GraphRagStorage OpenSearchEndpoint)
 | `GraphRagOrchestration` | `StateMachineArn` | Ingestion state machine |
 | `GraphRagSecurity` | `KmsKeyArn` | Shared CMK, only with `use_cmk=true` |
 | `GraphRagGuardrail` | `GuardrailIdentifier` | Created guardrail, in `bedrock_region` |
+| `GraphRagCompute` | `QueryTaskDefinitionArn`, `QueryTaskRoleArn` | Read-only query task definition and its role (Neptune reads, OpenSearch `GET`/`HEAD` and `_search`, Bedrock, the cache bucket's `eval/` prefix; no DynamoDB, no store writes) |
 | `GraphRagCompute` | `CollectorImageUri` | Collector image to pull once after deploy, only with `enable_cloudwatch_tracing` ([CloudWatch tracing](#cloudwatch-tracing-optional)) |
 
 The task already receives the endpoints, bucket, table and regions as
@@ -501,7 +503,7 @@ aws logs tail /graphrag/tasks --region "$REGION" --follow
 ### 4. Query from inside the VPC
 
 Both stores accept connections only from inside the VPC, so run `run-rag` as a
-one-off task of the same task definition, in the subnets and
+one-off task of the read-only query task definition, in the subnets and
 security group the state machine uses:
 
 ```bash
@@ -509,7 +511,7 @@ DEFINITION=$(aws stepfunctions describe-state-machine --region "$REGION" \
   --state-machine-arn "$STATE_MACHINE_ARN" --query definition --output text)
 PHASE=$(echo "$DEFINITION" | jq '.States.PrepPhase.Parameters')
 CLUSTER=$(echo "$PHASE" | jq -r '.Cluster')
-TASK_DEFINITION=$(echo "$PHASE" | jq -r '.TaskDefinition')
+TASK_DEFINITION=$(output GraphRagCompute QueryTaskDefinitionArn)
 SUBNETS=$(echo "$PHASE" | jq -r '.NetworkConfiguration.AwsvpcConfiguration.Subnets | join(",")')
 SECURITY_GROUPS=$(echo "$PHASE" | jq -r '.NetworkConfiguration.AwsvpcConfiguration.SecurityGroups | join(",")')
 
@@ -527,14 +529,23 @@ The command override must name the CLI explicitly (`run-rag ...`). The answer
 is written to the task's log stream (`app/app/<task id>` in
 `/graphrag/tasks`).
 
+The query task's role cannot write or delete in Neptune or OpenSearch and has
+no DynamoDB access, so a query, or a compromised serving process, cannot
+change the index; do not run queries with the ingestion task definition
+(`PrepPhase.TaskDefinition`). `--suffix` selects the corpus by name only:
+anyone who can run this task can name any suffix. A serving layer in front of
+it must set the suffix from the authenticated caller on the server; see
+[Query access and tenant isolation](../docs/operations.md#query-access-and-tenant-isolation)
+for infrastructure-enforced isolation (per-tenant OpenSearch index grants or
+fine-grained access control, a Neptune cluster per tenant).
+
 ### 5. Evaluate from inside the VPC
 
 `run-eval` runs the same way. The image holds no dataset and the task's disk is
 discarded on exit, so pass `s3://` paths for both: the dataset is downloaded
 before the run and the result files are uploaded when it ends. Keep them in
-the cache bucket, which the task role can already read and write (and which
-the `private`-mode S3 endpoint allows), under a prefix other than the two
-expiring ones, for example `eval/`. Reuse the variables from step 4:
+the cache bucket under `eval/`: the query role reads and writes only that
+prefix (and the `private`-mode S3 endpoint allows the bucket). Reuse the variables from step 4:
 
 ```bash
 aws s3 cp ./eval_data.json "s3://$CACHE_BUCKET/eval/eval_data.json" --region "$REGION"
@@ -562,7 +573,7 @@ result file fails to upload; the summary and errors are in the task's log
 stream. Uploads use the same `aws.s3.encryption` setting as the cache, so
 with `use_cmk=true` the results are encrypted with the CMK. To read a dataset
 from another bucket, deploy with `-c corpus_bucket_name=<bucket>`, which grants
-the task role read access and, in `private` mode, allows the bucket through the
+both task roles read access and, in `private` mode, allows the bucket through the
 S3 endpoint; results still go to the cache bucket.
 
 Operational procedures (re-ingesting, failed documents, alarms, caches) are in
