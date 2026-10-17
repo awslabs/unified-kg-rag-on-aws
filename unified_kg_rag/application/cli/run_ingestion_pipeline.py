@@ -315,8 +315,13 @@ class IngestionPipelineRunner:
 
     def _build_metrics_sink(self) -> MetricsSink:
         if self.args.metrics_sink == "cloudwatch":
-            logger.info("Forwarding pipeline metrics to CloudWatch (EMF)")
-            return CloudWatchEMFSink()
+            # Set by the CDK stack to its env_name, which its alarms filter on.
+            environment = os.getenv("GRAPHRAG_METRICS_ENVIRONMENT") or None
+            logger.info(
+                "Forwarding pipeline metrics to CloudWatch (EMF), environment '%s'",
+                environment or "-",
+            )
+            return CloudWatchEMFSink(environment=environment)
         return NullMetricsSink()
 
     def _create_pipeline_config(self) -> PipelineConfig:

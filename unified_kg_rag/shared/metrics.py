@@ -66,12 +66,14 @@ class CloudWatchEMFSink:
     logger that writes bare EMF lines to stdout (the stream the container's
     awslogs driver ships, like the app logs).
 
-    Every metric is published as the zero-dimension aggregate, which the
-    CloudWatch alarms and dashboard query. ``emit`` dimensions are written as
-    log properties (searchable in Logs Insights); only keys listed in
-    ``dimension_keys`` also become a metric dimension. Each distinct dimension
-    value is a separately billed custom-metric series, so never list a per-run
-    key such as ``pipeline_id``.
+    Every metric is published as one aggregate series: per ``environment``
+    when one is given (an ``Environment`` dimension, which the CDK stack's
+    alarms and dashboard query, so one deployment's runs never trip another's
+    alarms in the same account and region), else with no dimension. ``emit``
+    dimensions are written as log properties (searchable in Logs Insights);
+    only keys listed in ``dimension_keys`` also become a metric dimension.
+    Each distinct dimension value is a separately billed custom-metric series,
+    so never list a per-run key such as ``pipeline_id``.
     """
 
     def __init__(
@@ -79,8 +81,10 @@ class CloudWatchEMFSink:
         emf_logger: logging.Logger | None = None,
         *,
         dimension_keys: tuple[str, ...] = (),
+        environment: str | None = None,
     ) -> None:
         self._dimension_keys = dimension_keys
+        self._environment = environment
         if emf_logger is None:
             emf_logger = logging.getLogger("unified_kg_rag.emf")
             if not emf_logger.handlers:
@@ -106,11 +110,14 @@ class CloudWatchEMFSink:
         }
         if not numeric:
             return
-        dims = dimensions or {}
-        # The zero-dimension aggregate ([]) is what the dimensionless alarms
-        # (e.g. IndexingFailures) and dashboard widgets query. Other dimension
-        # values stay log properties unless configured as dimension keys.
+        dims = dict(dimensions or {})
+        # The aggregate (per environment, or with no dimension) is what the
+        # alarms (e.g. IndexingFailures) and dashboard widgets query. Other
+        # dimension values stay log properties unless configured as keys.
         dimension_sets: list[list[str]] = [[]]
+        if self._environment:
+            dims["Environment"] = self._environment
+            dimension_sets = [["Environment"]]
         keyed = [k for k in dims if k in self._dimension_keys]
         if keyed:
             dimension_sets.append(keyed)

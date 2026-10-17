@@ -168,6 +168,79 @@ def test_emf_metric_names_are_pipeline_metrics_fields() -> None:
         encoding="utf-8"
     )
     assert f'namespace="{EMF_NAMESPACE}"' in pipeline
+    assert 'f"duration_{stage_name}_seconds"' in pipeline
     names = _emf_metric_names(_template())
     assert {"total_items_index_failed", "total_entities_extracted"} <= names
-    assert names - _pipeline_metric_fields() == set()
+    durations = {f"duration_{stage}_seconds" for stage in _pipeline_stages()}
+    assert names - _pipeline_metric_fields() - durations == set()
+
+
+def _pipeline_stages() -> list[str]:
+    source = _PACKAGE / "domain" / "models" / "config.py"
+    tree = ast.parse(source.read_text(encoding="utf-8"))
+    (enum,) = (
+        node
+        for node in tree.body
+        if isinstance(node, ast.ClassDef) and node.name == "PipelineStageType"
+    )
+    return [
+        node.value.value
+        for node in enum.body
+        if isinstance(node, ast.Assign)
+        and isinstance(node.value, ast.Constant)
+        and isinstance(node.value.value, str)
+    ]
+
+
+def test_the_duration_widget_lists_every_stage() -> None:
+    from iac.stacks.observability_stack import PIPELINE_STAGES
+
+    assert list(PIPELINE_STAGES) == _pipeline_stages()
+
+
+def test_emf_alarms_watch_only_this_environment() -> None:
+    # A dev run in the same account and region must not trip prod's alarms:
+    # the task tags its EMF series with its env_name, the alarms filter on it.
+    for env in ("dev", "prod"):
+        template = _template({"env_name": env})
+        emf = [
+            stat
+            for alarm in template.find_resources("AWS::CloudWatch::Alarm").values()
+            for stat in [alarm["Properties"]]
+            + [
+                m["MetricStat"]["Metric"]
+                for m in alarm["Properties"].get("Metrics", [])
+                if "MetricStat" in m
+            ]
+            if stat.get("Namespace") == EMF_NAMESPACE
+        ]
+        assert emf
+        for stat in emf:
+            assert stat["Dimensions"] == [{"Name": "Environment", "Value": env}]
+
+
+def test_sustained_bedrock_throttling_alarms() -> None:
+    alarm = _alarms()["BedrockThrottling"]
+    (query,) = alarm["Metrics"]
+    # Summed over every model: Bedrock publishes per ModelId only.
+    assert "SUM(InvocationThrottles)" in query["Expression"]
+    assert 'SCHEMA("AWS/Bedrock", ModelId)' in query["Expression"]
+    assert (alarm["Threshold"], alarm["EvaluationPeriods"]) == (100, 3)
+    assert alarm["TreatMissingData"] == "notBreaching"
+    assert len(alarm["AlarmActions"]) == 1
+
+
+def test_ingestion_task_memory_alarms() -> None:
+    alarm = _alarms()["IngestionTaskMemory"]
+    stats = {
+        m["MetricStat"]["Metric"]["MetricName"]: m["MetricStat"]["Metric"]
+        for m in alarm["Metrics"]
+        if "MetricStat" in m
+    }
+    assert set(stats) == {"MemoryUtilized", "MemoryReserved"}
+    for metric in stats.values():
+        assert metric["Namespace"] == "ECS/ContainerInsights"
+        dims = {d["Name"] for d in metric["Dimensions"]}
+        # The ingestion task's family, not the query task's.
+        assert dims == {"ClusterName", "TaskDefinitionFamily"}
+    assert alarm["Threshold"] == 90

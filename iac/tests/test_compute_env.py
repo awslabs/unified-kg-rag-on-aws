@@ -325,3 +325,9 @@ def test_ingestion_disk_outside_fargate_range_is_rejected(gib: int) -> None:
         DeploymentConfig.from_context(
             cdk.App(context={"ingestion_ephemeral_storage_gib": gib})
         )
+
+
+@pytest.mark.parametrize("env", ["dev", "prod"])
+def test_task_tags_its_metrics_with_the_environment(env: str) -> None:
+    # Must match the CLI's env var and the observability stack's dimension.
+    assert _task_environment({"env_name": env})["GRAPHRAG_METRICS_ENVIRONMENT"] == env
