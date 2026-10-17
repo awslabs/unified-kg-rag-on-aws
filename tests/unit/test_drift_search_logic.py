@@ -325,6 +325,35 @@ async def test_rounds_stop_at_n_depth_and_k_followups() -> None:
     assert local.queries == ["about report 0?", "about report 1?"]
 
 
+async def test_a_round_runs_at_most_k_followups_of_the_open_queries() -> None:
+    # k_followups 2: two reports, one per fold, give six open follow-ups;
+    # two run, the earliest of the equally placed first, and four stay open.
+    local = _Local()
+    primer = _primer({f"report {i}": [f"{i}a?", f"{i}b?", f"{i}c?"] for i in (0, 1)})
+    strat = _strategy(local=local, primer=primer, n_depth=1)
+    strat.drift_config.k_followups = 2
+    result = await strat.asearch(SearchQuery(query="question"))
+    assert local.queries == ["0a?", "0b?"]
+    assert result.metadata["drift_follow_up_queries"] == 2
+    assert result.metadata["drift_open_follow_ups"] == 4
+
+
+async def test_an_action_reads_its_local_context_within_the_budget() -> None:
+    budgets: list[int] = []
+
+    class _Budget(_Tokens):
+        def optimize_context(self, results, query, max_tokens):
+            budgets.append(max_tokens)
+            return results[:0] if max_tokens < 1000 else results
+
+    strat = _strategy(n_depth=1, local_context_tokens=999)
+    strat.token_manager = _Budget()  # type: ignore[assignment]
+    await strat.asearch(SearchQuery(query="question"))
+    assert budgets and set(budgets) == {999}
+    # What the budget kept is the context the action answers from.
+    assert all(c["context"] == "" for c in strat.action.calls)
+
+
 async def test_a_follow_up_asked_twice_runs_once() -> None:
     local = _Local()
     primer = _primer({f"report {i}": ["same?", "question"] for i in (0, 2, 4)})
