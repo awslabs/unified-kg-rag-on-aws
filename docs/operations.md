@@ -257,9 +257,12 @@ A document is recorded `FAILED` in four cases:
 
 - translation, graph extraction, gleaning or claim extraction failed on one
   of its text units;
-- a base-level community covering one of its text units got no report (a
-  failed parent-level report marks no document; see
-  [User Guide: Failed documents](./user-guide.md#failed-documents));
+- a base-level community covering one of its text units got no report. A
+  failed parent-level report is logged as a WARNING and counted in the
+  stage's `reports_failed` metric but marks no document: a parent covers many
+  documents, and retrying them all for one report would re-extract most of
+  the corpus. Above `indexing.max_failure_rate` of the communities without a
+  report, the community detection stage fails instead;
 - an artifact stage (translation through community detection) crashed in a
   `--continue-on-error` run, which records every document of the run
   `FAILED`;
@@ -338,8 +341,8 @@ Wait for that run to finish and start again. A run that dies (a killed task,
 a lost host) stops renewing, so its lease expires at most `lease_seconds`
 after its last renewal and the next run proceeds; nothing needs cleaning up.
 A run whose renewals keep failing until its lease expires, or whose lease
-another run then took, stops before its next write with `NamespaceLeaseError:
-This run lost the write lease ...`: re-run once the other run ended.
+another run then took, stops before its next write with
+`NamespaceLeaseError: This run lost the write lease ...`: re-run once the other run ended.
 
 - **Where the lease lives.** In DynamoDB, the item with partition key
   `namespace` = `<namespace>` and sort key `doc_id` = `#lease` (owner in

@@ -781,6 +781,13 @@ changed once with the full-config keys (#332).
   configuration internals (loading, model selection, stage cache keys) moved
   to the configuration section, and implementation details the code and the
   configuration reference already state were dropped (#341).
+- The user guide opens each section with what it does and the command to
+  run, keeps one owner per topic (failed, quarantined and concurrent runs
+  link to the runbook; IAM permissions moved to installation), gives
+  filters a section of their own, presents the evaluators as a table with
+  a short section each, and splits the densest paragraphs into lists. It
+  also no longer advises raising `indexing.neptune.index_concurrency` for
+  large corpora, which the key's description warns against (#PR).
 - The operator runbook is organized by task: a task index at the top,
   routine operations, what to do when a run fails, the alarms in a section
   of their own, observability, and the common errors grouped by area

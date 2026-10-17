@@ -171,6 +171,33 @@ Two independent auth concerns:
 
    The `run-*` CLIs load the `.env` file automatically. When `use_iam: true`, no `.env` is needed.
 
+### IAM permissions
+
+Grant the principal running the CLIs access to: Bedrock (InvokeModel /
+InvokeModelWithResponseStream / CountTokens for your model IDs, plus
+embeddings; without CountTokens token counts fall back to estimates), Neptune
+(connect / SigV4 for `use_iam: true`), OpenSearch (read/write the configured
+indices), S3 (the configured bucket), and DynamoDB (when incremental indexing is
+on).
+
+Three Bedrock actions need statements of their own:
+
+- **`bedrock:Rerank` on `Resource: "*"`.** The Rerank API authorizes against a
+  different resource shape than `InvokeModel`, so a statement scoped to
+  foundation-model or inference-profile ARNs denies it (the CDK task role
+  grants it separately, `iac/stacks/compute_stack.py`). Without it every
+  query logs `Reranking failed: ...` at ERROR, reports
+  `metadata.rerank.status: failed` and returns the fused results unreranked
+  (or fails, with `search.reranking.required: true`). Reranking is on by
+  default; if you cannot grant the action, set
+  `search.reranking.enabled: false`.
+- **`bedrock:ListInferenceProfiles` on `Resource: "*"`**, an account-level
+  read the model resolver makes.
+- **`bedrock:ApplyGuardrail`** on the guardrail's ARN
+  (`arn:aws:bedrock:<bedrock region>:<account>:guardrail/<id>`), when a
+  guardrail is set.
+
+
 ### Local mode (no AWS)
 
 Local mode runs ingestion, querying and evaluation on a laptop or a single
@@ -275,58 +302,61 @@ points at `localhost` (see [Local stores in containers](#local-stores-in-contain
 - **Custom kinds** register a builder with
   `adapters.provider_registry.register_provider`; see [design §15](./design.md#15-extension-guide).
 
-Expected differences from AWS mode:
+#### Differences from AWS mode
+
+**Quality and models**
 
 - Extraction with small local models is noticeably weaker: more malformed
   output (retried, then recorded as failed chunks), weaker entity resolution
   and thinner community reports. Prefer the largest model the hardware runs.
-- No Bedrock prompt caching, and the local providers never attach a guardrail
-  to a model call. With `aws.bedrock.guardrail.identifier` set, the query
-  chain still screens queries and answers through Bedrock `ApplyGuardrail`
-  (AWS credentials needed). Reasoning effort settings do not apply.
-- The embedded vector store answers the queries the OpenSearch adapter
-  builds, with five differences. Text mapped to `nori` (Korean), `kuromoji`
-  (Japanese) or `smartcn` (Chinese) is split into overlapping CJK character
-  bigrams instead of being analyzed morphologically, so a name still matches
-  inside a longer word (홍길동 in 홍길동으로부터) but ranking differs from
-  OpenSearch's; the `english` analyzer stems only with `snowballstemmer`
-  from the `[local]` extra (without it, a warning is logged once). Emoji are
-  not indexed (OpenSearch's tokenizer keeps each as a word). There is
-  no fuzzy matching (OpenSearch's `fuzziness: AUTO`), so a misspelled query
-  term, and under the `standard` analyzer, which does not stem, an inflected
-  form ("vendors" for "vendor"), matches only through the vector side. kNN
-  search is exact: every document that passes the filters is scored, which
-  is accurate but grows linearly with the index. Hybrid search is fused by
-  the retriever the same way on both stores (a lexical and a kNN search of at
-  least 50 hits each, each min-max normalized over its own hits), so it differs only where those two
-  searches do.
-- The embedded vector store keeps each index it searches in memory (about
-  documents x dimension x 4 bytes per vector field). It is sized for about
-  100,000 documents per index and logs a warning when it loads a larger one;
-  use OpenSearch beyond that. Every write reloads the index on the next
-  query, and the first lexical query after it re-analyzes the searched text
-  field: about 10 s for 50,000 documents of 120 words. Under the `english`
-  analyzer a field of more than about 65,000 distinct words outgrows the
-  stemmer's cache, which makes that query about three times slower.
-- SQLite allows one writer at a time: run one ingestion per store file at a
-  time (queries can read alongside it). A writer that waits longer than
-  `search.store_timeout_seconds` fails with "stayed locked" (see
-  [Common errors](./operations.md#common-errors)). Keep the files on a local
-  disk; network filesystems (NFS, SMB, Amazon EFS) are not supported.
-- With the [containers](#local-stores-in-containers), Korean lexical analysis
-  depends on the `nori` plugin (installed by the compose file) or an
-  equivalent analyzer in your OpenSearch.
-- Token counts are estimates, so context budgets are approximate.
+- No Bedrock prompt caching, and reasoning-effort settings do not apply.
 - A local model's response cut at its output limit is not detected as
   truncated (Bedrock reports the stop reason); keep `max_output_tokens` at
   what the model can generate.
-- LLM judges in `run-eval` (`langchain`, `ragas`) run on the local model and
-  score less reliably; the deterministic evaluators are unaffected.
+- Token counts are estimates, so context budgets are approximate.
+- The LLM judges of `run-eval` (`langchain`, `ragas`) run on the local model
+  and score less reliably; the deterministic evaluators are unaffected.
+- The local providers never attach a guardrail to a model call. With
+  `aws.bedrock.guardrail.identifier` set, the query chain still screens
+  queries and answers through Bedrock `ApplyGuardrail` (AWS credentials
+  needed).
+- A model server that refuses a query's calls (a wrong key or model name, HTTP
+  4xx) or cannot be reached after the client's retries fails the query with
+  the client's error rather than answering "could not find".
 
-As with Bedrock, a model server that refuses a query's calls (a wrong key or
-model name, HTTP 4xx) or cannot be reached after the client's retries fails the
-query with the client's error rather than answering "could not find"; see
-[Common errors](./operations.md#common-errors).
+**The embedded vector store** answers the queries the OpenSearch adapter
+builds, with these differences:
+
+- Text mapped to `nori` (Korean), `kuromoji` (Japanese) or `smartcn`
+  (Chinese) is split into overlapping CJK character bigrams instead of being
+  analyzed morphologically: a name still matches inside a longer word
+  (홍길동 in 홍길동으로부터), but ranking differs from OpenSearch's.
+- The `english` analyzer stems only with `snowballstemmer` from the `[local]`
+  extra (without it, a warning is logged once). Emoji are not indexed.
+- There is no fuzzy matching (OpenSearch's `fuzziness: AUTO`), so a
+  misspelled query term, and under the non-stemming `standard` analyzer an
+  inflected form ("vendors" for "vendor"), matches only through the vector
+  side.
+- kNN search is exact: every document that passes the filters is scored,
+  which is accurate but grows linearly with the index. Hybrid search is fused
+  by the retriever the same way on both stores, so it differs only where the
+  lexical and kNN searches do.
+- Each searched index is held in memory (about documents x dimension x 4
+  bytes per vector field). It is sized for about 100,000 documents per index
+  and logs a warning when it loads a larger one; use OpenSearch beyond that.
+  The first query after a write reloads the index, and the first lexical
+  query re-analyzes the searched field: about 10 s for 50,000 documents of
+  120 words (about three times slower under `english` above about 65,000
+  distinct words).
+
+**SQLite files** allow one writer at a time: run one ingestion per store file
+at a time (queries can read alongside it). A writer that waits longer than
+`search.store_timeout_seconds` fails with "stayed locked". Keep the files on a
+local disk; network filesystems (NFS, SMB, Amazon EFS) are not supported.
+With the [containers](#local-stores-in-containers), Korean lexical analysis
+depends on the `nori` plugin (installed by the compose file) or an equivalent
+analyzer in your OpenSearch. The messages are in
+[Common errors](./operations.md#local-mode).
 
 #### Provider flags
 
@@ -388,20 +418,23 @@ To check the stores without any model, run the smoke test, which uses a
 hashing embedding provider and a fake model server:
 `LOCAL_STORES=1 uv run pytest tests/integration/test_local_stores.py`.
 
-Known differences from Neptune: TinkerGraph keeps the graph in memory only,
-so restarting Gremlin Server empties it while the SQLite registry keeps its
-records. An incremental run then stops before writing anything and asks for
-`indexing.reset: true` (or deleting the registry), instead of treating the
-lost documents as unchanged. A list property written when a vertex is created keeps duplicate values
-(Neptune stores them once). Every write looks its vertex or edge up by its
-`id` property first, so that a retry does not duplicate it; the compose
-file's Gremlin Server creates a TinkerGraph index on that property for
-vertices and edges at start-up. A Gremlin Server started without it scans
-every vertex or edge per lookup and slows down as the graph grows (10,000
-entities and their communities took about 60 seconds instead of 20). Use it
-for development-sized corpora. The containers drop all Linux capabilities, but
-the stores have no authentication or TLS; the compose file binds them to
-`127.0.0.1` only.
+Known differences from Neptune:
+
+- TinkerGraph keeps the graph in memory only, so restarting Gremlin Server
+  empties it while the SQLite registry keeps its records. An incremental run
+  then stops before writing anything and asks for `indexing.reset: true` (or
+  deleting the registry), instead of treating the lost documents as
+  unchanged.
+- A list property written when a vertex is created keeps duplicate values
+  (Neptune stores them once).
+- Every write looks its vertex or edge up by its `id` property first, so a
+  retry does not duplicate it. The compose file's Gremlin Server indexes that
+  property at start-up; one started without the index scans every vertex or
+  edge per lookup and slows down as the graph grows (10,000 entities and their
+  communities took about 60 seconds instead of 20). Use it for
+  development-sized corpora.
+- The containers drop all Linux capabilities, but the stores have no
+  authentication or TLS; the compose file binds them to `127.0.0.1` only.
 
 #### Local stores with Bedrock models
 
@@ -800,23 +833,26 @@ output unless `capture_content: true`. What is exported, how credentials are
 handled, and what an unreachable collector costs are in the runbook's
 [Export limits, private VPCs and privacy](./operations.md#export-limits-private-vpcs-and-privacy).
 
-Known limits: the streamed answer of `stream` / `astream` is traced as its own
-trace (retrieval and context building are in the `kg_rag.query` trace), and
-the async batch path records one span per batch, not per chunk. The streamed
-answer's model span takes `session.id` / `user.id` from the `session_id` /
-`user_id` in the answer step's run metadata, so it still groups with its
-session. A model call cancelled during `ainvoke` (for example by
-`asyncio.wait_for`) leaves no model span: LangChain reports no callback for
-it. A stream the caller stops reading early ends its span normally. With
-`otlp`, `langfuse` or `phoenix` the first backend the process installs also
-becomes OpenTelemetry's global tracer provider, which can be set only once:
-after a later configuration with different settings, the package's spans use
-the new exporter, but spans that other libraries emit through the global
-OpenTelemetry API are dropped. For CloudWatch, run an ADOT or
-OpenTelemetry Collector next to the task and use `backend: otlp`; on the CDK
-stacks, `-c enable_cloudwatch_tracing=true` adds that collector and sets the
-backend (recipe, Transaction Search and the Bedrock invocation-logging
-backstop in the
+Known limits:
+
+- The streamed answer of `stream` / `astream` is traced as its own trace
+  (retrieval and context building are in the `kg_rag.query` trace); its
+  model span takes `session.id` / `user.id` from the answer step's run
+  metadata, so it still groups with its session.
+- The async batch path records one span per batch, not per chunk.
+- A model call cancelled during `ainvoke` (for example by `asyncio.wait_for`)
+  leaves no model span: LangChain reports no callback for it. A stream the
+  caller stops reading early ends its span normally.
+- With `otlp`, `langfuse` or `phoenix` the first backend the process installs
+  also becomes OpenTelemetry's global tracer provider, which can be set only
+  once: after a later configuration with different settings, the package's
+  spans use the new exporter, but spans that other libraries emit through the
+  global OpenTelemetry API are dropped.
+
+For CloudWatch, run an ADOT or OpenTelemetry Collector next to the task and
+use `backend: otlp`; on the CDK stacks `-c enable_cloudwatch_tracing=true`
+adds that collector and sets the backend (recipe, Transaction Search and the
+Bedrock invocation-logging backstop in the
 [runbook](operations.md#cloudwatch-through-the-adot-collector-sidecar)). Local
 Langfuse and Phoenix recipes are in the [runbook](operations.md#observability)
 too.
@@ -825,8 +861,12 @@ too.
 
 ## 3. Ingestion (`run-ingestion`)
 
-Ingestion turns a directory of documents into a knowledge graph indexed in
-OpenSearch + Neptune.
+Ingestion turns a directory of documents into a knowledge graph in the graph
+store and the search and vector store. `run-ingestion --source-directory <dir>`
+runs the 12 stages ([Design §4](./design.md#4-ingestion-pipeline) shows them),
+checkpoints each one, and resumes after the last valid stage when re-run with
+the same `--pipeline-id`. With the doc-status registry on it is incremental
+([§5](#5-incremental-indexing)).
 
 ### CLI flags
 
@@ -900,39 +940,43 @@ run-ingestion --source-directory ./documents --config-path config.yaml \
 run-ingestion --source-directory ./documents --config-path config.yaml --metrics-sink cloudwatch
 ```
 
-**Resume vs. force-rebuild:** without `--force-rebuild`, completed stages are
-cached and skipped on re-run. Pass `--pipeline-id` to resume a specific prior
-run; with `--resume-from-stage` you re-run from a chosen stage onward, otherwise
-the pipeline resumes at the first failed or incomplete stage (with
-`--enabled-stages`, the first such stage in that set); a stage switched on
-since the pipeline last ran (gleaning or claim extraction, say) counts as
-incomplete. With incremental indexing, an automatic resume whose extraction
-settings differ from those its delta was computed with (a stage switched on,
-another model or prompt) restarts at `document_loading`, so the delta and the
-fingerprint recorded on the committed documents follow the new settings
-(`document_parsing` stays cached). Before resuming, the CLI
-checks that every completed stage's output is still cached under the current
-inputs; when it is not (the corpus or config changed), it lists the stages and
-asks before going on, and the resume recomputes them. Without a terminal, pass
-`--yes` to go on. `--force-rebuild` ignores the cached outputs, recomputes
-every stage and writes the new outputs to the cache, so a later run resumes
-from them. A run without `--pipeline-id` gets a new generated id.
+**Resume vs. force-rebuild.** Without `--force-rebuild`, completed stages are
+cached and skipped on a re-run:
 
-**S3 sync** keeps the stage cache in `s3://<bucket>/<prefix>/...`, so a fresh
-process (e.g. a new Fargate task) can resume without recomputing finished
-stages. The run uploads the files that changed after every stage, so a task
-that is stopped or dies keeps every stage it finished. On SIGTERM (ECS
-StopTask, a Step Functions timeout) `run-ingestion` stops the running stage,
-uploads its checkpoint and exits 143; a re-run with the same pipeline id
-starts at that stage. A failed upload between stages is logged and retried by
-the next one; a failed or partial initial download or final upload fails the
-run with `CacheSyncError` and `run-ingestion` exits non-zero, so the run that
-lost its checkpoint is the one marked failed. An empty remote cache on a fresh pipeline id is not an error. S3-synced
-checkpoints do not expire by `cache.ttl_seconds`; the bucket's lifecycle rule
-expires them (30 days in the CDK deployment). For
-embeddings specifically, set
-`indexing.opensearch.persist_embedding_cache: true` to avoid re-embedding
-unchanged text across runs.
+- `--pipeline-id <id>` resumes that run, at the first failed or incomplete
+  stage (with `--enabled-stages`, the first such stage in that set); a stage
+  switched on since the pipeline last ran (gleaning or claim extraction, say)
+  counts as incomplete. `--resume-from-stage <stage>` re-runs from a chosen
+  stage onward. A run without `--pipeline-id` gets a new generated id.
+- Before resuming, the CLI checks that every completed stage's output is
+  still cached under the current inputs. When it is not (the corpus or the
+  config changed), it lists the stages and asks before going on, and the
+  resume recomputes them; without a terminal, pass `--yes`.
+- With incremental indexing, an automatic resume whose extraction settings
+  differ from those its delta was computed with (a stage switched on, another
+  model or prompt) restarts at `document_loading`, so the delta and the
+  fingerprints recorded on the committed documents follow the new settings
+  (`document_parsing` stays cached).
+- `--force-rebuild` ignores the cached outputs, recomputes every stage and
+  writes the new outputs to the cache, so a later run resumes from them.
+
+**S3 sync** (`--s3-sync --s3-bucket-name <bucket>`) keeps the stage cache in
+`s3://<bucket>/<prefix>/...`, so a fresh process (a new Fargate task, say) can
+resume without recomputing finished stages:
+
+- The run uploads the files that changed after every stage, so a task that is
+  stopped or dies keeps every stage it finished. On SIGTERM (ECS `StopTask`,
+  a Step Functions timeout) `run-ingestion` stops the running stage, uploads
+  its checkpoint and exits 143; a re-run with the same pipeline id starts at
+  that stage.
+- A failed upload between stages is logged and retried by the next one. A
+  failed or partial initial download or final upload fails the run with
+  `CacheSyncError` and a non-zero exit, so the run that lost its checkpoint is the one
+  marked failed. An empty remote cache on a fresh pipeline id is not an error.
+- S3-synced checkpoints do not expire by `cache.ttl_seconds`; the bucket's
+  lifecycle rule expires them (30 days in the CDK deployment). To avoid
+  re-embedding unchanged text across runs, also set
+  `indexing.opensearch.persist_embedding_cache: true`.
 
 **LLM response cache** (`cache.llm_responses`, on by default): the responses
 of the ingestion model calls (extraction, gleaning, claims, translation,
@@ -998,33 +1042,36 @@ processing:
 ```
 
 When `source_language == target_language` and `additional_target_languages` is
-empty/null, the translation stage is an `is_noop` skip — an English-only corpus
-pays **no** translation LLM cost even with `enabled: true`. Language-aware
-OpenSearch analyzers are configured under
-`indexing.opensearch.language_analyzers` (e.g. `ko: nori`); unlisted languages
-fall back to `default_analyzer`. The original chunk `text` is analyzed for
-`source_language` and the translated text for `target_language`, so set
-`source_language` to the corpus language even when no translation runs: a
-Korean corpus with `source_language: en` gets the `english` analyzer, which
-keeps Korean words with their particles ("홍길동으로부터") as single tokens.
-Changing `source_language` changes the mapping, so re-index the text units.
-Parsed text and queries are NFC-normalized, so decomposed Hangul (NFD, as
-written by macOS file systems and many PDF text layers) matches its composed
-form.
+empty, the translation stage is skipped at no cost, even with `enabled: true`.
+
+- **Analyzers.** Language-aware OpenSearch analyzers are configured under
+  `indexing.opensearch.language_analyzers` (e.g. `ko: nori`); unlisted
+  languages fall back to `default_analyzer`. The original chunk `text` is
+  analyzed for `source_language` and the translated text for
+  `target_language`, so set `source_language` to the corpus language even
+  when no translation runs: a Korean corpus with `source_language: en` gets
+  the `english` analyzer, which keeps Korean words with their particles
+  ("홍길동으로부터") as single tokens. Changing `source_language` changes the
+  mapping, so re-index the text units.
+- **Unicode.** Parsed text and queries are NFC-normalized, so decomposed
+  Hangul (NFD, as written by macOS file systems and many PDF text layers)
+  matches its composed form.
 
 The analyzer must exist on the cluster: an index whose mapping names one it
 lacks is not created, and the indexing stage fails with `the cluster has no
 analyzer '<name>'`. `nori` comes from the `analysis-nori` plugin, which the
 [local OpenSearch container](#local-stores-in-containers) installs but an
 Amazon OpenSearch Service domain has only once its optional Nori package is
-associated. The [CDK deployment](../iac/README.md) therefore maps `ko` to
-OpenSearch's built-in `cjk` analyzer (overlapping character bigrams, close to
-what the embedded engine does for `nori`), through `UKR__INDEXING__OPENSEARCH__LANGUAGE_ANALYZERS__KO`,
-which wins over the image's config file. For morphological Korean analysis on
-the domain, associate the Nori package (console **Packages**, or
-`aws opensearch associate-package`; a blue/green deployment), then deploy with
-`-c opensearch_korean_analyzer=nori` and re-run once with `indexing.reset:
-true` to rebuild the Korean indices.
+associated. The [CDK deployment](../iac/README.md) therefore maps `ko` to the
+built-in `cjk` analyzer (overlapping character bigrams, close to what the
+embedded engine does for `nori`) through
+`UKR__INDEXING__OPENSEARCH__LANGUAGE_ANALYZERS__KO`, which wins over the
+image's config file.
+
+For morphological Korean analysis on the domain, associate the Nori package
+(console **Packages**, or `aws opensearch associate-package`; a blue/green
+deployment), deploy with `-c opensearch_korean_analyzer=nori`, and re-run once
+with `indexing.reset: true` to rebuild the Korean indices.
 
 A text unit whose translation fails keeps its original text and is extracted
 in the source language. A failed call for a whole target language fails the
@@ -1035,6 +1082,12 @@ documents as failed so the next run translates them again (§5).
 ---
 
 ## 4. Querying (`run-rag`)
+
+`run-rag --query "..."` answers one question, `--interactive` holds a
+conversation. Pick a strategy with `--search-strategy` (default `auto`, an LLM
+router); every answer returns the sources the answer model actually saw.
+[Design §6](./design.md#6-retrieval-two-methodologies) shows how each
+strategy retrieves.
 
 ### CLI flags
 
@@ -1148,6 +1201,9 @@ or region problem shows up as `failed` at the first query, not as
 the `kg_rag.rerank_status` attribute of the `kg_rag.fusion` and
 `kg_rag.strategy` spans.
 
+### Filters
+
+`--filters key:value ...` (or `RAGInput.filters`) narrows what retrieval ranks.
 Filters compile to `term`/`terms`/`range` clauses on OpenSearch and `has`
 steps on Neptune. Each store accepts the fields its indexer writes:
 
@@ -1191,18 +1247,13 @@ units unfiltered. The two stores treat `attr_<key>` differently:
   removes entities whose role differs. Every other key is strict on both
   stores.
 
-**Filters are not an access-control boundary.** A filter narrows what
-retrieval ranks; it does not hide data. A store that does not declare a key
-returns its content unfiltered: relationships and claims have no `attr_<key>`
-or `document_ids`, Neptune community vertices declare only their own fields,
-and Neptune keeps entity vertices that lack an `attr_<key>` property. Graph
-expansion and community reports can also bring in content from documents the
-filter would exclude. Do not use filters to separate tenants or users with
-different permissions. Give each one its own [index suffix](#index-suffix)
-instead: a distinct `--suffix` (with `document_parsing.index_value` and, if used,
-`indexing.additional_suffix`) gives it separate OpenSearch indices and Neptune
-labels, and the query suffix is validated so it cannot widen the index target.
-Decide in the calling application which suffix a caller may query.
+**Filters are not an access-control boundary.** A store that does not
+declare a key returns its content unfiltered (relationships and claims have no
+`attr_<key>` or `document_ids`, Neptune keeps entity vertices without the
+property), and graph expansion and community reports can bring in content
+from documents the filter would exclude. Separate tenants or users with
+different permissions by [index suffix](#index-suffix), chosen server-side;
+see [Operator Runbook: Query access and tenant isolation](./operations.md#query-access-and-tenant-isolation).
 
 A filter key that no store the selected strategy reads declares (for example
 `category` or `entity_type`) raises `InvalidFilterError`, whose message lists
@@ -1226,19 +1277,21 @@ Interactive mode auto-enables memory. In-session commands:
 - `show-config` — show the active configuration
 - `quit` / `exit` — end
 
-Conversation memory is held in the process (`MemoryManager` keeps it in
-memory, nothing is written to disk or a store): it carries over between the
-turns of one interactive session, or between calls of one `GraphRAGChain`
-that reuse a `conversation_id` with `use_memory=True` and the same `suffix`
-and `user_id` (a conversation belongs to its index suffix and user, so
-another tenant's or user's turns never reach it). Each chain has its own
-memory; to share it between chains, pass them one
-`MemoryManager(config)` as `memory_manager=`. Separate
-`run-rag --query` invocations do not share it: each starts with no history,
-so `--use-memory` and `--conversation-id` have no effect on a single query
-(`run-rag` logs a WARNING when they are combined with `--query`). Use
-`--interactive` for multi-turn from the CLI. Memory limits are under the
-`memory` config section.
+Conversation memory is held in the process (`MemoryManager`; nothing is
+written to disk or a store):
+
+- It carries over between the turns of one interactive session, or between
+  calls of one `GraphRAGChain` that reuse a `conversation_id` with
+  `use_memory=True` and the same `suffix` and `user_id`. A conversation
+  belongs to its index suffix and user, so another tenant's or user's turns
+  never reach it.
+- Each chain has its own memory; to share it between chains, pass them one
+  `MemoryManager(config)` as `memory_manager=`.
+- Separate `run-rag --query` invocations do not share it: each starts with no
+  history, so `--use-memory` and `--conversation-id` have no effect on a
+  single query (`run-rag` logs a WARNING when they are combined with
+  `--query`). Use `--interactive` for multi-turn from the CLI.
+- The limits are in the `memory` config section.
 
 Before retrieval, a follow-up is rewritten from the history as a standalone
 question (one `models.roles.query_rewrite` call per turn that has history;
@@ -1294,18 +1347,17 @@ SQLite file instead (`providers.doc_status.kind: sqlite`, switched on by
   goes once none of the chunks it cites is left.
 - **Change the extraction settings** (a tuned `custom_prompts` set,
   `entity_types`, an extraction, gleaning or chunking model, chunk sizes,
-  translation, resolution): each record stores a fingerprint of the settings
-  its document was extracted with, so the next run re-extracts every
-  unchanged document whose fingerprint differs and logs a WARNING with their
-  count and the settings that changed. The registry also keeps the settings
-  themselves for each corpus, compared field by field: a setting a newer
-  release adds is no change while it holds its default, so upgrading does
-  not by itself re-extract the corpus. Edits to the built-in prompt
-  templates (code) are not seen: reset after editing one. A re-extracted
-  document's chunks still take their stored records when the settings that
-  shape a chunk's record (models, extraction, gleaning and claim settings,
-  the target language, the prompt templates, built-in ones included) are
-  unchanged, e.g. after a resolution or chunking change.
+  translation, resolution): the next run re-extracts every unchanged document
+  extracted with other settings and logs a WARNING with their count and the
+  settings that changed (each record stores a fingerprint of its settings).
+  - The registry keeps the settings themselves too, compared field by field,
+    so a setting a newer release adds is no change while it holds its default.
+  - Edits to the built-in prompt templates (code) are not seen: reset after
+    editing one.
+  - A re-extracted document's chunks still take their stored records when the
+    settings that shape a chunk's record (models, extraction, gleaning and
+    claim settings, the target language, the prompt templates) are unchanged,
+    e.g. after a resolution or chunking change.
 - **Change the embedding model or its dimension**
   (`models.embedding.model_id` / `dimension`): an
   incremental run embeds only its new and changed documents, so it would
@@ -1402,52 +1454,31 @@ rejected at first use: switch to a new table and run once with
 
 ### Failed documents
 
-A document is recorded `FAILED` in four cases:
-
-- translation, graph extraction, gleaning or claim extraction failed on one
-  of its text units;
-- a base-level community covering one of its text units got no report;
-- an artifact stage (translation through community detection) crashed in a
-  `--continue-on-error` run, which records every document of the run
-  `FAILED`;
-- writing one of its artifacts (text unit, entity, relationship, claim,
-  community, report) to the stores failed.
-
-A failed parent-level report is logged
-as a WARNING and counted in the stage's `reports_failed` metric, but marks no
-document `FAILED`: a parent covers many documents, and retrying them all for
-one report would re-extract most of the corpus. Report and write failures are tolerated up to
-`indexing.max_failure_rate` of the communities or of one artifact type's
-writes; above it the stage fails and nothing is recorded. The next run treats it as
-changed even if the file did not change: it removes what the failed run wrote
-and processes the document again. A document that fails
-`indexing.max_document_failures` (default `3`) consecutive runs with the same
-content is no longer retried: it stays `FAILED`, keeps what it indexed, and is
-skipped as unchanged with a WARNING naming the file. Editing the file (new
-content starts the count again) or raising the limit retries it.
+A document is recorded `FAILED` when one of its text units failed in
+translation, extraction, gleaning or claim extraction, when a base-level
+community covering it got no report, when an artifact stage crashed in a
+`--continue-on-error` run, or when writing one of its artifacts failed. The
+next run treats it as changed, even if the file did not change, and processes
+it again, until `indexing.max_document_failures` (default `3`) consecutive
+failures of the same content; editing the file or raising the limit retries it
+after that. The details and what to do are in
+[Operator Runbook: Failed documents](./operations.md#failed-documents).
 
 ### Quarantined documents
 
 A document whose indexing kills the run (out of memory, a task timeout) would
-stop every later run the same way. Each run that starts indexing a
-document's content records the attempt in its in-progress record; after
-`indexing.max_document_attempts` (default `3`) such runs in a row that never
-finished, the next run quarantines it: it removes what the attempts wrote,
-records the document `QUARANTINED`, logs a WARNING naming the file and
-indexes the rest (the `total_documents_quarantined` metric counts them). A
-quarantined document is skipped until its file or the extraction settings
-change, or the limit is raised. The culprit is not isolated: every document
-of a delta that keeps dying counts an attempt and is quarantined with it.
-See [Operator Runbook: Quarantined documents](./operations.md#quarantined-documents).
+stop every later run the same way. After `indexing.max_document_attempts`
+(default `3`) runs in a row that started its content and never finished, the
+next run removes what the attempts wrote, records it `QUARANTINED`, logs a
+WARNING naming the file and indexes the rest; it is skipped until its file or
+the extraction settings change. See
+[Operator Runbook: Quarantined documents](./operations.md#quarantined-documents).
 
 ### Concurrent runs
 
 With the registry, a run holds its index namespace's write lease from its
-first stage to its end, renewed every third of `indexing.lease_seconds`
-(default 300 s). A second run on the same namespace stops with
-`NamespaceLeaseError`, naming the holder, before it reads or writes
-anything; a run that dies stops renewing, and its lease expires at most
-`lease_seconds` later. See
+first stage to its end; a second run on the same namespace stops with
+`NamespaceLeaseError` before it reads or writes anything. See
 [Operator Runbook: Concurrent runs](./operations.md#concurrent-runs).
 
 ### Document size limit
@@ -1462,40 +1493,44 @@ The SQLite registry of local mode has no such limit.
 
 ### Cross-run merge
 
-By default (`indexing.cross_run_merge: true`) a delta run *unions* the delta
-with existing graph state (description / `text_unit_ids` / weight)
-before upsert, so an entity shared with unchanged documents keeps their
-descriptions and chunk lineage (which `mix` follows). Each delta run reads the
-touched entities and relationships back from the graph first, and merged
-descriptions over the summarization budget are re-summarized. Setting it to
-`false` overwrites the affected fields with the delta's values instead; the
-entity then loses its lineage to the unchanged documents' chunks. Requires a
-graph adapter that supports read-back (one without it degrades to overwrite).
-Claims merge the same way: a claim id is keyed on the entities its subject
-and object resolve to, its type and its dates, not on the document or the
-spelling, so a claim that several documents state (as "Acme Inc" in one and
-"Acme" in another) is one claim that keeps every document's description,
-source text and text units, read back from the OpenSearch claims index.
-When a document changes or is deleted, entities, relationships and claims it shares
-with other documents lose its chunks from `text_unit_ids` (weight
-follows), and their name, type, description, rank and claim text are derived
-again from the chunks left, so what the document contributed goes with it.
-An entity's id follows its current name: when another spelling wins (the
-document that held the winning one is gone, or new documents outvote it),
-the entity takes that name's id, as a full build would give it, and its edges
-and claims follow; stored communities and reports keep the old id until a
-full rebuild. The stored entities a delta name can merge into are found by
-their compact name key; with `processing.fuzzy_entity_resolution: true`
-every stored name is read instead. Extraction-store records that only removed
-chunks named are deleted after each successful run.
-If reading the stored items back fails, nothing is overwritten: a failed read
-during the merge fails the indexing stage before any write (the documents stay
-unrecorded and are retried), and a failed read while removing a document's
-chunks counts as a failed removal (its registry row is kept for a retry).
+By default (`indexing.cross_run_merge: true`) a delta run reads the
+entities and relationships it touches back from the graph and merges the delta
+into them (descriptions, `text_unit_ids`, weights) before the upsert, so an
+entity shared with unchanged documents keeps their descriptions and chunk
+lineage (which `mix` follows). Merged descriptions over the summarization
+budget are re-summarized. `false` overwrites those fields with the delta's
+values, and the entity loses its lineage to the unchanged documents' chunks; a
+graph adapter without read-back degrades to that.
+
+- **Claims** merge the same way. A claim id is keyed on the entities its
+  subject and object resolve to, its type and its dates, not on the document
+  or the spelling, so a claim several documents state ("Acme Inc" in one,
+  "Acme" in another) is one claim that keeps every document's description,
+  source text and text units, read back from the OpenSearch claims index.
+- **Changed and deleted documents.** Entities, relationships and claims a
+  document shares with others lose its chunks from `text_unit_ids` (the
+  weight follows), and their name, type, description, rank and claim text are
+  derived again from the chunks left, so what the document contributed goes
+  with it.
+- **Ids follow the current name.** When another spelling of an entity wins
+  (the document that held the winning one is gone, or new documents outvote
+  it), the entity takes that name's id, as a full build would give it, and its
+  edges and claims follow; stored communities and reports keep the old id
+  until a full rebuild.
+- **Matching** finds the stored entities a delta name can merge into by their
+  compact name key; with `processing.fuzzy_entity_resolution: true` every
+  stored name is read instead.
+- Extraction-store records that only removed chunks named are deleted after
+  each successful run.
 
 ---
 
 ## 6. Evaluation (`run-eval`)
+
+`run-eval --data-path <dataset.json>` answers every question of a dataset and
+scores the answers and their sources. Three evaluators need no LLM and cost
+nothing; two use an LLM judge. Several strategies (or `--repeats`) turn the run
+into a paired comparison.
 
 ### CLI flags
 
@@ -1520,132 +1555,140 @@ chunks counts as a failed removal (its registry row is kept for a retry).
 
 ### Evaluators
 
-Selected via `evaluation.enabled_evaluators`. An enabled evaluator that cannot
-be built (e.g. no Bedrock access for the judge) or rejects its configuration
-stops the run; with `processing.ignore_errors: true` it is dropped instead and
-listed in `run_manifest.dropped_evaluators`. Scoring starts only after every
-answer is generated, so an evaluator error there (e.g. a judge call that
-fails) never discards the run: the metric is recorded as failed for that
-query, the results are saved, and `--max-failure-rate` decides the exit code.
-A judge reply without a usable score is likewise recorded as failed, never as 0.
-By default all five are enabled:
-the deterministic, LLM-free ones (`answer_match`, `retrieval`, `graph_aware`)
-are free and skip a query that lacks their dataset fields; for a judge-free run
-set `enabled_evaluators: [answer_match, retrieval, graph_aware]`.
+`evaluation.enabled_evaluators` selects them; all five are on by default. The
+three deterministic ones cost nothing and skip a query that lacks their
+dataset fields; for a judge-free run set
+`enabled_evaluators: [answer_match, retrieval, graph_aware]`.
 
-- **`langchain`** — LangChain-based text similarity (`langchain_metrics`:
-  `correctness`, `partial_correctness`). Needs `answer` ground truth.
-- **`ragas`** — RAGAS metrics (`answer_correctness`, `answer_relevancy`,
-  `context_precision`, `context_recall`, `faithfulness`). `context_precision`
-  makes one judge call per context, so it scores at most
+| Evaluator | LLM | Needs in the dataset | Main metrics |
+|---|---|---|---|
+| `answer_match` | no | `answer` (+ `answer_aliases`) | `answer_contains` (headline), `exact_match`, `token_f1` |
+| `retrieval` | no | `reference_sources` | `hit_at_k`, `recall_at_k`, `mrr` (k = `evaluation.retrieval_k`, default 5) |
+| `graph_aware` | no | `expected_entities` / `expected_relationships` | entity and relationship coverage (recall), in the answer and in the retrieved sources |
+| `langchain` | judge | `answer` | `correctness`, `partial_correctness` |
+| `ragas` | judge | `answer` | `answer_correctness`, `answer_relevancy`, `context_precision`, `context_recall`, `faithfulness` |
+
+An enabled evaluator that cannot be built (no Bedrock access for the judge,
+say) or rejects its configuration stops the run; with
+`processing.ignore_errors: true` it is dropped instead and listed in
+`run_manifest.dropped_evaluators`. Scoring starts only after every answer is
+generated, so an evaluator error there never discards the run: the metric is
+recorded as failed for that query (as is a judge reply without a usable
+score, never 0), the results are saved, and `--max-failure-rate` decides the
+exit code.
+
+#### `ragas` contexts
+
+- `context_precision` makes one judge call per context, so it scores at most
   `evaluation.ragas_max_contexts` (default 20; `null` = no cap) top-ranked
-  sources per query, applied before the `max_context_tokens` budget — it is
+  sources per query, applied before the `max_context_tokens` budget: it is
   `context_precision@N`. Without the cap, strategies that report 100+ sources
-  (e.g. LightRAG `mix`) hit `ragas_timeout`. `faithfulness` and
-  `context_recall` see every source within `max_context_tokens`, so a claim
-  backed by a lower-ranked source is not marked unsupported. By default
-  (`evaluation.max_context_tokens: null`) the judges get the answer model's
-  budget (`search.token_manager.max_context_tokens`, 30000), so they grade the
-  answer against the context it was given; a smaller explicit value logs a
-  warning. Each report
-  records what the judge saw: `judge_contexts` / `judge_context_tokens` and
-  `context_precision_contexts` / `context_precision_context_tokens`. None of
-  this changes what the answer model saw.
-- **`graph_aware`** — deterministic, **LLM-free** entity/relationship
-  **coverage = recall**: of the expected graph artifacts, how many appear in the
-  generated answer, using the same normalization and phrase matcher as
-  `answer_contains` (whole-word match; Korean particles tolerated; substring
-  match for single-word CJK text). A relationship given as `{"source": "A", "target": "B"}`
-  or `"A -> B"` counts when the answer mentions both endpoints; any other string
-  must appear as a phrase. Needs `expected_entities` / `expected_relationships`
-  in the dataset. **Precision and F1 are deliberately
-  NOT emitted** — enumerating every entity in a free-text answer isn't reliably
-  possible, so reporting precision/F1 would only re-label the recall signal.
-  Answer-text coverage rises with answer length, so the evaluator also reports
-  `retrieved_entity_coverage` / `retrieved_relationship_coverage` (the same
-  expectations matched against the names of the entity sources and the
-  endpoints of the relationship sources the answer model was given; a pair
-  matches one relationship in either direction, another string its endpoints
-  or description; skipped when the context had no source of that type, as
-  with `global`) and `answer_length` (characters). Compare strategies on the
-  retrieved coverage, and read answer-text coverage next to the length.
-  Skipped, not 0, is deliberate: a strategy that reads no entity sources by
-  design (`global`) has no retrieved coverage to measure. The cost is that a
-  strategy that finds no entity source for a query is not scored on it
-  either, so in a comparison check the metric's `pairs` and `unpaired`, and
-  `metric_outcomes`' skipped count in a single run.
-- **`retrieval`** — deterministic, LLM-free: did the sources the answer model saw
-  include the gold documents? `hit_at_k`, `recall_at_k` (k =
-  `evaluation.retrieval_k`, default 5) and `mrr` against `reference_sources`.
-  Text-unit sources name their file directly; entity, relationship and
-  community-report sources are attributed to the files of the text units in
-  their lineage (`text_unit_ids`, looked up in the chain's document store in
-  one batch per suffix), the file holding most of those text units first.
-  The sources are flattened into one list of distinct files in rank order,
-  and **k counts files, not sources**: a community report is attributed to
-  every file of its community, so counting it as one source let five random
-  reports score hit@5 0.98 on a 50-file corpus where five random text units
-  score 0.19. Each report also carries `by_source_type` (the same metrics over
-  each section type's sources alone), aggregated in
-  `grouped_statistics.source_type`; its `text` row scores only the text units
-  the answer model read verbatim, the fairest cross-strategy comparison.
-  Unattributable sources contribute no file, and `attributable_fraction`
-  (attributable / reported sources, also in `grouped_statistics` per strategy)
-  shows how much of the context the rank metrics cover. Matching is
-  NFKC-normalized and case-insensitive (so decomposed NFD Hangul file names
-  and full-width letters match) on the name. A reference without a file
-  extension (`.` + 1-5 letters/digits, at least one letter, not a version
-  such as `.v2`) also matches a source's stem; one with an extension needs
-  the same extension: `docs/Terms.pdf` = `terms.pdf` = `terms` all match the
-  source `Terms.pdf`, `terms.docx` does not, and `notes.v1` does not match
-  `notes.v2`. Sources carry only a file name, so a reference's directories
-  are ignored. A `/` is a directory separator only in a path-like
-  value (a file extension, a URI scheme, or a leading `/`, `./`, `~/`), so
-  titles such as `St. Louis Cardinals` or `AC/DC` are compared whole. The rank
-  metrics are skipped when a query has no `reference_sources`, or has sources
-  but none is attributable; a query that retrieved no sources at all scores 0
-  (a miss).
-- **`answer_match`** — deterministic, LLM-free answer scores against `answer`
-  and optional `answer_aliases` (a string or list, top level or under
-  `metadata`; `metadata` wins when both are set), taking the max over them.
-  **`answer_contains`** (1.0 when the gold answer or an alias appears in the
-  generated answer as a whole-word phrase) is the headline deterministic
-  metric: long-form RAG answers rarely equal a short gold span, so it tracks
-  correctness far better than exact match. Korean particles are tolerated
-  after a word (gold `서울 특별시` matches `서울 특별시는`, `AWS` matches
-  `AWS는`); a bare number may also carry a Korean unit (`2024` matches
-  `2024년에`, `2` matches `2개월`) but not a magnitude numeral (`3` does not
-  match `3억`, `5` does not match `5천만`, since that changes the value), and
-  spacing next to CJK letters is ignored (`3억 원` = `3억원`,
-  `가나다 상사` = `가나다상사`). A single-word CJK gold is matched as a
-  substring, but not inside a longer number or Latin word (`2년` does not
-  match `12년`). A yes/no gold (`yes`/`no`/`nope`; Korean
-  `예`/`네`/`아니요`/`아니오`/`아닙니다`; Chinese `是`/`对`/`否`/`不是`/`没有`;
-  Japanese `はい`/`いいえ`) is scored by the
-  answer's polarity, as in HotpotQA, since almost any long answer contains
-  the word "no" (or `예` in `예외`): the first whole yes/no word that answers
-  the question, skipping Markdown headings, a word next to `/` (the options
-  in `Yes/No: No` or `(네/아니요): 아니요`), `no` and `네` when no
-  punctuation (`No:`, `**No**:`, `No (`, `No -`) or line end follows them
-  (`there is no clause`, `네 가지`; emphasis or an opening quote after
-  them starts the next word, as in `no **cap**` or `no "cap"`), `예`
-  followed by `:` or `)` as well
-  (`(예: …)`, "e.g."), and `no` followed by a number (`No. 5`). Every other
-  yes/no word answers wherever it stands. So `네, 맞습니다` answers yes but
-  `네 맞습니다` is not read as an answer. SQuAD-style `exact_match` and
-  `token_f1` are also emitted. Text is NFKC-normalized, then lowercased,
-  punctuation deleted, English articles dropped and whitespace collapsed, as
-  in the SQuAD v1.1 script, except that Unicode punctuation is deleted too and
-  punctuation that changes meaning is kept: a leading minus (`-5` is not
-  `5`), a decimal point or comma between digits (`1.5` is not `15`;
-  thousands separators are dropped, so `1,000` = `1000`), a percent sign after
-  a number (`3.5%` is not `3.5` or `35%`) and a trailing `+`/`#` (`C++`,
-  `C#`). A dash between two words or numbers is a space, so `1990-1995` is two
-  numbers and `5-year` = `5 year`. A gold that is only an article
-  (`A`) is kept as is. Scores are therefore close to, but not comparable with,
-  leaderboard numbers from the official scripts. Token F1 splits on whitespace,
-  so for Chinese/Japanese text it degrades to exact match; Korean particles
-  (`서울은`) make both metrics under-count.
+  (LightRAG `mix`, say) hit `ragas_timeout`.
+- `faithfulness` and `context_recall` see every source within
+  `max_context_tokens`, so a claim backed by a lower-ranked source is not
+  marked unsupported. By default (`evaluation.max_context_tokens: null`) the
+  judges get the answer model's budget (`search.token_manager.max_context_tokens`),
+  so they grade the answer against the context it was given; a smaller value
+  logs a warning.
+- Each report records what the judge saw (`judge_contexts` /
+  `judge_context_tokens`, `context_precision_contexts` /
+  `context_precision_context_tokens`). None of this changes what the answer
+  model saw.
+
+#### `graph_aware`
+
+Of the expected graph artifacts, how many appear in the generated answer
+(coverage = recall), with the phrase matcher of `answer_contains` (whole-word
+match, Korean particles tolerated, substring match for single-word CJK text).
+A relationship given as `{"source": "A", "target": "B"}` or `"A -> B"` counts
+when the answer mentions both endpoints; any other string must appear as a
+phrase. Precision and F1 are not emitted: every entity of a free-text answer
+cannot be enumerated reliably, so they would only re-label recall.
+
+Answer-text coverage rises with answer length, so the evaluator also reports
+`retrieved_entity_coverage` / `retrieved_relationship_coverage` (the same
+expectations matched against the entity names and relationship endpoints of
+the sources the answer model was given, a pair matching one relationship in
+either direction; skipped when the context had no source of that type, as with
+`global`) and `answer_length` (characters). Compare strategies on the
+retrieved coverage, and read answer-text coverage next to the length.
+Skipped, not 0, is deliberate: a strategy that reads no entity sources by
+design (`global`) has no retrieved coverage to measure. The cost is that a
+strategy that finds no entity source for a query is not scored on it either,
+so in a comparison check the metric's `pairs` and `unpaired`, and
+`metric_outcomes`' skipped count in a single run.
+
+#### `retrieval`
+
+Did the sources the answer model saw include the gold documents?
+
+- **Attribution.** Text-unit sources name their file directly; entity,
+  relationship and community-report sources are attributed to the files of
+  the text units they cite (`text_unit_ids`, looked up in one batch per
+  suffix), the file holding most of those text units first.
+- **k counts files, not sources.** The sources are flattened into one list of
+  distinct files in rank order. A community report is attributed to every
+  file of its community, so counting it as one source let five random reports
+  score hit@5 0.98 on a 50-file corpus where five random text units score
+  0.19.
+- **Per source type.** `by_source_type` (aggregated in
+  `grouped_statistics.source_type`) has the same metrics over each section
+  type's sources alone; its `text` row scores only the text units the answer
+  model read verbatim, the fairest cross-strategy comparison.
+  `attributable_fraction` (attributable / reported sources) shows how much of
+  the context the rank metrics cover.
+- **Matching.** NFKC-normalized and case-insensitive on the file name (so
+  decomposed NFD Hangul file names and full-width letters match); a
+  reference's directories are ignored. A reference without a file extension
+  (`.` + 1-5 letters or digits with at least one letter, not a version such
+  as `.v2`) also matches a source's stem; one with an extension needs the same
+  extension: `docs/Terms.pdf`, `terms.pdf` and `terms` all match the source
+  `Terms.pdf`, `terms.docx` does not, and `notes.v1` does not match
+  `notes.v2`. A `/` separates directories only in a path-like value (a file
+  extension, a URI scheme, or a leading `/`, `./`, `~/`), so titles such as
+  `AC/DC` are compared whole.
+- **Skips.** The metrics are skipped when a query has no `reference_sources`,
+  or has sources but none is attributable; a query that retrieved no sources
+  at all scores 0 (a miss).
+
+#### `answer_match`
+
+Scores against `answer` and the optional `answer_aliases` (a string or a
+list, top level or under `metadata`, which wins), taking the maximum over
+them.
+
+- **`answer_contains`** is the headline: 1.0 when the gold answer or an alias
+  appears in the generated answer as a whole-word phrase. Long-form RAG
+  answers rarely equal a short gold span, so it tracks correctness far better
+  than exact match.
+- **Korean and CJK.** Korean particles are tolerated after a word (`서울 특별시`
+  matches `서울 특별시는`, `AWS` matches `AWS는`). A bare number may
+  carry a Korean unit (`2024` matches `2024년에`) but not a magnitude numeral
+  (`3` does not match `3억`). Spacing next to CJK letters is ignored
+  (`3억 원` = `3억원`). A single-word CJK gold is matched as a substring, but
+  not inside a longer number or Latin word (`2년` does not match `12년`).
+- **Yes/no golds** (`yes`/`no`/`nope`; Korean `예`/`네`/`아니요`/`아니오`/
+  `아닙니다`; Chinese `是`/`对`/`否`/`不是`/`没有`; Japanese `はい`/`いいえ`) are
+  scored by the answer's polarity, as in HotpotQA, since almost any long
+  answer contains the word "no" (or `예` in `예외`). The answer is the first
+  whole yes/no word that answers the question, skipping Markdown headings, a
+  word next to `/` (the options in `Yes/No: No`), `no` and `네` unless
+  punctuation or a line end follows them (`there is no clause`, `네 가지`),
+  `예` followed by `:` or `)` (`(예: …)`, "e.g.") and `no` followed by a
+  number (`No. 5`). So `네, 맞습니다` answers yes but `네 맞습니다` is not
+  read as an answer.
+- **`exact_match` and `token_f1`** follow the SQuAD v1.1 normalization
+  (NFKC, lowercase, punctuation and English articles removed, whitespace
+  collapsed), except that Unicode punctuation is removed too and punctuation
+  that changes meaning is kept: a leading minus (`-5` is not `5`), a decimal
+  point or comma between digits (`1.5` is not `15`; `1,000` = `1000`), a
+  percent sign after a number, and a trailing `+`/`#` (`C++`, `C#`). A dash
+  between two words or numbers is a space (`1990-1995` is two numbers), and a
+  gold that is only an article (`A`) is kept as is. Scores
+  are therefore close to, but not comparable with, leaderboard numbers; set
+  `evaluation.answer_normalization: official_squad` for the official script.
+  Token F1 splits on whitespace, so for Chinese and Japanese it degrades to
+  exact match, and Korean particles make both metrics under-count.
 
 ### Eval data format
 
@@ -1744,39 +1787,41 @@ The summary holds, per metric, mean/median/stdev/min/max/count
   `{"applied": 48, "failed": 2}`; each result carries `rerank_status`
   (`applied`, `disabled`, `unavailable`, `skipped`, `failed`, or `null` when
   answer generation failed first; see [Rerank status](#rerank-status)).
-- `run_manifest` — CLI arguments (a `*_url` argument such as
-  `--model-base-url` without its userinfo, query and fragment), model ids (answer generation, evaluation
-  judge/embedding, and `judge_is_answer_model`: LLM judges favour their own
-  outputs, so a judge that is the answer model — the default, both use the
-  `default` tier — inflates the judge scores; set
-  `models.roles.evaluation` to another model when comparing systems), package version, git commit (`git_sha`, and `git_dirty`
-  when tracked files differ from it; both `null` unless the package runs from
-  a checkout that tracks it), `retrieval_config_sha256`, `index`, `library_versions`
-  (ragas, langchain*), the dataset (path + file sha256, query count and a hash
-  of the parsed file, without the metadata the command line adds to every
-  query) and a UTC timestamp, so two runs can be compared.
-  `retrieval_config_sha256` hashes every setting that can change an answer or
-  a score, the `models` roles resolved to their model ids and the ingestion
-  settings included (an index built otherwise answers otherwise). Left out
-  are the settings that change no answer, as the stage-cache classification
-  (`CONFIG_KEYING`) marks them: regions, endpoints, credentials, store and
-  output paths, table names, the guardrail id and version, timeouts, retry
-  and concurrency knobs, cache, logging and telemetry settings. So the same
-  evaluation hashes the same in every environment, and a new setting counts
-  unless it is classified as changing no answer. `index` names, per queried
-  suffix, the ingestion run that last wrote its vector indices: ingestion
-  records `pipeline_id`, `mode` (`full`, also for an incremental run that
-  found the registry empty, or `incremental`), `built_at`, `documents`
-  (documents the run indexed; an incremental run counts only its new and
-  changed ones), `extraction_fingerprint`, `extraction_settings` (the
-  extraction settings field by field), `package_version` and, on an
-  incremental record, `full_build` (the full build it was applied on top of,
-  with its own `pipeline_id`, `built_at` and `documents`) in the index
-  mappings' `_meta` (best-effort: a role without the mapping-update
-  permission logs a warning). `null` for a backend without index metadata.
-  It also lists `dropped_evaluators`. `EvaluationManager.evaluate_dataset`
-  builds it, so library callers get it too (pass `dataset_path=` / `cli_args=`
-  to record those).
+- `run_manifest` — what was measured, so two runs can be compared:
+  - the CLI arguments (a `*_url` argument such as `--model-base-url` without
+    its userinfo, query and fragment), the package version, `library_versions`
+    (ragas, langchain*), the git commit (`git_sha`, and `git_dirty` when
+    tracked files differ from it; both `null` outside a checkout), the dataset
+    (path, file sha256, query count and a hash of the parsed file, without the
+    metadata the command line adds to every query), a UTC timestamp and
+    `dropped_evaluators`;
+  - the model ids (answer generation, evaluation judge and embedding) and
+    `judge_is_answer_model`: LLM judges favour their own outputs, so a judge
+    that is the answer model (the default: both use the `default` tier)
+    inflates the judge scores; set `models.roles.evaluation` to another model
+    when comparing systems;
+  - `retrieval_config_sha256`, a hash of every setting that can change an
+    answer or a score (the `models` roles resolved to their ids and the
+    ingestion settings included: an index built otherwise answers otherwise).
+    The settings the stage-cache classification (`CONFIG_KEYING`) marks as
+    changing no answer are left out: regions, endpoints, credentials, store
+    and output paths, table names, the guardrail id and version, timeouts,
+    retry and concurrency knobs, cache, logging and telemetry. So the same
+    evaluation hashes the same in every environment, and a new setting counts
+    until it is classified as changing no answer;
+  - `index`, per queried suffix, the ingestion run that last wrote its vector
+    indices, as recorded in the index mappings' `_meta`: `pipeline_id`,
+    `mode` (`full`, also for an incremental run that found the registry
+    empty, or `incremental`), `built_at`, `documents` (an incremental run
+    counts only its new and changed ones), `extraction_fingerprint`,
+    `extraction_settings`, `package_version` and, on an incremental record,
+    `full_build` (the full build it was applied on top of, with its own
+    `pipeline_id`, `built_at` and `documents`) (best-effort: a role without
+    the mapping-update permission logs a warning; `null` for a backend
+    without index metadata).
+
+  `EvaluationManager.evaluate_dataset` builds it, so library callers get it
+  too (pass `dataset_path=` / `cli_args=` to record those).
 
 Per-query reports list each evaluator's `metrics` (there is no overall
 score: an average of unrelated metrics has no meaning). Each result also records `retrieved_source_ids`: per reported source, in rank
@@ -1881,34 +1926,30 @@ This is a **standalone** renderer that draws from an already-exported
 visualization-data JSON. It does **not** re-run ingestion or touch AWS.
 
 The community-detection stage of `run-ingestion` writes
-`visualization_data.json` into `graph.visualization.outputs_directory` on
+`visualization_data.json`, the `--data-path` input of `run-visualization`, on
 every run whose graph covers the whole corpus: a full build, a reset, or an
 incremental run in which every document is new or changed. An incremental run
-that skips unchanged documents holds only its delta in memory, so it neither
-exports nor renders (it logs an INFO line instead) and an earlier file in a
-fixed `outputs_directory` is left as it was. To visualize the whole graph after
-incremental runs, run one full build (`indexing.reset: true`) and point
-`run-visualization` at the file it writes. By default (`graph.visualization.export_data: true`) it holds the
-graph and the community hierarchy only: writing it is one pass over the graph,
-with no embedding or model call, and `run-visualization` computes a seeded
-spring layout from the graph topology and the configured centrality metrics
-when it renders. With `graph.visualization.enabled: true` (default `false`,
-since it adds an embedding call per node and a layout reduction to every
-ingest) the stage also renders the visualizations, and the file carries the
-embedding-based layout and centrality. When
-that is unset (the default), ingestion writes to
-`<cache directory>/<pipeline_id>/visualization/` (`--cache-directory`, `PipelineConfig.local_directory`), so with S3 cache sync
-enabled `visualization_data.json` is uploaded with the cache (the sync copies
-`.json` files only; re-render the HTML locally with `run-visualization`). That
-file is the `--data-path` input. The interactive graph keeps only the top
-`interactive.max_nodes` nodes by degree (default 2000) so large graphs still
-render in a browser; the layout (node embeddings or the spring layout) is
-computed for those nodes only.
-It holds the graph nodes/edges (each node with its
-level-0 `community_id`, which the renderers color by), the community hierarchy
-and, when rendered at ingestion, the computed `layout` and centrality; vector
-attributes (`embedding`,
-`*_embedding`) are omitted to keep the file small.
+that skips unchanged documents holds only its delta, so it neither exports nor
+renders (it logs an INFO line), and an earlier file in a fixed
+`outputs_directory` is left as it was; run one full build
+(`indexing.reset: true`) to visualize the whole graph after incremental runs.
+
+- **Where.** `graph.visualization.outputs_directory`, by default
+  `<cache directory>/<pipeline_id>/visualization/` (`--cache-directory`), so
+  with S3 cache sync the file is uploaded with the cache (the sync copies
+  `.json` files only; re-render the HTML locally with `run-visualization`).
+- **What.** The graph nodes and edges (each node with its level-0
+  `community_id`, which the renderers color by) and the community hierarchy;
+  vector attributes are left out to keep the file small. By default
+  (`graph.visualization.export_data: true`, `enabled: false`) writing it is
+  one pass over the graph with no embedding or model call, and
+  `run-visualization` computes a seeded spring layout and the configured
+  centrality when it renders. With `graph.visualization.enabled: true` the
+  stage also renders, and the file carries the embedding-based layout and
+  centrality (one embedding call per node and a layout reduction per ingest).
+- **Size.** The interactive graph keeps only the top `interactive.max_nodes`
+  nodes by degree (default 2000) so large graphs still render in a browser;
+  the layout is computed for those nodes only.
 
 Layout and error behaviour:
 
@@ -1980,18 +2021,21 @@ persona / entity types) with the configured language model
 run-prompt-tuning --source-directory ./source --output-path tuned_prompts.yaml --config-path config.yaml
 ```
 
-The output YAML contains a `custom_prompts` block (and a `profile` with the
-detected domain and entity types). The tuned `graph_extraction_system` and
-`community_report_system` are a domain-adapted preamble followed by the built-in
-rules and output format, verbatim; few-shot examples, when generated, come last.
-The entity categories still come from `processing.graph_extraction.entity_types`
-(the `{entity_types}` variable), so copy the profile's `entity_types` there if
-you want the model held to them. **Review it**, then copy the prompts you want into your
-`config.yaml` under `custom_prompts:`. Plain-text files are read as-is; other
-formats (PDF, CSV, JSON, custom `ParserFactory.register_loader` formats) go
-through the same loaders as ingestion. Files that fail to parse are skipped
-with a warning. If the profiling model returns no JSON profile, the command
-exits non-zero and writes nothing (a default profile would look tuned).
+The output YAML contains a `custom_prompts` block and a `profile` with the
+detected domain and entity types. **Review it**, then copy the prompts you want
+into your `config.yaml` under `custom_prompts:`.
+
+- The tuned `graph_extraction_system` and `community_report_system` are a
+  domain-adapted preamble followed by the built-in rules and output format,
+  verbatim; few-shot examples, when generated, come last.
+- The entity categories still come from
+  `processing.graph_extraction.entity_types` (the `{entity_types}` variable),
+  so copy the profile's `entity_types` there to hold the model to them.
+- Plain-text files are read as-is; other formats (PDF, CSV, JSON, custom
+  `ParserFactory.register_loader` formats) go through the ingestion loaders,
+  and files that fail to parse are skipped with a warning.
+- If the profiling model returns no JSON profile, the command exits non-zero
+  and writes nothing (a default profile would look tuned).
 
 ---
 
@@ -2077,36 +2121,9 @@ review → merge the useful prompts + tune `entity_types` by hand → re-ingest.
 
 ## 10. Operations & troubleshooting
 
-### IAM permissions
-
-Grant the principal running the CLIs access to: Bedrock (InvokeModel /
-InvokeModelWithResponseStream / CountTokens for your model IDs, plus
-embeddings; without CountTokens token counts fall back to estimates), Neptune
-(connect / SigV4 for `use_iam: true`), OpenSearch (read/write the configured
-indices), S3 (the configured bucket), and DynamoDB (when incremental indexing is
-on).
-
-> **Bedrock reranking needs its own statement.** Reranking calls the Rerank
-> API, which authorizes `bedrock:Rerank` against a different resource shape
-> than `InvokeModel`: a statement scoped to foundation-model or
-> inference-profile ARNs denies it. Grant `bedrock:Rerank` on `Resource: "*"`
-> in its own statement, as the CDK task role does
-> (`iac/stacks/compute_stack.py`). Without it, every query logs
-> `Reranking failed: ...` at ERROR, reports `metadata.rerank.status: failed`
-> and returns the fused results unreranked (or fails, with
-> `search.reranking.required: true`).
-> Reranking is on by default (`search.reranking.enabled`); if you cannot grant
-> the action, set it to `false`.
->
-> The model resolver also calls `bedrock:ListInferenceProfiles`, an
-> account-level read that takes `Resource: "*"`, and a guardrail needs
-> `bedrock:ApplyGuardrail` on the guardrail's ARN
-> (`arn:aws:bedrock:<bedrock region>:<account>:guardrail/<id>`).
-
-### Common errors
-
-[Operator Runbook: Common errors](./operations.md#common-errors) lists the
-messages the CLIs report, what they mean and the fix, for AWS and local mode.
+The [IAM permissions](#iam-permissions) are in §1, and the messages the CLIs
+report, what they mean and the fix, for AWS and local mode, are in
+[Operator Runbook: Common errors](./operations.md#common-errors).
 
 ### CLI exit codes and JSON output
 
@@ -2141,9 +2158,9 @@ Ctrl-C) instead, so stdout is always JSON.
 ### Large / multilingual / heterogeneous corpora
 
 - **Large corpora:** raise `processing.max_concurrency` (LLM stages are
-  I/O-bound). For graph writes,
-  raise `indexing.neptune.index_concurrency`; the Gremlin connection pool grows
-  with it. Enable `indexing.opensearch.persist_embedding_cache` + `--s3-sync`
+  I/O-bound) as far as the Bedrock quota allows. Keep
+  `indexing.neptune.index_concurrency` at `1` unless you measured a gain:
+  concurrent write batches can conflict on shared vertices and retry. Enable `indexing.opensearch.persist_embedding_cache` + `--s3-sync`
   so re-runs don't recompute.
 - **Multilingual:** set `processing.translation.source_language` /
   `target_language` (+ `additional_target_languages`) and add language analyzers
