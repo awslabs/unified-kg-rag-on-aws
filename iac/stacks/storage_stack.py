@@ -71,7 +71,7 @@ class StorageStack(Stack):
             self,
             "NeptuneEndpoint",
             value=self.neptune_cluster.cluster_endpoint.hostname,
-            description="Set as NEPTUNE_ENDPOINT for the app (VPC-only host)",
+            description="Set as UKR__AWS__NEPTUNE__ENDPOINT for the app (VPC-only host)",
         )
         CfnOutput(
             self,
@@ -79,7 +79,7 @@ class StorageStack(Stack):
             # Bare host, like the task env var: the adapter builds the URL from
             # aws.opensearch.port/use_ssl, so a scheme here breaks the client.
             value=self.opensearch_domain.domain_endpoint,
-            description="Set as OPENSEARCH_ENDPOINT for the app (bare VPC-only "
+            description="Set as UKR__AWS__OPENSEARCH__ENDPOINT for the app (bare VPC-only "
             "host, no https://)",
         )
         CfnOutput(self, "CacheBucketName", value=self.cache_bucket.bucket_name)

@@ -14,7 +14,7 @@ data plane, each with a least-privilege task role.
   writes.
 
 Both run the same image with the same environment. Store endpoints are injected as the env vars the app reads
-(NEPTUNE_ENDPOINT / OPENSEARCH_ENDPOINT / BEDROCK_REGION / S3_BUCKET_NAME).
+(UKR__AWS__NEPTUNE__ENDPOINT / UKR__AWS__OPENSEARCH__ENDPOINT / UKR__AWS__BEDROCK__REGION_NAME / UKR__AWS__S3__BUCKET_NAME).
 
 With ``enable_cloudwatch_tracing`` the task also runs an AWS Distro for
 OpenTelemetry (ADOT) collector sidecar: the app exports OTLP/HTTP to it on
@@ -400,22 +400,22 @@ class ComputeStack(Stack):
         )
         environment = {
             "AWS_REGION": self.region,
-            "BEDROCK_REGION": self.config.bedrock_region or self.region,
-            "NEPTUNE_ENDPOINT": storage.neptune_cluster.cluster_endpoint.hostname,
+            "UKR__AWS__BEDROCK__REGION_NAME": self.config.bedrock_region or self.region,
+            "UKR__AWS__NEPTUNE__ENDPOINT": storage.neptune_cluster.cluster_endpoint.hostname,
             # Bare hostname — the OpenSearch adapter prepends the scheme itself
             # via use_ssl; passing https:// here yields https://[https://…].
-            "OPENSEARCH_ENDPOINT": storage.opensearch_domain.domain_endpoint,
-            "S3_BUCKET_NAME": storage.cache_bucket.bucket_name,
+            "UKR__AWS__OPENSEARCH__ENDPOINT": storage.opensearch_domain.domain_endpoint,
+            "UKR__AWS__S3__BUCKET_NAME": storage.cache_bucket.bucket_name,
             # One replica per index on a multi-node domain, so losing a node or
             # an AZ keeps every shard available; a single node has nowhere to
             # place one (the index would stay yellow).
-            "OPENSEARCH_NUMBER_OF_REPLICAS": str(
+            "UKR__INDEXING__OPENSEARCH__INDEX_SETTINGS__NUMBER_OF_REPLICAS": str(
                 min(self.config.opensearch_count - 1, 1)
             ),
             # Overrides language_analyzers.ko: the domain has no nori (Korean
             # morphological analyzer) unless its optional analysis-nori
             # package is associated, and a mapping naming it fails to create.
-            "OPENSEARCH_KOREAN_ANALYZER": self.config.opensearch_korean_analyzer,
+            "UKR__INDEXING__OPENSEARCH__LANGUAGE_ANALYZERS__KO": self.config.opensearch_korean_analyzer,
             # Maps to aws.dynamodb.table_name. The table is IaC-managed (KMS,
             # PITR, alarms) and the task role has no dynamodb:CreateTable, so
             # disable app-side auto-creation. With aws.dynamodb.enabled, a
@@ -424,26 +424,30 @@ class ComputeStack(Stack):
             # table and the ResourceNotFoundException, rather than an
             # AccessDenied on CreateTable or a silent full rebuild.
             # aws.dynamodb.enabled stays a config.yaml decision.
-            "GRAPHRAG_DOC_STATUS_TABLE": self.config.doc_status_table,
-            "GRAPHRAG_DOC_STATUS_CREATE_TABLE": "false",
+            "UKR__AWS__DYNAMODB__TABLE_NAME": self.config.doc_status_table,
+            "UKR__AWS__DYNAMODB__CREATE_TABLE_IF_MISSING": "false",
             # The Environment dimension of the EMF metrics (--metrics-sink
             # cloudwatch): this deployment's alarms watch only its own runs.
-            "GRAPHRAG_METRICS_ENVIRONMENT": self.config.env_name,
+            "UKR_METRICS_ENVIRONMENT": self.config.env_name,
             # "structured" => JSON-structured logs (CloudWatch-friendly); the
             # config model only accepts "structured" | "plain".
-            "LOG_FORMAT": "structured",
+            "UKR__LOGGING__LOG_FORMAT": "structured",
         }
         if self.guardrail_identifier:
-            environment["BEDROCK_GUARDRAIL_IDENTIFIER"] = self.guardrail_identifier
+            environment["UKR__AWS__BEDROCK__GUARDRAIL__IDENTIFIER"] = (
+                self.guardrail_identifier
+            )
         if self.config.guardrail_version:
-            environment["BEDROCK_GUARDRAIL_VERSION"] = self.config.guardrail_version
+            environment["UKR__AWS__BEDROCK__GUARDRAIL__VERSION"] = (
+                self.config.guardrail_version
+            )
         if self.config.enable_cloudwatch_tracing:
             # Tracing on, backend otlp, pointed at the sidecar. Prompt and
             # completion capture stays at the config default (off).
             environment.update(
                 {
-                    "GRAPHRAG_OBSERVABILITY_ENABLED": "true",
-                    "GRAPHRAG_OBSERVABILITY_BACKEND": "otlp",
+                    "UKR__OBSERVABILITY__ENABLED": "true",
+                    "UKR__OBSERVABILITY__BACKEND": "otlp",
                     "OTEL_EXPORTER_OTLP_ENDPOINT": f"http://{COLLECTOR_OTLP_HTTP}",
                     "OTEL_RESOURCE_ATTRIBUTES": (
                         f"deployment.environment={self.config.env_name}"

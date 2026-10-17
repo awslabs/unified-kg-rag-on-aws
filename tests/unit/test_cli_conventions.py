@@ -144,7 +144,7 @@ def test_ingestion_rejects_json_with_the_cloudwatch_metrics_sink(
 def test_ingestion_json_result_lists_each_stage(
     config: Config, mocker, tmp_path: Path
 ) -> None:
-    mocker.patch.object(run_ingestion_pipeline, "get_config", return_value=config)
+    mocker.patch.object(run_ingestion_pipeline, "load_cli_config", return_value=config)
     src = tmp_path / "src"
     src.mkdir()
     args = run_ingestion_pipeline.CommandLineInterface._setup_arguments().parse_args(
@@ -237,7 +237,7 @@ def test_visualization_json_output_names_the_written_files(
             "json",
         ],
     )
-    monkeypatch.setattr(run_visualization, "get_config", lambda _path=None: Config())
+    monkeypatch.setattr(run_visualization, "load_cli_config", lambda _args: Config())
     assert run_visualization.main() == 1  # an empty graph renders nothing
     assert json.loads(capsys.readouterr().out) == {
         "output_directory": str(tmp_path / "out"),
@@ -251,7 +251,7 @@ def test_a_missing_input_file_is_a_usage_error(
     monkeypatch.setattr(
         sys, "argv", ["run-visualization", "--data-path", str(tmp_path / "nope.json")]
     )
-    monkeypatch.setattr(run_visualization, "get_config", lambda _path=None: Config())
+    monkeypatch.setattr(run_visualization, "load_cli_config", lambda _args: Config())
     with pytest.raises(SystemExit) as exc:
         run_visualization.main()
     assert exc.value.code == 2

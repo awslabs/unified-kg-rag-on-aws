@@ -15,8 +15,8 @@ so one test states a store contract once and runs it on each:
   ``LOCAL_STORES_OPENSEARCH_PORT`` point it at a stack published on other
   ports.
 - ``aws``: Neptune and OpenSearch Service (``pytest.mark.aws``). The config is
-  ``GRAPHRAG_TEST_CONFIG`` if set, else the defaults; ``NEPTUNE_ENDPOINT`` and
-  ``OPENSEARCH_ENDPOINT`` override the endpoints. Skipped without both
+  ``GRAPHRAG_TEST_CONFIG`` if set, else the defaults; ``UKR__AWS__NEPTUNE__ENDPOINT`` and
+  ``UKR__AWS__OPENSEARCH__ENDPOINT`` override the endpoints. Skipped without both
   endpoints.
 
 Every harness of a shared server writes under its own
@@ -111,12 +111,14 @@ def _aws_config() -> Config:
         if path and Path(path).is_file()
         else Config()
     )
-    if endpoint := os.getenv("NEPTUNE_ENDPOINT"):
+    if endpoint := os.getenv("UKR__AWS__NEPTUNE__ENDPOINT"):
         config.aws.neptune.endpoint = endpoint
-    if endpoint := os.getenv("OPENSEARCH_ENDPOINT"):
+    if endpoint := os.getenv("UKR__AWS__OPENSEARCH__ENDPOINT"):
         config.aws.opensearch.endpoint = endpoint
     if not (config.aws.neptune.endpoint and config.aws.opensearch.endpoint):
-        pytest.skip("set NEPTUNE_ENDPOINT and OPENSEARCH_ENDPOINT (real AWS)")
+        pytest.skip(
+            "set UKR__AWS__NEPTUNE__ENDPOINT and UKR__AWS__OPENSEARCH__ENDPOINT (real AWS)"
+        )
     config.providers.graph.kind = "neptune"
     config.providers.vector.kind = "opensearch"
     return config

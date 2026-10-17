@@ -147,9 +147,9 @@ def test_unreadable_config_file_is_a_usage_error(
 
 
 _BAD_ENVIRONMENT = {
-    "LOG_LEVEL": "garbage",
-    "OPENSEARCH_NUMBER_OF_REPLICAS": "abc",
-    "LOG_FORMAT": "xml",
+    "UKR__LOGGING__LEVEL": "garbage",
+    "UKR__INDEXING__OPENSEARCH__INDEX_SETTINGS__NUMBER_OF_REPLICAS": "abc",
+    "UKR__LOGGING__LOG_FORMAT": "xml",
 }
 
 
@@ -177,7 +177,7 @@ def test_invalid_environment_override_names_the_variable(
 def test_log_level_from_the_environment_is_case_insensitive(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("LOG_LEVEL", "debug")
+    monkeypatch.setenv("UKR__LOGGING__LEVEL", "debug")
     assert ConfigLoader().load_config().logging.level == "DEBUG"
 
 
@@ -186,10 +186,10 @@ def test_invalid_environment_override_is_not_cached(
 ) -> None:
     # A shared loader that failed once must not hand out the half-applied
     # config on the next call.
-    monkeypatch.setenv("LOG_LEVEL", "s3cr3t-value")
+    monkeypatch.setenv("UKR__LOGGING__LEVEL", "s3cr3t-value")
     loader = ConfigLoader()
     for _ in range(2):
         with pytest.raises(ConfigurationError) as exc:
             loader.load_config()
-        assert "LOG_LEVEL" in str(exc.value)
+        assert "UKR__LOGGING__LEVEL" in str(exc.value)
         assert "s3cr3t-value" not in str(exc.value)

@@ -50,7 +50,7 @@ def eval_config(mocker) -> Config:
     config = Config()
     config.aws.region_name = REGION
     config.evaluation.enabled_evaluators = []
-    mocker.patch.object(run_evaluation, "get_config", return_value=config)
+    mocker.patch.object(run_evaluation, "load_cli_config", return_value=config)
     mocker.patch.object(run_evaluation, "display_ascii_art")
     return config
 

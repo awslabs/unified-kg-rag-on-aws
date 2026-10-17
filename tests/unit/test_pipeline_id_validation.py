@@ -7,7 +7,7 @@ an S3 prefix unchecked, so ``../x`` or ``a/b`` escaped the cache directory and
 the S3 sync uploaded whatever JSON sat under the resolved path. The id now
 must be one safe path segment (letters, digits, ``.``, ``_``, ``-``; no
 separator, no ``..``) at the CLI (``--pipeline-id`` and the
-``GRAPHRAG_PIPELINE_ID`` variable the Step Functions task sets), in
+``UKR_PIPELINE_ID`` variable the Step Functions task sets), in
 ``PipelineConfig`` and in ``DataIngestionPipeline.run``.
 """
 
@@ -43,7 +43,7 @@ def test_cli_rejects_unsafe_pipeline_id(bad: str) -> None:
 def test_cli_rejects_unsafe_pipeline_id_from_env(
     bad: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("GRAPHRAG_PIPELINE_ID", bad)
+    monkeypatch.setenv("UKR_PIPELINE_ID", bad)
     with pytest.raises(SystemExit):
         _parser().parse_args([])
 
@@ -51,7 +51,7 @@ def test_cli_rejects_unsafe_pipeline_id_from_env(
 def test_cli_treats_empty_env_pipeline_id_as_unset(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("GRAPHRAG_PIPELINE_ID", "")
+    monkeypatch.setenv("UKR_PIPELINE_ID", "")
     assert _parser().parse_args([]).pipeline_id is None
 
 

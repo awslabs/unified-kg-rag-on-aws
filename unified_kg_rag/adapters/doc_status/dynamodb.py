@@ -139,7 +139,7 @@ class DynamoDBDocStatusStore:
             hint = (
                 "The table does not exist in this account and region. Create it "
                 "(the CDK stack does), point aws.dynamodb.table_name (env "
-                "GRAPHRAG_DOC_STATUS_TABLE) at the existing table, or set "
+                "UKR__AWS__DYNAMODB__TABLE_NAME) at the existing table, or set "
                 "aws.dynamodb.create_table_if_missing: true."
             )
         elif code in _ACCESS_CODES:
@@ -184,7 +184,7 @@ class DynamoDBDocStatusStore:
                 f"the key schema {keys} of an earlier release; this release "
                 f"keys records by '{_PARTITION_KEY}' (partition) and "
                 f"'{_SORT_KEY}' (sort). Point aws.dynamodb.table_name (env "
-                "GRAPHRAG_DOC_STATUS_TABLE) at a new table, or deploy the CDK "
+                "UKR__AWS__DYNAMODB__TABLE_NAME) at a new table, or deploy the CDK "
                 "stack's new table, and re-run with indexing.reset: true."
             )
 

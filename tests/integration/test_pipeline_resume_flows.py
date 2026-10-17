@@ -96,7 +96,7 @@ class _Harness:
             )
 
         monkeypatch.setattr(pipeline_module, "build_providers", build_providers)
-        monkeypatch.setattr(cli, "get_config", lambda path=None: self.config)
+        monkeypatch.setattr(cli, "load_cli_config", lambda _args: self.config)
         monkeypatch.setattr(cli, "setup_logging", lambda config, stream=None: None)
         monkeypatch.setattr(
             cli.IngestionPipelineRunner,

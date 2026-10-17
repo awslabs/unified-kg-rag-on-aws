@@ -240,9 +240,9 @@ class TestFingerprintScope:
         # (LLM output) or the indexing cache.
         baseline = Config()
         changed = Config()
-        changed.graph.analysis.centrality.pagerank_alpha = 0.5
-        changed.graph.analysis.centrality.calculate_betweenness = (
-            not baseline.graph.analysis.centrality.calculate_betweenness
+        changed.graph.visualization.centrality.pagerank_alpha = 0.5
+        changed.graph.visualization.centrality.calculate_betweenness = (
+            not baseline.graph.visualization.centrality.calculate_betweenness
         )
         changed.graph.analysis.statistics.calculate_diameter = (
             not baseline.graph.analysis.statistics.calculate_diameter

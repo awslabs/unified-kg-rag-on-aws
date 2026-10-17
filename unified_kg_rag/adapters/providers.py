@@ -375,8 +375,8 @@ def _signing_session(providers: Providers, needed: bool) -> boto3.Session | None
 # validator requires aws.neptune.use_iam: false for it (no SigV4). Only the
 # retriever kinds declare the endpoint: preflight resolves it through the
 # retriever role, and each indexer shares its retriever's providers section.
-_NEPTUNE_ENDPOINT = ("aws.neptune.endpoint", "NEPTUNE_ENDPOINT")
-_OPENSEARCH_ENDPOINT = ("aws.opensearch.endpoint", "OPENSEARCH_ENDPOINT")
+_NEPTUNE_ENDPOINT = ("aws.neptune.endpoint", "UKR__AWS__NEPTUNE__ENDPOINT")
+_OPENSEARCH_ENDPOINT = ("aws.opensearch.endpoint", "UKR__AWS__OPENSEARCH__ENDPOINT")
 
 
 @register_provider(ProviderRole.GRAPH_INDEXER, NEPTUNE)

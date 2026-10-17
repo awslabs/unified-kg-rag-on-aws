@@ -204,7 +204,7 @@ class OrchestrationStack(Stack):
                     # `command` must be a static array (ECS RunTask cannot take a
                     # fully-dynamic command), so the flags are static here and
                     # per-run values come from environment overrides below
-                    # (the CLI reads GRAPHRAG_SOURCE_DIRECTORY / GRAPHRAG_PIPELINE_ID;
+                    # (the CLI reads UKR_SOURCE_DIRECTORY / UKR_PIPELINE_ID;
                     # --config-path is a fixed in-image path baked into the image).
                     command=[
                         "run-ingestion",
@@ -221,11 +221,11 @@ class OrchestrationStack(Stack):
                     ],
                     environment=[
                         tasks.TaskEnvironmentVariable(
-                            name="GRAPHRAG_SOURCE_DIRECTORY",
+                            name="UKR_SOURCE_DIRECTORY",
                             value=sfn.JsonPath.string_at("$.source_directory"),
                         ),
                         tasks.TaskEnvironmentVariable(
-                            name="GRAPHRAG_PIPELINE_ID",
+                            name="UKR_PIPELINE_ID",
                             value=sfn.JsonPath.string_at("$.pipeline_id"),
                         ),
                     ],

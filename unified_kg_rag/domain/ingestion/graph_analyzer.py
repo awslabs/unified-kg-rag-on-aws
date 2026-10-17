@@ -70,6 +70,8 @@ class GraphAnalyzer:
     def __init__(self, config: Config, graph: nx.Graph | None = None) -> None:
         self.config = config
         self.analysis_config = config.graph.analysis
+        # Centrality only sizes and plots the visualization's nodes.
+        self.centrality_config = config.graph.visualization.centrality
         self._graph = graph
         self._centrality_cache: dict[str, dict[str, float]] = {}
         self._centrality: dict[str, CentralityMetrics] | None = None
@@ -120,12 +122,12 @@ class GraphAnalyzer:
 
         centrality_methods = {
             "degree": (
-                self.analysis_config.centrality.calculate_degree,
+                self.centrality_config.calculate_degree,
                 nx.degree_centrality,
                 {},
             ),
             "betweenness": (
-                self.analysis_config.centrality.calculate_betweenness,
+                self.centrality_config.calculate_betweenness,
                 nx.betweenness_centrality,
                 # k is the pivot-sample size; networkx raises when k exceeds the
                 # node count, so clamp it. None means "use all nodes" (exact).
@@ -136,28 +138,28 @@ class GraphAnalyzer:
                 # it is ignored by networkx when k is None (exact).
                 {
                     "k": self._resolve_betweenness_k(),
-                    "seed": self.analysis_config.centrality.betweenness_seed,
+                    "seed": self.centrality_config.betweenness_seed,
                 },
             ),
             "pagerank": (
-                self.analysis_config.centrality.calculate_pagerank,
+                self.centrality_config.calculate_pagerank,
                 nx.pagerank,
                 {
-                    "alpha": self.analysis_config.centrality.pagerank_alpha,
-                    "max_iter": self.analysis_config.centrality.pagerank_max_iter,
+                    "alpha": self.centrality_config.pagerank_alpha,
+                    "max_iter": self.centrality_config.pagerank_max_iter,
                 },
             ),
             "closeness": (
-                self.analysis_config.centrality.calculate_closeness,
+                self.centrality_config.calculate_closeness,
                 nx.closeness_centrality,
                 {},
             ),
             "eigenvector": (
-                self.analysis_config.centrality.calculate_eigenvector,
+                self.centrality_config.calculate_eigenvector,
                 nx.eigenvector_centrality,
                 {
-                    "max_iter": self.analysis_config.centrality.eigenvector_max_iter,
-                    "tol": self.analysis_config.centrality.eigenvector_tol,
+                    "max_iter": self.centrality_config.eigenvector_max_iter,
+                    "tol": self.centrality_config.eigenvector_tol,
                 },
             ),
         }
@@ -187,7 +189,7 @@ class GraphAnalyzer:
           threshold) so exact O(V*E) betweenness cannot stall the analysis phase
           on a large real graph.
         """
-        centrality = self.analysis_config.centrality
+        centrality = self.centrality_config
         n = self._graph.number_of_nodes() if self._graph else 0
         if centrality.betweenness_k:
             return min(centrality.betweenness_k, n)

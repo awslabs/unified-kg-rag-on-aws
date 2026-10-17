@@ -163,8 +163,8 @@ optional 'unstructured' extra`). Python 3.11 또는 3.12에서는
 
    ```bash
    # .env — only needed when aws.opensearch.use_iam is false
-   OPENSEARCH_USERNAME=your_opensearch_username
-   OPENSEARCH_PASSWORD=your_opensearch_password
+   UKR__AWS__OPENSEARCH__USERNAME=your_opensearch_username
+   UKR__AWS__OPENSEARCH__PASSWORD=your_opensearch_password
    ```
 
    CLI(`run-ingestion`, `run-rag`)는 `.env` 파일을 자동으로 읽습니다.
@@ -408,21 +408,26 @@ cp config-template.yaml config.yaml
    딕셔너리와 병합되지 않고 통째로 대체됩니다.
 4. **환경 변수**(§2.10): 파일 위에 적용됩니다.
 5. **공급자 플래그**(`--backend`, `--llm-provider`, `--rerank-provider` 등): 마지막에
-   적용되어 앞의 모든 단계를 덮어씁니다. 파일과 환경 변수가 지정한 값은 모두
-   유지하며, `--backend`로 파일과 다른 백엔드로 바꾸면 이전 프리셋과 같은 값만
-   제거합니다.
+   적용되어 앞의 모든 단계를 덮어씁니다. 설정은 파일과 환경 변수가 지정한 값(파이썬에서는
+   그 뒤 `Config` 객체에 바꾼 값도)으로 다시 만들어지므로, `--backend`를 바꾸면 이전
+   프리셋이 채운 값만 사라지고 사용자가 지정한 값은 프리셋 값과 같더라도 남습니다.
 
 YAML 값은 파일을 읽을 때 검증합니다. 타입이 틀리거나 지원하지 않는 값이면
 잘못된 키를 밝힌 `Configuration validation error: ...`와 함께 CLI가 멈춥니다. 이
 경우와 올바른 YAML이 아닌 파일, 존재하지 않는 `--config-path` 파일은 사용법 오류로
-처리되어 모든 CLI가 오류 한 줄을 출력하고 종료 코드 2로 끝납니다. 알 수 없는 키(오타나
-새 릴리스에서 제거된 키)는 실행을 멈추지 않습니다. `Unknown config key '<path>' is ignored`
-WARNING을 남기고 버리므로, 파일을 고치거나 업그레이드한 뒤에는 로그를 확인하세요.
+처리되어 모든 CLI가 오류 한 줄을 출력하고 종료 코드 2로 끝납니다. 파일이나 `UKR__`
+변수에 있는 알 수 없는 키(오타나 새 릴리스에서 제거된 키)도 마찬가지이며, 오류가 키를
+하나하나 밝힙니다. 철자가 틀린 키는 아무 표시 없이 설정을 기본값으로 남기기 때문입니다
+(가드레일 ID를 잘못된 키에 적으면 질의를 검사하지 않습니다). `--allow-unknown-keys`(모든
+CLI, `get_config` / `ConfigLoader`에서는 `allow_unknown_keys=True`)를 주면 키마다
+WARNING만 남기고 계속합니다. 위치가 바뀐 키(이제 `models` 아래에 있는 모델 설정, 이제
+`graph.visualization.centrality`인 `graph.analysis.centrality`)는 대신할 키를 알려
+주며 실패합니다.
 
 첫 릴리스 전에 이름이 바뀐 키(`search.llm_retry`, `aws.bedrock.effort`,
 `processing.max_retries`, `indexing.neptune.max_retries`,
 `evaluation.ragas_max_retries`, `providers.llm.max_retries`,
-`providers.embedding.max_retries`)는 읽지 않으며 알 수 없는 키로 보고됩니다.
+`providers.embedding.max_retries`)는 읽지 않으며 알 수 없는 키로 처리됩니다.
 `aws.bedrock.transient_retry`, `aws.bedrock.default_effort`,
 `processing.max_attempts`, `indexing.neptune.max_attempts`,
 `evaluation.ragas_max_attempts`, `providers.llm.max_attempts`,
@@ -438,7 +443,7 @@ WARNING을 남기고 버리므로, 파일을 고치거나 업그레이드한 뒤
 
 | 키 | 기본값 | 역할과 변경 시점 |
 |---|---|---|
-| `aws.region_name` | `"us-west-2"` | Neptune, OpenSearch, S3, DynamoDB의 리전이며, `aws.bedrock.region_name`을 지정하지 않으면 Bedrock 리전이기도 합니다. `AWS_REGION`이 이 값을 덮어씁니다(§2.10 참고). 기본 리전에는 재순위화 모델 두 개를 포함한 기본 모델이 모두 있지만, 일부 리전(예: `ap-northeast-2`)에는 재순위화 모델이 없습니다. |
+| `aws.region_name` | `"us-west-2"` | Neptune, OpenSearch, S3, DynamoDB의 리전이며, `aws.bedrock.region_name`을 지정하지 않으면 Bedrock 리전이기도 합니다. `AWS_REGION`은 파일이 이 값을 지정하지 않았을 때만 채웁니다(§2.10 참고). 기본 리전에는 재순위화 모델 두 개를 포함한 기본 모델이 모두 있지만, 일부 리전(예: `ap-northeast-2`)에는 재순위화 모델이 없습니다. |
 | `aws.profile_name` | `null` | 이름 있는 AWS 프로파일입니다. `null`이면 기본 자격 증명 체인을 씁니다. |
 | `aws.bedrock.region_name` | `null` | Bedrock 모델·임베딩·재순위화 호출을 보내는 리전이며, 가드레일도 이 리전에 있어야 합니다. `null`이면 `aws.region_name`을 씁니다. 모델을 다른 리전에서 활성화한 경우에만 지정하세요. Bedrock으로 가는 경로가 VPC 엔드포인트뿐인 프라이빗 VPC에서는 `null`로 두거나 VPC 리전을 지정하세요. |
 | `aws.bedrock.enable_global_profile` | `true` | 교차 리전(global) 추론 프로파일을 찾아 씁니다. Claude 4.7 이후 모델과 GPT 모델은 프로파일로만 호출할 수 있으므로 켜 두세요. |
@@ -459,7 +464,7 @@ WARNING을 남기고 버리므로, 파일을 고치거나 업그레이드한 뒤
 | `aws.neptune.use_ssl` | `true` | `wss://`로 연결합니다. Neptune에서는 필수이며, 로컬 Gremlin Server에서만 `use_iam: false`와 함께 `false`로 둡니다(§1 로컬 모드). |
 | `aws.neptune.pool_size` | `4` | Gremlin 연결 풀 크기입니다. `indexing.neptune.index_concurrency`가 더 크면 클라이언트가 그 값으로 늘립니다. |
 | `aws.opensearch.endpoint` | `null` | **필수.** OpenSearch 도메인 엔드포인트입니다. |
-| `aws.opensearch.use_iam` | `false` | `false`이면 환경 변수 `OPENSEARCH_USERNAME` / `OPENSEARCH_PASSWORD`를 읽습니다(§1 인증). |
+| `aws.opensearch.use_iam` | `false` | `false`이면 환경 변수 `UKR__AWS__OPENSEARCH__USERNAME` / `UKR__AWS__OPENSEARCH__PASSWORD`를 읽습니다(§1 인증). |
 | `aws.opensearch.allow_anonymous` | `false` | 인증 없이 연결합니다. 보안 플러그인을 끈 로컬 OpenSearch용입니다(§1 로컬 모드). `use_iam`이나 username/password와 함께 쓸 수 없습니다. |
 | `aws.opensearch.sigv4_service_name` | `"es"` | 관리형 도메인은 `es`, OpenSearch Serverless는 `aoss`입니다. 값이 틀리면 검색 결과가 0건으로 나오는 경우가 많습니다. |
 | `aws.s3.bucket_name` | `null` | 캐시 동기화와 임베딩 캐시 저장에 쓰는 버킷입니다. |
@@ -587,10 +592,10 @@ LLM 단계는 Bedrock I/O가 병목이므로 동시성을 CPU 수보다 훨씬 �
 | `processing.resolution_method` | `"minhash"` | 엔티티 해석 방식입니다. `minhash` 또는 `sequence_matcher`입니다. |
 | `processing.fuzzy_entity_resolution` | `false` | 이름이 비슷하기만 한 엔티티도 전체 빌드와 증분 병합에서 병합합니다. 끄면 정규화, 법인 형태 표기 제거, 한자·한글·가나 옆 공백 제거 뒤 이름이 같을 때만 병합합니다. |
 | `processing.similarity_threshold` | `0.85` | 퍼지 엔티티 해석과 클레임 주체·객체의 엔티티 이름 매칭에 쓰는 임계값입니다. 서로 다른 엔티티가 합쳐지면 올리세요. |
-| `processing.document_parsing.source_directory` | `"source"` | 라이브러리 호출용 기본값입니다. `run-ingestion`에는 `--source-directory`(또는 `GRAPHRAG_SOURCE_DIRECTORY`)가 반드시 필요합니다. |
+| `processing.document_parsing.source_directory` | `"source"` | 라이브러리 호출용 기본값입니다. `run-ingestion`에는 `--source-directory`(또는 `UKR_SOURCE_DIRECTORY`)가 반드시 필요합니다. |
 | `processing.document_parsing.target_directory` | `null` | 파싱한 문서를 확인용 `<stem>.json`으로 내보냅니다(`--output-directory`와 같음). 소스 디렉터리는 지정할 수 없습니다. |
 | `processing.document_parsing.index_value` | `null` | 실행이 쓰는 인덱스 접미사입니다. 모든 OpenSearch 인덱스와 Neptune 레이블 이름이 `<prefix>-<index_value>`가 됩니다(`null`이면 `default`). 이 코퍼스에 질의할 때는 같은 값을 `run-rag`/`run-eval --suffix`로 넘깁니다. `run-ingestion`에는 이 값을 지정하는 플래그가 없으므로 테넌트나 버전마다 설정 파일을 따로 두세요. |
-| `processing.document_parsing.source_scope` | `null` | 증분 삭제에 쓰는 코퍼스 식별값입니다. 실행은 자기 인덱스 접미사와 소스 범위에 속한 레지스트리 문서만 삭제합니다. `null`이면 해석된 소스 디렉터리 경로를 쓰며, 컨테이너 엔트리포인트는 S3 URI로 설정합니다(`GRAPHRAG_SOURCE_SCOPE`). §5를 참고하세요. |
+| `processing.document_parsing.source_scope` | `null` | 증분 삭제에 쓰는 코퍼스 식별값입니다. 실행은 자기 인덱스 접미사와 소스 범위에 속한 레지스트리 문서만 삭제합니다. `null`이면 해석된 소스 디렉터리 경로를 쓰며, 컨테이너 엔트리포인트는 S3 URI로 설정합니다(`UKR__PROCESSING__DOCUMENT_PARSING__SOURCE_SCOPE`). §5를 참고하세요. |
 | `processing.chunking.chunker_type` | `"intelligent"` | `intelligent`는 LLM이 의미 경계를 고르고, `simple`은 크기로 나눕니다. |
 | `processing.chunking.min_chunk_size` | `1000` | 최소 청크 크기(문자 수)입니다. 이보다 짧은 조각은 이웃 청크에 합칩니다. |
 | `processing.chunking.max_chunk_size` | `8000` | 최대 청크 크기(문자 수)입니다. 임베딩과 재순위화 입력 한도 안에 들어야 합니다. 크기는 토큰이 아니라 문자 수입니다. 영어는 평균 약 4자가 1토큰이지만 한자·한글·가나는 1자가 약 1토큰이므로, CJK 8,000자는 약 8K 토큰입니다. Titan Text Embeddings V2(8,192)에는 들어가지만 Cohere Rerank 3.5의 문서 한도(4,096 토큰)는 넘으므로, 재순위화를 쓰는 CJK 코퍼스는 크기를 절반 정도로 줄이세요. |
@@ -623,7 +628,7 @@ LLM 단계는 Bedrock I/O가 병목이므로 동시성을 CPU 수보다 훨씬 �
 | `graph.community_detection.min_community_size` | `3` | 엔티티 수가 이보다 작은 레벨 0 커뮤니티는 간선 가중치를 가장 많이 공유하는 이웃 커뮤니티에 합칩니다. 합친 결과가 `max_cluster_size`를 넘으면 합치지 않습니다. |
 | `graph.community_detection.report_generation.max_report_context_tokens` | `4000` | 리포트 프롬프트 하나에 넣는 엔티티·관계 컨텍스트의 토큰 예산입니다. |
 | `graph.community_detection.report_generation.content_length` | `"medium"` | 리포트 길이로, 리포트마다 요청할 findings 수입니다. `short`(5-7), `medium`(7-10), `long`(10-15) 중 하나입니다. |
-| `graph.analysis.centrality.calculate_betweenness` | `true` | 시각화에서 매개 중심성을 계산합니다(수집 단계는 중심성을 계산하지 않음). 노드가 `betweenness_auto_sample_threshold`(`2000`)보다 많은 그래프에서는 정확히 계산하지 않고 샘플링합니다. |
+| `graph.visualization.centrality.calculate_betweenness` | `true` | 시각화에서 매개 중심성을 계산합니다(수집 단계는 중심성을 계산하지 않음). 노드가 `betweenness_auto_sample_threshold`(`2000`)보다 많은 그래프에서는 정확히 계산하지 않고 샘플링합니다. |
 | `graph.visualization.enabled` | `false` | 수집 중에 시각화를 렌더링하고 레이아웃을 포함한 시각화 데이터를 내보냅니다(수집마다 노드당 임베딩 호출 한 번과 레이아웃 차원 축소가 추가됨). |
 | `graph.visualization.export_data` | `true` | `enabled: false`여도 `visualization_data.json`(그래프와 커뮤니티. 레이아웃과 중심성은 없음)을 기록해 `run-visualization`으로 필요할 때 렌더링할 수 있게 합니다. 그래프를 한 번 훑을 뿐이며 모델 호출이 없습니다. |
 | `graph.visualization.outputs_directory` | `null` | 지정하지 않으면 `<cache dir>/<pipeline_id>/visualization`에 기록하므로 데이터가 캐시와 함께 S3로 동기화됩니다. |
@@ -726,7 +731,7 @@ LLM 단계는 Bedrock I/O가 병목이므로 동시성을 CPU 수보다 훨씬 �
 항상 같은 값이 나오므로 질의 내용을 드러내지 않고도 같은 질의를 여러 레코드에서
 따라갈 수 있습니다. 질의 원문, 다시 쓴 질의(DRIFT와 번역), 엔티티 이름, 모델 원본
 출력은 `DEBUG`에서만 기록하며, 예외 메시지에는 모델 출력을 넣지 않습니다. `DEBUG`
-로그(`logging.level: DEBUG`, `LOG_LEVEL=DEBUG`, `--verbose`)에는 사용자 데이터와
+로그(`logging.level: DEBUG`, `UKR__LOGGING__LEVEL=DEBUG`, `--verbose`)에는 사용자 데이터와
 코퍼스 데이터가 들어 있다고 보세요. 로그를 공유 저장소로 보내는 환경에서는 켜지
 마세요. `logging.library_levels`에서 `DEBUG`로 둔 라이브러리(예: `botocore`)는 요청
 본문도 기록할 수 있습니다.
@@ -758,45 +763,51 @@ LLM 단계는 Bedrock I/O가 병목이므로 동시성을 CPU 수보다 훨씬 �
 
 ### 2.10 환경 변수로 덮어쓰기
 
-다음 환경 변수를 지정하면 설정 파일(과 내장 기본값)보다 우선합니다. 값은 필드
-타입으로 변환하고(불리언은 `true`/`1`/`yes`/`on`을 참으로 봄) 파일에 같은 값을 쓴
-경우처럼 필드 제약 조건으로 검증합니다(`LOG_LEVEL`은 대소문자를 가리지 않음). 값이
-잘못되면 사용법 오류로 보고 CLI가 해당 변수를 밝힌 한 줄을 출력한 뒤 종료 코드 2로
-끝납니다.
+모든 설정 키는 `UKR__` 뒤에 키 경로를 붙인 환경 변수로 지정할 수 있습니다. 경로의
+마디 사이에는 밑줄 두 개를 쓰고 대소문자는 가리지 않습니다.
+`UKR__AWS__NEPTUNE__ENDPOINT`는 `aws.neptune.endpoint`를,
+`UKR__SEARCH__RERANKING__TOP_K`는 `search.reranking.top_k`를 지정하며, 자유 형식
+매핑 다음 마디는 그 매핑의 키를 가리킵니다
+(`UKR__INDEXING__OPENSEARCH__LANGUAGE_ANALYZERS__KO`). 환경 변수는 설정 파일과 내장
+기본값보다 우선합니다. 값은 필드 타입으로 변환하고(불리언은 `true`/`1`/`yes`/`on`을
+참으로 봄. 목록이나 매핑 설정은 JSON, 예:
+`UKR__SEARCH__AUTO_ROUTABLE_STRATEGIES='["local", "mix"]'`) 파일에 같은 값을 쓴
+경우처럼 필드 제약 조건으로 검증합니다(`UKR__LOGGING__LEVEL`은 대소문자를 가리지
+않음). 값이 잘못되었거나 어떤 설정 키도 가리키지 않는 `UKR__` 변수는 사용법 오류이며,
+CLI가 해당 변수를 밝힌 한 줄을 출력한 뒤 종료 코드 2로 끝납니다
+(`--allow-unknown-keys`를 주면 알 수 없는 변수는 WARNING만 남깁니다).
 
-| 환경 변수 | 덮어쓰는 키 | 참고 |
+AWS SDK의 `AWS_PROFILE`과 `AWS_REGION`은 설정 파일이 `aws.profile_name`과
+`aws.region_name`을 지정하지 않았을 때만 그 값을 채웁니다. SDK와 마찬가지로 명시한
+설정이 환경 변수보다 우선하므로, 셸이 `AWS_REGION`을 내보내도(SSO 도우미와
+CloudShell이 그렇게 합니다) 파일에 적은 리전은 바뀌지 않습니다. `AWS_DEFAULT_REGION`은
+읽지 않으며, `UKR__AWS__REGION_NAME`은 다른 `UKR__` 변수처럼 파일보다 우선합니다.
+
+배포에서 주로 지정하는 변수는 다음과 같습니다.
+
+| 환경 변수 | 지정하는 키 | 참고 |
 |---|---|---|
-| `AWS_PROFILE` | `aws.profile_name` | |
-| `AWS_REGION` | `aws.region_name` | `aws.bedrock.region_name`이 `null`이면 Bedrock 호출 리전도 바뀝니다. `AWS_DEFAULT_REGION`은 읽지 않습니다. |
-| `BEDROCK_REGION` | `aws.bedrock.region_name` | |
-| `BEDROCK_GUARDRAIL_IDENTIFIER` | `aws.bedrock.guardrail.identifier` | |
-| `BEDROCK_GUARDRAIL_VERSION` | `aws.bedrock.guardrail.version` | |
-| `NEPTUNE_ENDPOINT` | `aws.neptune.endpoint` | |
-| `OPENSEARCH_ENDPOINT` | `aws.opensearch.endpoint` | |
-| `OPENSEARCH_USERNAME` | `aws.opensearch.username` | `aws.opensearch.use_iam: false`일 때의 기본 인증입니다. |
-| `OPENSEARCH_PASSWORD` | `aws.opensearch.password` | 로그에는 가려서 표시합니다. |
-| `OPENSEARCH_NUMBER_OF_REPLICAS` | `indexing.opensearch.index_settings.number_of_replicas` | 이후에 만드는 인덱스에 적용됩니다. |
-| `OPENSEARCH_KOREAN_ANALYZER` | `indexing.opensearch.language_analyzers.ko` | 이후에 만드는 인덱스에 적용됩니다. |
-| `S3_BUCKET_NAME` | `aws.s3.bucket_name` | |
-| `GRAPHRAG_DOC_STATUS_TABLE` | `aws.dynamodb.table_name` | |
-| `GRAPHRAG_DOC_STATUS_CREATE_TABLE` | `aws.dynamodb.create_table_if_missing` | |
-| `GRAPHRAG_OBSERVABILITY_ENABLED` | `observability.enabled` | |
-| `GRAPHRAG_OBSERVABILITY_BACKEND` | `observability.backend` | `none`, `otlp`, `langfuse`, `phoenix` 중 하나. |
-| `LOG_LEVEL` | `logging.level` | |
-| `LOG_FORMAT` | `logging.log_format` | |
-| `LOG_TO_FILE` | `logging.log_to_file` | |
-| `LOG_FILE_PATH` | `logging.log_file_path` | |
+| `AWS_PROFILE` / `AWS_REGION` | `aws.profile_name` / `aws.region_name` | 파일이 지정하지 않았을 때만. `aws.bedrock.region_name`이 `null`이면 `AWS_REGION`이 Bedrock 호출 리전도 정합니다. |
+| `UKR__AWS__BEDROCK__REGION_NAME` | `aws.bedrock.region_name` | |
+| `UKR__AWS__BEDROCK__GUARDRAIL__IDENTIFIER` / `__VERSION` | `aws.bedrock.guardrail.identifier` / `version` | |
+| `UKR__AWS__NEPTUNE__ENDPOINT` | `aws.neptune.endpoint` | |
+| `UKR__AWS__OPENSEARCH__ENDPOINT` | `aws.opensearch.endpoint` | |
+| `UKR__AWS__OPENSEARCH__USERNAME` / `__PASSWORD` | `aws.opensearch.username` / `password` | `aws.opensearch.use_iam: false`일 때의 기본 인증이며, 비밀번호는 로그에 가려서 표시합니다. |
+| `UKR__INDEXING__OPENSEARCH__INDEX_SETTINGS__NUMBER_OF_REPLICAS` | `indexing.opensearch.index_settings.number_of_replicas` | 이후에 만드는 인덱스에 적용됩니다. |
+| `UKR__INDEXING__OPENSEARCH__LANGUAGE_ANALYZERS__KO` | `indexing.opensearch.language_analyzers.ko` | 이후에 만드는 인덱스에 적용됩니다. |
+| `UKR__AWS__S3__BUCKET_NAME` | `aws.s3.bucket_name` | |
+| `UKR__AWS__DYNAMODB__TABLE_NAME` / `__CREATE_TABLE_IF_MISSING` | `aws.dynamodb.table_name` / `create_table_if_missing` | |
+| `UKR__PROCESSING__DOCUMENT_PARSING__SOURCE_SCOPE` | `processing.document_parsing.source_scope` | 컨테이너 엔트리포인트가 동기화한 S3 URI로 지정합니다. |
+| `UKR__OBSERVABILITY__ENABLED` / `__BACKEND` | `observability.enabled` / `backend` | |
+| `UKR__LOGGING__LEVEL` / `__LOG_FORMAT` | `logging.level` / `log_format` | |
 
-`run-ingestion`은 `GRAPHRAG_SOURCE_DIRECTORY`와 `GRAPHRAG_PIPELINE_ID`도
-`--source-directory`와 `--pipeline-id`의 기본값으로 읽습니다. 플래그를 직접
-지정하면 플래그가 우선합니다.
+`run-ingestion`은 `UKR_SOURCE_DIRECTORY`와 `UKR_PIPELINE_ID`(설정 키가 아니므로
+밑줄 하나)도 `--source-directory`와 `--pipeline-id`의 기본값으로 읽습니다. 플래그를
+직접 지정하면 플래그가 우선합니다. `UKR_METRICS_ENVIRONMENT`는
+`--metrics-sink cloudwatch`의 `Environment` 차원입니다.
 
-> **의도하지 않은 `AWS_REGION`이 설정 파일보다 우선합니다.** SSO 자격 증명 도우미,
-> CloudShell, 셸 프로필은 `AWS_REGION`을 내보내는 경우가 많습니다. 이 값은
-> `aws.region_name`을 아무 표시 없이 대체하므로, 실행이 Neptune과
-> OpenSearch(`aws.bedrock.region_name`을 지정하지 않았다면 Bedrock도)를 엉뚱한
-> 리전에서 찾게 됩니다. 실행 전에 `env | grep -E '^(AWS_REGION|BEDROCK_REGION)='`로
-> 확인하고, 찾은 값은 해제하거나 바로잡으세요.
+이 릴리스 이전의 변수 이름(`NEPTUNE_ENDPOINT`, `LOG_LEVEL`, `GRAPHRAG_SOURCE_SCOPE`
+등)은 더 이상 읽지 않습니다.
 
 > **LangSmith 추적은 내용을 업로드합니다.** `LANGSMITH_TRACING=true`(또는 구형
 > 변수 `LANGCHAIN_TRACING_V2=true`)가 설정되어 있으면 LangChain은 추적한 실행을 모두
@@ -813,15 +824,15 @@ CLI는 python-dotenv로 `.env` 파일도 읽습니다. 현재 작업 디렉터�
 Python 코드에서 `.env`가 필요하면 직접 읽으세요(예: `get_config()` 전에
 `dotenv.load_dotenv()`).
 
-CDK compute 스택은 `AWS_REGION`, `BEDROCK_REGION`,
-`NEPTUNE_ENDPOINT`, `OPENSEARCH_ENDPOINT`, `OPENSEARCH_NUMBER_OF_REPLICAS`(다중 노드
-도메인이면 1), `OPENSEARCH_KOREAN_ANALYZER`(`opensearch_korean_analyzer`를 지정하지
-않으면 `cjk`), `S3_BUCKET_NAME`,
-`GRAPHRAG_DOC_STATUS_TABLE`, `GRAPHRAG_DOC_STATUS_CREATE_TABLE=false`(테이블은
-IaC가 관리하며 태스크 역할에는 테이블 생성 권한이 없음), `LOG_FORMAT`을 주입하고,
-가드레일을 배포했다면 `BEDROCK_GUARDRAIL_IDENTIFIER`도 주입합니다(`guardrail_version`을
-설정하면 `BEDROCK_GUARDRAIL_VERSION`도 주입). `enable_cloudwatch_tracing`을 켜면
-`GRAPHRAG_OBSERVABILITY_ENABLED=true`, `GRAPHRAG_OBSERVABILITY_BACKEND=otlp`,
+CDK compute 스택은 `AWS_REGION`, `UKR__AWS__BEDROCK__REGION_NAME`,
+`UKR__AWS__NEPTUNE__ENDPOINT`, `UKR__AWS__OPENSEARCH__ENDPOINT`, `UKR__INDEXING__OPENSEARCH__INDEX_SETTINGS__NUMBER_OF_REPLICAS`(다중 노드
+도메인이면 1), `UKR__INDEXING__OPENSEARCH__LANGUAGE_ANALYZERS__KO`(`opensearch_korean_analyzer`를 지정하지
+않으면 `cjk`), `UKR__AWS__S3__BUCKET_NAME`,
+`UKR__AWS__DYNAMODB__TABLE_NAME`, `UKR__AWS__DYNAMODB__CREATE_TABLE_IF_MISSING=false`(테이블은
+IaC가 관리하며 태스크 역할에는 테이블 생성 권한이 없음), `UKR__LOGGING__LOG_FORMAT`을 주입하고,
+가드레일을 배포했다면 `UKR__AWS__BEDROCK__GUARDRAIL__IDENTIFIER`도 주입합니다(`guardrail_version`을
+설정하면 `UKR__AWS__BEDROCK__GUARDRAIL__VERSION`도 주입). `enable_cloudwatch_tracing`을 켜면
+`UKR__OBSERVABILITY__ENABLED=true`, `UKR__OBSERVABILITY__BACKEND=otlp`,
 `OTEL_EXPORTER_OTLP_ENDPOINT`(수집기 사이드카), `OTEL_RESOURCE_ATTRIBUTES`도
 주입합니다. 증분 인덱싱을
 쓰려면 설정 파일에 `aws.dynamodb.enabled: true`가 있어야 합니다.
@@ -943,23 +954,24 @@ LangChain이 콜백을 호출하지 않으므로 모델 스팬이 남지 않습�
 
 | 플래그 | 기본값 | 의미 |
 |---|---|---|
-| `--source-directory` | `$GRAPHRAG_SOURCE_DIRECTORY` | 소스 문서 디렉터리입니다. 실행에 필요하며, 플래그를 생략하면 환경 변수 `GRAPHRAG_SOURCE_DIRECTORY`를 씁니다. |
+| `--source-directory` | `$UKR_SOURCE_DIRECTORY` | 소스 문서 디렉터리입니다. 실행에 필요하며, 플래그를 생략하면 환경 변수 `UKR_SOURCE_DIRECTORY`를 씁니다. |
 | `--output-directory` | 없음(내보내지 않음) | 파싱한 문서를 확인용 JSON으로 내보낼 위치(소스 디렉터리는 지정 불가) |
 | `--cache-directory` | `cache` | 파이프라인 캐시와 중간 결과 |
 | `--force-rebuild` | off | 캐시된 단계 출력을 무시하고 모든 단계를 다시 계산. 새 출력으로 캐시를 다시 씀 |
 | `--s3-sync` | off | 캐시를 S3에 동기화(`--s3-bucket-name` 필요) |
 | `--s3-bucket-name` | — | 캐시 동기화용 S3 버킷 |
 | `--s3-prefix` | `pipeline-runs` | 캐시 파일의 S3 키 접두사 |
-| `--pipeline-id` | `$GRAPHRAG_PIPELINE_ID` | 재개하거나 검사할 기존 실행입니다. 플래그를 생략하면 환경 변수 `GRAPHRAG_PIPELINE_ID`를 씁니다. 이 ID가 실행의 캐시 디렉터리와 S3 접두사 이름이 되므로 영문 소문자, 숫자, 하이픈, 밑줄만 쓸 수 있습니다. |
+| `--pipeline-id` | `$UKR_PIPELINE_ID` | 재개하거나 검사할 기존 실행입니다. 플래그를 생략하면 환경 변수 `UKR_PIPELINE_ID`를 씁니다. 이 ID가 실행의 캐시 디렉터리와 S3 접두사 이름이 되므로 영문 소문자, 숫자, 하이픈, 밑줄만 쓸 수 있습니다. |
 | `--resume-from-stage` | — | 재개할 단계 이름(대소문자 무관, `--pipeline-id` 필요). 없는 이름이면 사용법 오류(종료 코드 2) |
 | `--verify-metadata` | off | 파이프라인 메타데이터 무결성 확인(`--pipeline-id` 필요). 손상되었거나 실행을 찾지 못하면 0이 아닌 코드로 종료 |
 | `--yes`, `-y` | off | 확인 질문(무결성 검사 실패 후 계속 진행)에 모두 예로 답함. stdin이 터미널이 아니면 질문할 수 없으므로 `--yes` 없이는 실행이 실패 |
 | `--continue-on-error` | off | 단계에서 오류가 나도 계속 진행. 추출·해석·커뮤니티 단계가 비정상 종료해 산출물이 빠진 문서는 FAILED로 기록되어 다음 증분 실행이 다시 처리 |
 | `--enabled-stages` | 전체 | 실행할 단계 목록(쉼표로 구분) |
-| `--metrics-sink` | `none` | `none` 또는 `cloudwatch`(CloudWatch EMF — Embedded Metric Format — 지표를 stdout에 출력. `GRAPHRAG_METRICS_ENVIRONMENT`가 있으면 `Environment` 차원을 붙이고(CDK 태스크는 `env_name`을 설정), 없으면 차원 없음. `pipeline_id`는 차원이 아니라 로그 속성으로 기록하므로 실행마다 지표 시계열이 늘지 않음). 각 단계의 지표는 그 단계가 끝날 때, 그 단계를 실행한 실행만 내보내므로 재개한 실행이 복원한 단계의 수치를 다시 보내지 않음 |
+| `--metrics-sink` | `none` | `none` 또는 `cloudwatch`(CloudWatch EMF — Embedded Metric Format — 지표를 stdout에 출력. `UKR_METRICS_ENVIRONMENT`가 있으면 `Environment` 차원을 붙이고(CDK 태스크는 `env_name`을 설정), 없으면 차원 없음. `pipeline_id`는 차원이 아니라 로그 속성으로 기록하므로 실행마다 지표 시계열이 늘지 않음). 각 단계의 지표는 그 단계가 끝날 때, 그 단계를 실행한 실행만 내보내므로 재개한 실행이 복원한 단계의 수치를 다시 보내지 않음 |
 | `--retire-source-scope SCOPE` | — | 증분 실행에서 이전 소스 범위 `SCOPE`(이번 실행의 인덱스 접미사)의 레지스트리 레코드를 모두 삭제된 문서로 처리해 그 문서에만 속한 내용을 지웁니다. 여러 번 지정할 수 있고 `indexing.retire_source_scopes`에 더해집니다. `SCOPE`가 실행 자신의 범위이면 실패합니다(§5 삭제 범위 참고). |
 | `--output-format` | `text` | `text`, 또는 표준 출력에 JSON 결과 하나를 쓰는 `json`([종료 코드와 JSON 출력](#cli-종료-코드와-json-출력) 참고) |
 | `--config-path` | — | `config.yaml` 경로. 파일이 없으면 사용법 오류(종료 코드 2) |
+| `--allow-unknown-keys` | off | 알 수 없는 설정 키(와 `UKR__` 변수)에 실패하지 않고 WARNING만 남긴 채 계속합니다([설정을 읽는 순서](#설정을-읽는-순서) 참고) |
 | `--backend`, `--llm-provider` 등 | — | 공급자 선택. [공급자 플래그](#공급자-플래그) 참고 |
 
 ### 파이프라인 단계 12개
@@ -1111,7 +1123,7 @@ processing:
 `nori`는 `analysis-nori` 플러그인이 제공하며, [로컬 OpenSearch
 컨테이너](#컨테이너로-띄운-로컬-저장소)에는 설치되어 있지만 Amazon OpenSearch Service
 도메인에는 선택 사항인 Nori 패키지를 연결해야만 생깁니다. 그래서 [CDK
-배포](../iac/README.md)는 `OPENSEARCH_KOREAN_ANALYZER`로 `ko`를 OpenSearch에 내장된
+배포](../iac/README.md)는 `UKR__INDEXING__OPENSEARCH__LANGUAGE_ANALYZERS__KO`로 `ko`를 OpenSearch에 내장된
 `cjk` 분석기(겹치는 문자 바이그램. 임베디드 엔진이 `nori`를 처리하는 방식과 비슷함)로
 매핑하며, 이 값이 이미지의 설정 파일보다 우선합니다. 도메인에서 한국어 형태소 분석을
 쓰려면 Nori 패키지를 연결한 뒤(콘솔 **Packages** 또는 `aws opensearch
@@ -1147,6 +1159,7 @@ associate-package`. 블루/그린 배포가 일어남) `-c opensearch_korean_ana
 | `--output-format` | `text` | `text`, 또는 표준 출력에 JSON 결과 하나를 쓰는 `json`([종료 코드와 JSON 출력](#cli-종료-코드와-json-출력) 참고) |
 | `--verbose`, `-v` | off | 질의 처리 정보, 출처, 지표 표시 |
 | `--config-path` | — | `config.yaml` 경로 |
+| `--allow-unknown-keys` | off | 알 수 없는 설정 키(와 `UKR__` 변수)에 실패하지 않고 WARNING만 남긴 채 계속합니다([설정을 읽는 순서](#설정을-읽는-순서) 참고) |
 | `--backend`, `--llm-provider` 등 | — | 공급자 선택. [공급자 플래그](#공급자-플래그) 참고 |
 
 ### 검색 전략 선택
@@ -1550,6 +1563,7 @@ rank, 주장 문장은 남은 청크에서 다시 파생하므로 그 문서가 
 | `--verbose`, `-v` | off | 디버그 로깅 |
 | `--output-format` | `text` | `text`, 또는 표준 출력에 JSON 결과 하나를 쓰는 `json`([종료 코드와 JSON 출력](#cli-종료-코드와-json-출력) 참고) |
 | `--config-path` | — | `config.yaml` 경로 |
+| `--allow-unknown-keys` | off | 알 수 없는 설정 키(와 `UKR__` 변수)에 실패하지 않고 WARNING만 남긴 채 계속합니다([설정을 읽는 순서](#설정을-읽는-순서) 참고) |
 | `--backend`, `--llm-provider` 등 | — | 공급자 선택. [공급자 플래그](#공급자-플래그) 참고 |
 
 ### 평가기
@@ -1905,6 +1919,7 @@ spring 레이아웃)도 이 노드만으로 계산합니다. 파일에는
 | `--renderers` | 등록된 전체 | 실행할 렌더러: `interactive`, `static` |
 | `--output-format` | `text` | `text`, 또는 표준 출력에 JSON 결과 하나를 쓰는 `json`([종료 코드와 JSON 출력](#cli-종료-코드와-json-출력) 참고) |
 | `--config-path` | — | `config.yaml` 경로 |
+| `--allow-unknown-keys` | off | 알 수 없는 설정 키(와 `UKR__` 변수)에 실패하지 않고 WARNING만 남긴 채 계속합니다([설정을 읽는 순서](#설정을-읽는-순서) 참고) |
 | `--backend`, `--llm-provider` 등 | — | 다른 CLI처럼 받기만 합니다(모델이나 저장소를 호출하지 않음). [공급자 플래그](#공급자-플래그) 참고 |
 
 등록된 렌더러는 **`interactive`**(pyvis)와 **`static`**(Bokeh) 두 개입니다. 설정은
@@ -1937,6 +1952,7 @@ run-visualization --data-path visualization_data.json --renderers interactive --
 | `--max-docs` | `20` | 표본으로 뽑을 최대 문서 수 |
 | `--output-format` | `text` | `text`, 또는 표준 출력에 JSON 결과 하나를 쓰는 `json`([종료 코드와 JSON 출력](#cli-종료-코드와-json-출력) 참고) |
 | `--config-path` | — | `config.yaml` 경로 |
+| `--allow-unknown-keys` | off | 알 수 없는 설정 키(와 `UKR__` 변수)에 실패하지 않고 WARNING만 남긴 채 계속합니다([설정을 읽는 순서](#설정을-읽는-순서) 참고) |
 | `--backend`, `--llm-provider` 등 | — | 공급자 선택. [공급자 플래그](#공급자-플래그) 참고 |
 
 ```bash

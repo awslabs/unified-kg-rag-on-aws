@@ -84,5 +84,5 @@ def test_bedrock_region_sets_task_env_and_guardrail_region(
         c for c in task_def["Properties"]["ContainerDefinitions"] if c["Name"] == "app"
     ]
     env = {e["Name"]: e["Value"] for e in app["Environment"]}
-    assert env["BEDROCK_REGION"] == bedrock_region
+    assert env["UKR__AWS__BEDROCK__REGION_NAME"] == bedrock_region
     assert env["AWS_REGION"] == _REGION

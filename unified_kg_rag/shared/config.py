@@ -1,5 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
+import json
 import logging
 import os
 import types
@@ -11,7 +12,7 @@ from dotenv import load_dotenv
 from pydantic import BaseModel, SecretStr, TypeAdapter, ValidationError
 
 from unified_kg_rag.domain.models import Config
-from unified_kg_rag.domain.models.config import REMOVED_MODEL_KEYS
+from unified_kg_rag.domain.models.config import MOVED_KEYS, merge_over
 from unified_kg_rag.domain.models.provider_config import SQLITE
 from unified_kg_rag.shared.exceptions import ConfigurationError
 
@@ -33,21 +34,24 @@ def _nested_model(annotation: Any) -> type[BaseModel] | None:
     return None
 
 
-def warn_unknown_keys(data: Any, model: type[BaseModel], prefix: str = "") -> None:
-    """Warn on config keys the model does not define (pydantic drops them)."""
+def unknown_keys(data: Any, model: type[BaseModel], prefix: str = "") -> list[str]:
+    """The config keys in ``data`` the model does not define (pydantic would
+    drop them), as dotted paths. Moved keys are left out: validation refuses
+    them, naming their replacement."""
     if not isinstance(data, dict):
-        return
+        return []
+    found: list[str] = []
     for key, value in data.items():
         path = f"{prefix}{key}"
         field = model.model_fields.get(key)
         if field is None:
-            # A removed model key fails validation with its replacement named.
-            if path not in REMOVED_MODEL_KEYS:
-                _logger.warning("Unknown config key '%s' is ignored", path)
+            if path not in MOVED_KEYS:
+                found.append(path)
             continue
         nested = _nested_model(field.annotation)
         if nested is not None:
-            warn_unknown_keys(value, nested, f"{path}.")
+            found.extend(unknown_keys(value, nested, f"{path}."))
+    return found
 
 
 DOTENV_FILENAME = ".env"
@@ -94,87 +98,70 @@ def load_cli_dotenv(directory: Path | None = None) -> Path | None:
     return path
 
 
-# Environment variable -> the config field it overrides. A path ending inside a
-# free-form mapping (index_settings, language_analyzers) sets that one key.
-ENV_OVERRIDES: dict[str, tuple[str, ...]] = {
+# Environment overrides: UKR__<SECTION>__<KEY>... sets the config key at that
+# path (double underscores between path segments, any case), e.g.
+# UKR__AWS__NEPTUNE__ENDPOINT or UKR__INDEXING__OPENSEARCH__LANGUAGE_ANALYZERS__KO
+# (a segment past a free-form mapping names one of its keys). Every key can be
+# set this way; docs/operations.md lists the ones a deployment sets.
+ENV_PREFIX = "UKR__"
+# The AWS SDK's own variables fill the AWS keys a config file leaves unset; an
+# explicit value in the file wins, as an explicit client setting wins over the
+# environment in the SDKs.
+AWS_ENV_FALLBACKS: dict[str, tuple[str, ...]] = {
     "AWS_PROFILE": ("aws", "profile_name"),
     "AWS_REGION": ("aws", "region_name"),
-    "LOG_LEVEL": ("logging", "level"),
-    "LOG_FORMAT": ("logging", "log_format"),
-    "LOG_TO_FILE": ("logging", "log_to_file"),
-    "LOG_FILE_PATH": ("logging", "log_file_path"),
-    "NEPTUNE_ENDPOINT": ("aws", "neptune", "endpoint"),
-    "OPENSEARCH_ENDPOINT": ("aws", "opensearch", "endpoint"),
-    "OPENSEARCH_USERNAME": ("aws", "opensearch", "username"),
-    "OPENSEARCH_PASSWORD": ("aws", "opensearch", "password"),
-    "BEDROCK_REGION": ("aws", "bedrock", "region_name"),
-    "BEDROCK_GUARDRAIL_IDENTIFIER": ("aws", "bedrock", "guardrail", "identifier"),
-    "BEDROCK_GUARDRAIL_VERSION": ("aws", "bedrock", "guardrail", "version"),
-    "S3_BUCKET_NAME": ("aws", "s3", "bucket_name"),
-    # Injected by the CDK compute stack from the domain's node count. Applies
-    # to indices created from now on; existing indices keep theirs until
-    # changed with `PUT <index>/_settings`.
-    "OPENSEARCH_NUMBER_OF_REPLICAS": (
-        "indexing",
-        "opensearch",
-        "index_settings",
-        "number_of_replicas",
-    ),
-    # Injected by the CDK compute stack: Amazon OpenSearch Service has no nori
-    # unless its optional plugin is associated, so the IaC maps Korean to an
-    # analyzer the domain has (the built-in cjk).
-    "OPENSEARCH_KOREAN_ANALYZER": (
-        "indexing",
-        "opensearch",
-        "language_analyzers",
-        "ko",
-    ),
-    # Injected by the CDK compute stack so the app uses the IaC-managed
-    # doc-status table (and never auto-creates an unmanaged one).
-    "GRAPHRAG_DOC_STATUS_TABLE": ("aws", "dynamodb", "table_name"),
-    # Set by the container entrypoint to the S3 URI the corpus was synced
-    # from, so incremental deletion is scoped to that corpus rather than the
-    # shared local staging directory.
-    "GRAPHRAG_SOURCE_SCOPE": ("processing", "document_parsing", "source_scope"),
-    "GRAPHRAG_DOC_STATUS_CREATE_TABLE": (
-        "aws",
-        "dynamodb",
-        "create_table_if_missing",
-    ),
-    # Injected by the CDK compute stack when enable_cloudwatch_tracing adds the
-    # ADOT collector sidecar, so the baked-in image config can stay
-    # tracing-free.
-    "GRAPHRAG_OBSERVABILITY_ENABLED": ("observability", "enabled"),
-    "GRAPHRAG_OBSERVABILITY_BACKEND": ("observability", "backend"),
 }
 
 
-def merge_over(base: dict[str, Any], top: dict[str, Any]) -> dict[str, Any]:
-    """``base`` with every leaf of ``top`` written over it (nested dicts merge)."""
-    merged = dict(base)
-    for key, value in top.items():
-        below = merged.get(key)
-        merged[key] = (
-            merge_over(below, value)
-            if isinstance(value, dict) and isinstance(below, dict)
-            else value
-        )
-    return merged
+def env_var(path: str) -> str:
+    """The environment variable that sets the config key ``path``."""
+    return ENV_PREFIX + path.replace(".", "__").upper()
+
+
+def _is_mapping(annotation: Any) -> bool:
+    return any(
+        get_origin(arg) is dict or arg is dict
+        for arg in (annotation, *get_args(annotation))
+    )
+
+
+def _env_path(name: str) -> tuple[str, ...] | None:
+    """The config path a ``UKR__`` variable names, or ``None`` if none."""
+    segments = tuple(name[len(ENV_PREFIX) :].lower().split("__"))
+    model: type[BaseModel] = Config
+    for position, segment in enumerate(segments):
+        field = model.model_fields.get(segment)
+        if field is None:
+            return None
+        nested = _nested_model(field.annotation)
+        rest = len(segments) - position - 1
+        if nested is not None:
+            model = nested
+            continue
+        if rest == 0 or (rest == 1 and _is_mapping(field.annotation)):
+            return segments
+        return None
+    return None
 
 
 class ConfigLoader:
     """Loads the config from its layers: defaults < ``backend`` preset < file
-    < environment (:data:`ENV_OVERRIDES`).
+    < environment (``UKR__`` variables; ``AWS_PROFILE`` / ``AWS_REGION`` only
+    under a file that leaves those keys unset).
 
     The environment is a layer of the input, merged over the file's data before
     the one validation, not assigned to the validated model: an override is
-    then part of what the config was built from (``model_fields_set``), so a
-    config rebuilt from ``model_dump(exclude_unset=True)`` (the CLI provider
-    flags, ``with_provider_overrides``) keeps it.
+    then part of the input the config keeps (``Config.as_input``), so a config
+    rebuilt under other provider flags (``with_provider_overrides``) keeps it.
+    Unknown keys, in the file or as ``UKR__`` variables, are an error unless
+    ``allow_unknown_keys`` (then a WARNING each).
     """
 
-    def __init__(self, config_path: Path | None = None) -> None:
+    def __init__(
+        self, config_path: Path | None = None, *, allow_unknown_keys: bool = False
+    ) -> None:
         self.config_path = Path(config_path) if config_path else None
+        self.allow_unknown_keys = allow_unknown_keys
         self._config: Config | None = None
 
         # Debug, not print: a module-level ConfigLoader() runs this on every
@@ -193,10 +180,10 @@ class ConfigLoader:
             self._read_file(self.config_path) if self.config_path is not None else {}
         )
         where = f" (in '{self.config_path}')" if self.config_path else ""
+        unknown = unknown_keys(config_data, Config)
         try:
-            warn_unknown_keys(config_data, Config)
             file_config = Config(**config_data)
-            env_data = self._environment_layer(file_config)
+            env_data, unknown_env = self._environment_layer(file_config, config_data)
             config = (
                 Config(**merge_over(config_data, env_data)) if env_data else file_config
             )
@@ -204,6 +191,10 @@ class ConfigLoader:
             raise ConfigurationError(
                 f"Configuration validation error: {validation_summary(e)}{where}"
             ) from e
+        self._check_unknown(
+            [f"'{path}'{where}" for path in unknown]
+            + [f"environment variable {name}" for name in unknown_env]
+        )
         for path in config.inactive_provider_settings():
             _logger.warning(
                 "Config key '%s' is ignored: its provider is not the one selected "
@@ -214,6 +205,25 @@ class ConfigLoader:
             resolve_relative_paths(config, self.config_path)
         self._config = config
         return config
+
+    def _check_unknown(self, unknown: list[str]) -> None:
+        """Refuse unknown keys, or warn on them with ``allow_unknown_keys``.
+
+        A misspelled key would otherwise leave its setting at the default
+        (a guardrail identifier under the wrong key leaves queries
+        unscreened).
+        """
+        if not unknown:
+            return
+        if not self.allow_unknown_keys:
+            raise ConfigurationError(
+                "Unknown config keys: "
+                + ", ".join(unknown)
+                + " (fix or remove them, or pass --allow-unknown-keys to "
+                "ignore them)"
+            )
+        for item in unknown:
+            _logger.warning("Unknown config key %s is ignored", item)
 
     @staticmethod
     def _read_file(config_path: Path) -> dict[str, Any]:
@@ -250,24 +260,43 @@ class ConfigLoader:
         return config_data
 
     @staticmethod
-    def _environment_layer(config: Config) -> dict[str, Any]:
-        """The set environment overrides as raw config data.
+    def _environment_layer(
+        config: Config, file_data: dict[str, Any]
+    ) -> tuple[dict[str, Any], list[str]]:
+        """The set environment overrides as raw config data, and the
+        ``UKR__`` variables that name no config key.
 
         Each value is converted and checked against its field in ``config``
         (the config without them), so an invalid one is reported by variable.
+        ``AWS_PROFILE`` / ``AWS_REGION`` fill only
+        the keys ``file_data`` leaves unset.
 
         Raises:
             ConfigurationError: An environment variable holds an invalid value.
         """
+        overrides: dict[str, tuple[str, ...]] = {}
+        unknown: list[str] = []
+        for name in sorted(os.environ):
+            if name.upper().startswith(ENV_PREFIX):
+                path = _env_path(name)
+                if path is None:
+                    unknown.append(name)
+                else:
+                    overrides[name] = path
+        for name, path in AWS_ENV_FALLBACKS.items():
+            if (
+                name in os.environ
+                and path not in overrides.values()
+                and not _is_set(file_data, path)
+            ):
+                overrides[name] = path
         layer: dict[str, Any] = {}
-        for env_var, config_path in ENV_OVERRIDES.items():
-            env_value = os.getenv(env_var)
-            if env_value is None:
-                continue
-            if env_var == "LOG_LEVEL":
-                env_value = env_value.upper()  # logging accepts any case
+        for name, path in overrides.items():
+            value = os.environ[name]
+            if path == ("logging", "level"):
+                value = value.upper()  # logging accepts any case
             try:
-                _set_env_value(layer, config, config_path, env_value)
+                _set_env_value(layer, config, path, value)
             except (ValueError, ValidationError) as e:
                 # The value is left out: it may be a secret.
                 reason = (
@@ -276,13 +305,13 @@ class ConfigLoader:
                         for detail in e.errors(include_url=False, include_input=False)
                     )
                     if isinstance(e, ValidationError)
-                    else "not a valid number"
+                    else "not a valid value"
                 )
                 raise ConfigurationError(
-                    f"Invalid environment variable {env_var} "
-                    f"(overrides {'.'.join(config_path)}): {reason}"
+                    f"Invalid environment variable {name} "
+                    f"(overrides {'.'.join(path)}): {reason}"
                 ) from e
-        return layer
+        return layer, unknown
 
     def reload_config(self) -> Config:
         self._config = None
@@ -291,6 +320,14 @@ class ConfigLoader:
     @property
     def config(self) -> Config:
         return self._config if self._config is not None else self.load_config()
+
+
+def _is_set(data: Any, path: tuple[str, ...]) -> bool:
+    for key in path:
+        if not isinstance(data, dict) or data.get(key) is None:
+            return False
+        data = data[key]
+    return True
 
 
 def _set_env_value(
@@ -345,6 +382,9 @@ def _set_env_value(
         parsed_value = int(value)
     elif isinstance(current_value, float):
         parsed_value = float(value)
+    elif isinstance(current_value, (list, dict)):
+        # A list or mapping setting takes JSON: UKR__X__Y='["a", "b"]'.
+        parsed_value = json.loads(value)
     else:
         parsed_value = value
 
@@ -377,9 +417,21 @@ def validation_summary(error: ValidationError) -> str:
     )
 
 
-def get_config(config_path: str | Path | None = None) -> Config:
-    if config_path is not None:
-        loader = ConfigLoader(Path(config_path))
+def get_config(
+    config_path: str | Path | None = None, *, allow_unknown_keys: bool = False
+) -> Config:
+    """The config of ``config_path`` (and the environment); without a path,
+    the defaults and the environment, loaded once.
+
+    Raises:
+        ConfigurationError: An unknown key is set (unless
+            ``allow_unknown_keys``) or a value is invalid.
+    """
+    if config_path is not None or allow_unknown_keys:
+        loader = ConfigLoader(
+            Path(config_path) if config_path is not None else None,
+            allow_unknown_keys=allow_unknown_keys,
+        )
         return loader.load_config()
     return _config_loader.config
 

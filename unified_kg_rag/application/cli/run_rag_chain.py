@@ -6,7 +6,6 @@ import re
 import sys
 import uuid
 from collections.abc import Callable
-from pathlib import Path
 from typing import Any
 
 import nest_asyncio
@@ -15,8 +14,9 @@ from rich.panel import Panel
 
 from unified_kg_rag import __version__
 from unified_kg_rag.application.cli.config_args import (
-    config_path_arg,
+    add_config_arguments,
     exit_on_config_error,
+    load_cli_config,
 )
 from unified_kg_rag.application.cli.conventions import (
     EXIT_FAILURE,
@@ -43,7 +43,7 @@ from unified_kg_rag.application.retrieval.rag_chain import (
     create_rag_chain,
 )
 from unified_kg_rag.domain.models import Constants, SearchStrategy
-from unified_kg_rag.shared import get_config, get_logger, setup_logging
+from unified_kg_rag.shared import get_logger, setup_logging
 from unified_kg_rag.shared.config import load_cli_dotenv
 from unified_kg_rag.shared.utils import event_loop
 from unified_kg_rag.shared.utils.display import console, display_ascii_art
@@ -153,11 +153,7 @@ class CommandLineInterface:
             action="store_true",
             help="Display detailed information",
         )
-        parser.add_argument(
-            "--config-path",
-            type=config_path_arg,
-            help="Path to custom configuration file",
-        )
+        add_config_arguments(parser, "Path to custom configuration file")
         add_provider_arguments(parser)
         return parser
 
@@ -178,7 +174,7 @@ class RAGChainRunner:
         self.args = args
         with exit_on_config_error():
             self.config = apply_provider_arguments(
-                get_config(Path(args.config_path) if args.config_path else None),
+                load_cli_config(args),
                 args,
             )
         # JSON mode keeps stdout machine-parseable (pipeable to jq): the banner,

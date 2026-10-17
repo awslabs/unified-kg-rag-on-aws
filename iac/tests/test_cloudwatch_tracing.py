@@ -147,8 +147,8 @@ def test_enabled_points_the_app_at_the_sidecar_without_content_capture() -> None
     _, compute = _stacks(_ON)
     env = _env(_containers(compute)["app"])
     # Names must match the unified_kg_rag.shared.config env overrides.
-    assert env["GRAPHRAG_OBSERVABILITY_ENABLED"] == "true"
-    assert env["GRAPHRAG_OBSERVABILITY_BACKEND"] == "otlp"
+    assert env["UKR__OBSERVABILITY__ENABLED"] == "true"
+    assert env["UKR__OBSERVABILITY__BACKEND"] == "otlp"
     assert env["OTEL_EXPORTER_OTLP_ENDPOINT"] == "http://127.0.0.1:4318"
     assert not [k for k in env if "CAPTURE" in k]
 

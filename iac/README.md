@@ -16,7 +16,7 @@ can coexist in one account/region. Every resource also carries an `env` tag.
 |---|---|
 | `GraphRagNetwork` | VPC (reuse or create), subnets, data-plane security group, VPC endpoints for a created VPC: S3/DynamoDB gateways always; in `private` mode also interface endpoints (own security group, 443 from the data plane only) for Bedrock (`bedrock`, `bedrock-runtime`, `bedrock-agent-runtime`), ECR (`ecr.api`, `ecr.dkr`), CloudWatch Logs and STS, each with an endpoint policy that admits only this account's principals (`aws:PrincipalAccount`) |
 | `GraphRagStorage` | Neptune cluster (IAM auth), OpenSearch domain (VPC, encrypted), DynamoDB doc-status table (TTL on `lease_expires_at`, so an abandoned namespace write lease expires), S3 cache bucket |
-| `GraphRagCompute` | ECR repo (lifecycle keeps the 10 newest images and never expires the deployed `image_tag`), ECS cluster, an ingestion Fargate task definition + least-privilege task role (S3 cache read + put, no delete), and a query task definition (`run-rag` / `run-eval`) whose role only reads the stores and has no DynamoDB access. Injects `OPENSEARCH_NUMBER_OF_REPLICAS` = 1 on a multi-node domain (0 on a single node) |
+| `GraphRagCompute` | ECR repo (lifecycle keeps the 10 newest images and never expires the deployed `image_tag`), ECS cluster, an ingestion Fargate task definition + least-privilege task role (S3 cache read + put, no delete), and a query task definition (`run-rag` / `run-eval`) whose role only reads the stores and has no DynamoDB access. Injects `UKR__INDEXING__OPENSEARCH__INDEX_SETTINGS__NUMBER_OF_REPLICAS` = 1 on a multi-node domain (0 on a single node) |
 | `GraphRagOrchestration` | Step Functions state machine — one resumable ingestion task on Fargate (the task definition revision deployed with it), retried only when ECS cannot start the task (a task that exits non-zero is not rerun), one JSON failure notification (execution id, error, cause; the publish is retried on throttling or transient errors) + SNS alarm topic. The topic is encrypted with its own customer-managed key whose policy lets CloudWatch alarms publish (the AWS-managed `alias/aws/sns` key cannot, so alarm notifications would be dropped) |
 | `GraphRagObservability` | CloudWatch dashboard + alarms: pipeline failed (a failed task is also published by the orchestration failure notification, so it notifies twice; the alarm also covers failures the notification cannot report, such as an invalid start input), timed out or aborted, silent indexing-failure, extraction-failure and quarantined-documents (EMF, this deployment's `Environment` series only), capacity (Bedrock throttling summed over the account and region's models, ingestion task memory at least 90% via Container Insights), and store health (OpenSearch cluster-red / free-storage / JVM pressure, DynamoDB write throttling, Neptune writer CPU at least 90% for 3 × 5 minutes, writer freeable memory at most 512 MiB in 5 minutes, and Gremlin server errors in 3 consecutive minutes, so retried write conflicts during parallel writes do not page; see [Failed documents](../docs/operations.md#failed-documents) for the alarm table) → SNS. Synth warns if `alarm_email` is unset (alarms would have no subscriber) |
 | `GraphRagSecurity` | Shared customer-managed KMS key (optional, `use_cmk`) |
@@ -60,7 +60,7 @@ derived) to avoid replace-on-rename conflicts.
 > cdk bootstrap aws://<account>/us-west-2
 > # 1) create the guardrail in bedrock_region, note its id from the output
 > cdk deploy GraphRagGuardrail -c network_mode=public -c bedrock_region=us-west-2 …
-> # 2) pass that id so compute injects BEDROCK_GUARDRAIL_IDENTIFIER
+> # 2) pass that id so compute injects UKR__AWS__BEDROCK__GUARDRAIL__IDENTIFIER
 > cdk deploy --all -c network_mode=public -c bedrock_region=us-west-2 \
 >   -c guardrail_identifier=<id> …
 > ```
@@ -104,7 +104,7 @@ uploaded to S3 as they are produced, so an execution re-run with the same
 | Key | Default | Meaning |
 |---|---|---|
 | `env_name` | `dev` | stack/resource name prefix. `dev` keeps bare `GraphRag*`/`graphrag-*` names; a non-dev env (e.g. `prod`) scopes them (`GraphRagProd*`, `prod-graphrag-*`) so environments don't collide in one account/region |
-| `bedrock_region` | deploy region | Bedrock runtime region: injected into the task as `BEDROCK_REGION`, and the region of the `GraphRagGuardrail` stack. With `network_mode=private`, synth fails unless it equals the deploy region (the Bedrock VPC endpoints serve the deploy region only) |
+| `bedrock_region` | deploy region | Bedrock runtime region: injected into the task as `UKR__AWS__BEDROCK__REGION_NAME`, and the region of the `GraphRagGuardrail` stack. With `network_mode=private`, synth fails unless it equals the deploy region (the Bedrock VPC endpoints serve the deploy region only) |
 | `network_mode` | `private` | `private` = isolated subnets + VPC endpoints, **no NAT** (no internet egress); `public` = private subnets with NAT egress |
 | `vpc_id` | _(none)_ | **reuse** an existing VPC instead of creating one. The stack adds **no** VPC endpoints or subnets to it (synth warns with the list): in `private` mode it needs `PRIVATE_ISOLATED` subnets (no NAT or internet gateway route), S3/DynamoDB gateway endpoints, and private-DNS interface endpoints for `bedrock`, `bedrock-runtime`, `bedrock-agent-runtime`, `ecr.api`, `ecr.dkr`, `logs` and `sts` (and `xray` with `enable_cloudwatch_tracing`); in `public` mode it needs `PRIVATE_WITH_EGRESS` subnets (NAT route) |
 | `max_azs` | `2` | AZs for a newly-created VPC; at least `2` (the Neptune cluster needs subnets in two AZs) |
@@ -117,8 +117,8 @@ uploaded to S3 as they are produced, so an execution re-run with the same
 | `opensearch_master_instance` | `m6g.large.search` | dedicated master node type, used only when `opensearch_count > 1`. 8 GiB Graviton, which AWS sizes for up to 10 nodes / 10K shards on OpenSearch 2.13; raise it for larger domains |
 | `opensearch_count` | `1` (dev) / `2` (non-dev) | OpenSearch data node count (`>1` ⇒ 3 dedicated masters + zone awareness, e.g. 2 data nodes = 5 nodes; dev runs a single node for cost). A zone-aware domain spans as many AZs as it has data nodes, up to 3 and up to the AZs of the VPC (`max_azs` for a created VPC): 3 data nodes with `max_azs=3` use 3 AZs. A domain in 2 AZs needs an even count (OpenSearch rejects an odd one), so synth fails on, say, `opensearch_count=3` with `max_azs=2`. **Upgrading:** earlier versions pinned such domains to 2 AZs, so the first deploy of an existing domain with 3 or more data nodes in a VPC with 3 or more AZs moves it to 3 AZs, which OpenSearch applies as a blue/green deployment (new nodes, every shard copied; the domain stays available but slower, which can take hours on a large domain). Deploy it in a quiet window, with no ingestion running |
 | `opensearch_volume_gib` | `50` | GP3 volume per OpenSearch data node; the free-storage alarm fires at 40% free |
-| `opensearch_korean_analyzer` | `cjk` | OpenSearch analyzer of Korean text, injected as `OPENSEARCH_KOREAN_ANALYZER` (overrides `indexing.opensearch.language_analyzers.ko` of the image config). The domain has no `nori` unless its optional Nori package (`analysis-nori`) is associated, and an index whose mapping names a missing analyzer fails to create; `cjk` (character bigrams) is built into OpenSearch. To use `nori`, associate the package (console **Packages** or `aws opensearch associate-package`, a blue/green deployment), deploy with `nori`, and re-run once with `indexing.reset: true` |
-| `doc_status_table` | `graphrag-doc-status-v2` (dev) / `<env>-graphrag-doc-status-v2` (non-dev) | DynamoDB doc-status (incremental-indexing registry) table name, injected into the task as `GRAPHRAG_DOC_STATUS_TABLE`. Changing it on a deployed environment creates a new, empty registry table |
+| `opensearch_korean_analyzer` | `cjk` | OpenSearch analyzer of Korean text, injected as `UKR__INDEXING__OPENSEARCH__LANGUAGE_ANALYZERS__KO` (overrides `indexing.opensearch.language_analyzers.ko` of the image config). The domain has no `nori` unless its optional Nori package (`analysis-nori`) is associated, and an index whose mapping names a missing analyzer fails to create; `cjk` (character bigrams) is built into OpenSearch. To use `nori`, associate the package (console **Packages** or `aws opensearch associate-package`, a blue/green deployment), deploy with `nori`, and re-run once with `indexing.reset: true` |
+| `doc_status_table` | `graphrag-doc-status-v2` (dev) / `<env>-graphrag-doc-status-v2` (non-dev) | DynamoDB doc-status (incremental-indexing registry) table name, injected into the task as `UKR__AWS__DYNAMODB__TABLE_NAME`. Changing it on a deployed environment creates a new, empty registry table |
 | `backup_retention_days` | `7` | Neptune automated backup retention, 1-35 days (see [Backup and restore](../docs/operations.md#backup-and-restore)) |
 | `fargate_cpu` | `2048` | Fargate task vCPU units (in-task ProcessPool extractors scale with vCPU): `256`, `512`, `1024`, `2048`, `4096`, `8192` or `16384` |
 | `fargate_memory` | `8192` | Fargate task memory (MiB); must be a size Fargate offers for `fargate_cpu` (with `2048`: 4096-16384 in 1024 steps), else synth fails naming the valid range |
@@ -126,8 +126,8 @@ uploaded to S3 as they are produced, so an execution re-run with the same
 | `image_tag` | `latest` | container image tag the task pulls; pin a version tag to make ECR tags immutable. The ECR lifecycle keeps this tag and the 10 newest images, so pin a tag rather than a digest |
 | `sfn_timeout_hours` | `6` | ingestion state machine timeout for a whole run (at least 1); a run that hits it is `TIMED_OUT` (alarmed) |
 | `create_guardrail` | `true` | `GraphRagGuardrail` creates and keeps a baseline PII/prompt-attack guardrail in `bedrock_region` (retained on stack deletion unless `removal_destroy`). `false` = bring your own guardrail; nothing is created |
-| `guardrail_identifier` | _(none)_ | guardrail id the compute task **uses**, injected as `BEDROCK_GUARDRAIL_IDENTIFIER`. The created guardrail's id is **not** injected automatically: pass the `GuardrailIdentifier` output of `GraphRagGuardrail` here (two-step flow above), or an external id with `create_guardrail=false`. The task role gets `bedrock:ApplyGuardrail` on this guardrail only (an id resolves to `arn:…:bedrock:<bedrock_region>:<account>:guardrail/<id>`; an ARN is used as is). Unset = no guardrail on the task and no grant |
-| `guardrail_version` | _(none)_ | published guardrail version the task applies, injected as `BEDROCK_GUARDRAIL_VERSION`. Unset = `DRAFT`, which changes whenever the guardrail is edited; publish a version and pin it outside dev |
+| `guardrail_identifier` | _(none)_ | guardrail id the compute task **uses**, injected as `UKR__AWS__BEDROCK__GUARDRAIL__IDENTIFIER`. The created guardrail's id is **not** injected automatically: pass the `GuardrailIdentifier` output of `GraphRagGuardrail` here (two-step flow above), or an external id with `create_guardrail=false`. The task role gets `bedrock:ApplyGuardrail` on this guardrail only (an id resolves to `arn:…:bedrock:<bedrock_region>:<account>:guardrail/<id>`; an ARN is used as is). Unset = no guardrail on the task and no grant |
+| `guardrail_version` | _(none)_ | published guardrail version the task applies, injected as `UKR__AWS__BEDROCK__GUARDRAIL__VERSION`. Unset = `DRAFT`, which changes whenever the guardrail is edited; publish a version and pin it outside dev |
 | `use_cmk` | `false` | customer-managed KMS key for at-rest encryption (S3/Neptune/OpenSearch/DDB/ECR and every log group; the key policy lets CloudWatch Logs use it for this account's log groups, and principals in this account may use it through CloudWatch Logs (`kms:ViaService`), so log writers and readers need no KMS permissions of their own). Choose it before the first deploy: ECR sets a repository's encryption only at creation, and CloudFormation cannot replace the fixed-name repository, so turning `use_cmk` on (or off) for a deployed environment fails until the compute stack is destroyed and redeployed. The SNS alarm topic always uses its own customer-managed key (see below) |
 | `vpc_flow_logs` | `false` (dev) / `true` (non-dev) | enable VPC flow logs (created VPC only) |
 | `flow_log_retention_days` | `731` | flow-log log group retention; must be a CloudWatch Logs retention value (e.g. `30`, `90`, `365`, `731`) |
@@ -333,8 +333,8 @@ What the option changes:
   `v0.50.0`, pinned by digest in `compute_stack.py`) that is not essential, so
   a collector that crashes or cannot export loses traces but never stops a
   run. An image ECS cannot pull does fail the task (step 4). The `app` container
-  starts after it and gets `GRAPHRAG_OBSERVABILITY_ENABLED=true`,
-  `GRAPHRAG_OBSERVABILITY_BACKEND=otlp`,
+  starts after it and gets `UKR__OBSERVABILITY__ENABLED=true`,
+  `UKR__OBSERVABILITY__BACKEND=otlp`,
   `OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318` and
   `OTEL_RESOURCE_ATTRIBUTES=deployment.environment=<env_name>`. The collector
   logs to the task log group under the `otel-collector/` stream prefix.
@@ -374,13 +374,13 @@ output() {
 }
 STATE_MACHINE_ARN=$(output GraphRagOrchestration StateMachineArn)
 CACHE_BUCKET=$(output GraphRagStorage CacheBucketName)
-NEPTUNE_ENDPOINT=$(output GraphRagStorage NeptuneEndpoint)
-OPENSEARCH_ENDPOINT=$(output GraphRagStorage OpenSearchEndpoint)
+UKR__AWS__NEPTUNE__ENDPOINT=$(output GraphRagStorage NeptuneEndpoint)
+UKR__AWS__OPENSEARCH__ENDPOINT=$(output GraphRagStorage OpenSearchEndpoint)
 ```
 
 | Stack | Output | Value |
 |---|---|---|
-| `GraphRagStorage` | `NeptuneEndpoint`, `OpenSearchEndpoint` | Bare hostnames (no `https://`), the form `aws.neptune.endpoint` / `aws.opensearch.endpoint` and `NEPTUNE_ENDPOINT` / `OPENSEARCH_ENDPOINT` expect |
+| `GraphRagStorage` | `NeptuneEndpoint`, `OpenSearchEndpoint` | Bare hostnames (no `https://`), the form `aws.neptune.endpoint` / `aws.opensearch.endpoint` and `UKR__AWS__NEPTUNE__ENDPOINT` / `UKR__AWS__OPENSEARCH__ENDPOINT` expect |
 | `GraphRagStorage` | `CacheBucketName`, `DocStatusTableName` | S3 cache bucket and doc-status table |
 | `GraphRagOrchestration` | `StateMachineArn` | Ingestion state machine |
 | `GraphRagSecurity` | `KmsKeyArn` | Shared CMK, only with `use_cmk=true` |
@@ -413,13 +413,13 @@ add the `otel` extra (`--build-arg UV_EXTRAS="--extra otel"`).
 
 The image bakes in the tracked, endpoint-free `docker/config.yaml` as
 `/app/config.yaml`; the deployed values come from the environment variables the
-task injects: `NEPTUNE_ENDPOINT`, `OPENSEARCH_ENDPOINT`, `S3_BUCKET_NAME`,
-`AWS_REGION`, `BEDROCK_REGION`, `LOG_FORMAT`, `OPENSEARCH_NUMBER_OF_REPLICAS`,
-`OPENSEARCH_KOREAN_ANALYZER` (`opensearch_korean_analyzer`),
-`GRAPHRAG_DOC_STATUS_TABLE`
-(the table this stack created) and `GRAPHRAG_DOC_STATUS_CREATE_TABLE=false`,
-plus `BEDROCK_GUARDRAIL_IDENTIFIER` when `guardrail_identifier` is set (and
-`BEDROCK_GUARDRAIL_VERSION` when `guardrail_version` is). The
+task injects: `UKR__AWS__NEPTUNE__ENDPOINT`, `UKR__AWS__OPENSEARCH__ENDPOINT`, `UKR__AWS__S3__BUCKET_NAME`,
+`AWS_REGION`, `UKR__AWS__BEDROCK__REGION_NAME`, `UKR__LOGGING__LOG_FORMAT`, `UKR__INDEXING__OPENSEARCH__INDEX_SETTINGS__NUMBER_OF_REPLICAS`,
+`UKR__INDEXING__OPENSEARCH__LANGUAGE_ANALYZERS__KO` (`opensearch_korean_analyzer`),
+`UKR__AWS__DYNAMODB__TABLE_NAME`
+(the table this stack created) and `UKR__AWS__DYNAMODB__CREATE_TABLE_IF_MISSING=false`,
+plus `UKR__AWS__BEDROCK__GUARDRAIL__IDENTIFIER` when `guardrail_identifier` is set (and
+`UKR__AWS__BEDROCK__GUARDRAIL__VERSION` when `guardrail_version` is). The
 image config sets `aws.dynamodb.enabled: true`, so ingestion runs
 incrementally. S3 cache uploads default to the bucket's own encryption
 (`aws.s3.encryption.encryption_type: BUCKET_DEFAULT`), so with `use_cmk=true`
@@ -445,7 +445,7 @@ aws logs tail /graphrag/tasks --region "$REGION" --follow
 ```
 
 - The input takes exactly two keys, passed to the task as
-  `GRAPHRAG_SOURCE_DIRECTORY` / `GRAPHRAG_PIPELINE_ID`. The task is a fresh
+  `UKR_SOURCE_DIRECTORY` / `UKR_PIPELINE_ID`. The task is a fresh
   Fargate task, so `source_directory` must be an `s3://` URI: the container
   entrypoint (`docker/entrypoint.sh`) syncs it to local scratch before running
   the CLI (size the disk with `ingestion_ephemeral_storage_gib`).

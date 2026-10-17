@@ -131,7 +131,7 @@ def test_cli_sink_takes_the_environment_from_the_task(monkeypatch) -> None:  # t
 
     from unified_kg_rag.application.cli import run_ingestion_pipeline as cli
 
-    monkeypatch.setenv("GRAPHRAG_METRICS_ENVIRONMENT", "prod")
+    monkeypatch.setenv("UKR_METRICS_ENVIRONMENT", "prod")
     runner = cli.IngestionPipelineRunner.__new__(cli.IngestionPipelineRunner)
     runner.args = SimpleNamespace(metrics_sink="cloudwatch")
     sink = runner._build_metrics_sink()
