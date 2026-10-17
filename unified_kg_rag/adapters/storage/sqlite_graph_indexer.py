@@ -282,29 +282,20 @@ class SQLiteGraphIndexer(GraphIndexer):
     def delete_by_id(self, ids: list[str], suffix: str | None = None) -> IndexingStats:
         """Delete edges and vertices by id, with the vertices' edges.
 
-        With ``suffix`` only that suffix's entity and community labels (and
-        the edges between its entities) are touched; ``None`` deletes the ids
-        under every label.
+        Only the suffix's entity and community labels (and the edges between
+        its entities) are touched; ``None`` is the default suffix, as for
+        every other method, never every label.
         """
         stats = IndexingStats(total_items=len(ids))
         if not ids:
             return stats
         with self.store.transaction("delete by id") as connection:
-            if suffix is None:
-                self._delete_edges(connection, None, ids)
-                pairs = [
-                    (label, vertex_id)
-                    for batch in batches(list(dict.fromkeys(ids)))
-                    for label, vertex_id in connection.execute(
-                        f"SELECT label, id FROM vertices WHERE id IN ({placeholders(batch)})",
-                        batch,
-                    ).fetchall()
-                ]
-            else:
-                labels = (self._entity_label(suffix), self._community_label(suffix))
-                self._delete_edges(connection, labels[0], ids)
-                pairs = [(label, vertex_id) for label in labels for vertex_id in ids]
-            self._drop_vertices(connection, pairs)
+            labels = (self._entity_label(suffix), self._community_label(suffix))
+            self._delete_edges(connection, labels[0], ids)
+            self._drop_vertices(
+                connection,
+                [(label, vertex_id) for label in labels for vertex_id in ids],
+            )
         stats.add_success(len(ids))
         return stats
 
@@ -546,30 +537,22 @@ class SQLiteGraphIndexer(GraphIndexer):
     def find_incident_relationship_ids(
         self, entity_ids: list[str], suffix: str | None = None
     ) -> list[str]:
-        """Sorted ids of the edges incident to ``entity_ids`` (any suffix
-        when ``suffix`` is None)."""
+        """Sorted ids of the suffix's edges incident to ``entity_ids``
+        (``None``: the default suffix)."""
         if not entity_ids:
             return []
-        label = self._entity_label(suffix) if suffix is not None else None
+        label = self._entity_label(suffix)
         found: set[str] = set()
         with self.store.read("find incident relationships") as connection:
             for batch in batches(list(dict.fromkeys(entity_ids))):
                 marks = placeholders(batch)
-                if label is None:
-                    # No index leads with an endpoint: one scan of the table.
-                    rows = connection.execute(
-                        f"SELECT id FROM edges WHERE source_id IN ({marks}) "
-                        f"OR target_id IN ({marks})",
-                        [*batch, *batch],
-                    ).fetchall()
-                else:
-                    rows = connection.execute(
-                        "SELECT id FROM edges WHERE label = ? "
-                        f"AND source_id IN ({marks}) "
-                        "UNION ALL "
-                        "SELECT id FROM edges WHERE label = ? "
-                        f"AND target_id IN ({marks})",
-                        [label, *batch, label, *batch],
-                    ).fetchall()
+                rows = connection.execute(
+                    "SELECT id FROM edges WHERE label = ? "
+                    f"AND source_id IN ({marks}) "
+                    "UNION ALL "
+                    "SELECT id FROM edges WHERE label = ? "
+                    f"AND target_id IN ({marks})",
+                    [label, *batch, label, *batch],
+                ).fetchall()
                 found.update(row[0] for row in rows)
         return sorted(found)

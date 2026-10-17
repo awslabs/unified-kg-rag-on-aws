@@ -271,8 +271,9 @@ def test_delete_by_id_scopes_by_label_when_suffix_given(indexer) -> None:
     assert "where" in step_names
 
 
-def test_delete_by_id_unscoped_without_suffix(indexer) -> None:
-    # Legacy single-tenant path: no suffix -> no hasLabel scoping.
+def test_delete_by_id_without_a_suffix_is_scoped_to_the_default(indexer) -> None:
+    # None used to drop the ids under every label: another tenant's vertex
+    # with the same content-derived id went too.
     labels: list[tuple] = []
 
     class LabelRecorder:
@@ -285,7 +286,9 @@ def test_delete_by_id_unscoped_without_suffix(indexer) -> None:
 
     indexer.neptune_client.g = LabelRecorder()
     indexer.delete_by_id(["id1"])
-    assert labels == [], "unscoped delete must not call hasLabel"
+    assert labels and all(
+        label.endswith("-default") for args in labels for label in args
+    ), labels
 
 
 def test_relationship_pre_drop_is_scoped_to_the_suffix(indexer, mocker) -> None:

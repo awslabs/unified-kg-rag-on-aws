@@ -342,14 +342,14 @@ class GraphIndexer(BaseIndexer):
     def delete_by_id(self, ids: list[str], suffix: str | None = None) -> IndexingStats:
         """Delete vertices/edges by id (for removed/changed documents).
 
-        ``suffix`` scopes the deletion to one tenant/version's labels so a
-        content-hash id shared across suffixes does not delete another tenant's
-        data; ``None`` is unscoped (single-tenant)."""
+        Scoped to ``suffix``'s labels (``None``: the default suffix, as for
+        every method), so a content-hash id shared across suffixes does not
+        delete another tenant's data."""
 
     def find_incident_relationship_ids(
         self, entity_ids: list[str], suffix: str | None = None
     ) -> list[str]:
-        """Return ids of edges incident to any of ``entity_ids``.
+        """Return ids of ``suffix``'s edges incident to any of ``entity_ids``.
 
         Used to find relationship documents orphaned when an entity vertex is
         dropped (the edge is owned in lineage by a surviving document, so it is
