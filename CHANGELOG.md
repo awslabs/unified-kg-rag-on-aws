@@ -1144,6 +1144,8 @@ changed once with the full-config keys (#332).
   empty says `full`, and an incremental record keeps the full build it was
   applied on top of (`full_build`), so the manifest no longer reports the
   last delta's document count as the index's (#PR).
+- An `auto` run's result files are named `..._auto_...`, not after the one
+  strategy it happened to route every query to (#PR).
 - The docs no longer contradict the code: an unknown config key fails the
   load (not a warning), the four causes of a `FAILED` document are listed
   alike in the user guide, the runbook and the design doc, a second

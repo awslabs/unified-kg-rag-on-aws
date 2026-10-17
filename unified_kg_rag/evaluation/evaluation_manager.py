@@ -1178,9 +1178,15 @@ class EvaluationManager:
         # A random suffix keeps runs started in the same second (parallel
         # strategies, CI matrices) from overwriting each other's files.
         timestamp = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
-        # Name files after the strategy when every answered query used the same
-        # one, so runs of different strategies are distinguishable on disk.
-        strategies = {r.search_strategy for r in results if r.search_strategy}
+        # Name files after the strategy when every query asked for (else
+        # used) the same one, so runs of different strategies are
+        # distinguishable on disk; an ``auto`` run stays ``auto_*`` whatever
+        # it routed to.
+        strategies = {
+            str(getattr(strategy, "value", strategy))
+            for r in results
+            if (strategy := r.metadata.get("search_strategy") or r.search_strategy)
+        }
         stem = f"{strategies.pop()}_{timestamp}" if len(strategies) == 1 else timestamp
 
         if self.config.evaluation.save_detailed_results:

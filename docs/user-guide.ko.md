@@ -1545,8 +1545,9 @@ run-eval --data-path s3://my-bucket/eval/my_eval_data.json \
 항목 번호, 질의 id를 출력한 뒤 종료 코드 2로 끝납니다.
 
 결과는 출력 디렉터리에 `evaluation_{results,reports,summary}_<timestamp>.json`으로
-씁니다. 답변한 질의가 모두 같은 전략을 썼다면 파일 이름은
-`..._<strategy>_<timestamp>.json`이 됩니다. `<timestamp>`는
+씁니다. 모든 질의가 같은 전략을 요청했다면(요청한 전략이 없으면 모두 같은 전략을 썼다면)
+파일 이름은 `..._<strategy>_<timestamp>.json`이 되므로, `auto` 실행은 어느 전략으로
+분기했든 `..._auto_...`입니다. `<timestamp>`는
 `YYYYMMDD_HHMMSS_<16진수 8자리>`입니다. 임의 부분은 같은 초에 시작한 실행(여러
 전략 병렬 실행, CI 매트릭스)이 서로의 파일을 덮어쓰지 않게 하므로, 스크립트는 이름을
 만들어 내지 말고 이름이나 파일 시각으로 정렬해 최신 실행을 찾습니다. 요약에는 지표마다

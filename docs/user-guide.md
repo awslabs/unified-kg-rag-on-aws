@@ -1710,8 +1710,10 @@ stops `run-eval` before any query with `Error: invalid evaluation dataset:`,
 the item index and query id, and exit code 2.
 
 Results are written to the outputs directory as
-`evaluation_{results,reports,summary}_<timestamp>.json`; when every answered
-query used the same strategy the name becomes `..._<strategy>_<timestamp>.json`.
+`evaluation_{results,reports,summary}_<timestamp>.json`; when every query
+asked for the same strategy (or, with none asked for, used the same one) the
+name becomes `..._<strategy>_<timestamp>.json`, so an `auto` run is
+`..._auto_...` whatever it routed to.
 `<timestamp>` is `YYYYMMDD_HHMMSS_<8 hex characters>`: the random part keeps
 runs started in the same second (parallel strategies, CI matrices) from
 overwriting each other's files, so a script finds the latest run by sorting
