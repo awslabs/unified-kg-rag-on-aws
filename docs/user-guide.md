@@ -566,7 +566,7 @@ own `*_model_id` key still wins over its tier:
 | Tier | Roles (`*_model_id` keys) |
 | --- | --- |
 | `default` | `fixing.fixing_model_id`, `processing.graph_extraction.extraction_model_id`, `processing.gleaning.graph_refinement_model_id`, `processing.claim_extraction.extraction_model_id`, `graph.community_detection.report_generation.report_generation_model_id`, `search.{entity_extraction,answer_generation}_model_id`, `evaluation.evaluation_model_id` |
-| `fast` | `processing.chunking.chunking_model_id`, `processing.translation.translation_model_id`, `processing.graph_extraction.description_summarization.summary_model_id`, `search.{translation,strategy_selection,query_rewrite}_model_id`, `search.global_search.{community_relevance,map_reduce,map}_model_id`, `search.drift_search.{query_refinement,keyword_expansion,convergence_assessment,primer}_model_id` |
+| `fast` | `processing.chunking.chunking_model_id`, `processing.translation.translation_model_id`, `processing.graph_extraction.description_summarization.summary_model_id`, `search.{translation,strategy_selection,query_rewrite}_model_id`, `search.global_search.{community_relevance,map_reduce,map}_model_id`, `search.drift_search.{primer,action}_model_id` |
 
 ```yaml
 aws:
@@ -713,9 +713,11 @@ LLM stages are Bedrock-I/O-bound, so concurrency can far exceed the CPU count.
 | `search.global_search.text_unit_slots` | `0` | Text units of the communities behind the key points added to the context, reranked. `0` = none, as in MS GraphRAG's global search; the chunks took most of the answer budget the key points and reports need. |
 | `search.local_search.entity_frequency_threshold` | `20` | Drop graph-expanded entities that appear in more text units than this (too generic). The query's own matched entities are always kept. |
 | `search.local_search.include_bridge_relationships` | `true` | Also fetch relationships incident to the expanded entities, edges between two retrieved entities first (multi-hop bridges). Needs the relationship index. `false` = relationship vector query only. |
-| `search.drift_search.max_iterations` | `3` | DRIFT iteration budget. |
-| `search.drift_search.enable_primer` | `false` | MS GraphRAG primer → follow-up flow (one extra LLM call up front). |
-| `search.drift_search.enable_llm_convergence` | `false` | LLM convergence check after each iteration (one extra call per iteration). |
+| `search.drift_search.k_followups` | `20` | Community reports the DRIFT primer reads, and follow-up queries run per round (MS GraphRAG `drift_k_followups`). Each follow-up query is one local search plus one `action_model_id` call. |
+| `search.drift_search.primer_folds` | `5` | Primer calls the primer reports are split over; each drafts an intermediate answer and follow-up queries. |
+| `search.drift_search.n_depth` | `3` | Rounds of follow-up queries: up to `k_followups * n_depth` local searches per query. |
+| `search.drift_search.local_context_tokens` | `12000` | Context budget one follow-up query is answered from. |
+| `search.drift_search.max_answer_tokens` | `8000` | Budget for the ranked intermediate answers given to the answer model. |
 | `search.token_manager.max_context_tokens` | `30000` | Retrieval context budget for the answer prompt (see the note below). |
 | `search.token_manager.context_window_headroom_ratio` | `0.1` | Share of the window held back when the budget is derived (`max_context_tokens: null`). |
 | `search.store_timeout_seconds` | `30` | How long a query waits for one OpenSearch or Neptune request (and for opening a Neptune connection); a Neptune traversal, including its wait for a pooled connection, gets twice that. A store that does not answer fails the query instead of answering from no context. Ingestion keeps its own limits. |
@@ -1194,7 +1196,7 @@ rerank); only the retrieval algorithm differs.
 | `simple` | Fast factual lookups; straightforward questions | Direct OpenSearch vector + keyword retrieval, no graph traversal. Fastest. Includes the claims index when claim extraction is on. |
 | `local` | Detailed questions about specific entities/concepts | Extracts query entities → Neptune graph traversal for neighbors/relationships → combined with vector/keyword hits. Injects claims (covariates) when enabled. |
 | `global` | Broad, thematic, "what are the main themes" questions | MS GraphRAG global search: maps every community report of one cut of the hierarchy (`search.global_search.community_depth`, default 2 from the root) into scored key points on the fast model, in token-sized batches, and answers from the ranked points. Optional dynamic selection walks the hierarchy from the roots instead. Cost grows with the cut: one map call per `map_context_tokens` of reports. Best for high-level synthesis. |
-| `drift` | Complex, multi-faceted questions needing exploration | Iterative query refinement/expansion with convergence detection across rounds. |
+| `drift` | Multi-part questions that need the broad picture and specific facts several steps away from it | MS GraphRAG DRIFT search: the community reports most similar to a hypothetical answer (HyDE) draft intermediate answers and follow-up queries; each follow-up runs a local search, is answered on the fast model and raises further follow-ups, for `n_depth` rounds; the answer model reduces the ranked intermediate answers and their evidence. The most LLM calls per query of any strategy (about `primer_folds + k_followups * n_depth`). |
 | `auto` | You don't know / general use (the default) | An LLM router (`search.strategy_selection_model_id`) picks the best strategy from the query among `search.auto_routable_strategies` (default local, mix, global, drift). |
 
 **LightRAG (dual-level keyword):**
@@ -1998,8 +2000,8 @@ custom_prompts:
 Available override keys (each `_system` + `_human`): `graph_extraction`,
 `description_summarization`, `claim_extraction`, `graph_refinement`,
 `community_report`, `answer_generation`, `query_rewrite`,
-`entity_extraction`, `keyword_expansion`, `query_refinement`,
-`drift_primer` (DRIFT primer, when `enable_primer` is set),
+`entity_extraction`, `drift_hyde`, `drift_primer` and `drift_action` (DRIFT
+query expansion, primer and follow-up answer),
 `strategy_selection`, `keywords_extraction` (LightRAG dual-level),
 `global_map` (global-search map-reduce), plus the prompt-tuning
 `corpus_profile` prompt.

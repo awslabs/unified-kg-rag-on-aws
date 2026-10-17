@@ -1,14 +1,27 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
+"""MS GraphRAG DRIFT search: a community-report primer, then local search.
+
+1. PRIMER — the query is expanded into a hypothetical answer shaped like a
+   community report (HyDE); the ``k_followups`` reports most similar to it are
+   split into ``primer_folds`` and each fold drafts an intermediate answer, a
+   0-100 score and follow-up queries.
+2. ACTIONS — for ``n_depth`` rounds, the ``k_followups`` open follow-up queries
+   whose parent answer scored best run as local searches; each local context
+   is answered with its own score and follow-up queries.
+3. REDUCE — the ranked intermediate answers are one synthesized context
+   section and the local evidence behind them follows it; the answer model
+   reduces them into the answer.
+"""
+
 import asyncio
+import math
 import time
+from dataclasses import dataclass, field
 from typing import Any
 
-from langchain_core.output_parsers import (
-    CommaSeparatedListOutputParser,
-    StrOutputParser,
-)
-from langchain_core.runnables import RunnableConfig
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.runnables import Runnable, RunnableConfig
 
 from unified_kg_rag.adapters.llm.chain_factory import setup_chain
 from unified_kg_rag.adapters.retrieval.base import (
@@ -17,24 +30,26 @@ from unified_kg_rag.adapters.retrieval.base import (
     is_fatal_retrieval_error,
 )
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
+from unified_kg_rag.adapters.search_strategies.local_search import (
+    LocalSearchStrategy,
+)
 from unified_kg_rag.domain.models import (
     Config,
     RetrievalResult,
     SearchQuery,
     SearchResult,
     SearchStrategy,
+    SearchType,
     language_name,
 )
 from unified_kg_rag.domain.prompts import (
-    ConvergenceAssessmentPrompt,
+    DriftActionPrompt,
+    DriftHydePrompt,
     DriftPrimerPrompt,
-    KeywordExpansionPrompt,
-    QueryRefinementPrompt,
 )
 from unified_kg_rag.domain.retrieval.strategy_registry import register_strategy
-from unified_kg_rag.shared import get_logger
+from unified_kg_rag.shared import get_logger, observability
 from unified_kg_rag.shared.utils import (
-    compute_hash,
     parse_llm_json,
     safe_float_parse,
     text_digest,
@@ -42,16 +57,37 @@ from unified_kg_rag.shared.utils import (
 
 logger = get_logger(__name__)
 
-# Keyword expansion asks for at most this many keywords per iteration.
-_MAX_EXPANSION_KEYWORDS = 20
-# The loop stops early once two consecutive iterations each add fewer than
-# this many unseen results (next to the ratio check of improvement_threshold).
-_MIN_UNIQUE_GAIN = 2
+# Follow-up queries one primer or action call is asked for (MS GraphRAG's
+# primer asks for "at least five").
+_FOLLOW_UPS_PER_ANSWER = 5
 
 
-# No query-side entity extraction: each iteration seeds graph expansion from
-# its own (original, refined or follow-up) query text, which the extracted
-# entities of the original question could only narrow.
+@dataclass
+class _Answer:
+    """One intermediate answer: of the primer (to the question) or an action."""
+
+    query: str
+    text: str
+    score: int
+    follow_ups: list[str] = field(default_factory=list)
+    evidence: list[RetrievalResult] = field(default_factory=list)
+
+
+def _score(value: Any) -> int:
+    """A 0-100 integer score from untrusted LLM output (non-finite -> 0)."""
+    number = safe_float_parse(str(value), default_value=0.0)
+    if number is None or not math.isfinite(number):
+        return 0
+    return max(0, min(100, int(number)))
+
+
+def _follow_ups(payload: dict[str, Any]) -> list[str]:
+    raw = payload.get("follow_up_queries")
+    if not isinstance(raw, list):
+        return []
+    return [str(q).strip() for q in raw if str(q).strip()]
+
+
 @register_strategy(SearchStrategy.DRIFT, needs_community_reports=True)
 class DriftSearchStrategy(BaseSearchStrategy):
     def __init__(
@@ -63,48 +99,43 @@ class DriftSearchStrategy(BaseSearchStrategy):
         super().__init__(config, retrievers, **kwargs)
         self.drift_config = self.config.search.drift_search
         self.ignore_errors = config.processing.ignore_errors
-        # Keyword expansion / query refinement must produce terms in the corpus
-        # language so they hit the language-analyzed index (not English-biased).
+        self.max_concurrency = config.processing.max_concurrency
+        # Follow-up queries are written in the corpus language so they hit the
+        # language-analyzed index.
         self.target_language = language_name(
             config.processing.translation.target_language
         )
 
         factory = self.providers.llm_factory
-
-        str_output_parser = StrOutputParser()
-        self.query_refiner = setup_chain(
+        parser = StrOutputParser()
+        self.hyde: Runnable = setup_chain(
             factory=factory,
-            model_id=self.drift_config.query_refinement_model_id,
-            prompt_class=QueryRefinementPrompt,
-            parser=str_output_parser,
+            model_id=self.drift_config.primer_model_id,
+            prompt_class=DriftHydePrompt,
+            parser=parser,
             custom_prompts=self.config.custom_prompts,
         )
-        self.keyword_expander = setup_chain(
+        self.primer: Runnable = setup_chain(
             factory=factory,
-            model_id=self.drift_config.keyword_expansion_model_id,
-            prompt_class=KeywordExpansionPrompt,
-            parser=CommaSeparatedListOutputParser(),
+            model_id=self.drift_config.primer_model_id,
+            prompt_class=DriftPrimerPrompt,
+            parser=parser,
             custom_prompts=self.config.custom_prompts,
         )
-        # Built only when the opt-in LLM convergence check is enabled.
-        if self.drift_config.enable_llm_convergence:
-            self.convergence_assessor = setup_chain(
-                factory=factory,
-                model_id=self.drift_config.convergence_assessment_model_id,
-                prompt_class=ConvergenceAssessmentPrompt,
-                parser=str_output_parser,
-                custom_prompts=self.config.custom_prompts,
-            )
-        # The HyDE primer chain is only built when the primer path is enabled,
-        # so the default DRIFT flow constructs no extra chain.
-        if self.drift_config.enable_primer:
-            self.primer = setup_chain(
-                factory=factory,
-                model_id=self.drift_config.primer_model_id,
-                prompt_class=DriftPrimerPrompt,
-                parser=str_output_parser,
-                custom_prompts=self.config.custom_prompts,
-            )
+        self.action: Runnable = setup_chain(
+            factory=factory,
+            model_id=self.drift_config.action_model_id,
+            prompt_class=DriftActionPrompt,
+            parser=parser,
+            custom_prompts=self.config.custom_prompts,
+        )
+        # Each follow-up query is a local search, as in MS GraphRAG. It shares
+        # this strategy's providers, scorer and token counter.
+        self.local_search = LocalSearchStrategy(
+            config, retrievers, providers=self.providers
+        )
+        self.local_search.hybrid_scorer = self.hybrid_scorer
+        self.local_search.token_manager = self.token_manager
 
     async def asearch(
         self, query: SearchQuery, config: RunnableConfig | None = None
@@ -116,528 +147,324 @@ class DriftSearchStrategy(BaseSearchStrategy):
             text_digest(query.query),
             query.search_type.value,
         )
+        stats: dict[str, Any] = {"drift_llm_calls": 0}
+        degraded: list[str] = []
+        semaphore = asyncio.Semaphore(self.max_concurrency)
 
-        candidate_communities = await self._find_candidate_communities(query)
-        if not candidate_communities:
-            logger.warning("No candidate communities found, proceeding with empty seed")
-
-        community_ids = self._get_ids(candidate_communities, "community_id")
-        logger.debug(
-            "Found %s candidate communities: '%s%s'",
-            len(community_ids),
-            ", ".join(community_ids[:5]),
-            "..." if len(community_ids) > 5 else "",
-        )
-
-        all_results: list[RetrievalResult] = list(candidate_communities)
-        seen_hashes: set[str] = set()
-        metrics: list[dict[str, Any]] = []
-        self._update_seen_content(candidate_communities, seen_hashes)
-
-        # The primer drafts from the seed community reports; with none to draw
-        # on it could only guess, so fall back to the iterative loop instead.
-        if self.drift_config.enable_primer and candidate_communities:
-            await self._primer_search(
-                query,
-                candidate_communities,
-                all_results,
-                seen_hashes,
-                metrics,
-                config=config,
-            )
-        else:
-            if self.drift_config.enable_primer:
-                logger.info("No candidate communities; skipping DRIFT primer")
-            await self._iterative_search(
-                query, all_results, seen_hashes, metrics, config=config
+        with observability.span("kg_rag.drift.primer") as span:
+            reports = await self._primer_reports(query, stats, config, degraded)
+            answers = await self._prime(query, reports, stats, config, degraded)
+            span.set_attributes(
+                {"kg_rag.reports": len(reports), "kg_rag.answers": len(answers)}
             )
 
-        # DRIFT accumulates communities, entities, relationships and chunks
-        # from several iterations; reserve slots per section type (shared with
-        # local search) so the final cut does not collapse them to one type, and
-        # rerank only text chunks, as local search does. RRF ranks the single
-        # bucket by position, so order each type by its native score first.
-        final_results = await self._fuse_and_rerank(
-            {"results": self._rank_within_type(all_results)},
-            rerank_trace=rerank,
-            top_k=query.top_k,
-            retrieval_multiplier=query.retrieval_multiplier,
-            query=query.query,
-            per_type_quota=self._per_type_quota(query.top_k),
-            rerank_only_types={SectionType.TEXT.value},
+        # Open follow-up queries: (parent score, arrival order, query). MS
+        # GraphRAG shuffles them; the parent's score orders them here, so the
+        # follow-ups of the most useful answers run first.
+        queue: list[tuple[int, int, str]] = []
+        asked = {query.query.strip().lower()}
+
+        def enqueue(parent: _Answer) -> None:
+            for follow_up in parent.follow_ups:
+                key = follow_up.lower()
+                if key not in asked:
+                    asked.add(key)
+                    queue.append((parent.score, len(asked), follow_up))
+
+        for answer in answers:
+            enqueue(answer)
+        if not queue:
+            # Nothing to follow up (no reports, or the primer gave none): one
+            # local search on the question itself still answers it.
+            queue.append((0, 0, query.query))
+
+        actions = 0
+        depth = 0
+        while queue and depth < self.drift_config.n_depth:
+            queue.sort(key=lambda item: (-item[0], item[1]))
+            batch = [q for _, _, q in queue[: self.drift_config.k_followups]]
+            del queue[: self.drift_config.k_followups]
+            with observability.span(
+                "kg_rag.drift.actions", depth=depth, actions=len(batch)
+            ):
+                done = await asyncio.gather(
+                    *(
+                        self._act(sub, query, semaphore, stats, config, degraded)
+                        for sub in batch
+                    )
+                )
+            actions += len(batch)
+            depth += 1
+            for answer in done:
+                answers.append(answer)
+                enqueue(answer)
+
+        evidence = [r for answer in answers for r in answer.evidence]
+        fused = (
+            await self._fuse_and_rerank(
+                {"results": self._rank_within_type(self._dedupe(evidence))},
+                rerank_trace=rerank,
+                top_k=query.top_k,
+                retrieval_multiplier=query.retrieval_multiplier,
+                query=query.query,
+                per_type_quota=self._per_type_quota(query.top_k),
+                rerank_only_types={SectionType.TEXT.value},
+            )
+            if evidence
+            else []
         )
+        synthesized = await self._answers_item(answers)
+        results = ([synthesized] if synthesized else []) + fused
+
         processing_time = time.time() - start_time
-
         logger.info(
-            "Search completed: %s iterations, %s results in %.3fs",
-            len(metrics),
-            len(final_results),
+            "Drift search completed: %s primer reports, %s follow-up queries in %s "
+            "rounds, %s LLM calls, %s results in %.3fs",
+            len(reports),
+            actions,
+            depth,
+            stats["drift_llm_calls"],
+            len(results),
             processing_time,
         )
-
         return SearchResult(
             query=query,
-            results=final_results,
-            total_results=len(final_results),
+            results=results,
+            total_results=len(results),
             search_strategy="drift_search",
             processing_time=processing_time,
             metadata={
-                "iterations_completed": len(metrics),
-                "iteration_metrics": metrics,
+                **stats,
+                "drift_primer_reports": len(reports),
+                "drift_follow_up_queries": actions,
+                "drift_depth": depth,
+                "drift_answers": sum(1 for a in answers if a.text),
+                "drift_open_follow_ups": len(queue),
                 "rerank": rerank.summary(),
+                **({"degraded_error": degraded[0]} if degraded else {}),
             },
         )
 
-    async def _iterative_search(
+    # ------------------------------------------------------------------ #
+    # Primer
+    # ------------------------------------------------------------------ #
+
+    def _reports_query(self, base: SearchQuery, **update: Any) -> SearchQuery:
+        return base.model_copy(
+            update={
+                "index_prefixes": [
+                    self.config.indexing.opensearch.community_reports_index_prefix
+                ],
+                "retrieval_multiplier": 1,
+                **update,
+            }
+        )
+
+    async def _primer_reports(
         self,
         query: SearchQuery,
-        all_results: list[RetrievalResult],
-        seen_hashes: set[str],
-        metrics: list[dict[str, Any]],
-        *,
-        config: RunnableConfig | None = None,
-    ) -> None:
-        """Original DRIFT loop: carry one mutating query forward each iteration."""
-        current_query = query.model_copy(deep=True)
-        # Each iteration's new results, to expand keywords from the newest.
-        iteration_results_log: list[list[RetrievalResult]] = []
-        for iteration in range(self.drift_config.max_iterations):
-            if await self._should_stop(iteration, metrics, query.query, config=config):
-                logger.info("Convergence achieved at iteration %s", iteration)
-                break
-
-            # Iteration 0 searches with the original query: rewriting it before
-            # any document has been retrieved could only drift away from the
-            # user's wording. Later iterations refine it from what was found.
-            if iteration > 0:
-                current_query = await self._evolve_query(
-                    current_query,
-                    query.query,
-                    all_results,
-                    iteration,
-                    self._recent_entity_names(iteration_results_log),
-                    config=config,
-                )
-            logger.info(
-                "Iteration %s: query %s, %s optional keywords",
-                iteration,
-                text_digest(current_query.query),
-                len(current_query.optional_keywords),
-            )
-            logger.debug(
-                "Iteration %s: evolved query='%s', optional keywords='%s'",
-                iteration,
-                current_query.query,
-                ", ".join(current_query.optional_keywords),
-            )
-
-            iteration_results = await self._execute_search_iteration(current_query)
-            unique_new = self._filter_unique_results(iteration_results, seen_hashes)
-
-            self._update_seen_content(unique_new, seen_hashes)
-            all_results.extend(unique_new)
-            iteration_results_log.append(unique_new)
-
-            metrics.append(
-                {
-                    "iteration": iteration,
-                    "query": current_query.query,
-                    "retrieved": len(iteration_results),
-                    "unique_new": len(unique_new),
-                }
-            )
-
-            improvement_ratio = len(unique_new) / max(len(iteration_results), 1)
-            if (
-                iteration > 0
-                and improvement_ratio < self.drift_config.improvement_threshold
-            ):
-                logger.info(
-                    "Early stop at iteration %s: "
-                    "improvement ratio %.2f below threshold",
-                    iteration,
-                    improvement_ratio,
-                )
-                break
-
-    async def _primer_search(
-        self,
-        query: SearchQuery,
-        candidate_communities: list[RetrievalResult],
-        all_results: list[RetrievalResult],
-        seen_hashes: set[str],
-        metrics: list[dict[str, Any]],
-        *,
-        config: RunnableConfig | None = None,
-    ) -> None:
-        """MS GraphRAG primer flow: HyDE primer -> per-follow-up local searches.
-
-        The primer drafts a hypothetical answer from the seed community reports
-        and decomposes the query into specific follow-up sub-queries; each
-        follow-up is then run as its own search iteration (capped by
-        ``max_iterations``). Falls back to the iterative loop if the primer
-        yields no follow-up queries, so the strategy never returns seed-only.
-
-        The hypothetical answer is deliberately NOT added to the result set: it
-        is an LLM guess, not retrieved evidence, and seeding it at top score
-        made it both answer context and a reported source. It only steers the
-        follow-up queries the primer derives alongside it.
-        """
-        follow_ups, intermediate_answer = await self._run_primer(
-            query, candidate_communities, config=config
-        )
-        if intermediate_answer:
-            logger.debug(
-                "DRIFT primer intermediate answer (%s chars) kept out of the "
-                "answer context",
-                len(intermediate_answer),
-            )
-
-        if not follow_ups:
-            logger.info("Primer produced no follow-ups; using iterative loop")
-            await self._iterative_search(
-                query, all_results, seen_hashes, metrics, config=config
-            )
-            return
-
-        follow_ups = follow_ups[: self.drift_config.max_iterations]
-        follow_up_queries = []
-        for iteration, follow_up in enumerate(follow_ups):
-            follow_up_query = query.model_copy(deep=True)
-            follow_up_query.query = follow_up
-            follow_up_queries.append(follow_up_query)
-            logger.info("Primer follow-up %s: %s", iteration, text_digest(follow_up))
-            logger.debug("Primer follow-up %s: '%s'", iteration, follow_up)
-
-        # The follow-ups are independent searches: run them together, then
-        # dedupe in follow-up order.
-        all_iteration_results = await asyncio.gather(
-            *(self._execute_search_iteration(q) for q in follow_up_queries)
-        )
-        for iteration, (follow_up, iteration_results) in enumerate(
-            zip(follow_ups, all_iteration_results, strict=True)
-        ):
-            unique_new = self._filter_unique_results(iteration_results, seen_hashes)
-            self._update_seen_content(unique_new, seen_hashes)
-            all_results.extend(unique_new)
-
-            metrics.append(
-                {
-                    "iteration": iteration,
-                    "query": follow_up,
-                    "retrieved": len(iteration_results),
-                    "unique_new": len(unique_new),
-                    "source": "primer_follow_up",
-                }
-            )
-
-    async def _run_primer(
-        self,
-        query: SearchQuery,
-        candidate_communities: list[RetrievalResult],
-        *,
-        config: RunnableConfig | None = None,
-    ) -> tuple[list[str], str]:
-        """Run the HyDE primer; return (follow-up sub-queries, intermediate answer).
-
-        The ``intermediate_answer`` is the primer's hypothetical answer drafted
-        from the seed community summaries (HyDE). It is returned for diagnostics
-        only; callers must not treat it as retrieved evidence or a source.
-        """
-        reports = "\n".join(
-            f"- {r.content[: self.drift_config.summary_char_limit]}"
-            for r in candidate_communities[: self.drift_config.initial_top_k]
-        )
-        if not reports:
-            # Nothing to ground the primer in: an LLM call here could only
-            # produce an unsupported guess.
-            return [], ""
-        try:
-            raw = await self.primer.ainvoke(
-                {
-                    "query": query.query,
-                    "community_reports": reports,
-                    "num_follow_ups": self.drift_config.primer_follow_ups,
-                },
-                config,
-            )
-            payload = parse_llm_json(raw)
-        except Exception as e:
-            if not self.ignore_errors:
-                raise
-            logger.error("DRIFT primer failed: %s", e)
-            return [], ""
-
-        raw_follow_ups = payload.get("follow_up_queries")
-        follow_ups = (
-            [str(f).strip() for f in raw_follow_ups if str(f).strip()]
-            if isinstance(raw_follow_ups, list)
-            else []
-        )
-        intermediate_answer = str(payload.get("intermediate_answer", "")).strip()
-        return follow_ups, intermediate_answer
-
-    async def _find_candidate_communities(
-        self, query: SearchQuery
+        stats: dict[str, Any],
+        config: RunnableConfig | None,
+        degraded: list[str],
     ) -> list[RetrievalResult]:
-        if not self.document_retriever:
+        """The ``k_followups`` reports most similar to the expanded query."""
+        retriever = self.document_retriever
+        if retriever is None:
             return []
-
-        search_query = query.model_copy(deep=True)
-        search_query.index_prefixes = [
-            self.config.indexing.opensearch.community_reports_index_prefix
-        ]
-        search_query.top_k = self.config.search.drift_search.initial_top_k
-
+        # The template the hypothetical answer takes its shape from: MS
+        # GraphRAG picks a random report; the most important one is stable.
+        template = await self._safe_aretrieve(
+            retriever,
+            self._reports_query(
+                query, query="", search_type=SearchType.LEXICAL, top_k=1
+            ),
+            "DRIFT report template",
+        )
+        if not template:
+            return []
+        expanded = query.query
+        try:
+            stats["drift_llm_calls"] += 1
+            hypothetical = await self.hyde.ainvoke(
+                {"query": query.query, "template": template[0].content}, config
+            )
+            expanded = str(hypothetical).strip() or query.query
+        except Exception as e:
+            self._degrade("DRIFT query expansion", e, degraded)
         return await self._safe_aretrieve(
-            self.document_retriever, search_query, "Candidate community lookup"
+            retriever,
+            self._reports_query(
+                query, query=expanded, top_k=self.drift_config.k_followups
+            ),
+            "DRIFT primer reports",
+        )
+
+    async def _prime(
+        self,
+        query: SearchQuery,
+        reports: list[RetrievalResult],
+        stats: dict[str, Any],
+        config: RunnableConfig | None,
+        degraded: list[str],
+    ) -> list[_Answer]:
+        """One intermediate answer per fold of the primer reports."""
+        folds = self._folds(reports, self.drift_config.primer_folds)
+
+        async def prime(fold: list[RetrievalResult]) -> _Answer | None:
+            stats["drift_llm_calls"] += 1
+            try:
+                raw = await self.primer.ainvoke(
+                    {
+                        "query": query.query,
+                        "community_reports": "\n\n".join(r.content for r in fold),
+                        "num_follow_ups": _FOLLOW_UPS_PER_ANSWER,
+                        "target_language": self.target_language,
+                    },
+                    config,
+                )
+            except Exception as e:
+                self._degrade("DRIFT primer", e, degraded)
+                return None
+            payload = parse_llm_json(str(raw))
+            if not payload:
+                logger.warning("DRIFT primer returned no JSON; fold skipped")
+                return None
+            return _Answer(
+                query=query.query,
+                text=str(payload.get("intermediate_answer", "")).strip(),
+                score=_score(payload.get("score", 0)),
+                follow_ups=_follow_ups(payload),
+            )
+
+        primed = await asyncio.gather(*(prime(fold) for fold in folds))
+        return [answer for answer in primed if answer is not None]
+
+    @staticmethod
+    def _folds(items: list[RetrievalResult], folds: int) -> list[list[RetrievalResult]]:
+        """``items`` in ``folds`` contiguous near-equal parts (none empty)."""
+        count = min(folds, len(items))
+        if count == 0:
+            return []
+        size, extra = divmod(len(items), count)
+        parts, start = [], 0
+        for i in range(count):
+            end = start + size + (1 if i < extra else 0)
+            parts.append(items[start:end])
+            start = end
+        return parts
+
+    # ------------------------------------------------------------------ #
+    # Actions
+    # ------------------------------------------------------------------ #
+
+    async def _act(
+        self,
+        follow_up: str,
+        query: SearchQuery,
+        semaphore: asyncio.Semaphore,
+        stats: dict[str, Any],
+        config: RunnableConfig | None,
+        degraded: list[str],
+    ) -> _Answer:
+        """A local search for ``follow_up`` and its answer from that context."""
+        async with semaphore:
+            sub_query = query.model_copy(
+                update={"query": follow_up, "entity_focus": [], "optional_keywords": []}
+            )
+            local = await self.local_search.asearch(sub_query, config)
+            # Counting can be one CountTokens request per section: off the loop.
+            optimized = await asyncio.to_thread(
+                self.token_manager.optimize_context,
+                local.results,
+                follow_up,
+                self.drift_config.local_context_tokens,
+            )
+            context = self.token_manager.build_context_string(optimized)
+            answer = _Answer(query=follow_up, text="", score=0, evidence=local.results)
+            if not local.results:
+                return answer
+            stats["drift_llm_calls"] += 1
+            try:
+                raw = await self.action.ainvoke(
+                    {
+                        "query": follow_up,
+                        "global_query": query.query,
+                        "context": context,
+                        "num_follow_ups": _FOLLOW_UPS_PER_ANSWER,
+                        "target_language": self.target_language,
+                    },
+                    config,
+                )
+            except Exception as e:
+                self._degrade("DRIFT action", e, degraded)
+                return answer
+        payload = parse_llm_json(str(raw))
+        if not payload:
+            logger.warning(
+                "DRIFT action returned no JSON for %s", text_digest(follow_up)
+            )
+            return answer
+        answer.text = str(payload.get("response", "") or "").strip()
+        answer.score = _score(payload.get("score", 0))
+        answer.follow_ups = _follow_ups(payload)
+        return answer
+
+    def _degrade(self, step: str, error: Exception, degraded: list[str]) -> None:
+        """Raise ``error`` unless ``ignore_errors`` lets ``step`` degrade.
+
+        A fatal error (no model access, an unusable store) raises either way.
+        """
+        if not self.ignore_errors or is_fatal_retrieval_error(error):
+            raise error
+        logger.error("%s failed: %s", step, error)
+        degraded.append(type(error).__name__)
+
+    # ------------------------------------------------------------------ #
+    # Reduce
+    # ------------------------------------------------------------------ #
+
+    async def _answers_item(self, answers: list[_Answer]) -> RetrievalResult | None:
+        """The intermediate answers, best first, within ``max_answer_tokens``.
+
+        LLM output rather than retrieved evidence: the answer model reads it,
+        but it is never reported as a source.
+        """
+        ranked = sorted(
+            (a for a in answers if a.text), key=lambda a: a.score, reverse=True
+        )
+        if not ranked:
+            return None
+        entries = [f"- (score {a.score}) Q: {a.query}\n  A: {a.text}" for a in ranked]
+        costs = await asyncio.to_thread(self.token_manager.count_tokens_many, entries)
+        packed: list[str] = []
+        used = 0
+        for entry, cost in zip(entries, costs, strict=True):
+            if packed and used + cost > self.drift_config.max_answer_tokens:
+                break
+            packed.append(entry)
+            used += cost
+        return RetrievalResult(
+            content=(
+                "Intermediate answers to the question and its follow-up "
+                "questions, ranked by how well each addresses the question "
+                "(0-100):\n\n" + "\n\n".join(packed)
+            ),
+            score=1.0,
+            source="synthesized_drift_answers",
+            retriever_type=SectionType.GENERAL.value,
+            metadata={"synthesized": True, "intermediate_answers": len(packed)},
         )
 
     @staticmethod
-    def _update_seen_content(
-        results: list[RetrievalResult], seen_hashes: set[str]
-    ) -> None:
+    def _dedupe(results: list[RetrievalResult]) -> list[RetrievalResult]:
+        """One result per stored item; the best-scored copy is kept."""
+        best: dict[tuple[str, str], RetrievalResult] = {}
         for result in results:
-            seen_hashes.add(compute_hash(result.content, length=16))
-
-    async def _should_stop(
-        self,
-        iteration: int,
-        metrics: list[dict[str, Any]],
-        original_query: str,
-        *,
-        config: RunnableConfig | None = None,
-    ) -> bool:
-        # The caller loops over range(max_iterations), so the hard cap is already
-        # enforced there; this method only decides EARLY convergence.
-        if iteration > 1:
-            recent_gains = [m["unique_new"] for m in metrics[-2:]]
-            if all(gain < _MIN_UNIQUE_GAIN for gain in recent_gains):
-                return True
-
-        if (
-            self.drift_config.enable_llm_convergence
-            and metrics
-            and await self._assess_convergence_with_llm(
-                original_query, iteration, metrics, config=config
-            )
-        ):
-            return True
-
-        return False
-
-    async def _assess_convergence_with_llm(
-        self,
-        original_query: str,
-        iteration: int,
-        metrics: list[dict[str, Any]],
-        *,
-        config: RunnableConfig | None = None,
-    ) -> bool:
-        if not metrics:
-            return False
-
-        try:
-            llm_output = await self.convergence_assessor.ainvoke(
-                {
-                    "original_query": original_query,
-                    "iterations": iteration,
-                    "total_results": sum(m["unique_new"] for m in metrics),
-                    "new_results": metrics[-1]["unique_new"],
-                },
-                config,
-            )
-            parsed_score = safe_float_parse(llm_output, default_value=0.5) or 0.0
-            return parsed_score >= self.drift_config.convergence_threshold
-
-        except Exception as e:
-            if not self.ignore_errors:
-                raise
-
-            logger.error("Convergence assessment failed: %s", e)
-            return False
-
-    async def _evolve_query(
-        self,
-        query: SearchQuery,
-        original_query: str,
-        results: list[RetrievalResult],
-        iteration: int,
-        entity_names: list[str] | None = None,
-        *,
-        config: RunnableConfig | None = None,
-    ) -> SearchQuery:
-        evolved_query = query.model_copy(deep=True)
-        tasks = {}
-
-        if self.drift_config.enable_query_refinement:
-            summary = self._summarize_results(results)
-            tasks["refinement"] = self.query_refiner.ainvoke(
-                {
-                    "original_query": original_query,
-                    "results_summary": summary,
-                    "iteration": iteration,
-                    "target_language": self.target_language,
-                },
-                config,
-            )
-
-        if self.drift_config.enable_keyword_extraction:
-            tasks["expansion"] = self.keyword_expander.ainvoke(
-                {
-                    "query": original_query,
-                    "entities": entity_names or [],
-                    "topics": [],
-                    "max_keywords": _MAX_EXPANSION_KEYWORDS,
-                    "target_language": self.target_language,
-                },
-                config,
-            )
-
-        if not tasks:
-            return evolved_query
-
-        try:
-            task_results = await asyncio.gather(*tasks.values(), return_exceptions=True)
-            results_map = dict(zip(tasks.keys(), task_results, strict=True))
-            # return_exceptions keeps one failed step from discarding the
-            # other's result, but a fatal error (no model access, bad
-            # credentials) must still surface, and every failure is logged.
-            for name, outcome in results_map.items():
-                if not isinstance(outcome, Exception):
-                    continue
-                if is_fatal_retrieval_error(outcome) and not self.ignore_errors:
-                    raise outcome
-                logger.warning("DRIFT query %s failed: %s", name, outcome)
-
-            refinement = results_map.get("refinement")
-            if (
-                refinement is not None
-                and not isinstance(refinement, Exception)
-                and isinstance(refinement, str)
-            ):
-                refinement = refinement.strip()
-                if refinement:
-                    evolved_query.query = refinement
-
-            expansion = results_map.get("expansion")
-            if (
-                expansion is not None
-                and not isinstance(expansion, Exception)
-                and isinstance(expansion, list)
-            ):
-                if expansion:
-                    evolved_query.optional_keywords = expansion
-
-        except Exception as e:
-            if not self.ignore_errors:
-                raise
-
-            logger.error("Query evolution failed: %s", e)
-
-        return evolved_query
-
-    def _recent_entity_names(
-        self, iteration_results_log: list[list[RetrievalResult]]
-    ) -> list[str]:
-        """Names of the entities found, newest iteration first.
-
-        Keyword expansion grows the query from what the last iterations found;
-        the first results overall are the seed community reports, whose titles
-        are not entities.
-        """
-        names = (
-            str(result.metadata["name"])
-            for batch in reversed(iteration_results_log)
-            for result in batch
-            if result.retriever_type == SectionType.ENTITY.value
-            and result.metadata.get("name")
-        )
-        return list(dict.fromkeys(names))[: self.drift_config.n_entities]
-
-    def _summarize_results(self, results: list[RetrievalResult]) -> str:
-        if not results:
-            return "No information gathered yet. Start by exploring broad topics related to the original query."
-
-        sorted_results = sorted(results, key=lambda x: x.score, reverse=True)
-        summaries = []
-        for result in sorted_results:
-            # By type, not index name: the real prefix is
-            # "graphrag-community-reports", which never contained
-            # "community_reports", so every report was labelled "Item:".
-            if result.retriever_type == SectionType.COMMUNITY.value:
-                summaries.append(
-                    f"Community: {result.content[: self.drift_config.summary_char_limit]}..."
-                )
-            else:
-                summaries.append(
-                    f"Item: {result.content[: self.drift_config.summary_char_limit]}..."
-                )
-
-        return "\n".join(summaries[: self.drift_config.summary_length])
-
-    async def _execute_search_iteration(
-        self, query: SearchQuery
-    ) -> list[RetrievalResult]:
-        tasks = []
-        if self.graph_retriever:
-            tasks.append(self._graph_results_for_iteration(self.graph_retriever, query))
-
-        # Independent of the candidate lookup, so it runs alongside the
-        # lookup -> graph expansion chain instead of after it.
-        if self.document_retriever:
-            document_query = query.model_copy(deep=True)
-            document_query.top_k = query.top_k
-            tasks.append(
-                self._safe_aretrieve(
-                    self.document_retriever, document_query, "DRIFT document retrieval"
-                )
-            )
-
-        if not tasks:
-            return []
-
-        # Each task already degrades transient failures to []; only fatal
-        # errors raise, and those must propagate rather than be gathered away.
-        results_lists = await asyncio.gather(*tasks)
-        return [item for result_list in results_lists for item in result_list]
-
-    async def _graph_results_for_iteration(
-        self, graph_retriever: BaseGraphRAGRetriever, query: SearchQuery
-    ) -> list[RetrievalResult]:
-        """Candidate entities for the iteration's query, expanded in the graph."""
-        candidate_entity_ids = await self._find_candidate_entities_for_iteration(query)
-        if not candidate_entity_ids:
-            return []
-        graph_query = query.model_copy(deep=True)
-        graph_query.query = ""
-        graph_query.filters = (graph_query.filters or {}).copy()
-        graph_query.filters["id"] = candidate_entity_ids
-        return await self._safe_aretrieve(
-            graph_retriever, graph_query, "DRIFT graph retrieval"
-        )
-
-    async def _find_candidate_entities_for_iteration(
-        self, query: SearchQuery
-    ) -> list[str]:
-        # The iteration's own query text (the original, refined or follow-up
-        # question) finds top_k candidate entities.
-        if not self.document_retriever or not query.query:
-            return []
-        entity_search_query = query.model_copy(deep=True)
-        entity_search_query.index_prefixes = [
-            self.config.indexing.opensearch.entities_index_prefix
-        ]
-        entity_search_query.retrieval_multiplier = 1
-
-        results = await self._safe_aretrieve(
-            self.document_retriever, entity_search_query, "Candidate entity lookup"
-        )
-        return [
-            str(result.metadata.get("id") or result.source)
-            for result in results
-            if result.metadata or result.source
-        ]
+            key = (str(result.retriever_type), str(result.source or result.content))
+            kept = best.get(key)
+            if kept is None or result.score > kept.score:
+                best[key] = result
+        return list(best.values())
 
     @staticmethod
     def _rank_within_type(results: list[RetrievalResult]) -> list[RetrievalResult]:
@@ -666,13 +493,3 @@ class DriftSearchStrategy(BaseSearchStrategy):
             for key, members in by_group.items()
         }
         return [next(ranked[group(result)]) for result in results]
-
-    @staticmethod
-    def _filter_unique_results(
-        results: list[RetrievalResult], seen_hashes: set[str]
-    ) -> list[RetrievalResult]:
-        return [
-            result
-            for result in results
-            if compute_hash(result.content, length=16) not in seen_hashes
-        ]

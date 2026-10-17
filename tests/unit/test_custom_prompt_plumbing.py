@@ -70,7 +70,6 @@ _COMPONENTS: dict[str, tuple[str, str, dict[str, Any]]] = {
 
 def _config() -> Config:
     cfg = Config()
-    cfg.search.drift_search.enable_primer = True  # build every DRIFT chain
     cfg.search.reranking.enabled = False
     return cfg
 

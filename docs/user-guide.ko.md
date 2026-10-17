@@ -520,7 +520,7 @@ WARNING을 남기고 버리므로, 파일을 고치거나 업그레이드한 뒤
 | 계층 | 역할(`*_model_id` 키) |
 | --- | --- |
 | `default` | `fixing.fixing_model_id`, `processing.graph_extraction.extraction_model_id`, `processing.gleaning.graph_refinement_model_id`, `processing.claim_extraction.extraction_model_id`, `graph.community_detection.report_generation.report_generation_model_id`, `search.{entity_extraction,answer_generation}_model_id`, `evaluation.evaluation_model_id` |
-| `fast` | `processing.chunking.chunking_model_id`, `processing.translation.translation_model_id`, `processing.graph_extraction.description_summarization.summary_model_id`, `search.{translation,strategy_selection,query_rewrite}_model_id`, `search.global_search.{community_relevance,map_reduce,map}_model_id`, `search.drift_search.{query_refinement,keyword_expansion,convergence_assessment,primer}_model_id` |
+| `fast` | `processing.chunking.chunking_model_id`, `processing.translation.translation_model_id`, `processing.graph_extraction.description_summarization.summary_model_id`, `search.{translation,strategy_selection,query_rewrite}_model_id`, `search.global_search.{community_relevance,map_reduce,map}_model_id`, `search.drift_search.{primer,action}_model_id` |
 
 ```yaml
 aws:
@@ -664,9 +664,11 @@ LLM 단계는 Bedrock I/O가 병목이므로 동시성을 CPU 수보다 훨씬 �
 | `search.global_search.text_unit_slots` | `0` | 핵심 내용의 근거가 된 커뮤니티의 텍스트 단위를 재순위화해 컨텍스트에 더하는 개수입니다. `0`이면 더하지 않으며, MS GraphRAG global search와 같습니다. 청크를 함께 넣으면 핵심 내용과 리포트에 필요한 답변 예산 대부분을 청크가 차지했습니다. |
 | `search.local_search.entity_frequency_threshold` | `20` | 그래프 확장으로 얻은 엔티티 중 이보다 많은 텍스트 단위에 나오는 것(너무 일반적인 것)을 버립니다. 질의가 직접 찾은 엔티티는 항상 남깁니다. |
 | `search.local_search.include_bridge_relationships` | `true` | 확장된 엔티티에 연결된 관계도 가져오며, 검색된 두 엔티티를 잇는 간선(다중 홉 연결)을 먼저 둡니다. 관계 인덱스가 필요합니다. `false`이면 관계 벡터 질의만 씁니다. |
-| `search.drift_search.max_iterations` | `3` | DRIFT 반복 횟수 상한입니다. |
-| `search.drift_search.enable_primer` | `false` | MS GraphRAG의 primer → follow-up 흐름을 씁니다(처음에 LLM 호출 1회 추가). |
-| `search.drift_search.enable_llm_convergence` | `false` | 반복마다 LLM으로 수렴 여부를 확인합니다(반복당 호출 1회 추가). |
+| `search.drift_search.k_followups` | `20` | DRIFT primer가 읽는 커뮤니티 리포트 수이자, 라운드마다 실행하는 후속 질의 수입니다(MS GraphRAG `drift_k_followups`). 후속 질의마다 local search 1회와 `action_model_id` 호출 1회가 듭니다. |
+| `search.drift_search.primer_folds` | `5` | primer 리포트를 나눠 담는 primer 호출 수입니다. 호출마다 중간 답변과 후속 질의를 만듭니다. |
+| `search.drift_search.n_depth` | `3` | 후속 질의 라운드 수입니다. 질의당 local search가 최대 `k_followups * n_depth`회 실행됩니다. |
+| `search.drift_search.local_context_tokens` | `12000` | 후속 질의 하나에 답할 때 쓰는 컨텍스트 예산입니다. |
+| `search.drift_search.max_answer_tokens` | `8000` | 답변 모델에 넘기는, 순위를 매긴 중간 답변의 토큰 예산입니다. |
 | `search.token_manager.max_context_tokens` | `30000` | 답변 프롬프트에 넣는 검색 컨텍스트의 토큰 예산입니다(아래 참고 사항 참고). |
 | `search.token_manager.context_window_headroom_ratio` | `0.1` | 예산을 도출할 때(`max_context_tokens: null`) 남겨 두는 컨텍스트 창 비율입니다. |
 | `search.store_timeout_seconds` | `30` | 질의가 OpenSearch나 Neptune 요청 하나(그리고 Neptune 연결 열기)를 기다리는 시간입니다. 풀의 연결을 기다리는 시간을 포함한 Neptune 순회 하나에는 그 두 배를 줍니다. 응답하지 않는 저장소는 컨텍스트 없이 답하지 않고 질의를 실패시킵니다. 수집은 자체 제한을 따릅니다. |
@@ -1117,7 +1119,7 @@ RRF + Bedrock 재순위화)를 거치며, 검색 알고리즘만 다릅니다.
 | `simple` | 빠른 사실 조회, 단순한 질문 | OpenSearch 벡터·키워드 직접 검색이며 그래프 순회가 없습니다. 가장 빠릅니다. 주장 추출이 켜져 있으면 주장 인덱스도 포함합니다. |
 | `local` | 특정 엔티티나 개념에 관한 자세한 질문 | 질의에서 엔티티를 추출 → Neptune 그래프 순회로 이웃과 관계를 찾음 → 벡터·키워드 결과와 결합합니다. 켜져 있으면 주장(covariate)을 넣습니다. |
 | `global` | "주요 주제는 무엇인가" 같은 넓은 주제 질문 | MS GraphRAG global search입니다. 계층의 한 단면(`search.global_search.community_depth`, 기본값은 루트부터 2)에 속한 커뮤니티 리포트 전체를 토큰 크기 배치로 나눠 fast 모델로 점수 매긴 핵심 내용으로 만들고, 순위를 매긴 핵심 내용으로 답합니다. 선택 사항인 동적 선택은 대신 루트부터 계층을 따라 내려갑니다. 비용은 단면 크기에 비례합니다(리포트 `map_context_tokens`마다 map 호출 1회). 상위 수준 종합에 가장 적합합니다. |
-| `drift` | 탐색이 필요한 복잡하고 여러 측면을 가진 질문 | 질의를 반복해서 정제·확장하며, 회차마다 수렴 여부를 감지합니다. |
+| `drift` | 큰 그림과 거기서 몇 단계 떨어진 구체적 사실이 함께 필요한 여러 부분으로 된 질문 | MS GraphRAG DRIFT search입니다. 가상 답변(HyDE)과 가장 비슷한 커뮤니티 리포트로 중간 답변과 후속 질의를 만들고, 후속 질의마다 local search를 실행해 fast 모델로 답하며 새 후속 질의를 얻는 과정을 `n_depth` 라운드 반복합니다. 답변 모델이 순위를 매긴 중간 답변과 그 근거를 종합합니다. 질의당 LLM 호출이 전략 중 가장 많습니다(약 `primer_folds + k_followups * n_depth`회). |
 | `auto` | 어떤 전략이 맞는지 모를 때, 일반 용도(기본값) | LLM 라우터(`search.strategy_selection_model_id`)가 질의를 보고 `search.auto_routable_strategies`(기본 local, mix, global, drift) 중 가장 알맞은 전략을 고릅니다. |
 
 **LightRAG(이중 레벨 키워드):**
@@ -1848,8 +1850,8 @@ custom_prompts:
 재정의할 수 있는 키(각각 `_system` + `_human`): `graph_extraction`,
 `description_summarization`, `claim_extraction`, `graph_refinement`,
 `community_report`, `answer_generation`, `query_rewrite`,
-`entity_extraction`, `keyword_expansion`, `query_refinement`,
-`drift_primer`(`enable_primer`를 켰을 때의 DRIFT primer),
+`entity_extraction`, `drift_hyde`, `drift_primer`, `drift_action`(DRIFT 질의 확장,
+primer, 후속 질의 답변),
 `strategy_selection`, `keywords_extraction`(LightRAG 이중 레벨),
 `global_map`(global 검색 map-reduce), 그리고 프롬프트 튜닝의 `corpus_profile`
 프롬프트입니다.

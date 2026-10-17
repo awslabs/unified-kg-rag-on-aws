@@ -96,6 +96,20 @@ ignored, so check the start-up warnings after upgrading.
   was meant to repair, so on a corrupt file it failed like
   `--verify-metadata` and never repaired anything; use `--verify-metadata`
   and, for a corrupt run, `--force-rebuild` or a new `--pipeline-id` (#248).
+- `search.drift_search` follows MS GraphRAG DRIFT search (see *Changed*):
+  `enable_query_refinement`, `enable_keyword_extraction`,
+  `enable_llm_convergence`, `max_iterations`, `initial_top_k`,
+  `summary_length`, `summary_char_limit`, `n_entities`,
+  `convergence_threshold`, `improvement_threshold`, `enable_primer`,
+  `primer_follow_ups` and the `query_refinement_model_id`,
+  `keyword_expansion_model_id` and `convergence_assessment_model_id` models
+  are removed with the iterative query-rewriting loop, and so are
+  `custom_prompts.query_refinement_*` and `keyword_expansion_*`. Use
+  `k_followups` (default 20), `primer_folds` (5), `n_depth` (3),
+  `local_context_tokens` and `max_answer_tokens`, with `primer_model_id` and
+  the new `action_model_id` (both fast tier). `custom_prompts.drift_primer_*`
+  overrides must emit a 0-100 integer `score`; `drift_hyde_*` and
+  `drift_action_*` are new (#323).
 - `search.global_search` follows MS GraphRAG global search (see *Changed*):
   `max_communities`, `map_batch_size`, `reserve_report_slots` and
   `max_text_units` are removed. Use `community_depth` (which cut of the
@@ -529,6 +543,17 @@ Library API (Python callers and custom backends).
   relevance against redundancy on the reranker's scores. The reranker
   receives the best `search.reranking.top_k` fused candidates of the types
   it reranks, as that setting already documented (#317).
+- DRIFT search is MS GraphRAG's DRIFT instead of iterative query
+  rewriting: the community reports most similar to a hypothetical answer
+  (HyDE) prime intermediate answers and follow-up queries in folds; for
+  `n_depth` rounds the best-placed follow-ups each run a local search and
+  are answered, with new follow-ups, on the fast model; the answer model
+  reduces the ranked intermediate answers and the local evidence behind
+  them. A query costs about `1 + primer_folds + k_followups * n_depth` LLM
+  calls (was 5). On a synthetic corpus of seven-fact chains on the embedded
+  stores (12 questions, fake model), the answer context held 6.75 of 7 facts
+  per question (was 1.17; 2.92 with the old primer; local search 3.08), at
+  15.3 LLM calls per question (#323).
 - Global search maps every community report of one cut of the community
   hierarchy, as MS GraphRAG does, instead of the `top_k` reports most
   similar to the query: the communities at `community_depth` from the root
