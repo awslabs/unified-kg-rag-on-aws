@@ -1801,9 +1801,23 @@ The summary holds, per metric, mean/median/stdev/min/max/count
   `default` tier — inflates the judge scores; set
   `evaluation.evaluation_model_id` to another model when comparing systems), package version, git commit (`git_sha`, and `git_dirty`
   when tracked files differ from it; both `null` unless the package runs from
-  a checkout that tracks it), `config_sha256` of the full resolved config, `library_versions`
+  a checkout that tracks it), `retrieval_config_sha256`, `index`, `library_versions`
   (ragas, langchain*), the dataset (path + file sha256, query count and a hash
   of the parsed content) and a UTC timestamp, so two runs can be compared.
+  `retrieval_config_sha256` hashes only the settings that shape answers and
+  scores (`backend`, `search`, `custom_prompts`, `evaluation`, `providers`,
+  `processing.translation`, `indexing.additional_suffix`,
+  `indexing.opensearch` and the `aws.bedrock` models and effort), without
+  regions, endpoints, credentials, file paths, the guardrail id, output
+  directories or retry knobs, so the same evaluation hashes the same in every
+  environment. `index` names, per queried suffix, the ingestion run that
+  last wrote its vector indices: ingestion records `pipeline_id`, `mode`
+  (`full` or `incremental`), `built_at`, `documents` (documents the run
+  indexed; an incremental run counts only its new and changed ones),
+  `extraction_fingerprint` and `package_version` in the index mappings'
+  `_meta` (best-effort: a role without the mapping-update permission logs a
+  warning). `null` for an index built before ingestion recorded it, or a
+  backend without index metadata.
   It also lists `dropped_evaluators`. `EvaluationManager.evaluate_dataset`
   builds it, so library callers get it too (pass `dataset_path=` / `cli_args=`
   to record those).

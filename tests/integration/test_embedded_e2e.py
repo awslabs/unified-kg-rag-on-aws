@@ -336,6 +336,7 @@ def test_local_mode_runs_end_to_end_on_the_embedded_stores(
     (source / "contract.txt").unlink()
     context = _ingest(config, providers, source, tmp_path / "run-2")
     assert context.status is PipelineStageStatus.COMPLETED, _errors(context)
+    incremental_run = context.pipeline_id
     delta = context.incremental_delta
     assert delta is not None
     assert (len(delta.new), len(delta.changed), len(delta.deleted)) == (1, 1, 1)
@@ -414,6 +415,14 @@ def test_local_mode_runs_end_to_end_on_the_embedded_stores(
     finally:
         chain.close()
 
+    # The manifest names the index the run was scored against: the last
+    # successful ingestion (the refused run 3 wrote nothing).
+    build = summary.run_manifest["index"]["default"]
+    assert (build["pipeline_id"], build["mode"], build["documents"]) == (
+        incremental_run,
+        "incremental",
+        2,
+    )
     stats = summary.metric_statistics
     assert stats["hit_at_k"]["mean"] == 1.0
     assert stats["exact_match"]["mean"] == 1.0

@@ -41,6 +41,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.ports.indexer import IndexingStats
 from unified_kg_rag.shared import ConfigurationError, PipelineStageError
+from unified_kg_rag.shared.utils.cache_keys import extraction_fingerprint
 
 pytestmark = pytest.mark.unit
 
@@ -63,6 +64,7 @@ class _RecordingManager:
         self.opensearch_indexer = SimpleNamespace(
             check_index_settings=lambda suffix=None: None,
             set_doc_status_tracking=lambda tracked: None,
+            record_build=lambda record, suffix: None,
             read_text_unit_ids=lambda ids, suffix=None: ids,
         )
 
@@ -287,6 +289,7 @@ def test_deletion_only_run_checks_the_configured_suffix(mocker) -> None:
     manager.opensearch_indexer = SimpleNamespace(
         check_index_settings=checked.append,
         set_doc_status_tracking=lambda tracked: None,
+        record_build=lambda record, suffix: None,
         read_text_unit_ids=lambda ids, suffix=None: ids,
     )
     stage = _stage(mocker, store, manager)
@@ -500,3 +503,41 @@ def test_delta_run_reports_its_community_drift(mocker) -> None:
     assert metrics["community_drift"] == drift.model_dump()
     assert metrics["community_drift_overlap_share"] == 0.5
     assert metrics["community_rebuild_recommended"] == 1
+
+
+@pytest.mark.parametrize(
+    ("delta", "mode"), [(DocumentDelta(changed=["x"]), "incremental"), (None, "full")]
+)
+def test_records_the_build_on_each_written_suffix(
+    mocker, delta: DocumentDelta | None, mode: str
+) -> None:
+    manager = _RecordingManager()
+    recorded: list[tuple[Any, str | None]] = []
+    manager.opensearch_indexer.record_build = lambda record, suffix: recorded.append(
+        (record, suffix)
+    )
+    stage = _stage(mocker, FakeDocStatusStore(), manager)
+    text_units = [
+        TextUnit(id="t1", text="a", document_ids=["d1"], attributes={"index": "t1x"}),
+        TextUnit(id="t2", text="b", document_ids=["d1", "d2"]),
+    ]
+
+    stage._record_build(_context(delta, []), text_units)
+
+    assert [suffix for _, suffix in recorded] == ["default", "t1x"]
+    record = recorded[0][0]
+    assert (record.pipeline_id, record.mode, record.documents) == ("pid", mode, 2)
+    assert record.extraction_fingerprint == extraction_fingerprint(stage.config)
+
+
+def test_delete_only_run_records_its_configured_suffix(mocker) -> None:
+    manager = _RecordingManager()
+    manager.config.processing.document_parsing.index_value = "tenant1"
+    recorded: list[str | None] = []
+    manager.opensearch_indexer.record_build = lambda record, suffix: recorded.append(
+        suffix
+    )
+    stage = _stage(mocker, FakeDocStatusStore(), manager)
+    stage.config.processing.document_parsing.index_value = "tenant1"
+    stage._record_build(_context(DocumentDelta(deleted=["x"]), []), [])
+    assert recorded == ["tenant1"]

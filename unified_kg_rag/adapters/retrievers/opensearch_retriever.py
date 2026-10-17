@@ -13,6 +13,7 @@ from unified_kg_rag.adapters.retrieval.token_manager import SectionType
 from unified_kg_rag.adapters.storage.embedding_settings import (
     configured_embedding_model,
     resolve_embedding_dimension,
+    stored_build_record,
     stored_embedding_settings,
 )
 from unified_kg_rag.adapters.storage.filter_schema import (
@@ -547,6 +548,17 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             for index_name, index_mappings in mappings.items():
                 self._raise_on_embedding_mismatch(index_name, index_mappings)
             self._embedding_checked_aliases.add(alias)
+
+    async def aread_build_record(self, suffix: str | None) -> dict[str, Any] | None:
+        """The build record of ``suffix``'s text-unit index (see
+        ``VectorIndexer.record_build``), or ``None`` when it records none or
+        cannot be read."""
+        alias = self._get_name(self._opensearch_config.text_units_index_prefix, suffix)
+        mappings = await self._index_mappings(alias)
+        for index_mappings in (mappings or {}).values():
+            if (record := stored_build_record(index_mappings)) is not None:
+                return record
+        return None
 
     async def _index_mappings(self, alias: str) -> dict[str, dict[str, Any]] | None:
         try:

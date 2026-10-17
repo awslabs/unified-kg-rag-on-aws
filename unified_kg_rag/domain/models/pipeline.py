@@ -27,6 +27,33 @@ class PipelineStageStatus(str, Enum):
     SKIPPED = "skipped"
 
 
+class IndexBuildRecord(BaseModel):
+    """What built an index suffix: recorded by ingestion, read by evaluation.
+
+    The vector store keeps the record of the latest run that wrote a suffix
+    (its index mappings' ``_meta``), so a run manifest can name the index it
+    was scored against.
+    """
+
+    pipeline_id: str = Field(description="The ingestion run that wrote the index.")
+    mode: str = Field(
+        description="'full' (the suffix was rebuilt) or 'incremental' (a delta)."
+    )
+    built_at: datetime = Field(description="When the run finished indexing (UTC).")
+    documents: int = Field(
+        description=(
+            "Distinct documents whose text units the run indexed (an "
+            "incremental run counts only its new and changed documents)."
+        )
+    )
+    extraction_fingerprint: str = Field(
+        description="Fingerprint of the extraction settings (cache_keys)."
+    )
+    package_version: str | None = Field(
+        default=None, description="Version of the package that ran ingestion."
+    )
+
+
 class PipelineMetrics(BaseModel):
     pipeline_id: str = Field(description="Unique identifier for the pipeline run")
     total_duration_seconds: float = Field(

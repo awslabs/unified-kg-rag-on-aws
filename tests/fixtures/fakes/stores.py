@@ -21,7 +21,7 @@ from unified_kg_rag.adapters.storage.neptune_codec import (
     relationship_label,
     relationship_properties,
 )
-from unified_kg_rag.domain.models import Claim, Config, Constants
+from unified_kg_rag.domain.models import Claim, Config, Constants, IndexBuildRecord
 from unified_kg_rag.ports.indexer import BaseIndexer, IndexingStats
 
 # The claim fields the OpenSearch claims index stores (``_prepare_claim_doc``).
@@ -293,6 +293,7 @@ class FakeVectorStore(_Recorder):
         # Records (alias_prefix, suffix) of each delete_by_id call so tests can
         # assert per-index routing (delete is fanned out once per index prefix).
         self.delete_calls: list[tuple[str, str]] = []
+        self.builds: dict[str, IndexBuildRecord] = {}
 
     def clear(self, suffixes: list[str]) -> None:
         # Only the given suffixes' documents, like the per-alias delete.
@@ -310,6 +311,10 @@ class FakeVectorStore(_Recorder):
 
     def set_doc_status_tracking(self, tracked: bool) -> None:
         return None
+
+    def record_build(self, record: IndexBuildRecord, suffix: str | None) -> None:
+        # The latest build per suffix, as the indices' _meta would hold it.
+        self.builds[suffix or Constants.DEFAULT_SUFFIX.value] = record
 
     def initialize(self) -> None:
         return None

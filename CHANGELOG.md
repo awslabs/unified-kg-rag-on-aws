@@ -160,6 +160,10 @@ Defaults. Set the old value explicitly to keep the previous behaviour.
   units; now both score 0.19. `hit_at_k`, `recall_at_k` and `mrr` drop for
   `global`, `drift` and `mix` (and for any source naming several files);
   scores from earlier runs are not comparable (#315).
+- The run manifest's `config_sha256` (the full resolved config, so it
+  differed between environments) is replaced by `retrieval_config_sha256`
+  over the settings that shape answers and scores only; compare new runs by
+  the new key (#321).
 - `evaluation.max_context_tokens` defaults to `null`: the RAGAS judges get
   the answer budget (`search.token_manager.max_context_tokens`, 30000)
   instead of 8192 tokens, so `faithfulness` and `context_recall` judge an
@@ -371,6 +375,11 @@ Library API (Python callers and custom backends).
   with `indexing.reset: true` to rebuild in the embedded stores (#273).
 
 ### Added
+- Index build record: ingestion records in the vector index mappings'
+  `_meta` which run last wrote each suffix (`pipeline_id`, `mode`,
+  `built_at`, `documents`, `extraction_fingerprint`, `package_version`), and
+  the `run-eval` manifest copies it under `index` per queried suffix, so a
+  score can be traced to the index it was measured on (#321).
 - Evaluation: `grouped_statistics.source_type` reports the retrieval metrics
   per source section type (its `text` row scores only the text units the
   answer model read); `graph_aware` adds `retrieved_entity_coverage` /

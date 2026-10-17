@@ -33,6 +33,7 @@ from unified_kg_rag.application.retrieval.rag_chain import (
 )
 from unified_kg_rag.domain.models import (
     Config,
+    Constants,
     EvaluationGroundTruth,
     EvaluationQuery,
     EvaluationReport,
@@ -51,6 +52,59 @@ from .retrieval_evaluator import BY_SOURCE_TYPE_KEY, RetrievalEvaluator
 from .source_resolver import SourceFileResolver, TextUnitFileResolver, file_name_of
 
 logger = get_logger(__name__)
+
+# Retrieval-relevant config, hashed into the run manifest: what shapes the
+# answers and scores of a run. Endpoints, regions, credentials, file paths,
+# the guardrail id and retry knobs are left out, so the same evaluation in two
+# environments hashes the same. Paths are (section, keys to drop).
+_RETRIEVAL_SECTIONS: tuple[tuple[str, frozenset[str]], ...] = (
+    ("backend", frozenset()),
+    ("search", frozenset()),
+    ("custom_prompts", frozenset()),
+    ("evaluation", frozenset({"outputs_directory", "save_detailed_results"})),
+    ("providers", frozenset({"base_url", "api_key", "sqlite_path"})),
+    ("processing.translation", frozenset()),
+    ("indexing.additional_suffix", frozenset()),
+    (
+        "indexing.opensearch",
+        frozenset(
+            {"persist_embedding_cache", "embedding_cache_s3_key", "refresh_after_batch"}
+        ),
+    ),
+    (
+        "aws.bedrock",
+        frozenset(
+            {
+                "region_name",
+                "assumed_role_arn",
+                "enable_global_profile",
+                "guardrail",
+                "transient_retry",
+            }
+        ),
+    ),
+)
+
+
+def retrieval_settings(config: Config) -> dict[str, Any]:
+    """The retrieval-relevant part of ``config`` (see ``_RETRIEVAL_SECTIONS``)."""
+
+    def _drop(value: Any, keys: frozenset[str]) -> Any:
+        if isinstance(value, dict):
+            return {k: _drop(v, keys) for k, v in value.items() if k not in keys}
+        if isinstance(value, list):
+            return [_drop(v, keys) for v in value]
+        return value
+
+    dumped = config.model_dump(mode="json")
+    settings: dict[str, Any] = {}
+    for path, dropped in _RETRIEVAL_SECTIONS:
+        value: Any = dumped
+        for part in path.split("."):
+            value = value.get(part) if isinstance(value, dict) else None
+        settings[path] = _drop(value, dropped)
+    return settings
+
 
 # The installed ``unified_kg_rag`` package directory (for the run manifest).
 _PACKAGE_DIR = Path(__file__).resolve().parents[1]
@@ -354,6 +408,7 @@ class EvaluationManager:
                 cli_args,
                 queries=queries,
                 ground_truths=ground_truths,
+                index_builds=await self._read_index_builds(queries),
             )
 
             logger.info(
@@ -913,8 +968,13 @@ class EvaluationManager:
         *,
         queries: list[EvaluationQuery] | None = None,
         ground_truths: list[EvaluationGroundTruth] | None = None,
+        index_builds: dict[str, dict[str, Any] | None] | None = None,
     ) -> dict[str, Any]:
-        """Record what produced a run so two summaries can be compared."""
+        """Record what produced a run so two summaries can be compared.
+
+        ``index_builds`` (per queried suffix, the build record its index
+        holds; see ``_read_index_builds``) is recorded as ``index``.
+        """
         enabled = set(self.evaluators) or set(self.config.evaluation.enabled_evaluators)
         uses_judge = bool(enabled & {EvaluatorType.LANGCHAIN, EvaluatorType.RAGAS})
         evaluation = self.config.evaluation
@@ -941,7 +1001,10 @@ class EvaluationManager:
             "package_version": self._package_version("unified-kg-rag-on-aws"),
             "git_sha": git_sha,
             "git_dirty": git_dirty,
-            "config_sha256": self._sha256_json(self.config.model_dump(mode="json")),
+            "retrieval_config_sha256": self._sha256_json(
+                retrieval_settings(self.config)
+            ),
+            "index": dict(index_builds or {}),
             "library_versions": {
                 name: self._package_version(name) for name in self._LIBRARIES
             },
@@ -971,6 +1034,41 @@ class EvaluationManager:
             "enabled_evaluators": sorted(e.value for e in enabled),
             "dropped_evaluators": dict(self.dropped_evaluators),
         }
+
+    async def _read_index_builds(
+        self, queries: list[EvaluationQuery]
+    ) -> dict[str, dict[str, Any] | None]:
+        """Per queried suffix, the build record of its text-unit index.
+
+        Read through the chain's DOCUMENT retriever (the indices the answers
+        came from); ``None`` for a suffix whose index records no build (built
+        before ingestion recorded one, or a backend without index metadata)
+        or cannot be read. Empty for a chain that is not a ``GraphRAGChain``.
+        """
+        if not isinstance(self.rag_chain, GraphRAGChain):
+            return {}
+        suffixes = sorted(
+            {
+                q.metadata.get("suffix") or Constants.DEFAULT_SUFFIX.value
+                for q in queries
+            }
+        )
+        try:
+            retriever = self.rag_chain._get_retriever(RetrieverRole.DOCUMENT)
+        except Exception as e:  # noqa: BLE001 - the manifest entry is optional
+            logger.warning("Could not read the index build records: %s", e)
+            return dict.fromkeys(suffixes)
+        read = getattr(retriever, "aread_build_record", None)
+        builds: dict[str, dict[str, Any] | None] = {}
+        for suffix in suffixes:
+            try:
+                builds[suffix] = await read(suffix) if read else None
+            except Exception as e:  # noqa: BLE001 - the manifest entry is optional
+                logger.warning(
+                    "Could not read the build record of suffix '%s': %s", suffix, e
+                )
+                builds[suffix] = None
+        return builds
 
     @staticmethod
     def _sha256_json(data: Any) -> str:

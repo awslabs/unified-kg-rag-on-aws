@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, NamedTuple
 
 from unified_kg_rag.adapters.aws.opensearch import OpenSearchClient
 from unified_kg_rag.adapters.storage.embedding_settings import (
+    META_BUILD,
     META_DIMENSION,
     META_MODEL,
     resolve_embedding_dimension,
@@ -20,6 +21,7 @@ from unified_kg_rag.domain.models import (
     Config,
     Constants,
     Entity,
+    IndexBuildRecord,
     Relationship,
     TextUnit,
     model_id_value,
@@ -320,6 +322,36 @@ class OpenSearchIndexer(VectorIndexer):
                 index_name,
                 e,
             )
+
+    def record_build(self, record: IndexBuildRecord, suffix: str | None) -> None:
+        """Write ``record`` into the ``_meta`` of each live index of ``suffix``.
+
+        Merged into the existing ``_meta`` (the embedding settings stay), so
+        it needs ``indices:admin/mapping/put`` like the dimension backfill; a
+        failure is logged and the run goes on.
+        """
+        payload = record.model_dump(mode="json")
+        for prefix in self._index_prefixes():
+            alias = self._get_name(prefix, suffix)
+            try:
+                index_name = self.opensearch_client.get_index_name_by_alias(alias)
+                if not index_name:
+                    continue
+                meta = (
+                    self.opensearch_client.get_index_mappings(index_name).get("_meta")
+                    or {}
+                )
+                self.opensearch_client.put_index_meta(
+                    index_name, {**meta, META_BUILD: payload}
+                )
+            except Exception as e:  # noqa: BLE001 - the record is optional
+                logger.warning(
+                    "Could not record the build of pipeline '%s' in the _meta of "
+                    "%s (%s); run-eval manifests will not identify this index.",
+                    record.pipeline_id,
+                    alias,
+                    e,
+                )
 
     def clear(self, suffixes: list[str]) -> None:
         if not suffixes:

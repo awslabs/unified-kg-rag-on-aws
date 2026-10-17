@@ -911,7 +911,8 @@ class TestComparability:
         assert manifest["models"]["judge_is_answer_model"] is None
         assert manifest["enabled_evaluators"] == ["graph_aware"]
         assert manifest["package_version"] and manifest["created_at"]
-        assert len(manifest["config_sha256"]) == 64
+        assert len(manifest["retrieval_config_sha256"]) == 64
+        assert manifest["index"] == {}
         assert manifest["library_versions"]["ragas"]
         assert manifest["library_versions"]["langchain-core"]
         assert "git_sha" in manifest
@@ -921,9 +922,54 @@ class TestComparability:
     def test_config_hash_tracks_resolved_config(self, config: Config) -> None:
         config.evaluation.enabled_evaluators = []
         manager = EvaluationManager(config, rag_chain=object())
-        before = manager.build_run_manifest()["config_sha256"]
+        before = manager.build_run_manifest()["retrieval_config_sha256"]
         config.search.answer_generation_model_id = "another-model"
-        assert manager.build_run_manifest()["config_sha256"] != before
+        assert manager.build_run_manifest()["retrieval_config_sha256"] != before
+
+    def test_config_hash_ignores_the_environment(self, config: Config) -> None:
+        # The same evaluation in another account/region/bucket hashes the same.
+        config.evaluation.enabled_evaluators = []
+        manager = EvaluationManager(config, rag_chain=object())
+        before = manager.build_run_manifest()["retrieval_config_sha256"]
+        config.aws.region_name = "eu-west-1"
+        config.aws.bedrock.region_name = "eu-west-1"
+        config.aws.s3.bucket_name = "another-bucket"
+        config.indexing.opensearch.persist_embedding_cache = True
+        config.providers.llm.base_url = "http://localhost:11434"
+        config.evaluation.outputs_directory = "elsewhere"
+        assert manager.build_run_manifest()["retrieval_config_sha256"] == before
+        config.indexing.opensearch.embedding_dimension = 256
+        assert manager.build_run_manifest()["retrieval_config_sha256"] != before
+
+    async def test_index_build_records_read_per_suffix(self, config: Config) -> None:
+        from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain
+
+        record = {"pipeline_id": "run-1", "mode": "full"}
+
+        class _Retriever:
+            async def aread_build_record(self, suffix):
+                if suffix == "broken":
+                    raise RuntimeError("unreachable")
+                return record if suffix == "default" else None
+
+        chain = GraphRAGChain.__new__(GraphRAGChain)
+        object.__setattr__(chain, "_get_retriever", lambda role: _Retriever())
+        config.evaluation.enabled_evaluators = []
+        manager = EvaluationManager(config, rag_chain=chain)
+        queries = [
+            EvaluationQuery(query_id="a", question="?"),
+            EvaluationQuery(query_id="b", question="?", metadata={"suffix": "v2"}),
+            EvaluationQuery(query_id="c", question="?", metadata={"suffix": "broken"}),
+        ]
+        builds = await manager._read_index_builds(queries)
+        assert builds == {"broken": None, "default": record, "v2": None}
+        assert manager.build_run_manifest(index_builds=builds)["index"] == builds
+        assert (
+            await EvaluationManager(config, rag_chain=object())._read_index_builds(
+                queries
+            )
+            == {}
+        )
 
     def test_git_state_none_without_git(self, mocker) -> None:
         mocker.patch(

@@ -1413,3 +1413,47 @@ def test_shapes_cover_every_search_type_and_filter_kind() -> None:
         for clause in OpenSearchRetriever._build_filter_clauses(value)
     }
     assert clause_kinds == {"term", "terms", "range"}
+
+
+def test_build_record_round_trip(tmp_path: Path) -> None:
+    # Ingestion records which run built the index; run-eval reads it back
+    # through the retriever for its manifest (embedding settings kept).
+    from datetime import datetime, timezone
+
+    from unified_kg_rag.domain.models import IndexBuildRecord
+
+    config = Config()
+    path = tmp_path / "vector.sqlite3"
+    indexer = OpenSearchIndexer(
+        config,
+        embedding_factory=_EMBEDDINGS,
+        opensearch_client=SQLiteSearchEngine(path),
+    )
+    _index_everything(indexer)
+    retriever = OpenSearchRetriever(
+        config, SQLiteSearchEngine(path), embedding_factory=_EMBEDDINGS
+    )
+    assert asyncio.run(retriever.aread_build_record(None)) is None
+    record = IndexBuildRecord(
+        pipeline_id="run-1",
+        mode="full",
+        built_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        documents=2,
+        extraction_fingerprint="abc",
+        package_version="1.0",
+    )
+    indexer.record_build(record, None)
+    assert asyncio.run(retriever.aread_build_record(None)) == record.model_dump(
+        mode="json"
+    )
+    engine = indexer.opensearch_client
+    index = engine.get_index_name_by_alias(
+        indexer._get_name(config.indexing.opensearch.entities_index_prefix, None)
+    )
+    meta = engine.get_index_mappings(index)["_meta"]
+    assert meta["embedding_dimension"] == 64 and meta["build"]["pipeline_id"] == "run-1"
+    indexer.check_index_settings()  # the record does not disturb the check
+    # An unknown suffix has no index: nothing to record, no error.
+    indexer.record_build(record, "other")
+    retriever.close()
+    indexer.close()
