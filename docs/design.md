@@ -453,11 +453,11 @@ CLI: `run-eval --data-path <json> [--search-strategy ...]`.
 
 ## 12. Configuration System
 
-The nested Pydantic tree in `domain/models/config.py` (root `Config`), loaded by `shared/config.py` (`get_config`); the schema example is `config-template.yaml`.
+The nested Pydantic tree in `domain/models/config.py` (root `Config`), loaded by `shared/config.py` (`get_config`). [docs/configuration.md](./configuration.md) is generated from it by `scripts/gen_config_reference.py` (`tests/unit/test_config_reference.py` fails when it is stale); `config-template.yaml` is the commented starting file.
 
 - Sections: `backend`, `providers` (llm/embedding/rerank/graph/vector/doc_status), `models` (default/fast tiers, roles, embedding, rerank), `aws` (bedrock/neptune/opensearch/s3/dynamodb), `fixing`, `processing` (document_parsing/chunking/translation/graph_extraction/gleaning/claim_extraction), `graph` (analysis/community_detection/visualization), `indexing` (opensearch/neptune), `search` (hybrid/fusion/reranking/global_search/local_search/drift_search/lightrag_search/token_manager), `memory`, `cache` (chunking/llm_responses), `logging`, `observability`, `evaluation`, `custom_prompts`.
 - **Config-based generalization**: The language→analyzer mapping (`language_analyzers`), LightRAG fallback length, and eigenvector convergence parameters are all exposed via config.
-- Adding a new config section: Define a Pydantic `BaseModel` → attach to its parent via `Field(default_factory=...)` → document in `config-template.yaml`.
+- Adding a new config section: Define a Pydantic `BaseModel` → attach to its parent via `Field(default_factory=...)` → give every field a user-facing `description` → regenerate `docs/configuration.md` → add it to `config-template.yaml`.
 
 ---
 
@@ -494,7 +494,7 @@ This section is the single reference for extending the framework; the README, us
 - **New evaluator**: Subclass `BaseGraphRAGEvaluator` + add a branch in `EvaluationManager._resolve_evaluator_class` + an `EvaluatorType` enum.
 - **New renderer**: Subclass `BaseRenderer` + `@register_renderer("name")`. Registration happens on import: `GraphVisualizationManager` sees any renderer imported in the process, `run-visualization` only those that `adapters/renderers/__init__.py` imports.
 - **New parser / file format**: `ParserFactory.register_loader(".ext", MyLangChainLoader, loader_kwargs=..., file_type_name=...)` — any LangChain `BaseLoader` subclass; no edit to the factory, and the extension is then auto-discovered + parseable. Override a built-in by registering its extension.
-- **New config section**: Define a Pydantic `BaseModel` → attach it to its parent via `Field(default_factory=...)` → document it in `config-template.yaml` (see §12).
+- **New config section**: Define a Pydantic `BaseModel` → attach it to its parent via `Field(default_factory=...)` → describe every field, regenerate `docs/configuration.md` and add it to `config-template.yaml` (see §12).
 
 ### Custom backends (run without AWS)
 

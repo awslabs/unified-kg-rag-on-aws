@@ -450,11 +450,11 @@ CLI: `run-eval --data-path <json> [--search-strategy ...]`.
 
 ## 12. 설정 시스템
 
-`domain/models/config.py`의 중첩 Pydantic 트리(루트 `Config`)를 `shared/config.py`(`get_config`)가 불러옵니다. 스키마 예시는 `config-template.yaml`입니다.
+`domain/models/config.py`의 중첩 Pydantic 트리(루트 `Config`)를 `shared/config.py`(`get_config`)가 불러옵니다. [docs/configuration.md](./configuration.md)는 `scripts/gen_config_reference.py`가 이 트리에서 생성하며(오래되면 `tests/unit/test_config_reference.py`가 실패), `config-template.yaml`은 주석이 달린 시작 파일입니다.
 
 - 섹션: `backend`, `providers`(llm/embedding/rerank/graph/vector/doc_status), `models`(default/fast 계층, roles, embedding, rerank), `aws`(bedrock/neptune/opensearch/s3/dynamodb), `fixing`, `processing`(document_parsing/chunking/translation/graph_extraction/gleaning/claim_extraction), `graph`(analysis/community_detection/visualization), `indexing`(opensearch/neptune), `search`(hybrid/fusion/reranking/global_search/local_search/drift_search/lightrag_search/token_manager), `memory`, `cache`(chunking/llm_responses), `logging`, `observability`, `evaluation`, `custom_prompts`.
 - **설정 기반 일반화**: 언어→분석기 매핑(`language_analyzers`), LightRAG 대체 질의 길이, eigenvector 수렴 파라미터를 모두 설정으로 노출합니다.
-- 새 설정 섹션 추가: Pydantic `BaseModel` 정의 → `Field(default_factory=...)`로 부모에 연결 → `config-template.yaml`에 문서화.
+- 새 설정 섹션 추가: Pydantic `BaseModel` 정의 → `Field(default_factory=...)`로 부모에 연결 → 모든 필드에 사용자용 `description` 작성 → `docs/configuration.md` 재생성 → `config-template.yaml`에 추가.
 
 ---
 
@@ -491,7 +491,7 @@ CLI: `run-eval --data-path <json> [--search-strategy ...]`.
 - **새 평가기**: `BaseGraphRAGEvaluator` 상속 + `EvaluationManager._resolve_evaluator_class`에 분기 추가 + `EvaluatorType` enum 추가.
 - **새 렌더러**: `BaseRenderer` 상속 + `@register_renderer("name")`. 등록은 import할 때 일어납니다. `GraphVisualizationManager`는 프로세스에서 import된 모든 렌더러를 보지만, `run-visualization`은 `adapters/renderers/__init__.py`가 import하는 렌더러만 봅니다.
 - **새 파서 / 파일 형식**: `ParserFactory.register_loader(".ext", MyLangChainLoader, loader_kwargs=..., file_type_name=...)` — LangChain `BaseLoader` 하위 클래스면 무엇이든 됩니다. 팩토리를 고칠 필요가 없고, 등록한 확장자는 자동으로 탐색·파싱 대상이 됩니다. 내장 형식은 같은 확장자를 등록하면 덮어씁니다.
-- **새 설정 섹션**: Pydantic `BaseModel` 정의 → `Field(default_factory=...)`로 부모에 연결 → `config-template.yaml`에 문서화(§12 참고).
+- **새 설정 섹션**: Pydantic `BaseModel` 정의 → `Field(default_factory=...)`로 부모에 연결 → 모든 필드를 설명하고 `docs/configuration.md`를 재생성한 뒤 `config-template.yaml`에 추가(§12 참고).
 
 ### 커스텀 백엔드 (AWS 없이 실행)
 

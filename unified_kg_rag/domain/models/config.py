@@ -567,7 +567,11 @@ class GuardrailConfig(BaseModel):
 
     identifier: str | None = Field(
         default=None,
-        description="Bedrock guardrail identifier (ID or ARN). Enables guardrails when set.",
+        description=(
+            "Bedrock guardrail ID or ARN; setting it enables the guardrail on "
+            "the query path. The guardrail must exist in "
+            "aws.bedrock.region_name."
+        ),
     )
     version: str = Field(
         default="DRAFT",
@@ -628,8 +632,11 @@ class TransientRetryConfig(BaseModel):
     max_attempts: int = Field(
         default=5,
         ge=1,
-        description="Total attempts per call, including the first (1 disables "
-        "the retry)",
+        description=(
+            "Attempts per call, including the first, for transient Bedrock "
+            "errors that botocore does not retry (such as HTTP 424), on "
+            "embeddings and query-time calls. 1 disables the retry."
+        ),
     )
     base_delay_seconds: float = Field(
         default=2.0,
@@ -654,15 +661,25 @@ class BedrockConfig(BaseModel):
     region_name: str | None = Field(
         default=None,
         min_length=1,
-        description="Region for Bedrock model, embedding and rerank calls. "
-        "None = aws.region_name, so a private-VPC deployment reaches Bedrock "
-        "through its own region's VPC endpoint without extra config.",
+        description=(
+            "Region for Bedrock model, embedding and rerank calls, and where "
+            "the guardrail must exist. null = aws.region_name. Set it only "
+            "when your models are enabled in another region; in a private VPC "
+            "whose only Bedrock route is a VPC endpoint, leave it null or set "
+            "the VPC's region."
+        ),
     )
     assumed_role_arn: str | None = Field(
         default=None, description="AWS assumed role ARN for Bedrock service"
     )
     enable_global_profile: bool = Field(
-        default=True, description="Enable global profile for Bedrock service"
+        default=True,
+        description=(
+            "Resolve cross-region (global) inference profiles. "
+            "Keep it on: Claude 4.7+ and OpenAI GPT models are "
+            "invocable only through a profile, which also needs "
+            "bedrock:ListInferenceProfiles."
+        ),
     )
     default_max_output_tokens: int | None = Field(
         default=16384,
@@ -675,7 +692,8 @@ class BedrockConfig(BaseModel):
             "long before real usage does. Thinking tokens count toward it. "
             "Prompts with long outputs (graph/claim extraction, gleaning, "
             "community reports, document translation) declare a higher floor "
-            "that wins over this value. null sends the model maximum."
+            "that wins over this value. Raise it if answers are cut off "
+            "(stopReason max_tokens); null sends the model maximum."
         ),
     )
     model_overrides: dict[str, dict[str, Any]] = Field(
@@ -704,11 +722,13 @@ class BedrockConfig(BaseModel):
     default_effort: EffortLevel = Field(
         default="high",
         description=(
-            "Reasoning effort for calls on the default tier's model (models.default). Sent as "
-            "output_config.effort to Anthropic adaptive-thinking models (Claude "
-            "4.6+), where it replaces the fixed thinking token budget, and as "
-            "reasoning.effort to OpenAI GPT models. 'xhigh'/'max' are only "
-            "accepted by some models; lower levels trade depth for cost/latency."
+            "Reasoning effort for calls on the default tier's model "
+            "(models.default). Sent as output_config.effort to Anthropic "
+            "adaptive-thinking models (Claude 4.6+), where it replaces the "
+            "fixed thinking token budget, and as reasoning.effort to OpenAI "
+            "GPT models. 'xhigh'/'max' are only accepted by some models, and "
+            "an unsupported level fails fast; lower it to cut cost and "
+            "latency."
         ),
     )
     fast_effort: EffortLevel = Field(
@@ -758,13 +778,19 @@ class BedrockConfig(BaseModel):
 
 class NeptuneConfig(BaseModel):
     endpoint: str | None = Field(
-        default=None, description="Neptune database endpoint URL"
+        default=None,
+        description=(
+            "Neptune cluster endpoint. Required with the neptune"
+            " graph store (the CDK stack injects it as "
+            "UKR__AWS__NEPTUNE__ENDPOINT)."
+        ),
     )
     port: int = Field(
         default=8182, ge=1, le=65535, description="Neptune database connection port"
     )
     use_iam: bool = Field(
-        default=True, description="Enable IAM authentication for Neptune"
+        default=True,
+        description=("SigV4-sign Neptune requests (IAM database " "authentication)."),
     )
     use_ssl: bool = Field(
         default=True,
@@ -792,7 +818,12 @@ class NeptuneConfig(BaseModel):
 
 class OpenSearchConfig(BaseModel):
     endpoint: str | None = Field(
-        default=None, description="OpenSearch cluster endpoint URL"
+        default=None,
+        description=(
+            "OpenSearch domain endpoint. Required with the "
+            "opensearch vector store (the CDK stack injects it "
+            "as UKR__AWS__OPENSEARCH__ENDPOINT)."
+        ),
     )
     port: int = Field(
         default=443, ge=1, le=65535, description="OpenSearch cluster connection port"
@@ -807,7 +838,14 @@ class OpenSearchConfig(BaseModel):
     use_ssl: bool = Field(default=True, description="Enable SSL/TLS connection")
     verify_certs: bool = Field(default=True, description="Verify SSL/TLS certificates")
     use_iam: bool = Field(
-        default=False, description="Enable IAM authentication for OpenSearch"
+        default=False,
+        description=(
+            "SigV4-sign OpenSearch requests. false uses basic "
+            "auth with username / password, usually from "
+            "UKR__AWS__OPENSEARCH__USERNAME and "
+            "UKR__AWS__OPENSEARCH__PASSWORD (for example in "
+            ".env)."
+        ),
     )
     allow_anonymous: bool = Field(
         default=False,
@@ -858,7 +896,11 @@ class S3EncryptionConfig(BaseModel):
 
 class S3Config(BaseModel):
     bucket_name: str | None = Field(
-        default=None, description="S3 bucket name for data storage"
+        default=None,
+        description=(
+            "Bucket for the stage-cache sync (run-ingestion "
+            "--s3-sync) and the persisted embedding cache."
+        ),
     )
     encryption: S3EncryptionConfig = Field(
         default_factory=S3EncryptionConfig,
@@ -869,16 +911,26 @@ class S3Config(BaseModel):
 class DynamoDBConfig(BaseModel):
     enabled: bool = Field(
         default=False,
-        description="Enable the DynamoDB document-status registry for incremental indexing",
+        description=(
+            "Turn on the DynamoDB doc-status registry, which makes ingestion "
+            "incremental (only new, changed and failed documents are "
+            "processed)."
+        ),
     )
     table_name: str = Field(
         default="unified-kg-rag-on-aws-doc-status-v2",
         min_length=1,
-        description="DynamoDB table holding per-document status and lineage",
+        description=(
+            "DynamoDB table holding each document's status and text units, "
+            "partitioned by index namespace."
+        ),
     )
     create_table_if_missing: bool = Field(
         default=True,
-        description="Create the doc-status table on first use if it does not exist",
+        description=(
+            "Create the doc-status table on first use. Set false when the "
+            "table is managed by IaC (the CDK stack does)."
+        ),
     )
     billing_mode: str = Field(
         default="PAY_PER_REQUEST",
@@ -890,10 +942,30 @@ class AWSConfig(BaseModel):
     # us-west-2 offers every default model, including both rerank models,
     # which several regions (e.g. ap-northeast-2) do not.
     region_name: str = Field(
-        default="us-west-2", min_length=1, description="AWS region name"
+        default="us-west-2",
+        min_length=1,
+        description=(
+            "Region of Neptune, OpenSearch,"
+            " S3 and DynamoDB, and of "
+            "Bedrock unless "
+            "aws.bedrock.region_name is "
+            "set. AWS_REGION fills it only "
+            "when the file leaves it unset."
+            " The default offers every "
+            "default model, including both "
+            "rerank models, which some "
+            "regions (e.g. ap-northeast-2) "
+            "do not."
+        ),
     )
     profile_name: str | None = Field(
-        default=None, description="AWS profile name for authentication"
+        default=None,
+        description=(
+            "Named AWS profile. null uses the default credential"
+            " chain (environment variables, instance or task "
+            "role, ...); AWS_PROFILE fills it only when the file"
+            " leaves it unset."
+        ),
     )
     bedrock: BedrockConfig = Field(
         default_factory=BedrockConfig, description="AWS Bedrock service configuration"
@@ -921,27 +993,41 @@ class AWSConfig(BaseModel):
 
 class FixingConfig(BaseModel):
     enabled: bool = Field(
-        default=True, description="Enable automatic fixing of malformed model responses"
+        default=True,
+        description=(
+            "When a structured stage gets malformed JSON from "
+            "the model, ask a model (models.roles.fixing) to "
+            "repair it instead of failing the item. Leave it on."
+        ),
     )
 
 
 class DocumentParsingConfig(BaseModel):
     source_directory: str | Path = Field(
-        default="source", description="Directory to load documents from"
+        default="source",
+        description=(
+            "Directory to load documents from, for library "
+            "callers. run-ingestion requires "
+            "--source-directory (or UKR_SOURCE_DIRECTORY) "
+            "instead."
+        ),
     )
     target_directory: str | Path | None = Field(
         default=None,
         description=(
             "Directory to export each parsed document to as <stem>.json for "
-            "inspection. None = no export. Must not be the source directory."
+            "inspection (run-ingestion --output-directory). null = no export. "
+            "Must not be the source directory."
         ),
     )
     index_value: str | None = Field(
         default=None,
         description=(
-            "Index suffix the run writes to (OpenSearch index and Neptune label "
-            "names); query with the same value as run-rag/run-eval --suffix. "
-            "None = 'default'."
+            "Index suffix the run writes: every OpenSearch index and Neptune "
+            "label is named <prefix>-<index_value>. null = 'default'. Query "
+            "the corpus with the same value as run-rag / run-eval --suffix. "
+            "run-ingestion has no flag for it: use one config file per tenant "
+            "or corpus version."
         ),
     )
     source_scope: str | None = Field(
@@ -959,7 +1045,11 @@ class DocumentParsingConfig(BaseModel):
 class ChunkingConfig(BaseModel):
     chunker_type: ChunkingStrategy = Field(
         default=ChunkingStrategy.INTELLIGENT,
-        description="Text chunking strategy to use",
+        description=(
+            "intelligent lets the chunking model pick semantic boundaries (one"
+            " fast LLM call per pre-chunk); simple splits by size with no LLM "
+            "call."
+        ),
     )
     min_chunk_size: int = Field(
         default=1000,
@@ -974,17 +1064,20 @@ class ChunkingConfig(BaseModel):
         default=8000,
         ge=1,
         description=(
-            "Maximum chunk size in characters. Every chunk is embedded whole and "
-            "reranked as one document, so it must fit the embedding model's "
-            "input (Titan Text Embeddings V2: 8,192 tokens) and the reranker's "
-            "per-document limit (Cohere Rerank 3.5: 4,096 tokens), or its tail "
-            "is never embedded or reranked. Default 8,000 fits Titan V2 even at "
-            "~1 character per token (CJK scripts) and is ~2K tokens of English, "
-            "inside the reranker limit."
+            "Maximum chunk size in characters. Every chunk is embedded whole "
+            "and reranked as one document, so it must fit the embedding "
+            "model's input (Titan Text Embeddings V2: 8,192 tokens) and the "
+            "reranker's per-document limit (Cohere Rerank 3.5: 4,096 tokens), "
+            "or its tail is never embedded or reranked. Sizes count "
+            "characters: English averages ~4 characters per token, a "
+            "Han/Hangul/Kana character ~1, so for CJK corpora with reranking "
+            "use about half the default sizes."
         ),
     )
     chunk_overlap: int = Field(
-        default=500, ge=0, description="Chunk overlap in characters"
+        default=500,
+        ge=0,
+        description=("Overlap between consecutive chunks, in " "characters."),
     )
     pre_chunk_size: int = Field(
         default=50000,
@@ -1002,10 +1095,12 @@ class ChunkingConfig(BaseModel):
         default=4800,
         ge=1,
         description=(
-            "Target chunk size for the size-based splitter (the simple chunker, "
-            "and intelligent chunking when the LLM fails or a chunk exceeds "
-            "max_chunk_size). Default 4,800 characters ~= 1,200 English tokens, "
-            "the default chunk size of MS GraphRAG and LightRAG."
+            "Target chunk size for the size-based splitter (the simple "
+            "chunker, and intelligent chunking when the LLM fails or a chunk "
+            "exceeds max_chunk_size). It splits at paragraphs, then lines, "
+            "then after CJK sentence terminators, then spaces. 4,800 "
+            "characters is ~1,200 English tokens, the default chunk size of MS"
+            " GraphRAG and LightRAG."
         ),
     )
     max_marker_miss_rate: float = Field(
@@ -1029,11 +1124,11 @@ class ChunkingConfig(BaseModel):
 class TranslationConfig(BaseModel):
     enabled: bool = Field(
         default=True,
-        description="Run the translation pipeline stage. Defaults to True to "
-        "preserve existing behavior. Even when enabled, translation is skipped "
-        "as a no-op when source_language equals target_language and there are no "
-        "additional_target_languages (e.g. an English-only corpus with an English "
-        "target pays no LLM cost).",
+        description=(
+            "Run the translation stage. It is skipped at no cost when "
+            "source_language equals target_language and there are no "
+            "additional_target_languages."
+        ),
     )
     source_language: LanguageCode = Field(
         default=LanguageCode.EN,
@@ -1042,14 +1137,25 @@ class TranslationConfig(BaseModel):
         "same-language no-op skip; translation itself is content-driven.",
     )
     target_language: LanguageCode = Field(
-        default=LanguageCode.EN, description="Target language code for translation"
+        default=LanguageCode.EN,
+        description=(
+            "Language the corpus is translated into. "
+            "Extraction, embeddings and the answer "
+            "context use it, and entity and "
+            "relationship descriptions are written in"
+            " it."
+        ),
     )
     additional_target_languages: list[LanguageCode] | None = Field(
         default=None,
-        description="Additional target languages for translation. Each one is "
-        "indexed in its own translated_text_<language> field (with that "
-        "language's analyzer) and searched lexically; the target language "
-        "alone feeds extraction, embeddings and the answer context.",
+        description=(
+            "Extra languages to translate into. Each is indexed in its own "
+            "translated_text_<language> field with that language's analyzer "
+            "and searched lexically (useful with a per-query "
+            "RAGInput.target_language); extraction, embeddings and the answer "
+            "context use target_language only. Each language is one more LLM "
+            "call per chunk."
+        ),
     )
 
     @property
@@ -1081,9 +1187,12 @@ class DescriptionSummarizationConfig(BaseModel):
 
     enabled: bool = Field(
         default=True,
-        description="Re-summarize over-long merged descriptions with an LLM "
-        "(parity with MS GraphRAG/LightRAG). When disabled, descriptions are only "
-        "concatenated and may grow unbounded for frequently-mentioned entities.",
+        description=(
+            "Re-summarize merged descriptions longer than "
+            "force_summary_threshold_tokens with an LLM (as MS GraphRAG and "
+            "LightRAG do). Off, descriptions are only concatenated and grow "
+            "without bound for frequently mentioned entities."
+        ),
     )
     force_summary_threshold_tokens: int = Field(
         default=600,
@@ -1114,9 +1223,15 @@ class EntityGroundingConfig(BaseModel):
 
     enabled: bool = Field(
         default=False,
-        description="Reject/penalize entities whose source_text evidence span is "
-        "not found in the source chunk (hallucination guard). Requires the "
-        "extraction model to emit a source_text span per entity.",
+        description=(
+            "Hallucination guard: drop (or, with action 'penalize', "
+            "down-weight) entities and relationships whose verbatim "
+            "source_text span is not found in their chunk. Punctuation is "
+            "ignored and Han/Hangul/Kana spans are compared by character "
+            "bigrams, so a changed Korean particle still counts as present. It"
+            " applies to gleaning additions too. Requires an extraction model "
+            "that emits a source_text span per item."
+        ),
     )
     action: str = Field(
         default="drop",
@@ -1156,7 +1271,13 @@ class EntityGroundingConfig(BaseModel):
 
 class GraphExtractionConfig(BaseModel):
     max_entities_per_chunk: int = Field(
-        default=50, ge=1, description="Maximum entities per text chunk"
+        default=50,
+        ge=1,
+        description=(
+            "Most entities the extraction prompt asks for "
+            "per text chunk; it also sizes the extraction "
+            "call's output-token floor."
+        ),
     )
     max_relationships_per_chunk: int = Field(
         default=50, ge=1, description="Maximum relationships per text chunk"
@@ -1165,12 +1286,13 @@ class GraphExtractionConfig(BaseModel):
         default=0.0,
         ge=0.0,
         le=1.0,
-        description="Minimum confidence score for filtering entities. "
-        "Applied per text unit: an entity a chunk scored below this threshold is "
-        "dropped from that chunk, with the chunk's relationships naming it. Set to "
-        "0.0 to disable filtering. "
-        "Compared against the normalized confidence: the prompt's 1-10 score / 10 "
-        "(an integer 1 -> 0.1; decimal values <= 1 are taken as fractions).",
+        description=(
+            "Drop an entity from each chunk that scored it below this "
+            "confidence, with that chunk's relationships naming it (per chunk,"
+            " so the result does not depend on which documents are indexed "
+            "together). Compared against the normalized confidence: the "
+            "prompt's 1-10 score / 10. 0.0 keeps everything."
+        ),
     )
     entity_types: list[str] = Field(
         default_factory=lambda: [
@@ -1182,11 +1304,13 @@ class GraphExtractionConfig(BaseModel):
             "EVENT: Meetings, projects, activities, processes, incidents",
             "TEMPORAL: Dates, time periods, schedules, deadlines",
         ],
-        description="Domain entity categories the extractor may use, injected "
-        "into the extraction prompt's {entity_types} slot. Override this to adapt "
-        "to a domain (e.g. ['GENE: ...', 'DISEASE: ...']) WITHOUT rewriting the "
-        "whole prompt. Each item is 'LABEL: short description' (description "
-        "optional). Empty list lets the model choose any relevant types.",
+        description=(
+            "Entity categories injected into the extraction prompt, each "
+            "'LABEL: short description' (the description is optional), e.g. "
+            "['GENE: ...', 'DISEASE: ...']. The cheapest and most effective "
+            "domain-adaptation knob; an empty list lets the model choose any "
+            "relevant types."
+        ),
     )
     description_summarization: DescriptionSummarizationConfig = Field(
         default_factory=DescriptionSummarizationConfig,
@@ -1200,17 +1324,21 @@ class GraphExtractionConfig(BaseModel):
 
 class GleaningConfig(BaseModel):
     enabled: bool = Field(
-        default=True, description="Enable gleaning for improved extraction"
+        default=True,
+        description=(
+            "Extra extraction passes per text unit that ask the "
+            "model for the entities and relationships it missed."
+        ),
     )
     max_rounds: int = Field(
         default=3,
         ge=1,
         description=(
-            "Maximum gleaning rounds per text unit. Each round after the first "
-            "re-sends only the text units whose previous answer added a new "
-            "entity or relationship; a unit stops once an answer adds nothing "
-            "new. Set 1 for MS GraphRAG's single-gleaning default when "
-            "ingestion cost matters more than graph recall."
+            "Maximum gleaning rounds per text unit. Each round after the first"
+            " re-sends only the text units whose previous answer added a new "
+            "entity or relationship, so a unit stops once an answer adds "
+            "nothing new. 1 is MS GraphRAG's default, for when ingestion cost "
+            "matters more than graph recall."
         ),
     )
     max_entities_per_prompt: int = Field(
@@ -1226,13 +1354,12 @@ class GleaningConfig(BaseModel):
 class ClaimExtractionConfig(BaseModel):
     enabled: bool = Field(
         default=False,
-        description="Enable claim (covariate) extraction. OFF by default: it "
-        "incurs an LLM call per text unit. When ON, the local search strategy "
-        "retrieves matching claims from the claims index and injects them into "
-        "its context (mirroring MS GraphRAG covariates), and simple search "
-        "includes the claims index in its sweep; claims subject/object are still "
-        "not linked into the entity graph. The pipeline honors this flag "
-        "(DataIngestionPipeline._initialize_stages).",
+        description=(
+            "Extract claims (covariates): one more LLM call per text unit. "
+            "When on, local search injects the matching claims into its "
+            "context and simple search includes the claims index in its sweep."
+            " Claim subjects and objects are not linked into the entity graph."
+        ),
     )
     max_entities_per_prompt: int = Field(
         default=100,
@@ -1245,42 +1372,67 @@ class ProcessingConfig(BaseModel):
     max_concurrency: int = Field(
         default=40,
         ge=1,
-        description="LLM calls an ingestion stage keeps in flight: the next "
-        "item starts as soon as one finishes, so this is both the peak and the "
-        "steady concurrency. These stages are Bedrock-I/O-bound (CPU/memory "
-        "near-idle), so this can be well above the CPU count. Bedrock quotas "
-        "differ per account, model and Region: lower it if the logs show "
-        "ThrottlingException retries.",
+        description=(
+            "LLM calls an ingestion stage keeps in flight: the next item "
+            "starts as soon as one finishes, so this is both the peak and the "
+            "steady concurrency. These stages are I/O-bound, so this can be "
+            "well above the CPU count. Bedrock quotas differ per account, "
+            "model and Region: lower it if the logs show ThrottlingException "
+            "retries, raise it if quota allows. The backend: local preset sets"
+            " 20, since a local model server queues the calls it cannot run at"
+            " once."
+        ),
     )
     max_attempts: int = Field(
         default=5,
         ge=1,
-        description="Total attempts per ingestion LLM item, including the "
-        "first call (1 disables the retry)",
+        description=(
+            "Attempts per ingestion LLM item, including the first call. "
+            "Transient Bedrock errors, call timeouts and unparseable output "
+            "are retried; other errors fail fast. 1 disables the retry."
+        ),
     )
     io_workers: int = Field(
         default=64,
         ge=1,
-        description="Threads for blocking I/O on the query path (Bedrock calls "
-        "LangChain runs in the event loop's default executor, Neptune "
-        "traversals, reranking) in the CLIs and GraphRAGChain's sync methods. "
-        "Python's default is min(32, CPUs + 4), which caps concurrent Bedrock "
-        "calls on small tasks; async hosts call "
-        "unified_kg_rag.shared.utils.configure_event_loop themselves.",
+        description=(
+            "Threads for blocking I/O on the query path (the Bedrock calls "
+            "LangChain runs in the event loop's default executor, Neptune "
+            "traversals, reranking) in the CLIs and GraphRAGChain's sync "
+            "methods. Python's default is min(32, CPUs + 4), six on a 2-vCPU "
+            "task. An async host calls "
+            "unified_kg_rag.configure_event_loop(asyncio.get_running_loop(), "
+            "config.processing.io_workers) at startup."
+        ),
     )
     ignore_errors: bool = Field(
         default=False,
-        description="Degrade instead of raising when a whole step fails "
-        "(a batch call, a translation language, an evaluator, global "
-        "map/reduce, the DRIFT primer, the auto router). Items whose own LLM "
-        "call fails are always skipped and reported, whatever this says.",
+        description=(
+            "When a whole step fails (a batch call, a translation language, an"
+            " evaluator, global map/reduce, the DRIFT primer, the auto "
+            "router), log it and continue with an empty or degraded result "
+            "instead of raising. Items whose own LLM call fails are always "
+            "skipped and reported, whatever this says."
+        ),
     )
     deduplicate: bool = Field(
-        default=False, description="Enable document deduplication"
+        default=False,
+        description=(
+            "Drop near-duplicate documents before extraction. "
+            "Two documents are near-duplicates when the Jaccard"
+            " similarity of their character 3-gram sets, "
+            "estimated with a 128-permutation MinHash, is at "
+            "least 0.9 (fixed parameters); of each pair the "
+            "first is kept, and an incremental run keeps the "
+            "already-indexed copy."
+        ),
     )
     resolution_method: ResolutionMethod = Field(
         default=ResolutionMethod.MINHASH,
-        description="Entity/relationship resolution method",
+        description=(
+            "Name-similarity measure of fuzzy entity resolution "
+            "(fuzzy_entity_resolution): minhash or sequence_matcher."
+        ),
     )
     fuzzy_entity_resolution: bool = Field(
         default=False,
@@ -1296,9 +1448,11 @@ class ProcessingConfig(BaseModel):
         default=0.85,
         ge=0.0,
         le=1.0,
-        description="Similarity threshold for fuzzy entity resolution "
-        "(fuzzy_entity_resolution) and for matching claim subjects and "
-        "objects to entity names",
+        description=(
+            "Similarity threshold for fuzzy entity resolution "
+            "(fuzzy_entity_resolution) and for matching claim subjects and "
+            "objects to entity names. Raise it if distinct entities merge."
+        ),
     )
     document_parsing: DocumentParsingConfig = Field(
         default_factory=DocumentParsingConfig,
@@ -1331,7 +1485,12 @@ class CentralityConfig(BaseModel):
     )
     calculate_betweenness: bool = Field(
         default=True,
-        description="Calculate betweenness centrality to identify bridge nodes",
+        description=(
+            "Compute betweenness centrality (bridge nodes) for the "
+            "visualization; ingestion itself computes no centrality. On graphs"
+            " larger than betweenness_auto_sample_threshold nodes it is "
+            "sampled instead of computed exactly."
+        ),
     )
     calculate_pagerank: bool = Field(
         default=True,
@@ -1460,8 +1619,11 @@ class CommunityDetectionConfig(BaseModel):
         default=1.0,
         gt=0.0,
         le=10.0,
-        description="Leiden modularity resolution: higher gives more, smaller "
-        "communities; lower gives fewer, larger ones.",
+        description=(
+            "Leiden modularity resolution: higher gives more, smaller "
+            "communities (and more report calls); lower gives fewer, larger "
+            "ones."
+        ),
     )
     random_state: int = Field(
         default=42,
@@ -1469,7 +1631,9 @@ class CommunityDetectionConfig(BaseModel):
         description="Leiden random seed (a positive integer; the native Leiden "
         "rejects 0). The same graph and seed give the same communities.",
     )
-    max_levels: int = Field(default=5, ge=1, description="Maximum hierarchy levels")
+    max_levels: int = Field(
+        default=5, ge=1, description=("Maximum depth of the " "community hierarchy.")
+    )
     trials: int = Field(
         default=3,
         ge=1,
@@ -1497,15 +1661,21 @@ class CommunityDetectionConfig(BaseModel):
     min_community_size: int = Field(
         default=3,
         ge=1,
-        description="Minimum entities per level-0 community (smaller ones are merged "
-        "into the neighbor they share the most edge weight with)",
+        description=(
+            "Minimum entities per level-0 community: a smaller one merges into"
+            " the neighbour it shares the most edge weight with, unless that "
+            "would exceed max_cluster_size."
+        ),
     )
     auto_resolution: bool = Field(
         default=False,
-        description="Sweep auto_resolution_candidates at every hierarchy level and "
-        "keep the most modular resolution. Off by default: maximizing modularity "
-        "on the coarse upper-level graphs picks low resolutions that merge "
-        "unrelated communities, which cost global search accuracy in testing.",
+        description=(
+            "Sweep auto_resolution_candidates at every hierarchy level and "
+            "keep the most modular resolution; otherwise resolution is used. "
+            "Off by default: maximizing modularity on the coarse upper-level "
+            "graphs picks low resolutions that merge unrelated communities, "
+            "which cost global search accuracy in testing."
+        ),
     )
     auto_resolution_candidates: list[float] = Field(
         default_factory=lambda: [0.1, 0.2, 0.3, 0.5, 0.7, 1.0, 1.5, 2.0, 3.0],
@@ -1545,10 +1715,12 @@ class VisualizationConfig(BaseModel):
     )
     enabled: bool = Field(
         default=False,
-        description="Render visualizations during ingestion. Off by default: it "
-        "adds an embedding call per node (embedding_method) and a "
-        "dimensionality reduction to every ingest; render on demand with "
-        "run-visualization from the data export_data writes instead.",
+        description=(
+            "Render visualizations during ingestion. Off by default: it adds "
+            "an embedding call per node (embedding_method) and a "
+            "dimensionality reduction to every ingest; render on demand with "
+            "run-visualization from the data export_data writes instead."
+        ),
     )
     export_data: bool = Field(
         default=True,
@@ -1575,7 +1747,7 @@ class VisualizationConfig(BaseModel):
     layout_method: str = Field(
         default="umap",
         pattern="^(umap|tsne|pca)$",
-        description="Method for dimensionality reduction ('umap', 'tsne', 'pca').",
+        description=("Dimensionality reduction of the node layout: umap, tsne or pca."),
     )
     layout: dict[str, Any] = Field(
         default={
@@ -1583,15 +1755,27 @@ class VisualizationConfig(BaseModel):
             "tsne": {},
             "pca": {},
         },
-        description="Configuration parameters for layout algorithms.",
+        description=(
+            "Parameters per layout_method (umap: n_neighbors 15, min_dist 0.1;"
+            " tsne and pca: none by default). Setting the key replaces the "
+            "whole map."
+        ),
     )
     interactive: dict[str, Any] = Field(
         default={"physics_enabled": False},
-        description="Configuration for interactive visualization rendering.",
+        description=(
+            "Settings of the interactive pyvis graph (interactive_graph.html),"
+            " e.g. max_nodes (top-N nodes by degree kept, default 2000; 0 or "
+            "null disables the cap) and physics_enabled (false). Setting the "
+            "key replaces the whole map."
+        ),
     )
     static: dict[str, Any] = Field(
         default={"figure_width": 900, "figure_height": 600},
-        description="Configuration for static visualization rendering.",
+        description=(
+            "Settings of the static Bokeh charts (figure_width, "
+            "figure_height). Setting the key replaces the whole map."
+        ),
     )
 
 
@@ -1625,34 +1809,32 @@ class NeptuneIndexingConfig(BaseModel):
     batch_size: int = Field(
         default=100,
         ge=1,
-        description="Number of items to process per batch in Neptune operations",
+        description=("Items per Neptune write batch."),
     )
     index_concurrency: int = Field(
         default=1,
         ge=1,
         description=(
-            "Number of Neptune write batches (and relationship edges, written "
-            "one per request) to submit concurrently. 1 (default) "
-            "preserves sequential indexing; >1 fans batches over a thread pool, "
-            "multiplexed across the Gremlin connection pool (sized to at least "
-            "this value). Each batch accumulates its own stats, merged "
-            "on completion. NOTE (real-AWS finding): >1 can trigger Neptune "
-            "ConcurrentModificationException when batches touch overlapping "
-            "vertices/properties; the retry (exponential backoff) recovers but "
-            "the conflict churn can make a large run SLOWER than sequential. "
-            "Prefer 1 unless you have measured a net win on your data/cluster."
+            "Neptune write batches (and relationship edges, one per request) "
+            "submitted concurrently; the Gremlin connection pool grows to at "
+            "least this. Above 1, batches touching the same vertices can raise"
+            " ConcurrentModificationException; the retry recovers, but the "
+            "conflicts can make a large run slower than sequential writes, so "
+            "measure before raising it."
         ),
     )
     max_attempts: int = Field(
         default=4,
         ge=1,
-        description="Total attempts per Neptune indexer request (writes, "
-        "read-backs, drops and label clears), including the first (1 disables "
-        "the retry). Every error is retried except one a retry cannot fix, "
-        "which fails on the first attempt: a Neptune error code in "
-        "PERMANENT_NEPTUNE_ERROR_CODES (malformed query, access denied, bad "
-        "parameter, read-only violation, ...) or a client-side "
-        "ValueError/TypeError.",
+        description=(
+            "Attempts per Neptune indexer request (writes, read-backs, drops "
+            "and label clears), including the first, with full-jitter "
+            "exponential backoff (the wait after attempt n is random between 0"
+            " and retry_delay_seconds * 2^(n-1) seconds). Errors a retry "
+            "cannot fix (malformed query, access denied, bad parameter, "
+            "read-only violation) fail on the first attempt. 1 disables the "
+            "retry."
+        ),
     )
     retry_delay_seconds: int = Field(
         default=2,
@@ -1665,19 +1847,19 @@ class NeptuneIndexingConfig(BaseModel):
         default=4000,
         ge=1,
         description=(
-            "Maximum character length for Neptune property values (entity and "
-            "relationship descriptions are read back from Neptune into the "
-            "local/DRIFT context). Keep it well above the longest description "
-            "that is not re-summarized: processing.description_summarization "
-            "only triggers above force_summary_threshold_tokens (600 tokens, "
-            "~2,400 English characters), so the former 1,000-character default "
-            "cut such descriptions mid-sentence."
+            "Character cap per Neptune property value. Keep it above the "
+            "longest description that is not re-summarized (summarization "
+            "triggers above force_summary_threshold_tokens, 600 tokens or "
+            "~2,400 English characters). OpenSearch keeps descriptions in "
+            "full. Takes effect on re-ingestion."
         ),
     )
     max_hops: int = Field(
         default=3,
         ge=1,
-        description="Maximum number of hops for graph traversal queries",
+        description=(
+            "Depth of the graph expansion around the seed entities at query " "time."
+        ),
     )
     max_results_per_hop: int = Field(
         default=50,
@@ -1689,13 +1871,11 @@ class NeptuneIndexingConfig(BaseModel):
         default="rank",
         description=(
             "Graph-expansion relevance orders entities by distance from the "
-            "seeds first (seeds always first) and by this importance among "
-            "entities at the same distance. 'rank' uses the indexed entity `rank`, "
-            "'degree' counts the entity's edges at query time (MS GraphRAG ranks "
-            "entities by degree), and each is normalized by the largest value in "
-            "the same result. 'none' gives every entity a neutral 0.5, the "
-            "previous behaviour (it read an `importance` property that entity "
-            "vertices never store), so expansion ranks by distance alone."
+            "seeds (seeds first) and, at the same distance, by this "
+            "importance: 'rank' (the indexed entity rank, its degree), "
+            "'degree' (the entity's edges counted at query time, as MS "
+            "GraphRAG ranks entities) or 'none' (a neutral 0.5 for every "
+            "entity, so expansion ranks by distance alone)."
         ),
     )
     traversal_fetch_multiplier: int = Field(
@@ -1732,16 +1912,15 @@ class OpenSearchIndexingConfig(BaseModel):
     )
     build_relationship_vector_index: bool = Field(
         default=True,
-        description="Build the OpenSearch relationship VECTOR index (embeds "
-        "Relationship.description). LightRAG mix/hybrid query it for high-level "
-        "keyword retrieval and incident edges; GraphRAG local for its "
-        "relationship section and bridge relationships; simple and drift search "
-        "it with the other indexes (auto routes to these strategies). Only "
-        "global does without it. Set false to skip the relationship embeddings: "
-        "mix/hybrid then lose high-level retrieval and local its relationship "
-        "section. The Neptune relationship EDGES are always indexed regardless — "
-        "both methodologies traverse them for graph expansion; this toggles only "
-        "the vector index. Symmetric with graph.community_detection.enabled.",
+        description=(
+            "Build the relationship vector index (embeds "
+            "Relationship.description). LightRAG mix/hybrid query it for "
+            "high-level keywords and incident edges, GraphRAG local for its "
+            "relationship section and bridge relationships, and simple and "
+            "drift search it with the other indexes; only global does without "
+            "it. false skips the relationship embeddings at the cost of those."
+            " The Neptune relationship edges are indexed either way."
+        ),
     )
     relationships_index_prefix: str = Field(
         default="graphrag-relationships",
@@ -1772,7 +1951,13 @@ class OpenSearchIndexingConfig(BaseModel):
     )
     language_analyzers: dict[str, str] = Field(
         default_factory=lambda: {"en": "english", "ko": "nori"},
-        description="Maps a language code to its OpenSearch text analyzer; extend without code changes",
+        description=(
+            "Text analyzer per language code (en: english, ko: nori); "
+            "languages without an entry use default_analyzer. nori needs the "
+            "analysis-nori plugin, which an Amazon OpenSearch Service domain "
+            "has only once its optional package is associated (the CDK stack "
+            "maps ko to cjk). Setting the key replaces the whole map."
+        ),
     )
     refresh_after_batch: bool = Field(
         default=True,
@@ -1780,9 +1965,11 @@ class OpenSearchIndexingConfig(BaseModel):
     )
     persist_embedding_cache: bool = Field(
         default=False,
-        description="Persist the content-hash embedding cache to S3 so unchanged "
-        "text is not re-embedded across separate runs (each Fargate task is a "
-        "fresh process). Requires aws.s3.bucket_name. Off by default.",
+        description=(
+            "Persist the content-hash embedding cache to S3, so unchanged text"
+            " is not embedded again by a later run (each Fargate task is a "
+            "fresh process). Requires aws.s3.bucket_name."
+        ),
     )
     embedding_cache_s3_key: str = Field(
         default="embedding-cache/cache.json",
@@ -1800,7 +1987,13 @@ class OpenSearchIndexingConfig(BaseModel):
             "number_of_replicas": 0,
             "refresh_interval": "1s",
         },
-        description="OpenSearch index configuration settings for performance tuning",
+        description=(
+            "OpenSearch settings of the indices this package creates "
+            "(number_of_shards, number_of_replicas, refresh_interval, ...); "
+            "they apply to indices created afterwards. Raise refresh_interval "
+            '(or set "-1") for faster bulk loads, then reset it for live '
+            "querying. Setting the key replaces the whole map."
+        ),
     )
     vector_search: dict[str, Any] = Field(
         default_factory=lambda: {
@@ -1833,25 +2026,39 @@ class OpenSearchIndexingConfig(BaseModel):
 class IndexingConfig(BaseModel):
     reset: bool = Field(
         default=False,
-        description="Whether to clear all existing indexed data before starting new indexing",
+        description=(
+            "Rebuild the run's index namespace from the whole corpus instead "
+            "of applying a delta, without taking it offline: the vector "
+            "indices swap aliases, the graph is rewritten in place and what "
+            "the rebuild did not write is dropped at the end; then the "
+            "namespace's registry records are written again. Set it for one "
+            "run."
+        ),
     )
     additional_suffix: str | None = Field(
         default=None,
         min_length=1,
         max_length=100,
-        description="Optional additional suffix to append to index names for isolation",
+        description=(
+            "Appended after the run's suffix in every OpenSearch index name "
+            "and Neptune label (<prefix>-<suffix>-<additional_suffix>; the "
+            "suffix is processing.document_parsing.index_value at ingestion "
+            "and --suffix at query time, both 'default' when unset). Set it "
+            "identically for ingestion and queries, for versioned or "
+            "multi-tenant separation."
+        ),
     )
     cross_run_merge: bool = Field(
         default=True,
-        description="On incremental (delta) runs, read existing graph entities/"
-        "relationships and union them with the delta (description/text_unit_ids/"
-        "weight) before upsert, instead of overwriting. Requires a graph "
-        "adapter that supports read-back (an adapter without it degrades to "
-        "overwrite). On by default: overwriting replaces an entity shared with "
-        "unchanged documents by its delta-only description and text_unit_ids. "
-        "Delta entities match stored ones by the full build's rule "
-        "(processing.fuzzy_entity_resolution), which costs an entity-name "
-        "projection per delta run.",
+        description=(
+            "On incremental runs, read back the stored entities and "
+            "relationships the delta touches and merge the delta into them "
+            "(descriptions, text units, weights) before the upsert, so an "
+            "entity shared with unchanged documents keeps what they "
+            "contributed. false overwrites stored items with their delta-only "
+            "content. Delta names match stored ones by the full build's rule "
+            "(processing.fuzzy_entity_resolution)."
+        ),
     )
     community_drift_threshold: float = Field(
         default=0.5,
@@ -1877,15 +2084,13 @@ class IndexingConfig(BaseModel):
         default=0.2,
         ge=0.0,
         le=1.0,
-        description="Maximum tolerated per-index-type write failure rate before "
-        "the indexing stage is marked FAILED. A fully-failed index type (0 "
-        "successes) always fails regardless of this value; this additionally "
-        "catches PARTIAL failures (e.g. most relationship edges dropped) that "
-        "would otherwise be reported as a successful run. The same rate bounds "
-        "the share of communities left without a report before the community "
-        "detection stage fails; below it their documents are recorded FAILED "
-        "and retried. Set to 1.0 to disable the partial-failure gate (only "
-        "total write failures fail the indexing stage).",
+        description=(
+            "Per-index-type write failure rate above which the indexing stage "
+            "fails, and share of communities without a report above which "
+            "community detection fails; below it the affected documents are "
+            "recorded FAILED and retried. A fully failed index type always "
+            "fails the stage. 1.0 disables the partial-failure gate."
+        ),
     )
     max_document_failures: int = Field(
         default=3,
@@ -1937,7 +2142,21 @@ class IndexingConfig(BaseModel):
 
 class HybridConfig(BaseModel):
     lexical_weight: float = Field(
-        default=0.5, ge=0.0, le=1.0, description="Weight for lexical search results"
+        default=0.5,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Weight of the lexical side of a "
+            "hybrid search. A hybrid search runs "
+            "a lexical and a kNN search on each "
+            "index, each fetching at least 50 "
+            "hits, min-max normalizes each over "
+            "its hits, takes their weighted mean "
+            "(lexical_weight, vector_weight) and "
+            "keeps the requested number, so the "
+            "ranking does not depend on how many "
+            "hits a query asks for."
+        ),
     )
     vector_weight: float = Field(
         default=0.5, ge=0.0, le=1.0, description="Weight for vector search results"
@@ -1960,12 +2179,18 @@ class HybridConfig(BaseModel):
 class FusionConfig(BaseModel):
     method: FusionMethod = Field(
         default=FusionMethod.RRF,
-        description="Method used for fusing search results from multiple sources",
+        description=(
+            "How results of different sources are fused: rrf (reciprocal rank "
+            "fusion) or weighted (score-weighted)."
+        ),
     )
     rrf_k: int = Field(
         default=60,
         ge=1,
-        description="RRF parameter k for reciprocal rank fusion algorithm",
+        description=(
+            "The k constant of reciprocal rank fusion: each result adds 1 / "
+            "(rrf_k + rank)."
+        ),
     )
     diversity_lambda: float = Field(
         default=0.5,
@@ -1999,12 +2224,16 @@ class FusionConfig(BaseModel):
 class RerankingConfig(BaseModel):
     enabled: bool = Field(
         default=True,
-        description="Enable reranking of search results for improved relevance",
+        description=(
+            "Rerank the fused results with models.rerank. Bedrock rerank "
+            "models are not offered in every region, and the Rerank API needs "
+            "its own IAM statement (bedrock:Rerank on Resource '*')."
+        ),
     )
     top_k: int = Field(
         default=100,
         ge=1,
-        description="Maximum number of top results to rerank",
+        description=("Fused candidates sent to the reranker."),
     )
     required: bool = Field(
         default=False,
@@ -2056,10 +2285,10 @@ class GlobalSearchConfig(BaseModel):
         description=(
             "MS GraphRAG dynamic community selection instead of a fixed cut: "
             "rate the root reports for the query with "
-            "community_relevance_model_id, descend into the children of the "
-            "relevant ones (dropping a parent once a child is relevant), and "
-            "rate the whole next depth when a depth yields none, down to "
-            "community_depth. One LLM call per rated report, "
+            "models.roles.community_relevance, descend into the children of "
+            "the relevant ones (dropping a parent once a child is relevant), "
+            "and rate the whole next depth when a depth yields none, down to "
+            "community_depth. One fast-model call per rated report, "
             "processing.max_concurrency at a time; the relevant reports are "
             "then mapped. Off by default, as in MS GraphRAG."
         ),
@@ -2113,14 +2342,11 @@ class GlobalSearchConfig(BaseModel):
     reduce_with_llm: bool = Field(
         default=False,
         description=(
-            "Run the REDUCE step as its own LLM call that writes a summary of the "
+            "Run the reduce step as its own LLM call that summarizes the "
             "packed key points, which the answer model then rewrites. Off by "
-            "default: the packed points go straight to the answer model as one "
-            "ranked context section, saving one LLM call per query and avoiding "
-            "a second synthesis that can drop facts or assert that the summaries "
-            "lack them. When off, the degraded path (map calls that failed) also "
-            "passes the unrated reports through instead of summarizing them. "
-            "true = the previous two-step behaviour."
+            "default: the packed points go straight to the answer model as one"
+            " ranked context section, saving one LLM call per query and a "
+            "second synthesis that can drop facts."
         ),
     )
     text_unit_slots: int = Field(
@@ -2197,11 +2423,11 @@ class LocalSearchConfig(BaseModel):
         description=(
             "Also fetch the relationships incident to the graph-expanded "
             "entities, edges between two of those entities first (MS GraphRAG "
-            "local's in-network relationships). These bridge edges carry the hops "
-            "of a multi-hop chain, which the relationship vector query alone "
-            "often misses. Needs the relationship index "
-            "(indexing.opensearch.build_relationship_vector_index). false = the "
-            "previous behaviour: only the vector query on the relationship index."
+            "local's in-network relationships). These bridge edges carry the "
+            "hops of a multi-hop chain, which the relationship vector query "
+            "alone often misses. Needs "
+            "indexing.opensearch.build_relationship_vector_index. false = only"
+            " the vector query on the relationship index."
         ),
     )
 
@@ -2222,9 +2448,9 @@ class DriftSearchConfig(BaseModel):
         default=20,
         ge=1,
         description=(
-            "Community reports the primer reads, and follow-up queries run per "
-            "round (MS GraphRAG drift_k_followups, 20). Each follow-up query is "
-            "one local search plus one action_model_id call."
+            "Community reports the primer reads, and follow-up queries run per"
+            " round (MS GraphRAG drift_k_followups, 20). Each follow-up query "
+            "is one local search plus one models.roles.drift_action call."
         ),
     )
     primer_folds: int = Field(
@@ -2328,15 +2554,15 @@ class TokenManagerConfig(BaseModel):
         default=30_000,
         ge=1024,
         description=(
-            "Prompt-side retrieval context budget in tokens. Default 30,000 "
-            "matches upstream LightRAG's total context budget "
-            "(DEFAULT_MAX_TOTAL_TOKENS); MS GraphRAG uses 12,000. Deriving the "
-            "budget from the answer model's window gives ~785K tokens on a 1M "
-            "model, so it never binds: the per-type budgets and priority "
-            "ordering never trim anything and every query pays for the whole "
-            "retrieved set. The value is always clamped to what the answer "
-            "model can accept alongside its output reservation. Set null to "
-            "derive the budget from the window instead."
+            "Retrieval context budget of the answer prompt, in tokens. 30,000 "
+            "matches upstream LightRAG's total context budget (MS GraphRAG "
+            "uses 12,000); a budget derived from a 1M-token window (~785K) "
+            "would never bind, so the per-type budgets would never trim "
+            "anything. Always clamped to what models.roles.answer_generation "
+            "accepts beside its output reservation "
+            "(aws.bedrock.default_max_output_tokens), with a warning. null "
+            "derives it from that window minus the output reservation and "
+            "context_window_headroom_ratio."
         ),
     )
     context_window_headroom_ratio: float = Field(
@@ -2437,14 +2663,13 @@ class SearchConfig(BaseModel):
         ],
         min_length=1,
         description=(
-            "Strategies the AUTO router may pick. Default: local, mix, global, "
-            "drift. simple is left out because the graph strategies already "
-            "cover its direct lookups with graph context; mix (LightRAG) is "
-            "included for multi-hop fact chains, which it serves from the same "
-            "index. global and drift are skipped when "
-            "graph.community_detection.enabled is false (no community reports); "
-            "local is used when nothing is left. Every strategy stays "
-            "selectable explicitly."
+            "Strategies the auto router may pick; its prompt describes exactly"
+            " these, in this order. simple is left out by default because the "
+            "graph strategies cover its direct lookups with graph context. "
+            "global and drift are skipped when "
+            "graph.community_detection.enabled is false (no community "
+            "reports), and local is used when nothing is left. auto itself is "
+            "rejected; every strategy stays selectable explicitly."
         ),
     )
     hybrid: HybridConfig = Field(
@@ -2477,18 +2702,22 @@ class SearchConfig(BaseModel):
         gt=0,
         description=(
             "Seconds a query waits for one OpenSearch or Neptune request (and "
-            "for opening a Neptune connection) before giving up on it. A store "
-            "that does not answer fails the query instead of answering from "
-            "no context. Ingestion keeps its own, longer limits."
+            "for opening a Neptune connection); a Neptune traversal, including"
+            " its wait for a pooled connection, gets twice that. A store that "
+            "does not answer fails the query instead of answering from no "
+            "context. Ingestion keeps its own, longer limits."
         ),
     )
     store_max_attempts: int = Field(
         default=3,
         ge=1,
         description=(
-            "Attempts of one OpenSearch query request that timed out or got a "
-            "429/502/503/504, including the first. Neptune query requests are "
-            "not retried."
+            "Attempts of one OpenSearch query request that timed out, could "
+            "not connect or got a 429/502/503/504, including the first, with a"
+            " jittered backoff between them (0.25-0.5 s, then 0.5-1 s, "
+            "doubling up to 2-4 s), so a short throttling burst is waited out."
+            " A hung cluster fails a query after about store_max_attempts x "
+            "store_timeout_seconds. Neptune query requests are not retried."
         ),
     )
 
@@ -2497,12 +2726,15 @@ class MemoryConfig(BaseModel):
     max_conversations: int = Field(
         default=100,
         ge=1,
-        description="Maximum number of conversations to keep in memory",
+        description=(
+            "Conversations held in conversation memory; a new one beyond it "
+            "drops the one idle longest."
+        ),
     )
     max_messages_per_conversation: int = Field(
         default=20,
         ge=1,
-        description="Maximum number of messages to store per conversation",
+        description=("Messages kept per conversation; older ones are dropped."),
     )
     max_conversation_age_hours: int = Field(
         default=168,
@@ -2552,7 +2784,11 @@ class CacheConfig(BaseModel):
     ttl_seconds: int | None = Field(
         default=86400,
         ge=1,
-        description="Cache entry time-to-live in seconds (None for no expiration)",
+        description=(
+            "Time-to-live of the local stage-cache entries, in seconds; null ="
+            " never expire. Not applied with --s3-sync, where the bucket "
+            "lifecycle expires the checkpoints."
+        ),
     )
     chunking: CacheChunkingConfig = Field(
         default_factory=CacheChunkingConfig,
@@ -2568,14 +2804,31 @@ class LoggingConfig(BaseModel):
     level: str = Field(
         default="INFO",
         pattern="^(DEBUG|INFO|WARNING|ERROR|CRITICAL)$",
-        description="Logging level",
+        description=(
+            "Log level: DEBUG, INFO, WARNING, ERROR or CRITICAL. DEBUG logs "
+            "contain user and corpus text."
+        ),
     )
     log_format: str = Field(
         default="structured",
         pattern="^(structured|plain)$",
-        description="Log format style",
+        description=(
+            "structured (JSON records, for CloudWatch and other log stores) or"
+            " plain."
+        ),
     )
-    log_to_file: bool = Field(default=True, description="Enable file logging")
+    log_to_file: bool = Field(
+        default=True,
+        description=(
+            "Also write the CLIs' logs to "
+            "log_file_path (dated per day;"
+            " a relative path resolves "
+            "against the working "
+            "directory). The package "
+            "configures no handler when "
+            "imported as a library."
+        ),
+    )
     log_file_path: str = Field(
         default="logs/log.txt",
         min_length=1,
@@ -2590,8 +2843,10 @@ class LoggingConfig(BaseModel):
             # The OTLP exporter warns on every retry to an unreachable collector.
             "opentelemetry": "ERROR",
         },
-        description="Per-logger levels for chatty third-party libraries "
-        "(logger name -> level)",
+        description=(
+            "Per-logger levels for chatty third-party libraries (logger name "
+            "-> level). Setting the key replaces the whole map."
+        ),
     )
 
 
@@ -2626,20 +2881,31 @@ class ObservabilityConfig(BaseModel):
 
     enabled: bool = Field(
         default=False,
-        description="Emit OpenTelemetry spans for ingestion and query runs",
+        description=(
+            "Emit OpenTelemetry spans for ingestion, queries and evaluation "
+            "(needs the otel extra). OTEL_SDK_DISABLED=true turns it off "
+            "regardless."
+        ),
     )
     backend: ObservabilityBackend = Field(
         default=ObservabilityBackend.NONE,
-        description="'none' uses the process's global tracer provider; 'otlp' "
-        "installs an OTLP exporter configured by OTEL_EXPORTER_OTLP_* variables; "
-        "'langfuse' and 'phoenix' export over OTLP to that vendor with its "
-        "attribute names added",
+        description=(
+            "none: spans go to the process's global tracer provider, which a "
+            "host application or opentelemetry-instrument sets up. otlp: the "
+            "package installs an OTLP exporter configured by the "
+            "OTEL_EXPORTER_OTLP_* variables. langfuse / phoenix: the same "
+            "exporter pointed at Langfuse or Arize Phoenix, with that vendor's"
+            " attribute names added."
+        ),
     )
     capture_content: bool = Field(
         default=False,
-        description="Record prompt and completion text on model spans (after "
-        "redact_patterns). Off by default: spans carry counts, ids and token "
-        "usage only",
+        description=(
+            "Also record prompt and completion text on model spans, and the "
+            "query and answer on the kg_rag.query span (after "
+            "redact_patterns). Off by default: spans carry counts, ids and "
+            "token usage only. Leave it off for confidential corpora."
+        ),
     )
     sample_rate: float = Field(
         default=1.0,
@@ -2652,7 +2918,10 @@ class ObservabilityConfig(BaseModel):
     service_name: str = Field(
         default="unified-kg-rag",
         min_length=1,
-        description="OpenTelemetry service.name (OTEL_SERVICE_NAME wins when set)",
+        description=(
+            "OpenTelemetry service.name, and the Phoenix project; "
+            "OTEL_SERVICE_NAME (and PHOENIX_PROJECT_NAME) win when set."
+        ),
     )
     redact_patterns: list[str] = Field(
         default_factory=list,
@@ -2938,7 +3207,7 @@ def _template_variables(template: str) -> set[str]:
 class EvaluationConfig(BaseModel):
     outputs_directory: str | Path = Field(
         default="outputs/evaluation",
-        description="Directory to save evaluation results",
+        description=("Directory the evaluation results are written to."),
     )
     enabled_evaluators: list[EvaluatorType] = Field(
         default=[

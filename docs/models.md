@@ -7,7 +7,7 @@ provider, and how to describe a model it does not know. For which models to
 enable before a first run, see the
 [User Guide §1 Required models](./user-guide.md#required-models); for the two
 model tiers and per-role overrides, see
-[§2.1 Model selection notes](./user-guide.md#model-selection-notes).
+[§2 Model selection notes](./user-guide.md#model-selection-notes).
 
 ## Model ids and capability records
 

@@ -28,7 +28,7 @@ Every CLI's `--help` ends with an example invocation and a link to its section h
 ## Contents
 
 1. [Prerequisites & Installation](#1-prerequisites--installation) (including [Required models](#required-models))
-2. [Configuration](#2-configuration)
+2. [Configuration](#2-configuration) (every key: [Configuration Reference](./configuration.md))
 3. [Ingestion (`run-ingestion`)](#3-ingestion-run-ingestion)
 4. [Querying (`run-rag`)](#4-querying-run-rag)
 5. [Incremental indexing](#5-incremental-indexing)
@@ -40,7 +40,7 @@ Every CLI's `--help` ends with an example invocation and a link to its section h
 11. [Using the library from Python](#11-using-the-library-from-python)
 12. [Limitations](#12-limitations)
 
-Related pages: [Model Catalog](./models.md) · [Operator Runbook](./operations.md) ·
+Related pages: [Configuration Reference](./configuration.md) · [Model Catalog](./models.md) · [Operator Runbook](./operations.md) ·
 [Design Doc](./design.md) · [`iac/README.md`](../iac/README.md)
 
 ---
@@ -103,7 +103,7 @@ them. Choose one of three ways to run it:
 
 - **Bring your own services.** If Neptune and OpenSearch (and, when you use
   them, S3 and DynamoDB) are already running, just record their endpoints in `config.yaml`
-  (§2.1 below) and skip ahead. Make sure Bedrock model access is enabled for the
+  (§2 below) and skip ahead. Make sure Bedrock model access is enabled for the
   model IDs you configure.
 - **Provision everything with the bundled CDK app.** The repo ships an optional,
   Well-Architected AWS CDK app in [`iac/`](../iac/README.md) that stands up the
@@ -417,18 +417,18 @@ alone (`docker compose -f docker/compose.local.yaml up -d --wait`, no
 
 ## 2. Configuration
 
-Create your config from the template and point every CLI at it with
-`--config-path config.yaml`:
+Copy the template and point every CLI at it with `--config-path config.yaml`:
 
 ```bash
 cp config-template.yaml config.yaml
 ```
 
-**`config-template.yaml` is the reference for every option.** It lists each key
-with its default and a comment on what it does. This section covers how
-configuration is loaded, the knobs you will most often tune, and the
-environment variables that override the file. For anything not listed here,
-read the template.
+A config file holds only the keys you change; every other key keeps its
+built-in default. The [Configuration Reference](./configuration.md) lists
+every key with its type, default and description (it is generated from the
+code, so it is always current). This section covers how the configuration is
+loaded, the settings most runs change, and the topics that need more than a
+table row: models, the guardrail, logs, environment variables and tracing.
 
 ### How configuration is loaded
 
@@ -441,143 +441,59 @@ Values are resolved in layers, each overriding the one before:
    the local providers and stores for every key the file and the environment
    leave unset ([Local mode](#local-mode-no-aws)).
 3. **Your YAML file**: every key you set replaces its default; every key you
-   omit keeps it. A `config.yaml` can therefore hold only the keys you change.
-   A dict-valued key (for example `logging.library_levels` or
+   omit keeps it. A dict-valued key (for example `logging.library_levels` or
    `graph.visualization.interactive`) replaces the whole default dict rather
    than merging into it.
-4. **Environment variables** (§2.10): on top of the file.
+4. **Environment variables** ([below](#environment-variable-overrides)): on
+   top of the file.
 5. **Provider flags** (`--backend`, `--llm-provider`, `--rerank-provider` ...):
-   applied last, on top of all of the above. The config is rebuilt from what
-   the file and the environment set (and, from Python, every change made to
-   the `Config` object since): switching `--backend` drops only what the old
-   preset filled in, never a value you set, even one equal to the preset's.
+   applied last. The config is rebuilt from what the file and the environment
+   set (and, from Python, every change made to the `Config` object since), so
+   switching `--backend` drops only what the old preset filled in, never a
+   value you set, even one equal to the preset's.
 
-YAML values are validated when the file loads: a wrong type or an unsupported
-value stops the CLI with `Configuration validation error: ...`, naming each
-invalid key. That, a file that is not valid YAML, and a missing
-`--config-path` file are usage errors: every CLI prints one error line and
-exits with code 2. So is an unknown key (a typo, or a key removed in a newer
-release), in the file or as a `UKR__` variable: the error names each one,
-because a misspelled key would leave its setting at the default without a
-word (a guardrail identifier under a wrong key leaves queries unscreened).
-`--allow-unknown-keys` (every CLI; `allow_unknown_keys=True` for
-`get_config` / `ConfigLoader`) logs each one at WARNING instead and goes on.
-A key that moved (the model settings, now under `models`, and
-`graph.analysis.centrality`, now `graph.visualization.centrality`) fails
-with the key that replaces it.
-
-Keys renamed before the first release (`search.llm_retry`,
-`aws.bedrock.effort`, `processing.max_retries`, `indexing.neptune.max_retries`,
-`evaluation.ragas_max_retries`, `providers.llm.max_retries`,
-`providers.embedding.max_retries`) are not read; each is an unknown key. Use `aws.bedrock.transient_retry`, `aws.bedrock.default_effort`,
-`processing.max_attempts`, `indexing.neptune.max_attempts`,
-`evaluation.ragas_max_attempts`, `providers.llm.max_attempts` and
-`providers.embedding.max_attempts` (a former `max_retries: N` is
-`max_attempts: N+1`).
+The file is validated when it loads. A wrong type or an unsupported value
+stops the CLI with `Configuration validation error: ...`, naming each invalid
+key. That, a file that is not valid YAML, a missing `--config-path` file and
+an unknown key (in the file or as a `UKR__` variable) are usage errors: every
+CLI prints one error line and exits with code 2. Unknown keys are refused
+because a misspelled key would leave its setting at the default without a word
+(a guardrail identifier under a wrong key leaves queries unscreened);
+`--allow-unknown-keys` (`allow_unknown_keys=True` for `get_config` /
+`ConfigLoader`) logs each one at WARNING instead. A key that moved fails with
+the key that replaces it ([Moved keys](./configuration.md#moved-keys)).
 
 Every `max_attempts` key counts total attempts, including the first; `1`
 disables the retry.
 
-The tables below give each key's built-in default. `config-template.yaml` uses
-the same values.
+### Settings most runs change
 
-### 2.1 `aws` — service endpoints & credentials
-
-| Key | Default | What it does / when to change |
+| Key | Default | Change it when |
 |---|---|---|
-| `aws.region_name` | `"us-west-2"` | Region of Neptune, OpenSearch, S3, and DynamoDB, and of Bedrock unless `aws.bedrock.region_name` is set. `AWS_REGION` fills it only when the file leaves it unset (see §2.10). The default offers every default model, including both rerank models, which some regions (e.g. `ap-northeast-2`) do not. |
-| `aws.profile_name` | `null` | Named AWS profile; `null` uses the default credential chain. |
-| `aws.bedrock.region_name` | `null` | Region for Bedrock model, embedding, and rerank calls, and where the guardrail must exist. `null` uses `aws.region_name`. Set it only when your models are enabled in another region; in a private VPC whose only Bedrock route is a VPC endpoint, leave it `null` or set the VPC's region. |
-| `aws.bedrock.enable_global_profile` | `true` | Resolve cross-region (global) inference profiles. Keep it on: Claude 4.7+ and GPT models are invocable only through a profile. |
-| `aws.bedrock.default_max_output_tokens` | `16384` | `max_tokens` per request, clamped to the model maximum. Raise it if answers are cut off (`stopReason: max_tokens`); `null` sends the model maximum. |
-| `aws.bedrock.default_effort` | `"high"` | Reasoning depth for calls on the default tier's model (adaptive-thinking Claude and GPT models): `low`, `medium`, `high`, `xhigh`, `max`. Lower it to cut cost and latency. |
-| `aws.bedrock.ingestion_effort` | `null` | Reasoning depth for ingestion calls on the default tier (graph extraction, gleaning, claim extraction, community reports; the output fixer only when `models.roles.fixing` is a default-tier model). `null` inherits `default_effort`; lower it (e.g. `"medium"`) to cut ingestion cost without changing query-time effort. Fast-tier ingestion calls keep `fast_effort`. |
-| `aws.bedrock.fast_effort` | `"low"` | Reasoning depth for calls on the fast tier's model when it differs from the default tier's. The shipped Claude Haiku 5.5 thinks adaptively, so this sets its reasoning depth; no effect on a fast model that does not reason. |
-| `aws.bedrock.enable_1m_context` | `false` | Opt into the 1M window on models where it is a beta (premium billing). Claude 5 has a native 1M window. |
-| `aws.bedrock.model_overrides` | `{}` | Capability records for a language model the package does not know (see Model selection notes). Embedding and rerank models are a closed list. |
-| `aws.bedrock.guardrail.identifier` | `null` | Bedrock guardrail ID or ARN; setting it enables the guardrail. |
-| `aws.bedrock.guardrail.check_input` | `true` | Screen each raw user query with `ApplyGuardrail` (source `INPUT`) before retrieval (see the guardrail note below). |
-| `aws.bedrock.guardrail.check_output` | `true` | Screen each final answer (source `OUTPUT`). A streamed answer is then delivered as one chunk after the check. |
-| `aws.bedrock.guardrail.apply_to` | `"query"` | `query`: only the query and answer are screened. `all`: also attach the guardrail to every ingestion and evaluation model call. |
-| `aws.bedrock.guardrail.trace` | `false` | Return full assessments (including non-detected entries) for auditing. |
-| `aws.bedrock.transient_retry.max_attempts` | `5` | Attempts per call for transient Bedrock errors that botocore does not retry (such as HTTP 424), on embeddings and query-time calls. `1` disables the retry. |
-| `aws.neptune.endpoint` | `null` | **Required.** Neptune cluster endpoint. |
-| `aws.neptune.use_iam` | `true` | SigV4-sign Neptune requests. |
-| `aws.neptune.use_ssl` | `true` | Connect over `wss://`. Neptune requires it; set `false` (with `use_iam: false`) only for a local Gremlin Server (§1 Local mode). |
-| `aws.neptune.pool_size` | `4` | Gremlin connection pool size. The client raises it to `indexing.neptune.index_concurrency` when that is larger. |
-| `aws.opensearch.endpoint` | `null` | **Required.** OpenSearch domain endpoint. |
-| `aws.opensearch.use_iam` | `false` | `false` reads `UKR__AWS__OPENSEARCH__USERNAME` / `UKR__AWS__OPENSEARCH__PASSWORD` from the environment (§1 Authentication). |
-| `aws.opensearch.allow_anonymous` | `false` | Connect with no auth, for a local OpenSearch with the security plugin disabled (§1 Local mode). Cannot be combined with `use_iam` or username/password. |
-| `aws.opensearch.sigv4_service_name` | `"es"` | `es` for a managed domain, `aoss` for OpenSearch Serverless. A wrong value often shows up as zero search hits. |
-| `aws.s3.bucket_name` | `null` | Bucket for cache sync and embedding-cache persistence. |
-| `aws.s3.encryption.encryption_type` | `"BUCKET_DEFAULT"` | `BUCKET_DEFAULT` lets the bucket's default encryption apply; `AES256` or `aws:kms` (with `kms_key_id`) force a per-object header. Applies to the stage-cache sync and the persisted embedding cache. |
-| `aws.dynamodb.enabled` | `false` | Turn on the doc-status registry for incremental indexing (§5). |
-| `aws.dynamodb.table_name` | `"unified-kg-rag-on-aws-doc-status-v2"` | Doc-status table name. |
-| `aws.dynamodb.create_table_if_missing` | `true` | Create the table on first use. Set `false` when the table is managed by IaC. |
+| `aws.region_name` | `"us-west-2"` | Your stores are in another region. Bedrock follows it unless `aws.bedrock.region_name` is set |
+| `aws.neptune.endpoint`, `aws.opensearch.endpoint` | `null` | Always, for the AWS stores (the CDK stack injects them) |
+| `aws.dynamodb.enabled` | `false` | You want incremental indexing ([§5](#5-incremental-indexing)) |
+| `models.default`, `models.fast` | Claude Sonnet 5.5, Claude Haiku 5.5 | You use other models ([Model selection notes](#model-selection-notes)) |
+| `processing.max_concurrency` | `40` | The logs show `ThrottlingException` retries (lower it), or your Bedrock quota allows more |
+| `processing.graph_extraction.entity_types` | 7 generic types | You adapt extraction to a domain ([§9](#9-domain-adaptation)) |
+| `processing.translation.target_language` | `"en"` | The corpus or the answers should be in another language ([Multilingual ingestion](#multilingual-ingestion)) |
+| `processing.claim_extraction.enabled` | `false` | You want claims in `local` search (one more LLM call per text unit) |
+| `processing.document_parsing.index_value` | `null` (`default`) | You keep several corpora or tenants apart ([Index suffix](#index-suffix)) |
+| `graph.community_detection.enabled` | `true` | You query only with LightRAG and want a lighter ingestion (`global` and `drift` need it) |
+| `search.reranking.enabled` | `true` | Your Bedrock region has no rerank model, or you do not want reranking |
+| `search.token_manager.max_context_tokens` | `30000` | Answers need more (or cheaper, less) retrieved context ([Context budget](#context-budget)) |
+| `indexing.reset` | `false` | You rebuild the stores from the whole corpus, for one run |
+| `aws.bedrock.guardrail.identifier` | `null` | You screen queries and answers with a Bedrock guardrail ([Guardrail](#guardrail)) |
+| `observability.enabled` | `false` | You want OpenTelemetry traces ([Observability](#observability)) |
 
-> **Guardrail scope and placement.** The guardrail must exist in
-> `aws.bedrock.region_name`. The query chain screens two texts with the
-> `ApplyGuardrail` API: the raw user query, once, before conversation memory,
-> the follow-up rewrite, routing and retrieval (`check_input`), and the final
-> answer (`check_output`). Only those texts are evaluated and billed. A blocked
-> query is answered with the guardrail's blocked message, nothing is retrieved
-> or written to memory, and `RAGOutput.metadata.blocked` is `true`. A masked
-> query (PII anonymized) continues with the masked text, so retrieval, the
-> models and memory never see the original. A blocked or masked answer is
-> replaced by the guardrail's text. Every intervention is listed in
-> `RAGOutput.metadata.guardrail` (source, action, policies), logged at WARNING
-> with a running count, and recorded on a `kg_rag.guardrail` span. A guardrail
-> API error fails the query (with `processing.ignore_errors`, the standard
-> error answer); it is never answered unscreened.
->
-> The model calls inside a query (rewrite, routing, keyword extraction,
-> global/DRIFT map steps, answer generation) run without a guardrail. Attached
-> to a model call, a guardrail evaluates the whole prompt: on the Converse API
-> that is the retrieved corpus text and the developer instructions, which a
-> `PROMPT_ATTACK` filter judges as user input (false blocks), at a cost that
-> grows with context size times calls; on the InvokeModel API the
-> `PROMPT_ATTACK` filter does nothing unless the user input is wrapped in input
-> tags ([Bedrock Guardrails: prompt attacks](https://docs.aws.amazon.com/bedrock/latest/userguide/guardrails-prompt-attack.html)).
-> Contextual grounding checks are not run: they need the grounding source and
-> query as qualified content, which the answer screen does not send.
->
-> Ingestion models, the prompt tuner, and evaluation judges run unguarded by
-> default, because a PII guardrail that anonymizes `NAME` rewrites extracted
-> entity names to a placeholder such as `{NAME}` (distinct people merge into
-> one node), and a `PROMPT_ATTACK` filter can block instruction-like corpus
-> text. `apply_to: "all"` attaches the guardrail to those calls; use it only
-> with a policy that is safe for extraction. On the query path `NAME`
-> anonymization also hurts: a question about a person loses the name it
-> retrieves by, and answers show `{NAME}`. The baseline guardrail that `iac/`
-> creates therefore anonymizes email, phone and card numbers but not `NAME`.
->
-> Custom code that builds chains with `setup_chain` or calls `get_model`
-> for non-query work should pass `model_purpose=ModelPurpose.INGESTION` (or
-> `EVALUATION`). Unmarked calls default to `QUERY`: they get the query-time
-> transient-error retry, and never an attached guardrail.
+### Model selection notes
 
-> **S3 cache encryption.** With the CDK stack's `use_cmk=true`, the bucket
-> default is the customer-managed KMS key, so `BUCKET_DEFAULT` uses it; forcing
-> `AES256` would bypass a bucket's CMK. When you reuse a bucket whose default is SSE-KMS, the writer needs
-> `kms:GenerateDataKey` and `kms:Decrypt` on that key.
-
-#### Model selection notes
-
-The top-level `models` section says which model serves each role. The
-provider of each family is `providers.llm`, `providers.embedding` and
-`providers.rerank` `.kind`, and the ids are checked against it.
-
-| Key | Default | What it does |
-|---|---|---|
-| `models.default` | `null` = `anthropic.claude-sonnet-5-5` on Bedrock | Model of the default tier. Required with another LLM provider. |
-| `models.fast` | `null` = `anthropic.claude-haiku-5-5` on Bedrock | Model of the fast tier; with another provider `null` is the default tier's model. |
-| `models.roles.<role>` | `null` (the role's tier) | A model id, or `default` / `fast` to move the role to the other tier. |
-| `models.embedding.model_id` | `null` = `amazon.titan-embed-text-v2:0` on Bedrock | The one embedding model: indices, queries, RAGAS and the visualization layout. Required with another provider. Changing it needs a re-index. |
-| `models.embedding.dimension` | `null` = the Bedrock model's largest | Fixed into the index mappings (Titan Embed V2 also takes 256 or 512). Required with another provider. |
-| `models.rerank` | `null` = `cohere.rerank-v3-5:0` on Bedrock | Rerank model; with `cross_encoder` a sentence-transformers model name, required. |
-
-Every LLM role runs on one of two tiers, so switching the whole pipeline to
-another model is one line; a `models.roles` entry wins over its tier:
+The top-level `models` section says which model serves each role; the
+provider of each family is `providers.llm.kind`, `providers.embedding.kind`
+and `providers.rerank.kind`, and the ids are checked against it. Every LLM
+role runs on one of two tiers, so switching the whole pipeline to another
+model is one line, and a `models.roles` entry (a model id, or `default` /
+`fast` to move the role to the other tier) wins over its tier:
 
 | Tier | Roles |
 | --- | --- |
@@ -592,227 +508,132 @@ models:
     query_rewrite: default                          # moved to the other tier
 ```
 
-The model settings used to sit in their feature sections
-(`aws.bedrock.default_model_id`, `search.answer_generation_model_id`,
-`indexing.opensearch.embedding_model_id`, ...). A config that still sets one
-fails validation with the `models` key that replaces it (the CHANGELOG has the
-whole table). A setting of a provider the config does not select (say
-`providers.llm.temperature` while the language models are Bedrock's, or
-`aws.bedrock.default_effort` with a local model) is ignored with a WARNING at
-load.
-
-The full list of curated models, the request differences between Claude
-generations and OpenAI GPT models, prompt caching, and how to describe a model
-the package does not know (`aws.bedrock.model_overrides`) are in the
-[Model Catalog](./models.md). Embedding and rerank model ids are a closed list
+The embedding model (`models.embedding.model_id`) serves the indices, the
+queries, RAGAS and the visualization layout; changing it, or its `dimension`,
+needs a re-index. Embedding and rerank model ids are a closed list
 (`amazon.titan-embed-text-v2:0`, `amazon.titan-embed-text-v1`,
 `cohere.embed-v4:0`, `cohere.embed-english-v3`, `cohere.embed-multilingual-v3`;
-`cohere.rerank-v3-5:0`, `amazon.rerank-v1:0`); any other id fails config
-validation.
+`cohere.rerank-v3-5:0`, `amazon.rerank-v1:0`); any other id fails validation.
+A setting of a provider the config does not select (say
+`providers.llm.temperature` while the language models are Bedrock's) is
+ignored with a WARNING at load.
 
-**Output cap.** Bedrock reserves input + `max_tokens` against the
-tokens-per-minute quota when a request starts, so asking for the model maximum
-(128K on Claude 5.x) throttles concurrent ingestion long before real usage
-does. That is why `default_max_output_tokens` is 16384. Thinking tokens count
-toward it, and prompts with long outputs derive a higher floor from their own
-limits that wins: the largest answer those limits allow plus 8192 tokens of
-reasoning headroom. Graph extraction and gleaning (and their output fixer)
+The curated models, the request differences between Claude generations and
+OpenAI GPT models, prompt caching, and how to describe a model the package
+does not know (`aws.bedrock.model_overrides`) are in the
+[Model Catalog](./models.md).
+
+**Output cap.** `aws.bedrock.default_max_output_tokens` is 16384 because
+Bedrock reserves input + `max_tokens` against the tokens-per-minute quota when
+a request starts, so asking for the model maximum (128K on Claude 5.x)
+throttles concurrent ingestion long before real usage does. Thinking tokens
+count toward it. Prompts with long outputs derive a higher floor from their
+own limits that wins: the largest answer those limits allow plus 8192 tokens
+of reasoning headroom. Graph extraction and gleaning (and their output fixer)
 budget 150 tokens per record at `max_entities_per_chunk` +
 `max_relationships_per_chunk` (23192 by default); document translation budgets
 1.35 tokens per character of `max_chunk_size` (18992), claim extraction twice
 that (29792); community reports stay under the default cap. Raising those
 limits raises the floor with them.
 
-### 2.2 `fixing` — auto-repair malformed model output
+### Context budget
 
-| Key | Default | What it does / when to change |
-|---|---|---|
-| `fixing.enabled` | `true` | When a structured stage gets malformed JSON from the model, ask a model to repair it instead of failing the run. Leave it on. |
+`search.token_manager.max_context_tokens` (`30000`) is the retrieved context
+the answer prompt gets. It matches upstream LightRAG's total context budget
+(MS GraphRAG uses 12000): a budget derived from a 1M-token window (~785K)
+never binds, so the per-type budgets would never trim anything. The value is
+always clamped to what `models.roles.answer_generation` accepts alongside its
+output reservation (`aws.bedrock.default_max_output_tokens`), with a warning
+when that happens. With `null`, the budget is derived from that model's window
+minus the output reservation and `context_window_headroom_ratio`;
+`aws.bedrock.enable_1m_context` widens it on models where 1M is a beta. The
+per-section-type shares (`search.token_manager.type_budgets`) and the `local`
+slot quotas (`search.local_search.type_quota`) are in the reference.
 
-### 2.3 `processing` — concurrency, chunking, translation, extraction
+### Guardrail
 
-LLM stages are Bedrock-I/O-bound, so concurrency can far exceed the CPU count.
+Setting `aws.bedrock.guardrail.identifier` screens two texts of every query
+with the `ApplyGuardrail` API; the guardrail must exist in
+`aws.bedrock.region_name`.
 
-| Key | Default | What it does / when to change |
-|---|---|---|
-| `processing.max_concurrency` | `40` | LLM calls an ingestion stage keeps in flight; the next item starts as soon as one finishes. Bedrock quotas differ per account, model and Region: lower it if the logs show `ThrottlingException` retries, raise it if quota allows. The `backend: local` preset sets `20`: a local model server queues the calls it cannot run at once. |
-| `processing.max_attempts` | `5` | Attempts per ingestion LLM item, including the first call. Transient Bedrock errors, call timeouts and unparseable output are retried; other errors fail fast. `1` disables the retry. |
-| `processing.io_workers` | `64` | Threads for blocking query-path I/O (Bedrock calls, Neptune traversals, reranking) in the CLIs and the chain's sync methods. Python's default caps it at `min(32, CPUs + 4)`, six on a 2-vCPU task. An async host calls `configure_event_loop(asyncio.get_running_loop(), config.processing.io_workers)` (from `unified_kg_rag`) at startup. |
-| `processing.ignore_errors` | `false` | When a whole step fails (a batch call, a translation language, an evaluator, global map/reduce, the DRIFT primer, the auto router), log it and continue with an empty or degraded result instead of raising. Items whose own LLM call fails are always skipped and reported, whatever this says. |
-| `processing.deduplicate` | `false` | Drop near-duplicate documents before extraction. Two documents are near-duplicates when the Jaccard similarity of their character 3-gram sets, estimated with a 128-permutation MinHash, is at least 0.9; of each pair the first is kept (an incremental run keeps the already-indexed copy). These parameters are fixed. |
-| `processing.resolution_method` | `"minhash"` | Entity resolution: `minhash` or `sequence_matcher`. |
-| `processing.fuzzy_entity_resolution` | `false` | Also merge entities whose names are only similar, in full builds and incremental merges. Off: names merge when equal after normalization, legal-form removal and dense-script spacing. |
-| `processing.similarity_threshold` | `0.85` | Threshold for fuzzy entity resolution and for matching claim subjects/objects to entity names. Raise it if distinct entities merge. |
-| `processing.document_parsing.source_directory` | `"source"` | Fallback for library callers. `run-ingestion` requires `--source-directory` (or `UKR_SOURCE_DIRECTORY`). |
-| `processing.document_parsing.target_directory` | `null` | Export each parsed document as `<stem>.json` for inspection (same as `--output-directory`). Must not be the source directory. |
-| `processing.document_parsing.index_value` | `null` | Index suffix the run writes: every OpenSearch index and Neptune label is named `<prefix>-<index_value>` (`null` = `default`). Query the corpus with the same value as `run-rag`/`run-eval --suffix`. `run-ingestion` has no flag for it; use one config file per tenant or version. |
-| `processing.document_parsing.source_scope` | `null` | Corpus identity for incremental deletion: a run only deletes registry documents of its own index suffix and source scope. `null` = the resolved source directory; the container entrypoint sets it to the S3 URI (`UKR__PROCESSING__DOCUMENT_PARSING__SOURCE_SCOPE`). See §5. |
-| `processing.chunking.chunker_type` | `"intelligent"` | `intelligent` lets an LLM pick semantic boundaries; `simple` splits by size. |
-| `processing.chunking.min_chunk_size` | `1000` | Minimum chunk size in characters; shorter pieces merge into a neighbour. |
-| `processing.chunking.max_chunk_size` | `8000` | Maximum chunk size in characters. Must fit the embedding and rerank input limits. Sizes count characters, not tokens: English averages ~4 characters per token, but a Han/Hangul/Kana character is ~1 token, so 8,000 CJK characters is ~8K tokens. That fits Titan Text Embeddings V2 (8,192) but not the 4,096-token Cohere Rerank 3.5 document limit; for CJK corpora with reranking use about half the sizes. |
-| `processing.chunking.chunk_overlap` | `500` | Overlap between chunks in characters. |
-| `processing.chunking.fallback_chunk_size` | `4800` | Target size for the size-based splitter (`simple`, or when intelligent chunking fails). It splits at paragraphs, then lines, then after CJK sentence terminators (`。．｡！？；`), then spaces. |
-| `processing.translation.enabled` | `true` | Run the translation stage. It is a no-op (zero LLM cost) when the source and target languages match and no additional target is set. |
-| `processing.translation.source_language` | `"en"` | Predominant corpus language; used only for the no-op check. |
-| `processing.translation.target_language` | `"en"` | Language the corpus is translated into (see §3 Multilingual ingestion); entity and relationship descriptions are written in it. |
-| `processing.translation.additional_target_languages` | `null` | Extra target languages to translate into. Each is indexed in its own `translated_text_<language>` field with that language's analyzer and searched lexically (useful with a per-query `RAGInput.target_language`); extraction, embeddings and the answer context use `target_language` only. Each language is one more LLM call per chunk. |
-| `processing.graph_extraction.entity_types` | 7 generic types | `"LABEL: description"` items injected into the extraction prompt. The most effective domain-adaptation knob (§9). An empty list lets the model choose. |
-| `processing.graph_extraction.max_entities_per_chunk` | `50` | Cap on entities per chunk (relationships: `max_relationships_per_chunk`, also `50`). |
-| `processing.graph_extraction.entity_confidence_threshold` | `0.0` | Drop an entity from each chunk that scored it below this confidence, with that chunk's relationships naming it (per chunk, so the result does not depend on which documents are indexed together); `0.0` keeps all. |
-| `processing.graph_extraction.description_summarization.enabled` | `true` | Re-summarize merged descriptions longer than `force_summary_threshold_tokens` (`600`) with an LLM. |
-| `processing.graph_extraction.entity_grounding.enabled` | `false` | Hallucination guard: drop (or, with `action: "penalize"`, down-weight) entities and relationships whose verbatim `source_text` span is absent from the chunk; `penalize` still drops an ungrounded relationship naming an entity the chunk did not extract (punctuation ignored; Han/Hangul/Kana spans are compared by character bigrams, so a Korean particle change still counts as present). Also applies to gleaning additions (under `penalize` they are down-weighted, not dropped, on the same rules): a gleaned relationship naming an entity rejected for its chunk is dropped, and one naming an entity the chunk does not list is kept only when the chunk contains the name. |
-| `processing.gleaning.enabled` | `true` | Extra extraction passes that catch missed entities and relationships. |
-| `processing.gleaning.max_rounds` | `3` | Gleaning rounds per text unit. A later round re-sends only the units whose previous answer added a new entity or relationship, so a unit stops as soon as an answer adds nothing new. `1` matches MS GraphRAG's default. |
-| `processing.claim_extraction.enabled` | `false` | Extract claims (one extra LLM call per text unit). When on, `local` search injects matching claims and `simple` search sweeps the claims index. |
+- **What is screened.** The raw user query, once, before conversation memory,
+  the follow-up rewrite, routing and retrieval (`check_input`), and the final
+  answer (`check_output`; a streamed answer is then delivered as one chunk
+  after the check). Only those texts are evaluated and billed.
+- **What happens.** A blocked query is answered with the guardrail's blocked
+  message; nothing is retrieved or written to memory, and
+  `RAGOutput.metadata.blocked` is `true`. A masked query (PII anonymized)
+  continues with the masked text, so retrieval, the models and memory never
+  see the original. A blocked or masked answer is replaced by the guardrail's
+  text. Every intervention is listed in `RAGOutput.metadata.guardrail`
+  (source, action, policies), logged at WARNING with a running count, and
+  recorded on a `kg_rag.guardrail` span. A guardrail API error fails the
+  query (with `processing.ignore_errors`, the standard error answer); it is
+  never answered unscreened.
+- **Why not on the model calls.** The model calls inside a query (rewrite,
+  routing, keyword extraction, global/DRIFT map steps, answer generation) run
+  without a guardrail. Attached to a model call, a guardrail evaluates the
+  whole prompt: on the Converse API that is the retrieved corpus text and the
+  developer instructions, which a `PROMPT_ATTACK` filter judges as user input
+  (false blocks), at a cost that grows with context size times calls; on the
+  InvokeModel API the `PROMPT_ATTACK` filter does nothing unless the user
+  input is wrapped in input tags
+  ([Bedrock Guardrails: prompt attacks](https://docs.aws.amazon.com/bedrock/latest/userguide/guardrails-prompt-attack.html)).
+  Contextual grounding checks are not run: they need the grounding source and
+  query as qualified content, which the answer screen does not send.
+- **Ingestion and evaluation.** Ingestion models, the prompt tuner and the
+  evaluation judges run unguarded by default (`apply_to: "query"`): a PII
+  guardrail that anonymizes `NAME` rewrites extracted entity names to a
+  placeholder such as `{NAME}` (distinct people merge into one node), and a
+  `PROMPT_ATTACK` filter can block instruction-like corpus text.
+  `apply_to: "all"` attaches the guardrail to those calls; use it only with a
+  policy that is safe for extraction. On the query path `NAME` anonymization
+  also hurts: a question about a person loses the name it retrieves by, and
+  answers show `{NAME}`. The baseline guardrail that `iac/` creates therefore
+  anonymizes email, phone and card numbers but not `NAME`.
+- **Custom code** that builds chains with `setup_chain` or calls `get_model`
+  for non-query work should pass `model_purpose=ModelPurpose.INGESTION` (or
+  `EVALUATION`). Unmarked calls default to `QUERY`: they get the query-time
+  transient-error retry, and never an attached guardrail.
 
-### 2.4 `graph` — analysis, community detection, visualization
+### S3 cache encryption
 
-| Key | Default | What it does / when to change |
-|---|---|---|
-| `graph.community_detection.enabled` | `true` | Leiden clustering plus community-report generation. Required by GraphRAG `global`/`drift`. Set `false` for a lighter LightRAG-only ingestion. |
-| `graph.community_detection.resolution` | `1.0` | Leiden resolution: higher gives more, smaller communities (and more report LLM calls); lower gives fewer, larger ones. |
-| `graph.community_detection.random_state` | `42` | Leiden seed, a positive integer. The same graph and seed give the same communities. |
-| `graph.community_detection.auto_resolution` | `false` | `true` sweeps `auto_resolution_candidates` at every level and keeps the most modular resolution; otherwise `resolution` (`1.0`) is used. |
-| `graph.community_detection.auto_resolution_max_nodes` | `10000` | Above this node count the sweep is skipped and `resolution` is used. |
-| `graph.community_detection.max_levels` | `5` | Maximum community hierarchy depth. |
-| `graph.community_detection.max_cluster_size` | `20` | Maximum entities per level-0 community, and child communities per parent above; a larger one is partitioned again on its own subgraph until it fits (or cannot be split). Lower gives more, smaller leaves and more report calls. |
-| `graph.community_detection.min_community_size` | `3` | Smaller level-0 communities (in entities) merge into the neighbour they share the most edge weight with, unless that would exceed `max_cluster_size`. |
-| `graph.community_detection.report_generation.max_report_context_tokens` | `4000` | Token budget for the entity/relationship context in one report prompt. |
-| `graph.community_detection.report_generation.content_length` | `"medium"` | Report length as findings per report: `short` (5-7), `medium` (7-10), `long` (10-15). |
-| `graph.visualization.centrality.calculate_betweenness` | `true` | Betweenness centrality in the visualization (ingestion computes no centrality). On graphs larger than `betweenness_auto_sample_threshold` (`2000`) nodes it is sampled instead of computed exactly. |
-| `graph.visualization.enabled` | `false` | Render visualizations during ingestion and export their data with the layout (one embedding call per node plus a layout reduction per ingest). |
-| `graph.visualization.export_data` | `true` | With `enabled: false`, still write `visualization_data.json` (graph and communities, no layout or centrality; one pass over the graph, no model call) so `run-visualization` can render on demand. |
-| `graph.visualization.outputs_directory` | `null` | Unset writes to `<cache dir>/<pipeline_id>/visualization`, so the data syncs to S3 with the cache. |
-| `graph.visualization.layout_method` | `"umap"` | `umap`, `tsne`, or `pca`. |
-| `graph.visualization.interactive.max_nodes` | `2000` | Top-N nodes by degree kept in `interactive_graph.html`; `0` or `null` disables the cap. Physics stays off (`physics_enabled: false`) unless set. |
+`aws.s3.encryption.encryption_type: BUCKET_DEFAULT` sends no encryption
+header, so the bucket's default applies (with the CDK stack's `use_cmk=true`,
+its customer-managed KMS key; forcing `AES256` would bypass it). When you reuse
+a bucket whose default is SSE-KMS, the writer needs `kms:GenerateDataKey` and
+`kms:Decrypt` on that key.
 
-### 2.5 `indexing` — OpenSearch & Neptune write side
+### What the logs contain
 
-| Key | Default | What it does / when to change |
-|---|---|---|
-| `indexing.reset` | `false` | Rebuild the run's index suffix from the whole corpus (without taking it offline: the vector indices swap aliases, the graph is rewritten in place and what the rebuild did not write is dropped at the end) and re-record its registry namespace. |
-| `indexing.additional_suffix` | `null` | Appended after the run suffix in every OpenSearch index name and Neptune label (`<prefix>-<suffix>-<additional_suffix>`, where `<suffix>` is `processing.document_parsing.index_value` at ingestion and `--suffix` at query time, both `default` when unset). Set it identically for ingestion and queries. Use it for versioned or multi-tenant separation. |
-| `indexing.cross_run_merge` | `true` | On delta runs, union the delta with existing graph state instead of overwriting, so entities shared with unchanged documents keep their lineage (§5). `false` overwrites. |
-| `indexing.community_drift_threshold` | `0.5` | Incremental runs: share of the run's clustered entities that also belong to an earlier level-0 community at which the run recommends a rebuild (WARNING and `community_rebuild_recommended`; see [Operations](./operations.md#incremental-runs)). |
-| `indexing.max_failure_rate` | `0.2` | Per-index-type write failure rate above which the indexing stage fails, and share of communities without a report above which community detection fails. `1.0` disables the partial-failure gate. |
-| `indexing.max_document_failures` | `3` | Incremental runs: consecutive FAILED records of unchanged content after which a document is no longer retried (§5). |
-| `indexing.max_document_attempts` | `3` | Incremental runs: consecutive runs that started indexing a document's unchanged content and never finished it (the run died) after which the document is quarantined: skipped until its content or the extraction settings change (§5, *Quarantined documents*). |
-| `indexing.lease_seconds` | `300` | Incremental runs: term of the index namespace's write lease, which a run holds for its whole duration and renews every third of it; a dead run's lease expires at most this long after (§5, *Concurrent runs*). Minimum `10`. |
-| `indexing.retire_source_scopes` | `[]` | Incremental runs: former source scopes (an old absolute source directory, or a former `source_scope` value) whose records in the run's index suffix are treated as deleted, so their exclusive content is removed. Never the run's own scope. `--retire-source-scope` adds to it. See §5 Deletion scope. |
-| `indexing.opensearch.build_relationship_vector_index` | `true` | Relationship vector index. LightRAG `mix`/`hybrid` (high-level keywords, incident edges) and GraphRAG `local` (relationship section, bridge relationships) query it, and `simple`/`drift` search it with the other indexes. `false` skips the relationship embeddings at the cost of those. |
-| `indexing.opensearch.persist_embedding_cache` | `false` | Persist the embedding cache to S3 so unchanged text is not re-embedded across runs. Requires `aws.s3.bucket_name`. |
-| `indexing.opensearch.language_analyzers` | `{en: english, ko: nori}` | Text analyzer per language code; unlisted languages use `default_analyzer` (`standard`). |
-| `indexing.opensearch.vector_search.engine` | `"lucene"` | HNSW engine. `lucene` supports `cosinesimil` up to 1024 dimensions; see the template for `faiss`. |
-| `indexing.opensearch.vector_search.ef_search` | `100` | Candidates a kNN query explores (more: better recall, slower). On `faiss` and `nmslib` it is the index setting `index.knn.algo_param.ef_search`, fixed when the index is created. `lucene` ignores that setting, so the retriever sends it as the `k` of each kNN query (at least the hits it returns); there it applies from the next query. |
-| `indexing.opensearch.index_settings.refresh_interval` | `"1s"` | Raise it (or `"-1"`) for faster bulk loads, then reset for live querying. |
-| `indexing.neptune.batch_size` | `100` | Items per Neptune write batch. |
-| `indexing.neptune.index_concurrency` | `1` | Concurrent write batches (and relationship edges). The Gremlin connection pool grows to match if `aws.neptune.pool_size` is smaller. |
-| `indexing.neptune.max_attempts` | `4` | Attempts per Neptune indexer request (writes, read-backs, drops and label clears), including the first. Failures are retried with full-jitter exponential backoff (the wait after attempt n is random between 0 and `retry_delay_seconds` (`2`) x 2^(n-1) seconds), except errors a retry cannot fix (malformed query, access denied, bad parameter), which fail on the first attempt. `1` disables the retry. |
-| `indexing.neptune.max_hops` | `3` | Neighbour-expansion depth at retrieval time. |
-| `indexing.neptune.property_max_length` | `4000` | Character cap per Neptune property value. Keep it above the longest description that is not re-summarized (summarization triggers above 600 tokens, ~2,400 characters). OpenSearch keeps descriptions in full, and the incremental cross-run merge takes a capped one from there. Takes effect on re-ingestion. |
-| `indexing.neptune.entity_importance_source` | `"rank"` | Entity importance in graph-expansion relevance (orders entities at the same distance from the seeds; nearer entities, seeds first, always rank higher): `rank` (indexed entity rank, its degree), `degree` (edge count at query time) or `none` (neutral 0.5 for every entity). |
-| `indexing.neptune.traversal_fetch_multiplier` | `3` | Graph expansion fetches this many times the result width, ranks, then keeps the seeds plus the best result-width others. `1` = cut in traversal order. |
+At `INFO` and above the package logs only lengths, counts, ids and a short
+hash for user and corpus text, for example `query: len=42 sha=1a2b3c4d`. The
+hash is stable, so one query can be followed across records without revealing
+it. Query text, rewritten (DRIFT and translated) queries, entity names and raw
+model output are logged only at `DEBUG`, and exception messages never carry
+model output. Treat `DEBUG` logs (`logging.level: DEBUG`,
+`UKR__LOGGING__LEVEL=DEBUG` or `--verbose`) as containing user and corpus
+data: do not enable them where logs are shipped to shared storage. Libraries
+set to `DEBUG` in `logging.library_levels` (for example `botocore`) can log
+request bodies too.
 
-### 2.6 `search` — retrieval, fusion, reranking, per-strategy knobs
+The CLIs also write their logs to `logging.log_file_path` (`logs/log.txt`,
+dated as `log_YYYYMMDD.txt`) unless `logging.log_to_file` is `false`.
+Imported as a library, the package configures no handler or file: the host
+application's logging setup applies, its formatter shows the plain message,
+and the structured fields (`logger`, `level`, `pipeline_id`, `trace_id`, ...)
+are attributes of the log record.
 
-| Key | Default | What it does / when to change |
-|---|---|---|
-| `search.auto_routable_strategies` | `["local", "mix", "global", "drift"]` | Strategies the `auto` router may pick; its prompt describes exactly these, in this order. With `graph.community_detection.enabled: false`, `global` and `drift` are left out (there are no community reports), and `local` is used when nothing is left. `auto` itself is rejected. Any strategy can still be chosen explicitly. |
-| `search.hybrid.lexical_weight` | `0.5` | Lexical weight of a hybrid search (vector: `vector_weight`, also `0.5`). A hybrid search runs a lexical and a kNN search on each index, each fetching at least 50 hits, min-max normalizes each over those hits, takes their weighted mean and keeps the requested number. The fixed window keeps the ranking independent of how many hits a query asks for. The weights are read at query time. |
-| `search.fusion.method` | `"rrf"` | `rrf` (reciprocal rank fusion) or `weighted`. |
-| `search.fusion.rrf_k` | `60` | RRF constant `k`. |
-| `search.fusion.fusion_weights` | `{}` (every bucket `1.0`) | Per-source-bucket weights; they scale each bucket's contribution under both `rrf` and `weighted`. The template lists the bucket names. |
-| `search.fusion.diversity_lambda` | `0.5` | MMR trade-off: `1.0` = pure relevance, `0.0` = maximum diversity. |
-| `search.reranking.enabled` | `true` | Rerank fused results with `models.rerank` (`cohere.rerank-v3-5:0`). |
-| `search.reranking.top_k` | `100` | Candidates sent to the reranker. |
-| `search.reranking.required` | `false` | `true` fails the query with `RerankModelError` when reranking is enabled but the rerank model cannot be built, a rerank call fails, or it returns nothing usable. `false` keeps the fused order in those cases (an initialization failure is logged at ERROR). No effect when reranking is off or `providers.rerank.kind` is `none`. See [Rerank status](#rerank-status). |
-| `search.lightrag_search.kg_stream_top_k` | `40` | Width of the LightRAG entity/relationship vector queries (a floor against the request's `top_k`). |
-| `search.lightrag_search.chunk_stream_top_k` | `20` | Width of the LightRAG chunk stream. |
-| `search.lightrag_search.enable_graph_expansion` | `false` | `mix`/`hybrid`: also expand matches through Neptune. |
-| `search.global_search.community_depth` | `2` | The cut of the community hierarchy `global` maps over, counted from the root as MS GraphRAG's `community_level` (default 2 there too): every community at this depth plus the leaves above it, so each entity is covered once. `0` = the root communities (fewest, broadest reports); a large value = the leaves (most, narrowest). |
-| `search.global_search.max_reports_per_level` | `100` | Most reports one cut (or one step of the dynamic selection) contributes. A larger cut is cut to the reports most similar to the query, and the search metadata says so (`global_level_capped`). Bounded by `indexing.opensearch.max_query_size`. Each mapped report costs map-step input tokens. |
-| `search.global_search.use_dynamic_selection` | `false` | MS GraphRAG dynamic community selection instead of a fixed cut: rate the root reports with `models.roles.community_relevance`, descend into the relevant ones' children down to `community_depth`, and map the relevant reports. One fast-model call per rated report. |
-| `search.global_search.relevance_threshold` | `0.2` | Dynamic selection keeps a report rated at least this (its 1-10 rating / 10); 0.2 is MS GraphRAG's threshold of 1 on its 0-5 scale. A report below it prunes its subtree. |
-| `search.global_search.map_context_tokens` | `12000` | Report tokens packed into one map-step call (MS GraphRAG's `data_max_tokens`); map calls run `processing.max_concurrency` at a time. |
-| `search.global_search.max_map_reduce_tokens` | `8000` | Token budget for ranked key points fed to the reduce step. |
-| `search.global_search.reduce_with_llm` | `false` | `true` = a reduce LLM summarizes the packed key points before the answer model rewrites them (one extra LLM call). `false` passes the points straight to the answer model. |
-| `search.global_search.text_unit_slots` | `0` | Text units of the communities behind the key points added to the context, reranked. `0` = none, as in MS GraphRAG's global search; the chunks took most of the answer budget the key points and reports need. |
-| `search.local_search.entity_frequency_threshold` | `20` | Drop graph-expanded entities that appear in more text units than this (too generic). The query's own matched entities are always kept. |
-| `search.local_search.include_bridge_relationships` | `true` | Also fetch relationships incident to the expanded entities, edges between two retrieved entities first (multi-hop bridges). Needs the relationship index. `false` = relationship vector query only. |
-| `search.drift_search.k_followups` | `20` | Community reports the DRIFT primer reads, and follow-up queries run per round (MS GraphRAG `drift_k_followups`). Each follow-up query is one local search plus one `models.roles.drift_action` call. |
-| `search.drift_search.primer_folds` | `5` | Primer calls the primer reports are split over; each drafts an intermediate answer and follow-up queries. |
-| `search.drift_search.n_depth` | `3` | Rounds of follow-up queries: up to `k_followups * n_depth` local searches per query. |
-| `search.drift_search.local_context_tokens` | `12000` | Context budget one follow-up query is answered from. |
-| `search.drift_search.max_answer_tokens` | `8000` | Budget for the ranked intermediate answers given to the answer model. |
-| `search.token_manager.max_context_tokens` | `30000` | Retrieval context budget for the answer prompt (see the note below). |
-| `search.token_manager.context_window_headroom_ratio` | `0.1` | Share of the window held back when the budget is derived (`max_context_tokens: null`). |
-| `search.store_timeout_seconds` | `30` | How long a query waits for one OpenSearch or Neptune request (and for opening a Neptune connection); a Neptune traversal, including its wait for a pooled connection, gets twice that. A store that does not answer fails the query instead of answering from no context. Ingestion keeps its own limits. |
-| `search.store_max_attempts` | `3` | Attempts of one OpenSearch query request that timed out, could not connect or got a 429/502/503/504, including the first, with a jittered backoff between them (0.25-0.5 s, then 0.5-1 s, doubling up to 2-4 s), so the default 3 attempts wait about 0.75-1.5 s in all and a short throttling burst is waited out. A hung cluster fails a query after about `3 x 30` s, and one still answering 429/5xx after them fails it too. Neptune query requests are not retried. |
+### Custom prompts
 
-Per-section-type shares (`search.token_manager.type_budgets`) and `local` slot
-quotas (`search.local_search.type_quota`) are in the template.
+Every prompt has a `custom_prompts.*_system` / `*_human` override (default
+`null` = the built-in prompt in `unified_kg_rag/domain/prompts/`). Override
+what you need and leave the rest `null` ([§9](#9-domain-adaptation)).
+Overrides are validated at load: unknown `{variables}` and missing data
+variables (such as `{input_text}`) are errors, and a literal brace is written
+`{{` / `}}`.
 
-> **Context budget.** `30000` matches upstream LightRAG's total context budget
-> (MS GraphRAG uses 12000). A budget derived from a 1M-token window (~785K)
-> never binds, so per-type budgets would never trim anything. The value is
-> always clamped to what `models.roles.answer_generation` accepts alongside
-> its output reservation (`aws.bedrock.default_max_output_tokens`), with a
-> warning when that happens. With `null`, the budget is derived from that
-> model's window minus the output reservation and the headroom ratio;
-> `aws.bedrock.enable_1m_context` widens it on models where 1M is a beta.
-
-### 2.7 `memory`, `cache`, `logging`
-
-| Key | Default | What it does / when to change |
-|---|---|---|
-| `memory.max_conversations` | `100` | Conversations held in conversation memory (§4 Interactive mode). |
-| `memory.max_messages_per_conversation` | `20` | Messages kept per conversation. |
-| `memory.max_conversation_age_hours` | `168` | Hours a conversation may stay idle; an older one is dropped and starts over. |
-| `cache.ttl_seconds` | `86400` | Cache entry TTL; `null` = never expire. Not applied with `--s3-sync` (the bucket lifecycle expires the checkpoints). |
-| `cache.llm_responses.enabled` | `true` | Keep the ingestion model responses with the stage cache so a re-run with the same pipeline id does not repeat answered calls (see **LLM response cache** in section 3). |
-| `cache.llm_responses.flush_every` | `100` | Responses per cache segment file (written and, with `--s3-sync`, uploaded when full and at each stage checkpoint). |
-| `logging.level` | `"INFO"` | `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`. |
-| `logging.log_format` | `"structured"` | `structured` or `plain`. |
-| `logging.log_to_file` | `true` | The CLIs also write logs to `log_file_path` (`logs/log.txt`, dated as `log_YYYYMMDD.txt`; a relative path is resolved against the working directory). Importing the package as a library configures no handler or file: the host application's logging setup applies, its formatter shows the plain message, and the structured fields (`logger`, `level`, `pipeline_id`, `trace_id`, ...) are attributes of the log record. |
-| `logging.library_levels` | `{langchain_aws: WARNING, botocore: WARNING, urllib3: WARNING, opentelemetry: ERROR}` | Per-logger levels for chatty libraries. Setting the key replaces the whole map. |
-
-**What the logs contain.** At `INFO` and above the package logs only lengths,
-counts, ids and a short hash for user and corpus text, for example
-`query: len=42 sha=1a2b3c4d`. The hash is stable, so one query can be followed
-across records without revealing it. Query text, rewritten (DRIFT and
-translated) queries, entity names and raw model output are logged only at
-`DEBUG`, and exception messages never carry model output. Treat `DEBUG` logs
-(`logging.level: DEBUG`, `UKR__LOGGING__LEVEL=DEBUG` or `--verbose`) as containing user
-and corpus data: do not enable them where logs are shipped to shared storage.
-Libraries set to `DEBUG` in `logging.library_levels` (for example `botocore`)
-can log request bodies too.
-
-### 2.8 `evaluation`
-
-| Key | Default | What it does / when to change |
-|---|---|---|
-| `evaluation.enabled_evaluators` | `[langchain, ragas, answer_match, retrieval, graph_aware]` | The deterministic evaluators (`answer_match`, `retrieval`, `graph_aware`) skip queries that lack their ground-truth fields (§6). Remove the LLM judges to evaluate without judge cost. |
-| `evaluation.judge_effort` | `"low"` | Reasoning effort for LLM judges; `null` inherits the judge model's tier effort (`aws.bedrock.default_effort` by default). |
-| `evaluation.ragas_timeout` | `300` | Seconds to score one metric on one sample; a timeout yields NaN. |
-| `evaluation.ragas_max_contexts` | `20` | Top-ranked contexts per sample scored by RAGAS `context_precision` (so it is "@20"); faithfulness and context_recall see the full token-budgeted context. `null` = no cap. |
-| `evaluation.ragas_max_workers` | `8` | Concurrent RAGAS jobs. Lower it if Bedrock throttles the judge. |
-| `evaluation.ragas_max_attempts` | `3` | Total attempts per judge call. |
-| `evaluation.max_context_tokens` | `null` | Token cap on the context passed to the RAGAS judges; `null` = the answer budget (`search.token_manager.max_context_tokens`), a smaller value logs a warning. |
-| `evaluation.answer_normalization` | `default` | `exact_match` / `token_f1` normalization; `official_squad` = the official SQuAD v1.1 script, for numbers comparable with published MuSiQue / HotpotQA results. |
-| `evaluation.retrieval_k` | `5` | Cutoff for the `retrieval` evaluator's hit@k / recall@k: the top k distinct files of the reported sources. |
-| `evaluation.outputs_directory` | `"outputs/evaluation"` | Where results are written. |
-
-Metric lists (`langchain_metrics`, `ragas_metrics`) are in the template.
-
-### 2.9 `custom_prompts`
-
-Every prompt has a `*_system` / `*_human` override (default `null` = use the
-built-in prompt in `unified_kg_rag/domain/prompts/`). See §9. Override what you
-need; leave the rest `null`. Overrides are validated at load: unknown
-`{variables}` and missing data variables (such as `{input_text}`) are errors,
-and a literal brace is written `{{` / `}}` (§9.B).
-
-### 2.10 Environment variable overrides
+### Environment variable overrides
 
 Any config key can be set from the environment as `UKR__` followed by its
 path, with double underscores between the segments, in any case:
@@ -824,15 +645,14 @@ the config file and the built-in defaults. Values are converted to the field's
 type (`true`/`1`/`yes`/`on` count as true for booleans; a list or mapping
 setting takes JSON, e.g. `UKR__SEARCH__AUTO_ROUTABLE_STRATEGIES='["local", "mix"]'`)
 and checked against the field's constraints, as the same value in the file
-would be (`UKR__LOGGING__LEVEL` in any case). An invalid value, or a `UKR__`
-variable that names no config key, is a usage error: the CLI prints one line
-naming the variable and exits 2 (`--allow-unknown-keys` turns the unknown
-name into a WARNING).
+would be. An invalid value, or a `UKR__` variable that names no config key, is
+a usage error: the CLI prints one line naming the variable and exits 2
+(`--allow-unknown-keys` turns the unknown name into a WARNING).
 
 The AWS SDK's own `AWS_PROFILE` and `AWS_REGION` fill `aws.profile_name` and
 `aws.region_name` only when the config file leaves them unset: as in the SDKs,
 an explicit setting wins over the environment, so a shell that exports
-`AWS_REGION` (SSO helpers and CloudShell do) no longer moves a file's region.
+`AWS_REGION` (SSO helpers and CloudShell do) does not move a file's region.
 `AWS_DEFAULT_REGION` is not read; `UKR__AWS__REGION_NAME` overrides the file
 like any other `UKR__` variable.
 
@@ -840,27 +660,35 @@ The variables a deployment usually sets:
 
 | Variable | Sets | Notes |
 |---|---|---|
-| `AWS_PROFILE` / `AWS_REGION` | `aws.profile_name` / `aws.region_name` | Only when the file leaves them unset. `AWS_REGION` also moves Bedrock calls while `aws.bedrock.region_name` is `null`. |
+| `AWS_PROFILE` / `AWS_REGION` | `aws.profile_name` / `aws.region_name` | Only when the file leaves them unset. `AWS_REGION` also moves Bedrock calls while `aws.bedrock.region_name` is `null` |
 | `UKR__AWS__BEDROCK__REGION_NAME` | `aws.bedrock.region_name` | |
 | `UKR__AWS__BEDROCK__GUARDRAIL__IDENTIFIER` / `__VERSION` | `aws.bedrock.guardrail.identifier` / `version` | |
 | `UKR__AWS__NEPTUNE__ENDPOINT` | `aws.neptune.endpoint` | |
 | `UKR__AWS__OPENSEARCH__ENDPOINT` | `aws.opensearch.endpoint` | |
-| `UKR__AWS__OPENSEARCH__USERNAME` / `__PASSWORD` | `aws.opensearch.username` / `password` | Basic auth when `aws.opensearch.use_iam: false`; the password stays masked in logs. |
-| `UKR__INDEXING__OPENSEARCH__INDEX_SETTINGS__NUMBER_OF_REPLICAS` | `indexing.opensearch.index_settings.number_of_replicas` | Applies to indices created afterwards. |
-| `UKR__INDEXING__OPENSEARCH__LANGUAGE_ANALYZERS__KO` | `indexing.opensearch.language_analyzers.ko` | Applies to indices created afterwards. |
+| `UKR__AWS__OPENSEARCH__USERNAME` / `__PASSWORD` | `aws.opensearch.username` / `password` | Basic auth when `aws.opensearch.use_iam: false`; the password stays masked in logs |
+| `UKR__INDEXING__OPENSEARCH__INDEX_SETTINGS__NUMBER_OF_REPLICAS` | `indexing.opensearch.index_settings.number_of_replicas` | Applies to indices created afterwards |
+| `UKR__INDEXING__OPENSEARCH__LANGUAGE_ANALYZERS__KO` | `indexing.opensearch.language_analyzers.ko` | Applies to indices created afterwards |
 | `UKR__AWS__S3__BUCKET_NAME` | `aws.s3.bucket_name` | |
 | `UKR__AWS__DYNAMODB__TABLE_NAME` / `__CREATE_TABLE_IF_MISSING` | `aws.dynamodb.table_name` / `create_table_if_missing` | |
-| `UKR__PROCESSING__DOCUMENT_PARSING__SOURCE_SCOPE` | `processing.document_parsing.source_scope` | Set by the container entrypoint to the S3 URI it synced. |
+| `UKR__PROCESSING__DOCUMENT_PARSING__SOURCE_SCOPE` | `processing.document_parsing.source_scope` | Set by the container entrypoint to the S3 URI it synced |
 | `UKR__OBSERVABILITY__ENABLED` / `__BACKEND` | `observability.enabled` / `backend` | |
 | `UKR__LOGGING__LEVEL` / `__LOG_FORMAT` | `logging.level` / `log_format` | |
 
 `run-ingestion` also reads `UKR_SOURCE_DIRECTORY` and `UKR_PIPELINE_ID` (one
 underscore: they are not config keys) as the defaults of `--source-directory`
 and `--pipeline-id`; an explicit flag wins. `UKR_METRICS_ENVIRONMENT` is the
-`Environment` dimension of `--metrics-sink cloudwatch`.
+`Environment` dimension of `--metrics-sink cloudwatch`. The variables the CDK
+compute stack injects are listed in
+[`iac/README.md`](../iac/README.md#2-build-and-push-the-app-image); incremental
+indexing there still needs `aws.dynamodb.enabled: true` in the config file
+(the image's config sets it).
 
-The variable names before this release (`NEPTUNE_ENDPOINT`, `LOG_LEVEL`,
-`GRAPHRAG_SOURCE_SCOPE`, ...) are no longer read.
+The CLIs also load a `.env` file with python-dotenv: only `./.env` in the
+current working directory, never one in a parent directory (a `~/.env` setting
+`AWS_PROFILE` would otherwise switch accounts unnoticed). A variable already
+set in the environment wins over `.env`. Importing the package loads no `.env`
+and never changes `os.environ`; a Python caller that wants one loads it itself
+(for example `dotenv.load_dotenv()` before `get_config()`).
 
 > **LangSmith tracing uploads content.** When `LANGSMITH_TRACING=true` (or the
 > older `LANGCHAIN_TRACING_V2=true`) is set, LangChain sends every traced run to
@@ -870,31 +698,12 @@ The variable names before this release (`NEPTUNE_ENDPOINT`, `LOG_LEVEL`,
 > The warning comes from `setup_logging`, so library code that does not call it
 > gets none.
 
-The CLIs also load a `.env` file with python-dotenv: only `./.env` in the
-current working directory, never one in a parent directory (a `~/.env` setting
-`AWS_PROFILE` would otherwise switch accounts unnoticed). A variable already
-set in the environment wins over `.env`. Importing the package loads no `.env`
-and never changes `os.environ`; a Python caller that wants one loads it itself
-(for example `dotenv.load_dotenv()` before `get_config()`).
+### Observability
 
-The CDK compute stack injects `AWS_REGION`, `UKR__AWS__BEDROCK__REGION_NAME`,
-`UKR__AWS__NEPTUNE__ENDPOINT`, `UKR__AWS__OPENSEARCH__ENDPOINT`, `UKR__INDEXING__OPENSEARCH__INDEX_SETTINGS__NUMBER_OF_REPLICAS`
-(1 on a multi-node domain), `UKR__INDEXING__OPENSEARCH__LANGUAGE_ANALYZERS__KO` (`cjk` unless
-`opensearch_korean_analyzer` is set), `UKR__AWS__S3__BUCKET_NAME`,
-`UKR__AWS__DYNAMODB__TABLE_NAME`, `UKR__AWS__DYNAMODB__CREATE_TABLE_IF_MISSING=false` (the
-table is IaC-managed and the task role cannot create tables), `UKR__LOGGING__LOG_FORMAT`, and,
-when a guardrail is deployed, `UKR__AWS__BEDROCK__GUARDRAIL__IDENTIFIER` (and
-`UKR__AWS__BEDROCK__GUARDRAIL__VERSION` when `guardrail_version` is set). With
-`enable_cloudwatch_tracing` it also injects `UKR__OBSERVABILITY__ENABLED=true`,
-`UKR__OBSERVABILITY__BACKEND=otlp`, `OTEL_EXPORTER_OTLP_ENDPOINT` (the
-collector sidecar) and `OTEL_RESOURCE_ATTRIBUTES`. Incremental
-indexing still needs `aws.dynamodb.enabled: true` in the config file.
-
-### 2.11 `observability` — OpenTelemetry tracing
-
-Tracing is off by default. When it is on, every ingestion run and every query
-becomes an OpenTelemetry trace that any OTLP-capable backend (Jaeger, Grafana
-Tempo, an OpenTelemetry Collector, ...) can show. It needs the `otel` extra:
+Tracing is off by default. With `observability.enabled: true`, every ingestion
+run and every query becomes an OpenTelemetry trace that any OTLP-capable
+backend (Jaeger, Grafana Tempo, an OpenTelemetry Collector, ...) can show. It
+needs the `otel` extra:
 
 ```bash
 uv sync --extra otel          # or: pip install -e '.[otel]'
@@ -902,17 +711,13 @@ uv sync --extra otel          # or: pip install -e '.[otel]'
 
 Enabling tracing without the extra fails at start-up with a
 `ConfigurationError` that names the extra; with tracing off nothing
-OpenTelemetry-related is imported.
-
-| Key | Default | What it does / when to change |
-|---|---|---|
-| `observability.enabled` | `false` | Emit spans. `OTEL_SDK_DISABLED=true` turns it off regardless. |
-| `observability.backend` | `"none"` | `none`: spans go to the process's global tracer provider, which a host application or `opentelemetry-instrument` sets up. `otlp`: the package installs an OTLP exporter. `langfuse` / `phoenix`: the same OTLP exporter pointed at Langfuse or Arize Phoenix, with that vendor's attribute names added (see below). |
-| `observability.capture_content` | `false` | Also record prompt and completion text on model spans, and the query and answer on the `kg_rag.query` span (see *Trace shape*). Leave off for confidential corpora. |
-| `observability.redact_patterns` | `[]` | Regular expressions replaced with `[REDACTED]` in captured content and, with `otlp`/`langfuse`/`phoenix`, in every exported string attribute, event attribute (exception messages) and status message. |
-| `observability.sample_rate` | `1.0` | Fraction of root traces kept (`otlp`, `langfuse`, `phoenix`); child spans follow their root. With `none` the host's tracer provider samples. |
-| `observability.service_name` | `"unified-kg-rag"` | `service.name` resource attribute, and the Phoenix project; `OTEL_SERVICE_NAME` (and `PHOENIX_PROJECT_NAME`) win when set. |
-| `observability.export_timeout_seconds` | `10` | Upper bound on one export request (`otlp`, `langfuse`, `phoenix`); `OTEL_EXPORTER_OTLP_TIMEOUT` wins when set. |
+OpenTelemetry-related is imported. `observability.backend` picks where spans
+go (`none`: the process's global tracer provider, which a host application or
+`opentelemetry-instrument` sets up; `otlp`: an OTLP exporter the package
+installs; `langfuse` / `phoenix`: that exporter pointed at the vendor, below),
+and `capture_content`, `redact_patterns`, `sample_rate`, `service_name` and
+`export_timeout_seconds` are in the
+[reference](./configuration.md#observability).
 
 The exporter is configured by the standard OpenTelemetry environment
 variables, never by the config file, so a collector API key never lands in it:

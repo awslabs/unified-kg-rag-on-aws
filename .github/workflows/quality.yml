@@ -66,13 +66,13 @@ jobs:
         run: uv sync --locked --extra otel
 
       - name: Ruff (lint)
-        run: uv run ruff check unified_kg_rag tests iac
+        run: uv run ruff check unified_kg_rag tests iac scripts
 
       - name: Black (format check)
-        run: uv run black --check unified_kg_rag tests iac
+        run: uv run black --check unified_kg_rag tests iac scripts
 
       - name: isort (import order)
-        run: uv run isort --check-only unified_kg_rag tests iac
+        run: uv run isort --check-only unified_kg_rag tests iac scripts
 
       - name: mypy (type check)
         run: uv run mypy unified_kg_rag
