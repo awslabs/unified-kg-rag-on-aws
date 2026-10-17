@@ -112,6 +112,18 @@ def normalize_answer(text: str) -> str:
     return without_articles or " ".join(text.split())
 
 
+_SQUAD_ARTICLES = re.compile(r"\b(a|an|the)\b")
+_SQUAD_PUNCTUATION = frozenset(string.punctuation)
+
+
+def normalize_answer_squad(text: str) -> str:
+    """The official SQuAD v1.1 ``normalize_answer`` (also MuSiQue's and
+    HotpotQA's): lowercase, delete ASCII punctuation, drop ``a``/``an``/``the``
+    and collapse whitespace. No Unicode folding."""
+    text = "".join(ch for ch in text.lower() if ch not in _SQUAD_PUNCTUATION)
+    return " ".join(_SQUAD_ARTICLES.sub(" ", text).split())
+
+
 def tokenize(text: str) -> list[str]:
     """Whitespace tokens of the normalized text (``normalize_answer``)."""
     return normalize_answer(text).split()

@@ -8,7 +8,11 @@ Unicode NFKC (``text_matching.normalize_answer``: lowercase, delete punctuation
 except a number's sign, decimal point and percent sign and "C++"-style
 suffixes, split dashed ranges and compounds, drop the English articles
 ``a``/``an``/``the``, collapse whitespace; not identical to the official SQuAD
-v1.1 script, so scores are not leaderboard-comparable), then:
+v1.1 script, so scores are not leaderboard-comparable). With
+``evaluation.answer_normalization: official_squad`` exact match and token F1
+use the official script's normalization instead
+(``text_matching.normalize_answer_squad``), for numbers comparable with
+published MuSiQue / HotpotQA results. Then:
 
 - ``answer_contains``: 1.0 if the gold answer appears in the generated answer
   as a whole-word phrase (``text_matching.phrase_in_text``: Korean particles
@@ -37,6 +41,7 @@ from __future__ import annotations
 import re
 import unicodedata
 from collections import Counter
+from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 
@@ -55,7 +60,7 @@ from unified_kg_rag.domain.models import (
     EvaluatorType,
 )
 
-from .text_matching import normalize_answer, phrase_in_text
+from .text_matching import normalize_answer, normalize_answer_squad, phrase_in_text
 
 __all__ = [
     "AnswerMatchEvaluator",
@@ -66,8 +71,12 @@ __all__ = [
 ]
 
 
-def exact_match(prediction: str, reference: str) -> float:
-    return float(normalize_answer(prediction) == normalize_answer(reference))
+def exact_match(
+    prediction: str,
+    reference: str,
+    normalize: Callable[[str], str] = normalize_answer,
+) -> float:
+    return float(normalize(prediction) == normalize(reference))
 
 
 # Yes/no answer words, by language, mapped to their polarity. A short
@@ -159,9 +168,13 @@ def answer_contains(prediction: str, reference: str) -> float:
     return float(phrase_in_text(reference, prediction))
 
 
-def token_f1(prediction: str, reference: str) -> float:
-    pred_tokens = normalize_answer(prediction).split()
-    ref_tokens = normalize_answer(reference).split()
+def token_f1(
+    prediction: str,
+    reference: str,
+    normalize: Callable[[str], str] = normalize_answer,
+) -> float:
+    pred_tokens = normalize(prediction).split()
+    ref_tokens = normalize(reference).split()
     if not pred_tokens or not ref_tokens:
         return float(pred_tokens == ref_tokens)
     overlap = sum((Counter(pred_tokens) & Counter(ref_tokens)).values())
@@ -215,8 +228,13 @@ class AnswerMatchEvaluator(BaseGraphRAGEvaluator):
             )
         answer = result.generated_answer or ""
         contains = max(answer_contains(answer, ref) for ref in references)
-        em = max(exact_match(answer, ref) for ref in references)
-        f1 = max(token_f1(answer, ref) for ref in references)
+        normalize = (
+            normalize_answer_squad
+            if self.config.evaluation.answer_normalization == "official_squad"
+            else normalize_answer
+        )
+        em = max(exact_match(answer, ref, normalize) for ref in references)
+        f1 = max(token_f1(answer, ref, normalize) for ref in references)
         return EvaluationReport(
             query_id=query.query_id,
             evaluator_type=self.evaluator_type,

@@ -29,7 +29,12 @@ from unified_kg_rag.application.cli import (
     run_rag_chain,
     run_visualization,
 )
-from unified_kg_rag.domain.models import EvaluationSummary, SearchStrategy, SearchType
+from unified_kg_rag.domain.models import (
+    EvaluationSummary,
+    EvaluatorType,
+    SearchStrategy,
+    SearchType,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -312,7 +317,8 @@ def test_eval_parser_requires_eval_data_path() -> None:
 def test_eval_parser_defaults() -> None:
     args = _eval_parser().parse_args(["--eval-data-path", "data.json"])
     assert args.eval_data_path == Path("data.json")
-    assert args.search_strategy == "auto"
+    assert args.search_strategy == ["auto"]
+    assert args.repeats == 1 and args.pairwise_judge is False
     assert args.search_type == "hybrid"
     assert args.top_k == 10
     assert args.outputs_directory is None
@@ -466,6 +472,129 @@ async def test_eval_runner_exit_code_and_manifest(
     manifest = json.loads(summary_file.read_text())["run_manifest"]
     assert manifest["cli_args"]["eval_data_path"] == str(data)
     assert len(manifest["dataset"]["sha256"]) == 64
+
+
+def test_eval_parser_takes_a_strategy_list() -> None:
+    args = _eval_parser().parse_args(
+        ["--eval-data-path", "d", "--search-strategy", "local, mix,global"]
+    )
+    assert args.search_strategy == ["local", "mix", "global"]
+    for bad in ("local,nope", "local,local", ","):
+        with pytest.raises(SystemExit):
+            _eval_parser().parse_args(
+                ["--eval-data-path", "d", "--search-strategy", bad]
+            )
+    with pytest.raises(SystemExit):
+        _eval_parser().parse_args(["--eval-data-path", "d", "--repeats", "0"])
+
+
+class _StrategyChain:
+    """Answers by strategy: local is right, mix wrong; auto routes to local."""
+
+    def __init__(self) -> None:
+        self.strategies: list[str] = []
+
+    async def ainvoke(self, inputs, config=None):
+        requested = inputs.get("search_strategy", "auto")
+        self.strategies.append(requested)
+        used = "local" if requested == "auto" else requested
+        answer = "Vendor" if used == "local" else "Buyer"
+        meta = {"search_strategy": used, "processing_time": 0.1}
+        return {"answer": answer, "sources": [], "metadata": meta}
+
+
+async def test_eval_runner_compares_strategies_pairwise(
+    config, mocker, tmp_path
+) -> None:
+    import json
+
+    config.evaluation.enabled_evaluators = [EvaluatorType.ANSWER_MATCH]
+    mocker.patch.object(run_evaluation, "display_ascii_art")
+    data = tmp_path / "eval.json"
+    data.write_text(
+        json.dumps(
+            [
+                # A per-item strategy does not override the compared ones.
+                {
+                    "question": f"Who ships {i}?",
+                    "answer": "Vendor",
+                    "metadata": {"search_strategy": "global"},
+                }
+                for i in range(4)
+            ]
+        )
+    )
+    out = tmp_path / "out"
+    args = _eval_parser().parse_args(
+        [
+            "--eval-data-path",
+            str(data),
+            "--outputs-directory",
+            str(out),
+            "--search-strategy",
+            "local,mix,auto",
+            "--repeats",
+            "2",
+        ]
+    )
+    chain = _StrategyChain()
+    runner = run_evaluation.EvaluationRunner(args, chain, config)
+    assert await runner.run() == 0
+    assert chain.strategies == ["local"] * 8 + ["mix"] * 8 + ["auto"] * 8
+    assert len(list(out.glob("evaluation_summary_*.json"))) == 6
+    comparison = json.loads(next(out.glob("evaluation_comparison_*.json")).read_text())
+    assert comparison["baseline"] == "local"
+    em = "answer_match/exact_match"
+    mix = comparison["deltas_vs_baseline"]["mix"][em]
+    assert (mix["pairs"], mix["mean_delta"], mix["ci_low"], mix["ci_high"]) == (
+        4,
+        -1.0,
+        -1.0,
+        -1.0,
+    )
+    assert (mix["wins"], mix["ties"], mix["losses"]) == (0, 0, 4)
+    assert comparison["deltas_vs_baseline"]["auto"][em]["mean_delta"] == 0.0
+    auto = comparison["strategies"]["auto"]
+    assert auto["routed_strategies"] == {"local": 8}
+    assert auto["repeats"] == 2 and auto["metrics"][em]["repeat_stdev"] == 0.0
+    assert comparison["run_manifest"]["cli_args"]["search_strategy"] == [
+        "local",
+        "mix",
+        "auto",
+    ]
+
+
+async def test_eval_runner_runs_the_pairwise_judge(config, mocker, tmp_path) -> None:
+    import json
+
+    config.evaluation.enabled_evaluators = []
+    mocker.patch.object(run_evaluation, "display_ascii_art")
+    judge = mocker.patch.object(run_evaluation, "PairwiseJudge")
+    judge.return_value.acompare = mocker.AsyncMock(
+        return_value={"judged": 1, "criteria": {}}
+    )
+    data = tmp_path / "eval.json"
+    data.write_text(json.dumps([{"question": "Who ships?", "answer": "Vendor"}]))
+    out = tmp_path / "out"
+    args = _eval_parser().parse_args(
+        [
+            "--eval-data-path",
+            str(data),
+            "--outputs-directory",
+            str(out),
+            "--search-strategy",
+            "local,mix",
+            "--pairwise-judge",
+        ]
+    )
+    assert (
+        await run_evaluation.EvaluationRunner(args, _StrategyChain(), config).run() == 0
+    )
+    baseline, candidate = judge.return_value.acompare.await_args.args
+    assert [r.generated_answer for r in baseline] == ["Vendor"]
+    assert [r.generated_answer for r in candidate] == ["Buyer"]
+    comparison = json.loads(next(out.glob("evaluation_comparison_*.json")).read_text())
+    assert comparison["pairwise_vs_baseline"] == {"mix": {"judged": 1, "criteria": {}}}
 
 
 # --- run_ingestion_pipeline: parser --------------------------------------

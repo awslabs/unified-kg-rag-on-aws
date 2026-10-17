@@ -85,7 +85,11 @@ The two rules to keep in mind:
   per-document lineage in the DynamoDB registry.
 - **CLIs** (`pyproject` scripts): `run-ingestion`, `run-rag`, `run-eval`,
   `run-visualization` (render from exported graph data, no ingestion),
-  `run-prompt-tuning` (profile a corpus → domain-adapted `custom_prompts` YAML).
+  `run-prompt-tuning` (profile a corpus → domain-adapted `custom_prompts` YAML),
+  `prepare-benchmark` (MuSiQue → corpus + `run-eval` dataset, downloaded at
+  run time, never committed). `run-eval --search-strategy a,b --repeats N`
+  runs a paired comparison (`evaluation/comparison.py`, optional
+  `--pairwise-judge`).
 - **Evaluation**: `langchain` + `ragas` (LLM judges) plus three LLM-free
   evaluators: `graph_aware` (entity/relationship coverage = recall, from
   ground-truth `expected_entities`/`expected_relationships`; precision/F1

@@ -6,6 +6,7 @@ from .data_processing import (
     TextChunkingPrompt,
     TextTranslationPrompt,
 )
+from .evaluation import PairwiseComparisonPrompt
 from .graph_extraction import (
     BasePrompt,
     ClaimExtractionPrompt,
@@ -46,6 +47,7 @@ __all__ = [
     "GraphRefinementPrompt",
     "KeywordsExtractionPrompt",
     "MapReduceSummaryPrompt",
+    "PairwiseComparisonPrompt",
     "QueryRewritePrompt",
     "ResolvedPrompt",
     "StrategySelectionPrompt",

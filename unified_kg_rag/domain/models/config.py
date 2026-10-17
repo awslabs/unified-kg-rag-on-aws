@@ -2728,6 +2728,14 @@ class CustomPromptConfig(BaseModel):
         default=None,
         description="Custom human prompt for the DRIFT primer (intermediate answer + follow-up queries)",
     )
+    pairwise_comparison_system: str | None = Field(
+        default=None,
+        description="Custom system prompt for the run-eval --pairwise-judge LLM judge",
+    )
+    pairwise_comparison_human: str | None = Field(
+        default=None,
+        description="Custom human prompt for the run-eval --pairwise-judge LLM judge",
+    )
     drift_hyde_system: str | None = Field(
         default=None,
         description="Custom system prompt for the DRIFT query expansion (HyDE)",
@@ -2850,6 +2858,7 @@ _REQUIRED_PROMPT_VARIABLES: dict[str, frozenset[str]] = {
     "graph_extraction": frozenset({"input_text"}),
     "graph_refinement": frozenset({"text", "entities", "relationships"}),
     "keywords_extraction": frozenset({"query"}),
+    "pairwise_comparison": frozenset({"query", "answer1", "answer2"}),
     "query_rewrite": frozenset({"query", "conversation_history"}),
     "strategy_selection": frozenset({"query", "strategies"}),
 }
@@ -3006,6 +3015,17 @@ class EvaluationConfig(BaseModel):
             "RAGAS RunConfig.max_retries, which RAGAS applies as "
             "stop_after_attempt, with exponential backoff). Attempts count "
             "against ragas_timeout."
+        ),
+    )
+    answer_normalization: Literal["default", "official_squad"] = Field(
+        default="default",
+        description=(
+            "Normalization of the answer_match exact_match and token_f1 scores. "
+            "'default' keeps meaning-bearing punctuation (minus signs, decimal "
+            "points, 'C++') and folds Unicode; 'official_squad' is the official "
+            "SQuAD v1.1 script (lowercase, ASCII punctuation and English "
+            "articles removed), so scores compare with published MuSiQue / "
+            "HotpotQA numbers. answer_contains always uses 'default'."
         ),
     )
     retrieval_k: int = Field(

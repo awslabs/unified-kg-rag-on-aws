@@ -16,8 +16,29 @@ def _positive_int(value: str) -> int:
     return number
 
 
-def add_query_arguments(parser: argparse.ArgumentParser) -> None:
-    """Add the index suffix, thinking, strategy, search type and width flags."""
+def _strategy_list(value: str) -> list[str]:
+    """A comma-separated list of distinct search strategies (``local,mix``)."""
+    names = [name.strip() for name in value.split(",") if name.strip()]
+    valid = [s.value for s in SearchStrategy]
+    unknown = [name for name in names if name not in valid]
+    if not names or unknown:
+        raise argparse.ArgumentTypeError(
+            f"invalid strategy {', '.join(unknown) or repr(value)} "
+            f"(choose from {', '.join(valid)})"
+        )
+    if len(set(names)) != len(names):
+        raise argparse.ArgumentTypeError(f"strategy listed twice in '{value}'")
+    return names
+
+
+def add_query_arguments(
+    parser: argparse.ArgumentParser, *, multiple_strategies: bool = False
+) -> None:
+    """Add the index suffix, thinking, strategy, search type and width flags.
+
+    With ``multiple_strategies`` (run-eval), ``--search-strategy`` takes a
+    comma-separated list and parses to a list of names.
+    """
     parser.add_argument(
         "--suffix",
         help="Suffix for multi-tenant or versioned indices",
@@ -32,12 +53,24 @@ def add_query_arguments(parser: argparse.ArgumentParser) -> None:
             "/ fast_effort in the config"
         ),
     )
-    parser.add_argument(
-        "--search-strategy",
-        default="auto",
-        choices=[ss.value for ss in SearchStrategy],
-        help="Choose the search strategy",
-    )
+    if multiple_strategies:
+        parser.add_argument(
+            "--search-strategy",
+            default=["auto"],
+            type=_strategy_list,
+            help=(
+                "Search strategy, or a comma-separated list (e.g. local,mix,global) "
+                "to answer the same queries with each and compare them pairwise "
+                "against the first"
+            ),
+        )
+    else:
+        parser.add_argument(
+            "--search-strategy",
+            default="auto",
+            choices=[ss.value for ss in SearchStrategy],
+            help="Choose the search strategy",
+        )
     parser.add_argument(
         "--search-type",
         default="hybrid",
