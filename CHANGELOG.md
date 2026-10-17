@@ -455,6 +455,9 @@ Library API (Python callers and custom backends).
   `evaluation.answer_normalization: official_squad` scores EM/F1 with the
   official SQuAD script, for numbers comparable with published results
   (#324).
+- `ingestion_ephemeral_storage_gib` (CDK context, 21-200, default 40) sizes
+  the ingestion task's disk, which holds the synced corpus, the parsed
+  documents and the stage cache (#PR).
 - Index build record: ingestion records in the vector index mappings'
   `_meta` which run last wrote each suffix (`pipeline_id`, `mode`,
   `built_at`, `documents`, `extraction_fingerprint`, `package_version`), and

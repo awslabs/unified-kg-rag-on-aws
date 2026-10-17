@@ -305,3 +305,23 @@ def test_tracing_adds_the_collector_to_both_task_definitions() -> None:
         names = {c["Name"] for c in task_def["Properties"]["ContainerDefinitions"]}
         assert names == {"app", "otel-collector"}
     assert len(template.find_resources("AWS::ECR::PullThroughCacheRule")) == 1
+
+
+@pytest.mark.parametrize(
+    ("context", "gib"), [({}, 40), ({"ingestion_ephemeral_storage_gib": 150}, 150)]
+)
+def test_ingestion_disk_is_configurable(context: dict[str, Any], gib: int) -> None:
+    task_defs = _compute_template(context).find_resources("AWS::ECS::TaskDefinition")
+    sizes = {
+        t["Properties"].get("Family", name): t["Properties"].get("EphemeralStorage")
+        for name, t in task_defs.items()
+    }
+    assert {"SizeInGiB": gib} in sizes.values()
+
+
+@pytest.mark.parametrize("gib", [20, 201])
+def test_ingestion_disk_outside_fargate_range_is_rejected(gib: int) -> None:
+    with pytest.raises(ValueError, match="ingestion_ephemeral_storage_gib"):
+        DeploymentConfig.from_context(
+            cdk.App(context={"ingestion_ephemeral_storage_gib": gib})
+        )

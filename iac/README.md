@@ -122,6 +122,7 @@ uploaded to S3 as they are produced, so an execution re-run with the same
 | `backup_retention_days` | `7` | Neptune automated backup retention, 1-35 days (see [Backup and restore](../docs/operations.md#backup-and-restore)) |
 | `fargate_cpu` | `2048` | Fargate task vCPU units (in-task ProcessPool extractors scale with vCPU): `256`, `512`, `1024`, `2048`, `4096`, `8192` or `16384` |
 | `fargate_memory` | `8192` | Fargate task memory (MiB); must be a size Fargate offers for `fargate_cpu` (with `2048`: 4096-16384 in 1024 steps), else synth fails naming the valid range |
+| `ingestion_ephemeral_storage_gib` | `40` | disk of the ingestion task (GiB, 21-200): holds the synced corpus, the parsed documents and the run's stage cache; size it to about twice the corpus plus the cache |
 | `image_tag` | `latest` | container image tag the task pulls; pin a version tag to make ECR tags immutable. The ECR lifecycle keeps this tag and the 10 newest images, so pin a tag rather than a digest |
 | `sfn_timeout_hours` | `6` | ingestion state machine timeout for a whole run (at least 1); a run that hits it is `TIMED_OUT` (alarmed) |
 | `create_guardrail` | `true` | `GraphRagGuardrail` creates and keeps a baseline PII/prompt-attack guardrail in `bedrock_region` (retained on stack deletion unless `removal_destroy`). `false` = bring your own guardrail; nothing is created |
@@ -251,7 +252,7 @@ for your region and sizes. What scales each service's cost:
 | Bedrock embeddings and rerank | Embedded text units, entities, relationships and reports; one rerank call per query over up to `search.reranking.top_k` candidates | `indexing.opensearch.persist_embedding_cache`, `search.reranking.top_k` |
 | Amazon Neptune | Provisioned: instance-hours × `neptune_instances`. Serverless (`neptune_serverless_ncu`): NCU-hours of each instance at its current capacity, never below `MIN` per instance, so an idle cluster still bills `MIN` × `neptune_instances` NCU. Both: storage and I/O, backup retention | `neptune_instance` or `neptune_serverless_ncu` (a low `MIN` for an environment that is idle most of the day, such as dev or a query-only deployment between ingestions; provisioned is usually cheaper under sustained load such as long ingestions), `neptune_instances` (1 in dev), `backup_retention_days`, tear down dev |
 | Amazon OpenSearch Service | Data node-hours × `opensearch_count`, plus three dedicated masters when `opensearch_count > 1`, and 50 GiB gp3 storage per data node | `opensearch_instance`, `opensearch_master_instance`, `opensearch_count` (1 in dev) |
-| AWS Fargate | vCPU and memory per task for the run time of the ingestion and query tasks | `fargate_cpu`, `fargate_memory` |
+| AWS Fargate | vCPU, memory and ephemeral storage above 20 GiB per task for the run time of the ingestion and query tasks | `fargate_cpu`, `fargate_memory`, `ingestion_ephemeral_storage_gib` |
 | VPC interface endpoints (`private`) | Seven endpoints (eight with `enable_cloudwatch_tracing`) × `max_azs`, billed per AZ-hour, plus data processed | `max_azs`, or reuse a VPC's endpoints (`vpc_id`) |
 | NAT gateways (`public`) | One per AZ, billed per hour, plus data processed | `max_azs`, or use `private` mode |
 | Amazon S3 | Stage checkpoints, embedding cache, corpus, access logs | 30-day expiry on `pipeline-runs/` and `embedding-cache/` |
@@ -471,7 +472,7 @@ aws logs tail /graphrag/tasks --region "$REGION" --follow
   `GRAPHRAG_SOURCE_DIRECTORY` / `GRAPHRAG_PIPELINE_ID`. The task is a fresh
   Fargate task, so `source_directory` must be an `s3://` URI: the container
   entrypoint (`docker/entrypoint.sh`) syncs it to local scratch before running
-  the CLI.
+  the CLI (size the disk with `ingestion_ephemeral_storage_gib`).
   `pipeline_id` accepts letters, digits, `.`, `_` and `-`, starting with a
   letter or digit, without `..`, up to 128 characters; reuse an id to resume a
   failed run from its S3 checkpoints: start a new execution with the same

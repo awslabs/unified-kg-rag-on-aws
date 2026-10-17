@@ -91,6 +91,9 @@ Context keys (all optional; sensible defaults shown):
                                        extractors scale with vCPU count)
   fargate_memory      8192             task memory (MiB)
   image_tag           latest           container image tag (pin a version for immutable ECR tags)
+  ingestion_ephemeral_storage_gib 40   ingestion task disk (GiB, 21-200): holds the
+                                       synced corpus, the parsed documents and
+                                       the run's stage cache
   sfn_timeout_hours   6                ingestion state machine timeout
 
   # --- Governance (propagated as cost-allocation / ownership tags) ---
@@ -256,6 +259,7 @@ class DeploymentConfig:
     backup_retention_days: int
     fargate_cpu: int
     fargate_memory: int
+    ingestion_ephemeral_storage_gib: int
     # container image tag the Fargate task pulls. Default "latest" (mutable, for
     # local/dev iteration); set to an immutable version tag for non-dev, which
     # also flips the ECR repo to immutable tags (provenance). A tag, not a
@@ -431,6 +435,10 @@ class DeploymentConfig:
             backup_retention_days=as_int("backup_retention_days", 7, maximum=35),
             fargate_cpu=fargate_cpu,
             fargate_memory=fargate_memory,
+            # Fargate's range; 20 GiB is what a task gets without the setting.
+            ingestion_ephemeral_storage_gib=as_int(
+                "ingestion_ephemeral_storage_gib", 40, minimum=21, maximum=200
+            ),
             image_tag=ctx("image_tag", "latest") or "latest",
             # A Standard state machine runs for up to one year.
             sfn_timeout_hours=as_int("sfn_timeout_hours", 6, maximum=8760),
