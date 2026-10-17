@@ -1,6 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 import copy
+import functools
 import logging
 import math
 import re
@@ -3146,6 +3147,7 @@ _REQUIRED_PROMPT_VARIABLES: dict[str, frozenset[str]] = {
 }
 
 
+@functools.cache
 def _warn_missing_output_tags(
     key: str, templates: str, required_tags: tuple[str, ...]
 ) -> None:
@@ -3155,6 +3157,8 @@ def _warn_missing_output_tags(
     where the output schema lives for the XML-parsed prompts; without it the
     model answers in a free format the parser drops. Some users teach the
     format in prose or a human override, so this warns rather than fails.
+    Once per override text: a config is validated several times per load
+    (each layer, each rebuild under provider flags).
     """
     missing = [tag for tag in required_tags if tag not in templates]
     if missing:
