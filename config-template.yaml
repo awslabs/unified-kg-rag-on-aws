@@ -612,8 +612,9 @@ indexing:
     # prompts, grounding, gleaning, claims). A chunk whose text and settings
     # are unchanged is never extracted again, in a full build, an incremental
     # run or another document (--force-rebuild re-extracts and rewrites them).
-    # No embeddings; only ever added to (a full build, indexing.reset and
-    # document deletions leave it as it is).
+    # No embeddings. A record stays while a stored text unit names it: a full
+    # build or indexing.reset keeps only its text units' records, and an
+    # incremental run deletes those only removed text units named.
     extraction_records_index_prefix: "graphrag-extraction-records"
     # Text analyzer per language code (extend without code changes); unlisted
     # languages use default_analyzer. The cluster must have it: nori is the

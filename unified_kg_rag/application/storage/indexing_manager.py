@@ -209,7 +209,7 @@ class IndexingManager:
                 *(claims or []),
             ]
         )
-        return self._write_artifacts(
+        results = self._write_artifacts(
             text_units,
             entities,
             relationships,
@@ -218,6 +218,42 @@ class IndexingManager:
             claims,
             suffixes=suffixes,
         )
+        written = results.get("opensearch_text_units")
+        if written is not None and not written.failed_items:
+            self._retain_extraction_records(text_units or [], suffixes)
+        return results
+
+    def _retain_extraction_records(
+        self, text_units: list[TextUnit], suffixes: list[str]
+    ) -> None:
+        """Keep, per rebuilt suffix, only the extraction records its stored
+        text units name: the records of other extraction settings, and of
+        texts no stored unit holds any more (deleted or edited documents),
+        go. Best-effort: a failure keeps the records, which cost space only.
+        """
+        named: dict[str, set[str]] = {suffix: set() for suffix in suffixes}
+        for unit in text_units:
+            named.setdefault(BaseIndexer.get_suffix(unit), set()).update(
+                record_keys(unit).values()
+            )
+        for suffix, keys in sorted(named.items()):
+            try:
+                kept = self.opensearch_indexer.retain_extraction_records(
+                    sorted(keys), suffix=suffix
+                )
+            except Exception as e:  # noqa: BLE001 - garbage only costs space
+                logger.warning(
+                    "Dropping the extraction records of '%s' its text units no "
+                    "longer name failed; they stay until the next full build: %s",
+                    suffix,
+                    e,
+                )
+                continue
+            logger.info(
+                "Kept %d extraction records of '%s' (the ones its text units name)",
+                kept.successful_items,
+                suffix,
+            )
 
     def index_delta(
         self,

@@ -740,6 +740,54 @@ class OpenSearchIndexer(VectorIndexer):
             suffix or Constants.DEFAULT_SUFFIX.value,
         )
 
+    def retain_extraction_records(
+        self, keys: list[str], suffix: str | None = None
+    ) -> IndexingStats:
+        """Keep only the records ``keys`` name (see the port).
+
+        The kept records are copied, a batch at a time, into a new index and
+        the alias is swapped onto it; the old index, with every record no key
+        names, is deleted. A failure before the swap drops the new index and
+        leaves the live one as it was.
+        """
+        prefix = self.opensearch_config.extraction_records_index_prefix
+        alias_name = self._get_name(prefix, suffix)
+        stats = IndexingStats()
+        if not self.opensearch_client.get_index_name_by_alias(alias_name):
+            return stats
+        index_name = self._new_index_name(
+            alias_name, prefix, suffix or Constants.DEFAULT_SUFFIX.value
+        )
+        wanted = sorted(set(keys))
+        try:
+            self.opensearch_client.create_index(
+                index_name, self._get_extraction_records_mapping(), exist_ok=False
+            )
+            for start in range(0, len(wanted), _READ_BATCH_SIZE):
+                documents = [
+                    {"id": source["id"], "record": source["record"]}
+                    for source in self._read_sources(
+                        prefix, wanted[start : start + _READ_BATCH_SIZE], suffix
+                    )
+                    if isinstance(source.get("record"), dict)
+                ]
+                response = self.opensearch_client.bulk_index(index_name, documents)
+                if response.get("items"):
+                    raise DataProcessingError(
+                        f"Copying {len(response['items'])} extraction records "
+                        f"to '{index_name}' failed"
+                    )
+                stats.add_success(len(documents))
+            self.opensearch_client.update_alias(
+                alias_name, index_name, remove_pattern=f"{alias_name}-*"
+            )
+        except Exception:
+            self._drop_unswapped_index(alias_name, index_name)
+            raise
+        self._reap_stale_indices(alias_name, index_name)
+        stats.total_items = stats.successful_items
+        return stats
+
     def read_extraction_records(
         self, keys: list[str], suffix: str | None = None
     ) -> dict[str, dict[str, Any]]:
@@ -760,8 +808,9 @@ class OpenSearchIndexer(VectorIndexer):
 
         The index has no embeddings and indexes no field but the id: the
         record is kept in ``_source`` only. It is not one of the artifact
-        indices (``_index_prefixes``), so a full build, ``clear`` and the
-        index-settings check leave it alone.
+        indices (``_index_prefixes``), so ``clear`` and the index-settings
+        check leave it alone, and a full build keeps the records its text
+        units name (:meth:`retain_extraction_records`).
         """
         stats = IndexingStats(total_items=len(records))
         if not records:

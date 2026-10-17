@@ -147,6 +147,20 @@ class _Store:
             r.error_message for r in context.stage_results if r.error_message
         ]
 
+    def record_keys(self) -> set[str]:
+        """Every record key in the default suffix's extraction store."""
+        vector = self.providers.build_vector_indexer()
+        try:
+            alias = vector._get_name(
+                self.config.indexing.opensearch.extraction_records_index_prefix, None
+            )
+            hits = vector.opensearch_client.search(
+                index=alias, body={"size": 1000, "query": {"match_all": {}}}
+            )["hits"]["hits"]
+        finally:
+            vector.close()
+        return {hit["_id"] for hit in hits}
+
     def edges(self) -> list[tuple]:
         graph = self.providers.build_graph_indexer()
         try:
@@ -207,6 +221,27 @@ def test_a_reset_reuses_the_records_and_force_rebuild_does_not(
     store.ingest(corpus, force_rebuild=True)
     assert model.calls == Counter(extract=1, glean=1)
     assert store.edges() == edges
+
+
+def test_a_reset_keeps_only_the_records_its_text_units_name(
+    tmp_path: Path,
+) -> None:
+    store = _Store(tmp_path, _Model())
+    kept = "Acme supplies goods to Buyer here."
+    store.ingest({"a.txt": kept, "b.txt": "Depot and Buyer trade goods today."})
+    before = store.record_keys()
+
+    # b.txt deleted and gleaning switched off (another record fingerprint):
+    # the reset's text units name only a.txt's ungleaned records.
+    store.config.indexing.reset = True
+    store.config.processing.gleaning.enabled = False
+    store.ingest({"a.txt": kept})
+    after = store.record_keys()
+
+    assert after and not after & before
+    # The next reset of the same corpus reuses (and keeps) every one of them.
+    store.ingest({"a.txt": kept})
+    assert store.record_keys() == after
 
 
 @pytest.mark.parametrize(

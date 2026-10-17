@@ -1143,6 +1143,14 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- The extraction store no longer grows without bound: a full build or
+  `indexing.reset` whose text units were all written keeps only the
+  extraction records its text units name, so records of earlier extraction
+  settings and of deleted or edited documents' chunks (their extracted
+  content included) are dropped instead of kept forever; incremental runs
+  already deleted the records only removed text units named. The operator
+  runbook states the retention. A switch of extraction settings and back
+  re-extracts once (#PR).
 - Evaluation counts guardrail blocks: each result records whether the
   guardrail blocked its query or answer (`guardrail_blocked`), and the
   summary counts them (`guardrail_blocked_counts`, also printed by

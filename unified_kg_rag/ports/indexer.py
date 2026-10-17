@@ -547,13 +547,25 @@ class VectorIndexer(BaseIndexer):
         more). Default deletes nothing."""
         return IndexingStats()
 
+    def retain_extraction_records(
+        self, keys: list[str], suffix: str | None = None
+    ) -> IndexingStats:
+        """Keep only the extraction records of ``suffix`` named by ``keys``
+        and drop every other (a full build, once its text units are stored:
+        records of other extraction settings, or of texts no stored unit
+        holds any more). Raises when it fails; the records are then left as
+        they were. Default keeps everything."""
+        return IndexingStats()
+
     def write_extraction_records(
         self, records: dict[str, dict[str, Any]], suffix: str | None = None
     ) -> IndexingStats:
         """Store text-unit extraction records by key (an upsert; see
-        :meth:`read_extraction_records`). The keys are content-derived, so
-        the store is only ever added to: a full build, a reset or a document
-        deletion leaves it as it is. Default stores nothing."""
+        :meth:`read_extraction_records`). The keys are content-derived:
+        a record goes when no stored text unit names it any more (an
+        incremental removal, :meth:`delete_extraction_records`) or a full
+        build or reset keeps only its own units' records
+        (:meth:`retain_extraction_records`). Default stores nothing."""
         return IndexingStats()
 
     def update_claim_lineage(self, claims: list[Claim]) -> IndexingStats:
