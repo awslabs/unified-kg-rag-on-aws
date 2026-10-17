@@ -47,7 +47,7 @@ naming the key that replaces it.
   an error instead of a warning: a misspelled key (a guardrail identifier
   under `aws.bedrock.guardrail.identifer`) left its setting at the default
   without a word. Every CLI takes `--allow-unknown-keys` to warn and go on;
-  `get_config` and `ConfigLoader` take `allow_unknown_keys=True` (#PR).
+  `get_config` and `ConfigLoader` take `allow_unknown_keys=True` (#335).
 - Environment overrides use one prefix and name the key they set:
   `UKR__<SECTION>__<KEY>` sets any config key (double underscores between
   path segments, any case; JSON for list and mapping settings). The former
@@ -73,20 +73,20 @@ naming the key that replaces it.
   `GRAPHRAG_METRICS_ENVIRONMENT` are `UKR_SOURCE_DIRECTORY` /
   `UKR_PIPELINE_ID` / `UKR_METRICS_ENVIRONMENT`. The CDK stacks and the
   container entrypoint set the new names; redeploy the stacks with the image
-  (#PR).
+  (#335).
 - `AWS_REGION` and `AWS_PROFILE` no longer override a region or profile the
   config file sets: they fill `aws.region_name` / `aws.profile_name` only
   when the file leaves them unset, as an explicit setting wins over the
   environment in the AWS SDKs (a shell exporting `AWS_REGION` used to move a
   file's region silently). Use `UKR__AWS__REGION_NAME` to override the file
-  (#PR).
+  (#335).
 - `graph.analysis.centrality` moved to `graph.visualization.centrality`: only
-  the visualization computes centrality (#PR).
+  the visualization computes centrality (#335).
 - Switching `--backend` (or any provider flag) rebuilds the config from what
   the file, the environment and the caller set, so a value equal to the old
   preset's that you set yourself is kept, and a change a library caller made
   to the `Config` object survives the flags (`Config.as_input`). The removed
-  `strip_backend_preset` dropped both (#PR).
+  `strip_backend_preset` dropped both (#335).
 - Every model setting moved into one top-level `models` section: the two
   tier models (`models.default`, `models.fast`), per-role overrides
   (`models.roles.<role>`, a model id or a tier name), the one embedding model
