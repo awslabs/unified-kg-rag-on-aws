@@ -613,7 +613,7 @@ LLM stages are Bedrock-I/O-bound, so concurrency can far exceed the CPU count.
 |---|---|---|
 | `processing.max_concurrency` | `40` | LLM calls an ingestion stage keeps in flight; the next item starts as soon as one finishes. Bedrock quotas differ per account, model and Region: lower it if the logs show `ThrottlingException` retries, raise it if quota allows. The `backend: local` preset sets `20`: a local model server queues the calls it cannot run at once. |
 | `processing.max_attempts` | `5` | Attempts per ingestion LLM item, including the first call. Transient Bedrock errors, call timeouts and unparseable output are retried; other errors fail fast. `1` disables the retry. |
-| `processing.io_workers` | `64` | Threads for blocking query-path I/O (Bedrock calls, Neptune traversals, reranking) in the CLIs and the chain's sync methods. Python's default caps it at `min(32, CPUs + 4)`, six on a 2-vCPU task. An async host calls `configure_event_loop(asyncio.get_running_loop(), config.processing.io_workers)` (from `unified_kg_rag.shared.utils`) at startup. |
+| `processing.io_workers` | `64` | Threads for blocking query-path I/O (Bedrock calls, Neptune traversals, reranking) in the CLIs and the chain's sync methods. Python's default caps it at `min(32, CPUs + 4)`, six on a 2-vCPU task. An async host calls `configure_event_loop(asyncio.get_running_loop(), config.processing.io_workers)` (from `unified_kg_rag`) at startup. |
 | `processing.ignore_errors` | `false` | When a whole step fails (a batch call, a translation language, an evaluator, global map/reduce, the DRIFT primer, the auto router), log it and continue with an empty or degraded result instead of raising. Items whose own LLM call fails are always skipped and reported, whatever this says. |
 | `processing.deduplicate` | `false` | Drop near-duplicate documents before extraction. Two documents are near-duplicates when the Jaccard similarity of their character 3-gram sets, estimated with a 128-permutation MinHash, is at least 0.9; of each pair the first is kept (an incremental run keeps the already-indexed copy). These parameters are fixed. |
 | `processing.resolution_method` | `"minhash"` | Entity resolution: `minhash` or `sequence_matcher`. |
@@ -2257,15 +2257,22 @@ to avoid full re-ingests.
 
 ## 11. Using the library from Python
 
-The CLIs are thin wrappers over two public classes. Build the `Config` with
+The CLIs are thin wrappers over two public classes. Import them, and
+everything else you use, from the package root: the names `unified_kg_rag`
+exports (`unified_kg_rag.__all__`) are the public API, and other module paths
+are internal and may change between releases. Build the `Config` with
 `get_config`, which applies the same file and environment-variable layers as
 the CLIs (§2).
 
 ```python
-from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
-from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain, RAGInput
-from unified_kg_rag.domain.models import PipelineConfig, PipelineStageStatus
-from unified_kg_rag.shared import get_config
+from unified_kg_rag import (
+    DataIngestionPipeline,
+    GraphRAGChain,
+    PipelineConfig,
+    PipelineStageStatus,
+    RAGInput,
+    get_config,
+)
 
 config = get_config("config.yaml")
 
@@ -2300,22 +2307,27 @@ finally:
   `search_type`, `top_k`, `suffix` ([index suffix](#index-suffix)), `filters`,
   `conversation_id` and `use_memory`, `target_language`. A plain dict with
   these keys also works.
-- `GraphRAGChain(config, mode=ChainMode.SEARCH)` returns retrieval results
-  without generating an answer (`ChainMode` is in the same module).
+- `chain.search(...)` (`await chain.asearch(...)`) runs the same retrieval
+  without generating an answer and returns a `SearchOutput`: the ranked
+  `search_results`, the `processed_query` and `metadata`.
 - In async code, use `await chain.ainvoke(...)` and `await chain.aclose()`.
   An async host should also size the event loop's executor once at startup:
   `configure_event_loop(asyncio.get_running_loop(), config.processing.io_workers)`
-  (from `unified_kg_rag.shared.utils`).
+  (from `unified_kg_rag`).
 - Always close what you build. Both classes open connections on first use;
   without `close()`/`aclose()` they stay open until garbage collection.
 - Importing the package configures no logging handler; call
-  `unified_kg_rag.shared.setup_logging(config)` to get the CLI's logging.
+  `unified_kg_rag.setup_logging(config)` to get the CLI's logging.
   Without it the package's records reach your handlers with the plain
   message, and structured fields (including values you bind with
   `structlog.contextvars`) become record attributes; a field named like a
   `LogRecord` attribute (`name`, `process`, `msg`, ...) gets a trailing `_`.
 
-Both constructors accept injected backends through a `providers=` bundle
+Extensions import from the package root too: the ports (`LLMFactoryPort`,
+`GraphIndexer`, `DocStatusPort`, ...), `Providers`, `register_provider`,
+`BaseSearchStrategy` with `register_strategy`, `ParserFactory` and
+`register_renderer`. Both constructors accept injected backends through a
+`providers=` bundle
 (`Providers(config, llm_factory=..., doc_status=..., vector_indexer_factory=...,
 graph_indexer_factory=..., retriever_builders=...)`). Without a bundle,
 `DataIngestionPipeline` also takes `doc_status`, `vector_indexer` and

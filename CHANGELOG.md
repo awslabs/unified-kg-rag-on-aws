@@ -271,6 +271,21 @@ Library API (Python callers and custom backends).
   removed (a reset no longer clears the stores first), and a custom graph
   backend can rebuild in place through `GraphIndexer.begin_rebuild` /
   `end_rebuild` (the default still clears each label first) (#331).
+- The public API is what `unified_kg_rag` exports (`unified_kg_rag.__all__`):
+  `Config`, `get_config`, `DataIngestionPipeline`, `IndexingManager`,
+  `GraphRAGChain` with `RAGInput` / `RAGOutput` / `SearchOutput`,
+  `EvaluationManager`, and the extension surface (the ports, `Providers`,
+  `register_provider`, `BaseSearchStrategy` / `register_strategy`,
+  `ParserFactory`, `register_renderer`). Import from the package root;
+  other module paths are internal and may move without a Breaking entry.
+  Retrieval-only queries are `GraphRAGChain.search()` / `asearch()`, which
+  return a typed `SearchOutput` (`search_results`, `processed_query`,
+  `metadata`) instead of a dict; `ChainMode` and `GraphRAGChain(mode=)` are
+  removed, so `invoke`/`ainvoke` always answer (they returned a dict in
+  `SEARCH` mode) and `stream` no longer yields nothing in `SEARCH` mode.
+  Replace `GraphRAGChain(cfg, mode=ChainMode.SEARCH).ainvoke(q)` with
+  `GraphRAGChain(cfg).asearch(q)` and read attributes
+  (`out.search_results.results`) instead of keys (#PR).
 - Incremental removal no longer plans from registry lineage.
   `DocStatusRecord` and `DocumentLineage` keep only `text_unit_ids`
   (`DocumentLineage` rejects the removed id fields),

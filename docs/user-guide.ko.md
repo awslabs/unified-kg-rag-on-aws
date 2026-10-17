@@ -564,7 +564,7 @@ LLM 단계는 Bedrock I/O가 병목이므로 동시성을 CPU 수보다 훨씬 �
 |---|---|---|
 | `processing.max_concurrency` | `40` | 수집 단계가 동시에 진행하는 LLM 호출 수입니다. 호출 하나가 끝나는 즉시 다음 항목을 시작합니다. Bedrock 할당량은 계정, 모델, 리전마다 다르므로 로그에 `ThrottlingException` 재시도가 보이면 낮추고, 할당량에 여유가 있으면 올리세요. `backend: local` 프리셋은 `20`으로 설정합니다. 로컬 모델 서버는 한 번에 처리하지 못하는 호출을 대기열에 쌓기 때문입니다. |
 | `processing.max_attempts` | `5` | 첫 호출을 포함한 수집 LLM 항목당 시도 횟수입니다. 일시적 Bedrock 오류, 호출 시간 초과, 파싱할 수 없는 출력은 재시도하고 그 밖의 오류는 바로 실패합니다. `1`이면 재시도하지 않습니다. |
-| `processing.io_workers` | `64` | CLI와 체인의 동기 메서드에서 질의 경로의 블로킹 I/O(Bedrock 호출, Neptune 순회, 재순위화)를 처리하는 스레드 수입니다. Python 기본값은 `min(32, CPUs + 4)`라서 vCPU 2개인 태스크에서는 6개입니다. 비동기 호스트는 시작할 때 `configure_event_loop(asyncio.get_running_loop(), config.processing.io_workers)`(`unified_kg_rag.shared.utils`)를 호출합니다. |
+| `processing.io_workers` | `64` | CLI와 체인의 동기 메서드에서 질의 경로의 블로킹 I/O(Bedrock 호출, Neptune 순회, 재순위화)를 처리하는 스레드 수입니다. Python 기본값은 `min(32, CPUs + 4)`라서 vCPU 2개인 태스크에서는 6개입니다. 비동기 호스트는 시작할 때 `configure_event_loop(asyncio.get_running_loop(), config.processing.io_workers)`(`unified_kg_rag`)를 호출합니다. |
 | `processing.ignore_errors` | `false` | 단계 전체가 실패할 때(배치 호출, 번역 대상 언어, 평가기, global map/reduce, DRIFT primer, auto 라우터) 예외를 일으키지 않고 로그를 남긴 뒤 빈 결과나 저하된 결과로 계속합니다. 개별 항목의 LLM 호출 실패는 이 값과 관계없이 항상 건너뛰고 보고합니다. |
 | `processing.deduplicate` | `false` | 추출 전에 거의 같은 문서를 제거합니다. 두 문서의 문자 3-gram 집합 Jaccard 유사도(128개 순열 MinHash로 추정)가 0.9 이상이면 중복으로 보고, 둘 중 앞의 문서를 남깁니다(증분 실행에서는 이미 색인된 문서를 남깁니다). 이 값들은 고정입니다. |
 | `processing.resolution_method` | `"minhash"` | 엔티티 해석 방식입니다. `minhash` 또는 `sequence_matcher`입니다. |
@@ -2076,14 +2076,20 @@ CLI가 보고하는 메시지와 그 의미, 해결 방법은 AWS 모드와 로�
 
 ## 11. Python 라이브러리로 사용하기
 
-CLI는 공개 클래스 두 개를 감싼 얇은 래퍼입니다. `Config`는 `get_config`로 만드세요.
-`get_config`는 CLI와 같은 설정 파일·환경 변수 단계를 적용합니다(§2).
+CLI는 공개 클래스 두 개를 감싼 얇은 래퍼입니다. 이 클래스와 그 밖에 쓰는 이름은 모두
+패키지 최상위에서 import하세요. `unified_kg_rag`가 내보내는 이름(`unified_kg_rag.__all__`)이
+공개 API이고, 그 밖의 모듈 경로는 내부 구현이라 릴리스마다 바뀔 수 있습니다. `Config`는
+`get_config`로 만드세요. `get_config`는 CLI와 같은 설정 파일·환경 변수 단계를 적용합니다(§2).
 
 ```python
-from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
-from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain, RAGInput
-from unified_kg_rag.domain.models import PipelineConfig, PipelineStageStatus
-from unified_kg_rag.shared import get_config
+from unified_kg_rag import (
+    DataIngestionPipeline,
+    GraphRAGChain,
+    PipelineConfig,
+    PipelineStageStatus,
+    RAGInput,
+    get_config,
+)
 
 config = get_config("config.yaml")
 
@@ -2117,20 +2123,24 @@ finally:
 - `RAGInput`은 `run-rag` 옵션을 필드로 받습니다: `search_strategy`, `search_type`,
   `top_k`, `suffix`([인덱스 접미사](#인덱스-접미사)), `filters`, `conversation_id`와
   `use_memory`, `target_language`. 이 키를 담은 일반 딕셔너리도 됩니다.
-- `GraphRAGChain(config, mode=ChainMode.SEARCH)`는 답변을 생성하지 않고 검색 결과를
-  반환합니다(`ChainMode`는 같은 모듈에 있음).
+- `chain.search(...)`(`await chain.asearch(...)`)는 답변을 생성하지 않고 같은 검색을
+  실행해 `SearchOutput`을 반환합니다. 순위가 매겨진 `search_results`, `processed_query`,
+  `metadata`를 담습니다.
 - 비동기 코드에서는 `await chain.ainvoke(...)`와 `await chain.aclose()`를 쓰세요.
   비동기 호스트는 시작할 때 이벤트 루프의 실행기 크기도 한 번 지정해야 합니다:
   `configure_event_loop(asyncio.get_running_loop(), config.processing.io_workers)`
-  (`unified_kg_rag.shared.utils`).
+  (`unified_kg_rag`).
 - 만든 객체는 항상 닫으세요. 두 클래스 모두 처음 사용할 때 연결을 열며,
   `close()`/`aclose()`를 호출하지 않으면 가비지 컬렉션 때까지 연결이 열려 있습니다.
 - 패키지를 import해도 로깅 핸들러는 설정하지 않습니다. CLI와 같은 로깅을 쓰려면
-  `unified_kg_rag.shared.setup_logging(config)`를 호출하세요. 호출하지 않으면 패키지의
+  `unified_kg_rag.setup_logging(config)`를 호출하세요. 호출하지 않으면 패키지의
   레코드는 일반 메시지로 호스트 핸들러에 전달되고, 구조화 필드(`structlog.contextvars`로
   바인딩한 값 포함)는 레코드 속성이 됩니다. `LogRecord` 속성과 이름이 같은
   필드(`name`, `process`, `msg` 등)에는 끝에 `_`가 붙습니다.
 
+확장 코드도 패키지 최상위에서 import합니다. 포트(`LLMFactoryPort`, `GraphIndexer`,
+`DocStatusPort` 등), `Providers`, `register_provider`, `BaseSearchStrategy`와
+`register_strategy`, `ParserFactory`, `register_renderer`가 여기에 있습니다.
 두 생성자 모두 `providers=` 번들로 백엔드를 주입받습니다
 (`Providers(config, llm_factory=..., doc_status=..., vector_indexer_factory=...,
 graph_indexer_factory=..., retriever_builders=...)`). 번들 없이 쓸 때

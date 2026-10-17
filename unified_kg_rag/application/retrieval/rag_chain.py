@@ -9,7 +9,6 @@ import uuid
 import weakref
 from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Iterator
 from contextlib import AbstractContextManager
-from enum import Enum
 from typing import TYPE_CHECKING, Any, ClassVar, TypeVar
 
 from langchain_core.output_parsers import (
@@ -120,11 +119,6 @@ NO_CONTEXT_ANSWER = (
 DEFAULT_ERROR_MESSAGE: str = (
     "I apologize, but an error occurred while processing your request. Please try again in a moment."
 )
-
-
-class ChainMode(str, Enum):
-    RAG = "rag"
-    SEARCH = "search"
 
 
 class ProcessedQuery(BaseModel):
@@ -262,17 +256,35 @@ class RAGOutput(BaseModel):
     )
 
 
-class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
+class SearchOutput(BaseModel):
+    """The result of a retrieval-only ``search``/``asearch``: the fused,
+    ranked results without an answer.
+
+    ``metadata`` carries the same keys as :attr:`RAGOutput.metadata`
+    (``processing_time``, ``error``, ``blocked``, ``guardrail``) plus the
+    retrieval's own (``search_strategy``, ``total_results``, ``rerank``, ...).
+    """
+
+    search_results: SearchResult = Field(
+        description="The fused, ranked retrieval results"
+    )
+    processed_query: ProcessedQuery = Field(
+        description="Information about how the query was processed"
+    )
+    metadata: dict[str, Any] = Field(
+        default_factory=dict, description="Additional metadata about the search"
+    )
+
+
+class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
     """Query a knowledge graph built by the ingestion pipeline.
 
-    One chain serves many queries, including concurrent ones. Results depend
-    on ``mode``:
+    One chain serves many queries, including concurrent ones:
 
-    - ``ChainMode.RAG`` (default): ``invoke``/``ainvoke`` return a
-      :class:`RAGOutput` with the generated answer and its sources.
-    - ``ChainMode.SEARCH``: retrieval only. ``invoke``/``ainvoke`` return a
-      dict with ``search_results``, ``processed_query`` (both dumped models)
-      and ``metadata``; ``stream``/``astream`` yield nothing.
+    - ``invoke``/``ainvoke`` return a :class:`RAGOutput` with the generated
+      answer and its sources; ``stream``/``astream`` yield the answer text.
+    - ``search``/``asearch`` run the same retrieval without generating an
+      answer and return a :class:`SearchOutput`.
 
     Lifecycle: the chain opens Neptune and OpenSearch connections on first use
     and keeps them for later queries. Call :meth:`close` (sync code) or
@@ -282,10 +294,10 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
 
     Threads and event loops: the async methods run on the caller's event
     loop, with retrievers built once per loop. The sync methods (``invoke``,
-    ``batch``, ``stream``) run on one event loop the chain owns on a daemon
-    thread, so they also work from a thread that already runs an event loop;
-    they must not be called from a coroutine running on that chain-owned
-    loop (for example a callback), which raises ``RuntimeError``.
+    ``batch``, ``stream``, ``search``) run on one event loop the chain owns on
+    a daemon thread, so they also work from a thread that already runs an
+    event loop; they must not be called from a coroutine running on that
+    chain-owned loop (for example a callback), which raises ``RuntimeError``.
 
     Backends are injectable: ``providers`` (or the ``model_factory``
     shorthand) for models, ``retriever_builders`` for the graph and document
@@ -298,7 +310,6 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         self,
         config: Config,
         boto_session: "boto3.Session | None" = None,
-        mode: ChainMode = ChainMode.RAG,
         *,
         model_factory: LLMFactoryPort | None = None,
         providers: Providers | None = None,
@@ -340,7 +351,6 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             llm_factory=model_factory,
             retriever_builders=retriever_builders,
         )
-        self.mode = mode
         self.ignore_errors = self.config.processing.ignore_errors
         # Screens the raw query before anything reads it and the final answer
         # after generation; the model calls in between run unguarded (see
@@ -433,12 +443,10 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             | RunnableLambda(self._format_output_step)
         )
 
-        search_branch = RunnableLambda(self._format_search_output_step)
-
-        return base_chain | RunnableBranch(
-            (lambda _: self.mode == ChainMode.RAG, rag_branch),
-            search_branch,
+        self._search_chain: Runnable = base_chain | RunnableLambda(
+            self._format_search_output_step
         )
+        return base_chain | rag_branch
 
     async def _resolve_strategy(
         self, state: dict[str, Any], config: RunnableConfig | None = None
@@ -1346,7 +1354,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         return sources
 
     @staticmethod
-    def _format_search_output_step(state: dict[str, Any]) -> dict[str, Any]:
+    def _format_search_output_step(state: dict[str, Any]) -> SearchOutput:
         sr: SearchResult = state["search_results"]
         sr.search_strategy = state["resolved_strategy"].value
 
@@ -1357,30 +1365,27 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             **sr.metadata,
         }
 
-        return {
-            "search_results": sr.model_dump(),
-            "processed_query": state["processed_query"].model_dump(),
-            "metadata": metadata,
-        }
+        return SearchOutput(
+            search_results=sr,
+            processed_query=state["processed_query"],
+            metadata=metadata,
+        )
 
     def invoke(
         self,
         input: RAGInput,
         config: RunnableConfig | None = None,
         **kwargs: Any,
-    ) -> RAGOutput | dict[str, Any]:
-        """Answer one query; the sync form of :meth:`ainvoke`.
+    ) -> RAGOutput:
+        """Answer one query with a :class:`RAGOutput`; the sync form of
+        :meth:`ainvoke`.
 
-        Returns a :class:`RAGOutput` in RAG mode and a dict
-        (``search_results``, ``processed_query``, ``metadata``) in SEARCH
-        mode. Runs on the chain's own event loop (see the class docstring).
+        Runs on the chain's own event loop (see the class docstring).
         """
         # Runs on the chain's long-lived loop (not asyncio.run per call), so it
         # also works from a thread that already runs an event loop and reuses
         # the loop-bound retrievers across calls (batch() fans out to here).
-        result: RAGOutput | dict[str, Any] = self._loop_runner.run(
-            self.ainvoke(input, config, **kwargs)
-        )
+        result: RAGOutput = self._loop_runner.run(self.ainvoke(input, config, **kwargs))
         return result
 
     async def ainvoke(
@@ -1388,7 +1393,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         input: RAGInput,
         config: RunnableConfig | None = None,
         **kwargs: Any,
-    ) -> RAGOutput | dict[str, Any]:
+    ) -> RAGOutput:
         """Answer one query.
 
         Args:
@@ -1397,24 +1402,57 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
                 reach every nested LLM call.
 
         Returns:
-            A :class:`RAGOutput` in RAG mode; a dict with ``search_results``,
-            ``processed_query`` and ``metadata`` in SEARCH mode.
+            A :class:`RAGOutput`: the answer, its sources and the search
+            results.
 
         Raises:
             Exception: Any query failure, unless ``processing.ignore_errors``
                 is set, in which case a degraded result with
                 ``metadata["error"] = True`` is returned instead.
         """
+        result = await self._query(input, config, search=False)
+        assert isinstance(result, RAGOutput)
+        return result
+
+    def search(
+        self, input: RAGInput, config: RunnableConfig | None = None
+    ) -> SearchOutput:
+        """Retrieve for one query without answering; the sync form of
+        :meth:`asearch`."""
+        result: SearchOutput = self._loop_runner.run(self.asearch(input, config))
+        return result
+
+    async def asearch(
+        self, input: RAGInput, config: RunnableConfig | None = None
+    ) -> SearchOutput:
+        """Retrieve for one query without generating an answer.
+
+        Runs the same steps as :meth:`ainvoke` up to retrieval (the input
+        guardrail, follow-up rewrite, routing, query processing, search,
+        fusion and rerank) and returns the ranked results. Nothing is written
+        to conversation memory. Errors behave as in :meth:`ainvoke`.
+        """
+        result = await self._query(input, config, search=True)
+        assert isinstance(result, SearchOutput)
+        return result
+
+    async def _query(
+        self,
+        input: RAGInput | dict[str, Any],
+        config: RunnableConfig | None,
+        *,
+        search: bool,
+    ) -> RAGOutput | SearchOutput:
         rag_input, input_dict = self._prepare_invoke(input)
         # The root span of a query trace: the strategy, retrieval, fusion,
         # rerank, context build and model calls nest under it.
         with (
             self._identity(rag_input),
             observability.span(
-                "kg_rag.query", self._query_span_attributes(rag_input)
+                "kg_rag.query", self._query_span_attributes(rag_input, search)
             ) as span,
         ):
-            result = await self._ainvoke(rag_input, input_dict, config, span)
+            result = await self._ainvoke(rag_input, input_dict, config, span, search)
             span.set_attributes(
                 {
                     **self._query_outcome_attributes(result),
@@ -1442,12 +1480,14 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         }
         return {key: value for key, value in identity.items() if value}
 
-    def _query_span_attributes(self, rag_input: RAGInput) -> dict[str, Any]:
+    def _query_span_attributes(
+        self, rag_input: RAGInput, search: bool
+    ) -> dict[str, Any]:
         """Query-span attributes: the request's settings; its text only when
         ``observability.capture_content`` is on (redacted)."""
         return {
             GEN_AI_CONVERSATION_ID: rag_input.conversation_id,
-            "kg_rag.mode": self.mode,
+            "kg_rag.mode": "search" if search else "rag",
             "kg_rag.requested_strategy": rag_input.search_strategy,
             "kg_rag.top_k": rag_input.top_k,
             "kg_rag.use_memory": rag_input.use_memory,
@@ -1456,13 +1496,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
 
     @staticmethod
     def _query_outcome_attributes(
-        output: RAGOutput | dict[str, Any],
+        output: RAGOutput | SearchOutput,
     ) -> dict[str, Any]:
-        metadata: dict[str, Any] = (
-            output.metadata
-            if isinstance(output, RAGOutput)
-            else dict(output.get("metadata") or {})
-        )
+        metadata = output.metadata
         attributes: dict[str, Any] = {
             "kg_rag.error": bool(metadata.get("error")),
             "kg_rag.abstained": bool(metadata.get("abstained")),
@@ -1479,7 +1515,8 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         input_dict: dict[str, Any],
         config: RunnableConfig | None,
         span: observability.SpanHandle,
-    ) -> RAGOutput | dict[str, Any]:
+        search: bool,
+    ) -> RAGOutput | SearchOutput:
         tokens = bind_contextvars(
             query_id=uuid.uuid4().hex[:12], conversation_id=rag_input.conversation_id
         )
@@ -1492,25 +1529,21 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
                 return self._short_circuit_output(
                     rag_input,
                     input_dict,
+                    search=search,
                     answer=blocking.text,
                     strategy="blocked",
                     metadata={"blocked": True, "guardrail": guard_records},
                 )
-            output: RAGOutput | dict[str, Any] = await self.chain.ainvoke(
+            runnable = self._search_chain if search else self.chain
+            output: RAGOutput | SearchOutput = await runnable.ainvoke(
                 input_dict, config
             )
-            # RAG mode ends in _format_output_step (a RAGOutput); SEARCH mode
-            # in _format_search_output_step (a dict). Both are returned as is.
             if isinstance(output, RAGOutput):
                 output.answer = await self._screen_output(output.answer, guard_records)
             if guard_records:
-                metadata = (
-                    output.metadata
-                    if isinstance(output, RAGOutput)
-                    else output.setdefault("metadata", {})
-                )
-                metadata["guardrail"] = guard_records
-            await self._save_memory(output)
+                output.metadata["guardrail"] = guard_records
+            if isinstance(output, RAGOutput):
+                await self._save_memory(output)
             return output
         except Exception as e:
             if not self.ignore_errors:
@@ -1528,6 +1561,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             return self._short_circuit_output(
                 rag_input,
                 input_dict,
+                search=search,
                 answer=DEFAULT_ERROR_MESSAGE,
                 strategy="error",
                 metadata={"error": True},
@@ -1541,11 +1575,12 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         rag_input: RAGInput,
         input_dict: dict[str, Any],
         *,
+        search: bool,
         answer: str,
         strategy: str,
         metadata: dict[str, Any],
         search_metadata: dict[str, Any] | None = None,
-    ) -> RAGOutput | dict[str, Any]:
+    ) -> RAGOutput | SearchOutput:
         """The result of a query that ended before retrieval (error, block)."""
         processing_time = time.time() - input_dict["start_time"]
         search_result = SearchResult(
@@ -1560,12 +1595,12 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             original_query=rag_input.query, final_query=rag_input.query
         )
         metadata = {**metadata, "processing_time": processing_time}
-        if self.mode == ChainMode.SEARCH:
-            return {
-                "search_results": search_result.model_dump(),
-                "processed_query": processed_query.model_dump(),
-                "metadata": metadata,
-            }
+        if search:
+            return SearchOutput(
+                search_results=search_result,
+                processed_query=processed_query,
+                metadata=metadata,
+            )
         return RAGOutput(
             answer=answer,
             sources=[],
@@ -1626,8 +1661,8 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         input_dict["start_time"] = time.time()
         return rag_input, input_dict
 
-    async def _save_memory(self, output: RAGOutput | dict | None) -> None:
-        if not isinstance(output, RAGOutput) or not output.conversation_id:
+    async def _save_memory(self, output: RAGOutput) -> None:
+        if not output.conversation_id:
             return
 
         try:
@@ -1657,7 +1692,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
 
         Yields the answer as ``str`` chunks only, never a :class:`RAGOutput`:
         to get the sources and metadata as well, call :meth:`invoke` or
-        :meth:`ainvoke` instead. Yields nothing in SEARCH mode.
+        :meth:`ainvoke` instead.
 
         Drives :meth:`astream` on the chain's long-lived event loop (the one
         ``invoke`` uses), pulling one chunk at a time. This works both from
@@ -1665,10 +1700,6 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         (where ``asyncio.run`` would raise), while still delivering chunks as
         they are produced rather than after the whole answer is generated.
         """
-        if self.mode == ChainMode.SEARCH:
-            logger.warning("Streaming is not supported in SEARCH mode.")
-            return
-
         yield from _iterate_async_generator(
             self.astream(input, config, **kwargs), self._loop_runner
         )
@@ -1683,9 +1714,8 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
 
         Yields the answer as ``str`` chunks only, never a :class:`RAGOutput`:
         to get the sources and metadata as well, call :meth:`ainvoke` instead.
-        Yields nothing in SEARCH mode. With ``processing.ignore_errors`` set, a
-        failure yields the standard error message as a final chunk instead of
-        raising.
+        With ``processing.ignore_errors`` set, a failure yields the standard
+        error message as a final chunk instead of raising.
 
         Retrieval, query processing and context building run once (the same
         steps ``ainvoke`` uses); only the answer-generation LLM is streamed.
@@ -1695,10 +1725,6 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         yields the blocked message once, and with ``check_output`` the answer
         is generated in full, screened, and yielded as one chunk.
         """
-        if self.mode == ChainMode.SEARCH:
-            logger.warning("Streaming is not supported in SEARCH mode.")
-            return
-
         rag_input, input_dict = self._prepare_invoke(input)
         chunks: list[str] = []
         delivered = False
@@ -1718,7 +1744,8 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
                 with (
                     self._identity(rag_input),
                     observability.span(
-                        "kg_rag.query", self._query_span_attributes(rag_input)
+                        "kg_rag.query",
+                        self._query_span_attributes(rag_input, search=False),
                     ),
                 ):
                     blocking = await self._screen_input(
@@ -2001,7 +2028,6 @@ def _iterate_async_generator(
 async def create_rag_chain(
     config: Config,
     boto_session: "boto3.Session | None" = None,
-    mode: ChainMode = ChainMode.RAG,
     **kwargs: Any,
 ) -> GraphRAGChain:
-    return GraphRAGChain(config=config, boto_session=boto_session, mode=mode, **kwargs)
+    return GraphRAGChain(config=config, boto_session=boto_session, **kwargs)

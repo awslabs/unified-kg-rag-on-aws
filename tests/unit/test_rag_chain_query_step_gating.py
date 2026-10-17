@@ -20,7 +20,6 @@ from langchain_core.callbacks import BaseCallbackHandler
 
 import unified_kg_rag.adapters.search_strategies  # noqa: F401 (registers strategies)
 from unified_kg_rag.application.retrieval.rag_chain import (
-    ChainMode,
     EntityExtractionPrompt,
     GraphRAGChain,
     KeywordsExtractionPrompt,
@@ -292,7 +291,7 @@ async def test_no_entity_focus_for_strategies_that_do_not_read_it(
     config: Config,
 ) -> None:
     # Extracted entities reach only a strategy that declares the input.
-    chain = GraphRAGChain(config=config, mode=ChainMode.SEARCH)
+    chain = GraphRAGChain(config=config)
     captured: dict[str, Any] = {}
 
     class _Strategy:
@@ -325,7 +324,7 @@ async def test_callers_callbacks_reach_the_query_llms_and_the_strategy(
     # nested calls are traced under the caller's run on every Python version.
     handler = BaseCallbackHandler()
     factory = _FakeFactory(route="mix", translation="translated")
-    chain = GraphRAGChain(config=config, mode=ChainMode.SEARCH)
+    chain = GraphRAGChain(config=config)
     chain._get_chain_for_prompt = factory.get_chain  # type: ignore[assignment]
     strategy_configs: list[Any] = []
 

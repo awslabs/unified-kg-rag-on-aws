@@ -176,7 +176,9 @@ This pattern follows the same philosophy as the existing `ParserFactory._loader_
 
 `domain/` imports no `ports`/`adapters`/`application` module at runtime, `ports/` and `shared/` import no other layer, and `adapters/` import no `application`, `evaluation` or `visualization` module; `evaluation/` reaches the application layer only through the chain (`application.retrieval`, `application.bootstrap`). `tests/unit/test_domain_purity.py` enforces these contracts on every import, including `TYPE_CHECKING` ones. Two compile-time-only exceptions exist, and the test checks that both stay under `TYPE_CHECKING`: `domain/retrieval/strategy_registry.py` references `adapters.retrieval.base.BaseSearchStrategy` (the registry stores strategy subclasses), and `domain/ingestion/delta_detector.py` annotates its parameters with `DocStatusPort` (the port module imports the domain models, so a runtime import would be a cycle). Extracting pure strategy/retriever ports would also remove the first type-level reference; it is left in place as a deliberate boundary (see "Deliberate Design Boundaries" at the end of this document).
 
-Code imports from real layer locations (`application.retrieval.rag_chain`, `application.storage.indexing_manager`, `application.ingestion.pipeline`, and the `adapters.*` / `domain.*` modules). `evaluation/` and `visualization/` are real logic packages (see the layout note in §2).
+Code inside the package imports from real layer locations (`application.retrieval.rag_chain`, `application.storage.indexing_manager`, `application.ingestion.pipeline`, and the `adapters.*` / `domain.*` modules). `evaluation/` and `visualization/` are real logic packages (see the layout note in §2).
+
+**Public API.** Callers outside the package import from `unified_kg_rag` itself. Its `__all__` is the supported surface, in two groups: using the framework (`Config`, `get_config`, `setup_logging`, `configure_event_loop`, `DataIngestionPipeline` and its `PipelineConfig` / `PipelineContext` / `PipelineStageStatus` / `PipelineStageType`, `IndexingManager`, `GraphRAGChain` with `RAGInput`, `RAGOutput`, `SearchOutput`, `ProcessedQuery`, `SearchResult`, `SearchStrategy`, `SearchType`, `MemoryManager`, and `EvaluationManager`) and extending it (the ports, `Providers` / `build_providers`, `ProviderRole` / `register_provider`, `BaseSearchStrategy` / `BaseGraphRAGRetriever` / `register_strategy` / `QueryInput` / `RetrieverRole`, `ParserFactory`, `BaseRenderer` / `register_renderer`). Every other module path is internal: it can move in any release, and only a change to the exported names, configuration keys, CLI flags and exit codes, or stored formats is a breaking change. The root resolves names on first access (`__getattr__`), so `import unified_kg_rag` loads none of the package, and `tests/unit/test_public_api.py` pins the list.
 
 ---
 
@@ -312,7 +314,7 @@ The `GraphRAGChain` (an LCEL Runnable) in `application/retrieval/rag_chain.py` p
 
 ![Search strategies](../assets/retrieval-strategies.drawio.png)
 
-`ChainMode` decides where the chain stops: `SEARCH` returns the fused, ranked retrieval results without an answer; `RAG` (the default) packs them into the token budget (`TokenManager`, §7), generates the answer, and returns a `RAGOutput` whose sources are exactly the sections the answer model saw. When the budgeted context is empty, the chain answers that it cannot answer without calling the LLM.
+The entry point decides where the chain stops: `search`/`asearch` return the fused, ranked retrieval results without an answer (a `SearchOutput`); `invoke`/`ainvoke` (and `stream`) pack them into the token budget (`TokenManager`, §7), generate the answer, and return a `RAGOutput` whose sources are exactly the sections the answer model saw. Both run one chain of steps up to retrieval, so a search and an answer for the same input retrieve the same results. When the budgeted context is empty, the chain answers that it cannot answer without calling the LLM.
 
 Neptune graph expansion is part of `local` and `drift`; for `mix`/`hybrid` it is opt-in (`search.lightrag_search.enable_graph_expansion`). The strategies find the seed entities in OpenSearch and pass their ids to the graph retriever as an `id` filter; `NeptuneRetriever` expands from those ids only and returns nothing for a query without one.
 
@@ -476,7 +478,7 @@ Run: `uv run pytest -m "not aws" --cov=unified_kg_rag`.
 
 ## 15. Extension Guide
 
-This section is the single reference for extending the framework; the README, user guide and CONTRIBUTING.md link here. Strategies, renderers and parsers extend through registries, evaluators through one branch in their type map, and backends through constructor injection; none needs a change to dispatch code.
+This section is the single reference for extending the framework; the README, user guide and CONTRIBUTING.md link here. Strategies, renderers and parsers extend through registries, evaluators through one branch in their type map, and backends through constructor injection; none needs a change to dispatch code. The ports, `Providers` and the registries an extension uses are exported from `unified_kg_rag` (the extension half of the public API, §2.4).
 
 - **New search strategy**: Add a `SearchStrategy` enum member (`domain/models/retrieval.py`; strategies are keyed by this closed enum, and the CLI choices follow it) + subclass `BaseSearchStrategy` + `@register_strategy(SearchStrategy.X, required_roles=(...), query_inputs=frozenset({QueryInput.ENTITIES}))` + export from `adapters/search_strategies/__init__.py`. `query_inputs` declares the query-side LLM extractions the strategy reads (`ENTITIES` for `entity_focus`, `DUAL_KEYWORDS` for `hl_keywords`/`ll_keywords`); the chain skips the rest. A strategy that answers from community reports also passes `needs_community_reports=True`, so `auto` skips it when none are built. No edit to `rag_chain` is needed; add the strategy to `search.auto_routable_strategies` if `auto` may pick it.
 - **New storage/LLM backend**: Implement the relevant port, then either register a builder for a new `providers.<role>.kind` with `@register_provider(ProviderRole.X, "kind")` (`adapters/provider_registry.py`) and select it in config, or pass the port to the constructor that uses it (see "Custom backends" below). Do not hardcode it into a manager's `__init__`.
@@ -591,7 +593,7 @@ their adapter only when built. A new kind needs no edit to the bundle, the
 config model or any call site:
 
 ```python
-from unified_kg_rag.adapters.provider_registry import ProviderRole, register_provider
+from unified_kg_rag import ProviderRole, register_provider
 
 @register_provider(ProviderRole.LLM, "my_server")
 def _build(providers):

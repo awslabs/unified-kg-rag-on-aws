@@ -23,9 +23,9 @@ import unified_kg_rag.adapters.search_strategies  # noqa: F401  (registers strat
 from tests.fixtures.fakes.chat_models import fake_model_info
 from unified_kg_rag.application.retrieval.rag_chain import (
     DEFAULT_ERROR_MESSAGE,
-    ChainMode,
     GraphRAGChain,
     RAGInput,
+    SearchOutput,
 )
 from unified_kg_rag.domain.models import (
     Config,
@@ -109,7 +109,6 @@ def _make_chain(
     empty: bool = False,
     retrieval_error: bool = False,
     ignore_errors: bool = False,
-    mode: ChainMode = ChainMode.RAG,
 ) -> tuple[GraphRAGChain, _StreamingModelFactory, _RecordingMemoryManager]:
     config.processing.ignore_errors = ignore_errors
     factory = factory or _StreamingModelFactory()
@@ -124,7 +123,6 @@ def _make_chain(
 
     chain = GraphRAGChain(
         config=config,
-        mode=mode,
         model_factory=factory,
         retriever_builders={
             RetrieverRole.DOCUMENT: _build,
@@ -244,9 +242,16 @@ async def test_astream_mid_stream_llm_error_appends_notice_with_ignore_errors(
     assert memory.messages == []
 
 
-async def test_astream_search_mode_yields_nothing(config: Config) -> None:
-    chain, _, _ = _make_chain(config, mode=ChainMode.SEARCH)
-    assert [c async for c in chain.astream(_input())] == []
+def test_search_returns_results_without_an_answer_or_memory(
+    config: Config,
+) -> None:
+    chain, factory, memory = _make_chain(config)
+    output = chain.search(_input(conversation_id="c-1", use_memory=True))
+    assert isinstance(output, SearchOutput)
+    assert output.search_results.total_results == 1
+    assert output.metadata["search_strategy"] == SearchStrategy.SIMPLE.value
+    assert memory.messages == []
+    chain.close()
 
 
 def test_stream_sync_yields_multiple_chunks(config: Config) -> None:

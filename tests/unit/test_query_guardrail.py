@@ -29,10 +29,10 @@ from unified_kg_rag.adapters.guardrail.bedrock import (
 )
 from unified_kg_rag.application.retrieval.rag_chain import (
     DEFAULT_ERROR_MESSAGE,
-    ChainMode,
     GraphRAGChain,
     RAGInput,
     RAGOutput,
+    SearchOutput,
 )
 from unified_kg_rag.domain.models import (
     Config,
@@ -341,14 +341,12 @@ def _chain(
     config: Config,
     client: Any,
     *,
-    mode: ChainMode = ChainMode.RAG,
     ignore_errors: bool = False,
 ) -> tuple[GraphRAGChain, _Factory, _Retriever, _Memory]:
     config.processing.ignore_errors = ignore_errors
     factory, retriever, memory = _Factory(), _Retriever(), _Memory()
     chain = GraphRAGChain(
         config=config,
-        mode=mode,
         model_factory=factory,
         retriever_builders={
             RetrieverRole.DOCUMENT: lambda: retriever,
@@ -488,13 +486,13 @@ async def test_guardrail_error_with_ignore_errors_is_the_error_answer(
 async def test_search_mode_blocked_query(runtime) -> None:  # noqa: ANN001
     client, stubber = runtime
     stubber.add_response("apply_guardrail", _PROMPT_ATTACK, _request(_QUERY))
-    chain, _, retriever, _ = _chain(_guarded_config(), client, mode=ChainMode.SEARCH)
+    chain, _, retriever, _ = _chain(_guarded_config(), client)
 
-    output = await chain.ainvoke(_input())
+    output = await chain.asearch(_input())
 
-    assert isinstance(output, dict)
-    assert output["metadata"]["blocked"] is True
-    assert output["search_results"]["results"] == []
+    assert isinstance(output, SearchOutput)
+    assert output.metadata["blocked"] is True
+    assert output.search_results.results == []
     assert retriever.queries == []
 
 

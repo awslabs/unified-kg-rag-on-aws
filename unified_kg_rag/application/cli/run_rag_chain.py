@@ -30,7 +30,6 @@ from unified_kg_rag.application.cli.provider_args import (
 )
 from unified_kg_rag.application.cli.query_args import add_query_arguments
 from unified_kg_rag.application.retrieval.rag_chain import (
-    ChainMode,
     GraphRAGChain,
     RAGInput,
     create_rag_chain,
@@ -109,8 +108,8 @@ class CommandLineInterface:
         )
         parser.add_argument(
             "--mode",
-            default=ChainMode.RAG.value,
-            choices=[cm.value for cm in ChainMode],
+            default="rag",
+            choices=["rag", "search"],
             help="Set the execution mode: 'rag' for full generation, 'search' for "
             "retrieval only (a single --query only; --interactive always generates)",
         )
@@ -162,7 +161,7 @@ class CommandLineInterface:
         args = self.parser.parse_args()
         if not args.interactive and not args.query:
             self.parser.error("either --query or --interactive is required")
-        if args.interactive and args.mode != ChainMode.RAG.value:
+        if args.interactive and args.mode != "rag":
             self.parser.error(
                 f"--mode {args.mode} is not supported with --interactive, which "
                 "always generates answers; use --query for retrieval-only output"
@@ -261,10 +260,7 @@ class RAGChainRunner:
     async def _initialize_chain(self) -> None:
         console.print("[bold]Initializing RAG chain...[/bold]")
         try:
-            self.rag_chain = await create_rag_chain(
-                config=self.config,
-                mode=ChainMode(self.args.mode),
-            )
+            self.rag_chain = await create_rag_chain(config=self.config)
             console.print("[green]GraphRAG chain initialized successfully![/green]")
         except Exception as e:
             logger.exception("Failed to initialize RAG chain: %s", e)
@@ -312,9 +308,6 @@ class RAGChainRunner:
                         state["filters"] if isinstance(state["filters"], dict) else None
                     ),
                 )
-                if self.rag_chain:
-                    self.rag_chain.mode = ChainMode.RAG
-
                 result = await self._run_query(rag_input)
                 self._print_result(result, verbose=True)
                 state["conversation_id"] = result.get(
@@ -364,8 +357,12 @@ class RAGChainRunner:
                 f"[bold]Executing RAG query in '{self.args.mode}' mode...[/bold]",
                 "[dim]This may take some time depending on query complexity[/dim]",
             )
-            result = await self.rag_chain.ainvoke(rag_input)
-            output = result if isinstance(result, dict) else result.model_dump()
+            result = (
+                await self.rag_chain.asearch(rag_input)
+                if self.args.mode == "search"
+                else await self.rag_chain.ainvoke(rag_input)
+            )
+            output = result.model_dump()
             # With processing.ignore_errors the chain does not raise: it returns
             # its error fallback flagged by metadata.error. That is a failure.
             if (output.get("metadata") or {}).get("error"):

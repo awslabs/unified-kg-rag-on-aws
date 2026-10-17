@@ -71,6 +71,10 @@ Without uv: create a virtual environment, activate it, and run `pip install -e .
 - Pull requests are squash-merged after CI passes and a maintainer approves, so `main` keeps one commit per change.
 - Add an entry under `## [Unreleased]` in [CHANGELOG.md](./CHANGELOG.md) for any user-visible change. Release history
   belongs in the changelog only, not in the user guide or design doc.
+- A **Breaking changes** entry covers what users depend on: the names exported from `unified_kg_rag` (pinned in
+  `tests/unit/test_public_api.py`; changing that list is a deliberate API change), configuration keys, CLI flags and
+  exit codes, index and registry formats, and the CDK stack's inputs and outputs. Moving or renaming an internal module
+  is not a breaking change and needs no entry; neither does a change to code only reached through internal imports.
 
 ### Commit messages
 

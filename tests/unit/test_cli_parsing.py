@@ -984,13 +984,35 @@ async def test_rag_run_query_success_wraps_result(config, mocker) -> None:
     mocker.patch.object(run_rag_chain, "get_config", return_value=config)
     args = _rag_parser().parse_args(["-q", "hi"])
     runner = run_rag_chain.RAGChainRunner(args)
-    # Stub the chain so no AWS is touched; ainvoke returns a plain dict.
+    # Stub the chain so no AWS is touched.
     runner.rag_chain = mocker.MagicMock()
-    runner.rag_chain.ainvoke = AsyncMock(return_value={"answer": "A", "sources": []})
+    result = mocker.MagicMock()
+    result.model_dump.return_value = {"answer": "A", "sources": []}
+    runner.rag_chain.ainvoke = AsyncMock(return_value=result)
 
     out = await runner._run_query(RAGInput(query="hi"))
     assert out["success"] is True
     assert out["answer"] == "A"
+
+
+async def test_rag_search_mode_runs_retrieval_only(config, mocker) -> None:
+    from unittest.mock import AsyncMock
+
+    from unified_kg_rag.application.cli.run_rag_chain import RAGInput
+
+    mocker.patch.object(run_rag_chain, "get_config", return_value=config)
+    args = _rag_parser().parse_args(["-q", "hi", "--mode", "search"])
+    runner = run_rag_chain.RAGChainRunner(args)
+    runner.rag_chain = mocker.MagicMock()
+    result = mocker.MagicMock()
+    result.model_dump.return_value = {"search_results": {"results": []}}
+    runner.rag_chain.asearch = AsyncMock(return_value=result)
+    runner.rag_chain.ainvoke = AsyncMock()
+
+    out = await runner._run_query(RAGInput(query="hi"))
+    assert out["success"] is True
+    assert out["search_results"] == {"results": []}
+    runner.rag_chain.ainvoke.assert_not_awaited()
 
 
 async def test_rag_run_query_error_is_captured(config, mocker) -> None:

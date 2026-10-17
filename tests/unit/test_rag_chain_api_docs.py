@@ -10,6 +10,7 @@ from unified_kg_rag.application.retrieval.rag_chain import (
     GraphRAGChain,
     RAGInput,
     RAGOutput,
+    SearchOutput,
 )
 
 pytestmark = pytest.mark.unit
@@ -18,11 +19,14 @@ pytestmark = pytest.mark.unit
 @pytest.mark.parametrize(
     ("obj", "phrases"),
     [
-        (GraphRAGChain, ["close", "aclose", "SEARCH", "event loop"]),
+        (GraphRAGChain, ["close", "aclose", "search", "SearchOutput", "event loop"]),
         (RAGInput, ["suffix", "index_value"]),
         (RAGOutput, ["sources"]),
-        (GraphRAGChain.invoke, ["RAGOutput", "dict", "SEARCH"]),
-        (GraphRAGChain.ainvoke, ["RAGOutput", "dict", "ignore_errors"]),
+        (SearchOutput, ["search", "metadata"]),
+        (GraphRAGChain.invoke, ["RAGOutput", "ainvoke"]),
+        (GraphRAGChain.ainvoke, ["RAGOutput", "ignore_errors"]),
+        (GraphRAGChain.search, ["asearch"]),
+        (GraphRAGChain.asearch, ["without generating an answer", "memory"]),
         (GraphRAGChain.stream, ["str", "ainvoke", "sources"]),
         (GraphRAGChain.astream, ["str", "ainvoke", "sources"]),
     ],
