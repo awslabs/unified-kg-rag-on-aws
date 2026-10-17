@@ -1102,7 +1102,7 @@ changed once with the full-config keys (#332).
   ingestion on the CDK stack stops with `NamespaceLeaseError`, `naive` is
   BM25 + vector, and `config-template.yaml` lists
   `evaluation.answer_normalization` and no longer mentions the removed
-  `effort` key (#PR).
+  `effort` key (#336).
 - Two corpora written to one index namespace that hold the same file with
   the same text no longer share text units, so removing one corpus's copy
   keeps the other's (#327).
