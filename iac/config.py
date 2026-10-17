@@ -8,7 +8,9 @@ provision its own, and can run the data plane fully private (no NAT, VPC
 endpoints only). Resolve once in ``app.py`` and thread the typed object into the
 stacks.
 
-Context keys (all optional; sensible defaults shown):
+Context keys (all optional; sensible defaults shown). A key of this shape
+(lower-case snake_case) that is none of them fails the synth, so a typo
+cannot leave its setting at the default:
 
   env_name            "dev"            stack/resource name prefix
   bedrock_region      account region   region for Bedrock model calls
@@ -106,8 +108,9 @@ Context keys (all optional; sensible defaults shown):
 
 from __future__ import annotations
 
+import difflib
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from typing import Any
 
 _TRUE = frozenset(("1", "true", "yes", "on"))
@@ -238,6 +241,33 @@ _LOG_RETENTION_DAYS = frozenset(
 )
 
 
+# The shape of this app's context keys. CDK's own keys (feature flags such as
+# "@aws-cdk/...", "aws:cdk:..." settings, cached lookups such as
+# "availability-zones:...", "acknowledged-issue-numbers") and "_doc" notes
+# never take it, so a key of this shape that is not a setting is a typo.
+_SETTING_KEY = re.compile(r"[a-z][a-z0-9_]*")
+
+
+def _check_context_keys(keys: list[str], known: frozenset[str]) -> None:
+    """Refuse a context key that looks like a setting but is none: a
+    misspelled key would otherwise leave its setting at the default."""
+    unknown = sorted(
+        key
+        for key in keys
+        if key not in known
+        and (_SETTING_KEY.fullmatch(key) or key.replace("-", "_") in known)
+    )
+    if not unknown:
+        return
+    hints = []
+    for key in unknown:
+        close = difflib.get_close_matches(key.replace("-", "_"), known, n=1)
+        hints.append(f"{key} (did you mean {close[0]}?)" if close else key)
+    raise ValueError(
+        "Unknown context keys: " + ", ".join(hints) + " (see iac/config.py)"
+    )
+
+
 @dataclass(frozen=True)
 class DeploymentConfig:
     env_name: str
@@ -343,6 +373,11 @@ class DeploymentConfig:
 
     @classmethod
     def from_context(cls, scope: Any) -> DeploymentConfig:
+        _check_context_keys(
+            list(scope.node.get_all_context()),
+            frozenset(f.name for f in fields(cls)) - {"create_guardrail_explicit"},
+        )
+
         def ctx(key: str, default: Any = None) -> Any:
             value = scope.node.try_get_context(key)
             return default if value is None else value

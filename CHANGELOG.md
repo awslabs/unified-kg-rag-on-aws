@@ -1143,6 +1143,11 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- IaC: a misspelled CDK context key (`-c neptune_instnace=...`) fails the
+  synth naming the closest setting, as an unknown app config key does,
+  instead of leaving its setting silently at the default; CDK's own keys
+  (feature flags, `aws:cdk:*`, cached lookups) and `_doc` notes are not
+  checked (#PR).
 - An S3 connection error while uploading an LLM response-cache segment no
   longer fails the model call that filled it: the cache logs the failure and
   hands the segment over again at its next write (the stage checkpoint upload

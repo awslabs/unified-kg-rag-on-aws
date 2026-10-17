@@ -123,3 +123,25 @@ def test_neptune_serverless_ncu_rejects_bad_ranges(value: str, message: str) -> 
 def test_neptune_serverless_ncu_excludes_an_instance_class() -> None:
     with pytest.raises(ValueError, match="exclusive"):
         _config({"neptune_serverless_ncu": "1-8", "neptune_instance": "db.r6g.xlarge"})
+
+
+def test_a_misspelled_context_key_fails_naming_the_closest_setting() -> None:
+    with pytest.raises(
+        ValueError, match=r"neptune_instnace \(did you mean neptune_instance\?\)"
+    ):
+        _config({"neptune_instnace": "db.r6g.xlarge"})
+    with pytest.raises(ValueError, match="guardrail-identifier"):
+        _config({"guardrail-identifier": "gr-1"})
+
+
+def test_cdk_keys_and_notes_are_not_settings() -> None:
+    _config(
+        {
+            "@aws-cdk/core:checkSecretUsage": True,
+            "aws:cdk:enable-path-metadata": True,
+            "availability-zones:account=111111111111:region=us-west-2": ["a"],
+            "acknowledged-issue-numbers": [1],
+            "_doc": "a note",
+            "env_name": "dev",
+        }
+    )
