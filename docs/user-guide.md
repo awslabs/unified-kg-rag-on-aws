@@ -592,16 +592,26 @@ with the `ApplyGuardrail` API; the guardrail must exist in
   the follow-up rewrite, routing and retrieval (`check_input`), and the final
   answer (`check_output`; a streamed answer is then delivered as one chunk
   after the check). Only those texts are evaluated and billed.
-- **What happens.** A blocked query is answered with the guardrail's blocked
-  message; nothing is retrieved or written to memory, and
-  `RAGOutput.metadata.blocked` is `true`. A masked query (PII anonymized)
-  continues with the masked text, so retrieval, the models and memory never
-  see the original. A blocked or masked answer is replaced by the guardrail's
-  text. Every intervention is listed in `RAGOutput.metadata.guardrail`
-  (source, action, policies), logged at WARNING with a running count, and
-  recorded on a `kg_rag.guardrail` span. A guardrail API error fails the
-  query (with `processing.ignore_errors`, the standard error answer); it is
-  never answered unscreened.
+- **What happens.**
+  - A blocked query is answered with the guardrail's blocked message; nothing
+    is retrieved or written to memory, and `RAGOutput.metadata.blocked` is
+    `true`.
+  - A masked query (PII anonymized) continues with the masked text, so
+    retrieval, the models and memory never see the original. A trace with
+    `observability.capture_content` records the masked query, and no text
+    for a blocked one.
+  - A blocked or masked answer is replaced by the guardrail's text. A blocked
+    answer also returns no `sources` or search results (`metadata.blocked`
+    stays reserved for a blocked query).
+  - Masking covers the answer only: a masked answer's sources are the indexed
+    corpus text as retrieved (screening each would bill every retrieved chunk
+    on every query). Keep text a caller must not see out of the corpus, or
+    filter it in the serving layer.
+  - Every intervention is listed in `RAGOutput.metadata.guardrail` (source,
+    action, policies), logged at WARNING with a running count, and recorded
+    on a `kg_rag.guardrail` span.
+  - A guardrail API error fails the query (with `processing.ignore_errors`,
+    the standard error answer); it is never answered unscreened.
 - **Why not on the model calls.** The model calls inside a query (rewrite,
   routing, keyword extraction, global/DRIFT map steps, answer generation) run
   without a guardrail. Attached to a model call, a guardrail evaluates the

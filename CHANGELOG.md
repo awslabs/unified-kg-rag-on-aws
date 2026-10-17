@@ -2604,6 +2604,13 @@ changed once with the full-config keys (#332).
   instead of frozen dataclasses; they were never instantiated (#300).
 
 ### Security
+- A guardrail-blocked answer no longer returns the evidence behind it:
+  `sources` and `search_results.results` are empty (they carried the
+  retrieved text the refused answer was built from). Masking covers the
+  answer only, as the user guide now states. The query span records the
+  query only once screened (the masked text, nothing for a blocked query)
+  rather than the raw query before screening, and a masked query no longer
+  rewrites the caller's `RAGInput` (#PR).
 - IaC: the query role can no longer write documents through a path that
   ends in `_search`. Its `POST` grant on `<domain>/*/_search` also matched
   `<index>/_doc/_search`, `_create/_search` and `_update/_search` (an IAM `*`
