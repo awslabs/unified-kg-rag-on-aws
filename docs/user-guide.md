@@ -744,6 +744,8 @@ quotas (`search.local_search.type_quota`) are in the template.
 | `memory.max_messages_per_conversation` | `20` | Messages kept per conversation. |
 | `memory.max_conversation_age_hours` | `168` | Hours a conversation may stay idle; an older one is dropped and starts over. |
 | `cache.ttl_seconds` | `86400` | Cache entry TTL; `null` = never expire. Not applied with `--s3-sync` (the bucket lifecycle expires the checkpoints). |
+| `cache.llm_responses.enabled` | `true` | Keep the ingestion model responses with the stage cache so a re-run with the same pipeline id does not repeat answered calls (see **LLM response cache** in section 3). |
+| `cache.llm_responses.flush_every` | `100` | Responses per cache segment file (written and, with `--s3-sync`, uploaded when full and at each stage checkpoint). |
 | `logging.level` | `"INFO"` | `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`. |
 | `logging.log_format` | `"structured"` | `structured` or `plain`. |
 | `logging.log_to_file` | `true` | The CLIs also write logs to `log_file_path` (`logs/log.txt`, dated as `log_YYYYMMDD.txt`; a relative path is resolved against the working directory). Importing the package as a library configures no handler or file: the host application's logging setup applies, its formatter shows the plain message, and the structured fields (`logger`, `level`, `pipeline_id`, `trace_id`, ...) are attributes of the log record. |
@@ -1084,6 +1086,34 @@ expires them (30 days in the CDK deployment). For
 embeddings specifically, set
 `indexing.opensearch.persist_embedding_cache: true` to avoid re-embedding
 unchanged text across runs.
+
+**LLM response cache** (`cache.llm_responses`, on by default): the responses
+of the ingestion model calls (extraction, gleaning, claims, translation,
+description summaries, community reports, LLM chunking, output fixing) are
+kept in the run's cache directory under `llm-cache/`, and synced with the
+stage cache. A re-run with the same pipeline id answers a prompt it already
+sent from there, so a stage that was stopped, timed out or crashed repays
+only the calls it had not made. The key is the rendered prompt plus the model
+and its generation settings (model id, max tokens, temperature, reasoning,
+guardrail), so a changed prompt, model or setting asks the model again.
+Things to know:
+
+- Each cached response is served at most once per run, and only responses of
+  earlier runs are served: a retry within the run (after a response failed to
+  parse) calls the model again, and the new response replaces the old one. A
+  response cut off at the output-token limit is not kept.
+- With a temperature above 0 a re-run replays the earlier sample instead of
+  drawing a new one; `--force-rebuild` serves nothing from the cache (it still
+  stores the new responses).
+- A new pipeline id starts with an empty cache. Query and evaluation calls are
+  never cached.
+- Cost: the cache grows by about one response per model call (a few KB each);
+  segments of `cache.llm_responses.flush_every` responses are written (and
+  uploaded with `--s3-sync`) as they fill and at every stage checkpoint, so a
+  task killed without warning loses at most one segment. The cache is read
+  into memory when the run starts.
+- A stop also ends the retries of the model calls still running, so the task
+  exits once the calls in flight return.
 
 ### Index suffix
 

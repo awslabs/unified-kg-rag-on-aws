@@ -430,6 +430,16 @@ Library API (Python callers and custom backends).
   `built_at`, `documents`, `extraction_fingerprint`, `package_version`), and
   the `run-eval` manifest copies it under `index` per queried suffix, so a
   score can be traced to the index it was measured on (#321).
+- An LLM response cache for ingestion (`cache.llm_responses`, on by
+  default): the stages' model responses are kept with the run's stage cache
+  (and synced to S3 with `--s3-sync`, a segment at a time as they fill), so a
+  re-run with the same pipeline id after a stop, timeout or crash repays only
+  the model calls the interrupted stage had not made. In a synthetic run
+  stopped halfway through graph extraction, the resume made 20 extraction
+  calls instead of 42. Each cached response is served at most once per run,
+  truncated responses are not kept, and `--force-rebuild` serves none. A
+  re-run stage with unchanged prompts (`--resume-from-stage`) now answers from
+  the cache; with a temperature above 0 it replays the earlier sample (#PR).
 - Evaluation: `grouped_statistics.source_type` reports the retrieval metrics
   per source section type (its `text` row scores only the text units the
   answer model read); `graph_aware` adds `retrieved_entity_coverage` /

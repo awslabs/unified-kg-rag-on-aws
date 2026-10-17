@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
+import functools
 import secrets
 import time
 from collections.abc import Callable, Iterator, Mapping
@@ -14,6 +15,7 @@ from pydantic import BaseModel
 from structlog.contextvars import bind_contextvars, reset_contextvars
 
 from unified_kg_rag.adapters.ingestion.parser import ParserFactory
+from unified_kg_rag.adapters.llm.response_cache import LLMResponseCache
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.application.bootstrap import build_providers
 from unified_kg_rag.application.ingestion.pipeline_stages import (
@@ -203,6 +205,9 @@ class DataIngestionPipeline:
     # checkpoint is in place, whether a checkpoint is being written, and the
     # signal of a stop requested meanwhile.
     s3_cache_manager: S3CacheManager | None = None
+    llm_response_cache: LLMResponseCache | None = None
+    # Where the response cache keeps its segments, in the run's cache directory.
+    LLM_CACHE_DIRECTORY = "llm-cache"
     _checkpoint_id: str | None = None
     _checkpointing: bool = False
     _stop_signal: int | None = None
@@ -283,6 +288,16 @@ class DataIngestionPipeline:
             if providers is not None
             else build_providers(config, boto_session, **overrides)
         )
+
+        # The ingestion models the stages build below answer from (and add
+        # to) the run's response cache, opened once the run's cache is in place.
+        self.llm_response_cache: LLMResponseCache | None = None
+        responses = config.cache.llm_responses
+        if pipeline_config.cache_enabled and responses.enabled:
+            self.llm_response_cache = LLMResponseCache(
+                flush_every=responses.flush_every
+            )
+            self.providers.use_llm_response_cache(self.llm_response_cache)
 
         self._initialize_managers()
         self.stages, self.name_to_type_map = self._initialize_stages()
@@ -497,6 +512,7 @@ class DataIngestionPipeline:
             # Part of every stage cache key, so it must be set before the
             # resume decision reads the cache.
             self._set_corpus_fingerprint(source_path)
+            self._open_llm_response_cache(resolved_pipeline_id)
 
             # force_rebuild must ignore ALL existing cache: skip the resume path
             # entirely so the run re-executes from the beginning even when a
@@ -549,8 +565,41 @@ class DataIngestionPipeline:
             logger.exception("Pipeline execution failed: %s", e)
             raise PipelineExecutionError(f"Failed to run pipeline: {e}") from e
         finally:
+            if self.llm_response_cache is not None:
+                self.llm_response_cache.close()
             self._checkpoint_id = None
             reset_contextvars(**log_context)
+
+    def _open_llm_response_cache(self, pipeline_id: str) -> None:
+        """Serve this run's ingestion model calls from the responses earlier
+        runs of ``pipeline_id`` stored (none on a force rebuild)."""
+        if self.llm_response_cache is None:
+            return
+        cache_dir = self.cache_manager.get_pipeline_cache_dir(pipeline_id)
+        self.llm_response_cache.open(
+            cache_dir / self.LLM_CACHE_DIRECTORY,
+            lookups=not self.pipeline_config.force_rebuild,
+            on_segment=(
+                functools.partial(self._upload_file, pipeline_id, cache_dir)
+                if self.s3_cache_manager is not None
+                else None
+            ),
+        )
+
+    def _upload_file(self, pipeline_id: str, cache_dir: Path, path: Path) -> None:
+        """Upload one cache file now (best effort; the next checkpoint upload
+        retries it). The response cache calls it from the model call that
+        filled a segment, so a task killed mid-stage keeps those responses."""
+        if self.s3_cache_manager is None:
+            return
+        try:
+            self.s3_cache_manager.upload_file(pipeline_id, cache_dir, path)
+        except CacheSyncError as e:
+            logger.warning(
+                "Upload of '%s' failed; the next checkpoint upload retries it: %s",
+                path.name,
+                e,
+            )
 
     def request_stop(self, signum: int) -> None:
         """End the run: raise ``PipelineInterrupted``, uploading the
@@ -779,6 +828,8 @@ class DataIngestionPipeline:
 
         try:
             if direction == "upload":
+                if self.llm_response_cache is not None:
+                    self.llm_response_cache.flush()
                 self.s3_cache_manager.sync_pipeline_to_s3(pipeline_id, cache_dir)
             else:
                 self.s3_cache_manager.sync_pipeline_from_s3(pipeline_id, cache_dir)
@@ -1037,10 +1088,12 @@ class DataIngestionPipeline:
             else:
                 logger.info("Executing stage: '%s'", stage.name)
                 result = self._execute_stage(stage, context)
-                if self.s3_cache_manager is not None:
-                    # Durable now, not only after the last stage: a task
-                    # stopped later resumes from here.
-                    with self._checkpoint_write():
+                with self._checkpoint_write():
+                    if self.llm_response_cache is not None:
+                        self.llm_response_cache.flush()
+                    if self.s3_cache_manager is not None:
+                        # Durable now, not only after the last stage: a task
+                        # stopped later resumes from here.
                         self._upload_checkpoint(context.pipeline_id)
 
                 if self._should_stop_pipeline(result):

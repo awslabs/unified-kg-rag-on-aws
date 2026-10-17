@@ -20,6 +20,7 @@ import boto3
 import pytest
 from moto import mock_aws
 
+from tests.integration import test_ingestion_stages as stages_test
 from tests.integration.test_pipeline_resume_flows import _Harness
 from unified_kg_rag.application.ingestion import pipeline as pipeline_module
 from unified_kg_rag.application.ingestion import pipeline_stages as ps
@@ -148,3 +149,33 @@ def test_a_resume_after_a_day_reuses_the_s3_checkpoint(
     assert _run(harness, "task-2") == 0
     assert extractions == [1]
     assert harness.llm_calls == calls
+
+
+def test_a_stopped_stage_does_not_repeat_its_answered_model_calls(
+    s3_harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The stop lands while graph extraction is running: the responses it
+    # already had reach S3 with the checkpoint, and the next task (empty
+    # disk) answers those prompts from them instead of asking the model.
+    harness, s3 = s3_harness
+    harness.incremental = False
+    extraction_prompts: list[str] = []
+    respond = stages_test._respond
+
+    def stop_during_extraction(system: str, human: str) -> str:
+        answer = respond(system, human)
+        if "knowledge graph extraction expert" in system:
+            extraction_prompts.append(human)
+            if len(extraction_prompts) == 1:
+                os.kill(os.getpid(), signal.SIGTERM)
+        return answer
+
+    monkeypatch.setattr(stages_test, "_respond", stop_during_extraction)
+    assert _run(harness, "task-1") == 128 + signal.SIGTERM
+    assert extraction_prompts
+    assert _s3_statuses(s3).get("graph_extraction") != "completed"
+
+    assert _run(harness, "task-2") == 0
+    assert _s3_statuses(s3)["graph_extraction"] == "completed"
+    # Every text unit was extracted, none twice.
+    assert len(extraction_prompts) == len(set(extraction_prompts)) == 2

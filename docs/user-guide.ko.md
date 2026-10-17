@@ -695,6 +695,8 @@ LLM 단계는 Bedrock I/O가 병목이므로 동시성을 CPU 수보다 훨씬 �
 | `memory.max_messages_per_conversation` | `20` | 대화당 보관하는 메시지 수입니다. |
 | `memory.max_conversation_age_hours` | `168` | 대화가 쓰이지 않은 채 머물 수 있는 시간입니다. 이보다 오래된 대화는 버리고 새로 시작합니다. |
 | `cache.ttl_seconds` | `86400` | 캐시 항목 TTL입니다. `null`이면 만료하지 않습니다. `--s3-sync`에서는 적용하지 않습니다(버킷 수명 주기가 체크포인트를 만료시킴). |
+| `cache.llm_responses.enabled` | `true` | 수집 모델 응답을 단계 캐시와 함께 보관해, 같은 pipeline id로 다시 실행할 때 답을 받은 호출을 반복하지 않습니다. |
+| `cache.llm_responses.flush_every` | `100` | 캐시 세그먼트 파일 하나의 응답 수입니다(채워질 때와 단계 체크포인트마다 쓰고, `--s3-sync`면 업로드). |
 | `logging.level` | `"INFO"` | `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL` 중 하나입니다. |
 | `logging.log_format` | `"structured"` | `structured` 또는 `plain`입니다. |
 | `logging.log_to_file` | `true` | CLI가 로그를 `log_file_path`(`logs/log.txt`, 실제 파일 이름은 `log_YYYYMMDD.txt`)에도 씁니다. 상대 경로는 작업 디렉터리 기준입니다. 패키지를 라이브러리로 import하면 핸들러나 파일을 설정하지 않으며, 호스트 애플리케이션의 로깅 설정을 따릅니다. 호스트의 포매터에는 메시지 본문만 나오고, 구조화 필드(`logger`, `level`, `pipeline_id`, `trace_id` 등)는 로그 레코드의 속성으로 들어갑니다. |
@@ -1016,6 +1018,27 @@ run-ingestion --source-directory ./documents --config-path config.yaml --metrics
 만료되지 않고 버킷의 수명 주기 규칙이 만료시킵니다(CDK 배포에서는 30일). 임베딩은 따로
 `indexing.opensearch.persist_embedding_cache: true`를 설정하면 바뀌지 않은 텍스트를
 실행마다 다시 임베딩하지 않습니다.
+
+**LLM 응답 캐시**(`cache.llm_responses`, 기본값 켜짐): 수집 단계의 모델 호출(추출, 글리닝,
+클레임, 번역, 설명 요약, 커뮤니티 보고서, LLM 청킹, 출력 수정) 응답을 실행의 캐시 디렉터리
+`llm-cache/`에 두고 단계 캐시와 함께 동기화합니다. 같은 pipeline id로 다시 실행하면 이미 보낸
+프롬프트는 여기서 답하므로, 중지되거나 시간 초과되거나 비정상 종료된 단계는 하지 않은 호출만
+다시 합니다. 키는 렌더링한 프롬프트와 모델 및 생성 설정(모델 ID, 최대 토큰, temperature,
+추론, 가드레일)이므로 프롬프트, 모델, 설정이 바뀌면 모델을 다시 호출합니다.
+알아 둘 점은 다음과 같습니다.
+
+- 캐시한 응답은 실행마다 한 번까지만, 그리고 이전 실행의 응답만 씁니다. 실행 안에서 다시
+  시도하면(응답을 파싱하지 못한 경우) 모델을 다시 호출하고 새 응답이 이전 응답을 대체합니다.
+  출력 토큰 한도에서 잘린 응답은 보관하지 않습니다.
+- temperature가 0보다 크면 다시 실행할 때 새로 샘플링하지 않고 이전 결과를 재사용합니다.
+  `--force-rebuild`는 캐시에서 답하지 않습니다(새 응답은 저장합니다).
+- 새 pipeline id는 빈 캐시로 시작합니다. 질의와 평가 호출은 캐시하지 않습니다.
+- 비용: 모델 호출마다 응답 하나(수 KB)만큼 커집니다. `cache.llm_responses.flush_every`개
+  응답 단위의 세그먼트를 채워질 때와 단계 체크포인트마다 쓰고(`--s3-sync`면 업로드),
+  예고 없이 종료된 태스크도 잃는 것은 세그먼트 하나 이하입니다. 캐시는 실행을 시작할 때
+  메모리로 읽습니다.
+- 중지하면 실행 중인 모델 호출의 재시도도 멈추므로, 진행 중인 호출이 끝나면 태스크가
+  종료됩니다.
 
 ### 인덱스 접미사
 

@@ -114,6 +114,9 @@ class Providers:
         self._vector_indexer_factory = vector_indexer_factory
         self._retriever_builders = dict(retriever_builders or {})
         self._doc_status = doc_status
+        # Set by use_llm_response_cache; the wrapped factory is built once.
+        self._llm_response_cache: Any = None
+        self._caching_llm_factory: LLMFactoryPort | None = None
         # Re-entrant: building a factory reads ``boto_session`` under the lock.
         self._lock = threading.RLock()
 
@@ -145,7 +148,24 @@ class Providers:
         with self._lock:
             if self._llm_factory is None:
                 self._llm_factory = self._build(ProviderRole.LLM)
-            return self._llm_factory
+            if self._llm_response_cache is None:
+                return self._llm_factory
+            if self._caching_llm_factory is None:
+                from unified_kg_rag.adapters.llm.response_cache import (
+                    CachingLLMFactory,
+                )
+
+                self._caching_llm_factory = CachingLLMFactory(
+                    self._llm_factory, self._llm_response_cache
+                )
+            return self._caching_llm_factory
+
+    def use_llm_response_cache(self, cache: Any) -> None:
+        """Give the ingestion models ``llm_factory`` builds from now on the
+        LangChain cache ``cache`` (see ``adapters.llm.response_cache``)."""
+        with self._lock:
+            self._llm_response_cache = cache
+            self._caching_llm_factory = None
 
     @property
     def embedding_factory(self) -> EmbeddingFactoryPort:

@@ -298,6 +298,7 @@ def test_local_backend_builds_the_store_retrievers(no_aws, tmp_path, stores) -> 
 
 
 def test_local_backend_reaches_every_ingestion_component(no_aws, tmp_path) -> None:
+    from unified_kg_rag.adapters.llm.response_cache import CachingLLMFactory
     from unified_kg_rag.adapters.local.search_engine import SQLiteSearchEngine
     from unified_kg_rag.adapters.storage.opensearch_indexer import OpenSearchIndexer
     from unified_kg_rag.adapters.storage.sqlite_graph_indexer import SQLiteGraphIndexer
@@ -315,7 +316,9 @@ def test_local_backend_reaches_every_ingestion_component(no_aws, tmp_path) -> No
     stages = {pipeline.name_to_type_map[s.name]: s for s in pipeline.stages}
     providers = pipeline.providers
     llm = providers.llm_factory
-    assert isinstance(llm, OllamaLanguageModelFactory)
+    # The stages' factory adds the run's response cache to the configured one.
+    assert isinstance(llm, CachingLLMFactory)
+    assert isinstance(llm.factory, OllamaLanguageModelFactory)
     for stage_type, stage in stages.items():
         assert stage.providers is providers, stage_type
 
