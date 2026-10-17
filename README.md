@@ -92,11 +92,11 @@ uv run run-rag --query "How are Alice and Acme related?" --search-strategy mix -
 uv run run-rag --interactive --use-memory --conversation-id my-session --config-path config.yaml
 
 # Evaluate (LangChain + RAGAS + graph-aware coverage, retrieval and answer-match metrics)
-uv run run-eval --eval-data-path eval_data.json --config-path config.yaml
+uv run run-eval --data-path eval_data.json --config-path config.yaml
 
 # Optional: render an exported graph, or tune prompts to your domain
-uv run run-visualization --data-path visualization_data.json --output-dir ./viz --config-path config.yaml
-uv run run-prompt-tuning --source-directory ./source --output tuned_prompts.yaml --config-path config.yaml
+uv run run-visualization --data-path visualization_data.json --output-directory ./viz --config-path config.yaml
+uv run run-prompt-tuning --source-directory ./source --output-path tuned_prompts.yaml --config-path config.yaml
 ```
 
 The graph-aware evaluator reports entity and relationship coverage (recall) against `expected_entities` / `expected_relationships`, without an LLM. It matches on word boundaries for space-delimited scripts and falls back to substring matching for CJK text. Two more LLM-free evaluators make runs comparable: `retrieval` scores hit@k, recall@k and MRR of the reported sources against `reference_sources`, and `answer_match` scores exact match and token F1 against `answer` (plus optional `metadata.answer_aliases`). The [User Guide](./docs/user-guide.md) covers every configuration section, CLI flag, and the evaluation data format.

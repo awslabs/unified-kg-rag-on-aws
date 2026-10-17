@@ -25,7 +25,6 @@ from unified_kg_rag.adapters.retrieval.token_manager import (
     OptimizedContext,
 )
 from unified_kg_rag.application.retrieval.rag_chain import (
-    ChainMode,
     GraphRAGChain,
     ProcessedQuery,
     RAGInput,
@@ -63,10 +62,10 @@ def _text_result(i: int, *, words: int, score: float) -> RetrievalResult:
     )
 
 
-def _chain(config: Config, mode: ChainMode = ChainMode.RAG, **kw: Any) -> GraphRAGChain:
+def _chain(config: Config, **kw: Any) -> GraphRAGChain:
     config = config.model_copy(deep=True)  # don't leak the tweak below
     config.search.token_manager.min_truncated_section_tokens = 10
-    chain = GraphRAGChain(config=config, mode=mode, **kw)
+    chain = GraphRAGChain(config=config, **kw)
     # Local whitespace token count (no Bedrock count_tokens call).
     chain.token_manager.count_tokens = lambda text: len((text or "").split())
     return chain

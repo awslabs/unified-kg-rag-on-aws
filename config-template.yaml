@@ -304,7 +304,7 @@ processing:
     # (or GRAPHRAG_SOURCE_DIRECTORY) and ignores this value.
     source_directory: "source"
     # Set a directory to export each parsed document as <stem>.json for
-    # inspection (or pass --target-directory); null = no export. The loading
+    # inspection (or pass --output-directory); null = no export. The loading
     # stage reuses the parsed documents in memory and never reads the export.
     # Must not be the source directory: .json is a parseable source format, so
     # output there would be re-ingested as new documents on the next run.

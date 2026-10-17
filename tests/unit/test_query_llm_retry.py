@@ -28,7 +28,6 @@ from unified_kg_rag.adapters.llm.chain_factory import (
     with_transient_retry,
 )
 from unified_kg_rag.application.retrieval.rag_chain import (
-    ChainMode,
     GraphRAGChain,
     RAGInput,
     RAGOutput,
@@ -300,7 +299,6 @@ def _rag_chain(model: _ScriptedModel) -> GraphRAGChain:
     retriever = _FakeRetriever()
     chain = GraphRAGChain(
         config=config,
-        mode=ChainMode.RAG,
         model_factory=_FakeBedrockFactory(model, config),
         retriever_builders={
             RetrieverRole.DOCUMENT: lambda: retriever,

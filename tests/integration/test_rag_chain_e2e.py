@@ -19,10 +19,10 @@ import unified_kg_rag.adapters.search_strategies  # noqa: F401  (registers strat
 from tests.fixtures.fakes.chat_models import ScriptedLLMFactory
 from unified_kg_rag.application.retrieval.rag_chain import (
     NO_CONTEXT_ANSWER,
-    ChainMode,
     GraphRAGChain,
     RAGInput,
     RAGOutput,
+    SearchOutput,
 )
 from unified_kg_rag.domain.models import (
     Config,
@@ -64,14 +64,11 @@ class _FakeRetriever:
         ]
 
 
-def _make_chain(
-    config: Config, mode: ChainMode, *, empty_retrieval: bool = False
-) -> GraphRAGChain:
+def _make_chain(config: Config, *, empty_retrieval: bool = False) -> GraphRAGChain:
     doc_retriever = _FakeRetriever("document", empty=empty_retrieval)
     graph_retriever = _FakeRetriever("graph", empty=empty_retrieval)
     chain = GraphRAGChain(
         config=config,
-        mode=mode,
         model_factory=ScriptedLLMFactory(lambda _system, _human: _CANNED_ANSWER),
         retriever_builders={
             RetrieverRole.DOCUMENT: lambda: doc_retriever,
@@ -87,7 +84,7 @@ def _make_chain(
 async def test_rag_mode_round_trip_produces_answer_and_sources(
     config: Config,
 ) -> None:
-    chain = _make_chain(config, ChainMode.RAG)
+    chain = _make_chain(config)
     out = await chain.ainvoke(
         RAGInput(
             query="What does Vendor supply to Buyer?",
@@ -107,17 +104,17 @@ async def test_rag_mode_round_trip_produces_answer_and_sources(
 async def test_search_mode_round_trip_returns_results_without_llm_answer(
     config: Config,
 ) -> None:
-    chain = _make_chain(config, ChainMode.SEARCH)
-    out = await chain.ainvoke(
+    chain = _make_chain(config)
+    out = await chain.asearch(
         RAGInput(
             query="Vendor Buyer supply agreement",
             search_strategy=SearchStrategy.SIMPLE,
             enable_query_processing=False,
         )
     )
-    # SEARCH mode skips answer generation; results still come back.
-    result = out if isinstance(out, dict) else out.model_dump()
-    assert result["search_results"]["total_results"] >= 1
+    # Search skips answer generation; results still come back.
+    assert isinstance(out, SearchOutput)
+    assert out.search_results.total_results >= 1
 
 
 async def test_rag_mode_empty_retrieval_short_circuits_answer_generation(
@@ -125,7 +122,7 @@ async def test_rag_mode_empty_retrieval_short_circuits_answer_generation(
 ) -> None:
     # When retrieval yields no context, the chain must NOT invoke the answer LLM
     # (which would hallucinate); it returns an explicit "cannot answer" instead.
-    chain = _make_chain(config, ChainMode.RAG, empty_retrieval=True)
+    chain = _make_chain(config, empty_retrieval=True)
     out = await chain.ainvoke(
         RAGInput(
             query="What does Vendor supply to Buyer?",
@@ -147,7 +144,7 @@ async def test_rag_mode_local_strategy_uses_graph_and_document_roles(
 ) -> None:
     # LOCAL needs both roles; this exercises the multi-role injection seam end to
     # end (graph expansion + document retrieval) through the full chain.
-    chain = _make_chain(config, ChainMode.RAG)
+    chain = _make_chain(config)
     out = await chain.ainvoke(
         RAGInput(
             query="Who are the parties?",
@@ -157,6 +154,36 @@ async def test_rag_mode_local_strategy_uses_graph_and_document_roles(
     )
     assert isinstance(out, RAGOutput)
     assert out.answer == _CANNED_ANSWER
+
+
+async def test_a_conversation_id_reaches_only_its_tenants_and_users_history(
+    config: Config,
+) -> None:
+    # One chain serving several tenants (index suffixes) and users: the same
+    # conversation id must not carry one's turns into another's rewrite.
+    chain = _make_chain(config)
+
+    def turn(**fields: object) -> RAGInput:
+        return RAGInput(
+            query="What does Vendor supply to Buyer?",
+            search_strategy=SearchStrategy.SIMPLE,
+            enable_query_processing=False,
+            use_memory=True,
+            conversation_id="c-1",
+            **fields,
+        )
+
+    await chain.ainvoke(turn(suffix="tenant-a", user_id="u1"))
+
+    async def history(**fields: object) -> str:
+        state = await chain._load_memory_step(turn(**fields).model_dump())
+        return str(state["history"])
+
+    assert "Vendor" in await history(suffix="tenant-a", user_id="u1")
+    assert await history(suffix="tenant-b", user_id="u1") == ""
+    assert await history(suffix="tenant-a", user_id="u2") == ""
+    assert await history(suffix="tenant-a") == ""
+    await chain.aclose()
 
 
 class _LineageStore:

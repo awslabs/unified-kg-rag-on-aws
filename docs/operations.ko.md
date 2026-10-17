@@ -423,10 +423,10 @@ Neptune `connect`와 `ReadDataViaQuery`, 도메인에 대한 OpenSearch `GET`/`H
 ## 시작 시 엔드포인트 검사
 
 CLI는 첫 유료 모델 호출 전에 실행에 필요한 저장소 엔드포인트가 설정되어 있는지
-검사하고, 없으면 종료 코드 1로 끝납니다.
+검사하고, 없으면 종료 코드 2(설정 오류)로 끝납니다.
 
 ```text
-Error: Missing endpoint configuration for the indexing stage: aws.neptune.endpoint (env NEPTUNE_ENDPOINT), aws.opensearch.endpoint (env OPENSEARCH_ENDPOINT). Set them in the config file or the environment.
+run-ingestion: error: Missing endpoint configuration for the indexing stage: aws.neptune.endpoint (env NEPTUNE_ENDPOINT), aws.opensearch.endpoint (env OPENSEARCH_ENDPOINT). Set them in the config file or the environment.
 ```
 
 - `run-ingestion`은 `indexing` 단계가 켜져 있으면 두 엔드포인트를 모두
@@ -775,10 +775,10 @@ LangSmith로 업로드합니다.
 | `Incremental indexing is enabled but no document delta was computed` | 레지스트리 비교 없이 인덱싱 단계가 실행됨(`continue_on_error`로 로딩 단계 실패 뒤 진행) | 레지스트리에 접근할 수 있게 한 뒤 `document_loading`부터 다시 실행 |
 | `CacheSyncError` | S3 단계 캐시 다운로드나 업로드가 실패함 | 버킷 권한과 `aws.s3.encryption`을 확인한 뒤 같은 `--pipeline-id`로 재개 |
 | `Pipeline failed at stage(s): ...` | 단계가 실패해 CLI가 1로 종료함 | 해당 단계 로그를 확인해 고친 뒤 같은 `--pipeline-id`로 재개. `--verify-metadata`로 실행 메타데이터를 확인하거나 `--force-rebuild`로 처음부터 시작 |
-| `--source-directory is required for pipeline execution` | `--source-directory`도 `$GRAPHRAG_SOURCE_DIRECTORY`도 없음 | 플래그를 넘김. `--verify-metadata`에는 대신 `--pipeline-id`가 필요 |
-| `--s3-bucket-name must be specified for S3 sync` | 버킷 없이 `--s3-sync`를 지정함 | `--s3-bucket-name`을 넘김 |
+| `--source-directory is required for pipeline execution`(아래 사용법 오류처럼 종료 코드 2) | `--source-directory`도 `$GRAPHRAG_SOURCE_DIRECTORY`도 없음 | 플래그를 넘김. `--verify-metadata`에는 대신 `--pipeline-id`가 필요 |
+| `--s3-bucket-name must be specified for --s3-sync` | 버킷 없이 `--s3-sync`를 지정함 | `--s3-bucket-name`을 넘김 |
 | `--pipeline-id is required for --resume-from-stage` | 재개하려면 이전 실행이 필요함 | 그 실행의 `--pipeline-id`를 넘김 |
-| `Invalid stage names provided: ...` | `--enabled-stages`에 없는 단계 이름이 있음 | CLI가 출력하는 목록의 이름을 사용 |
+| `--enabled-stages: invalid stage names ...` | `--enabled-stages`에 없는 단계 이름이 있음 | 메시지에 나온 목록의 이름을 사용 |
 | `argument --resume-from-stage: Unknown pipeline stage ...`(종료 코드 2) | `--resume-from-stage`에 없는 단계 이름을 넘김 | 메시지에 나온 목록의 이름을 사용(대소문자 무관) |
 | `... needs confirmation, but stdin is not a terminal` | 다시 실행할 때 완료된 단계의 출력이 현재 입력 기준으로 캐시에 없는데, 물어볼 터미널이 없음 | `--yes`를 넘겨 계속(재개하면서 그 단계를 다시 계산)하거나 새 `--pipeline-id`를 사용 |
 | `Stage '<stage>', upstream of this run's enabled stages, has not completed` | `--enabled-stages` 범위를 재개했는데 앞 단계가 실패했거나 캐시된 출력이 없음 | 앞 단계를 먼저 실행 |

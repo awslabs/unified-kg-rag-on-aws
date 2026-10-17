@@ -28,6 +28,10 @@ def patched_history():
     return make
 
 
+def _key(conversation_id: str) -> mm.ConversationKey:
+    return mm.ConversationKey("default", None, conversation_id)
+
+
 # --- GraphRAGChatMessageHistory ------------------------------------------
 
 
@@ -78,8 +82,8 @@ def test_get_or_create_memory_caches_instance(patched_history) -> None:
     import asyncio
 
     manager = mm.MemoryManager(config=Config())
-    h1 = asyncio.run(manager.get_or_create_memory("c1"))
-    h2 = asyncio.run(manager.get_or_create_memory("c1"))
+    h1 = asyncio.run(manager.get_or_create_memory(_key("c1")))
+    h2 = asyncio.run(manager.get_or_create_memory(_key("c1")))
     assert h1 is h2
 
 
@@ -92,13 +96,13 @@ def test_get_or_create_memory_evicts_oldest_at_capacity(patched_history) -> None
     manager = mm.MemoryManager(config=cfg)
 
     async def scenario():
-        a = await manager.get_or_create_memory("a")
+        a = await manager.get_or_create_memory(_key("a"))
         # Make "a" the oldest by back-dating it.
         a.updated_at = datetime.now() - timedelta(hours=1)
-        await manager.get_or_create_memory("b")
+        await manager.get_or_create_memory(_key("b"))
         # Third insertion is at capacity -> evicts oldest ("a").
-        await manager.get_or_create_memory("c")
-        return set(manager._memories.keys())
+        await manager.get_or_create_memory(_key("c"))
+        return {key.conversation_id for key in manager._memories}
 
     keys = asyncio.run(scenario())
     assert keys == {"b", "c"}
@@ -113,18 +117,18 @@ async def test_get_or_create_memory_expires_idle_conversations(
     cfg = Config()
     cfg.memory.max_conversation_age_hours = 2
     manager = mm.MemoryManager(config=cfg)
-    stale = await manager.get_or_create_memory("stale")
+    stale = await manager.get_or_create_memory(_key("stale"))
     stale.add_message(HumanMessage(content="old question"))
-    idle = await manager.get_or_create_memory("idle")
-    fresh = await manager.get_or_create_memory("fresh")
+    idle = await manager.get_or_create_memory(_key("idle"))
+    fresh = await manager.get_or_create_memory(_key("fresh"))
     expired_at = datetime.now() - timedelta(hours=3)
     stale.updated_at = idle.updated_at = expired_at
 
-    again = await manager.get_or_create_memory("stale")
+    again = await manager.get_or_create_memory(_key("stale"))
 
     assert again is not stale and again.messages == []
-    assert set(manager._memories) == {"stale", "fresh"}
-    assert manager._memories["fresh"] is fresh
+    assert {key.conversation_id for key in manager._memories} == {"stale", "fresh"}
+    assert manager._memories[_key("fresh")] is fresh
 
 
 def test_cleanup_oldest_no_op_for_nonpositive(patched_history) -> None:
@@ -133,9 +137,9 @@ def test_cleanup_oldest_no_op_for_nonpositive(patched_history) -> None:
     manager = mm.MemoryManager(config=Config())
 
     async def scenario():
-        await manager.get_or_create_memory("a")
+        await manager.get_or_create_memory(_key("a"))
         manager._cleanup_oldest_unsafe(0)
-        return list(manager._memories.keys())
+        return [key.conversation_id for key in manager._memories]
 
     assert asyncio.run(scenario()) == ["a"]
 
@@ -144,23 +148,31 @@ async def test_load_history_returns_the_bounded_history(patched_history) -> None
     cfg = Config()
     cfg.memory.max_messages_per_conversation = 2
     manager = mm.MemoryManager(config=cfg)
-    await manager.add_turn("c1", "first", "old answer")
+    await manager.add_turn(_key("c1"), "first", "old answer")
     long_answer = "x" * (mm.HISTORY_ANSWER_CHARS + 50)
-    await manager.add_turn("c1", "about Vendor", long_answer)
+    await manager.add_turn(_key("c1"), "about Vendor", long_answer)
 
-    history = await manager.load_history("c1")
+    history = await manager.load_history(_key("c1"))
 
     # The last turn only, its answer cut for the rewrite.
     assert history == (f"Human: about Vendor\nAI: {'x' * mm.HISTORY_ANSWER_CHARS}...")
 
 
-def test_get_memory_manager_is_singleton(patched_history, mocker) -> None:
-    # Reset the module-level singleton so the test is deterministic.
-    mocker.patch.object(mm, "_memory_manager", None)
-    mocker.patch.object(mm, "get_config", return_value=Config())
-    m1 = mm.get_memory_manager()
-    m2 = mm.get_memory_manager()
-    assert m1 is m2
+async def test_conversations_are_keyed_by_namespace_user_and_id(
+    patched_history,
+) -> None:
+    # The same conversation id in another tenant (index suffix) or for another
+    # user is another conversation.
+    manager = mm.MemoryManager(config=Config())
+    await manager.add_turn(mm.ConversationKey("tenant-a", "u1", "c1"), "q", "a")
+
+    assert await manager.load_history(mm.ConversationKey("tenant-b", "u1", "c1")) == ""
+    assert await manager.load_history(mm.ConversationKey("tenant-a", "u2", "c1")) == ""
+    assert await manager.load_history(mm.ConversationKey("tenant-a", None, "c1")) == ""
+    assert (
+        await manager.load_history(mm.ConversationKey("tenant-a", "u1", "c1"))
+        == "Human: q\nAI: a"
+    )
 
 
 def test_concurrent_turns_keep_each_answer_after_its_question(patched_history) -> None:
@@ -170,9 +182,9 @@ def test_concurrent_turns_keep_each_answer_after_its_question(patched_history) -
 
     async def scenario():
         await asyncio.gather(
-            *(manager.add_turn("c1", f"q{i}", f"a{i}") for i in range(5))
+            *(manager.add_turn(_key("c1"), f"q{i}", f"a{i}") for i in range(5))
         )
-        history = await manager.get_or_create_memory("c1")
+        history = await manager.get_or_create_memory(_key("c1"))
         return [m.content for m in history.messages]
 
     contents = asyncio.run(scenario())
@@ -204,7 +216,10 @@ def test_turns_from_threads_on_separate_loops_stay_atomic(
     def worker(tag: str) -> None:
         async def turns() -> None:
             await asyncio.gather(
-                *(manager.add_turn("c1", f"q{tag}{i}", f"a{tag}{i}") for i in range(5))
+                *(
+                    manager.add_turn(_key("c1"), f"q{tag}{i}", f"a{tag}{i}")
+                    for i in range(5)
+                )
             )
 
         try:
@@ -220,7 +235,7 @@ def test_turns_from_threads_on_separate_loops_stay_atomic(
 
     assert not any(thread.is_alive() for thread in threads)
     assert errors == []
-    contents = [m.content for m in manager._memories["c1"].messages]
+    contents = [m.content for m in manager._memories[_key("c1")].messages]
     assert len(contents) == 20
     for question, answer in zip(contents[::2], contents[1::2], strict=True):
         assert question.startswith("q") and answer == "a" + question[1:]

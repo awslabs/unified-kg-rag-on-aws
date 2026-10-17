@@ -291,11 +291,23 @@ def test_prepare_benchmark_cli(tmp_path: Path, capsys) -> None:
 
     source = TestMusique()._source(tmp_path)
     prepare_benchmark.main(
-        ["musique", "--output-dir", str(tmp_path / "b"), "--source", str(source)]
+        [
+            "musique",
+            "--output-directory",
+            str(tmp_path / "b"),
+            "--data-path",
+            str(source),
+        ]
     )
     assert (tmp_path / "b" / "eval_data.json").is_file()
     with pytest.raises(SystemExit) as exit_info:  # corpus/ is no longer empty
         prepare_benchmark.main(
-            ["musique", "--output-dir", str(tmp_path / "b"), "--source", str(source)]
+            [
+                "musique",
+                "--output-directory",
+                str(tmp_path / "b"),
+                "--data-path",
+                str(source),
+            ]
         )
     assert exit_info.value.code == 1

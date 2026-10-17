@@ -2,13 +2,14 @@
 # SPDX-License-Identifier: Apache-2.0
 import threading
 from datetime import datetime, timedelta
+from typing import NamedTuple
 
 from langchain_core.chat_history import BaseChatMessageHistory
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langchain_core.messages.utils import get_buffer_string
 
 from unified_kg_rag.domain.models import Config
-from unified_kg_rag.shared import get_config, get_logger
+from unified_kg_rag.shared import get_logger
 
 logger = get_logger(__name__)
 
@@ -16,6 +17,19 @@ logger = get_logger(__name__)
 # follow-up rewrite reads: the rewrite needs what a turn was about (the names
 # an answer opens with), not every answer in full on every turn.
 HISTORY_ANSWER_CHARS = 1000
+
+
+class ConversationKey(NamedTuple):
+    """Who a conversation belongs to: its index namespace (the query's
+    ``suffix``), end user and conversation id.
+
+    Two tenants or users that pick the same conversation id get separate
+    histories.
+    """
+
+    namespace: str
+    user_id: str | None
+    conversation_id: str
 
 
 class GraphRAGChatMessageHistory(BaseChatMessageHistory):
@@ -74,16 +88,25 @@ class GraphRAGChatMessageHistory(BaseChatMessageHistory):
 
 
 class MemoryManager:
+    """In-process conversation histories, keyed by :class:`ConversationKey`.
+
+    Each :class:`GraphRAGChain` builds its own; pass one manager to several
+    chains (``GraphRAGChain(memory_manager=...)``) to share histories between
+    them, e.g. across chains built per request.
+    """
+
     def __init__(self, config: Config) -> None:
         self.config = config
-        self._memories: dict[str, GraphRAGChatMessageHistory] = {}
-        # A threading lock, not asyncio.Lock: the process-wide manager is shared
-        # by chains on different threads and event loops (an asyncio.Lock binds
+        self._memories: dict[ConversationKey, GraphRAGChatMessageHistory] = {}
+        # A threading lock, not asyncio.Lock: a manager may be shared by
+        # chains on different threads and event loops (an asyncio.Lock binds
         # to one loop and does not exclude across threads). Every section it
         # guards is a short, non-awaiting state mutation.
         self._lock = threading.Lock()
 
-    async def get_or_create_memory(self, conv_id: str) -> GraphRAGChatMessageHistory:
+    async def get_or_create_memory(
+        self, key: ConversationKey
+    ) -> GraphRAGChatMessageHistory:
         with self._lock:
             # Conversations idle past memory.max_conversation_age_hours are
             # dropped (a returning one starts over). A sweep over at most
@@ -91,30 +114,30 @@ class MemoryManager:
             now = datetime.now()
             for cid in [c for c, m in self._memories.items() if m.is_expired(now)]:
                 del self._memories[cid]
-            if (memory := self._memories.get(conv_id)) is not None:
+            if (memory := self._memories.get(key)) is not None:
                 return memory
 
             if len(self._memories) >= self.config.memory.max_conversations:
                 self._cleanup_oldest_unsafe(1)
 
             memory = GraphRAGChatMessageHistory(
-                conversation_id=conv_id,
+                conversation_id=key.conversation_id,
                 max_messages=self.config.memory.max_messages_per_conversation,
                 ttl_hours=self.config.memory.max_conversation_age_hours,
             )
-            self._memories[conv_id] = memory
+            self._memories[key] = memory
             return memory
 
-    async def load_history(self, conv_id: str) -> str:
+    async def load_history(self, key: ConversationKey) -> str:
         """The conversation's history text, each answer cut to
         ``HISTORY_ANSWER_CHARS`` (the turn count is bounded by
         ``memory.max_messages_per_conversation``)."""
-        memory = await self.get_or_create_memory(conv_id)
+        memory = await self.get_or_create_memory(key)
         with self._lock:
             return memory.get_buffer_string(max_answer_chars=HISTORY_ANSWER_CHARS)
 
     async def add_turn(
-        self, conv_id: str, user_content: str, assistant_content: str
+        self, key: ConversationKey, user_content: str, assistant_content: str
     ) -> None:
         """Append a user message and its answer as one unit.
 
@@ -122,7 +145,7 @@ class MemoryManager:
         same conversation land between them (user, user, answer, answer), so
         both messages are appended under one lock hold.
         """
-        memory = await self.get_or_create_memory(conv_id)
+        memory = await self.get_or_create_memory(key)
         with self._lock:
             memory.add_message(HumanMessage(content=user_content))
             memory.add_message(AIMessage(content=assistant_content))
@@ -143,43 +166,3 @@ class MemoryManager:
             logger.info(
                 "Removed %s oldest conversations to maintain capacity", len(to_remove)
             )
-
-
-_memory_manager: MemoryManager | None = None
-_manager_lock = threading.Lock()
-_mismatch_logged = False
-
-
-def _memory_fingerprint(config: Config) -> str:
-    """The config part conversation memory is built from."""
-    return config.memory.model_dump_json()
-
-
-def get_memory_manager(config: Config | None = None) -> MemoryManager:
-    """The process-wide conversation memory, shared by every default chain.
-
-    Created on first use from the first caller's ``config`` (``get_config()``
-    when omitted), so conversations survive across chain instances, e.g. a
-    chain built per request. A later caller whose ``memory`` limits differ
-    keeps using the shared manager; the mismatch is logged once. Pass a chain
-    its own ``MemoryManager`` to isolate it instead.
-    """
-    global _memory_manager, _mismatch_logged
-
-    if _memory_manager is None:
-        with _manager_lock:
-            if _memory_manager is None:
-                _memory_manager = MemoryManager(config=config or get_config())
-                return _memory_manager
-    if (
-        config is not None
-        and not _mismatch_logged
-        and _memory_fingerprint(config) != _memory_fingerprint(_memory_manager.config)
-    ):
-        _mismatch_logged = True
-        logger.warning(
-            "The shared conversation memory was created from a different memory "
-            "config than this chain's; it keeps the first config. Pass "
-            "GraphRAGChain(memory_manager=MemoryManager(config)) to isolate a chain."
-        )
-    return _memory_manager

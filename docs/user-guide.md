@@ -613,14 +613,14 @@ LLM stages are Bedrock-I/O-bound, so concurrency can far exceed the CPU count.
 |---|---|---|
 | `processing.max_concurrency` | `40` | LLM calls an ingestion stage keeps in flight; the next item starts as soon as one finishes. Bedrock quotas differ per account, model and Region: lower it if the logs show `ThrottlingException` retries, raise it if quota allows. The `backend: local` preset sets `20`: a local model server queues the calls it cannot run at once. |
 | `processing.max_attempts` | `5` | Attempts per ingestion LLM item, including the first call. Transient Bedrock errors, call timeouts and unparseable output are retried; other errors fail fast. `1` disables the retry. |
-| `processing.io_workers` | `64` | Threads for blocking query-path I/O (Bedrock calls, Neptune traversals, reranking) in the CLIs and the chain's sync methods. Python's default caps it at `min(32, CPUs + 4)`, six on a 2-vCPU task. An async host calls `configure_event_loop(asyncio.get_running_loop(), config.processing.io_workers)` (from `unified_kg_rag.shared.utils`) at startup. |
+| `processing.io_workers` | `64` | Threads for blocking query-path I/O (Bedrock calls, Neptune traversals, reranking) in the CLIs and the chain's sync methods. Python's default caps it at `min(32, CPUs + 4)`, six on a 2-vCPU task. An async host calls `configure_event_loop(asyncio.get_running_loop(), config.processing.io_workers)` (from `unified_kg_rag`) at startup. |
 | `processing.ignore_errors` | `false` | When a whole step fails (a batch call, a translation language, an evaluator, global map/reduce, the DRIFT primer, the auto router), log it and continue with an empty or degraded result instead of raising. Items whose own LLM call fails are always skipped and reported, whatever this says. |
 | `processing.deduplicate` | `false` | Drop near-duplicate documents before extraction. Two documents are near-duplicates when the Jaccard similarity of their character 3-gram sets, estimated with a 128-permutation MinHash, is at least 0.9; of each pair the first is kept (an incremental run keeps the already-indexed copy). These parameters are fixed. |
 | `processing.resolution_method` | `"minhash"` | Entity resolution: `minhash` or `sequence_matcher`. |
 | `processing.fuzzy_entity_resolution` | `false` | Also merge entities whose names are only similar, in full builds and incremental merges. Off: names merge when equal after normalization, legal-form removal and dense-script spacing. |
 | `processing.similarity_threshold` | `0.85` | Threshold for fuzzy entity resolution and for matching claim subjects/objects to entity names. Raise it if distinct entities merge. |
 | `processing.document_parsing.source_directory` | `"source"` | Fallback for library callers. `run-ingestion` requires `--source-directory` (or `GRAPHRAG_SOURCE_DIRECTORY`). |
-| `processing.document_parsing.target_directory` | `null` | Export each parsed document as `<stem>.json` for inspection (same as `--target-directory`). Must not be the source directory. |
+| `processing.document_parsing.target_directory` | `null` | Export each parsed document as `<stem>.json` for inspection (same as `--output-directory`). Must not be the source directory. |
 | `processing.document_parsing.index_value` | `null` | Index suffix the run writes: every OpenSearch index and Neptune label is named `<prefix>-<index_value>` (`null` = `default`). Query the corpus with the same value as `run-rag`/`run-eval --suffix`. `run-ingestion` has no flag for it; use one config file per tenant or version. |
 | `processing.document_parsing.source_scope` | `null` | Corpus identity for incremental deletion: a run only deletes registry documents of its own index suffix and source scope. `null` = the resolved source directory; the container entrypoint sets it to the S3 URI (`GRAPHRAG_SOURCE_SCOPE`). See §5. |
 | `processing.chunking.chunker_type` | `"intelligent"` | `intelligent` lets an LLM pick semantic boundaries; `simple` splits by size. |
@@ -989,7 +989,7 @@ OpenSearch + Neptune.
 | Flag | Default | Meaning |
 |---|---|---|
 | `--source-directory` | `$GRAPHRAG_SOURCE_DIRECTORY` | Directory of source documents. Required to run; if the flag is omitted it falls back to the `GRAPHRAG_SOURCE_DIRECTORY` environment variable. |
-| `--target-directory` | none (no export) | Export parsed documents as JSON here for inspection (must not be the source directory) |
+| `--output-directory` | none (no export) | Export parsed documents as JSON here for inspection (must not be the source directory) |
 | `--cache-directory` | `cache` | Pipeline cache + intermediate results |
 | `--force-rebuild` | off | Recompute every stage, ignoring the cached stage outputs; the cache is rewritten with the new outputs |
 | `--s3-sync` | off | Sync cache to S3 (requires `--s3-bucket-name`) |
@@ -1003,6 +1003,7 @@ OpenSearch + Neptune.
 | `--enabled-stages` | all | Comma-separated stage list to run |
 | `--metrics-sink` | `none` | `none`, or `cloudwatch` (emits CloudWatch EMF — Embedded Metric Format — metrics to stdout, with an `Environment` dimension when `GRAPHRAG_METRICS_ENVIRONMENT` is set (the CDK task sets its `env_name`) and none otherwise; `pipeline_id` is recorded as a log property, not a dimension, so runs add no new metric series). Each stage's metrics are emitted when the stage finishes, and only by a run that executed it, so a resumed run does not repeat the counts of the stages it restored |
 | `--retire-source-scope SCOPE` | — | Incremental runs: treat every registry record of the former source scope `SCOPE` (in this run's index suffix) as deleted, removing its exclusive content. Repeatable; added to `indexing.retire_source_scopes`. Fails when `SCOPE` is the run's own scope. See §5 Deletion scope. |
+| `--output-format` | `text` | `text`, or `json` for one JSON result on stdout (see [Exit codes and JSON output](#cli-exit-codes-and-json-output)) |
 | `--config-path` | — | Path to `config.yaml`; a missing file is a usage error (exit 2) |
 | `--backend`, `--llm-provider`, ... | — | Provider selection; see [Provider flags](#provider-flags) |
 
@@ -1207,7 +1208,7 @@ documents as failed so the next run translates them again (§5).
 | `--retrieval-multiplier` | `1` | Increase retrieval depth |
 | `--disable-query-processing` | off | Skip translation + entity extraction |
 | `--filters` | — | `key:value` attribute filters (space-separated) |
-| `--output-format` | `text` | `text` or `json` |
+| `--output-format` | `text` | `text`, or `json` for one JSON result on stdout (see [Exit codes and JSON output](#cli-exit-codes-and-json-output)) |
 | `--verbose`, `-v` | off | Show query-processing info, sources, metrics |
 | `--config-path` | — | Path to `config.yaml` |
 | `--backend`, `--llm-provider`, ... | — | Provider selection; see [Provider flags](#provider-flags) |
@@ -1381,8 +1382,12 @@ Interactive mode auto-enables memory. In-session commands:
 
 Conversation memory is held in the process (`MemoryManager` keeps it in
 memory, nothing is written to disk or a store): it carries over between the
-turns of one interactive session, or between `GraphRAGChain` calls of one
-Python process that reuse a `conversation_id` with `use_memory=True`. Separate
+turns of one interactive session, or between calls of one `GraphRAGChain`
+that reuse a `conversation_id` with `use_memory=True` and the same `suffix`
+and `user_id` (a conversation belongs to its index suffix and user, so
+another tenant's or user's turns never reach it). Each chain has its own
+memory; to share it between chains, pass them one
+`MemoryManager(config)` as `memory_manager=`. Separate
 `run-rag --query` invocations do not share it: each starts with no history,
 so `--use-memory` and `--conversation-id` have no effect on a single query
 (`run-rag` logs a WARNING when they are combined with `--query`). Use
@@ -1645,8 +1650,8 @@ chunks counts as a failed removal (its registry row is kept for a retry).
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--eval-data-path` | **required** | JSON file of questions + ground truths: a local path or an `s3://bucket/key` URI |
-| `--outputs-directory` | `evaluation.outputs_directory` | Where to save results: a local directory or an `s3://bucket/prefix/` URI |
+| `--data-path` | **required** | JSON file of questions + ground truths: a local path or an `s3://bucket/key` URI |
+| `--output-directory` | `evaluation.outputs_directory` | Where to save results: a local directory or an `s3://bucket/prefix/` URI |
 | `--suffix` | — (`default`) | [Index suffix](#index-suffix) to evaluate against |
 | `--enable-thinking` | off | Model reasoning, as for `run-rag` (a no-op for models that always reason) |
 | `--search-strategy` | `auto` | Strategy used to answer each question; a comma-separated list (`local,mix,global`) runs a [paired comparison](#comparing-strategies) against the first |
@@ -1657,6 +1662,7 @@ chunks counts as a failed removal (its registry row is kept for a retry).
 | `--retrieval-multiplier` | `1` | Retrieval depth |
 | `--max-failure-rate` | `1.0` | Exit non-zero when the fraction of queries whose answer generation failed, or the fraction of a metric's attempted values that failed (`metric_outcomes`; skipped values do not count), exceeds this (0.0-1.0). A run where every query, or every attempt of a metric, failed always exits non-zero |
 | `--verbose`, `-v` | off | Debug logging |
+| `--output-format` | `text` | `text`, or `json` for one JSON result on stdout (see [Exit codes and JSON output](#cli-exit-codes-and-json-output)) |
 | `--config-path` | — | Path to `config.yaml` |
 | `--backend`, `--llm-provider`, ... | — | Provider selection; see [Provider flags](#provider-flags) |
 
@@ -1824,15 +1830,15 @@ duplicate id, a wrong field type, or a `metadata` value the RAG chain rejects
 ### Examples
 
 ```bash
-run-eval --eval-data-path my_eval_data.json --config-path config.yaml
+run-eval --data-path my_eval_data.json --config-path config.yaml
 
-run-eval --eval-data-path my_eval_data.json --outputs-directory ./results --config-path config.yaml
+run-eval --data-path my_eval_data.json --output-directory ./results --config-path config.yaml
 
-run-eval --eval-data-path my_eval_data.json \
+run-eval --data-path my_eval_data.json \
   --search-strategy global --search-type vector --config-path config.yaml
 
-run-eval --eval-data-path s3://my-bucket/eval/my_eval_data.json \
-  --outputs-directory s3://my-bucket/eval/results/ --config-path config.yaml
+run-eval --data-path s3://my-bucket/eval/my_eval_data.json \
+  --output-directory s3://my-bucket/eval/results/ --config-path config.yaml
 ```
 
 Either path can be an `s3://` URI, so `run-eval` also runs as a one-off task on
@@ -1954,7 +1960,7 @@ routing and the pairwise win rates. The failure budget applies to every run.
 CC BY 4.0; Trivedi et al., TACL 2022) into a corpus and a `run-eval` dataset.
 Nothing of it is in this repository: by default it downloads the answerable
 dev split (2,417 questions) from a pinned revision of a public mirror and
-checks its SHA-256; `--source` reads a local `musique_ans_v1.0_*.jsonl` from
+checks its SHA-256; `--data-path` reads a local `musique_ans_v1.0_*.jsonl` from
 the official download instead. It writes `corpus/` (one text file per
 distinct paragraph: its title, a blank line, its text; each question brings
 2-4 supporting paragraphs and up to 18 distractors) and `eval_data.json`
@@ -1963,13 +1969,13 @@ distinct paragraph: its title, a blank line, its text; each question brings
 
 ```bash
 # 1. 100 questions (about 1,900 paragraphs), sampled with seed 0.
-prepare-benchmark musique --output-dir bench/musique --limit 100
+prepare-benchmark musique --output-directory bench/musique --limit 100
 
 # 2. Ingest the paragraphs under their own suffix.
 run-ingestion --source-directory bench/musique/corpus --config-path musique.yaml
 
 # 3. Paired comparison of both methodologies, scored like the papers.
-run-eval --eval-data-path bench/musique/eval_data.json --suffix musique \
+run-eval --data-path bench/musique/eval_data.json --suffix musique \
   --search-strategy local,mix,global,naive --repeats 2 --config-path musique.yaml
 ```
 
@@ -2054,8 +2060,9 @@ Layout and error behaviour:
 | Flag | Default | Meaning |
 |---|---|---|
 | `--data-path` | **required** | Exported visualization-data JSON |
-| `--output-dir` | `visualization_outputs` | Where to write rendered files |
+| `--output-directory` | `visualization_outputs` | Where to write rendered files |
 | `--renderers` | all registered | Renderers to run: `interactive`, `static` |
+| `--output-format` | `text` | `text`, or `json` for one JSON result on stdout (see [Exit codes and JSON output](#cli-exit-codes-and-json-output)) |
 | `--config-path` | — | Path to `config.yaml` |
 | `--backend`, `--llm-provider`, ... | — | Accepted like on the other CLIs (no model or store is called); see [Provider flags](#provider-flags) |
 
@@ -2065,7 +2072,7 @@ The two registered renderers are **`interactive`** (pyvis) and **`static`**
 
 ```bash
 # Render all renderers
-run-visualization --data-path visualization_data.json --output-dir ./viz --config-path config.yaml
+run-visualization --data-path visualization_data.json --output-directory ./viz --config-path config.yaml
 
 # Only the interactive renderer
 run-visualization --data-path visualization_data.json --renderers interactive --config-path config.yaml
@@ -2085,13 +2092,14 @@ persona / entity types) with the configured language model
 | Flag | Default | Meaning |
 |---|---|---|
 | `--source-directory` | **required** | Directory of documents (`.txt`/`.md`/`.markdown` plus every format `run-ingestion` parses, e.g. `.pdf`) |
-| `--output` | `tuned_prompts.yaml` | Output YAML path |
+| `--output-path` | `tuned_prompts.yaml` | Output YAML path |
 | `--max-docs` | `20` | Max documents to sample |
+| `--output-format` | `text` | `text`, or `json` for one JSON result on stdout (see [Exit codes and JSON output](#cli-exit-codes-and-json-output)) |
 | `--config-path` | — | Path to `config.yaml` |
 | `--backend`, `--llm-provider`, ... | — | Provider selection; see [Provider flags](#provider-flags) |
 
 ```bash
-run-prompt-tuning --source-directory ./source --output tuned_prompts.yaml --config-path config.yaml
+run-prompt-tuning --source-directory ./source --output-path tuned_prompts.yaml --config-path config.yaml
 ```
 
 The output YAML contains a `custom_prompts` block (and a `profile` with the
@@ -2222,6 +2230,34 @@ on).
 [Operator Runbook: Common errors](./operations.md#common-errors) lists the
 messages the CLIs report, what they mean and the fix, for AWS and local mode.
 
+### CLI exit codes and JSON output
+
+Every CLI (`run-ingestion`, `run-rag`, `run-eval`, `run-visualization`,
+`run-prompt-tuning`, `prepare-benchmark`) exits with:
+
+| Code | Meaning |
+|---|---|
+| `0` | Success |
+| `1` | The run failed: a failed stage or query, a breached `--max-failure-rate`, a failed upload, nothing rendered |
+| `2` | Usage or configuration error, before any work: an unknown or invalid flag, a missing input file or directory, an invalid configuration file or environment override, an unset store endpoint |
+| `130` | Interrupted with Ctrl-C (SIGINT) |
+| `143` | Stopped by SIGTERM (ECS `StopTask`, a Step Functions timeout); `run-ingestion` checkpoints its finished stages first |
+
+Flags name files one way across the CLIs: `--source-directory` (a corpus
+directory), `--data-path` (an input data file), `--output-directory` /
+`--output-path` (what the command writes), `--cache-directory` and
+`--config-path`. Flags must be spelled out in full: a prefix such as
+`--output` is rejected rather than matched to a longer flag.
+
+`--output-format json` prints one JSON document with the result to stdout
+and moves the banner, progress and logs to stderr, so the output pipes into
+`jq`: the answer or search results (`run-rag`), the pipeline id, status and
+per-stage results (`run-ingestion`; not with `--metrics-sink cloudwatch`,
+which also writes to stdout), each run's summary, the comparison and the
+failure-budget breaches (`run-eval`), the written files (`run-visualization`),
+the output path and detected profile (`run-prompt-tuning`), and the counts
+written (`prepare-benchmark`).
+
 ### Large / multilingual / heterogeneous corpora
 
 - **Large corpora:** raise `processing.max_concurrency` (LLM stages are
@@ -2257,15 +2293,22 @@ to avoid full re-ingests.
 
 ## 11. Using the library from Python
 
-The CLIs are thin wrappers over two public classes. Build the `Config` with
+The CLIs are thin wrappers over two public classes. Import them, and
+everything else you use, from the package root: the names `unified_kg_rag`
+exports (`unified_kg_rag.__all__`) are the public API, and other module paths
+are internal and may change between releases. Build the `Config` with
 `get_config`, which applies the same file and environment-variable layers as
 the CLIs (§2).
 
 ```python
-from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
-from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain, RAGInput
-from unified_kg_rag.domain.models import PipelineConfig, PipelineStageStatus
-from unified_kg_rag.shared import get_config
+from unified_kg_rag import (
+    DataIngestionPipeline,
+    GraphRAGChain,
+    PipelineConfig,
+    PipelineStageStatus,
+    RAGInput,
+    get_config,
+)
 
 config = get_config("config.yaml")
 
@@ -2300,22 +2343,27 @@ finally:
   `search_type`, `top_k`, `suffix` ([index suffix](#index-suffix)), `filters`,
   `conversation_id` and `use_memory`, `target_language`. A plain dict with
   these keys also works.
-- `GraphRAGChain(config, mode=ChainMode.SEARCH)` returns retrieval results
-  without generating an answer (`ChainMode` is in the same module).
+- `chain.search(...)` (`await chain.asearch(...)`) runs the same retrieval
+  without generating an answer and returns a `SearchOutput`: the ranked
+  `search_results`, the `processed_query` and `metadata`.
 - In async code, use `await chain.ainvoke(...)` and `await chain.aclose()`.
   An async host should also size the event loop's executor once at startup:
   `configure_event_loop(asyncio.get_running_loop(), config.processing.io_workers)`
-  (from `unified_kg_rag.shared.utils`).
+  (from `unified_kg_rag`).
 - Always close what you build. Both classes open connections on first use;
   without `close()`/`aclose()` they stay open until garbage collection.
 - Importing the package configures no logging handler; call
-  `unified_kg_rag.shared.setup_logging(config)` to get the CLI's logging.
+  `unified_kg_rag.setup_logging(config)` to get the CLI's logging.
   Without it the package's records reach your handlers with the plain
   message, and structured fields (including values you bind with
   `structlog.contextvars`) become record attributes; a field named like a
   `LogRecord` attribute (`name`, `process`, `msg`, ...) gets a trailing `_`.
 
-Both constructors accept injected backends through a `providers=` bundle
+Extensions import from the package root too: the ports (`LLMFactoryPort`,
+`GraphIndexer`, `DocStatusPort`, ...), `Providers`, `register_provider`,
+`BaseSearchStrategy` with `register_strategy`, `ParserFactory` and
+`register_renderer`. Both constructors accept injected backends through a
+`providers=` bundle
 (`Providers(config, llm_factory=..., doc_status=..., vector_indexer_factory=...,
 graph_indexer_factory=..., retriever_builders=...)`). Without a bundle,
 `DataIngestionPipeline` also takes `doc_status`, `vector_indexer` and

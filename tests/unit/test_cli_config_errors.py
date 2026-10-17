@@ -29,7 +29,7 @@ pytestmark = pytest.mark.unit
 _CLIS: dict[str, tuple[Callable[[], object], list[str]]] = {
     "run-ingestion": (run_ingestion_pipeline.main, ["--source-directory", "."]),
     "run-rag": (run_rag_chain.main, ["--query", "q"]),
-    "run-eval": (run_evaluation.main, ["--eval-data-path", "eval.json"]),
+    "run-eval": (run_evaluation.main, ["--data-path", "eval.json"]),
     "run-prompt-tuning": (run_prompt_tuning.main, ["--source-directory", "."]),
     "run-visualization": (run_visualization.main, ["--data-path", "graph.json"]),
 }

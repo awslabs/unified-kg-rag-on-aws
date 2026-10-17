@@ -26,7 +26,6 @@ from unified_kg_rag.adapters.aws.neptune import NeptuneClient
 from unified_kg_rag.adapters.retrievers.neptune_retriever import NeptuneRetriever
 from unified_kg_rag.adapters.retrievers.opensearch_retriever import OpenSearchRetriever
 from unified_kg_rag.application.retrieval.rag_chain import (
-    ChainMode,
     GraphRAGChain,
     RAGInput,
 )
@@ -82,7 +81,6 @@ def _chain(config: Config, *, fail: bool = False) -> GraphRAGChain:
     retriever = _FakeRetriever(fail=fail)
     chain = GraphRAGChain(
         config=config,
-        mode=ChainMode.RAG,
         model_factory=ScriptedLLMFactory(
             lambda _system, _human: "Vendor supplies parts."
         ),

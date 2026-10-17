@@ -22,6 +22,7 @@ from unified_kg_rag.application.retrieval.rag_chain import (
     ProcessedQuery,
     RAGInput,
     RAGOutput,
+    SearchOutput,
 )
 from unified_kg_rag.domain.models import (
     Config,
@@ -219,7 +220,7 @@ def test_format_output_step_excludes_synthesized_results_from_sources() -> None:
     assert len(out.search_results.results) == 2
 
 
-def test_format_search_output_step_returns_serializable_dict() -> None:
+def test_format_search_output_step_returns_a_search_output() -> None:
     state = {
         "search_results": _search_result(),
         "resolved_strategy": SearchStrategy.GLOBAL,
@@ -227,10 +228,10 @@ def test_format_search_output_step_returns_serializable_dict() -> None:
         "processed_query": ProcessedQuery(original_query="q", final_query="q"),
     }
     out = GraphRAGChain._format_search_output_step(state)
-    assert isinstance(out, dict)
-    assert out["search_results"]["search_strategy"] == SearchStrategy.GLOBAL.value
-    assert out["metadata"]["total_results"] == 1
-    assert out["processed_query"]["original_query"] == "q"
+    assert isinstance(out, SearchOutput)
+    assert out.search_results.search_strategy == SearchStrategy.GLOBAL.value
+    assert out.metadata["total_results"] == 1
+    assert out.processed_query.original_query == "q"
 
 
 # --- _query_processing_branch simple path --------------------------------

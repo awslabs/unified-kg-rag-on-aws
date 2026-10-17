@@ -173,7 +173,9 @@ class LocalSearchStrategy(BaseSearchStrategy): ...
 
 `domain/`은 런타임에 `ports`/`adapters`/`application` 모듈을 import하지 않고, `ports/`와 `shared/`는 다른 레이어를 import하지 않으며, `adapters/`는 `application`, `evaluation`, `visualization` 모듈을 import하지 않습니다. `evaluation/`은 체인(`application.retrieval`, `application.bootstrap`)을 통해서만 애플리케이션 레이어에 닿습니다. `tests/unit/test_domain_purity.py`가 `TYPE_CHECKING` import까지 포함해 이 규칙을 검사합니다. 컴파일 타임에만 해당하는 예외가 두 개 있고, 테스트는 둘 다 `TYPE_CHECKING` 아래에 있는지 확인합니다. `domain/retrieval/strategy_registry.py`는 레지스트리가 전략 하위 클래스를 저장하므로 `adapters.retrieval.base.BaseSearchStrategy`를 참조하고, `domain/ingestion/delta_detector.py`는 매개변수 타입으로 `DocStatusPort`를 씁니다(포트 모듈이 도메인 모델을 import하므로 런타임 import는 순환이 됩니다). 순수한 전략·리트리버 포트를 분리하면 첫 번째 타입 수준 참조도 없어지지만, 의도적인 경계로 남겨 둡니다(이 문서 끝의 "의도적 설계 경계" 참고).
 
-코드는 실제 레이어 위치(`application.retrieval.rag_chain`, `application.storage.indexing_manager`, `application.ingestion.pipeline`, `adapters.*` / `domain.*` 모듈)에서 import합니다. `evaluation/`과 `visualization/`은 실제 로직 패키지입니다(§2의 레이아웃 참고).
+패키지 안의 코드는 실제 레이어 위치(`application.retrieval.rag_chain`, `application.storage.indexing_manager`, `application.ingestion.pipeline`, `adapters.*` / `domain.*` 모듈)에서 import합니다. `evaluation/`과 `visualization/`은 실제 로직 패키지입니다(§2의 레이아웃 참고).
+
+**공개 API.** 패키지 밖의 호출자는 `unified_kg_rag`에서 바로 import합니다. 이 모듈의 `__all__`이 지원하는 범위이며 두 묶음으로 나뉩니다. 프레임워크 사용(`Config`, `get_config`, `setup_logging`, `configure_event_loop`, `DataIngestionPipeline`과 `PipelineConfig` / `PipelineContext` / `PipelineStageStatus` / `PipelineStageType`, `IndexingManager`, `GraphRAGChain`과 `RAGInput`, `RAGOutput`, `SearchOutput`, `ProcessedQuery`, `SearchResult`, `SearchStrategy`, `SearchType`, `MemoryManager` / `ConversationKey`, `EvaluationManager`)과 확장(포트, `Providers` / `build_providers`, `ProviderRole` / `register_provider`, `BaseSearchStrategy` / `BaseGraphRAGRetriever` / `register_strategy` / `QueryInput` / `RetrieverRole`, `ParserFactory`, `BaseRenderer` / `register_renderer`)입니다. 그 밖의 모듈 경로는 내부 구현이라 어느 릴리스에서든 옮겨질 수 있으며, 호환성을 깨는 변경은 내보내는 이름, 설정 키, CLI 플래그와 종료 코드, 저장 형식이 바뀔 때뿐입니다. 최상위 모듈은 이름을 처음 접근할 때 불러오므로(`__getattr__`) `import unified_kg_rag`만으로는 패키지의 어떤 모듈도 로드하지 않으며, `tests/unit/test_public_api.py`가 이 목록을 고정합니다.
 
 ---
 
@@ -309,7 +311,7 @@ class LocalSearchStrategy(BaseSearchStrategy): ...
 
 ![검색 전략](../assets/retrieval-strategies.drawio.png)
 
-`ChainMode`가 체인이 끝나는 지점을 정합니다. `SEARCH`는 답변 없이 융합·정렬한 검색 결과를 돌려주고, `RAG`(기본값)는 결과를 토큰 예산(`TokenManager`, §7)에 맞춰 담은 뒤 답변을 생성해 `RAGOutput`을 돌려줍니다. 이때 출처는 답변 모델이 실제로 본 섹션과 정확히 일치합니다. 예산을 적용한 컨텍스트가 비어 있으면 LLM을 호출하지 않고 답할 수 없다고 응답합니다.
+호출한 진입점이 체인이 끝나는 지점을 정합니다. `search`/`asearch`는 답변 없이 융합·정렬한 검색 결과(`SearchOutput`)를 돌려주고, `invoke`/`ainvoke`(와 `stream`)는 결과를 토큰 예산(`TokenManager`, §7)에 맞춰 담은 뒤 답변을 생성해 `RAGOutput`을 돌려줍니다. 이때 출처는 답변 모델이 실제로 본 섹션과 정확히 일치합니다. 두 진입점은 검색까지 같은 단계를 거치므로, 같은 입력이면 검색 결과도 같습니다. 예산을 적용한 컨텍스트가 비어 있으면 LLM을 호출하지 않고 답할 수 없다고 응답합니다.
 
 Neptune 그래프 확장은 `local`과 `drift`에 포함되어 있고, `mix`/`hybrid`에서는 선택 사항입니다(`search.lightrag_search.enable_graph_expansion`). 전략은 시드 엔티티를 OpenSearch에서 찾아 그 ID를 `id` 필터로 그래프 리트리버에 넘깁니다. `NeptuneRetriever`는 이 ID에서만 확장하며, `id` 필터가 없는 질의에는 결과를 돌려주지 않습니다.
 
@@ -416,7 +418,7 @@ AWS 세션은 묶음의 세션(`Providers(boto_session=...)`, 기본값은 처�
 - **답변 일치 평가기**(`answer_match_evaluator.py`): `answer`와 선택 항목 `metadata.answer_aliases`에 대해 대표 지표인 `answer_contains`와, SQuAD 방식으로 정규화한 `exact_match`·`token_f1`을 계산합니다(정규화에서 소수점과 `C++` 같은 접미 기호를 남기므로 리더보드 수치와 직접 비교할 수 없음)(참조 중 최댓값). 결정적이고 LLM이 필요 없습니다. 공백 기준으로 토큰을 나누므로, 띄어쓰기가 없는 문자 체계에서는 token F1이 exact match와 같아집니다.
 - **그래프 인식 평가기**(`graph_aware_evaluator.py`): 정답의 `expected_entities`/`expected_relationships`가 생성된 답변에 나오는 비율(= 커버리지 = 재현율)을 `ENTITY_COVERAGE`/`RELATIONSHIP_COVERAGE`로 계산합니다. 결정적이고 LLM이 필요 없습니다. precision과 F1은 답변 속 엔티티를 열거해야 하는데(자유 텍스트에서는 불가능) 그렇게 하지 않으면 재현율을 중복한 값이 되어 신호를 부풀리므로 계산하지 않습니다. 라틴 문자는 단어 경계를 지키는 연속 토큰으로 매칭하고("AI"는 "airport" 안에서 매칭되지 않음), 공백이 없는 CJK는 부분 문자열 매칭을 씁니다. 답변 텍스트 기준 커버리지는 답변이 길수록 올라가므로, 답변 모델이 받은 출처의 엔티티 이름과 관계 끝점에 기대값을 맞춘 `RETRIEVED_ENTITY_COVERAGE`/`RETRIEVED_RELATIONSHIP_COVERAGE`와 `ANSWER_LENGTH`도 보고합니다. 매니저가 기대값을 `result.metadata`로 넣어 주므로 추상 시그니처는 바뀌지 않습니다.
 
-CLI: `run-eval --eval-data-path <json> [--search-strategy ...]`.
+CLI: `run-eval --data-path <json> [--search-strategy ...]`.
 
 ---
 
@@ -473,7 +475,7 @@ CLI: `run-eval --eval-data-path <json> [--search-strategy ...]`.
 
 ## 15. 확장 가이드
 
-프레임워크 확장 방법은 이 절 한 곳에 모았으며, README, 사용자 가이드, CONTRIBUTING.md가 여기를 가리킵니다. 전략, 렌더러, 파서는 레지스트리로, 평가기는 타입 맵의 분기 하나로, 백엔드는 생성자 주입으로 확장하며, 어느 경우에도 디스패치 코드를 고치지 않습니다.
+프레임워크 확장 방법은 이 절 한 곳에 모았으며, README, 사용자 가이드, CONTRIBUTING.md가 여기를 가리킵니다. 전략, 렌더러, 파서는 레지스트리로, 평가기는 타입 맵의 분기 하나로, 백엔드는 생성자 주입으로 확장하며, 어느 경우에도 디스패치 코드를 고치지 않습니다. 확장 코드가 쓰는 포트, `Providers`, 레지스트리는 `unified_kg_rag`에서 내보냅니다(공개 API의 확장 묶음, §2.4).
 
 - **새 검색 전략**: `SearchStrategy` enum 멤버 추가(`domain/models/retrieval.py`. 전략은 이 닫힌 enum을 키로 쓰며 CLI 선택지도 이를 따릅니다) + `BaseSearchStrategy` 상속 + `@register_strategy(SearchStrategy.X, required_roles=(...), query_inputs=frozenset({QueryInput.ENTITIES}))` + `adapters/search_strategies/__init__.py`에서 export. `query_inputs`는 전략이 읽는 질의 측 LLM 추출을 선언하며(`entity_focus`용 `ENTITIES`, `hl_keywords`/`ll_keywords`용 `DUAL_KEYWORDS`), 체인은 나머지 추출을 건너뜁니다. 커뮤니티 리포트로 답하는 전략은 `needs_community_reports=True`도 넘겨, 리포트를 만들지 않는 구성에서 `auto`가 고르지 않게 합니다. `rag_chain`은 고치지 않아도 됩니다. `auto`가 이 전략을 고를 수 있게 하려면 `search.auto_routable_strategies`에 추가하세요.
 - **새 스토리지/LLM 백엔드**: 해당 포트를 구현한 뒤, `@register_provider(ProviderRole.X, "kind")`(`adapters/provider_registry.py`)로 새 `providers.<역할>.kind`의 빌더를 등록하고 설정에서 고르거나, 그 포트를 쓰는 생성자에 넘깁니다(아래 "커스텀 백엔드" 참고). 매니저의 `__init__`에 하드코딩하지 마세요.
@@ -531,11 +533,11 @@ root는 `application/bootstrap.py`(`build_providers`)로, 설정된 kind를 확�
 - `GraphRAGChain`: 체인 자체의 프롬프트, 모든 검색 전략(global map/reduce와 DRIFT
   체인 포함), 하이브리드 스코어러의 재순위화 모델, 두 토큰 매니저, 기본
   OpenSearch 리트리버의 임베딩. 대화 메모리는 자체 모델이 없고(후속 질문 재작성은 체인의
-  프롬프트입니다) 기본적으로 프로세스 전체에서 공유하므로 요청마다 체인을 새로 만들어도
-  대화 기록이 남으며, 첫 체인의 설정으로 만들어집니다.
-  메모리 설정이 다른 체인을 나중에 만들어도 공유 매니저를 그대로 쓰고 경고를 한 번
-  기록합니다. 체인의 대화를 분리하려면
-  `GraphRAGChain(memory_manager=MemoryManager(cfg))`를 넘기세요.
+  프롬프트입니다) 체인마다 따로 두며 체인의 설정으로 만듭니다. 대화는 인덱스 접미사,
+  `user_id`, `conversation_id`를 함께 키로 쓰므로 한 테넌트나 사용자의 대화 id가 다른
+  테넌트나 사용자의 기록에 닿지 않습니다. 요청마다 체인을 새로 만들면서 기록을 이어 가려면
+  체인들에 매니저 하나를 넘기세요: `shared = MemoryManager(cfg)`로 만든 뒤
+  `GraphRAGChain(memory_manager=shared)`.
 - `DataIngestionPipeline`: 청커, 번역기, 그래프·주장 추출, 추가 추출, 설명 요약,
   커뮤니티 리포트, 기본 OpenSearch 인덱서의 임베딩, 시각화 임베더.
 - `EvaluationManager`: LangChain과 RAGAS 판정 모델(LLM, 임베딩, 토큰 카운터). 기본적으로
@@ -575,7 +577,7 @@ Neptune, OpenSearch, DynamoDB). 모델 팩토리는 묶음마다 한 번만 만�
 필요가 없습니다.
 
 ```python
-from unified_kg_rag.adapters.provider_registry import ProviderRole, register_provider
+from unified_kg_rag import ProviderRole, register_provider
 
 @register_provider(ProviderRole.LLM, "my_server")
 def _build(providers):

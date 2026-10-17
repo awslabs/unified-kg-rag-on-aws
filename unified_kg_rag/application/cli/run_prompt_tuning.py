@@ -20,6 +20,15 @@ from unified_kg_rag.application.cli.config_args import (
     config_path_arg,
     exit_on_config_error,
 )
+from unified_kg_rag.application.cli.conventions import (
+    EXIT_FAILURE,
+    EXIT_INTERRUPTED,
+    add_output_format_argument,
+    exits_on_sigterm,
+    json_output,
+    print_json,
+    usage_error,
+)
 from unified_kg_rag.application.cli.help_text import doc_epilog
 from unified_kg_rag.application.cli.provider_args import (
     add_provider_arguments,
@@ -73,17 +82,17 @@ def load_corpus_texts(
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
+        allow_abbrev=False,
         description="Generate domain-adapted custom_prompts from a corpus sample.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=doc_epilog(
             "8-prompt-tuning-run-prompt-tuning",
-            "run-prompt-tuning --source-directory ./source --output tuned_prompts.yaml",
+            "run-prompt-tuning --source-directory ./source --output-path "
+            "tuned_prompts.yaml",
         ),
     )
     parser.add_argument(
-        # The same flag as run-ingestion's.
         "--source-directory",
-        dest="source_directory",
         required=True,
         type=Path,
         help=(
@@ -92,7 +101,10 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
-        "--output", type=Path, default=Path("tuned_prompts.yaml"), help="Output YAML"
+        "--output-path",
+        type=Path,
+        default=Path("tuned_prompts.yaml"),
+        help="Where to write the tuned custom_prompts YAML",
     )
     parser.add_argument(
         "--max-docs", type=int, default=20, help="Max documents to sample"
@@ -100,44 +112,53 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--config-path", type=config_path_arg, default=None, help="Config YAML path"
     )
+    add_output_format_argument(parser)
     add_provider_arguments(parser)
     return parser
 
 
+@exits_on_sigterm
 def main() -> int:
     load_cli_dotenv()
     args = _build_parser().parse_args()
+    as_json = json_output(args)
     try:
         with exit_on_config_error():
             config = apply_provider_arguments(get_config(args.config_path), args)
-        setup_logging(config)
+        if not args.source_directory.is_dir():
+            usage_error(f"source directory not found: '{args.source_directory}'")
+        setup_logging(config, stream=sys.stderr if as_json else None)
 
         texts = load_corpus_texts(args.source_directory, args.max_docs, config)
         if not texts:
             logger.error("No text documents found under '%s'", args.source_directory)
-            return 1
+            return EXIT_FAILURE
 
         tuner = PromptTuner(config)
         result = event_loop.run(
             tuner.tune(texts), io_workers=config.processing.io_workers
         )
 
-        args.output.write_text(
+        args.output_path.write_text(
             yaml.safe_dump(result, sort_keys=False, allow_unicode=True),
             encoding="utf-8",
         )
-        logger.info("Wrote tuned prompts to '%s'", args.output)
+        logger.info("Wrote tuned prompts to '%s'", args.output_path)
         logger.info("Detected domain: '%s'", result["profile"]["domain"])
+        if as_json:
+            print_json(
+                {"output_path": str(args.output_path), "profile": result["profile"]}
+            )
         return 0
     except KeyboardInterrupt:
         logger.warning("Prompt tuning interrupted by user.")
-        return 130
+        return EXIT_INTERRUPTED
     except Exception as e:
         # Surface a clean error line instead of a raw traceback (parity with the
         # other CLIs); details still go to the log at debug level.
         logger.error("Prompt tuning failed: %s", e)
         logger.debug("Traceback:", exc_info=True)
-        return 1
+        return EXIT_FAILURE
 
 
 if __name__ == "__main__":

@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 import argparse
 import asyncio
-import json
 import re
 import sys
 import uuid
@@ -19,6 +18,15 @@ from unified_kg_rag.application.cli.config_args import (
     config_path_arg,
     exit_on_config_error,
 )
+from unified_kg_rag.application.cli.conventions import (
+    EXIT_FAILURE,
+    EXIT_INTERRUPTED,
+    add_output_format_argument,
+    exits_on_sigterm,
+    json_output,
+    print_json,
+    usage_error,
+)
 from unified_kg_rag.application.cli.help_text import doc_epilog
 from unified_kg_rag.application.cli.preflight import (
     missing_endpoints_error,
@@ -30,7 +38,6 @@ from unified_kg_rag.application.cli.provider_args import (
 )
 from unified_kg_rag.application.cli.query_args import add_query_arguments
 from unified_kg_rag.application.retrieval.rag_chain import (
-    ChainMode,
     GraphRAGChain,
     RAGInput,
     create_rag_chain,
@@ -88,6 +95,7 @@ class CommandLineInterface:
     @staticmethod
     def _setup_arguments() -> argparse.ArgumentParser:
         parser = argparse.ArgumentParser(
+            allow_abbrev=False,
             description="GraphRAG Chain - Retrieval-augmented generation using knowledge graphs",
             formatter_class=argparse.RawDescriptionHelpFormatter,
             epilog=doc_epilog(
@@ -109,8 +117,8 @@ class CommandLineInterface:
         )
         parser.add_argument(
             "--mode",
-            default=ChainMode.RAG.value,
-            choices=[cm.value for cm in ChainMode],
+            default="rag",
+            choices=["rag", "search"],
             help="Set the execution mode: 'rag' for full generation, 'search' for "
             "retrieval only (a single --query only; --interactive always generates)",
         )
@@ -138,12 +146,7 @@ class CommandLineInterface:
             nargs="*",
             help="Apply attribute filters using 'key:value' format",
         )
-        parser.add_argument(
-            "--output-format",
-            default="text",
-            choices=["text", "json"],
-            help="Select output format",
-        )
+        add_output_format_argument(parser)
         parser.add_argument(
             "--verbose",
             "-v",
@@ -162,7 +165,7 @@ class CommandLineInterface:
         args = self.parser.parse_args()
         if not args.interactive and not args.query:
             self.parser.error("either --query or --interactive is required")
-        if args.interactive and args.mode != ChainMode.RAG.value:
+        if args.interactive and args.mode != "rag":
             self.parser.error(
                 f"--mode {args.mode} is not supported with --interactive, which "
                 "always generates answers; use --query for retrieval-only output"
@@ -180,9 +183,8 @@ class RAGChainRunner:
             )
         # JSON mode keeps stdout machine-parseable (pipeable to jq): the banner,
         # status lines and logs all go to stderr; only the JSON goes to stdout.
-        json_output = args.output_format == "json"
-        console.stderr = json_output
-        setup_logging(self.config, stream=sys.stderr if json_output else None)
+        self.json_output = json_output(args)
+        setup_logging(self.config, stream=sys.stderr if self.json_output else None)
         self.rag_chain: GraphRAGChain | None = None
         self.interactive_commands: dict[str, Callable] = {
             "help": self._handle_help,
@@ -216,8 +218,7 @@ class RAGChainRunner:
             f"search strategy '{self.args.search_strategy}'",
         )
         if error:
-            console.print(f"[red]Error: {error}[/red]")
-            sys.exit(1)
+            usage_error(error)
         event_loop.configure_event_loop(
             asyncio.get_running_loop(), self.config.processing.io_workers
         )
@@ -245,13 +246,13 @@ class RAGChainRunner:
                 )
 
                 result = await self._run_query(rag_input)
-                if self.args.output_format == "json":
-                    print(json.dumps(result, indent=2, ensure_ascii=False, default=str))
+                if self.json_output:
+                    print_json(result)
                 else:
                     self._print_result(result, self.args.verbose)
 
                 if not result.get("success", False):
-                    sys.exit(1)
+                    sys.exit(EXIT_FAILURE)
         finally:
             # Release Neptune/OpenSearch sockets when the query/session ends so
             # a finished process does not leak the retrievers' connection pools.
@@ -261,15 +262,12 @@ class RAGChainRunner:
     async def _initialize_chain(self) -> None:
         console.print("[bold]Initializing RAG chain...[/bold]")
         try:
-            self.rag_chain = await create_rag_chain(
-                config=self.config,
-                mode=ChainMode(self.args.mode),
-            )
+            self.rag_chain = await create_rag_chain(config=self.config)
             console.print("[green]GraphRAG chain initialized successfully![/green]")
         except Exception as e:
             logger.exception("Failed to initialize RAG chain: %s", e)
             console.print(f"[red]Error during initialization: {_markup_safe(e)}[/red]")
-            sys.exit(1)
+            sys.exit(EXIT_FAILURE)
 
     async def _interactive_mode(self) -> None:
         console.print(
@@ -312,9 +310,6 @@ class RAGChainRunner:
                         state["filters"] if isinstance(state["filters"], dict) else None
                     ),
                 )
-                if self.rag_chain:
-                    self.rag_chain.mode = ChainMode.RAG
-
                 result = await self._run_query(rag_input)
                 self._print_result(result, verbose=True)
                 state["conversation_id"] = result.get(
@@ -364,8 +359,12 @@ class RAGChainRunner:
                 f"[bold]Executing RAG query in '{self.args.mode}' mode...[/bold]",
                 "[dim]This may take some time depending on query complexity[/dim]",
             )
-            result = await self.rag_chain.ainvoke(rag_input)
-            output = result if isinstance(result, dict) else result.model_dump()
+            result = (
+                await self.rag_chain.asearch(rag_input)
+                if self.args.mode == "search"
+                else await self.rag_chain.ainvoke(rag_input)
+            )
+            output = result.model_dump()
             # With processing.ignore_errors the chain does not raise: it returns
             # its error fallback flagged by metadata.error. That is a failure.
             if (output.get("metadata") or {}).get("error"):
@@ -606,16 +605,17 @@ async def async_main(args: argparse.Namespace) -> int:
         await runner.run()
         return 0
     except SystemExit as e:
-        return e.code if isinstance(e.code, int) else 1
+        return e.code if isinstance(e.code, int) else EXIT_FAILURE
     except KeyboardInterrupt:
         console.print("\n[yellow]Execution interrupted by user.[/yellow]")
-        return 130
+        return EXIT_INTERRUPTED
     except Exception as e:
         console.print(f"\n[red]An unexpected error occurred: {_markup_safe(e)}[/red]")
         logger.exception("Unexpected error during execution")
-        return 1
+        return EXIT_FAILURE
 
 
+@exits_on_sigterm
 def main() -> None:
     load_cli_dotenv()
     # Parse (and let argparse exit on --help or bad arguments) before the event

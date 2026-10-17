@@ -155,9 +155,9 @@ def test_ingestion_exits_before_the_pipeline_when_indexing_lacks_endpoints(
     pipeline = mocker.patch.object(run_ingestion_pipeline, "DataIngestionPipeline")
     with pytest.raises(SystemExit) as exc:
         runner.run()
-    assert exc.value.code == 1
+    assert exc.value.code == 2  # a configuration error
     pipeline.assert_not_called()
-    assert "aws.opensearch.endpoint" in capsys.readouterr().out
+    assert "aws.opensearch.endpoint" in capsys.readouterr().err
 
 
 def test_ingestion_checks_both_store_endpoints_through_the_retriever_kinds(
@@ -173,7 +173,7 @@ def test_ingestion_checks_both_store_endpoints_through_the_retriever_kinds(
     with pytest.raises(SystemExit):
         runner.run()
     pipeline.assert_not_called()
-    out = " ".join(capsys.readouterr().out.split())  # undo console wrapping
+    out = " ".join(capsys.readouterr().err.split())  # undo console wrapping
     assert "aws.neptune.endpoint (env NEPTUNE_ENDPOINT)" in out
     assert "aws.opensearch.endpoint (env OPENSEARCH_ENDPOINT)" in out
 
@@ -200,9 +200,9 @@ async def test_rag_exits_before_the_chain_when_the_strategy_lacks_endpoints(
     create = mocker.patch.object(run_rag_chain, "create_rag_chain")
     parser = run_rag_chain.CommandLineInterface._setup_arguments()
     args = parser.parse_args(["-q", "hi", "--search-strategy", "simple"])
-    assert await run_rag_chain.async_main(args) == 1
+    assert await run_rag_chain.async_main(args) == 2  # a configuration error
     create.assert_not_called()
-    out = capsys.readouterr().out
+    out = capsys.readouterr().err
     assert "aws.opensearch.endpoint" in out
     assert "aws.neptune.endpoint" not in out  # simple does not use the graph
 
@@ -218,13 +218,13 @@ def test_eval_exits_before_the_chain_when_the_strategy_lacks_endpoints(
 ) -> None:
     data = tmp_path / "eval.json"
     data.write_text("[]")
-    monkeypatch.setattr(sys, "argv", ["run-eval", "--eval-data-path", str(data)])
+    monkeypatch.setattr(sys, "argv", ["run-eval", "--data-path", str(data)])
     mocker.patch.object(
         run_evaluation, "get_config", return_value=_config(opensearch="o")
     )
     chain = mocker.patch.object(run_evaluation, "GraphRAGChain")
     with pytest.raises(SystemExit) as exc:
         run_evaluation.main()
-    assert exc.value.code == 1
+    assert exc.value.code == 2  # a configuration error
     chain.assert_not_called()
-    assert "aws.neptune.endpoint" in capsys.readouterr().out
+    assert "aws.neptune.endpoint" in capsys.readouterr().err

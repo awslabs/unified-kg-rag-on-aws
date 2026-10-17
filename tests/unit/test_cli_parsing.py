@@ -3,7 +3,7 @@
 """Unit tests for the CLI argument parsing + input validation (AWS-free).
 
 Covers only the parser construction, flag defaults/choices, and the local
-validation paths (``_validate_args``, eval-data-path existence, output-format,
+validation paths (``_validate_args``, data-path existence, output-format,
 stage-name validation) of the five ``run-*`` entry points. The AWS-driven
 ``run()`` bodies (chain/pipeline/Bedrock) are deliberately NOT exercised here;
 those are integration-level. Where a ``main()`` path is asserted, the chain /
@@ -309,19 +309,19 @@ def _eval_parser() -> argparse.ArgumentParser:
     return run_evaluation.CommandLineInterface._setup_arguments()
 
 
-def test_eval_parser_requires_eval_data_path() -> None:
+def test_eval_parser_requires_data_path() -> None:
     with pytest.raises(SystemExit):
         _eval_parser().parse_args([])
 
 
 def test_eval_parser_defaults() -> None:
-    args = _eval_parser().parse_args(["--eval-data-path", "data.json"])
-    assert args.eval_data_path == Path("data.json")
+    args = _eval_parser().parse_args(["--data-path", "data.json"])
+    assert args.data_path == Path("data.json")
     assert args.search_strategy == ["auto"]
     assert args.repeats == 1 and args.pairwise_judge is False
     assert args.search_type == "hybrid"
     assert args.top_k == 10
-    assert args.outputs_directory is None
+    assert args.output_directory is None
 
 
 @pytest.mark.parametrize("flag", ["--top-k", "--retrieval-multiplier"])
@@ -329,7 +329,7 @@ def test_eval_parser_defaults() -> None:
 def test_query_width_flags_must_be_positive(parser, flag: str) -> None:
     # Both CLIs share the query flags; a zero width fails at parse time
     # instead of deep in the chain.
-    required = ["--query", "q"] if parser is _rag_parser else ["--eval-data-path", "d"]
+    required = ["--query", "q"] if parser is _rag_parser else ["--data-path", "d"]
     with pytest.raises(SystemExit):
         parser().parse_args([*required, flag, "0"])
     assert (
@@ -341,7 +341,7 @@ def test_query_width_flags_must_be_positive(parser, flag: str) -> None:
 def test_eval_parser_rejects_bad_strategy() -> None:
     with pytest.raises(SystemExit):
         _eval_parser().parse_args(
-            ["--eval-data-path", "d.json", "--search-strategy", "nope"]
+            ["--data-path", "d.json", "--search-strategy", "nope"]
         )
 
 
@@ -349,7 +349,7 @@ def test_eval_runner_missing_file_is_an_invalid_dataset(
     config, mocker, tmp_path
 ) -> None:
     missing = tmp_path / "does-not-exist.json"
-    args = _eval_parser().parse_args(["--eval-data-path", str(missing)])
+    args = _eval_parser().parse_args(["--data-path", str(missing)])
     with pytest.raises(run_evaluation.InvalidDatasetError, match="not found"):
         run_evaluation.EvaluationRunner(args, object(), config)
 
@@ -360,7 +360,7 @@ def test_run_eval_missing_dataset_exits_2(config, mocker, tmp_path, capsys) -> N
     mocker.patch.object(run_evaluation, "missing_endpoints_error", return_value=None)
     mocker.patch.object(run_evaluation, "GraphRAGChain", return_value=AsyncMock())
     missing = tmp_path / "does-not-exist.json"
-    mocker.patch.object(sys, "argv", ["run-eval", "--eval-data-path", str(missing)])
+    mocker.patch.object(sys, "argv", ["run-eval", "--data-path", str(missing)])
     with pytest.raises(SystemExit) as exc:
         run_evaluation.main()
     assert exc.value.code == 2
@@ -373,19 +373,17 @@ def test_run_eval_missing_dataset_exits_2(config, mocker, tmp_path, capsys) -> N
 def test_eval_runner_existing_file_ok(config, mocker, tmp_path) -> None:
     data = tmp_path / "eval.json"
     data.write_text("[]", encoding="utf-8")
-    args = _eval_parser().parse_args(["--eval-data-path", str(data)])
+    args = _eval_parser().parse_args(["--data-path", str(data)])
     runner = run_evaluation.EvaluationRunner(args, object(), config)  # no exit
-    assert runner.args.eval_data_path == data
+    assert runner.args.data_path == data
 
 
 def test_eval_parser_max_failure_rate_default_and_range() -> None:
-    assert _eval_parser().parse_args(["--eval-data-path", "d"]).max_failure_rate == 1.0
-    args = _eval_parser().parse_args(
-        ["--eval-data-path", "d", "--max-failure-rate", "0.2"]
-    )
+    assert _eval_parser().parse_args(["--data-path", "d"]).max_failure_rate == 1.0
+    args = _eval_parser().parse_args(["--data-path", "d", "--max-failure-rate", "0.2"])
     assert args.max_failure_rate == 0.2
     with pytest.raises(SystemExit):
-        _eval_parser().parse_args(["--eval-data-path", "d", "--max-failure-rate", "2"])
+        _eval_parser().parse_args(["--data-path", "d", "--max-failure-rate", "2"])
 
 
 @pytest.mark.parametrize(
@@ -464,28 +462,26 @@ async def test_eval_runner_exit_code_and_manifest(
     data.write_text(json.dumps([{"question": "Who ships?", "answer": "Vendor"}]))
     out = tmp_path / "out"
     args = _eval_parser().parse_args(
-        ["--eval-data-path", str(data), "--outputs-directory", str(out)]
+        ["--data-path", str(data), "--output-directory", str(out)]
     )
     runner = run_evaluation.EvaluationRunner(args, _DictChain(error), config)
     assert await runner.run() == code
     summary_file = next(out.glob("evaluation_summary_*.json"))
     manifest = json.loads(summary_file.read_text())["run_manifest"]
-    assert manifest["cli_args"]["eval_data_path"] == str(data)
+    assert manifest["cli_args"]["data_path"] == str(data)
     assert len(manifest["dataset"]["sha256"]) == 64
 
 
 def test_eval_parser_takes_a_strategy_list() -> None:
     args = _eval_parser().parse_args(
-        ["--eval-data-path", "d", "--search-strategy", "local, mix,global"]
+        ["--data-path", "d", "--search-strategy", "local, mix,global"]
     )
     assert args.search_strategy == ["local", "mix", "global"]
     for bad in ("local,nope", "local,local", ","):
         with pytest.raises(SystemExit):
-            _eval_parser().parse_args(
-                ["--eval-data-path", "d", "--search-strategy", bad]
-            )
+            _eval_parser().parse_args(["--data-path", "d", "--search-strategy", bad])
     with pytest.raises(SystemExit):
-        _eval_parser().parse_args(["--eval-data-path", "d", "--repeats", "0"])
+        _eval_parser().parse_args(["--data-path", "d", "--repeats", "0"])
 
 
 class _StrategyChain:
@@ -527,9 +523,9 @@ async def test_eval_runner_compares_strategies_pairwise(
     out = tmp_path / "out"
     args = _eval_parser().parse_args(
         [
-            "--eval-data-path",
+            "--data-path",
             str(data),
-            "--outputs-directory",
+            "--output-directory",
             str(out),
             "--search-strategy",
             "local,mix,auto",
@@ -578,9 +574,9 @@ async def test_eval_runner_runs_the_pairwise_judge(config, mocker, tmp_path) -> 
     out = tmp_path / "out"
     args = _eval_parser().parse_args(
         [
-            "--eval-data-path",
+            "--data-path",
             str(data),
-            "--outputs-directory",
+            "--output-directory",
             str(out),
             "--search-strategy",
             "local,mix",
@@ -630,15 +626,16 @@ def test_ingestion_runner_requires_source_directory(config, mocker) -> None:
     args.source_directory = None  # ensure env var fallback didn't set it
     with pytest.raises(SystemExit) as exc:
         run_ingestion_pipeline.IngestionPipelineRunner(args)
-    assert exc.value.code == 1
+    assert exc.value.code == 2  # a usage error
 
 
 def test_ingestion_runner_missing_source_dir_exits(config, mocker, tmp_path) -> None:
     mocker.patch.object(run_ingestion_pipeline, "get_config", return_value=config)
     missing = tmp_path / "nope"
     args = _ing_parser().parse_args(["--source-directory", str(missing)])
-    with pytest.raises(SystemExit):
+    with pytest.raises(SystemExit) as exc:
         run_ingestion_pipeline.IngestionPipelineRunner(args)
+    assert exc.value.code == 2  # a usage error
 
 
 @pytest.mark.parametrize("from_config", [False, True])
@@ -654,12 +651,12 @@ def test_ingestion_runner_rejects_the_source_as_target(
     if from_config:
         config.processing.document_parsing.target_directory = str(src / ".")
     else:
-        argv += ["--target-directory", str(src)]
+        argv += ["--output-directory", str(src)]
     args = _ing_parser().parse_args(argv)
     with pytest.raises(SystemExit) as exc:
         run_ingestion_pipeline.IngestionPipelineRunner(args)
-    assert exc.value.code == 1
-    raw = re.sub(r"\x1b\[[0-9;]*m", "", capsys.readouterr().out)
+    assert exc.value.code == 2  # a usage error
+    raw = re.sub(r"\x1b\[[0-9;]*m", "", capsys.readouterr().err)
     out = " ".join(raw.split())  # undo rich styling and wrapping
     assert "must not be the source directory" in out
     assert "Traceback" not in out
@@ -672,7 +669,7 @@ def test_ingestion_runner_s3_sync_needs_bucket(config, mocker, tmp_path) -> None
     args = _ing_parser().parse_args(["--source-directory", str(src), "--s3-sync"])
     with pytest.raises(SystemExit) as exc:
         run_ingestion_pipeline.IngestionPipelineRunner(args)
-    assert exc.value.code == 1
+    assert exc.value.code == 2  # a usage error
 
 
 def test_ingestion_runner_resume_needs_pipeline_id(config, mocker, tmp_path) -> None:
@@ -682,15 +679,17 @@ def test_ingestion_runner_resume_needs_pipeline_id(config, mocker, tmp_path) -> 
     args = _ing_parser().parse_args(
         ["--source-directory", str(src), "--resume-from-stage", "TEXT_CHUNKING"]
     )
-    with pytest.raises(SystemExit):
+    with pytest.raises(SystemExit) as exc:
         run_ingestion_pipeline.IngestionPipelineRunner(args)
+    assert exc.value.code == 2  # a usage error
 
 
 def test_ingestion_runner_metadata_op_needs_pipeline_id(config, mocker) -> None:
     mocker.patch.object(run_ingestion_pipeline, "get_config", return_value=config)
     args = _ing_parser().parse_args(["--verify-metadata"])
-    with pytest.raises(SystemExit):
+    with pytest.raises(SystemExit) as exc:
         run_ingestion_pipeline.IngestionPipelineRunner(args)
+    assert exc.value.code == 2  # a usage error
 
 
 def test_ingestion_runner_valid_source_sets_cache_dir(config, mocker, tmp_path) -> None:
@@ -744,7 +743,7 @@ def test_ingestion_create_pipeline_config_rejects_invalid_stage(
     runner = run_ingestion_pipeline.IngestionPipelineRunner(args)
     with pytest.raises(SystemExit) as exc:
         runner._create_pipeline_config()
-    assert exc.value.code == 1
+    assert exc.value.code == 2  # a usage error
 
 
 def test_ingestion_create_pipeline_config_enables_subset(
@@ -813,15 +812,18 @@ def test_prompt_tuning_parser_defaults() -> None:
     # Canonical flag is --source-directory (matches run-ingestion).
     args = run_prompt_tuning._build_parser().parse_args(["--source-directory", "docs"])
     assert args.source_directory == Path("docs")
-    assert args.output == Path("tuned_prompts.yaml")
+    assert args.output_path == Path("tuned_prompts.yaml")
     assert args.max_docs == 20
     assert args.config_path is None
 
 
-def test_prompt_tuning_parser_accepts_legacy_source_dir_alias() -> None:
-    # --source-dir is kept as a backward-compatible alias of --source-directory.
-    args = run_prompt_tuning._build_parser().parse_args(["--source-dir", "docs"])
-    assert args.source_directory == Path("docs")
+def test_prompt_tuning_parser_has_no_legacy_aliases() -> None:
+    # One naming scheme across the CLIs: --source-dir and --output are gone.
+    parser = run_prompt_tuning._build_parser()
+    for legacy in (["--source-dir", "docs"], ["--output", "x.yaml"]):
+        with pytest.raises(SystemExit) as exc:
+            parser.parse_args(["--source-directory", "docs", *legacy])
+        assert exc.value.code == 2
 
 
 def test_load_corpus_texts_filters_and_limits(tmp_path) -> None:
@@ -874,7 +876,7 @@ def test_prompt_tuning_main_no_texts_returns_1(config, mocker, tmp_path) -> None
     mocker.patch.object(run_prompt_tuning, "get_config", return_value=config)
     empty = tmp_path / "empty"
     empty.mkdir()
-    mocker.patch("sys.argv", ["run-prompt-tuning", "--source-dir", str(empty)])
+    mocker.patch("sys.argv", ["run-prompt-tuning", "--source-directory", str(empty)])
     # No text files -> early return 1, tuner/AWS never constructed.
     assert run_prompt_tuning.main() == 1
 
@@ -890,7 +892,7 @@ def test_visualization_parser_requires_data_path() -> None:
 def test_visualization_parser_defaults() -> None:
     args = run_visualization._build_parser().parse_args(["--data-path", "g.json"])
     assert args.data_path == Path("g.json")
-    assert args.output_dir == Path("visualization_outputs")
+    assert args.output_directory == Path("visualization_outputs")
     assert isinstance(args.renderers, list) and args.renderers  # registry default
 
 
@@ -984,13 +986,35 @@ async def test_rag_run_query_success_wraps_result(config, mocker) -> None:
     mocker.patch.object(run_rag_chain, "get_config", return_value=config)
     args = _rag_parser().parse_args(["-q", "hi"])
     runner = run_rag_chain.RAGChainRunner(args)
-    # Stub the chain so no AWS is touched; ainvoke returns a plain dict.
+    # Stub the chain so no AWS is touched.
     runner.rag_chain = mocker.MagicMock()
-    runner.rag_chain.ainvoke = AsyncMock(return_value={"answer": "A", "sources": []})
+    result = mocker.MagicMock()
+    result.model_dump.return_value = {"answer": "A", "sources": []}
+    runner.rag_chain.ainvoke = AsyncMock(return_value=result)
 
     out = await runner._run_query(RAGInput(query="hi"))
     assert out["success"] is True
     assert out["answer"] == "A"
+
+
+async def test_rag_search_mode_runs_retrieval_only(config, mocker) -> None:
+    from unittest.mock import AsyncMock
+
+    from unified_kg_rag.application.cli.run_rag_chain import RAGInput
+
+    mocker.patch.object(run_rag_chain, "get_config", return_value=config)
+    args = _rag_parser().parse_args(["-q", "hi", "--mode", "search"])
+    runner = run_rag_chain.RAGChainRunner(args)
+    runner.rag_chain = mocker.MagicMock()
+    result = mocker.MagicMock()
+    result.model_dump.return_value = {"search_results": {"results": []}}
+    runner.rag_chain.asearch = AsyncMock(return_value=result)
+    runner.rag_chain.ainvoke = AsyncMock()
+
+    out = await runner._run_query(RAGInput(query="hi"))
+    assert out["success"] is True
+    assert out["search_results"] == {"results": []}
+    runner.rag_chain.ainvoke.assert_not_awaited()
 
 
 async def test_rag_run_query_error_is_captured(config, mocker) -> None:
@@ -1117,7 +1141,7 @@ def test_eval_main_closes_the_chain(config, mocker, fails) -> None:
     runner.run = AsyncMock(side_effect=RuntimeError("boom") if fails else None)
     runner.run.return_value = 0
     mocker.patch.object(run_evaluation, "EvaluationRunner", return_value=runner)
-    mocker.patch.object(sys, "argv", ["run-eval", "--eval-data-path", "d.json"])
+    mocker.patch.object(sys, "argv", ["run-eval", "--data-path", "d.json"])
 
     with pytest.raises(SystemExit) if fails else contextlib.nullcontext():
         run_evaluation.main()
