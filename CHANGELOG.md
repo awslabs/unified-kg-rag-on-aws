@@ -614,7 +614,7 @@ changed once with the full-config keys (#332).
   from the code. The user guide's configuration section keeps how the
   configuration is loaded, the settings most runs change and the topics
   that need prose, and links to it; the field descriptions were rewritten
-  for users (#PR).
+  for users (#337).
 - The doc-status registry keeps each corpus's extraction settings field by
   field next to the fingerprint on its documents. An incremental run whose
   settings changed names them in its WARNING, and a setting a newer release
