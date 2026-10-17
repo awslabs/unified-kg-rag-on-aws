@@ -487,7 +487,8 @@ aws logs tail /graphrag/tasks --region "$REGION" --follow
 - **Run one ingestion at a time.** The state machine does not stop a second
   execution from starting while one is running. With the doc-status registry
   (on in the image config), the second run on the same index namespace stops
-  with `NamespaceLeaseError` before it reads or writes anything; start it
+  with `NamespaceLeaseError` once it has synced the corpus and its checkpoint,
+  before it reads the stores or writes anything; start it
   again once the first one ended. See
   [Concurrent runs](../docs/operations.md#concurrent-runs).
 

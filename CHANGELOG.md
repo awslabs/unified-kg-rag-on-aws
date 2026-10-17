@@ -1143,6 +1143,9 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- iac/README.md no longer says a second concurrent ingestion stops before it
+  reads anything: it syncs the corpus and its checkpoint first, then stops
+  with `NamespaceLeaseError` before it reads the stores or writes (#PR).
 - IaC: on Neptune Serverless (`neptune_serverless_ncu`) the writer's
   low-freeable-memory alarm fires only while the writer is at its maximum
   capacity (at its minimum, about 2 GiB, low free memory is what makes it
