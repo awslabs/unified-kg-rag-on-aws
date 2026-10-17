@@ -24,15 +24,15 @@ import pytest
 import unified_kg_rag.adapters.search_strategies  # noqa: F401  (registers strategies)
 from unified_kg_rag.adapters import provider_registry
 from unified_kg_rag.adapters.aws import bedrock as bedrock_module
-from unified_kg_rag.adapters.aws import dynamodb as dynamodb_module
 from unified_kg_rag.adapters.aws import token_counter as token_counter_module
+from unified_kg_rag.adapters.doc_status import dynamodb as dynamodb_module
+from unified_kg_rag.adapters.doc_status.sqlite import SQLiteDocStatusStore
 from unified_kg_rag.adapters.local.embeddings import OllamaEmbeddingFactory
 from unified_kg_rag.adapters.local.models import (
     OllamaLanguageModelFactory,
     OpenAICompatibleLanguageModelFactory,
 )
 from unified_kg_rag.adapters.local.rerank import NoRerankFactory
-from unified_kg_rag.adapters.local.sqlite_doc_status import SQLiteDocStatusStore
 from unified_kg_rag.adapters.local.token_counter import LocalTokenCounter
 from unified_kg_rag.adapters.provider_registry import (
     ProviderRole,
@@ -299,8 +299,8 @@ def test_local_backend_builds_the_store_retrievers(no_aws, tmp_path, stores) -> 
 
 def test_local_backend_reaches_every_ingestion_component(no_aws, tmp_path) -> None:
     from unified_kg_rag.adapters.local.search_engine import SQLiteSearchEngine
-    from unified_kg_rag.adapters.local.sqlite_graph import SQLiteGraphIndexer
     from unified_kg_rag.adapters.storage.opensearch_indexer import OpenSearchIndexer
+    from unified_kg_rag.adapters.storage.sqlite_graph_indexer import SQLiteGraphIndexer
     from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
 
     config = _local_config(tmp_path)

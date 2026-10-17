@@ -22,7 +22,10 @@ from tests.fixtures.incremental_runs import (
     document,
     expected_state,
 )
-from unified_kg_rag.adapters.aws.dynamodb import DynamoDBDocStatusStore, _overflow_item
+from unified_kg_rag.adapters.doc_status.dynamodb import (
+    DynamoDBDocStatusStore,
+    _overflow_item,
+)
 from unified_kg_rag.domain.ingestion.delta_detector import document_doc_id
 from unified_kg_rag.domain.models import (
     Config,
@@ -234,7 +237,7 @@ def test_overflow_parts_are_written_in_order(
     # DynamoDB may store any subset of a BatchWriteItem: here it never stores
     # part 0. A part 1 stored without it would never be read or deleted.
     monkeypatch.setattr(
-        "unified_kg_rag.adapters.aws.dynamodb.time.sleep", lambda _: None
+        "unified_kg_rag.adapters.doc_status.dynamodb.time.sleep", lambda _: None
     )
     batch_write = ddb_store.client.batch_write_item
     part_zero = "d#pending#0"

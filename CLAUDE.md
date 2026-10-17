@@ -25,12 +25,14 @@ ports → domain`, with `shared` as a cross-cutting kernel any layer may use.
   retrieval/evaluation abstract bases are *adapter bases* (they construct infra
   in `__init__`): `ports/__init__` names them but does not export them; import
   them from `adapters.retrieval.base` / `adapters.evaluators.base`.
-- **`adapters/`**: concrete technology bindings — `aws/` (Bedrock, Neptune,
-  OpenSearch, DynamoDB, S3), `local/` (Ollama/OpenAI-compatible, the SQLite
-  doc-status registry, graph store `sqlite_graph.py` and vector engine
-  `search_engine/`),
+- **`adapters/`**: concrete technology bindings. Rule: vendor packages hold
+  clients/engines/model factories/caches, role packages hold port impls
+  (a role package may import a vendor one, not the reverse). Vendor: `aws/`
+  (Bedrock, Neptune/OpenSearch clients, S3), `local/` (Ollama/OpenAI-compatible,
+  graph store `sqlite_graph.py`, vector engine `search_engine/`). Role:
+  `storage/` (indexers, incl. `sqlite_graph_indexer.py`), `retrievers/`,
+  `doc_status/` (DynamoDB/SQLite `DocStatusPort` impls). Also
   `llm/` (provider-neutral chain assembly, retry, token estimate),
-  `storage/` (indexers), `retrievers/`,
   `search_strategies/`, `retrieval/` (base + hybrid scorer + token/memory
   managers), `ingestion/` (LLM/IO-coupled chunker/extractor/loader/parser/
   translator), `renderers/`, `evaluators/` (incl. the evaluator bases).

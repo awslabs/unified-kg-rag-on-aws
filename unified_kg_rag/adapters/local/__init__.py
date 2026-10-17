@@ -6,15 +6,18 @@
 - ``embeddings``: embedding factories for the same two servers.
 - ``rerank``: a sentence-transformers cross-encoder reranker and the no-op one.
 - ``token_counter``: a token counter that needs no model API.
-- ``sqlite_doc_status``: the document-status registry on SQLite.
 - ``search_engine``: an embedded vector/lexical store on SQLite that answers
   the OpenSearch queries of ``OpenSearchIndexer`` and ``OpenSearchRetriever``.
 - ``sqlite_graph``: the knowledge-graph store on SQLite.
+- ``sqlite_util``: the SQLite connection and transaction plumbing the
+  embedded stores share.
 
-Each conforms structurally to its port (``ModelFactoryPort``,
-``TokenCounterPort``, ``DocStatusPort``). The provider registry
-(``adapters.provider_registry``) builds them from ``config.providers``; the
-third-party clients of the ``[local]`` extra are imported only when a model is
+The model factories and the token counter conform structurally to their ports
+(``ModelFactoryPort``, ``TokenCounterPort``); the port implementations on the
+stores live in the role packages (``adapters.storage.sqlite_graph_indexer``,
+``adapters.retrievers.sqlite_graph_retriever``, ``adapters.doc_status.sqlite``).
+The provider registry (``adapters.provider_registry``) builds them from
+``config.providers``; the third-party clients of the ``[local]`` extra are imported only when a model is
 built, so importing this package needs none of them. Nothing is re-exported
 here, for the same reason: import from the submodules.
 """

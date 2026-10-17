@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import pytest
 
-from unified_kg_rag.adapters.aws.dynamodb import DynamoDBDocStatusStore
+from unified_kg_rag.adapters.doc_status.dynamodb import DynamoDBDocStatusStore
 from unified_kg_rag.domain.models import DocStatus, DocStatusRecord
 
 pytestmark = pytest.mark.unit

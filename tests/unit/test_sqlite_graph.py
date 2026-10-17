@@ -17,15 +17,13 @@ from typing import Any
 import pytest
 
 from tests.fixtures.fakes.stores import FakeGraphStore
-from unified_kg_rag.adapters.local.sqlite_graph import (
-    SQLiteGraphIndexer,
-    SQLiteGraphStore,
-)
+from unified_kg_rag.adapters.local.sqlite_graph import SQLiteGraphStore
 from unified_kg_rag.adapters.provider_registry import ProviderRole, provider_endpoint
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.adapters.retrievers.sqlite_graph_retriever import (
     SQLiteGraphRetriever,
 )
+from unified_kg_rag.adapters.storage.sqlite_graph_indexer import SQLiteGraphIndexer
 from unified_kg_rag.domain.models import (
     Community,
     Config,

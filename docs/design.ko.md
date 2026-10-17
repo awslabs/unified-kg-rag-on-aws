@@ -47,7 +47,7 @@ import는 **안쪽을 향합니다**(왼쪽이 오른쪽을 import하며 반대 
 ```mermaid
 flowchart TB
     application["<b>application/</b> - orchestration and entry points<br/>cli (run-*) · DataIngestionPipeline + stages · IndexingManager · GraphRAGChain"]
-    adapters["<b>adapters/</b> - technology bindings<br/>aws (Bedrock, Neptune, OpenSearch, DynamoDB, S3) · search_strategies (GraphRAG + LightRAG)<br/>storage · retrievers · retrieval · ingestion · renderers · evaluators"]
+    adapters["<b>adapters/</b> - technology bindings<br/>vendor: aws (Bedrock, Neptune, OpenSearch, S3) · local (Ollama/OpenAI-compatible, SQLite stores)<br/>role: storage · retrievers · doc_status · search_strategies (GraphRAG + LightRAG) · retrieval · ingestion · renderers · evaluators"]
     ports["<b>ports/</b> - abstract interfaces<br/>DocStatusPort · model factory and TokenCounter ports · BaseIndexer / GraphIndexer / VectorIndexer"]
     domain["<b>domain/</b> - technology-agnostic core<br/>models · ingestion (delta, merge, resolve, analyze) · retrieval (strategy_registry) · prompts"]
     shared["<b>shared/</b> - cross-cutting kernel<br/>config · logging · exceptions · metrics · cache and pipeline managers · utils"]
@@ -72,12 +72,13 @@ unified_kg_rag/
 │                       #   BaseIndexer/GraphIndexer/VectorIndexer,
 │                       #   ModelFactoryPort — ports/__init__이 포트 카탈로그)
 ├─ adapters/            # 구체적인 기술 바인딩
-│  ├─ aws/              #   Bedrock, Neptune, OpenSearch, DynamoDB, S3 클라이언트
-│  ├─ local/            #   Ollama/OpenAI 호환 모델, 크로스 인코더, SQLite 레지스트리
+│  ├─ aws/              #   Bedrock 모델 팩토리, Neptune/OpenSearch 클라이언트, S3 전송과 캐시
+│  ├─ local/            #   Ollama/OpenAI 호환 모델, 크로스 인코더, 내장 SQLite 그래프·검색 저장소
 │  ├─ llm/              #   공급자 중립 체인 조립, 일시적 오류 재시도, 토큰 추정
 │  ├─ observability/    #   OpenTelemetry 트레이서, 내보내기, LangChain 콜백
-│  ├─ storage/          #   Neptune/OpenSearch 인덱서 (쓰기 측 포트 구현)
-│  ├─ retrievers/       #   Neptune/OpenSearch 리트리버
+│  ├─ storage/          #   Neptune/OpenSearch/SQLite 그래프 인덱서 (쓰기 측 포트 구현)
+│  ├─ retrievers/       #   Neptune/OpenSearch/SQLite 그래프 리트리버
+│  ├─ doc_status/       #   DynamoDB/SQLite 문서 상태 레지스트리 (DocStatusPort)
 │  ├─ search_strategies/#   simple/local/global/drift + lightrag(mix/hybrid/naive)
 │  ├─ retrieval/        #   추상 리트리버/전략 베이스, hybrid scorer, 토큰/메모리 매니저
 │  ├─ ingestion/        #   LLM/IO 결합: chunker, *_extractor, loader, parser,
@@ -110,12 +111,20 @@ unified_kg_rag/
 > (`application.retrieval.rag_chain`, `application.storage.indexing_manager`,
 > `application.ingestion.pipeline`, `adapters.*`, `domain.*`)에서 import합니다.
 
+> 어댑터 패키지: 벤더 패키지(`adapters/aws/`, `adapters/local/`)에는 기술 바인딩,
+> 즉 전송 클라이언트, 내장 엔진과 저장소, 모델 팩토리(LLM, 임베딩, 재순위화), 토큰
+> 카운터와 캐시를 둡니다. 역할 패키지에는 애플리케이션이 연결하는 포트 구현을 둡니다.
+> `adapters/storage/`(`GraphIndexer`/`VectorIndexer`), `adapters/retrievers/`(리트리버),
+> `adapters/doc_status/`(`DocStatusPort`)입니다. 역할 패키지는 벤더 패키지를 import하고
+> 반대 방향은 허용하지 않습니다. `NeptuneIndexer`(`storage/`)가 `NeptuneClient`(`aws/`)로
+> 쓰듯 `SQLiteGraphIndexer`(`storage/`)는 `SQLiteGraphStore`(`local/`)에 씁니다.
+
 ### 2.1 포트(추상 인터페이스)
 
 | 포트 | 위치 | 어댑터 | 비고 |
 |---|---|---|---|
-| `DocStatusPort` | `ports/doc_status.py` | `adapters/aws/dynamodb.py` (`DynamoDBDocStatusStore`), `adapters/local/sqlite_doc_status.py` (`SQLiteDocStatusStore`), 테스트용 `FakeDocStatusStore` | 증분 인덱싱의 문서 상태와 계보 저장 |
-| `GraphIndexer` (쓰기 측) | `ports/indexer.py` | `adapters/storage/neptune_indexer.py`. 로컬: `adapters/local/sqlite_graph.py` | 전체 인덱싱과 델타(`upsert_*`/`delete_by_id`)를 하나의 계약으로 처리 |
+| `DocStatusPort` | `ports/doc_status.py` | `adapters/doc_status/dynamodb.py` (`DynamoDBDocStatusStore`), `adapters/doc_status/sqlite.py` (`SQLiteDocStatusStore`), 테스트용 `FakeDocStatusStore` | 증분 인덱싱의 문서 상태와 계보 저장 |
+| `GraphIndexer` (쓰기 측) | `ports/indexer.py` | `adapters/storage/neptune_indexer.py`. 로컬: `adapters/storage/sqlite_graph_indexer.py`(`adapters/local/sqlite_graph.py` 저장소 위) | 전체 인덱싱과 델타(`upsert_*`/`delete_by_id`)를 하나의 계약으로 처리 |
 | `VectorIndexer` (쓰기 측) | `ports/indexer.py` | `adapters/storage/opensearch_indexer.py`(OpenSearch, 또는 `SearchEngineClient`를 통해 `adapters/local/search_engine/` 위에서 동작) | 위와 같음 |
 | `BaseGraphRAGRetriever` (읽기 측) | `adapters/retrieval/base.py` | `adapters/retrievers/{neptune,opensearch,sqlite_graph}_retriever.py`(그래프 리트리버는 `graph_expansion.py` 기반) | 검색 어댑터 |
 | LLM/임베딩/재순위화 팩토리, 토큰 카운터 | `ports/model_factory.py` (`ModelFactoryPort`, `TokenCounterPort`, 그리고 `get_model_info`가 돌려주는 `LanguageModelInfo` / `EmbeddingModelInfo` / `RerankModelInfo` 레코드) | `adapters/aws/bedrock.py`, `adapters/aws/bedrock_models.py`, `adapters/aws/token_counter.py`. 로컬: `adapters/local/{models,embeddings,rerank,token_counter}.py` | 오케스트레이터마다 한 번 만드는 `Providers` 묶음(`adapters/providers.py`, `application/bootstrap.py`가 생성)에 담아 모든 구성 요소에 전달. 역할별 어댑터는 `adapters/provider_registry.py`를 거쳐 `providers.<역할>.kind`가 고름(기본값 Bedrock. §15) |
@@ -369,7 +378,7 @@ Neptune 그래프 확장은 `local`과 `drift`에 포함되어 있고, `mix`/`hy
 | **Neptune** | `adapters/aws/neptune.py` | `wss://` 위의 Gremlin(`aws.neptune.use_ssl: false`이면 로컬 Gremlin Server에 `ws://`), SigV4 IAM, 배치 upsert/삭제. `indexing.neptune.index_concurrency`가 1보다 크면 쓰기 배치를 스레드 풀로 동시에 제출하며(배치마다 독립된 `IndexingStats` → 메인 스레드에서 병합, 공유 상태 변경 없음), Gremlin 커넥션 풀(`aws.neptune.pool_size`, 최소 `index_concurrency`까지 늘림)로 다중화합니다. 기본값 1은 순차 실행. 읽기와 삭제를 포함한 인덱서의 모든 요청은 새 연결로 `indexing.neptune.max_attempts`회까지 재시도하며, 반복해도 결과가 같습니다. 정점은 전체 빌드와 델타 모두 ID로 찾거나 만들고, `MemberOf` 에지는 아직 구성원이 아닌 엔티티에만, 관계 에지는 그 ID가 없을 때만 추가하므로 응답을 잃은 뒤의 재시도가 중복을 만들지 않습니다 |
 | **OpenSearch** | `adapters/aws/opensearch.py` | 벡터(kNN/HNSW, 기본 엔진은 **lucene**이며 `iac/`가 배포하는 OpenSearch 2.13에서 `cosinesimil`을 지원합니다. faiss는 2.19 이전에는 `cosinesimil`을 거부하므로 1024차원을 넘는 모델에서 `innerproduct`와 함께만 쓰세요. `config-template.yaml`의 엔진 설명 참고) + BM25, 비동기 SigV4, 동기/비동기 클라이언트, alias 관리, 대량 upsert/삭제, 언어별 분석기(en→english, ko→nori 등) |
 | **S3** | `adapters/aws/s3_cache.py` | 파이프라인 캐시 동기화(암호화 기본값 `BUCKET_DEFAULT`는 버킷의 기본 암호화(예: CMK)를 따르고, `AES256`/`aws:kms`는 객체별 SSE를 강제) |
-| **DynamoDB** | `adapters/aws/dynamodb.py` | 증분 인덱싱용 문서 상태 레지스트리 |
+| **DynamoDB** | `adapters/doc_status/dynamodb.py` | 증분 인덱싱용 문서 상태 레지스트리 |
 
 AWS 세션은 묶음의 세션(`Providers(boto_session=...)`, 기본값은 처음 쓸 때 `config.aws.profile_name`으로 생성)이므로 테스트에서 fake나 moto 세션을 넣을 수 있습니다. 세션은 AWS 클라이언트만 요청하므로 로컬 실행이나 IAM 인증을 쓰지 않는 저장소는 프로필을 읽지 않습니다.
 
@@ -476,8 +485,8 @@ CLI: `run-eval --eval-data-path <json> [--search-strategy ...]`.
 역할의 어댑터는 공급자 레지스트리(아래)를 거쳐 `providers.<역할>.kind`로 정해집니다.
 오케스트레이터는 어떤 포트든 **생성자 주입**으로도 받습니다. 그래서 AWS가 아닌 백엔드나
 커스텀 백엔드를 하위 클래스를 만들거나 디스패치 코드를 고치지 않고 연결할 수 있습니다.
-포트와 기본(Bedrock/Neptune/OpenSearch/DynamoDB) 어댑터, 로컬 어댑터(`adapters/local/`,
-`[local]` extra. 사용자 가이드의 "로컬 모드" 참고)는 다음과 같습니다.
+포트와 기본(Bedrock/Neptune/OpenSearch/DynamoDB) 어댑터, 로컬 어댑터(`adapters/local/`와
+역할 패키지의 SQLite 구현, `[local]` extra. 사용자 가이드의 "로컬 모드" 참고)는 다음과 같습니다.
 
 | 포트 | 계약 | 기본 어댑터(로컬 어댑터) | 주입 방법 |
 |---|---|---|---|
@@ -594,14 +603,14 @@ vector_indexer_factory=lambda: vectors, graph_indexer_factory=lambda: graph))`, 
 graph_indexer=...)`, `tests/integration/test_ingestion_stages.py`에서
 검증), 커스텀 저장소를 만들 때 출발점으로 권장합니다. 이 프레임워크는 AWS 어댑터 외에 로컬
 어댑터도 저장소 안에 제공합니다(`adapters/local/`: OpenAI 호환·Ollama 모델, 크로스 인코더
-재순위화, 로컬 토큰 카운터, SQLite 레지스트리, 그리고 `backend: local`이 고르는 내장 SQLite
-그래프·벡터 저장소). 두 저장소는 백엔드를 추가하는 두 가지 방법을 보여 줍니다. 벡터
+재순위화, 로컬 토큰 카운터, 내장 SQLite 그래프·벡터 저장소. `adapters/doc_status/sqlite.py`의 SQLite
+레지스트리도 있으며, 모두 `backend: local`이 고릅니다). 두 저장소는 백엔드를 추가하는 두 가지 방법을 보여 줍니다. 벡터
 저장소 `SQLiteSearchEngine`(`adapters/local/search_engine/`)은 인덱서와 리트리버가 부르는
 OpenSearch 클라이언트 호출인 `SearchEngineClient` 프로토콜(`adapters/storage/search_engine.py`)을
 구현합니다. 그래서 `OpenSearchIndexer`와 `OpenSearchRetriever`가 그대로 그 위에서 동작하고,
 두 백엔드가 인덱싱·검색 로직 하나를 함께 씁니다. 구현한 질의 범위를 벗어난 요청은
 거부합니다(`StoreRequestRejectedError`). Gremlin은 이렇게 흉내 낼 수 없으므로 그래프
-저장소는 별도의 `GraphIndexer`(`SQLiteGraphIndexer`, 쓰기 의미의 기준은 `FakeGraphStore`)와
+저장소는 별도의 `GraphIndexer`(`adapters/storage/sqlite_graph_indexer.py`의 `SQLiteGraphIndexer`, 쓰기 의미의 기준은 `FakeGraphStore`)와
 순회만 구현하는 `GraphExpansionRetriever` 하위 클래스(`adapters/retrievers/graph_expansion.py`)입니다.
 채점, 자르기, 내용 구성은 `NeptuneRetriever`와 함께 씁니다.
 

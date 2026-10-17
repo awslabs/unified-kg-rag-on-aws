@@ -326,9 +326,9 @@ def test_local_mode_ingests_and_answers_through_the_registry(
 
     from tests.fixtures.fakes.model_servers import FakeOllama
     from tests.integration.test_ingestion_stages import _respond
+    from unified_kg_rag.adapters.doc_status.sqlite import SQLiteDocStatusStore
     from unified_kg_rag.adapters.local.embeddings import OllamaEmbeddingFactory
     from unified_kg_rag.adapters.local.models import OllamaLanguageModelFactory
-    from unified_kg_rag.adapters.local.sqlite_doc_status import SQLiteDocStatusStore
     from unified_kg_rag.application.bootstrap import build_providers
     from unified_kg_rag.application.ingestion import pipeline_stages as ps
     from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline

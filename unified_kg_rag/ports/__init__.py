@@ -8,7 +8,7 @@ application code import ports from here and never import a concrete backend.
 
 Catalog:
 - ``DocStatusPort`` — document-status registry for incremental indexing
-  (adapters: ``adapters.aws.dynamodb``, ``adapters.local.sqlite_doc_status``;
+  (adapters: ``adapters.doc_status.dynamodb``, ``adapters.doc_status.sqlite``;
   in-memory fake in tests).
 - ``BaseIndexer`` / ``GraphIndexer`` / ``VectorIndexer`` — write-side store
   contracts (adapters: ``adapters.storage``). ``IndexingStats`` is the shared

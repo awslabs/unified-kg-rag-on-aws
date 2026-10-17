@@ -45,7 +45,7 @@ Imports point **inward** (left imports right, never the reverse). `shared/` is a
 ```mermaid
 flowchart TB
     application["<b>application/</b> - orchestration and entry points<br/>cli (run-*) · DataIngestionPipeline + stages · IndexingManager · GraphRAGChain"]
-    adapters["<b>adapters/</b> - technology bindings<br/>aws (Bedrock, Neptune, OpenSearch, DynamoDB, S3) · search_strategies (GraphRAG + LightRAG)<br/>storage · retrievers · retrieval · ingestion · renderers · evaluators"]
+    adapters["<b>adapters/</b> - technology bindings<br/>vendor: aws (Bedrock, Neptune, OpenSearch, S3) · local (Ollama/OpenAI-compatible, SQLite stores)<br/>role: storage · retrievers · doc_status · search_strategies (GraphRAG + LightRAG) · retrieval · ingestion · renderers · evaluators"]
     ports["<b>ports/</b> - abstract interfaces<br/>DocStatusPort · model factory and TokenCounter ports · BaseIndexer / GraphIndexer / VectorIndexer"]
     domain["<b>domain/</b> - technology-agnostic core<br/>models · ingestion (delta, merge, resolve, analyze) · retrieval (strategy_registry) · prompts"]
     shared["<b>shared/</b> - cross-cutting kernel<br/>config · logging · exceptions · metrics · cache and pipeline managers · utils"]
@@ -70,12 +70,13 @@ unified_kg_rag/
 │                       #   BaseIndexer/GraphIndexer/VectorIndexer,
 │                       #   ModelFactoryPort — ports/__init__ is the port catalog)
 ├─ adapters/            # concrete technology bindings
-│  ├─ aws/              #   Bedrock, Neptune, OpenSearch, DynamoDB, S3 clients
-│  ├─ local/            #   Ollama/OpenAI-compatible models, cross-encoder, SQLite registry
+│  ├─ aws/              #   Bedrock model factories, Neptune/OpenSearch clients, S3 transfer and caches
+│  ├─ local/            #   Ollama/OpenAI-compatible models, cross-encoder, embedded SQLite graph/search stores
 │  ├─ llm/              #   provider-neutral chain assembly, transient retry, token estimate
 │  ├─ observability/    #   OpenTelemetry tracer, exporters, LangChain callback
-│  ├─ storage/          #   Neptune/OpenSearch indexers (write-side port implementations)
-│  ├─ retrievers/       #   Neptune/OpenSearch retrievers
+│  ├─ storage/          #   Neptune/OpenSearch/SQLite-graph indexers (write-side port implementations)
+│  ├─ retrievers/       #   Neptune/OpenSearch/SQLite-graph retrievers
+│  ├─ doc_status/       #   DynamoDB/SQLite document-status registries (DocStatusPort)
 │  ├─ search_strategies/#   simple/local/global/drift + lightrag(mix/hybrid/naive)
 │  ├─ retrieval/        #   abstract retriever/strategy bases, hybrid scorer, token/memory managers
 │  ├─ ingestion/        #   LLM/IO coupled: chunker, *_extractor, loader, parser,
@@ -109,12 +110,22 @@ unified_kg_rag/
 > `application.storage.indexing_manager`, `application.ingestion.pipeline`,
 > `adapters.*`, `domain.*`).
 
+> Adapter packages: vendor packages (`adapters/aws/`, `adapters/local/`) hold
+> technology bindings, that is transport clients, embedded engines and stores,
+> model factories (LLM, embedding, rerank), token counters and caches. Role
+> packages hold the port implementations the application wires:
+> `adapters/storage/` (`GraphIndexer` / `VectorIndexer`), `adapters/retrievers/`
+> (retrievers) and `adapters/doc_status/` (`DocStatusPort`). A role package
+> imports a vendor package, never the other way round: `SQLiteGraphIndexer`
+> (`storage/`) writes to `SQLiteGraphStore` (`local/`) as `NeptuneIndexer`
+> writes through `NeptuneClient` (`aws/`).
+
 ### 2.1 Ports (Abstract Interfaces)
 
 | Port | Location | Adapter | Notes |
 |---|---|---|---|
-| `DocStatusPort` | `ports/doc_status.py` | `adapters/aws/dynamodb.py` (`DynamoDBDocStatusStore`), `adapters/local/sqlite_doc_status.py` (`SQLiteDocStatusStore`), `FakeDocStatusStore` for tests | Persists incremental-indexing document status/lineage |
-| `GraphIndexer` (write-side) | `ports/indexer.py` | `adapters/storage/neptune_indexer.py`; local: `adapters/local/sqlite_graph.py` | Single contract for full + delta (`upsert_*`/`delete_by_id`) |
+| `DocStatusPort` | `ports/doc_status.py` | `adapters/doc_status/dynamodb.py` (`DynamoDBDocStatusStore`), `adapters/doc_status/sqlite.py` (`SQLiteDocStatusStore`), `FakeDocStatusStore` for tests | Persists incremental-indexing document status/lineage |
+| `GraphIndexer` (write-side) | `ports/indexer.py` | `adapters/storage/neptune_indexer.py`; local: `adapters/storage/sqlite_graph_indexer.py` (on the `adapters/local/sqlite_graph.py` store) | Single contract for full + delta (`upsert_*`/`delete_by_id`) |
 | `VectorIndexer` (write-side) | `ports/indexer.py` | `adapters/storage/opensearch_indexer.py` (on OpenSearch, or on `adapters/local/search_engine/` through `SearchEngineClient`) | Same |
 | `BaseGraphRAGRetriever` (read-side) | `adapters/retrieval/base.py` | `adapters/retrievers/{neptune,opensearch,sqlite_graph}_retriever.py` (the graph ones on `graph_expansion.py`) | Retrieval adapters |
 | LLM/Embedding/Rerank factories, token counter | `ports/model_factory.py` (`ModelFactoryPort`, `TokenCounterPort`, and the `LanguageModelInfo` / `EmbeddingModelInfo` / `RerankModelInfo` records `get_model_info` returns) | `adapters/aws/bedrock.py`, `adapters/aws/bedrock_models.py`, `adapters/aws/token_counter.py`; local: `adapters/local/{models,embeddings,rerank,token_counter}.py` | Carried by one `Providers` bundle (`adapters/providers.py`, built by `application/bootstrap.py`) that each orchestrator builds once and passes to every component; each role's adapter is the one `providers.<role>.kind` selects through `adapters/provider_registry.py` (default Bedrock; §15) |
@@ -369,7 +380,7 @@ Per-source behavior:
 | **Neptune** | `adapters/aws/neptune.py` | Gremlin over `wss://` (`ws://` to a local Gremlin Server with `aws.neptune.use_ssl: false`), SigV4 IAM, batch upsert/delete. Write batches submit concurrently via a thread pool when `indexing.neptune.index_concurrency` > 1 (per-batch independent `IndexingStats` → merged on the main thread, no shared mutation), multiplexed over the Gremlin connection pool (`aws.neptune.pool_size`, raised to at least `index_concurrency`). Default 1 = sequential. Every indexer request, reads and drops included, is retried up to `indexing.neptune.max_attempts` times over a new connection, and repeating one changes nothing: vertices (full build and delta alike) are created or matched by id, a `MemberOf` edge is added only for an entity not yet a member, and a relationship edge only when its id is missing, so a retry after a lost response adds no duplicate |
 | **OpenSearch** | `adapters/aws/opensearch.py` | Vector (kNN/HNSW, default engine **lucene**, which supports `cosinesimil` on OpenSearch 2.13 as deployed by `iac/`; faiss rejects `cosinesimil` before 2.19, so use it only with `innerproduct` for >1024-dim models — see the engine note in `config-template.yaml`) + BM25, async SigV4, sync/async clients, alias management, bulk upsert/delete, per-language analyzers (en→english, ko→nori, etc.) |
 | **S3** | `adapters/aws/s3_cache.py` | Pipeline cache sync (encryption defaults to `BUCKET_DEFAULT` — the bucket's default encryption, e.g. a CMK; `AES256`/`aws:kms` force per-object SSE) |
-| **DynamoDB** | `adapters/aws/dynamodb.py` | Incremental-indexing document-status registry |
+| **DynamoDB** | `adapters/doc_status/dynamodb.py` | Incremental-indexing document-status registry |
 
 The AWS session is the bundle's (`Providers(boto_session=...)`, by default created from `config.aws.profile_name` on first use), so a fake/moto session can be injected during testing. Only an AWS client asks for it: a local run, or a store without IAM auth, never resolves the profile.
 
@@ -478,7 +489,8 @@ the provider registry (below), and the orchestrators also accept any port via
 **constructor injection** — so a non-AWS or custom backend is wired in without
 subclassing or editing dispatch code. The ports, their default
 (Bedrock/Neptune/OpenSearch/DynamoDB) adapters and the local ones
-(`adapters/local/`, the `[local]` extra; see the user guide's "Local mode"):
+(`adapters/local/` and the SQLite implementations in the role packages, the
+`[local]` extra; see the user guide's "Local mode"):
 
 | Port | Contract | Default adapter (local adapters) | Inject via |
 |---|---|---|---|
@@ -612,9 +624,9 @@ doc_status=..., vector_indexer=..., graph_indexer=...)`, exercised in
 `tests/integration/test_ingestion_stages.py`). They are
 the recommended starting point for a custom store. Besides the AWS adapters the
 framework ships the local ones in-tree (`adapters/local/`: OpenAI-compatible
-and Ollama models, a cross-encoder reranker, a local token counter, the
-SQLite registry and the embedded SQLite graph and vector stores that
-`backend: local` selects). The two stores show the two ways to add a
+and Ollama models, a cross-encoder reranker, a local token counter and the
+embedded SQLite graph and vector stores; `adapters/doc_status/sqlite.py`: the
+SQLite registry; all of them what `backend: local` selects). The two stores show the two ways to add a
 backend. The vector store, `SQLiteSearchEngine` (`adapters/local/search_engine/`),
 implements the `SearchEngineClient` protocol (`adapters/storage/search_engine.py`),
 the OpenSearch client calls the indexer and retriever make, so the unchanged
@@ -622,8 +634,8 @@ the OpenSearch client calls the indexer and retriever make, so the unchanged
 share one copy of the indexing and retrieval logic; a request outside the
 query subset it implements is rejected (`StoreRequestRejectedError`). Gremlin
 cannot be emulated that way, so the graph store is its own `GraphIndexer`
-(`SQLiteGraphIndexer`, with `FakeGraphStore` as the reference for the write
-semantics) and a `GraphExpansionRetriever` subclass
+(`SQLiteGraphIndexer` in `adapters/storage/sqlite_graph_indexer.py`, with
+`FakeGraphStore` as the reference for the write semantics) and a `GraphExpansionRetriever` subclass
 (`adapters/retrievers/graph_expansion.py`) that implements only the traversal;
 the scoring, cutting and content building it shares with `NeptuneRetriever`.
 
