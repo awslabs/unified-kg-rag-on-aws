@@ -1652,7 +1652,8 @@ run-eval --data-path s3://my-bucket/eval/my_eval_data.json \
 `musique_ans_v1.0_*.jsonl`을 대신 읽을 수 있습니다. `corpus/`(서로 다른 단락마다 텍스트
 파일 하나: 제목, 빈 줄, 본문. 질문마다 근거 단락 2-4개와 방해 단락 최대 18개)와
 `eval_data.json`(`answer`, `answer_aliases`, 근거 단락의 파일 이름인
-`reference_sources`, 홉 수인 `category`)을 씁니다.
+`reference_sources`, 홉 수인 `category`)을 씁니다. `corpus/`가 비어 있지 않으면
+아무것도 내려받기 전에 사용 오류(종료 코드 2)로 끝납니다.
 
 ```bash
 # 1. 시드 0으로 질문 100개(단락 약 1,900개) 표집

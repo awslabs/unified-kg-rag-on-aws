@@ -384,4 +384,18 @@ def test_prepare_benchmark_cli(tmp_path: Path, capsys) -> None:
                 str(source),
             ]
         )
-    assert exit_info.value.code == 1
+    assert exit_info.value.code == 2  # a usage error
+
+
+def test_prepare_benchmark_refuses_a_used_directory_before_downloading(
+    tmp_path: Path, mocker
+) -> None:
+    from unified_kg_rag.application.cli import prepare_benchmark
+
+    (tmp_path / "b" / "corpus").mkdir(parents=True)
+    (tmp_path / "b" / "corpus" / "old.txt").write_text("x")
+    download = mocker.patch.object(musique, "download_dev")
+    with pytest.raises(SystemExit) as exit_info:
+        prepare_benchmark.main(["musique", "--output-directory", str(tmp_path / "b")])
+    assert exit_info.value.code == 2
+    download.assert_not_called()

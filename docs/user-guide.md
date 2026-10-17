@@ -1834,7 +1834,8 @@ the official download instead. It writes `corpus/` (one text file per
 distinct paragraph: its title, a blank line, its text; each question brings
 2-4 supporting paragraphs and up to 18 distractors) and `eval_data.json`
 (`answer`, `answer_aliases`, the supporting paragraphs' file names as
-`reference_sources`, the hop count as `category`).
+`reference_sources`, the hop count as `category`). A `corpus/` that is not
+empty is a usage error (exit 2), reported before anything is downloaded.
 
 ```bash
 # 1. 100 questions (about 1,900 paragraphs), sampled with seed 0.

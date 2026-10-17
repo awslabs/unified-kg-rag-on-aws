@@ -88,6 +88,16 @@ def _file_name(title: str, taken: set[str]) -> str:
     return name
 
 
+def check_output_directory(output_dir: Path) -> None:
+    """Raise unless ``output_dir``'s ``corpus/`` is new or empty: files of
+    another sample would be ingested with this one."""
+    corpus = output_dir / "corpus"
+    if corpus.exists() and any(corpus.iterdir()):
+        raise EvaluationException(
+            f"'{corpus}' is not empty; choose a new --output-directory"
+        )
+
+
 def prepare(
     source: Path, output_dir: Path, *, limit: int | None = None, seed: int = 0
 ) -> dict[str, int]:
@@ -96,12 +106,8 @@ def prepare(
     ``limit`` questions are drawn with ``seed`` (all when ``None``);
     unanswerable items (in the full, non-``ans`` files) are skipped.
     """
+    check_output_directory(output_dir)
     corpus = output_dir / "corpus"
-    if corpus.exists() and any(corpus.iterdir()):
-        # Files of another sample would be ingested with this one.
-        raise EvaluationException(
-            f"'{corpus}' is not empty; choose a new --output-directory"
-        )
     items = [i for i in _items(source) if i.get("answerable", True)]
     if limit is not None and limit < len(items):
         items = random.Random(seed).sample(items, limit)

@@ -1148,6 +1148,8 @@ changed once with the full-config keys (#332).
   strategy it happened to route every query to (#PR).
 - `--output-format json` prints `{"status": "interrupted", "exit_code": ...}`
   when a signal stops a CLI before it printed its document (#PR).
+- `prepare-benchmark` with a non-empty `corpus/` exits 2 (a usage error)
+  before downloading the benchmark, instead of exiting 1 after (#PR).
 - The docs no longer contradict the code: an unknown config key fails the
   load (not a warning), the four causes of a `FAILED` document are listed
   alike in the user guide, the runbook and the design doc, a second
