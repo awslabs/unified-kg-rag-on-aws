@@ -82,6 +82,7 @@ from unified_kg_rag.domain.prompts.retrieval import describe_routable_strategies
 from unified_kg_rag.domain.retrieval.strategy_registry import (
     QueryInput,
     get_strategy_spec,
+    routable_strategies,
 )
 from unified_kg_rag.ports.model_factory import LLMFactoryPort
 from unified_kg_rag.shared import (
@@ -426,7 +427,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             state["resolved_strategy"] = strategy
             return state
 
-        routable = tuple(self.config.search.auto_routable_strategies)
+        routable = routable_strategies(self.config)
         try:
             router = self._get_chain_for_prompt(
                 StrategySelectionPrompt, StrOutputParser()
@@ -1126,10 +1127,16 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
     def _optimize_context(self, state: dict[str, Any]) -> OptimizedContext:
         query: ProcessedQuery = state["processed_query"]
         search_results: SearchResult = state["search_results"]
+        strategy = state.get("resolved_strategy")
         return self.token_manager.optimize_context(
             retrieval_results=search_results.results,
             query=query.final_query,
             max_tokens=state.get("max_tokens"),
+            spare_budget_first=(
+                get_strategy_spec(strategy).strategy_class.spare_context_budget_first
+                if strategy is not None
+                else ()
+            ),
         )
 
     def _context_optimization_step(self, state: dict[str, Any]) -> OptimizedContext:

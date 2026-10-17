@@ -26,13 +26,21 @@ from unified_kg_rag.domain.retrieval.strategy_registry import get_strategy_spec
 pytestmark = pytest.mark.unit
 
 
-def _edge(rid: str, src: str, tgt: str, rank: float) -> RetrievalResult:
+def _edge(
+    rid: str, src: str, tgt: str, rank: float, rel_type: str = "related"
+) -> RetrievalResult:
     return RetrievalResult(
-        content=f"{src} -> {tgt}",
+        content=f"{src} -{rel_type}-> {tgt}",
         score=0.0,
         source=rid,
         retriever_type="relationship",
-        metadata={"id": rid, "source_id": src, "target_id": tgt, "rank": rank},
+        metadata={
+            "id": rid,
+            "source_id": src,
+            "target_id": tgt,
+            "rank": rank,
+            "type": rel_type,
+        },
     )
 
 
@@ -43,7 +51,9 @@ _EDGES = {
         _edge("r-bridge", "vendor", "buyer", 1.0),
     ],
     "target_id": [
-        _edge("r-bridge-dup", "buyer", "vendor", 1.0),  # same pair, other side
+        _edge("r-bridge", "vendor", "buyer", 1.0),  # same edge, other endpoint
+        # Another typed edge between the same pair: a distinct relationship.
+        _edge("r-bridge-typed", "buyer", "vendor", 2.0, "invoices"),
         _edge("r-in", "bank", "buyer", 5.0),
     ],
 }
@@ -107,16 +117,38 @@ def _make_strategy(config: Config):
     return strategy, doc, captured
 
 
-async def test_bridge_edges_come_first_and_pairs_dedupe(config: Config) -> None:
+async def test_bridge_edges_come_first_and_edges_dedupe_by_id(
+    config: Config,
+) -> None:
     strategy, _, _ = _make_strategy(config)
 
     edges = await strategy._fetch_incident_relationships(
         SearchQuery(query="q"), ["vendor", "buyer"], bridge_first=True
     )
 
-    # Bridge first despite its low rank; then out-of-network by rank. The
-    # reversed duplicate of the bridge pair is carried once.
-    assert [e.source for e in edges] == ["r-bridge", "r-out", "r-in"]
+    # Bridges first despite their low rank; then out-of-network by rank. The
+    # bridge reached from both endpoints is carried once, and the other typed
+    # edge between the same pair is kept (an endpoint-pair key dropped it).
+    assert [e.source for e in edges] == [
+        "r-bridge-typed",
+        "r-bridge",
+        "r-out",
+        "r-in",
+    ]
+
+
+async def test_an_edge_the_caller_holds_is_not_fetched_again(
+    config: Config,
+) -> None:
+    strategy, _, _ = _make_strategy(config)
+
+    edges = await strategy._fetch_incident_relationships(
+        SearchQuery(query="q"),
+        ["vendor", "buyer"],
+        known_relationships=[_edge("r-bridge", "vendor", "buyer", 1.0)],
+    )
+
+    assert [e.source for e in edges] == ["r-out", "r-in", "r-bridge-typed"]
 
 
 async def test_without_bridge_first_the_upstream_rank_order_holds(
@@ -128,7 +160,7 @@ async def test_without_bridge_first_the_upstream_rank_order_holds(
         SearchQuery(query="q"), ["vendor", "buyer"]
     )
 
-    assert [e.source for e in edges] == ["r-out", "r-in", "r-bridge"]
+    assert [e.source for e in edges] == ["r-out", "r-in", "r-bridge-typed", "r-bridge"]
 
 
 async def test_local_search_adds_bridge_section_for_expanded_entities(
@@ -140,6 +172,7 @@ async def test_local_search_adds_bridge_section_for_expanded_entities(
     await strategy.asearch(SearchQuery(query="q", entity_focus=["Vendor"]))
 
     assert [r.source for r in captured["bridge_relationships"]] == [
+        "r-bridge-typed",
         "r-bridge",
         "r-out",
         "r-in",
@@ -186,5 +219,8 @@ async def test_bridge_stream_is_capped_at_the_relationship_quota(
 
     await strategy.asearch(SearchQuery(query="q", entity_focus=["Vendor"], top_k=5))
 
-    # In-network edge first, then the best out-of-network one.
-    assert [r.source for r in captured["bridge_relationships"]] == ["r-bridge", "r-out"]
+    # In-network edges first, up to the quota.
+    assert [r.source for r in captured["bridge_relationships"]] == [
+        "r-bridge-typed",
+        "r-bridge",
+    ]

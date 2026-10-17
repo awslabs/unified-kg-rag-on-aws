@@ -2206,8 +2206,11 @@ class ContextTypeBudgetConfig(BaseModel):
 
     Shares are relative weights, not fractions: they are renormalized over the
     section types actually present in a query's candidate set, so an absent type
-    does not shrink the usable window. Raise ``text`` to favour verbatim source
-    passages, raise ``community`` to favour high-level synthesis.
+    does not shrink the usable window. Budget a type leaves unused because all
+    of its candidates fit goes to the types that still have candidates, by
+    share (LightRAG mix/hybrid give it to chunks first, as upstream does).
+    Raise ``text`` to favour verbatim source passages, raise ``community`` to
+    favour high-level synthesis.
     """
 
     text: float = Field(
@@ -2393,7 +2396,10 @@ class SearchConfig(BaseModel):
             "drift. simple is left out because the graph strategies already "
             "cover its direct lookups with graph context; mix (LightRAG) is "
             "included for multi-hop fact chains, which it serves from the same "
-            "index. Every strategy stays selectable explicitly."
+            "index. global and drift are skipped when "
+            "graph.community_detection.enabled is false (no community reports); "
+            "local is used when nothing is left. Every strategy stays "
+            "selectable explicitly."
         ),
     )
     query_rewrite_model_id: BedrockModelId = role_model_field(

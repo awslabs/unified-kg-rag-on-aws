@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, ClassVar
 
 from langchain_core.callbacks import (
     AsyncCallbackManagerForRetrieverRun,
@@ -122,6 +122,10 @@ class BaseSearchStrategy(ABC):
     therefore keep per-query state local to ``asearch`` (and what it calls)
     and treat instance attributes as read-only after ``__init__``.
     """
+
+    # Section types that take the context budget other types leave unused
+    # before the rest share it (``TokenManager.optimize_context``).
+    spare_context_budget_first: ClassVar[tuple[SectionType, ...]] = ()
 
     def __init__(
         self,
@@ -320,12 +324,10 @@ class BaseSearchStrategy(ABC):
         return self.config.indexing.opensearch.max_query_size
 
     @staticmethod
-    def _endpoint_pair(result: RetrievalResult) -> tuple[str, str]:
-        """The undirected endpoint key upstream dedups edges by (`tuple(sorted(e))`)."""
+    def _relationship_identity(result: RetrievalResult) -> str:
+        """The stored relationship's id (its content when it has none)."""
         metadata = result.metadata or {}
-        return tuple(  # type: ignore[return-value]
-            sorted((str(metadata.get("source_id")), str(metadata.get("target_id"))))
-        )
+        return str(metadata.get("id") or result.source or result.content)
 
     async def _fetch_incident_relationships(
         self,
@@ -339,7 +341,7 @@ class BaseSearchStrategy(ABC):
         The relationships index stores its endpoints as `source_id`/`target_id`
         keywords, but `_build_filter_clauses` ANDs every filter, so
         `source_id OR target_id` needs two queries. Edges are deduped by
-        undirected endpoint pair (also against ``known_relationships``) and
+        relationship id (also against ``known_relationships``) and
         ordered by `(rank, weight)` descending, as upstream LightRAG's
         `_find_most_related_edges_from_entities` does. With ``bridge_first``
         the edges whose BOTH endpoints are in ``entity_ids`` — the bridges
@@ -385,18 +387,19 @@ class BaseSearchStrategy(ABC):
             _by_endpoint("source_id"), _by_endpoint("target_id")
         )
 
-        # Dedup by the undirected endpoint pair, as upstream does (`tuple(sorted(e))`),
-        # so an edge reachable from both of its endpoints is carried once — and so an
-        # edge the caller already holds is not paid for twice.
-        seen: set[tuple[str, str]] = {
-            self._endpoint_pair(r) for r in (known_relationships or [])
-        }
+        # Dedup by relationship id, so an edge reachable from both of its
+        # endpoints is carried once and an edge the caller already holds is not
+        # paid for twice. Upstream dedups by the undirected endpoint pair
+        # (`tuple(sorted(e))`) because its graph holds one edge per pair; ours
+        # keeps typed, directed edges, and a pair key dropped every edge between
+        # two entities but the first ("supplies" and "invoices" alike).
+        seen = {self._relationship_identity(r) for r in (known_relationships or [])}
         deduped: list[RetrievalResult] = []
         for result in [r for side in sides for r in side]:
-            pair = self._endpoint_pair(result)
-            if pair in seen:
+            identity = self._relationship_identity(result)
+            if identity in seen:
                 continue
-            seen.add(pair)
+            seen.add(identity)
             deduped.append(result)
 
         in_set = set(entity_ids)

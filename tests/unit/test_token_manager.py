@@ -328,17 +328,23 @@ class TestPriorityOrdering:
         assert section.priority == 0.0
 
 
-class TestPerTypeBudgetIsAHardCap:
-    """TYPE_BUDGET_PROP must CAP each type, not floor it.
+def _tokens_by_type(out) -> dict[SectionType, int]:  # noqa: ANN001
+    by_type: dict[SectionType, int] = {}
+    for section in out.sections:
+        by_type[section.section_type] = (
+            by_type.get(section.section_type, 0) + section.token_count
+        )
+    return by_type
 
-    The previous implementation packed each type to its sub-budget and then ran a
-    second pass that pooled every unused token and offered it to the leftovers of
-    ANY type by raw priority. That made the proportions advisory: whichever type
-    had the most/highest-scoring leftovers absorbed the whole remainder, so one
-    type could take most of the window and evict the others. Neither upstream
-    pools — MS GraphRAG's mixed_context packs community
-    / local / text against three independent strict budgets and LightRAG
-    truncates each type separately.
+
+class TestPerTypeBudgetIsAHardCap:
+    """A type's share CAPS it while another type still has candidates.
+
+    An earlier implementation pooled every unused token and offered it to the
+    leftovers of ANY type by raw priority, so whichever type had the
+    highest-scoring leftovers absorbed the whole remainder and evicted the
+    others. Budget a type leaves unused now goes only to types that still have
+    candidates, by share (or to the ``spare_budget_first`` types first).
     """
 
     def test_one_type_cannot_exceed_its_share_when_another_type_has_candidates(
@@ -383,27 +389,62 @@ class TestPerTypeBudgetIsAHardCap:
         out = mgr.optimize_context(results, query="q", max_tokens=1 + HEADER + 1000)
         assert out.total_tokens == 1000
 
-    def test_unused_share_of_a_sparse_type_is_left_unused(self, mocker) -> None:
-        # TEXT is sparse (2 candidates); COMMUNITY has plenty. The rest of TEXT's
-        # share must be LEFT UNUSED, not handed to community reports. Re-offering
-        # the remainder to whichever type still has candidates was measured to
-        # reproduce the original defect verbatim (community kept 0.66 of the window
-        # because it was the only type with candidates left), which is why this is a
-        # single pass.
+    def test_unused_share_of_a_sparse_type_goes_to_types_with_candidates(
+        self, mocker
+    ) -> None:
+        # TEXT is sparse (2 candidates); COMMUNITY has plenty. The rest of
+        # TEXT's share goes to COMMUNITY once TEXT has nothing left to seat:
+        # a hard cap left the window mostly empty (27-34% unused in the
+        # measured local/mix shapes) while community reports were being cut.
         mgr = _make_manager(mocker)
         results = [_r(" ".join(["t"] * 50), 0.9, "text", f"t{i}") for i in range(2)] + [
             _r(" ".join(["c"] * 50), 0.4, "community", f"c{i}") for i in range(40)
         ]
         out = mgr.optimize_context(results, query="q", max_tokens=1001)
-        by_type: dict[SectionType, int] = {}
-        for section in out.sections:
-            by_type[section.section_type] = (
-                by_type.get(section.section_type, 0) + section.token_count
-            )
-        # Renormalized over {TEXT 0.50, COMMUNITY 0.10} -> TEXT 833, COMMUNITY 166.
-        assert by_type[SectionType.TEXT] == 102  # only 2 candidates (+ prefixes)
-        assert by_type[SectionType.COMMUNITY] <= 200
-        assert out.total_tokens < 400  # the rest of TEXT's share stays unused
+        by_type = _tokens_by_type(out)
+        # Budget 1001 - 1 (query) - 2 headers = 994; TEXT seats both chunks.
+        assert by_type[SectionType.TEXT] == 102
+        # Renormalized COMMUNITY share alone would be 165 (three sections).
+        assert by_type[SectionType.COMMUNITY] == 867  # 17 whole sections
+        assert 994 - out.total_tokens < mgr.config.min_truncated_section_tokens
+
+    def test_spare_budget_goes_by_share_and_never_by_score(self, mocker) -> None:
+        # ENTITY is sparse; TEXT and COMMUNITY both still have candidates. The
+        # spare is split by their shares (TEXT 0.50 : COMMUNITY 0.10), not won
+        # by whichever type scores higher: COMMUNITY outscores TEXT here.
+        mgr = _make_manager(mocker)
+        out = mgr.optimize_context(self._three_types(), query="q", max_tokens=1001)
+        by_type = _tokens_by_type(out)
+        assert by_type[SectionType.ENTITY] == 51
+        # First-pass caps over 991 tokens: TEXT 619, COMMUNITY 123.
+        assert 619 < by_type[SectionType.TEXT]
+        assert 123 < by_type[SectionType.COMMUNITY] < by_type[SectionType.TEXT] / 3
+
+    def test_spare_budget_first_types_take_the_spare_before_the_others(
+        self, mocker
+    ) -> None:
+        # LightRAG gives chunks what the KG sections leave unused
+        # (available_chunk_tokens); the other types keep their own share.
+        mgr = _make_manager(mocker)
+        out = mgr.optimize_context(
+            self._three_types(),
+            query="q",
+            max_tokens=1001,
+            spare_budget_first=(SectionType.TEXT,),
+        )
+        by_type = _tokens_by_type(out)
+        assert by_type[SectionType.ENTITY] == 51
+        assert by_type[SectionType.COMMUNITY] <= 123  # its first-pass cap
+        assert by_type[SectionType.TEXT] > 750
+        assert 991 - out.total_tokens < mgr.config.min_truncated_section_tokens
+
+    @staticmethod
+    def _three_types() -> list[RetrievalResult]:
+        return (
+            [_r(" ".join(["t"] * 50), 0.5, "text", f"t{i}") for i in range(40)]
+            + [_r(" ".join(["e"] * 50), 0.9, "entity", "e0")]
+            + [_r(" ".join(["c"] * 50), 0.9, "community", f"c{i}") for i in range(40)]
+        )
 
     def test_general_only_candidates_still_get_a_budget(self, mocker) -> None:
         # Global search emits ONLY GENERAL sections, so renormalizing over present

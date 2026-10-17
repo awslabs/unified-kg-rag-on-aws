@@ -293,8 +293,8 @@ Expected differences from AWS mode:
   form ("vendors" for "vendor"), matches only through the vector side. kNN
   search is exact: every document that passes the filters is scored, which
   is accurate but grows linearly with the index. Hybrid search is fused by
-  the retriever the same way on both stores (a lexical and a kNN search, each
-  min-max normalized over its own hits), so it differs only where those two
+  the retriever the same way on both stores (a lexical and a kNN search of at
+  least 50 hits each, each min-max normalized over its own hits), so it differs only where those two
   searches do.
 - The embedded vector store keeps each index it searches in memory (about
   documents x dimension x 4 bytes per vector field). It is sized for about
@@ -668,8 +668,8 @@ LLM stages are Bedrock-I/O-bound, so concurrency can far exceed the CPU count.
 
 | Key | Default | What it does / when to change |
 |---|---|---|
-| `search.auto_routable_strategies` | `["local", "mix", "global", "drift"]` | Strategies the `auto` router may pick; its prompt describes exactly these, in this order. `auto` itself is rejected. Any strategy can still be chosen explicitly. |
-| `search.hybrid.lexical_weight` | `0.5` | Lexical weight of a hybrid search (vector: `vector_weight`, also `0.5`). A hybrid search runs a lexical and a kNN search on each index, min-max normalizes each over its own hits and takes their weighted mean. The weights are read at query time. |
+| `search.auto_routable_strategies` | `["local", "mix", "global", "drift"]` | Strategies the `auto` router may pick; its prompt describes exactly these, in this order. With `graph.community_detection.enabled: false`, `global` and `drift` are left out (there are no community reports), and `local` is used when nothing is left. `auto` itself is rejected. Any strategy can still be chosen explicitly. |
+| `search.hybrid.lexical_weight` | `0.5` | Lexical weight of a hybrid search (vector: `vector_weight`, also `0.5`). A hybrid search runs a lexical and a kNN search on each index, each fetching at least 50 hits, min-max normalizes each over those hits, takes their weighted mean and keeps the requested number. The fixed window keeps the ranking independent of how many hits a query asks for. The weights are read at query time. |
 | `search.fusion.method` | `"rrf"` | `rrf` (reciprocal rank fusion) or `weighted`. |
 | `search.fusion.rrf_k` | `60` | RRF constant `k`. |
 | `search.fusion.fusion_weights` | `{}` (every bucket `1.0`) | Per-source-bucket weights; they scale each bucket's contribution under both `rrf` and `weighted`. The template lists the bucket names. |

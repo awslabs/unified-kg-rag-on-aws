@@ -658,16 +658,17 @@ class IncidentEdgeRetriever:
             ]
         if prefix != self.os_config.relationships_index_prefix:
             return []
-        # The hl relationship vector query (no filters) returns one already-known edge.
+        # The hl relationship vector query (no filters) returns one already-known
+        # edge: the same relationships-index document the incident fetch finds.
         if not query.filters:
             return [
                 RetrievalResult(
                     content="hl edge",
                     score=1.0,
-                    source="rel-known",
+                    source="rel-e1-e-known",
                     retriever_type="relationship",
                     metadata={
-                        "id": "rel-known",
+                        "id": "rel-e1-e-known",
                         "source_id": "e1",
                         "target_id": "e-known",
                     },
@@ -798,7 +799,7 @@ class TestIncidentRelationshipExpansion:
     async def test_edges_the_hl_query_already_returned_are_excluded(
         self, config: Config
     ) -> None:
-        # `rel-known` (e1 -> e-known) comes back from the hl relationship vector
+        # `rel-e1-e-known` comes back from the hl relationship vector
         # query; re-offering it from the incident side would spend the relationship
         # quota twice on one edge.
         strategy, _ = _incident_strategy(config, {("e1", "e-known"): 7.0})
@@ -812,18 +813,10 @@ class TestIncidentRelationshipExpansion:
         await strategy.asearch(
             _query(SearchStrategy.MIX, ll_keywords=["a"], hl_keywords=["b"])
         )
-        # The fake indexes the incident hit under a different doc id than the hl
-        # hit, so the exclusion has to bite on the endpoint pair, not the id.
         incident = captured["sources"].get("lightrag_incident_relationships", [])
-        hl_pairs = {
-            (r.metadata["source_id"], r.metadata["target_id"])
-            for r in captured["sources"]["lightrag_relationships"]
-        }
-        assert not [
-            r
-            for r in incident
-            if (r.metadata["source_id"], r.metadata["target_id"]) in hl_pairs
-        ]
+        hl_ids = {r.source for r in captured["sources"]["lightrag_relationships"]}
+        assert hl_ids == {"rel-e1-e-known"}
+        assert not [r for r in incident if r.source in hl_ids]
 
     async def test_kg_quota_rises_to_the_expanded_candidate_count(
         self, config: Config

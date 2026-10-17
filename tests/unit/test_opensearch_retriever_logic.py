@@ -384,8 +384,9 @@ def test_hybrid_is_a_lexical_and_a_knn_search(retriever) -> None:
     lexical, knn = _bodies(retriever, SearchQuery(query="alice"), [0.1])
     assert "multi_match" in lexical["query"]
     assert knn["query"]["knn"]["name_embedding"]["vector"] == [0.1]
-    # No spare hit: each search returns exactly the hits it is fused over.
-    assert lexical["size"] == knn["size"] == 5
+    # Both fetch the normalization window; the fusion cuts to size.
+    window = OpenSearchRetriever.HYBRID_NORMALIZATION_WINDOW
+    assert lexical["size"] == knn["size"] == window
 
 
 def test_hybrid_filters_reach_both_searches(retriever) -> None:
@@ -399,17 +400,32 @@ def test_hybrid_filters_reach_both_searches(retriever) -> None:
 
 
 @pytest.mark.parametrize(
-    ("engine", "size", "k"),
-    [("lucene", 5, 100), ("lucene", 150, 150), ("faiss", 5, 5), ("nmslib", 5, 5)],
+    ("engine", "size", "k", "fetched"),
+    [
+        ("lucene", 5, 100, 50),
+        ("lucene", 150, 150, 150),
+        ("faiss", 5, 50, 50),
+        ("nmslib", 5, 50, 50),
+    ],
 )
-def test_knn_k_is_ef_search_on_lucene(retriever, config, engine, size, k) -> None:
+def test_knn_k_is_ef_search_on_lucene(
+    retriever, config, engine, size, k, fetched
+) -> None:
     # lucene ignores index.knn.algo_param.ef_search and explores k candidates,
     # so k = size (10-40) cut recall; faiss/nmslib read the index setting.
+    # A hybrid search fetches the normalization window at least.
     config.indexing.opensearch.vector_search["engine"] = engine
     q = SearchQuery(query="alice", search_type=SearchType.HYBRID)
     lexical, knn = _bodies(retriever, q, [0.1], size=size)
     assert knn["query"]["knn"]["name_embedding"]["k"] == k
-    assert lexical["size"] == knn["size"] == size
+    assert lexical["size"] == knn["size"] == fetched
+
+
+def test_a_vector_only_search_fetches_size(retriever, config) -> None:
+    config.indexing.opensearch.vector_search["engine"] = "faiss"
+    q = SearchQuery(query="alice", search_type=SearchType.VECTOR)
+    (knn,) = _bodies(retriever, q, [0.1], size=5)
+    assert knn["size"] == knn["query"]["knn"]["name_embedding"]["k"] == 5
 
 
 def test_vector_search_is_one_knn_search(retriever) -> None:
@@ -539,6 +555,34 @@ async def test_hybrid_fuses_the_two_searches_client_side(
     assert [r.source for r in results] == ["c", "a", "b"]
     for r in results:
         assert r.score == pytest.approx(expected[r.source])
+
+
+async def test_hybrid_ranking_does_not_depend_on_the_hits_asked_for(
+    retriever, config, mocker
+) -> None:
+    # Min-max over only the returned window made the fused order depend on
+    # size: at size 2 the lexical range is 9..8, so b's lexical 8 counts as
+    # nothing and its strong vector score does not lift it above a.
+    prefix = config.indexing.opensearch.text_units_index_prefix
+    lexical = [("a", 9.0), ("b", 8.0)] + [(f"x{i}", 1.0) for i in range(60)]
+    vector = [("a", 0.90), ("b", 0.89)] + [(f"x{i}", 0.10) for i in range(60)]
+    client = _Client({prefix: lexical}, {prefix: vector})
+    object.__setattr__(retriever, "_opensearch_client", client)
+    mocker.patch.object(
+        OpenSearchRetriever, "_get_query_vector", mocker.AsyncMock(return_value=[0.1])
+    )
+    mocker.patch.object(OpenSearchRetriever, "_check_embedding_settings")
+
+    async def scores(top_k: int) -> dict[str, float]:
+        results = await retriever.aretrieve(
+            SearchQuery(query="x", top_k=top_k, index_prefixes=[prefix])
+        )
+        return {r.source: r.score for r in results}
+
+    narrow, wide = await scores(2), await scores(40)
+    assert list(narrow) == list(wide)[:2]
+    for source, score in narrow.items():
+        assert score == pytest.approx(wide[source])
 
 
 @pytest.mark.parametrize(
