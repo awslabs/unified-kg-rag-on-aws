@@ -201,8 +201,8 @@ naming the key that replaces it.
   are removed with the iterative query-rewriting loop, and so are
   `custom_prompts.query_refinement_*` and `keyword_expansion_*`. Use
   `k_followups` (default 20), `primer_folds` (5), `n_depth` (3),
-  `local_context_tokens` and `max_answer_tokens`, with `primer_model_id` and
-  the new `action_model_id` (both fast tier). `custom_prompts.drift_primer_*`
+  `local_context_tokens` and `max_answer_tokens`, with the
+  `models.roles.drift_primer` and `drift_action` models (both fast tier). `custom_prompts.drift_primer_*`
   overrides must emit a 0-100 integer `score`; `drift_hyde_*` and
   `drift_action_*` are new (#323).
 - `search.global_search` follows MS GraphRAG global search (see *Changed*):
@@ -235,13 +235,13 @@ Defaults. Set the old value explicitly to keep the previous behaviour.
   (`processing.fuzzy_entity_resolution: true`), and
   `processing.similarity_threshold` defaults to 0.85 (was 0.6) (#214).
 - A memory query with conversation history is rewritten as a standalone
-  question (`search.query_rewrite_model_id`, fast tier) and every step reads
+  question (`models.roles.query_rewrite`, fast tier) and every step reads
   the rewrite (#212).
 - `aws.region_name` defaults to `us-west-2`, and `aws.bedrock.region_name`
   defaults to `null` (follow `aws.region_name`); set it to keep Bedrock in
   another region (#148).
-- Default models: Claude Sonnet 5.5 (`default_model_id`, #117) and Claude
-  Haiku 5.5 (`fast_model_id`; set `anthropic.claude-haiku-4-5-20251001-v1:0`
+- Default models: Claude Sonnet 5.5 (`models.default`, #117) and Claude
+  Haiku 5.5 (`models.fast`; set `anthropic.claude-haiku-4-5-20251001-v1:0`
   to keep Haiku 4.5) (#170).
 - The Bedrock guardrail applies to the query path only
   (`aws.bedrock.guardrail.apply_to: all` restores it) (#104).
@@ -585,7 +585,7 @@ Library API (Python callers and custom backends).
 Nothing an earlier build stored is read: rebuild every index once with
 `indexing.reset: true` (registry on) in the new registry table (see
 Breaking changes), and run pipelines that resume a cached
-`--pipeline-id` with `--force-rebuild` or a new id (#327, #PR). The
+`--pipeline-id` with `--force-rebuild` or a new id (#327, #331). The
 compatibility code for earlier builds is removed (#331): an index without
 recorded embedding settings (`_meta`) is refused instead of given its
 dimension, a stage-cache entry holding an absolute path is a miss, a
@@ -775,6 +775,11 @@ changed once with the full-config keys (#332).
   fused order. Reported by @vibhupb (#83) (#284).
 
 ### Changed
+- The user guide, the runbook and the design doc describe the current
+  release only; what a pre-release build left behind (registry tables keyed
+  by `doc_id` alone, indices without recorded settings) is covered here
+  under Upgrading from pre-release builds, and the entries above name the
+  current model keys (#PR).
 - `indexing.reset` no longer takes the suffix offline. The stores are not
   cleared first: the vector indices are rebuilt into new indices and swap
   their aliases, as before, and the graph (Neptune, the embedded SQLite
@@ -1315,9 +1320,8 @@ changed once with the full-config keys (#332).
   say `graph expansion` instead of `Neptune graph expansion`, which was wrong
   with the embedded SQLite or Gremlin Server graph store (#292).
 - `run-prompt-tuning` profiles the corpus with
-  `processing.graph_extraction.extraction_model_id`, the ingestion model the
-  tuned prompt is for, instead of the query-time
-  `search.entity_extraction_model_id` (#292).
+  the `graph_extraction` model, the ingestion model the tuned prompt is for,
+  instead of the query-time `entity_extraction` model (#292).
 - `run-prompt-tuning`: the corpus-grounded few-shot examples show entity and
   relationship types UPPERCASE, as the extraction rules they follow ask;
   entity types came out lower-cased (`<type>organization</type>`) (#292).
@@ -1594,7 +1598,7 @@ changed once with the full-config keys (#332).
 - A global-search map step whose every call gets an HTTP 400 (a parameter
   the server does not support, a model id it does not know) fails the query
   with that error. It left every batch unrated and answered from the raw
-  reports; with `providers.llm.fast_model_id` set the answer call runs on
+  reports; with a separate fast-tier model (`models.fast`) the answer call runs on
   another model, so nothing failed (#267).
 - A query degraded under `processing.ignore_errors` records `error.type` on
   its `kg_rag.query` span, as a query that raised does; the span had the
