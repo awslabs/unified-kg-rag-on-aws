@@ -11,13 +11,15 @@ missing-directory / empty-pipeline guards.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import boto3
 import pytest
 from moto import mock_aws
 
 from unified_kg_rag.adapters.aws.s3_cache import S3CacheManager, sse_extra_args
 from unified_kg_rag.domain.models import Config, S3EncryptionType
-from unified_kg_rag.shared import ConfigurationError
+from unified_kg_rag.shared import CacheSyncError, ConfigurationError
 
 pytestmark = pytest.mark.unit
 
@@ -117,6 +119,97 @@ def test_sync_to_s3_uploads_to_mirrored_keys(s3_setup, tmp_path) -> None:
     assert "cache/pid-1/stageA/a1.json" in keys
     assert "cache/pid-1/stageB/b1.json" in keys
     assert "cache/pid-1/top.json" in keys
+
+
+def _uploaded_keys(mgr: S3CacheManager, mocker) -> list[str]:  # noqa: ANN001
+    """Record the keys ``mgr`` uploads, in order (uploads still happen)."""
+    keys: list[str] = []
+    real = mgr._upload_file_to_s3
+
+    def record(local_path: Path, s3_key: str) -> bool:
+        keys.append(s3_key)
+        return real(local_path, s3_key)
+
+    mocker.patch.object(mgr, "_upload_file_to_s3", side_effect=record)
+    return keys
+
+
+def test_sync_to_s3_uploads_only_changed_files(s3_setup, tmp_path, mocker) -> None:
+    # The pipeline uploads after every stage: each upload must send the new
+    # stage's files and the rewritten index/metadata, not the whole cache.
+    config, session = s3_setup
+    mgr = _manager(config, session)
+    keys = _uploaded_keys(mgr, mocker)
+    (tmp_path / "stageA").mkdir()
+    (tmp_path / "stageA" / "a.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "cache_index.json").write_text('{"n": 1}', encoding="utf-8")
+    mgr.sync_pipeline_to_s3("pid", tmp_path)
+    assert len(keys) == 2
+
+    keys.clear()
+    (tmp_path / "stageB").mkdir()
+    (tmp_path / "stageB" / "b.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "cache_index.json").write_text('{"n": 22}', encoding="utf-8")
+    mgr.sync_pipeline_to_s3("pid", tmp_path)
+    assert keys == ["cache/pid/stageB/b.json", "cache/pid/cache_index.json"]
+
+    keys.clear()
+    mgr.sync_pipeline_to_s3("pid", tmp_path)
+    assert keys == []
+
+
+def test_a_failed_file_is_uploaded_again_next_time(s3_setup, tmp_path, mocker) -> None:
+    config, session = s3_setup
+    mgr = _manager(config, session)
+    (tmp_path / "a.json").write_text("{}", encoding="utf-8")
+    mocker.patch.object(mgr, "_upload_file_to_s3", return_value=False)
+    with pytest.raises(CacheSyncError):
+        mgr.sync_pipeline_to_s3("pid", tmp_path)
+    mocker.stopall()
+    mgr.sync_pipeline_to_s3("pid", tmp_path)
+    assert _bucket_keys(session) == {"cache/pid/a.json"}
+
+
+def test_downloaded_files_are_not_uploaded_back(s3_setup, tmp_path, mocker) -> None:
+    config, session = s3_setup
+    writer = _manager(config, session)
+    src = tmp_path / "src"
+    (src / "stageA").mkdir(parents=True)
+    (src / "stageA" / "a.json").write_text("{}", encoding="utf-8")
+    writer.sync_pipeline_to_s3("pid", src)
+
+    resumed = _manager(config, session)
+    dest = tmp_path / "dest"
+    resumed.sync_pipeline_from_s3("pid", dest)
+    keys = _uploaded_keys(resumed, mocker)
+    resumed.sync_pipeline_to_s3("pid", dest)
+    assert keys == []
+
+
+def test_sync_to_s3_uploads_stage_data_before_index_and_metadata(
+    s3_setup, tmp_path, mocker
+) -> None:
+    # An upload cut short (the task is killed) must not leave S3 with an index
+    # entry or a completed stage whose data is not there yet.
+    config, session = s3_setup
+    mgr = _manager(config, session)
+    keys = _uploaded_keys(mgr, mocker)
+    for name in [
+        "pipeline_metadata.json",
+        "cache_index.json",
+        "zstage/z.json",
+        "astage/a.json",
+    ]:
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("{}", encoding="utf-8")
+    mgr.sync_pipeline_to_s3("pid", tmp_path)
+    assert [k.removeprefix("cache/pid/") for k in keys] == [
+        "astage/a.json",
+        "zstage/z.json",
+        "cache_index.json",
+        "pipeline_metadata.json",
+    ]
 
 
 # --- sync_pipeline_from_s3 ------------------------------------------------

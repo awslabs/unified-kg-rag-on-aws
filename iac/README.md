@@ -475,7 +475,10 @@ aws logs tail /graphrag/tasks --region "$REGION" --follow
   hyphens and underscores; reuse an id to resume a failed run from its S3
   checkpoints: start a new execution with the same input, and each phase
   skips the stages of its window that already completed, so only the failed
-  stage onward runs again.
+  stage onward runs again. Checkpoints are uploaded after every stage, and a
+  task stopped by the execution's timeout or StopTask uploads its checkpoint
+  on SIGTERM (the app container's stop timeout is 120 s), so a timed-out
+  execution also resumes at the stage that was running.
 - The task role can read and write the cache bucket only. To read a corpus
   from another bucket, deploy with `-c corpus_bucket_name=<bucket>`. In
   `private` mode the S3 and DynamoDB gateway endpoints only allow this

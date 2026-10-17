@@ -74,6 +74,20 @@ class PipelineExecutionError(GraphRAGException):
     pass
 
 
+class PipelineInterrupted(KeyboardInterrupt):
+    """The run was asked to stop by a signal (SIGTERM from ECS StopTask or a
+    Step Functions timeout) after its finished stages were checkpointed.
+
+    A ``KeyboardInterrupt``, like Ctrl-C, so the ``except Exception`` handlers
+    that turn a stage error into a failed stage (and ``continue_on_error``)
+    do not swallow it. ``signum`` gives the CLI its exit code (128 + signum).
+    """
+
+    def __init__(self, signum: int) -> None:
+        super().__init__(f"interrupted by signal {signum}")
+        self.signum = signum
+
+
 class PipelineResumeError(GraphRAGException):
     pass
 

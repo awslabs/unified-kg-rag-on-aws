@@ -715,7 +715,7 @@ quotas (`search.local_search.type_quota`) are in the template.
 | `memory.max_conversations` | `100` | Conversations held in conversation memory (§4 Interactive mode). |
 | `memory.max_messages_per_conversation` | `20` | Messages kept per conversation. |
 | `memory.max_conversation_age_hours` | `168` | Hours a conversation may stay idle; an older one is dropped and starts over. |
-| `cache.ttl_seconds` | `86400` | Cache entry TTL; `null` = never expire. |
+| `cache.ttl_seconds` | `86400` | Cache entry TTL; `null` = never expire. Not applied with `--s3-sync` (the bucket lifecycle expires the checkpoints). |
 | `logging.level` | `"INFO"` | `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`. |
 | `logging.log_format` | `"structured"` | `structured` or `plain`. |
 | `logging.log_to_file` | `true` | The CLIs also write logs to `log_file_path` (`logs/log.txt`, dated as `log_YYYYMMDD.txt`; a relative path is resolved against the working directory). Importing the package as a library configures no handler or file: the host application's logging setup applies, its formatter shows the plain message, and the structured fields (`logger`, `level`, `pipeline_id`, `trace_id`, ...) are attributes of the log record. |
@@ -1037,10 +1037,17 @@ from them. A run without `--pipeline-id` gets a new generated id.
 
 **S3 sync** keeps the stage cache in `s3://<bucket>/<prefix>/...`, so a fresh
 process (e.g. a new Fargate task) can resume without recomputing finished
-stages. A failed or partial sync (the initial download or the final upload)
-fails the run with `CacheSyncError` and `run-ingestion` exits non-zero, so in a
-phased Step Functions run the phase that lost its checkpoint is the one marked
-failed. An empty remote cache on a fresh pipeline id is not an error. For
+stages. The run uploads the files that changed after every stage, so a task
+that is stopped or dies keeps every stage it finished. On SIGTERM (ECS
+StopTask, a Step Functions timeout) `run-ingestion` uploads its checkpoint,
+stops the running stage and exits 143; a re-run with the same pipeline id
+starts at that stage. A failed upload between stages is logged and retried by
+the next one; a failed or partial initial download or final upload fails the
+run with `CacheSyncError` and `run-ingestion` exits non-zero, so in a phased
+Step Functions run the phase that lost its checkpoint is the one marked
+failed. An empty remote cache on a fresh pipeline id is not an error. S3-synced
+checkpoints do not expire by `cache.ttl_seconds`; the bucket's lifecycle rule
+expires them (30 days in the CDK deployment). For
 embeddings specifically, set
 `indexing.opensearch.persist_embedding_cache: true` to avoid re-embedding
 unchanged text across runs.

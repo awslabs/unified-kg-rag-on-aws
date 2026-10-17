@@ -344,6 +344,10 @@ class ComputeStack(Stack):
                 stream_prefix="app", log_group=self.log_group
             ),
             environment=environment,
+            # On SIGTERM (StopTask, a Step Functions timeout) run-ingestion
+            # uploads its checkpoint and unwinds the in-flight model calls;
+            # give it the Fargate maximum before the task is killed.
+            stop_timeout=Duration.seconds(120),
         )
         if self.config.enable_cloudwatch_tracing:
             collector = self._add_trace_collector(task_def)
