@@ -47,8 +47,6 @@ def _commit(incremental: IncrementalIndexer, doc_id: str, community: Community):
         lineages=[
             DocumentLineage(
                 doc_id=doc_id,
-                entity_ids=community.entity_ids,
-                community_ids=[community.id],
             )
         ],
         fingerprints={doc_id: f"hash-{doc_id}"},

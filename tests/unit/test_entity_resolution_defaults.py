@@ -65,7 +65,7 @@ def _incremental(config: Config) -> tuple[IncrementalIndexer, FakeGraphStore]:
 
 def _commit(incremental: IncrementalIndexer, doc_id: str, entity: Entity) -> None:
     incremental.commit(
-        lineages=[DocumentLineage(doc_id=doc_id, entity_ids=[entity.id])],
+        lineages=[DocumentLineage(doc_id=doc_id)],
         fingerprints={doc_id: f"hash-{doc_id}"},
         entities=[entity],
     )

@@ -191,6 +191,20 @@ Defaults. Set the old value explicitly to keep the previous behaviour.
 
 Index data. Rebuild existing indexes once with `indexing.reset: true` (or a
 full re-index of the affected index type).
+- The doc-status registry has a new format and table. A record lists only
+  its document's text units (the per-artifact id lists and the lineage
+  overflow items are gone), and records are keyed by index namespace: the
+  DynamoDB table's partition key is `namespace` and its sort key `doc_id`,
+  so a run reads its namespace with one Query instead of scanning the
+  table, and the SQLite registry uses a new `documents` table. The default
+  table names are `unified-kg-rag-on-aws-doc-status-v2` (library) and
+  `graphrag-doc-status-v2` / `<env>-graphrag-doc-status-v2` (CDK), and a
+  table of the earlier key schema is rejected at first use. Text-unit ids
+  now derive from the registry key (source scope included) and entity
+  vertices store their compact name key (`name_key`). To upgrade: deploy
+  the CDK stack (it creates the new table; the old one is retained outside
+  `dev`) or point `aws.dynamodb.table_name` at a new table, run once with
+  `indexing.reset: true`, then delete the old table (#PR).
 - Incremental runs derive the content of what they touch from the text units'
   extraction records, which text units now name
   (`attributes.extraction_records`), and resolved entities record the name
@@ -229,6 +243,22 @@ full re-index of the affected index type).
   `--pipeline-id` to apply the fixes to them (#167, #170, #171, #201, #214).
 
 Library API (Python callers and custom backends).
+- Incremental removal no longer plans from registry lineage.
+  `DocStatusRecord` and `DocumentLineage` keep only `text_unit_ids`
+  (`DocumentLineage` rejects the removed id fields),
+  `build_document_lineage(documents, text_units, suffix)` takes no artifact
+  lists, `IncrementalIndexer.record` takes the artifacts' owners
+  (`artifact_owners`), and `DocStatusPort` drops `add_lineage_overflow`,
+  `get_lineage_overflow` and `delete_lineage_overflow` (and
+  `DocumentDelta.orphan_overflow`) for `list_namespace(namespace)`. The
+  legacy-key adoption is removed with `legacy_doc_id`,
+  `adopt_legacy_records` and the `legacy_doc_ids` argument of
+  `detect_delta`. A custom graph backend implements
+  `GraphIndexer.find_ids_citing` (and optionally
+  `find_entity_ids_by_name_key`), a custom vector backend
+  `VectorIndexer.find_documents` and `delete_extraction_records`; without
+  them a removal cannot find what a removed document stated (a WARNING
+  says so) (#PR).
 - Adapter modules are grouped by role: `adapters/aws/` and `adapters/local/`
   hold technology bindings (clients, embedded stores, model factories,
   caches); `storage/`, `retrievers/` and the new `doc_status/` hold the port
@@ -376,15 +406,9 @@ Library API (Python callers and custom backends).
   written before still load; their `content.text` is read as the text (#289).
 
 ### Upgrading from pre-release builds
-- Doc-status registries written before source scopes existed are migrated in
-  place: the first run of a scope re-keys each legacy record whose file is
-  still in the corpus, without re-extracting it (#188). A record of a file
-  removed before the upgrade is never adopted or deleted, so its artifacts
-  stay: run once with `indexing.reset: true` to clear them (deleting the
-  registry items alone leaves the artifacts) (#190, #197-#199).
-- Records the direct API wrote without a scope under a caller's own `doc_id`
-  survive every reset; remove them through the doc-status store
-  (`list_all()`, then `delete_lineage_overflow` and `delete`) (#200).
+- Doc-status registries of any earlier build are not migrated: the
+  registry has a new table format, so deploy or point at the new table and
+  run once with `indexing.reset: true` (see Breaking changes) (#PR).
 - Hidden files and files under a hidden or `__pycache__` subdirectory of the
   corpus (any path component below the root starting with `.`, such as
   `docs/.drafts/`) are no longer parsed (#213). The first incremental run
@@ -392,12 +416,9 @@ Library API (Python callers and custom backends).
   deleted and removes their artifacts and registry records. Rename them
   before upgrading to keep them (they are then indexed under their new
   paths).
-- Records written before records carried an extraction fingerprint are
-  compared by content only, so upgrading re-extracts nothing; run once with
-  `indexing.reset: true` to bring them under the current settings. The
-  SQLite registry gains the column on first open (#224).
 - Roles with a custom IAM policy need `dynamodb:BatchGetItem` and
-  `dynamodb:BatchWriteItem` on the registry table (#191, #194).
+  `dynamodb:BatchWriteItem` (#191, #194) and `dynamodb:Query` and
+  `dynamodb:DescribeTable` (#PR) on the registry table.
 - A suffix indexed with the doc-status registry off by a release before
   #233 cannot be told apart from a tracked one (its indices carry no
   marker), so an incremental run takes it as tracked: run such a suffix once
@@ -538,6 +559,30 @@ Library API (Python callers and custom backends).
   fused order. Reported by @vibhupb (#83) (#284).
 
 ### Changed
+- An incremental run finds what a changed or deleted document contributed
+  in the stores, by the text units every artifact cites: the graph's
+  entities and communities citing them, their edges, and the vector
+  store's entities, relationships, claims and community reports. An item
+  citing only removed text units is deleted, one citing others too is
+  stripped and derived again, and a community or report goes once none of
+  its text units is stored. The work no longer grows with the registry: a
+  run reads its namespace's records and the cross-run merge looks the
+  stored entities a delta name can join up by compact name key instead of
+  reading every stored name (with `processing.fuzzy_entity_resolution` off,
+  the default) (#PR).
+- An entity, relationship or claim takes the id a full build gives it when
+  derivation changes its name: an entity whose most-supported spelling has
+  another id moves to that id with its edges and claims (claims stating
+  the same fact merge), and the old ids are deleted once the new ones are
+  written. A stored item that a full build merges with it (an edge of
+  another spelling between the same entities and of the same type, or the
+  copy an interrupted re-key left under the new id) is merged with it,
+  never overwritten. Stored
+  communities and reports keep listing the old entity id until a rebuild
+  (#PR).
+- Extraction records only removed text units named are deleted after the
+  run's delta is written, so the extraction store no longer grows with
+  every edit and deletion (#PR).
 - `graph.community_detection.max_cluster_size` also caps a parent's child
   communities: a coarser-level community with more children is partitioned
   again on the cluster graph, so a parent report's roll-up covers every
@@ -810,6 +855,9 @@ Library API (Python callers and custom backends).
   (#300).
 
 ### Fixed
+- Two corpora written to one index namespace that hold the same file with
+  the same text no longer share text units, so removing one corpus's copy
+  keeps the other's (#PR).
 - `auto` no longer routes queries to `global` or `drift` when
   `graph.community_detection.enabled` is false: without community reports
   they answered from nothing. The routable set is now
@@ -828,8 +876,7 @@ Library API (Python callers and custom backends).
   shared claim's description, source text and status, are derived from the
   records of the text units they cite now, by the full build's merge and
   resolution, so they equal a full build of the current corpus. A name
-  follows the most-supported spelling (the id stays the first indexed
-  name's until a rebuild), the stored edges of an entity whose degree or
+  follows the most-supported spelling, the stored edges of an entity whose degree or
   name changed get their new rank and endpoint name, and a description is
   summarized again only when the text it is derived from changed. The
   property tests and the crash-recovery fixture compare descriptions,

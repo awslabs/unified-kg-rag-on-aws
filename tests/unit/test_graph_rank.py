@@ -82,7 +82,7 @@ def test_incremental_merge_ranks_over_the_stored_graph() -> None:
     def commit(doc_id: str, relationship: Relationship) -> None:
         ids = [relationship.source_id, relationship.target_id]
         incremental.commit(
-            lineages=[DocumentLineage(doc_id=doc_id, entity_ids=ids)],
+            lineages=[DocumentLineage(doc_id=doc_id)],
             fingerprints={doc_id: f"h-{doc_id}"},
             entities=[Entity(id=i, name=names[i], text_unit_ids=[doc_id]) for i in ids],
             relationships=[relationship],

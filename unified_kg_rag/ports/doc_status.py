@@ -3,9 +3,12 @@
 """Document-status port — the persistence boundary for incremental indexing.
 
 The domain needs to know, across runs, which documents have been seen, their
-content hash, processing status, and which graph artifacts (entities,
-relationships, text units, communities) they produced — so a re-run can compute
-a delta (new / changed / deleted) and merge instead of re-indexing everything.
+content hash, processing status, and their text units — so a re-run can
+compute a delta (new / changed / deleted), find what a changed or deleted
+document contributed (every artifact cites the text units it was stated in)
+and merge instead of re-indexing everything. Records are kept per index
+namespace, the prefix of their ``doc_id`` (``doc_id_namespace``): a run reads
+only its own namespace's records.
 
 Adapters: DynamoDB (``unified_kg_rag.adapters.doc_status.dynamodb``) and SQLite for
 local mode (``unified_kg_rag.adapters.doc_status.sqlite``); tests use the
@@ -24,13 +27,12 @@ if TYPE_CHECKING:
     from unified_kg_rag.domain.models.document import (
         DocStatusRecord,
         DocumentDelta,
-        DocumentLineage,
     )
 
 
 @runtime_checkable
 class DocStatusPort(Protocol):
-    """Persistent registry of per-document processing state and lineage."""
+    """Persistent registry of per-document processing state, by namespace."""
 
     def get(self, doc_id: str) -> DocStatusRecord | None:
         """Return the stored record for ``doc_id``, or ``None`` if unknown."""
@@ -70,46 +72,24 @@ class DocStatusPort(Protocol):
     def record_fits(self, record: DocStatusRecord) -> bool:
         """Whether :meth:`put` can store ``record`` (the backend's item limit).
 
-        An incremental run's write-ahead record lists a document's stored and
-        planned artifact ids, which can outgrow a limit the stored and the
-        committed record each fit; the run then moves the planned ids into
-        lineage overflow (:meth:`add_lineage_overflow`). The default (no
-        limit) never needs overflow.
+        An incremental run checks its write-ahead records (a document's
+        stored and planned text units) before writing any. The default (no
+        limit) accepts every record.
         """
         return True
-
-    def add_lineage_overflow(self, lineages: Iterable[DocumentLineage]) -> None:
-        """Add each lineage's artifact ids to its ``doc_id``'s overflow.
-
-        Lineage overflow holds the artifact ids of a write-ahead record that
-        do not fit in the record itself (see :meth:`record_fits`). It is never
-        part of :meth:`get`, :meth:`get_many`, :meth:`list_all` or
-        :meth:`diff`; the incremental run reads it with
-        :meth:`get_lineage_overflow` and deletes it with
-        :meth:`delete_lineage_overflow`. Only called when :meth:`record_fits`
-        rejected a record, so a store without an item limit needs no
-        implementation.
-        """
-        raise NotImplementedError(
-            f"{type(self).__name__}.record_fits rejected a write-ahead record "
-            "but the store implements no lineage overflow"
-        )
-
-    def get_lineage_overflow(
-        self, doc_ids: Iterable[str]
-    ) -> dict[str, DocumentLineage]:
-        """Return ``{doc_id: overflow}`` for the ``doc_ids`` that have any."""
-        return {}
-
-    def delete_lineage_overflow(self, doc_ids: Iterable[str]) -> None:
-        """Remove the overflow of every ``doc_id`` (no-op where there is none)."""
 
     def delete(self, doc_id: str) -> None:
         """Remove the record for ``doc_id`` (no-op if absent)."""
         ...
 
+    def list_namespace(self, namespace: str) -> list[DocStatusRecord]:
+        """Return every record of index ``namespace`` (its registry partition)."""
+        ...
+
     def list_all(self) -> list[DocStatusRecord]:
-        """Return every stored record (used to diff against the new corpus)."""
+        """Return every stored record, of every namespace (administration and
+        tests; a run reads its namespace with :meth:`list_namespace` or
+        :meth:`diff`)."""
         ...
 
     def diff(
@@ -121,12 +101,13 @@ class DocStatusPort(Protocol):
         """Classify ``{doc_id: content_hash}`` against stored state.
 
         Returns the new / changed / unchanged / deleted partition driving an
-        incremental run. With ``scope``, only stored records of that scope are
-        candidates for ``deleted`` (a record without a scope never is), so one
-        tenant's or one corpus's run cannot delete another's documents.
+        incremental run. With ``scope``, only the records of the scope's
+        namespace (``scope_namespace``) are read, and only those of that scope
+        are candidates for ``deleted`` (a record without a scope never is), so
+        one tenant's or one corpus's run cannot delete another's documents.
         Callers key documents per scope (the source scope is part of the
         ``doc_id``), so an incoming id never matches another scope's record.
-        ``scope=None`` considers every stored record. A stored ``FAILED``
+        ``scope=None`` reads every namespace. A stored ``FAILED``
         record is ``changed`` even when its hash matches, so it is retried.
 
         With ``extraction_fingerprint`` (the run's extraction settings, see

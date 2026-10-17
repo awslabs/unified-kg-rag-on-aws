@@ -15,6 +15,7 @@ from unified_kg_rag.adapters.storage.embedding_settings import (
 )
 from unified_kg_rag.adapters.storage.search_engine import SearchEngineClient
 from unified_kg_rag.domain.ingestion.community_hierarchy import max_cut_depth
+from unified_kg_rag.domain.ingestion.contributions import RECORD_KEYS_ATTRIBUTE
 from unified_kg_rag.domain.models import (
     Claim,
     CommunityReport,
@@ -28,7 +29,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.ports.indexer import IndexingStats, VectorIndexer
 from unified_kg_rag.ports.model_factory import EmbeddingFactoryPort
-from unified_kg_rag.shared import ConfigurationError, get_logger
+from unified_kg_rag.shared import ConfigurationError, DataProcessingError, get_logger
 from unified_kg_rag.shared.utils.common import compute_hash
 from unified_kg_rag.shared.utils.concurrency import ContextThreadPoolExecutor
 
@@ -50,6 +51,9 @@ _EMBED_WORKERS = 16
 _WRITE_SLICE_SIZE = _EMBED_BATCH_SIZE * _EMBED_WORKERS
 # Ids per read-back search (well under index.max_result_window).
 _READ_BATCH_SIZE = 1000
+# Values per terms search of find_documents, and the hits one returns.
+_FIND_BATCH_SIZE = 100
+_FIND_WINDOW = 10000
 
 # Whether the doc-status registry tracks the index's documents: False when
 # a run with the registry off built it (see check_index_settings).
@@ -725,6 +729,62 @@ class OpenSearchIndexer(VectorIndexer):
                 self.opensearch_config.text_units_index_prefix, ids, suffix
             )
         }
+
+    def find_documents(
+        self,
+        alias_prefix: str,
+        field: str,
+        values: list[str],
+        suffix: str | None = None,
+    ) -> dict[str, list[str]] | None:
+        """Documents whose keyword ``field`` holds any of ``values``, with
+        their ``text_unit_ids`` (see the port). A batch that matches more
+        documents than one search returns raises rather than drop some."""
+        alias_name = self._get_name(alias_prefix, suffix)
+        if not values or not self.opensearch_client.get_index_name_by_alias(alias_name):
+            return {}
+        found: dict[str, list[str]] = {}
+        for start in range(0, len(values), _FIND_BATCH_SIZE):
+            batch = values[start : start + _FIND_BATCH_SIZE]
+            response = self.opensearch_client.search(
+                index=alias_name,
+                body={
+                    "size": _FIND_WINDOW,
+                    "query": {"bool": {"filter": [{"terms": {field: batch}}]}},
+                    "_source": {"excludes": ["*_embedding"]},
+                },
+            )
+            hits = response.get("hits", {})
+            documents = hits.get("hits", [])
+            total = hits.get("total", {})
+            count = (
+                total.get("value", len(documents)) if isinstance(total, dict) else total
+            )
+            if count > len(documents):
+                raise DataProcessingError(
+                    f"{count} documents of '{alias_name}' match {len(batch)} "
+                    f"values of '{field}', more than one search returns "
+                    f"({_FIND_WINDOW})"
+                )
+            for hit in documents:
+                source = hit.get("_source") or {}
+                found[hit["_id"]] = list(source.get("text_unit_ids") or [])
+        return found
+
+    def delete_extraction_records(
+        self, keys: list[str], suffix: str | None = None
+    ) -> IndexingStats:
+        """Delete extraction records by key (see the port)."""
+        alias_name = self._get_name(
+            self.opensearch_config.extraction_records_index_prefix, suffix
+        )
+        if not keys or not self.opensearch_client.get_index_name_by_alias(alias_name):
+            return IndexingStats()
+        return self.delete_by_id(
+            keys,
+            self.opensearch_config.extraction_records_index_prefix,
+            suffix or Constants.DEFAULT_SUFFIX.value,
+        )
 
     def read_extraction_records(
         self, keys: list[str], suffix: str | None = None
@@ -1468,7 +1528,20 @@ class OpenSearchIndexer(VectorIndexer):
                 "text_embedding": self._get_knn_vector_mapping(),
                 "community_ids": {"type": "keyword"},
                 "n_tokens": {"type": "integer"},
-                "attributes": {"type": "object", "dynamic": True},
+                "attributes": {
+                    "type": "object",
+                    "dynamic": True,
+                    "properties": {
+                        # The unit's extraction-store keys: a removal finds
+                        # the records no text unit names any more by them.
+                        RECORD_KEYS_ATTRIBUTE: {
+                            "properties": {
+                                "graph": {"type": "keyword"},
+                                "claims": {"type": "keyword"},
+                            }
+                        }
+                    },
+                },
             }
         )
 

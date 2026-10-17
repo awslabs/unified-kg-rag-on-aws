@@ -89,7 +89,7 @@ def test_a_removed_units_description_and_type_vote_are_gone() -> None:
     assert (derived.id, derived.text_unit_ids) == (stored.id, ["u2", "u3"])
 
 
-def test_the_name_follows_the_support_and_the_id_stays() -> None:
+def test_the_name_and_the_id_follow_the_support() -> None:
     # "Acme" was indexed first; two units now say "Acme Inc".
     records = {
         "u2": _record("u2", _entity("Acme Inc", "u2")),
@@ -102,9 +102,12 @@ def test_the_name_follows_the_support_and_the_id_stays() -> None:
         attributes={ENTITY_KEYS_ATTRIBUTE: ["acme", "acme inc"]},
     )
 
-    (derived,) = derive(Config(), [stored], [], [], records).entities
+    result = derive(Config(), [stored], [], [], records)
+    (derived,) = result.entities
 
-    assert (derived.id, derived.name) == (_id("Acme"), "Acme Inc")
+    # A full build names it "Acme Inc" and keys it by that name.
+    assert (derived.id, derived.name) == (_id("Acme Inc"), "Acme Inc")
+    assert result.id_remap == {_id("Acme"): _id("Acme Inc")}
     assert set(derived.attributes[ENTITY_KEYS_ATTRIBUTE]) == {
         entity_key("Acme"),
         entity_key("Acme Inc"),

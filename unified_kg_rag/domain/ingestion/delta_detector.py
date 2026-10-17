@@ -41,7 +41,7 @@ local source directories of the run's namespace so the run can warn.
 from __future__ import annotations
 
 import inspect
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -68,7 +68,6 @@ from unified_kg_rag.shared.utils.document_identity import (
 )
 
 __all__ = [
-    "adopt_legacy_records",
     "assign_document_identity",
     "assign_registry_source",
     "compute_content_hash",
@@ -77,7 +76,6 @@ __all__ = [
     "document_doc_id",
     "filter_documents_to_process",
     "fingerprint_documents",
-    "legacy_doc_id",
     "other_local_scopes",
     "registry_scope",
     "retire_source_scopes",
@@ -145,6 +143,12 @@ def assign_registry_source(document: Document, source_scope: str) -> None:
     the same relative path.
     """
     document.metadata[REGISTRY_SOURCE_KEY] = source_scope
+    # Its text units' ids derive from ``document_id``: keyed by the registry
+    # key, a text unit belongs to one record even when two corpora of one
+    # namespace hold the same file, so removing one never drops the other's.
+    document.document_id = compute_document_id(
+        document_doc_id(document), compute_content_hash(document)
+    )
 
 
 def _identity(document: Document) -> tuple[str, str]:
@@ -167,13 +171,6 @@ def document_doc_id(document: Document) -> str:
     return compute_doc_id(
         relative, namespace, document.metadata.get(REGISTRY_SOURCE_KEY)
     )
-
-
-def legacy_doc_id(document: Document) -> str:
-    """The key ``document`` had before the source scope joined the registry
-    key (namespace and relative path only)."""
-    relative, namespace = _identity(document)
-    return compute_doc_id(relative, namespace)
 
 
 def registry_scope(namespace: str, source_scope: str) -> str:
@@ -219,7 +216,6 @@ def detect_delta(
     scope: str | None = None,
     failed_doc_ids: Iterable[str] = (),
     max_failures: int | None = None,
-    legacy_doc_ids: Mapping[str, str] | None = None,
     retired_scopes: Iterable[str] = (),
     extraction_fingerprint: str | None = None,
 ) -> tuple[DocumentDelta, dict[str, str]]:
@@ -237,13 +233,6 @@ def detect_delta(
             this many consecutive times is classified unchanged instead of
             changed, so a deterministic failure is not re-extracted every run.
             ``None`` retries without limit.
-        legacy_doc_ids: ``{doc_id: legacy_doc_id}`` for this run's documents
-            and failed files (see :func:`legacy_doc_id`). With a ``scope``, a
-            record stored under the legacy key whose scope is this run's (or
-            that predates scopes) is re-keyed to ``doc_id`` (see
-            :func:`adopt_legacy_records`), so it keeps its content hash and
-            lineage instead of reading as new plus deleted. Re-keying is the
-            only registry write this function makes.
         retired_scopes: Registry scopes (:func:`registry_scope`) every record
             of which is classified deleted this run (see
             :func:`retire_source_scopes`). Needs a ``scope``, which it must
@@ -270,31 +259,7 @@ def detect_delta(
             "document of the run would be deleted"
         )
     fingerprints = fingerprint_documents(documents)
-    adopted: dict[str, DocStatusRecord] = {}
-    if scope is None:
-        delta = _diff(doc_status, fingerprints, None, extraction_fingerprint)
-    elif not legacy_doc_ids:
-        delta = _diff(doc_status, fingerprints, scope, extraction_fingerprint)
-    else:
-        # The legacy keys and the failed files' keys ride along in the diff,
-        # so its one scan also tells which of them are stored: only those are
-        # read (batched) by adopt_legacy_records.
-        delta, stored = _diff_with_probes(
-            doc_status,
-            fingerprints,
-            scope,
-            [*legacy_doc_ids.values(), *failed_doc_ids],
-            extraction_fingerprint,
-        )
-        _, adopted = _adopt_legacy_records(
-            doc_status,
-            delta,
-            legacy_doc_ids,
-            scope,
-            fingerprints,
-            stored,
-            extraction_fingerprint,
-        )
+    delta = _diff(doc_status, fingerprints, scope, extraction_fingerprint)
     if retired:
         retire_source_scopes(doc_status, delta, retired, own_scope=scope)
     if max_failures is not None and delta.changed:
@@ -303,7 +268,6 @@ def detect_delta(
             doc_status,
             fingerprints,
             max_failures,
-            adopted,
             extraction_fingerprint,
         )
     failed = set(failed_doc_ids) - set(fingerprints)
@@ -378,167 +342,6 @@ def _takes_extraction_fingerprint(doc_status: DocStatusPort) -> bool:
         or parameter.kind is inspect.Parameter.VAR_KEYWORD
         for parameter in parameters
     )
-
-
-# Content hash of a probe in ``_diff_with_probes``: no stored record has it.
-_PROBE_HASH = ""
-
-
-def _diff_with_probes(
-    doc_status: DocStatusPort,
-    fingerprints: dict[str, str],
-    scope: str,
-    probe_ids: Iterable[str],
-    extraction_fingerprint: str | None = None,
-) -> tuple[DocumentDelta, set[str]]:
-    """Diff ``fingerprints`` and report which ``probe_ids`` are stored.
-
-    The probes are diffed with a hash no record has, so a stored probe reads
-    as changed and an absent one as new; both are then removed from the
-    delta. A probe is never a deletion candidate, which is what the probed
-    keys need: a legacy key or a failed file of this run is not deleted.
-    """
-    probes = {doc_id: _PROBE_HASH for doc_id in probe_ids if doc_id not in fingerprints}
-    delta = _diff(doc_status, {**probes, **fingerprints}, scope, extraction_fingerprint)
-    stored = (set(delta.changed) | set(delta.unchanged)) & probes.keys()
-    delta.new = [doc_id for doc_id in delta.new if doc_id not in probes]
-    delta.changed = [doc_id for doc_id in delta.changed if doc_id not in probes]
-    delta.settings_changed = [
-        doc_id for doc_id in delta.settings_changed if doc_id not in probes
-    ]
-    delta.unchanged = [doc_id for doc_id in delta.unchanged if doc_id not in probes]
-    return delta, stored
-
-
-def adopt_legacy_records(
-    doc_status: DocStatusPort,
-    delta: DocumentDelta,
-    legacy_doc_ids: Mapping[str, str],
-    scope: str,
-    fingerprints: Mapping[str, str],
-    stored_ids: set[str] | None = None,
-    extraction_fingerprint: str | None = None,
-) -> int:
-    """Re-key this scope's legacy-keyed records to the current ``doc_id``.
-
-    A record stored under the legacy key is adopted when its scope is
-    ``scope``, or ``None`` (written before scopes existed, which the legacy key
-    matched for any run): it is written under the current key with its content
-    hash, status and lineage, then the legacy key is deleted. When the current
-    key already has a record (an adoption interrupted between the write and
-    the delete), only the stale legacy key is deleted, whatever its scope
-    (``scope`` or ``None``), so it does not keep the previous version's
-    artifacts referenced. A legacy record of another scope is left untouched,
-    so that scope adopts it on its own run.
-
-    ``delta`` is then updated in place rather than by diffing again: an
-    adopted document moves from ``new`` to ``unchanged`` or ``changed`` by the
-    adopted record's content hash and status, and no legacy key is ever
-    ``deleted``. A second diff would be a second registry scan, and an
-    eventually consistent one (a DynamoDB ``Scan``) can still return the
-    legacy key and miss the new one: the legacy key would read as deleted and
-    its artifacts, now the adopted document's, would be pruned.
-
-    Args:
-        fingerprints: ``{doc_id: content_hash}`` of this run's documents.
-        stored_ids: The legacy keys, and the current keys of the failed files,
-            known to be stored (see :func:`_diff_with_probes`). Only those are
-            read, in one batch (:meth:`DocStatusPort.get_many`). ``None``
-            reads every legacy key and every failed file's current key.
-        extraction_fingerprint: The run's extraction fingerprint; an adopted
-            record that stored another one is classified changed (see
-            :func:`detect_delta`).
-
-    Returns:
-        The number of legacy keys adopted or deleted.
-    """
-    count, _ = _adopt_legacy_records(
-        doc_status,
-        delta,
-        legacy_doc_ids,
-        scope,
-        fingerprints,
-        stored_ids,
-        extraction_fingerprint,
-    )
-    return count
-
-
-def _adopt_legacy_records(
-    doc_status: DocStatusPort,
-    delta: DocumentDelta,
-    legacy_doc_ids: Mapping[str, str],
-    scope: str,
-    fingerprints: Mapping[str, str],
-    stored_ids: set[str] | None,
-    extraction_fingerprint: str | None = None,
-) -> tuple[int, dict[str, DocStatusRecord]]:
-    """:func:`adopt_legacy_records`; also returns ``{doc_id: record}`` of the
-    records it wrote (the adopted ones, under their new key)."""
-    current = set(delta.changed) | set(delta.unchanged)
-    lookups = {
-        doc_id: legacy_id
-        for doc_id, legacy_id in sorted(legacy_doc_ids.items())
-        if legacy_id != doc_id and (stored_ids is None or legacy_id in stored_ids)
-    }
-    legacy_records = doc_status.get_many(lookups.values())
-    candidates = {
-        doc_id: legacy_records[legacy_id]
-        for doc_id, legacy_id in lookups.items()
-        if legacy_id in legacy_records
-        and legacy_records[legacy_id].scope in (scope, None)
-    }
-    # A failed file is in neither ``delta.new`` nor ``current``.
-    known = current | set(delta.new)
-    failed = [doc_id for doc_id in candidates if doc_id not in known]
-    if stored_ids is None:
-        stored = set(doc_status.get_many(failed))
-    else:
-        stored = set(failed) & stored_ids
-    keep = current | stored
-    written = _rekey(doc_status, candidates, scope, keep=keep)
-    _classify_adopted(delta, written, fingerprints, extraction_fingerprint)
-    legacy_ids = set(legacy_doc_ids.values()) - set(fingerprints)
-    delta.deleted = [doc_id for doc_id in delta.deleted if doc_id not in legacy_ids]
-    if candidates:
-        labels = [record.file_path or doc_id for doc_id, record in candidates.items()]
-        logger.info(
-            "Adopted %d doc-status records keyed without the source scope "
-            "(written before it was part of the key), e.g. %s",
-            len(candidates),
-            ", ".join(labels[:10]),
-        )
-    return len(candidates), written
-
-
-def _classify_adopted(
-    delta: DocumentDelta,
-    written: Mapping[str, DocStatusRecord],
-    fingerprints: Mapping[str, str],
-    extraction_fingerprint: str | None = None,
-) -> None:
-    """Move documents whose record was just written from ``new`` to
-    ``unchanged`` or ``changed``, the way the diff classifies a record.
-
-    A failed file (not in ``fingerprints``) is not in the partition and stays
-    out of it.
-    """
-    moved = {doc_id for doc_id in written if doc_id in fingerprints}
-    if not moved:
-        return
-    delta.new = [doc_id for doc_id in delta.new if doc_id not in moved]
-    for doc_id in sorted(moved):
-        record = written[doc_id]
-        if (
-            record.content_hash != fingerprints[doc_id]
-            or record.status is DocStatus.FAILED
-        ):
-            delta.changed.append(doc_id)
-        elif _settings_changed(record, extraction_fingerprint):
-            delta.changed.append(doc_id)
-            delta.settings_changed.append(doc_id)
-        else:
-            delta.unchanged.append(doc_id)
 
 
 def _settings_changed(
@@ -698,37 +501,11 @@ def other_local_scopes(
     )
 
 
-def _rekey(
-    doc_status: DocStatusPort,
-    records: Mapping[str, DocStatusRecord],
-    scope: str,
-    keep: set[str],
-) -> dict[str, DocStatusRecord]:
-    """Move each ``{doc_id: record}`` to ``doc_id`` and ``scope``.
-
-    The records are written under their new keys (one batched write) before
-    any old key is deleted, so an interrupted run leaves duplicates (cleaned
-    up by the next run) rather than losing the lineage. A ``doc_id`` in
-    ``keep`` already has its record: only the old key is deleted. Returns the
-    records written, by their new key.
-    """
-    written = {
-        doc_id: record.model_copy(update={"doc_id": doc_id, "scope": scope})
-        for doc_id, record in records.items()
-        if doc_id not in keep
-    }
-    doc_status.put_many(list(written.values()))
-    for record in records.values():
-        doc_status.delete(record.doc_id)
-    return written
-
-
 def _stop_retrying_exhausted(
     delta: DocumentDelta,
     doc_status: DocStatusPort,
     fingerprints: dict[str, str],
     max_failures: int,
-    written: Mapping[str, DocStatusRecord] | None = None,
     extraction_fingerprint: str | None = None,
 ) -> None:
     """Move changed documents that used up their retries to ``unchanged``.
@@ -736,19 +513,14 @@ def _stop_retrying_exhausted(
     A document whose extraction settings changed since it failed is retried
     (its earlier failures were with other settings).
 
-    ``written`` holds the records this run just wrote (adopted legacy
-    records), used as they are instead of read back from a store that may
-    not return them yet. The others are read in one batch
-    (:meth:`DocStatusPort.get_many`), not one ``get`` per changed document.
+    The records are read in one batch (:meth:`DocStatusPort.get_many`), not
+    one ``get`` per changed document.
     """
-    written = written or {}
-    stored = doc_status.get_many(
-        [doc_id for doc_id in delta.changed if doc_id not in written]
-    )
+    stored = doc_status.get_many(delta.changed)
     exhausted: list[str] = []
     labels: list[str] = []
     for doc_id in delta.changed:
-        record = written.get(doc_id) or stored.get(doc_id)
+        record = stored.get(doc_id)
         if (
             record is not None
             and record.status is DocStatus.FAILED

@@ -508,7 +508,7 @@ the same values.
 | `aws.s3.bucket_name` | `null` | Bucket for cache sync and embedding-cache persistence. |
 | `aws.s3.encryption.encryption_type` | `"BUCKET_DEFAULT"` | `BUCKET_DEFAULT` lets the bucket's default encryption apply; `AES256` or `aws:kms` (with `kms_key_id`) force a per-object header. Applies to the stage-cache sync and the persisted embedding cache. |
 | `aws.dynamodb.enabled` | `false` | Turn on the doc-status registry for incremental indexing (§5). |
-| `aws.dynamodb.table_name` | `"unified-kg-rag-on-aws-doc-status"` | Doc-status table name. |
+| `aws.dynamodb.table_name` | `"unified-kg-rag-on-aws-doc-status-v2"` | Doc-status table name. |
 | `aws.dynamodb.create_table_if_missing` | `true` | Create the table on first use. Set `false` when the table is managed by IaC. |
 
 > **Guardrail scope and placement.** The guardrail must exist in
@@ -1413,7 +1413,7 @@ rebuilding everything.
 aws:
   dynamodb:
     enabled: true
-    table_name: "unified-kg-rag-on-aws-doc-status"
+    table_name: "unified-kg-rag-on-aws-doc-status-v2"
     create_table_if_missing: true
 ```
 
@@ -1435,9 +1435,11 @@ SQLite file instead (`providers.doc_status.kind: sqlite`, switched on by
   record for, in this or any other document (`--force-rebuild` re-extracts
   them all and refreshes the store).
 - **Delete a document:** remove it from the source directory and re-run. Its
-  **exclusive** artifacts (entities/relationships seen only in that document,
-  tracked via per-document lineage in the registry) are deleted; artifacts
-  shared with surviving documents are kept.
+  **exclusive** artifacts (entities, relationships and claims stated only in
+  that document's chunks: the registry lists each document's chunks, and the
+  stores are asked what cites them) are deleted; artifacts shared with
+  surviving documents are kept, without its chunks. A community or report
+  goes once none of the chunks it cites is left.
 - **Change the extraction settings** (a tuned `custom_prompts` set,
   `entity_types`, an extraction, gleaning or chunking model, chunk sizes,
   translation, resolution): each record stores a fingerprint of the settings
@@ -1538,12 +1540,16 @@ To move a corpus, either:
 
 A local run with the default scope that has new documents logs one WARNING
 naming the other local source directories with records in its index suffix
-(read from the registry scan the diff already makes), pointing to these two
+(from the registry records the diff already reads), pointing to these two
 options. It deletes nothing. Set `source_scope` per corpus to silence it when
 the directories are separate corpora.
 
-A registry written by a pre-release build is migrated on its first run; see
-[CHANGELOG: Upgrading from pre-release builds](../CHANGELOG.md#upgrading-from-pre-release-builds).
+The registry is partitioned by index namespace (the `<namespace>#` prefix of
+each document key; the DynamoDB partition key), so a run reads only its own
+namespace's records. A table of the earlier `doc_id`-only key schema is
+rejected at first use: switch to a new table and run once with
+`indexing.reset: true`, see
+[Operator Runbook: Incremental runs](./operations.md#incremental-runs).
 
 ### Failed documents
 
@@ -1565,10 +1571,12 @@ content starts the count again) or raising the limit retries it.
 
 ### Document size limit
 
-The DynamoDB registry stores each document's artifact ids (text units,
-entities, relationships, claims, communities, reports) in one item, and an item
-is limited to 400 KB, roughly 10,000 ids. A document that produces more fails
-the indexing stage with an error naming the file; split it into smaller files.
+The DynamoDB registry stores each document's text-unit (chunk) ids in one
+item, and an item is limited to 400 KB, roughly 10,000 ids. An edited
+document's in-progress record holds its old and new chunk ids, so the limit is
+about half that for a document you edit. A document over it fails the
+indexing stage with an error naming the file, before anything is written;
+split it into smaller files.
 The SQLite registry of local mode has no such limit.
 
 ### Cross-run merge
@@ -1591,9 +1599,15 @@ indexed before claims stored their text units starts from this run's).
 When a document changes or is deleted, entities, relationships and claims it shares
 with other documents lose its chunks from `text_unit_ids` (weight
 follows), and their name, type, description, rank and claim text are derived
-again from the chunks left, so what the document contributed goes with it
-(an entity keeps the id of the name it was first indexed under until a full
-rebuild).
+again from the chunks left, so what the document contributed goes with it.
+An entity's id follows its current name: when another spelling wins (the
+document that held the winning one is gone, or new documents outvote it),
+the entity takes that name's id, as a full build would give it, and its edges
+and claims follow; stored communities and reports keep the old id until a
+full rebuild. The stored entities a delta name can merge into are found by
+their compact name key; with `processing.fuzzy_entity_resolution: true`
+every stored name is read instead. Extraction-store records that only removed
+chunks named are deleted after each successful run.
 If reading the stored items back fails, nothing is overwritten: a failed read
 during the merge fails the indexing stage before any write (the documents stay
 unrecorded and are retried), and a failed read while removing a document's
@@ -2323,17 +2337,17 @@ graph_indexer_factory=..., retriever_builders=...)`). Without a bundle,
   `hybrid` lose high-level keyword retrieval and `local` its relationship
   section.
 - **Incremental indexing approximations** (§5). Delta runs append
-  communities instead of re-clustering the whole graph, and an entity keeps
-  the id of the name it was first indexed under; only a full rebuild
-  (`indexing.reset: true`) refreshes both. Descriptions, names, types, ranks
-  and claims follow the current corpus.
-  Each run scans the whole doc-status table, and with the DynamoDB registry
-  one document's artifact ids must fit one 400 KB item.
+  communities instead of re-clustering the whole graph, and stored
+  communities and reports keep an entity's old id after it took its current
+  name's; only a full rebuild (`indexing.reset: true`) refreshes both.
+  Descriptions, names, ids, types, ranks and claims follow the current
+  corpus. With the DynamoDB registry one document's chunk ids must fit one
+  400 KB item (§5, *Document size limit*).
 - **Concurrent runs are not supported.** Do not run two ingestions at once
   against the same index suffix (a full reindex's alias swap and old-index
   cleanup can delete the other run's index) or the same doc-status table
-  namespace (removal planning reads the registry once, so the other run's
-  records can be pruned). Runs on different suffixes with separate
+  namespace (one run's removal can delete or strip what the other is
+  writing, and each overwrites the other's registry records). Runs on different suffixes with separate
   doc-status tables are fine. The CDK state machine does not block an
   overlapping execution; see
   [Operator Runbook: Concurrent runs](./operations.md#concurrent-runs).

@@ -4,7 +4,7 @@
 
 Before an incremental run removes or writes anything for its delta, every new
 and changed document is recorded PENDING with a content hash no document has
-and its stored + planned lineage. A run interrupted anywhere after that leaves
+and its stored + planned text units. A run interrupted anywhere after that leaves
 those records, so the next run re-extracts a document that still exists (even
 when its content went back to the indexed version) and removes everything the
 interrupted run may have written for one that is gone. Every interruption
@@ -72,7 +72,7 @@ def _assert_converged(harness: IncrementalRun, corpus: Corpus) -> None:
     assert harness.state() == expected_state(corpus)
 
 
-# Random corpora, points, k and follow-ups (with and without overflow) are in
+# Random corpora, points, k and follow-ups are in
 # tests/property/test_incremental_interruption_properties.py, and every point
 # runs through each registry in test_doc_status_conformance.py. This keeps one
 # named case per point that also proves the point fires on this corpus.
@@ -143,54 +143,54 @@ def test_write_ahead_record_holds_old_and_planned_lineage() -> None:
     store = FakeDocStatusStore()
     store.put(
         DocStatusRecord(
-            doc_id="changed",
+            doc_id="ns#changed",
             content_hash="h1",
             status=DocStatus.PROCESSED,
             suffix="tenant",
             scope="ns|src",
             file_path="b.txt",
-            entity_ids=["e-old", "e-shared"],
-            text_unit_ids=["t-old"],
+            text_unit_ids=["t-old", "t-shared"],
         )
     )
     inc = IncrementalIndexer(store, None, scope="ns|src")  # type: ignore[arg-type]
     inc.write_ahead(
-        DocumentDelta(changed=["changed"], new=["new"]),
+        DocumentDelta(changed=["ns#changed"], new=["ns#new"]),
         [
             DocumentLineage(
-                doc_id="changed",
+                doc_id="ns#changed",
                 suffix="tenant",
                 file_path="b.txt",
-                entity_ids=["e-shared", "e-new"],
-                text_unit_ids=["t-new"],
+                text_unit_ids=["t-shared", "t-new"],
             ),
             DocumentLineage(
-                doc_id="new", suffix="tenant", file_path="e.txt", entity_ids=["e-x"]
+                doc_id="ns#new",
+                suffix="tenant",
+                file_path="e.txt",
+                text_unit_ids=["t-x"],
             ),
         ],
     )
 
-    changed, new = store.get("changed"), store.get("new")
+    changed, new = store.get("ns#changed"), store.get("ns#new")
     assert changed is not None and new is not None
     assert changed.status is DocStatus.PENDING
     assert changed.content_hash == PENDING_CONTENT_HASH
-    assert changed.entity_ids == ["e-new", "e-old", "e-shared"]
-    assert changed.text_unit_ids == ["t-new", "t-old"]
+    assert changed.text_unit_ids == ["t-new", "t-old", "t-shared"]
     assert (changed.suffix, changed.scope, changed.file_path) == (
         "tenant",
         "ns|src",
         "b.txt",
     )
-    assert (new.status, new.entity_ids, new.scope) == (
+    assert (new.status, new.text_unit_ids, new.scope) == (
         DocStatus.PENDING,
-        ["e-x"],
+        ["t-x"],
         "ns|src",
     )
     # Neither can read as unchanged, whatever its content.
-    delta = store.diff({"changed": "h1", "new": "anything"}, scope="ns|src")
-    assert sorted(delta.changed) == ["changed", "new"]
+    delta = store.diff({"ns#changed": "h1", "ns#new": "anything"}, scope="ns|src")
+    assert sorted(delta.changed) == ["ns#changed", "ns#new"]
     # Gone, both read as deleted in their scope, and only there.
-    assert sorted(store.diff({}, scope="ns|src").deleted) == ["changed", "new"]
+    assert sorted(store.diff({}, scope="ns|src").deleted) == ["ns#changed", "ns#new"]
     assert store.diff({}, scope="ns|other").deleted == []
 
 
@@ -277,14 +277,11 @@ def test_retried_shared_strip_repairs_the_store_an_earlier_one_missed(
 
         return upsert
 
+    # The entity writes of both stores are the last step of a strip (a
+    # retry finds the edges through the entities still citing the unit).
     originals = {
         name: getattr(harness.vector, name)
-        for name in (
-            "update_entity_lineage",
-            "update_relationship_lineage",
-            "upsert_entities",
-            "upsert_relationships",
-        )
+        for name in ("update_entity_lineage", "upsert_entities")
     }
     for name in originals:
         setattr(harness.vector, name, broken(name))
@@ -307,32 +304,44 @@ def test_retried_shared_strip_repairs_the_store_an_earlier_one_missed(
     _assert_converged(harness, after)
 
 
-def test_removal_plans_in_flight_documents_from_their_stored_records() -> None:
+class _RemovalRecorder:
+    """Records the text units each removal asks the stores to remove."""
+
+    def __init__(self) -> None:
+        self.removed: dict[str, list[str]] = {}
+
+    def remove_text_units(self, suffix, text_unit_ids):
+        self.removed[suffix] = list(text_unit_ids)
+        return {}
+
+
+def test_removal_of_in_flight_documents_uses_their_stored_records() -> None:
     # The write-ahead PENDING records also list what this run writes after the
-    # removal. A new document has no stored record: it neither removes nor
-    # retains anything (its pending "x" must not keep the deleted document's
-    # "x"). A changed document is planned from its stored record ("y"), not
-    # the pending one (which also lists the "z" it is about to write).
+    # removal. A new document has no stored record: it removes nothing (its
+    # pending "t-x" is not removed with the deleted document's units). A
+    # changed document is removed by its stored record ("t-y"), not the
+    # pending one (which also lists the "t-z" it is about to write).
     store = FakeDocStatusStore()
     deleted, changed, new = "doc-deleted", "doc-changed", "doc-new"
-    for doc_id, entity in ((deleted, "x"), (changed, "y")):
+    for doc_id, unit in ((deleted, "t-w"), (changed, "t-y")):
         store.put(
             DocStatusRecord(
                 doc_id=doc_id,
                 content_hash="h",
                 status=DocStatus.PROCESSED,
-                entity_ids=[entity],
+                text_unit_ids=[unit],
             )
         )
-    inc = IncrementalIndexer(store, indexing_manager=None)  # type: ignore[arg-type]
+    manager = _RemovalRecorder()
+    inc = IncrementalIndexer(store, indexing_manager=manager)  # type: ignore[arg-type]
     inc.write_ahead(
         DocumentDelta(new=[new], changed=[changed], deleted=[deleted]),
         [
-            DocumentLineage(doc_id=new, entity_ids=["x"]),
-            DocumentLineage(doc_id=changed, entity_ids=["z"]),
+            DocumentLineage(doc_id=new, text_unit_ids=["t-x"]),
+            DocumentLineage(doc_id=changed, text_unit_ids=["t-y", "t-z"]),
         ],
     )
 
-    plan = inc._plan_removal([changed, deleted])
+    assert inc.remove_obsolete_artifacts([changed, deleted])
 
-    assert plan["default"].exclusive_ids == ["x", "y"]
+    assert manager.removed == {"default": ["t-w", "t-y"]}

@@ -19,13 +19,14 @@ retires it, see ``indexing.retire_source_scopes``):
   namespace keeps two tenants' identically named files apart even when both
   corpora are staged in the same directory; the source scope keeps two
   corpora written to one namespace apart when both contain the same relative
-  path. Without a source scope the key is the legacy one (namespace and path
-  only) that registries written before source scopes were keyed by.
+  path. A document read outside an incremental run has no source scope
+  (namespace and path only).
 * ``compute_text_hash(text)`` -- content fingerprint (change detection).
 * ``compute_document_id(source_key, content_hash)`` -- the per-version
   ``Document.document_id`` that text-unit ids derive from. Hashing the full
   text, not a prefix, keeps two files with the same name and the same opening
-  lines from colliding.
+  lines from colliding. An incremental run keys it by the registry key
+  (``assign_registry_source``), so a text unit belongs to one registry record.
 
 Absolute paths only appear when no corpus root is known (a document parsed
 outside the pipeline); the pipeline stages re-derive the id against the root.
@@ -153,13 +154,13 @@ def compute_doc_id(
     namespace: str = DEFAULT_NAMESPACE,
     source_scope: str | None = None,
 ) -> str:
-    """Registry key of a document: its index namespace, corpus source scope
-    and relative path.
+    """Registry key of a document: ``<index namespace>#<hash>`` of its index
+    namespace, corpus source scope and relative path (the namespace prefix
+    is its registry partition, see :func:`doc_id_namespace`).
 
-    ``source_scope=None`` returns the legacy key (namespace and relative path
-    only), which two corpora written to one namespace share for files with
-    the same relative path; the pipeline always passes the run's source scope
-    and only uses the legacy key to adopt records written before it did.
+    ``source_scope=None`` keys by namespace and relative path only, which
+    two corpora written to one namespace share for files with the same
+    relative path; an incremental run always passes its source scope.
     """
     path = normalize_source_path(relative_path)
     key = (
@@ -167,7 +168,24 @@ def compute_doc_id(
         if source_scope is None
         else f"{namespace}\x00{source_scope}\x00{path}"
     )
-    return compute_hash(key, length=_ID_HASH_LENGTH)
+    return (
+        f"{namespace}{_NAMESPACE_SEPARATOR}{compute_hash(key, length=_ID_HASH_LENGTH)}"
+    )
+
+
+# Separates a doc_id's index namespace from its hash. A namespace never holds
+# it (suffixes are safe names; the store tag is a hex hash after "@").
+_NAMESPACE_SEPARATOR = "#"
+
+
+def doc_id_namespace(doc_id: str) -> str:
+    """The index namespace a registry key names: its registry partition.
+
+    A key :func:`compute_doc_id` made is ``<namespace>#<hash>``; any other
+    (a caller's own id) belongs to the default namespace.
+    """
+    namespace, separator, _ = doc_id.rpartition(_NAMESPACE_SEPARATOR)
+    return namespace if separator and namespace else DEFAULT_NAMESPACE
 
 
 def is_local_path_scope(source_scope: str) -> bool:

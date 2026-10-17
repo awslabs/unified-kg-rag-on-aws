@@ -48,7 +48,7 @@ Context keys (all optional; sensible defaults shown):
                                        nori unless its optional analysis-nori
                                        package is associated; set "nori" once it
                                        is
-  doc_status_table    dev:"graphrag-doc-status"/else:"<env>-graphrag-doc-status"
+  doc_status_table    dev:"graphrag-doc-status-v2"/else:"<env>-graphrag-doc-status-v2"
   opensearch_volume_gib 50             GP3 volume per OpenSearch data node; the
                                        free-storage alarm fires at 40% of it
   backup_retention_days 7              Neptune automated backup retention
@@ -414,16 +414,16 @@ class DeploymentConfig:
             ),
             opensearch_volume_gib=as_int("opensearch_volume_gib", 50, minimum=10),
             # Default DDB table name follows the same env-scoped prefix as the
-            # other physical names (dev: "graphrag-doc-status";
-            # non-dev: "<env>-graphrag-doc-status") so environments don't share a
+            # other physical names (dev: "graphrag-doc-status-v2";
+            # non-dev: "<env>-graphrag-doc-status-v2") so environments don't share a
             # registry table in one account/region.
             doc_status_table=str(
                 ctx(
                     "doc_status_table",
                     (
-                        "graphrag-doc-status"
+                        "graphrag-doc-status-v2"
                         if is_dev
-                        else f"{env_name.lower()}-graphrag-doc-status"
+                        else f"{env_name.lower()}-graphrag-doc-status-v2"
                     ),
                 )
             ),

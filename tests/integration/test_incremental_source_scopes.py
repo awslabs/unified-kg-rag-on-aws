@@ -39,7 +39,6 @@ from unified_kg_rag.adapters.doc_status.dynamodb import DynamoDBDocStatusStore
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.application.ingestion import pipeline_stages as ps
 from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
-from unified_kg_rag.domain.ingestion.delta_detector import compute_doc_id
 from unified_kg_rag.domain.models import (
     Config,
     PipelineConfig,
@@ -284,103 +283,6 @@ def test_deleting_a_file_in_one_scope_removes_only_its_exclusive_artifacts(
     }
 
 
-def _rekey_to_legacy(registry: DocStatusPort) -> dict[str, str]:
-    """Rewrite every record under the key used before the source scope was
-    part of it; returns ``{legacy_id: current_id}``."""
-    moved = {}
-    for record in registry.list_all():
-        legacy_id = compute_doc_id(record.file_path, "default")
-        registry.delete(record.doc_id)
-        registry.put(record.model_copy(update={"doc_id": legacy_id}))
-        moved[legacy_id] = record.doc_id
-    return moved
-
-
-@pytest.mark.parametrize("legacy_scope", ["same", "none"])
-def test_a_legacy_keyed_registry_upgrades_without_reextracting(
-    registry, tmp_path, legacy_scope
-) -> None:
-    stack = ScopeStack(registry, tmp_path)
-    source = write_corpus(
-        tmp_path / "src-a",
-        {"contract.txt": A_TEXT, "depot.txt": "Depot stores widgets."},
-    )
-    stack.run(source)
-    before = {r.file_path: r for r in registry.list_all()}
-    moved = _rekey_to_legacy(registry)
-    if legacy_scope == "none":
-        # Records written before scopes existed carry no scope.
-        for legacy_id in moved:
-            record = registry.get(legacy_id)
-            registry.put(record.model_copy(update={"scope": None}))
-    entities, texts = stack.entity_names(), stack.texts()
-
-    context = stack.run(source)
-
-    delta = context.incremental_delta
-    assert sorted(delta.unchanged) == sorted(moved.values())
-    assert delta.new == delta.changed == delta.deleted == []
-    assert not stack.model.extractions
-    assert (stack.entity_names(), stack.texts()) == (entities, texts)
-    # Adopted under the current key with the same fingerprint and lineage.
-    after = {r.file_path: r for r in registry.list_all()}
-    assert {r.doc_id for r in after.values()} == set(moved.values())
-    for path, record in after.items():
-        assert record.model_dump(exclude={"scope"}) == before[path].model_dump(
-            exclude={"scope"}
-        )
-        assert record.scope == _scope_of(context)
-
-
-def test_a_legacy_record_of_another_scope_is_left_alone(registry, tmp_path) -> None:
-    stack = ScopeStack(registry, tmp_path)
-    source_a = write_corpus(tmp_path / "src-a", {"contract.txt": A_TEXT})
-    source_b = write_corpus(tmp_path / "src-b", {"contract.txt": B_TEXT})
-    stack.run(source_b)
-    (legacy_id,) = _rekey_to_legacy(registry)
-    legacy_b = registry.get(legacy_id)
-
-    context = stack.run(source_a)
-
-    # A's contract.txt is new to A; B's legacy record is not adopted, not
-    # deleted and its artifacts are kept.
-    assert len(context.incremental_delta.new) == 1
-    assert context.incremental_delta.deleted == []
-    assert registry.get(legacy_id) == legacy_b
-    assert stack.texts() == {A_TEXT, B_TEXT}
-
-    # B's own next run adopts it without re-extracting.
-    rerun_b = stack.run(source_b)
-    assert rerun_b.incremental_delta.new == rerun_b.incremental_delta.deleted == []
-    assert not stack.model.extractions
-    assert registry.get(legacy_id) is None
-    assert len(registry.list_all()) == 2
-
-
-def test_an_interrupted_scopeless_adoption_does_not_keep_old_content(
-    registry, tmp_path
-) -> None:
-    stack = ScopeStack(registry, tmp_path)
-    source = write_corpus(tmp_path / "src-a", {"contract.txt": A_TEXT})
-    stack.run(source)
-    (current,) = registry.list_all()
-    # A record written before scopes existed, adopted under the current key
-    # by a run that stopped before deleting the legacy key.
-    registry.put(
-        current.model_copy(
-            update={"doc_id": compute_doc_id("contract.txt", "default"), "scope": None}
-        )
-    )
-
-    write_corpus(source, {"contract.txt": "Vendor supplies Depot."})
-    context = stack.run(source)
-
-    assert context.incremental_delta.changed == [current.doc_id]
-    assert stack.texts() == {"Vendor supplies Depot."}
-    assert stack.entity_names() == {"Vendor", "Depot"}
-    assert [r.doc_id for r in registry.list_all()] == [current.doc_id]
-
-
 DEPOT_TEXT = "Depot stores widgets."
 
 
@@ -424,12 +326,7 @@ def _store_snapshot(stack: ScopeStack) -> dict[str, Any]:
             for collection in ("entities", "relationships")
         },
         "registry": {
-            (r.file_path, r.scope): (
-                r.content_hash,
-                sorted(r.entity_ids),
-                sorted(r.relationship_ids),
-                sorted(r.text_unit_ids),
-            )
+            (r.file_path, r.scope): (r.content_hash, sorted(r.text_unit_ids))
             for r in stack.registry.list_all()
         },
     }

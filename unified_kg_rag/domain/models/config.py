@@ -741,7 +741,7 @@ class DynamoDBConfig(BaseModel):
         description="Enable the DynamoDB document-status registry for incremental indexing",
     )
     table_name: str = Field(
-        default="unified-kg-rag-on-aws-doc-status",
+        default="unified-kg-rag-on-aws-doc-status-v2",
         min_length=1,
         description="DynamoDB table holding per-document status and lineage",
     )

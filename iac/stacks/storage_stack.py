@@ -156,7 +156,15 @@ class StorageStack(Stack):
             self,
             "DocStatusTable",
             table_name=self.config.doc_status_table,
+            # Records are read per index namespace (one Query per run), so
+            # the namespace is the partition key and the document the sort
+            # key (DynamoDBDocStatusStore). The earlier table, keyed by
+            # doc_id alone, had another name: a key schema change replaces
+            # the table.
             partition_key=dynamodb.Attribute(
+                name="namespace", type=dynamodb.AttributeType.STRING
+            ),
+            sort_key=dynamodb.Attribute(
                 name="doc_id", type=dynamodb.AttributeType.STRING
             ),
             billing_mode=dynamodb.BillingMode.PAY_PER_REQUEST,

@@ -26,13 +26,13 @@ can coexist in one account/region. Every resource also carries an `env` tag.
 
 Physical resources share a single lowercase `<prefix>-<purpose>` scheme,
 following a common `<app>-<purpose>-…` convention. The prefix is `graphrag` in
-the default `dev` env and `<env>-graphrag` otherwise (e.g. `prod-graphrag-doc-status`),
+the default `dev` env and `<env>-graphrag` otherwise (e.g. `prod-graphrag-doc-status-v2`),
 so physical names do not collide across environments. Names below are for `dev`:
 
 | Resource | Name |
 |---|---|
 | S3 cache bucket | `graphrag-cache-<account>-<region>` |
-| DynamoDB doc-status | `graphrag-doc-status` |
+| DynamoDB doc-status | `graphrag-doc-status-v2` |
 | ECR repository | `graphrag-app` |
 | ECS cluster | `graphrag-cluster` |
 | Step Functions | `graphrag-ingestion` |
@@ -121,7 +121,7 @@ Prep (parse/load/chunk/translate) → GraphBuild (extract/glean/resolve/claims)
 | `opensearch_count` | `1` (dev) / `2` (non-dev) | OpenSearch data node count (`>1` ⇒ 3 dedicated masters + zone awareness, e.g. 2 data nodes = 5 nodes; dev runs a single node for cost). A zone-aware domain spans as many AZs as it has data nodes, up to 3 and up to the AZs of the VPC (`max_azs` for a created VPC): 3 data nodes with `max_azs=3` use 3 AZs. A domain in 2 AZs needs an even count (OpenSearch rejects an odd one), so synth fails on, say, `opensearch_count=3` with `max_azs=2`. **Upgrading:** earlier versions pinned such domains to 2 AZs, so the first deploy of an existing domain with 3 or more data nodes in a VPC with 3 or more AZs moves it to 3 AZs, which OpenSearch applies as a blue/green deployment (new nodes, every shard copied; the domain stays available but slower, which can take hours on a large domain). Deploy it in a quiet window, with no ingestion running |
 | `opensearch_volume_gib` | `50` | GP3 volume per OpenSearch data node; the free-storage alarm fires at 40% free |
 | `opensearch_korean_analyzer` | `cjk` | OpenSearch analyzer of Korean text, injected as `OPENSEARCH_KOREAN_ANALYZER` (overrides `indexing.opensearch.language_analyzers.ko` of the image config). The domain has no `nori` unless its optional Nori package (`analysis-nori`) is associated, and an index whose mapping names a missing analyzer fails to create; `cjk` (character bigrams) is built into OpenSearch. To use `nori`, associate the package (console **Packages** or `aws opensearch associate-package`, a blue/green deployment), deploy with `nori`, and re-run once with `indexing.reset: true` |
-| `doc_status_table` | `graphrag-doc-status` (dev) / `<env>-graphrag-doc-status` (non-dev) | DynamoDB doc-status (incremental-indexing registry) table name, injected into the task as `GRAPHRAG_DOC_STATUS_TABLE`. Changing it on a deployed environment creates a new, empty registry table |
+| `doc_status_table` | `graphrag-doc-status-v2` (dev) / `<env>-graphrag-doc-status-v2` (non-dev) | DynamoDB doc-status (incremental-indexing registry) table name, injected into the task as `GRAPHRAG_DOC_STATUS_TABLE`. Changing it on a deployed environment creates a new, empty registry table |
 | `backup_retention_days` | `7` | Neptune automated backup retention, 1-35 days (see [Backup and restore](../docs/operations.md#backup-and-restore)) |
 | `fargate_cpu` | `2048` | Fargate task vCPU units (in-task ProcessPool extractors scale with vCPU): `256`, `512`, `1024`, `2048`, `4096`, `8192` or `16384` |
 | `fargate_memory` | `8192` | Fargate task memory (MiB); must be a size Fargate offers for `fargate_cpu` (with `2048`: 4096-16384 in 1024 steps), else synth fails naming the valid range |
@@ -258,7 +258,7 @@ for your region and sizes. What scales each service's cost:
 | VPC interface endpoints (`private`) | Seven endpoints (eight with `enable_cloudwatch_tracing`) × `max_azs`, billed per AZ-hour, plus data processed | `max_azs`, or reuse a VPC's endpoints (`vpc_id`) |
 | NAT gateways (`public`) | One per AZ, billed per hour, plus data processed | `max_azs`, or use `private` mode |
 | Amazon S3 | Stage checkpoints, embedding cache, corpus, access logs | 30-day expiry on `pipeline-runs/` and `embedding-cache/` |
-| Amazon DynamoDB | On-demand reads and writes: one full-table diff scan per ingestion plus one record per processed document; point-in-time recovery | Fewer, larger runs |
+| Amazon DynamoDB | On-demand reads and writes: one projected query of the run's namespace partition per ingestion plus one record per processed document; point-in-time recovery | Fewer, larger runs |
 | Amazon CloudWatch | Log ingestion and retention (task, pipeline and, with `vpc_flow_logs`, flow logs), alarms, dashboard | `vpc_flow_logs`, `flow_log_retention_days` |
 | CloudWatch Container Insights (ECS cluster, always on) | Custom metrics per cluster and task definition family, and performance log events in `/aws/ecs/containerinsights/<cluster>/performance`, for the time tasks run. It is where per-task CPU and memory use come from (sizing `fargate_cpu`/`fargate_memory`, diagnosing an out-of-memory stop); no alarm or dashboard of the stack reads it | — (cdk-nag `AwsSolutions-ECS4` requires it) |
 | AWS KMS | Customer-managed keys per month and requests: the alarm-topic key always, the data key with `use_cmk` | `use_cmk` |

@@ -95,7 +95,7 @@ def test_filter_skips_unchanged_documents() -> None:
         a = _doc("/a.txt", "A")
         store.put(
             DocStatusRecord(
-                doc_id=compute_doc_id("/a.txt"),
+                doc_id=compute_doc_id("/a.txt", "default", "/"),
                 content_hash=compute_content_hash(a),
             )
         )
@@ -126,7 +126,7 @@ def test_filter_stops_retrying_a_document_after_max_failures() -> None:
         for path, doc, failures in (("/a.txt", a, 3), ("/b.txt", b, 2)):
             store.put(
                 DocStatusRecord(
-                    doc_id=compute_doc_id(path),
+                    doc_id=compute_doc_id(path, "default", "/"),
                     content_hash=compute_content_hash(doc),
                     status=DocStatus.FAILED,
                     failure_count=failures,

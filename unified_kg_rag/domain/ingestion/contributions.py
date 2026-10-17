@@ -176,7 +176,12 @@ RECORD_KEYS_ATTRIBUTE = "extraction_records"
 
 def record_keys(unit: TextUnit) -> dict[str, str]:
     """The unit's extraction-store keys by record kind ("graph", "claims")."""
-    keys = (unit.attributes or {}).get(RECORD_KEYS_ATTRIBUTE)
+    return attribute_record_keys(unit.attributes)
+
+
+def attribute_record_keys(attributes: dict[str, Any] | None) -> dict[str, str]:
+    """:func:`record_keys` of a text unit's stored ``attributes``."""
+    keys = (attributes or {}).get(RECORD_KEYS_ATTRIBUTE)
     if not isinstance(keys, dict):
         return {}
     return {kind: key for kind, key in keys.items() if isinstance(key, str)}

@@ -102,14 +102,14 @@ def test_prune_failure_blocks_commit_and_keeps_old_lineage(mocker) -> None:
         doc_id="doc-a",
         content_hash="old-hash",
         status=DocStatus.PROCESSED,
-        entity_ids=["e-stale"],
+        text_unit_ids=["t-stale"],
     )
     store.put(old)
 
     manager = mocker.MagicMock()
     manager.config = Config()
     # The stale-artifact removal reports a failed delete.
-    manager.delete_documents.return_value = {
+    manager.remove_text_units.return_value = {
         "neptune_delete_default": IndexingStats(total_items=1, failed_items=1)
     }
     stage = _incremental_indexing_stage(mocker, store, manager)
@@ -129,7 +129,7 @@ def test_prune_failure_blocks_commit_and_keeps_old_lineage(mocker) -> None:
     assert record is not None
     assert record.status is DocStatus.PENDING
     assert record.content_hash == PENDING_CONTENT_HASH
-    assert record.entity_ids == old.entity_ids
+    assert record.text_unit_ids == old.text_unit_ids
     assert store.diff({"doc-a": "old-hash"}).changed == ["doc-a"]
 
 
@@ -140,11 +140,11 @@ def test_removal_of_changed_docs_reports_success_and_failure() -> None:
         def __init__(self, failed: int) -> None:
             self.failed = failed
 
-        def delete_documents(self, ids_by_suffix):
+        def remove_text_units(self, suffix, text_unit_ids):
             return {"x": IndexingStats(total_items=1, failed_items=self.failed)}
 
     store = FakeDocStatusStore()
-    store.put(DocStatusRecord(doc_id="d", content_hash="h", entity_ids=["e1"]))
+    store.put(DocStatusRecord(doc_id="d", content_hash="h", text_unit_ids=["t1"]))
     delta = DocumentDelta(changed=["d"])
 
     assert IncrementalIndexer(store, _Manager(0)).remove_changed_and_deleted(delta) is True  # type: ignore[arg-type]
@@ -173,8 +173,8 @@ def test_delta_run_unions_an_entity_shared_with_unchanged_docs_by_default() -> N
     # Run 1: "Vendor" appears in doc-a (chunk ta) and doc-b (chunk tb).
     incremental.commit(
         lineages=[
-            DocumentLineage(doc_id="doc-a", entity_ids=["e-vendor"]),
-            DocumentLineage(doc_id="doc-b", entity_ids=["e-vendor"]),
+            DocumentLineage(doc_id="doc-a", text_unit_ids=["ta"]),
+            DocumentLineage(doc_id="doc-b", text_unit_ids=["tb"]),
         ],
         fingerprints={"doc-a": "ha", "doc-b": "hb"},
         entities=[
@@ -189,7 +189,7 @@ def test_delta_run_unions_an_entity_shared_with_unchanged_docs_by_default() -> N
 
     # Run 2: only doc-c is new; its extraction sees "Vendor" in chunk tc.
     incremental.commit(
-        lineages=[DocumentLineage(doc_id="doc-c", entity_ids=["e-vendor"])],
+        lineages=[DocumentLineage(doc_id="doc-c", text_unit_ids=["tc"])],
         fingerprints={"doc-c": "hc"},
         entities=[
             Entity(

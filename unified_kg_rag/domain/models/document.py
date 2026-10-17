@@ -5,7 +5,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 def _read_text_autodetect(path: Path) -> str:
@@ -65,14 +65,16 @@ PENDING_CONTENT_HASH = "pending"
 class DocStatusRecord(BaseModel):
     """Per-document state persisted across indexing runs (DocStatusPort).
 
-    Stores the content hash for change detection and the ids of every graph
-    artifact the document produced, so a delta run can merge or remove exactly
-    the affected entities/relationships/text-units/communities.
+    Stores the content hash for change detection and the document's text
+    units, by which a delta run finds (and removes or strips) everything the
+    document contributed to the stores.
     """
 
     doc_id: str = Field(
-        description="Stable document identifier: hash of the index namespace, the "
-        "corpus source scope and the path relative to the corpus root"
+        description="Stable document identifier: ``<index namespace>#<hash of the "
+        "namespace, the corpus source scope and the path relative to the corpus "
+        "root>``. The namespace prefix is the registry partition the record is "
+        "kept in (see ``doc_id_namespace``)"
     )
     content_hash: str = Field(description="Content hash used for change detection")
     status: DocStatus = Field(
@@ -95,24 +97,11 @@ class DocStatusRecord(BaseModel):
     file_path: str | None = Field(
         default=None, description="Source file path relative to the corpus root"
     )
-    entity_ids: list[str] = Field(
-        default_factory=list, description="Entity ids produced by this document"
-    )
-    relationship_ids: list[str] = Field(
-        default_factory=list, description="Relationship ids produced by this document"
-    )
     text_unit_ids: list[str] = Field(
-        default_factory=list, description="Text-unit ids produced by this document"
-    )
-    community_ids: list[str] = Field(
-        default_factory=list, description="Community ids this document contributed to"
-    )
-    claim_ids: list[str] = Field(
-        default_factory=list, description="Claim ids produced by this document"
-    )
-    community_report_ids: list[str] = Field(
         default_factory=list,
-        description="Community-report ids this document contributed to",
+        description="Text-unit ids of this document. Every other artifact is "
+        "found in the stores by the text units it cites, so removing the "
+        "document removes what it alone states and strips the rest",
     )
     error_info: str | None = Field(
         default=None, description="Error detail if status is FAILED"
@@ -141,12 +130,12 @@ class DocStatusRecord(BaseModel):
 
 
 class DocumentLineage(BaseModel):
-    """Per-document artifact attribution for an incremental commit.
+    """The text units one document produced in an incremental commit.
 
-    Lets the orchestrator record exactly which entities/relationships/text-units/
-    communities a single document produced (and under which index suffix), so a
-    later change/delete can remove that document's *exclusive* artifacts without
-    touching ones shared with surviving documents.
+    A text unit belongs to one document (its id derives from the document's
+    registry key), and every graph and vector artifact cites the text units
+    it was stated in, so the text units are all a later run needs to remove
+    what the document contributed.
     """
 
     doc_id: str = Field(description="Stable document id these artifacts belong to")
@@ -157,12 +146,11 @@ class DocumentLineage(BaseModel):
     file_path: str | None = Field(
         default=None, description="Source file path relative to the corpus root"
     )
-    entity_ids: list[str] = Field(default_factory=list)
-    relationship_ids: list[str] = Field(default_factory=list)
     text_unit_ids: list[str] = Field(default_factory=list)
-    community_ids: list[str] = Field(default_factory=list)
-    claim_ids: list[str] = Field(default_factory=list)
-    community_report_ids: list[str] = Field(default_factory=list)
+
+    # The per-artifact id lists of earlier releases are gone: passing one is
+    # an error, not silently ignored.
+    model_config = ConfigDict(extra="forbid")
 
 
 class DocumentDelta(BaseModel):
@@ -204,15 +192,6 @@ class DocumentDelta(BaseModel):
         description="The ``changed`` doc ids whose content and status alone "
         "would read unchanged: their stored extraction fingerprint differs "
         "from the run's, so they are re-extracted with the current settings",
-    )
-    orphan_overflow: list[str] = Field(
-        default_factory=list,
-        description="Owner doc ids of write-ahead lineage overflow the diff "
-        "read next to a record that is not PENDING, or next to no record, "
-        "sorted: overflow left by a commit or removal interrupted before "
-        "deleting it, which no later run reads. The incremental write-ahead "
-        "deletes it for the owners of its namespace. A store that does not "
-        "report it leaves it empty",
     )
 
     @property

@@ -14,7 +14,7 @@ pytestmark = pytest.mark.unit
 def test_record_defaults_to_pending() -> None:
     record = DocStatusRecord(doc_id="d1", content_hash="h1")
     assert record.status is DocStatus.PENDING
-    assert record.entity_ids == []
+    assert record.text_unit_ids == []
 
 
 def test_empty_delta_is_empty() -> None:

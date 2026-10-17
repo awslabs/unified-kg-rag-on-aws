@@ -22,52 +22,34 @@ import boto3
 from botocore.config import Config as BotoConfig
 from botocore.exceptions import BotoCoreError, ClientError
 
+from unified_kg_rag.domain.ingestion.delta_detector import scope_namespace
 from unified_kg_rag.domain.models import (
     Config,
     DocStatus,
     DocStatusRecord,
     DocumentDelta,
-    DocumentLineage,
 )
 from unified_kg_rag.shared import (
+    ConfigurationError,
     DataProcessingError,
     DocStatusRegistryError,
     get_logger,
 )
+from unified_kg_rag.shared.utils.document_identity import doc_id_namespace
 
 if TYPE_CHECKING:
     from types_boto3_dynamodb import DynamoDBClient
 
 logger = get_logger(__name__)
 
-# DynamoDB stores list attributes as lists; empty lists are allowed. The doc_id
-# is the partition key.
-_PARTITION_KEY = "doc_id"
+# The index namespace (the doc_id's prefix, doc_id_namespace) is the partition
+# key and the doc_id the sort key, so a run reads its own namespace with one
+# Query instead of scanning every tenant's records.
+_PARTITION_KEY = "namespace"
+_SORT_KEY = "doc_id"
 _SCOPE_ATTRIBUTE = "registry_scope"
 # DynamoDB rejects an item over 400 KB (attribute names plus values).
 _MAX_ITEM_BYTES = 400 * 1024
-# Lineage overflow (see add_lineage_overflow) lives in the same table, one
-# item per part under the key "<doc_id>#pending#<n>", n = 0, 1, ... with no
-# gap (each part is written only after the one before it). The record-kind
-# attribute tells a part from a registry record: every read of records (get,
-# get_many, list_all, diff) skips the parts.
-_RECORD_KIND_ATTRIBUTE = "record_kind"
-_OVERFLOW_KIND = "lineage_overflow"
-_OVERFLOW_OWNER_ATTRIBUTE = "owner_doc_id"
-# Ids per part, well under the item limit: room for the key, kind and owner
-# attributes, and for a size count slightly off DynamoDB's (parts are cheap).
-_OVERFLOW_PART_BYTES = 380 * 1024
-# Parts probed per document in each BatchGetItem round after the first, which
-# probes part 0 only (most documents have no overflow).
-_OVERFLOW_PROBE = 8
-_LINEAGE_FIELDS = (
-    "entity_ids",
-    "relationship_ids",
-    "text_unit_ids",
-    "community_ids",
-    "claim_ids",
-    "community_report_ids",
-)
 # botocore's standard retry mode backs off and retries throttling
 # (ThrottlingException, ProvisionedThroughputExceededException,
 # RequestLimitExceeded) and transient 5xx/connection errors. Ten attempts ride
@@ -116,9 +98,6 @@ class DynamoDBDocStatusStore:
             region_name=config.aws.region_name,
         )
         self._client: DynamoDBClient | None = None
-        # Overflow part keys by owner doc_id, as the last full scan (diff or
-        # list_all) found them; None before the first scan.
-        self._scanned_overflow: dict[str, set[str]] | None = None
 
     @property
     def client(self) -> DynamoDBClient:
@@ -127,6 +106,8 @@ class DynamoDBDocStatusStore:
             if self.ddb_config.create_table_if_missing:
                 with self._registry_errors("create the table"):
                     self._ensure_table(client)
+            with self._registry_errors("describe the table"):
+                self._check_key_schema(client)
             self._client = client
         return self._client
 
@@ -153,8 +134,8 @@ class DynamoDBDocStatusStore:
             )
         elif code in _ACCESS_CODES:
             hint = (
-                "Refresh the credentials, or grant the caller dynamodb:Scan, "
-                "GetItem, BatchGetItem, PutItem, BatchWriteItem, DeleteItem and "
+                "Refresh the credentials, or grant the caller dynamodb:Query, "
+                "Scan, GetItem, BatchGetItem, PutItem, BatchWriteItem, DeleteItem and "
                 "DescribeTable on "
                 "the table "
                 "(and the use of the table's KMS key, if it has one)."
@@ -175,6 +156,28 @@ class DynamoDBDocStatusStore:
             "its own documents)."
         )
 
+    def _check_key_schema(self, client: DynamoDBClient) -> None:
+        """Raise :class:`ConfigurationError` for a table of the earlier
+        registry format (keyed by ``doc_id`` alone): its records hold
+        per-artifact lineage this release does not read. A missing table is
+        left to the first read, which names the fix."""
+        try:
+            table = client.describe_table(TableName=self.table_name)["Table"]
+        except ClientError as e:
+            if e.response.get("Error", {}).get("Code") in _MISSING_TABLE_CODES:
+                return
+            raise
+        keys = {k["AttributeName"]: k["KeyType"] for k in table.get("KeySchema", [])}
+        if keys != {_PARTITION_KEY: "HASH", _SORT_KEY: "RANGE"}:
+            raise ConfigurationError(
+                f"Doc-status registry: DynamoDB table '{self.table_name}' has "
+                f"the key schema {keys} of an earlier release; this release "
+                f"keys records by '{_PARTITION_KEY}' (partition) and "
+                f"'{_SORT_KEY}' (sort). Point aws.dynamodb.table_name (env "
+                "GRAPHRAG_DOC_STATUS_TABLE) at a new table, or deploy the CDK "
+                "stack's new table, and re-run with indexing.reset: true."
+            )
+
     def _ensure_table(self, client: DynamoDBClient) -> None:
         """Create the doc-status table on first use if it does not exist."""
         try:
@@ -187,9 +190,13 @@ class DynamoDBDocStatusStore:
         logger.info("Creating DynamoDB doc-status table '%s'", self.table_name)
         client.create_table(
             TableName=self.table_name,
-            KeySchema=[{"AttributeName": _PARTITION_KEY, "KeyType": "HASH"}],
+            KeySchema=[
+                {"AttributeName": _PARTITION_KEY, "KeyType": "HASH"},
+                {"AttributeName": _SORT_KEY, "KeyType": "RANGE"},
+            ],
             AttributeDefinitions=[
-                {"AttributeName": _PARTITION_KEY, "AttributeType": "S"}
+                {"AttributeName": _PARTITION_KEY, "AttributeType": "S"},
+                {"AttributeName": _SORT_KEY, "AttributeType": "S"},
             ],
             BillingMode=self.ddb_config.billing_mode,  # type: ignore[arg-type]
         )
@@ -197,13 +204,9 @@ class DynamoDBDocStatusStore:
 
     def get(self, doc_id: str) -> DocStatusRecord | None:
         with self._registry_errors("read a record"):
-            response = self.client.get_item(
-                TableName=self.table_name, Key={_PARTITION_KEY: {"S": doc_id}}
-            )
+            response = self.client.get_item(TableName=self.table_name, Key=_key(doc_id))
         item = response.get("Item")
-        if not item or _is_overflow(item):
-            return None
-        return self._deserialize(item)
+        return self._deserialize(item) if item else None
 
     def get_many(self, doc_ids: Iterable[str]) -> dict[str, DocStatusRecord]:
         """Read the stored ``doc_ids`` with ``BatchGetItem``, 100 keys per call.
@@ -219,8 +222,6 @@ class DynamoDBDocStatusStore:
         for start in range(0, len(unique), _BATCH_GET_SIZE):
             batch = unique[start : start + _BATCH_GET_SIZE]
             for item in self._batch_get(batch):
-                if _is_overflow(item):
-                    continue
                 record = self._deserialize(item)
                 records[record.doc_id] = record
         return records
@@ -228,7 +229,7 @@ class DynamoDBDocStatusStore:
     def _batch_get(
         self, keys: list[str], consistent: bool = False
     ) -> list[dict[str, Any]]:
-        table: dict[str, Any] = {"Keys": [{_PARTITION_KEY: {"S": k}} for k in keys]}
+        table: dict[str, Any] = {"Keys": [_key(k) for k in keys]}
         if consistent:
             table["ConsistentRead"] = True
         request: dict[str, Any] = {self.table_name: table}
@@ -252,11 +253,9 @@ class DynamoDBDocStatusStore:
     def put(self, record: DocStatusRecord) -> None:
         """Write ``record``; raise ``DataProcessingError`` if it is over 400 KB.
 
-        The record holds every artifact id of the document (~36 bytes each),
-        so one item fits roughly 10,000 ids; a larger document must be split
-        into smaller files. (A write-ahead record that does not fit keeps its
-        extra ids in lineage overflow instead, see
-        :meth:`add_lineage_overflow`.)
+        The record holds the document's text-unit ids (~36 bytes each), so one
+        item fits roughly 10,000 of them; a larger document must be split
+        into smaller files.
         """
         item = self._sized_item(record)
         with self._registry_errors("write a record"):
@@ -302,171 +301,16 @@ class DynamoDBDocStatusStore:
         if size > _MAX_ITEM_BYTES:
             raise DataProcessingError(
                 f"Doc-status record for '{record.file_path or record.doc_id}' "
-                f"lists {_lineage_size(record)} artifact ids ({size} bytes), "
-                "over the DynamoDB 400 KB item limit: the document produces "
-                "more artifacts than one registry item holds (roughly 10,000 "
-                "ids). Split the document into smaller files"
+                f"lists {len(record.text_unit_ids)} text units ({size} bytes), "
+                "over the DynamoDB 400 KB item limit: the document has more "
+                "chunks than one registry item holds (roughly 10,000). Split "
+                "the document into smaller files"
             )
         return item
 
     def record_fits(self, record: DocStatusRecord) -> bool:
         """Whether ``record`` is within the DynamoDB 400 KB item limit."""
         return self._item_size(self._serialize(record)) <= _MAX_ITEM_BYTES
-
-    def add_lineage_overflow(self, lineages: Iterable[DocumentLineage]) -> None:
-        """Append each lineage's ids not yet in its overflow, as new parts.
-
-        Parts are only appended (from the first free index) until
-        :meth:`delete_lineage_overflow` removes them all, so an interrupted
-        append can lose only the ids it was adding, never earlier ones. The
-        new parts are written in index order, each only once the one before
-        it is stored (one ``BatchWriteItem`` round per part index, all
-        documents together): a ``BatchWriteItem`` can store any subset of
-        its items, and a later part stored without an earlier one would never
-        be read back.
-        """
-        wanted: dict[str, dict[str, set[str]]] = {}
-        for lineage in lineages:
-            fields = wanted.setdefault(lineage.doc_id, {})
-            for name in _LINEAGE_FIELDS:
-                fields.setdefault(name, set()).update(getattr(lineage, name))
-        if not wanted:
-            return
-        existing = self._read_overflow(list(wanted))
-        # rounds[i]: the i-th new part of every document that has one.
-        rounds: list[list[dict[str, Any]]] = []
-        for doc_id, fields in wanted.items():
-            parts = existing.get(doc_id, [])
-            stored = _merge_parts(parts)
-            new = {
-                name: sorted(fields[name] - set(stored[name]))
-                for name in _LINEAGE_FIELDS
-            }
-            for offset, chunk in enumerate(_chunk_lineage(new)):
-                if offset == len(rounds):
-                    rounds.append([])
-                rounds[offset].append(
-                    _overflow_item(doc_id, len(parts) + offset, chunk)
-                )
-        for items in rounds:
-            for start in range(0, len(items), _BATCH_WRITE_SIZE):
-                self._batch_write(items[start : start + _BATCH_WRITE_SIZE])
-
-    def get_lineage_overflow(
-        self, doc_ids: Iterable[str]
-    ) -> dict[str, DocumentLineage]:
-        """Read the overflow of ``doc_ids`` (batched; documents without any
-        cost one key each)."""
-        return {
-            doc_id: DocumentLineage.model_validate(
-                {"doc_id": doc_id, **_merge_parts(parts)}
-            )
-            for doc_id, parts in self._read_overflow(list(doc_ids)).items()
-        }
-
-    def delete_lineage_overflow(self, doc_ids: Iterable[str]) -> None:
-        """Delete every overflow part of ``doc_ids``, the last part first, so
-        an interrupted delete leaves a gap-free prefix that still reads back.
-
-        Parts after a gap are deleted too (left by an append that stored a
-        later part without an earlier one, before appends wrote parts in
-        order): those the last full scan (``diff``, ``list_all``) found for
-        the documents besides the gap-free parts read now (appends write in
-        order, so a part added since the scan follows them), or before any
-        scan, those a probe that does not stop at a missing part finds
-        (``_OVERFLOW_PROBE`` parts per round, while a round finds any).
-        """
-        owners = list(dict.fromkeys(doc_ids))
-        if not owners:
-            return
-        found: dict[str, set[str]]
-        if self._scanned_overflow is None:
-            found = self._probe_overflow_keys(owners)
-        else:
-            found = {
-                doc_id: {_overflow_key(doc_id, n) for n in range(len(parts))}
-                for doc_id, parts in self._read_overflow(owners).items()
-            }
-            for owner in owners:
-                found.setdefault(owner, set()).update(
-                    self._scanned_overflow.pop(owner, ())
-                )
-        keys = [
-            key
-            for owner in owners
-            for key in sorted(found.get(owner, ()), key=_overflow_part, reverse=True)
-        ]
-        with self._registry_errors("delete lineage overflow"):
-            for key in keys:
-                self.client.delete_item(
-                    TableName=self.table_name, Key={_PARTITION_KEY: {"S": key}}
-                )
-
-    def _probe_overflow_keys(self, doc_ids: list[str]) -> dict[str, set[str]]:
-        """``{doc_id: stored overflow part keys}``, past gaps: parts
-        ``0 .. _OVERFLOW_PROBE - 1`` of every document, then the next
-        ``_OVERFLOW_PROBE`` for those whose last round found any."""
-        found: dict[str, set[str]] = {}
-        probe = dict.fromkeys(doc_ids, 0)
-        while probe:
-            keys = [
-                _overflow_key(doc_id, n)
-                for doc_id, start in probe.items()
-                for n in range(start, start + _OVERFLOW_PROBE)
-            ]
-            hits: set[str] = set()
-            for start in range(0, len(keys), _BATCH_GET_SIZE):
-                batch = keys[start : start + _BATCH_GET_SIZE]
-                for item in self._batch_get(batch, consistent=True):
-                    if _is_overflow(item):
-                        hits.add(item[_PARTITION_KEY]["S"])
-            following: dict[str, int] = {}
-            for doc_id, start in probe.items():
-                window = {
-                    _overflow_key(doc_id, n)
-                    for n in range(start, start + _OVERFLOW_PROBE)
-                } & hits
-                if window:
-                    found.setdefault(doc_id, set()).update(window)
-                    following[doc_id] = start + _OVERFLOW_PROBE
-            probe = following
-        return found
-
-    def _read_overflow(self, doc_ids: list[str]) -> dict[str, list[dict[str, Any]]]:
-        """``{doc_id: [part 0, part 1, ...]}`` for the doc_ids with overflow.
-
-        Reads up to the first missing part: part 0 of every document first,
-        then ``_OVERFLOW_PROBE`` parts per round for the documents whose parts
-        have not ended yet.
-        """
-        found: dict[str, list[dict[str, Any]]] = {}
-        probe = dict.fromkeys(doc_ids, 0)
-        window = 1
-        while probe:
-            keys = [
-                _overflow_key(doc_id, n)
-                for doc_id, start in probe.items()
-                for n in range(start, start + window)
-            ]
-            items: dict[str, dict[str, Any]] = {}
-            for start in range(0, len(keys), _BATCH_GET_SIZE):
-                # Strongly consistent: an append numbers its parts after the
-                # ones read, so it must see every part written so far.
-                batch = keys[start : start + _BATCH_GET_SIZE]
-                for item in self._batch_get(batch, consistent=True):
-                    if _is_overflow(item):
-                        items[item[_PARTITION_KEY]["S"]] = item
-            following: dict[str, int] = {}
-            for doc_id, start in probe.items():
-                n = start
-                while n < start + window and _overflow_key(doc_id, n) in items:
-                    found.setdefault(doc_id, []).append(items[_overflow_key(doc_id, n)])
-                    n += 1
-                if n == start + window:
-                    following[doc_id] = n
-            probe = following
-            window = _OVERFLOW_PROBE
-        return found
 
     @staticmethod
     def _item_size(item: dict[str, Any]) -> int:
@@ -486,80 +330,66 @@ class DynamoDBDocStatusStore:
 
     def delete(self, doc_id: str) -> None:
         with self._registry_errors("delete a record"):
-            self.client.delete_item(
-                TableName=self.table_name, Key={_PARTITION_KEY: {"S": doc_id}}
+            self.client.delete_item(TableName=self.table_name, Key=_key(doc_id))
+
+    def _items(self, namespace: str | None, **kwargs: Any) -> Iterator[dict[str, Any]]:
+        """The items of ``namespace`` (one paginated Query), or of the whole
+        table (a Scan) for ``None``."""
+        if namespace is None:
+            paginator = self.client.get_paginator("scan")
+            pages = paginator.paginate(TableName=self.table_name, **kwargs)
+        else:
+            names = {
+                **kwargs.pop("ExpressionAttributeNames", {}),
+                "#ns": _PARTITION_KEY,
+            }
+            pages = self.client.get_paginator("query").paginate(
+                TableName=self.table_name,
+                KeyConditionExpression="#ns = :ns",
+                ExpressionAttributeNames=names,
+                ExpressionAttributeValues={":ns": {"S": namespace}},
+                **kwargs,
             )
+        for page in pages:
+            yield from page.get("Items", [])
+
+    def list_namespace(self, namespace: str) -> list[DocStatusRecord]:
+        with self._registry_errors("query the records"):
+            return [self._deserialize(item) for item in self._items(namespace)]
 
     def list_all(self) -> list[DocStatusRecord]:
-        records: list[DocStatusRecord] = []
         with self._registry_errors("scan the records"):
-            paginator = self.client.get_paginator("scan")
-            overflow: dict[str, set[str]] = {}
-            for page in paginator.paginate(TableName=self.table_name):
-                for item in page.get("Items", []):
-                    if _is_overflow(item):
-                        _note_overflow(overflow, item)
-                    else:
-                        records.append(self._deserialize(item))
-        self._scanned_overflow = overflow
-        return records
+            return [self._deserialize(item) for item in self._items(None)]
 
-    def _scan_fingerprints(
-        self,
-    ) -> dict[str, tuple[str, str | None, bool, bool, str | None]]:
-        """Scan only ``{doc_id: (content_hash, scope, failed, pending,
-        extraction_fingerprint)}``.
-
-        ``diff`` needs just the partition key, the content hash, the scope,
-        whether the record is FAILED or PENDING and its extraction
-        fingerprint,
-        so this uses a ``ProjectionExpression`` to fetch those attributes instead
-        of deserializing the full ``DocStatusRecord`` (content hash + six
-        artifact-id lists) for every row. (A full ``scan`` is still required
-        because deletion detection needs every stored doc_id of the scope.)
-        The lineage-overflow parts it passes are noted by owner
-        (``_scanned_overflow``).
-        """
-        fingerprints: dict[str, tuple[str, str | None, bool, bool, str | None]] = {}
-        overflow: dict[str, set[str]] = {}
-        paginator = self.client.get_paginator("scan")
-        for page in paginator.paginate(
-            TableName=self.table_name,
+    def _stored_states(
+        self, namespace: str | None
+    ) -> dict[str, tuple[str, str | None, bool, str | None]]:
+        """``{doc_id: (content_hash, scope, failed, extraction_fingerprint)}``
+        of ``namespace`` (every namespace for ``None``), projected: ``diff``
+        needs no text units."""
+        states: dict[str, tuple[str, str | None, bool, str | None]] = {}
+        for item in self._items(
+            namespace,
             # Attribute-name placeholders keep the projection clear of
             # DynamoDB reserved words.
-            ProjectionExpression=(
-                "#pk, #hash, #scope, #status, #kind, #owner, #extraction"
-            ),
+            ProjectionExpression="#id, #hash, #scope, #status, #extraction",
             ExpressionAttributeNames={
-                "#pk": _PARTITION_KEY,
+                "#id": _SORT_KEY,
                 "#hash": "content_hash",
                 "#extraction": "extraction_fingerprint",
                 "#scope": _SCOPE_ATTRIBUTE,
                 "#status": "status",
-                "#kind": _RECORD_KIND_ATTRIBUTE,
-                "#owner": _OVERFLOW_OWNER_ATTRIBUTE,
             },
         ):
-            for item in page.get("Items", []):
-                if _is_overflow(item):
-                    # Lineage overflow is no document: never new, changed,
-                    # deleted or a stored scope.
-                    _note_overflow(overflow, item)
-                    continue
-                doc_id = item.get(_PARTITION_KEY, {}).get("S")
-                content_hash = item.get("content_hash", {}).get("S", "")
-                scope = item.get(_SCOPE_ATTRIBUTE, {}).get("S")
-                status = item.get("status", {}).get("S")
-                if doc_id is not None:
-                    fingerprints[doc_id] = (
-                        content_hash,
-                        scope,
-                        status == DocStatus.FAILED.value,
-                        status == DocStatus.PENDING.value,
-                        item.get("extraction_fingerprint", {}).get("S"),
-                    )
-        self._scanned_overflow = overflow
-        return fingerprints
+            doc_id = item.get(_SORT_KEY, {}).get("S")
+            if doc_id is not None:
+                states[doc_id] = (
+                    item.get("content_hash", {}).get("S", ""),
+                    item.get(_SCOPE_ATTRIBUTE, {}).get("S"),
+                    item.get("status", {}).get("S") == DocStatus.FAILED.value,
+                    item.get("extraction_fingerprint", {}).get("S"),
+                )
+        return states
 
     def diff(
         self,
@@ -571,13 +401,16 @@ class DynamoDBDocStatusStore:
 
         Mirrors ``FakeDocStatusStore.diff`` exactly so the production and test
         implementations stay behaviourally identical: with ``scope``, only
-        stored records of that scope can be classified deleted. A FAILED
-        record is ``changed`` even with an unchanged hash, so it is retried;
-        so is a record whose extraction fingerprint is set and differs from
-        ``extraction_fingerprint`` (see ``DocStatusPort.diff``).
+        the scope's namespace is queried and only its records of that scope
+        can be classified deleted. A FAILED record is ``changed`` even with an
+        unchanged hash, so it is retried; so is a record whose extraction
+        fingerprint is set and differs from ``extraction_fingerprint`` (see
+        ``DocStatusPort.diff``).
         """
-        with self._registry_errors("scan the records"):
-            stored = self._scan_fingerprints()
+        namespace = scope_namespace(scope) if scope is not None else None
+        operation = "scan the records" if namespace is None else "query the records"
+        with self._registry_errors(operation):
+            stored = self._stored_states(namespace)
         delta = DocumentDelta()
         for doc_id, content_hash in incoming.items():
             if doc_id not in stored:
@@ -585,7 +418,7 @@ class DynamoDBDocStatusStore:
             elif stored[doc_id][0] != content_hash or stored[doc_id][2]:
                 delta.changed.append(doc_id)
             elif extraction_fingerprint is not None and (
-                stored[doc_id][4] not in (None, extraction_fingerprint)
+                stored[doc_id][3] not in (None, extraction_fingerprint)
             ):
                 delta.changed.append(doc_id)
                 delta.settings_changed.append(doc_id)
@@ -594,19 +427,12 @@ class DynamoDBDocStatusStore:
         incoming_ids = set(incoming)
         delta.deleted = [
             doc_id
-            for doc_id, (_, stored_scope, _, _, _) in stored.items()
+            for doc_id, (_, stored_scope, _, _) in stored.items()
             if doc_id not in incoming_ids and (scope is None or stored_scope == scope)
         ]
         # Already projected for the deletion filter: reporting it is free.
         delta.stored_scopes = sorted(
-            {s for _, s, _, _, _ in stored.values() if s is not None}
-        )
-        # Overflow is only read with a PENDING record: next to any other
-        # record, or none, it is left over (see DocumentDelta).
-        delta.orphan_overflow = sorted(
-            owner
-            for owner in self._scanned_overflow or {}
-            if owner not in stored or not stored[owner][3]
+            {s for _, s, _, _ in stored.values() if s is not None}
         )
         return delta
 
@@ -614,34 +440,16 @@ class DynamoDBDocStatusStore:
     def _serialize(record: DocStatusRecord) -> dict[str, Any]:
         """Convert a record into a DynamoDB item (low-level attribute format)."""
         item: dict[str, Any] = {
-            _PARTITION_KEY: {"S": record.doc_id},
+            _PARTITION_KEY: {"S": doc_id_namespace(record.doc_id)},
+            _SORT_KEY: {"S": record.doc_id},
             "content_hash": {"S": record.content_hash},
             "status": {"S": record.status.value},
             "suffix": {"S": record.suffix},
             _SCOPE_ATTRIBUTE: (
                 {"S": record.scope} if record.scope is not None else {"NULL": True}
             ),
-            "entity_ids": (
-                {"SS": record.entity_ids} if record.entity_ids else {"NULL": True}
-            ),
-            "relationship_ids": (
-                {"SS": record.relationship_ids}
-                if record.relationship_ids
-                else {"NULL": True}
-            ),
             "text_unit_ids": (
                 {"SS": record.text_unit_ids} if record.text_unit_ids else {"NULL": True}
-            ),
-            "community_ids": (
-                {"SS": record.community_ids} if record.community_ids else {"NULL": True}
-            ),
-            "claim_ids": (
-                {"SS": record.claim_ids} if record.claim_ids else {"NULL": True}
-            ),
-            "community_report_ids": (
-                {"SS": record.community_report_ids}
-                if record.community_report_ids
-                else {"NULL": True}
             ),
         }
         # Optional scalar string attributes.
@@ -671,18 +479,13 @@ class DynamoDBDocStatusStore:
 
         failure_count_cell = item.get("failure_count")
         return DocStatusRecord(
-            doc_id=item[_PARTITION_KEY]["S"],
+            doc_id=item[_SORT_KEY]["S"],
             content_hash=item["content_hash"]["S"],
             status=item["status"]["S"],
             suffix=_str("suffix") or "default",
             scope=_str(_SCOPE_ATTRIBUTE),
             file_path=_str("file_path"),
-            entity_ids=_str_set("entity_ids"),
-            relationship_ids=_str_set("relationship_ids"),
             text_unit_ids=_str_set("text_unit_ids"),
-            community_ids=_str_set("community_ids"),
-            claim_ids=_str_set("claim_ids"),
-            community_report_ids=_str_set("community_report_ids"),
             error_info=_str("error_info"),
             extraction_fingerprint=_str("extraction_fingerprint"),
             failure_count=(
@@ -702,70 +505,9 @@ def _backoff_before(attempt: int) -> None:
         time.sleep(min(_BATCH_GET_MAX_DELAY, _BATCH_GET_BASE_DELAY * 2**attempt))
 
 
-def _is_overflow(item: dict[str, Any]) -> bool:
-    """Whether ``item`` is a lineage-overflow part, not a registry record."""
-    return bool(item.get(_RECORD_KIND_ATTRIBUTE, {}).get("S") == _OVERFLOW_KIND)
-
-
-def _overflow_key(doc_id: str, part: int) -> str:
-    return f"{doc_id}#pending#{part}"
-
-
-def _overflow_part(key: str) -> int:
-    """The part number of overflow key ``key``."""
-    return int(key.rsplit("#", 1)[1])
-
-
-def _note_overflow(found: dict[str, set[str]], item: dict[str, Any]) -> None:
-    """Add overflow part ``item``'s key under its owner doc_id to ``found``."""
-    owner = item.get(_OVERFLOW_OWNER_ATTRIBUTE, {}).get("S")
-    key = item.get(_PARTITION_KEY, {}).get("S")
-    if owner is not None and key is not None:
-        found.setdefault(owner, set()).add(key)
-
-
-def _lineage_size(record: DocStatusRecord) -> int:
-    return sum(len(getattr(record, name)) for name in _LINEAGE_FIELDS)
-
-
-def _merge_parts(parts: list[dict[str, Any]]) -> dict[str, list[str]]:
-    """``{lineage field: sorted ids}`` over overflow ``parts``."""
+def _key(doc_id: str) -> dict[str, Any]:
+    """The item key of ``doc_id``: its namespace and itself."""
     return {
-        name: sorted(
-            {value for part in parts for value in part.get(name, {}).get("SS", [])}
-        )
-        for name in _LINEAGE_FIELDS
+        _PARTITION_KEY: {"S": doc_id_namespace(doc_id)},
+        _SORT_KEY: {"S": doc_id},
     }
-
-
-def _chunk_lineage(lineage: dict[str, list[str]]) -> list[dict[str, list[str]]]:
-    """Split ``{lineage field: ids}`` into parts that each fit one item."""
-    parts: list[dict[str, list[str]]] = []
-    current: dict[str, list[str]] = {}
-    size = 0
-    for name in _LINEAGE_FIELDS:
-        for value in lineage.get(name, []):
-            cost = len(value.encode()) + (0 if name in current else len(name))
-            if current and size + cost > _OVERFLOW_PART_BYTES:
-                parts.append(current)
-                current, size = {}, 0
-                cost = len(value.encode()) + len(name)
-            current.setdefault(name, []).append(value)
-            size += cost
-    if current:
-        parts.append(current)
-    return parts
-
-
-def _overflow_item(
-    doc_id: str, part: int, lineage: dict[str, list[str]]
-) -> dict[str, Any]:
-    item: dict[str, Any] = {
-        _PARTITION_KEY: {"S": _overflow_key(doc_id, part)},
-        _RECORD_KIND_ATTRIBUTE: {"S": _OVERFLOW_KIND},
-        _OVERFLOW_OWNER_ATTRIBUTE: {"S": doc_id},
-    }
-    for name, ids in lineage.items():
-        if ids:
-            item[name] = {"SS": ids}
-    return item

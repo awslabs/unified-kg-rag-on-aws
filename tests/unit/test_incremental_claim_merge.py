@@ -98,9 +98,7 @@ def _run(store, manager, corpus: list[str], suffix: str = "default") -> None:
     if not todo:
         return
     units, entities, claims = _extract([d.file_path for d in todo], suffix)
-    lineages = build_document_lineage(
-        todo, units, entities, [], [], claims, suffix=suffix
-    )
+    lineages = build_document_lineage(todo, units, suffix=suffix)
     inc.write_ahead(delta, lineages)
     inc.commit(
         lineages=lineages,
@@ -228,7 +226,7 @@ def test_remapped_claims_are_rekeyed_and_merged() -> None:
     first, second = delta("e-acme-2", "a.txt"), delta("e-acme-3", "b.txt")
     remap = {"default": {"e-acme-2": "e-acme", "e-acme-3": "e-acme"}}
 
-    _, (claim,), claim_id_remap = _remap_references(None, [first, second], remap)
+    _, (claim,) = _remap_references(None, [first, second], remap)
 
     expected = resolved_claim_id(
         _claim("x").model_copy(update={"subject_id": "e-acme"})
@@ -236,4 +234,3 @@ def test_remapped_claims_are_rekeyed_and_merged() -> None:
     assert claim.id == expected
     assert claim.subject_id == "e-acme"
     assert claim.text_unit_ids == ["tu-a.txt", "tu-b.txt"]
-    assert claim_id_remap == {"default": {first.id: expected, second.id: expected}}

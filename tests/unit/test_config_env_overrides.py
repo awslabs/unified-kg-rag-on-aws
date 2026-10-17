@@ -116,7 +116,7 @@ def test_invalid_observability_backend_from_env(
 
 def test_unset_env_keeps_defaults() -> None:
     cfg = ConfigLoader().load_config()
-    assert cfg.aws.dynamodb.table_name == "unified-kg-rag-on-aws-doc-status"
+    assert cfg.aws.dynamodb.table_name == "unified-kg-rag-on-aws-doc-status-v2"
     assert cfg.aws.dynamodb.create_table_if_missing is True
 
 

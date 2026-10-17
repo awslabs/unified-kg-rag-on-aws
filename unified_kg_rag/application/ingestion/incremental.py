@@ -7,13 +7,13 @@ Ties together the M2 pieces around a :class:`DocStatusPort`:
 1. detect the corpus delta (new / changed / unchanged / deleted),
 2. write ahead: record every new and changed document PENDING, with a
    content hash no document has and the union of its stored and planned
-   lineage (the part over the registry's item limit in lineage overflow),
-   before any store write (:meth:`IncrementalIndexer.write_ahead`),
-3. for deleted (and changed) documents, remove their previously indexed
-   artifacts from the live stores using the lineage recorded in the registry,
+   text units, before any store write (:meth:`IncrementalIndexer.write_ahead`),
+3. for deleted (and changed) documents, remove what their text units stated
+   from the live stores, found there by the text units every artifact cites
+   (``IndexingManager.remove_text_units``),
 4. upsert the freshly extracted delta artifacts (idempotent),
 5. commit: replace the PENDING records with the new content hashes and
-   artifact lineage.
+   text units.
 
 A run interrupted anywhere after step 2 leaves PENDING records: the next run
 classifies those documents changed (re-extracted, even when their content went
@@ -28,11 +28,9 @@ stays storage-focused and is exercised end-to-end with in-memory fakes.
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Callable, Collection, Sequence
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-
-from pydantic import BaseModel, Field
 
 from unified_kg_rag.domain.ingestion.claim_resolver import resolved_claim_id
 from unified_kg_rag.domain.ingestion.community_drift import (
@@ -45,7 +43,6 @@ from unified_kg_rag.domain.ingestion.delta_detector import (
     document_doc_id,
     filter_documents_to_process,
     fingerprint_documents,
-    legacy_doc_id,
     other_local_scopes,
     registry_scope,
     scope_namespace,
@@ -99,133 +96,58 @@ logger = get_logger(__name__)
 def build_document_lineage(
     documents: list[Document],
     text_units: list[TextUnit],
-    entities: list[Entity],
-    relationships: list[Relationship],
-    communities: list[Community],
-    claims: list[Claim],
-    community_reports: list[CommunityReport] | None = None,
     suffix: str = DEFAULT_NAMESPACE,
 ) -> list[DocumentLineage]:
-    """Attribute extracted artifacts to their source documents.
+    """Each document's text units, keyed by its stable ``doc_id``.
 
-    Walks the per-run ``document_id`` linkage (``TextUnit.document_ids`` and the
-    artifacts' ``text_unit_ids``) and keys the resulting lineage by the *stable*
-    ``doc_id`` so a later run can remove a document's exclusive artifacts. An
-    artifact shared across documents is attributed to each — the registry-level
-    exclusive-id computation later subtracts ids still referenced by survivors.
+    A text unit belongs to one document (its id derives from the document's
+    registry key, see ``assign_registry_source``), and every artifact cites
+    the text units it was stated in, so a document's text units are all a
+    later run needs to find what it contributed.
     """
-    # Map per-run document_id -> stable doc_id.
     docid_to_stable = {doc.document_id: document_doc_id(doc) for doc in documents}
-    # Map text_unit id -> set of stable doc_ids it belongs to.
-    tu_to_docs: dict[str, set[str]] = {}
-    docs_by_stable: dict[str, set[str]] = defaultdict(set)
-    for tu in text_units:
-        stable_ids = {
-            docid_to_stable[d] for d in (tu.document_ids or []) if d in docid_to_stable
-        }
-        if stable_ids:
-            tu_to_docs[tu.id] = stable_ids
-            for s in stable_ids:
-                docs_by_stable[s].add(tu.id)
-
-    entity_ids: dict[str, set[str]] = defaultdict(set)
-    relationship_ids: dict[str, set[str]] = defaultdict(set)
-    claim_ids: dict[str, set[str]] = defaultdict(set)
-    community_ids: dict[str, set[str]] = defaultdict(set)
-    community_report_ids: dict[str, set[str]] = defaultdict(set)
-
-    def _attribute(artifact_id: str, tu_ids: list[str] | None, bucket: dict) -> None:
-        for tu_id in tu_ids or []:
-            for stable in tu_to_docs.get(tu_id, ()):  # noqa: B007
-                bucket[stable].add(artifact_id)
-
-    for e in entities:
-        _attribute(e.id, e.text_unit_ids, entity_ids)
-    for r in relationships:
-        _attribute(r.id, r.text_unit_ids, relationship_ids)
-        # A relationship's endpoints belong to its documents too: an entity
-        # one document extracts may be the endpoint of another's relationship
-        # (named there only inside it). Removing the first document must keep
-        # it, as a fresh build of the survivors would: deleting the entity
-        # also drops every edge incident to it.
-        for endpoint in (r.source_id, r.target_id):
-            if endpoint:
-                _attribute(endpoint, r.text_unit_ids, entity_ids)
-    for c in claims:
-        _attribute(c.id, c.text_unit_ids, claim_ids)
-
-    # Communities (and the reports that summarize them) attach to documents
-    # through the community's member text units.
-    community_docs: dict[str, set[str]] = {}
-    for comm in communities:
-        _attribute(comm.id, comm.text_unit_ids, community_ids)
-        community_docs[comm.id] = {
-            stable
-            for tu_id in (comm.text_unit_ids or [])
-            for stable in tu_to_docs.get(tu_id, ())
-        }
-    for report in community_reports or []:
-        for stable in community_docs.get(report.community_id, ()):  # noqa: B007
-            community_report_ids[stable].add(report.id)
-
-    lineages = []
-    for doc in documents:
-        stable = docid_to_stable[doc.document_id]
-        lineages.append(
-            DocumentLineage(
-                doc_id=stable,
-                suffix=suffix,
-                file_path=doc.metadata.get(RELATIVE_PATH_KEY) or doc.file_path,
-                text_unit_ids=sorted(docs_by_stable.get(stable, set())),
-                entity_ids=sorted(entity_ids.get(stable, set())),
-                relationship_ids=sorted(relationship_ids.get(stable, set())),
-                claim_ids=sorted(claim_ids.get(stable, set())),
-                community_ids=sorted(community_ids.get(stable, set())),
-                community_report_ids=sorted(community_report_ids.get(stable, set())),
-            )
+    units_by_doc: dict[str, list[str]] = defaultdict(list)
+    for unit in text_units:
+        for document_id in unit.document_ids or []:
+            if document_id in docid_to_stable:
+                units_by_doc[docid_to_stable[document_id]].append(unit.id)
+    return [
+        DocumentLineage(
+            doc_id=docid_to_stable[doc.document_id],
+            suffix=suffix,
+            file_path=doc.metadata.get(RELATIVE_PATH_KEY) or doc.file_path,
+            text_unit_ids=sorted(set(units_by_doc[docid_to_stable[doc.document_id]])),
         )
-    return lineages
+        for doc in documents
+    ]
 
 
-class _SuffixRemoval(BaseModel):
-    """What removing some documents does to one suffix's artifacts."""
-
-    # Artifacts no surviving document references: deleted.
-    exclusive_ids: list[str] = Field(default_factory=list)
-    # Entities/relationships/claims a survivor still references: kept, but
-    # stripped of the removed text units.
-    shared_entity_ids: list[str] = Field(default_factory=list)
-    shared_relationship_ids: list[str] = Field(default_factory=list)
-    shared_claim_ids: list[str] = Field(default_factory=list)
-    removed_text_unit_ids: list[str] = Field(default_factory=list)
-
-
-# Indexed documents with entities, and entities (text units) of them, probed in
-# the graph (vector) store before a delta run writes
-# (IncrementalIndexer.check_graph_holds_registry).
-# Stored records are read in batches of _PROBE_DOCUMENTS until that many are
-# found, so a corpus that starts with entity-less pages is still probed.
-_PROBE_DOCUMENTS = 20
-_PROBE_ENTITIES = 100
-
-
-def _store_holds_any(
-    ids_by_suffix: dict[str, list[str]],
-    read: Callable[[list[str], str], Sequence[Any] | None],
-) -> bool:
-    """Whether ``read`` finds any of a few of each suffix's ids: true with
-    nothing to probe, or when ``read`` returns ``None`` (cannot tell)."""
-    probes = {
-        suffix: sorted(set(ids))[:_PROBE_ENTITIES]
-        for suffix, ids in ids_by_suffix.items()
-        if ids
+def artifact_owners(
+    lineages: Sequence[DocumentLineage],
+    artifacts: Iterable[Any],
+) -> dict[str, set[str]]:
+    """``{artifact id: doc ids}``: the documents whose text units each
+    artifact (any item with ``text_unit_ids``, or a text unit) cites."""
+    owner_of_unit = {
+        unit_id: lineage.doc_id
+        for lineage in lineages
+        for unit_id in lineage.text_unit_ids
     }
-    for suffix, ids in probes.items():
-        found = read(ids, suffix)
-        if found is None or found:
-            return True
-    return not probes
+    owners: dict[str, set[str]] = defaultdict(set)
+    for item in artifacts:
+        if item.id in owner_of_unit:
+            owners[item.id].add(owner_of_unit[item.id])
+        for unit_id in getattr(item, "text_unit_ids", None) or []:
+            if unit_id in owner_of_unit:
+                owners[item.id].add(owner_of_unit[unit_id])
+    return owners
 
+
+# Indexed documents' text units probed in the stores before a delta run writes
+# (IncrementalIndexer.check_graph_holds_registry). Stored records are read in
+# batches of _PROBE_DOCUMENTS until that many with text units are found.
+_PROBE_DOCUMENTS = 20
+_PROBE_UNITS = 100
 
 _EXTRACTION_FAILED = "extraction failed on some text units"
 _WRITE_FAILED = "writing some of its artifacts to the stores failed"
@@ -233,109 +155,6 @@ _WRITE_AHEAD_INFO = (
     "indexing in progress (write-ahead record); a run that ends with this "
     "record re-extracts the document, or removes its artifacts if it is gone"
 )
-_LINEAGE_FIELDS = (
-    "entity_ids",
-    "relationship_ids",
-    "text_unit_ids",
-    "community_ids",
-    "claim_ids",
-    "community_report_ids",
-)
-
-
-def _artifact_ids(record: DocStatusRecord | DocumentLineage) -> list[str]:
-    return (
-        record.entity_ids
-        + record.relationship_ids
-        + record.text_unit_ids
-        + record.community_ids
-        + record.claim_ids
-        + record.community_report_ids
-    )
-
-
-# (item suffix, index namespace or None when the record has no scope).
-_NamespaceKey = tuple[str, str | None]
-
-
-def _namespace_key(
-    record: DocStatusRecord, known: Collection[str] = ()
-) -> _NamespaceKey:
-    """The removal-planning group of ``record``.
-
-    ``record.suffix`` is the item suffix the indexers are called with
-    (``index_value``, ``default`` when unset); the index namespace adds
-    ``indexing.additional_suffix`` and is read from the record's scope (see
-    ``scope_namespace``).
-
-    A record without a scope has its namespace only when its key proves it:
-    a ``file_path`` whose legacy key ``compute_doc_id(file_path, namespace)``
-    is its ``doc_id`` for one of the ``known`` namespaces. Any other
-    scope-less record is of an unknown namespace (``None``), which removal
-    planning treats as part of every namespace of its suffix: a record of
-    the initial release (keyed by the path alone, no ``file_path``), a
-    pipeline record of a namespace no scope in the registry names yet, a
-    record of the direct API without a scope (keyed by the bare suffix,
-    whatever ``indexing.additional_suffix`` the indexers write under) or
-    one under a caller's own ``doc_id``.
-    """
-    if record.scope is not None:
-        return record.suffix, scope_namespace(record.scope)
-    if record.file_path is not None:
-        for namespace in known:
-            if record.doc_id == compute_doc_id(record.file_path, namespace):
-                return record.suffix, namespace
-    return record.suffix, None
-
-
-def _union_lineage(
-    record: DocStatusRecord | DocumentLineage,
-    lineage: DocumentLineage | DocStatusRecord | None,
-) -> dict[str, list[str]]:
-    """``record``'s artifact ids plus ``lineage``'s, per lineage field."""
-    if lineage is None:
-        return {name: list(getattr(record, name)) for name in _LINEAGE_FIELDS}
-    return {
-        name: sorted(set(getattr(record, name)) | set(getattr(lineage, name)))
-        for name in _LINEAGE_FIELDS
-    }
-
-
-def _lineage_minus(
-    lineage: DocStatusRecord | DocumentLineage,
-    *others: DocStatusRecord | DocumentLineage | None,
-) -> dict[str, list[str]]:
-    """``lineage``'s artifact ids that none of ``others`` lists, per field."""
-    return {
-        name: sorted(
-            set(getattr(lineage, name)).difference(
-                *(getattr(other, name) for other in others if other is not None)
-            )
-        )
-        for name in _LINEAGE_FIELDS
-    }
-
-
-def _lineage(doc_id: str, ids: dict[str, list[str]]) -> DocumentLineage:
-    """A lineage of ``doc_id`` with ``{lineage field: ids}``."""
-    return DocumentLineage.model_validate({"doc_id": doc_id, **ids})
-
-
-def _remap_lineage(
-    lineage: DocumentLineage, id_remap: dict[str, str]
-) -> DocumentLineage:
-    """Point a lineage's entity/relationship/claim ids at the ids written."""
-    if not id_remap:
-        return lineage
-    return lineage.model_copy(
-        update={
-            "entity_ids": sorted({id_remap.get(i, i) for i in lineage.entity_ids}),
-            "relationship_ids": sorted(
-                {id_remap.get(i, i) for i in lineage.relationship_ids}
-            ),
-            "claim_ids": sorted({id_remap.get(i, i) for i in lineage.claim_ids}),
-        }
-    )
 
 
 def _remap_ids(ids: list[str] | None, id_remap: dict[str, str]) -> list[str]:
@@ -344,18 +163,16 @@ def _remap_ids(ids: list[str] | None, id_remap: dict[str, str]) -> list[str]:
 
 def _remap_claims(
     claims: list[Claim], id_remap_by_suffix: dict[str, dict[str, str]]
-) -> tuple[list[Claim], dict[str, dict[str, str]]]:
+) -> list[Claim]:
     """Point claims' subjects/objects at the entity ids the merge kept.
 
     A claim's id derives from its subject and object entity ids
     (``resolved_claim_id``), so a remapped claim is re-keyed: it then has the
     id the full build gives it and that a stored claim of the same fact has,
     so ``merge_claims`` folds the two instead of storing a duplicate. Delta
-    claims that now share an id are merged. Returns the claims and
-    ``{suffix: {old claim id: new claim id}}`` for the lineage.
+    claims that now share an id are merged.
     """
     by_key: dict[tuple[str, str], Claim] = {}
-    claim_id_remap: dict[str, dict[str, str]] = {}
     for claim in claims:
         suffix = BaseIndexer.get_suffix(claim)
         remap = id_remap_by_suffix.get(suffix, {})
@@ -372,7 +189,6 @@ def _remap_claims(
             )
             claim_id = resolved_claim_id(claim)
             if claim_id != claim.id:
-                claim_id_remap.setdefault(suffix, {})[claim.id] = claim_id
                 claim = claim.model_copy(
                     update={"id": claim_id, "short_id": claim_id[:8]}
                 )
@@ -380,22 +196,18 @@ def _remap_claims(
         if key in by_key:
             claim = merge_claims([by_key[key]], [claim])[0]
         by_key[key] = claim
-    return list(by_key.values()), claim_id_remap
+    return list(by_key.values())
 
 
 def _remap_references(
     communities: list[Community] | None,
     claims: list[Claim] | None,
     id_remap_by_suffix: dict[str, dict[str, str]],
-) -> tuple[list[Community] | None, list[Claim] | None, dict[str, dict[str, str]]]:
+) -> tuple[list[Community] | None, list[Claim] | None]:
     """Point communities' members and claims' subjects/objects at the ids the
-    cross-run merge kept, so none references an id that is never written.
-
-    Also returns ``{suffix: {old claim id: new claim id}}`` for the claims
-    re-keyed by :func:`_remap_claims`.
-    """
+    cross-run merge kept, so none references an id that is never written."""
     if not id_remap_by_suffix:
-        return communities, claims, {}
+        return communities, claims
     remapped_communities = None
     if communities is not None:
         remapped_communities = []
@@ -414,9 +226,8 @@ def _remap_references(
                 else community
             )
     if claims is None:
-        return remapped_communities, None, {}
-    remapped_claims, claim_id_remap = _remap_claims(claims, id_remap_by_suffix)
-    return remapped_communities, remapped_claims, claim_id_remap
+        return remapped_communities, None
+    return remapped_communities, _remap_claims(claims, id_remap_by_suffix)
 
 
 class IncrementalIndexer:
@@ -440,12 +251,10 @@ class IncrementalIndexer:
         # recorded on every committed document; None records none.
         self.extraction_fingerprint = extraction_fingerprint
         # Write-ahead state of the current run (see write_ahead): the records
-        # stored before it (with an interrupted run's lineage overflow), the
-        # PENDING records written, the ids held in lineage overflow for them,
-        # and the documents being (re)indexed.
+        # stored before it, the PENDING records written, and the documents
+        # being (re)indexed.
         self._prior: dict[str, DocStatusRecord] = {}
         self._pending: dict[str, DocStatusRecord] = {}
-        self._overflow: dict[str, DocumentLineage] = {}
         self._in_flight: set[str] = set()
         # Community drift of the last commit (None without communities).
         self.community_drift: CommunityDrift | None = None
@@ -458,32 +267,31 @@ class IncrementalIndexer:
         Gremlin Server restarted, say) or vector store (its database file
         deleted or moved, ``providers.vector.sqlite_path`` changed), the diff
         calls those documents unchanged and they would never be indexed
-        again. Probes the entities (graph store) and text units (vector
-        store, ``VectorIndexer.read_text_unit_ids``) of a few indexed
-        documents of the run's namespace; when a store holds none of them,
-        raises :class:`DataProcessingError`.
-
-        The probed documents are ``PROCESSED`` records that list entities:
-        records are read in batches until enough are found or every stored
-        record was read, so entity-less documents first in the corpus (cover
-        pages, say), however many, cannot leave the check with nothing to
-        probe. The text units are those of every ``PROCESSED`` record read.
+        again. Probes the text units of a few indexed documents of the run's
+        namespace in the vector store (``VectorIndexer.read_text_unit_ids``),
+        and the entities citing them in the graph store
+        (``GraphIndexer.find_ids_citing``) against those the vector store
+        holds; when a store holds none, raises :class:`DataProcessingError`.
+        A backend that cannot tell skips its probe.
         """
         stored = [*delta.unchanged, *delta.changed]
-        entity_ids: dict[str, list[str]] = defaultdict(list)
         text_unit_ids: dict[str, list[str]] = defaultdict(list)
         probed = 0
         for start in range(0, len(stored), _PROBE_DOCUMENTS):
             batch = stored[start : start + _PROBE_DOCUMENTS]
             for record in self.doc_status.get_many(batch).values():
-                if record.status is not DocStatus.PROCESSED:
+                if record.status is not DocStatus.PROCESSED or not record.text_unit_ids:
                     continue
                 text_unit_ids[record.suffix].extend(record.text_unit_ids)
-                if record.entity_ids:
-                    entity_ids[record.suffix].extend(record.entity_ids)
-                    probed += 1
+                probed += 1
             if probed >= _PROBE_DOCUMENTS:
                 break
+        probes = {
+            suffix: sorted(set(ids))[:_PROBE_UNITS]
+            for suffix, ids in text_unit_ids.items()
+        }
+        if not probes:
+            return
         graph = self.indexing_manager.neptune_indexer
         vector = self.indexing_manager.opensearch_indexer
         lost = "doc-status registry lists indexed documents of this namespace whose"
@@ -491,21 +299,35 @@ class IncrementalIndexer:
             "Re-run with indexing.reset: true to rebuild the stores and the "
             "registry, or delete the registry's records of this namespace."
         )
-        if not _store_holds_any(
-            entity_ids, lambda ids, suffix: graph.read_entities(ids, suffix=suffix)
-        ):
-            raise DataProcessingError(
-                f"The {lost} entities the graph store does not hold (an "
-                f"in-memory Gremlin Server loses its graph on restart). {advice}"
-            )
-        if not _store_holds_any(
-            text_unit_ids,
-            lambda ids, suffix: vector.read_text_unit_ids(ids, suffix=suffix),
-        ):
+        found_units = [
+            vector.read_text_unit_ids(ids, suffix=suffix)
+            for suffix, ids in probes.items()
+        ]
+        if all(found is not None and not found for found in found_units):
             raise DataProcessingError(
                 f"The {lost} text units the vector store does not hold (its "
                 "database file was deleted or moved, providers.vector."
                 f"sqlite_path changed, or its indices were deleted). {advice}"
+            )
+        # The documents probed may state no entity (cover pages): the graph
+        # lost them only if the vector store holds entities citing them.
+        opensearch = self.indexing_manager.config.indexing.opensearch
+        lost_graph = []
+        for suffix, ids in probes.items():
+            in_graph = graph.find_ids_citing(ids, suffix=suffix)
+            lost_graph.append(
+                in_graph is not None
+                and not in_graph
+                and bool(
+                    vector.find_documents(
+                        opensearch.entities_index_prefix, "text_unit_ids", ids, suffix
+                    )
+                )
+            )
+        if all(lost_graph):
+            raise DataProcessingError(
+                f"The {lost} entities the graph store does not hold (an "
+                f"in-memory Gremlin Server loses its graph on restart). {advice}"
             )
 
     def write_ahead(
@@ -517,32 +339,18 @@ class IncrementalIndexer:
         Call after extraction and before removing or writing anything for the
         delta. Each new and changed document (and any other document with a
         lineage) gets a PENDING record with the content hash
-        ``PENDING_CONTENT_HASH`` and the union of its stored lineage and the
-        lineage this run is about to write (``lineages``), under its current
+        ``PENDING_CONTENT_HASH`` and the union of its stored text units and
+        the ones this run is about to write (``lineages``), under its current
         key and the run's scope (the stored scope when the run has none), so:
 
         - an interrupted run leaves a record the next diff classifies changed
           (never unchanged, even when the document reverted to the indexed
           content), or deleted when the document is gone;
-        - removing it then finds every artifact this run may have written.
+        - removing it then finds every artifact this run may have written:
+          they cite those text units.
 
-        A union over the store's item limit (``DocStatusPort.record_fits``;
-        a document whose stored and planned lineage each fit, but not
-        together) keeps the stored lineage in the record and the other
-        planned ids in lineage overflow (``add_lineage_overflow``, written
-        after the record and still before any store write), which a later
-        run reads back with the record (only a stored PENDING record's is
-        read) and which the commit and the removal of the document delete. A document whose planned lineage alone
-        cannot fit in a record raises :class:`DataProcessingError` here,
-        before anything is written.
-
-        Overflow the diff found left over (``delta.orphan_overflow``: next to
-        a record that is not PENDING, after a commit or removal interrupted
-        before deleting it) is deleted first when its owner is a record of
-        the run's namespace (any record when the run has no scope) or a
-        document of this run, as re-read here. Overflow of another
-        namespace's owner, or of an owner whose record is gone, is left
-        alone.
+        A record over the store's item limit (``DocStatusPort.record_fits``)
+        raises :class:`DataProcessingError` here, before anything is written.
 
         :meth:`commit` replaces the records with the real ones. A PENDING
         record has ``failure_count`` 0 and is never FAILED: an interruption is
@@ -550,168 +358,38 @@ class IncrementalIndexer:
         of a document that had failed before (the next run counts from the
         PENDING record). The count of a failure in this run continues from
         the record stored before the PENDING one. The stored records are read
-        once (batched) and kept for :meth:`commit`, which therefore neither
-        re-reads them nor takes the PENDING record for the previous state.
+        once (batched) and kept for :meth:`commit`.
         """
         planned = {lineage.doc_id: lineage for lineage in lineages}
         doc_ids = list(dict.fromkeys([*delta.to_process, *planned]))
-        if not doc_ids and not delta.orphan_overflow:
-            return
-        read = self.doc_status.get_many([*doc_ids, *delta.orphan_overflow])
-        self._collect_leftover_overflow(delta.orphan_overflow, read, set(doc_ids))
         if not doc_ids:
             return
-        stored = {doc_id: read[doc_id] for doc_id in doc_ids if doc_id in read}
-        self._check_committable(stored, planned)
-        # Overflow belongs to a PENDING record (an interrupted run's): its ids
-        # are part of that record's lineage, so only those documents' is
-        # read. Next to any other record, or none, it is left over from a
-        # commit or removal interrupted before deleting it, and was collected
-        # above (delta.orphan_overflow).
-        kept = self.doc_status.get_lineage_overflow(
-            [
-                doc_id
-                for doc_id, record in stored.items()
-                if record.status is DocStatus.PENDING
-            ],
-        )
-        self._prior = {
-            doc_id: (
-                record.model_copy(update=_union_lineage(record, kept[doc_id]))
-                if doc_id in kept
-                else record
-            )
-            for doc_id, record in stored.items()
-        }
+        self._prior = self.doc_status.get_many(doc_ids)
         self._in_flight = set(doc_ids)
-        self._pending = {}
-        self._overflow = {}
-        additions: list[DocumentLineage] = []
-        for doc_id in doc_ids:
-            full = self._pending_record(
+        self._pending = {
+            doc_id: self._pending_record(
                 doc_id, self._prior.get(doc_id), planned.get(doc_id)
             )
-            record, spilled = self._fit(full, stored.get(doc_id))
-            self._pending[doc_id] = record
-            if spilled is None:
-                continue
-            self._overflow[doc_id] = spilled
-            added = _lineage_minus(spilled, kept.get(doc_id))
-            if any(added.values()):
-                additions.append(_lineage(doc_id, added))
-        self.doc_status.put_many(list(self._pending.values()))
-        if additions:
-            self.doc_status.add_lineage_overflow(additions)
-        # A record that now holds its interrupted run's overflow ids itself.
-        self.doc_status.delete_lineage_overflow(
-            [doc_id for doc_id in kept if doc_id not in self._overflow]
-        )
-        logger.info(
-            "Recorded %d documents PENDING before indexing the delta%s",
-            len(self._pending),
-            (
-                f" ({len(self._overflow)} with lineage overflow)"
-                if self._overflow
-                else ""
-            ),
-        )
-
-    def _collect_leftover_overflow(
-        self,
-        owners: list[str],
-        records: dict[str, DocStatusRecord],
-        documents: set[str],
-    ) -> None:
-        """Delete the leftover overflow of ``owners`` this run may delete.
-
-        ``records`` are the owners' records as read now: an owner that
-        became PENDING since the diff has its overflow read with it. An
-        owner without a record is only this run's when it is one of its
-        ``documents`` (keyed in its namespace).
-        """
-        namespace = scope_namespace(self.scope)
-        leftover = []
-        for owner in owners:
-            record = records.get(owner)
-            if record is None:
-                if owner in documents:
-                    leftover.append(owner)
-                continue
-            if record.status is DocStatus.PENDING:
-                continue
-            if self.scope is None or (
-                namespace is not None
-                and _namespace_key(record, [namespace])[1] == namespace
-            ):
-                leftover.append(owner)
-        if leftover:
-            logger.info(
-                "Deleting the leftover lineage overflow of %d documents "
-                "(an interrupted commit or removal did not delete it)",
-                len(leftover),
-            )
-            self.doc_status.delete_lineage_overflow(leftover)
-
-    def _fit(
-        self, full: DocStatusRecord, stored: DocStatusRecord | None
-    ) -> tuple[DocStatusRecord, DocumentLineage | None]:
-        """``full`` as stored: itself when it fits, else a record listing the
-        stored lineage (or none) plus the overflow holding the rest."""
-        if self.doc_status.record_fits(full):
-            return full, None
-        empty = DocumentLineage(doc_id=full.doc_id)
-        for base in (stored, empty):
-            if base is None:
-                continue
-            record = full.model_copy(
-                update={name: list(getattr(base, name)) for name in _LINEAGE_FIELDS}
-            )
-            if self.doc_status.record_fits(record):
-                return record, _lineage(full.doc_id, _lineage_minus(full, record))
-        raise DataProcessingError(
-            f"Doc-status record for '{full.file_path or full.doc_id}' does not "
-            "fit the registry's item limit even without artifact ids"
-        )
-
-    def _check_committable(
-        self, stored: dict[str, DocStatusRecord], planned: dict[str, DocumentLineage]
-    ) -> None:
-        """Raise before any write when a document's commit record cannot fit.
-
-        The commit records each document with this run's lineage; one over
-        the store's item limit would fail after the stores were written, and
-        so on every later run. Checked with the longer (FAILED) record.
-        """
-        too_large = []
-        for doc_id, lineage in planned.items():
-            existing = stored.get(doc_id)
-            record = DocStatusRecord(
-                doc_id=doc_id,
-                content_hash="0" * 64,
-                status=DocStatus.FAILED,
-                error_info=_WRITE_FAILED,
-                failure_count=1,
-                suffix=lineage.suffix,
-                scope=(
-                    self.scope
-                    if self.scope is not None
-                    else (existing.scope if existing else None)
-                ),
-                file_path=lineage.file_path,
-                **{name: getattr(lineage, name) for name in _LINEAGE_FIELDS},
-            )
-            if not self.doc_status.record_fits(record):
-                too_large.append(
-                    f"{lineage.file_path or doc_id} "
-                    f"({len(_artifact_ids(lineage))} artifact ids)"
-                )
+            for doc_id in doc_ids
+        }
+        too_large = [
+            f"{record.file_path or record.doc_id} "
+            f"({len(record.text_unit_ids)} text units)"
+            for record in self._pending.values()
+            if not self.doc_status.record_fits(record)
+        ]
         if too_large:
             raise DataProcessingError(
-                f"{len(too_large)} documents produce more artifact ids than one "
+                f"{len(too_large)} documents have more text units than one "
                 "doc-status registry record holds (DynamoDB: 400 KB, roughly "
-                "10,000 ids); split them into smaller files. Nothing was "
-                "written for this run's delta: " + ", ".join(too_large[:10])
+                "10,000); split them into smaller files. Nothing was written "
+                "for this run's delta: " + ", ".join(too_large[:10])
             )
+        self.doc_status.put_many(list(self._pending.values()))
+        logger.info(
+            "Recorded %d documents PENDING before indexing the delta",
+            len(self._pending),
+        )
 
     def _pending_record(
         self,
@@ -734,95 +412,60 @@ class IncrementalIndexer:
                 # changed document's old artifacts were written under it.
                 "scope": self.scope if self.scope is not None else base.scope,
                 "file_path": (lineage.file_path if lineage else None) or base.file_path,
-                **_union_lineage(base, lineage),
+                "text_unit_ids": sorted(
+                    set(base.text_unit_ids)
+                    | set(lineage.text_unit_ids if lineage else ())
+                ),
             }
         )
 
-    def _extend_pending(self, lineages: list[DocumentLineage]) -> None:
-        """Add the ids the cross-run merge kept to the PENDING lineage (to the
-        record, or to its overflow when it has some or would not fit)."""
-        updated = []
-        additions = []
-        for lineage in lineages:
-            doc_id = lineage.doc_id
-            pending = self._pending.get(doc_id)
-            if pending is None:
-                continue
-            held = self._overflow.get(doc_id)
-            added = _lineage_minus(lineage, pending, held)
-            if not any(added.values()):
-                continue
-            if held is None:
-                extended = pending.model_copy(update=_union_lineage(pending, lineage))
-                if self.doc_status.record_fits(extended):
-                    self._pending[doc_id] = extended
-                    updated.append(extended)
-                    continue
-                held = DocumentLineage(doc_id=doc_id)
-            self._overflow[doc_id] = held.model_copy(
-                update=_union_lineage(held, _lineage(doc_id, added))
-            )
-            additions.append(_lineage(doc_id, added))
-        self.doc_status.put_many(updated)
-        if additions:
-            self.doc_status.add_lineage_overflow(additions)
-
     def remove_obsolete_artifacts(self, doc_ids: list[str]) -> bool:
-        """Delete artifacts belonging only to the given (deleted/changed) docs.
+        """Remove what the given (deleted/changed) docs contributed.
 
-        Lineage is read from the registry; only ids not still referenced by a
-        *surviving* document are removed, so shared artifacts are preserved.
-        Removals are grouped by the suffix each document's artifacts were
-        written under (multi-tenant/multi-index safe).
+        Their text units are read from the registry (for a document of this
+        run, from the record stored before its PENDING one; after an
+        interrupted run, that run's PENDING record, so whatever it wrote is
+        found too) and grouped by the suffix they were written under. The
+        stores are then asked for the items citing them
+        (``IndexingManager.remove_text_units``): an item citing only removed
+        text units is deleted, one citing others too is stripped of them and
+        its content derived again from the rest.
 
-        Returns True if every store delete reported no failures (or there was
-        nothing to remove). The store delete_by_id paths swallow exceptions into
-        error stats rather than raising, so the caller must inspect this result
-        before deleting the registry record — otherwise a transient delete
-        failure would orphan the artifacts (record gone, artifacts still live).
-
-        Artifacts the documents share with survivors are kept, but the text
-        units being removed are stripped from them and their weight
-        recomputed, so they no longer cite chunks that no longer exist, and
-        their content is derived again from the text units left
-        (``IndexingManager.remove_text_units_from_shared``).
+        Returns True if every store write reported no failures (or there was
+        nothing to remove). The store paths swallow exceptions into error
+        stats rather than raising, so the caller must inspect this result
+        before deleting the registry record — otherwise a transient failure
+        would orphan the artifacts (record gone, artifacts still live).
         """
         if not doc_ids:
             return True
-
-        removals = self._plan_removal(doc_ids)
-        exclusive_by_suffix = {
-            suffix: removal.exclusive_ids
-            for suffix, removal in removals.items()
-            if removal.exclusive_ids
-        }
-        if not exclusive_by_suffix:
-            return True
-
-        total = sum(len(ids) for ids in exclusive_by_suffix.values())
-        logger.info(
-            "Removing %d artifacts for %d obsolete documents",
-            total,
-            len(doc_ids),
+        stored = self.doc_status.get_many(
+            [doc_id for doc_id in doc_ids if doc_id not in self._in_flight]
         )
-        results = list(
-            self.indexing_manager.delete_documents(exclusive_by_suffix).values()
-        )
-        for suffix, removal in removals.items():
-            if removal.removed_text_unit_ids and (
-                removal.shared_entity_ids
-                or removal.shared_relationship_ids
-                or removal.shared_claim_ids
-            ):
-                results.extend(
-                    self.indexing_manager.remove_text_units_from_shared(
-                        suffix,
-                        entity_ids=removal.shared_entity_ids,
-                        relationship_ids=removal.shared_relationship_ids,
-                        text_unit_ids=removal.removed_text_unit_ids,
-                        claim_ids=removal.shared_claim_ids,
-                    ).values()
-                )
+        units_by_suffix: dict[str, set[str]] = defaultdict(set)
+        for doc_id in doc_ids:
+            record = (
+                self._prior.get(doc_id)
+                if doc_id in self._in_flight
+                else stored.get(doc_id)
+            )
+            if record is not None:
+                units_by_suffix[record.suffix].update(record.text_unit_ids)
+        results: list[IndexingStats] = []
+        for suffix, unit_ids in sorted(units_by_suffix.items()):
+            if not unit_ids:
+                continue
+            logger.info(
+                "Removing the %d text units of %d obsolete documents from '%s'",
+                len(unit_ids),
+                len(doc_ids),
+                suffix,
+            )
+            results.extend(
+                self.indexing_manager.remove_text_units(
+                    suffix, sorted(unit_ids)
+                ).values()
+            )
         failed = sum(s.failed_items for s in results if s is not None)
         if failed:
             logger.warning(
@@ -847,44 +490,32 @@ class IncrementalIndexer:
     ) -> dict[str, IndexingStats]:
         """Upsert delta artifacts and update the registry for processed docs.
 
-        ``lineages`` attributes artifacts to their source document (one entry
-        per processed doc), so per-document deletion later removes only a doc's
-        *exclusive* artifacts. The artifact lists passed separately are the union
-        actually written to the stores this run. Docs in ``failed_doc_ids`` (an
+        ``lineages`` lists each processed doc's text units, by which a later
+        run finds what the doc contributed. The artifact lists passed
+        separately are the union actually written to the stores this run. Docs in ``failed_doc_ids`` (an
         extraction stage failed on some of their text units) are recorded
         FAILED with their lineage, so the next run re-extracts them and first
         prunes what this run wrote.
 
         Entities and relationships are first merged with the stored graph state
-        they touch (``indexing.cross_run_merge``); a delta item that merged into
-        a stored one under another id is recorded in the lineage by that id
-        (and added to the document's PENDING record before the write, see
-        :meth:`write_ahead`), and the communities and claims referencing it
-        are pointed at that id too. Claims are merged with the stored claims
-        of the same id, which other documents may have contributed to.
+        they touch (``indexing.cross_run_merge``); the communities and claims
+        referencing a delta item that merged into a stored one under another
+        id are pointed at that id. Claims are merged with the stored claims
+        of the same id, which other documents may have contributed to. Once
+        the docs are recorded, the extraction records only removed text units
+        named are deleted (``IndexingManager.collect_extraction_records``).
         """
         merged = self.indexing_manager.merge_with_existing_graph(
             entities, relationships, text_units or ()
         )
         entities, relationships = merged.entities, merged.relationships
-        communities, claims, claim_id_remap = _remap_references(
+        communities, claims = _remap_references(
             communities, claims, merged.id_remap_by_suffix
         )
         self.community_drift = self._measure_drift(entities, communities)
         claims = self.indexing_manager.merge_with_stored_claims(
             claims, text_units or ()
         )
-        lineages = [
-            _remap_lineage(
-                lineage,
-                merged.id_remap_by_suffix.get(lineage.suffix, {})
-                | claim_id_remap.get(lineage.suffix, {}),
-            )
-            for lineage in lineages
-        ]
-        # A stored id the merge kept in place of a delta id is written too:
-        # the PENDING record must reference it before the write.
-        self._extend_pending(lineages)
         results = self.indexing_manager.index_delta(
             text_units=text_units,
             entities=entities,
@@ -893,7 +524,37 @@ class IncrementalIndexer:
             community_reports=community_reports,
             claims=claims,
         )
-        self.record(lineages, fingerprints, results, failed_doc_ids)
+        # The items the merge re-keyed to follow their current name are now
+        # written under the new ids: delete the old ones, unless a write
+        # failed (deleting them would lose the item; the next run re-keys it).
+        if any(stats.failed_items for stats in results.values() if stats):
+            self.indexing_manager.discard_retired_ids()
+        else:
+            # Cleanup, not the delta: a failure leaves an old copy beside the
+            # new one (the next run that touches it re-keys it again).
+            retired = self.indexing_manager.delete_retired_ids()
+            failed = sum(stats.failed_items for stats in retired.values())
+            if failed:
+                logger.warning(
+                    "Deleting %d re-keyed items' old ids failed; their old "
+                    "copies stay until a run touches them again",
+                    failed,
+                )
+        owners = artifact_owners(
+            lineages,
+            [
+                *(text_units or []),
+                *(entities or []),
+                *(relationships or []),
+                *(communities or []),
+                *(community_reports or []),
+                *(claims or []),
+            ],
+        )
+        if self.record(lineages, fingerprints, results, failed_doc_ids, owners):
+            # After the delta's writes: a changed document's new text units
+            # name the records its removed ones did.
+            self.indexing_manager.collect_extraction_records()
         return results
 
     def _measure_drift(
@@ -935,6 +596,7 @@ class IncrementalIndexer:
         fingerprints: dict[str, str],
         results: dict[str, IndexingStats],
         failed_doc_ids: Collection[str] = (),
+        owners: Mapping[str, set[str]] | None = None,
     ) -> bool:
         """Record the processed docs in the registry if their writes landed.
 
@@ -951,7 +613,9 @@ class IncrementalIndexer:
         :meth:`_documents_with_failed_writes`), so the next run rewrites it.
         """
         if self._delta_writes_succeeded(results):
-            write_failed = self._documents_with_failed_writes(lineages, results)
+            write_failed = self._documents_with_failed_writes(
+                lineages, results, owners or {}
+            )
             self._record_processed(lineages, fingerprints, failed_doc_ids, write_failed)
             return True
         logger.error(
@@ -996,13 +660,16 @@ class IncrementalIndexer:
 
     @staticmethod
     def _documents_with_failed_writes(
-        lineages: list[DocumentLineage], results: dict[str, IndexingStats]
+        lineages: list[DocumentLineage],
+        results: dict[str, IndexingStats],
+        owners: Mapping[str, set[str]],
     ) -> set[str]:
         """Registry ids of the documents owning an artifact whose write failed.
 
-        The failed artifact ids come from the indexers' stats. A failure the
-        indexer reported without an id cannot be attributed, so every document
-        of the commit is returned: retrying them all re-extracts more than
+        The failed artifact ids come from the indexers' stats, their owners
+        from ``owners`` (see :func:`artifact_owners`). A failure the indexer
+        reported without an id, or for an id no owner is known for, cannot be
+        attributed, so every document of the commit is returned: retrying them all re-extracts more than
         needed, while recording them PROCESSED would leave the artifact missing
         with the documents classified unchanged on every later run.
         """
@@ -1026,24 +693,27 @@ class IncrementalIndexer:
             return {lineage.doc_id for lineage in lineages}
         if not failed_ids:
             return set()
-        owners = {
-            lineage.doc_id
-            for lineage in lineages
-            if failed_ids.intersection(_artifact_ids(lineage))
-        }
+        unowned = [i for i in failed_ids if not owners.get(i)]
+        if unowned:
+            logger.warning(
+                "%d failed writes belong to no document of this run; recording "
+                "all %d documents of this run FAILED so the next run rewrites "
+                "them",
+                len(unowned),
+                len(lineages),
+            )
+            return {lineage.doc_id for lineage in lineages}
+        failed_docs = {doc_id for i in failed_ids for doc_id in owners[i]}
         logger.warning(
             "%d artifact writes failed; recording the %d documents that own "
             "them FAILED so the next run rewrites them",
             len(failed_ids),
-            len(owners),
+            len(failed_docs),
         )
-        return owners
+        return failed_docs
 
     def _delete_records(self, doc_ids: list[str]) -> None:
-        """Delete removed documents' records, their lineage overflow first: an
-        interruption in between leaves the record, listing artifacts that
-        are already gone, rather than overflow nothing references."""
-        self.doc_status.delete_lineage_overflow(doc_ids)
+        """Delete removed documents' records."""
         for doc_id in doc_ids:
             self.doc_status.delete(doc_id)
 
@@ -1080,103 +750,6 @@ class IncrementalIndexer:
             return False
         self._delete_records(delta.deleted)
         return True
-
-    def _plan_removal(self, doc_ids: list[str]) -> dict[str, _SuffixRemoval]:
-        target = set(doc_ids)
-        # Artifact ids referenced by SURVIVING documents -> keep them. Tracked
-        # PER NAMESPACE: artifact ids are namespace-independent (an entity
-        # "Vendor" yields the same uuid5 id in every tenant), so a global
-        # retained set would let a surviving doc in tenant B suppress the
-        # deletion of the same id in tenant A. Only a survivor of the same
-        # namespace should retain an id. The namespace is read from the
-        # record's scope, not from ``record.suffix``: that is the item suffix
-        # the indexers are called with, which every
-        # ``indexing.additional_suffix`` shares (see _namespace_key).
-        retained: dict[_NamespaceKey, set[str]] = defaultdict(set)
-        removing: dict[_NamespaceKey, list[DocStatusRecord]] = defaultdict(list)
-        records = self.doc_status.list_all()
-        # Another run's interrupted PENDING record may keep part of its
-        # lineage in overflow (this run's documents have theirs in _prior).
-        overflow = self.doc_status.get_lineage_overflow(
-            [
-                r.doc_id
-                for r in records
-                if r.status is DocStatus.PENDING and r.doc_id not in self._in_flight
-            ],
-        )
-        planned: list[DocStatusRecord] = []
-        for record in records:
-            if record.doc_id in overflow:
-                record = record.model_copy(
-                    update=_union_lineage(record, overflow[record.doc_id])
-                )
-            if record.doc_id in self._in_flight:
-                # This run's PENDING record also lists what the run writes
-                # after this removal: plan from the record stored before it
-                # (after an interrupted run, that run's PENDING record, so
-                # whatever it wrote is removed). A new document has none and
-                # neither removes nor retains anything.
-                prior = self._prior.get(record.doc_id)
-                if prior is None:
-                    continue
-                record = prior
-            planned.append(record)
-        # The namespaces a record without a scope is matched against (by its
-        # legacy key): the run's and every one a scope in the registry names.
-        known = sorted(
-            {
-                namespace
-                for namespace in (
-                    scope_namespace(self.scope),
-                    *(scope_namespace(r.scope) for r in (*records, *planned)),
-                )
-                if namespace is not None
-            }
-        )
-        for record in planned:
-            key = _namespace_key(record, known)
-            if record.doc_id in target:
-                removing[key].append(record)
-            else:
-                retained[key].update(_artifact_ids(record))
-
-        plan: dict[str, _SuffixRemoval] = {}
-        for suffix in dict.fromkeys(key[0] for key in removing):
-            records = [
-                record
-                for key, group in removing.items()
-                if key[0] == suffix
-                for record in group
-            ]
-            # The ids a survivor of any removed record's namespace keeps. A
-            # record of an unknown namespace (see _namespace_key) may belong
-            # to any namespace of its suffix: it retains for all of them, and
-            # all of them retain for it.
-            kept: set[str] = set()
-            for key in removing:
-                if key[0] != suffix:
-                    continue
-                for other, ids in retained.items():
-                    if other[0] == suffix and (
-                        key[1] is None or other[1] is None or other[1] == key[1]
-                    ):
-                        kept |= ids
-            ids = {i for record in records for i in _artifact_ids(record)}
-            text_units = {i for record in records for i in record.text_unit_ids}
-            plan[suffix] = _SuffixRemoval(
-                exclusive_ids=sorted(ids - kept),
-                shared_entity_ids=sorted(
-                    {i for record in records for i in record.entity_ids} & kept
-                ),
-                shared_relationship_ids=sorted(
-                    {i for record in records for i in record.relationship_ids} & kept
-                ),
-                shared_claim_ids=sorted(
-                    {i for record in records for i in record.claim_ids} & kept
-                ),
-                removed_text_unit_ids=sorted(text_units - kept),
-            )
-        return plan
 
     def _record_processed(
         self,
@@ -1235,23 +808,10 @@ class IncrementalIndexer:
                     else (existing.scope if existing else None)
                 ),
                 file_path=lineage.file_path,
-                entity_ids=lineage.entity_ids,
-                relationship_ids=lineage.relationship_ids,
                 text_unit_ids=lineage.text_unit_ids,
-                community_ids=lineage.community_ids,
-                claim_ids=lineage.claim_ids,
-                community_report_ids=lineage.community_report_ids,
             )
             records.append(record)
         self.doc_status.put_many(records)
-        # The committed records replace the PENDING ones: their overflow is
-        # no longer referenced (deleted after the write, so an interruption
-        # in between leaves overflow next to a committed record, which the
-        # next write-ahead ignores and drops).
-        committed = [r.doc_id for r in records if r.doc_id in self._overflow]
-        self.doc_status.delete_lineage_overflow(committed)
-        for doc_id in committed:
-            del self._overflow[doc_id]
         unrecorded = sorted(set(self._pending) - {r.doc_id for r in records})
         if unrecorded:
             logger.warning(
@@ -1273,7 +833,7 @@ class IncrementalIndexer:
 
 def run_registry_scope(
     config: Config, source_directory: Path, failed_source_files: list[str]
-) -> tuple[str, str, str, dict[str, str]]:
+) -> tuple[str, str, str, list[str]]:
     """The run's registry scope, namespace, source scope and failed files.
 
     The scope is the index namespace the run writes (``index_value`` +
@@ -1285,18 +845,20 @@ def run_registry_scope(
     corpus's documents. The source scope is also part of every document's
     registry key, so two corpora written to one namespace never share a
     record. Failed files are keyed the same way their documents would have
-    been, mapped to their legacy key (see ``legacy_doc_id``).
+    been.
     """
     parsing = config.processing.document_parsing
     namespace = config_registry_namespace(config.indexing, parsing.index_value)
     root = source_directory
     source_scope = parsing.source_scope or root.as_posix()
-    failed_doc_ids: dict[str, str] = {}
-    for path in failed_source_files:
-        relative = relative_source_path(path, root) or normalize_source_path(path)
-        failed_doc_ids[compute_doc_id(relative, namespace, source_scope)] = (
-            compute_doc_id(relative, namespace)
+    failed_doc_ids = [
+        compute_doc_id(
+            relative_source_path(path, root) or normalize_source_path(path),
+            namespace,
+            source_scope,
         )
+        for path in failed_source_files
+    ]
     return (
         registry_scope(namespace, source_scope),
         namespace,
@@ -1316,8 +878,8 @@ def dedup_preferences(
 
     The incremental diff treats a dropped document as deleted, so a new
     near-copy that happened to be kept would delete the indexed original and
-    index itself instead. A document the registry holds as PROCESSED (under
-    its key or its legacy key) is therefore kept over one it does not, and one
+    index itself instead. A document the registry holds as PROCESSED is
+    therefore kept over one it does not, and one
     it holds as FAILED gives way to any other: a FAILED document may have used
     up its retries (``indexing.max_document_failures``), so keeping it over
     its copy would leave neither indexed. A PENDING record (an interrupted
@@ -1326,15 +888,12 @@ def dedup_preferences(
     _, _, source_scope, _ = run_registry_scope(
         config, source_directory, context.failed_source_files
     )
-    keys: dict[int, tuple[str, str]] = {}
+    keys: dict[int, str] = {}
     for document in documents:
         assign_registry_source(document, source_scope)
-        keys[id(document)] = (
-            document_doc_id(document),
-            legacy_doc_id(document),
-        )
+        keys[id(document)] = document_doc_id(document)
     try:
-        stored = doc_status().get_many({key for pair in keys.values() for key in pair})
+        stored = doc_status().get_many(set(keys.values()))
     except Exception as e:
         raise DocStatusRegistryError(
             f"Doc-status registry: could not read it to deduplicate the "
@@ -1343,10 +902,8 @@ def dedup_preferences(
 
     def has_status(status: DocStatus) -> Callable[[Document], bool]:
         def check(document: Document) -> bool:
-            return any(
-                key in stored and stored[key].status is status
-                for key in keys[id(document)]
-            )
+            record = stored.get(keys[id(document)])
+            return record is not None and record.status is status
 
         return check
 
@@ -1412,15 +969,8 @@ def filter_to_delta(
             documents,
             store,
             scope=scope,
-            failed_doc_ids=list(failed_doc_ids),
+            failed_doc_ids=failed_doc_ids,
             max_failures=config.indexing.max_document_failures,
-            legacy_doc_ids={
-                **failed_doc_ids,
-                **{
-                    document_doc_id(document): legacy_doc_id(document)
-                    for document in documents
-                },
-            },
             retired_scopes=retired,
             extraction_fingerprint=extraction,
         )
@@ -1518,18 +1068,6 @@ def _warn_about_other_local_scopes(
     )
 
 
-def reset_suffixes(config: Config, text_units: list[TextUnit]) -> set[str]:
-    """The item suffixes whose stores a reset clears.
-
-    ``clear_all_data`` clears the suffixes of the run's text units; the
-    run's own suffix (``index_value``, ``default`` when unset) is always
-    included, as in ``reset_namespaces``.
-    """
-    suffixes = {BaseIndexer.get_suffix(unit) for unit in text_units}
-    suffixes.add(config.processing.document_parsing.index_value or DEFAULT_NAMESPACE)
-    return suffixes
-
-
 def reset_namespaces(
     config: Config, context: PipelineContext, text_units: list[TextUnit]
 ) -> set[str]:
@@ -1553,44 +1091,16 @@ def reset_namespaces(
     return namespaces
 
 
-def record_in_namespaces(
-    record: DocStatusRecord, namespaces: set[str], suffixes: set[str]
-) -> bool:
-    """Whether a reset of ``namespaces`` (item ``suffixes``) clears ``record``.
-
-    A scoped record belongs to its scope's namespace. A record without a
-    scope that stores its ``file_path`` belongs to the namespace whose
-    legacy key ``compute_doc_id(file_path, namespace)`` is its key (even
-    if its ``suffix`` field does not match), so a reset of one namespace
-    keeps such a record of another namespace on the same suffix. A record
-    without a scope or ``file_path`` (the initial release, keyed by the
-    file path alone) names no namespace: it is cleared with its suffix,
-    since removal planning treats it as a survivor in every namespace of
-    its suffix and would otherwise never delete the entities it lists.
-    """
-    if record.scope is not None:
-        return scope_namespace(record.scope) in namespaces
-    if record.file_path is None:
-        return record.suffix in suffixes
-    return any(
-        record.doc_id == compute_doc_id(record.file_path, namespace)
-        for namespace in namespaces
-    )
-
-
 def clear_registry_namespaces(
-    doc_status: Callable[[], DocStatusPort], namespaces: set[str], suffixes: set[str]
+    doc_status: Callable[[], DocStatusPort], namespaces: set[str]
 ) -> None:
     """Delete the registry records of ``namespaces`` (reset path).
 
     Only the namespaces whose stores the reset cleared: other index
     suffixes sharing the table keep their records, which still describe
-    their intact stores. A record without a scope is cleared when its key
-    is a cleared namespace's legacy key for its ``file_path``, or, with no
-    ``file_path``, when its suffix is one of the cleared ``suffixes`` (see
-    ``record_in_namespaces``); else it is kept.
+    their intact stores. Each namespace is its own registry partition
+    (``DocStatusPort.list_namespace``).
 
-    Uses the port's list_all + delete so no new port method is needed.
     The registry adapters raise :class:`DocStatusRegistryError` when the
     registry cannot be cleared, and it propagates as is (like any other
     typed error, e.g. a configuration error): the stores are already wiped,
@@ -1599,18 +1109,14 @@ def clear_registry_namespaces(
     leave the registry out of step.
     """
     store = doc_status()
-    records = [
-        record
-        for record in store.list_all()
-        if record_in_namespaces(record, namespaces, suffixes)
-    ]
-    # Write-ahead lineage overflow is not listed as records.
-    store.delete_lineage_overflow([record.doc_id for record in records])
-    for record in records:
-        store.delete(record.doc_id)
+    cleared = 0
+    for namespace in sorted(namespaces):
+        for record in store.list_namespace(namespace):
+            store.delete(record.doc_id)
+            cleared += 1
     logger.info(
         "Cleared %s doc-status registry records of namespaces %s on reset",
-        len(records),
+        cleared,
         ", ".join(sorted(namespaces)),
     )
 
@@ -1703,25 +1209,11 @@ def run_incremental_indexer(
 
 
 def context_lineages(
-    context: PipelineContext,
-    suffix: str,
-    text_units: list[TextUnit],
-    entities: list[Entity],
-    relationships: list[Relationship],
-    communities: list[Community],
-    community_reports: list[CommunityReport],
-    claims: list[Claim],
+    context: PipelineContext, suffix: str, text_units: list[TextUnit]
 ) -> list[DocumentLineage]:
     """Per-document lineage of the run's documents (``build_document_lineage``)."""
     return build_document_lineage(
-        documents=context.documents,
-        text_units=text_units,
-        entities=entities,
-        relationships=relationships,
-        communities=communities,
-        claims=claims,
-        community_reports=community_reports,
-        suffix=suffix,
+        documents=context.documents, text_units=text_units, suffix=suffix
     )
 
 
@@ -1751,16 +1243,7 @@ def index_delta(
     incremental = run_incremental_indexer(
         doc_status(), indexing_manager, context, text_units
     )
-    lineages = context_lineages(
-        context,
-        incremental.suffix,
-        text_units,
-        entities,
-        relationships,
-        communities,
-        community_reports,
-        claims,
-    )
+    lineages = context_lineages(context, incremental.suffix, text_units)
     # Checked before any write: the live indices must have been built for
     # this run's embedding model and languages by a run that kept the
     # registry (unchanged documents are not rewritten), and the graph must

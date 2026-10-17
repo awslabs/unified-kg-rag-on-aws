@@ -35,9 +35,9 @@
   인덱스를 지웁니다. 그래서 한 실행이 다른 실행이 쓰고 있는 인덱스를 지우거나,
   별칭을 다른 실행의 인덱스에 남길 수 있습니다. 재구축(reset)은 다른 실행이
   쓰는 도중에 그 접미사의 저장소를 비웁니다.
-- **같은 문서 상태 테이블 네임스페이스.** 증분 실행은 무엇을 지우고 어떤 레코드를
-  남길지 계획할 때 레지스트리를 한 번만 읽습니다. 그 사이 다른 실행이 쓴 레코드는
-  정리될 수 있고, 그 산출물은 계획과 어긋나게 지워지거나 남을 수 있습니다.
+- **같은 문서 상태 테이블 네임스페이스.** 증분 실행은 제거하는 텍스트 단위를
+  인용하는 것을 저장소에서 지우고 자기 문서의 레지스트리 레코드를 덮어씁니다. 그래서
+  다른 실행이 쓰는 것을 지우거나 정리하고, 그 실행의 레코드를 바꿀 수 있습니다.
 
 인덱스 접미사가 다르고 문서 상태 테이블(`aws.dynamodb.table_name`)도 따로 쓰는
 실행은 어느 쪽도 공유하지 않으므로 함께 실행할 수 있습니다. 그 밖의 경우에는 한
@@ -121,14 +121,22 @@ CDK 스택에서 `start-execution` 한 번은 네 단계를 차례로 실행하�
   그래프·벡터 데이터를 지웁니다.
 - 테넌트나 코퍼스 버전마다 인덱스 접미사와 설정 파일을 따로 둡니다.
 
-정식 릴리스 전 빌드가 기록한 레지스트리를 업그레이드할 때는
-[CHANGELOG: Upgrading from pre-release builds](../CHANGELOG.md#upgrading-from-pre-release-builds)를
+레지스트리 테이블을 `doc_id`만으로 키를 잡던 릴리스에서 업그레이드할 때: 이제
+레지스트리는 문서마다 텍스트 단위만 담고 인덱스 네임스페이스별로 나뉘므로, 이전
+테이블은 처음 쓸 때 `ConfigurationError`로 거부됩니다. 실행이 새 테이블을 쓰게 하고
+(CDK 스택은 `graphrag-doc-status-v2`, `dev`가 아니면 `<env>-graphrag-doc-status-v2`를
+만들고, 라이브러리 기본값은 `unified-kg-rag-on-aws-doc-status-v2`입니다)
+`indexing.reset: true`로 한 번 실행하세요. 재구축이 성공하면 이전 테이블을 지우세요
+(`dev`가 아니면 스택이 테이블을 남겨 둡니다). 정식 릴리스 전 빌드가 기록한
+레지스트리는
+[CHANGELOG: Upgrading from pre-release builds](../CHANGELOG.md#upgrading-from-pre-release-builds)도
 참고하세요.
 
 증분 실행이 갱신하지 않는 것도 있습니다. 델타 실행은 그래프 전체를 다시 군집화하지
-않고 커뮤니티를 덧붙이며, 엔티티는 처음 인덱싱된 이름의 id를 유지합니다. 주기적인
-전체 재구축(`indexing.reset: true`)으로 둘 다 새로 고칩니다. 공유 설명, 이름, 유형,
-rank, 주장은 실행마다 현재 문서에서 파생합니다. 자세한 내용은
+않고 커뮤니티를 덧붙이며, 엔티티가 현재 이름의 id를 받은 뒤에도 저장된 커뮤니티와
+리포트에는 이전 id가 남습니다. 주기적인 전체 재구축(`indexing.reset: true`)으로 둘 다
+새로 고칩니다. 공유 설명, 이름, id, 유형, rank, 주장은 실행마다 현재 문서에서
+파생합니다. 자세한 내용은
 [사용자 가이드](./user-guide.ko.md) §5에 있습니다.
 
 재구축할 때가 되었는지는 커뮤니티 드리프트로 판단합니다. 엔티티마다 속한 레벨 0
@@ -158,7 +166,7 @@ rank, 주장은 실행마다 현재 문서에서 파생합니다. 자세한 내�
 인덱싱 단계 도중 멈춘 증분 실행(태스크 강제 종료, 저장소나 레지스트리 연결 끊김,
 실패 기준 미달)은 따로 손볼 필요 없이 다시 실행하면 됩니다. 인덱싱 단계는 무엇이든
 지우거나 쓰기 전에 새 문서와 바뀐 문서를 `PENDING`으로 기록하며, 이 레코드에는
-문서가 원래 가진 산출물과 이번 실행이 쓸 산출물이 모두 들어갑니다. 레코드는 쓰기가
+문서가 원래 가진 텍스트 단위와 이번 실행이 쓸 텍스트 단위가 모두 들어갑니다. 레코드는 쓰기가
 끝난 뒤에야 `PROCESSED`(또는 `FAILED`)로 바뀝니다. 그래서 다음 실행은
 
 - 코퍼스에 남아 있는 `PENDING` 문서를 다시 추출합니다. 파일을 이전에 인덱싱한
@@ -170,13 +178,13 @@ rank, 주장은 실행마다 현재 문서에서 파생합니다. 자세한 내�
 횟수를 초기화합니다. `PENDING` 레코드의 `failure_count`는 0이므로, 이전에 실패한
 문서도 다음 실패부터 다시 셉니다. 실패한 실행 뒤에 `PENDING` 레코드(`status`와
 `content_hash`가 `pending`이고 `error_info`가 선기록 레코드임을 알림)가 남는 것은
-정상입니다. 직접 지우지 마세요. 다음 실행은 이 레코드의 계보로 중단된 실행이 쓴
-것을 찾습니다. 큰 문서의 이전 산출물 ID와 새 산출물 ID를 합치면 DynamoDB 항목
-하나에 들어가지 않을 때는, 레코드에 들어가지 않은 ID를 같은 테이블의 초과 항목
-(키 `<doc_id>#pending#<n>`, `record_kind`는 `lineage_overflow`)에 둡니다. 이
-항목도 그대로 두세요. 실행이 문서를 커밋하거나 제거할 때 지웁니다. 커밋과 삭제
-사이에 멈춘 실행이 커밋된 레코드 옆에 남긴 초과 항목은 문서가 바뀌지 않았어도
-같은 네임스페이스의 다음 증분 실행이 지웁니다. 인덱싱 단계는 레지스트리를 일괄로
+정상입니다. 직접 지우지 마세요. 다음 실행은 이 레코드의 텍스트 단위로 중단된
+실행이 쓴 것을 찾습니다(모든 산출물은 자신이 서술된 텍스트 단위를 인용합니다).
+텍스트 단위가 DynamoDB 항목 하나에 담을 수 있는 양(약 10,000개, 이전과 새 텍스트
+단위를 함께 담는 수정 문서의 `PENDING` 레코드는 그 절반)보다 많은 문서는 아무것도
+쓰기 전에 실행을 실패시킵니다. 문서를 나누세요. 커밋이 성공할 때마다 제거된 텍스트
+단위만 가리키던 추출 레코드를 지웁니다. 제거와 커밋 사이에 멈춘 실행은 그 레코드를
+남기며, 공간만 차지합니다. 인덱싱 단계는 레지스트리를 일괄로
 쓰므로, 직접 작성한 정책을 쓰는 역할에는 `BatchGetItem`과 함께
 `dynamodb:BatchWriteItem` 권한이 필요합니다(CDK 스택의 `grant_read_write_data`는
 둘 다 포함합니다).
@@ -696,6 +704,7 @@ LangSmith로 업로드합니다.
 | `EmbeddingModelError: Query embedding failed: ...` | 클라이언트 재시도 후에도 질의 임베딩 모델 호출이 실패함(멈춘 Ollama 러너, 죽은 vLLM 엔진, 계속되는 Bedrock `InternalServerException`). 질의의 모든 벡터 검색에 필요하므로 "찾을 수 없음"으로 답하지 않고 질의가 실패함 | 임베딩 서버나 모델(`providers.embedding`, `indexing.opensearch.embedding_model_id`)과 그 로그를 확인한 뒤 다시 시도 |
 | `Neptune refused the connection (HTTP 403)` | IAM 인증이 웹소켓 연결을 거부함. 정책에 클러스터의 `neptune-db:connect`가 없거나 다른 리전으로 서명함 | `neptune-db:connect`(실행에 필요한 `neptune-db:*` 데이터 작업 포함)를 부여하고 `aws.region_name`을 클러스터의 리전으로 설정 |
 | `Skipping N '.md' file(s) ...` / `No supported source files found in '<dir>'` | `unstructured` 추가 패키지가 설치되지 않음 | 설치(Python 3.11 이상)하거나 파일 형식을 변환 |
+| `ConfigurationError: Doc-status registry: DynamoDB table '...' has the key schema ... of an earlier release` | `doc_id`만으로 레코드 키를 잡던 릴리스가 만든 테이블임 | `aws.dynamodb.table_name`(`GRAPHRAG_DOC_STATUS_TABLE`)을 새 테이블로 바꾸거나 스택의 새 테이블을 배포하고, `indexing.reset: true`로 한 번 실행([증분 실행](#증분-실행) 참고) |
 | `DocStatusRegistryError` | 문서 상태 레지스트리 테이블이 없거나, 접근할 수 없거나, 스로틀링됨 | 테이블을 만들거나 `aws.dynamodb.table_name`을 고치고, 메시지에 나온 DynamoDB 권한을 부여한 뒤 같은 `--pipeline-id`로 재개 |
 | `Incremental indexing is enabled but no document delta was computed` | 레지스트리 비교 없이 인덱싱 단계가 실행됨(`continue_on_error`로 로딩 단계 실패 뒤 진행) | 레지스트리에 접근할 수 있게 한 뒤 `document_loading`부터 다시 실행 |
 | `CacheSyncError` | S3 단계 캐시 다운로드나 업로드가 실패함 | 버킷 권한과 `aws.s3.encryption`을 확인한 뒤 같은 `--pipeline-id`로 재개 |
@@ -707,7 +716,7 @@ LangSmith로 업로드합니다.
 | `argument --resume-from-stage: Unknown pipeline stage ...`(종료 코드 2) | `--resume-from-stage`에 없는 단계 이름을 넘김 | 메시지에 나온 목록의 이름을 사용(대소문자 무관) |
 | `... needs confirmation, but stdin is not a terminal` | 다시 실행할 때 완료된 단계의 출력이 현재 입력 기준으로 캐시에 없는데, 물어볼 터미널이 없음 | `--yes`를 넘겨 계속(재개하면서 그 단계를 다시 계산)하거나 새 `--pipeline-id`를 사용 |
 | `Stage '<stage>', upstream of this run's enabled stages, has not completed` | `--enabled-stages` 범위(Step Functions 단계 묶음)를 재개했는데 앞 단계가 실패했거나 캐시된 출력이 없음 | 앞 단계를 먼저 실행. CDK 스택에서는 같은 `pipeline_id`로 새 실행을 시작 |
-| `The doc-status registry lists indexed documents of this namespace whose entities the graph store does not hold` | 레지스트리에 기록된 내용을 그래프가 잃음(Gremlin Server 재시작, `docker compose ... down -v`, 복원하거나 교체한 그래프) | `indexing.reset: true`로 다시 실행하거나 해당 네임스페이스의 레지스트리 레코드를 삭제(로컬 모드에서는 SQLite 파일) |
+| `The doc-status registry lists indexed documents of this namespace whose entities the graph store does not hold` | 레지스트리에 기록된 내용을 그래프가 잃음(Gremlin Server 재시작, `docker compose ... down -v`, 복원하거나 교체한 그래프). 확인한 문서의 텍스트 단위를 인용하는 엔티티가 벡터 저장소에는 있고 그래프에는 없을 때입니다(엔티티를 서술하지 않는 문서로는 걸리지 않음) | `indexing.reset: true`로 다시 실행하거나 해당 네임스페이스의 레지스트리 레코드를 삭제(로컬 모드에서는 SQLite 파일) |
 | `The doc-status registry lists indexed documents of this namespace whose text units the vector store does not hold` | 레지스트리에 기록된 내용을 벡터 저장소가 잃음(로컬 모드에서 `vector.sqlite3`를 지우거나 옮김, `providers.vector.sqlite_path` 변경, 삭제된 OpenSearch 인덱스) | 위와 같음. 로컬 모드에서는 저장소 파일 세 개를 함께 지우거나 벡터 파일을 복원 |
 | 내장 그래프·벡터 저장소나 SQLite 문서 상태 레지스트리의 `... stayed locked ...`(`database is locked`)(로컬 모드) | 다른 프로세스(두 번째 수집 등)가 같은 SQLite 파일에 쓰면서 `search.store_timeout_seconds`보다 오래 잠금을 잡음. SQLite는 한 번에 한 프로세스만 씀 | 다른 실행이 끝난 뒤 다시 실행하거나, 저장소 파일마다 수집을 한 번에 하나만 실행하거나, `search.store_timeout_seconds`를 늘림. 파일은 로컬 디스크에 둠(네트워크 파일 시스템은 지원하지 않음) |
 | 로그에 `Connection refused`와 함께 `... processed N inputs but produced 0 outputs`(로컬 모드) | `providers.llm.base_url` / `providers.embedding.base_url`에서 Ollama나 OpenAI 호환 서버에 연결할 수 없음 | 서버를 띄우고(`ollama serve` 또는 `docker compose -f docker/compose.local.yaml --profile models up -d --wait`), `base_url`(또는 `--model-base-url`)을 확인하고, 모델을 내려받음 |

@@ -146,12 +146,7 @@ def _index(inc: IncrementalIndexer, gleaner, mocker, corpus) -> None:
         return
     units, entities, edges = _glean(gleaner, mocker, batch)
     lineages = build_document_lineage(
-        documents=[_document(p) for p in batch],
-        text_units=units,
-        entities=entities,
-        relationships=edges,
-        communities=[],
-        claims=[],
+        documents=[_document(p) for p in batch], text_units=units
     )
     inc.commit(
         lineages=lineages,

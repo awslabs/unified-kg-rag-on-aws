@@ -3,8 +3,9 @@
 """One run that changes one document and deletes another (AWS-free).
 
 Artifacts only the changed and the deleted document reference must go: the
-removal is planned over both sets at once. Planning each set separately treats
-the other as a survivor and leaves such artifacts behind with no text units.
+removal is asked for both documents' text units at once. Removing each set
+separately treats the other as a survivor and leaves such artifacts behind
+with no text units.
 """
 
 from __future__ import annotations
@@ -70,14 +71,7 @@ def _meets(doc: Document, unit_id: str, other: str):
 
 def _commit(inc, docs, text_units, entities, relationships) -> None:
     _, fingerprints = detect_delta(docs, inc.doc_status)
-    lineages = build_document_lineage(
-        documents=docs,
-        text_units=text_units,
-        entities=entities,
-        relationships=relationships,
-        communities=[],
-        claims=[],
-    )
+    lineages = build_document_lineage(documents=docs, text_units=text_units)
     inc.commit(
         lineages=lineages,
         fingerprints=fingerprints,

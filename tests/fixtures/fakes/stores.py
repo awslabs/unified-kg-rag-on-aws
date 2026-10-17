@@ -16,6 +16,7 @@ from collections.abc import Collection
 from typing import Any
 
 from unified_kg_rag.adapters.storage.neptune_codec import (
+    NAME_KEY_PROPERTY,
     entity_from_vertex,
     entity_properties,
     relationship_from_edge,
@@ -250,6 +251,39 @@ class FakeGraphStore:
             if s == scope
         ]
 
+    def find_ids_citing(
+        self,
+        text_unit_ids: list[str],
+        suffix: str | None = None,
+        *,
+        communities: bool = False,
+    ) -> dict[str, list[str]] | None:
+        scope = suffix or Constants.DEFAULT_SUFFIX.value
+        wanted = set(text_unit_ids)
+        found: dict[str, list[str]] = {}
+        for (s, item_id), item in self.data.get(
+            "communities" if communities else "entities", {}
+        ).items():
+            units = (
+                list(item.text_unit_ids or [])
+                if communities
+                else list(item.get("text_unit_ids", []))
+            )
+            if s == scope and wanted.intersection(units):
+                found[item_id] = units
+        return found
+
+    def find_entity_ids_by_name_key(
+        self, name_keys: list[str], suffix: str | None = None
+    ) -> list[str] | None:
+        scope = suffix or Constants.DEFAULT_SUFFIX.value
+        wanted = set(name_keys)
+        return sorted(
+            item_id
+            for (s, item_id), row in self.data.get("entities", {}).items()
+            if s == scope and wanted.intersection(row.get(NAME_KEY_PROPERTY, []))
+        )
+
     def read_neighbor_ids(
         self, entity_ids: list[str], suffix: str | None = None
     ) -> dict[str, list[str]]:
@@ -453,6 +487,43 @@ class FakeVectorStore(_Recorder):
             for key in keys
             if (wanted, key) in self.extraction_records
         }
+
+    def find_documents(
+        self,
+        alias_prefix: str,
+        field: str,
+        values: list[str],
+        suffix: str | None = None,
+    ) -> dict[str, list[str]] | None:
+        oc = self.opensearch_config
+        collection = {
+            getattr(oc, f"{name}_index_prefix", name.replace("_", "-")): name
+            for name in (
+                "text_units",
+                "entities",
+                "relationships",
+                "claims",
+                "community_reports",
+            )
+        }[alias_prefix]
+        wanted = suffix or Constants.DEFAULT_SUFFIX.value
+        found: dict[str, list[str]] = {}
+        for item_id, item in self.data.get(collection, {}).items():
+            value: Any = item.model_dump()
+            for part in field.split("."):
+                value = value.get(part) if isinstance(value, dict) else None
+            held = value if isinstance(value, list) else [value]
+            if BaseIndexer.get_suffix(item) == wanted and set(values) & set(held):
+                found[item_id] = list(getattr(item, "text_unit_ids", None) or [])
+        return found
+
+    def delete_extraction_records(
+        self, keys: list[str], suffix: str | None = None
+    ) -> IndexingStats:
+        wanted = suffix or Constants.DEFAULT_SUFFIX.value
+        for key in keys:
+            self.extraction_records.pop((wanted, key), None)
+        return IndexingStats(total_items=len(keys), successful_items=len(keys))
 
     def write_extraction_records(
         self, records: dict[str, dict[str, Any]], suffix: str | None = None

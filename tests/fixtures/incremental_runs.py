@@ -40,6 +40,7 @@ from unified_kg_rag.domain.ingestion.contributions import (
     merge_contributions,
     merge_entity_contributions,
     merge_relationship_contributions,
+    record_keys,
     record_payload,
 )
 from unified_kg_rag.domain.ingestion.delta_detector import detect_delta, document_doc_id
@@ -245,32 +246,6 @@ def claim_state(claim: Claim) -> tuple[Any, ...]:
     )
 
 
-def largest_lineage(*corpora: Corpus) -> int:
-    """The most artifact ids one document of ``corpora`` produces: a registry
-    limit of that many ids fits every committed record, while a changed
-    document's write-ahead record (old + new ids) may not."""
-    largest = 1
-    for corpus in corpora:
-        built = extract(corpus)
-        documents = [document(path, content) for path, content in corpus.items()]
-        for lineage in build_document_lineage(
-            documents=documents,
-            text_units=built.units,
-            entities=built.entities,
-            relationships=built.relationships,
-            communities=[],
-            claims=built.claims,
-        ):
-            largest = max(
-                largest,
-                len(lineage.text_unit_ids)
-                + len(lineage.entity_ids)
-                + len(lineage.relationship_ids)
-                + len(lineage.claim_ids),
-            )
-    return largest
-
-
 def expected_state(corpus: Corpus) -> dict[str, Any]:
     """What a fresh full build of ``corpus`` stores (see :meth:`state`)."""
     built = extract(corpus)
@@ -298,11 +273,14 @@ class IncrementalRun:
         self.config = Config()
         self.graph = FakeGraphStore()
         self.vector = FakeVectorStore(opensearch_config=self.config.indexing.opensearch)
-        self.manager = IndexingManager(
-            config=self.config, vector_indexer=self.vector, graph_indexer=self.graph
-        )
+        self.manager = self._manager()
         self.store: DocStatusPort = store or FakeDocStatusStore()
         self.extracted: list[str] = []
+
+    def _manager(self) -> IndexingManager:
+        return IndexingManager(
+            config=self.config, vector_indexer=self.vector, graph_indexer=self.graph
+        )
 
     def run(self, corpus: Corpus, interrupt: str | None = None, k: int = 1) -> bool:
         """Index ``corpus``; return whether the ``interrupt`` point fired.
@@ -310,6 +288,9 @@ class IncrementalRun:
         ``k`` picks which call of a counted point (the k-th store write of
         the removal or the delta, the k-th registry record or delete) fires.
         """
+        # A run is a new process: nothing an interrupted one held in memory
+        # survives it.
+        self.manager = self._manager()
         inc = IncrementalIndexer(self.store, self.manager)
         restore: list[Callable[[], None]] = []
         fired = False
@@ -342,14 +323,7 @@ class IncrementalRun:
             }
         )
         units, entities, edges = built.units, built.entities, built.relationships
-        lineages = build_document_lineage(
-            documents=extracted,
-            text_units=units,
-            entities=entities,
-            relationships=edges,
-            communities=[],
-            claims=built.claims,
-        )
+        lineages = build_document_lineage(documents=extracted, text_units=units)
         inc.write_ahead(delta, lineages)
         if not inc.remove_changed_and_deleted(delta):
             raise AssertionError("the fake stores never fail a removal")
@@ -461,24 +435,21 @@ class IncrementalRun:
             },
         }
 
+    def unused_extraction_records(self) -> set[str]:
+        """Extraction-store keys no stored text unit names."""
+        named = {
+            key
+            for unit in self.vector.data.get("text_units", {}).values()
+            for key in record_keys(unit).values()
+        }
+        return {key for _, key in self.vector.extraction_records} - named
+
     def registry_problems(self, corpus: Corpus) -> list[str]:
         """Registry inconsistencies: rows not PROCESSED or not in the corpus,
-        lineage pointing at missing artifacts, artifacts no lineage lists."""
+        text units the rows and the stores disagree on, artifacts citing a
+        text unit that is not stored."""
         records = self.store.list_all()
         problems = []
-        # Write-ahead lineage overflow never outlives its document's PENDING
-        # record. (Overflow next to a committed record, left when a commit
-        # died before deleting it, is ignored and dropped by the next run's
-        # write-ahead.)
-        overflow = set(getattr(self.store, "overflow", {}))
-        orphans = overflow - {r.doc_id for r in records}
-        if orphans:
-            problems.append(f"lineage overflow without a record: {sorted(orphans)}")
-        leftover = overflow & {
-            r.doc_id for r in records if r.status is not DocStatus.PENDING
-        }
-        if leftover:
-            problems.append(f"lineage overflow left over: {sorted(leftover)}")
         paths = sorted(r.file_path or r.doc_id for r in records)
         if paths != sorted(corpus):
             problems.append(f"registry rows {paths} != corpus {sorted(corpus)}")
@@ -487,15 +458,20 @@ class IncrementalRun:
             for r in records
             if r.status is not DocStatus.PROCESSED
         ]
-        live = {
-            "text_unit_ids": self.vector.ids("text_units"),
-            "entity_ids": self.graph.ids("entities"),
-            "relationship_ids": self.graph.ids("relationships"),
-        }
-        for field, ids in live.items():
-            listed = {i for r in records for i in getattr(r, field)}
-            if listed - ids:
-                problems.append(f"lineage {field} not in the stores: {listed - ids}")
-            if ids - listed:
-                problems.append(f"{field} no lineage lists: {ids - listed}")
+        units = self.vector.ids("text_units")
+        listed = {i for r in records for i in r.text_unit_ids}
+        if listed != units:
+            problems.append(
+                f"registry text units {sorted(listed)} != stored {sorted(units)}"
+            )
+        artifacts = [
+            *self.graph.read_entities(sorted(self.graph.ids("entities"))),
+            *self.graph.read_relationships(sorted(self.graph.ids("relationships"))),
+            *self.vector.data.get("claims", {}).values(),
+        ]
+        problems += [
+            f"{item.id} cites text units that are not stored"
+            for item in artifacts
+            if not set(item.text_unit_ids or []) <= units
+        ]
         return problems
