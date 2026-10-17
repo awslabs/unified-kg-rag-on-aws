@@ -4,10 +4,24 @@
 
 용어는 [용어집](./glossary.ko.md)을 따릅니다.
 
-이미 배포된 환경에서 운영자가 하는 작업을 정리합니다. 다시 수집하기, 증분
-실행, 실패한 문서 처리, 캐시 관리, CLI가 내는 오류 해석이 대상입니다. 설정 키는
-[설정 레퍼런스](./configuration.md)(영문, 읽는 방식은 [사용자 가이드 §2](./user-guide.ko.md#2-설정))에, 배포 스택과 명령은
+이미 배포된 환경에서 운영자가 하는 작업과, 실행이나 질의가 실패했을 때 할 일을
+정리합니다. 모든 설정 키는 [설정 레퍼런스](./configuration.md)(영문, 설정을 읽는
+방식은 [사용자 가이드 §2](./user-guide.ko.md#2-설정))에, 배포 스택과 명령은
 [`iac/README.md`](../iac/README.md#after-deploy)에 있습니다.
+
+| 하려는 일 | 볼 곳 |
+|---|---|
+| 첫 실행 전에 배포를 점검하기 | [실행 전 확인](#실행-전-확인) |
+| 수집을 재개하거나, 다시 계산하거나, 다시 구축하기 | [다시 수집하기](#다시-수집하기) |
+| 코퍼스를 최신 상태로 유지하기 | [증분 실행](#증분-실행) |
+| 멈춘 실행을 복구하기 | [중단된 실행](#중단된-실행) |
+| 문서가 `FAILED`나 `QUARANTINED`인 이유 찾기 | [실패한 문서](#실패한-문서), [격리된 문서](#격리된-문서) |
+| 수집을 둘 실행하거나 `NamespaceLeaseError` 이해하기 | [동시 실행](#동시-실행) |
+| CloudWatch 경보에 대응하기 | [경보](#경보) |
+| 저장소 복원하기 | [백업과 복원](#백업과-복원) |
+| 서비스 계층에 질의 권한을 주거나 테넌트를 격리하기 | [질의 권한과 테넌트 격리](#질의-권한과-테넌트-격리) |
+| 추적 켜기(Jaeger, Langfuse, Phoenix, CloudWatch) | [관측성](#관측성) |
+| 오류 메시지 찾아보기 | [자주 보는 오류](#자주-보는-오류) |
 
 ## 실행 전 확인
 
@@ -28,59 +42,9 @@
    `aws stepfunctions list-executions --state-machine-arn <arn> --status-filter RUNNING`으로
    확인합니다.
 
-## 동시 실행
+## 일상 운영
 
-문서 상태 레지스트리를 쓰면 한 인덱스 네임스페이스에는 한 번에 한 실행만 씁니다.
-실행은 첫 단계 전에 네임스페이스의 쓰기 임대(lease)를 얻어 끝날 때까지 유지하며,
-`indexing.lease_seconds`(기본값 300초)의 3분의 1마다 갱신합니다. 같은
-네임스페이스의 두 번째 실행은 무엇이든 읽거나 쓰기 전에 곧바로 멈춥니다.
-
-```text
-NamespaceLeaseError: Index namespace '<namespace>' is being written by
-<host>:<pid>:<id> (its lease runs until <time> unless renewed) ...
-```
-
-그 실행이 끝날 때까지 기다렸다가 다시 시작합니다. 죽은 실행(강제 종료된 태스크,
-사라진 호스트)은 갱신을 멈추므로, 그 임대는 마지막 갱신 뒤 늦어도
-`lease_seconds` 안에 만료되고 다음 실행은 그대로 진행됩니다. 따로 정리할 것은
-없습니다. DynamoDB에서 임대는 파티션 키 `namespace` = `<namespace>`, 정렬 키
-`doc_id` = `#lease`인 항목입니다(소유자는 `lease_owner`, 만료 시각은 테이블의 TTL
-속성인 `lease_expires_at`에 있으므로 만료되면 DynamoDB가 지웁니다). SQLite
-레지스트리에서는 `leases` 테이블의 네임스페이스 행입니다. 직접 지우는 것은 그 항목에
-적힌 실행이 끝났는지 확인한 뒤에만 합니다. 갱신이 계속 실패해 임대가 만료됐거나
-다른 실행이 임대를 가져간 실행은 다음 레지스트리·저장소 쓰기 전에
-`NamespaceLeaseError: This run lost the write lease ...`로 멈춥니다. 다른 실행이
-끝난 뒤 다시 실행합니다. 사용자 정의 정책을 쓰는 레지스트리에는 임대용
-`dynamodb:PutItem`, `GetItem`, `DeleteItem` 권한이 필요하고(CDK 스택의 권한 부여에
-포함됨), 라이브러리가 테이블을 만들 때(`aws.dynamodb.create_table_if_missing`)는
-`dynamodb:UpdateTimeToLive`도 필요합니다.
-
-레지스트리가 없으면 잠그는 장치가 없고 동시 실행을 지원하지 않습니다. **같은 인덱스
-접미사**(같은 OpenSearch 별칭과 Neptune 레이블)에 다른 실행이 진행 중이면 새 실행을
-시작하지 마세요. 전체 재색인은 타임스탬프가 붙은 새 인덱스에 쓰고, 별칭을 새
-인덱스로 옮긴 뒤 그 별칭의 이전 인덱스를 지웁니다. 그래서 한 실행이 다른 실행이 쓰고
-있는 인덱스를 지우거나, 별칭을 다른 실행의 인덱스에 남길 수 있습니다.
-`IncrementalIndexer`를 직접 쓰는 API도 임대를 얻지 않습니다. 서로 다른
-네임스페이스는 따로 임대하므로 함께 실행할 수 있습니다.
-
-문서 상태 테이블 네임스페이스는 인덱스 접미사(`index_value`, 지정하지 않으면
-`default`)와 `indexing.additional_suffix`로 정해지며,
-`indexing.opensearch.*_index_prefix`나 `indexing.neptune.*_label_prefix` 값 중
-하나라도 기본값이 아니면 이 접두사들의 태그가 덧붙습니다. 접두사만 다른 두 설정은
-서로 다른 저장소에 쓰므로 테이블 하나를 함께 써도(CDK 스택은 고정된 테이블 이름
-하나를 주입합니다) 레코드를 따로 둡니다. 산출물 ID는 내용에서 만들어지므로, 그렇지
-않으면 다른 저장소 집합의 레코드 때문에 바뀐 문서의 이전 텍스트 단위와 엔티티가 이
-실행의 저장소에 남습니다.
-
-CDK 스택에서 `start-execution` 한 번은 수집 태스크를 실행하는 실행 하나를
-시작합니다. 스택에는 일정이나 이벤트 트리거가 없으므로 누군가(또는 직접 추가한
-자동화가) `start-execution`을 호출할 때만 실행이 시작됩니다. 상태 머신은 실행 중에 두 번째
-실행이 시작되는 것을 막지 않으며, 그때는 임대가 두 번째 실행을 실패시킵니다. 먼저
-위 명령으로 `RUNNING` 실행이 있는지 확인하고, 일정을 추가한다면 이전 실행이 아직
-돌고 있을 수 없을 때만(상태 머신 제한 시간 `sfn_timeout_hours`, 기본 6시간) 실행되게
-설정합니다.
-
-## 다시 수집하기
+### 다시 수집하기
 
 비슷해 보이지만 건드리는 상태가 다른 작업이 세 가지 있습니다.
 
@@ -114,200 +78,60 @@ reset 동안에도 질의는 이전 내용을 읽습니다. 벡터 인덱스는 
 `--verify-metadata`(`--pipeline-id` 필요)는 실행의 단계 메타데이터를 검사하고,
 메타데이터가 없거나 손상되었으면 0이 아닌 종료 코드를 반환합니다.
 
-## 증분 실행
+### 증분 실행
 
-`aws.dynamodb.enabled: true`(컨테이너 이미지의 기본값)이면 `run-ingestion`은
-실행할 때마다 콘텐츠 해시로 코퍼스와 문서 상태 레지스트리를 비교하고, 새 문서와
-바뀐 문서만 인덱싱합니다. 비교 범위는 실행의
-[인덱스 접미사](./user-guide.ko.md#인덱스-접미사)와 소스 범위입니다. 소스 범위는
-`processing.document_parsing.source_scope`이며 기본값은 해석된 소스
-디렉터리이고, 컨테이너 엔트리포인트는 `s3://` 소스 URI로 설정합니다. 둘 다 문서의
-레지스트리 키에 들어가므로, 한 접미사를 쓰는 두 코퍼스는 상대 경로가 같은 파일이
-있어도 레코드를 공유하지 않습니다. 끝에 슬래시가 있는 `s3://` URI와 없는 URI
-(`s3://bucket/corpus/`, `s3://bucket/corpus`)는 같은 범위입니다. 레지스트리에 실행의
-표기는 없고 다른 표기만 있으면 저장된 표기를 쓰고 WARNING 로그를 남깁니다. 소스에서
-사라진 파일은 삭제된 것으로 보고, 그 문서에만 속한 산출물을 지웁니다. 따라서 다음을
-지킵니다.
+`aws.dynamodb.enabled: true`(컨테이너 이미지에 설정되어 있음)이면 `run-ingestion`은
+실행할 때마다 문서 상태 레지스트리와 코퍼스를 내용 해시로 비교해 새 문서와 바뀐 문서만
+인덱싱합니다. 원본에서 사라진 파일은 삭제된 것으로 보고, 그 파일만 기술하던 내용을
+지웁니다.
 
-- 한 코퍼스에는 같은 소스 디렉터리(또는 고정한 `source_scope`)를 씁니다.
-  범위가 기본값인 코퍼스를 옮기면 범위가 바뀌고, 이전 범위의 레코드는 저절로
-  넘겨받거나 지우지 않으므로 이전 내용(옮기는 중에 지운 파일 포함)이 인덱스에
-  남습니다. 옮기기 전에 `source_scope`를 고정하거나, 새 위치에서
-  `--retire-source-scope <이전 소스 디렉터리>`로 한 번 실행하세요. 이 실행이 이전
-  범위에만 속한 내용과 레코드를 지웁니다([사용자 가이드 §5](./user-guide.ko.md#삭제-범위) 참고). 새 문서가 있는
-  실행은 같은 접미사의 다른 로컬 소스 디렉터리를 WARNING으로 알립니다.
-- 코퍼스 파일이 의도와 다르게 만료되거나 사라지지 않게 합니다. 다음 실행이 해당
-  그래프·벡터 데이터를 지웁니다.
-- 테넌트나 코퍼스 버전마다 인덱스 접미사와 설정 파일을 따로 둡니다.
+비교 범위는 실행의 [인덱스 접미사](./user-guide.ko.md#인덱스-접미사)와 소스
+범위(`processing.document_parsing.source_scope`, 기본값은 해석한 원본 디렉터리이며
+컨테이너에서는 `s3://` 원본 URI)입니다. 둘 다 각 문서의 레지스트리 키에 들어가므로,
+한 접미사를 쓰는 두 코퍼스는 상대 경로가 같은 파일이 있어도 레코드를 공유하지
+않습니다. `s3://` URI는 끝의 슬래시가 있든 없든 같은 범위이며, 실행은 레지스트리에
+저장된 표기를 쓰고 WARNING을 남깁니다. 따라서 다음을 지키세요.
+
+- **코퍼스의 원본 디렉터리(또는 고정한 `source_scope`)를 바꾸지 않습니다.** 기본
+  범위로 코퍼스를 옮기면 범위가 바뀌고, 이전 범위의 레코드는 저절로 넘겨받거나
+  지워지지 않으므로 이전 내용이 계속 인덱싱되어 남습니다. 옮기기 전에 `source_scope`를
+  고정하거나, 새 위치에서 `--retire-source-scope <이전 원본 디렉터리>`로 한 번
+  실행하세요([사용자 가이드: 삭제 범위](./user-guide.ko.md#삭제-범위)). 새 문서가 있는
+  실행은 같은 접미사의 다른 로컬 원본 디렉터리를 WARNING으로 알립니다.
+- **코퍼스 파일이 뜻하지 않게 만료되거나 사라지지 않게 합니다.** 다음 실행이 그
+  파일의 그래프·벡터 내용을 지웁니다.
+- **테넌트나 코퍼스 버전마다 인덱스 접미사와 설정 파일을 따로 둡니다.**
+
+**증분 실행이 새로 고치지 않는 것.** 델타 실행은 다시 클러스터링하지 않고 커뮤니티를
+덧붙이며, 저장된 커뮤니티와 리포트는 엔티티가 현재 이름의 ID를 받은 뒤에도 이전 ID를
+계속 가리킵니다. 주기적인 전체 재구축(`indexing.reset: true`)이 둘 다 새로 고칩니다.
+공유된 설명, 이름, ID, 유형, 순위, 주장은 실행마다 현재 문서에서 다시
+도출합니다([사용자 가이드 §5](./user-guide.ko.md#5-증분-인덱싱)).
+
+**재구축할 때: 커뮤니티 드리프트.** 델타 실행의 인덱싱 단계는 `community_drift` 지표를
+보고합니다. 덧붙인 커뮤니티(`delta_communities`), 클러스터링한
+엔티티(`clustered_entities`), 그중 이전 클러스터링이 이미 배치한
+엔티티(`overlapping_entities`, 이제 기본 수준 커뮤니티 둘 이상에 속함), 이번 실행이
+더한 내용이 리포트에 빠진 이전 커뮤니티(`stale_communities`), `overlap_share`(겹친 수 /
+클러스터링한 수)입니다. `overlap_share`가 `indexing.community_drift_threshold`(기본값
+`0.5`)에 이르면 실행은 `indexing.reset: true`를 권하는 WARNING을 남기고
+`community_drift_overlap_share`와 함께 `community_rebuild_recommended: 1`을 보고하므로
+경보로 감시할 수 있습니다. 이 수치는 엔티티를 건드린 실행들에 걸쳐 누적되므로 상한으로
+읽으세요. 커뮤니티가 없거나 `indexing.cross_run_merge: false`인 실행은 겹침을 보고하지
+않습니다.
+
+**레지스트리를 읽을 수 없으면**(테이블 없음, 접근 거부, 클라이언트 재시도로도 풀리지
+않는 스로틀링) `document_loading` 단계가 테이블과 원인을 밝힌
+`DocStatusRegistryError`로 실패합니다. 실행은 모든 문서를 인덱싱하는 경로로 넘어가지
+않습니다. 그 경로는 접미사의 내용을 이번 실행의 문서로만 바꾸기 때문입니다.
+레지스트리를 고친 뒤 같은 `--pipeline-id`로 다시 실행하거나,
+`aws.dynamodb.enabled: false`로 증분 인덱싱 없이 실행하세요.
 
 시험판(pre-release) 빌드에서 올 때: 그 빌드가 저장한 것은 읽지 않습니다.
 [CHANGELOG: Upgrading from pre-release builds](../CHANGELOG.md#upgrading-from-pre-release-builds)를
 참고하세요.
 
-증분 실행이 갱신하지 않는 것도 있습니다. 델타 실행은 그래프 전체를 다시 군집화하지
-않고 커뮤니티를 덧붙이며, 엔티티가 현재 이름의 id를 받은 뒤에도 저장된 커뮤니티와
-리포트에는 이전 id가 남습니다. 주기적인 전체 재구축(`indexing.reset: true`)으로 둘 다
-새로 고칩니다. 공유 설명, 이름, id, 유형, rank, 주장은 실행마다 현재 문서에서
-파생합니다. 자세한 내용은
-[사용자 가이드 §5](./user-guide.ko.md#5-증분-인덱싱)에 있습니다.
-
-재구축할 때가 되었는지는 커뮤니티 드리프트로 판단합니다. 엔티티마다 속한 레벨 0
-커뮤니티를 기록하므로, 델타 실행의 인덱싱 단계는 `community_drift` 지표에 다음을
-남깁니다. 덧붙인 커뮤니티 수(`delta_communities`), 군집화한 엔티티 수
-(`clustered_entities`), 그중 이전 군집화에서 이미 배치된 엔티티 수
-(`overlapping_entities`, 이제 레벨 0 커뮤니티 두 개 이상에 속합니다), 이번 실행이
-추가한 내용을 리포트에 담지 못한 이전 커뮤니티 수(`stale_communities`), 그리고
-`overlap_share`(겹친 엔티티 수 / 군집화한 엔티티 수)입니다. `overlap_share`가
-`indexing.community_drift_threshold`(기본값 `0.5`)에 이르면 `indexing.reset: true`를
-권하는 WARNING 로그를 남기고, 실행 지표에 `community_drift_overlap_share`와 함께
-`community_rebuild_recommended: 1`을 기록합니다(경보를 걸 수 있습니다). 실행이
-건드린 엔티티에 대해서는 누적값입니다(세 번의 실행에서 다시 군집화된 엔티티는
-커뮤니티 세 개로 셉니다). 변경되거나 삭제된 문서와 함께 지워진 커뮤니티도 재구축
-전까지 공유 엔티티에 남으므로 상한값으로 읽어야 합니다. 커뮤니티가 없거나
-`indexing.cross_run_merge: false`인 실행은 겹침을 보고하지 않습니다.
-
-레지스트리를 읽을 수 없으면(테이블 없음, 접근 거부, 클라이언트 재시도로도 풀리지
-않는 스로틀링) `document_loading` 단계가 테이블 이름과 원인을 담은
-`DocStatusRegistryError`로 실패합니다. 모든 문서를 인덱싱하는 경로로 넘어가지
-않습니다. 그 경로는 접미사의 인덱스 내용을 이번 실행의 문서만으로 바꾸기
-때문입니다. 레지스트리를 고친 뒤 같은 `--pipeline-id`로 다시 실행하거나, 증분
-인덱싱 없이 실행하려면 `aws.dynamodb.enabled: false`로 설정합니다.
-
-### 중단된 실행
-
-인덱싱 단계 도중 멈춘 증분 실행(태스크 강제 종료, 저장소나 레지스트리 연결 끊김,
-실패 기준 미달)은 따로 손볼 필요 없이 다시 실행하면 됩니다. 인덱싱 단계는 무엇이든
-지우거나 쓰기 전에 새 문서와 바뀐 문서를 `PENDING`으로 기록하며, 이 레코드에는
-문서가 원래 가진 텍스트 단위와 이번 실행이 쓸 텍스트 단위가 모두 들어갑니다. 레코드는 쓰기가
-끝난 뒤에야 `PROCESSED`(또는 `FAILED`)로 바뀝니다. 그래서 다음 실행은
-
-- 코퍼스에 남아 있는 `PENDING` 문서를 다시 추출합니다. 파일을 이전에 인덱싱한
-  버전으로 되돌렸어도 마찬가지입니다.
-- 코퍼스에서 사라진 `PENDING` 문서에 대해 중단된 실행이 썼을 수 있는 것을 모두
-  지웁니다.
-
-중단은 실패로 세지 않지만, `indexing.max_document_failures`에 쓰는 연속 실패
-횟수를 초기화합니다. `PENDING` 레코드의 `failure_count`는 0이므로, 이전에 실패한
-문서도 다음 실패부터 다시 셉니다. 대신 `PENDING` 레코드는 같은 내용을 시작하고
-끝내지 못한 연속 실행 수를 셉니다(`attempt_count`, [격리된 문서](#격리된-문서)
-참고). 실패한 실행 뒤에 `PENDING` 레코드(`status`와
-`content_hash`가 `pending`이고 `error_info`가 선기록 레코드임을 알림)가 남는 것은
-정상입니다. 직접 지우지 마세요. 다음 실행은 이 레코드의 텍스트 단위로 중단된
-실행이 쓴 것을 찾습니다(모든 산출물은 자신이 서술된 텍스트 단위를 인용합니다).
-텍스트 단위가 DynamoDB 항목 하나에 담을 수 있는 양(약 10,000개, 이전과 새 텍스트
-단위를 함께 담는 수정 문서의 `PENDING` 레코드는 그 절반)보다 많은 문서는 아무것도
-쓰기 전에 실행을 실패시킵니다. 문서를 나누세요. 커밋이 성공할 때마다 제거된 텍스트
-단위만 가리키던 추출 레코드를 지웁니다. 제거와 커밋 사이에 멈춘 실행은 그 레코드를
-남기며, 공간만 차지합니다. 인덱싱 단계는 레지스트리를 일괄로
-쓰므로, 직접 작성한 정책을 쓰는 역할에는 `BatchGetItem`과 함께
-`dynamodb:BatchWriteItem` 권한이 필요합니다(CDK 스택의 `grant_read_write_data`는
-둘 다 포함합니다).
-
-## 실패한 문서
-
-다음 네 경우에 문서가 `FAILED`로 기록됩니다.
-
-- 텍스트 단위 하나라도 번역, 그래프 추출, gleaning, 주장 추출에 실패함
-- 텍스트 단위를 포함한 기본 수준 커뮤니티의 리포트가 생성되지 않음
-- `--continue-on-error` 실행에서 산출물을 만드는 단계(번역부터 커뮤니티 탐지까지)가
-  비정상 종료함. 이때는 그 실행의 모든 문서가 `FAILED`로 기록됨
-- 산출물(텍스트 단위, 엔티티, 관계, 주장, 커뮤니티, 리포트) 하나를 저장소에 쓰는 데 실패함
-
-상위 수준 커뮤니티의 리포트 실패는 어떤 문서도 `FAILED`로 기록하지 않습니다([사용자 가이드: 실패한 문서](./user-guide.ko.md#실패한-문서)
-참고). 다음 실행은 이 문서를 바뀐 문서로 취급해 실패한 실행이 쓴 내용을 지우고 다시
-처리합니다. `--continue-on-error` 실행에서 파싱, 로딩, 청킹 단계가 비정상
-종료하면 인덱싱 단계를 아예 실행하지 않으므로 저장소와 레지스트리는 이전 상태를
-유지합니다. `--continue-on-error` 없이 어떤 단계든 실패해도 마찬가지입니다. 실행은
-인덱싱 전에 멈추고 아무것도 기록하지 않습니다. 단계 실패만으로는 문서 하나가
-문제인지 백엔드(스로틀링, 장애, 만료된 자격 증명)가 문제인지 알 수 없으므로, 다음
-실행이 같은 새 문서와 바뀐 문서를 다시 처리합니다.
-
-- 내용이 그대로인 채로 `indexing.max_document_failures`(기본값 `3`)번 연속
-  실패하면 더 이상 재시도하지 않습니다. 문서는 `FAILED`로 남아 인덱싱된 내용을
-  유지하고, 실행할 때마다 파일 이름을 담은 WARNING이 남습니다.
-- 다시 시도하려면 원인(대개 너무 크거나 형식이 잘못된 파일)을 고치거나, 파일을
-  수정해 콘텐츠 해시를 바꾸거나, `indexing.max_document_failures`를 올립니다.
-- 한 문서의 텍스트 단위 ID가 DynamoDB 항목 하나(400 KB, 약 10,000개 ID,
-  수정한 문서는 그 절반)를 넘으면 인덱싱 단계가 델타에 대해 아무것도 쓰기
-  전에, 파일 이름과 텍스트 단위 개수를 담은 오류로 실패합니다. 파일을
-  나눕니다.
-
-쓰기 실패는 따로 판정합니다. 재시도할 수 있는 상태(429, 502, 503, 504)로
-거부된 OpenSearch bulk 항목과, 클라이언트 자체 재시도 후에도 그런 상태를 받은
-bulk 요청 전체의 항목은 먼저 백오프를 두고 최대 네 번 다시 보냅니다. 실행 중
-Neptune 요청(쓰기, 삭제, 제거와 병합을 위한 읽기)은 모두 새 연결로
-`indexing.neptune.max_attempts`회(기본값 `4`)까지 재시도하며, 어느 요청이든
-반복해도 안전하므로 응답을 잃은 요청이 두 번 적용되지 않습니다. 그래도
-한 산출물 유형의 쓰기 중 실패 비율이 `indexing.max_failure_rate`(기본값 `0.2`)를
-넘으면 인덱싱 단계가 실패하고 문서를 기록하지 않으므로, 다음 실행이 다시
-시도합니다. 그 이하이면 실행은 성공하고, 실패한 산출물을 가진 문서만 `FAILED`로
-기록됩니다. 백엔드가 항목 ID 없이 보고한 실패가 있으면 그 실행의 모든 문서를
-`FAILED`로 기록합니다. CDK 스택에서는 수집 태스크가 실패하면 실행 ID와 오류를 담은
-메시지를 SNS 토픽에 게시하고, 아래 경보도 같은 토픽으로 문제를 알립니다.
-파이프라인 실행 경보가 다섯 개, 저장소 상태 경보가 일곱 개, 용량 경보가 두 개입니다.
-태스크가 실패하면 `PipelineFailures`도 발생하므로 같은 실패가 두 번 오며, 두 번째
-알림에는 실행 ID와 오류가 없습니다. 이 경보를 두는 이유는 메시지로 알릴 수 없는
-실패도 잡기 때문입니다. 태스크의 오류 처리기가 잡지 못하는 오류(예: `pipeline_id`가
-없는 시작 입력)나 재시도 후에도 실패한 게시가 여기에 해당합니다.
-
-| 경보 | 발생 조건 |
-|---|---|
-| `PipelineFailures` | Step Functions 실행이 실패함 |
-| `PipelineTimedOutOrAborted` | 실행이 상태 머신 제한 시간을 넘겼거나 중지됨 |
-| `IndexingFailures` | 실행이 성공했더라도 인덱싱에서 실패한 항목이 있음 |
-| `ExtractionFailures` | 추출, gleaning, 주장 추출이 일부 텍스트 단위에서 실패함 |
-| `DocumentsQuarantined` | 인덱싱이 계속 죽은 문서를 실행이 격리함([격리된 문서](#격리된-문서) 참고) |
-
-Step Functions 경보를 뺀 파이프라인 실행 경보는 `run-ingestion --metrics-sink cloudwatch`가
-내보내는 EMF 지표를 읽습니다. 각 단계의 지표는 그 단계가 끝날 때(그래서 중지되거나 시간
-초과된 실행도 끝낸 단계는 보고합니다), 실행 전체의 지표(소요 시간, 캐시 적중률)는 실행이
-끝날 때 내보냅니다. 태스크는 스택의 `env_name`을 `Environment` 차원으로 붙이고, 경보와
-대시보드는 그 시계열만 읽으므로 같은 계정과 리전의 dev 배포 실행이 prod 배포의 경보를
-울리지 않습니다. `UKR_METRICS_ENVIRONMENT`가 없는 실행(CDK 태스크 밖)은 차원 없는
-시계열을 내보내며, 이를 읽는 경보는 없습니다.
-
-저장소 상태 경보는 실행이 없을 때도 발생하므로, 다음 실행이 실패하기 전에 성능
-저하를 알 수 있습니다.
-
-| 경보 | 발생 조건 | 조치 |
-|---|---|---|
-| `OpenSearchClusterRed` | 할당되지 않은 프라이머리 샤드가 있음(5분) | 도메인의 클러스터 상태와 실패한 노드를 확인합니다. 해당 인덱스 검색에서 데이터가 빠지므로 green이나 yellow가 될 때까지 수집을 멈춥니다 |
-| `OpenSearchFreeStorageLow` | 가장 많이 찬 데이터 노드의 여유 공간이 `opensearch_volume_gib`의 40% 이하 | 쓰기 차단 기준에 이르기 전에 `opensearch_volume_gib`(또는 `opensearch_count`)를 늘려 다시 배포합니다 |
-| `OpenSearchJvmPressure` | JVM 메모리 압력이 3분 연속 95% 이상 | 메모리 부족 위험입니다. 더 큰 `opensearch_instance`를 쓰거나 데이터 노드를 늘립니다 |
-| `DocStatusWriteThrottled` | 문서 상태 테이블이 쓰기를 스로틀링함(5분) | 앱은 스로틀링된 레지스트리 호출을 백오프하며 재시도하고, 그래도 스로틀링되면 `DocStatusRegistryError`로 실행이 실패합니다. 같은 테이블에 겹쳐 실행되는 수집이 있는지 확인하고, 스로틀링이 해소된 뒤 실패한 실행을 다시 실행합니다 |
-| `NeptuneHighCpu` | 라이터(writer)의 평균 CPU가 15분(5분 × 3) 동안 90% 이상 | 대량 쓰기의 일시적 최고치가 아니라 지속적인 포화입니다. 더 큰 `neptune_instance`(또는 더 높은 `neptune_serverless_ncu` 최댓값)를 쓰거나 `indexing.neptune.index_concurrency`를 낮춥니다 |
-| `NeptuneLowFreeableMemory` | 5분 안에 라이터의 가용 메모리가 한 번이라도 512MiB 이하로 떨어짐(최솟값) | 쿼리와 쓰기가 메모리 부족으로 실패할 수 있습니다. 더 큰 `neptune_instance`를 쓰거나, 부하가 몰리기 전에 용량이 확보되도록 `neptune_serverless_ncu` 최솟값을 높입니다 |
-| `NeptuneGremlinErrors` | 3분 연속 어느 인스턴스에서든 Gremlin 서버 오류가 있음 | 지속적인 쓰기·쿼리 실패입니다(재시도되는 쓰기 충돌은 짧게 몰려 발생하므로 이 경보를 울리지 않음). 작업 로그에서 실패한 요청을 확인합니다 |
-
-용량 경보는 느려지거나 곧 종료될 실행을 알립니다.
-
-| 경보 | 발생 조건 | 조치 |
-|---|---|---|
-| `BedrockThrottling` | 5분 구간 3개 연속으로 Bedrock이 100회 이상 스로틀링함. 계정과 리전의 모든 모델을 합산합니다(Bedrock은 모델별로만 지표를 내고, 스택은 앱이 쓰는 모델을 모름) | 실행은 스로틀링된 호출을 재시도하므로 실패하지 않고 느려집니다. `processing.max_concurrency`를 낮추거나 Bedrock 할당량 증가를 요청합니다. 같은 계정과 리전의 다른 Bedrock 사용량도 포함됩니다 |
-| `IngestionTaskMemory` | 수집 태스크가 3분 동안 메모리의 90% 이상을 씀(Container Insights) | Fargate는 메모리를 넘은 태스크를 종료하고, 그러면 실행 중인 단계를 잃습니다. `fargate_memory`를 늘립니다 |
-
-대시보드에는 단계별 소요 시간, 수집 태스크의 메모리·CPU 사용률, 모델별 Bedrock 호출·스로틀링·지연 시간도 표시됩니다.
-
-경보를 받으려면 `-c alarm_email=<address>`로 배포해 구독자를 등록해야 합니다.
-
-### 격리된 문서
-
-인덱싱할 때마다 실행을 죽이는 문서(그 문서에서 태스크가 메모리 부족이나 제한 시간에
-걸림)는 이후 모든 실행을 같은 방식으로 멈추게 합니다. 바뀌지 않은 내용을 시작하고
-끝내지 못한 실행이 `indexing.max_document_attempts`번(기본값 `3`) 연속되면, 다음
-실행이 그 문서를 격리합니다. 파일 이름을 담은 WARNING을 남기고, 시도들이 쓴 것을
-지우고, 문서를 `QUARANTINED`로 기록한 뒤(텍스트 단위 없음, 사유는 `error_info`)
-나머지를 인덱싱합니다. 실행 지표 `total_documents_quarantined`가 그 수를 세고, CDK
-스택에서는 `DocumentsQuarantined` 경보가 발생합니다.
-
-- 격리된 문서는 내용이 그대로인 동안 건너뜁니다. 파일이 바뀌거나, 추출 설정이
-  바뀌거나, `indexing.max_document_attempts`를 올리면 다시 시도합니다.
-- 계속 죽는 델타의 모든 문서가 시도로 세어지므로, 원인 문서와 함께 인덱싱된
-  문서도 함께 격리됩니다. 원인 문서를 찾은 뒤(예: 그 폴더만 따로 실행) 그 파일들을
-  수정하거나 한도를 올려 다시 시도합니다.
-- 텍스트 단위를 만들지 않는 문서는 `PENDING`으로 남고, 같은 횟수 뒤에 격리됩니다.
-
-## 캐시와 접두사
+### 캐시와 접두사
 
 | 캐시 | 위치 | 참고 |
 |---|---|---|
@@ -325,7 +149,7 @@ CDK 캐시 버킷은 `pipeline-runs/`와 `embedding-cache/` 아래의 객체만 
 `pipeline_id`는 캐시 디렉터리와 S3 접두사 이름이 되므로 영문 소문자, 숫자,
 하이픈, 밑줄만 쓸 수 있습니다.
 
-## OpenSearch 복제본
+### OpenSearch 복제본
 
 CDK 스택에서 다중 노드 도메인(`opensearch_count` > 1, dev가 아닌 환경의 기본값)은
 인덱스마다 복제본을 하나 두므로 노드나 AZ 하나를 잃어도 모든 샤드를 쓸 수
@@ -341,7 +165,7 @@ curl -X PUT "https://<OpenSearch endpoint>/_all/_settings" \
   -H 'Content-Type: application/json' -d '{"index": {"number_of_replicas": 1}}'
 ```
 
-## 백업과 복원
+### 백업과 복원
 
 세 저장소는 백업 주기가 다르고 내용이 서로를 참조합니다(레지스트리가 문서별
 텍스트 단위를 기록하고, 그래프·인덱스 산출물이 그 텍스트 단위를 인용함). 따라서 세 저장소를 같은 시점으로 함께 복원하거나
@@ -378,6 +202,215 @@ S3의 코퍼스가 원본이므로 모든 저장소는 코퍼스에서 다시 �
 다시 쓰지 않은 항목을 지웁니다. 다른 네임스페이스가 테이블을 함께 쓸 때만 테이블을 먼저
 복원합니다.
 
+## 실행이 실패할 때
+
+### 중단된 실행
+
+인덱싱 단계 안에서 멈춘 증분 실행(태스크 종료, 저장소나 레지스트리 연결 끊김, 실패
+기준 초과)은 손으로 고칠 필요 없이 다시 실행하면 됩니다. 인덱싱 단계는 무엇이든 지우거나
+쓰기 전에 새 문서와 바뀐 문서를 모두 `PENDING`으로 기록하며, 기존 텍스트 단위와 이번
+실행이 쓸 텍스트 단위를 함께 적어 둡니다. 레코드는 쓰기가 끝난 뒤에야
+`PROCESSED`(또는 `FAILED`)가 됩니다. 그래서 다음 실행은 다음과 같이 합니다.
+
+- 코퍼스에 남아 있는 `PENDING` 문서는 파일이 이전에 인덱싱한 버전으로 되돌아갔더라도
+  다시 추출합니다.
+- 코퍼스에서 사라진 `PENDING` 문서는 중단된 실행이 썼을 수 있는 내용을 모두 지웁니다.
+
+**`PENDING` 레코드는 그대로 두세요.** 이 레코드(`status` `pending`, `content_hash`
+`pending`, 선기록 레코드를 알리는 `error_info`)는 실패한 실행 뒤에 남는 것이 정상이며,
+모든 산출물이 자신이 기술된 텍스트 단위를 인용하므로 다음 실행은 이 레코드의 텍스트
+단위로 중단된 실행이 쓴 내용을 찾습니다.
+
+- 중단은 실패로 세지 않지만, `indexing.max_document_failures`를 향한
+  `failure_count`를 처음부터 다시 셉니다. 대신 `PENDING` 레코드는 같은 내용을 시작하고
+  끝내지 못한 연속 실행 수(`attempt_count`, [격리된 문서](#격리된-문서) 참고)를
+  셉니다.
+- DynamoDB 항목 하나에 담을 수 있는 것보다 텍스트 단위가 많은 문서(약 10,000개, 수정한
+  문서는 `PENDING` 레코드에 이전과 새 텍스트 단위를 모두 적으므로 그 절반)는 아무것도
+  쓰기 전에 실행을 실패시킵니다. 문서를 나누세요.
+- 제거된 텍스트 단위만 가리키던 추출 레코드는 커밋이 성공할 때마다 지웁니다. 제거와
+  커밋 사이에 멈춘 실행은 이 레코드를 남기지만 공간만 차지합니다.
+- 인덱싱 단계는 레지스트리를 일괄로 쓰므로, 사용자 정의 정책을 쓰는 역할에는
+  `BatchGetItem`과 함께 `dynamodb:BatchWriteItem`이 필요합니다(CDK 스택의 권한 부여에
+  둘 다 들어 있음).
+
+### 실패한 문서
+
+다음 네 경우에 문서가 `FAILED`로 기록됩니다.
+
+- 텍스트 단위 하나라도 번역, 그래프 추출, gleaning, 주장 추출에 실패함
+- 텍스트 단위를 포함한 기본 수준 커뮤니티의 리포트가 생성되지 않음(상위 수준 리포트
+  실패는 어떤 문서도 `FAILED`로 기록하지 않음.
+  [사용자 가이드: 실패한 문서](./user-guide.ko.md#실패한-문서) 참고)
+- `--continue-on-error` 실행에서 산출물을 만드는 단계(번역부터 커뮤니티 탐지까지)가
+  비정상 종료함. 이때는 그 실행의 모든 문서가 `FAILED`로 기록됨
+- 산출물(텍스트 단위, 엔티티, 관계, 주장, 커뮤니티, 리포트) 하나를 저장소에 쓰는 데 실패함
+
+다음 실행은 `FAILED` 문서를 바뀐 문서로 취급해 실패한 실행이 쓴 내용을 지우고 다시
+처리합니다. 그 밖의 단계 실패는 아무것도 기록하지 않습니다. `--continue-on-error`
+실행에서 파싱, 로딩, 청킹이 비정상 종료하거나, 그 옵션 없이 어떤 단계든 실패하면 실행은
+인덱싱 전에 멈추고 저장소와 레지스트리는 이전 상태를 유지합니다. 단계 실패만으로는 문서
+하나가 문제인지 백엔드(스로틀링, 장애, 만료된 자격 증명)가 문제인지 알 수 없기
+때문입니다. 다음 실행이 같은 새 문서와 바뀐 문서를 다시 처리합니다.
+
+- **재시도 한도.** 내용이 그대로인 채로 `indexing.max_document_failures`(기본값 `3`)번
+  연속 실패한 문서는 더 재시도하지 않습니다. `FAILED` 상태와 인덱싱된 내용을 유지하고,
+  실행마다 파일 이름이 담긴 WARNING을 남깁니다. 다시 시도하려면 원인(대개 너무 크거나
+  형식이 깨진 파일)을 고치거나, 내용 해시가 바뀌도록 파일을 수정하거나, 한도를
+  올리세요.
+- **레지스트리에 담기에 너무 큰 문서.** 텍스트 단위 ID가 DynamoDB 항목 하나(400KB, 약
+  10,000개, 수정한 문서는 그 절반)를 넘는 문서는 델타에 무엇이든 쓰기 전에 파일 이름과
+  텍스트 단위 수를 밝힌 오류로 인덱싱 단계를 실패시킵니다. 파일을 나누세요.
+
+**쓰기 실패**는 먼저 재시도합니다. 재시도할 수 있는 상태(429, 502, 503, 504)로 거부된
+OpenSearch bulk 항목과, 클라이언트 재시도 뒤에도 그런 상태로 답한 bulk 요청 전체는
+백오프하며 최대 네 번 다시 보냅니다. 실행의 모든 Neptune 요청은 새 연결로 최대
+`indexing.neptune.max_attempts`번(기본값 `4`) 재시도하며, 어느 요청이든 반복해도
+안전합니다. 한 산출물 유형의 쓰기 중 `indexing.max_failure_rate`(기본값 `0.2`)보다 많은
+비율이 그래도 실패하면 인덱싱 단계가 실패하고 어떤 문서도 기록하지 않으므로 다음 실행이
+모두 다시 시도합니다. 그 비율 아래면 실행은 성공하고 실패한 산출물을 가진 문서만
+`FAILED`로 기록합니다(백엔드가 항목 ID 없이 알린 실패는 실행의 모든 문서를 표시함).
+`IndexingFailures`와 `ExtractionFailures` [경보](#경보)가 둘 다 알립니다.
+
+### 격리된 문서
+
+인덱싱할 때마다 실행을 죽이는 문서(그 문서에서 태스크가 메모리 부족이나 제한 시간에
+걸림)는 이후 모든 실행을 같은 방식으로 멈추게 합니다. 바뀌지 않은 내용을 시작하고
+끝내지 못한 실행이 `indexing.max_document_attempts`번(기본값 `3`) 연속되면, 다음
+실행이 그 문서를 격리합니다. 파일 이름을 담은 WARNING을 남기고, 시도들이 쓴 것을
+지우고, 문서를 `QUARANTINED`로 기록한 뒤(텍스트 단위 없음, 사유는 `error_info`)
+나머지를 인덱싱합니다. 실행 지표 `total_documents_quarantined`가 그 수를 세고, CDK
+스택에서는 `DocumentsQuarantined` 경보가 발생합니다.
+
+- 격리된 문서는 내용이 그대로인 동안 건너뜁니다. 파일이 바뀌거나, 추출 설정이
+  바뀌거나, `indexing.max_document_attempts`를 올리면 다시 시도합니다.
+- 계속 죽는 델타의 모든 문서가 시도로 세어지므로, 원인 문서와 함께 인덱싱된
+  문서도 함께 격리됩니다. 원인 문서를 찾은 뒤(예: 그 폴더만 따로 실행) 그 파일들을
+  수정하거나 한도를 올려 다시 시도합니다.
+- 텍스트 단위를 만들지 않는 문서는 `PENDING`으로 남고, 같은 횟수 뒤에 격리됩니다.
+
+### 동시 실행
+
+문서 상태 레지스트리를 쓰면 한 인덱스 네임스페이스에는 한 번에 한 실행만 씁니다.
+실행은 첫 단계 전에 네임스페이스의 쓰기 임대를 얻어 끝날 때까지 유지하며,
+`indexing.lease_seconds`(기본 300초)의 3분의 1마다 갱신합니다. 같은 네임스페이스의 두
+번째 실행은 무엇이든 읽거나 쓰기 전에 다음 오류로 바로 멈춥니다.
+
+```text
+NamespaceLeaseError: Index namespace '<namespace>' is being written by
+<host>:<pid>:<id> (its lease runs until <time> unless renewed) ...
+```
+
+그 실행이 끝날 때까지 기다린 뒤 다시 시작하세요. 죽은 실행(종료된 태스크, 사라진
+호스트)은 갱신을 멈추므로 임대는 마지막 갱신 뒤 늦어도 `lease_seconds` 안에 만료되고,
+다음 실행이 진행합니다. 따로 정리할 것은 없습니다. 갱신이 계속 실패해 임대가 만료됐거나
+다른 실행이 임대를 가져간 실행은 다음 쓰기 전에 `NamespaceLeaseError: This run lost the
+write lease ...`로 멈춥니다. 다른 실행이 끝난 뒤 다시 실행하세요.
+
+- **임대가 있는 곳.** DynamoDB에서는 파티션 키 `namespace` = `<namespace>`, 정렬 키
+  `doc_id` = `#lease`인 항목입니다(소유자는 `lease_owner`, 만료 시각은 테이블의 TTL
+  속성인 `lease_expires_at`이므로 만료되면 DynamoDB도 지움). SQLite 레지스트리에서는
+  `leases` 테이블의 네임스페이스 행입니다. 손으로 지우려면 먼저 그 항목에 적힌 실행이
+  끝났는지 확인하세요.
+- **권한.** 사용자 정의 정책을 쓰는 레지스트리에는 임대용 `dynamodb:PutItem`,
+  `GetItem`, `DeleteItem`(CDK 스택의 권한 부여에 들어 있음)과, 라이브러리가 테이블을
+  만들 때 `dynamodb:UpdateTimeToLive`가 필요합니다.
+- **네임스페이스란.** 인덱스 접미사(`index_value`, 지정하지 않으면 `default`)에
+  `indexing.additional_suffix`를 더하고, `indexing.opensearch.*_index_prefix`나
+  `indexing.neptune.*_label_prefix` 중 하나라도 기본값이 아니면 이 접두사들의 태그를
+  덧붙인 값입니다. 접두사만 다른 두 설정은 서로 다른 저장소에 쓰므로 테이블 하나를
+  함께 써도 레코드를 따로 둡니다. 네임스페이스가 다른 실행은 임대를 따로 얻으므로 함께
+  실행할 수 있습니다.
+
+**레지스트리가 없으면 아무것도 잠그지 않으며** 동시 실행을 지원하지 않습니다. 같은 인덱스
+접미사(같은 OpenSearch 별칭과 Neptune 레이블)에 다른 실행이 돌고 있으면 실행을 시작하지
+마세요. 전체 재색인은 타임스탬프가 붙은 새 인덱스에 쓰고, 별칭을 새 인덱스로 옮긴 뒤 그
+별칭의 이전 인덱스를 지우므로 한 실행이 다른 실행이 쓰고 있는 인덱스를 지울 수 있습니다.
+`IncrementalIndexer`를 직접 쓰는 API도 임대를 얻지 않습니다.
+
+**CDK 스택에서는** `start-execution` 한 번이 수집 태스크를 실행하는 실행 하나를 시작하며,
+스택에는 일정이나 트리거가 없습니다. 상태 머신은 실행 중에 두 번째 실행이 시작되는 것을
+막지 않고, 임대가 두 번째 실행을 실패시킵니다. 먼저 `RUNNING` 실행이 있는지
+확인하고([실행 전 확인](#실행-전-확인)), 직접 추가한 일정은 이전 실행이 아직 돌고 있을 수
+없을 때만(`sfn_timeout_hours`, 기본 6시간까지) 실행되게 하세요.
+
+### 시작 시 엔드포인트 검사
+
+CLI는 첫 유료 모델 호출 전에 실행에 필요한 저장소 엔드포인트가 설정되어 있는지
+검사하고, 없으면 종료 코드 2(설정 오류)로 끝납니다.
+
+```text
+run-ingestion: error: Missing endpoint configuration for the indexing stage: aws.neptune.endpoint (env UKR__AWS__NEPTUNE__ENDPOINT), aws.opensearch.endpoint (env UKR__AWS__OPENSEARCH__ENDPOINT). Set them in the config file or the environment.
+```
+
+- `run-ingestion`은 `indexing` 단계가 켜져 있으면 두 엔드포인트를 모두
+  검사합니다(`--verify-metadata`는 제외).
+- `run-rag`와 `run-eval`은 선택한 전략의 검색기가 쓰는 엔드포인트를 검사합니다.
+  모든 전략에 OpenSearch가 필요하고, `local`, `drift`, `mix`, `hybrid`는
+  Neptune도 필요합니다. `auto`는 라우팅할 수 있는 모든 전략, 즉
+  `search.auto_routable_strategies`에서 `graph.community_detection.enabled`가 false일 때
+  `global`과 `drift`를 뺀 전략을 기준으로 검사합니다.
+
+이 검사는 값이 설정되어 있는지만 봅니다. 값이 틀렸거나 연결할 수 없는
+엔드포인트는 첫 연결에서 실패하며, 검색기는 인증·설정·연결 오류를 빈 결과로
+감추지 않고 그대로 보고합니다.
+
+## 경보
+
+CDK 스택에서는 수집 태스크가 실패하면 실행 ID와 오류를 담은 메시지를 SNS 토픽에
+게시하고, 아래 경보도 같은 토픽으로 문제를 알립니다. 파이프라인 실행 경보가 다섯 개,
+저장소 상태 경보가 일곱 개, 용량 경보가 두 개입니다. 경보를 받으려면
+`-c alarm_email=<address>`로 배포해 구독자를 등록해야 합니다.
+
+태스크가 실패하면 `PipelineFailures`도 발생하므로 같은 실패가 두 번 오며, 두 번째
+알림에는 실행 ID와 오류가 없습니다. 이 경보를 두는 이유는 메시지로 알릴 수 없는
+실패도 잡기 때문입니다. 태스크의 오류 처리기가 잡지 못하는 오류(예: `pipeline_id`가
+없는 시작 입력)나 재시도 후에도 실패한 게시가 여기에 해당합니다.
+
+**파이프라인 실행**
+
+| 경보 | 발생 조건 |
+|---|---|
+| `PipelineFailures` | Step Functions 실행이 실패함 |
+| `PipelineTimedOutOrAborted` | 실행이 상태 머신 제한 시간을 넘겼거나 중지됨 |
+| `IndexingFailures` | 실행이 성공했더라도 인덱싱에서 실패한 항목이 있음 |
+| `ExtractionFailures` | 추출, gleaning, 주장 추출이 일부 텍스트 단위에서 실패함 |
+| `DocumentsQuarantined` | 인덱싱이 계속 죽은 문서를 실행이 격리함([격리된 문서](#격리된-문서) 참고) |
+
+Step Functions 경보를 뺀 파이프라인 실행 경보는 `run-ingestion --metrics-sink cloudwatch`가
+내보내는 EMF 지표를 읽습니다. 각 단계의 지표는 그 단계가 끝날 때(그래서 중지되거나 시간
+초과된 실행도 끝낸 단계는 보고합니다), 실행 전체의 지표(소요 시간, 캐시 적중률)는 실행이
+끝날 때 내보냅니다. 태스크는 스택의 `env_name`을 `Environment` 차원으로 붙이고, 경보와
+대시보드는 그 시계열만 읽으므로 같은 계정과 리전의 dev 배포 실행이 prod 배포의 경보를
+울리지 않습니다. `UKR_METRICS_ENVIRONMENT`가 없는 실행(CDK 태스크 밖)은 차원 없는
+시계열을 내보내며, 이를 읽는 경보는 없습니다.
+
+**저장소 상태**
+
+저장소 상태 경보는 실행이 없을 때도 발생하므로, 다음 실행이 실패하기 전에 성능
+저하를 알 수 있습니다.
+
+| 경보 | 발생 조건 | 조치 |
+|---|---|---|
+| `OpenSearchClusterRed` | 할당되지 않은 프라이머리 샤드가 있음(5분) | 도메인의 클러스터 상태와 실패한 노드를 확인합니다. 해당 인덱스 검색에서 데이터가 빠지므로 green이나 yellow가 될 때까지 수집을 멈춥니다 |
+| `OpenSearchFreeStorageLow` | 가장 많이 찬 데이터 노드의 여유 공간이 `opensearch_volume_gib`의 40% 이하 | 쓰기 차단 기준에 이르기 전에 `opensearch_volume_gib`(또는 `opensearch_count`)를 늘려 다시 배포합니다 |
+| `OpenSearchJvmPressure` | JVM 메모리 압력이 3분 연속 95% 이상 | 메모리 부족 위험입니다. 더 큰 `opensearch_instance`를 쓰거나 데이터 노드를 늘립니다 |
+| `DocStatusWriteThrottled` | 문서 상태 테이블이 쓰기를 스로틀링함(5분) | 앱은 스로틀링된 레지스트리 호출을 백오프하며 재시도하고, 그래도 스로틀링되면 `DocStatusRegistryError`로 실행이 실패합니다. 같은 테이블에 겹쳐 실행되는 수집이 있는지 확인하고, 스로틀링이 해소된 뒤 실패한 실행을 다시 실행합니다 |
+| `NeptuneHighCpu` | 라이터(writer)의 평균 CPU가 15분(5분 × 3) 동안 90% 이상 | 대량 쓰기의 일시적 최고치가 아니라 지속적인 포화입니다. 더 큰 `neptune_instance`(또는 더 높은 `neptune_serverless_ncu` 최댓값)를 쓰거나 `indexing.neptune.index_concurrency`를 낮춥니다 |
+| `NeptuneLowFreeableMemory` | 5분 안에 라이터의 가용 메모리가 한 번이라도 512MiB 이하로 떨어짐(최솟값) | 쿼리와 쓰기가 메모리 부족으로 실패할 수 있습니다. 더 큰 `neptune_instance`를 쓰거나, 부하가 몰리기 전에 용량이 확보되도록 `neptune_serverless_ncu` 최솟값을 높입니다 |
+| `NeptuneGremlinErrors` | 3분 연속 어느 인스턴스에서든 Gremlin 서버 오류가 있음 | 지속적인 쓰기·쿼리 실패입니다(재시도되는 쓰기 충돌은 짧게 몰려 발생하므로 이 경보를 울리지 않음). 작업 로그에서 실패한 요청을 확인합니다 |
+
+**용량**
+
+용량 경보는 느려지거나 곧 종료될 실행을 알립니다.
+
+| 경보 | 발생 조건 | 조치 |
+|---|---|---|
+| `BedrockThrottling` | 5분 구간 3개 연속으로 Bedrock이 100회 이상 스로틀링함. 계정과 리전의 모든 모델을 합산합니다(Bedrock은 모델별로만 지표를 내고, 스택은 앱이 쓰는 모델을 모름) | 실행은 스로틀링된 호출을 재시도하므로 실패하지 않고 느려집니다. `processing.max_concurrency`를 낮추거나 Bedrock 할당량 증가를 요청합니다. 같은 계정과 리전의 다른 Bedrock 사용량도 포함됩니다 |
+| `IngestionTaskMemory` | 수집 태스크가 3분 동안 메모리의 90% 이상을 씀(Container Insights) | Fargate는 메모리를 넘은 태스크를 종료하고, 그러면 실행 중인 단계를 잃습니다. `fargate_memory`를 늘립니다 |
+
+대시보드에는 단계별 소요 시간, 수집 태스크의 메모리·CPU 사용률, 모델별 Bedrock 호출·스로틀링·지연 시간도 표시됩니다.
+
 ## 질의 권한과 테넌트 격리
 
 질의(`run-rag`, `run-eval`, `GraphRAGChain`을 내장한 애플리케이션)에는 수집보다
@@ -411,27 +444,6 @@ Neptune `connect`와 `ReadDataViaQuery`, 도메인에 대한 OpenSearch `GET`/`H
   테넌트가 그래프를 읽을 수 없어야 한다면 테넌트마다 Neptune 클러스터를 따로 두세요
   (테넌트마다 배포 하나, 또는 `env_name` 하나).
 - Bedrock과 가드레일은 공유하며 테넌트 데이터를 보관하지 않습니다.
-
-## 시작 시 엔드포인트 검사
-
-CLI는 첫 유료 모델 호출 전에 실행에 필요한 저장소 엔드포인트가 설정되어 있는지
-검사하고, 없으면 종료 코드 2(설정 오류)로 끝납니다.
-
-```text
-run-ingestion: error: Missing endpoint configuration for the indexing stage: aws.neptune.endpoint (env UKR__AWS__NEPTUNE__ENDPOINT), aws.opensearch.endpoint (env UKR__AWS__OPENSEARCH__ENDPOINT). Set them in the config file or the environment.
-```
-
-- `run-ingestion`은 `indexing` 단계가 켜져 있으면 두 엔드포인트를 모두
-  검사합니다(`--verify-metadata`는 제외).
-- `run-rag`와 `run-eval`은 선택한 전략의 검색기가 쓰는 엔드포인트를 검사합니다.
-  모든 전략에 OpenSearch가 필요하고, `local`, `drift`, `mix`, `hybrid`는
-  Neptune도 필요합니다. `auto`는 라우팅할 수 있는 모든 전략, 즉
-  `search.auto_routable_strategies`에서 `graph.community_detection.enabled`가 false일 때
-  `global`과 `drift`를 뺀 전략을 기준으로 검사합니다.
-
-이 검사는 값이 설정되어 있는지만 봅니다. 값이 틀렸거나 연결할 수 없는
-엔드포인트는 첫 연결에서 실패하며, 검색기는 인증·설정·연결 오류를 빈 결과로
-감추지 않고 그대로 보고합니다.
 
 ## 관측성
 
@@ -738,35 +750,15 @@ LangSmith로 업로드합니다.
 
 ## 자주 보는 오류
 
+메시지는 요약한 것이며, 로그 줄에 관련 키, 파일, 단계가 나옵니다. 질의 중의 저장소, 모델, 자격 증명 오류는 이후 질의도 모두 같은 이유로 실패하므로 빈 컨텍스트로 "찾을 수 없음"이라고 답하지 않고 질의를 실패시킵니다.
+
+### 설정과 시작
+
 | 메시지(요약) | 의미 | 조치 |
 |---|---|---|
 | `Missing endpoint configuration for ...` | 실행에 필요한 엔드포인트가 비어 있음 | 메시지에 나온 키나 환경 변수를 설정 |
 | `Configuration validation error: ...` | 설정값의 타입이나 값이 잘못됨 | 메시지에 나온 키를 수정 |
 | `ConfigurationError: Unknown config keys: '<path>' ...`(종료 코드 2) | 오타이거나 이번 릴리스에서 없어지거나 이름이 바뀐 키 | 키를 고치거나 삭제함(바뀐 이름은 [CHANGELOG](../CHANGELOG.md)에 있음). `--allow-unknown-keys`를 주면 키마다 `Unknown config key '<path>' is ignored`(WARNING)를 남기고 파일을 읽음 |
-| `No valid AWS credentials for Amazon Bedrock in region ...` | 자격 증명이 없거나 만료됨 | 자격 증명을 갱신하고 `AWS_PROFILE` / `aws.profile_name` 확인 |
-| `Model '<id>' is only available through a cross-region inference profile, but none resolved ...` | 온디맨드 처리량이 없는 모델인데 추론 프로파일을 찾지 못함 | `aws.bedrock.enable_global_profile: true`를 유지하고 `bedrock:ListInferenceProfiles`를 허용하거나 다른 리전 사용 |
-| `Reranking failed: ...` (질의마다 ERROR, `metadata.rerank.status: failed`) | Rerank 호출이 거부되었거나 해당 리전에 모델이 없음 | `bedrock:Rerank`를 `Resource: "*"`로 허용하거나, rerank 모델이 있는 리전으로 Bedrock을 옮기거나, `search.reranking.enabled: false` 설정 |
-| `RerankModelError: Reranking failed: ...` / `... returned no usable results` / `Rerank model could not be built: ...` | `search.reranking.required: true`인데 재순위화 호출이 실패했거나, 쓸 수 있는 결과를 돌려주지 않았거나, 재순위화 모델을 만들 수 없음. 융합 순서로 답하지 않고 질의가 실패함 | 위 `Reranking failed`와 같이 원인을 해결하거나, 융합만으로 답해도 되면 `required: false` 설정(`metadata.rerank.status`에 `failed`·`unavailable`로 보고됨) |
-| `Reranking initialization failed; queries keep the fused order ...` (전략을 처음 만들 때 ERROR) | 재순위화가 켜져 있지만 재순위화 모델을 만들 수 없음. 모든 질의가 `metadata.rerank.status: unavailable`을 보고함 | `models.rerank`와 재순위화 공급자(`providers.rerank`)를 확인하거나 `search.reranking.enabled: false` 설정 |
-| `No indices found for suffix '<suffix>' ...` | 그 인덱스 접미사로 수집한 데이터가 없음 | 수집을 실행하거나, 코퍼스를 수집할 때 쓴 접미사로 질의 |
-| `InvalidFilterError` | 전략이 읽는 어떤 저장소도 그 필터 키를 선언하지 않음 | 메시지에 나온 키 목록에서 선택 |
-| `OpenSearch rejected the search on <index>: ...` | 그 인덱스에 맞지 않는 요청(HTTP 400). 필드와 형식이 다른 필터 값(`query_shard_exception`). `too_many_nested_clauses` / `too_many_clauses`(HTTP 500)는 질의의 절이 클러스터 허용치보다 많은 경우로, 보통 `indices.query.bool.max_clause_count`가 기본값 1,024보다 낮음 | 필터 값을 고침. 절 한도는 `indices.query.bool.max_clause_count`를 1,024 이상으로 둠 |
-| `Cannot create the OpenSearch index '<index>': the cluster has no analyzer '<name>'` (원래 오류: `mapper_parsing_exception: analyzer [<name>] has not been configured in mappings`) | `indexing.opensearch.language_analyzers`가 코퍼스 언어나 대상 언어를 클러스터에 플러그인이 없는 분석기로 매핑함. 보통 선택 사항인 Nori 패키지를 연결하지 않은 Amazon OpenSearch Service 도메인에서 `ko: nori` | 클러스터에 있는 분석기로 매핑(`ko: cjk`는 내장. CDK 배포는 기본으로 이렇게 하며 `-c opensearch_korean_analyzer`로 바꿈)하거나 도메인에 플러그인 패키지를 연결한 뒤 다시 실행 |
-| `StoreConnectionError: ... Cannot connect to host ...` / `Neptune is not reachable ...` / `... status=429 ... (still failing after the client's retries)` | OpenSearch 또는 Neptune이 연결을 거부했거나 주소를 확인할 수 없음, Neptune이 연결을 닫음(재시작, 장애 조치), 또는 OpenSearch가 `search.store_max_attempts`번 시도 후에도 429/502/503/504로 응답함(과부하, 재시작 중). 컨텍스트 없이 답하지 않고 질의가 실패함. 끊긴 Neptune 연결은 버리고 다음 질의나 수집의 다음 재시도가 다시 연결함 | 엔드포인트와 포트, 저장소 실행 여부, 네트워크 경로(보안 그룹, VPC 엔드포인트) 확인 |
-| `OpenSearch did not answer a request on <index> within N s in M attempt(s)` / `Neptune did not answer within N s` | 저장소가 연결은 받았지만 `search.store_timeout_seconds` 안에 응답하지 않음(OpenSearch는 `search.store_max_attempts`번 시도). 질의가 실패함. 수집 중 Neptune의 제한은 고정 180초이며 해당 항목을 재시도함 | 저장소 상태와 부하(CPU, 대기열, 진행 중인 장애 조치) 확인. 원래 느린 클러스터라면 `search.store_timeout_seconds`를 늘림(수집 쪽 제한은 바뀌지 않음) |
-| `OpenSearch denied the search on <index>: ... status=403 ...` (또는 `401`) | 질의 주체가 인덱스를 검색할 권한이 없음. 세분화된 액세스 제어에서 `indices:data/read/search`가 없는 역할이거나 자격 증명이 잘못됨 | 역할에 해당 인덱스의 `indices:data/read/search`(임베딩 확인용 `indices:admin/mappings/get` 포함)를 부여하거나 자격 증명을 고침 |
-| 질의 중 `ClientError: ... (ValidationException) ... InvokeModel ...` / `(ResourceNotFoundException)` / `NoCredentialsError` | 질의 임베딩 호출이 성공할 수 없음. 잘못된 모델 ID, 그 리전에서 온디맨드 처리량을 지원하지 않는 모델, 부여되지 않은 모델 액세스, 자격 증명 없음. 컨텍스트 없이 답하지 않고 질의가 실패함 | `models.embedding.model_id`, `aws.bedrock.region_name`, 계정의 모델 액세스 또는 자격 증명 확인 |
-| `EmbeddingModelError: Query embedding failed: ...` | 클라이언트 재시도 후에도 질의 임베딩 모델 호출이 실패함(멈춘 Ollama 러너, 죽은 vLLM 엔진, 계속되는 Bedrock `InternalServerException`). 질의의 모든 벡터 검색에 필요하므로 "찾을 수 없음"으로 답하지 않고 질의가 실패함 | 임베딩 서버나 모델(`providers.embedding`, `models.embedding.model_id`)과 그 로그를 확인한 뒤 다시 시도 |
-| `Neptune refused the connection (HTTP 403)` | IAM 인증이 웹소켓 연결을 거부함. 정책에 클러스터의 `neptune-db:connect`가 없거나 다른 리전으로 서명함 | `neptune-db:connect`(실행에 필요한 `neptune-db:*` 데이터 작업 포함)를 부여하고 `aws.region_name`을 클러스터의 리전으로 설정 |
-| `Skipping N '.md' file(s) ...` / `No supported source files found in '<dir>'` | `unstructured` 추가 패키지가 설치되지 않음 | 설치(Python 3.11 이상)하거나 파일 형식을 변환 |
-| `ConfigurationError: Doc-status registry: DynamoDB table '...' has the key schema ... of an earlier release` | `doc_id`만으로 레코드 키를 잡던 릴리스가 만든 테이블임 | `aws.dynamodb.table_name`(`UKR__AWS__DYNAMODB__TABLE_NAME`)을 새 테이블로 바꾸거나 스택의 새 테이블을 배포하고, `indexing.reset: true`로 한 번 실행([증분 실행](#증분-실행) 참고) |
-| `NamespaceLeaseError: Index namespace '...' is being written by ...` | 다른 실행이 네임스페이스의 쓰기 임대를 가지고 있음 | 그 실행이 끝날 때까지 기다립니다. 죽은 실행의 임대는 `indexing.lease_seconds` 안에 만료됩니다([동시 실행](#동시-실행) 참고) |
-| `NamespaceLeaseError: This run lost the write lease ...` | 임대 갱신이 계속 실패해 만료됐거나 다른 실행이 임대를 가져감 | 다른 실행이 끝난 뒤 다시 실행하고, 레지스트리에 연결할 수 있는지 확인합니다 |
-| `ConfigurationError: The OpenSearch index '...' records no embedding settings ...` | 이전 릴리스가 만든 인덱스 | `indexing.reset: true`로 한 번 실행합니다 |
-| `DocStatusRegistryError` | 문서 상태 레지스트리 테이블이 없거나, 접근할 수 없거나, 스로틀링됨 | 테이블을 만들거나 `aws.dynamodb.table_name`을 고치고, 메시지에 나온 DynamoDB 권한을 부여한 뒤 같은 `--pipeline-id`로 재개 |
-| `Incremental indexing is enabled but no document delta was computed` | 레지스트리 비교 없이 인덱싱 단계가 실행됨(`continue_on_error`로 로딩 단계 실패 뒤 진행) | 레지스트리에 접근할 수 있게 한 뒤 `document_loading`부터 다시 실행 |
-| `CacheSyncError` | S3 단계 캐시 다운로드나 업로드가 실패함 | 버킷 권한과 `aws.s3.encryption`을 확인한 뒤 같은 `--pipeline-id`로 재개 |
-| `Pipeline failed at stage(s): ...` | 단계가 실패해 CLI가 1로 종료함 | 해당 단계 로그를 확인해 고친 뒤 같은 `--pipeline-id`로 재개. `--verify-metadata`로 실행 메타데이터를 확인하거나 `--force-rebuild`로 처음부터 시작 |
 | `--source-directory is required for pipeline execution`(아래 사용법 오류처럼 종료 코드 2) | `--source-directory`도 `$UKR_SOURCE_DIRECTORY`도 없음 | 플래그를 넘김. `--verify-metadata`에는 대신 `--pipeline-id`가 필요 |
 | `--s3-bucket-name must be specified for --s3-sync` | 버킷 없이 `--s3-sync`를 지정함 | `--s3-bucket-name`을 넘김 |
 | `--pipeline-id is required for --resume-from-stage` | 재개하려면 이전 실행이 필요함 | 그 실행의 `--pipeline-id`를 넘김 |
@@ -774,12 +766,61 @@ LangSmith로 업로드합니다.
 | `argument --resume-from-stage: Unknown pipeline stage ...`(종료 코드 2) | `--resume-from-stage`에 없는 단계 이름을 넘김 | 메시지에 나온 목록의 이름을 사용(대소문자 무관) |
 | `... needs confirmation, but stdin is not a terminal` | 다시 실행할 때 완료된 단계의 출력이 현재 입력 기준으로 캐시에 없는데, 물어볼 터미널이 없음 | `--yes`를 넘겨 계속(재개하면서 그 단계를 다시 계산)하거나 새 `--pipeline-id`를 사용 |
 | `Stage '<stage>', upstream of this run's enabled stages, has not completed` | `--enabled-stages` 범위를 재개했는데 앞 단계가 실패했거나 캐시된 출력이 없음 | 앞 단계를 먼저 실행 |
-| `The doc-status registry lists indexed documents of this namespace whose entities the graph store does not hold` | 레지스트리에 기록된 내용을 그래프가 잃음(Gremlin Server 재시작, `docker compose ... down -v`, 복원하거나 교체한 그래프). 확인한 문서의 텍스트 단위를 인용하는 엔티티가 벡터 저장소에는 있고 그래프에는 없을 때입니다(엔티티를 서술하지 않는 문서로는 걸리지 않음) | `indexing.reset: true`로 다시 실행하거나 해당 네임스페이스의 레지스트리 레코드를 삭제(로컬 모드에서는 SQLite 파일) |
-| `The doc-status registry lists indexed documents of this namespace whose text units the vector store does not hold` | 레지스트리에 기록된 내용을 벡터 저장소가 잃음(로컬 모드에서 `vector.sqlite3`를 지우거나 옮김, `providers.vector.sqlite_path` 변경, 삭제된 OpenSearch 인덱스) | 위와 같음. 로컬 모드에서는 저장소 파일 세 개를 함께 지우거나 벡터 파일을 복원 |
-| 내장 그래프·벡터 저장소나 SQLite 문서 상태 레지스트리의 `... stayed locked ...`(`database is locked`)(로컬 모드) | 다른 프로세스(두 번째 수집 등)가 같은 SQLite 파일에 쓰면서 `search.store_timeout_seconds`보다 오래 잠금을 잡음. SQLite는 한 번에 한 프로세스만 씀 | 다른 실행이 끝난 뒤 다시 실행하거나, 저장소 파일마다 수집을 한 번에 하나만 실행하거나, `search.store_timeout_seconds`를 늘림. 파일은 로컬 디스크에 둠(네트워크 파일 시스템은 지원하지 않음) |
-| 로그에 `Connection refused`와 함께 `... processed N inputs but produced 0 outputs`(로컬 모드) | `providers.llm.base_url` / `providers.embedding.base_url`에서 Ollama나 OpenAI 호환 서버에 연결할 수 없음 | 서버를 띄우고(`ollama serve` 또는 `docker compose -f docker/compose.local.yaml --profile models up -d --wait`), `base_url`(또는 `--model-base-url`)을 확인하고, 모델을 내려받음 |
-| 질의가 `AuthenticationError` / `NotFoundError`(`Error code: 401` / `404`), `APIConnectionError` / `APITimeoutError`, `ResponseError: model ... not found`로 실패함(로컬 모드) | OpenAI 호환 서버나 Ollama가 키를 거부했거나 그 모델을 제공하지 않음, 또는 클라이언트 재시도 후에도 연결할 수 없거나 응답하지 않음. 이후 질의도 모두 같은 이유로 실패하므로 "찾을 수 없음"으로 답하지 않고 질의를 실패시킴 | `providers.llm` / `providers.embedding`의 `base_url`과 `api_key`, `models.default` / `models.embedding.model_id`의 모델 이름, 서버 실행 여부를 확인하고 모델을 내려받음 |
 | `observability.enabled is true but OpenTelemetry is not installed` | 추적을 켰지만 `otel` extra가 설치되지 않음 | `uv sync --extra otel`을 실행하거나 `observability.enabled: false` 설정 |
+| `Skipping N '.md' file(s) ...` / `No supported source files found in '<dir>'` | `unstructured` 추가 패키지가 설치되지 않음 | 설치(Python 3.11 이상)하거나 파일 형식을 변환 |
+
+### 자격 증명과 모델
+
+| 메시지(요약) | 의미 | 조치 |
+|---|---|---|
+| `No valid AWS credentials for Amazon Bedrock in region ...` | 자격 증명이 없거나 만료됨 | 자격 증명을 갱신하고 `AWS_PROFILE` / `aws.profile_name` 확인 |
+| `Model '<id>' is only available through a cross-region inference profile, but none resolved ...` | 온디맨드 처리량이 없는 모델인데 추론 프로파일을 찾지 못함 | `aws.bedrock.enable_global_profile: true`를 유지하고 `bedrock:ListInferenceProfiles`를 허용하거나 다른 리전 사용 |
+| `Reranking failed: ...` (질의마다 ERROR, `metadata.rerank.status: failed`) | Rerank 호출이 거부되었거나 해당 리전에 모델이 없음 | `bedrock:Rerank`를 `Resource: "*"`로 허용하거나, rerank 모델이 있는 리전으로 Bedrock을 옮기거나, `search.reranking.enabled: false` 설정 |
+| `RerankModelError: Reranking failed: ...` / `... returned no usable results` / `Rerank model could not be built: ...` | `search.reranking.required: true`이고 재순위화 호출이 실패했거나, 쓸 만한 결과가 없거나, 모델을 만들 수 없음 | `Reranking failed`처럼 원인을 고치거나, `required: false`로 융합 순서대로 답하게 함(`metadata.rerank.status` `failed` / `unavailable`) |
+| `Reranking initialization failed; queries keep the fused order ...` (전략을 처음 만들 때 ERROR) | 재순위화가 켜져 있지만 재순위화 모델을 만들 수 없음. 모든 질의가 `metadata.rerank.status: unavailable`을 보고함 | `models.rerank`와 재순위화 공급자(`providers.rerank`)를 확인하거나 `search.reranking.enabled: false` 설정 |
+| 질의 중 `ClientError: ... (ValidationException) ... InvokeModel ...` / `(ResourceNotFoundException)` / `NoCredentialsError` | 질의 임베딩 호출이 성공할 수 없음: 잘못된 모델 ID, 리전에 온디맨드 처리량이 없음, 모델 액세스 없음, 자격 증명 없음 | `models.embedding.model_id`, `aws.bedrock.region_name`, 계정의 모델 액세스와 자격 증명을 확인 |
+| `EmbeddingModelError: Query embedding failed: ...` | 클라이언트 재시도 후에도 질의 임베딩 호출이 실패함(멈춘 Ollama 러너, 죽은 vLLM 엔진, 계속되는 Bedrock `InternalServerException`). 질의의 모든 벡터 검색에 필요함 | 임베딩 서버나 모델(`providers.embedding`, `models.embedding.model_id`)과 로그를 확인한 뒤 다시 시도 |
 | 프라이빗 VPC에서 Bedrock 호출이 멈춤 | VPC 엔드포인트가 처리하지 않는 리전으로 Bedrock을 호출함 | `aws.bedrock.region_name`을 비우거나 VPC 리전과 같게 설정 |
+
+### 저장소: 연결, 권한, 요청
+
+| 메시지(요약) | 의미 | 조치 |
+|---|---|---|
+| `StoreConnectionError: ... Cannot connect to host ...` / `Neptune is not reachable ...` / `... status=429 ... (still failing after the client's retries)` | 저장소가 연결을 거부했거나 이름을 찾을 수 없음, Neptune이 연결을 닫음(재시작이나 장애 조치), 또는 OpenSearch가 `search.store_max_attempts`번 시도 뒤에도 429/502/503/504로 답함. 끊긴 Neptune 연결은 다음 질의나 재시도가 다시 엶 | 엔드포인트와 포트, 저장소 실행 여부, 네트워크 경로(보안 그룹, VPC 엔드포인트)를 확인 |
+| `OpenSearch did not answer a request on <index> within N s in M attempt(s)` / `Neptune did not answer within N s` | 저장소가 연결은 받았지만 `search.store_timeout_seconds` 안에 답하지 않음. 수집 중 Neptune 한도는 고정 180초이며 항목을 재시도함 | 저장소 상태와 부하(CPU, 큐, 장애 조치)를 확인하고, 원래 느린 클러스터라면 `search.store_timeout_seconds`를 늘림 |
+| `OpenSearch denied the search on <index>: ... status=403 ...` (또는 `401`) | 질의 주체가 인덱스를 검색할 권한이 없음. 세분화된 액세스 제어에서 `indices:data/read/search`가 없는 역할이거나 자격 증명이 잘못됨 | 역할에 해당 인덱스의 `indices:data/read/search`(임베딩 확인용 `indices:admin/mappings/get` 포함)를 부여하거나 자격 증명을 고침 |
+| `Neptune refused the connection (HTTP 403)` | IAM 인증이 웹소켓 연결을 거부함. 정책에 클러스터의 `neptune-db:connect`가 없거나 다른 리전으로 서명함 | `neptune-db:connect`(실행에 필요한 `neptune-db:*` 데이터 작업 포함)를 부여하고 `aws.region_name`을 클러스터의 리전으로 설정 |
 | `use_iam: false`에서 OpenSearch 인증 실패 | 기본 인증 자격 증명이 없음 | `UKR__AWS__OPENSEARCH__USERNAME` / `UKR__AWS__OPENSEARCH__PASSWORD` 설정(예: `.env`) |
+| `OpenSearch rejected the search on <index>: ...` | HTTP 400: 필드와 형식이 다른 필터 값(`query_shard_exception`). HTTP 500 `too_many_clauses` / `too_many_nested_clauses`: `indices.query.bool.max_clause_count`가 기본값 1,024보다 작음 | 필터 값을 고치거나 `indices.query.bool.max_clause_count`를 1,024 이상으로 유지 |
+| `Cannot create the OpenSearch index '<index>': the cluster has no analyzer '<name>'`(원래 오류: `mapper_parsing_exception`) | `indexing.opensearch.language_analyzers`가 클러스터에 플러그인이 없는 분석기를 가리킴. 보통 Nori 패키지가 없는 Amazon OpenSearch Service 도메인의 `ko: nori` | 클러스터에 있는 분석기로 바꾸거나(`ko: cjk`는 기본 제공이며 CDK 스택의 기본값, `-c opensearch_korean_analyzer`), 패키지를 연결한 뒤 다시 실행 |
+
+### 수집 실행과 문서 상태 레지스트리
+
+| 메시지(요약) | 의미 | 조치 |
+|---|---|---|
+| `Pipeline failed at stage(s): ...` | 단계가 실패해 CLI가 1로 종료함 | 해당 단계 로그를 확인해 고친 뒤 같은 `--pipeline-id`로 재개. `--verify-metadata`로 실행 메타데이터를 확인하거나 `--force-rebuild`로 처음부터 시작 |
+| `CacheSyncError` | S3 단계 캐시 다운로드나 업로드가 실패함 | 버킷 권한과 `aws.s3.encryption`을 확인한 뒤 같은 `--pipeline-id`로 재개 |
+| `DocStatusRegistryError` | 문서 상태 레지스트리 테이블이 없거나, 접근할 수 없거나, 스로틀링됨 | 테이블을 만들거나 `aws.dynamodb.table_name`을 고치고, 메시지에 나온 DynamoDB 권한을 부여한 뒤 같은 `--pipeline-id`로 재개 |
+| `Incremental indexing is enabled but no document delta was computed` | 레지스트리 비교 없이 인덱싱 단계가 실행됨(`continue_on_error`로 로딩 단계 실패 뒤 진행) | 레지스트리에 접근할 수 있게 한 뒤 `document_loading`부터 다시 실행 |
+| `NamespaceLeaseError: Index namespace '...' is being written by ...` | 다른 실행이 네임스페이스의 쓰기 임대를 가지고 있음 | 그 실행이 끝날 때까지 기다립니다. 죽은 실행의 임대는 `indexing.lease_seconds` 안에 만료됩니다([동시 실행](#동시-실행) 참고) |
+| `NamespaceLeaseError: This run lost the write lease ...` | 임대 갱신이 계속 실패해 만료됐거나 다른 실행이 임대를 가져감 | 다른 실행이 끝난 뒤 다시 실행하고, 레지스트리에 연결할 수 있는지 확인합니다 |
+| `ConfigurationError: Doc-status registry: DynamoDB table '...' has the key schema ... of an earlier release` | `doc_id`만으로 레코드 키를 잡던 릴리스가 만든 테이블임 | `aws.dynamodb.table_name`(`UKR__AWS__DYNAMODB__TABLE_NAME`)을 새 테이블로 바꾸거나 스택의 새 테이블을 배포하고, `indexing.reset: true`로 한 번 실행([증분 실행](#증분-실행) 참고) |
+| `ConfigurationError: The OpenSearch index '...' records no embedding settings ...` | 이전 릴리스가 만든 인덱스 | `indexing.reset: true`로 한 번 실행합니다 |
+| `The doc-status registry lists indexed documents of this namespace whose entities the graph store does not hold` | 레지스트리가 기록한 내용을 그래프가 잃음(Gremlin Server 재시작, `docker compose ... down -v`, 복원하거나 교체한 그래프) | `indexing.reset: true`로 다시 실행하거나 네임스페이스의 레지스트리 레코드를 삭제(로컬 모드: SQLite 파일) |
+| `The doc-status registry lists indexed documents of this namespace whose text units the vector store does not hold` | 레지스트리가 기록한 내용을 벡터 저장소가 잃음(삭제된 인덱스, 로컬 모드: `vector.sqlite3`를 옮기거나 지움, `providers.vector.sqlite_path` 변경) | 위와 같음. 로컬 모드에서는 저장소 파일 세 개를 함께 지우거나 벡터 파일을 되돌림 |
+
+### 질의
+
+| 메시지(요약) | 의미 | 조치 |
+|---|---|---|
+| `No indices found for suffix '<suffix>' ...` | 그 인덱스 접미사로 수집한 데이터가 없음 | 수집을 실행하거나, 코퍼스를 수집할 때 쓴 접미사로 질의 |
+| `InvalidFilterError` | 전략이 읽는 어떤 저장소도 그 필터 키를 선언하지 않음 | 메시지에 나온 키 목록에서 선택 |
 | LightRAG `mix` / `hybrid` 결과가 없음 | 관계 인덱스가 없거나 키워드 추출이 키워드를 만들지 못함 | 수집에서 관계 인덱스를 만들었는지 확인. 아주 짧은 질의는 `raw_query_fallback_max_len` 이하일 때만 원래 질의를 씀 |
+
+### 로컬 모드
+
+| 메시지(요약) | 의미 | 조치 |
+|---|---|---|
+| 내장 저장소나 SQLite 레지스트리의 `... stayed locked ...`(`database is locked`) | 다른 프로세스(두 번째 수집 등)가 SQLite 파일의 쓰기 잠금을 `search.store_timeout_seconds`보다 오래 쥠. SQLite는 한 번에 한 쓰기만 허용함 | 저장소 파일마다 수집을 하나씩 실행하거나 `search.store_timeout_seconds`를 늘림. 파일은 네트워크 파일 시스템이 아닌 로컬 디스크에 둠 |
+| 로그에 `Connection refused`와 함께 `... processed N inputs but produced 0 outputs`(로컬 모드) | `providers.llm.base_url` / `providers.embedding.base_url`에서 Ollama나 OpenAI 호환 서버에 연결할 수 없음 | 서버를 띄우고(`ollama serve` 또는 `docker compose -f docker/compose.local.yaml --profile models up -d --wait`), `base_url`(또는 `--model-base-url`)을 확인하고, 모델을 내려받음 |
+| 질의가 `AuthenticationError` / `NotFoundError`(401 / 404), `APIConnectionError` / `APITimeoutError`, `ResponseError: model ... not found`로 실패함 | OpenAI 호환 서버나 Ollama가 키를 거부했거나, 그 모델을 제공하지 않거나, 클라이언트 재시도 후에도 연결할 수 없음 | `providers.llm` / `providers.embedding`의 `base_url`과 `api_key`, 모델 이름(`models.default`, `models.embedding.model_id`), 서버 실행 여부를 확인하고 모델을 내려받음 |
