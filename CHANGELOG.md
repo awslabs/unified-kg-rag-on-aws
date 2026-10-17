@@ -606,7 +606,7 @@ Library API (Python callers and custom backends).
   order is defaults < `backend` preset < file < environment < provider
   flags. An environment value is now also checked with the rest of the
   config: `OPENSEARCH_USERNAME` keeps the local preset's anonymous access
-  off, as the same key in the file does (#PR).
+  off, as the same key in the file does (#313).
 - Community detection no longer logs the WARNING "Graph has no weighted
   edges" when the hierarchy ends normally at a level whose communities no
   edge joins; it logs that at INFO and stops, with the same communities. An
