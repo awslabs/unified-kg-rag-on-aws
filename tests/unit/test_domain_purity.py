@@ -112,7 +112,7 @@ def test_domain_import_loads_no_infra_packages() -> None:
     )
 
 
-# --- layer contracts (design.md §2.0) ----------------------------------------
+# --- layer contracts (design.md §2.1) ----------------------------------------
 
 _PACKAGE_ROOT = _DOMAIN_ROOT.parent
 
@@ -138,7 +138,7 @@ _LAYER_FORBIDDEN: dict[str, tuple[str, ...]] = {
 }
 
 # Deliberate type-only exceptions (TYPE_CHECKING imports), documented in
-# design.md §2.4.
+# design.md §2.5.
 _ALLOWED: set[tuple[str, str]] = {
     # The strategy registry stores BaseSearchStrategy subclasses.
     (
