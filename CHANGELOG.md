@@ -163,7 +163,7 @@ Defaults. Set the old value explicitly to keep the previous behaviour.
 - The run manifest's `config_sha256` (the full resolved config, so it
   differed between environments) is replaced by `retrieval_config_sha256`
   over the settings that shape answers and scores only; compare new runs by
-  the new key (#PR).
+  the new key (#321).
 - `evaluation.max_context_tokens` defaults to `null`: the RAGAS judges get
   the answer budget (`search.token_manager.max_context_tokens`, 30000)
   instead of 8192 tokens, so `faithfulness` and `context_recall` judge an
@@ -379,7 +379,7 @@ Library API (Python callers and custom backends).
   `_meta` which run last wrote each suffix (`pipeline_id`, `mode`,
   `built_at`, `documents`, `extraction_fingerprint`, `package_version`), and
   the `run-eval` manifest copies it under `index` per queried suffix, so a
-  score can be traced to the index it was measured on (#PR).
+  score can be traced to the index it was measured on (#321).
 - Evaluation: `grouped_statistics.source_type` reports the retrieval metrics
   per source section type (its `text` row scores only the text units the
   answer model read); `graph_aware` adds `retrieved_entity_coverage` /
