@@ -712,6 +712,11 @@ search:
   # classification run before retrieval stays off the critical path.
   auto_routable_strategies: ["local", "mix", "global", "drift"]
 
+  # LLM calls and sub-searches one query keeps in flight (global map calls,
+  # dynamic-selection ratings, DRIFT primer calls and follow-up searches).
+  # Per query: concurrent queries multiply it.
+  max_concurrency: 10
+
   # Hybrid search weights: a hybrid search runs a lexical and a kNN search
   # per index, min-max normalizes each over its own hits and takes their
   # weighted mean. Read at query time.
@@ -792,7 +797,7 @@ search:
     # (0-100) for the query, FILTER+RANK drops low-scored points, PACK fits the
     # ranked points into a token budget, REDUCE synthesizes the answer from them.
     # Report tokens packed into one map LLM call (MS GraphRAG data_max_tokens);
-    # map calls run processing.max_concurrency at a time.
+    # map calls run search.max_concurrency at a time.
     map_context_tokens: 12000
     # Drop map key points whose 0-100 score is at or below this (0 keeps any
     # positive score).
@@ -839,10 +844,12 @@ search:
     # follow-up queries. Then, for n_depth rounds, the k_followups open
     # follow-up queries whose parent answer scored best each run a local
     # search and are answered (with new follow-ups) by models.roles.drift_action.
-    # Up to k_followups * n_depth local searches and action calls per query.
-    k_followups: 20
+    # Up to k_followups * n_depth local searches and action calls per query:
+    # at most 27 LLM calls with these defaults (MS GraphRAG's 20 / 3: 67).
+    # The follow-up searches are not reranked; their evidence is reranked once.
+    k_followups: 10
     primer_folds: 5
-    n_depth: 3
+    n_depth: 2
     # Token budget of the local-search context one follow-up is answered from.
     local_context_tokens: 12000
     # Token budget for the ranked intermediate answers given to the answer model.

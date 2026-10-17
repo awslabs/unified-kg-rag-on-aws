@@ -798,6 +798,18 @@ changed once with the full-config keys (#332).
 - The DynamoDB, SQLite and in-memory doc-status registries classify a
   corpus with one rule, `DocumentDelta.classify` (with `settings_changed`
   shared with the delta detector), instead of a copy each (#344).
+- DRIFT costs less per query: the follow-up local searches no longer rerank
+  (the evidence of all of them is reranked once, at the final fusion: one
+  rerank call a query instead of up to 61), the defaults are
+  `search.drift_search.k_followups: 10` and `n_depth: 2` (at most 27 LLM
+  calls a query; MS GraphRAG's 20 and 3 made up to 67). On the synthetic
+  quality harness DRIFT keeps exact match 1.000 with 4.4 to 4.5 actions a
+  query instead of 7.3 to 7.9 (16.9 instead of 46.8 when every answer
+  raises five follow-ups) (#PR).
+- Query-time fan-out has its own knob, `search.max_concurrency` (default 10,
+  per query): the global map calls, the dynamic-selection ratings and the
+  DRIFT primer calls and follow-up searches no longer use the ingestion
+  setting `processing.max_concurrency` (default 40) (#PR).
 - The design doc is about half as long: each section opens with a summary,
   the ingestion and incremental sections are split into short subsections,
   the merge rules and the retrieval error policy are tables, the

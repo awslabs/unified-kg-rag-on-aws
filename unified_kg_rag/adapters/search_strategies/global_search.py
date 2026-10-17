@@ -86,7 +86,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         super().__init__(config, retrievers, **kwargs)
         self.global_search_config = config.search.global_search
         self.ignore_errors = config.processing.ignore_errors
-        self.max_concurrency = config.processing.max_concurrency
+        self.max_concurrency = config.search.max_concurrency
         self.target_language = language_name(
             config.processing.translation.target_language
         )
@@ -126,7 +126,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         # flight. The map chain already retries transient Bedrock errors as a
         # query chain, so BatchProcessor calls each input once (max_attempts=1).
         self.batch_processor = BatchProcessor(
-            max_concurrency=config.processing.max_concurrency, max_attempts=1
+            max_concurrency=config.search.max_concurrency, max_attempts=1
         )
 
     async def asearch(

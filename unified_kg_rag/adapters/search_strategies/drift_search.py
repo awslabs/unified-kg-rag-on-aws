@@ -3,15 +3,17 @@
 """MS GraphRAG DRIFT search: a community-report primer, then local search.
 
 1. PRIMER — the query is expanded into a hypothetical answer shaped like a
-   community report (HyDE); the ``k_followups`` reports most similar to it are
-   split into ``primer_folds`` and each fold drafts an intermediate answer, a
-   0-100 score and follow-up queries.
+   community report (HyDE); the ``k_followups`` reports (of any depth of the
+   hierarchy) most similar to it are split into ``primer_folds`` and each
+   fold drafts an intermediate answer, a 0-100 score and follow-up queries.
 2. ACTIONS — for ``n_depth`` rounds, the ``k_followups`` open follow-up queries
-   whose parent answer scored best run as local searches; each local context
-   is answered with its own score and follow-up queries.
+   whose parent answer scored best run as local searches (not reranked);
+   each local context is answered with its own score and follow-up queries.
 3. REDUCE — the ranked intermediate answers are one synthesized context
-   section and the local evidence behind them follows it; the answer model
-   reduces them into the answer.
+   section and the local evidence behind them, reranked once, follows it;
+   the answer model reduces them into the answer.
+
+``search.max_concurrency`` primer calls and actions run at a time.
 """
 
 import asyncio
@@ -121,7 +123,7 @@ class DriftSearchStrategy(BaseSearchStrategy):
         super().__init__(config, retrievers, **kwargs)
         self.drift_config = self.config.search.drift_search
         self.ignore_errors = config.processing.ignore_errors
-        self.max_concurrency = config.processing.max_concurrency
+        self.max_concurrency = config.search.max_concurrency
         # Follow-up queries are written in the corpus language so they hit the
         # language-analyzed index.
         self.target_language = language_name(
@@ -152,12 +154,16 @@ class DriftSearchStrategy(BaseSearchStrategy):
             custom_prompts=self.config.custom_prompts,
         )
         # Each follow-up query is a local search, as in MS GraphRAG. It shares
-        # this strategy's providers, scorer and token counter.
+        # this strategy's providers, scorer and token counter, and does not
+        # rerank: the evidence of every follow-up is reranked once, at the
+        # final fusion (one rerank call per action cost a model call each,
+        # and their outcomes were never reported).
         self.local_search = LocalSearchStrategy(
             config, retrievers, providers=self.providers
         )
         self.local_search.hybrid_scorer = self.hybrid_scorer
         self.local_search.token_manager = self.token_manager
+        self.local_search.rerank_types = frozenset()
 
     async def asearch(
         self, query: SearchQuery, config: RunnableConfig | None = None
@@ -287,6 +293,13 @@ class DriftSearchStrategy(BaseSearchStrategy):
     # ------------------------------------------------------------------ #
 
     def _reports_query(self, base: SearchQuery, **update: Any) -> SearchQuery:
+        """A search of the community reports, of any depth.
+
+        MS GraphRAG reads the reports of one community_level. Across every
+        depth, similarity picks the granularity that fits the hypothetical
+        answer: on a synthetic six-hop corpus the depth-2 cut (its leaves)
+        answered 16 of 21 sub-questions where every depth answered 21.
+        """
         return base.model_copy(
             update={
                 "index_prefixes": [

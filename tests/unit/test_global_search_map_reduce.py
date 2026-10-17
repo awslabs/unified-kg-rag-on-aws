@@ -769,9 +769,11 @@ class _SlowMapChain:
 
 
 async def test_map_phase_runs_max_concurrency_calls_at_once() -> None:
-    # processing.max_concurrency is the documented map fan-out.
+    # search.max_concurrency is the documented map fan-out; the ingestion
+    # knob processing.max_concurrency is not.
     config = Config()
-    config.processing.max_concurrency = 20
+    config.search.max_concurrency = 20
+    config.processing.max_concurrency = 3
     strat = GlobalSearchStrategy(config=config, retrievers={})
     strat.map_rater = _SlowMapChain(target=20)  # type: ignore[assignment]
 

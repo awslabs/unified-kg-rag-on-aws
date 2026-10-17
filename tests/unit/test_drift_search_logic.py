@@ -24,6 +24,9 @@ from unified_kg_rag.adapters.search_strategies.drift_search import (
     DriftSearchStrategy,
     _score,
 )
+from unified_kg_rag.adapters.search_strategies.local_search import (
+    LocalSearchStrategy,
+)
 from unified_kg_rag.domain.models import (
     Config,
     RetrievalResult,
@@ -199,9 +202,13 @@ def _answers(result: SearchResult) -> str:
 # --------------------------------------------------------------------------- #
 
 
-def test_defaults_follow_ms_graphrag() -> None:
+def test_defaults_bound_the_llm_calls() -> None:
+    # MS GraphRAG's 20 follow-ups over 3 rounds made up to 67 LLM calls a
+    # query; the defaults make at most 27.
     drift = Config().search.drift_search
-    assert (drift.k_followups, drift.primer_folds, drift.n_depth) == (20, 5, 3)
+    assert (drift.k_followups, drift.primer_folds, drift.n_depth) == (10, 5, 2)
+    calls = 1 + drift.primer_folds + drift.k_followups * drift.n_depth + 1
+    assert calls == 27
 
 
 async def test_the_primer_reads_the_reports_similar_to_the_expanded_query() -> None:
@@ -222,6 +229,19 @@ async def test_the_primer_reads_the_reports_similar_to_the_expanded_query() -> N
         "report 2\n\nreport 3",
         "report 4\n\nreport 5",
     ]
+
+
+def test_follow_up_searches_do_not_rerank_and_use_the_search_concurrency() -> None:
+    # Regression: every follow-up's local search made its own rerank call
+    # (up to 60 a query) whose outcome was never reported, and the fan-out
+    # read the ingestion knob processing.max_concurrency.
+    config = Config()
+    config.search.max_concurrency = 3
+    config.processing.max_concurrency = 40
+    strat = DriftSearchStrategy(config, {})
+    assert strat.local_search.rerank_types == frozenset()
+    assert strat.max_concurrency == 3
+    assert LocalSearchStrategy(config, {}).rerank_types == {"text"}
 
 
 def test_folds_are_contiguous_and_never_empty() -> None:
@@ -271,7 +291,7 @@ async def test_follow_ups_run_as_local_searches_round_by_round() -> None:
         "about report 2?": (30, ["deeper B?"]),
         "deeper A?": (70, ["deepest?"]),
     }
-    strat = _strategy(local=local, action=_action(tree))
+    strat = _strategy(local=local, action=_action(tree), n_depth=3)
     result = await strat.asearch(SearchQuery(query="question"))
 
     assert local.queries[:3] == [

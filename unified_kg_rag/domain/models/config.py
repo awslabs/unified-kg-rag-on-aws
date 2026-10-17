@@ -2318,7 +2318,7 @@ class GlobalSearchConfig(BaseModel):
             "the relevant ones (dropping a parent once a child is relevant), "
             "and rate the whole next depth when a depth yields none, down to "
             "community_depth. One fast-model call per rated report, "
-            "processing.max_concurrency at a time; the relevant reports are "
+            "search.max_concurrency at a time; the relevant reports are "
             "then mapped. Off by default, as in MS GraphRAG."
         ),
     )
@@ -2351,7 +2351,7 @@ class GlobalSearchConfig(BaseModel):
             "Report tokens packed into one map-step LLM call (MS GraphRAG's "
             "data_max_tokens, 12000). Reports are packed in order until the "
             "next one would exceed it; a longer report gets a call of its own. "
-            "Map calls run processing.max_concurrency at a time."
+            "Map calls run search.max_concurrency at a time."
         ),
     )
     map_relevance_threshold: int = Field(
@@ -2470,15 +2470,15 @@ class DriftSearchConfig(BaseModel):
     ``n_depth`` rounds then runs the ``k_followups`` best-placed open follow-up
     queries as local searches, each answered by ``models.roles.drift_action`` with its
     own follow-up queries. The answer model reduces the ranked intermediate
-    answers with the local evidence they came from.
+    answers with the local evidence they came from, reranked once.
     """
 
     k_followups: int = Field(
-        default=20,
+        default=10,
         ge=1,
         description=(
             "Community reports the primer reads, and follow-up queries run per"
-            " round (MS GraphRAG drift_k_followups, 20). Each follow-up query "
+            " round (MS GraphRAG drift_k_followups: 20). Each follow-up query "
             "is one local search plus one models.roles.drift_action call."
         ),
     )
@@ -2490,10 +2490,12 @@ class DriftSearchConfig(BaseModel):
         "follow-up queries.",
     )
     n_depth: int = Field(
-        default=3,
+        default=2,
         ge=1,
-        description="Rounds of follow-up queries (MS GraphRAG n_depth, 3). Up to "
-        "k_followups * n_depth local searches per query.",
+        description="Rounds of follow-up queries (MS GraphRAG n_depth: 3). Up to "
+        "k_followups * n_depth local searches per query, so the defaults make "
+        "at most 1 + primer_folds + 20 + 1 = 27 LLM calls (MS GraphRAG's "
+        "defaults: 67).",
     )
     local_context_tokens: int = Field(
         default=12000,
@@ -2725,6 +2727,17 @@ class SearchConfig(BaseModel):
     )
     token_manager: TokenManagerConfig = Field(
         default_factory=TokenManagerConfig, description="Token management configuration"
+    )
+    max_concurrency: int = Field(
+        default=10,
+        ge=1,
+        description=(
+            "LLM calls and sub-searches one query keeps in flight: the global "
+            "map calls, the dynamic-selection ratings, and the DRIFT primer "
+            "calls and follow-up local searches. Per query, so concurrent "
+            "queries (run-eval keeps processing.max_concurrency of them in "
+            "flight) multiply it; lower it if a query's calls are throttled."
+        ),
     )
     store_timeout_seconds: float = Field(
         default=30.0,
