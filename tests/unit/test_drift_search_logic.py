@@ -1,30 +1,39 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""AWS-free unit tests for DriftSearchStrategy pure helpers + orchestration branches.
+"""AWS-free tests of DRIFT search (MS GraphRAG parity).
 
-Covers content-hash dedup (``_update_seen_content`` / ``_filter_unique_results``),
-result summarization (community vs item formatting + length cap + score sort),
-the early-stop heuristics (``_should_stop`` low-gain branch + LLM-convergence
-branch with error handling), candidate-entity id resolution, the search-iteration
-fan-out (graph + document, exception tolerance) and query evolution (refinement /
-keyword expansion, partial failures). The strategy is built via ``__new__`` so its
-Bedrock-backed ``__init__`` never runs; chains and retrievers are stubbed.
+DRIFT expands the query (HyDE), primes intermediate answers and follow-up
+queries from the most similar community reports in folds, and runs the
+follow-ups as local searches over ``n_depth`` rounds, each answered with its
+own follow-ups. The strategy is built via ``__new__``; the chains, the report
+retriever and the local search are stubs, so the tests see which queries,
+reports and contexts each step receives.
 """
 
 from __future__ import annotations
 
-from types import SimpleNamespace
+import asyncio
+import json
+from typing import Any
 
 import pytest
 from botocore.exceptions import ClientError
 
 from unified_kg_rag.adapters.retrieval.hybrid_scorer import HybridScorer
-from unified_kg_rag.adapters.search_strategies.drift_search import DriftSearchStrategy
-from unified_kg_rag.domain.models import Config, RetrievalResult, SearchQuery
-from unified_kg_rag.shared.exceptions import StoreAccessDeniedError
-from unified_kg_rag.shared.utils import compute_hash
+from unified_kg_rag.adapters.search_strategies.drift_search import (
+    DriftSearchStrategy,
+    _score,
+)
+from unified_kg_rag.domain.models import (
+    Config,
+    RetrievalResult,
+    SearchQuery,
+    SearchResult,
+)
 
 pytestmark = pytest.mark.unit
+
+REPORTS_PREFIX = Config().indexing.opensearch.community_reports_index_prefix
 
 
 def _result(
@@ -33,882 +42,370 @@ def _result(
     score: float = 0.5,
     source: str | None = None,
     metadata: dict | None = None,
-    retriever_type: str = "document",
+    retriever_type: str = "text",
 ) -> RetrievalResult:
     return RetrievalResult(
         content=content,
         score=score,
-        source=source,
+        source=source or content,
         retriever_type=retriever_type,
         metadata=metadata or {},
     )
 
 
-class _AChain:
-    """Async chain stub returning a fixed value (or raising) from ainvoke."""
+class _Chain:
+    """Async chain stub: ``respond(inputs)`` gives the output (or raises)."""
 
-    def __init__(self, value=None, raises: Exception | None = None) -> None:
-        self._value = value
-        self._raises = raises
+    def __init__(self, respond) -> None:
+        self.respond = respond
         self.calls: list[dict] = []
-        self.configs: list = []
+        self.configs: list[Any] = []
 
-    async def ainvoke(self, inputs: dict, config=None):
+    async def ainvoke(self, inputs: dict, config: Any = None) -> str:
         self.calls.append(inputs)
         self.configs.append(config)
-        if self._raises is not None:
-            raise self._raises
-        return self._value
+        value = self.respond(inputs)
+        if isinstance(value, BaseException):
+            raise value
+        return value
 
 
-class _StubRetriever:
-    def __init__(self, results=None, raises: Exception | None = None) -> None:
-        self._results = results or []
-        self._raises = raises
-        self.last_query: SearchQuery | None = None
+class _Reports:
+    """The community-report index: a browse gives the template, a search the
+    ``top_k`` reports (it records the query text it was given)."""
 
-    async def aretrieve(self, query: SearchQuery):
-        self.last_query = query
-        if self._raises is not None:
-            raise self._raises
-        return self._results
+    def __init__(self, count: int = 6) -> None:
+        self.reports = [
+            _result(f"report {i}", retriever_type="community") for i in range(count)
+        ]
+        self.queries: list[SearchQuery] = []
+
+    async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
+        self.queries.append(query)
+        assert query.index_prefixes == [REPORTS_PREFIX]
+        return self.reports[: query.top_k]
 
 
-def _no_rerank_scorer() -> HybridScorer:
-    """A real scorer with reranking off (asearch asks it for a rerank trace)."""
+class _Local:
+    """Local search: one chunk naming the follow-up query."""
+
+    def __init__(self, empty: set[str] | None = None) -> None:
+        self.queries: list[str] = []
+        self.empty = empty or set()
+
+    async def asearch(self, query: SearchQuery, config: Any = None) -> SearchResult:
+        self.queries.append(query.query)
+        results = (
+            []
+            if query.query in self.empty
+            else [_result(f"chunk for {query.query}", source=f"t:{query.query}")]
+        )
+        return SearchResult(
+            query=query,
+            results=results,
+            total_results=len(results),
+            search_strategy="local_search",
+            processing_time=0.0,
+        )
+
+
+class _Tokens:
+    def optimize_context(self, results, query, max_tokens):
+        return results
+
+    def build_context_string(self, optimized) -> str:
+        return "\n".join(r.content for r in optimized)
+
+    def count_tokens_many(self, texts: list[str]) -> list[int]:
+        return [len(t) for t in texts]
+
+
+def _primer(follow_ups: dict[str, list[str]] | None = None):
+    """Primer: one answer per fold, with follow-ups keyed by the fold's first
+    report (default: one follow-up per report)."""
+
+    def respond(inputs: dict) -> str:
+        first = inputs["community_reports"].split("\n\n")[0]
+        ups = (follow_ups or {}).get(first, [f"about {first}?"])
+        return json.dumps(
+            {
+                "intermediate_answer": f"draft from {first}",
+                "score": 40,
+                "follow_up_queries": ups,
+            }
+        )
+
+    return respond
+
+
+def _action(tree: dict[str, tuple[int, list[str]]] | None = None):
+    """Action: answers ``query`` with its score and follow-ups from ``tree``."""
+
+    def respond(inputs: dict) -> str:
+        score, ups = (tree or {}).get(inputs["query"], (50, []))
+        return json.dumps(
+            {
+                "response": f"answer to {inputs['query']}",
+                "score": score,
+                "follow_up_queries": ups,
+            }
+        )
+
+    return respond
+
+
+def _strategy(
+    *,
+    reports: _Reports | None = None,
+    local: _Local | None = None,
+    primer=None,
+    action=None,
+    hyde=None,
+    ignore_errors: bool = False,
+    **settings: Any,
+) -> DriftSearchStrategy:
     config = Config()
     config.search.reranking.enabled = False
-    return HybridScorer(config)
-
-
-def _bare_strategy(
-    *,
-    retrievers: dict | None = None,
-    ignore_errors: bool = False,
-    enable_query_refinement: bool = True,
-    enable_keyword_extraction: bool = True,
-    summary_length: int = 5,
-    n_entities: int = 5,
-    convergence_threshold: float = 0.1,
-    enable_llm_convergence: bool = True,
-) -> DriftSearchStrategy:
+    config.processing.ignore_errors = ignore_errors
+    drift = config.search.drift_search
+    drift.k_followups = 6
+    drift.primer_folds = 3
+    for key, value in settings.items():
+        setattr(drift, key, value)
     strat = DriftSearchStrategy.__new__(DriftSearchStrategy)
-    strat.drift_config = SimpleNamespace(
-        enable_query_refinement=enable_query_refinement,
-        enable_keyword_extraction=enable_keyword_extraction,
-        max_iterations=3,
-        initial_top_k=5,
-        summary_length=summary_length,
-        summary_char_limit=200,
-        n_entities=n_entities,
-        convergence_threshold=convergence_threshold,
-        enable_llm_convergence=enable_llm_convergence,
-        improvement_threshold=0.05,
-    )
+    strat.config = config
+    strat.drift_config = drift
     strat.ignore_errors = ignore_errors
-    strat.target_language = "en"
-    strat.retrievers = retrievers or {}
-    strat.hybrid_scorer = _no_rerank_scorer()
-    strat.config = SimpleNamespace(
-        indexing=SimpleNamespace(
-            opensearch=SimpleNamespace(
-                community_reports_index_prefix="community_reports",
-                entities_index_prefix="entities",
-            )
-        ),
-        search=SimpleNamespace(
-            drift_search=SimpleNamespace(initial_top_k=5),
-            local_search=Config().search.local_search,
-        ),
-    )
+    strat.max_concurrency = 4
+    strat.target_language = "English"
+    strat.retrievers = {"document": reports or _Reports()}
+    strat.hybrid_scorer = HybridScorer(config)
+    strat.token_manager = _Tokens()  # type: ignore[assignment]
+    strat.local_search = local or _Local()  # type: ignore[assignment]
+    strat.hyde = _Chain(hyde or (lambda inputs: "hypothetical report"))
+    strat.primer = _Chain(primer or _primer())
+    strat.action = _Chain(action or _action())
     return strat
 
 
-# --------------------------------------------------------------------------- #
-# _update_seen_content + _filter_unique_results (content-hash dedup)
-# --------------------------------------------------------------------------- #
-
-
-def test_update_seen_content_hashes_each_result() -> None:
-    seen: set[str] = set()
-    results = [_result("alpha"), _result("beta")]
-    DriftSearchStrategy._update_seen_content(results, seen)
-    assert seen == {compute_hash("alpha", length=16), compute_hash("beta", length=16)}
-
-
-def test_filter_unique_results_drops_already_seen() -> None:
-    seen = {compute_hash("alpha", length=16)}
-    results = [_result("alpha"), _result("beta")]
-    unique = DriftSearchStrategy._filter_unique_results(results, seen)
-    assert [r.content for r in unique] == ["beta"]
-
-
-def test_filter_unique_results_dedup_roundtrip() -> None:
-    # Seeding from a first batch removes those exact contents from a second batch.
-    seen: set[str] = set()
-    first = [_result("a"), _result("b")]
-    DriftSearchStrategy._update_seen_content(first, seen)
-    second = [_result("a"), _result("c")]  # "a" repeats, "c" is new
-    unique = DriftSearchStrategy._filter_unique_results(second, seen)
-    assert [r.content for r in unique] == ["c"]
-
-
-def test_filter_unique_results_same_content_collapses() -> None:
-    # Two results with identical content hash to the same value; both filtered if
-    # the content was already seen.
-    seen = {compute_hash("dup", length=16)}
-    results = [_result("dup"), _result("dup")]
-    assert DriftSearchStrategy._filter_unique_results(results, seen) == []
+def _answers(result: SearchResult) -> str:
+    first = result.results[0]
+    assert first.metadata.get("synthesized") is True
+    return first.content
 
 
 # --------------------------------------------------------------------------- #
-# _summarize_results
+# Primer
 # --------------------------------------------------------------------------- #
 
 
-def test_summarize_results_empty_returns_placeholder() -> None:
-    strat = _bare_strategy()
-    out = strat._summarize_results([])
-    assert "No information gathered yet" in out
-
-
-def test_summarize_results_community_vs_item_formatting() -> None:
-    strat = _bare_strategy()
-    # The real index names, as OpenSearchRetriever records them.
-    community = _result(
-        "C" * 300,
-        score=0.9,
-        metadata={"_search_index": "graphrag-community-reports-dev"},
-        retriever_type="community",
-    )
-    item = _result(
-        "I" * 300,
-        score=0.1,
-        metadata={"_search_index": "graphrag-text-units-dev"},
-        retriever_type="text",
-    )
-    out = strat._summarize_results([item, community])
-    lines = out.split("\n")
-    # Sorted by score desc -> community (0.9) first. Both community and item are
-    # capped at the configurable summary_char_limit (200 here).
-    assert lines[0].startswith("Community: ")
-    assert lines[1].startswith("Item: ")
-    assert lines[0] == f"Community: {'C' * 200}..."
-    assert lines[1] == f"Item: {'I' * 200}..."
-
-
-def test_summarize_results_caps_at_summary_length() -> None:
-    strat = _bare_strategy(summary_length=2)
-    results = [_result(f"r{i}", score=float(i)) for i in range(5)]
-    out = strat._summarize_results(results)
-    assert len(out.split("\n")) == 2
-
-
-# --------------------------------------------------------------------------- #
-# _should_stop (early-convergence heuristics)
-# --------------------------------------------------------------------------- #
-
-
-async def test_should_stop_false_for_early_iterations() -> None:
-    strat = _bare_strategy()
-    # iteration <= 1 -> never the low-gain branch; metrics empty -> no LLM stop.
-    assert await strat._should_stop(0, [], "q") is False
-    assert await strat._should_stop(1, [], "q") is False
-
-
-async def test_should_stop_true_on_consecutive_low_gains() -> None:
-    strat = _bare_strategy()
-    metrics = [{"unique_new": 0}, {"unique_new": 1}]  # last two both < 2
-    assert await strat._should_stop(2, metrics, "q") is True
-
-
-async def test_should_stop_false_when_gains_above_floor() -> None:
-    strat = _bare_strategy(enable_llm_convergence=False)
-    metrics = [{"unique_new": 5}, {"unique_new": 5}]
-    # Low-gain branch evaluated but gains high; the LLM check is disabled.
-    assert await strat._should_stop(2, metrics, "q") is False
-
-
-async def test_should_stop_consults_llm_once_an_iteration_ran() -> None:
-    # Reachable within the default max_iterations=3 (iterations 0, 1, 2): the
-    # old `iteration > 2` gate could never fire.
-    strat = _bare_strategy(convergence_threshold=0.1)
-    strat.convergence_assessor = _AChain("0.9")  # >= threshold -> converged
-    metrics = [{"unique_new": 5}]  # high gain, skip low-gain stop
-    assert await strat._should_stop(1, metrics, "q") is True
-
-
-async def test_should_stop_skips_llm_when_disabled() -> None:
-    strat = _bare_strategy(enable_llm_convergence=False)
-    strat.convergence_assessor = _AChain(raises=AssertionError("must not run"))
-    metrics = [{"unique_new": 5}, {"unique_new": 5}]
-    assert await strat._should_stop(2, metrics, "q") is False
-
-
-async def test_should_stop_llm_below_threshold_continues() -> None:
-    strat = _bare_strategy(convergence_threshold=0.5)
-    strat.convergence_assessor = _AChain("0.1")  # < threshold -> not converged
-    metrics = [{"unique_new": 5}, {"unique_new": 5}]
-    assert await strat._should_stop(3, metrics, "q") is False
-
-
-# --------------------------------------------------------------------------- #
-# _assess_convergence_with_llm
-# --------------------------------------------------------------------------- #
-
-
-async def test_assess_convergence_empty_metrics_false() -> None:
-    strat = _bare_strategy()
-    strat.convergence_assessor = _AChain("1.0")
-    assert await strat._assess_convergence_with_llm("q", 3, []) is False
-
-
-async def test_assess_convergence_parses_score_against_threshold() -> None:
-    strat = _bare_strategy(convergence_threshold=0.3)
-    strat.convergence_assessor = _AChain("0.4")
-    metrics = [{"unique_new": 2}]
-    assert await strat._assess_convergence_with_llm("q", 3, metrics) is True
-
-
-async def test_assess_convergence_error_ignored_returns_false() -> None:
-    strat = _bare_strategy(ignore_errors=True)
-    strat.convergence_assessor = _AChain(raises=RuntimeError("bedrock"))
-    metrics = [{"unique_new": 2}]
-    assert await strat._assess_convergence_with_llm("q", 3, metrics) is False
-
-
-async def test_assess_convergence_error_propagates_when_not_ignored() -> None:
-    strat = _bare_strategy(ignore_errors=False)
-    strat.convergence_assessor = _AChain(raises=RuntimeError("bedrock"))
-    metrics = [{"unique_new": 2}]
-    with pytest.raises(RuntimeError):
-        await strat._assess_convergence_with_llm("q", 3, metrics)
-
-
-# --------------------------------------------------------------------------- #
-# _find_candidate_entities_for_iteration
-# --------------------------------------------------------------------------- #
-
-
-async def test_find_candidate_entities_no_retriever_empty() -> None:
-    strat = _bare_strategy(retrievers={})
-    assert (
-        await strat._find_candidate_entities_for_iteration(SearchQuery(query="q")) == []
-    )
-
-
-async def test_find_candidate_entities_prefers_metadata_id_over_source() -> None:
-    retriever = _StubRetriever(
-        [
-            _result("x", source="src-1", metadata={"id": "meta-1"}),
-            _result("y", source="src-2", metadata={}),  # falls back to source
-        ]
-    )
-    strat = _bare_strategy(retrievers={"document": retriever})
-    # An entity focus no longer narrows the lookup: the iteration's query text
-    # finds top_k candidates.
-    query = SearchQuery(query="q", top_k=8, entity_focus=["Alice"])
-    out = await strat._find_candidate_entities_for_iteration(query)
-    assert out == ["meta-1", "src-2"]
-    sent = retriever.last_query
-    assert sent is not None
-    assert sent.index_prefixes == ["entities"]
-    assert sent.top_k == 8
-    assert sent.retrieval_multiplier == 1
-
-
-async def test_find_candidate_entities_falls_back_to_query_text() -> None:
-    # Regression: with no extracted entity focus, n_candidates was
-    # 0 * multiplier = 0, so a DRIFT iteration seeded no graph expansion.
-    retriever = _StubRetriever([_result("x", source="e-1", metadata={"id": "e-1"})])
-    strat = _bare_strategy(retrievers={"document": retriever})
-    query = SearchQuery(query="follow-up about the vendor", top_k=7)
-    assert await strat._find_candidate_entities_for_iteration(query) == ["e-1"]
-    sent = retriever.last_query
-    assert sent is not None
-    assert sent.query == "follow-up about the vendor"
-    assert sent.top_k == 7
-    assert sent.index_prefixes == ["entities"]
-
-
-async def test_find_candidate_entities_empty_query_and_focus_short_circuits() -> None:
-    retriever = _StubRetriever([_result("x", source="e-1")])
-    strat = _bare_strategy(retrievers={"document": retriever})
-    assert (
-        await strat._find_candidate_entities_for_iteration(SearchQuery(query="")) == []
-    )
-    assert retriever.last_query is None
-
-
-async def test_find_candidate_entities_swallows_error() -> None:
-    strat = _bare_strategy(
-        retrievers={"document": _StubRetriever(raises=RuntimeError("os"))}
-    )
-    query = SearchQuery(query="q", entity_focus=["Alice"])
-    assert await strat._find_candidate_entities_for_iteration(query) == []
-
-
-# --------------------------------------------------------------------------- #
-# _execute_search_iteration (fan-out, exception tolerance)
-# --------------------------------------------------------------------------- #
-
-
-async def test_execute_search_iteration_no_retrievers_returns_empty() -> None:
-    strat = _bare_strategy(retrievers={})
-    assert await strat._execute_search_iteration(SearchQuery(query="q")) == []
-
-
-async def test_execute_search_iteration_merges_graph_and_document(mocker) -> None:
-    graph = _StubRetriever([_result("g1")])
-    document = _StubRetriever([_result("d1"), _result("d2")])
-    strat = _bare_strategy(retrievers={"graph": graph, "document": document})
-    # Force a non-empty candidate-entity list so the graph branch runs.
-    mocker.patch.object(
-        strat,
-        "_find_candidate_entities_for_iteration",
-        mocker.AsyncMock(return_value=["e1"]),
-    )
-    out = await strat._execute_search_iteration(SearchQuery(query="q", top_k=7))
-    contents = {r.content for r in out}
-    assert contents == {"g1", "d1", "d2"}
-    # The graph sub-query is id-filtered.
-    graph_sent = graph.last_query
-    document_sent = document.last_query
-    assert graph_sent is not None and graph_sent.filters is not None
-    assert document_sent is not None
-    assert graph_sent.filters["id"] == ["e1"]
-    assert document_sent.top_k == 7
-
-
-async def test_document_retrieval_does_not_wait_for_the_candidate_lookup() -> None:
-    import asyncio
-
-    started: list[str] = []
-    lookup_may_finish = asyncio.Event()
-
-    class _Document(_StubRetriever):
-        async def aretrieve(self, query: SearchQuery):
-            if query.index_prefixes == ["entities"]:
-                started.append("lookup")
-                await asyncio.wait_for(lookup_may_finish.wait(), timeout=1)
-                return [_result("e", source="e1")]
-            started.append("document")
-            lookup_may_finish.set()
-            return [_result("d1")]
-
-    graph = _StubRetriever([_result("g1")])
-    strat = _bare_strategy(retrievers={"graph": graph, "document": _Document()})
-
-    out = await strat._execute_search_iteration(SearchQuery(query="q"))
-
-    assert started == ["lookup", "document"]
-    assert [r.content for r in out] == ["g1", "d1"]
-
-
-async def test_execute_search_iteration_tolerates_retriever_exception(mocker) -> None:
-    graph = _StubRetriever(raises=RuntimeError("neptune"))
-    document = _StubRetriever([_result("d1")])
-    strat = _bare_strategy(retrievers={"graph": graph, "document": document})
-    mocker.patch.object(
-        strat,
-        "_find_candidate_entities_for_iteration",
-        mocker.AsyncMock(return_value=["e1"]),
-    )
-    out = await strat._execute_search_iteration(SearchQuery(query="q"))
-    # A transient failure degrades that branch to []; document results survive.
-    assert [r.content for r in out] == ["d1"]
-
-
-async def test_execute_search_iteration_propagates_fatal_error(mocker) -> None:
-    # gather(return_exceptions=True) used to swallow fatal errors too, so an
-    # AccessDenied from Neptune read as "no graph results" on every iteration.
-    graph = _StubRetriever(raises=StoreAccessDeniedError("AccessDeniedException"))
-    document = _StubRetriever([_result("d1")])
-    strat = _bare_strategy(retrievers={"graph": graph, "document": document})
-    mocker.patch.object(
-        strat,
-        "_find_candidate_entities_for_iteration",
-        mocker.AsyncMock(return_value=["e1"]),
-    )
-    with pytest.raises(StoreAccessDeniedError, match="AccessDenied"):
-        await strat._execute_search_iteration(SearchQuery(query="q"))
-
-
-async def test_execute_search_iteration_skips_graph_without_candidates(mocker) -> None:
-    document = _StubRetriever([_result("d1")])
-    strat = _bare_strategy(
-        retrievers={"graph": _StubRetriever([_result("g1")]), "document": document}
-    )
-    mocker.patch.object(
-        strat,
-        "_find_candidate_entities_for_iteration",
-        mocker.AsyncMock(return_value=[]),
-    )
-    out = await strat._execute_search_iteration(SearchQuery(query="q"))
-    # No candidate entities -> graph branch skipped, only document results.
-    assert [r.content for r in out] == ["d1"]
-
-
-# --------------------------------------------------------------------------- #
-# _evolve_query
-# --------------------------------------------------------------------------- #
-
-
-async def test_evolve_query_no_tasks_returns_copy_unchanged() -> None:
-    strat = _bare_strategy(
-        enable_query_refinement=False, enable_keyword_extraction=False
-    )
-    query = SearchQuery(query="orig", optional_keywords=["kw"])
-    out = await strat._evolve_query(query, "orig", [], 0)
-    assert out is not query  # deep copy
-    assert out.query == "orig"
-    assert out.optional_keywords == ["kw"]
-
-
-async def test_evolve_query_applies_refinement_and_expansion() -> None:
-    strat = _bare_strategy()
-    strat.query_refiner = _AChain("  refined query  ")
-    strat.keyword_expander = _AChain(["k1", "k2"])
-    query = SearchQuery(query="start")
-    results = [_result("r", metadata={"name": "Alice"})]
-    out = await strat._evolve_query(query, "original", results, 1, ["Alice"])
-    assert out.query == "refined query"  # stripped
-    assert out.optional_keywords == ["k1", "k2"]
-    # The keyword expander receives the given entity names.
-    assert strat.keyword_expander.calls[0]["entities"] == ["Alice"]
-
-
-def test_recent_entity_names_skip_reports_and_put_the_newest_first() -> None:
-    # Seed community reports came first in the results, so the expander was
-    # fed report titles instead of entities.
-    strat = _bare_strategy(n_entities=3)
-
-    def _typed_named(name: str, retriever_type: str) -> RetrievalResult:
-        return RetrievalResult(
-            content=name,
-            score=0.5,
-            source=name,
-            retriever_type=retriever_type,
-            metadata={"name": name},
-        )
-
-    first = [
-        _typed_named("Report title", "community"),
-        _typed_named("Vendor", "entity"),
-    ]
-    second = [_typed_named("Buyer", "entity"), _typed_named("Vendor", "entity")]
-    third = [_typed_named("Invoice", "entity"), _typed_named("Carrier", "entity")]
-
-    assert strat._recent_entity_names([first, second]) == ["Buyer", "Vendor"]
-    assert strat._recent_entity_names([first, second, third]) == [
-        "Invoice",
-        "Carrier",
-        "Buyer",
-    ]
-
-
-async def test_evolve_query_blank_refinement_keeps_original() -> None:
-    strat = _bare_strategy(enable_keyword_extraction=False)
-    strat.query_refiner = _AChain("   ")  # blank -> ignored
-    query = SearchQuery(query="keepme")
-    out = await strat._evolve_query(query, "original", [], 0)
-    assert out.query == "keepme"
-
-
-async def test_evolve_query_partial_failure_via_gather(mocker) -> None:
-    # Refinement raises, expansion succeeds; return_exceptions keeps the good one.
-    strat = _bare_strategy()
-    strat.query_refiner = _AChain(raises=RuntimeError("refine boom"))
-    strat.keyword_expander = _AChain(["only-kw"])
-    query = SearchQuery(query="start")
-    out = await strat._evolve_query(query, "original", [], 1)
-    assert out.query == "start"  # refinement failed, unchanged
-    assert out.optional_keywords == ["only-kw"]
-
-
-async def test_evolve_query_empty_expansion_list_ignored() -> None:
-    strat = _bare_strategy(enable_query_refinement=False)
-    strat.keyword_expander = _AChain([])  # empty -> not applied
-    query = SearchQuery(query="start", optional_keywords=["prev"])
-    out = await strat._evolve_query(query, "original", [], 0)
-    assert out.optional_keywords == ["prev"]
-
-
-# --------------------------------------------------------------------------- #
-# _find_candidate_communities
-# --------------------------------------------------------------------------- #
-
-
-async def test_find_candidate_communities_no_retriever_empty() -> None:
-    strat = _bare_strategy(retrievers={})
-    assert await strat._find_candidate_communities(SearchQuery(query="q")) == []
-
-
-async def test_find_candidate_communities_sets_prefix_and_top_k() -> None:
-    retriever = _StubRetriever([_result("cr1")])
-    strat = _bare_strategy(retrievers={"document": retriever})
-    out = await strat._find_candidate_communities(SearchQuery(query="q"))
-    assert [r.content for r in out] == ["cr1"]
-    sent = retriever.last_query
-    assert sent is not None
-    assert sent.index_prefixes == ["community_reports"]
-    assert sent.top_k == 5  # initial_top_k
-
-
-async def test_find_candidate_communities_swallows_error() -> None:
-    strat = _bare_strategy(
-        retrievers={"document": _StubRetriever(raises=RuntimeError("os"))}
-    )
-    assert await strat._find_candidate_communities(SearchQuery(query="q")) == []
-
-
-# --------------------------------------------------------------------------- #
-# DRIFT primer -> follow-up (enable_primer)
-# --------------------------------------------------------------------------- #
-
-
-def _primer_strategy(*, primer_value=None, primer_raises=None, **kw):
-    strat = _bare_strategy(**kw)
-    strat.drift_config.enable_primer = True
-    strat.drift_config.primer_follow_ups = 3
-    if primer_value is not None or primer_raises is not None:
-        strat.primer = _AChain(value=primer_value, raises=primer_raises)
-    return strat
-
-
-async def test_run_primer_returns_follow_ups_and_intermediate_answer() -> None:
-    strat = _primer_strategy(
-        primer_value='{"intermediate_answer": "hypothetical", "score": 0.3, '
-        '"follow_up_queries": ["q1", " q2 ", ""]}'
-    )
-    follow_ups, intermediate = await strat._run_primer(
-        SearchQuery(query="orig"), [_result("Community report A")]
-    )
-    # Whitespace trimmed and empties dropped; HyDE answer returned too.
-    assert follow_ups == ["q1", "q2"]
-    assert intermediate == "hypothetical"
-
-
-async def test_run_primer_degrades_on_error_when_ignoring() -> None:
-    strat = _primer_strategy(
-        primer_raises=RuntimeError("bedrock down"), ignore_errors=True
-    )
-    result = await strat._run_primer(SearchQuery(query="q"), [_result("report")])
-    assert result == ([], "")
-    assert len(strat.primer.calls) == 1  # the failing call was attempted
-
-
-async def test_run_primer_raises_on_error_without_ignore_errors() -> None:
-    strat = _primer_strategy(
-        primer_raises=RuntimeError("bedrock down"), ignore_errors=False
-    )
-    with pytest.raises(RuntimeError, match="bedrock down"):
-        await strat._run_primer(SearchQuery(query="q"), [_result("report")])
-
-
-async def test_run_primer_without_reports_makes_no_llm_call() -> None:
-    # No community summaries -> nothing to ground a hypothetical answer in, so
-    # the primer LLM is not called at all (it could only guess).
-    strat = _primer_strategy(
-        primer_value='{"intermediate_answer": "guess", "follow_up_queries": ["x"]}'
-    )
-    assert await strat._run_primer(SearchQuery(query="q"), []) == ([], "")
-    assert strat.primer.calls == []
-
-
-async def test_primer_search_runs_one_iteration_per_follow_up() -> None:
-    # Each follow-up sub-query becomes its own search iteration; the graph/doc
-    # fan-out is stubbed via _execute_search_iteration.
-    strat = _primer_strategy(
-        primer_value='{"follow_up_queries": ["fa", "fb"], "score": 0.2}'
-    )
-    executed: list[str] = []
-
-    async def _fake_iteration(q: SearchQuery):
-        executed.append(q.query)
-        return [_result(f"hit for {q.query}")]
-
-    strat._execute_search_iteration = _fake_iteration  # type: ignore[method-assign]
-
-    all_results: list = []
-    seen: set[str] = set()
-    metrics: list[dict] = []
-    await strat._primer_search(
-        SearchQuery(query="orig"), [_result("seed report")], all_results, seen, metrics
-    )
-
-    assert executed == ["fa", "fb"]
-    assert {m["source"] for m in metrics} == {"primer_follow_up"}
-    assert len(all_results) == 2
-
-
-async def test_primer_follow_ups_run_concurrently_and_dedupe_in_order() -> None:
-    import asyncio
-
-    strat = _primer_strategy(
-        primer_value='{"follow_up_queries": ["fa", "fb"], "score": 0.2}'
-    )
-    started: list[str] = []
-    release = asyncio.Event()
-
-    async def _fake_iteration(q: SearchQuery):
-        started.append(q.query)
-        if len(started) == 2:
-            release.set()
-        # Each follow-up waits until both have started: sequential runs would
-        # never get past the first one.
-        await asyncio.wait_for(release.wait(), timeout=1)
-        return [_result("shared hit"), _result(f"hit for {q.query}")]
-
-    strat._execute_search_iteration = _fake_iteration  # type: ignore[method-assign]
-    all_results: list = []
-    metrics: list[dict] = []
-    await strat._primer_search(
-        SearchQuery(query="orig"), [_result("seed")], all_results, set(), metrics
-    )
-
-    assert [r.content for r in all_results] == [
-        "shared hit",
-        "hit for fa",
-        "hit for fb",
-    ]
-    assert [m["unique_new"] for m in metrics] == [2, 1]
-
-
-async def test_primer_search_keeps_intermediate_answer_out_of_results() -> None:
-    # The primer's HyDE intermediate_answer is an LLM guess, not evidence: it
-    # must not enter all_results (which become answer context and sources).
-    # Only the follow-up queries it drives contribute results.
-    strat = _primer_strategy(
-        primer_value='{"intermediate_answer": "HYDE seed answer", '
-        '"follow_up_queries": ["fa"], "score": 0.2}'
-    )
-
-    async def _fake_iteration(q: SearchQuery):
-        return [_result(f"hit for {q.query}")]
-
-    strat._execute_search_iteration = _fake_iteration  # type: ignore[method-assign]
-    all_results: list = []
-    await strat._primer_search(
-        SearchQuery(query="orig"), [_result("seed report")], all_results, set(), []
-    )
-
-    assert [r.content for r in all_results] == ["hit for fa"]
-    assert all(r.source != "drift_primer" for r in all_results)
-    assert all("HYDE seed answer" not in r.content for r in all_results)
-
-
-async def test_asearch_skips_primer_without_candidate_communities() -> None:
-    # Primer enabled but community retrieval found nothing: the primer must not
-    # run (no reports to ground it); DRIFT falls back to the iterative loop.
-    strat = _primer_strategy(
-        primer_value='{"intermediate_answer": "guess", "follow_up_queries": ["x"]}',
-        retrievers={"document": _StubRetriever(results=[])},
-    )
-    called = {"iterative": 0}
-
-    async def _fake_iterative(query, all_results, seen, metrics, config=None):
-        called["iterative"] += 1
-
-    strat._iterative_search = _fake_iterative  # type: ignore[method-assign]
-    strat.hybrid_scorer.fuse_and_rerank_results = (  # type: ignore[method-assign]
-        lambda groups, **kw: groups["results"]
-    )
-
-    result = await strat.asearch(SearchQuery(query="q"))
-
-    assert strat.primer.calls == []
-    assert called["iterative"] == 1
-    assert result.results == []
-
-
-async def test_primer_search_falls_back_to_iterative_without_follow_ups() -> None:
-    strat = _primer_strategy(primer_value='{"follow_up_queries": [], "score": 0.9}')
-    called = {"iterative": False}
-
-    async def _fake_iterative(query, all_results, seen, metrics, config=None):
-        called["iterative"] = True
-
-    strat._iterative_search = _fake_iterative  # type: ignore[method-assign]
-    await strat._primer_search(SearchQuery(query="q"), [], [], set(), [])
-    assert called["iterative"]
-
-
-async def test_iterative_search_uses_original_query_on_first_iteration() -> None:
-    # Iteration 0 must search with the user's query; only later iterations are
-    # rewritten from what was retrieved.
-    strat = _bare_strategy(enable_llm_convergence=False)
-    strat.drift_config.max_iterations = 2
-    searched: list[str] = []
-    evolved_at: list[int] = []
-
-    async def _fake_search(q):
-        searched.append(q.query)
-        return [_result(f"new-{len(searched)}-{i}") for i in range(5)]
-
-    async def _fake_evolve(q, original, results, iteration, names, config=None):
-        evolved_at.append(iteration)
-        out = q.model_copy(deep=True)
-        out.query = f"refined-{iteration}"
-        return out
-
-    strat._execute_search_iteration = _fake_search  # type: ignore[method-assign]
-    strat._evolve_query = _fake_evolve  # type: ignore[method-assign]
-    await strat._iterative_search(SearchQuery(query="orig"), [], set(), [])
-
-    assert searched == ["orig", "refined-1"]
-    assert evolved_at == [1]
-
-
-def test_default_config_disables_llm_convergence() -> None:
+def test_defaults_follow_ms_graphrag() -> None:
     drift = Config().search.drift_search
-    assert drift.enable_llm_convergence is False
-    assert drift.convergence_threshold == 0.8
+    assert (drift.k_followups, drift.primer_folds, drift.n_depth) == (20, 5, 3)
 
 
-async def test_asearch_fuses_with_per_type_quota() -> None:
-    strat = _bare_strategy(
-        enable_llm_convergence=False, retrievers={"document": _StubRetriever([])}
-    )
-    captured: dict = {}
+async def test_the_primer_reads_the_reports_similar_to_the_expanded_query() -> None:
+    reports = _Reports()
+    strat = _strategy(reports=reports, n_depth=1)
+    await strat.asearch(SearchQuery(query="question"))
 
-    async def _fake_iterative(query, all_results, seen, metrics, config=None):
-        return None
-
-    def _fuse(groups, **kw):
-        captured.update(kw)
-        return groups["results"]
-
-    strat._iterative_search = _fake_iterative  # type: ignore[method-assign]
-    strat.hybrid_scorer.fuse_and_rerank_results = _fuse  # type: ignore[method-assign]
-    strat.drift_config.enable_primer = False
-
-    await strat.asearch(SearchQuery(query="q", top_k=10))
-
-    quota = captured["per_type_quota"]
-    assert quota["text"] >= 10 and quota["entity"] >= 1 and quota["community"] >= 1
-    assert captured["rerank_only_types"] == {"text"}
-
-
-def _typed(source: str, retriever_type: str, score: float) -> RetrievalResult:
-    return RetrievalResult(
-        content=source, score=score, source=source, retriever_type=retriever_type
-    )
-
-
-async def test_asearch_ranks_each_type_by_score_before_fusion() -> None:
-    # RRF ranks the one "results" bucket by position. Results arrive per
-    # retrieval call, so a later iteration's best entity ranked below an
-    # earlier iteration's worst one.
-    seeds = [_typed("c0", "community", 0.9)]
-    first = [_typed("e-weak", "entity", 0.2), _typed("t-weak", "text", 0.1)]
-    second = [_typed("e-strong", "entity", 0.8), _typed("t-strong", "text", 0.7)]
-    strat = _bare_strategy(
-        enable_llm_convergence=False, retrievers={"document": _StubRetriever(seeds)}
-    )
-    fused: list[list[RetrievalResult]] = []
-
-    async def _fake_iterative(query, all_results, seen, metrics, config=None):
-        all_results.extend(first + second)
-
-    def _fuse(groups, **kw):
-        fused.append(groups["results"])
-        return groups["results"]
-
-    strat._iterative_search = _fake_iterative  # type: ignore[method-assign]
-    strat.hybrid_scorer.fuse_and_rerank_results = _fuse  # type: ignore[method-assign]
-    strat.drift_config.enable_primer = False
-
-    await strat.asearch(SearchQuery(query="q", top_k=10))
-
-    # Within each type: best score first. The type of each slot is unchanged.
-    assert [r.source for r in fused[0]] == [
-        "c0",
-        "e-strong",
-        "t-strong",
-        "e-weak",
-        "t-weak",
+    template, similar = reports.queries
+    assert template.query == "" and template.top_k == 1
+    # The hypothetical answer, not the question, finds the primer reports.
+    assert strat.hyde.calls[0]["template"] == "report 0"
+    assert similar.query == "hypothetical report"
+    assert similar.top_k == 6
+    # Six reports in three folds of two, one primer call each.
+    folds = [c["community_reports"] for c in strat.primer.calls]
+    assert sorted(folds) == [
+        "report 0\n\nreport 1",
+        "report 2\n\nreport 3",
+        "report 4\n\nreport 5",
     ]
 
 
-# --------------------------------------------------------------------------- #
-# The caller's RunnableConfig reaches every DRIFT LLM call
-# --------------------------------------------------------------------------- #
+def test_folds_are_contiguous_and_never_empty() -> None:
+    items = [_result(str(i)) for i in range(5)]
+    parts = DriftSearchStrategy._folds(items, 3)
+    assert [[r.content for r in p] for p in parts] == [["0", "1"], ["2", "3"], ["4"]]
+    assert len(DriftSearchStrategy._folds(items[:2], 5)) == 2
+    assert DriftSearchStrategy._folds([], 5) == []
 
 
-async def test_iterative_search_passes_the_callers_config_to_its_llm_calls() -> None:
-    strat = _bare_strategy(convergence_threshold=0.99)
-    strat.drift_config.max_iterations = 2
-    strat.convergence_assessor = _AChain("0.0")  # below threshold: keep going
-    strat.query_refiner = _AChain("refined")
-    strat.keyword_expander = _AChain(["kw"])
-
-    async def _fake_search(q):
-        return [_result(f"{q.query}-{i}") for i in range(5)]
-
-    strat._execute_search_iteration = _fake_search  # type: ignore[method-assign]
-    caller_config = {"tags": ["caller"]}
-    await strat._iterative_search(
-        SearchQuery(query="q"), [], set(), [], config=caller_config
+async def test_a_failed_expansion_searches_with_the_question() -> None:
+    reports = _Reports()
+    strat = _strategy(
+        reports=reports, hyde=lambda _: TimeoutError("slow"), ignore_errors=True
     )
+    result = await strat.asearch(SearchQuery(query="question"))
+    assert reports.queries[1].query == "question"
+    assert result.metadata["degraded_error"] == "TimeoutError"
 
-    for chain in (strat.convergence_assessor, strat.query_refiner):
+
+async def test_a_failed_expansion_raises_without_ignore_errors() -> None:
+    strat = _strategy(hyde=lambda _: TimeoutError("slow"))
+    with pytest.raises(TimeoutError):
+        await strat.asearch(SearchQuery(query="question"))
+
+
+async def test_without_reports_the_question_itself_is_searched() -> None:
+    local = _Local()
+    strat = _strategy(reports=_Reports(count=0), local=local)
+    result = await strat.asearch(SearchQuery(query="question"))
+    assert local.queries == ["question"]
+    assert strat.primer.calls == [] and strat.hyde.calls == []
+    assert "answer to question" in _answers(result)
+
+
+# --------------------------------------------------------------------------- #
+# Actions
+# --------------------------------------------------------------------------- #
+
+
+async def test_follow_ups_run_as_local_searches_round_by_round() -> None:
+    # Regression: DRIFT rewrote one query per iteration; follow-up queries
+    # never ran as local searches answered on their own.
+    local = _Local()
+    tree = {
+        "about report 0?": (90, ["deeper A?"]),
+        "about report 2?": (30, ["deeper B?"]),
+        "deeper A?": (70, ["deepest?"]),
+    }
+    strat = _strategy(local=local, action=_action(tree))
+    result = await strat.asearch(SearchQuery(query="question"))
+
+    assert local.queries[:3] == [
+        "about report 0?",
+        "about report 2?",
+        "about report 4?",
+    ]
+    # Round 2: the follow-ups of the better answer first.
+    assert local.queries[3:5] == ["deeper A?", "deeper B?"]
+    assert local.queries[5:] == ["deepest?"]
+    assert result.metadata["drift_depth"] == 3
+    assert result.metadata["drift_follow_up_queries"] == 6
+    # Each follow-up's context is its own local search.
+    contexts = {c["query"]: c["context"] for c in strat.action.calls}
+    assert contexts["deeper A?"] == "chunk for deeper A?"
+    assert all(c["global_query"] == "question" for c in strat.action.calls)
+
+
+async def test_rounds_stop_at_n_depth_and_k_followups() -> None:
+    local = _Local()
+    tree = {f"about report {i}?": (50, [f"next {i}?"]) for i in (0, 2, 4)}
+    strat = _strategy(local=local, action=_action(tree), n_depth=1, k_followups=6)
+    result = await strat.asearch(SearchQuery(query="question"))
+    assert len(local.queries) == 3
+    assert result.metadata["drift_open_follow_ups"] == 3
+
+    local = _Local()
+    strat = _strategy(local=local, action=_action(tree), k_followups=2, n_depth=1)
+    await strat.asearch(SearchQuery(query="question"))
+    # Two reports, so one fold-answer per report and two follow-ups a round.
+    assert local.queries == ["about report 0?", "about report 1?"]
+
+
+async def test_a_follow_up_asked_twice_runs_once() -> None:
+    local = _Local()
+    primer = _primer({f"report {i}": ["same?", "question"] for i in (0, 2, 4)})
+    strat = _strategy(local=local, primer=primer)
+    await strat.asearch(SearchQuery(query="question"))
+    assert local.queries == ["same?"]
+
+
+async def test_a_follow_up_without_local_results_costs_no_action_call() -> None:
+    strat = _strategy(local=_Local(empty={"about report 2?"}))
+    await strat.asearch(SearchQuery(query="question"))
+    assert "about report 2?" not in [c["query"] for c in strat.action.calls]
+
+
+async def test_a_failed_action_keeps_its_evidence_under_ignore_errors() -> None:
+    strat = _strategy(action=lambda _: TimeoutError("slow"), ignore_errors=True)
+    result = await strat.asearch(SearchQuery(query="question"))
+    assert result.metadata["degraded_error"] == "TimeoutError"
+    sources = {r.source for r in result.results}
+    assert "t:about report 0?" in sources
+
+
+async def test_a_failed_action_raises_without_ignore_errors() -> None:
+    strat = _strategy(action=lambda _: TimeoutError("slow"))
+    with pytest.raises(TimeoutError):
+        await strat.asearch(SearchQuery(query="question"))
+
+
+async def test_a_fatal_action_error_raises_even_under_ignore_errors() -> None:
+    denied = ClientError(
+        {"Error": {"Code": "AccessDeniedException", "Message": "no"}}, "Converse"
+    )
+    strat = _strategy(action=lambda _: denied, ignore_errors=True)
+    with pytest.raises(ClientError):
+        await strat.asearch(SearchQuery(query="question"))
+
+
+# --------------------------------------------------------------------------- #
+# Reduce
+# --------------------------------------------------------------------------- #
+
+
+async def test_answers_are_ranked_and_packed_into_the_budget() -> None:
+    tree = {"about report 0?": (90, []), "about report 2?": (10, [])}
+    strat = _strategy(action=_action(tree))
+    result = await strat.asearch(SearchQuery(query="question"))
+    text = _answers(result)
+    assert text.index("answer to about report 0?") < text.index("draft from report 0")
+    assert text.index("draft from report 0") < text.index("answer to about report 2?")
+    assert result.results[0].source == "synthesized_drift_answers"
+
+    strat = _strategy(action=_action(tree), max_answer_tokens=128)
+    text = _answers(await strat.asearch(SearchQuery(query="question")))
+    assert "answer to about report 0?" in text
+    assert "answer to about report 2?" not in text
+
+
+async def test_evidence_is_fused_with_the_local_quota(mocker) -> None:
+    strat = _strategy()
+    spy = mocker.spy(strat, "_fuse_and_rerank")
+    query = SearchQuery(query="question", top_k=7)
+    await strat.asearch(query)
+    kwargs = spy.call_args.kwargs
+    assert kwargs["per_type_quota"] == strat._per_type_quota(7)
+    assert kwargs["rerank_only_types"] == {"text"}
+    fused = spy.call_args.args[0]["results"]
+    assert len(fused) == len({r.source for r in fused})  # deduplicated
+
+
+async def test_the_callers_config_reaches_every_llm_call() -> None:
+    strat = _strategy(n_depth=1)
+    caller_config = {"tags": ["caller"]}
+    await strat.asearch(SearchQuery(query="question"), config=caller_config)
+    for chain in (strat.hyde, strat.primer, strat.action):
         assert chain.configs and all(c is caller_config for c in chain.configs)
-    assert strat.keyword_expander.configs == [caller_config]
 
 
-async def test_asearch_passes_the_callers_config_to_the_primer() -> None:
-    strat = _primer_strategy(
-        primer_value='{"follow_up_queries": [], "score": 0.9}',
-        retrievers={"document": _StubRetriever(results=[_result("report")])},
-    )
-    received: list = []
+async def test_actions_run_concurrently() -> None:
+    in_flight = 0
+    peak = 0
 
-    async def _fake_iterative(query, all_results, seen, metrics, config=None):
-        received.append(config)
+    class _SlowLocal(_Local):
+        async def asearch(self, query, config=None):
+            nonlocal in_flight, peak
+            in_flight += 1
+            peak = max(peak, in_flight)
+            await asyncio.sleep(0.01)
+            in_flight -= 1
+            return await super().asearch(query, config)
 
-    strat._iterative_search = _fake_iterative  # type: ignore[method-assign]
-    strat.hybrid_scorer.fuse_and_rerank_results = (  # type: ignore[method-assign]
-        lambda groups, **kw: groups["results"]
-    )
-    caller_config = {"tags": ["caller"]}
-
-    await strat.asearch(SearchQuery(query="q"), config=caller_config)
-
-    assert strat.primer.configs == [caller_config]
-    assert received == [caller_config]  # no follow-ups: the loop gets it too
+    strat = _strategy(local=_SlowLocal(), n_depth=1)
+    await strat.asearch(SearchQuery(query="question"))
+    assert peak == 3
 
 
-async def test_evolve_query_fatal_error_propagates_when_not_ignored() -> None:
-    # gather(return_exceptions=True) must not swallow a fatal (access) error.
-    strat = _bare_strategy(ignore_errors=False)
-    strat.query_refiner = _AChain(
-        raises=ClientError(
-            {"Error": {"Code": "AccessDeniedException", "Message": "no access"}},
-            "Converse",
-        )
-    )
-    strat.keyword_expander = _AChain(["kw"])
-    with pytest.raises(ClientError, match="AccessDenied"):
-        await strat._evolve_query(SearchQuery(query="q"), "original", [], 1)
-
-
-async def test_evolve_query_failures_are_logged(mocker) -> None:
-    from unified_kg_rag.adapters.search_strategies import drift_search
-
-    warning = mocker.spy(drift_search.logger, "warning")
-    strat = _bare_strategy(ignore_errors=True)
-    strat.query_refiner = _AChain(
-        raises=ClientError(
-            {"Error": {"Code": "AccessDeniedException", "Message": "no access"}},
-            "Converse",
-        )
-    )
-    strat.keyword_expander = _AChain(raises=TimeoutError("timed out"))
-    out = await strat._evolve_query(SearchQuery(query="q"), "original", [], 1)
-    assert out.query == "q"
-    logged = " ".join(str(call.args) for call in warning.call_args_list)
-    assert "refinement" in logged and "expansion" in logged
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [("80", 80), (250, 100), (-5, 0), ("Infinity", 0), ("NaN", 0), ("x", 0)],
+)
+def test_scores_are_clamped_integers(raw: Any, expected: int) -> None:
+    assert _score(raw) == expected
 
 
 def test_rank_within_type_keeps_each_store_in_its_slots() -> None:

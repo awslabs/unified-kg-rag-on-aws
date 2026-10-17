@@ -4,11 +4,11 @@
 
 Three audited gaps:
 
-GAP 1 — DRIFT keyword expansion / query refinement must be language-aware so a
-        non-English corpus is not expanded with English-only keywords that miss
-        the language-analyzed index. ``KeywordExpansionPrompt`` and
-        ``QueryRefinementPrompt`` now thread ``target_language``, mirroring the
-        LightRAG ``KeywordsExtractionPrompt`` / answer prompts.
+GAP 1 — DRIFT follow-up queries must be language-aware so a non-English
+        corpus is not searched with English-only queries that miss the
+        language-analyzed index. ``DriftPrimerPrompt`` and ``DriftActionPrompt``
+        thread ``target_language``, mirroring the LightRAG
+        ``KeywordsExtractionPrompt`` / answer prompts.
 GAP 2 — non-UTF-8 source files (e.g. cp949) must be recovered via encoding
         autodetection rather than silently dropped. The parser passes
         ``autodetect_encoding=True`` to the text/CSV loaders, and
@@ -34,7 +34,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.domain.models.config import TranslationConfig
 from unified_kg_rag.domain.models.document import _read_text_autodetect
-from unified_kg_rag.domain.prompts import KeywordExpansionPrompt, QueryRefinementPrompt
+from unified_kg_rag.domain.prompts import DriftActionPrompt, DriftPrimerPrompt
 
 pytestmark = pytest.mark.unit
 
@@ -50,34 +50,19 @@ _KOREAN_TEXT = (
 
 
 class TestLanguageAwareDriftPrompts:
-    def test_keyword_expansion_declares_target_language(self) -> None:
-        assert "target_language" in KeywordExpansionPrompt.input_variables
-
-    def test_query_refinement_declares_target_language(self) -> None:
-        assert "target_language" in QueryRefinementPrompt.input_variables
-
-    def test_keyword_expansion_renders_with_target_language(self) -> None:
+    @pytest.mark.parametrize("prompt", [DriftPrimerPrompt, DriftActionPrompt])
+    def test_follow_up_prompts_render_with_target_language(self, prompt) -> None:
         # resolve() validates the shipped default's variables against the
         # template, so a missing {target_language} slot would raise here.
-        resolved = KeywordExpansionPrompt.resolve()
+        resolved = prompt.resolve()
         assert "target_language" in resolved.input_variables
         combined = resolved.system_prompt_template + resolved.human_prompt_template
         assert "{target_language}" in combined
 
-    def test_query_refinement_renders_with_target_language(self) -> None:
-        resolved = QueryRefinementPrompt.resolve()
-        assert "target_language" in resolved.input_variables
-        combined = resolved.system_prompt_template + resolved.human_prompt_template
-        assert "{target_language}" in combined
-
-    def test_keyword_expansion_formats_with_a_concrete_language(self) -> None:
-        resolved = KeywordExpansionPrompt.resolve()
-        rendered = resolved.human_prompt_template.format(
-            query="클라우드 아키텍처",
-            entities=["AWS"],
-            topics=[],
-            max_keywords=20,
-            target_language="Korean",
+    def test_action_prompt_formats_with_a_concrete_language(self) -> None:
+        resolved = DriftActionPrompt.resolve()
+        rendered = resolved.system_prompt_template.format(
+            num_follow_ups=5, target_language="Korean"
         )
         assert "Korean" in rendered
 

@@ -24,10 +24,11 @@ from unified_kg_rag.domain.prompts.graph_extraction import (
 from unified_kg_rag.domain.prompts.retrieval import (
     AnswerGenerationPrompt,
     CommunityRelevancePrompt,
+    DriftActionPrompt,
+    DriftHydePrompt,
     DriftPrimerPrompt,
     GlobalMapPrompt,
     MapReduceSummaryPrompt,
-    QueryRefinementPrompt,
     QueryRewritePrompt,
 )
 
@@ -50,7 +51,8 @@ _WRAPPED: list[tuple[type[BasePrompt], str, str]] = [
     (GlobalMapPrompt, "reports", "community_reports"),
     (MapReduceSummaryPrompt, "summaries", "summaries"),
     (DriftPrimerPrompt, "community_reports", "community_reports"),
-    (QueryRefinementPrompt, "results_summary", "results_summary"),
+    (DriftHydePrompt, "template", "template"),
+    (DriftActionPrompt, "context", "context"),
     (QueryRewritePrompt, "conversation_history", "conversation_history"),
     (QueryRewritePrompt, "query", "query"),
 ]

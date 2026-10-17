@@ -190,7 +190,7 @@ def test_injected_llm_factory_reaches_global_and_drift(
     expected = (
         config.search.global_search.map_model_id
         if strategy is SearchStrategy.GLOBAL
-        else config.search.drift_search.query_refinement_model_id
+        else config.search.drift_search.action_model_id
     )
     assert str(expected) in llm.model_ids
     # Scorer and token counter came from the bundle too.

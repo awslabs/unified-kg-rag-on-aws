@@ -11,7 +11,6 @@ import pytest
 
 from unified_kg_rag.adapters.retrieval.hybrid_scorer import HybridScorer
 from unified_kg_rag.adapters.retrievers.neptune_retriever import NeptuneRetriever
-from unified_kg_rag.adapters.search_strategies.drift_search import DriftSearchStrategy
 from unified_kg_rag.domain.models import Config, FusionMethod, RetrievalResult
 
 pytestmark = pytest.mark.unit
@@ -284,23 +283,16 @@ class TestOneContributionPerBucket:
         )
 
     def _drift_bucket(self) -> list[RetrievalResult]:
-        """One DRIFT bucket, built the way `asearch` builds `all_results`."""
+        """One bucket holding one artifact twice, rendered with two paths.
+
+        DRIFT fuses the evidence of several local searches in one bucket, so
+        an artifact can arrive more than once: rank 1 `best`, ranks 2 and 3
+        `repeat`.
+        """
         best = self._graph_hit("e-best", "Best", 1.0, ["Seed", "Best"])
         repeat_a = self._graph_hit("e-repeat", "Repeat", 0.5, ["Seed", "Repeat"])
         repeat_b = self._graph_hit("e-repeat", "Repeat", 0.5, ["Other", "Repeat"])
-        best_again = self._graph_hit("e-best", "Best", 1.0, ["Seed", "Best"])
-
-        seen: set[str] = set()
-        bucket: list[RetrievalResult] = []
-        for iteration_results in ([best, repeat_a], [repeat_b, best_again]):
-            unique = DriftSearchStrategy._filter_unique_results(iteration_results, seen)
-            DriftSearchStrategy._update_seen_content(unique, seen)
-            bucket.extend(unique)
-
-        # The content dedupe dropped the identical re-rendering of `best` and
-        # kept the differently-pathed re-rendering of `repeat`: rank 1 `best`,
-        # ranks 2 and 3 `repeat`.
-        assert [r.source for r in bucket] == ["e-best", "e-repeat", "e-repeat"]
+        bucket = [best, repeat_a, repeat_b]
         assert bucket[1].content != bucket[2].content
         return bucket
 

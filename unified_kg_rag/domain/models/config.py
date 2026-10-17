@@ -2156,105 +2156,60 @@ class LocalSearchConfig(BaseModel):
 
 
 class DriftSearchConfig(BaseModel):
-    enable_query_refinement: bool = Field(
-        default=True,
-        description="Enable iterative query refinement during drift search",
-    )
-    enable_keyword_extraction: bool = Field(
-        default=True,
-        description="Enable automatic keyword extraction from search results",
-    )
-    query_refinement_model_id: BedrockModelId = role_model_field(
-        "fast",
-        description="Language model used for refining search queries based on intermediate results",
-    )
-    keyword_expansion_model_id: BedrockModelId = role_model_field(
-        "fast",
-        description="Language model used for expanding keywords from discovered entities",
-    )
-    enable_llm_convergence: bool = Field(
-        default=False,
-        description=(
-            "Ask an LLM after each iteration whether DRIFT has converged and stop "
-            "early when its score reaches convergence_threshold. Off by default: "
-            "it adds one LLM call per iteration, while the deterministic checks "
-            "(low unique-result gain, improvement_threshold) already stop the "
-            "loop, and max_iterations bounds it."
-        ),
-    )
-    convergence_assessment_model_id: BedrockModelId = role_model_field(
-        "fast",
-        description="Language model used for assessing search convergence",
-    )
-    max_iterations: int = Field(
-        default=3,
-        ge=1,
-        description="Maximum number of drift search iterations allowed",
-    )
-    initial_top_k: int = Field(
-        default=5,
-        ge=1,
-        description="Number of initial community reports to retrieve as search seeds",
-    )
-    summary_length: int = Field(
-        default=5,
-        ge=1,
-        description="Maximum number of result summaries to include in query evolution",
-    )
-    summary_char_limit: int = Field(
-        default=200,
-        ge=1,
-        description="Per-result character budget when summarizing retrieved "
-        "content into the evolved DRIFT query. Caps how much of each result is "
-        "fed back into the next iteration's query (was a hardcoded cutoff).",
-    )
-    n_entities: int = Field(
-        default=5,
-        ge=1,
-        description="Entity names passed to keyword expansion, from the "
-        "newest iteration's results first",
-    )
-    convergence_threshold: float = Field(
-        default=0.8,
-        ge=0.0,
-        le=1.0,
-        description=(
-            "LLM convergence score (0-1) at or above which DRIFT stops early "
-            "(enable_llm_convergence only). Default 0.8 is the lower bound of the "
-            "ConvergenceAssessmentPrompt's 'convergence achieved' band; lower "
-            "values stop while the prompt still advises exploring."
-        ),
-    )
-    improvement_threshold: float = Field(
-        default=0.05,
-        ge=0.0,
-        le=1.0,
-        description=(
-            "Minimum improvement ratio (unseen / retrieved results of an "
-            "iteration) required to continue iterations. Independently, the "
-            "loop also stops once two consecutive iterations each add fewer "
-            "than 2 unseen results."
-        ),
-    )
-    enable_primer: bool = Field(
-        default=False,
-        description="Restructure DRIFT into MS GraphRAG's primer -> follow-up "
-        "flow: a HyDE primer drafts a hypothetical answer from the seed "
-        "community reports and decomposes the query into specific follow-up "
-        "sub-queries, each run as its own search iteration (instead of carrying "
-        "one mutating query forward). Off by default — the primer adds one LLM "
-        "call up front and turns the iteration budget into follow-up breadth.",
-    )
+    """MS GraphRAG DRIFT search: a community-report primer, then local search.
+
+    The primer expands the query into a hypothetical answer (HyDE), reads the
+    ``k_followups`` community reports most similar to it in ``primer_folds``
+    calls and drafts intermediate answers plus follow-up queries. Each of
+    ``n_depth`` rounds then runs the ``k_followups`` best-placed open follow-up
+    queries as local searches, each answered by ``action_model_id`` with its
+    own follow-up queries. The answer model reduces the ranked intermediate
+    answers with the local evidence they came from.
+    """
+
     primer_model_id: BedrockModelId = role_model_field(
         "fast",
-        description="Language model for the DRIFT primer (HyDE answer + "
-        "follow-up decomposition) when enable_primer is set.",
+        description="Language model for the DRIFT query expansion (HyDE) and "
+        "the primer calls",
     )
-    primer_follow_ups: int = Field(
+    action_model_id: BedrockModelId = role_model_field(
+        "fast",
+        description="Language model that answers each follow-up query from its "
+        "local-search context (one call per follow-up query)",
+    )
+    k_followups: int = Field(
+        default=20,
+        ge=1,
+        description=(
+            "Community reports the primer reads, and follow-up queries run per "
+            "round (MS GraphRAG drift_k_followups, 20). Each follow-up query is "
+            "one local search plus one action_model_id call."
+        ),
+    )
+    primer_folds: int = Field(
+        default=5,
+        ge=1,
+        description="Primer calls the primer reports are split over (MS "
+        "GraphRAG primer_folds, 5); each drafts its own intermediate answer and "
+        "follow-up queries.",
+    )
+    n_depth: int = Field(
         default=3,
         ge=1,
-        description="Number of follow-up sub-queries the DRIFT primer emits; "
-        "each becomes one follow-up search iteration (capped by max_iterations).",
+        description="Rounds of follow-up queries (MS GraphRAG n_depth, 3). Up to "
+        "k_followups * n_depth local searches per query.",
+    )
+    local_context_tokens: int = Field(
+        default=12000,
+        ge=128,
+        description="Token budget of the local-search context one follow-up "
+        "query is answered from (MS GraphRAG local_search_max_data_tokens).",
+    )
+    max_answer_tokens: int = Field(
+        default=8000,
+        ge=128,
+        description="Token budget for the ranked intermediate answers handed to "
+        "the answer model; the best-scored answers are taken first.",
     )
 
 
@@ -2767,27 +2722,29 @@ class CustomPromptConfig(BaseModel):
     )
     drift_primer_system: str | None = Field(
         default=None,
-        description="Custom system prompt for the DRIFT primer (HyDE answer + follow-up decomposition)",
+        description="Custom system prompt for the DRIFT primer (intermediate answer + follow-up queries)",
     )
     drift_primer_human: str | None = Field(
         default=None,
-        description="Custom human prompt for the DRIFT primer (HyDE answer + follow-up decomposition)",
+        description="Custom human prompt for the DRIFT primer (intermediate answer + follow-up queries)",
     )
-    keyword_expansion_system: str | None = Field(
+    drift_hyde_system: str | None = Field(
         default=None,
-        description="Custom system prompt for expanding search queries with relevant keywords",
+        description="Custom system prompt for the DRIFT query expansion (HyDE)",
     )
-    keyword_expansion_human: str | None = Field(
+    drift_hyde_human: str | None = Field(
         default=None,
-        description="Custom human prompt for expanding search queries with relevant keywords",
+        description="Custom human prompt for the DRIFT query expansion (HyDE)",
     )
-    query_refinement_system: str | None = Field(
+    drift_action_system: str | None = Field(
         default=None,
-        description="Custom system prompt for refining queries based on intermediate results",
+        description="Custom system prompt for answering a DRIFT follow-up query "
+        "from its local-search context",
     )
-    query_refinement_human: str | None = Field(
+    drift_action_human: str | None = Field(
         default=None,
-        description="Custom human prompt for refining queries based on intermediate results",
+        description="Custom human prompt for answering a DRIFT follow-up query "
+        "from its local-search context",
     )
     query_rewrite_system: str | None = Field(
         default=None,
@@ -2885,14 +2842,14 @@ _REQUIRED_PROMPT_VARIABLES: dict[str, frozenset[str]] = {
     "community_report": frozenset({"entities", "relationships"}),
     "corpus_profile": frozenset({"corpus_sample"}),
     "description_summarization": frozenset({"descriptions"}),
+    "drift_action": frozenset({"query", "context"}),
+    "drift_hyde": frozenset({"query"}),
     "drift_primer": frozenset({"query", "community_reports"}),
     "entity_extraction": frozenset({"query"}),
     "global_map": frozenset({"query", "reports"}),
     "graph_extraction": frozenset({"input_text"}),
     "graph_refinement": frozenset({"text", "entities", "relationships"}),
-    "keyword_expansion": frozenset({"query"}),
     "keywords_extraction": frozenset({"query"}),
-    "query_refinement": frozenset({"original_query", "results_summary"}),
     "query_rewrite": frozenset({"query", "conversation_history"}),
     "strategy_selection": frozenset({"query", "strategies"}),
 }
