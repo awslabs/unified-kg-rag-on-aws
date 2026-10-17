@@ -1010,11 +1010,10 @@ class EvaluationManager:
         except Exception as e:  # noqa: BLE001 - the manifest entry is optional
             logger.warning("Could not read the index build records: %s", e)
             return dict.fromkeys(suffixes)
-        read = getattr(retriever, "aread_build_record", None)
         builds: dict[str, dict[str, Any] | None] = {}
         for suffix in suffixes:
             try:
-                builds[suffix] = await read(suffix) if read else None
+                builds[suffix] = await retriever.aread_build_record(suffix)
             except Exception as e:  # noqa: BLE001 - the manifest entry is optional
                 logger.warning(
                     "Could not read the build record of suffix '%s': %s", suffix, e

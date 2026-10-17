@@ -106,6 +106,13 @@ class BaseGraphRAGRetriever(BaseRetriever, ABC):
         """
         return None
 
+    async def aread_build_record(self, suffix: str | None) -> dict[str, Any] | None:
+        """The build record ingestion wrote on ``suffix``'s index
+        (``VectorIndexer.record_build``), read by ``run-eval`` into its run
+        manifest. ``None`` (the default, for a backend without index
+        metadata) when there is none or it cannot be read."""
+        return None
+
     def _get_name(self, base: str, suffix: str | None) -> str:
         return store_name(base, suffix, self._config.indexing.additional_suffix)
 
