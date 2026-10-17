@@ -91,7 +91,7 @@ Context keys (all optional; sensible defaults shown):
                                        extractors scale with vCPU count)
   fargate_memory      8192             task memory (MiB)
   image_tag           latest           container image tag (pin a version for immutable ECR tags)
-  sfn_timeout_hours   6                ingestion state machine timeout (all phases)
+  sfn_timeout_hours   6                ingestion state machine timeout
 
   # --- Governance (propagated as cost-allocation / ownership tags) ---
   owner               "aws-proserve"   `owner` tag on every resource

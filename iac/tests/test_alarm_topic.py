@@ -121,19 +121,17 @@ def _definition(template: Template) -> dict[str, Any]:
     return dict(json.loads(text))
 
 
-def test_phases_retry_only_task_start_errors(template: Template) -> None:
+def test_the_task_retries_only_task_start_errors(template: Template) -> None:
     states = _definition(template)["States"]
-    phases = [s for name, s in states.items() if name.endswith("Phase")]
-    assert len(phases) == 4
-    for state in phases:
-        (retry,) = state["Retry"]
-        assert retry["ErrorEquals"] == ["ECS.AmazonECSException", "AmazonECS.Unknown"]
-        (catch,) = state["Catch"]
-        assert catch == {
-            "ErrorEquals": ["States.ALL"],
-            "ResultPath": "$.error",
-            "Next": "NotifyFailure",
-        }
+    state = states["Ingest"]
+    (retry,) = state["Retry"]
+    assert retry["ErrorEquals"] == ["ECS.AmazonECSException", "AmazonECS.Unknown"]
+    (catch,) = state["Catch"]
+    assert catch == {
+        "ErrorEquals": ["States.ALL"],
+        "ResultPath": "$.error",
+        "Next": "NotifyFailure",
+    }
     # A throttled or transient publish is retried; otherwise the run would
     # fail without its notification.
     (publish_retry,) = states["NotifyFailure"]["Retry"]
@@ -152,29 +150,36 @@ def test_state_machine_timeout_is_configurable() -> None:
     assert _definition(template)["TimeoutSeconds"] == 12 * 3600
 
 
-def test_phases_auto_resume_within_their_stage_window(template: Template) -> None:
-    # Each phase passes its window and no --resume-from-stage: an explicit
-    # start would re-run the whole window on a retried execution instead of
-    # skipping the stages a previous attempt completed.
+def test_one_task_runs_every_stage_and_resumes(template: Template) -> None:
+    # No --enabled-stages window and no --resume-from-stage: the task runs
+    # every stage, and a re-run execution skips the ones a previous attempt
+    # checkpointed to S3 (an explicit start would redo them).
     states = _definition(template)["States"]
-    windows = []
-    for name in ("PrepPhase", "GraphBuildPhase", "AnalysisPhase", "IndexPhase"):
-        (override,) = states[name]["Parameters"]["Overrides"]["ContainerOverrides"]
-        command = override["Command"]
-        assert "--resume-from-stage" not in command
-        windows.append(command[command.index("--enabled-stages") + 1].split(","))
-    # Together the windows cover every stage once, in pipeline order.
-    assert [stage for window in windows for stage in window] == [
-        "document_parsing",
-        "document_loading",
-        "text_chunking",
-        "translation",
-        "graph_extraction",
-        "gleaning",
-        "graph_resolution",
-        "claim_extraction",
-        "claim_resolution",
-        "graph_analysis",
-        "community_detection",
-        "indexing",
+    assert [name for name, s in states.items() if s["Type"] == "Task"] == [
+        "Ingest",
+        "NotifyFailure",
     ]
+    assert states["Ingest"]["Next"] == "PipelineComplete"
+    (override,) = states["Ingest"]["Parameters"]["Overrides"]["ContainerOverrides"]
+    command = override["Command"]
+    assert command[0] == "run-ingestion"
+    assert "--enabled-stages" not in command
+    assert "--resume-from-stage" not in command
+    assert "--s3-sync" in command
+
+
+def test_the_task_runs_the_revision_deployed_with_it(template: Template) -> None:
+    # The family name alone runs its latest ACTIVE revision, which a
+    # registration outside this deployment can change.
+    (machine,) = template.find_resources("AWS::StepFunctions::StateMachine").values()
+    parts = machine["Properties"]["DefinitionString"]["Fn::Join"][1]
+    at = next(
+        i
+        for i, p in enumerate(parts)
+        if isinstance(p, str) and '"TaskDefinition":"' in p
+    )
+    family = parts[at].rsplit('"TaskDefinition":"', 1)[1]
+    assert family.endswith(":")
+    revision = parts[at + 1]
+    assert revision["Fn::Select"][0] == 6
+    assert revision["Fn::Select"][1]["Fn::Split"][0] == ":"

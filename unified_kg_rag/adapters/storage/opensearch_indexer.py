@@ -104,7 +104,7 @@ class OpenSearchIndexer(VectorIndexer):
         self.target_language = self.config.processing.translation.target_language.value
         self.analyzer = self._analyzer_for(self.target_language)
         # Optional S3-persisted cache so unchanged text is not re-embedded across
-        # separate runs/phases (each Fargate phase is a fresh process). Loaded
+        # separate runs (each Fargate task is a fresh process). Loaded
         # lazily on first embed; best-effort (an S3 error leaves it in memory).
         self._s3_embedding_cache = self._build_s3_embedding_cache()
 

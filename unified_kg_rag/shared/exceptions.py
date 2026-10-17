@@ -11,9 +11,9 @@ class AWSServiceError(GraphRAGException):
 class CacheSyncError(AWSServiceError):
     """A pipeline cache sync with remote storage (S3) failed or was partial.
 
-    Raised instead of returning a partial result so a phased run (one Step
-    Functions task per phase) exits non-zero at the phase that lost its
-    checkpoint, not later with a misleading "missing stage" error.
+    Raised instead of returning a partial result so the run that lost its
+    checkpoint exits non-zero, not the next run (another task, or an
+    ``--enabled-stages`` window) with a misleading "missing stage" error.
     """
 
 

@@ -999,7 +999,7 @@ OpenSearch + Neptune.
 | `--yes`, `-y` | off | Answer yes to confirmation prompts (continuing after a failed integrity check). Without a terminal on stdin a prompt cannot be asked, so the run fails unless `--yes` is passed |
 | `--continue-on-error` | off | Keep going when a stage errors. The documents a crashed extraction, resolution or community stage left without artifacts are recorded FAILED, so the next incremental run re-processes them |
 | `--enabled-stages` | all | Comma-separated stage list to run |
-| `--metrics-sink` | `none` | `none`, or `cloudwatch` (emits CloudWatch EMF — Embedded Metric Format — metrics to stdout as dimensionless series; `pipeline_id` is recorded as a log property, not a dimension, so runs add no new metric series). A run emits the metrics of the stages it executed, so the phases of a phased run do not repeat each other's counts |
+| `--metrics-sink` | `none` | `none`, or `cloudwatch` (emits CloudWatch EMF — Embedded Metric Format — metrics to stdout as dimensionless series; `pipeline_id` is recorded as a log property, not a dimension, so runs add no new metric series). A run emits the metrics of the stages it executed, so a resumed run or an `--enabled-stages` window does not repeat the counts of the stages it restored from the cache |
 | `--retire-source-scope SCOPE` | — | Incremental runs: treat every registry record of the former source scope `SCOPE` (in this run's index suffix) as deleted, removing its exclusive content. Repeatable; added to `indexing.retire_source_scopes`. Fails when `SCOPE` is the run's own scope. See §5 Deletion scope. |
 | `--config-path` | — | Path to `config.yaml`; a missing file is a usage error (exit 2) |
 | `--backend`, `--llm-provider`, ... | — | Provider selection; see [Provider flags](#provider-flags) |
@@ -1078,9 +1078,8 @@ StopTask, a Step Functions timeout) `run-ingestion` stops the running stage,
 uploads its checkpoint and exits 143; a re-run with the same pipeline id
 starts at that stage. A failed upload between stages is logged and retried by
 the next one; a failed or partial initial download or final upload fails the
-run with `CacheSyncError` and `run-ingestion` exits non-zero, so in a phased
-Step Functions run the phase that lost its checkpoint is the one marked
-failed. An empty remote cache on a fresh pipeline id is not an error. S3-synced
+run with `CacheSyncError` and `run-ingestion` exits non-zero, so the run that
+lost its checkpoint is the one marked failed. An empty remote cache on a fresh pipeline id is not an error. S3-synced
 checkpoints do not expire by `cache.ttl_seconds`; the bucket's lifecycle rule
 expires them (30 days in the CDK deployment). For
 embeddings specifically, set
@@ -2203,7 +2202,7 @@ messages the CLIs report, what they mean and the fix, for AWS and local mode.
   I/O-bound). For graph writes,
   raise `indexing.neptune.index_concurrency`; the Gremlin connection pool grows
   with it. Enable `indexing.opensearch.persist_embedding_cache` + `--s3-sync`
-  so re-runs and multi-phase jobs don't recompute.
+  so re-runs don't recompute.
 - **Multilingual:** set `processing.translation.source_language` /
   `target_language` (+ `additional_target_languages`) and add language analyzers
   under `indexing.opensearch.language_analyzers`. The translation stage no-ops

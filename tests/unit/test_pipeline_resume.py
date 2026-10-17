@@ -2,10 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """Resume-strategy unit tests for PipelineResumeManager.
 
-These cover the phased-execution handoff used by the Step Functions ingestion
-pipeline: each phase runs in its own Fargate task and resumes at a stage that
-the *previous* phase did not record, so the upstream completed stages must still
-be restored from the (S3-synced) cache.
+These cover the handoff between ``--enabled-stages`` windows: each window runs
+in its own process and resumes at a stage that the *previous* window did not
+record, so the upstream completed stages must still be restored from the
+(S3-synced) cache.
 """
 
 from datetime import datetime

@@ -503,7 +503,7 @@ class IngestionPipelineRunner:
                 # A soft stage failure stops the run but does NOT raise — the
                 # pipeline returns a context with status=FAILED. Without this
                 # check the CLI would print success and exit 0, so Step Functions
-                # (RUN_JOB, keyed on container exit code) marks the phase
+                # (RUN_JOB, keyed on container exit code) marks the task
                 # SUCCEEDED and the failure is invisible. Raise so main() exits
                 # non-zero and the failure surfaces.
                 if context.status == PipelineStageStatus.FAILED:

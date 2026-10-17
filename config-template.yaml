@@ -592,7 +592,7 @@ indexing:
     embedding_dimension: null
     refresh_after_batch: true
     # Persist the content-hash embedding cache to S3 so unchanged text is not
-    # re-embedded across separate runs/phases (each Fargate phase is a fresh
+    # re-embedded across separate runs (each Fargate task is a fresh
     # process). Requires aws.s3.bucket_name. Off by default.
     persist_embedding_cache: false
     embedding_cache_s3_key: "embedding-cache/cache.json"

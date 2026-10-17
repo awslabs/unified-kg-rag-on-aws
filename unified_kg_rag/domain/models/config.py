@@ -1725,8 +1725,8 @@ class OpenSearchIndexingConfig(BaseModel):
     persist_embedding_cache: bool = Field(
         default=False,
         description="Persist the content-hash embedding cache to S3 so unchanged "
-        "text is not re-embedded across separate runs/phases (each Fargate phase "
-        "is a fresh process). Requires aws.s3.bucket_name. Off by default.",
+        "text is not re-embedded across separate runs (each Fargate task is a "
+        "fresh process). Requires aws.s3.bucket_name. Off by default.",
     )
     embedding_cache_s3_key: str = Field(
         default="embedding-cache/cache.json",

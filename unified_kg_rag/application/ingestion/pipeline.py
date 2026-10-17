@@ -817,8 +817,8 @@ class DataIngestionPipeline:
         cache via S3.
 
         A failed or partial sync raises ``CacheSyncError``; ``run()`` turns it
-        into ``PipelineExecutionError`` and the CLI exits non-zero, so a phased
-        Step Functions run fails at the phase that lost its checkpoint.
+        into ``PipelineExecutionError`` and the CLI exits non-zero, so a run
+        that lost its checkpoint fails instead of the next one recomputing.
         """
         if not self.s3_cache_manager:
             logger.info("S3 cache manager not available, skipping sync")

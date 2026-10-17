@@ -56,7 +56,7 @@
 이전 레코드는 태그 없는 네임스페이스로 테이블에 남습니다. 기본 접두사와 같은 접미사를
 쓰는 설정이 그 테이블을 쓰지 않을 때 이 레코드를 삭제합니다.
 
-CDK 스택에서 `start-execution` 한 번은 네 단계를 차례로 실행하는 실행 하나를
+CDK 스택에서 `start-execution` 한 번은 수집 태스크를 실행하는 실행 하나를
 시작합니다. 스택에는 일정이나 이벤트 트리거가 없으므로 누군가(또는 직접 추가한
 자동화가) `start-execution`을 호출할 때만 실행이 시작되지만, 상태 머신은 실행
 중에 두 번째 실행이 시작되는 것을 막지 않습니다. 먼저 위 명령으로 `RUNNING`
@@ -70,7 +70,7 @@ CDK 스택에서 `start-execution` 한 번은 네 단계를 차례로 실행하�
 
 | 목적 | 방법 | 단계 캐시 | 저장소와 레지스트리 |
 |---|---|---|---|
-| 중단된 실행 마무리 | 같은 `--pipeline-id`로 다시 실행합니다(CDK 스택에서는 같은 `pipeline_id`로 새 실행을 시작). 처음으로 실패했거나 끝나지 않은 단계부터 재개하며, Step Functions의 각 단계 묶음은 이미 완료된 단계를 건너뜁니다. `--resume-from-stage <stage>`로 단계를 지정할 수 있습니다. | 재사용 | 실행되는 단계가 기록 |
+| 중단된 실행 마무리 | 같은 `--pipeline-id`로 다시 실행합니다(CDK 스택에서는 같은 `pipeline_id`로 새 실행을 시작). 처음으로 실패했거나 끝나지 않은 단계부터 재개하며 이미 완료된 단계는 건너뜁니다. `--resume-from-stage <stage>`로 단계를 지정할 수 있습니다. | 재사용 | 실행되는 단계가 기록 |
 | 모든 단계 다시 계산 | `--force-rebuild` | 무시하고 새로 기록 | 평소대로 기록(활성화 시 증분) |
 | 저장소를 처음부터 재구축 | 한 번의 실행에만 `indexing.reset: true` | 변경 없음 | 비운 뒤 코퍼스 전체를 인덱싱하고 모든 문서를 다시 기록 |
 
@@ -222,12 +222,12 @@ Neptune 요청(쓰기, 삭제, 제거와 병합을 위한 읽기)은 모두 새 
 넘으면 인덱싱 단계가 실패하고 문서를 기록하지 않으므로, 다음 실행이 다시
 시도합니다. 그 이하이면 실행은 성공하고, 실패한 산출물을 가진 문서만 `FAILED`로
 기록됩니다. 백엔드가 항목 ID 없이 보고한 실패가 있으면 그 실행의 모든 문서를
-`FAILED`로 기록합니다. CDK 스택에서는 단계가 실패하면 실행 ID와 오류를 담은
+`FAILED`로 기록합니다. CDK 스택에서는 수집 태스크가 실패하면 실행 ID와 오류를 담은
 메시지를 SNS 토픽에 게시하고, 아래 경보도 같은 토픽으로 문제를 알립니다.
 파이프라인 실행 경보가 네 개, 저장소 상태 경보가 일곱 개입니다.
-단계가 실패하면 `PipelineFailures`도 발생하므로 같은 실패가 두 번 오며, 두 번째
+태스크가 실패하면 `PipelineFailures`도 발생하므로 같은 실패가 두 번 오며, 두 번째
 알림에는 실행 ID와 오류가 없습니다. 이 경보를 두는 이유는 메시지로 알릴 수 없는
-실패도 잡기 때문입니다. 단계의 오류 처리기가 잡지 못하는 오류(예: `pipeline_id`가
+실패도 잡기 때문입니다. 태스크의 오류 처리기가 잡지 못하는 오류(예: `pipeline_id`가
 없는 시작 입력)나 재시도 후에도 실패한 게시가 여기에 해당합니다.
 
 | 경보 | 발생 조건 |
@@ -257,7 +257,7 @@ Neptune 요청(쓰기, 삭제, 제거와 병합을 위한 읽기)은 모두 새 
 | 캐시 | 위치 | 참고 |
 |---|---|---|
 | 단계 체크포인트(로컬) | `<--cache-directory>/<pipeline_id>/` (기본값 `cache/`) | 재개할 때 재사용하며, `--force-rebuild`는 읽지 않고 다시 계산한 출력을 씁니다 |
-| 단계 체크포인트(S3) | `s3://<bucket>/<--s3-prefix>/<pipeline_id>/` (기본 접두사 `pipeline-runs`) | `--s3-sync` 사용 시. 단계가 끝날 때마다, 그리고 SIGTERM을 받으면 업로드하며 Step Functions 단계 사이의 인계에 쓰입니다. 시작 시 다운로드나 마지막 업로드가 실패하면 `CacheSyncError`로 실행이 실패합니다. `cache.ttl_seconds`가 아니라 버킷 수명 주기가 만료시킵니다 |
+| 단계 체크포인트(S3) | `s3://<bucket>/<--s3-prefix>/<pipeline_id>/` (기본 접두사 `pipeline-runs`) | `--s3-sync` 사용 시. 단계가 끝날 때마다, 그리고 SIGTERM을 받으면 업로드하며 새 태스크에서 다시 실행하면 여기서 재개합니다. 시작 시 다운로드나 마지막 업로드가 실패하면 `CacheSyncError`로 실행이 실패합니다. `cache.ttl_seconds`가 아니라 버킷 수명 주기가 만료시킵니다 |
 | LLM 응답 캐시 | `<단계 체크포인트 디렉터리>/llm-cache/`(로컬, `--s3-sync`면 S3에도) | 같은 pipeline id로 다시 실행할 때 재사용하는 수집 모델 응답입니다. `cache.llm_responses.enabled: false`로 끄며, `--force-rebuild`는 무시합니다 |
 | 임베딩 캐시 | `s3://<aws.s3.bucket_name>/embedding-cache/cache.json` (`indexing.opensearch.embedding_cache_s3_key`) | `indexing.opensearch.persist_embedding_cache: true`일 때만 |
 | 시각화 데이터 | `graph.visualization.outputs_directory`가 없으면 `<cache directory>/<pipeline_id>/visualization/` | 단계 캐시와 함께 동기화(`.json`만) |
@@ -715,7 +715,7 @@ LangSmith로 업로드합니다.
 | `Invalid stage names provided: ...` | `--enabled-stages`에 없는 단계 이름이 있음 | CLI가 출력하는 목록의 이름을 사용 |
 | `argument --resume-from-stage: Unknown pipeline stage ...`(종료 코드 2) | `--resume-from-stage`에 없는 단계 이름을 넘김 | 메시지에 나온 목록의 이름을 사용(대소문자 무관) |
 | `... needs confirmation, but stdin is not a terminal` | 다시 실행할 때 완료된 단계의 출력이 현재 입력 기준으로 캐시에 없는데, 물어볼 터미널이 없음 | `--yes`를 넘겨 계속(재개하면서 그 단계를 다시 계산)하거나 새 `--pipeline-id`를 사용 |
-| `Stage '<stage>', upstream of this run's enabled stages, has not completed` | `--enabled-stages` 범위(Step Functions 단계 묶음)를 재개했는데 앞 단계가 실패했거나 캐시된 출력이 없음 | 앞 단계를 먼저 실행. CDK 스택에서는 같은 `pipeline_id`로 새 실행을 시작 |
+| `Stage '<stage>', upstream of this run's enabled stages, has not completed` | `--enabled-stages` 범위를 재개했는데 앞 단계가 실패했거나 캐시된 출력이 없음 | 앞 단계를 먼저 실행 |
 | `The doc-status registry lists indexed documents of this namespace whose entities the graph store does not hold` | 레지스트리에 기록된 내용을 그래프가 잃음(Gremlin Server 재시작, `docker compose ... down -v`, 복원하거나 교체한 그래프). 확인한 문서의 텍스트 단위를 인용하는 엔티티가 벡터 저장소에는 있고 그래프에는 없을 때입니다(엔티티를 서술하지 않는 문서로는 걸리지 않음) | `indexing.reset: true`로 다시 실행하거나 해당 네임스페이스의 레지스트리 레코드를 삭제(로컬 모드에서는 SQLite 파일) |
 | `The doc-status registry lists indexed documents of this namespace whose text units the vector store does not hold` | 레지스트리에 기록된 내용을 벡터 저장소가 잃음(로컬 모드에서 `vector.sqlite3`를 지우거나 옮김, `providers.vector.sqlite_path` 변경, 삭제된 OpenSearch 인덱스) | 위와 같음. 로컬 모드에서는 저장소 파일 세 개를 함께 지우거나 벡터 파일을 복원 |
 | 내장 그래프·벡터 저장소나 SQLite 문서 상태 레지스트리의 `... stayed locked ...`(`database is locked`)(로컬 모드) | 다른 프로세스(두 번째 수집 등)가 같은 SQLite 파일에 쓰면서 `search.store_timeout_seconds`보다 오래 잠금을 잡음. SQLite는 한 번에 한 프로세스만 씀 | 다른 실행이 끝난 뒤 다시 실행하거나, 저장소 파일마다 수집을 한 번에 하나만 실행하거나, `search.store_timeout_seconds`를 늘림. 파일은 로컬 디스크에 둠(네트워크 파일 시스템은 지원하지 않음) |
