@@ -12,7 +12,7 @@ two retrieval methodologies on one stack: **Microsoft GraphRAG**
 - For *internals / architecture* (hexagonal layers, ports & adapters, the
   dependency rule), see [docs/design.md](./design.md).
 
-The five console entry points (defined as `pyproject` scripts) are:
+The six console entry points (defined as `pyproject` scripts) are:
 
 | Script | Module | Purpose |
 |---|---|---|
@@ -21,6 +21,7 @@ The five console entry points (defined as `pyproject` scripts) are:
 | `run-eval` | `application.cli.run_evaluation` | Evaluate retrieval + generation |
 | `run-visualization` | `application.cli.run_visualization` | Render an exported graph (no ingestion) |
 | `run-prompt-tuning` | `application.cli.run_prompt_tuning` | Generate domain-adapted prompts |
+| `prepare-benchmark` | `application.cli.prepare_benchmark` | Turn a public benchmark (MuSiQue) into a corpus + `run-eval` dataset |
 
 Every CLI's `--help` ends with an example invocation and a link to its section here.
 
@@ -770,6 +771,7 @@ can log request bodies too.
 | `evaluation.ragas_max_workers` | `8` | Concurrent RAGAS jobs. Lower it if Bedrock throttles the judge. |
 | `evaluation.ragas_max_attempts` | `3` | Total attempts per judge call. |
 | `evaluation.max_context_tokens` | `null` | Token cap on the context passed to the RAGAS judges; `null` = the answer budget (`search.token_manager.max_context_tokens`), a smaller value logs a warning. |
+| `evaluation.answer_normalization` | `default` | `exact_match` / `token_f1` normalization; `official_squad` = the official SQuAD v1.1 script, for numbers comparable with published MuSiQue / HotpotQA results. |
 | `evaluation.retrieval_k` | `5` | Cutoff for the `retrieval` evaluator's hit@k / recall@k: the top k distinct files of the reported sources. |
 | `evaluation.outputs_directory` | `"outputs/evaluation"` | Where results are written. |
 
@@ -1576,7 +1578,9 @@ chunks counts as a failed removal (its registry row is kept for a retry).
 | `--outputs-directory` | `evaluation.outputs_directory` | Where to save results: a local directory or an `s3://bucket/prefix/` URI |
 | `--suffix` | — (`default`) | [Index suffix](#index-suffix) to evaluate against |
 | `--enable-thinking` | off | Model reasoning, as for `run-rag` (a no-op for models that always reason) |
-| `--search-strategy` | `auto` | Strategy used to answer each question |
+| `--search-strategy` | `auto` | Strategy used to answer each question; a comma-separated list (`local,mix,global`) runs a [paired comparison](#comparing-strategies) against the first |
+| `--repeats` | `1` | Runs per strategy; a comparison averages each query over them and reports the run-to-run spread |
+| `--pairwise-judge` | off | With 2+ strategies, also judge each one's answers against the first's with an LLM (see [Comparing strategies](#comparing-strategies)) |
 | `--search-type` | `hybrid` | Search method |
 | `--top-k` | `10` | Max results |
 | `--retrieval-multiplier` | `1` | Retrieval depth |
@@ -1838,6 +1842,83 @@ order, the file names it is attributed to (`[]` when unattributable), and
 `retrieved_source_types`, `retrieved_entities` and `retrieved_relationships`
 (the section type of each source and the graph elements the model was given).
 
+### Comparing strategies
+
+`run-eval --search-strategy local,mix,global --repeats 3` answers and scores
+the same queries with each strategy, `--repeats` times each (the listed
+strategy overrides a per-item `search_strategy`), saves every run's files as
+usual and adds `evaluation_comparison_<timestamp>.json`:
+
+- `strategies.<s>.metrics.<evaluator>/<metric>` — the mean over queries of
+  each query's mean over the repeats, the number of queries, and
+  `repeat_stdev` (the spread of the per-run means: the answer model's
+  run-to-run noise). `routed_strategies` counts the strategy each answer
+  actually used, so `auto` shows how it routed.
+- `deltas_vs_baseline.<s>.<metric>` — paired against the first strategy over
+  the queries both scored: `mean_delta`, a 95% paired bootstrap confidence
+  interval (`ci_low`/`ci_high`; 2,000 resamples of the queries, seed 0),
+  `wins`/`ties`/`losses` and the per-query deltas. A difference is supported
+  by the query sample when its interval excludes 0. In a simulation with
+  binary metrics, a 10-point difference was detected in 15% of runs with 50
+  queries and 59% with 200 (the interval held the true value in 95-98% of
+  runs), so compare on a few hundred queries.
+- `pairwise_vs_baseline.<s>` (with `--pairwise-judge`) — the GraphRAG /
+  LightRAG head-to-head LLM judge on comprehensiveness, diversity,
+  empowerment and directness, using `evaluation.evaluation_model_id`
+  (prompt: `custom_prompts.pairwise_comparison_*`). Each pair is judged in
+  both orders and a criterion counts as a win only when both orders agree
+  (the judge favours the answer it reads first); `candidate_win_rate` counts
+  a tie as half. It judges the first repeat's answers, one call per order,
+  query and strategy.
+- `run_manifest` of the first run.
+
+The console prints the means, the deltas with their intervals, `auto`'s
+routing and the pairwise win rates. The failure budget applies to every run.
+
+### Benchmarks (MuSiQue)
+
+`prepare-benchmark musique` turns
+[MuSiQue](https://github.com/StonyBrookNLP/musique) (answerable, multi-hop,
+CC BY 4.0; Trivedi et al., TACL 2022) into a corpus and a `run-eval` dataset.
+Nothing of it is in this repository: by default it downloads the answerable
+dev split (2,417 questions) from a pinned revision of a public mirror and
+checks its SHA-256; `--source` reads a local `musique_ans_v1.0_*.jsonl` from
+the official download instead. It writes `corpus/` (one text file per
+distinct paragraph: its title, a blank line, its text; each question brings
+2-4 supporting paragraphs and up to 18 distractors) and `eval_data.json`
+(`answer`, `answer_aliases`, the supporting paragraphs' file names as
+`reference_sources`, the hop count as `category`).
+
+```bash
+# 1. 100 questions (about 1,900 paragraphs), sampled with seed 0.
+prepare-benchmark musique --output-dir bench/musique --limit 100
+
+# 2. Ingest the paragraphs under their own suffix.
+run-ingestion --source-directory bench/musique/corpus --config-path musique.yaml
+
+# 3. Paired comparison of both methodologies, scored like the papers.
+run-eval --eval-data-path bench/musique/eval_data.json --suffix musique \
+  --search-strategy local,mix,global,naive --repeats 2 --config-path musique.yaml
+```
+
+with `musique.yaml` holding your usual config plus:
+
+```yaml
+processing:
+  document_parsing:
+    index_value: musique          # keep the benchmark out of your own index
+evaluation:
+  answer_normalization: official_squad   # EM / F1 as MuSiQue reports them
+  enabled_evaluators: [answer_match, retrieval]   # judge-free; add langchain / ragas if wanted
+```
+
+`answer_contains` and `token_f1` are the answer scores to read (long-form RAG
+answers rarely equal a short gold span exactly); `retrieval` scores whether
+the supporting paragraphs reached the context, per `category` in
+`grouped_statistics`. Ingestion cost grows with the paragraph count; each
+`--limit` question adds about 19 paragraphs. Cite the paper when you publish
+results.
+
 ---
 
 ## 7. Visualization (`run-visualization`)
@@ -2003,7 +2084,8 @@ Available override keys (each `_system` + `_human`): `graph_extraction`,
 `entity_extraction`, `drift_hyde`, `drift_primer` and `drift_action` (DRIFT
 query expansion, primer and follow-up answer),
 `strategy_selection`, `keywords_extraction` (LightRAG dual-level),
-`global_map` (global-search map-reduce), plus the prompt-tuning
+`global_map` (global-search map-reduce), `pairwise_comparison` (the
+`run-eval --pairwise-judge` judge; keep its JSON verdict format), plus the prompt-tuning
 `corpus_profile` prompt.
 
 Overrides are checked when the config loads, and a mistake fails the load

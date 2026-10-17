@@ -7,7 +7,10 @@ import shutil
 import sys
 import tempfile
 import time
+import uuid
+from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 import nest_asyncio
 from langchain_core.runnables import Runnable
@@ -36,7 +39,10 @@ from unified_kg_rag.application.cli.provider_args import (
     add_provider_arguments,
     apply_provider_arguments,
 )
-from unified_kg_rag.application.cli.query_args import add_query_arguments
+from unified_kg_rag.application.cli.query_args import (
+    _positive_int,
+    add_query_arguments,
+)
 from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain
 from unified_kg_rag.domain.models import (
     Config,
@@ -45,6 +51,8 @@ from unified_kg_rag.domain.models import (
     SearchStrategy,
 )
 from unified_kg_rag.evaluation import EvaluationManager
+from unified_kg_rag.evaluation.comparison import Run, paired_comparison
+from unified_kg_rag.evaluation.pairwise import PairwiseJudge
 from unified_kg_rag.shared import (
     AWSServiceError,
     ConfigurationError,
@@ -142,7 +150,27 @@ class CommandLineInterface:
                 "a failed upload exits non-zero)."
             ),
         )
-        add_query_arguments(parser)
+        add_query_arguments(parser, multiple_strategies=True)
+        parser.add_argument(
+            "--repeats",
+            type=_positive_int,
+            default=1,
+            help=(
+                "Answer and score the dataset this many times per strategy; the "
+                "comparison averages each query over the repeats and reports "
+                "the run-to-run spread (default 1)"
+            ),
+        )
+        parser.add_argument(
+            "--pairwise-judge",
+            action="store_true",
+            help=(
+                "With two or more strategies, also judge each strategy's answers "
+                "against the first's with an LLM (comprehensiveness, diversity, "
+                "empowerment, directness; both orders) using "
+                "evaluation.evaluation_model_id"
+            ),
+        )
         parser.add_argument(
             "--max-failure-rate",
             type=_failure_rate,
@@ -210,9 +238,7 @@ class EvaluationRunner:
             )
 
     @staticmethod
-    def _print_summary(
-        summary: EvaluationSummary, total_time: float, outputs_directory: str
-    ) -> None:
+    def _print_summary(summary: EvaluationSummary, total_time: float) -> None:
         summary_text = (
             f"Total Queries: [bold]{summary.total_queries}[/bold]\n"
             f"Successful: [green]{summary.successful_evaluations}[/green]\n"
@@ -277,9 +303,65 @@ class EvaluationRunner:
                         "(failed/skipped excluded from statistics)[/yellow]"
                     )
 
-        console.print(
-            f"\n[bold green]Results saved to '{outputs_directory}'[/bold green]"
+    @staticmethod
+    def _save_comparison(comparison: dict[str, Any], outputs_dir: Path) -> Path:
+        """Write the comparison next to the runs' result files."""
+        outputs_dir.mkdir(parents=True, exist_ok=True)
+        stamp = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
+        path = outputs_dir / f"evaluation_comparison_{stamp}.json"
+        path.write_text(
+            json.dumps(comparison, indent=2, ensure_ascii=False, default=str),
+            encoding="utf-8",
         )
+        return path
+
+    @staticmethod
+    def _print_comparison(comparison: dict[str, Any], total_time: float) -> None:
+        """Mean per strategy and the paired delta (95% CI) against the baseline."""
+        baseline = comparison["baseline"]
+        strategies = comparison["strategies"]
+        table = Table(
+            title=(
+                f"[bold]Paired comparison vs '{baseline}' "
+                f"({total_time:.0f}s)[/bold]"
+            ),
+            show_header=True,
+            header_style="bold magenta",
+        )
+        table.add_column("Metric")
+        for strategy in strategies:
+            table.add_column(strategy, style="green")
+        for strategy in list(strategies)[1:]:
+            table.add_column(f"{strategy} - {baseline} [CI]", style="cyan")
+        for key in strategies[baseline]["metrics"]:
+            row = [key]
+            for strategy in strategies:
+                stats = strategies[strategy]["metrics"].get(key)
+                row.append(f"{stats['mean']:.3f}" if stats else "-")
+            for strategy in list(strategies)[1:]:
+                delta = comparison["deltas_vs_baseline"][strategy].get(key)
+                row.append(
+                    f"{delta['mean_delta']:+.3f} "
+                    f"[{delta['ci_low']:+.3f}, {delta['ci_high']:+.3f}]"
+                    if delta
+                    else "-"
+                )
+            table.add_row(*row)
+        console.print(table)
+        for strategy, stats in strategies.items():
+            routed = stats["routed_strategies"]
+            if routed and list(routed) != [strategy]:
+                console.print(f"[dim]{strategy} routed to: {routed}[/dim]")
+        for strategy, judged in (comparison.get("pairwise_vs_baseline") or {}).items():
+            rates = ", ".join(
+                f"{criterion} {stats['candidate_win_rate']:.2f}"
+                for criterion, stats in judged["criteria"].items()
+                if stats["candidate_win_rate"] is not None
+            )
+            console.print(
+                f"[cyan]Pairwise judge, {strategy} win rate vs {baseline} "
+                f"({judged['judged']} pairs): {rates}[/cyan]"
+            )
 
     async def run(self) -> int:
         """Evaluate; 0 on success, 1 on a breached failure budget or failed upload.
@@ -318,13 +400,16 @@ class EvaluationRunner:
             config=self.config, rag_chain=self.rag_chain
         )
 
+        strategies: list[str] = list(self.args.search_strategy)
+        comparing = len(strategies) > 1 or self.args.repeats > 1
         try:
             queries, ground_truths = self.evaluation_manager.load_data(
                 eval_data_path=eval_data_path,
                 base_metadata={
                     "suffix": self.args.suffix,
                     "enable_thinking": self.args.enable_thinking,
-                    "search_strategy": self.args.search_strategy,
+                    # A comparison sets each run's strategy itself (below).
+                    "search_strategy": None if comparing else strategies[0],
                     "search_type": self.args.search_type,
                     "top_k": self.args.top_k,
                     "retrieval_multiplier": self.args.retrieval_multiplier,
@@ -350,34 +435,86 @@ class EvaluationRunner:
                 for q in queries
             ]
 
-        console.rule(
-            f"[bold]Running Evaluation on {len(queries)} Queries[/bold]", style="blue"
-        )
-
-        start_time = time.time()
-        results, reports, summary = await self.evaluation_manager.evaluate_dataset(
-            queries=queries,
-            ground_truths=ground_truths,
-            show_progress=True,
-            dataset_path=eval_data_path,
-            cli_args=vars(self.args),
-        )
-        total_time = time.time() - start_time
-        if is_s3_uri(eval_data_uri) and summary.run_manifest:
-            # Record where the dataset came from, not the temporary copy.
-            summary.run_manifest.get("dataset", {})["path"] = eval_data_uri
-        # The directory --outputs-directory chose, not the config default.
-        summary.configuration["outputs_directory"] = outputs_target
-
         local_outputs = (
             work_dir / "outputs" if is_s3_uri(outputs_target) else Path(outputs_target)
         )
-        self.evaluation_manager.save_results(
-            results=results,
-            reports=reports,
-            summary=summary,
-            outputs_dir=local_outputs,
-        )
+        runs: dict[str, list[Run]] = {}
+        breaches: list[str] = []
+        manifest: dict[str, Any] | None = None
+        start_time = time.time()
+        for strategy in strategies:
+            for repeat in range(1, self.args.repeats + 1):
+                # The run's strategy overrides a per-item one: every run of a
+                # comparison must answer the same queries the same way.
+                run_queries = (
+                    [
+                        q.model_copy(
+                            update={
+                                "metadata": {**q.metadata, "search_strategy": strategy}
+                            }
+                        )
+                        for q in queries
+                    ]
+                    if comparing
+                    else queries
+                )
+                label = (
+                    f" ({strategy}, repeat {repeat}/{self.args.repeats})"
+                    if comparing
+                    else ""
+                )
+                console.rule(
+                    f"[bold]Running Evaluation on {len(queries)} Queries{label}[/bold]",
+                    style="blue",
+                )
+                run_start = time.time()
+                results, reports, summary = (
+                    await self.evaluation_manager.evaluate_dataset(
+                        queries=run_queries,
+                        ground_truths=ground_truths,
+                        show_progress=True,
+                        dataset_path=eval_data_path,
+                        cli_args=vars(self.args),
+                    )
+                )
+                if is_s3_uri(eval_data_uri) and summary.run_manifest:
+                    # Record where the dataset came from, not the temporary copy.
+                    summary.run_manifest.get("dataset", {})["path"] = eval_data_uri
+                # The directory --outputs-directory chose, not the config default.
+                summary.configuration["outputs_directory"] = outputs_target
+                self.evaluation_manager.save_results(
+                    results=results,
+                    reports=reports,
+                    summary=summary,
+                    outputs_dir=local_outputs,
+                )
+                manifest = manifest or summary.run_manifest
+                runs.setdefault(strategy, []).append((reports, results))
+                if not comparing:
+                    self._print_summary(summary, time.time() - run_start)
+                breaches.extend(
+                    f"{strategy}#{repeat}: {b}" if comparing else b
+                    for b in failure_budget_breaches(
+                        summary, self.args.max_failure_rate
+                    )
+                )
+
+        if comparing:
+            comparison = paired_comparison(runs)
+            if self.args.pairwise_judge and len(strategies) > 1:
+                judge = PairwiseJudge(
+                    self.config, providers=self.evaluation_manager.providers
+                )
+                baseline_results = runs[strategies[0]][0][1]
+                comparison["pairwise_vs_baseline"] = {
+                    strategy: await judge.acompare(
+                        baseline_results, runs[strategy][0][1]
+                    )
+                    for strategy in strategies[1:]
+                }
+            comparison["run_manifest"] = manifest
+            self._save_comparison(comparison, local_outputs)
+            self._print_comparison(comparison, time.time() - start_time)
 
         upload_error: AWSServiceError | None = None
         if s3_client is not None and is_s3_uri(outputs_target):
@@ -389,10 +526,9 @@ class EvaluationRunner:
                 upload_error = e
 
         console.rule("[bold]Evaluation Complete[/bold]", style="blue")
-        self._print_summary(
-            summary,
-            total_time,
-            str(local_outputs) if upload_error else outputs_target,
+        console.print(
+            "\n[bold green]Results saved to "
+            f"'{local_outputs if upload_error else outputs_target}'[/bold green]"
         )
 
         exit_code = 0
@@ -404,7 +540,6 @@ class EvaluationRunner:
             )
             exit_code = 1
 
-        breaches = failure_budget_breaches(summary, self.args.max_failure_rate)
         if breaches:
             console.print(
                 f"[red]Failure budget exceeded ({'; '.join(breaches)}; allowed "
@@ -431,8 +566,12 @@ def main() -> None:
 
         error = missing_endpoints_error(
             config,
-            strategy_roles(config, SearchStrategy(args.search_strategy)),
-            f"search strategy '{args.search_strategy}'",
+            {
+                role
+                for name in args.search_strategy
+                for role in strategy_roles(config, SearchStrategy(name))
+            },
+            f"search strategy '{','.join(args.search_strategy)}'",
         )
         if error:
             console.print(f"[red]Error: {error}[/red]")

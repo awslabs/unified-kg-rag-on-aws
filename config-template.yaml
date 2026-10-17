@@ -1056,6 +1056,10 @@ custom_prompts:
   entity_extraction_system: null
   entity_extraction_human: null
 
+  # Pairwise Judge Prompts (run-eval --pairwise-judge; JSON verdict per criterion)
+  pairwise_comparison_system: null
+  pairwise_comparison_human: null
+
   # Follow-up Rewrite Prompts (a memory query with history is rewritten as a
   # standalone question before retrieval)
   query_rewrite_system: null

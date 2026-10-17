@@ -14,7 +14,7 @@ unified-kg-rag-on-aws는 대규모 다국어 문서 코퍼스로 지식 그래�
 - 내부 구조와 아키텍처(헥사고날 레이어, 포트와 어댑터, 의존성 규칙)는
   [설계 문서](./design.ko.md)를 참고하세요.
 
-콘솔 진입점 다섯 개(`pyproject` 스크립트로 정의)는 다음과 같습니다.
+콘솔 진입점 여섯 개(`pyproject` 스크립트로 정의)는 다음과 같습니다.
 
 | 스크립트 | 모듈 | 용도 |
 |---|---|---|
@@ -23,6 +23,7 @@ unified-kg-rag-on-aws는 대규모 다국어 문서 코퍼스로 지식 그래�
 | `run-eval` | `application.cli.run_evaluation` | 검색과 생성 평가 |
 | `run-visualization` | `application.cli.run_visualization` | 내보낸 그래프 렌더링(수집 없음) |
 | `run-prompt-tuning` | `application.cli.run_prompt_tuning` | 도메인에 맞춘 프롬프트 생성 |
+| `prepare-benchmark` | `application.cli.prepare_benchmark` | 공개 벤치마크(MuSiQue)를 코퍼스와 `run-eval` 데이터셋으로 변환 |
 
 각 CLI의 `--help` 끝에는 실행 예시와 이 문서의 해당 절 링크가 있습니다.
 
@@ -720,6 +721,7 @@ LLM 단계는 Bedrock I/O가 병목이므로 동시성을 CPU 수보다 훨씬 �
 | `evaluation.ragas_max_workers` | `8` | 동시에 실행하는 RAGAS 작업 수입니다. Bedrock이 판정 모델 호출을 스로틀링하면 낮추세요. |
 | `evaluation.ragas_max_attempts` | `3` | 판정 모델 호출당 총 시도 횟수입니다. |
 | `evaluation.max_context_tokens` | `null` | RAGAS 판정 모델에 넘기는 컨텍스트의 토큰 상한입니다. `null`이면 답변 예산(`search.token_manager.max_context_tokens`)을 쓰고, 그보다 작은 값이면 경고를 남깁니다. |
+| `evaluation.answer_normalization` | `default` | `exact_match` / `token_f1`의 정규화 방식입니다. `official_squad`는 공식 SQuAD v1.1 스크립트와 같아서, 공개된 MuSiQue / HotpotQA 결과와 비교할 수 있습니다. |
 | `evaluation.retrieval_k` | `5` | `retrieval` 평가기의 hit@k / recall@k 기준값입니다. 보고된 출처의 서로 다른 파일 중 상위 k개를 셉니다. |
 | `evaluation.outputs_directory` | `"outputs/evaluation"` | 결과를 쓰는 위치입니다. |
 
@@ -1462,7 +1464,9 @@ OpenSearch 주장 인덱스에서 읽어 옵니다(주장이 텍스트 단위를
 | `--outputs-directory` | `evaluation.outputs_directory` | 결과 저장 위치. 로컬 디렉터리 또는 `s3://bucket/prefix/` URI |
 | `--suffix` | —(`default`) | 평가 대상 [인덱스 접미사](#인덱스-접미사) |
 | `--enable-thinking` | off | `run-rag`와 같은 모델 추론(항상 추론하는 모델에는 효과 없음) |
-| `--search-strategy` | `auto` | 각 질문에 답할 때 쓰는 전략 |
+| `--search-strategy` | `auto` | 각 질문에 답할 때 쓰는 전략입니다. 쉼표로 구분한 목록(`local,mix,global`)을 주면 첫 전략을 기준으로 [짝지은 비교](#전략-비교)를 실행합니다 |
+| `--repeats` | `1` | 전략마다 실행할 횟수입니다. 비교는 질의마다 반복 실행의 평균을 내고 실행 간 편차를 보고합니다 |
+| `--pairwise-judge` | 꺼짐 | 전략이 둘 이상이면 각 전략의 답변을 첫 전략의 답변과 LLM으로 맞비교합니다([전략 비교](#전략-비교) 참고) |
 | `--search-type` | `hybrid` | 검색 방식 |
 | `--top-k` | `10` | 최대 결과 수 |
 | `--retrieval-multiplier` | `1` | 검색 깊이 |
@@ -1697,6 +1701,75 @@ run-eval --eval-data-path s3://my-bucket/eval/my_eval_data.json \
 `retrieved_source_types`와 모델이 받은 그래프 요소인 `retrieved_entities`,
 `retrieved_relationships`도 기록됩니다.
 
+### 전략 비교
+
+`run-eval --search-strategy local,mix,global --repeats 3`은 같은 질의를 전략마다
+`--repeats`번 답하고 채점합니다(지정한 전략이 항목별 `search_strategy`보다 우선).
+실행마다 평소처럼 결과 파일을 저장하고, `evaluation_comparison_<timestamp>.json`을
+추가로 씁니다.
+
+- `strategies.<s>.metrics.<evaluator>/<metric>` — 질의마다 반복 실행의 평균을 내고 이를
+  질의 전체로 평균한 값, 질의 수, `repeat_stdev`(실행별 평균의 편차. 답변 모델의 실행 간
+  잡음)입니다. `routed_strategies`는 각 답변이 실제로 쓴 전략을 세므로 `auto`가 어떻게
+  분기했는지 보여 줍니다.
+- `deltas_vs_baseline.<s>.<metric>` — 두 전략이 모두 채점한 질의에서 첫 전략과 짝지어
+  비교한 값입니다. `mean_delta`, 95% 짝지은 부트스트랩 신뢰 구간(`ci_low`/`ci_high`.
+  질의를 2,000번 재표집, 시드 0), `wins`/`ties`/`losses`, 질의별 차이가 있습니다. 구간이
+  0을 포함하지 않으면 질의 표본이 그 차이를 뒷받침합니다. 이진 지표로 시뮬레이션해 보면
+  10%p 차이를 질의 50개에서는 15%, 200개에서는 59%의 실행에서 찾아냈습니다(구간이 참값을
+  포함한 비율은 95-98%). 그러니 수백 개 질의로 비교하세요.
+- `pairwise_vs_baseline.<s>`(`--pairwise-judge` 사용 시) — GraphRAG / LightRAG 논문의
+  맞비교 LLM 판정입니다. `evaluation.evaluation_model_id`로 포괄성(comprehensiveness),
+  다양성(diversity), 이해 도움(empowerment), 직접성(directness)을 판정합니다(프롬프트:
+  `custom_prompts.pairwise_comparison_*`). 판정 모델은 먼저 읽은 답변을 선호하므로 쌍마다
+  순서를 바꿔 두 번 판정하고, 두 순서가 같은 답변을 고른 기준만 승리로 셉니다.
+  `candidate_win_rate`는 무승부를 0.5로 셉니다. 첫 반복 실행의 답변을 판정하며, 질의와
+  전략마다 순서별로 한 번씩 호출합니다.
+- 첫 실행의 `run_manifest`.
+
+콘솔에는 평균, 신뢰 구간을 붙인 차이, `auto`의 분기 결과, 맞비교 승률이 출력됩니다.
+실패 허용 기준은 모든 실행에 적용됩니다.
+
+### 벤치마크 (MuSiQue)
+
+`prepare-benchmark musique`는 [MuSiQue](https://github.com/StonyBrookNLP/musique)(답변
+가능, 다중 홉, CC BY 4.0. Trivedi 외, TACL 2022)를 코퍼스와 `run-eval` 데이터셋으로
+바꿉니다. 데이터는 이 저장소에 포함하지 않습니다. 기본적으로 공개 미러의 고정 리비전에서
+답변 가능 dev 분할(질문 2,417개)을 내려받아 SHA-256을 확인하며, `--source`로 공식 배포본의
+`musique_ans_v1.0_*.jsonl`을 대신 읽을 수 있습니다. `corpus/`(서로 다른 단락마다 텍스트
+파일 하나: 제목, 빈 줄, 본문. 질문마다 근거 단락 2-4개와 방해 단락 최대 18개)와
+`eval_data.json`(`answer`, `answer_aliases`, 근거 단락의 파일 이름인
+`reference_sources`, 홉 수인 `category`)을 씁니다.
+
+```bash
+# 1. 시드 0으로 질문 100개(단락 약 1,900개) 표집
+prepare-benchmark musique --output-dir bench/musique --limit 100
+
+# 2. 단락을 별도 접미사로 수집
+run-ingestion --source-directory bench/musique/corpus --config-path musique.yaml
+
+# 3. 두 방법론을 짝지어 비교하고 논문과 같은 방식으로 채점
+run-eval --eval-data-path bench/musique/eval_data.json --suffix musique \
+  --search-strategy local,mix,global,naive --repeats 2 --config-path musique.yaml
+```
+
+`musique.yaml`에는 평소 설정에 다음을 더합니다.
+
+```yaml
+processing:
+  document_parsing:
+    index_value: musique          # 벤치마크를 기존 인덱스와 분리
+evaluation:
+  answer_normalization: official_squad   # MuSiQue가 보고하는 방식의 EM / F1
+  enabled_evaluators: [answer_match, retrieval]   # 판정 모델 없이. 필요하면 langchain / ragas 추가
+```
+
+답변 점수는 `answer_contains`와 `token_f1`을 보세요(긴 RAG 답변은 짧은 정답 구간과
+정확히 일치하는 경우가 드뭅니다). `retrieval`은 근거 단락이 컨텍스트에 들어갔는지를
+채점하며, `grouped_statistics`에서 `category`별로 볼 수 있습니다. 수집 비용은 단락 수에
+비례하며 `--limit` 질문 하나마다 단락이 약 19개 늘어납니다. 결과를 공개할 때는 논문을
+인용하세요.
+
 ---
 
 ## 7. 시각화 (`run-visualization`)
@@ -1853,7 +1926,8 @@ custom_prompts:
 `entity_extraction`, `drift_hyde`, `drift_primer`, `drift_action`(DRIFT 질의 확장,
 primer, 후속 질의 답변),
 `strategy_selection`, `keywords_extraction`(LightRAG 이중 레벨),
-`global_map`(global 검색 map-reduce), 그리고 프롬프트 튜닝의 `corpus_profile`
+`global_map`(global 검색 map-reduce), `pairwise_comparison`(`run-eval --pairwise-judge`
+판정 모델. JSON 판정 형식은 유지), 그리고 프롬프트 튜닝의 `corpus_profile`
 프롬프트입니다.
 
 재정의는 설정을 읽을 때 검사하며, 잘못된 부분이 있으면 해당 키를 알리고 읽기에

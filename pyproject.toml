@@ -109,6 +109,7 @@ run-rag = "unified_kg_rag.application.cli.run_rag_chain:main"
 run-eval = "unified_kg_rag.application.cli.run_evaluation:main"
 run-visualization = "unified_kg_rag.application.cli.run_visualization:main"
 run-prompt-tuning = "unified_kg_rag.application.cli.run_prompt_tuning:main"
+prepare-benchmark = "unified_kg_rag.application.cli.prepare_benchmark:main"
 
 [project.optional-dependencies]
 # Optional: enables .md/.markdown/.html/.htm source parsing (heavy transitive

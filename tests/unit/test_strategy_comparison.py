@@ -1,0 +1,301 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+"""Paired strategy comparison, pairwise judge and benchmark preparation."""
+
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import io
+import json
+import random
+from datetime import datetime
+from pathlib import Path
+
+import pytest
+
+from unified_kg_rag.domain.models import (
+    Config,
+    EvaluationMetric,
+    EvaluationMetricType,
+    EvaluationQuery,
+    EvaluationReport,
+    EvaluationResult,
+    EvaluatorType,
+)
+from unified_kg_rag.domain.prompts import PairwiseComparisonPrompt
+from unified_kg_rag.evaluation import pairwise
+from unified_kg_rag.evaluation.answer_match_evaluator import AnswerMatchEvaluator
+from unified_kg_rag.evaluation.benchmarks import musique
+from unified_kg_rag.evaluation.comparison import bootstrap_ci, paired_comparison
+from unified_kg_rag.evaluation.text_matching import normalize_answer_squad
+from unified_kg_rag.shared import EvaluationException
+
+pytestmark = pytest.mark.unit
+
+
+def _run(scores: dict[str, float], strategy: str = "local"):
+    reports = [
+        EvaluationReport(
+            query_id=qid,
+            evaluator_type=EvaluatorType.ANSWER_MATCH,
+            metrics=[
+                EvaluationMetric(metric_type=EvaluationMetricType.TOKEN_F1, value=v)
+            ],
+            evaluation_time=datetime(2026, 1, 1),
+        )
+        for qid, v in scores.items()
+    ]
+    results = [
+        EvaluationResult(
+            query_id=qid,
+            question="?",
+            generated_answer="a",
+            ground_truth="",
+            search_strategy=strategy,
+        )
+        for qid in scores
+    ]
+    return reports, results
+
+
+class TestPairedComparison:
+    def test_pairs_only_queries_both_scored(self) -> None:
+        out = paired_comparison(
+            {
+                "local": [_run({"a": 0.2, "b": 0.4, "c": 1.0})],
+                "mix": [_run({"a": 0.6, "b": 0.4}, "mix")],
+            }
+        )
+        delta = out["deltas_vs_baseline"]["mix"]["answer_match/token_f1"]
+        assert delta["pairs"] == 2
+        assert delta["mean_delta"] == pytest.approx(0.2)
+        assert (delta["wins"], delta["ties"], delta["losses"]) == (1, 1, 0)
+        assert delta["per_query"] == {"a": pytest.approx(0.4), "b": 0.0}
+
+    def test_repeats_are_averaged_per_query(self) -> None:
+        out = paired_comparison(
+            {
+                "local": [_run({"a": 0.0}), _run({"a": 1.0})],
+                "mix": [_run({"a": 1.0}, "mix"), _run({"a": 1.0}, "mix")],
+            }
+        )
+        local = out["strategies"]["local"]["metrics"]["answer_match/token_f1"]
+        assert local["mean"] == 0.5
+        assert local["repeat_stdev"] == pytest.approx(0.7071, abs=1e-4)
+        assert out["deltas_vs_baseline"]["mix"]["answer_match/token_f1"][
+            "mean_delta"
+        ] == pytest.approx(0.5)
+
+    def test_bootstrap_ci_covers_a_known_mean_and_is_seeded(self) -> None:
+        rng = random.Random(1)
+        deltas = [0.1 + rng.gauss(0, 0.3) for _ in range(200)]
+        low, high = bootstrap_ci(deltas, resamples=2000, confidence=0.95, seed=0)
+        assert low < sum(deltas) / len(deltas) < high
+        assert low < 0.1 < high
+        assert (low, high) == bootstrap_ci(
+            deltas, resamples=2000, confidence=0.95, seed=0
+        )
+        # A pure-noise difference: the CI straddles 0.
+        noise = [rng.gauss(0, 0.3) for _ in range(200)]
+        low, high = bootstrap_ci(noise, resamples=2000, confidence=0.95, seed=0)
+        assert low < 0 < high
+
+
+class _FakeChain:
+    """Judge that always prefers the answer shown first (position bias),
+    except that it prefers "detailed" on comprehensiveness wherever shown."""
+
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    async def ainvoke(self, inputs):
+        self.calls.append(inputs)
+        first_detailed = inputs["answer1"] == "detailed"
+        verdict = {c: {"winner": "1"} for c in pairwise.CRITERIA}
+        verdict["comprehensiveness"] = {"winner": "1" if first_detailed else "2"}
+        return verdict
+
+
+class TestPairwiseJudge:
+    def _judge(self, mocker) -> pairwise.PairwiseJudge:
+        mocker.patch.object(pairwise, "setup_chain", return_value=_FakeChain())
+        mocker.patch.object(pairwise.Providers, "resolve")
+        return pairwise.PairwiseJudge(Config())
+
+    def test_position_bias_is_a_tie_and_a_stable_verdict_wins(self, mocker) -> None:
+        judge = self._judge(mocker)
+        outcome = asyncio.run(judge.ajudge("q?", "short", "detailed"))
+        assert outcome == {
+            "comprehensiveness": "candidate",
+            "diversity": "tie",
+            "empowerment": "tie",
+            "directness": "tie",
+        }
+        # Both orders were asked.
+        assert [c["answer1"] for c in judge.chain.calls] == ["short", "detailed"]
+
+    def test_compare_skips_errored_answers_and_reports_win_rates(self, mocker) -> None:
+        judge = self._judge(mocker)
+
+        def result(qid: str, answer: str, error: bool = False) -> EvaluationResult:
+            return EvaluationResult(
+                query_id=qid,
+                question="q?",
+                generated_answer=answer,
+                ground_truth="",
+                error=error,
+            )
+
+        out = asyncio.run(
+            judge.acompare(
+                [result("a", "short"), result("b", "short")],
+                [result("a", "detailed"), result("b", "x", error=True)],
+            )
+        )
+        assert (out["pairs"], out["judged"], out["failed"]) == (1, 1, 0)
+        assert out["criteria"]["comprehensiveness"]["candidate_win_rate"] == 1.0
+        assert out["criteria"]["directness"]["candidate_win_rate"] == 0.5
+
+    def test_prompt_templates_declare_their_variables(self) -> None:
+        resolved = PairwiseComparisonPrompt.resolve()
+        for name in PairwiseComparisonPrompt.input_variables:
+            assert "{" + name + "}" in resolved.human_prompt_template
+
+
+class TestOfficialSquadNormalization:
+    def test_matches_the_official_script(self) -> None:
+        assert normalize_answer_squad("The  Eiffel-Tower!") == "eiffeltower"
+        assert normalize_answer_squad("an Apple, a day") == "apple day"
+        # No Unicode folding, unlike the default normalization.
+        assert normalize_answer_squad("Ｒome") == "ｒome"
+
+    @pytest.mark.parametrize(
+        ("mode", "em"), [("default", 1.0), ("official_squad", 0.0)]
+    )
+    def test_answer_match_uses_the_configured_normalization(
+        self, mode: str, em: float
+    ) -> None:
+        # The default keeps the minus sign and splits the dashed range; the
+        # official script deletes both dashes.
+        config = Config()
+        config.evaluation.answer_normalization = mode
+        result = EvaluationResult(
+            query_id="q", question="?", generated_answer="1990 1995", ground_truth=""
+        )
+        report = AnswerMatchEvaluator(config).evaluate_single(
+            EvaluationQuery(query_id="q", question="?"), result, "1990-1995"
+        )
+        values = {m.metric_type.value: m.value for m in report.metrics}
+        assert values["exact_match"] == em
+
+
+def _musique_line(qid: str, supporting: list[int], titles: list[str]) -> str:
+    return json.dumps(
+        {
+            "id": qid,
+            "question": f"Who supplies the buyer in {qid}?",
+            "answer": "Vendor",
+            "answer_aliases": ["The Vendor"],
+            "answerable": True,
+            "paragraphs": [
+                {
+                    "idx": i,
+                    "title": title,
+                    "paragraph_text": f"{title} paragraph {i}.",
+                    "is_supporting": i in supporting,
+                }
+                for i, title in enumerate(titles)
+            ],
+        }
+    )
+
+
+class TestMusique:
+    def _source(self, tmp_path: Path) -> Path:
+        source = tmp_path / "in" / "synthetic.jsonl"
+        source.parent.mkdir()
+        lines = [
+            _musique_line("2hop__1_2", [0, 1], ["Vendor", "Buyer", "Depot"]),
+            # The same title with other text gets its own file; a/b is unsafe.
+            _musique_line("3hop1__3_4_5", [2], ["Carrier", "Vendor", "A/B"]),
+            json.dumps({"id": "x", "answerable": False, "paragraphs": []}),
+        ]
+        source.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        return source
+
+    def test_prepare_writes_corpus_and_dataset(self, tmp_path: Path) -> None:
+        out = tmp_path / "bench"
+        counts = musique.prepare(self._source(tmp_path), out)
+        assert counts == {"questions": 2, "paragraphs": 6}
+        files = sorted(p.name for p in (out / "corpus").iterdir())
+        assert files == [
+            "A B.txt",
+            "Buyer.txt",
+            "Carrier.txt",
+            "Depot.txt",
+            "Vendor (2).txt",
+            "Vendor.txt",
+        ]
+        assert (out / "corpus" / "Vendor.txt").read_text() == (
+            "Vendor\n\nVendor paragraph 0.\n"
+        )
+        data = json.loads((out / "eval_data.json").read_text())
+        assert data[0]["reference_sources"] == ["Vendor.txt", "Buyer.txt"]
+        assert data[1]["reference_sources"] == ["A B.txt"]
+        assert [d["category"] for d in data] == ["2hop", "3hop"]
+        assert data[0]["answer_aliases"] == ["The Vendor"]
+        # Loads as a run-eval dataset.
+        from unified_kg_rag.evaluation import EvaluationManager
+
+        queries, truths = EvaluationManager.load_data(out / "eval_data.json")
+        assert (
+            len(queries) == 2
+            and truths[0].reference_sources == data[0]["reference_sources"]
+        )
+
+    def test_limit_samples_with_the_seed_and_refuses_a_used_corpus(
+        self, tmp_path: Path
+    ) -> None:
+        source = self._source(tmp_path)
+        musique.prepare(source, tmp_path / "one", limit=1, seed=3)
+        musique.prepare(source, tmp_path / "two", limit=1, seed=3)
+        assert (tmp_path / "one" / "eval_data.json").read_text() == (
+            tmp_path / "two" / "eval_data.json"
+        ).read_text()
+        with pytest.raises(EvaluationException, match="not empty"):
+            musique.prepare(source, tmp_path / "one")
+
+    def test_download_checks_the_pinned_digest(self, tmp_path: Path, mocker) -> None:
+        body = b'{"id": "2hop__1_2"}\n'
+        mocker.patch.object(
+            musique.urllib.request, "urlopen", return_value=io.BytesIO(body)
+        )
+        with pytest.raises(EvaluationException, match="SHA-256"):
+            musique.download_dev(tmp_path / "dev.jsonl")
+        assert not (tmp_path / "dev.jsonl").exists()
+        mocker.patch.object(musique, "DEV_SHA256", hashlib.sha256(body).hexdigest())
+        mocker.patch.object(
+            musique.urllib.request, "urlopen", return_value=io.BytesIO(body)
+        )
+        assert musique.download_dev(tmp_path / "dev.jsonl").read_bytes() == body
+
+
+def test_pairwise_prompt_override_must_keep_both_answers() -> None:
+    with pytest.raises(ValueError, match="answer2"):
+        Config(custom_prompts={"pairwise_comparison_human": "{query} {answer1}"})
+
+
+def test_prepare_benchmark_cli(tmp_path: Path, capsys) -> None:
+    from unified_kg_rag.application.cli import prepare_benchmark
+
+    source = TestMusique()._source(tmp_path)
+    prepare_benchmark.main(
+        ["musique", "--output-dir", str(tmp_path / "b"), "--source", str(source)]
+    )
+    assert (tmp_path / "b" / "eval_data.json").is_file()
+    with pytest.raises(SystemExit) as exit_info:  # corpus/ is no longer empty
+        prepare_benchmark.main(
+            ["musique", "--output-dir", str(tmp_path / "b"), "--source", str(source)]
+        )
+    assert exit_info.value.code == 1
