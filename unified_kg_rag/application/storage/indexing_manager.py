@@ -404,6 +404,15 @@ class IndexingManager:
                     "previous vertices and edges beside the new ones until a "
                     "build succeeds"
                 )
+                # Reported as a failed write: the rebuild did not replace the
+                # graph, so it must not be recorded as the corpus's build (a
+                # registry cleared now would leave the previous vertices and
+                # edges with nothing to remove them).
+                skipped = IndexingStats(total_items=1)
+                skipped.add_error(
+                    "previous graph not dropped: some graph writes failed"
+                )
+                results["neptune_sweep"] = skipped
             try:
                 graph.end_rebuild(suffixes or [], sweep=not graph_failed)
             except Exception as e:  # noqa: BLE001 - reported as a failed write

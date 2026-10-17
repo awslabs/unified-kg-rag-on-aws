@@ -250,3 +250,55 @@ def test_runs_whose_indexing_fails_with_an_error_count_no_attempt(
     assert isinstance(healthy, PipelineContext)
     assert healthy.status is PipelineStageStatus.COMPLETED
     assert set(harness.statuses().values()) == {DocStatus.PROCESSED}
+
+
+def test_a_reset_that_could_not_drop_the_previous_graph_is_not_recorded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Old behaviour: a rebuild whose graph writes partly failed (under
+    # indexing.max_failure_rate) kept the previous graph beside the new one,
+    # yet recorded the corpus and cleared the replaced documents' records:
+    # nothing would ever remove their edges.
+    harness = _Harness(tmp_path)
+    (harness.source / "poison.txt").write_text("Buyer pays the Depot.")
+    assert isinstance(harness.run("ingest-1", monkeypatch), PipelineContext)
+    assert {"Buyer", "Depot"} in _edges(harness)
+    (harness.source / "poison.txt").unlink()
+    harness.config.indexing.reset = True
+    harness.config.indexing.max_failure_rate = 0.9
+    index_relationships = harness.graph.index_relationships
+
+    def one_edge_fails(relationships: Any, *args: Any, **kwargs: Any) -> Any:
+        stats = index_relationships(relationships, *args, **kwargs)
+        if len(relationships) > 1:
+            stats.successful_items -= 1
+            stats.add_error("injected", ids=[relationships[-1].id])
+        return stats
+
+    monkeypatch.setattr(harness.graph, "index_relationships", one_edge_fails)
+    reset = harness.run("ingest-2", monkeypatch)
+    assert isinstance(reset, PipelineContext)
+    assert reset.status is PipelineStageStatus.FAILED
+    assert "neptune_sweep" in str(
+        [r.error_message for r in reset.stage_results if r.stage_name == "indexing"]
+    )
+    # The replaced document's record is kept for the next run to remove.
+    assert "poison.txt" in harness.statuses()
+
+    monkeypatch.undo()
+    harness.config.indexing.reset = False
+    harness.run("ingest-3", monkeypatch)
+
+    assert {"Buyer", "Depot"} not in _edges(harness)
+    assert harness.statuses() == {
+        "contract.txt": DocStatus.PROCESSED,
+        "logistics.txt": DocStatus.PROCESSED,
+    }
+
+
+def _edges(harness: _Harness) -> list[set[str]]:
+    graph = harness.graph
+    return [
+        {edge.source_name, edge.target_name}
+        for edge in graph.read_relationships(sorted(graph.ids("relationships")))
+    ]

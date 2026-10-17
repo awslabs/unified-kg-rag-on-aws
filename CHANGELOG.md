@@ -1294,6 +1294,12 @@ changed once with the full-config keys (#332).
   document's deaths retries it, as the setting promised (`DocStatusPort.diff`
   reports the unchanged quarantined records in
   `DocumentDelta.quarantined_unchanged`) (#PR).
+- A reset whose graph writes partly failed (within
+  `indexing.max_failure_rate`) kept the previous graph beside the new one,
+  yet recorded the corpus and cleared the replaced documents' records, so
+  their vertices and edges were never removed. The skipped drop is now a
+  failed write (`neptune_sweep`): the rebuild fails and records nothing, and
+  the next run removes what the previous graph still holds (#PR).
 - Two corpora written to one index namespace that hold the same file with
   the same text no longer share text units, so removing one corpus's copy
   keeps the other's (#327).

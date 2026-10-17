@@ -518,7 +518,11 @@ aliases swap when each is built; the graph is rebuilt in place
 `end_rebuild` drops the suffix's entities, communities and edges without the
 tag). Queries keep reading the previous graph meanwhile. Only after every
 document is recorded again are the namespace's other records deleted, so a
-failed rebuild drops nothing.
+failed rebuild drops nothing. A rebuild whose graph writes partly failed
+(within `indexing.max_failure_rate`) skips the drop so a retry still finds the
+previous copies, and is reported failed (`neptune_sweep`): recording it and
+clearing the replaced documents' records would leave their vertices and edges
+with nothing to remove them.
 
 A generation switch (new labels plus a pointer) was rejected: Neptune labels
 cannot be renamed, so every retriever would resolve the current generation on

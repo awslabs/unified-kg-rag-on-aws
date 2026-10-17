@@ -72,7 +72,11 @@ During a reset, queries keep reading the previous content: the vector
 indices swap aliases one index type at a time, and the graph holds a mix of
 previous and rebuilt vertices and edges until the rebuild drops what it did
 not write. A reset that fails leaves the previous graph and registry records
-in place (beside what it wrote); re-run it.
+in place (beside what it wrote); re-run it. A reset whose graph writes
+partly failed, even within `indexing.max_failure_rate`, cannot drop the
+previous graph either, so it fails too (`neptune_sweep` in the indexing
+results) and records nothing; the next run, reset or incremental, removes
+what the previous graph still holds.
 
 Set `indexing.reset` back to `false` afterwards; otherwise every run rebuilds.
 
