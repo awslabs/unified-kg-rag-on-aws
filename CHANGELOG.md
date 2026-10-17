@@ -824,6 +824,10 @@ Library API (Python callers and custom backends).
   summarized again only when the text it is derived from changed. The
   property tests and the crash-recovery fixture compare descriptions,
   names, types, ranks and claims with a full build (#325).
+- A stopped or interrupted ingestion no longer keeps retrying the model
+  calls that were running: their batch makes no further attempt and a
+  backoff wait ends at once, so the task exits once the calls in flight
+  return instead of being killed after the stop timeout (#PR).
 - A SIGTERM no longer hangs `run-ingestion --s3-sync` when it arrives while
   a stage is handing work to a thread pool: the handler uploaded the
   checkpoint itself, and the upload waited on a lock the interrupted code
