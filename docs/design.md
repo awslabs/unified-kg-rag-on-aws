@@ -568,10 +568,15 @@ whose processing kills the task would stop every later run the same way.
   processed nor deleted). A death narrows the suspects to that half; a run
   that ends commits it, so one culprit among `n` is isolated in about
   `log2(n) + 1` runs, and no document is quarantined for dying with it.
-- **Quarantined record.** The removal pass removes what the attempts wrote;
-  the record becomes `QUARANTINED` (the attempted content hash, no text
-  units, the reason in `error_info`) and reads unchanged until the content
-  or the extraction settings change.
+- **Quarantined record.** It becomes `QUARANTINED` (the attempted content
+  hash, its deaths, the reason in `error_info`). When the attempts reached
+  indexing (the record is the write-ahead `PENDING` one) the removal pass
+  removes what they wrote and no text units are kept; when they died before,
+  the indexed version and its text units stay. It reads unchanged until the
+  content or the extraction settings change, or the limit is raised above
+  its deaths: `diff` lists unchanged `QUARANTINED` records
+  (`DocumentDelta.quarantined_unchanged`) and `release_quarantined`
+  classifies those below the limit changed.
 - A document that produces no text units in a committing run counts as a
   death alone.
 - **Resume check** (`delta_still_applies`). A resumed run whose restored

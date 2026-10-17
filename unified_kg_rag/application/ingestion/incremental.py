@@ -778,12 +778,30 @@ class IncrementalIndexer:
         cleaned up. Not committing keeps the old lineage (inside the PENDING
         record :meth:`write_ahead` wrote), so the next run retries.
 
-        Quarantined documents (``DocumentDelta.quarantined``) are removed in
-        the same pass, since their interrupted attempts may have written
-        artifacts, and then recorded QUARANTINED, without text units.
+        Quarantined documents (``DocumentDelta.quarantined``) are recorded
+        QUARANTINED. One whose attempts reached the indexing stage (its record
+        is the write-ahead ``PENDING`` one) may have written artifacts and
+        removed some of its indexed version: it is removed in the same pass
+        and recorded without text units. One whose attempts died before (its
+        record is still the indexed version's) keeps that version: nothing of
+        the new one was written.
         """
-        doc_ids = list(dict.fromkeys(delta.changed + delta.deleted + delta.quarantined))
+        held = self.doc_status.get_many(delta.quarantined) if delta.quarantined else {}
+        kept = {
+            doc_id
+            for doc_id, record in held.items()
+            if record.status is not DocStatus.PENDING and record.text_unit_ids
+        }
+        doc_ids = list(
+            dict.fromkeys(
+                delta.changed
+                + delta.deleted
+                + [doc_id for doc_id in delta.quarantined if doc_id not in kept]
+            )
+        )
         if not doc_ids:
+            check_lease()
+            self._record_quarantined(delta.quarantined, kept)
             return True
         if not self.remove_obsolete_artifacts(doc_ids):
             if delta.deleted or delta.quarantined:
@@ -796,32 +814,44 @@ class IncrementalIndexer:
             return False
         check_lease()
         self._delete_records(delta.deleted)
-        self._record_quarantined(delta.quarantined)
+        self._record_quarantined(delta.quarantined, kept)
         return True
 
-    def _record_quarantined(self, doc_ids: list[str]) -> None:
-        """Replace the quarantined documents' PENDING records with QUARANTINED
-        ones of the content they crashed on: unchanged while it stays."""
+    def _record_quarantined(
+        self, doc_ids: list[str], kept: Collection[str] = ()
+    ) -> None:
+        """Replace the quarantined documents' records with QUARANTINED ones of
+        the content they died on (unchanged while it stays), with their deaths
+        settled. Those in ``kept`` keep the text units of their indexed
+        version, the others have none left."""
         if not doc_ids:
             return
-        self.doc_status.put_many(
-            record.model_copy(
-                update={
-                    "status": DocStatus.QUARANTINED,
-                    "content_hash": record.attempted_hash or record.content_hash,
-                    "text_unit_ids": [],
-                    "error_info": _QUARANTINED_INFO.format(
-                        attempts=record.attempt_count
-                    ),
-                    "attempt_batch": None,
-                    "scope": self.scope if self.scope is not None else record.scope,
-                    "extraction_fingerprint": (
-                        self.extraction_fingerprint or record.extraction_fingerprint
-                    ),
-                }
+        records = []
+        for doc_id, record in self.doc_status.get_many(doc_ids).items():
+            attempted = record.attempted_hash or record.content_hash
+            deaths, crash_batch = settled_attempts(record, attempted)
+            records.append(
+                record.model_copy(
+                    update={
+                        "status": DocStatus.QUARANTINED,
+                        "content_hash": attempted,
+                        "text_unit_ids": (
+                            record.text_unit_ids if doc_id in kept else []
+                        ),
+                        "error_info": _QUARANTINED_INFO.format(attempts=deaths),
+                        "attempt_count": deaths,
+                        "crash_batch": crash_batch,
+                        "attempt_batch": None,
+                        "scope": (
+                            self.scope if self.scope is not None else record.scope
+                        ),
+                        "extraction_fingerprint": (
+                            self.extraction_fingerprint or record.extraction_fingerprint
+                        ),
+                    }
+                )
             )
-            for record in self.doc_status.get_many(doc_ids).values()
-        )
+        self.doc_status.put_many(records)
 
     def _record_processed(
         self,

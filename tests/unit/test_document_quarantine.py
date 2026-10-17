@@ -323,3 +323,65 @@ def test_a_resumed_delta_is_replanned_once_its_runs_died_too_often() -> None:
     for runs in range(1, 4):
         open_attempts(harness.store, delta, fingerprints)  # ... and died
         assert delta_still_applies(harness.store, delta, fingerprints, 3) == (runs < 3)
+
+
+def test_a_changed_document_that_dies_before_indexing_keeps_its_indexed_version() -> (
+    None
+):
+    # Old behaviour: quarantine removed the indexed version too, although the
+    # runs that died never reached the stores.
+    harness = IncrementalRun()
+    harness.run({**_A, **_B})
+    edited = {"/c/a.txt": [[("Vendor", "Depot", 3)]]}
+    corpus = {**edited, **_B}
+    harness.crash_on = lambda paths: paths == ["/c/a.txt"]
+    for _ in range(3):
+        assert harness.run(corpus)
+
+    harness.run(corpus)
+
+    record = _record_of(harness, "/c/a.txt", corpus)
+    assert record.status is DocStatus.QUARANTINED
+    assert record.content_hash == compute_content_hash(
+        document("/c/a.txt", edited["/c/a.txt"])
+    )
+    assert record.text_unit_ids
+    assert harness.state() == expected_state({**_A, **_B})
+    # Skipped while its content stays; an edit replaces the kept version.
+    harness.run(corpus)
+    assert harness.extracted == []
+    harness.crash_on = None
+    again = {"/c/a.txt": [[("Vendor", "Depot", 2)]], **_B}
+    harness.run(again)
+    assert harness.state() == expected_state(again)
+
+
+def test_raising_the_limit_retries_a_quarantined_document() -> None:
+    # Old behaviour: a QUARANTINED record read unchanged whatever the limit,
+    # although the setting promised a retry once raised.
+    harness = IncrementalRun()
+    harness.run(_B)
+    corpus = {**_A, **_B}
+    _crash_indexing(harness, corpus, 3)
+    harness.run(corpus)
+    assert _record_of(harness, "/c/a.txt", corpus).status is DocStatus.QUARANTINED
+
+    harness.config.indexing.max_document_attempts = 5
+    harness.run(corpus)
+
+    assert harness.extracted == ["/c/a.txt"]
+    assert _record_of(harness, "/c/a.txt", corpus).status is DocStatus.PROCESSED
+    assert harness.state() == expected_state(corpus)
+
+
+def test_a_retried_quarantined_document_counts_on_from_its_deaths() -> None:
+    harness = IncrementalRun()
+    _crash_indexing(harness, _A, 3)
+    harness.run(_A)
+    harness.config.indexing.max_document_attempts = 4
+
+    _crash_indexing(harness, _A, 1)
+    harness.run(_A)
+
+    record = _record_of(harness, "/c/a.txt", _A)
+    assert (record.status, record.attempt_count) == (DocStatus.QUARANTINED, 4)

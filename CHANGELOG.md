@@ -404,7 +404,9 @@ Library API (Python callers and custom backends).
   `attempt_batch` and `crash_batch`. `detect_delta` may return
   `DocumentDelta.deferred` documents (neither processed nor deleted), and
   `IncrementalIndexer.write_ahead` no longer takes fingerprints: a run opens
-  its attempts with `incremental.open_attempts` (#PR).
+  its attempts with `incremental.open_attempts`. Its `diff` should list the
+  unchanged `QUARANTINED` records in `DocumentDelta.quarantined_unchanged`,
+  or a raised `indexing.max_document_attempts` does not retry them (#PR).
 - Conversation memory is per chain: a `GraphRAGChain` builds its own
   `MemoryManager` instead of sharing one process-wide manager, and a
   conversation is keyed by index suffix, `user_id` and `conversation_id`
@@ -1284,6 +1286,14 @@ changed once with the full-config keys (#332).
   the registry no longer matches (another run re-indexed or deleted one of
   its documents) or whose runs died often enough to isolate a culprit
   resumes from document_loading instead (#PR).
+- A run that failed with an error (a store outage) no longer counts toward
+  quarantine either: three such runs used to make the first healthy run
+  quarantine and remove the documents. A changed document whose runs died
+  before its indexing started keeps its indexed version while quarantined,
+  and raising `indexing.max_document_attempts` above a quarantined
+  document's deaths retries it, as the setting promised (`DocStatusPort.diff`
+  reports the unchanged quarantined records in
+  `DocumentDelta.quarantined_unchanged`) (#PR).
 - Two corpora written to one index namespace that hold the same file with
   the same text no longer share text units, so removing one corpus's copy
   keeps the other's (#327).

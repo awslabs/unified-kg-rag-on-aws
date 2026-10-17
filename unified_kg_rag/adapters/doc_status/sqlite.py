@@ -35,7 +35,6 @@ from unified_kg_rag.adapters.local.sqlite_util import (
 from unified_kg_rag.domain.ingestion.delta_detector import scope_namespace
 from unified_kg_rag.domain.models import (
     Config,
-    DocStatus,
     DocStatusRecord,
     DocumentDelta,
     ExtractionSettings,
@@ -304,9 +303,7 @@ class SQLiteDocStatusStore:
                     (namespace,),
                 ).fetchall()
         stored = {
-            doc_id: StoredDocument(
-                content_hash, stored_scope, status == DocStatus.FAILED.value, extraction
-            )
+            doc_id: StoredDocument(content_hash, stored_scope, status, extraction)
             for doc_id, content_hash, status, stored_scope, extraction in rows
         }
         return DocumentDelta.classify(incoming, stored, scope, extraction_fingerprint)

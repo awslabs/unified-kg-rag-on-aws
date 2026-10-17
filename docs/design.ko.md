@@ -496,9 +496,13 @@ class LocalSearchStrategy(BaseSearchStrategy): ...
   않음)로 분류합니다. 실행이 죽으면 의심 문서가 그 절반으로 좁혀지고, 끝나면 그 절반을
   커밋합니다. 그래서 `n`개 가운데 원인 문서 하나는 대략 `log2(n) + 1`번의 실행으로 가려지고,
   함께 죽었다는 이유로 격리되는 문서는 없습니다.
-- **격리 레코드.** 제거 단계가 시도들이 쓴 것을 지우고, 레코드는 `QUARANTINED`(시도한 내용의
-  해시, 텍스트 단위 없음, `error_info`에 이유)가 되어 내용이나 추출 설정이 바뀔 때까지
-  unchanged로 읽힙니다.
+- **격리 레코드.** 레코드는 `QUARANTINED`(시도한 내용의 해시, 죽은 횟수, `error_info`에
+  이유)가 됩니다. 시도가 인덱싱에 이르렀다면(레코드가 선기록 `PENDING` 레코드) 제거 단계가
+  시도들이 쓴 것을 지우고 텍스트 단위를 남기지 않으며, 그 전에 죽었다면 인덱싱된 버전과 그
+  텍스트 단위를 유지합니다. 내용이나 추출 설정이 바뀌거나 한도를 죽은 횟수보다 크게 올릴
+  때까지 unchanged로 읽힙니다. `diff`가 unchanged인 `QUARANTINED` 레코드를 알려 주고
+  (`DocumentDelta.quarantined_unchanged`), `release_quarantined`가 한도 아래인 것을 changed로
+  분류합니다.
 - 커밋하는 실행에서 텍스트 단위를 만들지 않은 문서는 혼자 죽은 것으로 셉니다.
 - **재개 검사**(`delta_still_applies`). 복원한 델타의 문서 가운데 레코드가 사라졌거나 다른
   내용을 담았거나 죽은 횟수가 한도에 이른 것이 있으면 document_loading부터 재개합니다.

@@ -25,7 +25,6 @@ from botocore.exceptions import BotoCoreError, ClientError
 from unified_kg_rag.domain.ingestion.delta_detector import scope_namespace
 from unified_kg_rag.domain.models import (
     Config,
-    DocStatus,
     DocStatusRecord,
     DocumentDelta,
     ExtractionSettings,
@@ -512,7 +511,7 @@ class DynamoDBDocStatusStore:
                 states[doc_id] = StoredDocument(
                     item.get("content_hash", {}).get("S", ""),
                     item.get(_SCOPE_ATTRIBUTE, {}).get("S"),
-                    item.get("status", {}).get("S") == DocStatus.FAILED.value,
+                    item.get("status", {}).get("S"),
                     item.get("extraction_fingerprint", {}).get("S"),
                 )
         return states

@@ -44,7 +44,10 @@ from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from unified_kg_rag.domain.ingestion.attempts import plan_attempts
+from unified_kg_rag.domain.ingestion.attempts import (
+    plan_attempts,
+    release_quarantined,
+)
 from unified_kg_rag.domain.models import (
     Constants,
     DocStatus,
@@ -272,6 +275,10 @@ def detect_delta(
     )
     if retired:
         retire_source_scopes(doc_status, delta, retired, own_scope=scope)
+    if max_attempts is not None and delta.quarantined_unchanged:
+        release_quarantined(
+            delta, doc_status.get_many(delta.quarantined_unchanged), max_attempts
+        )
     if (max_failures is not None or max_attempts is not None) and delta.changed:
         stored = doc_status.get_many(delta.changed)
         if max_attempts is not None:

@@ -573,8 +573,10 @@ class DataIngestionPipeline:
         resume_stage: str | None,
     ) -> PipelineContext:
         """Download the checkpoint, prepare the run and execute it (under the
-        namespace's lease), closing the run's processing attempts however it
-        ends in the process, and uploading the checkpoint of a stopped run."""
+        namespace's lease), closing the run's processing attempts when it
+        finishes, fails with an error or is stopped (KeyboardInterrupt,
+        ``PipelineInterrupted``), and uploading the checkpoint of a stopped
+        run."""
         context: PipelineContext | None = None
         try:
             if self.pipeline_config.s3_sync_enabled:
@@ -626,7 +628,9 @@ class DataIngestionPipeline:
                 self._checkpointing = False
                 self._checkpoint_id = None
             raise
-        except BaseException:
+        # Any other BaseException (SystemExit, or a test's simulated death)
+        # leaves the attempts open, like a process that died.
+        except Exception:
             self._close_attempts(context)
             raise
         self._close_attempts(context)

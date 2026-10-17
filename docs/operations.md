@@ -334,7 +334,13 @@ the same way. Runs therefore count deaths and isolate the culprit.
   re-run only repeats its own delta).
 - **Retrying.** A quarantined document is skipped while its content stays.
   It is retried when the file or the extraction settings change, or when
-  `indexing.max_document_attempts` is raised.
+  `indexing.max_document_attempts` is raised above its deaths (the
+  `attempt_count` of its record).
+- **Kept version.** A changed document whose runs died before its indexing
+  started (in chunking, extraction, gleaning...) keeps its indexed version
+  while quarantined: nothing of the new version reached the stores. One
+  whose runs died while indexing it is removed (no text units in its
+  `QUARANTINED` record).
 - **Limits.** A task that dies whatever it processes (a broken image)
   quarantines the delta's documents one at a time: fix the deployment, then
   edit the files or raise the limit. A one-off kill during the run that

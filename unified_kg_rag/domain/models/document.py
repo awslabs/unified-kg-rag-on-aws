@@ -215,7 +215,7 @@ class StoredDocument(NamedTuple):
 
     content_hash: str
     scope: str | None
-    failed: bool
+    status: str | None  # the record's ``DocStatus`` value
     extraction_fingerprint: str | None
 
 
@@ -267,6 +267,14 @@ class DocumentDelta(BaseModel):
         "processing the document alone: not processed; the run removes what "
         "the attempts wrote and records them QUARANTINED",
     )
+    quarantined_unchanged: list[str] = Field(
+        default_factory=list,
+        description="The ``unchanged`` doc ids whose record is QUARANTINED, "
+        "reported by ``DocStatusPort.diff`` (the status is read anyway), so "
+        "a raised ``indexing.max_document_attempts`` retries them. A store "
+        "that does not report them leaves it empty, and then only an edit "
+        "or a settings change retries a quarantined document",
+    )
     deferred: list[str] = Field(
         default_factory=list,
         description="New or changed doc ids left for a later run while runs "
@@ -295,15 +303,20 @@ class DocumentDelta(BaseModel):
         store read for the diff. A document is ``new`` without a record,
         ``changed`` when its hash differs or its record is FAILED (so it is
         retried), and also when only its extraction settings changed
-        (``settings_changed`` too); else ``unchanged``. With ``scope``, only
-        stored records of that scope can be ``deleted``.
+        (``settings_changed`` too); else ``unchanged`` (and also
+        ``quarantined_unchanged`` when its record is QUARANTINED, so a raised
+        attempt limit can retry it). With ``scope``, only stored records of
+        that scope can be ``deleted``.
         """
         delta = cls()
         for doc_id, content_hash in incoming.items():
             record = stored.get(doc_id)
             if record is None:
                 delta.new.append(doc_id)
-            elif record.content_hash != content_hash or record.failed:
+            elif (
+                record.content_hash != content_hash
+                or record.status == DocStatus.FAILED.value
+            ):
                 delta.changed.append(doc_id)
             elif settings_changed(
                 record.extraction_fingerprint, extraction_fingerprint
@@ -312,6 +325,8 @@ class DocumentDelta(BaseModel):
                 delta.settings_changed.append(doc_id)
             else:
                 delta.unchanged.append(doc_id)
+                if record.status == DocStatus.QUARANTINED.value:
+                    delta.quarantined_unchanged.append(doc_id)
         delta.deleted = [
             doc_id
             for doc_id, record in stored.items()

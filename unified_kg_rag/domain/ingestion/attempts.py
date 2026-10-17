@@ -36,17 +36,15 @@ deployment) quarantines the delta's documents one at a time.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import TYPE_CHECKING
 
+from unified_kg_rag.domain.models import DocStatus, DocStatusRecord, DocumentDelta
 from unified_kg_rag.shared import get_logger
-
-if TYPE_CHECKING:
-    from unified_kg_rag.domain.models import DocStatusRecord, DocumentDelta
 
 __all__ = [
     "closed_attempt",
     "opened_attempt",
     "plan_attempts",
+    "release_quarantined",
     "settled_attempts",
     "unproductive_attempt",
 ]
@@ -167,6 +165,38 @@ def plan_attempts(
         len(group),
         len(delta.deferred),
         ", ".join(_label(stored, doc_id) for doc_id in sorted(batch)),
+    )
+
+
+def release_quarantined(
+    delta: DocumentDelta,
+    stored: Mapping[str, DocStatusRecord],
+    max_attempts: int,
+) -> None:
+    """Retry quarantined documents the current limit no longer quarantines.
+
+    ``stored`` holds the records of ``delta.quarantined_unchanged``. A
+    QUARANTINED record whose deaths (``attempt_count``) are below
+    ``max_attempts`` (the limit was raised since) moves from ``unchanged`` to
+    ``changed``; its deaths keep counting from there.
+    """
+    released = sorted(
+        doc_id
+        for doc_id in delta.quarantined_unchanged
+        if (record := stored.get(doc_id)) is not None
+        and record.status is DocStatus.QUARANTINED
+        and record.attempt_count < max_attempts
+    )
+    if not released:
+        return
+    delta.unchanged = [doc_id for doc_id in delta.unchanged if doc_id not in released]
+    delta.changed.extend(released)
+    logger.warning(
+        "Retrying %d quarantined documents: indexing.max_document_attempts (%d) "
+        "is now above their deaths: %s",
+        len(released),
+        max_attempts,
+        ", ".join(_label(stored, doc_id) for doc_id in released),
     )
 
 

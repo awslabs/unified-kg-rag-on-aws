@@ -59,6 +59,17 @@ class _Harness:
         self.config.processing.claim_extraction.enabled = False
         self.vectors = FakeVectorStore(self.config.indexing.opensearch)
         self.extractions = 0
+        # Raised by the graph store's entity writes: an error (an outage,
+        # the run fails) or a stop request (SIGTERM during indexing).
+        self.graph_down: BaseException | None = None
+        upsert_entities = self.graph.upsert_entities
+
+        def upsert(*args: Any, **kwargs: Any) -> Any:
+            if self.graph_down is not None:
+                raise self.graph_down
+            return upsert_entities(*args, **kwargs)
+
+        self.graph.upsert_entities = upsert  # type: ignore[method-assign]
 
     def _respond(self, system: str, human: str) -> str:
         if "knowledge graph extraction expert" in system:
@@ -113,9 +124,6 @@ class _Harness:
 
         with monkeypatch.context() as patch:
             patch.setattr(ps.TextChunkingStage, "_execute_core", chunk)
-            if chunking_fails_with is _Died:
-                # A dead process closes nothing.
-                patch.setattr(pipeline, "_close_attempts", lambda context: None)
             try:
                 return pipeline.run(self.source, pipeline_id=pipeline_id)
             except (_Died, PipelineInterrupted) as stopped:
@@ -163,20 +171,26 @@ def test_a_document_that_kills_chunking_is_isolated_across_resumed_runs(
     assert {"Vendor", "Buyer", "Depot"} <= names
 
 
+@pytest.mark.parametrize("stage", ["chunking", "indexing"])
 def test_runs_stopped_by_sigterm_count_no_attempt(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stage: str
 ) -> None:
-    # Old behaviour: a stopped run (a task timeout, StopTask) counted like a
-    # crash.
+    # Old behaviour: a run stopped during indexing (a task timeout, StopTask)
+    # left its write-ahead records, counted like a crash.
     harness = _Harness(tmp_path)
+    if stage == "indexing":
+        harness.graph_down = PipelineInterrupted(signal.SIGTERM)
     for _ in range(4):
         outcome = harness.run(
-            "ingest-1", monkeypatch, chunking_fails_with=PipelineInterrupted
+            "ingest-1",
+            monkeypatch,
+            chunking_fails_with=(PipelineInterrupted if stage == "chunking" else None),
         )
         assert isinstance(outcome, PipelineInterrupted)
         records = harness.store.list_all()
-        assert {r.attempt_batch for r in records} == {None}
+        assert records
         assert {r.attempt_count for r in records} == {0}
+    harness.graph_down = None
 
     outcome = harness.run("ingest-1", monkeypatch)
 
@@ -211,3 +225,28 @@ def test_a_resume_after_another_run_committed_computes_the_delta_again(
         "poison.txt": DocStatus.PROCESSED,
     }
     assert harness.extractions == 1
+
+
+def test_runs_whose_indexing_fails_with_an_error_count_no_attempt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Old behaviour: each run that failed on the outage left its write-ahead
+    # records, counted as attempts, and the first healthy run quarantined
+    # (and removed) the documents.
+    harness = _Harness(tmp_path)
+    (harness.source / "poison.txt").unlink()
+    first = harness.run("ingest-0", monkeypatch)
+    assert isinstance(first, PipelineContext)
+    (harness.source / "contract.txt").write_text("Vendor supplies Depot and Buyer.")
+    harness.graph_down = RuntimeError("graph store unavailable")
+    for run in range(1, 4):
+        failed = harness.run(f"ingest-{run}", monkeypatch)
+        assert isinstance(failed, PipelineContext)
+        assert failed.status is PipelineStageStatus.FAILED
+    harness.graph_down = None
+
+    healthy = harness.run("ingest-4", monkeypatch)
+
+    assert isinstance(healthy, PipelineContext)
+    assert healthy.status is PipelineStageStatus.COMPLETED
+    assert set(harness.statuses().values()) == {DocStatus.PROCESSED}

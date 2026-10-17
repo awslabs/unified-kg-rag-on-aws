@@ -24,13 +24,14 @@ from unified_kg_rag.domain.models import (
 pytestmark = pytest.mark.unit
 
 _STORED = {
-    "same": StoredDocument("h1", "s", False, "fp"),
-    "edited": StoredDocument("old", "s", False, "fp"),
-    "failed": StoredDocument("h3", "s", True, "fp"),
-    "resettled": StoredDocument("h4", "s", False, "other-fp"),
-    "unknown-fp": StoredDocument("h5", "s", False, None),
-    "gone": StoredDocument("h6", "s", False, None),
-    "elsewhere": StoredDocument("h7", "t", False, None),
+    "same": StoredDocument("h1", "s", "processed", "fp"),
+    "edited": StoredDocument("old", "s", "processed", "fp"),
+    "failed": StoredDocument("h3", "s", "failed", "fp"),
+    "resettled": StoredDocument("h4", "s", "processed", "other-fp"),
+    "unknown-fp": StoredDocument("h5", "s", "processed", None),
+    "gone": StoredDocument("h6", "s", "processed", None),
+    "elsewhere": StoredDocument("h7", "t", "processed", None),
+    "held": StoredDocument("h9", "s", "quarantined", "fp"),
 }
 _INCOMING = {
     "same": "h1",
@@ -39,6 +40,7 @@ _INCOMING = {
     "resettled": "h4",
     "unknown-fp": "h5",
     "fresh": "h8",
+    "held": "h9",
 }
 
 
@@ -47,7 +49,8 @@ def test_classify_partitions_the_corpus() -> None:
     assert delta.new == ["fresh"]
     assert delta.changed == ["edited", "failed", "resettled"]
     assert delta.settings_changed == ["resettled"]
-    assert delta.unchanged == ["same", "unknown-fp"]
+    assert delta.unchanged == ["same", "unknown-fp", "held"]
+    assert delta.quarantined_unchanged == ["held"]
     assert delta.deleted == ["gone"]  # "elsewhere" is another scope's
     assert delta.stored_scopes == ["s", "t"]
 
@@ -71,7 +74,7 @@ def test_registries_apply_the_rule(store_kind: str, tmp_path) -> None:
                 doc_id=doc_id,
                 content_hash=stored.content_hash,
                 scope=stored.scope,
-                status=DocStatus.FAILED if stored.failed else DocStatus.PROCESSED,
+                status=DocStatus(stored.status),
                 extraction_fingerprint=stored.extraction_fingerprint,
             )
         )
