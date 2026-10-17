@@ -1944,6 +1944,12 @@ Library API (Python callers and custom backends).
   class is defined, instead of failing every query at evaluation time (#305).
 
 ### Removed
+- The native-score blend of RRF fusion: RRF scores are plain
+  `weight / (rrf_k + rank)` sums again. The blend claimed to restore order
+  within a stream, which RRF already keeps; scaled to the rank-1 step, it
+  outweighed the smaller steps deeper in a list and inverted 20 positions
+  of a 60-item DRIFT bucket that mixes graph-distance and index scores
+  (#PR).
 - `Entity.frequency`: it counted an entity's text units in every merge path
   but no store wrote it and nothing read it (ranking uses `rank`, the local
   search frequency filter counts `text_unit_ids`). Stage caches that carry

@@ -59,47 +59,28 @@ class TestNormalizeScores:
 
 
 class TestReciprocalRankFusion:
-    # Fusion blends a per-stream min-max-normalized NATIVE
-    # score into the RRF score, scaled to one RRF adjacent-rank step so it only
-    # orders items within an RRF-rank neighborhood (plain RRF made every item in a
-    # stream nearly indistinguishable, which let token_manager fill quota slots with
-    # the wrong item). So the expected score is now RRF + native_scale *
-    # native_norm, and the assertions below carry that term explicitly rather than
-    # asserting plain RRF. The scale is derived from `rrf_k`, not a fixed constant,
-    # so it stays correct for a reconfigured k — this helper mirrors that identity.
-    @staticmethod
-    def _expected(k: int, rrf: float, native_norm: float) -> float:
-        native_scale = 1.0 / (k + 1) - 1.0 / (k + 2)
-        return rrf + native_scale * native_norm
-
-    def test_native_blend_never_outweighs_one_rrf_rank_step(self) -> None:
-        # The contract the scale exists to hold: a maximally-favoured native score
-        # (1.0) may not lift a rank-2 item above a rank-1 item, at any configured k.
-        for k in (1, 10, 60, 500):
-            config = Config()
-            config.search.reranking.enabled = False
-            config.search.fusion.rrf_k = k
-            scorer = HybridScorer(config)
-            fused = scorer._reciprocal_rank_fusion(
-                {"src": [_r("first", 0.9, "1"), _r("second", 0.8, "2")]}
-            )
-            by_content = {r.content: r.score for r in fused}
-            assert by_content["first"] > by_content["second"], k
-
     def test_higher_rank_contributes_more(self) -> None:
         scorer = _scorer()
         k = scorer.fusion_config.rrf_k
         result_map = {"src": [_r("first", 0.9, "1"), _r("second", 0.8, "2")]}
         fused = scorer._reciprocal_rank_fusion(result_map)
         by_content = {r.content: r.score for r in fused}
-        # Two items in one stream min-max normalize to 1.0 (top) and 0.0 (bottom).
-        assert by_content["first"] == pytest.approx(
-            self._expected(k, 1.0 / (k + 1), 1.0)
-        )
-        assert by_content["second"] == pytest.approx(
-            self._expected(k, 1.0 / (k + 2), 0.0)
-        )
-        assert by_content["first"] > by_content["second"]
+        assert by_content["first"] == pytest.approx(1.0 / (k + 1))
+        assert by_content["second"] == pytest.approx(1.0 / (k + 2))
+
+    def test_one_bucket_keeps_its_own_order(self) -> None:
+        # Its bucket's order is the only thing RRF reads: a native score blended
+        # in (scaled to the rank-1 step) outweighed the smaller steps deeper in
+        # a list and inverted positions of a DRIFT bucket that mixes
+        # graph-distance and fused index scores.
+        scorer = _scorer()
+        items = [
+            _r(f"c{p}", 0.1 if p % 2 == 0 else (1.0 if p > 30 else 0.0), f"s{p}")
+            for p in range(60)
+        ]
+        fused = scorer._reciprocal_rank_fusion({"results": items})
+        fused.sort(key=lambda r: r.score or 0.0, reverse=True)
+        assert [r.source for r in fused] == [f"s{p}" for p in range(60)]
 
     def test_cross_source_contributions_accumulate(self) -> None:
         scorer = _scorer()
@@ -112,8 +93,7 @@ class TestReciprocalRankFusion:
         }
         fused = scorer._reciprocal_rank_fusion(result_map)
         assert len(fused) == 1
-        # A degenerate-range (single-item) stream normalizes to 0.5; RRF still accumulates.
-        assert fused[0].score == pytest.approx(self._expected(k, 2.0 / (k + 1), 0.5))
+        assert fused[0].score == pytest.approx(2.0 / (k + 1))
 
     def test_fused_object_is_a_copy(self) -> None:
         scorer = _scorer()
@@ -122,20 +102,17 @@ class TestReciprocalRankFusion:
         assert fused[0] is not original
 
     def test_default_weights_reproduce_plain_rrf(self) -> None:
-        # No fusion_weights by default, and an unconfigured bucket weighs 1.0,
-        # so the RRF *term* is the unweighted 1/(k+rank) — the native blend
-        # above is the only other contribution.
+        # No fusion_weights by default, and an unconfigured bucket weighs 1.0.
         scorer = _scorer()
         assert scorer.fusion_config.fusion_weights == {}
         k = scorer.fusion_config.rrf_k
         fused = scorer._reciprocal_rank_fusion(
             {"unconfigured_bucket": [_r("only", 0.9, "1")]}
         )
-        assert fused[0].score == pytest.approx(self._expected(k, 1.0 / (k + 1), 0.5))
+        assert fused[0].score == pytest.approx(1.0 / (k + 1))
 
     def test_per_bucket_weight_scales_rrf_contribution(self) -> None:
-        # A configured per-bucket weight now applies under RRF too (previously it
-        # was silently ignored unless FusionMethod.WEIGHTED was selected).
+        # A configured per-bucket weight applies under RRF too.
         config = Config()
         config.search.reranking.enabled = False
         config.search.fusion.fusion_weights = {"boosted": 3.0}  # "plain" defaults 1.0
@@ -147,11 +124,8 @@ class TestReciprocalRankFusion:
         }
         fused = scorer._reciprocal_rank_fusion(result_map)
         by_content = {r.content: r.score for r in fused}
-        # Each bucket holds one item, so both normalize to native 0.5; the weight
-        # scaling applies to the RRF term, which is what this test is about.
-        assert by_content["b"] == pytest.approx(self._expected(k, 3.0 / (k + 1), 0.5))
-        assert by_content["p"] == pytest.approx(self._expected(k, 1.0 / (k + 1), 0.5))
-        assert by_content["b"] > by_content["p"]
+        assert by_content["b"] == pytest.approx(3.0 / (k + 1))
+        assert by_content["p"] == pytest.approx(1.0 / (k + 1))
 
 
 class TestWeightedFusion:
@@ -343,9 +317,7 @@ class TestOneContributionPerBucket:
 
         assert [r.source for r in out] == ["e-best", "e-repeat"]
         by_source = {r.source: r.score or 0.0 for r in out}
-        native_scale = 1.0 / (k + 1) - 1.0 / (k + 2)
-        # `best`: rank 1 plus the full native blend (it is the bucket's max).
-        assert by_source["e-best"] == pytest.approx(1.0 / (k + 1) + native_scale)
+        assert by_source["e-best"] == pytest.approx(1.0 / (k + 1))
         # `repeat`: its best rank in the bucket, once — not 1/(k+2) + 1/(k+3).
         assert by_source["e-repeat"] == pytest.approx(1.0 / (k + 2))
 
@@ -377,9 +349,7 @@ class TestOneContributionPerBucket:
             {"graph": [hit.model_copy()], "vector": [hit.model_copy()]}
         )
         assert len(fused) == 1
-        assert fused[0].score == pytest.approx(
-            2.0 / (k + 1) + (1.0 / (k + 1) - 1.0 / (k + 2)) * 0.5
-        )
+        assert fused[0].score == pytest.approx(2.0 / (k + 1))
 
 
 class TestFuseAndRerank:

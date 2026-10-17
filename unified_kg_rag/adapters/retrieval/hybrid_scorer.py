@@ -405,44 +405,21 @@ class HybridScorer:
         scores: dict[str, float] = defaultdict(float)
         objects: dict[str, RetrievalResult] = {}
 
-        # Plain RRF overwrites each item's score with a flat
-        # weight/(k+rank) (~0.0164 at rank1 vs 0.0143 at rank10) — so WITHIN a stream
-        # the gold item is indistinguishable from noise, and downstream token_manager
-        # (which packs each type's share in score order) fills it with the wrong
-        # item, so a relevant item can be retrieved yet dropped from context. Upstream LightRAG keeps
-        # the native order (entities by cosine, relations by degree). We preserve that
-        # by BLENDING a per-stream min-max-normalized native score into the RRF score:
-        # cross-stream fusion still comes from RRF rank; within-stream discrimination
-        # is restored by the native component (scaled small so it breaks ties/orders
-        # within a rank neighborhood without dominating the cross-stream RRF signal).
-        buckets = {
-            name: self._once_per_bucket(results) for name, results in result_map.items()
-        }
-
-        native_norm: dict[str, float] = {}
-        for results in buckets.values():
-            for r in self._normalize_scores(results):
-                native_norm[self._get_result_key(r)] = r.score
-
-        for name, results in buckets.items():
+        # Pure RRF: an item's score is the sum of weight/(k+rank) over the
+        # buckets it appears in. Within one bucket that is already the bucket's
+        # own order, so nothing else is needed to keep it; a native score
+        # blended in (it was, scaled to one rank step at rank 1) is larger than
+        # the rank steps deeper in the list and reordered them.
+        for name, results in result_map.items():
             weight = weights.get(name, 1.0)
-            for rank, result in enumerate(results, 1):
+            for rank, result in enumerate(self._once_per_bucket(results), 1):
                 key = self._get_result_key(result)
                 scores[key] += weight / (k + rank)
                 if key not in objects:
                     objects[key] = result.model_copy()
 
-        # The native component must order items WITHIN an RRF-rank tie without
-        # flipping genuine cross-stream rank gaps, so scale it to the granularity of
-        # one RRF rank step. Adjacent-rank steps are 1/(k+r) - 1/(k+r+1), largest at
-        # r=1; derive the scale from that identity rather than fixing a constant, so
-        # it tracks a reconfigured `rrf_k` (at the default k=60 this is ~2.7e-4).
-        # Native scores are min-max normalized to [0, 1], so the blended component
-        # can never exceed a single rank step.
-        native_scale = 1.0 / (k + 1) - 1.0 / (k + 2)
         for key, score in scores.items():
-            if key in objects:
-                objects[key].score = score + native_scale * native_norm.get(key, 0.0)
+            objects[key].score = score
 
         return list(objects.values())
 
