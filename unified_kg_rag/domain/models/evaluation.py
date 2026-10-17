@@ -25,8 +25,16 @@ class EvaluationMetricType(str, Enum):
     # copy of recall (the previous behaviour) overstated the signal.
     ENTITY_COVERAGE = "entity_coverage"
     RELATIONSHIP_COVERAGE = "relationship_coverage"
+    # The same coverage over the entity/relationship sources the answer model
+    # was given (not the answer text), so it does not grow with answer length.
+    RETRIEVED_ENTITY_COVERAGE = "retrieved_entity_coverage"
+    RETRIEVED_RELATIONSHIP_COVERAGE = "retrieved_relationship_coverage"
+    # Answer length in characters, reported next to the coverage metrics:
+    # answer-text coverage rises with wordiness.
+    ANSWER_LENGTH = "answer_length"
     # Deterministic retrieval metrics against EvaluationGroundTruth.
-    # reference_sources (k = EvaluationConfig.retrieval_k).
+    # reference_sources, over the rank-ordered files of the reported sources
+    # (k = EvaluationConfig.retrieval_k files).
     HIT_AT_K = "hit_at_k"
     RECALL_AT_K = "recall_at_k"
     MRR = "mrr"
@@ -120,6 +128,25 @@ class EvaluationResult(BaseModel):
             "the file names it is attributed to — named directly (text units) or "
             "via its text_unit_ids lineage (entities, relationships, community "
             "reports); empty when unattributable."
+        ),
+    )
+    retrieved_source_types: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Section type of each reported source, parallel to "
+            "retrieved_source_ids (text, entity, relationship, community, claim, "
+            "general; empty when unknown)."
+        ),
+    )
+    retrieved_entities: list[str] = Field(
+        default_factory=list,
+        description="Names of the entity sources the answer model was given.",
+    )
+    retrieved_relationships: list[dict[str, str]] = Field(
+        default_factory=list,
+        description=(
+            "Relationship sources the answer model was given, as "
+            '{"source": A, "target": B, "description": text} records.'
         ),
     )
     response_time: float | None = Field(

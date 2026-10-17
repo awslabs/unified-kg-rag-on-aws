@@ -2911,10 +2911,19 @@ class EvaluationConfig(BaseModel):
         ],
         description="Specific evaluation metrics to calculate when using RAGAS evaluator.",
     )
-    max_context_tokens: int = Field(
-        default=8192,
+    max_context_tokens: int | None = Field(
+        default=None,
         ge=1,
-        description="Maximum number of tokens allowed in context for evaluation processing",
+        description=(
+            "Token cap on the retrieved context passed to the RAGAS judges. "
+            "null (default) uses the answer model's budget "
+            "(search.token_manager.max_context_tokens), so faithfulness and "
+            "context_recall judge the answer against the context it was given; "
+            "with that budget derived from the model window too, no extra cap "
+            "applies (the contexts are already the answer model's selection). A "
+            "value below the answer budget logs a warning: the judge then sees "
+            "less context than the answer model did."
+        ),
     )
     judge_effort: EffortLevel | None = Field(
         default="low",
@@ -2975,7 +2984,8 @@ class EvaluationConfig(BaseModel):
         ge=1,
         description=(
             "Cutoff k for the retrieval evaluator's hit@k / recall@k: the number "
-            "of top-ranked reported sources compared with reference_sources."
+            "of top-ranked distinct files (of the reported sources, in rank "
+            "order) compared with reference_sources."
         ),
     )
     save_detailed_results: bool = Field(

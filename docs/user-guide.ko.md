@@ -694,8 +694,8 @@ LLM 단계는 Bedrock I/O가 병목이므로 동시성을 CPU 수보다 훨씬 �
 | `evaluation.ragas_max_contexts` | `20` | RAGAS `context_precision`이 샘플마다 채점하는 상위 컨텍스트 수입니다(그래서 "@20"입니다). faithfulness와 context_recall은 토큰 예산 안의 전체 컨텍스트를 봅니다. `null`이면 제한하지 않습니다. |
 | `evaluation.ragas_max_workers` | `8` | 동시에 실행하는 RAGAS 작업 수입니다. Bedrock이 판정 모델 호출을 스로틀링하면 낮추세요. |
 | `evaluation.ragas_max_attempts` | `3` | 판정 모델 호출당 총 시도 횟수입니다. |
-| `evaluation.max_context_tokens` | `8192` | 판정 모델에 넘기는 컨텍스트의 토큰 상한입니다. |
-| `evaluation.retrieval_k` | `5` | `retrieval` 평가기의 hit@k / recall@k 기준값입니다. |
+| `evaluation.max_context_tokens` | `null` | RAGAS 판정 모델에 넘기는 컨텍스트의 토큰 상한입니다. `null`이면 답변 예산(`search.token_manager.max_context_tokens`)을 쓰고, 그보다 작은 값이면 경고를 남깁니다. |
+| `evaluation.retrieval_k` | `5` | `retrieval` 평가기의 hit@k / recall@k 기준값입니다. 보고된 출처의 서로 다른 파일 중 상위 k개를 셉니다. |
 | `evaluation.outputs_directory` | `"outputs/evaluation"` | 결과를 쓰는 위치입니다. |
 
 지표 목록(`langchain_metrics`, `ragas_metrics`)은 템플릿을 참고하세요.
@@ -1448,7 +1448,10 @@ OpenSearch 주장 인덱스에서 읽어 옵니다(주장이 텍스트 단위를
   `context_precision@N`입니다. 제한이 없으면 출처를 100개 넘게 보고하는 전략(예:
   LightRAG `mix`)이 `ragas_timeout`에 걸립니다. `faithfulness`와 `context_recall`은
   `max_context_tokens` 안의 모든 출처를 보므로, 순위가 낮은 출처가 뒷받침하는 진술도
-  근거 없음으로 처리되지 않습니다. 각 리포트에는 판정 모델이 본 내용이
+  근거 없음으로 처리되지 않습니다. 기본값(`evaluation.max_context_tokens: null`)에서는
+  판정 모델이 답변 모델과 같은 예산(`search.token_manager.max_context_tokens`, 30000)을
+  받으므로, 답변이 실제로 받은 컨텍스트를 기준으로 채점합니다. 이보다 작은 값을 직접
+  지정하면 경고를 남깁니다. 각 리포트에는 판정 모델이 본 내용이
   기록됩니다(`judge_contexts` / `judge_context_tokens`,
   `context_precision_contexts` / `context_precision_context_tokens`). 이 설정은 답변
   모델이 본 내용에는 영향을 주지 않습니다.
@@ -1460,15 +1463,26 @@ OpenSearch 주장 인덱스에서 읽어 옵니다(주장이 텍스트 단위를
   구문으로 나와야 합니다. 데이터셋에 `expected_entities` / `expected_relationships`가
   필요합니다. **정밀도와 F1은 의도적으로 출력하지 않습니다.** 자유 형식 답변에 나온
   엔티티를 빠짐없이 열거할 신뢰할 만한 방법이 없으므로, 정밀도와 F1을 보고해도 재현율
-  신호에 이름만 바꿔 붙이는 셈이기 때문입니다.
+  신호에 이름만 바꿔 붙이는 셈이기 때문입니다. 답변 텍스트 기준 커버리지는 답변이
+  길수록 올라가므로 `retrieved_entity_coverage` / `retrieved_relationship_coverage`도
+  보고합니다. 같은 기대값을 답변 모델이 받은 엔티티 출처의 이름과 관계 출처의 두
+  끝점에 맞춰 봅니다(쌍은 방향과 관계없이 관계 하나와 일치해야 하고, 그 밖의 문자열은
+  끝점이나 설명에 나와야 함. `global`처럼 컨텍스트에 해당 유형의 출처가 없으면 건너뜀).
+  `answer_length`(문자 수)도 함께 기록합니다. 전략 비교에는 검색 기준 커버리지를 쓰고,
+  답변 텍스트 기준 커버리지는 길이와 함께 읽으세요.
 - **`retrieval`** — 결정적이며 LLM을 쓰지 않습니다. 답변 모델이 본 출처에 정답 문서가
   들어 있었는지 봅니다. `reference_sources`를 기준으로 `hit_at_k`, `recall_at_k`(k =
   `evaluation.retrieval_k`, 기본 5), `mrr`을 계산합니다. 텍스트 단위 출처는 파일을
   직접 가리킵니다. 엔티티, 관계, 커뮤니티 리포트 출처는 계보(`text_unit_ids`)에 있는
   텍스트 단위의 파일로 귀속하며, 체인의 문서 저장소에서 접미사마다 한 번에 일괄
-  조회합니다. 커뮤니티 리포트의 계보는 커뮤니티 전체이므로 `global`/`drift` 점수는
-  답변 모델이 실제로 읽은 범위의 상한입니다. 귀속할 수 있는 출처만 순위에 넣으며,
-  `attributable_fraction`(귀속 가능한 출처 / 보고된 출처. 전략별 값은
+  조회합니다. 그 텍스트 단위를 가장 많이 담은 파일이 앞에 옵니다. 출처는 순위 순으로
+  서로 다른 파일 목록 하나로 펼치고, **k는 출처가 아니라 파일을 셉니다.** 커뮤니티
+  리포트는 커뮤니티의 모든 파일에 귀속되므로, 출처 하나로 세면 파일 50개 코퍼스에서
+  무작위 리포트 5개가 hit@5 0.98을 받았습니다(무작위 텍스트 단위 5개는 0.19). 각
+  리포트에는 `by_source_type`(섹션 유형별 출처만으로 계산한 같은 지표)도 있고, 요약의
+  `grouped_statistics.source_type`에 모입니다. 그중 `text` 행은 답변 모델이 원문
+  그대로 읽은 텍스트 단위만 채점하므로 전략 간 비교에 가장 공정합니다. 귀속할 수 없는
+  출처는 파일을 내지 않으며, `attributable_fraction`(귀속 가능한 출처 / 보고된 출처. 전략별 값은
   `grouped_statistics`에도 있음)은 순위 지표가 컨텍스트의 얼마만큼을 다루는지
   보여 줍니다. 일치 비교는 NFKC 정규화 후 대소문자를 구분하지 않으며(그래서 자모가
   분해된 NFD 한글 파일 이름과 전각 문자도 일치), 이름으로 비교합니다. 파일
@@ -1592,7 +1606,8 @@ run-eval --eval-data-path s3://my-bucket/eval/my_eval_data.json \
 채점/실패/건너뜀 개수(`metric_outcomes`)가 있고, 다음 항목도 들어 있습니다.
 
 - `grouped_statistics` — 같은 통계를 `search_strategy`(실제로 쓴 전략. `auto`에서는
-  질의마다 다름), `category`, `difficulty`별로 나눈 값입니다.
+  질의마다 다름), `category`, `difficulty`별로 나눈 값입니다. `source_type`에는 출처
+  섹션 유형(`text`, `entity`, `relationship`, `community` 등)별 검색 지표가 있습니다.
 - `abstention_statistics` — 체인이 답변 대신 고정된 컨텍스트 없음 응답("I could not
   find relevant information…")을 반환한 빈도입니다. `abstained`, `answered`,
   `abstention_rate`, 같은 값의 `per_strategy`가 있고, `answerable: false` 항목에는
@@ -1606,7 +1621,10 @@ run-eval --eval-data-path s3://my-bucket/eval/my_eval_data.json \
   `disabled`, `unavailable`, `skipped`, `failed`, 답변 생성이 먼저 실패했으면 `null`)가
   기록됩니다([재순위화 상태](#재순위화-상태) 참고).
 - `run_manifest` — CLI 인자(`--model-base-url` 같은 `*_url` 인자는 사용자 정보·쿼리·
-  프래그먼트를 뺀 값), 모델 ID(답변 생성, 평가 판정 모델·임베딩), 패키지 버전,
+  프래그먼트를 뺀 값), 모델 ID(답변 생성, 평가 판정 모델·임베딩, 그리고
+  `judge_is_answer_model`. LLM 판정 모델은 자기 출력을 선호하므로 판정 모델이 답변
+  모델과 같으면(기본값. 둘 다 `default` 티어) 판정 점수가 부풀려집니다. 시스템을
+  비교할 때는 `evaluation.evaluation_model_id`를 다른 모델로 지정하세요), 패키지 버전,
   git 커밋(`git_sha`. 추적 파일이 커밋과 다르면 `git_dirty`도 기록. 패키지를 해당
   커밋을 추적하는 체크아웃에서 실행하지 않으면 둘 다 `null`), 해석된 전체 설정의
   `config_sha256`, `library_versions`(ragas, langchain*), 데이터셋(경로와 파일 sha256,
@@ -1618,7 +1636,9 @@ run-eval --eval-data-path s3://my-bucket/eval/my_eval_data.json \
 질의별 리포트에는 평가기마다 `metrics`가 있습니다. 서로 무관한 지표의 평균은
 의미가 없으므로 종합 점수는 두지 않습니다. 각
 결과에는 `retrieved_source_ids`도 기록됩니다. 보고된 출처마다 순위 순으로, 그 출처가
-귀속된 파일 이름 목록입니다(귀속할 수 없으면 `[]`).
+귀속된 파일 이름 목록입니다(귀속할 수 없으면 `[]`). 출처마다 섹션 유형인
+`retrieved_source_types`와 모델이 받은 그래프 요소인 `retrieved_entities`,
+`retrieved_relationships`도 기록됩니다.
 
 ---
 

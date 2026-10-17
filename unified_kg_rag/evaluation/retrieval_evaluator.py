@@ -1,25 +1,34 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Retrieval evaluator: did the sources the answer model saw include the gold docs?
+"""Retrieval evaluator: did the files the answer model saw include the gold docs?
 
 Deterministic and LLM-free. Scores the rank-ordered sources reported for a
 query (``EvaluationResult.retrieved_source_ids``: per source, the file names
 it is attributed to) against the dataset's ``reference_sources``. A text unit
 names its file directly; an entity, relationship or community report is
 attributed to the files of the text units in its lineage (``text_unit_ids``,
-resolved by the manager). A community report's lineage is its whole
-community, so for ``global``/``drift`` the scores are an upper bound on what
-the answer model actually read. A source that maps to no file is
-*unattributable*; only attributable sources are ranked:
+resolved by the manager, most-supported file first). The sources are
+flattened into one list of distinct files in rank order (a file ranks where
+the first source naming it ranks), and the metrics count files, not sources:
+a community report is attributed to many files, so counting it as one source
+let five random reports cover most of a small corpus and score near-perfect
+hit@5. A source that maps to no file is *unattributable* and contributes no
+file:
 
-- ``hit_at_k``: 1.0 if any reference is matched within the top ``k``
-  attributable sources.
-- ``recall_at_k``: fraction of distinct references matched within the top ``k``.
-- ``mrr``: reciprocal rank of the first attributable source matching any
-  reference (0.0 if none matches).
+- ``hit_at_k``: 1.0 if any reference is among the top ``k`` files.
+- ``recall_at_k``: fraction of distinct references among the top ``k`` files.
+- ``mrr``: reciprocal rank of the first file matching any reference (0.0 if
+  none matches).
 - ``attributable_fraction``: attributable / reported sources — how much of the
   context the rank metrics can see. Emitted whenever the query has sources,
   with or without ``reference_sources``.
+
+The report metadata also carries ``by_source_type``: the same three metrics
+over each section type's sources alone (``text``, ``entity``,
+``relationship``, ``community``, ...), which the manager aggregates into
+``summary.grouped_statistics["source_type"]``. The ``text`` row scores only the
+text units the answer model read verbatim (reported sources are exactly the
+context it was given).
 
 ``k`` is ``evaluation.retrieval_k``. Matching rule: each identifier is
 reduced, case-insensitively, to its name (``reference_key``); a source also
@@ -63,6 +72,11 @@ from unified_kg_rag.domain.models import (
     EvaluatorType,
 )
 
+# Report-metadata key of the per-section-type scores, and the type of a source
+# whose section type is not reported.
+BY_SOURCE_TYPE_KEY = "by_source_type"
+UNKNOWN_SOURCE_TYPE = "unknown"
+
 # A file extension: "." + 1-5 ASCII alphanumerics with at least one letter, so
 # "Version 2.0" or "Route 66" keep their numeric tail, and not a version
 # (".v2"), so "notes.v1" and "notes.v2" are different names.
@@ -103,6 +117,25 @@ def source_keys(identifier: str) -> frozenset[str]:
     return frozenset(k for k in (name, stem) if k)
 
 
+def ranked_files(sources: list[list[str]]) -> list[frozenset[str]]:
+    """Match keys of the distinct files of ``sources``, in rank order.
+
+    A file ranks where the first source naming it ranks; within one source,
+    files keep the source's order. Files that reduce to the same name count
+    once.
+    """
+    seen: set[str] = set()
+    files: list[frozenset[str]] = []
+    for idents in sources:
+        for ident in idents:
+            keys = source_keys(ident)
+            name = reference_key(ident)
+            if keys and name not in seen:
+                seen.add(name)
+                files.append(keys)
+    return files
+
+
 class RetrievalEvaluator(BaseGraphRAGEvaluator):
     """Scores hit@k / recall@k / MRR of reported sources vs reference_sources."""
 
@@ -127,19 +160,18 @@ class RetrievalEvaluator(BaseGraphRAGEvaluator):
         ground_truth: str,
         **kwargs: Any,
     ) -> EvaluationReport:
-        reported = [
-            frozenset().union(*(source_keys(ident) for ident in idents))
-            for idents in result.retrieved_source_ids
+        sources = result.retrieved_source_ids
+        types = result.retrieved_source_types
+        source_types = [
+            (types[i] if i < len(types) else "") or UNKNOWN_SOURCE_TYPE
+            for i in range(len(sources))
         ]
-        # Rank only attributable sources: an unattributable one (no file name,
-        # no resolvable lineage) can be neither a hit nor a miss, so it must not
-        # push attributable sources out of the top k.
-        ranked = [keys for keys in reported if keys]
+        attributable = sum(1 for idents in sources if any(map(source_keys, idents)))
         values: dict[EvaluationMetricType, float] = {}
         skipped: dict[str, str] = {}
-        if reported:
-            values[EvaluationMetricType.ATTRIBUTABLE_FRACTION] = len(ranked) / len(
-                reported
+        if sources:
+            values[EvaluationMetricType.ATTRIBUTABLE_FRACTION] = attributable / len(
+                sources
             )
         else:
             skipped[EvaluationMetricType.ATTRIBUTABLE_FRACTION.value] = "no_sources"
@@ -150,18 +182,13 @@ class RetrievalEvaluator(BaseGraphRAGEvaluator):
             if isinstance(ref, str) and (key := reference_key(ref)):
                 references.setdefault(key, ref.strip())
 
-        def _matched(sources: list[frozenset[str]]) -> set[str]:
-            return {
-                name
-                for ref_key, name in references.items()
-                if any(ref_key in keys for keys in sources)
-            }
-
+        files = ranked_files(sources)
         metadata: dict[str, Any] = {
             **self._extract_search_metadata(result),
             "k": self.k,
-            "num_sources": len(reported),
-            "num_attributable_sources": len(ranked),
+            "num_sources": len(sources),
+            "num_attributable_sources": attributable,
+            "num_ranked_files": len(files),
             "num_references": len(references),
         }
         rank_metrics = (
@@ -174,23 +201,28 @@ class RetrievalEvaluator(BaseGraphRAGEvaluator):
         skip_reason = (
             "no_reference_sources"
             if not references
-            else "no_source_provenance" if reported and not ranked else None
+            else "no_source_provenance" if sources and not files else None
         )
         if skip_reason:
             skipped.update({m.value: skip_reason for m in rank_metrics})
         else:
-            matched_at_k = _matched(ranked[: self.k])
-            first_rank = next(
-                (rank for rank, keys in enumerate(ranked, 1) if _matched([keys])),
-                None,
-            )
-            values[EvaluationMetricType.HIT_AT_K] = 1.0 if matched_at_k else 0.0
-            values[EvaluationMetricType.RECALL_AT_K] = len(matched_at_k) / len(
-                references
-            )
-            values[EvaluationMetricType.MRR] = 1.0 / first_rank if first_rank else 0.0
-            metadata["matched_references_at_k"] = sorted(matched_at_k)
+            scores, matched_at_k, first_rank = self._rank_scores(files, references)
+            values.update(scores)
+            metadata["matched_references_at_k"] = matched_at_k
             metadata["first_relevant_rank"] = first_rank
+            by_type: dict[str, dict[str, float]] = {}
+            for source_type in dict.fromkeys(source_types):
+                type_files = ranked_files(
+                    [
+                        s
+                        for s, t in zip(sources, source_types, strict=True)
+                        if t == source_type
+                    ]
+                )
+                if type_files:
+                    type_scores, _, _ = self._rank_scores(type_files, references)
+                    by_type[source_type] = {m.value: v for m, v in type_scores.items()}
+            metadata[BY_SOURCE_TYPE_KEY] = by_type
         if skipped:
             metadata[SKIPPED_METRICS_KEY] = skipped
         return EvaluationReport(
@@ -202,3 +234,26 @@ class RetrievalEvaluator(BaseGraphRAGEvaluator):
             evaluation_time=datetime.now(),
             metadata=metadata,
         )
+
+    def _rank_scores(
+        self, files: list[frozenset[str]], references: dict[str, str]
+    ) -> tuple[dict[EvaluationMetricType, float], list[str], int | None]:
+        """(hit@k / recall@k / MRR, matched references at k, first match rank)."""
+
+        def _matched(keys: list[frozenset[str]]) -> set[str]:
+            return {
+                name
+                for ref_key, name in references.items()
+                if any(ref_key in file_keys for file_keys in keys)
+            }
+
+        matched_at_k = _matched(files[: self.k])
+        first_rank = next(
+            (rank for rank, keys in enumerate(files, 1) if _matched([keys])), None
+        )
+        scores = {
+            EvaluationMetricType.HIT_AT_K: 1.0 if matched_at_k else 0.0,
+            EvaluationMetricType.RECALL_AT_K: len(matched_at_k) / len(references),
+            EvaluationMetricType.MRR: 1.0 / first_rank if first_rank else 0.0,
+        }
+        return scores, sorted(matched_at_k), first_rank

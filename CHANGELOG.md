@@ -126,6 +126,19 @@ Defaults. Set the old value explicitly to keep the previous behaviour.
 - The Bedrock guardrail applies to the query path only
   (`aws.bedrock.guardrail.apply_to: all` restores it) (#104).
 - `graph.community_detection.auto_resolution` defaults to `false` (#141).
+- The `retrieval` evaluator's k counts distinct files, not sources: the
+  reported sources are flattened into their files in rank order (a graph
+  source's lineage files most-supported first). A community report counted as
+  one source but matched every file of its community, so five random reports
+  scored hit@5 0.98 on a 50-file corpus against 0.19 for five random text
+  units; now both score 0.19. `hit_at_k`, `recall_at_k` and `mrr` drop for
+  `global`, `drift` and `mix` (and for any source naming several files);
+  scores from earlier runs are not comparable (#315).
+- `evaluation.max_context_tokens` defaults to `null`: the RAGAS judges get
+  the answer budget (`search.token_manager.max_context_tokens`, 30000)
+  instead of 8192 tokens, so `faithfulness` and `context_recall` judge an
+  answer against the context it was given. Judge input tokens rise up to
+  about 3.7x; set `8192` to keep the old cap (it now logs a warning) (#315).
 - Entity and relationship `rank` are computed from node degree (#214), and
   relationship weight sums the extracted strengths per text unit (#189).
 
@@ -332,6 +345,15 @@ Library API (Python callers and custom backends).
   with `indexing.reset: true` to rebuild in the embedded stores (#273).
 
 ### Added
+- Evaluation: `grouped_statistics.source_type` reports the retrieval metrics
+  per source section type (its `text` row scores only the text units the
+  answer model read); `graph_aware` adds `retrieved_entity_coverage` /
+  `retrieved_relationship_coverage` over the entity and relationship sources
+  the answer model was given, and `answer_length`, because answer-text
+  coverage rises with answer length; results record
+  `retrieved_source_types`, `retrieved_entities` and
+  `retrieved_relationships`; the run manifest records
+  `models.judge_is_answer_model` (LLM judges favour their own outputs) (#315).
 - With `observability.capture_content`, the root `kg_rag.query` span records
   the redacted query as `input.value` and, outside `stream` / `astream`, the
   redacted answer as `output.value`, so the Langfuse and Phoenix trace lists
