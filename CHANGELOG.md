@@ -571,6 +571,11 @@ Library API (Python callers and custom backends).
   fused order. Reported by @vibhupb (#83) (#284).
 
 ### Changed
+- Ingestion metrics are emitted as each stage finishes instead of once at
+  the end, so a run that is stopped or times out still reports the stages it
+  completed; the run's own metrics (duration, cache hit rate) still come at
+  the end. A count several stages produce (entities after extraction and
+  gleaning) is emitted after the last of them the run has enabled (#PR).
 - An incremental run finds what a changed or deleted document contributed
   in the stores, by the text units every artifact cites: the graph's
   entities and communities citing them, their edges, and the vector

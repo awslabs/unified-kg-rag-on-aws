@@ -313,17 +313,16 @@ def test_a_failed_phased_run_resumes_at_the_failed_stage(
     }
     assert set(statuses.values()) == {"completed"}
 
-    # Each phase emits only the counts of the stages it ran: summed over the
-    # first attempt's phases, every count is reported once.
+    # Each stage's counts are emitted when it finishes, so summed over the
+    # first attempt's windows every count is reported once, and the retry
+    # reports only what it ran.
     entity_counts = [
         m["total_entities_extracted"]
         for m in emitted_first
         if "total_entities_extracted" in m
     ]
     assert len(entity_counts) == 1
-    assert [m for m in harness.sink.emitted if "total_items_indexed" in m] == [
-        harness.sink.emitted[-1]
-    ]
+    assert len([m for m in harness.sink.emitted if "total_items_indexed" in m]) == 1
     assert all("total_entities_extracted" not in m for m in harness.sink.emitted)
 
 
