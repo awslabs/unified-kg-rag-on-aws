@@ -431,6 +431,12 @@ Library API (Python callers and custom backends).
   to replace an existing index's communities (incremental runs cluster only
   their delta). Set a large `max_cluster_size` to keep the previous
   partition (#314).
+- The answer context no longer leaves budget unused while sections are cut:
+  a share a type cannot fill (all of its candidates fit) goes to the types
+  that still have candidates, by share, and LightRAG `mix`/`hybrid` give it
+  to chunks first, as upstream LightRAG does. Per-type shares were hard
+  caps, which left 27-34% of the 30,000-token window empty in typical
+  `local` and `mix` queries; those now use over 99% of it (#PR).
 - Fusion reranks before it diversifies: fuse, rerank, MMR diversity
   filtering, then the per-type quota (or `top_k`) cut. MMR used to cut each
   type to its quota on fused scores first, so 16-50% of the reranker's top

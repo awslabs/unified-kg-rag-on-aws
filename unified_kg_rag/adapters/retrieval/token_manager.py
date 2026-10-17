@@ -204,12 +204,18 @@ class TokenManager:
         retrieval_results: list[RetrievalResult],
         query: str,
         max_tokens: int | None = None,
+        spare_budget_first: Sequence[SectionType] = (),
     ) -> OptimizedContext:
+        """The sections of ``retrieval_results`` that fit the context budget.
+
+        ``spare_budget_first`` names the section types that take budget other
+        types leave unused before the rest share it (``_select_per_type``).
+        """
         with observability.span(
             "kg_rag.context_build", results_in=len(retrieval_results)
         ) as span:
             optimized, budget = self._optimize_context(
-                retrieval_results, query, max_tokens
+                retrieval_results, query, max_tokens, spare_budget_first
             )
             # Tokens used vs the budget the sections had to fit in.
             span.set_attributes(
@@ -227,6 +233,7 @@ class TokenManager:
         retrieval_results: list[RetrievalResult],
         query: str,
         max_tokens: int | None,
+        spare_budget_first: Sequence[SectionType] = (),
     ) -> tuple[OptimizedContext, int]:
         # A caller-supplied budget is still capped by what the answer model can
         # accept, so a large --top-k / RAGInput.max_tokens cannot overflow it.
@@ -261,7 +268,7 @@ class TokenManager:
             for section_type in {s.section_type for s in all_sections}
         )
         selected_sections = self._select_optimal_sections(
-            all_sections, max(available_tokens, 0)
+            all_sections, max(available_tokens, 0), spare_budget_first
         )
 
         total_tokens = sum(section.token_count for section in selected_sections)
@@ -364,8 +371,36 @@ class TokenManager:
             total = float(len(present)) or 1.0
         return {t: int(token_budget * s / total) for t, s in shares.items()}
 
+    def _pack_type(
+        self, ranked: list[ContextSection], cap: int
+    ) -> tuple[list[ContextSection], bool]:
+        """``ranked`` packed into ``cap`` tokens in order, and whether all of
+        it was seated whole (the type has no candidate left)."""
+        packed: list[ContextSection] = []
+        used = 0
+        for section in ranked:
+            room = cap - used
+            if section.token_count <= room:
+                packed.append(section)
+                used += section.token_count
+                continue
+            # The section overflows the remaining share. Upstream's rows are
+            # table rows, so it simply stops; ours are whole retrieved items,
+            # and a single community report routinely exceeds a 10% share —
+            # dropping the type outright would leave it unrepresented. Truncate
+            # the FIRST overflowing section to fit instead, then stop this type
+            # (the budget is now spent).
+            head = self._truncate_to_tokens(section, room) if room > 0 else None
+            if head is not None:
+                packed.append(head)
+            return packed, False
+        return packed, True
+
     def _select_optimal_sections(
-        self, sections: list[ContextSection], token_budget: int
+        self,
+        sections: list[ContextSection],
+        token_budget: int,
+        spare_budget_first: Sequence[SectionType] = (),
     ) -> list[ContextSection]:
         # Synthesized sections (global search's ranked map key points or reduce
         # summary) are not one retrieved item of their type: they condense every
@@ -396,33 +431,35 @@ class TokenManager:
             break
         evidence = [s for s in sections if not s.metadata.get("synthesized")]
         if not reserved:
-            return self._select_per_type(evidence, token_budget)
-        return reserved + self._select_per_type(evidence, remaining, fallback=False)
+            return self._select_per_type(evidence, token_budget, spare_budget_first)
+        return reserved + self._select_per_type(
+            evidence, remaining, spare_budget_first, fallback=False
+        )
 
     def _select_per_type(
         self,
         sections: list[ContextSection],
         token_budget: int,
+        spare_budget_first: Sequence[SectionType] = (),
         fallback: bool = True,
     ) -> list[ContextSection]:
-        # The per-type budget is a HARD CAP, not a floor.
+        # Each type is packed in score order against its own share first, so
+        # no type can cross into another's share by out-scoring it: scores are
+        # only ever compared within a type. Both upstreams start the same way:
+        # MS GraphRAG's mixed_context packs the community / local / text
+        # sections against independent budgets (community_prop,
+        # 1 - community_prop - text_unit_prop, text_unit_prop), and LightRAG caps
+        # entities and relations (max_entity_tokens / max_relation_tokens).
         #
-        # This used to pack each type to its sub-budget and then run a second pass
-        # that pooled ALL unused budget and offered it to the leftover sections of
-        # ANY type by raw priority. Because every leftover competed in one global
-        # pool, whichever type happened to have the most/highest-scoring leftovers
-        # absorbed the entire remainder. That
-        # made the configured shares advisory rather than binding: one type could
-        # take most of the window against a 0.10 share, and once chunk candidates
-        # carried real descending rank scores TEXT evicted the community and entity
-        # sections almost entirely.
-        #
-        # Neither upstream pools: MS GraphRAG's mixed_context builds the community /
-        # local / text sections against three INDEPENDENT strict token budgets
-        # (community_prop, 1 - community_prop - text_unit_prop, text_unit_prop);
-        # LightRAG truncates entities / relations / chunks against separate per-type
-        # limits. Mirror that: each type is packed only against its own cap, and no
-        # type can ever cross into another's share by out-scoring it.
+        # Budget a type leaves unused because all of its candidates fit is then
+        # handed to the types that still have candidates, and they are packed
+        # again: first to the ``spare_budget_first`` types (LightRAG's mix/hybrid
+        # give chunks what the KG sections did not use: operate.py's
+        # available_chunk_tokens = max_total_tokens - KG tokens used), else in
+        # proportion to the receivers' shares. A hard cap left 27-34% of the
+        # window unused while other types were being cut. The hand-out cannot
+        # crowd a type out: it only runs once a type has nothing left to seat,
+        # and it goes by share, never by comparing scores across types.
         by_type: dict[SectionType, list[ContextSection]] = {}
         for s in sections:
             if s.token_count > 0:
@@ -432,40 +469,28 @@ class TokenManager:
         for lst in by_type.values():
             lst.sort(key=lambda s: s.priority, reverse=True)
 
-        # ONE pass, no leftover re-offering. A type that cannot fill its share
-        # (e.g. only 8 chunk candidates survive local search's entity ceiling)
-        # leaves the remainder UNUSED — exactly as MS GraphRAG leaves an unfilled
-        # text_unit_prop share unused rather than handing it to community reports.
-        # Re-offering the remainder to whichever type still has candidates would
-        # let that one type (typically community reports) absorb most of the
-        # window, the imbalance the per-type shares exist to prevent.
-        # Renormalization over PRESENT types (in _type_budgets) is the only
-        # redistribution, and it is static — it cannot depend on how many
-        # candidates a type happens to have.
-        budgets = self._type_budgets(list(by_type), token_budget)
-        selected: list[ContextSection] = []
-        for stype, lst in by_type.items():
-            cap = budgets[stype]
-            sub_used = 0
-            for section in lst:
-                room = cap - sub_used
-                if room <= 0:
-                    break
-                if section.token_count <= room:
-                    selected.append(section)
-                    sub_used += section.token_count
-                    continue
-                # The section overflows the remaining share. Upstream's rows are
-                # table rows, so it simply stops; ours are whole retrieved items,
-                # and a single community report routinely exceeds a 10% share —
-                # dropping the type outright would leave it unrepresented and most
-                # of the window unused. Truncate the FIRST overflowing
-                # section to fit instead, so every type with candidates is
-                # represented, then stop this type (the budget is now spent).
-                head = self._truncate_to_tokens(section, room)
-                if head is not None:
-                    selected.append(head)
+        shares = self._type_budget_shares(list(by_type))
+        caps = self._type_budgets(list(by_type), token_budget)
+        min_spare = self.config.min_truncated_section_tokens
+        # A round normally spends the spare or seats a receiver completely, so
+        # one round per type (after the first) bounds the loop.
+        for _ in range(len(by_type) + 1):
+            packed = {t: self._pack_type(lst, caps[t]) for t, lst in by_type.items()}
+            spare = token_budget - sum(
+                s.token_count for seated, _ in packed.values() for s in seated
+            )
+            receivers = [t for t, (_, done) in packed.items() if not done]
+            if spare < min_spare or not receivers:
                 break
+            first = [t for t in spare_budget_first if t in receivers]
+            if first:
+                caps[first[0]] += spare
+                continue
+            total = sum(shares[t] for t in receivers)
+            for t in receivers:
+                weight = shares[t] / total if total > 0 else 1.0 / len(receivers)
+                caps[t] += int(spare * weight)
+        selected = [s for seated, _ in packed.values() for s in seated]
 
         if selected or not fallback:
             return selected

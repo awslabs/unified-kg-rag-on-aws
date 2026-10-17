@@ -280,3 +280,26 @@ async def test_full_chain_sources_are_budgeted_selection_without_vectors(
     assert out.metadata["context_sections_excluded"] >= 1
     for source in out.sources:
         assert not [k for k in source["metadata"] if k.endswith("_embedding")]
+
+
+@pytest.mark.parametrize(
+    ("strategy", "expected"),
+    [
+        (SearchStrategy.MIX, ("text",)),
+        (SearchStrategy.HYBRID, ("text",)),
+        (SearchStrategy.LOCAL, ()),
+        (SearchStrategy.SIMPLE, ()),
+    ],
+)
+def test_lightrag_modes_give_spare_context_budget_to_chunks_first(
+    config: Config, mocker, strategy: SearchStrategy, expected: tuple[str, ...]
+) -> None:
+    # Upstream LightRAG hands chunks the budget its KG sections leave unused;
+    # GraphRAG strategies share it by type share.
+    chain = _chain(config)
+    spy = mocker.spy(chain.token_manager, "optimize_context")
+    state = _state([_text_result(0, words=5, score=0.9)], max_tokens=100)
+    state["resolved_strategy"] = strategy
+    chain._context_optimization_step(state)
+    passed = spy.call_args.kwargs["spare_budget_first"]
+    assert tuple(t.value for t in passed) == expected

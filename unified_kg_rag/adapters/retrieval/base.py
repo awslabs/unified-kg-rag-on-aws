@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, ClassVar
 
 from langchain_core.callbacks import (
     AsyncCallbackManagerForRetrieverRun,
@@ -122,6 +122,10 @@ class BaseSearchStrategy(ABC):
     therefore keep per-query state local to ``asearch`` (and what it calls)
     and treat instance attributes as read-only after ``__init__``.
     """
+
+    # Section types that take the context budget other types leave unused
+    # before the rest share it (``TokenManager.optimize_context``).
+    spare_context_budget_first: ClassVar[tuple[SectionType, ...]] = ()
 
     def __init__(
         self,

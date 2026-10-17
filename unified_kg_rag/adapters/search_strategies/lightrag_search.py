@@ -157,6 +157,10 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
     roles (``self.graph_retriever`` / ``self.document_retriever``).
     """
 
+    # Upstream gives chunks what the KG sections leave unused
+    # (operate.py: available_chunk_tokens = max_total_tokens - KG tokens).
+    spare_context_budget_first = (SectionType.TEXT,)
+
     def __init__(
         self,
         config: Config,

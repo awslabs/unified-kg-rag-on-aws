@@ -862,8 +862,10 @@ search:
     # as an unusable fragment.
     min_truncated_section_tokens: 64
     # Relative shares of the context window per section type. Each type is packed
-    # against its own share only, so no type can crowd out another; shares are
-    # renormalized over the types actually present in a query's candidates.
+    # against its own share, so no type can crowd out another; shares are
+    # renormalized over the types actually present in a query's candidates. A
+    # share a type cannot fill goes to the types that still have candidates (by
+    # share; LightRAG mix/hybrid give it to chunks first).
     type_budgets:
       text: 0.50
       entity: 0.20

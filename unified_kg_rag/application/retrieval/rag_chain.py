@@ -1126,10 +1126,16 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
     def _optimize_context(self, state: dict[str, Any]) -> OptimizedContext:
         query: ProcessedQuery = state["processed_query"]
         search_results: SearchResult = state["search_results"]
+        strategy = state.get("resolved_strategy")
         return self.token_manager.optimize_context(
             retrieval_results=search_results.results,
             query=query.final_query,
             max_tokens=state.get("max_tokens"),
+            spare_budget_first=(
+                get_strategy_spec(strategy).strategy_class.spare_context_budget_first
+                if strategy is not None
+                else ()
+            ),
         )
 
     def _context_optimization_step(self, state: dict[str, Any]) -> OptimizedContext:

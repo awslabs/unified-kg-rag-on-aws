@@ -2206,8 +2206,11 @@ class ContextTypeBudgetConfig(BaseModel):
 
     Shares are relative weights, not fractions: they are renormalized over the
     section types actually present in a query's candidate set, so an absent type
-    does not shrink the usable window. Raise ``text`` to favour verbatim source
-    passages, raise ``community`` to favour high-level synthesis.
+    does not shrink the usable window. Budget a type leaves unused because all
+    of its candidates fit goes to the types that still have candidates, by
+    share (LightRAG mix/hybrid give it to chunks first, as upstream does).
+    Raise ``text`` to favour verbatim source passages, raise ``community`` to
+    favour high-level synthesis.
     """
 
     text: float = Field(
