@@ -49,6 +49,7 @@ from unified_kg_rag.domain.models import (
     DocStatusRecord,
     Document,
     DocumentDelta,
+    settings_changed,
 )
 from unified_kg_rag.shared import ConfigurationError, get_logger
 from unified_kg_rag.shared.utils.document_identity import (
@@ -310,9 +311,7 @@ def _settings_changed(
 ) -> bool:
     """Whether ``record`` was extracted with other settings than the run's
     (unknown for a record without a fingerprint: not changed)."""
-    return extraction_fingerprint is not None and (
-        record.extraction_fingerprint not in (None, extraction_fingerprint)
-    )
+    return settings_changed(record.extraction_fingerprint, extraction_fingerprint)
 
 
 def validate_retired_scopes(

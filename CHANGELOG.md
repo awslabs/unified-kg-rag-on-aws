@@ -775,6 +775,9 @@ changed once with the full-config keys (#332).
   fused order. Reported by @vibhupb (#83) (#284).
 
 ### Changed
+- The DynamoDB, SQLite and in-memory doc-status registries classify a
+  corpus with one rule, `DocumentDelta.classify` (with `settings_changed`
+  shared with the delta detector), instead of a copy each (#PR).
 - The design doc is about half as long: each section opens with a summary,
   the ingestion and incremental sections are split into short subsections,
   the merge rules and the retrieval error policy are tables, the

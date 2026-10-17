@@ -29,6 +29,7 @@ from unified_kg_rag.domain.models import (
     DocStatusRecord,
     DocumentDelta,
     ExtractionSettings,
+    StoredDocument,
 )
 from unified_kg_rag.shared import (
     ConfigurationError,
@@ -489,13 +490,10 @@ class DynamoDBDocStatusStore:
         with self._registry_errors("scan the records"):
             return [self._deserialize(item) for item in self._items(None)]
 
-    def _stored_states(
-        self, namespace: str | None
-    ) -> dict[str, tuple[str, str | None, bool, str | None]]:
-        """``{doc_id: (content_hash, scope, failed, extraction_fingerprint)}``
-        of ``namespace`` (every namespace for ``None``), projected: ``diff``
-        needs no text units."""
-        states: dict[str, tuple[str, str | None, bool, str | None]] = {}
+    def _stored_states(self, namespace: str | None) -> dict[str, StoredDocument]:
+        """The records of ``namespace`` (every namespace for ``None``) as the
+        delta rule reads them, projected: ``diff`` needs no text units."""
+        states: dict[str, StoredDocument] = {}
         for item in self._items(
             namespace,
             # Attribute-name placeholders keep the projection clear of
@@ -511,7 +509,7 @@ class DynamoDBDocStatusStore:
         ):
             doc_id = item.get(_SORT_KEY, {}).get("S")
             if doc_id is not None:
-                states[doc_id] = (
+                states[doc_id] = StoredDocument(
                     item.get("content_hash", {}).get("S", ""),
                     item.get(_SCOPE_ATTRIBUTE, {}).get("S"),
                     item.get("status", {}).get("S") == DocStatus.FAILED.value,
@@ -527,42 +525,14 @@ class DynamoDBDocStatusStore:
     ) -> DocumentDelta:
         """Classify ``{doc_id: content_hash}`` against persisted state.
 
-        Mirrors ``FakeDocStatusStore.diff`` exactly so the production and test
-        implementations stay behaviourally identical: with ``scope``, only
-        the scope's namespace is queried and only its records of that scope
-        can be classified deleted. A FAILED record is ``changed`` even with an
-        unchanged hash, so it is retried; so is a record whose extraction
-        fingerprint is set and differs from ``extraction_fingerprint`` (see
-        ``DocStatusPort.diff``).
+        With ``scope``, only the scope's namespace is queried; the partition
+        is ``DocumentDelta.classify``, as for every registry.
         """
         namespace = scope_namespace(scope) if scope is not None else None
         operation = "scan the records" if namespace is None else "query the records"
         with self._registry_errors(operation):
             stored = self._stored_states(namespace)
-        delta = DocumentDelta()
-        for doc_id, content_hash in incoming.items():
-            if doc_id not in stored:
-                delta.new.append(doc_id)
-            elif stored[doc_id][0] != content_hash or stored[doc_id][2]:
-                delta.changed.append(doc_id)
-            elif extraction_fingerprint is not None and (
-                stored[doc_id][3] not in (None, extraction_fingerprint)
-            ):
-                delta.changed.append(doc_id)
-                delta.settings_changed.append(doc_id)
-            else:
-                delta.unchanged.append(doc_id)
-        incoming_ids = set(incoming)
-        delta.deleted = [
-            doc_id
-            for doc_id, (_, stored_scope, _, _) in stored.items()
-            if doc_id not in incoming_ids and (scope is None or stored_scope == scope)
-        ]
-        # Already projected for the deletion filter: reporting it is free.
-        delta.stored_scopes = sorted(
-            {s for _, s, _, _ in stored.values() if s is not None}
-        )
-        return delta
+        return DocumentDelta.classify(incoming, stored, scope, extraction_fingerprint)
 
     @staticmethod
     def _serialize(record: DocStatusRecord) -> dict[str, Any]:

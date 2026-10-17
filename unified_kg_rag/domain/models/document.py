@@ -2,9 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 import hashlib
 import json
+from collections.abc import Mapping
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -194,6 +195,22 @@ class DocumentLineage(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class StoredDocument(NamedTuple):
+    """What the delta rule reads of a stored registry record."""
+
+    content_hash: str
+    scope: str | None
+    failed: bool
+    extraction_fingerprint: str | None
+
+
+def settings_changed(stored: str | None, run: str | None) -> bool:
+    """Whether a record extracted with fingerprint ``stored`` was extracted
+    with other settings than the run's ``run``; unknown on either side (a
+    record without a fingerprint, a run comparing by content) is not."""
+    return run is not None and stored not in (None, run)
+
+
 class DocumentDelta(BaseModel):
     """Partition of an incoming corpus relative to the persisted registry.
 
@@ -241,6 +258,47 @@ class DocumentDelta(BaseModel):
         "would read unchanged: their stored extraction fingerprint differs "
         "from the run's, so they are re-extracted with the current settings",
     )
+
+    @classmethod
+    def classify(
+        cls,
+        incoming: Mapping[str, str],
+        stored: Mapping[str, StoredDocument],
+        scope: str | None = None,
+        extraction_fingerprint: str | None = None,
+    ) -> "DocumentDelta":
+        """The delta rule every ``DocStatusPort.diff`` applies.
+
+        ``incoming`` is ``{doc_id: content_hash}``, ``stored`` the records the
+        store read for the diff. A document is ``new`` without a record,
+        ``changed`` when its hash differs or its record is FAILED (so it is
+        retried), and also when only its extraction settings changed
+        (``settings_changed`` too); else ``unchanged``. With ``scope``, only
+        stored records of that scope can be ``deleted``.
+        """
+        delta = cls()
+        for doc_id, content_hash in incoming.items():
+            record = stored.get(doc_id)
+            if record is None:
+                delta.new.append(doc_id)
+            elif record.content_hash != content_hash or record.failed:
+                delta.changed.append(doc_id)
+            elif settings_changed(
+                record.extraction_fingerprint, extraction_fingerprint
+            ):
+                delta.changed.append(doc_id)
+                delta.settings_changed.append(doc_id)
+            else:
+                delta.unchanged.append(doc_id)
+        delta.deleted = [
+            doc_id
+            for doc_id, record in stored.items()
+            if doc_id not in incoming and (scope is None or record.scope == scope)
+        ]
+        delta.stored_scopes = sorted(
+            {r.scope for r in stored.values() if r.scope is not None}
+        )
+        return delta
 
     @property
     def is_empty(self) -> bool:
