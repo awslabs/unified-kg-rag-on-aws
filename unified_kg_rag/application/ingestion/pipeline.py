@@ -6,7 +6,7 @@ import functools
 import secrets
 import time
 from collections.abc import Callable, Iterator, Mapping
-from contextlib import contextmanager
+from contextlib import AbstractContextManager, contextmanager, nullcontext
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar
@@ -18,6 +18,7 @@ from unified_kg_rag.adapters.ingestion.parser import ParserFactory
 from unified_kg_rag.adapters.llm.response_cache import LLMResponseCache
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.application.bootstrap import build_providers
+from unified_kg_rag.application.ingestion.namespace_lease import NamespaceLease
 from unified_kg_rag.application.ingestion.pipeline_stages import (
     ClaimExtractionStage,
     ClaimResolutionStage,
@@ -49,6 +50,7 @@ from unified_kg_rag.ports import DocStatusPort, GraphIndexer, VectorIndexer
 from unified_kg_rag.shared import (
     CacheSyncError,
     ConfigurationError,
+    NamespaceLeaseError,
     PipelineExecutionError,
     PipelineInterrupted,
     PipelineResumeError,
@@ -191,12 +193,16 @@ class DataIngestionPipeline:
         "community_drift_overlap_share": frozenset({"indexing"}),
         "community_rebuild_recommended": frozenset({"indexing"}),
         "total_extraction_failures": frozenset({"graph_extraction"}),
+        "total_documents_quarantined": frozenset({"document_loading"}),
         "total_gleaning_failures": frozenset({"gleaning"}),
         "total_claim_extraction_failures": frozenset({"claim_extraction"}),
     }
 
     # Names of the stages the current run executed (not skipped as completed).
     _executed_stages: frozenset[str] = frozenset()
+    # The doc-status registry handed to the stages (None when off); the run
+    # holds its namespace's write lease in it.
+    _doc_status: DocStatusPort | None = None
 
     # Fingerprint of the run's corpus contents, computed in run(); part of every
     # stage cache key so a changed corpus is a cache miss, not a stale resume.
@@ -366,6 +372,7 @@ class DataIngestionPipeline:
             if self.providers.doc_status_enabled
             else None
         )
+        self._doc_status = doc_status
         cache_directory = Path(self.pipeline_config.local_directory)
         extra_kwargs: dict[PipelineStageType, dict[str, Any]] = {
             PipelineStageType.DOCUMENT_PARSING: {
@@ -544,7 +551,8 @@ class DataIngestionPipeline:
                     source_path, resolved_pipeline_id, resolved_resume_stage
                 )
 
-            self._execute_pipeline(context, start_stage_name)
+            with self._namespace_lease():
+                self._execute_pipeline(context, start_stage_name)
 
             if context.status == PipelineStageStatus.FAILED:
                 logger.warning(
@@ -562,6 +570,9 @@ class DataIngestionPipeline:
         except KeyboardInterrupt:
             self._checkpoint_on_stop()
             raise
+        except NamespaceLeaseError:
+            # Another run writes the namespace: nothing was read or written.
+            raise
         except Exception as e:
             logger.exception("Pipeline execution failed: %s", e)
             raise PipelineExecutionError(f"Failed to run pipeline: {e}") from e
@@ -570,6 +581,18 @@ class DataIngestionPipeline:
                 self.llm_response_cache.close()
             self._checkpoint_id = None
             reset_contextvars(**log_context)
+
+    def _namespace_lease(self) -> AbstractContextManager[NamespaceLease | None]:
+        """The write lease of the run's index namespace, held for the whole
+        run when the doc-status registry is on (see ``namespace_lease``)."""
+        if self._doc_status is None:
+            return nullcontext()
+        namespace = config_registry_namespace(
+            self.config.indexing, self.config.processing.document_parsing.index_value
+        )
+        return NamespaceLease(
+            self._doc_status, namespace, self.config.indexing.lease_seconds
+        )
 
     def _open_llm_response_cache(self, pipeline_id: str) -> None:
         """Serve this run's ingestion model calls from the responses earlier
@@ -1454,6 +1477,13 @@ class DataIngestionPipeline:
             ),
             "total_claim_extraction_failures": int(
                 self._get_stage_metric(context, "claim_extraction", "failed_units")
+            ),
+            # Documents an incremental run stopped retrying because their
+            # indexing kept dying (the DocumentsQuarantined alarm).
+            "total_documents_quarantined": int(
+                self._get_stage_metric(
+                    context, "document_loading", "documents_quarantined"
+                )
             ),
             "cache_hit_rate": cache_stats.hit_rate,
             "cache_size_mb": cache_stats.total_size_mb,

@@ -20,28 +20,47 @@
 3. **엔드포인트.** `run-ingestion`, `run-rag`, `run-eval`은 시작할 때 모델을
    호출하기 전에 필요한 저장소 엔드포인트가 설정되어 있는지 검사합니다
    ([시작 시 엔드포인트 검사](#시작-시-엔드포인트-검사) 참고).
-4. **같은 저장소에서 다른 수집이 실행 중이지 않아야 합니다.** 동시 실행은
-   지원하지 않습니다([동시 실행](#동시-실행) 참고). CDK 스택에서는
+4. **같은 저장소에서 다른 수집이 실행 중이지 않아야 합니다.** 문서 상태
+   레지스트리를 쓰면 같은 인덱스 네임스페이스의 두 번째 실행은
+   `NamespaceLeaseError`로 멈추고, 레지스트리가 없으면 동시 실행을 지원하지
+   않습니다([동시 실행](#동시-실행) 참고). CDK 스택에서는
    `aws stepfunctions list-executions --state-machine-arn <arn> --status-filter RUNNING`으로
    확인합니다.
 
 ## 동시 실행
 
-수집 실행을 동시에 여러 개 돌리는 것은 지원하지 않습니다. 다음 대상에 대해 다른
-실행이 진행 중이면 새 실행을 시작하지 마세요.
+문서 상태 레지스트리를 쓰면 한 인덱스 네임스페이스에는 한 번에 한 실행만 씁니다.
+실행은 첫 단계 전에 네임스페이스의 쓰기 임대(lease)를 얻어 끝날 때까지 유지하며,
+`indexing.lease_seconds`(기본값 300초)의 3분의 1마다 갱신합니다. 같은
+네임스페이스의 두 번째 실행은 무엇이든 읽거나 쓰기 전에 곧바로 멈춥니다.
 
-- **같은 인덱스 접미사**(같은 OpenSearch 별칭과 Neptune 레이블). 전체 재색인은
-  타임스탬프가 붙은 새 인덱스에 쓰고, 별칭을 새 인덱스로 옮긴 뒤 그 별칭의 이전
-  인덱스를 지웁니다. 그래서 한 실행이 다른 실행이 쓰고 있는 인덱스를 지우거나,
-  별칭을 다른 실행의 인덱스에 남길 수 있습니다. 재구축(reset)은 다른 실행이
-  쓰는 도중에 그 접미사의 저장소를 비웁니다.
-- **같은 문서 상태 테이블 네임스페이스.** 증분 실행은 제거하는 텍스트 단위를
-  인용하는 것을 저장소에서 지우고 자기 문서의 레지스트리 레코드를 덮어씁니다. 그래서
-  다른 실행이 쓰는 것을 지우거나 정리하고, 그 실행의 레코드를 바꿀 수 있습니다.
+```text
+NamespaceLeaseError: Index namespace '<namespace>' is being written by
+<host>:<pid>:<id> (its lease runs until <time> unless renewed) ...
+```
 
-인덱스 접미사가 다르고 문서 상태 테이블(`aws.dynamodb.table_name`)도 따로 쓰는
-실행은 어느 쪽도 공유하지 않으므로 함께 실행할 수 있습니다. 그 밖의 경우에는 한
-실행이 끝난 뒤 다음 실행을 시작합니다.
+그 실행이 끝날 때까지 기다렸다가 다시 시작합니다. 죽은 실행(강제 종료된 태스크,
+사라진 호스트)은 갱신을 멈추므로, 그 임대는 마지막 갱신 뒤 늦어도
+`lease_seconds` 안에 만료되고 다음 실행은 그대로 진행됩니다. 따로 정리할 것은
+없습니다. DynamoDB에서 임대는 파티션 키 `namespace` = `<namespace>`, 정렬 키
+`doc_id` = `#lease`인 항목입니다(소유자는 `lease_owner`, 만료 시각은 테이블의 TTL
+속성인 `lease_expires_at`에 있으므로 만료되면 DynamoDB가 지웁니다). SQLite
+레지스트리에서는 `leases` 테이블의 네임스페이스 행입니다. 직접 지우는 것은 그 항목에
+적힌 실행이 끝났는지 확인한 뒤에만 합니다. 갱신이 계속 실패해 임대가 만료됐거나
+다른 실행이 임대를 가져간 실행은 다음 레지스트리·저장소 쓰기 전에
+`NamespaceLeaseError: This run lost the write lease ...`로 멈춥니다. 다른 실행이
+끝난 뒤 다시 실행합니다. 사용자 정의 정책을 쓰는 레지스트리에는 임대용
+`dynamodb:PutItem`, `GetItem`, `DeleteItem` 권한이 필요하고(CDK 스택의 권한 부여에
+포함됨), 라이브러리가 테이블을 만들 때(`aws.dynamodb.create_table_if_missing`)는
+`dynamodb:UpdateTimeToLive`도 필요합니다.
+
+레지스트리가 없으면 잠그는 장치가 없고 동시 실행을 지원하지 않습니다. **같은 인덱스
+접미사**(같은 OpenSearch 별칭과 Neptune 레이블)에 다른 실행이 진행 중이면 새 실행을
+시작하지 마세요. 전체 재색인은 타임스탬프가 붙은 새 인덱스에 쓰고, 별칭을 새
+인덱스로 옮긴 뒤 그 별칭의 이전 인덱스를 지웁니다. 그래서 한 실행이 다른 실행이 쓰고
+있는 인덱스를 지우거나, 별칭을 다른 실행의 인덱스에 남길 수 있습니다.
+`IncrementalIndexer`를 직접 쓰는 API도 임대를 얻지 않습니다. 서로 다른
+네임스페이스는 따로 임대하므로 함께 실행할 수 있습니다.
 
 문서 상태 테이블 네임스페이스는 인덱스 접미사(`index_value`, 지정하지 않으면
 `default`)와 `indexing.additional_suffix`로 정해지며,
@@ -58,10 +77,10 @@
 
 CDK 스택에서 `start-execution` 한 번은 수집 태스크를 실행하는 실행 하나를
 시작합니다. 스택에는 일정이나 이벤트 트리거가 없으므로 누군가(또는 직접 추가한
-자동화가) `start-execution`을 호출할 때만 실행이 시작되지만, 상태 머신은 실행
-중에 두 번째 실행이 시작되는 것을 막지 않습니다. 먼저 위 명령으로 `RUNNING`
-실행이 있는지 확인하고 실행이 겹치지 않게 합니다. 일정을 추가한다면 이전 실행이
-아직 돌고 있을 수 있는 동안(상태 머신 제한 시간 `sfn_timeout_hours`, 기본 6시간까지)에는 실행되지 않게
+자동화가) `start-execution`을 호출할 때만 실행이 시작됩니다. 상태 머신은 실행 중에 두 번째
+실행이 시작되는 것을 막지 않으며, 그때는 임대가 두 번째 실행을 실패시킵니다. 먼저
+위 명령으로 `RUNNING` 실행이 있는지 확인하고, 일정을 추가한다면 이전 실행이 아직
+돌고 있을 수 없을 때만(상태 머신 제한 시간 `sfn_timeout_hours`, 기본 6시간) 실행되게
 설정합니다.
 
 ## 다시 수집하기
@@ -72,7 +91,7 @@ CDK 스택에서 `start-execution` 한 번은 수집 태스크를 실행하는 �
 |---|---|---|---|
 | 중단된 실행 마무리 | 같은 `--pipeline-id`로 다시 실행합니다(CDK 스택에서는 같은 `pipeline_id`로 새 실행을 시작). 처음으로 실패했거나 끝나지 않은 단계부터 재개하며 이미 완료된 단계는 건너뜁니다. `--resume-from-stage <stage>`로 단계를 지정할 수 있습니다. | 재사용 | 실행되는 단계가 기록 |
 | 모든 단계 다시 계산 | `--force-rebuild` | 무시하고 새로 기록 | 평소대로 기록(활성화 시 증분) |
-| 저장소를 처음부터 재구축 | 한 번의 실행에만 `indexing.reset: true` | 변경 없음 | 비운 뒤 코퍼스 전체를 인덱싱하고 모든 문서를 다시 기록 |
+| 저장소를 처음부터 재구축 | 한 번의 실행에만 `indexing.reset: true` | 변경 없음 | 서비스를 멈추지 않고 재구축. 새 벡터 인덱스가 별칭 전환으로 이전 인덱스를 대체하고, 그래프는 제자리에서 다시 쓴 뒤 재구축이 쓰지 않은 것을 마지막에 지웁니다. 모든 문서를 다시 기록한 다음 네임스페이스의 나머지 레코드를 지웁니다(테이블의 다른 네임스페이스 레코드는 남김). 실패한 reset은 아무것도 지우지 않음 |
 
 저장된 데이터에 반영되는 설정을 바꾼 뒤에는 `indexing.reset: true`를 쓰고, 단계
 결과도 바뀌어야 하면 `--force-rebuild`를 함께 씁니다.
@@ -82,12 +101,15 @@ CDK 스택에서 `start-execution` 한 번은 수집 태스크를 실행하는 �
   바뀝니다)
 - 증분 실행이 덧붙이는 커뮤니티를 새로 고치고, 엔티티에 현재 이름의 id를 줄 때
   ([증분 실행](#증분-실행) 참고)
-- 레지스트리에 추출 지문이 없던 시기에 쓴 레코드가 있을 때의 추출 설정(프롬프트,
-  `entity_types`, 추출·청킹 모델, 청크 크기 등) 변경, 또는 내장 프롬프트 템플릿
-  (코드) 수정. 그 밖의 경우 증분 실행은 저장된 지문이 현재 설정과 다른 미변경
-  문서를 스스로 다시 추출하고 그 수를 로그로 남깁니다
-  ([사용자 가이드 §5](./user-guide.ko.md#작업-흐름) 참고). 지문이 없는 레코드는
-  콘텐츠로만 비교하므로 초기화하기 전까지 이전 추출 결과를 유지합니다.
+- 내장 프롬프트 템플릿(코드)을 수정했을 때. 그 밖의 추출 설정(프롬프트,
+  `entity_types`, 추출·청킹 모델, 청크 크기 등)은 초기화할 필요가 없습니다. 증분
+  실행이 저장된 지문이 현재 설정과 다른 미변경 문서를 스스로 다시 추출하고 그 수를
+  로그로 남깁니다([사용자 가이드 §5](./user-guide.ko.md#작업-흐름) 참고).
+
+reset 동안에도 질의는 이전 내용을 읽습니다. 벡터 인덱스는 인덱스 유형마다 별칭을
+옮기고, 그래프에는 재구축이 쓰지 않은 것을 지우기 전까지 이전 정점·엣지와 다시
+구축한 정점·엣지가 섞여 있습니다. 실패한 reset은 이전 그래프와 레지스트리 레코드를
+(새로 쓴 것 옆에) 그대로 남기므로 다시 실행합니다.
 
 끝나면 `indexing.reset`을 다시 `false`로 돌립니다. 그대로 두면 실행할 때마다
 재구축합니다.
@@ -127,9 +149,12 @@ CDK 스택에서 `start-execution` 한 번은 수집 태스크를 실행하는 �
 (CDK 스택은 `graphrag-doc-status-v2`, `dev`가 아니면 `<env>-graphrag-doc-status-v2`를
 만들고, 라이브러리 기본값은 `unified-kg-rag-on-aws-doc-status-v2`입니다)
 `indexing.reset: true`로 한 번 실행하세요. 재구축이 성공하면 이전 테이블을 지우세요
-(`dev`가 아니면 스택이 테이블을 남겨 둡니다). 정식 릴리스 전 빌드가 기록한
-레지스트리는
-[CHANGELOG: Upgrading from pre-release builds](../CHANGELOG.md#upgrading-from-pre-release-builds)도
+(`dev`가 아니면 스택이 테이블을 남겨 둡니다). 이전 빌드가 저장한 것은 읽지
+않습니다. 임베딩 설정을 기록하지 않은 인덱스는 거부되고(인덱스 이름을 알려 주는
+`ConfigurationError`), 이전 빌드의 단계 캐시는 적중하지 않습니다. 모든 인덱스를
+`indexing.reset: true`로 한 번 다시 구축하고, 캐시된 `--pipeline-id`를 재개하는
+파이프라인은 `--force-rebuild`나 새 id로 실행하세요.
+[CHANGELOG: Upgrading from pre-release builds](../CHANGELOG.md#upgrading-from-pre-release-builds)를
 참고하세요.
 
 증분 실행이 갱신하지 않는 것도 있습니다. 델타 실행은 그래프 전체를 다시 군집화하지
@@ -176,7 +201,9 @@ CDK 스택에서 `start-execution` 한 번은 수집 태스크를 실행하는 �
 
 중단은 실패로 세지 않지만, `indexing.max_document_failures`에 쓰는 연속 실패
 횟수를 초기화합니다. `PENDING` 레코드의 `failure_count`는 0이므로, 이전에 실패한
-문서도 다음 실패부터 다시 셉니다. 실패한 실행 뒤에 `PENDING` 레코드(`status`와
+문서도 다음 실패부터 다시 셉니다. 대신 `PENDING` 레코드는 같은 내용을 시작하고
+끝내지 못한 연속 실행 수를 셉니다(`attempt_count`, [격리된 문서](#격리된-문서)
+참고). 실패한 실행 뒤에 `PENDING` 레코드(`status`와
 `content_hash`가 `pending`이고 `error_info`가 선기록 레코드임을 알림)가 남는 것은
 정상입니다. 직접 지우지 마세요. 다음 실행은 이 레코드의 텍스트 단위로 중단된
 실행이 쓴 것을 찾습니다(모든 산출물은 자신이 서술된 텍스트 단위를 인용합니다).
@@ -208,9 +235,10 @@ OpenSearch나 Neptune에 쓰는 데 실패하면 그 문서는 `FAILED`로 기�
   유지하고, 실행할 때마다 파일 이름을 담은 WARNING이 남습니다.
 - 다시 시도하려면 원인(대개 너무 크거나 형식이 잘못된 파일)을 고치거나, 파일을
   수정해 콘텐츠 해시를 바꾸거나, `indexing.max_document_failures`를 올립니다.
-- 한 문서의 산출물 ID가 DynamoDB 항목 하나(400 KB, 약 10,000개 ID)를 넘으면
-  인덱싱 단계가 델타에 대해 아무것도 쓰기 전에, 파일 이름과 ID 개수를 담은
-  오류로 실패합니다. 파일을 나눕니다.
+- 한 문서의 텍스트 단위 ID가 DynamoDB 항목 하나(400 KB, 약 10,000개 ID,
+  수정한 문서는 그 절반)를 넘으면 인덱싱 단계가 델타에 대해 아무것도 쓰기
+  전에, 파일 이름과 텍스트 단위 개수를 담은 오류로 실패합니다. 파일을
+  나눕니다.
 
 쓰기 실패는 따로 판정합니다. 재시도할 수 있는 상태(429, 502, 503, 504)로
 거부된 OpenSearch bulk 항목과, 클라이언트 자체 재시도 후에도 그런 상태를 받은
@@ -224,7 +252,7 @@ Neptune 요청(쓰기, 삭제, 제거와 병합을 위한 읽기)은 모두 새 
 기록됩니다. 백엔드가 항목 ID 없이 보고한 실패가 있으면 그 실행의 모든 문서를
 `FAILED`로 기록합니다. CDK 스택에서는 수집 태스크가 실패하면 실행 ID와 오류를 담은
 메시지를 SNS 토픽에 게시하고, 아래 경보도 같은 토픽으로 문제를 알립니다.
-파이프라인 실행 경보가 네 개, 저장소 상태 경보가 일곱 개, 용량 경보가 두 개입니다.
+파이프라인 실행 경보가 다섯 개, 저장소 상태 경보가 일곱 개, 용량 경보가 두 개입니다.
 태스크가 실패하면 `PipelineFailures`도 발생하므로 같은 실패가 두 번 오며, 두 번째
 알림에는 실행 ID와 오류가 없습니다. 이 경보를 두는 이유는 메시지로 알릴 수 없는
 실패도 잡기 때문입니다. 태스크의 오류 처리기가 잡지 못하는 오류(예: `pipeline_id`가
@@ -236,6 +264,7 @@ Neptune 요청(쓰기, 삭제, 제거와 병합을 위한 읽기)은 모두 새 
 | `PipelineTimedOutOrAborted` | 실행이 상태 머신 제한 시간을 넘겼거나 중지됨 |
 | `IndexingFailures` | 실행이 성공했더라도 인덱싱에서 실패한 항목이 있음 |
 | `ExtractionFailures` | 추출, gleaning, 주장 추출이 일부 텍스트 단위에서 실패함 |
+| `DocumentsQuarantined` | 인덱싱이 계속 죽은 문서를 실행이 격리함([격리된 문서](#격리된-문서) 참고) |
 
 Step Functions 경보를 뺀 파이프라인 실행 경보는 `run-ingestion --metrics-sink cloudwatch`가
 내보내는 EMF 지표를 읽습니다. 각 단계의 지표는 그 단계가 끝날 때(그래서 중지되거나 시간
@@ -268,6 +297,23 @@ Step Functions 경보를 뺀 파이프라인 실행 경보는 `run-ingestion --m
 대시보드에는 단계별 소요 시간, 수집 태스크의 메모리·CPU 사용률, 모델별 Bedrock 호출·스로틀링·지연 시간도 표시됩니다.
 
 경보를 받으려면 `-c alarm_email=<address>`로 배포해 구독자를 등록해야 합니다.
+
+### 격리된 문서
+
+인덱싱할 때마다 실행을 죽이는 문서(그 문서에서 태스크가 메모리 부족이나 제한 시간에
+걸림)는 이후 모든 실행을 같은 방식으로 멈추게 합니다. 바뀌지 않은 내용을 시작하고
+끝내지 못한 실행이 `indexing.max_document_attempts`번(기본값 `3`) 연속되면, 다음
+실행이 그 문서를 격리합니다. 파일 이름을 담은 WARNING을 남기고, 시도들이 쓴 것을
+지우고, 문서를 `QUARANTINED`로 기록한 뒤(텍스트 단위 없음, 사유는 `error_info`)
+나머지를 인덱싱합니다. 실행 지표 `total_documents_quarantined`가 그 수를 세고, CDK
+스택에서는 `DocumentsQuarantined` 경보가 발생합니다.
+
+- 격리된 문서는 내용이 그대로인 동안 건너뜁니다. 파일이 바뀌거나, 추출 설정이
+  바뀌거나, `indexing.max_document_attempts`를 올리면 다시 시도합니다.
+- 계속 죽는 델타의 모든 문서가 시도로 세어지므로, 원인 문서와 함께 인덱싱된
+  문서도 함께 격리됩니다. 원인 문서를 찾은 뒤(예: 그 폴더만 따로 실행) 그 파일들을
+  수정하거나 한도를 올려 다시 시도합니다.
+- 텍스트 단위를 만들지 않는 문서는 `PENDING`으로 남고, 같은 횟수 뒤에 격리됩니다.
 
 ## 캐시와 접두사
 
@@ -722,6 +768,9 @@ LangSmith로 업로드합니다.
 | `Neptune refused the connection (HTTP 403)` | IAM 인증이 웹소켓 연결을 거부함. 정책에 클러스터의 `neptune-db:connect`가 없거나 다른 리전으로 서명함 | `neptune-db:connect`(실행에 필요한 `neptune-db:*` 데이터 작업 포함)를 부여하고 `aws.region_name`을 클러스터의 리전으로 설정 |
 | `Skipping N '.md' file(s) ...` / `No supported source files found in '<dir>'` | `unstructured` 추가 패키지가 설치되지 않음 | 설치(Python 3.11 이상)하거나 파일 형식을 변환 |
 | `ConfigurationError: Doc-status registry: DynamoDB table '...' has the key schema ... of an earlier release` | `doc_id`만으로 레코드 키를 잡던 릴리스가 만든 테이블임 | `aws.dynamodb.table_name`(`GRAPHRAG_DOC_STATUS_TABLE`)을 새 테이블로 바꾸거나 스택의 새 테이블을 배포하고, `indexing.reset: true`로 한 번 실행([증분 실행](#증분-실행) 참고) |
+| `NamespaceLeaseError: Index namespace '...' is being written by ...` | 다른 실행이 네임스페이스의 쓰기 임대를 가지고 있음 | 그 실행이 끝날 때까지 기다립니다. 죽은 실행의 임대는 `indexing.lease_seconds` 안에 만료됩니다([동시 실행](#동시-실행) 참고) |
+| `NamespaceLeaseError: This run lost the write lease ...` | 임대 갱신이 계속 실패해 만료됐거나 다른 실행이 임대를 가져감 | 다른 실행이 끝난 뒤 다시 실행하고, 레지스트리에 연결할 수 있는지 확인합니다 |
+| `ConfigurationError: The OpenSearch index '...' records no embedding settings ...` | 이전 릴리스가 만든 인덱스 | `indexing.reset: true`로 한 번 실행합니다 |
 | `DocStatusRegistryError` | 문서 상태 레지스트리 테이블이 없거나, 접근할 수 없거나, 스로틀링됨 | 테이블을 만들거나 `aws.dynamodb.table_name`을 고치고, 메시지에 나온 DynamoDB 권한을 부여한 뒤 같은 `--pipeline-id`로 재개 |
 | `Incremental indexing is enabled but no document delta was computed` | 레지스트리 비교 없이 인덱싱 단계가 실행됨(`continue_on_error`로 로딩 단계 실패 뒤 진행) | 레지스트리에 접근할 수 있게 한 뒤 `document_loading`부터 다시 실행 |
 | `CacheSyncError` | S3 단계 캐시 다운로드나 업로드가 실패함 | 버킷 권한과 `aws.s3.encryption`을 확인한 뒤 같은 `--pipeline-id`로 재개 |

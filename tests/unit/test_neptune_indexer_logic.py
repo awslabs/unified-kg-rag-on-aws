@@ -832,3 +832,48 @@ def test_member_drop_retries_after_a_lost_connection(indexer, mocker) -> None:
     )
 
     assert indexer.upsert_communities([comm]).failed_ids == []
+
+
+def test_a_rebuild_in_place_writes_tagged_and_clears_no_label(indexer, mocker) -> None:
+    clear = mocker.patch.object(indexer, "_clear_existing_data_by_label")
+    properties: list[tuple] = []
+
+    class Recorder(RecordingTraversal):
+        def property(self, *args):
+            properties.append(args)
+            return self
+
+    def fake_execute_batch(items, builder, op_name):
+        builder(Recorder([]), items)
+        from unified_kg_rag.ports.indexer import IndexingStats
+
+        return IndexingStats(total_items=len(items), successful_items=len(items))
+
+    mocker.patch.object(
+        indexer, "_execute_batch_traversal", side_effect=fake_execute_batch
+    )
+    drops = mocker.patch.object(indexer, "_drop_in_batches", return_value=0)
+
+    assert indexer.begin_rebuild(["default"])
+    indexer.index_entities([Entity(id="e1", name="A")], suffixes=["default"])
+    clear.assert_not_called()
+    # Every vertex the build writes carries its tag.
+    assert any(args[1:] == ("build_tag", indexer._rebuild_tag) for args in properties)
+    indexer.end_rebuild(["default"])
+
+    # Edges, then entity and community vertices the build did not write.
+    assert [c.args[1] for c in drops.call_args_list] == [
+        "stale edges of 'Entity-default'",
+        "stale vertices of 'Entity-default'",
+        "stale vertices of 'Community-default'",
+    ]
+    # The rebuild is over: a full build clears the label again.
+    indexer.index_entities([Entity(id="e1", name="A")], suffixes=["default"])
+    clear.assert_called_once_with("Entity-default")
+
+
+def test_a_failed_rebuild_drops_nothing(indexer, mocker) -> None:
+    drops = mocker.patch.object(indexer, "_drop_in_batches")
+    indexer.begin_rebuild(["default"])
+    indexer.end_rebuild(["default"], sweep=False)
+    drops.assert_not_called()

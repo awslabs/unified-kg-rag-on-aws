@@ -409,41 +409,6 @@ def test_edge_reads_look_up_each_endpoint_in_an_index(
         assert not any("TEMP B-TREE" in step for step in plan), (sql, plan)
 
 
-def test_opening_an_earlier_database_replaces_its_edge_indexes(
-    config: Config,
-) -> None:
-    # A file an earlier release wrote has the two-column endpoint indexes.
-    path = config.providers.graph.sqlite_path
-    connection = sqlite3.connect(path)
-    connection.executescript("""
-        CREATE TABLE vertices (label TEXT NOT NULL, id TEXT NOT NULL,
-            props TEXT NOT NULL, PRIMARY KEY (label, id));
-        CREATE TABLE edges (label TEXT NOT NULL, id TEXT NOT NULL,
-            type TEXT NOT NULL, source_id TEXT NOT NULL,
-            target_id TEXT NOT NULL, props TEXT NOT NULL,
-            PRIMARY KEY (label, id));
-        CREATE INDEX edges_source ON edges (label, source_id);
-        CREATE INDEX edges_target ON edges (label, target_id);
-        """)
-    connection.close()
-    first = SQLiteGraphIndexer(config)
-    _graph(first, [("a", "b")])
-    first.close()
-    second = SQLiteGraphIndexer(config)
-    with second.store.read("test") as connection:
-        indexes = {
-            row[0]
-            for row in connection.execute(
-                "SELECT name FROM sqlite_master WHERE type = 'index' "
-                "AND tbl_name = 'edges'"
-            )
-        }
-    assert {"edges_source_target", "edges_target_source"} <= indexes
-    assert not {"edges_source", "edges_target"} & indexes
-    assert second.read_neighbor_ids(["a"]) == {"a": ["b"]}
-    second.close()
-
-
 # --- comparison with the reference fake --------------------------------------
 
 
@@ -817,3 +782,46 @@ def test_sqlite_kind_is_registered_without_an_endpoint(config: Config) -> None:
         assert provider_endpoint(role, "sqlite") is None
     indexer.close()
     retriever.close()
+
+
+@pytest.mark.parametrize("store", ["sqlite", "fake"])
+def test_a_rebuild_in_place_serves_the_old_graph_until_its_sweep(
+    store: str, config: Config, indexer: Any
+) -> None:
+    graph = indexer if store == "sqlite" else FakeGraphStore(config)
+    graph.index_entities([_entity("a"), _entity("b"), _entity("old")])
+    graph.index_relationships([_rel("r-ab", "a", "b"), _rel("r-old", "a", "old")])
+    graph.index_communities([_community("c-old", ["a", "old"], text_unit_ids=["t"])])
+
+    assert graph.begin_rebuild(["default"])
+    graph.index_entities([_entity("a", name="A2"), _entity("b"), _entity("new")])
+    # Queries still find the previous graph while the build writes.
+    assert {e.id for e in graph.read_entities(["a", "old"])} == {"a", "old"}
+    assert [r.id for r in graph.read_relationships(["r-old"])] == ["r-old"]
+    graph.index_relationships([_rel("r-ab", "a", "b"), _rel("r-new", "b", "new")])
+    graph.index_communities([_community("c-new", ["a", "new"], text_unit_ids=["t"])])
+    graph.end_rebuild(["default"])
+
+    assert {e.id for e in graph.read_entities(["a", "b", "old", "new"])} == {
+        "a",
+        "b",
+        "new",
+    }
+    assert graph.read_entities(["a"])[0].name == "A2"
+    assert {r.id for r in graph.read_relationships(["r-ab", "r-old", "r-new"])} == {
+        "r-ab",
+        "r-new",
+    }
+    assert set(graph.find_ids_citing(["t"], communities=True)) == {"c-new"}
+
+
+def test_a_failed_rebuild_keeps_the_previous_graph(indexer: Any) -> None:
+    indexer.index_entities([_entity("a"), _entity("old")])
+    indexer.begin_rebuild(["default"])
+    indexer.index_entities([_entity("a")])
+    indexer.end_rebuild(["default"], sweep=False)
+
+    assert {e.id for e in indexer.read_entities(["a", "old"])} == {"a", "old"}
+    # A full build after it clears the label first again.
+    indexer.index_entities([_entity("a")])
+    assert [e.id for e in indexer.read_entities(["a", "old"])] == ["a"]

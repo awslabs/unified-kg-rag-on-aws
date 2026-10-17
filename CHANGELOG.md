@@ -257,6 +257,15 @@ Deployment (CDK stack).
   read: deploy the image and the stack together (#330).
 
 Library API (Python callers and custom backends).
+- A custom doc-status registry implements the namespace write lease
+  (`DocStatusPort.try_acquire_lease`, `lease_holder`, `release_lease`) and
+  the new `DocStatusRecord` fields (`attempt_count`, `attempted_hash`) and
+  status (`DocStatus.QUARANTINED`, unchanged while its content is).
+  `IncrementalIndexer.write_ahead` takes the run's fingerprints, and
+  `detect_delta` a `max_attempts`. `IndexingManager.clear_all_data` is
+  removed (a reset no longer clears the stores first), and a custom graph
+  backend can rebuild in place through `GraphIndexer.begin_rebuild` /
+  `end_rebuild` (the default still clears each label first) (#331).
 - Incremental removal no longer plans from registry lineage.
   `DocStatusRecord` and `DocumentLineage` keep only `text_unit_ids`
   (`DocumentLineage` rejects the removed id fields),
@@ -420,31 +429,46 @@ Library API (Python callers and custom backends).
   written before still load; their `content.text` is read as the text (#289).
 
 ### Upgrading from pre-release builds
-- Doc-status registries of any earlier build are not migrated: the
-  registry has a new table format, so deploy or point at the new table and
-  run once with `indexing.reset: true` (see Breaking changes) (#327).
+Nothing an earlier build stored is read: rebuild every index once with
+`indexing.reset: true` (registry on) in the new registry table (see
+Breaking changes), and run pipelines that resume a cached
+`--pipeline-id` with `--force-rebuild` or a new id (#327, #PR). The
+compatibility code for earlier builds is removed (#331): an index without
+recorded embedding settings (`_meta`) is refused instead of given its
+dimension, a stage-cache entry holding an absolute path is a miss, a
+parsed-document JSON's `content.text` is no longer read as its text (write
+`page_content`), the SQLite graph no longer drops the edge indexes of an
+earlier schema, and a custom registry's `diff` must take
+`extraction_fingerprint`.
 - Hidden files and files under a hidden or `__pycache__` subdirectory of the
   corpus (any path component below the root starting with `.`, such as
-  `docs/.drafts/`) are no longer parsed (#213). The first incremental run
-  after upgrading classifies such files indexed by an earlier build as
-  deleted and removes their artifacts and registry records. Rename them
-  before upgrading to keep them (they are then indexed under their new
-  paths).
-- Roles with a custom IAM policy need `dynamodb:BatchGetItem` and
-  `dynamodb:BatchWriteItem` (#191, #194) and `dynamodb:Query` and
-  `dynamodb:DescribeTable` (#327) on the registry table.
-- A suffix indexed with the doc-status registry off by a release before
-  #233 cannot be told apart from a tracked one (its indices carry no
-  marker), so an incremental run takes it as tracked: run such a suffix once
-  with `indexing.reset: true` (registry on) after upgrading (#243).
+  `docs/.drafts/`) are not parsed (#213).
+- Roles with a custom IAM policy need `dynamodb:BatchGetItem`,
+  `dynamodb:BatchWriteItem` (#191, #194), `dynamodb:Query` and
+  `dynamodb:DescribeTable` (#327) on the registry table, and
+  `dynamodb:UpdateTimeToLive` where the library creates the table (#331).
 - A `backend: local` config of your own that relied on the preset for the
-  stores now gets the embedded SQLite stores, empty, while its registry still
-  lists the documents indexed into the containers, so its next incremental
-  run stops before writing anything. Add `providers.graph.kind: gremlin` and
-  `providers.vector.kind: opensearch` to keep the containers, or run once
-  with `indexing.reset: true` to rebuild in the embedded stores (#273).
+  stores gets the embedded SQLite stores (#273): add
+  `providers.graph.kind: gremlin` and `providers.vector.kind: opensearch` to
+  keep the containers.
 
 ### Added
+- One writing run per index namespace: with the doc-status registry, a
+  pipeline run holds its namespace's write lease from its first stage to its
+  end (a conditional write in DynamoDB, a transaction in SQLite), renewed by
+  a heartbeat every third of `indexing.lease_seconds` (default 300). A second
+  run stops with `NamespaceLeaseError` naming the holder before it reads or
+  writes anything; a run that dies stops renewing, and its lease expires
+  (DynamoDB drops it by TTL: the CDK table and a table the library creates
+  enable TTL on `lease_expires_at`). A run that lost its lease stops before
+  its next registry or store write (#331).
+- Documents whose indexing keeps dying are quarantined: the write-ahead
+  record counts the consecutive runs that started a document's content and
+  never finished it, and once `indexing.max_document_attempts` (default 3)
+  is reached the next run removes what the attempts wrote, records the
+  document `QUARANTINED` and skips it until its content or the extraction
+  settings change. The `total_documents_quarantined` metric and the CDK
+  `DocumentsQuarantined` alarm report it (#331).
 - Paired strategy comparison: `run-eval --search-strategy local,mix,global
   --repeats N` answers the same queries with each strategy and writes
   `evaluation_comparison_*.json` with per-query deltas against the first
@@ -582,6 +606,15 @@ Library API (Python callers and custom backends).
   fused order. Reported by @vibhupb (#83) (#284).
 
 ### Changed
+- `indexing.reset` no longer takes the suffix offline. The stores are not
+  cleared first: the vector indices are rebuilt into new indices and swap
+  their aliases, as before, and the graph (Neptune, the embedded SQLite
+  graph) is rewritten in place, every vertex and edge the rebuild writes
+  tagged with the build, after which what it did not write is dropped.
+  Queries keep reading the previous content until it is replaced. The
+  registry keeps its records until the rebuild recorded the corpus, so a
+  failed reset leaves the previous graph and records in place for the retry
+  (#331).
 - An incremental run finds what a changed or deleted document contributed
   in the stores, by the text units every artifact cites: the graph's
   entities and communities citing them, their edges, and the vector

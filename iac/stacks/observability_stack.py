@@ -129,6 +129,24 @@ class ObservabilityStack(Stack):
             cw_actions.SnsAction(orchestration.alarm_topic)
         )
 
+        # Alarm: a document quarantined -> SNS. Its indexing was started
+        # indexing.max_document_attempts runs in a row and never finished (the
+        # task died each time); it is no longer indexed until someone looks.
+        quarantined_alarm = cw.Alarm(
+            self,
+            "DocumentsQuarantined",
+            metric=self._emf("total_documents_quarantined", period=Duration.minutes(5)),
+            threshold=1,
+            evaluation_periods=1,
+            comparison_operator=cw.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+            treat_missing_data=cw.TreatMissingData.NOT_BREACHING,
+            alarm_description="unified-kg-rag-on-aws quarantined documents whose "
+            "indexing kept dying (skipped until their content changes)",
+        )
+        quarantined_alarm.add_alarm_action(
+            cw_actions.SnsAction(orchestration.alarm_topic)
+        )
+
         # Alarm: per-chunk extraction failures -> SNS. A chunk whose LLM call
         # fails every retry is dropped and the run still SUCCEEDS with a partial
         # graph; nothing above sees that. Sums the three EMF failure

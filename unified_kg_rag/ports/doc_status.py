@@ -8,7 +8,9 @@ compute a delta (new / changed / deleted), find what a changed or deleted
 document contributed (every artifact cites the text units it was stated in)
 and merge instead of re-indexing everything. Records are kept per index
 namespace, the prefix of their ``doc_id`` (``doc_id_namespace``): a run reads
-only its own namespace's records.
+only its own namespace's records. A run also holds its namespace's write
+lease (:meth:`DocStatusPort.try_acquire_lease`), so two runs never write one
+namespace at once.
 
 Adapters: DynamoDB (``unified_kg_rag.adapters.doc_status.dynamodb``) and SQLite for
 local mode (``unified_kg_rag.adapters.doc_status.sqlite``); tests use the
@@ -82,6 +84,25 @@ class DocStatusPort(Protocol):
         """Remove the record for ``doc_id`` (no-op if absent)."""
         ...
 
+    def try_acquire_lease(self, namespace: str, owner: str, seconds: float) -> bool:
+        """Take or renew the write lease of index ``namespace`` for ``owner``.
+
+        Succeeds when no lease is held, the held one expired, or ``owner``
+        holds it; the lease then expires ``seconds`` from now. Atomic (a
+        conditional write), so two runs never both hold it. Returns whether
+        ``owner`` holds the lease.
+        """
+        ...
+
+    def lease_holder(self, namespace: str) -> tuple[str, float] | None:
+        """``(owner, expires_at)`` of ``namespace``'s lease (epoch seconds;
+        possibly expired), or ``None`` when none was taken."""
+        ...
+
+    def release_lease(self, namespace: str, owner: str) -> None:
+        """Release ``namespace``'s lease if ``owner`` holds it (no-op else)."""
+        ...
+
     def list_namespace(self, namespace: str) -> list[DocStatusRecord]:
         """Return every record of index ``namespace`` (its registry partition)."""
         ...
@@ -114,8 +135,8 @@ class DocStatusPort(Protocol):
         ``DocStatusRecord.extraction_fingerprint``), a stored record whose
         fingerprint is set and differs is ``changed`` too, and also listed in
         ``DocumentDelta.settings_changed`` when its hash and status alone
-        would read unchanged. A record without a fingerprint (written before
-        the field existed) is compared by hash and status only.
+        would read unchanged. A record without a fingerprint is compared by
+        hash and status only.
 
         An adapter should also report the distinct scopes of the records it
         read in ``DocumentDelta.stored_scopes`` (the scan already reads them);

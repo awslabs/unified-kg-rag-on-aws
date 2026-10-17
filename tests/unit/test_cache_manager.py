@@ -368,6 +368,23 @@ class TestIntegrity:
 class TestRelocation:
     """A cache directory moved or restored elsewhere keeps its hits."""
 
+    def test_an_absolute_entry_path_is_a_miss(self, tmp_path: Path) -> None:
+        # Only an earlier release wrote absolute paths: not read.
+        from datetime import datetime
+
+        from unified_kg_rag.domain.models.cache import CacheEntry
+
+        entry = CacheEntry(
+            key="k",
+            stage_name=STAGE,
+            pipeline_id=PIPELINE,
+            created_at=datetime(2026, 1, 1),
+            local_path=tmp_path / "old" / STAGE / "k.json",
+        )
+        assert entry.resolve_local_path(tmp_path / "new") is None
+        relative = entry.model_copy(update={"local_path": Path(STAGE) / "k.json"})
+        assert relative.resolve_local_path(tmp_path) == tmp_path / STAGE / "k.json"
+
     def test_copied_cache_directory_still_hits(self, tmp_path: Path) -> None:
         original = tmp_path / "original"
         mgr = _manager(original, chunk_size=3)
@@ -384,28 +401,3 @@ class TestRelocation:
         assert restored.load_stage_result("single", PIPELINE) == {"x": 1}
         assert restored.load_stage_result("big", PIPELINE) == list(range(10))
         assert restored.get_cache_stats(PIPELINE).local_entries == 2
-
-    def test_legacy_absolute_paths_resolve_under_the_new_root(
-        self, tmp_path: Path
-    ) -> None:
-        # Entries written by earlier versions hold the absolute path at write
-        # time; after a move they are re-rooted by stage and file name.
-        original = tmp_path / "original"
-        mgr = _manager(original, chunk_size=3)
-        mgr.save_stage_result({"x": 1}, "single", STAGE, PIPELINE)
-        mgr.save_stage_result(list(range(10)), "big", STAGE, PIPELINE)
-        index = mgr.load_cache_index(PIPELINE)
-        pipeline_dir = original / PIPELINE
-        for entry in index.entries.values():
-            entry.local_path = pipeline_dir / entry.local_path
-        mgr._save_cache_index(index)
-        stored = json.loads((pipeline_dir / "cache_index.json").read_text())
-        assert Path(stored["entries"]["single"]["local_path"]).is_absolute()
-
-        moved = tmp_path / "moved"
-        shutil.copytree(original, moved)
-        shutil.rmtree(original)
-
-        restored = _manager(moved, chunk_size=3)
-        assert restored.load_stage_result("single", PIPELINE) == {"x": 1}
-        assert restored.load_stage_result("big", PIPELINE) == list(range(10))

@@ -13,6 +13,8 @@
 | 체크포인트 | checkpoint | 단계별 결과 캐시. 재개(resume)에 사용 |
 | 증분 인덱싱 | incremental indexing | 새 문서와 바뀐 문서만 다시 인덱싱하는 방식 |
 | 문서 상태 레지스트리 | doc-status registry | 증분 인덱싱용 DynamoDB 테이블 |
+| 쓰기 임대 | write lease | 실행이 인덱스 네임스페이스에 혼자 쓰도록 레지스트리에서 얻어 갱신하는 기한부 잠금 |
+| 격리 | quarantine | 인덱싱할 때마다 실행이 죽은 문서를 내용이 바뀔 때까지 건너뛰는 처리(`QUARANTINED`) |
 | 전체 재구축 | full rebuild | `indexing.reset: true`로 저장소를 비우고 다시 인덱싱 |
 | 인덱스 접미사 | index suffix | OpenSearch 인덱스와 Neptune 레이블 이름 뒤에 붙는 값. 수집 시 `processing.document_parsing.index_value`, 질의 시 `--suffix` / `RAGInput.suffix` |
 | 테넌트 | tenant | 데이터를 분리해야 하는 사용자 또는 조직 단위 |

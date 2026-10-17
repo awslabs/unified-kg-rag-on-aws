@@ -4,6 +4,7 @@ import logging
 import math
 import random
 import time
+import uuid
 from collections.abc import Callable, Collection, Iterator
 from concurrent.futures import as_completed
 from typing import TYPE_CHECKING, Any, cast
@@ -22,6 +23,7 @@ from unified_kg_rag.adapters.aws.neptune import (
     run_traversal,
 )
 from unified_kg_rag.adapters.storage.neptune_codec import (
+    BUILD_TAG_PROPERTY,
     NAME_KEY_PROPERTY,
     entity_from_vertex,
     entity_properties,
@@ -58,6 +60,31 @@ _DELETE_BATCH_SIZE = 500
 _EXTRA_DELETE_PASSES = 3
 
 
+def _stale_edges(
+    entity_label: str, tag: str
+) -> Callable[[GraphTraversalSource], GraphTraversal]:
+    """The edges leaving ``entity_label`` vertices a build tagged ``tag`` did
+    not write."""
+
+    def select(g: GraphTraversalSource) -> GraphTraversal:
+        # From the label's vertices (label-indexed) rather than a scan of
+        # every edge: relationships and memberships both leave an entity.
+        return g.V().hasLabel(entity_label).outE().not_(__.has(BUILD_TAG_PROPERTY, tag))
+
+    return select
+
+
+def _stale_vertices(
+    label: str, tag: str
+) -> Callable[[GraphTraversalSource], GraphTraversal]:
+    """The ``label`` vertices a build tagged ``tag`` did not write."""
+
+    def select(g: GraphTraversalSource) -> GraphTraversal:
+        return g.V().hasLabel(label).not_(__.has(BUILD_TAG_PROPERTY, tag))
+
+    return select
+
+
 class NeptuneIndexer(GraphIndexer):
     # Emit a progress line every N edges during the per-edge relationship write
     # so a large run (tens of thousands of edges) is distinguishable from a hang.
@@ -74,6 +101,8 @@ class NeptuneIndexer(GraphIndexer):
             timeout_seconds=INGESTION_REQUEST_TIMEOUT_SECONDS,
             timeout_setting=None,
         )
+        # Set between begin_rebuild and end_rebuild (see there).
+        self._rebuild_tag: str | None = None
 
     def close(self) -> None:
         """Close the underlying Neptune websocket + thread pool (best-effort)."""
@@ -347,7 +376,7 @@ class NeptuneIndexer(GraphIndexer):
                 self.neptune_config.entity_label_prefix, suffix
             )
 
-            if not upsert:
+            if not upsert and self._rebuild_tag is None:
                 self._clear_existing_data_by_label(community_label)
             if not comms:
                 continue
@@ -392,7 +421,7 @@ class NeptuneIndexer(GraphIndexer):
             for comm in comms:
                 if not comm.entity_ids:
                     continue
-                if upsert:
+                if upsert or self._rebuild_tag is not None:
                     # Drop this community's existing membership edges, so an
                     # entity that left the community does not stay a member;
                     # after a failed drop the membership is left as it was.
@@ -432,7 +461,7 @@ class NeptuneIndexer(GraphIndexer):
                     ) -> GraphTraversal:
                         # Only entities not yet members: a retry after a lost
                         # response must not add the edges a second time.
-                        return (
+                        added = (
                             g.V()
                             .hasLabel(entity_label)
                             .has("id", P.within(entity_ids))
@@ -446,6 +475,7 @@ class NeptuneIndexer(GraphIndexer):
                                 __.V().hasLabel(community_label).has("id", community_id)
                             )
                         )
+                        return self._tagged(added)
 
                     try:
                         self._execute_with_retries(
@@ -555,6 +585,7 @@ class NeptuneIndexer(GraphIndexer):
         props = relationship_properties(rel, self.neptune_config.property_max_length)
         for key, value in props.items():
             add_edge.property(key, value)
+        self._tagged(add_edge)
         # Return the edge's id: with no source vertex addE gets no traverser
         # and raises nothing (a missing target does raise), so an empty result
         # is the only sign of a dropped edge.
@@ -773,6 +804,12 @@ class NeptuneIndexer(GraphIndexer):
 
         return stats
 
+    def _tagged(self, traversal: GraphTraversal) -> GraphTraversal:
+        """``traversal`` (adding an edge) with the rebuild's tag, if any."""
+        if self._rebuild_tag is not None:
+            traversal.property(BUILD_TAG_PROPERTY, self._rebuild_tag)
+        return traversal
+
     def _set_properties_on_traversal(
         self, traversal: GraphTraversal, props: dict[str, Any]
     ) -> None:
@@ -786,6 +823,8 @@ class NeptuneIndexer(GraphIndexer):
         expects.
         """
         traversal.sideEffect(__.properties().has_key(P.neq("id")).drop())
+        if self._rebuild_tag is not None:
+            props = {**props, BUILD_TAG_PROPERTY: self._rebuild_tag}
         for key, value in props.items():
             if value is None:
                 continue
@@ -821,7 +860,7 @@ class NeptuneIndexer(GraphIndexer):
 
         for suffix, chunk in grouped_items.items():
             label = self._get_label(label_prefix, suffix)
-            if clear_first:
+            if clear_first and self._rebuild_tag is None:
                 self._clear_existing_data_by_label(label)
             if not chunk:
                 continue
@@ -845,37 +884,47 @@ class NeptuneIndexer(GraphIndexer):
     def _clear_existing_data_by_label(
         self, label: str, batch_size: int = _DELETE_BATCH_SIZE
     ) -> None:
-        """Drop every vertex of ``label``, ``batch_size`` per request.
+        """Drop every vertex of ``label`` (see :meth:`_drop_in_batches`)."""
+        self._drop_in_batches(
+            lambda g: g.V().hasLabel(label),
+            f"vertices with label '{label}'",
+            batch_size,
+        )
+
+    def _drop_in_batches(
+        self,
+        select: Callable[[GraphTraversalSource], GraphTraversal],
+        what: str,
+        batch_size: int = _DELETE_BATCH_SIZE,
+    ) -> int:
+        """Drop the elements ``select`` yields, ``batch_size`` per request.
 
         Bounded requests keep each drop's transaction small, and each request
         is retried like a write (a drop is safe to repeat). A request returns
-        how many vertices it dropped, so a short one is the last: no count of
-        the label per pass. The label is counted once up front to bound the
-        passes: if requests keep reporting full batches past that bound (a
-        backend whose count does not reflect the drop, or writers adding
-        vertices meanwhile) the clear fails instead of looping forever.
+        how many elements it dropped, so a short one is the last: no count per
+        pass. The elements are counted once up front to bound the passes: if
+        requests keep reporting full batches past that bound (a backend whose
+        count does not reflect the drop, or writers adding elements meanwhile)
+        the drop fails instead of looping forever. Returns how many it
+        dropped.
 
         Raises:
-            AWSServiceError: A request failed after its retries, or the label
-                still reported full batches after
+            AWSServiceError: A request failed after its retries, or the
+                selection still reported full batches after
                 ``ceil(count / batch_size) + _EXTRA_DELETE_PASSES`` passes.
         """
         try:
             (initial,) = self._execute_with_retries(
-                lambda g: g.V().hasLabel(label).count(),
-                "Counting vertices to clear",
+                lambda g: select(g).count(),
+                f"Counting {what} to drop",
                 results=True,
             )
             max_passes = math.ceil(int(initial) / batch_size) + _EXTRA_DELETE_PASSES
             total = 0
             for _ in range(max_passes):
                 (dropped,) = self._execute_with_retries(
-                    lambda g: g.V()
-                    .hasLabel(label)
-                    .limit(batch_size)
-                    .sideEffect(__.drop())
-                    .count(),
-                    "Clearing vertices",
+                    lambda g: select(g).limit(batch_size).sideEffect(__.drop()).count(),
+                    f"Dropping {what}",
                     results=True,
                 )
                 total += int(dropped)
@@ -883,19 +932,56 @@ class NeptuneIndexer(GraphIndexer):
                     break
             else:
                 raise AWSServiceError(
-                    f"Deleting vertices with label '{label}' did not finish: "
-                    f"{max_passes} passes of {batch_size} each dropped a full "
-                    f"batch ({total} reported dropped, {initial} counted before)"
+                    f"Dropping {what} did not finish: {max_passes} passes of "
+                    f"{batch_size} each dropped a full batch ({total} reported "
+                    f"dropped, {initial} counted before)"
                 )
         except Exception as e:
-            logger.error("Failed to clear data for label '%s': %s", label, e)
+            logger.error("Failed to drop %s: %s", what, e)
             if isinstance(e, GraphRAGException):
                 raise
-            raise AWSServiceError(
-                f"Clearing Neptune label '{label}' failed: {e}"
-            ) from e
+            raise AWSServiceError(f"Dropping Neptune {what} failed: {e}") from e
         if total:
-            logger.info("Deleted %s vertices with label '%s'", total, label)
+            logger.info("Dropped %s %s", total, what)
+        return total
+
+    # --- rebuilding a suffix in place ------------------------------------------
+
+    def begin_rebuild(self, suffixes: Collection[str]) -> bool:
+        """Start a full build that replaces the suffixes' graph in place.
+
+        Until :meth:`end_rebuild`, the full-build writes no longer clear a
+        label first: every vertex and edge they write carries this build's
+        tag (``build_tag``), so the graph keeps serving its previous content
+        while the new one is written, and :meth:`end_rebuild` then drops what
+        the build did not write.
+        """
+        self._rebuild_tag = uuid.uuid4().hex
+        return True
+
+    def end_rebuild(self, suffixes: Collection[str], sweep: bool = True) -> None:
+        """Drop the suffixes' vertices and edges the build did not write
+        (``sweep``; skipped when a write failed, so a retry still finds the
+        previous copies), and end the rebuild."""
+        tag, self._rebuild_tag = self._rebuild_tag, None
+        if not sweep or tag is None:
+            return
+        for suffix in sorted(suffixes):
+            entity_label = self._get_label(
+                self.neptune_config.entity_label_prefix, suffix
+            )
+            # Edges first: relationships and memberships both leave entities.
+            self._drop_in_batches(
+                _stale_edges(entity_label, tag), f"stale edges of '{entity_label}'"
+            )
+            for prefix in (
+                self.neptune_config.entity_label_prefix,
+                self.neptune_config.community_label_prefix,
+            ):
+                label = self._get_label(prefix, suffix)
+                self._drop_in_batches(
+                    _stale_vertices(label, tag), f"stale vertices of '{label}'"
+                )
 
     def _execute_batch_traversal(
         self,

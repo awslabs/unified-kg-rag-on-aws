@@ -208,25 +208,16 @@ class OpenSearchIndexer(VectorIndexer):
         live indices, so they must have been built for this run's settings:
 
         - the embedding model and dimension each index records in its
-          mapping's ``_meta`` (an index built before it did is checked by the
-          dimension of its ``knn_vector`` fields alone): another model's
-          vectors would be mixed in, another dimension fails every write;
+          mapping's ``_meta``: another model's vectors would be mixed in,
+          another dimension fails every write;
         - the analyzers of its text fields, which follow the translation
           languages and ``language_analyzers`` and cannot change on a live
           index (a newly translated language would be mapped as a keyword);
         - the doc-status registry: an index built by a run with the registry
           off holds documents the registry does not describe.
 
-        The last two are checked only on an index that records its embedding
-        settings. One built before it did (before #231) is given the one
-        setting that can be verified, its vector dimension, when its text
-        fields match this run's, so later runs check it in full; its model
-        stays unrecorded, as which same-dimension model built it cannot be
-        told. Such an index carries no registry marker either, so it is taken
-        as registry-tracked. Giving it the dimension is best-effort: a failure
-        (e.g. a role without ``indices:admin/mapping/put``) is logged and the
-        run goes on. An index whose text fields do not match is left as it
-        is, with a warning: an older release may have mapped them otherwise.
+        An index that records no embedding settings was built by an earlier
+        release, whose indices this one does not read: it is rejected too.
 
         Raises:
             ConfigurationError: An index of ``suffix`` does not match.
@@ -264,8 +255,12 @@ class OpenSearchIndexer(VectorIndexer):
                 mapping_funcs[prefix]()["mappings"]["properties"], properties
             )
             if META_MODEL not in meta and META_DIMENSION not in meta:
-                self._record_legacy_dimension(index_name, meta, dimensions, mismatches)
-                continue
+                raise ConfigurationError(
+                    f"The OpenSearch index '{index_name}' records no embedding "
+                    "settings: an earlier release built it, and this release "
+                    "does not read its indices. Re-run once with "
+                    "indexing.reset: true to rebuild the stores."
+                )
             if mismatches:
                 raise ConfigurationError(
                     f"The OpenSearch index '{index_name}' was built for other "
@@ -288,51 +283,12 @@ class OpenSearchIndexer(VectorIndexer):
                     "keep the registry off for this suffix."
                 )
 
-    def _record_legacy_dimension(
-        self,
-        index_name: str,
-        meta: dict[str, Any],
-        dimensions: set[int],
-        mismatches: list[str],
-    ) -> None:
-        """Give an index built before it recorded its settings its dimension.
-
-        See ``check_index_settings``: only when its text fields match this
-        run's, and best-effort.
-        """
-        if mismatches:
-            logger.warning(
-                "The OpenSearch index '%s' records no embedding settings and its "
-                "text fields do not match this run's language settings (%s); "
-                "documents written incrementally may be analyzed differently "
-                "from the rest. Re-run once with indexing.reset: true to "
-                "rebuild it for the current processing.translation and "
-                "indexing.opensearch.language_analyzers.",
-                index_name,
-                "; ".join(mismatches),
-            )
-            return
-        if len(dimensions) != 1:
-            return  # no vector field to verify the dimension by
-        try:
-            self.opensearch_client.put_index_meta(
-                index_name, {**meta, META_DIMENSION: next(iter(dimensions))}
-            )
-        except Exception as e:  # noqa: BLE001 - recording it is optional
-            logger.warning(
-                "Could not record the embedding dimension in the _meta of the "
-                "OpenSearch index '%s' (%s); its dimension is still checked on "
-                "every run, its languages and registry state only once recorded.",
-                index_name,
-                e,
-            )
-
     def record_build(self, record: IndexBuildRecord, suffix: str | None) -> None:
         """Write ``record`` into the ``_meta`` of each live index of ``suffix``.
 
         Merged into the existing ``_meta`` (the embedding settings stay), so
-        it needs ``indices:admin/mapping/put`` like the dimension backfill; a
-        failure is logged and the run goes on.
+        it needs ``indices:admin/mapping/put``; a failure is logged and the run
+        goes on.
         """
         payload = record.model_dump(mode="json")
         for prefix in self._index_prefixes():
@@ -465,8 +421,7 @@ class OpenSearchIndexer(VectorIndexer):
             # Community membership provenance (candidate sources of the report's
             # community), so a retrieved report can be filtered by origin. Not
             # report-input provenance and not citation support: the union may
-            # include material the prompt's entity cap left out. Reports indexed
-            # before these fields existed index them as [] until regenerated.
+            # include material the prompt's entity cap left out.
             "text_unit_ids": list(report.text_unit_ids or []),
             "document_ids": list(report.document_ids or []),
             # The hierarchy cut global search maps over (community_hierarchy).
@@ -1613,9 +1568,6 @@ class OpenSearchIndexer(VectorIndexer):
                 "full_content_embedding": self._get_knn_vector_mapping(),
                 "rank": {"type": "double"},
                 "rating": {"type": "double"},
-                # Additive: an index created before these fields existed maps
-                # them as keyword via the base mapping's strings_as_keywords
-                # dynamic template, so an upsert into it stays compatible.
                 "text_unit_ids": {"type": "keyword"},
                 "document_ids": {"type": "keyword"},
                 "level": {"type": "integer"},

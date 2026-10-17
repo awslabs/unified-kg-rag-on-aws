@@ -10,6 +10,7 @@ namespace (``doc_id_namespace``), like the DynamoDB partitions.
 
 from __future__ import annotations
 
+import time
 from collections.abc import Iterable
 
 from unified_kg_rag.domain.ingestion.delta_detector import scope_namespace
@@ -36,6 +37,24 @@ class FakeDocStatusStore:
         self._records: dict[str, DocStatusRecord] = {}
         self.max_record_ids = max_record_ids
         self.namespace_reads: list[str | None] = []
+        # namespace -> (owner, expires_at); ``clock`` is replaceable in tests.
+        self.leases: dict[str, tuple[str, float]] = {}
+        self.clock = time.time
+
+    def try_acquire_lease(self, namespace: str, owner: str, seconds: float) -> bool:
+        now = self.clock()
+        held = self.leases.get(namespace)
+        if held is not None and held[0] != owner and held[1] > now:
+            return False
+        self.leases[namespace] = (owner, now + seconds)
+        return True
+
+    def lease_holder(self, namespace: str) -> tuple[str, float] | None:
+        return self.leases.get(namespace)
+
+    def release_lease(self, namespace: str, owner: str) -> None:
+        if self.leases.get(namespace, ("", 0.0))[0] == owner:
+            del self.leases[namespace]
 
     def get(self, doc_id: str) -> DocStatusRecord | None:
         return self._records.get(doc_id)

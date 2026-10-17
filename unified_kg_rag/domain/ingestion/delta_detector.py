@@ -17,20 +17,19 @@ when the path is unchanged.
 A document whose content is unchanged is still re-extracted when the settings
 that shaped its artifacts changed: the run passes its extraction fingerprint
 (models, prompts, entity types, chunking...) to the diff, which compares it
-with the one each record stored when the document was last extracted. A record
-written before records carried one is compared by content only.
+with the one each record stored when the document was last extracted (a
+record without one is compared by content only).
 
 Deletion is scoped: a run only classifies registry documents of its own scope
 (index namespace + corpus source, see :func:`registry_scope`) as deleted, and
 never a corpus file that merely failed to parse this run.
 
-Registries written before the source scope was part of ``doc_id`` are keyed
-by namespace and path only. :func:`detect_delta` adopts such a record under
-the new key when it belongs to the run's scope (or predates scopes), so an
-upgrade neither re-extracts nor deletes the corpus.
+A document whose indexing kept dying (its write-ahead record counts the
+attempts, see ``IncrementalIndexer.write_ahead``) is quarantined once the
+count reaches ``max_attempts``.
 
 A corpus whose source scope changed (a local directory that moved) leaves its
-records under the old scope. They are never adopted on a guess: whether a
+records under the old scope. They are never taken over on a guess: whether a
 directory exists on this host says nothing about a corpus another host
 indexes into the same registry. A run that is told the old scope is gone
 (``indexing.retire_source_scopes``) classifies its records as deleted
@@ -40,8 +39,7 @@ local source directories of the run's namespace so the run can warn.
 
 from __future__ import annotations
 
-import inspect
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -218,6 +216,7 @@ def detect_delta(
     max_failures: int | None = None,
     retired_scopes: Iterable[str] = (),
     extraction_fingerprint: str | None = None,
+    max_attempts: int | None = None,
 ) -> tuple[DocumentDelta, dict[str, str]]:
     """Classify ``documents`` against the persisted registry.
 
@@ -226,7 +225,7 @@ def detect_delta(
         doc_status: The registry.
         scope: The run's :func:`registry_scope`. Only stored documents of this
             scope can be classified deleted. ``None`` diffs against the whole
-            registry (single-corpus deployments that predate scopes).
+            registry (the direct API without a scope).
         failed_doc_ids: Registry ids of corpus files that failed to parse or
             load this run. They are reported as ``failed`` and never deleted.
         max_failures: A document whose unchanged content was recorded FAILED
@@ -242,6 +241,11 @@ def detect_delta(
             record stored another one is classified changed, so it is
             re-extracted with the current settings; a record without one is
             compared by content only. ``None`` compares by content only.
+        max_attempts: A document whose indexing of this content was started
+            and never finished this many consecutive runs (its PENDING
+            record's ``attempt_count``) is classified ``quarantined`` instead
+            of changed: it crashed the run each time, and retrying it would
+            crash this one too. ``None`` retries without limit.
 
     Returns:
         The :class:`DocumentDelta` plus the ``{doc_id: content_hash}``
@@ -259,17 +263,19 @@ def detect_delta(
             "document of the run would be deleted"
         )
     fingerprints = fingerprint_documents(documents)
-    delta = _diff(doc_status, fingerprints, scope, extraction_fingerprint)
+    delta = doc_status.diff(
+        fingerprints, scope=scope, extraction_fingerprint=extraction_fingerprint
+    )
     if retired:
         retire_source_scopes(doc_status, delta, retired, own_scope=scope)
-    if max_failures is not None and delta.changed:
-        _stop_retrying_exhausted(
-            delta,
-            doc_status,
-            fingerprints,
-            max_failures,
-            extraction_fingerprint,
-        )
+    if (max_failures is not None or max_attempts is not None) and delta.changed:
+        stored = doc_status.get_many(delta.changed)
+        if max_attempts is not None:
+            _quarantine_crashing(delta, stored, fingerprints, max_attempts)
+        if max_failures is not None:
+            _stop_retrying_exhausted(
+                delta, stored, fingerprints, max_failures, extraction_fingerprint
+            )
     failed = set(failed_doc_ids) - set(fingerprints)
     if failed:
         delta.deleted = [doc_id for doc_id in delta.deleted if doc_id not in failed]
@@ -280,12 +286,14 @@ def detect_delta(
             len(failed),
         )
     logger.info(
-        "Delta detected: %d new, %d changed, %d unchanged, %d deleted, %d failed",
+        "Delta detected: %d new, %d changed, %d unchanged, %d deleted, %d failed, "
+        "%d quarantined",
         len(delta.new),
         len(delta.changed),
         len(delta.unchanged),
         len(delta.deleted),
         len(delta.failed),
+        len(delta.quarantined),
     )
     if delta.settings_changed:
         logger.warning(
@@ -295,53 +303,6 @@ def detect_delta(
             len(delta.settings_changed),
         )
     return delta, fingerprints
-
-
-# Registry types already warned about lacking ``extraction_fingerprint``.
-_WARNED_NO_FINGERPRINT: set[type] = set()
-
-
-def _diff(
-    doc_status: DocStatusPort,
-    incoming: dict[str, str],
-    scope: str | None,
-    extraction_fingerprint: str | None,
-) -> DocumentDelta:
-    """``doc_status.diff``, with the extraction fingerprint when the store
-    takes one.
-
-    A registry written against the port before ``diff`` took
-    ``extraction_fingerprint`` is diffed by content only (with one WARNING),
-    rather than failing every incremental run.
-    """
-    if extraction_fingerprint is None:
-        return doc_status.diff(incoming, scope=scope)
-    if _takes_extraction_fingerprint(doc_status):
-        return doc_status.diff(
-            incoming, scope=scope, extraction_fingerprint=extraction_fingerprint
-        )
-    store_type = type(doc_status)
-    if store_type not in _WARNED_NO_FINGERPRINT:
-        _WARNED_NO_FINGERPRINT.add(store_type)
-        logger.warning(
-            "%s.diff takes no extraction_fingerprint: documents are diffed by "
-            "content only, so a change of the extraction settings does not "
-            "re-extract unchanged documents (see DocStatusPort.diff)",
-            store_type.__name__,
-        )
-    return doc_status.diff(incoming, scope=scope)
-
-
-def _takes_extraction_fingerprint(doc_status: DocStatusPort) -> bool:
-    try:
-        parameters = inspect.signature(doc_status.diff).parameters.values()
-    except (TypeError, ValueError):
-        return True
-    return any(
-        parameter.name == "extraction_fingerprint"
-        or parameter.kind is inspect.Parameter.VAR_KEYWORD
-        for parameter in parameters
-    )
 
 
 def _settings_changed(
@@ -501,9 +462,41 @@ def other_local_scopes(
     )
 
 
+def _quarantine_crashing(
+    delta: DocumentDelta,
+    stored: Mapping[str, DocStatusRecord],
+    fingerprints: Mapping[str, str],
+    max_attempts: int,
+) -> None:
+    """Move changed documents whose indexing of this content was started
+    ``max_attempts`` consecutive runs without finishing to ``quarantined``."""
+    crashing = [
+        doc_id
+        for doc_id in delta.changed
+        if (record := stored.get(doc_id)) is not None
+        and record.status is DocStatus.PENDING
+        and record.attempt_count >= max_attempts
+        and record.attempted_hash == fingerprints[doc_id]
+    ]
+    if not crashing:
+        return
+    delta.changed = [doc_id for doc_id in delta.changed if doc_id not in crashing]
+    delta.quarantined = crashing
+    logger.warning(
+        "Quarantining %d documents whose indexing was started %d consecutive "
+        "runs and never finished (the run died each time, or the document "
+        "produced no text units to record): they are skipped "
+        "until their content or the extraction settings change, or "
+        "indexing.max_document_attempts is raised: %s",
+        len(crashing),
+        max_attempts,
+        ", ".join(stored[doc_id].file_path or doc_id for doc_id in crashing),
+    )
+
+
 def _stop_retrying_exhausted(
     delta: DocumentDelta,
-    doc_status: DocStatusPort,
+    stored: Mapping[str, DocStatusRecord],
     fingerprints: dict[str, str],
     max_failures: int,
     extraction_fingerprint: str | None = None,
@@ -511,12 +504,9 @@ def _stop_retrying_exhausted(
     """Move changed documents that used up their retries to ``unchanged``.
 
     A document whose extraction settings changed since it failed is retried
-    (its earlier failures were with other settings).
-
-    The records are read in one batch (:meth:`DocStatusPort.get_many`), not
-    one ``get`` per changed document.
+    (its earlier failures were with other settings). ``stored`` holds the
+    changed documents' records, read in one batch.
     """
-    stored = doc_status.get_many(delta.changed)
     exhausted: list[str] = []
     labels: list[str] = []
     for doc_id in delta.changed:

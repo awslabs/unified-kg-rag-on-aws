@@ -1839,6 +1839,26 @@ class IndexingConfig(BaseModel):
         "FAILED and is skipped as unchanged (with a WARNING) until its content "
         "changes or this value is raised.",
     )
+    max_document_attempts: int = Field(
+        default=3,
+        ge=1,
+        description="Incremental runs: a document whose indexing (of the same "
+        "content) was started this many consecutive runs and never finished "
+        "(the run died each time: out of memory, a task timeout) is "
+        "quarantined: the next run removes what the attempts wrote, records "
+        "it QUARANTINED and skips it until its content or the extraction "
+        "settings change or this value is raised. Every document of a delta "
+        "that keeps dying counts an attempt.",
+    )
+    lease_seconds: float = Field(
+        default=300.0,
+        ge=10.0,
+        description="Incremental runs: the term of an index namespace's write "
+        "lease, which a run holds from its first stage to its end so no other "
+        "run writes the namespace meanwhile. The run renews it every third of "
+        "the term; a run that dies stops renewing, so its lease expires (and "
+        "another run can start) at most this long after.",
+    )
     retire_source_scopes: list[str] = Field(
         default_factory=list,
         description="Incremental runs only: source scopes (a former "

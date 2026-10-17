@@ -307,7 +307,11 @@ class IncrementalRun:
 
     def _run(self, inc: IncrementalIndexer, corpus: Corpus) -> None:
         documents = [document(path, content) for path, content in corpus.items()]
-        delta, fingerprints = detect_delta(documents, inc.doc_status)
+        delta, fingerprints = detect_delta(
+            documents,
+            inc.doc_status,
+            max_attempts=self.config.indexing.max_document_attempts,
+        )
         to_extract = set(delta.to_process)
         extracted = [d for d in documents if document_doc_id(d) in to_extract]
         self.extracted = sorted(d.file_path for d in extracted)
@@ -324,7 +328,7 @@ class IncrementalRun:
         )
         units, entities, edges = built.units, built.entities, built.relationships
         lineages = build_document_lineage(documents=extracted, text_units=units)
-        inc.write_ahead(delta, lineages)
+        inc.write_ahead(delta, lineages, fingerprints)
         if not inc.remove_changed_and_deleted(delta):
             raise AssertionError("the fake stores never fail a removal")
         inc.commit(

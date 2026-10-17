@@ -95,6 +95,8 @@ def test_round_trip_keeps_every_field(store: DocStatusPort) -> None:
         file_path="docs/d1.txt",
         text_unit_ids=["t2", "t1"],
         error_info=None,
+        attempt_count=2,
+        attempted_hash="h0",
         extraction_fingerprint="x1",
         updated_at="2026-01-01T00:00:00",
     )
@@ -244,6 +246,52 @@ def test_diff_of_an_empty_registry_marks_everything_new(store: DocStatusPort) ->
     delta = store.diff({"a": "1", "b": "2"}, scope="s")
     assert sorted(delta.new) == ["a", "b"]
     assert delta.deleted == delta.stored_scopes == []
+
+
+def test_a_quarantined_record_is_unchanged_until_its_content_changes(
+    store: DocStatusPort,
+) -> None:
+    store.put(_record("held", "h1", status=DocStatus.QUARANTINED, scope="s"))
+    store.put(_record("edited", "h2", status=DocStatus.QUARANTINED, scope="s"))
+
+    delta = store.diff({"held": "h1", "edited": "h2-new"}, scope="s")
+
+    assert (delta.unchanged, delta.changed) == (["held"], ["edited"])
+
+
+def test_one_owner_holds_a_namespace_lease_at_a_time(store: DocStatusPort) -> None:
+    assert store.lease_holder("ns") is None
+    assert store.try_acquire_lease("ns", "run-a", 60)
+    # Held: another owner is refused, the holder renews, and namespaces are
+    # leased apart.
+    assert not store.try_acquire_lease("ns", "run-b", 60)
+    assert store.try_acquire_lease("ns", "run-a", 60)
+    assert store.try_acquire_lease("other", "run-b", 60)
+    owner, expires_at = store.lease_holder("ns")
+    assert owner == "run-a" and expires_at > time.time() + 50
+    # Releasing someone else's lease does nothing; the holder's release frees it.
+    store.release_lease("ns", "run-b")
+    assert not store.try_acquire_lease("ns", "run-b", 60)
+    store.release_lease("ns", "run-a")
+    assert store.lease_holder("ns") is None
+    assert store.try_acquire_lease("ns", "run-b", 60)
+
+
+def test_an_expired_lease_can_be_taken(store: DocStatusPort) -> None:
+    assert store.try_acquire_lease("ns", "run-a", 0.2)
+    time.sleep(0.3)
+    assert store.try_acquire_lease("ns", "run-b", 60)
+    assert store.lease_holder("ns")[0] == "run-b"
+
+
+def test_a_lease_is_no_record(store: DocStatusPort) -> None:
+    store.put(_record("ns#d1", scope="ns|corpus"))
+    store.try_acquire_lease("ns", "run-a", 60)
+
+    assert [r.doc_id for r in store.list_namespace("ns")] == ["ns#d1"]
+    assert [r.doc_id for r in store.list_all()] == ["ns#d1"]
+    delta = store.diff({}, scope="ns|corpus")
+    assert delta.deleted == ["ns#d1"]
 
 
 def test_namespaces_partition_the_registry(store: DocStatusPort) -> None:

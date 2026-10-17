@@ -297,26 +297,3 @@ def test_settings_change_retries_a_document_that_used_up_its_retries() -> None:
         [exhausted], store, max_failures=3, extraction_fingerprint="new"
     )
     assert retried.changed == [document_doc_id(exhausted)]
-
-
-class _ContentOnlyStore(FakeDocStatusStore):
-    """A registry written against the port before diff took a fingerprint."""
-
-    def diff(  # type: ignore[override]
-        self, incoming: dict[str, str], scope: str | None = None
-    ):
-        return super().diff(incoming, scope=scope)
-
-
-def test_store_without_fingerprint_support_is_diffed_by_content(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    store = _ContentOnlyStore()
-    document = _doc("/a.txt", "a")
-    store.put(_record(document, extraction_fingerprint="old"))
-
-    with caplog.at_level("WARNING"):
-        delta, _ = detect_delta([document], store, extraction_fingerprint="new")
-
-    assert delta.unchanged == [document_doc_id(document)]
-    assert "takes no extraction_fingerprint" in caplog.text

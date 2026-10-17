@@ -166,20 +166,6 @@ class IndexingManager:
             except Exception as e:  # noqa: BLE001 - teardown must never raise
                 logger.debug("Error closing %s: %s", type(indexer).__name__, e)
 
-    def clear_all_data(self, text_units: list[TextUnit]) -> None:
-        """Clear both stores for the run's suffixes; a store's error propagates."""
-        suffixes = self._discover_suffixes(text_units)
-        if not suffixes:
-            logger.warning("No suffixes found to clear data")
-            return
-
-        logger.info("Clearing data for suffixes: '%s'", suffixes)
-        with ContextThreadPoolExecutor(max_workers=2) as executor:
-            os_future = executor.submit(self.opensearch_indexer.clear, suffixes)
-            neptune_future = executor.submit(self.neptune_indexer.clear, suffixes)
-            os_future.result()
-            neptune_future.result()
-
     @staticmethod
     def _group_by_suffix(items: list[Any]) -> dict[str, list[Any]]:
         grouped: dict[str, list[Any]] = {}
@@ -334,7 +320,8 @@ class IndexingManager:
                 for fn, _, items, key in specs
             ]
 
-        # A full build's replaced entity vertices already dropped the old edges.
+        # A full build's cleared (or, rebuilt in place, swept) entity labels
+        # drop the old edges.
         edges = (
             graph.upsert_relationships
             if suffixes is None
@@ -355,10 +342,39 @@ class IndexingManager:
         ]
 
         prefix, tail = ("", "") if suffixes is not None else ("Delta ", " (upsert)")
-        logger.info("--- Starting %sIndexing Phase 1%s ---", prefix, tail)
-        results = self._run_indexing_phase(tasks(phase1))
-        logger.info("--- Starting %sIndexing Phase 2%s ---", prefix, tail)
-        results.update(self._run_indexing_phase(phase2))
+        # A full build replaces the graph in place where the backend can: the
+        # labels are not cleared first, so queries keep reading the previous
+        # graph until the build's writes replace it, and what the build did
+        # not write is dropped at the end (the vector indices swap aliases).
+        rebuilding = suffixes is not None and graph.begin_rebuild(suffixes)
+        try:
+            logger.info("--- Starting %sIndexing Phase 1%s ---", prefix, tail)
+            results = self._run_indexing_phase(tasks(phase1))
+            logger.info("--- Starting %sIndexing Phase 2%s ---", prefix, tail)
+            results.update(self._run_indexing_phase(phase2))
+        except BaseException:
+            if rebuilding:
+                graph.end_rebuild(suffixes or [], sweep=False)
+            raise
+        if rebuilding:
+            graph_failed = any(
+                stats.failed_items
+                for key, stats in results.items()
+                if key.startswith("neptune_")
+            )
+            if graph_failed:
+                logger.warning(
+                    "Graph writes of the full build failed: keeping the graph's "
+                    "previous vertices and edges beside the new ones until a "
+                    "build succeeds"
+                )
+            try:
+                graph.end_rebuild(suffixes or [], sweep=not graph_failed)
+            except Exception as e:  # noqa: BLE001 - reported as a failed write
+                logger.error("Dropping the previous graph failed: %s", e)
+                stats = IndexingStats(total_items=1)
+                stats.add_error(str(e))
+                results["neptune_sweep"] = stats
 
         self._log_completion_summary(results, time.time() - start_time)
         return results
