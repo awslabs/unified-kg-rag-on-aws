@@ -419,9 +419,12 @@ Step Functions 경보를 뺀 파이프라인 실행 경보는 `run-ingestion --m
 (`GraphRagCompute`의 `QueryTaskDefinitionArn`, `QueryTaskRoleArn` 출력.
 [`iac/README.md`](../iac/README.md#4-query-from-inside-the-vpc) 참고). 이 역할은
 Neptune `connect`와 `ReadDataViaQuery`, 도메인에 대한 OpenSearch `GET`/`HEAD`와
-`_search` 경로에만 허용한 `POST`(OpenSearch는 HTTP 메서드와 URL 경로로 권한을
-판단하므로 `_bulk`, `_doc`, `_delete_by_query`, 인덱스 변경은 거부됩니다), Bedrock
-모델·재순위화·가드레일 호출, 캐시 버킷의 `eval/` 접두사만 가집니다. DynamoDB에는
+`<index>/_search`에만 허용한 `POST`(OpenSearch는 HTTP 메서드와 URL 경로로 권한을
+판단하므로 `_bulk`, `_doc`, `_delete_by_query`, 인덱스 변경은 거부됩니다. IAM의
+`*`는 `/`도 포함하므로, `_search`로 끝나지만 쓰기인 더 깊은 경로는 명시적 거부로
+막습니다. 예를 들어 `POST <index>/_doc/_search`는 ID가 `_search`인 문서를 만듭니다),
+Bedrock 모델·재순위화·가드레일 호출, 캐시 버킷의 `eval/` 접두사(그 안의 객체와 그
+안에서만 허용한 목록 조회)만 가집니다. DynamoDB에는
 접근할 수 없고 두 저장소 어디에도 쓰거나 지울 수 없습니다. 질의는 이 태스크 정의로
 실행하세요. 수집 태스크 정의의 역할에는 `neptune-db:DeleteDataViaQuery`,
 `es:ESHttp*`, 문서 상태 테이블 읽기·쓰기 권한이 있습니다. 직접 만든 서빙 계층도 같은
@@ -438,7 +441,8 @@ Neptune `connect`와 `ReadDataViaQuery`, 도메인에 대한 OpenSearch `GET`/`H
   `es:ESHttpPost`의 리소스를 그 테넌트의 인덱스로 한정합니다. 예:
   `<도메인 ARN>/graphrag-*-<suffix>`, `<도메인 ARN>/graphrag-*-<suffix>/*`
   (별칭은 `<인덱스 접두사>-<suffix>`입니다. 어떤 접미사도 `-<다른 접미사>`로 끝나지
-  않게 정하거나 테넌트마다 인덱스 접두사를 다르게 두세요). 문서·필드 수준 규칙이
+  않게 정하거나 테넌트마다 인덱스 접두사를 다르게 두세요). 문서·벌크 API를 막는
+  질의 역할의 거부 구문은 그대로 두세요. 문서·필드 수준 규칙이
   필요하면 도메인에서 세분화된 액세스 제어(fine-grained access control)를 켜고,
   테넌트 역할마다 `*-<suffix>*` 인덱스 권한만 가진 OpenSearch 역할을 매핑하세요.
 - Neptune: IAM은 클러스터 단위로만 권한을 주고 레이블 단위 범위가 없습니다. 다른

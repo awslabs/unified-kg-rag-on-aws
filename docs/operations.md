@@ -465,10 +465,13 @@ own task definition and role (`QueryTaskDefinitionArn`, `QueryTaskRoleArn`
 outputs of `GraphRagCompute`; see
 [`iac/README.md`](../iac/README.md#4-query-from-inside-the-vpc)): Neptune
 `connect` and `ReadDataViaQuery`, OpenSearch `GET`/`HEAD` on the domain and
-`POST` only on `_search` paths (OpenSearch authorizes by HTTP method and URL
-path, so `_bulk`, `_doc`, `_delete_by_query` and index changes are denied),
-Bedrock model, rerank and guardrail calls, and the cache bucket's `eval/`
-prefix. It has no DynamoDB access and cannot write or delete in either store.
+`POST` only on `<index>/_search` (OpenSearch authorizes by HTTP method and URL
+path, so `_bulk`, `_doc`, `_delete_by_query` and index changes are denied; an
+IAM `*` also matches `/`, so an explicit deny covers the deeper paths that end
+in `_search` but write, such as `POST <index>/_doc/_search`, which creates a
+document with the id `_search`), Bedrock model, rerank and guardrail calls,
+and the cache bucket's `eval/` prefix (its objects, and listing only within
+it). It has no DynamoDB access and cannot write or delete in either store.
 Run queries with it, not with the ingestion task definition, whose role
 holds `neptune-db:DeleteDataViaQuery`, `es:ESHttp*` and read/write on the
 doc-status table. A serving layer of your own should assume a role with the
@@ -487,7 +490,8 @@ infrastructure rather than by that code:
   `es:ESHttpHead` and `es:ESHttpPost` resources name only its indices, such
   as `<domain ARN>/graphrag-*-<suffix>` and `<domain ARN>/graphrag-*-<suffix>/*`
   (aliases are `<index prefix>-<suffix>`; pick suffixes that never end in
-  `-<another suffix>`, or set distinct index prefixes per tenant). For
+  `-<another suffix>`, or set distinct index prefixes per tenant), and keep
+  the query role's deny statement for the document and bulk APIs. For
   document- or field-level rules, enable fine-grained access control on the
   domain and map each tenant role to an OpenSearch role whose index
   permissions cover only `*-<suffix>*`.

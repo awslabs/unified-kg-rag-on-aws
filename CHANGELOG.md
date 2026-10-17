@@ -2604,6 +2604,13 @@ changed once with the full-config keys (#332).
   instead of frozen dataclasses; they were never instantiated (#300).
 
 ### Security
+- IaC: the query role can no longer write documents through a path that
+  ends in `_search`. Its `POST` grant on `<domain>/*/_search` also matched
+  `<index>/_doc/_search`, `_create/_search` and `_update/_search` (an IAM `*`
+  spans `/`), which OpenSearch serves as a document create or update with the
+  id `_search`; an explicit deny now covers any deeper `_search` path and the
+  document and bulk APIs. Its S3 listing is limited to the `eval/` prefix
+  (it listed the whole cache bucket) (#PR).
 - Prompts delimit corpus and retrieved text as data, and inputs cannot close
   their delimiter tags (#179, #182).
 - IaC: queries get their own task definition and role
