@@ -1634,6 +1634,17 @@ class IndexingManager:
         def gone(units: Iterable[str]) -> bool:
             return not (set(units) - removed) & live
 
+        outdated = sorted(i for i, units in reports.items() if not gone(units))
+        if outdated:
+            logger.warning(
+                "%d community reports in '%s' cite removed text units and other "
+                "ones: they are kept, and may state the removed text until "
+                "indexing.reset: true rebuilds them",
+                len(outdated),
+                suffix,
+            )
+            self.outdated_reports.update(outdated)
+
         shared_entities = sorted(
             i for i, units in cited.items() if not exclusive(units)
         )

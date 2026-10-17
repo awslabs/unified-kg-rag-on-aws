@@ -131,7 +131,11 @@ When `overlap_share` reaches `indexing.community_drift_threshold` (default
 `community_rebuild_recommended: 1` next to `community_drift_overlap_share`,
 which an alarm can watch. The counts accumulate over the runs that touch an
 entity, so read them as an upper bound. A run without communities reports no
-overlap.
+overlap. A run that removes text units (an edited or deleted document) also
+counts the stored reports it keeps although they cite a removed unit
+(`outdated_reports`, deletion-only runs included): a report is written from
+its units' text and may still state what was removed, so any such report
+recommends the rebuild too.
 
 **When the registry cannot be read** (missing table, denied access,
 throttling that outlasts the client's retries), the `document_loading` stage

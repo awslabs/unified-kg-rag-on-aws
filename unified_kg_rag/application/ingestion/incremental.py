@@ -593,13 +593,16 @@ class IncrementalIndexer:
         self, entities: list[Entity] | None, communities: list[Community] | None
     ) -> CommunityDrift | None:
         """Measure and log the commit's community drift (see community_drift)."""
-        if not communities:
+        outdated = self.indexing_manager.outdated_reports
+        if not communities and not outdated:
             return None
         drift = measure_community_drift(
             entities or [],
-            communities,
+            communities or [],
             self.indexing_manager.config.indexing.community_drift_threshold,
+            outdated,
         )
+        outdated.clear()
         if drift is None:
             return None
         if drift.rebuild_recommended:
@@ -607,12 +610,14 @@ class IncrementalIndexer:
                 "Community drift: %d of the %d entities this run clustered also "
                 "belong to an earlier level-0 community (%d earlier communities "
                 "have stale reports; %d root communities added to every global "
-                "search cut). Incremental runs cluster only their delta; "
-                "rebuild the communities with indexing.reset: true.",
+                "search cut), and %d kept reports cite text this run removed. "
+                "Incremental runs cluster only their delta; rebuild the "
+                "communities with indexing.reset: true.",
                 drift.overlapping_entities,
                 drift.clustered_entities,
                 drift.stale_communities,
                 drift.added_roots,
+                drift.outdated_reports,
             )
         else:
             logger.info(

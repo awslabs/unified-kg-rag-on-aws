@@ -1380,6 +1380,11 @@ changed once with the full-config keys (#332).
   The randomized convergence check of the review (25 sequences each over
   three seeds, with per-chunk entity types) now finds no divergence, where
   it found 3 to 7 per 25 (#PR).
+- Removing a document no longer leaves its text unnoticed in community
+  reports: a kept report that cites a removed text unit is counted in the
+  `community_drift` metrics (`outdated_reports`, deletion-only runs
+  included) and recommends a rebuild (`community_rebuild_recommended`).
+  Reports are not regenerated on incremental runs (#PR).
 - The graph-expansion degree (`indexing.neptune.entity_importance_source:
   degree`) counts an entity's relationships only, not its community
   memberships, as the setting describes (#PR).
