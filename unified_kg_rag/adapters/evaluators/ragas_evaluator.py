@@ -37,6 +37,7 @@ from unified_kg_rag.domain.models import (
     EvaluationResult,
     EvaluatorType,
     ModelPurpose,
+    ModelRole,
 )
 from unified_kg_rag.ports.model_factory import EmbeddingFactoryPort
 from unified_kg_rag.shared import EvaluationException, get_logger
@@ -90,10 +91,10 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
         # provider bundle (EvaluationManager passes the chain's).
         self.providers = Providers.resolve(config, providers)
         eval_model_info = self.providers.llm_model_info(
-            config.evaluation.evaluation_model_id
+            config.model_id(ModelRole.EVALUATION)
         )
         self._token_counter = self.providers.token_counter(
-            config.evaluation.evaluation_model_id,
+            config.model_id(ModelRole.EVALUATION),
             api_supported=eval_model_info.supports_count_tokens,
         )
         super().__init__(
@@ -118,11 +119,11 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
     def _initialize_models(self) -> None:
         embedding_factory = self._embedding_factory or self.providers.embedding_factory
         self.embeddings = embedding_factory.get_model(
-            model_id=self.config.evaluation.embedding_model_id
+            model_id=self.config.embedding_model_id
         )
 
         llm_factory = self.providers.llm_factory
-        model_id = self.config.evaluation.evaluation_model_id
+        model_id = self.config.model_id(ModelRole.EVALUATION)
         self.llm = llm_factory.get_model(
             model_id=model_id,
             model_purpose=ModelPurpose.EVALUATION,

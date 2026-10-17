@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Model ids as plain strings, tier defaults, and capability resolution.
 
-Role ``*_model_id`` fields accept any Bedrock model id and inherit
-``aws.bedrock.default_model_id`` / ``fast_model_id`` unless set. Capabilities
+``models.roles`` entries accept any Bedrock model id and follow
+``models.default`` / ``models.fast`` unless set. Capabilities
 resolve from the curated table, then provider-family defaults, then a
 conservative unknown default, with ``aws.bedrock.model_overrides`` on top.
 AWS-free: factories use a stub session and patched model classes.
@@ -17,7 +17,7 @@ from typing import Any
 
 import pytest
 import yaml
-from pydantic import BaseModel, ValidationError
+from pydantic import ValidationError
 
 from tests.fixtures.fakes.boto import FakeBotoSession
 from unified_kg_rag.adapters.aws import bedrock as bedrock_mod
@@ -27,32 +27,17 @@ from unified_kg_rag.adapters.aws.bedrock import (
     BedrockLanguageModelFactory,
 )
 from unified_kg_rag.adapters.aws.bedrock_models import get_language_model_info
-from unified_kg_rag.domain.models import Config, LanguageModelId
+from unified_kg_rag.domain.models import Config, LanguageModelId, ModelRole
 from unified_kg_rag.domain.models.config import (
     DEFAULT_MODEL_ID,
     FAST_MODEL_ID,
-    BedrockConfig,
-    SearchConfig,
+    ROLE_TIERS,
 )
 from unified_kg_rag.shared import LanguageModelError
 
 pytestmark = pytest.mark.unit
 
 TEMPLATE = Path(__file__).resolve().parents[2] / "config-template.yaml"
-
-
-def _role_fields(model: BaseModel, path: str = "") -> dict[str, tuple[str, str]]:
-    """Every role-model field as ``path -> (tier, value)``."""
-    found: dict[str, tuple[str, str]] = {}
-    for name, field in type(model).model_fields.items():
-        value = getattr(model, name)
-        here = f"{path}.{name}" if path else name
-        extra = field.json_schema_extra
-        if isinstance(extra, dict) and "model_tier" in extra:
-            found[here] = (str(extra["model_tier"]), value)
-        elif isinstance(value, BaseModel):
-            found.update(_role_fields(value, here))
-    return found
 
 
 @pytest.fixture(autouse=True)
@@ -65,62 +50,61 @@ def _reset_warnings() -> Any:
 # --- config ---------------------------------------------------------------
 
 
-def test_every_role_field_declares_a_tier_and_ships_its_default() -> None:
-    roles = _role_fields(Config())
-    tiers = [tier for tier, _ in roles.values()]
+def test_every_role_has_a_tier_and_ships_its_default() -> None:
+    config = Config()
+    assert set(ROLE_TIERS) == set(ModelRole)
+    tiers = list(ROLE_TIERS.values())
     assert tiers.count("default") == 8
     assert tiers.count("fast") == 11
-    for path, (tier, value) in roles.items():
-        assert value == (DEFAULT_MODEL_ID if tier == "default" else FAST_MODEL_ID), path
+    for role, tier in ROLE_TIERS.items():
+        expected = DEFAULT_MODEL_ID if tier == "default" else FAST_MODEL_ID
+        assert config.model_id(role) == expected, role
 
 
 def test_tier_keys_move_every_unset_role() -> None:
     config = Config(
-        aws={
-            "bedrock": {
-                "default_model_id": "openai.gpt-6-sol",
-                "fast_model_id": "anthropic.claude-sonnet-4-6",
-            }
-        }
+        models={"default": "openai.gpt-6-sol", "fast": "anthropic.claude-sonnet-4-6"}
     )
-    for path, (tier, value) in _role_fields(config).items():
+    for role, tier in ROLE_TIERS.items():
         expected = (
             "openai.gpt-6-sol" if tier == "default" else "anthropic.claude-sonnet-4-6"
         )
-        assert value == expected, path
+        assert config.model_id(role) == expected, role
 
 
 def test_explicit_role_value_wins_over_its_tier() -> None:
     config = Config(
-        aws={"bedrock": {"default_model_id": "openai.gpt-6-sol"}},
-        search={"answer_generation_model_id": "anthropic.claude-opus-5"},
+        models={
+            "default": "openai.gpt-6-sol",
+            "roles": {"answer_generation": "anthropic.claude-opus-5"},
+        }
     )
-    assert config.search.answer_generation_model_id == "anthropic.claude-opus-5"
-    assert config.search.entity_extraction_model_id == "openai.gpt-6-sol"
+    assert config.model_id(ModelRole.ANSWER_GENERATION) == "anthropic.claude-opus-5"
+    assert config.model_id(ModelRole.ENTITY_EXTRACTION) == "openai.gpt-6-sol"
 
 
-def test_reused_section_keeps_following_the_tier() -> None:
-    section = SearchConfig()
-    first = Config(search=section, aws={"bedrock": {"default_model_id": "a.one"}})
-    second = Config(search=section, aws={"bedrock": {"default_model_id": "b.two"}})
-    assert first.search.answer_generation_model_id == "a.one"
-    assert second.search.answer_generation_model_id == "b.two"
-    # The caller's object is not mutated.
-    assert section.answer_generation_model_id == DEFAULT_MODEL_ID
+def test_resolution_writes_nothing_back() -> None:
+    # A dump of what the config was built from stays what it was built from,
+    # so a rebuild (the CLI provider flags) keeps following the tiers.
+    config = Config(models={"default": "a.one"})
+    assert config.models.roles.answer_generation is None
+    assert config.model_dump(exclude_unset=True) == {"models": {"default": "a.one"}}
 
 
 def test_enum_members_and_any_string_validate_as_plain_ids() -> None:
     config = Config(
-        search={
-            "answer_generation_model_id": LanguageModelId.CLAUDE_V5_OPUS,
-            "translation_model_id": "  amazon.nova-pro-v1:0 ",
+        models={
+            "roles": {
+                "answer_generation": LanguageModelId.CLAUDE_V5_OPUS,
+                "query_translation": "  amazon.nova-pro-v1:0 ",
+            }
         }
     )
-    answer = config.search.answer_generation_model_id
+    answer = config.model_id(ModelRole.ANSWER_GENERATION)
     assert type(answer) is str and answer == "anthropic.claude-opus-5"
-    assert config.search.translation_model_id == "amazon.nova-pro-v1:0"
+    assert config.model_id(ModelRole.QUERY_TRANSLATION) == "amazon.nova-pro-v1:0"
     with pytest.raises(ValidationError):
-        Config(search={"answer_generation_model_id": ""})
+        Config(models={"roles": {"answer_generation": ""}})
 
 
 def test_enum_member_renders_as_its_id() -> None:
@@ -130,30 +114,15 @@ def test_enum_member_renders_as_its_id() -> None:
     assert record.getMessage() == "openai.gpt-6-sol"
 
 
-def test_template_documents_the_tiers_once() -> None:
+def test_template_documents_the_models_once() -> None:
     raw = yaml.safe_load(TEMPLATE.read_text())
-    bedrock = BedrockConfig(**raw["aws"]["bedrock"])
-    assert bedrock.default_model_id == DEFAULT_MODEL_ID
-    assert bedrock.fast_model_id == FAST_MODEL_ID
-    # Role keys are inherited, so the template must not pin copies of them.
+    config = Config(models=raw["models"])
+    assert config.tier_model_id("default") == DEFAULT_MODEL_ID
+    assert config.tier_model_id("fast") == FAST_MODEL_ID
+    # No role is pinned: every role follows its tier.
+    assert raw["models"]["roles"] == {}
     text = TEMPLATE.read_text()
-    for path in _role_fields(Config()):
-        assert f" {path.rsplit('.', 1)[1]}:" not in text, path
-
-
-def test_legacy_yaml_listing_every_role_still_loads() -> None:
-    # A config written before the tier keys existed sets each role explicitly.
-    legacy = {
-        "fixing": {"fixing_model_id": "anthropic.claude-sonnet-5-5"},
-        "search": {
-            "answer_generation_model_id": "anthropic.claude-opus-4-8",
-            "translation_model_id": "anthropic.claude-haiku-4-5-20251001-v1:0",
-            "global_search": {"map_model_id": "anthropic.claude-sonnet-4-6"},
-        },
-    }
-    config = Config(**legacy)
-    assert config.search.answer_generation_model_id == "anthropic.claude-opus-4-8"
-    assert config.search.global_search.map_model_id == "anthropic.claude-sonnet-4-6"
+    assert "_model_id:" not in text
 
 
 # --- capability resolution -----------------------------------------------

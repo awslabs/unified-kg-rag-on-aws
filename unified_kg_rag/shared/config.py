@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 from pydantic import BaseModel, SecretStr, TypeAdapter, ValidationError
 
 from unified_kg_rag.domain.models import Config
+from unified_kg_rag.domain.models.config import REMOVED_MODEL_KEYS
 from unified_kg_rag.domain.models.provider_config import SQLITE
 from unified_kg_rag.shared.exceptions import ConfigurationError
 
@@ -40,7 +41,9 @@ def warn_unknown_keys(data: Any, model: type[BaseModel], prefix: str = "") -> No
         path = f"{prefix}{key}"
         field = model.model_fields.get(key)
         if field is None:
-            _logger.warning("Unknown config key '%s' is ignored", path)
+            # A removed model key fails validation with its replacement named.
+            if path not in REMOVED_MODEL_KEYS:
+                _logger.warning("Unknown config key '%s' is ignored", path)
             continue
         nested = _nested_model(field.annotation)
         if nested is not None:
@@ -146,13 +149,13 @@ ENV_OVERRIDES: dict[str, tuple[str, ...]] = {
 }
 
 
-def _merge_over(base: dict[str, Any], top: dict[str, Any]) -> dict[str, Any]:
+def merge_over(base: dict[str, Any], top: dict[str, Any]) -> dict[str, Any]:
     """``base`` with every leaf of ``top`` written over it (nested dicts merge)."""
     merged = dict(base)
     for key, value in top.items():
         below = merged.get(key)
         merged[key] = (
-            _merge_over(below, value)
+            merge_over(below, value)
             if isinstance(value, dict) and isinstance(below, dict)
             else value
         )
@@ -195,14 +198,18 @@ class ConfigLoader:
             file_config = Config(**config_data)
             env_data = self._environment_layer(file_config)
             config = (
-                Config(**_merge_over(config_data, env_data))
-                if env_data
-                else file_config
+                Config(**merge_over(config_data, env_data)) if env_data else file_config
             )
         except ValidationError as e:
             raise ConfigurationError(
                 f"Configuration validation error: {validation_summary(e)}{where}"
             ) from e
+        for path in config.inactive_provider_settings():
+            _logger.warning(
+                "Config key '%s' is ignored: its provider is not the one selected "
+                "(see providers.*.kind)",
+                path,
+            )
         if self.config_path is not None:
             resolve_relative_paths(config, self.config_path)
         self._config = config

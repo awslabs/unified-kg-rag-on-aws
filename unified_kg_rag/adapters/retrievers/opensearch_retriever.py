@@ -159,12 +159,12 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         self._embedding_factory = embedding_factory
         # Queries embed with the model and dimension the indexer embeds with
         # (OpenSearchIndexer), so their vectors are comparable.
-        self._embedding_model_id = configured_embedding_model(self._opensearch_config)
+        self._embedding_model_id = configured_embedding_model(config)
         self._embedding_dimension = resolve_embedding_dimension(
-            embedding_factory, self._opensearch_config
+            embedding_factory, config
         )
         self._embedding_model = self._embedding_factory.get_model(
-            self._opensearch_config.embedding_model_id,
+            config.embedding_model_id,
             dimensions=self._embedding_dimension,
         )
         # Aliases whose indices were checked to hold this model's embeddings.
@@ -613,7 +613,7 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             f"'{model}' (dimension {dimension}), so its vector search would fail "
             "or rank by unrelated vectors. Query with the embedding model and "
             "dimension the corpus was ingested with "
-            "(indexing.opensearch.embedding_model_id / embedding_dimension), or "
+            "(models.embedding.model_id / dimension), or "
             "re-ingest the corpus with this model (indexing.reset: true)."
         )
 

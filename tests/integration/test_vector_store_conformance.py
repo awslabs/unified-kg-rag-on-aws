@@ -433,7 +433,7 @@ def test_incremental_write_refuses_another_embedding_model(
     _write(harness, "entities", "upsert", _entities())
     harness.vector_indexer.check_index_settings("default")
     other_model = harness.derive(
-        lambda c: setattr(c.indexing.opensearch, "embedding_model_id", "other-embed")
+        lambda c: setattr(c.models.embedding, "model_id", "other-embed")
     )
     other_dimension = harness.derive(embedding_factory=HashingEmbeddingFactory(32))
     for other in (other_model, other_dimension):

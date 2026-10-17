@@ -14,10 +14,7 @@ Ingestion also records what built the index (``META_BUILD``: an
 from collections.abc import Mapping
 from typing import Any
 
-from unified_kg_rag.domain.models.config import (
-    OpenSearchIndexingConfig,
-    model_id_value,
-)
+from unified_kg_rag.domain.models.config import Config, model_id_value
 from unified_kg_rag.ports.model_factory import EmbeddingFactoryPort
 from unified_kg_rag.shared.exceptions import ConfigurationError
 
@@ -28,17 +25,17 @@ META_DIMENSION = "embedding_dimension"
 META_BUILD = "build"
 
 
-def configured_embedding_model(opensearch_config: OpenSearchIndexingConfig) -> str:
+def configured_embedding_model(config: Config) -> str:
     """The configured embedding model id, as an index records it."""
-    return model_id_value(opensearch_config.embedding_model_id)
+    return model_id_value(config.embedding_model_id)
 
 
 def resolve_embedding_dimension(
-    embedding_factory: EmbeddingFactoryPort, opensearch_config: OpenSearchIndexingConfig
+    embedding_factory: EmbeddingFactoryPort, config: Config
 ) -> int:
     """The vector dimension the configured embedding model produces.
 
-    ``indexing.opensearch.embedding_dimension`` when set (it must be one the
+    ``models.embedding.dimension`` when set (it must be one the
     model supports, if the model reports its dimensions), otherwise the
     model's largest supported dimension.
 
@@ -47,12 +44,12 @@ def resolve_embedding_dimension(
             configured dimension, or reports no dimension while none is
             configured.
     """
-    model = configured_embedding_model(opensearch_config)
-    model_info = embedding_factory.get_model_info(opensearch_config.embedding_model_id)
+    model = configured_embedding_model(config)
+    model_info = embedding_factory.get_model_info(config.embedding_model_id)
     if not model_info:
         raise ConfigurationError(f"Unsupported model: '{model}'")
     supported = model_info.dimensions
-    if (dim := opensearch_config.embedding_dimension) is not None:
+    if (dim := config.embedding_dimension) is not None:
         is_supported = (
             supported is None
             or (isinstance(supported, list) and dim in supported)
@@ -71,7 +68,7 @@ def resolve_embedding_dimension(
     # Guessing a dimension would build an index the model's vectors do not fit.
     raise ConfigurationError(
         f"Embedding model '{model}' reports no vector dimension; set "
-        "indexing.opensearch.embedding_dimension."
+        "models.embedding.dimension."
     )
 
 

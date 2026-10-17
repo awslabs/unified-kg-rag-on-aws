@@ -21,6 +21,7 @@ from unified_kg_rag.domain.models import (
     Backend,
     Config,
     EmbeddingModelId,
+    ModelRole,
     RerankModelId,
     model_id_value,
 )
@@ -31,11 +32,7 @@ pytestmark = pytest.mark.unit
 
 _ROOT = Path(__file__).resolve().parents[2]
 
-_LOCAL_EMBEDDING = {
-    "kind": "ollama",
-    "model_id": "synthetic-embed",
-    "dimension": 384,
-}
+_LOCAL_EMBEDDING = {"model_id": "synthetic-embed", "dimension": 384}
 
 
 @pytest.mark.parametrize(
@@ -69,19 +66,16 @@ def test_shipped_yaml_without_providers_keeps_the_aws_providers(path: str) -> No
         "vector": "opensearch",
         "doc_status": "dynamodb",
     }
-    assert isinstance(config.indexing.opensearch.embedding_model_id, EmbeddingModelId)
-    assert isinstance(config.search.reranking.rerank_model_id, RerankModelId)
+    assert isinstance(config.embedding_model_id, EmbeddingModelId)
+    assert isinstance(config.rerank_model_id, RerankModelId)
 
 
 def test_default_config_is_unchanged_by_the_new_sections() -> None:
     config = Config()
-    assert config.indexing.opensearch.embedding_model_id is (
-        EmbeddingModelId.TITAN_EMBED_V2
-    )
-    assert config.evaluation.embedding_model_id is EmbeddingModelId.TITAN_EMBED_V2
-    assert config.search.reranking.rerank_model_id is RerankModelId.COHERE_RERANK_V3_5
-    assert (
-        config.search.answer_generation_model_id == config.aws.bedrock.default_model_id
+    assert config.embedding_model_id is EmbeddingModelId.TITAN_EMBED_V2
+    assert config.rerank_model_id is RerankModelId.COHERE_RERANK_V3_5
+    assert config.model_id(ModelRole.ANSWER_GENERATION) == config.tier_model_id(
+        "default"
     )
     assert config.doc_status_enabled is False
 
@@ -93,25 +87,18 @@ def test_default_config_is_unchanged_by_the_new_sections() -> None:
 def test_bedrock_embedding_ids_accept_enum_members_and_their_values(
     value: object,
 ) -> None:
-    config = Config(indexing={"opensearch": {"embedding_model_id": value}})
-    assert config.indexing.opensearch.embedding_model_id is EmbeddingModelId.EMBED_V4
+    config = Config(models={"embedding": {"model_id": value}})
+    assert config.embedding_model_id is EmbeddingModelId.EMBED_V4
 
 
 @pytest.mark.parametrize(
     ("section", "message"),
     [
         (
-            {"indexing": {"opensearch": {"embedding_model_id": "synthetic-embed"}}},
-            "indexing.opensearch.embedding_model_id",
+            {"models": {"embedding": {"model_id": "synthetic-embed"}}},
+            "models.embedding.model_id",
         ),
-        (
-            {"evaluation": {"embedding_model_id": "synthetic-embed"}},
-            "evaluation.embedding_model_id",
-        ),
-        (
-            {"search": {"reranking": {"rerank_model_id": "synthetic-rerank"}}},
-            "search.reranking.rerank_model_id",
-        ),
+        ({"models": {"rerank": "synthetic-rerank"}}, "models.rerank"),
     ],
 )
 def test_bedrock_providers_still_reject_ids_outside_the_catalog(
@@ -121,54 +108,133 @@ def test_bedrock_providers_still_reject_ids_outside_the_catalog(
         Config(**section)
 
 
-def test_non_bedrock_embedding_takes_any_name_and_defaults_every_field() -> None:
-    config = Config(providers={"embedding": _LOCAL_EMBEDDING})
-    assert config.indexing.opensearch.embedding_model_id == "synthetic-embed"
-    assert config.evaluation.embedding_model_id == "synthetic-embed"
-    assert model_id_value(config.indexing.opensearch.embedding_model_id) == (
-        "synthetic-embed"
-    )
-
-
-def test_an_explicit_embedding_id_wins_over_the_provider_default() -> None:
+def test_non_bedrock_embedding_takes_any_name() -> None:
     config = Config(
-        providers={"embedding": _LOCAL_EMBEDDING},
-        evaluation={"embedding_model_id": "other-embed"},
+        providers={"embedding": {"kind": "ollama"}},
+        models={"embedding": _LOCAL_EMBEDDING},
     )
-    assert config.indexing.opensearch.embedding_model_id == "synthetic-embed"
-    assert config.evaluation.embedding_model_id == "other-embed"
+    assert config.embedding_model_id == "synthetic-embed"
+    assert model_id_value(config.embedding_model_id) == "synthetic-embed"
+    assert config.embedding_dimension == 384
 
 
 def test_non_bedrock_embedding_requires_a_model_and_dimension() -> None:
-    with pytest.raises(ValidationError, match="providers.embedding.model_id"):
-        Config(providers={"embedding": {"kind": "ollama", "model_id": "x"}})
+    with pytest.raises(ValidationError, match="models.embedding.model_id"):
+        Config(
+            providers={"embedding": {"kind": "ollama"}},
+            models={"embedding": {"model_id": "x"}},
+        )
 
 
-def test_non_bedrock_llm_tiers_follow_the_provider_models() -> None:
+def test_tiers_and_roles_resolve_through_the_models_section() -> None:
     config = Config(
-        providers={
-            "llm": {
-                "kind": "openai_compatible",
-                "default_model_id": "synthetic-large",
-                "fast_model_id": "synthetic-small",
-            }
+        providers={"llm": {"kind": "openai_compatible"}},
+        models={
+            "default": "synthetic-large",
+            "fast": "synthetic-small",
+            "roles": {"answer_generation": "pinned-model", "query_rewrite": "default"},
         },
-        search={"answer_generation_model_id": "pinned-model"},
     )
-    assert config.processing.graph_extraction.extraction_model_id == "synthetic-large"
-    assert config.processing.chunking.chunking_model_id == "synthetic-small"
-    assert config.search.answer_generation_model_id == "pinned-model"
+    assert config.model_id(ModelRole.GRAPH_EXTRACTION) == "synthetic-large"
+    assert config.model_id(ModelRole.CHUNKING) == "synthetic-small"
+    assert config.model_id(ModelRole.ANSWER_GENERATION) == "pinned-model"
+    # A tier name moves a role to the other tier.
+    assert config.model_id(ModelRole.QUERY_REWRITE) == "synthetic-large"
+    assert config.model_tier("synthetic-small") == "fast"
+    assert config.model_tier("pinned-model") == "default"
 
 
 def test_the_fast_tier_defaults_to_the_default_model() -> None:
-    config = Config(providers={"llm": {"kind": "ollama", "default_model_id": "m"}})
-    assert config.processing.chunking.chunking_model_id == "m"
-    assert config.search.global_search.map_model_id == "m"
+    config = Config(providers={"llm": {"kind": "ollama"}}, models={"default": "m"})
+    assert config.model_id(ModelRole.CHUNKING) == "m"
+    assert config.model_id(ModelRole.GLOBAL_MAP) == "m"
+
+
+def test_bedrock_tiers_default_to_the_shipped_models() -> None:
+    config = Config(models={"default": "anthropic.claude-opus-5"})
+    assert config.model_id(ModelRole.ANSWER_GENERATION) == "anthropic.claude-opus-5"
+    # The fast tier keeps its own Bedrock default.
+    assert config.model_id(ModelRole.CHUNKING) == "anthropic.claude-haiku-5-5"
 
 
 def test_non_bedrock_llm_requires_a_default_model() -> None:
-    with pytest.raises(ValidationError, match="providers.llm.default_model_id"):
+    with pytest.raises(ValidationError, match="models.default is required"):
         Config(providers={"llm": {"kind": "ollama"}})
+
+
+@pytest.mark.parametrize(
+    ("data", "replacement"),
+    [
+        (
+            {"providers": {"llm": {"default_model_id": "m"}}},
+            "providers.llm.default_model_id -> models.default",
+        ),
+        (
+            {"aws": {"bedrock": {"fast_model_id": "m"}}},
+            "aws.bedrock.fast_model_id -> models.fast",
+        ),
+        (
+            {"search": {"answer_generation_model_id": "m"}},
+            "search.answer_generation_model_id -> models.roles.answer_generation",
+        ),
+        (
+            {"indexing": {"opensearch": {"embedding_dimension": 512}}},
+            "indexing.opensearch.embedding_dimension -> models.embedding.dimension",
+        ),
+        (
+            {"graph": {"visualization": {"embeddings": {}}}},
+            "graph.visualization.embeddings -> models.embedding.model_id",
+        ),
+        (
+            {"search": {"reranking": {"rerank_model_id": "m"}}},
+            "search.reranking.rerank_model_id -> models.rerank",
+        ),
+    ],
+)
+def test_a_removed_model_key_names_its_replacement(
+    data: dict, replacement: str
+) -> None:
+    # The settings used to be read only under their own provider, so a
+    # Bedrock config silently ignored providers.llm.default_model_id.
+    with pytest.raises(ValidationError, match=replacement):
+        Config(**data)
+
+
+def test_every_removed_model_key_is_refused() -> None:
+    from unified_kg_rag.domain.models.config import REMOVED_MODEL_KEYS
+
+    for old in REMOVED_MODEL_KEYS:
+        data: dict = {}
+        node = data
+        *parents, leaf = old.split(".")
+        for part in parents:
+            node = node.setdefault(part, {})
+        node[leaf] = "x"
+        with pytest.raises(ValidationError, match="models section"):
+            Config(**data)
+
+
+def test_settings_of_an_inactive_provider_are_reported() -> None:
+    bedrock = Config(providers={"llm": {"temperature": 0.7, "base_url": "http://x"}})
+    assert bedrock.inactive_provider_settings() == [
+        "providers.llm.base_url",
+        "providers.llm.temperature",
+    ]
+    local = Config(backend="local", aws={"bedrock": {"default_effort": "max"}})
+    assert local.inactive_provider_settings() == ["aws.bedrock.default_effort"]
+    # The preset's own endpoint settings are the active provider's.
+    assert Config(backend="local").inactive_provider_settings() == []
+    assert Config().inactive_provider_settings() == []
+
+
+def test_the_loader_warns_on_inactive_provider_settings(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    path = tmp_path / "config.yaml"
+    path.write_text("providers:\n  llm:\n    temperature: 0.7\n", encoding="utf-8")
+    with caplog.at_level("WARNING"):
+        ConfigLoader(path).load_config()
+    assert "providers.llm.temperature' is ignored" in caplog.text
 
 
 def test_kinds_are_normalised() -> None:
@@ -186,19 +252,18 @@ def test_gremlin_rejects_iam_auth() -> None:
 def test_local_preset_fills_every_role_and_the_store_endpoints() -> None:
     config = Config(backend="local")
     preset = LOCAL_PRESET["providers"]
+    models = LOCAL_PRESET["models"]
     assert config.providers.llm.kind == preset["llm"]["kind"]
-    assert config.providers.embedding.dimension == preset["embedding"]["dimension"]
+    assert config.embedding_dimension == models["embedding"]["dimension"]
     assert config.providers.rerank.kind == "cross_encoder"
     # The stores are the embedded ones; the endpoints below serve a config
     # that selects the gremlin and opensearch kinds (the containers).
     assert config.providers.graph.kind == "sqlite"
     assert config.providers.vector.kind == "sqlite"
     assert config.providers.doc_status.kind == "sqlite"
-    assert config.search.answer_generation_model_id == preset["llm"]["default_model_id"]
-    assert (
-        config.indexing.opensearch.embedding_model_id == preset["embedding"]["model_id"]
-    )
-    assert config.search.reranking.rerank_model_id == preset["rerank"]["model_id"]
+    assert config.model_id(ModelRole.ANSWER_GENERATION) == models["default"]
+    assert config.embedding_model_id == models["embedding"]["model_id"]
+    assert config.rerank_model_id == models["rerank"]
     assert (config.aws.neptune.use_iam, config.aws.neptune.use_ssl) == (False, False)
     assert config.aws.opensearch.allow_anonymous is True
     assert config.aws.opensearch.port == 9200
@@ -221,18 +286,54 @@ def test_local_preset_yields_to_values_the_config_sets() -> None:
     config = Config(
         backend="local",
         providers={
-            "llm": {"default_model_id": "my-model", "base_url": "http://gpu:11434"},
+            "llm": {"base_url": "http://gpu:11434"},
             "rerank": {"kind": "none"},
         },
+        models={"default": "my-model"},
         aws={"neptune": {"endpoint": "graph.internal.example", "port": 18182}},
     )
     assert config.providers.llm.kind == "ollama"
-    assert config.providers.llm.default_model_id == "my-model"
+    assert config.tier_model_id("default") == "my-model"
     assert config.providers.llm.base_url == "http://gpu:11434"
     assert config.providers.rerank.kind == "none"
+    assert config.rerank_model_id is None
     assert config.aws.neptune.endpoint == "graph.internal.example"
     assert config.aws.neptune.port == 18182
     assert config.aws.neptune.use_ssl is False
+
+
+def test_local_preset_keeps_its_dimension_to_its_own_embedding_model() -> None:
+    # The preset's 1024 is bge-m3's; another model took it silently and
+    # built an index of the wrong dimension.
+    with pytest.raises(ValidationError, match="models.embedding.dimension"):
+        Config(backend="local", models={"embedding": {"model_id": "nomic-embed-text"}})
+    config = Config(
+        backend="local",
+        models={"embedding": {"model_id": "nomic-embed-text", "dimension": 768}},
+    )
+    assert config.embedding_dimension == 768
+    assert (
+        Config(
+            backend="local", models={"embedding": {"model_id": "bge-m3"}}
+        ).embedding_dimension
+        == 1024
+    )
+
+
+def test_local_preset_models_yield_to_another_provider() -> None:
+    # A role moved back to Bedrock keeps the Bedrock defaults, not the
+    # preset's Ollama model names.
+    config = Config(
+        backend="local",
+        providers={
+            "llm": {"kind": "bedrock"},
+            "embedding": {"kind": "bedrock"},
+            "rerank": {"kind": "bedrock"},
+        },
+    )
+    assert config.model_id(ModelRole.ANSWER_GENERATION) == "anthropic.claude-sonnet-5-5"
+    assert config.embedding_model_id is EmbeddingModelId.TITAN_EMBED_V2
+    assert config.rerank_model_id is RerankModelId.COHERE_RERANK_V3_5
 
 
 def test_local_preset_skips_anonymous_access_for_authenticated_opensearch() -> None:
@@ -243,7 +344,7 @@ def test_local_preset_skips_anonymous_access_for_authenticated_opensearch() -> N
 
 def test_preset_does_not_mutate_its_template() -> None:
     before = yaml.safe_dump(LOCAL_PRESET)
-    Config(backend="local", providers={"llm": {"default_model_id": "x"}})
+    Config(backend="local", models={"default": "x"})
     assert yaml.safe_dump(LOCAL_PRESET) == before
 
 
@@ -262,15 +363,12 @@ def test_doc_status_switch_follows_dynamodb_unless_set() -> None:
 def test_local_backend_from_yaml(tmp_path: Path) -> None:
     path = tmp_path / "config.yaml"
     path.write_text(
-        "backend: local\n"
-        "providers:\n"
-        "  llm:\n"
-        "    default_model_id: synthetic-llm\n",
+        "backend: local\n" "models:\n" "  default: synthetic-llm\n",
         encoding="utf-8",
     )
     config = ConfigLoader(path).load_config()
     assert config.backend is Backend.LOCAL
-    assert config.search.answer_generation_model_id == "synthetic-llm"
+    assert config.model_id(ModelRole.ANSWER_GENERATION) == "synthetic-llm"
     # The preset's embedded stores live next to the config file, whatever
     # directory the run starts in.
     assert config.providers.graph.sqlite_path == str(
@@ -311,13 +409,8 @@ def test_a_relative_sqlite_path_follows_the_config_file(
 
 def test_api_key_is_masked() -> None:
     config = Config(
-        providers={
-            "llm": {
-                "kind": "openai_compatible",
-                "default_model_id": "m",
-                "api_key": "synthetic-secret",
-            }
-        }
+        providers={"llm": {"kind": "openai_compatible", "api_key": "synthetic-secret"}},
+        models={"default": "m"},
     )
     assert "synthetic-secret" not in repr(config.providers.llm)
 
@@ -349,10 +442,10 @@ def test_shipped_local_config_sets_only_what_differs_from_the_preset() -> None:
     assert set(raw["providers"]["doc_status"]) == {"enabled", "sqlite_path"}
     shown = set(commented_key_paths(text))
     assert shown == {
-        "providers.llm.default_model_id",
-        "providers.embedding.model_id",
-        "providers.embedding.dimension",
-        "providers.rerank.model_id",
+        "models.default",
+        "models.embedding.model_id",
+        "models.embedding.dimension",
+        "models.rerank",
         *(f"aws.neptune.{k}" for k in ("endpoint", "port", "use_ssl", "use_iam")),
         *(
             f"aws.opensearch.{k}"

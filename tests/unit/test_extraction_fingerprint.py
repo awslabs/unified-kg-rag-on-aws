@@ -49,7 +49,7 @@ def _set(path: str, value: object) -> Callable[[Config], None]:
     [
         _set("custom_prompts.graph_extraction_system", "tuned {input_text}"),
         _set("processing.graph_extraction.entity_types", ["PRODUCT: goods"]),
-        _set("processing.graph_extraction.extraction_model_id", "amazon.nova-pro"),
+        _set("models.roles.graph_extraction", "amazon.nova-pro"),
         _set("processing.chunking.max_chunk_size", 4000),
         _set("processing.gleaning.max_rounds", 1),
         _set("processing.similarity_threshold", 0.5),
@@ -130,32 +130,49 @@ def test_a_guardrail_that_guards_ingestion_moves_it() -> None:
 
 
 @pytest.mark.parametrize(
-    "block, field, value",
+    "block, path, value",
     [
-        ("processing.translation", "translation_model_id", "amazon.nova-pro"),
-        ("processing.gleaning", "max_rounds", 1),
-        ("fixing", "fixing_model_id", "amazon.nova-pro"),
+        ("processing.translation", "models.roles.translation", "amazon.nova-pro"),
+        ("processing.gleaning", "processing.gleaning.max_rounds", 1),
+        ("processing.gleaning", "models.roles.gleaning", "amazon.nova-pro"),
+        ("fixing", "models.roles.fixing", "amazon.nova-pro"),
         (
             "processing.graph_extraction.description_summarization",
-            "max_summary_tokens",
+            "processing.graph_extraction.description_summarization.max_summary_tokens",
             64,
         ),
     ],
 )
 def test_settings_of_a_disabled_block_do_not_move_it(
-    block: str, field: str, value: object
+    block: str, path: str, value: object
 ) -> None:
+    # A role's model lives in models.roles, outside its stage's block, and
+    # still counts only while that stage runs.
     disabled = Config()
     _set(f"{block}.enabled", False)(disabled)
     before = extraction_fingerprint(disabled)
-    _set(f"{block}.{field}", value)(disabled)
+    _set(path, value)(disabled)
     assert extraction_fingerprint(disabled) == before
 
     # Switched on, the same field shapes the output again.
     enabled = Config()
     before = extraction_fingerprint(enabled)
-    _set(f"{block}.{field}", value)(enabled)
+    _set(path, value)(enabled)
     assert extraction_fingerprint(enabled) != before
+
+
+def test_a_tier_change_moves_it_through_the_roles_on_that_tier() -> None:
+    # Graph extraction runs on the default tier: moving the tier moves the
+    # extraction settings, though no role key changed.
+    config = Config()
+    before = extraction_fingerprint(config)
+    config.models.default = "amazon.nova-pro"
+    assert extraction_fingerprint(config) != before
+    # Pinning the role back to the old model restores the fingerprint.
+    config.models.roles.graph_extraction = Config().tier_model_id("default")
+    config.models.roles.gleaning = Config().tier_model_id("default")
+    config.models.roles.fixing = Config().tier_model_id("default")
+    assert extraction_fingerprint(config) == before
 
 
 @pytest.mark.parametrize(
@@ -194,7 +211,7 @@ def test_grounding_settings_count_only_while_grounding_is_on() -> None:
     "change",
     [
         _set("processing.claim_extraction.max_entities_per_prompt", 5),
-        _set("processing.claim_extraction.extraction_model_id", "amazon.nova-pro"),
+        _set("models.roles.claim_extraction", "amazon.nova-pro"),
         _set("custom_prompts.claim_extraction_system", "tuned"),
         _set("custom_prompts.claim_extraction_human", "tuned {input_text}"),
     ],

@@ -90,23 +90,6 @@ class LLMProviderConfig(EndpointConfig):
         default=BEDROCK,
         description="Language-model provider: bedrock | openai_compatible | ollama.",
     )
-    default_model_id: str | None = Field(
-        default=None,
-        min_length=1,
-        description=(
-            "Model for every role on the 'default' tier when kind is not "
-            "bedrock (replaces aws.bedrock.default_model_id). Required then; a "
-            "role's own *_model_id still overrides it."
-        ),
-    )
-    fast_model_id: str | None = Field(
-        default=None,
-        min_length=1,
-        description=(
-            "Model for every role on the 'fast' tier when kind is not bedrock "
-            "(replaces aws.bedrock.fast_model_id). null uses default_model_id."
-        ),
-    )
     context_window_size: int = Field(
         default=32768,
         ge=1024,
@@ -152,23 +135,6 @@ class EmbeddingProviderConfig(EndpointConfig):
         default=BEDROCK,
         description="Embedding provider: bedrock | openai_compatible | ollama.",
     )
-    model_id: str | None = Field(
-        default=None,
-        min_length=1,
-        description=(
-            "Embedding model when kind is not bedrock. Required then; it "
-            "becomes the default of indexing.opensearch.embedding_model_id and "
-            "evaluation.embedding_model_id."
-        ),
-    )
-    dimension: int | None = Field(
-        default=None,
-        ge=1,
-        description=(
-            "Vector dimension of model_id (fixed into the OpenSearch knn_vector "
-            "mappings). Required when kind is not bedrock."
-        ),
-    )
     max_input_tokens: int = Field(
         default=8192,
         ge=1,
@@ -187,14 +153,6 @@ class RerankProviderConfig(BaseModel):
             "extra) | none (keep the fused order). With none, or a cross-encoder "
             "that cannot load, queries run unreranked, logged once and visible "
             "as kg_rag.rerank_enabled=false on the fusion span."
-        ),
-    )
-    model_id: str | None = Field(
-        default=None,
-        min_length=1,
-        description=(
-            "Cross-encoder model when kind is cross_encoder. Required then; it "
-            "becomes the default of search.reranking.rerank_model_id."
         ),
     )
     device: str | None = Field(
@@ -302,24 +260,17 @@ LOCAL_MAX_CONTEXT_TOKENS = 22_000
 # anything).
 LOCAL_PRESET: dict[str, Any] = {
     "providers": {
-        "llm": {
-            "kind": OLLAMA,
-            "base_url": _OLLAMA_URL,
-            "default_model_id": "qwen2.5:7b-instruct",
-        },
-        "embedding": {
-            "kind": OLLAMA,
-            "base_url": _OLLAMA_URL,
-            "model_id": "bge-m3",
-            "dimension": 1024,
-        },
-        "rerank": {
-            "kind": CROSS_ENCODER,
-            "model_id": "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1",
-        },
+        "llm": {"kind": OLLAMA, "base_url": _OLLAMA_URL},
+        "embedding": {"kind": OLLAMA, "base_url": _OLLAMA_URL},
+        "rerank": {"kind": CROSS_ENCODER},
         "graph": {"kind": SQLITE},
         "vector": {"kind": SQLITE},
         "doc_status": {"kind": SQLITE},
+    },
+    "models": {
+        "default": "qwen2.5:7b-instruct",
+        "embedding": {"model_id": "bge-m3", "dimension": 1024},
+        "rerank": "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1",
     },
     "aws": {
         "neptune": {
@@ -409,13 +360,34 @@ def apply_backend_preset(data: dict[str, Any]) -> dict[str, Any]:
         opensearch.get("username") or opensearch.get("use_iam")
     ):
         preset["aws"]["opensearch"].pop("allow_anonymous")
+    providers = data.get("providers") or {}
+
+    def kind(role: str) -> Any:
+        section = providers.get(role) if isinstance(providers, dict) else None
+        section = section if isinstance(section, dict) else {}
+        return _kind_value(section.get("kind", preset["providers"][role]["kind"]))
+
+    # The preset's models are its providers' models: a role the config moves
+    # to another provider keeps that provider's defaults.
+    if kind("llm") != OLLAMA:
+        preset["models"].pop("default")
+    models = data.get("models") if isinstance(data.get("models"), dict) else {}
+    embedding = models.get("embedding") if isinstance(models, dict) else None
+    if kind("embedding") != OLLAMA or (
+        # The dimension is the preset model's: another model needs its own.
+        isinstance(embedding, dict)
+        and embedding.get("model_id")
+        not in (None, preset["models"]["embedding"]["model_id"])
+    ):
+        preset["models"].pop("embedding")
+    if kind("rerank") != CROSS_ENCODER:
+        preset["models"].pop("rerank")
     # The context budget is derived from the default non-Bedrock window, so it
     # only fits a non-Bedrock LLM left at that window. Bedrock models (sized
     # from the catalog) or an explicit window keep the regular default.
-    llm = (data.get("providers") or {}).get("llm") or {}
-    if isinstance(llm, dict) and (
-        _kind_value(llm.get("kind", preset["providers"]["llm"]["kind"])) == BEDROCK
-        or "context_window_size" in llm
+    llm = providers.get("llm") if isinstance(providers, dict) else None
+    if kind("llm") == BEDROCK or (
+        isinstance(llm, dict) and "context_window_size" in llm
     ):
         preset.pop("search")
     merged = _merge_under(preset, data)

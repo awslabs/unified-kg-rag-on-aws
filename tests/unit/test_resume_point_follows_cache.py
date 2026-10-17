@@ -30,6 +30,7 @@ from unified_kg_rag.domain.models import (
     Config,
     Entity,
     LanguageModelId,
+    ModelRole,
     PipelineContext,
     PipelineStageResult,
     PipelineStageStatus,
@@ -157,8 +158,8 @@ def _resume(
 
 def _changed_model_config() -> Config:
     config = Config()
-    current = config.processing.graph_extraction.extraction_model_id
-    config.processing.graph_extraction.extraction_model_id = next(
+    current = config.model_id(ModelRole.GRAPH_EXTRACTION)
+    config.models.roles.graph_extraction = next(
         model for model in LanguageModelId if model != current
     )
     return config
@@ -444,7 +445,7 @@ class TestResumeAfterExtractionChange:
             path in caplog.text
             for path in (
                 "processing.claim_extraction.enabled",
-                "processing.graph_extraction.extraction_model_id",
+                "models.roles.graph_extraction",
             )
         )
 

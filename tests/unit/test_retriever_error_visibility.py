@@ -772,7 +772,7 @@ def _opensearch_retriever(config: Config) -> OpenSearchRetriever:
     object.__setattr__(
         inst,
         "_embedding_model_id",
-        configured_embedding_model(config.indexing.opensearch),
+        configured_embedding_model(config),
     )
     object.__setattr__(inst, "_embedding_dimension", _QUERY_DIMENSION)
     object.__setattr__(inst, "_embedding_checked_aliases", set())
@@ -1422,7 +1422,7 @@ def _text_units_query(
 async def test_index_of_another_embedding_model_is_refused(config: Config) -> None:
     # Same dimension, another model: the search would "succeed" and rank by
     # unrelated vectors.
-    model = configured_embedding_model(config.indexing.opensearch)
+    model = configured_embedding_model(config)
     retriever = _retriever_over(
         config, _knn_mappings(_QUERY_DIMENSION, "other-model", _QUERY_DIMENSION)
     )
@@ -1446,7 +1446,7 @@ async def test_index_of_another_dimension_is_refused_without_meta(
 
 
 async def test_matching_index_is_searched_and_checked_once(config: Config) -> None:
-    model = configured_embedding_model(config.indexing.opensearch)
+    model = configured_embedding_model(config)
     retriever = _retriever_over(
         config, _knn_mappings(_QUERY_DIMENSION, model, _QUERY_DIMENSION)
     )
@@ -1460,7 +1460,7 @@ async def test_matching_index_is_searched_and_checked_once(config: Config) -> No
 
 async def test_enum_model_id_matches_the_recorded_string(config: Config) -> None:
     # The config holds an EmbeddingModelId member; the index records its value.
-    config.indexing.opensearch.embedding_model_id = EmbeddingModelId.TITAN_EMBED_V2
+    config.models.embedding.model_id = EmbeddingModelId.TITAN_EMBED_V2
     retriever = _retriever_over(
         config,
         _knn_mappings(
@@ -1541,7 +1541,7 @@ def test_queries_embed_with_the_indexed_dimension(
 ) -> None:
     # The indexer embeds with indexing.opensearch.embedding_dimension; queries
     # embedded at the model's default instead fail every kNN search.
-    config.indexing.opensearch.embedding_dimension = configured
+    config.models.embedding.dimension = configured
     factory = _RecordingEmbeddingFactory()
 
     retriever = OpenSearchRetriever(

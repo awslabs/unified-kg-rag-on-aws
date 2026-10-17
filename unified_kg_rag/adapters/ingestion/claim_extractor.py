@@ -20,7 +20,14 @@ from unified_kg_rag.domain.ingestion.base_processor import (
 )
 from unified_kg_rag.domain.ingestion.claim_resolver import claim_identity_suffix
 from unified_kg_rag.domain.ingestion.contributions import merge_claim_contributions
-from unified_kg_rag.domain.models import Claim, Config, Entity, ModelPurpose, TextUnit
+from unified_kg_rag.domain.models import (
+    Claim,
+    Config,
+    Entity,
+    ModelPurpose,
+    ModelRole,
+    TextUnit,
+)
 from unified_kg_rag.domain.prompts import ClaimExtractionPrompt
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.utils import (
@@ -97,14 +104,14 @@ class ClaimExtractor(BaseProcessor):
             model_purpose=ModelPurpose.INGESTION,
             factory=self.factory,
             enable_output_fixing=self.config.fixing.enabled,
-            output_fixing_model_id=self.config.fixing.fixing_model_id,
+            output_fixing_model_id=self.config.model_id(ModelRole.FIXING),
             min_output_tokens=ClaimExtractionPrompt.output_floor(self.config),
             output_tags=["claims"],
         )
         self.claim_extractor = setup_chain(
             model_purpose=ModelPurpose.INGESTION,
             factory=self.factory,
-            model_id=self.claim_extraction_config.extraction_model_id,
+            model_id=self.config.model_id(ModelRole.CLAIM_EXTRACTION),
             prompt_class=ClaimExtractionPrompt,
             min_output_tokens=ClaimExtractionPrompt.output_floor(self.config),
             parser=robust_xml_output_parser,

@@ -40,6 +40,7 @@ from unified_kg_rag.domain.models import (
     EvaluationResult,
     EvaluationSummary,
     EvaluatorType,
+    ModelRole,
     RetrieverRole,
     model_id_value,
 )
@@ -59,6 +60,7 @@ logger = get_logger(__name__)
 # environments hashes the same. Paths are (section, keys to drop).
 _RETRIEVAL_SECTIONS: tuple[tuple[str, frozenset[str]], ...] = (
     ("backend", frozenset()),
+    ("models", frozenset()),
     ("search", frozenset()),
     ("custom_prompts", frozenset()),
     ("evaluation", frozenset({"outputs_directory", "save_detailed_results"})),
@@ -977,7 +979,8 @@ class EvaluationManager:
         """
         enabled = set(self.evaluators) or set(self.config.evaluation.enabled_evaluators)
         uses_judge = bool(enabled & {EvaluatorType.LANGCHAIN, EvaluatorType.RAGAS})
-        evaluation = self.config.evaluation
+        answer_model = self.config.model_id(ModelRole.ANSWER_GENERATION)
+        judge_model = self.config.model_id(ModelRole.EVALUATION)
         dataset: dict[str, Any] = {}
         if eval_data_path is not None:
             path = Path(eval_data_path)
@@ -1013,20 +1016,17 @@ class EvaluationManager:
                 k: self._manifest_arg(k, v) for k, v in (cli_args or {}).items()
             },
             "models": {
-                "answer_generation": self.config.search.answer_generation_model_id,
-                "evaluation_judge": (
-                    evaluation.evaluation_model_id if uses_judge else None
-                ),
+                "answer_generation": answer_model,
+                "evaluation_judge": judge_model if uses_judge else None,
                 # LLM judges favour their own outputs (self-preference): a
                 # judge that is the answer model inflates its scores.
                 "judge_is_answer_model": (
-                    model_id_value(evaluation.evaluation_model_id)
-                    == model_id_value(self.config.search.answer_generation_model_id)
+                    model_id_value(judge_model) == model_id_value(answer_model)
                     if uses_judge
                     else None
                 ),
                 "evaluation_embedding": (
-                    model_id_value(evaluation.embedding_model_id)
+                    model_id_value(self.config.embedding_model_id)
                     if EvaluatorType.RAGAS in enabled
                     else None
                 ),

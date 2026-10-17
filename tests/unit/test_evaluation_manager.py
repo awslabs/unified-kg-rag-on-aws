@@ -33,6 +33,7 @@ from unified_kg_rag.domain.models import (
     EvaluationResult,
     EvaluationSummary,
     EvaluatorType,
+    ModelRole,
     SearchQuery,
     SearchResult,
 )
@@ -879,7 +880,7 @@ class TestComparability:
         models = manager.build_run_manifest()["models"]
         # Same tier by default: the judge grades its own answers.
         assert models["judge_is_answer_model"] is True
-        manager.config.evaluation.evaluation_model_id = "judge.other-model-v1"
+        manager.config.models.roles.evaluation = "judge.other-model-v1"
         assert manager.build_run_manifest()["models"]["judge_is_answer_model"] is False
 
     def test_run_manifest(self, config: Config, tmp_path) -> None:
@@ -905,7 +906,7 @@ class TestComparability:
             "model_base_url": "https://llm.example.com:8443/v1"
         }
         assert manifest["models"]["answer_generation"] == (
-            config.search.answer_generation_model_id
+            config.model_id(ModelRole.ANSWER_GENERATION)
         )
         assert manifest["models"]["evaluation_judge"] is None  # no LLM judge
         assert manifest["models"]["judge_is_answer_model"] is None
@@ -923,7 +924,7 @@ class TestComparability:
         config.evaluation.enabled_evaluators = []
         manager = EvaluationManager(config, rag_chain=object())
         before = manager.build_run_manifest()["retrieval_config_sha256"]
-        config.search.answer_generation_model_id = "another-model"
+        config.models.roles.answer_generation = "another-model"
         assert manager.build_run_manifest()["retrieval_config_sha256"] != before
 
     def test_config_hash_ignores_the_environment(self, config: Config) -> None:
@@ -938,7 +939,7 @@ class TestComparability:
         config.providers.llm.base_url = "http://localhost:11434"
         config.evaluation.outputs_directory = "elsewhere"
         assert manager.build_run_manifest()["retrieval_config_sha256"] == before
-        config.indexing.opensearch.embedding_dimension = 256
+        config.models.embedding.dimension = 256
         assert manager.build_run_manifest()["retrieval_config_sha256"] != before
 
     async def test_index_build_records_read_per_suffix(self, config: Config) -> None:

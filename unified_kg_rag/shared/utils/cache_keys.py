@@ -56,9 +56,11 @@ from pydantic_core import to_jsonable_python
 
 from unified_kg_rag import __version__
 from unified_kg_rag.domain.models import (
+    ChunkingStrategy,
     Config,
     ExtractionSettings,
     ModelPurpose,
+    ModelRole,
     PipelineStageType,
 )
 from unified_kg_rag.domain.models.provider_config import BEDROCK
@@ -97,8 +99,8 @@ _EVERY_CALL = Keyed(None)
 _WHERE = "says where a call goes or with which credentials, not what it returns"
 _THROUGHPUT = "changes how long a stage takes, not what it produces"
 _TIER = (
-    "a tier default: it reaches a stage only through the role-model fields "
-    "it fills, which are keyed where each role runs"
+    "a tier model: it reaches a stage only through the roles that run on it, "
+    "keyed by their resolved model where each role runs"
 )
 _AT_INDEXING = "read while indexing or querying, and neither caches stage output"
 _QUERY = "read at query time only"
@@ -125,8 +127,6 @@ CONFIG_KEYING: dict[str, Keyed | Unkeyed] = {
     "providers.llm.temperature": _EVERY_CALL,
     "providers.llm.tokenizer": _EVERY_CALL,
     "providers.llm.tiktoken_encoding": _EVERY_CALL,
-    "providers.llm.default_model_id": Unkeyed(_TIER),
-    "providers.llm.fast_model_id": Unkeyed(_TIER),
     "providers.llm.base_url": Unkeyed(_WHERE),
     "providers.llm.api_key": Unkeyed(_WHERE),
     "providers.llm.timeout_seconds": Unkeyed(_THROUGHPUT),
@@ -137,8 +137,6 @@ CONFIG_KEYING: dict[str, Keyed | Unkeyed] = {
     "aws.bedrock.default_effort": _EVERY_CALL,
     "aws.bedrock.fast_effort": _EVERY_CALL,
     "aws.bedrock.ingestion_effort": _EVERY_CALL,
-    "aws.bedrock.default_model_id": Unkeyed(_TIER),
-    "aws.bedrock.fast_model_id": Unkeyed(_TIER),
     "aws.bedrock.region_name": Unkeyed(_WHERE),
     "aws.bedrock.assumed_role_arn": Unkeyed(_WHERE),
     "aws.bedrock.enable_global_profile": Unkeyed(_WHERE),
@@ -151,6 +149,30 @@ CONFIG_KEYING: dict[str, Keyed | Unkeyed] = {
     "aws.bedrock.guardrail.check_output": Unkeyed("screens the answer only"),
     # Output fixing repairs malformed model output in every stage.
     "fixing": _EVERY_CALL,
+    # --- models: each role keys the stage it runs in, by its resolved id ----
+    "models.default": Unkeyed(_TIER),
+    "models.fast": Unkeyed(_TIER),
+    "models.roles.fixing": _EVERY_CALL,
+    "models.roles.chunking": Keyed(_P.TEXT_CHUNKING),
+    "models.roles.translation": Keyed(_P.TRANSLATION),
+    "models.roles.graph_extraction": Keyed(_P.GRAPH_EXTRACTION),
+    "models.roles.description_summary": Keyed(_P.GRAPH_EXTRACTION),
+    "models.roles.gleaning": Keyed(_P.GLEANING),
+    "models.roles.claim_extraction": Keyed(_P.CLAIM_EXTRACTION),
+    "models.roles.community_report": Keyed(_P.COMMUNITY_DETECTION),
+    "models.roles.query_translation": Unkeyed(_QUERY),
+    "models.roles.entity_extraction": Unkeyed(_QUERY),
+    "models.roles.strategy_selection": Unkeyed(_QUERY),
+    "models.roles.query_rewrite": Unkeyed(_QUERY),
+    "models.roles.answer_generation": Unkeyed(_QUERY),
+    "models.roles.community_relevance": Unkeyed(_QUERY),
+    "models.roles.global_map": Unkeyed(_QUERY),
+    "models.roles.global_reduce": Unkeyed(_QUERY),
+    "models.roles.drift_primer": Unkeyed(_QUERY),
+    "models.roles.drift_action": Unkeyed(_QUERY),
+    "models.roles.evaluation": Unkeyed("read by run-eval only"),
+    "models.embedding": Unkeyed(_AT_INDEXING),
+    "models.rerank": Unkeyed(_QUERY),
     # --- the corpus, its identity and the registry it is diffed against ----
     "processing.document_parsing": Keyed(_P.DOCUMENT_PARSING, per_document=False),
     # The registry records the loading stage diffs the corpus against.
@@ -312,6 +334,23 @@ def _block_on(config: Config, path: str) -> bool:
 # Path prefix -> whether the settings under it are in effect. Their switch
 # fields (``kind``, ``enabled``) count either way.
 _IN_EFFECT_WHEN: dict[str, Callable[[Config], bool]] = {
+    # A role's model counts while the stage it serves runs.
+    **{
+        f"models.roles.{role}": functools.partial(_block_on, path=block)
+        for role, block in {
+            "fixing": "fixing",
+            "translation": "processing.translation",
+            "description_summary": (
+                "processing.graph_extraction.description_summarization"
+            ),
+            "gleaning": "processing.gleaning",
+            "claim_extraction": "processing.claim_extraction",
+            "community_report": "graph.community_detection.report_generation",
+        }.items()
+    },
+    "models.roles.chunking": lambda c: (
+        c.processing.chunking.chunker_type is ChunkingStrategy.INTELLIGENT
+    ),
     "providers.llm": lambda c: c.providers.llm.kind != BEDROCK,
     "aws.bedrock": lambda c: c.providers.llm.kind == BEDROCK,
     "aws.bedrock.guardrail": lambda c: c.aws.bedrock.guardrail.applies_to(
@@ -385,8 +424,19 @@ def _settings(config: Config, selected: Callable[[Keyed], bool]) -> dict[str, An
         rule = classify(path) or _UNCLASSIFIED
         if isinstance(rule, Keyed) and selected(rule):
             if _in_effect(config, path, disabled):
-                settings[path] = to_jsonable_python(value)
+                settings[path] = to_jsonable_python(_resolved(config, path, value))
     return settings
+
+
+_ROLES_PREFIX = "models.roles."
+
+
+def _resolved(config: Config, path: str, value: Any) -> Any:
+    """A setting's value as it takes effect: a role's model id resolved
+    through its tier (``Config.model_id``)."""
+    if path.startswith(_ROLES_PREFIX):
+        return config.model_id(ModelRole(path.removeprefix(_ROLES_PREFIX)))
+    return value
 
 
 def _upstream_of(stage: PipelineStageType) -> Callable[[Keyed], bool]:
@@ -520,7 +570,7 @@ def _default_value(path: str) -> Any:
         node = getattr(node, name, _MISSING)
         if node is _MISSING:
             return _MISSING
-    return _recorded(to_jsonable_python(node))
+    return _recorded(to_jsonable_python(_resolved(_default_config(), path, node)))
 
 
 @functools.cache

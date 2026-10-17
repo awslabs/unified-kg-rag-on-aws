@@ -35,6 +35,7 @@ from unified_kg_rag.adapters.search_strategies.local_search import (
 )
 from unified_kg_rag.domain.models import (
     Config,
+    ModelRole,
     RetrievalResult,
     SearchQuery,
     SearchResult,
@@ -110,21 +111,21 @@ class DriftSearchStrategy(BaseSearchStrategy):
         parser = StrOutputParser()
         self.hyde: Runnable = setup_chain(
             factory=factory,
-            model_id=self.drift_config.primer_model_id,
+            model_id=self.config.model_id(ModelRole.DRIFT_PRIMER),
             prompt_class=DriftHydePrompt,
             parser=parser,
             custom_prompts=self.config.custom_prompts,
         )
         self.primer: Runnable = setup_chain(
             factory=factory,
-            model_id=self.drift_config.primer_model_id,
+            model_id=self.config.model_id(ModelRole.DRIFT_PRIMER),
             prompt_class=DriftPrimerPrompt,
             parser=parser,
             custom_prompts=self.config.custom_prompts,
         )
         self.action: Runnable = setup_chain(
             factory=factory,
-            model_id=self.drift_config.action_model_id,
+            model_id=self.config.model_id(ModelRole.DRIFT_ACTION),
             prompt_class=DriftActionPrompt,
             parser=parser,
             custom_prompts=self.config.custom_prompts,

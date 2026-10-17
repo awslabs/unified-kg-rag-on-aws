@@ -54,7 +54,6 @@ class TestConfigDefaults:
     def test_default_values(self) -> None:
         cfg = DescriptionSummarizationConfig()
         assert cfg.enabled is True
-        assert cfg.summary_model_id == "anthropic.claude-haiku-5-5"
         assert cfg.force_summary_threshold_tokens == 600
         assert cfg.max_summary_tokens == 256
 

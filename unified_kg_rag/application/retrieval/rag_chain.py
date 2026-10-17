@@ -60,6 +60,7 @@ from unified_kg_rag.application.observability import configure_observability
 from unified_kg_rag.domain.models import (
     Config,
     Constants,
+    ModelRole,
     RetrievalResult,
     RetrieverRole,
     SearchQuery,
@@ -527,12 +528,12 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         **kwargs: Any,
     ) -> Runnable:
         model_id_map: dict[type[BasePrompt], str] = {
-            EntityExtractionPrompt: self.config.search.entity_extraction_model_id,
-            KeywordsExtractionPrompt: self.config.search.entity_extraction_model_id,
-            TranslationPrompt: self.config.search.translation_model_id,
-            StrategySelectionPrompt: self.config.search.strategy_selection_model_id,
-            QueryRewritePrompt: self.config.search.query_rewrite_model_id,
-            AnswerGenerationPrompt: self.config.search.answer_generation_model_id,
+            EntityExtractionPrompt: self.config.model_id(ModelRole.ENTITY_EXTRACTION),
+            KeywordsExtractionPrompt: self.config.model_id(ModelRole.ENTITY_EXTRACTION),
+            TranslationPrompt: self.config.model_id(ModelRole.QUERY_TRANSLATION),
+            StrategySelectionPrompt: self.config.model_id(ModelRole.STRATEGY_SELECTION),
+            QueryRewritePrompt: self.config.model_id(ModelRole.QUERY_REWRITE),
+            AnswerGenerationPrompt: self.config.model_id(ModelRole.ANSWER_GENERATION),
         }
         model_id = model_id_map.get(prompt_class)
         if model_id is None:

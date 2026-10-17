@@ -22,6 +22,7 @@ from unified_kg_rag.domain.models import (
     Config,
     Document,
     ModelPurpose,
+    ModelRole,
     TextUnit,
 )
 from unified_kg_rag.domain.prompts import TextChunkingPrompt
@@ -657,13 +658,13 @@ class IntelligentTextChunker(BaseChunker):
             model_purpose=ModelPurpose.INGESTION,
             factory=self.factory,
             enable_output_fixing=self.config.fixing.enabled,
-            output_fixing_model_id=self.config.fixing.fixing_model_id,
+            output_fixing_model_id=self.config.model_id(ModelRole.FIXING),
             output_tags=["chunk_boundaries"],
         )
         self.chunker = setup_chain(
             model_purpose=ModelPurpose.INGESTION,
             factory=self.factory,
-            model_id=self.chunking_config.chunking_model_id,
+            model_id=self.config.model_id(ModelRole.CHUNKING),
             prompt_class=TextChunkingPrompt,
             parser=robust_xml_output_parser,
             custom_prompts=self.config.custom_prompts,
@@ -680,7 +681,7 @@ class IntelligentTextChunker(BaseChunker):
         self._planned: dict[int, tuple[list[str], dict[int, Any]]] = {}
         logger.debug(
             "Initialized IntelligentTextChunker with model %s",
-            self.chunking_config.chunking_model_id,
+            self.config.model_id(ModelRole.CHUNKING),
         )
 
     def chunk_documents(self, documents: list[Document]) -> list[TextUnit]:

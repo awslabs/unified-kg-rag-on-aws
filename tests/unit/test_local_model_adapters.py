@@ -79,17 +79,18 @@ def _config(kind: str, **llm: Any) -> Config:
             "llm": {
                 "kind": kind,
                 "base_url": base_url,
-                "default_model_id": "synthetic-chat",
                 **llm,
             },
             "embedding": {
                 "kind": kind,
                 "base_url": base_url,
-                "model_id": "synthetic-embed",
-                "dimension": DIM,
                 "max_input_tokens": 16,
             },
-        }
+        },
+        models={
+            "default": "synthetic-chat",
+            "embedding": {"model_id": "synthetic-embed", "dimension": DIM},
+        },
     )
 
 
@@ -520,7 +521,7 @@ def test_openai_compatible_embeddings_leave_retries_to_the_client() -> None:
 
 def test_embedding_dimension_mismatch_fails() -> None:
     factory = OllamaEmbeddingFactory(_config("ollama"))
-    with pytest.raises(EmbeddingModelError, match="providers.embedding.dimension"):
+    with pytest.raises(EmbeddingModelError, match="models.embedding.dimension"):
         factory.get_model("synthetic-embed", dimensions=DIM * 2)
 
 
@@ -552,7 +553,8 @@ class FakeCrossEncoder:
 
 def _rerank_config() -> Config:
     return Config(
-        providers={"rerank": {"kind": "cross_encoder", "model_id": "synthetic-ce"}}
+        providers={"rerank": {"kind": "cross_encoder"}},
+        models={"rerank": "synthetic-ce"},
     )
 
 
@@ -668,9 +670,8 @@ def test_unavailable_tiktoken_falls_back_to_the_estimate(mocker) -> None:
 
 def test_token_counter_factory_follows_the_llm_settings() -> None:
     config = Config(
-        providers={
-            "llm": {"kind": "ollama", "default_model_id": "m", "tokenizer": "estimate"}
-        }
+        providers={"llm": {"kind": "ollama", "tokenizer": "estimate"}},
+        models={"default": "m"},
     )
     counter = local_token_counter_factory(config)(
         "m", cache_maxsize=8, api_supported=True

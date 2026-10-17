@@ -145,7 +145,7 @@ class TestFingerprint:
         assert fingerprint != unit_record_fingerprint(base, gleaned=True, claims=True)
 
         model = Config()
-        model.processing.graph_extraction.extraction_model_id = "other-model"
+        model.models.roles.graph_extraction = "other-model"
         assert unit_record_fingerprint(model, gleaned=True) != fingerprint
         language = Config()
         language.processing.translation.target_language = LanguageCode.KO

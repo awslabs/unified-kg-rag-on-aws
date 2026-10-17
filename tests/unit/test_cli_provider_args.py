@@ -21,7 +21,7 @@ from unified_kg_rag.application.cli import (
     run_visualization,
 )
 from unified_kg_rag.application.cli.provider_args import apply_provider_arguments
-from unified_kg_rag.domain.models import Backend, Config
+from unified_kg_rag.domain.models import Backend, Config, ModelRole
 
 pytestmark = pytest.mark.unit
 
@@ -69,9 +69,9 @@ def test_every_cli_accepts_the_provider_flags(cli: str) -> None:
     assert config.backend is Backend.LOCAL
     assert config.providers.llm.kind == "openai_compatible"
     assert config.providers.llm.base_url == "http://model-server.test/v1"
-    assert config.search.answer_generation_model_id == "served-model"
-    assert config.indexing.opensearch.embedding_model_id == "served-embed"
-    assert config.providers.embedding.dimension == 384
+    assert config.model_id(ModelRole.ANSWER_GENERATION) == "served-model"
+    assert config.embedding_model_id == "served-embed"
+    assert config.embedding_dimension == 384
     assert config.providers.rerank.kind == "none"
     # The rest of the local preset still applies.
     assert config.providers.doc_status.kind == "sqlite"

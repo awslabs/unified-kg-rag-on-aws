@@ -68,7 +68,7 @@ def _make_evaluator(
     if ragas_metrics is not None:
         config.evaluation.ragas_metrics = ragas_metrics
     if evaluation_model_id is not None:
-        config.evaluation.evaluation_model_id = evaluation_model_id
+        config.models.roles.evaluation = evaluation_model_id
     ev = RagasEvaluator(config=config, show_progress=False)
     return ev, fake_counter
 

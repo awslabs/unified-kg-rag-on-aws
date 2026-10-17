@@ -21,6 +21,7 @@ from unified_kg_rag.domain.models import (
     Config,
     Entity,
     ModelPurpose,
+    ModelRole,
     Relationship,
     TextUnit,
     TextUnitExtraction,
@@ -133,7 +134,7 @@ class GraphExtractor(BaseProcessor):
         robust_xml_output_parser = create_robust_xml_output_parser(
             model_purpose=ModelPurpose.INGESTION,
             enable_output_fixing=self.config.fixing.enabled,
-            output_fixing_model_id=self.config.fixing.fixing_model_id,
+            output_fixing_model_id=self.config.model_id(ModelRole.FIXING),
             factory=self.factory,
             min_output_tokens=GraphExtractionPrompt.output_floor(self.config),
             output_tags=["entities", "relationships"],
@@ -141,7 +142,7 @@ class GraphExtractor(BaseProcessor):
         self.graph_extractor = setup_chain(
             model_purpose=ModelPurpose.INGESTION,
             factory=self.factory,
-            model_id=self.extraction_config.extraction_model_id,
+            model_id=self.config.model_id(ModelRole.GRAPH_EXTRACTION),
             prompt_class=GraphExtractionPrompt,
             min_output_tokens=GraphExtractionPrompt.output_floor(self.config),
             parser=robust_xml_output_parser,

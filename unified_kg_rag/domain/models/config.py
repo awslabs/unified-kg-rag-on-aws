@@ -23,8 +23,11 @@ from pydantic import (
 from .evaluation import EvaluationMetricType, EvaluatorType
 from .provider_config import (
     BEDROCK,
+    CROSS_ENCODER,
     GREMLIN,
     Backend,
+    EmbeddingProviderConfig,
+    LLMProviderConfig,
     ProvidersConfig,
     apply_backend_preset,
 )
@@ -206,16 +209,10 @@ ModelTier = Literal["default", "fast"]
 EffortLevel = Literal["low", "medium", "high", "xhigh", "max"]
 EFFORT_LEVELS: frozenset[str] = frozenset(get_args(EffortLevel))
 
-# The two shipped model tiers. Every per-role model field declares one of them
-# and inherits aws.bedrock.default_model_id / aws.bedrock.fast_model_id unless
-# set explicitly, so changing a tier default is a one-line edit here.
+# The Bedrock models of the two tiers when models.default / models.fast are
+# unset, so changing a tier default is a one-line edit here.
 DEFAULT_MODEL_ID: str = LanguageModelId.CLAUDE_V5_5_SONNET.value
 FAST_MODEL_ID: str = LanguageModelId.CLAUDE_V5_5_HAIKU.value
-_TIER_DEFAULT_MODEL_IDS: dict[str, str] = {
-    "default": DEFAULT_MODEL_ID,
-    "fast": FAST_MODEL_ID,
-}
-_MODEL_TIER_KEY = "model_tier"
 
 
 def _coerce_model_id(value: Any) -> Any:
@@ -229,82 +226,6 @@ def _coerce_model_id(value: Any) -> Any:
 BedrockModelId = Annotated[
     str, BeforeValidator(_coerce_model_id), StringConstraints(min_length=1)
 ]
-
-
-def role_model_field(tier: ModelTier, description: str) -> Any:
-    """A per-role model-id field that inherits its tier's model when unset."""
-    return Field(
-        default=_TIER_DEFAULT_MODEL_IDS[tier],
-        description=f"{description.rstrip('.')}. Defaults to aws.bedrock.{tier}_model_id.",
-        json_schema_extra={_MODEL_TIER_KEY: tier},
-    )
-
-
-def _apply_model_tiers(model: BaseModel, tiers: dict[str, str]) -> BaseModel:
-    """Copy of ``model`` whose unset role-model fields follow ``tiers``.
-
-    Walks nested sections recursively. A field the user set explicitly is in
-    ``model_fields_set`` and is never touched.
-    """
-    updates: dict[str, Any] = {}
-    for name, field in type(model).model_fields.items():
-        value = getattr(model, name)
-        extra = field.json_schema_extra
-        tier = extra.get(_MODEL_TIER_KEY) if isinstance(extra, dict) else None
-        if isinstance(tier, str):
-            if name not in model.model_fields_set and value != tiers[tier]:
-                updates[name] = tiers[tier]
-        elif isinstance(value, BaseModel):
-            resolved = _apply_model_tiers(value, tiers)
-            if resolved is not value:
-                updates[name] = resolved
-    if not updates:
-        return model
-    copied = model.model_copy()
-    # Write through __dict__ so inherited values stay out of model_fields_set:
-    # the section keeps following its tier if it is reused in another Config.
-    copied.__dict__.update(updates)
-    return copied
-
-
-def _resolve_role_models(
-    model: BaseModel,
-    roles: dict[str, tuple[str | None, type[Enum] | None]],
-    errors: list[str],
-    path: str = "",
-) -> BaseModel:
-    """Copy of ``model`` with its embedding/rerank model ids resolved.
-
-    ``roles`` maps a role to ``(default, catalog)``: an id the config did not
-    set takes ``default`` (when not None), and an id outside ``catalog`` (when
-    not None) is reported in ``errors``. Walks nested sections recursively.
-    """
-    updates: dict[str, Any] = {}
-    for name, field in type(model).model_fields.items():
-        value = getattr(model, name)
-        extra = field.json_schema_extra
-        role = extra.get(_MODEL_ROLE_KEY) if isinstance(extra, dict) else None
-        if isinstance(role, str) and role in roles:
-            default, catalog = roles[role]
-            if default is not None and name not in model.model_fields_set:
-                if value != default:
-                    updates[name] = value = default
-            if catalog is not None and not isinstance(value, catalog):
-                errors.append(
-                    f"{path}{name}: '{value}' is not a Bedrock {role} model; "
-                    f"expected one of {[m.value for m in catalog]} (or select "
-                    f"another providers.{role}.kind)"
-                )
-        elif isinstance(value, BaseModel):
-            resolved = _resolve_role_models(value, roles, errors, f"{path}{name}.")
-            if resolved is not value:
-                updates[name] = resolved
-    if not updates:
-        return model
-    copied = model.model_copy()
-    # As in _apply_model_tiers: inherited values stay out of model_fields_set.
-    copied.__dict__.update(updates)
-    return copied
 
 
 class ModelPurpose(str, Enum):
@@ -372,9 +293,244 @@ RerankModelRef = Annotated[
     Field(union_mode="left_to_right"),
     BeforeValidator(_known_member(RerankModelId)),
 ]
-# json_schema_extra key marking a field as an embedding/rerank model id, so the
-# Config validator can find every one of them (see _resolve_role_models).
-_MODEL_ROLE_KEY = "model_role"
+
+
+class ModelRole(str, Enum):
+    """Every place the framework calls a language model, by its role.
+
+    Each role runs on a tier (``ROLE_TIERS``) unless ``models.roles`` names
+    another model or tier for it.
+    """
+
+    FIXING = "fixing"
+    CHUNKING = "chunking"
+    TRANSLATION = "translation"
+    GRAPH_EXTRACTION = "graph_extraction"
+    DESCRIPTION_SUMMARY = "description_summary"
+    GLEANING = "gleaning"
+    CLAIM_EXTRACTION = "claim_extraction"
+    COMMUNITY_REPORT = "community_report"
+    QUERY_TRANSLATION = "query_translation"
+    ENTITY_EXTRACTION = "entity_extraction"
+    STRATEGY_SELECTION = "strategy_selection"
+    QUERY_REWRITE = "query_rewrite"
+    ANSWER_GENERATION = "answer_generation"
+    COMMUNITY_RELEVANCE = "community_relevance"
+    GLOBAL_MAP = "global_map"
+    GLOBAL_REDUCE = "global_reduce"
+    DRIFT_PRIMER = "drift_primer"
+    DRIFT_ACTION = "drift_action"
+    EVALUATION = "evaluation"
+
+
+_ROLE_DESCRIPTIONS: dict[ModelRole, tuple[ModelTier, str]] = {
+    ModelRole.FIXING: ("default", "repairs malformed structured model output"),
+    ModelRole.CHUNKING: ("fast", "places chunk boundaries (intelligent chunker)"),
+    ModelRole.TRANSLATION: ("fast", "translates the corpus at ingestion"),
+    ModelRole.GRAPH_EXTRACTION: ("default", "extracts entities and relationships"),
+    ModelRole.DESCRIPTION_SUMMARY: (
+        "fast",
+        "summarizes the merged descriptions of an entity or relationship",
+    ),
+    ModelRole.GLEANING: ("default", "refines each text unit's extraction"),
+    ModelRole.CLAIM_EXTRACTION: ("default", "extracts claims"),
+    ModelRole.COMMUNITY_REPORT: ("default", "writes community reports"),
+    ModelRole.QUERY_TRANSLATION: ("fast", "translates the query"),
+    ModelRole.ENTITY_EXTRACTION: (
+        "default",
+        "extracts the query's entities and keywords",
+    ),
+    ModelRole.STRATEGY_SELECTION: ("fast", "routes an auto query to a strategy"),
+    ModelRole.QUERY_REWRITE: ("fast", "rewrites a follow-up into a standalone query"),
+    ModelRole.ANSWER_GENERATION: ("default", "writes the answer"),
+    ModelRole.COMMUNITY_RELEVANCE: (
+        "fast",
+        "rates community relevance for global search's dynamic selection",
+    ),
+    ModelRole.GLOBAL_MAP: ("fast", "answers from each report batch (global map)"),
+    ModelRole.GLOBAL_REDUCE: ("fast", "combines the map answers (global reduce)"),
+    ModelRole.DRIFT_PRIMER: ("fast", "writes DRIFT's primer and follow-ups"),
+    ModelRole.DRIFT_ACTION: ("fast", "answers each DRIFT follow-up"),
+    ModelRole.EVALUATION: ("default", "judges answers in run-eval"),
+}
+# The tier each role runs on unless models.roles says otherwise.
+ROLE_TIERS: dict[ModelRole, ModelTier] = {
+    role: tier for role, (tier, _) in _ROLE_DESCRIPTIONS.items()
+}
+
+
+def _role_field(role: ModelRole) -> Any:
+    tier, what = _ROLE_DESCRIPTIONS[role]
+    return Field(
+        default=None,
+        min_length=1,
+        description=(
+            f"Model that {what}: a model id, or a tier name ('default' / "
+            f"'fast'). null runs it on the '{tier}' tier."
+        ),
+    )
+
+
+class RoleModelsConfig(BaseModel):
+    """Per-role model overrides (``models.roles``)."""
+
+    fixing: str | None = _role_field(ModelRole.FIXING)
+    chunking: str | None = _role_field(ModelRole.CHUNKING)
+    translation: str | None = _role_field(ModelRole.TRANSLATION)
+    graph_extraction: str | None = _role_field(ModelRole.GRAPH_EXTRACTION)
+    description_summary: str | None = _role_field(ModelRole.DESCRIPTION_SUMMARY)
+    gleaning: str | None = _role_field(ModelRole.GLEANING)
+    claim_extraction: str | None = _role_field(ModelRole.CLAIM_EXTRACTION)
+    community_report: str | None = _role_field(ModelRole.COMMUNITY_REPORT)
+    query_translation: str | None = _role_field(ModelRole.QUERY_TRANSLATION)
+    entity_extraction: str | None = _role_field(ModelRole.ENTITY_EXTRACTION)
+    strategy_selection: str | None = _role_field(ModelRole.STRATEGY_SELECTION)
+    query_rewrite: str | None = _role_field(ModelRole.QUERY_REWRITE)
+    answer_generation: str | None = _role_field(ModelRole.ANSWER_GENERATION)
+    community_relevance: str | None = _role_field(ModelRole.COMMUNITY_RELEVANCE)
+    global_map: str | None = _role_field(ModelRole.GLOBAL_MAP)
+    global_reduce: str | None = _role_field(ModelRole.GLOBAL_REDUCE)
+    drift_primer: str | None = _role_field(ModelRole.DRIFT_PRIMER)
+    drift_action: str | None = _role_field(ModelRole.DRIFT_ACTION)
+    evaluation: str | None = _role_field(ModelRole.EVALUATION)
+
+    @field_validator("*", mode="before")
+    @classmethod
+    def _bare_id(cls, value: Any) -> Any:
+        return _coerce_model_id(value)
+
+
+class EmbeddingModelConfig(BaseModel):
+    """The one embedding model (``models.embedding``): index, queries,
+    evaluation and the visualization layout all embed with it."""
+
+    model_id: EmbeddingModelRef | None = Field(
+        default=None,
+        description=(
+            "Embedding model. With the bedrock embedding provider one of the "
+            "EmbeddingModelId values (the vector dimension must be known for "
+            "the index mapping), null = amazon.titan-embed-text-v2:0; with "
+            "another provider any model name, required."
+        ),
+    )
+    dimension: int | None = Field(
+        default=None,
+        ge=1,
+        description=(
+            "Vector dimension, fixed into the index mappings. Bedrock: one the "
+            "model supports (Titan Embed V2: 256, 512 or 1024), null = its "
+            "largest. Another provider: the model's dimension, required."
+        ),
+    )
+
+
+class ModelsConfig(BaseModel):
+    """Which model serves each role (``models``).
+
+    The provider of each family is ``providers.llm.kind`` /
+    ``providers.embedding.kind`` / ``providers.rerank.kind``; the ids here are
+    checked against it. Read the resolved models through ``Config.model_id``,
+    ``Config.embedding_model_id`` and ``Config.rerank_model_id``.
+    """
+
+    default: str | None = Field(
+        default=None,
+        min_length=1,
+        description=(
+            "Model of the 'default' tier (extraction, gleaning, claims, "
+            "community reports, output fixing, query entity/keyword "
+            "extraction, answer generation, evaluation). null = "
+            f"{DEFAULT_MODEL_ID} on Bedrock; required with another provider."
+        ),
+    )
+    fast: str | None = Field(
+        default=None,
+        min_length=1,
+        description=(
+            "Model of the 'fast' tier (chunking, translation, description "
+            "summarization, global/DRIFT search steps, query translation, "
+            f"rewriting and routing). null = {FAST_MODEL_ID} on Bedrock, the "
+            "default tier's model with another provider."
+        ),
+    )
+    roles: RoleModelsConfig = Field(
+        default_factory=RoleModelsConfig,
+        description="Per-role overrides: a model id or a tier name per role.",
+    )
+    embedding: EmbeddingModelConfig = Field(
+        default_factory=EmbeddingModelConfig,
+        description="The embedding model and its dimension.",
+    )
+    rerank: RerankModelRef | None = Field(
+        default=None,
+        description=(
+            "Rerank model. Bedrock: one of the RerankModelId values, null = "
+            "cohere.rerank-v3-5:0. cross_encoder: a sentence-transformers "
+            "model name, required. Ignored with providers.rerank.kind none."
+        ),
+    )
+
+    @field_validator("default", "fast", mode="before")
+    @classmethod
+    def _bare_id(cls, value: Any) -> Any:
+        return _coerce_model_id(value)
+
+
+# Removed model settings -> the models key that replaces each.
+REMOVED_MODEL_KEYS: dict[str, str] = {
+    "aws.bedrock.default_model_id": "models.default",
+    "aws.bedrock.fast_model_id": "models.fast",
+    "providers.llm.default_model_id": "models.default",
+    "providers.llm.fast_model_id": "models.fast",
+    "fixing.fixing_model_id": "models.roles.fixing",
+    "processing.chunking.chunking_model_id": "models.roles.chunking",
+    "processing.translation.translation_model_id": "models.roles.translation",
+    "processing.graph_extraction.extraction_model_id": "models.roles.graph_extraction",
+    "processing.graph_extraction.description_summarization.summary_model_id": (
+        "models.roles.description_summary"
+    ),
+    "processing.gleaning.graph_refinement_model_id": "models.roles.gleaning",
+    "processing.claim_extraction.extraction_model_id": "models.roles.claim_extraction",
+    "graph.community_detection.report_generation.report_generation_model_id": (
+        "models.roles.community_report"
+    ),
+    "search.translation_model_id": "models.roles.query_translation",
+    "search.entity_extraction_model_id": "models.roles.entity_extraction",
+    "search.strategy_selection_model_id": "models.roles.strategy_selection",
+    "search.query_rewrite_model_id": "models.roles.query_rewrite",
+    "search.answer_generation_model_id": "models.roles.answer_generation",
+    "search.global_search.community_relevance_model_id": (
+        "models.roles.community_relevance"
+    ),
+    "search.global_search.map_model_id": "models.roles.global_map",
+    "search.global_search.map_reduce_model_id": "models.roles.global_reduce",
+    "search.drift_search.primer_model_id": "models.roles.drift_primer",
+    "search.drift_search.action_model_id": "models.roles.drift_action",
+    "evaluation.evaluation_model_id": "models.roles.evaluation",
+    "providers.embedding.model_id": "models.embedding.model_id",
+    "providers.embedding.dimension": "models.embedding.dimension",
+    "indexing.opensearch.embedding_model_id": "models.embedding.model_id",
+    "indexing.opensearch.embedding_dimension": "models.embedding.dimension",
+    "evaluation.embedding_model_id": "models.embedding.model_id",
+    "graph.visualization.embeddings": "models.embedding.model_id",
+    "providers.rerank.model_id": "models.rerank",
+    "search.reranking.rerank_model_id": "models.rerank",
+}
+
+
+def removed_model_keys(data: Any) -> list[str]:
+    """``"old -> new"`` for each removed model setting ``data`` sets."""
+    found = []
+    for old, new in REMOVED_MODEL_KEYS.items():
+        node = data
+        for part in old.split("."):
+            node = node.get(part, _ABSENT) if isinstance(node, dict) else _ABSENT
+        if node is not _ABSENT:
+            found.append(f"{old} -> {new}")
+    return found
+
+
+_ABSENT: Any = object()
 
 
 class GuardrailConfig(BaseModel):
@@ -503,24 +659,6 @@ class BedrockConfig(BaseModel):
     enable_global_profile: bool = Field(
         default=True, description="Enable global profile for Bedrock service"
     )
-    default_model_id: BedrockModelId = Field(
-        default=DEFAULT_MODEL_ID,
-        description=(
-            "Model for every role on the 'default' tier (extraction, gleaning, "
-            "claims, community reports, output fixing, query entity/keyword "
-            "extraction, context building, answer generation, evaluation). Any "
-            "Bedrock model id; a role's own *_model_id overrides it."
-        ),
-    )
-    fast_model_id: BedrockModelId = Field(
-        default=FAST_MODEL_ID,
-        description=(
-            "Model for every role on the 'fast' tier (chunking, translation, "
-            "description summarization, global/DRIFT search steps, query "
-            "translation, strategy routing). Any Bedrock model id; a role's own "
-            "*_model_id overrides it."
-        ),
-    )
     default_max_output_tokens: int | None = Field(
         default=16384,
         ge=1,
@@ -561,7 +699,7 @@ class BedrockConfig(BaseModel):
     default_effort: EffortLevel = Field(
         default="high",
         description=(
-            "Reasoning effort for calls on the default_model_id. Sent as "
+            "Reasoning effort for calls on the default tier's model (models.default). Sent as "
             "output_config.effort to Anthropic adaptive-thinking models (Claude "
             "4.6+), where it replaces the fixed thinking token budget, and as "
             "reasoning.effort to OpenAI GPT models. 'xhigh'/'max' are only "
@@ -571,8 +709,8 @@ class BedrockConfig(BaseModel):
     fast_effort: EffortLevel = Field(
         default="low",
         description=(
-            "Reasoning effort for calls on the fast_model_id (when it differs "
-            "from default_model_id). The shipped fast model, Claude Haiku 5.5, "
+            "Reasoning effort for calls on the fast tier's model (models.fast; when it differs "
+            "from the default tier's). The shipped fast model, Claude Haiku 5.5, "
             "thinks adaptively, so this sets how much it reasons on fast-tier "
             "calls; it has no effect on a fast model that does not reason."
         ),
@@ -582,7 +720,7 @@ class BedrockConfig(BaseModel):
         description=(
             "Reasoning effort for ingestion calls on the default tier (graph "
             "extraction, gleaning, claim extraction, community reports, prompt "
-            "tuning, and the output fixer when fixing_model_id is a "
+            "tuning, and the output fixer when models.roles.fixing is a "
             "default-tier model). These make up most of an "
             "ingestion's default-tier tokens, so lowering this cuts ingestion "
             "cost without changing query-time effort. null inherits "
@@ -598,18 +736,6 @@ class BedrockConfig(BaseModel):
         description="Retry for embedding and query-time LLM calls on transient "
         "Bedrock errors",
     )
-
-    def model_tier(self, model_id: str) -> ModelTier:
-        """Tier a call on ``model_id`` belongs to, for picking its effort.
-
-        Only a model that is the fast tier's model (and not also the default
-        tier's) counts as fast; anything else, including a role pinned to its
-        own model, gets the default tier's effort.
-        """
-        model_id = str(model_id).strip()
-        if model_id == self.fast_model_id and model_id != self.default_model_id:
-            return "fast"
-        return "default"
 
     def tier_effort(
         self, tier: ModelTier, purpose: "ModelPurpose | None" = None
@@ -792,10 +918,6 @@ class FixingConfig(BaseModel):
     enabled: bool = Field(
         default=True, description="Enable automatic fixing of malformed model responses"
     )
-    fixing_model_id: BedrockModelId = role_model_field(
-        "default",
-        description="Language model for output correction",
-    )
 
 
 class DocumentParsingConfig(BaseModel):
@@ -833,10 +955,6 @@ class ChunkingConfig(BaseModel):
     chunker_type: ChunkingStrategy = Field(
         default=ChunkingStrategy.INTELLIGENT,
         description="Text chunking strategy to use",
-    )
-    chunking_model_id: BedrockModelId = role_model_field(
-        "fast",
-        description="Language model for intelligent chunking",
     )
     min_chunk_size: int = Field(
         default=1000,
@@ -912,10 +1030,6 @@ class TranslationConfig(BaseModel):
         "additional_target_languages (e.g. an English-only corpus with an English "
         "target pays no LLM cost).",
     )
-    translation_model_id: BedrockModelId = role_model_field(
-        "fast",
-        description="Language model for text translation",
-    )
     source_language: LanguageCode = Field(
         default=LanguageCode.EN,
         description="Predominant source language of the corpus. Selects the "
@@ -965,11 +1079,6 @@ class DescriptionSummarizationConfig(BaseModel):
         description="Re-summarize over-long merged descriptions with an LLM "
         "(parity with MS GraphRAG/LightRAG). When disabled, descriptions are only "
         "concatenated and may grow unbounded for frequently-mentioned entities.",
-    )
-    summary_model_id: BedrockModelId = role_model_field(
-        "fast",
-        description="Language model for description summarization. Summarization "
-        "is mechanical, so a cheap/fast model is the default.",
     )
     force_summary_threshold_tokens: int = Field(
         default=600,
@@ -1041,10 +1150,6 @@ class EntityGroundingConfig(BaseModel):
 
 
 class GraphExtractionConfig(BaseModel):
-    extraction_model_id: BedrockModelId = role_model_field(
-        "default",
-        description="Language model for entity and relationship extraction",
-    )
     max_entities_per_chunk: int = Field(
         default=50, ge=1, description="Maximum entities per text chunk"
     )
@@ -1092,10 +1197,6 @@ class GleaningConfig(BaseModel):
     enabled: bool = Field(
         default=True, description="Enable gleaning for improved extraction"
     )
-    graph_refinement_model_id: BedrockModelId = role_model_field(
-        "default",
-        description="Language model for graph refinement",
-    )
     max_rounds: int = Field(
         default=3,
         ge=1,
@@ -1127,10 +1228,6 @@ class ClaimExtractionConfig(BaseModel):
         "includes the claims index in its sweep; claims subject/object are still "
         "not linked into the entity graph. The pipeline honors this flag "
         "(DataIngestionPipeline._initialize_stages).",
-    )
-    extraction_model_id: BedrockModelId = role_model_field(
-        "default",
-        description="Language model for claim extraction",
     )
     max_entities_per_prompt: int = Field(
         default=100,
@@ -1318,10 +1415,6 @@ class ReportGenerationConfig(BaseModel):
     enabled: bool = Field(
         default=True, description="Enable automatic community report generation"
     )
-    report_generation_model_id: BedrockModelId = role_model_field(
-        "default",
-        description="Language model for community report generation",
-    )
     max_entities_per_report: int = Field(
         default=50, ge=1, description="Maximum entities per community report"
     )
@@ -1443,20 +1536,6 @@ class CommunityDetectionConfig(BaseModel):
         return self
 
 
-def _coerce_visualization_embeddings(value: dict[str, Any]) -> dict[str, Any]:
-    """Validate ``bedrock_model_id`` as an ``EmbeddingModelId`` (YAML gives a str)."""
-    if value.get("bedrock_model_id") is None:
-        return value
-    try:
-        model_id = EmbeddingModelId(value["bedrock_model_id"])
-    except ValueError as e:
-        raise ValueError(
-            f"bedrock_model_id: {e}; expected one of "
-            f"{[m.value for m in EmbeddingModelId]}"
-        ) from e
-    return {**value, "bedrock_model_id": model_id}
-
-
 class VisualizationConfig(BaseModel):
     enabled: bool = Field(
         default=False,
@@ -1491,16 +1570,6 @@ class VisualizationConfig(BaseModel):
         default="umap",
         pattern="^(umap|tsne|pca)$",
         description="Method for dimensionality reduction ('umap', 'tsne', 'pca').",
-    )
-    embeddings: Annotated[
-        dict[str, Any], AfterValidator(_coerce_visualization_embeddings)
-    ] = Field(
-        default_factory=dict,
-        description="Embedding parameters for node embedding. Only "
-        "'bedrock_model_id' is honored (node embeddings come from the "
-        "providers.embedding model factory; the embedding dimensionality is "
-        "determined by the chosen model). When unset, the OpenSearch embedding "
-        "model is reused.",
     )
     layout: dict[str, Any] = Field(
         default={
@@ -1698,25 +1767,6 @@ class OpenSearchIndexingConfig(BaseModel):
     language_analyzers: dict[str, str] = Field(
         default_factory=lambda: {"en": "english", "ko": "nori"},
         description="Maps a language code to its OpenSearch text analyzer; extend without code changes",
-    )
-    embedding_model_id: EmbeddingModelRef = Field(
-        default=EmbeddingModelId.TITAN_EMBED_V2,
-        description=(
-            "Embedding model for vector generation. With the bedrock embedding "
-            "provider, one of the EmbeddingModelId values (other ids are "
-            "rejected because the vector dimension must be known for the index "
-            "mapping); with another provider, any model name, defaulting to "
-            "providers.embedding.model_id."
-        ),
-        json_schema_extra={_MODEL_ROLE_KEY: "embedding"},
-    )
-    embedding_dimension: int | None = Field(
-        default=None,
-        ge=1,
-        description=(
-            "Vector embedding dimension. Must be one the model supports (Titan "
-            "Embed V2: 256, 512 or 1024); None uses the model's largest."
-        ),
     )
     refresh_after_batch: bool = Field(
         default=True,
@@ -1945,15 +1995,6 @@ class RerankingConfig(BaseModel):
         default=True,
         description="Enable reranking of search results for improved relevance",
     )
-    rerank_model_id: RerankModelRef = Field(
-        default=RerankModelId.COHERE_RERANK_V3_5,
-        description=(
-            "Reranking model. With the bedrock rerank provider, one of the "
-            "RerankModelId values (other ids are rejected); with another "
-            "provider, any model name, defaulting to providers.rerank.model_id."
-        ),
-        json_schema_extra={_MODEL_ROLE_KEY: "rerank"},
-    )
     top_k: int = Field(
         default=100,
         ge=1,
@@ -2017,11 +2058,6 @@ class GlobalSearchConfig(BaseModel):
             "then mapped. Off by default, as in MS GraphRAG."
         ),
     )
-    community_relevance_model_id: BedrockModelId = role_model_field(
-        "fast",
-        description="Language model that rates report relevance for dynamic "
-        "community selection",
-    )
     relevance_threshold: float = Field(
         default=0.2,
         ge=0.0,
@@ -2043,12 +2079,6 @@ class GlobalSearchConfig(BaseModel):
         ge=1,
         description="Minimum community results before map-reduce synthesis is "
         "applied; below this the results are returned directly.",
-    )
-    map_model_id: BedrockModelId = role_model_field(
-        "fast",
-        description="Language model used for the map step of MS GraphRAG "
-        "map-reduce (rates community-report key points 0-100). Rating is cheap, "
-        "so a fast/cheap model (e.g. Haiku) is the sensible default.",
     )
     map_context_tokens: int = Field(
         default=12000,
@@ -2073,11 +2103,6 @@ class GlobalSearchConfig(BaseModel):
         description="Token budget for the ranked key points packed into the "
         "reduce step; the highest-scored points are taken until this budget is "
         "reached, so the reduce LLM synthesizes from focused, ranked evidence.",
-    )
-    map_reduce_model_id: BedrockModelId = role_model_field(
-        "fast",
-        description="Language model used for the reduce step (reduce_with_llm) "
-        "and the concat-and-reduce fallback",
     )
     reduce_with_llm: bool = Field(
         default=False,
@@ -2187,16 +2212,6 @@ class DriftSearchConfig(BaseModel):
     answers with the local evidence they came from.
     """
 
-    primer_model_id: BedrockModelId = role_model_field(
-        "fast",
-        description="Language model for the DRIFT query expansion (HyDE) and "
-        "the primer calls",
-    )
-    action_model_id: BedrockModelId = role_model_field(
-        "fast",
-        description="Language model that answers each follow-up query from its "
-        "local-search context (one call per follow-up query)",
-    )
     k_followups: int = Field(
         default=20,
         ge=1,
@@ -2405,23 +2420,6 @@ def _reject_auto_strategy(strategies: list[SearchStrategy]) -> list[SearchStrate
 
 
 class SearchConfig(BaseModel):
-    translation_model_id: BedrockModelId = role_model_field(
-        "fast",
-        description="Language model identifier used for translating queries into the target language",
-    )
-    entity_extraction_model_id: BedrockModelId = role_model_field(
-        "default",
-        description="Language model identifier used for extracting named entities from user queries",
-    )
-    strategy_selection_model_id: BedrockModelId = role_model_field(
-        "fast",
-        description=(
-            "Language model identifier used for automatically selecting the "
-            "optimal search strategy (AUTO). A fast model by default: routing "
-            "is a one-word classification that runs before retrieval, so its "
-            "latency is added to every AUTO query."
-        ),
-    )
     auto_routable_strategies: Annotated[
         list[SearchStrategy], AfterValidator(_reject_auto_strategy)
     ] = Field(
@@ -2442,18 +2440,6 @@ class SearchConfig(BaseModel):
             "local is used when nothing is left. Every strategy stays "
             "selectable explicitly."
         ),
-    )
-    query_rewrite_model_id: BedrockModelId = role_model_field(
-        "fast",
-        description=(
-            "Language model identifier used for rewriting a follow-up message "
-            "as a standalone question from the conversation history, before "
-            "retrieval (memory queries with history only)"
-        ),
-    )
-    answer_generation_model_id: BedrockModelId = role_model_field(
-        "default",
-        description="Language model identifier used for generating final answers from retrieved context",
     )
     hybrid: HybridConfig = Field(
         default_factory=HybridConfig, description="Hybrid search configuration"
@@ -2948,19 +2934,6 @@ class EvaluationConfig(BaseModel):
         default="outputs/evaluation",
         description="Directory to save evaluation results",
     )
-    embedding_model_id: EmbeddingModelRef = Field(
-        default=EmbeddingModelId.TITAN_EMBED_V2,
-        description=(
-            "Embedding model for evaluation. One of the EmbeddingModelId values "
-            "with the bedrock embedding provider; with another provider, any "
-            "model name, defaulting to providers.embedding.model_id."
-        ),
-        json_schema_extra={_MODEL_ROLE_KEY: "embedding"},
-    )
-    evaluation_model_id: BedrockModelId = role_model_field(
-        "default",
-        description="Language model identifier used for evaluation",
-    )
     enabled_evaluators: list[EvaluatorType] = Field(
         default=[
             EvaluatorType.LANGCHAIN,
@@ -3101,6 +3074,10 @@ class Config(BaseModel):
         default_factory=ProvidersConfig,
         description="Per-role provider selection (models, stores, registry)",
     )
+    models: ModelsConfig = Field(
+        default_factory=ModelsConfig,
+        description="Which model serves each role, on the providers above",
+    )
     aws: AWSConfig = Field(
         default_factory=AWSConfig, description="AWS services configuration"
     )
@@ -3142,86 +3119,182 @@ class Config(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def _apply_backend_preset(cls, data: Any) -> Any:
-        """Fill in the ``backend`` preset under the keys the config sets."""
+        """Refuse the removed model keys, then fill in the ``backend`` preset
+        under the keys the config sets."""
         if not isinstance(data, dict):
             return data
+        if removed := removed_model_keys(data):
+            raise ValueError(
+                "model settings moved to the models section; replace "
+                + "; ".join(removed)
+            )
         return apply_backend_preset(data)
 
     @model_validator(mode="after")
-    def _inherit_tier_models(self) -> "Config":
-        """Point every role-model field the user did not set at its tier model.
+    def _check_models(self) -> "Config":
+        """Check the models against the provider of their family.
 
-        The tier models are ``aws.bedrock.default_model_id`` /
-        ``fast_model_id``, or ``providers.llm.default_model_id`` /
-        ``fast_model_id`` when the language models do not come from Bedrock.
+        A Bedrock provider takes only catalog members for embedding and
+        rerank (the vector dimension and rerank limits come from the
+        catalog); another provider takes any name but needs one.
         """
-        llm = self.providers.llm
-        if llm.kind == BEDROCK:
-            tiers = {
-                "default": self.aws.bedrock.default_model_id,
-                "fast": self.aws.bedrock.fast_model_id,
-            }
-        else:
-            if llm.default_model_id is None:
-                raise ValueError(
-                    "providers.llm.default_model_id is required when "
-                    f"providers.llm.kind is '{llm.kind}'"
-                )
-            tiers = {
-                "default": llm.default_model_id,
-                "fast": llm.fast_model_id or llm.default_model_id,
-            }
-        for name in type(self).model_fields:
-            section = getattr(self, name)
-            if isinstance(section, BaseModel):
-                resolved = _apply_model_tiers(section, tiers)
-                if resolved is not section:
-                    self.__dict__[name] = resolved
-        return self
-
-    @model_validator(mode="after")
-    def _resolve_provider_models(self) -> "Config":
-        """Default and validate every embedding/rerank model id by provider.
-
-        A Bedrock provider takes only catalog members (the vector dimension
-        and rerank limits come from the catalog); another provider takes any
-        name, and an id the config leaves unset follows the provider's
-        ``model_id``.
-        """
-        providers = self.providers
+        providers, models = self.providers, self.models
         errors: list[str] = []
-        roles: dict[str, tuple[str | None, type[Enum] | None]] = {}
-        if providers.embedding.kind == BEDROCK:
-            roles["embedding"] = (None, EmbeddingModelId)
-        elif providers.embedding.model_id is None or (
-            providers.embedding.dimension is None
-        ):
+        if providers.llm.kind != BEDROCK and models.default is None:
             errors.append(
-                "providers.embedding.model_id and providers.embedding.dimension "
-                "are required when providers.embedding.kind is "
+                "models.default is required when providers.llm.kind is "
+                f"'{providers.llm.kind}'"
+            )
+        embedding = models.embedding
+        if providers.embedding.kind == BEDROCK:
+            if embedding.model_id is not None and not isinstance(
+                embedding.model_id, EmbeddingModelId
+            ):
+                errors.append(
+                    f"models.embedding.model_id: '{embedding.model_id}' is not a "
+                    "Bedrock embedding model; expected one of "
+                    f"{[m.value for m in EmbeddingModelId]} (or select another "
+                    "providers.embedding.kind)"
+                )
+        elif embedding.model_id is None or embedding.dimension is None:
+            errors.append(
+                "models.embedding.model_id and models.embedding.dimension are "
+                "required when providers.embedding.kind is "
                 f"'{providers.embedding.kind}'"
             )
-            roles["embedding"] = (None, None)
-        else:
-            roles["embedding"] = (providers.embedding.model_id, None)
         if providers.rerank.kind == BEDROCK:
-            roles["rerank"] = (None, RerankModelId)
-        else:
-            roles["rerank"] = (providers.rerank.model_id, None)
+            if models.rerank is not None and not isinstance(
+                models.rerank, RerankModelId
+            ):
+                errors.append(
+                    f"models.rerank: '{models.rerank}' is not a Bedrock rerank "
+                    f"model; expected one of {[m.value for m in RerankModelId]} "
+                    "(or select another providers.rerank.kind)"
+                )
+        elif providers.rerank.kind == CROSS_ENCODER and models.rerank is None:
+            errors.append(
+                "models.rerank is required when providers.rerank.kind is "
+                f"'{CROSS_ENCODER}'"
+            )
         if providers.graph.kind == GREMLIN and self.aws.neptune.use_iam:
             errors.append(
                 "providers.graph.kind 'gremlin' needs aws.neptune.use_iam: false "
                 "(SigV4 signing is Neptune-only)"
             )
-        for name in type(self).model_fields:
-            section = getattr(self, name)
-            if isinstance(section, BaseModel):
-                resolved = _resolve_role_models(section, roles, errors, f"{name}.")
-                if resolved is not section:
-                    self.__dict__[name] = resolved
         if errors:
             raise ValueError("; ".join(errors))
         return self
+
+    # --- resolved models -----------------------------------------------------
+
+    def tier_model_id(self, tier: ModelTier) -> str:
+        """The model of ``tier``: ``models.<tier>``, else the provider's default."""
+        models = self.models
+        default = models.default or DEFAULT_MODEL_ID
+        if tier == "default":
+            return default
+        if models.fast is not None:
+            return models.fast
+        return FAST_MODEL_ID if self.providers.llm.kind == BEDROCK else default
+
+    def model_id(self, role: ModelRole) -> str:
+        """The model that serves ``role``: its ``models.roles`` entry (a model
+        id or a tier name), else its tier's model."""
+        chosen: str | None = getattr(self.models.roles, role.value)
+        if chosen is None:
+            return self.tier_model_id(ROLE_TIERS[role])
+        if chosen == "default":
+            return self.tier_model_id("default")
+        if chosen == "fast":
+            return self.tier_model_id("fast")
+        return chosen
+
+    def model_tier(self, model_id: str) -> ModelTier:
+        """Tier a call on ``model_id`` belongs to, for picking its effort.
+
+        Only a model that is the fast tier's model (and not also the default
+        tier's) counts as fast; anything else, including a role pinned to its
+        own model, gets the default tier's effort.
+        """
+        model_id = str(model_id).strip()
+        fast = self.tier_model_id("fast")
+        if model_id == fast and fast != self.tier_model_id("default"):
+            return "fast"
+        return "default"
+
+    @property
+    def embedding_model_id(self) -> EmbeddingModelId | str:
+        """The embedding model (``models.embedding.model_id``; Bedrock default
+        Titan Embed V2)."""
+        model_id = self.models.embedding.model_id
+        return EmbeddingModelId.TITAN_EMBED_V2 if model_id is None else model_id
+
+    @property
+    def embedding_dimension(self) -> int | None:
+        """``models.embedding.dimension`` (``None``: the Bedrock model's largest)."""
+        return self.models.embedding.dimension
+
+    @property
+    def rerank_model_id(self) -> RerankModelId | str | None:
+        """The rerank model (``models.rerank``; Bedrock default Cohere Rerank
+        3.5); ``None`` with a reranker that takes no model."""
+        if self.models.rerank is not None:
+            return self.models.rerank
+        if self.providers.rerank.kind == BEDROCK:
+            return RerankModelId.COHERE_RERANK_V3_5
+        return None
+
+    def inactive_provider_settings(self) -> list[str]:
+        """Settings the config sets that its providers do not read.
+
+        The endpoint and sampling settings of ``providers.llm`` while the
+        language models are Bedrock's, the Bedrock model knobs while they are
+        not, the endpoint settings of ``providers.embedding`` while
+        embeddings are Bedrock's, and the cross-encoder settings of
+        ``providers.rerank`` under another reranker. Logged as a WARNING at
+        load: such a setting is ignored.
+        """
+        providers = self.providers
+        sections: list[tuple[str, BaseModel, frozenset[str], bool]] = [
+            (
+                "providers.llm",
+                providers.llm,
+                frozenset(LLMProviderConfig.model_fields) - {"kind"},
+                providers.llm.kind == BEDROCK,
+            ),
+            (
+                "aws.bedrock",
+                self.aws.bedrock,
+                frozenset(
+                    {
+                        "default_effort",
+                        "fast_effort",
+                        "ingestion_effort",
+                        "enable_1m_context",
+                        "model_overrides",
+                    }
+                ),
+                providers.llm.kind != BEDROCK,
+            ),
+            (
+                "providers.embedding",
+                providers.embedding,
+                frozenset(EmbeddingProviderConfig.model_fields) - {"kind"},
+                providers.embedding.kind == BEDROCK,
+            ),
+            (
+                "providers.rerank",
+                providers.rerank,
+                frozenset({"device", "max_length", "batch_size"}),
+                providers.rerank.kind != CROSS_ENCODER,
+            ),
+        ]
+        return [
+            f"{prefix}.{name}"
+            for prefix, section, names, inactive in sections
+            if inactive
+            for name in sorted(names & section.model_fields_set)
+        ]
 
     @property
     def doc_status_enabled(self) -> bool:

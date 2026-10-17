@@ -23,8 +23,9 @@
 #   uv run run-rag --config-path docker/config.local.yaml --query "..."
 #
 # To keep Bedrock for the models and use only the local stores, set
-# providers.llm/embedding/rerank.kind: bedrock (with model ids from the Bedrock
-# catalog) and provide AWS credentials.
+# providers.llm/embedding/rerank.kind: bedrock (the models section then takes
+# Bedrock ids, or leave it unset for the Bedrock defaults) and provide AWS
+# credentials.
 #
 # This file sets only what differs from the preset. The preset's values are
 # shown commented out; uncomment one to change it.
@@ -36,24 +37,24 @@ providers:
     kind: gremlin
   vector:
     kind: opensearch
-  # llm:
-  #   # Any model pulled into Ollama. Small models extract noticeably weaker
-  #   # graphs than the Bedrock defaults; use the largest one your hardware
-  #   # runs. fast_model_id (chunking, translation, summaries, the global/DRIFT
-  #   # map steps) defaults to it.
-  #   default_model_id: "qwen2.5:7b-instruct"
-  # embedding:
-  #   # The dimension is fixed into the OpenSearch mappings: changing the
-  #   # model or the dimension needs a full re-index.
-  #   model_id: "bge-m3"
-  #   dimension: 1024
-  # rerank:
-  #   model_id: "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1"
   doc_status:
     # Incremental indexing: re-runs only re-index new and changed documents.
     enabled: true
     # Relative to this file: the repository's .unified-kg-rag/ directory.
     sqlite_path: "../.unified-kg-rag/doc-status.sqlite3"
+
+# models:
+#   # Any model pulled into Ollama. Small models extract noticeably weaker
+#   # graphs than the Bedrock defaults; use the largest one your hardware
+#   # runs. The fast tier (chunking, translation, summaries, the global/DRIFT
+#   # map steps) defaults to it.
+#   default: "qwen2.5:7b-instruct"
+#   embedding:
+#     # The dimension is fixed into the index mappings: changing the model or
+#     # the dimension needs a full re-index.
+#     model_id: "bge-m3"
+#     dimension: 1024
+#   rerank: "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1"
 
 # aws:
 #   neptune:

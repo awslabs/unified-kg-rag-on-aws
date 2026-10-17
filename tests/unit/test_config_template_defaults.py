@@ -102,14 +102,10 @@ def test_uncommented_view_finds_the_commented_defaults() -> None:
         "aws.neptune.use_iam",
         "aws.opensearch.allow_anonymous",
         "providers.llm.kind",
-        "providers.embedding.dimension",
         "providers.rerank.batch_size",
         "providers.doc_status.sqlite_path",
-        "indexing.opensearch.embedding_model_id",
-        "search.reranking.rerank_model_id",
-        "evaluation.embedding_model_id",
     } <= paths
-    assert len(paths) >= 40
+    assert len(paths) >= 35
     # Examples under free-form mappings and prose stay comments.
     assert not any(
         p.startswith(("aws.bedrock.model_overrides", "graph.visualization.embeddings"))

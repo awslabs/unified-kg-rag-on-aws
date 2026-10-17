@@ -28,6 +28,7 @@ from unified_kg_rag.adapters.store_errors import is_bad_request
 from unified_kg_rag.domain.ingestion.community_hierarchy import cut_filter
 from unified_kg_rag.domain.models import (
     Config,
+    ModelRole,
     RetrievalResult,
     RetrieverRole,
     SearchQuery,
@@ -97,7 +98,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         if self.global_search_config.use_dynamic_selection:
             self.community_relevance_scorer: Runnable = setup_chain(
                 factory=factory,
-                model_id=self.global_search_config.community_relevance_model_id,
+                model_id=self.config.model_id(ModelRole.COMMUNITY_RELEVANCE),
                 prompt_class=CommunityRelevancePrompt,
                 parser=str_output_parser,
                 custom_prompts=config.custom_prompts,
@@ -107,7 +108,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         # parse below keeps map output handling fault-tolerant.
         self.map_rater: Runnable = setup_chain(
             factory=factory,
-            model_id=self.global_search_config.map_model_id,
+            model_id=self.config.model_id(ModelRole.GLOBAL_MAP),
             prompt_class=GlobalMapPrompt,
             parser=str_output_parser,
             custom_prompts=config.custom_prompts,
@@ -115,7 +116,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         # REDUCE step: synthesize the final answer from the ranked key points.
         self.map_reducer: Runnable = setup_chain(
             factory=factory,
-            model_id=self.global_search_config.map_reduce_model_id,
+            model_id=self.config.model_id(ModelRole.GLOBAL_REDUCE),
             prompt_class=MapReduceSummaryPrompt,
             parser=str_output_parser,
             custom_prompts=config.custom_prompts,

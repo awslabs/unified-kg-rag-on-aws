@@ -452,7 +452,7 @@ def test_query_with_another_embedding_model_is_refused(harness: StoreHarness) ->
     (hits,) = _search(harness, query)
     assert hits
     other_model = harness.derive(
-        lambda c: setattr(c.indexing.opensearch, "embedding_model_id", "another-model")
+        lambda c: setattr(c.models.embedding, "model_id", "another-model")
     )
     with pytest.raises(ConfigurationError, match="'another-model'"):
         _search(other_model, query)

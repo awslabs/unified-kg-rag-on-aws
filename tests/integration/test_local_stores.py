@@ -397,7 +397,7 @@ def test_local_mode_ingests_and_answers_through_the_registry(
     config.processing.claim_extraction.enabled = False
     config.fixing.enabled = False
     config.graph.visualization.enabled = False
-    server = FakeOllama(_respond, answer, config.providers.embedding.dimension or 64)
+    server = FakeOllama(_respond, answer, config.embedding_dimension or 64)
     transport = httpx.MockTransport(server)
     providers = build_providers(
         config,
@@ -443,7 +443,7 @@ def test_local_mode_ingests_and_answers_through_the_registry(
         assert out.answer == answer
         assert out.sources
         assert server.answers == 1
-        assert set(server.embed_models) == {config.providers.embedding.model_id}
+        assert set(server.embed_models) == {config.embedding_model_id}
     finally:
         chain.close()
         pipeline.close()

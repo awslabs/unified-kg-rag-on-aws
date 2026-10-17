@@ -56,6 +56,7 @@ def test_prepare_relationship_doc_degrades_none_to_empty() -> None:
 def test_relationships_mapping_has_knn_vector(config) -> None:
     # Build the indexer without touching AWS by stubbing the heavy __init__ deps.
     indexer = OpenSearchIndexer.__new__(OpenSearchIndexer)
+    indexer.config = config
     indexer.opensearch_config = config.indexing.opensearch
     indexer.analyzer = "standard"
     indexer._embedding_dimension = 1024

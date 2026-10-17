@@ -23,7 +23,12 @@ from langchain_core.output_parsers import JsonOutputParser
 from unified_kg_rag.adapters.evaluators.base import judge_model_kwargs
 from unified_kg_rag.adapters.llm.chain_factory import setup_chain
 from unified_kg_rag.adapters.providers import Providers
-from unified_kg_rag.domain.models import Config, EvaluationResult, ModelPurpose
+from unified_kg_rag.domain.models import (
+    Config,
+    EvaluationResult,
+    ModelPurpose,
+    ModelRole,
+)
 from unified_kg_rag.domain.prompts import PairwiseComparisonPrompt
 from unified_kg_rag.shared import get_logger
 
@@ -40,7 +45,7 @@ class PairwiseJudge:
         providers = Providers.resolve(config, providers)
         self.chain = setup_chain(
             providers.llm_factory,
-            config.evaluation.evaluation_model_id,
+            config.model_id(ModelRole.EVALUATION),
             PairwiseComparisonPrompt,
             JsonOutputParser(),
             custom_prompts=config.custom_prompts,

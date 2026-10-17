@@ -98,7 +98,7 @@ class OpenSearchIndexer(VectorIndexer):
         self.embedding_factory = embedding_factory
         self._embedding_dimension = self._resolve_embedding_dimension()
         self.embedding_model = self.embedding_factory.get_model(
-            model_id=self.opensearch_config.embedding_model_id,
+            model_id=self.config.embedding_model_id,
             dimensions=self._embedding_dimension,
         )
         self.target_language = self.config.processing.translation.target_language.value
@@ -129,7 +129,7 @@ class OpenSearchIndexer(VectorIndexer):
         return S3EmbeddingCache(
             bucket_name=bucket,
             key=self.opensearch_config.embedding_cache_s3_key,
-            model_id=model_id_value(self.opensearch_config.embedding_model_id),
+            model_id=model_id_value(self.config.embedding_model_id),
             dimension=self._embedding_dimension,
             boto_session=self._s3_session(),
             encryption=self.config.aws.s3.encryption,
@@ -147,9 +147,7 @@ class OpenSearchIndexer(VectorIndexer):
         return self.boto_session
 
     def _resolve_embedding_dimension(self) -> int:
-        return resolve_embedding_dimension(
-            self.embedding_factory, self.opensearch_config
-        )
+        return resolve_embedding_dimension(self.embedding_factory, self.config)
 
     def close(self) -> None:
         """Release the search-engine client's connections (best-effort)."""
@@ -161,7 +159,7 @@ class OpenSearchIndexer(VectorIndexer):
     def _embedding_meta(self) -> dict[str, Any]:
         """What every index records of the embeddings it holds (``_meta``)."""
         return {
-            META_MODEL: model_id_value(self.opensearch_config.embedding_model_id),
+            META_MODEL: model_id_value(self.config.embedding_model_id),
             META_DIMENSION: self._embedding_dimension,
         }
 

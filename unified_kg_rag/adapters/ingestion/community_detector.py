@@ -25,6 +25,7 @@ from unified_kg_rag.domain.models import (
     Config,
     HierarchicalCommunity,
     ModelPurpose,
+    ModelRole,
     TextUnit,
 )
 from unified_kg_rag.domain.prompts import CommunityReportPrompt
@@ -186,7 +187,7 @@ class CommunityDetector:
                 model_purpose=ModelPurpose.INGESTION,
                 factory=self.factory,
                 enable_output_fixing=self.config.fixing.enabled,
-                output_fixing_model_id=self.config.fixing.fixing_model_id,
+                output_fixing_model_id=self.config.model_id(ModelRole.FIXING),
                 min_output_tokens=CommunityReportPrompt.output_floor(self.config),
                 output_tags=[
                     "community_name",
@@ -199,7 +200,7 @@ class CommunityDetector:
             self.report_generator = setup_chain(
                 model_purpose=ModelPurpose.INGESTION,
                 factory=self.factory,
-                model_id=self.community_detection_config.report_generation.report_generation_model_id,
+                model_id=self.config.model_id(ModelRole.COMMUNITY_REPORT),
                 prompt_class=CommunityReportPrompt,
                 min_output_tokens=CommunityReportPrompt.output_floor(self.config),
                 parser=parser,
@@ -1338,7 +1339,7 @@ class CommunityDetector:
         current_time = datetime.now()
 
         attributes = {
-            "generation_model": report_config.report_generation_model_id,
+            "generation_model": self.config.model_id(ModelRole.COMMUNITY_REPORT),
             "entity_count": len(community.entity_ids or []),
             "relationship_count": len(community.relationship_ids or []),
             "content_length": report_config.content_length,
