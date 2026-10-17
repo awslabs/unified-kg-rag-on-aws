@@ -825,7 +825,7 @@ Messages are abridged; the log line names the key, file or stage involved. A sto
 | `Configuration validation error: ...` | A config value has the wrong type or an unsupported value | Fix the named key |
 | `ConfigurationError: Unknown config keys: '<path>' ...` (exit code 2) | A typo, or a key removed or renamed in this release | Correct or delete the key ([CHANGELOG](../CHANGELOG.md) names the replacement). `--allow-unknown-keys` loads the file anyway, logging `Unknown config key '<path>' is ignored` (WARNING) per key |
 | `--source-directory is required for pipeline execution` (exit 2, like the usage errors below) | No `--source-directory` and no `$UKR_SOURCE_DIRECTORY` | Pass it; `--verify-metadata` needs `--pipeline-id` instead |
-| `--s3-bucket-name must be specified for --s3-sync` | `--s3-sync` without a bucket | Pass `--s3-bucket-name` |
+| `--s3-sync needs --s3-bucket-name or aws.s3.bucket_name` | `--s3-sync` without a bucket | Pass `--s3-bucket-name` or set `aws.s3.bucket_name` (`UKR__AWS__S3__BUCKET_NAME`) |
 | `--pipeline-id is required for --resume-from-stage` | Resuming needs the earlier run | Pass that run's `--pipeline-id` |
 | `--enabled-stages: invalid stage names ...` | `--enabled-stages` names an unknown stage | Use a name from the list in the message |
 | `argument --resume-from-stage: Unknown pipeline stage ...` (exit 2) | `--resume-from-stage` names an unknown stage | Use a name from the list in the message (any case) |

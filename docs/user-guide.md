@@ -879,8 +879,8 @@ the same `--pipeline-id`. With the doc-status registry on it is incremental
 | `--output-directory` | none (no export) | Export parsed documents as JSON here for inspection (must not be the source directory) |
 | `--cache-directory` | `cache` | Pipeline cache + intermediate results |
 | `--force-rebuild` | off | Recompute every stage, ignoring the cached stage outputs; the cache is rewritten with the new outputs |
-| `--s3-sync` | off | Sync cache to S3 (requires `--s3-bucket-name`) |
-| `--s3-bucket-name` | — | S3 bucket for cache sync |
+| `--s3-sync` | off | Sync cache to S3 (needs `--s3-bucket-name` or `aws.s3.bucket_name`) |
+| `--s3-bucket-name` | `aws.s3.bucket_name` | S3 bucket for cache sync |
 | `--s3-prefix` | `pipeline-runs` | S3 key prefix for cache files |
 | `--pipeline-id` | `$UKR_PIPELINE_ID` | Existing run to resume/inspect. If the flag is omitted it falls back to the `UKR_PIPELINE_ID` environment variable. The id names the run's cache directory and S3 prefix, so it accepts letters, digits, `.`, `_` and `-` only: up to 128 characters, starting with a letter or digit, with no `..`. |
 | `--resume-from-stage` | — | Stage to resume from, by name, case-insensitive (requires `--pipeline-id`); an unknown name is a usage error (exit 2) |

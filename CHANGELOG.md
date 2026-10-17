@@ -782,6 +782,9 @@ changed once with the full-config keys (#332).
   fused order. Reported by @vibhupb (#83) (#284).
 
 ### Changed
+- `run-ingestion --s3-sync` takes the bucket from `aws.s3.bucket_name`
+  (`UKR__AWS__S3__BUCKET_NAME`, which the CDK task sets) when
+  `--s3-bucket-name` is not given, so the bucket is configured once (#PR).
 - `graph.visualization.layout`, `interactive` and `static` are typed
   sections instead of free-form maps: a misspelled renderer setting is an
   unknown key (an error by default) rather than silently ignored, values are

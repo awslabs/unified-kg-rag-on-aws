@@ -677,6 +677,22 @@ def test_ingestion_runner_s3_sync_needs_bucket(config, mocker, tmp_path) -> None
     assert exc.value.code == 2  # a usage error
 
 
+def test_ingestion_s3_sync_takes_the_configured_bucket(
+    config, mocker, tmp_path
+) -> None:
+    # The CDK task injects aws.s3.bucket_name (UKR__AWS__S3__BUCKET_NAME) and
+    # had to pass the same bucket again as --s3-bucket-name.
+    config.aws.s3.bucket_name = "cache-bucket"
+    mocker.patch.object(run_ingestion_pipeline, "load_cli_config", return_value=config)
+    src = tmp_path / "src"
+    src.mkdir()
+    args = _ing_parser().parse_args(["--source-directory", str(src), "--s3-sync"])
+    runner = run_ingestion_pipeline.IngestionPipelineRunner(args)
+    assert runner._create_pipeline_config().s3_bucket_name == "cache-bucket"
+    args.s3_bucket_name = "flag-bucket"  # the flag wins
+    assert runner._create_pipeline_config().s3_bucket_name == "flag-bucket"
+
+
 def test_ingestion_runner_resume_needs_pipeline_id(config, mocker, tmp_path) -> None:
     mocker.patch.object(run_ingestion_pipeline, "load_cli_config", return_value=config)
     src = tmp_path / "src"

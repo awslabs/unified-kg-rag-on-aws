@@ -806,8 +806,8 @@ CloudWatch로 보내려면 태스크 옆에 ADOT나 OpenTelemetry Collector를 �
 | `--output-directory` | 없음(내보내지 않음) | 파싱한 문서를 확인용 JSON으로 내보낼 위치(소스 디렉터리는 지정 불가) |
 | `--cache-directory` | `cache` | 파이프라인 캐시와 중간 결과 |
 | `--force-rebuild` | off | 캐시된 단계 출력을 무시하고 모든 단계를 다시 계산. 새 출력으로 캐시를 다시 씀 |
-| `--s3-sync` | off | 캐시를 S3에 동기화(`--s3-bucket-name` 필요) |
-| `--s3-bucket-name` | — | 캐시 동기화용 S3 버킷 |
+| `--s3-sync` | off | 캐시를 S3에 동기화(`--s3-bucket-name` 또는 `aws.s3.bucket_name` 필요) |
+| `--s3-bucket-name` | `aws.s3.bucket_name` | 캐시 동기화용 S3 버킷 |
 | `--s3-prefix` | `pipeline-runs` | 캐시 파일의 S3 키 접두사 |
 | `--pipeline-id` | `$UKR_PIPELINE_ID` | 재개하거나 검사할 기존 실행입니다. 플래그를 생략하면 환경 변수 `UKR_PIPELINE_ID`를 씁니다. 이 ID가 실행의 캐시 디렉터리와 S3 접두사 이름이 되므로 영문 소문자, 숫자, 하이픈, 밑줄만 쓸 수 있습니다. |
 | `--resume-from-stage` | — | 재개할 단계 이름(대소문자 무관, `--pipeline-id` 필요). 없는 이름이면 사용법 오류(종료 코드 2) |

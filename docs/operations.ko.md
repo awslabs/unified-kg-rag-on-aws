@@ -761,7 +761,7 @@ LangSmith로 업로드합니다.
 | `Configuration validation error: ...` | 설정값의 타입이나 값이 잘못됨 | 메시지에 나온 키를 수정 |
 | `ConfigurationError: Unknown config keys: '<path>' ...`(종료 코드 2) | 오타이거나 이번 릴리스에서 없어지거나 이름이 바뀐 키 | 키를 고치거나 삭제함(바뀐 이름은 [CHANGELOG](../CHANGELOG.md)에 있음). `--allow-unknown-keys`를 주면 키마다 `Unknown config key '<path>' is ignored`(WARNING)를 남기고 파일을 읽음 |
 | `--source-directory is required for pipeline execution`(아래 사용법 오류처럼 종료 코드 2) | `--source-directory`도 `$UKR_SOURCE_DIRECTORY`도 없음 | 플래그를 넘김. `--verify-metadata`에는 대신 `--pipeline-id`가 필요 |
-| `--s3-bucket-name must be specified for --s3-sync` | 버킷 없이 `--s3-sync`를 지정함 | `--s3-bucket-name`을 넘김 |
+| `--s3-sync needs --s3-bucket-name or aws.s3.bucket_name` | 버킷 없이 `--s3-sync`를 지정함 | `--s3-bucket-name`을 넘기거나 `aws.s3.bucket_name`(`UKR__AWS__S3__BUCKET_NAME`)을 설정 |
 | `--pipeline-id is required for --resume-from-stage` | 재개하려면 이전 실행이 필요함 | 그 실행의 `--pipeline-id`를 넘김 |
 | `--enabled-stages: invalid stage names ...` | `--enabled-stages`에 없는 단계 이름이 있음 | 메시지에 나온 목록의 이름을 사용 |
 | `argument --resume-from-stage: Unknown pipeline stage ...`(종료 코드 2) | `--resume-from-stage`에 없는 단계 이름을 넘김 | 메시지에 나온 목록의 이름을 사용(대소문자 무관) |

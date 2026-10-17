@@ -132,7 +132,8 @@ class CommandLineInterface:
         parser.add_argument(
             "--s3-bucket-name",
             type=str,
-            help="Amazon S3 bucket name for cache synchronization (required when using --s3-sync)",
+            help="Amazon S3 bucket for cache synchronization with --s3-sync "
+            "(default: aws.s3.bucket_name)",
         )
         parser.add_argument(
             "--s3-prefix",
@@ -261,8 +262,8 @@ class IngestionPipelineRunner:
                     "would be ingested as new documents on the next run"
                 )
 
-        if self.args.s3_sync and not self.args.s3_bucket_name:
-            usage_error("--s3-bucket-name must be specified for --s3-sync")
+        if self.args.s3_sync and not self._s3_bucket_name():
+            usage_error("--s3-sync needs --s3-bucket-name or aws.s3.bucket_name")
 
         if self.args.resume_from_stage and not self.args.pipeline_id:
             usage_error("--pipeline-id is required for --resume-from-stage")
@@ -276,6 +277,11 @@ class IngestionPipelineRunner:
             else Path("cache")
         )
         self.args.cache_directory.mkdir(parents=True, exist_ok=True)
+
+    def _s3_bucket_name(self) -> str | None:
+        """The cache bucket: the flag, else the configured one (the CDK task
+        injects it as UKR__AWS__S3__BUCKET_NAME)."""
+        return self.args.s3_bucket_name or self.config.aws.s3.bucket_name
 
     def _display_run_info(self) -> None:
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -355,7 +361,7 @@ class IngestionPipelineRunner:
             cache_enabled=True,
             local_directory=self.args.cache_directory,
             s3_sync_enabled=self.args.s3_sync,
-            s3_bucket_name=self.args.s3_bucket_name,
+            s3_bucket_name=self._s3_bucket_name(),
             s3_prefix=self.args.s3_prefix,
             force_rebuild=self.args.force_rebuild,
             pipeline_id=self.args.pipeline_id,
