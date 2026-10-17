@@ -649,12 +649,12 @@ Library API (Python callers and custom backends).
   now uploads the changed checkpoint files after every stage (stage data
   first, the run metadata last); on SIGTERM it uploads, stops the running
   stage and exits 143, and a re-run with the same pipeline id starts at that
-  stage. The app container's stop timeout is 120 s (was 30 s) (#PR).
+  stage. The app container's stop timeout is 120 s (was 30 s) (#316).
 - An S3-synced run resumed more than a day later no longer recomputes every
   stage: checkpoints carried the 24 h `cache.ttl_seconds` expiry while the
   bucket keeps them for 30 days. With `--s3-sync` checkpoints have no TTL,
   including ones an earlier run stamped with one; the bucket lifecycle
-  expires them (#PR).
+  expires them (#316).
 - Community detection no longer logs the WARNING "Graph has no weighted
   edges" when the hierarchy ends normally at a level whose communities no
   edge joins; it logs that at INFO and stops, with the same communities. An
