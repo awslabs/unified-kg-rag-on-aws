@@ -223,8 +223,8 @@ Neptune 요청(쓰기, 삭제, 제거와 병합을 위한 읽기)은 모두 새 
 | `OpenSearchFreeStorageLow` | 가장 많이 찬 데이터 노드의 여유 공간이 `opensearch_volume_gib`의 40% 이하 | 쓰기 차단 기준에 이르기 전에 `opensearch_volume_gib`(또는 `opensearch_count`)를 늘려 다시 배포합니다 |
 | `OpenSearchJvmPressure` | JVM 메모리 압력이 3분 연속 95% 이상 | 메모리 부족 위험입니다. 더 큰 `opensearch_instance`를 쓰거나 데이터 노드를 늘립니다 |
 | `DocStatusWriteThrottled` | 문서 상태 테이블이 쓰기를 스로틀링함(5분) | 앱은 스로틀링된 레지스트리 호출을 백오프하며 재시도하고, 그래도 스로틀링되면 `DocStatusRegistryError`로 실행이 실패합니다. 같은 테이블에 겹쳐 실행되는 수집이 있는지 확인하고, 스로틀링이 해소된 뒤 실패한 실행을 다시 실행합니다 |
-| `NeptuneHighCpu` | 라이터(writer)의 평균 CPU가 15분(5분 × 3) 동안 90% 이상 | 대량 쓰기의 일시적 최고치가 아니라 지속적인 포화입니다. 더 큰 `neptune_instance`를 쓰거나 `indexing.neptune.index_concurrency`를 낮춥니다 |
-| `NeptuneLowFreeableMemory` | 5분 안에 라이터의 가용 메모리가 한 번이라도 512MiB 이하로 떨어짐(최솟값) | 쿼리와 쓰기가 메모리 부족으로 실패할 수 있습니다. 더 큰 `neptune_instance`를 씁니다 |
+| `NeptuneHighCpu` | 라이터(writer)의 평균 CPU가 15분(5분 × 3) 동안 90% 이상 | 대량 쓰기의 일시적 최고치가 아니라 지속적인 포화입니다. 더 큰 `neptune_instance`(또는 더 높은 `neptune_serverless_ncu` 최댓값)를 쓰거나 `indexing.neptune.index_concurrency`를 낮춥니다 |
+| `NeptuneLowFreeableMemory` | 5분 안에 라이터의 가용 메모리가 한 번이라도 512MiB 이하로 떨어짐(최솟값) | 쿼리와 쓰기가 메모리 부족으로 실패할 수 있습니다. 더 큰 `neptune_instance`를 쓰거나, 부하가 몰리기 전에 용량이 확보되도록 `neptune_serverless_ncu` 최솟값을 높입니다 |
 | `NeptuneGremlinErrors` | 3분 연속 어느 인스턴스에서든 Gremlin 서버 오류가 있음 | 지속적인 쓰기·쿼리 실패입니다(재시도되는 쓰기 충돌은 짧게 몰려 발생하므로 이 경보를 울리지 않음). 작업 로그에서 실패한 요청을 확인합니다 |
 
 경보를 받으려면 `-c alarm_email=<address>`로 배포해 구독자를 등록해야 합니다.

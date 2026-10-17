@@ -187,13 +187,28 @@ class StorageStack(Stack):
             vpc_subnets=self.app_subnets,
             removal_policy=self.removal_policy,
         )
+        # Neptune Serverless (neptune_serverless_ncu) runs every instance as
+        # db.serverless and scales each between the NCU bounds; the endpoints,
+        # IAM auth and Gremlin API are the same, so the app needs no change.
+        serverless = self.config.neptune_serverless_ncu
         return neptune.DatabaseCluster(
             self,
             "Neptune",
             vpc=self.vpc,
             vpc_subnets=self.app_subnets,
             subnet_group=subnet_group,
-            instance_type=neptune.InstanceType.of(self.config.neptune_instance),
+            instance_type=(
+                neptune.InstanceType.SERVERLESS
+                if serverless
+                else neptune.InstanceType.of(self.config.neptune_instance)
+            ),
+            serverless_scaling_configuration=(
+                neptune.ServerlessScalingConfiguration(
+                    min_capacity=serverless[0], max_capacity=serverless[1]
+                )
+                if serverless
+                else None
+            ),
             # >=2 instances => a reader in another AZ for HA failover.
             instances=max(1, self.config.neptune_instances),
             security_groups=[self.service_sg],

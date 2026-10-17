@@ -380,6 +380,11 @@ Library API (Python callers and custom backends).
   `retrieved_source_types`, `retrieved_entities` and
   `retrieved_relationships`; the run manifest records
   `models.judge_is_answer_model` (LLM judges favour their own outputs) (#315).
+- IaC: `-c neptune_serverless_ncu=MIN-MAX` (e.g. `1-16`) runs the Neptune
+  instances as Neptune Serverless, scaling each between the NCU bounds, for
+  environments that sit idle most of the day; unset keeps the provisioned
+  `neptune_instance`. The app is unchanged (same endpoints, IAM auth and
+  Gremlin API) (#PR).
 - With `observability.capture_content`, the root `kg_rag.query` span records
   the redacted query as `input.value` and, outside `stream` / `astream`, the
   redacted answer as `output.value`, so the Langfuse and Phoenix trace lists
