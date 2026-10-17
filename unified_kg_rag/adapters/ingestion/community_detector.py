@@ -390,13 +390,16 @@ class CommunityDetector:
 
         communities = self._leiden_communities(target_graph, resolution)
 
-        # Only entity communities are bounded by max_cluster_size and held to
-        # min_community_size. A node of a coarser cluster graph is a whole
-        # community, so splitting or merging there would undo the level below.
+        # Every level is bounded by max_cluster_size: in entities at level 0,
+        # in child communities above (a node of a cluster graph is a whole
+        # community), so a parent's roll-up packs a bounded number of child
+        # report summaries. Only entity communities are held to
+        # min_community_size: merging cluster-graph nodes would fold a level
+        # into the one below it.
+        communities = self._split_large_communities(
+            communities, target_graph, resolution, config.max_cluster_size
+        )
         if graph is None:
-            communities = self._split_large_communities(
-                communities, target_graph, resolution, config.max_cluster_size
-            )
             if config.min_community_size > 1:
                 communities = self._merge_small_communities(
                     communities,
@@ -439,15 +442,16 @@ class CommunityDetector:
         resolution: float,
         max_size: int,
     ) -> dict[int, set[Any]]:
-        """Re-partition every community above ``max_size`` entities, recursively.
+        """Re-partition every community above ``max_size`` members, recursively.
 
         Modularity has a resolution limit: on a large graph, one Leiden pass
-        merges well-separated groups into level-0 communities that grow with
-        the corpus, and a report then sees only the ``max_entities_per_report``
+        merges well-separated groups into communities that grow with the
+        corpus. A level-0 report then sees only the ``max_entities_per_report``
         best-connected members of such a leaf (MS GraphRAG bounds its leaves
-        with ``max_cluster_size`` the same way). Leiden run on the community's
-        own subgraph judges it against that subgraph alone, so it splits.
-        A community Leiden leaves whole (one piece) stays as it is.
+        with ``max_cluster_size`` the same way), and a parent's roll-up only
+        the child summaries that fit its token budget. Leiden run on the
+        community's own subgraph judges it against that subgraph alone, so it
+        splits. A community Leiden leaves whole (one piece) stays as it is.
         """
         done: list[set[Any]] = []
         pending = list(communities.values())
@@ -465,8 +469,8 @@ class CommunityDetector:
             )
             if len(pieces) < 2:
                 logger.info(
-                    "Level-0 community of %s entities has no finer partition; "
-                    "keeping it above max_cluster_size %s",
+                    "Community of %s members has no finer partition; keeping "
+                    "it above max_cluster_size %s",
                     len(nodes),
                     max_size,
                 )
@@ -476,7 +480,7 @@ class CommunityDetector:
             pending.extend(pieces)
         if split:
             logger.info(
-                "Split %s level-0 communities above max_cluster_size %s",
+                "Split %s communities above max_cluster_size %s",
                 split,
                 max_size,
             )

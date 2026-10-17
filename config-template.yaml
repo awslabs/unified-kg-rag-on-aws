@@ -463,9 +463,10 @@ graph:
     max_levels: 5
     trials: 3
     extra_forced_iterations: 2
-    # Maximum entities per level-0 (leaf) community: a larger one is
-    # partitioned again on its own subgraph until it fits, so a leaf report
-    # sees all of its members (MS GraphRAG's default is 10).
+    # Maximum members per community (entities at level 0, child communities
+    # above): a larger one is partitioned again on its own subgraph until it
+    # fits, so a leaf report sees all of its entities and a parent's roll-up
+    # all of its child summaries (MS GraphRAG's default is 10).
     max_cluster_size: 20
     min_community_size: 3
     # When true, sweep auto_resolution_candidates and keep the resolution that

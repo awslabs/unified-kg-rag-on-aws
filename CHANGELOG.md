@@ -450,6 +450,13 @@ Library API (Python callers and custom backends).
   fused order. Reported by @vibhupb (#83) (#284).
 
 ### Changed
+- `graph.community_detection.max_cluster_size` also caps a parent's child
+  communities: a coarser-level community with more children is partitioned
+  again on the cluster graph, so a parent report's roll-up covers every
+  child summary. On the synthetic 50,000-entity graph the largest parent goes
+  from 172 children to 20 (median 98 to 8), with 8,426 communities instead
+  of 7,580 and 5 levels instead of 4. Re-index with `indexing.reset: true`
+  to rebuild an existing hierarchy (#PR).
 - Level-0 communities are bounded by the new
   `graph.community_detection.max_cluster_size` (default 20): a larger Leiden
   community is partitioned again on its own subgraph until it fits, and the

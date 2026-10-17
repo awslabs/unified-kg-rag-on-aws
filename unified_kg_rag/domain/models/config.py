@@ -1389,14 +1389,16 @@ class CommunityDetectionConfig(BaseModel):
     max_cluster_size: int = Field(
         default=20,
         ge=2,
-        description="Maximum entities per level-0 (leaf) community. A larger "
-        "Leiden community is re-partitioned on its own subgraph, recursively, "
-        "until every piece fits or Leiden finds no finer split; coarser levels "
-        "regroup the pieces. Without the bound, modularity's resolution limit "
-        "grows leaves with the corpus beyond what one report's "
-        "max_report_context_tokens can describe. MS GraphRAG's default is 10 "
-        "with a larger report budget; 20 typically keeps a leaf's entities and "
-        "relationships within the default 4000-token report context.",
+        description="Maximum members per community: entities at level 0, "
+        "child communities above. A larger Leiden community is re-partitioned "
+        "on its own subgraph, recursively, until every piece fits or Leiden "
+        "finds no finer split; the next level regroups the pieces. Without the "
+        "bound, modularity's resolution limit grows communities with the "
+        "corpus beyond what one report's max_report_context_tokens can "
+        "describe (or a parent's roll-up can summarize). MS GraphRAG's default "
+        "is 10 with a larger report budget; 20 typically keeps a leaf's "
+        "entities and relationships, or a parent's child summaries, within the "
+        "default 4000-token report context.",
     )
     min_community_size: int = Field(
         default=3,
