@@ -905,6 +905,9 @@ cache:
     enabled: true
     chunk_size: 1000
     max_file_size_mb: 50
+  llm_responses:  # ingestion model responses, reused by a re-run with the same pipeline id
+    enabled: true
+    flush_every: 100  # responses per segment file (written/uploaded when full and per stage)
 
 # Logging Configuration
 logging:

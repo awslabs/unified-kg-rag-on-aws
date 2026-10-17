@@ -20,6 +20,7 @@ from langchain_core.language_models.fake_chat_models import FakeListChatModel
 
 from tests.fixtures.fakes.chat_models import fake_model_info
 from unified_kg_rag.adapters.aws import bedrock as bedrock_module
+from unified_kg_rag.adapters.llm.response_cache import CachingLLMFactory
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
 from unified_kg_rag.domain.models import Config, PipelineStageType
@@ -85,6 +86,11 @@ def test_injected_providers_reach_every_ingestion_stage(
     for stage_type, stage in stages.items():
         assert stage.providers is providers, stage_type
 
+    # The injected factory, with the run's response cache added.
+    cached = providers.llm_factory
+    assert isinstance(cached, CachingLLMFactory)
+    assert cached.factory is llm
+    llm = cached
     T = PipelineStageType
     assert stages[T.TEXT_CHUNKING].chunker.factory is llm
     assert stages[T.GRAPH_EXTRACTION].extractor.factory is llm

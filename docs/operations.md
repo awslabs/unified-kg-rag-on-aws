@@ -273,6 +273,7 @@ The alarms have a subscriber only when the stack was deployed with
 |---|---|---|
 | Stage checkpoints (local) | `<--cache-directory>/<pipeline_id>/` (default `cache/`) | Reused on resume; `--force-rebuild` ignores it and writes the recomputed outputs |
 | Stage checkpoints (S3) | `s3://<bucket>/<--s3-prefix>/<pipeline_id>/` (default prefix `pipeline-runs`) | With `--s3-sync`; uploaded after every stage and on SIGTERM, and how the Step Functions phases hand off. A failed initial download or final upload fails the run with `CacheSyncError`. Expired by the bucket lifecycle, not `cache.ttl_seconds` |
+| LLM response cache | `<stage checkpoint dir>/llm-cache/` (local, and in S3 with `--s3-sync`) | Ingestion model responses reused by a re-run with the same pipeline id; `cache.llm_responses.enabled: false` turns it off, `--force-rebuild` ignores it |
 | Embedding cache | `s3://<aws.s3.bucket_name>/embedding-cache/cache.json` (`indexing.opensearch.embedding_cache_s3_key`) | Only with `indexing.opensearch.persist_embedding_cache: true` |
 | Visualization data | `<cache directory>/<pipeline_id>/visualization/` unless `graph.visualization.outputs_directory` is set | Synced with the stage cache (`.json` only) |
 

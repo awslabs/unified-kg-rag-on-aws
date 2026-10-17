@@ -232,6 +232,21 @@ class S3CacheManager:
         else:
             logger.info("No cache files found for pipeline '%s' locally", pipeline_id)
 
+    def upload_file(
+        self, pipeline_id: str, local_cache_dir: Path, local_path: Path
+    ) -> None:
+        """Upload one file of the pipeline's cache now (it is then current
+        for ``sync_pipeline_to_s3``); raises CacheSyncError on failure."""
+        state = self._file_state(local_path)
+        relative_path = local_path.relative_to(local_cache_dir)
+        s3_key = f"{self._get_base_prefix(pipeline_id)}/{relative_path.as_posix()}"
+        if not self._upload_file_to_s3(local_path, s3_key):
+            raise CacheSyncError(
+                f"S3 cache upload for pipeline '{pipeline_id}' failed for "
+                f"'{s3_key}' in bucket '{self.bucket_name}'"
+            )
+        self._synced[local_path.resolve()] = state
+
     @staticmethod
     def _upload_order(local_cache_dir: Path) -> list[Path]:
         """The cache files, stage data first, then the cache index, then the

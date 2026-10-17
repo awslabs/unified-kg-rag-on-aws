@@ -263,8 +263,6 @@ def test_a_failed_checkpoint_upload_between_stages_does_not_stop_the_run(
 
 def test_a_stop_during_a_checkpoint_write_waits_for_it(tmp_path, mocker) -> None:
     pipe = _pipeline_with_failing_sync(tmp_path, mocker)
-    pipe.s3_cache_manager.sync_pipeline_to_s3.side_effect = None
-    pipe._checkpoint_id = "pid"
     written: list[str] = []
 
     with pytest.raises(PipelineInterrupted) as exc:
@@ -273,22 +271,41 @@ def test_a_stop_during_a_checkpoint_write_waits_for_it(tmp_path, mocker) -> None
             written.append("stage outputs")
     assert written == ["stage outputs"]
     assert exc.value.signum == signal.SIGTERM
-    # The stop uploaded the checkpoint, including what the write just saved.
-    pipe.s3_cache_manager.sync_pipeline_to_s3.assert_called_once_with("pid", tmp_path)
     assert pipe._checkpointing is False
 
 
-def test_a_stop_outside_a_checkpoint_write_uploads_then_raises(
-    tmp_path, mocker
-) -> None:
-    # A failed upload does not keep the run from stopping.
+def test_a_stop_request_does_no_io(tmp_path, mocker) -> None:
+    # The signal handler runs wherever the main thread was, possibly inside
+    # ThreadPoolExecutor.submit holding its global lock, which an S3 upload
+    # (s3transfer submits to a pool) would wait on forever.
     pipe = _pipeline_with_failing_sync(tmp_path, mocker)
     pipe._checkpoint_id = "pid"
     with pytest.raises(PipelineInterrupted):
         pipe.request_stop(signal.SIGTERM)
-    pipe.s3_cache_manager.sync_pipeline_to_s3.assert_called_once()
+    pipe.s3_cache_manager.sync_pipeline_to_s3.assert_not_called()
     # A stop is not a stage failure that ``except Exception`` would record.
     assert not issubclass(PipelineInterrupted, Exception)
+
+
+def test_a_stopped_run_uploads_its_checkpoint_as_it_unwinds(tmp_path, mocker) -> None:
+    # A failed upload does not keep the run from stopping.
+    pipe = _pipeline_with_failing_sync(tmp_path, mocker)
+    pipe.state_manager = mocker.MagicMock()
+    pipe.state_manager.pipeline_exists.return_value = False
+    pipe._prepare_new_run = mocker.MagicMock(return_value=(mocker.MagicMock(), None))
+    pipe.s3_cache_manager.sync_pipeline_from_s3.side_effect = None
+    mocker.patch.object(pipe, "_set_corpus_fingerprint")
+    mocker.patch.object(pipe, "_validate_retired_scopes")
+    mocker.patch.object(pipe, "_use_source_directory")
+    pipe.pipeline_config.force_rebuild = False
+
+    def execute(context, start):  # type: ignore[no-untyped-def]
+        pipe.request_stop(signal.SIGTERM)
+
+    mocker.patch.object(pipe, "_execute_pipeline", side_effect=execute)
+    with pytest.raises(PipelineInterrupted):
+        pipe.run(tmp_path, pipeline_id="pid")
+    pipe.s3_cache_manager.sync_pipeline_to_s3.assert_called_once_with("pid", tmp_path)
 
 
 def test_cli_exits_128_plus_the_signal_on_a_stop(mocker) -> None:

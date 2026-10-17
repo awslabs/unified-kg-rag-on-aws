@@ -4,6 +4,7 @@ import asyncio
 import concurrent.futures
 import math
 import re
+import threading
 import time
 from collections import defaultdict
 from collections.abc import Callable, Iterable
@@ -46,6 +47,10 @@ BATCH_ITEM_FAILED: Final = _BatchItemFailed()
 returned in place as this marker. Test it with ``result is BATCH_ITEM_FAILED``;
 an empty result (``{}``, ``""``) is a real LLM output, not a failure.
 """
+
+
+class _BatchAbandoned(Exception):
+    """An item's next attempt, not made: its batch was abandoned."""
 
 
 def _batch_outcome(items: list[Any], results: list[Any]) -> dict[str, Any]:
@@ -252,22 +257,31 @@ class BatchProcessor(BaseModel):
         if not inputs:
             return []
 
+        # Set when the calling thread abandons the batch (a stop, Ctrl-C):
+        # the items still running make no further attempt, and a backoff
+        # wait ends at once, so the pool shuts down after the calls in flight.
+        abandoned = threading.Event()
+
         # Bound every item call by the wall-clock ceiling so a hung item
         # aborts and is retried instead of blocking.
         def timed_sequential_func(single_input: dict[str, Any]) -> Any:
+            if abandoned.is_set():
+                raise _BatchAbandoned
             return self._run_with_timeout(
                 lambda: sequential_func(single_input),
                 self.call_timeout_seconds,
                 f"{task_name} item",
             )
 
-        retrying_sequential_func = self._create_retry_decorator(task_name)(
+        retrying_sequential_func = self._create_retry_decorator(task_name, abandoned)(
             timed_sequential_func
         )
 
         def process_one(single_input: dict[str, Any]) -> Any:
             try:
                 return retrying_sequential_func(single_input)
+            except _BatchAbandoned:
+                return BATCH_ITEM_FAILED
             except Exception as error:
                 return self._failed(task_name, error)
 
@@ -290,7 +304,9 @@ class BatchProcessor(BaseModel):
                 results[futures[future]] = future.result()
                 progress.update()
         except BaseException:
-            # Do not start the queued items of a batch that is being abandoned.
+            # Do not start the queued items of a batch that is being abandoned,
+            # nor another attempt of the running ones.
+            abandoned.set()
             executor.shutdown(wait=False, cancel_futures=True)
             raise
         finally:
@@ -337,6 +353,8 @@ class BatchProcessor(BaseModel):
         return results
 
     def _is_retryable(self, exc: BaseException) -> bool:
+        if isinstance(exc, _BatchAbandoned):
+            return False
         # The same input hits the same output-token limit again.
         if isinstance(exc, LLMOutputTruncatedError):
             return False
@@ -345,20 +363,30 @@ class BatchProcessor(BaseModel):
             return True
         return self.is_transient_error is None or self.is_transient_error(exc)
 
-    def _create_retry_decorator(self, operation_name: str) -> Callable:
+    def _create_retry_decorator(
+        self, operation_name: str, abandoned: threading.Event | None = None
+    ) -> Callable:
         # Exponential backoff WITH jitter (wait_random_exponential) to spread
         # concurrent retries and avoid hammering a throttled Bedrock endpoint in
         # lock-step. Only retryable errors are retried, so a permanent failure
-        # (access denied, validation, missing model) fails fast.
-        return tenacity.retry(
+        # (access denied, validation, missing model) fails fast. Once
+        # ``abandoned`` is set no retry is made and a backoff wait ends.
+        stop: tenacity.stop.stop_base = tenacity.stop_after_attempt(self.max_attempts)
+        options: dict[str, Any] = {}
+        if abandoned is not None:
+            stop = stop | tenacity.stop_when_event_set(abandoned)
+            options["sleep"] = abandoned.wait
+        decorator: Callable = tenacity.retry(
             retry=tenacity.retry_if_exception(self._is_retryable),
             wait=tenacity.wait_random_exponential(
                 multiplier=self.retry_multiplier, max=self.retry_max_wait
             ),
-            stop=tenacity.stop_after_attempt(self.max_attempts),
+            stop=stop,
             before_sleep=self._create_retry_log_callback(operation_name),
             reraise=True,
+            **options,
         )
+        return decorator
 
     @staticmethod
     def _create_retry_log_callback(operation_name: str) -> Callable:

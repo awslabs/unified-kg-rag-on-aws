@@ -2516,6 +2516,26 @@ class CacheChunkingConfig(BaseModel):
     )
 
 
+class LLMResponseCacheConfig(BaseModel):
+    """The ingestion LLM response cache (``adapters.llm.response_cache``)."""
+
+    enabled: bool = Field(
+        default=True,
+        description="Keep the responses of the ingestion model calls with the "
+        "run's stage cache, so a re-run with the same pipeline id (after a "
+        "crash, a stop or a timeout) does not call the model again for a "
+        "prompt that already answered. Query and evaluation calls are never "
+        "cached",
+    )
+    flush_every: int = Field(
+        default=100,
+        ge=1,
+        description="Responses per cache segment file; a segment is written "
+        "(and uploaded with --s3-sync) when it is full and before each stage "
+        "checkpoint, so a killed task loses at most this many responses",
+    )
+
+
 class CacheConfig(BaseModel):
     ttl_seconds: int | None = Field(
         default=86400,
@@ -2525,6 +2545,10 @@ class CacheConfig(BaseModel):
     chunking: CacheChunkingConfig = Field(
         default_factory=CacheChunkingConfig,
         description="Configuration for cache data chunking behavior",
+    )
+    llm_responses: LLMResponseCacheConfig = Field(
+        default_factory=LLMResponseCacheConfig,
+        description="Ingestion LLM response cache",
     )
 
 

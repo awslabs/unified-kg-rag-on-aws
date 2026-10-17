@@ -144,6 +144,9 @@ def harness(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> _Harness:
 def test_rerun_with_the_same_pipeline_id_resumes_without_a_prompt(
     harness: _Harness,
 ) -> None:
+    # Model calls show which stages re-run, so none is answered from the
+    # response cache (see test_a_rerun_stage_answers_from_the_response_cache).
+    harness.config.cache.llm_responses.enabled = False
     assert harness.run("--pipeline-id", "p1") == 0
     calls = harness.llm_calls
 
@@ -154,6 +157,19 @@ def test_rerun_with_the_same_pipeline_id_resumes_without_a_prompt(
 
     # An explicit, upper-case resume stage re-runs from there.
     assert harness.run("--pipeline-id", "p1", "--resume-from-stage", "GLEANING") == 0
+    assert harness.llm_calls > calls
+
+
+def test_a_rerun_stage_answers_from_the_response_cache(harness: _Harness) -> None:
+    # Non-incremental, so the force rebuild re-extracts unchanged documents.
+    harness.incremental = False
+    assert harness.run("--pipeline-id", "p1") == 0
+    calls = harness.llm_calls
+    # Gleaning and the community reports run again on the same prompts.
+    assert harness.run("--pipeline-id", "p1", "--resume-from-stage", "gleaning") == 0
+    assert harness.llm_calls == calls
+    # A force rebuild asks the model again.
+    assert harness.run("--pipeline-id", "p1", "--force-rebuild") == 0
     assert harness.llm_calls > calls
 
 
@@ -390,6 +406,7 @@ def test_a_phase_after_a_failed_upstream_stage_does_not_run(
 def test_rerunning_a_stage_drops_the_recorded_results_after_it(
     harness: _Harness,
 ) -> None:
+    harness.config.cache.llm_responses.enabled = False
     # Re-running gleaning alone makes the recorded later stages stale: they
     # leave the history, and the next run runs them again on its output.
     assert harness.run("--pipeline-id", "p1") == 0
