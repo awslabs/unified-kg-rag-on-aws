@@ -1911,7 +1911,7 @@ CLI가 보고하는 메시지와 그 의미, 해결 방법은 AWS 모드와 로�
 | `1` | 실행 실패: 단계나 질의 실패, `--max-failure-rate` 초과, 업로드 실패, 렌더링한 파일 없음 |
 | `2` | 작업을 시작하기 전의 사용법·설정 오류: 알 수 없거나 잘못된 플래그, 없는 입력 파일이나 디렉터리, 잘못된 설정 파일이나 환경 변수 덮어쓰기, 설정하지 않은 저장소 엔드포인트 |
 | `130` | Ctrl-C(SIGINT)로 중단 |
-| `143` | SIGTERM으로 중지(ECS `StopTask`, Step Functions 시간 초과). `run-ingestion`은 끝난 단계를 먼저 체크포인트로 저장합니다 |
+| `143` | SIGTERM으로 중지(ECS `StopTask`, Step Functions 시간 초과). `run-ingestion`은 끝난 단계를 먼저 체크포인트로 저장하고, 출력 디렉터리가 `s3://`인 `run-eval`은 끝난 실행의 결과를 업로드합니다(업로드에 실패하면 로컬에 남기고 경로를 로그로 남김) |
 
 파일을 가리키는 플래그 이름은 모든 CLI에서 같습니다. `--source-directory`(코퍼스
 디렉터리), `--data-path`(입력 데이터 파일), `--output-directory` / `--output-path`(명령이

@@ -393,16 +393,55 @@ class EvaluationRunner:
         """Evaluate; 0 on success, 1 on a breached failure budget or failed upload.
 
         An ``s3://`` dataset is downloaded to a temporary directory first; an
-        ``s3://`` outputs directory is written locally and then uploaded.
+        ``s3://`` outputs directory is written locally and then uploaded. A
+        run stopped part-way (SIGTERM, Ctrl-C, a crash) still uploads the
+        results of the runs that finished, or keeps them locally and logs
+        where.
         """
         work_dir = Path(tempfile.mkdtemp(prefix="graphrag-eval-"))
         keep_work_dir = False
         try:
             exit_code, keep_work_dir = await self._run(work_dir)
             return exit_code
+        except BaseException:
+            keep_work_dir = not self._upload_finished_runs(work_dir)
+            raise
         finally:
             if not keep_work_dir:
                 shutil.rmtree(work_dir, ignore_errors=True)
+
+    def _local_outputs(self, work_dir: Path) -> Path:
+        """Where the result files are written (``work_dir`` for an S3 target)."""
+        target = self._output_directory()
+        return work_dir / "outputs" if is_s3_uri(target) else Path(target)
+
+    def _upload_finished_runs(self, work_dir: Path) -> bool:
+        """Upload what an interrupted run already wrote to its S3 target.
+
+        Returns whether ``work_dir`` may go: nothing to upload, or uploaded.
+        """
+        target = self._output_directory()
+        outputs = self._local_outputs(work_dir)
+        if not is_s3_uri(target) or not any(outputs.glob("*")):
+            return True
+        try:
+            upload_directory_to_s3(
+                s3_client_for(self.config), outputs, target, self.config
+            )
+        except Exception as e:  # noqa: BLE001 - already failing; keep the files
+            logger.error(
+                "Evaluation stopped; could not upload the finished runs' "
+                "results to '%s' (%s). They are kept in '%s'.",
+                target,
+                e,
+                outputs,
+            )
+            return False
+        logger.warning(
+            "Evaluation stopped; the finished runs' results were uploaded to '%s'.",
+            target,
+        )
+        return True
 
     async def _run(self, work_dir: Path) -> tuple[int, bool]:
         """Run the evaluation; returns ``(exit code, keep work_dir)``."""
@@ -461,9 +500,7 @@ class EvaluationRunner:
                 for q in queries
             ]
 
-        local_outputs = (
-            work_dir / "outputs" if is_s3_uri(outputs_target) else Path(outputs_target)
-        )
+        local_outputs = self._local_outputs(work_dir)
         runs: dict[str, list[Run]] = {}
         summaries: list[dict[str, Any]] = []
         comparison: dict[str, Any] | None = None

@@ -1125,6 +1125,10 @@ changed once with the full-config keys (#332).
   and its judge calls nest under one `kg_rag.evaluate` span. The user guide
   says why retrieved entity coverage is skipped rather than 0 when a context
   has no entity source, and what that costs a comparison (#PR).
+- A `run-eval` with an `s3://` output directory that is stopped (SIGTERM,
+  Ctrl-C) or crashes part-way uploads the results of the runs that
+  finished, or keeps them locally and logs where; they were deleted
+  unuploaded (#PR).
 - The docs no longer contradict the code: an unknown config key fails the
   load (not a warning), the four causes of a `FAILED` document are listed
   alike in the user guide, the runbook and the design doc, a second

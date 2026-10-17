@@ -2104,7 +2104,7 @@ Every CLI (`run-ingestion`, `run-rag`, `run-eval`, `run-visualization`,
 | `1` | The run failed: a failed stage or query, a breached `--max-failure-rate`, a failed upload, nothing rendered |
 | `2` | Usage or configuration error, before any work: an unknown or invalid flag, a missing input file or directory, an invalid configuration file or environment override, an unset store endpoint |
 | `130` | Interrupted with Ctrl-C (SIGINT) |
-| `143` | Stopped by SIGTERM (ECS `StopTask`, a Step Functions timeout); `run-ingestion` checkpoints its finished stages first |
+| `143` | Stopped by SIGTERM (ECS `StopTask`, a Step Functions timeout); `run-ingestion` checkpoints its finished stages first, and `run-eval` with an `s3://` output directory uploads the results of the runs that finished (or keeps them locally and logs the path when the upload fails) |
 
 Flags name files one way across the CLIs: `--source-directory` (a corpus
 directory), `--data-path` (an input data file), `--output-directory` /
