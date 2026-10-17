@@ -391,15 +391,22 @@ cp config-template.yaml config.yaml
 
 ### 설정을 읽는 순서
 
-값은 세 단계로 정해지며, 뒤 단계가 앞 단계를 덮어씁니다.
+값은 여러 단계로 정해지며, 뒤 단계가 앞 단계를 덮어씁니다.
 
 1. **내장 기본값**: `unified_kg_rag/domain/models/config.py`의 Pydantic 모델입니다.
    `--config-path` 없이 실행하면 CLI는 이 기본값에 환경 변수만 적용해 동작합니다.
-2. **YAML 파일**: 지정한 키는 기본값을 대체하고, 지정하지 않은 키는 기본값을
+2. **`backend` 프리셋**: `backend: local`(또는 `--backend local`)은 파일과 환경
+   변수가 지정하지 않은 모든 키에 로컬 공급자와 저장소를 채웁니다
+   ([로컬 모드](#로컬-모드-aws-없이)).
+3. **YAML 파일**: 지정한 키는 기본값을 대체하고, 지정하지 않은 키는 기본값을
    유지합니다. 따라서 `config.yaml`에는 바꿀 키만 적어도 됩니다. 값이 딕셔너리인
    키(예: `logging.library_levels`, `graph.visualization.interactive`)는 기본
    딕셔너리와 병합되지 않고 통째로 대체됩니다.
-3. **환경 변수**(§2.10): 마지막에 적용되어 앞의 두 단계를 모두 덮어씁니다.
+4. **환경 변수**(§2.10): 파일 위에 적용됩니다.
+5. **공급자 플래그**(`--backend`, `--llm-provider`, `--rerank-provider` 등): 마지막에
+   적용되어 앞의 모든 단계를 덮어씁니다. 파일과 환경 변수가 지정한 값은 모두
+   유지하며, `--backend`로 파일과 다른 백엔드로 바꾸면 이전 프리셋과 같은 값만
+   제거합니다.
 
 YAML 값은 파일을 읽을 때 검증합니다. 타입이 틀리거나 지원하지 않는 값이면
 잘못된 키를 밝힌 `Configuration validation error: ...`와 함께 CLI가 멈춥니다. 이

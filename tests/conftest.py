@@ -61,8 +61,8 @@ _AWS_ENV_TO_CLEAR = (
     "AWS_CONTAINER_CREDENTIALS_FULL_URI",
     "AWS_CONTAINER_AUTHORIZATION_TOKEN",
 )
-# ConfigLoader._apply_environment_overrides (unified_kg_rag/shared/config.py)
-# maps these onto the loaded Config (AWS_PROFILE/AWS_REGION are cleared above),
+# unified_kg_rag.shared.config.ENV_OVERRIDES maps these onto the loaded Config
+# (AWS_PROFILE/AWS_REGION are cleared above),
 # so a value exported in the developer's shell would silently change what the
 # tests exercise.
 _CONFIG_ENV_OVERRIDES = (
