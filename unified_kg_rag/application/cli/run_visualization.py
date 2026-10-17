@@ -147,7 +147,7 @@ def _fill_missing_analysis(context: RenderContext, config: Any) -> None:
             "layout from the graph topology."
         )
         context.layout = InteractiveRenderer(
-            config.graph.visualization.interactive or {}
+            config.graph.visualization.interactive
         ).spring_layout(context.graph)
     if not context.centrality:
         context.centrality = GraphAnalyzer(config, context.graph).calculate_centrality()

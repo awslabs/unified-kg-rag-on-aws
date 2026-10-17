@@ -1690,6 +1690,76 @@ class CommunityDetectionConfig(BaseModel):
         return self
 
 
+class ReducerSettings(BaseModel):
+    """A dimensionality reduction of the node layout (PCA; the base of the others)."""
+
+    n_components: int = Field(default=2, ge=1, description="Output dimensions.")
+    metric: str = Field(default="euclidean", description="Distance metric.")
+    random_state: int | None = Field(
+        default=42,
+        description="Random seed, so a re-render gives the same layout; null "
+        "for a random one (UMAP then runs in parallel).",
+    )
+
+
+class UMAPSettings(ReducerSettings):
+    n_neighbors: int = Field(
+        default=15, ge=2, description="Neighbours of the local approximation."
+    )
+    min_dist: float = Field(
+        default=0.1, ge=0.0, description="Minimum distance between laid-out points."
+    )
+
+
+class TSNESettings(ReducerSettings):
+    perplexity: int = Field(
+        default=30, ge=1, description="Balance of local and global structure."
+    )
+    max_iter: int = Field(default=1000, ge=250, description="Optimization iterations.")
+
+
+class LayoutSettings(BaseModel):
+    """Parameters of each ``layout_method``."""
+
+    umap: UMAPSettings = Field(default_factory=UMAPSettings)
+    tsne: TSNESettings = Field(default_factory=TSNESettings)
+    pca: ReducerSettings = Field(default_factory=ReducerSettings)
+
+
+class InteractiveGraphSettings(BaseModel):
+    """The interactive pyvis graph (``interactive_graph.html``)."""
+
+    height: str = Field(default="900px", description="Canvas height (CSS).")
+    width: str = Field(default="100%", description="Canvas width (CSS).")
+    physics_enabled: bool = Field(
+        default=False, description="Run the pyvis physics simulation."
+    )
+    cdn_resources: str = Field(
+        default="in_line", description="pyvis cdn_resources: in_line, local or remote."
+    )
+    background_color: str = Field(default="#f8fafc", description="Canvas colour.")
+    font_family: str = Field(default="Arial", description="Label font.")
+    tooltip_delay: int = Field(default=200, ge=0, description="Tooltip delay (ms).")
+    max_nodes: int | None = Field(
+        default=2000,
+        ge=0,
+        description="Keep the top-N nodes by degree; 0 or null disables the cap "
+        "(a browser cannot lay out tens of thousands of nodes).",
+    )
+
+
+class StaticChartSettings(BaseModel):
+    """The static Bokeh charts."""
+
+    figure_width: int = Field(default=900, ge=100, description="Chart width (px).")
+    figure_height: int = Field(default=600, ge=100, description="Chart height (px).")
+    font: str = Field(default="Arial, sans-serif", description="Chart font.")
+    background_color: str = Field(default="#fdfdfd", description="Chart background.")
+    log_scale_x: bool = Field(
+        default=False, description="Logarithmic x axis on distributions."
+    )
+
+
 class VisualizationConfig(BaseModel):
     centrality: CentralityConfig = Field(
         default_factory=CentralityConfig,
@@ -1732,33 +1802,17 @@ class VisualizationConfig(BaseModel):
         pattern="^(umap|tsne|pca)$",
         description=("Dimensionality reduction of the node layout: umap, tsne or pca."),
     )
-    layout: dict[str, Any] = Field(
-        default={
-            "umap": {"n_neighbors": 15, "min_dist": 0.1},
-            "tsne": {},
-            "pca": {},
-        },
-        description=(
-            "Parameters per layout_method (umap: n_neighbors 15, min_dist 0.1;"
-            " tsne and pca: none by default). Setting the key replaces the "
-            "whole map."
-        ),
+    layout: LayoutSettings = Field(
+        default_factory=LayoutSettings,
+        description="Parameters per layout_method.",
     )
-    interactive: dict[str, Any] = Field(
-        default={"physics_enabled": False},
-        description=(
-            "Settings of the interactive pyvis graph (interactive_graph.html),"
-            " e.g. max_nodes (top-N nodes by degree kept, default 2000; 0 or "
-            "null disables the cap) and physics_enabled (false). Setting the "
-            "key replaces the whole map."
-        ),
+    interactive: InteractiveGraphSettings = Field(
+        default_factory=InteractiveGraphSettings,
+        description="Settings of the interactive pyvis graph.",
     )
-    static: dict[str, Any] = Field(
-        default={"figure_width": 900, "figure_height": 600},
-        description=(
-            "Settings of the static Bokeh charts (figure_width, "
-            "figure_height). Setting the key replaces the whole map."
-        ),
+    static: StaticChartSettings = Field(
+        default_factory=StaticChartSettings,
+        description="Settings of the static Bokeh charts.",
     )
 
 

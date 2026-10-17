@@ -782,6 +782,10 @@ changed once with the full-config keys (#332).
   fused order. Reported by @vibhupb (#83) (#284).
 
 ### Changed
+- `graph.visualization.layout`, `interactive` and `static` are typed
+  sections instead of free-form maps: a misspelled renderer setting is an
+  unknown key (an error by default) rather than silently ignored, values are
+  validated, and setting one key no longer drops the others' defaults (#PR).
 - The DynamoDB, SQLite and in-memory doc-status registries classify a
   corpus with one rule, `DocumentDelta.classify` (with `settings_changed`
   shared with the delta detector), instead of a copy each (#PR).

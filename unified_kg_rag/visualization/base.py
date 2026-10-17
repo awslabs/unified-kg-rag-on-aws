@@ -144,7 +144,7 @@ class GraphVisualizationManager:
         return self._spring_layout()
 
     def _interactive(self) -> InteractiveRenderer:
-        return InteractiveRenderer(self.viz_config.interactive or {})
+        return InteractiveRenderer(self.viz_config.interactive)
 
     def _spring_layout(self) -> dict[str, Any]:
         # Like the embeddings, the spring layout covers only the drawn nodes.

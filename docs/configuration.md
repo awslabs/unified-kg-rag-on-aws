@@ -442,9 +442,6 @@ Visualization configuration
 | `outputs_directory` | string \| path \| null | `null` | Directory to save visualization files. When unset, ingestion writes to '<cache directory>/<pipeline_id>/visualization' (--cache-directory), so visualization_data.json is synced to S3 with the cache; other callers fall back to 'outputs/visualization'. |
 | `embedding_method` | string | `"description"` | Node embedding for the layout: 'description' embeds each node's 'name: description' with the embedding model; 'none' uses a spring layout from the graph topology. |
 | `layout_method` | string | `"umap"` | Dimensionality reduction of the node layout: umap, tsne or pca. |
-| `layout` | dict[string, Any] | see `config-template.yaml` | Parameters per layout_method (umap: n_neighbors 15, min_dist 0.1; tsne and pca: none by default). Setting the key replaces the whole map. |
-| `interactive` | dict[string, Any] | `{"physics_enabled": false}` | Settings of the interactive pyvis graph (interactive_graph.html), e.g. max_nodes (top-N nodes by degree kept, default 2000; 0 or null disables the cap) and physics_enabled (false). Setting the key replaces the whole map. |
-| `static` | dict[string, Any] | `{"figure_width": 900, "figure_height": 600}` | Settings of the static Bokeh charts (figure_width, figure_height). Setting the key replaces the whole map. |
 
 #### `graph.visualization.centrality`
 
@@ -464,6 +461,71 @@ Node centrality metrics the visualization sizes nodes and plots by (computed at 
 | `betweenness_seed` | integer | `42` | Random seed for sampled betweenness (only used when betweenness_k is set). Fixed for reproducibility — sampled betweenness picks random pivots, so without a seed centrality is non-deterministic. |
 | `eigenvector_max_iter` | integer (≥ 1) | `1000` | Maximum iterations for eigenvector centrality convergence |
 | `eigenvector_tol` | number (> 0.0) | `0.001` | Convergence tolerance for eigenvector centrality |
+
+#### `graph.visualization.layout`
+
+Parameters per layout_method.
+
+#### `graph.visualization.layout.umap`
+
+A dimensionality reduction of the node layout (PCA; the base of the others).
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `n_components` | integer (≥ 1) | `2` | Output dimensions. |
+| `metric` | string | `"euclidean"` | Distance metric. |
+| `random_state` | integer \| null | `42` | Random seed, so a re-render gives the same layout; null for a random one (UMAP then runs in parallel). |
+| `n_neighbors` | integer (≥ 2) | `15` | Neighbours of the local approximation. |
+| `min_dist` | number (≥ 0.0) | `0.1` | Minimum distance between laid-out points. |
+
+#### `graph.visualization.layout.tsne`
+
+A dimensionality reduction of the node layout (PCA; the base of the others).
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `n_components` | integer (≥ 1) | `2` | Output dimensions. |
+| `metric` | string | `"euclidean"` | Distance metric. |
+| `random_state` | integer \| null | `42` | Random seed, so a re-render gives the same layout; null for a random one (UMAP then runs in parallel). |
+| `perplexity` | integer (≥ 1) | `30` | Balance of local and global structure. |
+| `max_iter` | integer (≥ 250) | `1000` | Optimization iterations. |
+
+#### `graph.visualization.layout.pca`
+
+A dimensionality reduction of the node layout (PCA; the base of the others).
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `n_components` | integer (≥ 1) | `2` | Output dimensions. |
+| `metric` | string | `"euclidean"` | Distance metric. |
+| `random_state` | integer \| null | `42` | Random seed, so a re-render gives the same layout; null for a random one (UMAP then runs in parallel). |
+
+#### `graph.visualization.interactive`
+
+Settings of the interactive pyvis graph.
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `height` | string | `"900px"` | Canvas height (CSS). |
+| `width` | string | `"100%"` | Canvas width (CSS). |
+| `physics_enabled` | boolean | `false` | Run the pyvis physics simulation. |
+| `cdn_resources` | string | `"in_line"` | pyvis cdn_resources: in_line, local or remote. |
+| `background_color` | string | `"#f8fafc"` | Canvas colour. |
+| `font_family` | string | `"Arial"` | Label font. |
+| `tooltip_delay` | integer (≥ 0) | `200` | Tooltip delay (ms). |
+| `max_nodes` | integer \| null (≥ 0) | `2000` | Keep the top-N nodes by degree; 0 or null disables the cap (a browser cannot lay out tens of thousands of nodes). |
+
+#### `graph.visualization.static`
+
+Settings of the static Bokeh charts.
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `figure_width` | integer (≥ 100) | `900` | Chart width (px). |
+| `figure_height` | integer (≥ 100) | `600` | Chart height (px). |
+| `font` | string | `"Arial, sans-serif"` | Chart font. |
+| `background_color` | string | `"#fdfdfd"` | Chart background. |
+| `log_scale_x` | boolean | `false` | Logarithmic x axis on distributions. |
 
 ## `indexing`
 
