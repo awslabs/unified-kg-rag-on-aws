@@ -13,6 +13,13 @@ interval (queries resampled with replacement, a fixed seed, percentile
 interval) and win/tie/loss counts; a CI that excludes 0 is a difference the
 query sample supports. Deterministic and LLM-free.
 
+A query whose answer generation failed has no reports, and dropping it
+would let a strategy that crashes on the queries it would lose look as good
+as one that answers them. So a failed answer scores 0 on every metric
+another run scored that query on (``answer_length``, a diagnostic rather than
+a score, excepted), and each strategy reports its failed answers;
+``warnings`` names the strategies whose failure counts differ.
+
 ``auto`` is reported with the distribution of the strategies it routed to,
 since its scores are a mix of theirs.
 """
@@ -25,20 +32,54 @@ from typing import Any
 
 import numpy as np
 
-from unified_kg_rag.domain.models import EvaluationReport, EvaluationResult
+from unified_kg_rag.domain.models import (
+    EvaluationMetricType,
+    EvaluationReport,
+    EvaluationResult,
+)
+from unified_kg_rag.shared import get_logger
+
+logger = get_logger(__name__)
 
 # One run: the reports and results of one strategy and repeat.
 Run = tuple[list[EvaluationReport], list[EvaluationResult]]
 
+# Not a score: a failed answer gets no value for it.
+_DIAGNOSTICS = frozenset({EvaluationMetricType.ANSWER_LENGTH.value})
 
-def per_query_means(runs: Sequence[Run]) -> dict[str, dict[str, float]]:
-    """``{"evaluator/metric": {query_id: mean over the runs that scored it}}``."""
+
+def _scored_metrics(runs: Mapping[str, Sequence[Run]]) -> dict[str, set[str]]:
+    """Per query, the scores any run of any strategy reported for it."""
+    scored: dict[str, set[str]] = defaultdict(set)
+    for strategy_runs in runs.values():
+        for reports, _ in strategy_runs:
+            for report in reports:
+                for metric in report.metrics:
+                    if metric.metric_type.value not in _DIAGNOSTICS:
+                        scored[report.query_id].add(
+                            f"{report.evaluator_type.value}/{metric.metric_type.value}"
+                        )
+    return scored
+
+
+def per_query_means(
+    runs: Sequence[Run], failed_scores: Mapping[str, set[str]] | None = None
+) -> dict[str, dict[str, float]]:
+    """``{"evaluator/metric": {query_id: mean over the runs that scored it}}``.
+
+    A query whose answer failed in a run counts 0 in that run for each metric
+    ``failed_scores`` lists for it.
+    """
     values: dict[str, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
-    for reports, _ in runs:
+    for reports, results in runs:
         for report in reports:
             for metric in report.metrics:
                 key = f"{report.evaluator_type.value}/{metric.metric_type.value}"
                 values[key][report.query_id].append(metric.value)
+        for result in results:
+            if result.error:
+                for key in (failed_scores or {}).get(result.query_id, ()):
+                    values[key][result.query_id].append(0.0)
     return {
         key: {qid: float(np.mean(v)) for qid, v in by_query.items()}
         for key, by_query in sorted(values.items())
@@ -72,10 +113,11 @@ def paired_comparison(
     """
     strategies = list(runs)
     baseline = strategies[0]
-    means = {s: per_query_means(runs[s]) for s in strategies}
+    scored = _scored_metrics(runs)
+    means = {s: per_query_means(runs[s], scored) for s in strategies}
     summary: dict[str, Any] = {}
     for strategy in strategies:
-        run_means = [per_query_means([run]) for run in runs[strategy]]
+        run_means = [per_query_means([run], scored) for run in runs[strategy]]
         metrics: dict[str, Any] = {}
         for key, by_query in means[strategy].items():
             per_repeat = [
@@ -95,9 +137,23 @@ def paired_comparison(
             for result in results
             if result.search_strategy
         )
+        failed = sorted(
+            {
+                result.query_id
+                for _, results in runs[strategy]
+                for result in results
+                if result.error
+            }
+        )
         summary[strategy] = {
             "repeats": len(runs[strategy]),
             "routed_strategies": dict(sorted(routed.items())),
+            # Answers whose generation failed (over every repeat), each
+            # scored 0, and the queries they belong to.
+            "failed_answers": sum(
+                result.error for _, results in runs[strategy] for result in results
+            ),
+            "failed_queries": failed,
             "metrics": metrics,
         }
 
@@ -109,12 +165,16 @@ def paired_comparison(
             paired = sorted(set(base) & set(other))
             if not paired:
                 continue
+            # Scored by one side only: a metric skipped there (no
+            # expectation, no source of that type), never a failed answer.
+            unpaired = len(set(base) ^ set(other))
             diff = [other[q] - base[q] for q in paired]
             low, high = bootstrap_ci(
                 diff, resamples=resamples, confidence=confidence, seed=seed
             )
             by_metric[key] = {
                 "pairs": len(paired),
+                "unpaired": unpaired,
                 "mean_delta": float(np.mean(diff)),
                 "ci_low": low,
                 "ci_high": high,
@@ -124,13 +184,29 @@ def paired_comparison(
                 "per_query": dict(zip(paired, diff, strict=True)),
             }
         deltas[strategy] = by_metric
+    warnings = _failure_warnings(summary)
+    for warning in warnings:
+        logger.warning("%s", warning)
     return {
         "baseline": baseline,
         "strategies": summary,
         "deltas_vs_baseline": deltas,
+        "warnings": warnings,
         "bootstrap": {
             "resamples": resamples,
             "confidence": confidence,
             "seed": seed,
         },
     }
+
+
+def _failure_warnings(summary: Mapping[str, Any]) -> list[str]:
+    """A warning when the strategies failed different numbers of answers."""
+    failed = {s: stats["failed_answers"] for s, stats in summary.items()}
+    if len(set(failed.values())) <= 1:
+        return []
+    counts = ", ".join(f"{s} {n}" for s, n in failed.items())
+    return [
+        f"Strategies failed different numbers of answers ({counts}); each "
+        "failed answer scores 0, so the comparison reflects those failures."
+    ]

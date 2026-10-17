@@ -1113,6 +1113,18 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- A paired strategy comparison no longer drops the queries a strategy
+  failed to answer: a strategy that crashed on the queries it would lose
+  looked as good as one that answered them. A failed answer scores 0 on
+  every metric another run scored the query on (`answer_length` excepted),
+  each strategy reports `failed_answers` / `failed_queries`, every delta
+  `unpaired`, and `warnings` names strategies with different failure
+  counts. The pairwise judge gives a pair with one failed answer to the
+  other side (`candidate_errors`, `baseline_errors`, `both_errors`), its
+  judge failures count against `--max-failure-rate` (all failing exits 1),
+  and its judge calls nest under one `kg_rag.evaluate` span. The user guide
+  says why retrieved entity coverage is skipped rather than 0 when a context
+  has no entity source, and what that costs a comparison (#PR).
 - The docs no longer contradict the code: an unknown config key fails the
   load (not a warning), the four causes of a `FAILED` document are listed
   alike in the user guide, the runbook and the design doc, a second

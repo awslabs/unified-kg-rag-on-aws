@@ -24,7 +24,10 @@ things), so the evaluator also reports ``retrieved_entity_coverage`` /
 ``retrieved_relationship_coverage`` — the same expectations matched against
 the entity names and relationship endpoints of the sources the answer model
 was given — and ``answer_length`` (characters) alongside. Retrieved coverage is
-skipped for a query whose context has no entity (or relationship) source.
+skipped for a query whose context has no entity (or relationship) source, not
+scored 0: a strategy that reads no such sources by design (``global``) has none
+to measure. A strategy that finds none for a query is therefore not scored on
+it either; a comparison reports those queries as ``unpaired``.
 
 Expected artifacts are threaded onto ``EvaluationResult.metadata`` by the
 manager (keys ``expected_entities`` / ``expected_relationships``), so this

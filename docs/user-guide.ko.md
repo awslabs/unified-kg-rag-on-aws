@@ -707,7 +707,8 @@ Secrets Manager나 태스크 시크릿에서 주입하세요.
 - 평가(`run-eval`): 답변 생성 전체가 `kg_rag.batch` 루트 하나(항목 수와 실패 수만
   기록) → 질문마다 `kg_rag.query` 하나이며, 질문별 입력과 출력은 이 자식 스팬에 있음.
   이어서 평가기마다 `kg_rag.evaluate` 루트 하나(`kg_rag.evaluator`, `kg_rag.items`) →
-  심사 모델의 `chat <model>` 스팬(`langchain`, `ragas`)
+  심사 모델의 `chat <model>` 스팬(`langchain`, `ragas`, `--pairwise-judge`일 때
+  `pairwise_judge`)
 - 모델 스팬은 OpenTelemetry GenAI 시맨틱 규약을 따릅니다(임베딩, Bedrock 재순위화
   스팬과 같이 스팬 종류는 `CLIENT`). `gen_ai.request.model`,
   `gen_ai.request.max_tokens` / `temperature`,
@@ -1412,7 +1413,11 @@ rank, 주장 문장은 남은 청크에서 다시 파생하므로 그 문서가 
   끝점에 맞춰 봅니다(쌍은 방향과 관계없이 관계 하나와 일치해야 하고, 그 밖의 문자열은
   끝점이나 설명에 나와야 함. `global`처럼 컨텍스트에 해당 유형의 출처가 없으면 건너뜀).
   `answer_length`(문자 수)도 함께 기록합니다. 전략 비교에는 검색 기준 커버리지를 쓰고,
-  답변 텍스트 기준 커버리지는 길이와 함께 읽으세요.
+  답변 텍스트 기준 커버리지는 길이와 함께 읽으세요. 0점이 아니라 건너뛰는 것은 의도한
+  동작입니다. 설계상 엔티티 출처를 읽지 않는 전략(`global`)에는 잴 검색 기준 커버리지가
+  없습니다. 대신 어떤 질의에서 엔티티 출처를 하나도 찾지 못한 전략도 그 질의는 채점되지
+  않으므로, 비교에서는 그 지표의 `pairs`와 `unpaired`를, 단일 실행에서는
+  `metric_outcomes`의 건너뛴 수를 확인하세요.
 - **`retrieval`** — 결정적이며 LLM을 쓰지 않습니다. 답변 모델이 본 출처에 정답 문서가
   들어 있었는지 봅니다. `reference_sources`를 기준으로 `hit_at_k`, `recall_at_k`(k =
   `evaluation.retrieval_k`, 기본 5), `mrr`을 계산합니다. 텍스트 단위 출처는 파일을
@@ -1607,7 +1612,12 @@ run-eval --data-path s3://my-bucket/eval/my_eval_data.json \
   분기했는지 보여 줍니다.
 - `deltas_vs_baseline.<s>.<metric>` — 두 전략이 모두 채점한 질의에서 첫 전략과 짝지어
   비교한 값입니다. `mean_delta`, 95% 짝지은 부트스트랩 신뢰 구간(`ci_low`/`ci_high`.
-  질의를 2,000번 재표집, 시드 0), `wins`/`ties`/`losses`, 질의별 차이가 있습니다. 구간이
+  질의를 2,000번 재표집, 시드 0), `wins`/`ties`/`losses`, 질의별 차이,
+  `unpaired`(한쪽만 채점한 질의 수. 엔티티 출처가 없어 건너뛴 지표 등)가 있습니다. 답변
+  생성에 실패한 질의는 다른 실행이 그 질의를 채점한 모든 지표에서 0점입니다
+  (`answer_length` 제외). 그래서 질 질의에서 실패하는 전략이 더 좋아 보일 수 없습니다.
+  실패 수는 `strategies.<s>.failed_answers` / `failed_queries`에 있고, 전략마다 실패한
+  답변 수가 다르면 `warnings`에 이름이 나오며 콘솔에도 출력됩니다. 구간이
   0을 포함하지 않으면 질의 표본이 그 차이를 뒷받침합니다. 이진 지표로 시뮬레이션해 보면
   10%p 차이를 질의 50개에서는 15%, 200개에서는 59%의 실행에서 찾아냈습니다(구간이 참값을
   포함한 비율은 95-98%). 그러니 수백 개 질의로 비교하세요.
@@ -1616,8 +1626,13 @@ run-eval --data-path s3://my-bucket/eval/my_eval_data.json \
   다양성(diversity), 이해 도움(empowerment), 직접성(directness)을 판정합니다(프롬프트:
   `custom_prompts.pairwise_comparison_*`). 판정 모델은 먼저 읽은 답변을 선호하므로 쌍마다
   순서를 바꿔 두 번 판정하고, 두 순서가 같은 답변을 고른 기준만 승리로 셉니다.
-  `candidate_win_rate`는 무승부를 0.5로 셉니다. 첫 반복 실행의 답변을 판정하며, 질의와
-  전략마다 순서별로 한 번씩 호출합니다.
+  `candidate_win_rate`는 무승부를 0.5로 셉니다. 한쪽 답변이 실패한 쌍은 판정하지 않고
+  다른 쪽이 모든 기준에서 이깁니다(`candidate_errors`, `baseline_errors`). 둘 다 실패한
+  쌍은 `both_errors`에만 셉니다. `failed`는 판정 모델이 결정하지 못한 쌍의 수이며,
+  `--max-failure-rate`가 지표와 같은 방식으로 적용됩니다(판정 호출이 모두 실패하면
+  초과). 첫 반복 실행의 답변을 판정하며, 질의와 전략마다 순서별로 한 번씩 호출하고,
+  호출은 `kg_rag.evaluate` 스팬 하나(`kg_rag.evaluator` = `pairwise_judge`) 아래에
+  모입니다.
 - 첫 실행의 `run_manifest`.
 
 콘솔에는 평균, 신뢰 구간을 붙인 차이, `auto`의 분기 결과, 맞비교 승률이 출력됩니다.

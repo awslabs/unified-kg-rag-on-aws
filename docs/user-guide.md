@@ -775,7 +775,8 @@ spans and exported as given, so pass an opaque id, not an e-mail address.
   and failure counts only) → one `kg_rag.query` per question, which carries
   that question's input and output; then one `kg_rag.evaluate` root per
   evaluator (`kg_rag.evaluator`, `kg_rag.items`) → the judge model's
-  `chat <model>` spans (`langchain`, `ragas`).
+  `chat <model>` spans (`langchain`, `ragas`, and `pairwise_judge` for
+  `--pairwise-judge`).
 - Model spans follow the OpenTelemetry GenAI semantic conventions (span
   kind `CLIENT`, as for embedding and Bedrock rerank spans):
   `gen_ai.request.model`, `gen_ai.request.max_tokens` / `temperature`,
@@ -1562,6 +1563,11 @@ set `enabled_evaluators: [answer_match, retrieval, graph_aware]`.
   or description; skipped when the context had no source of that type, as
   with `global`) and `answer_length` (characters). Compare strategies on the
   retrieved coverage, and read answer-text coverage next to the length.
+  Skipped, not 0, is deliberate: a strategy that reads no entity sources by
+  design (`global`) has no retrieved coverage to measure. The cost is that a
+  strategy that finds no entity source for a query is not scored on it
+  either, so in a comparison check the metric's `pairs` and `unpaired`, and
+  `metric_outcomes`' skipped count in a single run.
 - **`retrieval`** — deterministic, LLM-free: did the sources the answer model saw
   include the gold documents? `hit_at_k`, `recall_at_k` (k =
   `evaluation.retrieval_k`, default 5) and `mrr` against `reference_sources`.
@@ -1779,8 +1785,14 @@ usual and adds `evaluation_comparison_<timestamp>.json`:
 - `deltas_vs_baseline.<s>.<metric>` — paired against the first strategy over
   the queries both scored: `mean_delta`, a 95% paired bootstrap confidence
   interval (`ci_low`/`ci_high`; 2,000 resamples of the queries, seed 0),
-  `wins`/`ties`/`losses` and the per-query deltas. A difference is supported
-  by the query sample when its interval excludes 0. In a simulation with
+  `wins`/`ties`/`losses`, the per-query deltas and `unpaired` (queries only
+  one side scored, such as a metric skipped for lack of an entity source). A
+  query whose answer generation failed scores 0 on every metric another run
+  scored it on (`answer_length` excepted), so a strategy cannot look better by
+  failing on the queries it would lose; `strategies.<s>.failed_answers` /
+  `failed_queries` count the failures, and `warnings` (printed too) names
+  strategies that failed different numbers of answers. A difference is
+  supported by the query sample when its interval excludes 0. In a simulation with
   binary metrics, a 10-point difference was detected in 15% of runs with 50
   queries and 59% with 200 (the interval held the true value in 95-98% of
   runs), so compare on a few hundred queries.
@@ -1790,8 +1802,13 @@ usual and adds `evaluation_comparison_<timestamp>.json`:
   (prompt: `custom_prompts.pairwise_comparison_*`). Each pair is judged in
   both orders and a criterion counts as a win only when both orders agree
   (the judge favours the answer it reads first); `candidate_win_rate` counts
-  a tie as half. It judges the first repeat's answers, one call per order,
-  query and strategy.
+  a tie as half. A pair where one answer failed is not judged: the other
+  side wins every criterion (`candidate_errors`, `baseline_errors`); a pair
+  where both failed counts in `both_errors` only. `failed` counts the pairs
+  the judge could not decide, and `--max-failure-rate` applies to them as to
+  a metric (every judge call failing is a breach). It judges the first
+  repeat's answers, one call per order, query and strategy, under one
+  `kg_rag.evaluate` span (`kg_rag.evaluator` = `pairwise_judge`).
 - `run_manifest` of the first run.
 
 The console prints the means, the deltas with their intervals, `auto`'s

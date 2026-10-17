@@ -105,12 +105,8 @@ def failure_budget_breaches(
     skipped metrics were not applicable and do not count). A share of 1.0,
     or an empty run, always breaches it.
     """
-
-    def _over(failed: int, total: int) -> bool:
-        return total == 0 or failed >= total or failed / total > max_failure_rate
-
     breaches = []
-    if _over(summary.failed_evaluations, summary.total_queries):
+    if _over(summary.failed_evaluations, summary.total_queries, max_failure_rate):
         breaches.append(
             f"{summary.failed_evaluations}/{summary.total_queries} queries failed"
         )
@@ -118,11 +114,29 @@ def failure_budget_breaches(
         for metric_name, counts in metrics.items():
             failed = counts.get("failed", 0)
             attempted = counts.get("scored", 0) + failed
-            if failed and _over(failed, attempted):
+            if failed and _over(failed, attempted, max_failure_rate):
                 breaches.append(
                     f"{evaluator_name}/{metric_name}: {failed}/{attempted} failed"
                 )
     return breaches
+
+
+def pairwise_budget_breaches(
+    pairwise: dict[str, dict[str, Any]], max_failure_rate: float
+) -> list[str]:
+    """The failure budget applied to the pairwise judge: per strategy, the
+    pairs it failed to judge over the pairs it was asked to judge."""
+    breaches = []
+    for strategy, judged in pairwise.items():
+        failed = judged["failed"]
+        attempted = judged["judged"] + failed
+        if failed and _over(failed, attempted, max_failure_rate):
+            breaches.append(f"pairwise judge {strategy}: {failed}/{attempted} failed")
+    return breaches
+
+
+def _over(failed: int, total: int, max_failure_rate: float) -> bool:
+    return total == 0 or failed >= total or failed / total > max_failure_rate
 
 
 class CommandLineInterface:
@@ -360,15 +374,19 @@ class EvaluationRunner:
             routed = stats["routed_strategies"]
             if routed and list(routed) != [strategy]:
                 console.print(f"[dim]{strategy} routed to: {routed}[/dim]")
+        for warning in comparison.get("warnings") or []:
+            console.print(f"[yellow]Warning: {escape(warning)}[/yellow]")
         for strategy, judged in (comparison.get("pairwise_vs_baseline") or {}).items():
             rates = ", ".join(
                 f"{criterion} {stats['candidate_win_rate']:.2f}"
                 for criterion, stats in judged["criteria"].items()
                 if stats["candidate_win_rate"] is not None
             )
+            errors = judged["candidate_errors"] + judged["baseline_errors"]
             console.print(
                 f"[cyan]Pairwise judge, {strategy} win rate vs {baseline} "
-                f"({judged['judged']} pairs): {rates}[/cyan]"
+                f"({judged['judged']} judged, {errors} decided by a failed "
+                f"answer, {judged['failed']} judge failures): {rates}[/cyan]"
             )
 
     async def run(self) -> int:
@@ -539,6 +557,12 @@ class EvaluationRunner:
                     )
                     for strategy in strategies[1:]
                 }
+                breaches.extend(
+                    pairwise_budget_breaches(
+                        comparison["pairwise_vs_baseline"],
+                        self.args.max_failure_rate,
+                    )
+                )
             comparison["run_manifest"] = manifest
             self._save_comparison(comparison, local_outputs)
             self._print_comparison(comparison, time.time() - start_time)
