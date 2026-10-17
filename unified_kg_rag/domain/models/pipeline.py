@@ -155,8 +155,14 @@ class PipelineMetrics(BaseModel):
     total_documents_quarantined: int = Field(
         default=0,
         description="Incremental runs: documents quarantined this run, their "
-        "indexing having been started indexing.max_document_attempts "
-        "consecutive runs without finishing",
+        "processing having killed the run indexing.max_document_attempts "
+        "consecutive runs, the last one processing it alone",
+    )
+    total_documents_deferred: int = Field(
+        default=0,
+        description="Incremental runs: new or changed documents left for a "
+        "later run while the run isolates the document that keeps killing "
+        "runs (it processes half of the suspects)",
     )
     gleaning_improvement_rate: float = Field(
         default=0.0,

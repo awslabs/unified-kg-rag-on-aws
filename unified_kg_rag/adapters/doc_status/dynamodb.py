@@ -563,6 +563,12 @@ class DynamoDBDocStatusStore:
             item[attr] = {"S": value} if value is not None else {"NULL": True}
         item["failure_count"] = {"N": str(record.failure_count)}
         item["attempt_count"] = {"N": str(record.attempt_count)}
+        item["crash_batch"] = {"N": str(record.crash_batch)}
+        item["attempt_batch"] = (
+            {"N": str(record.attempt_batch)}
+            if record.attempt_batch is not None
+            else {"NULL": True}
+        )
         return item
 
     @staticmethod
@@ -594,6 +600,8 @@ class DynamoDBDocStatusStore:
             failure_count=_int("failure_count"),
             attempt_count=_int("attempt_count"),
             attempted_hash=_str("attempted_hash"),
+            crash_batch=_int("crash_batch"),
+            attempt_batch=_int("attempt_batch") or None,
             created_at=_str("created_at"),
             updated_at=_str("updated_at"),
         )

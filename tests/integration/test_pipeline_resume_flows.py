@@ -255,7 +255,15 @@ def test_a_crashed_corpus_stage_skips_indexing(
     (harness.source / "new.txt").write_text("Buyer pays Depot.")
     assert harness.run("--continue-on-error") == 1
     assert harness.graph.ids("entities") == entities
-    assert {(r.doc_id, r.status) for r in harness.registry.list_all()} == records
+    stored = {r.doc_id: r for r in harness.registry.list_all()}
+    assert {(doc_id, stored[doc_id].status) for doc_id, _ in records} == records
+    # Past document_loading, the new document has the record of the attempt
+    # the run opened (and closed), with nothing indexed.
+    new = [r for doc_id, r in stored.items() if (doc_id, r.status) not in records]
+    if stage_class is not ps.DocumentParsingStage:
+        assert [(r.status, r.text_unit_ids, r.attempt_batch) for r in new] == [
+            (DocStatus.PENDING, [], None)
+        ]
 
 
 def _run_phases(harness: _Harness, pipeline_id: str, attempt: int) -> list[int]:

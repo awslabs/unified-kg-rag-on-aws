@@ -413,7 +413,7 @@ class LocalSearchStrategy(BaseSearchStrategy): ...
    실행의 범위에 속한 레코드뿐이며, 파싱이나 로딩에 실패한 파일은 삭제가 아니라 `failed`로
    보고합니다. 옮긴 코퍼스는 이전 범위를 넘겨받지 않으며(옮긴 것과 같은 경로의 다른 호스트
    코퍼스를 구별할 수 없음) 실행이 이전 범위를 폐기할 때까지 그대로 둡니다
-   (`indexing.retire_source_scopes`). 인덱싱이 계속 죽은 문서는 `quarantined`로 분류합니다(§5.3).
+   (`indexing.retire_source_scopes`). 처리할 때마다 실행을 죽이는 문서는 격리하거나 미룹니다(§5.3).
 2. **선기록**(`write_ahead`). 저장소에 쓰기 전에 새 문서와 바뀐 문서를 모두 `PENDING`
    (어떤 문서도 그 해시를 갖지 않는 내용 해시 `"pending"`)으로 기록하며, 저장된 텍스트
    단위와 이번 실행이 쓸 텍스트 단위의 합집합을 일괄 쓰기 한 번으로 남깁니다. 레지스트리
@@ -477,13 +477,35 @@ class LocalSearchStrategy(BaseSearchStrategy): ...
   `failure_count`는 0).
 - 키가 바뀐 항목의 이전 ID는 새 복사본을 쓴 뒤에만 지우므로, 중단되어도 최악의 경우 두
   복사본이 남고 재시도가 둘을 함께 도출합니다.
-- **격리.** 인덱싱할 때마다 실행을 죽이는 문서는 그 내용을 시작한 실행마다 `PENDING`
-  레코드의 `attempt_count`가 하나씩 늘고, `indexing.max_document_attempts`에 이르면 다음
-  실행이 시도들이 쓴 내용을 지우고 `QUARANTINED`(텍스트 단위 없음, `error_info`에 이유)로
-  기록해 내용이나 추출 설정이 바뀔 때까지 건너뜁니다. 계속 죽는 델타의 모든 문서가 원인
-  문서와 함께 격리됩니다.
 
-비용은 실행마다 레지스트리 일괄 쓰기 한 번과 접미사마다 몇 번의 저장소 일괄 조회입니다.
+**시도와 격리**(`domain/ingestion/attempts.py`). 처리하다 태스크를 죽이는 문서는 이후 모든
+실행을 같은 방식으로 멈추게 합니다.
+
+- **열기, 닫기, 정산.** 실행은 diff 직후(그리고 document_loading 뒤에서 재개할 때) 처리할
+  모든 문서에 시도를 엽니다(`incremental.open_attempts`: 함께 처리하는 문서 수
+  `attempt_batch`, `attempted_hash`. 새 문서는 텍스트 단위 없는 `PENDING` 레코드를 받음).
+  프로세스 안에서 어떻게 끝나든(완료, 오류로 인한 실패, SIGTERM이나 Ctrl-C로 인한 중지)
+  시도를 닫습니다(`close_attempts`). 다음 실행에서도 열려 있는 시도는 그 내용에서 한 번 더
+  죽은 것(`attempt_count`)이고, 그때의 배치는 `attempt_batch`개(`crash_batch`)입니다.
+- **재구축은 세지 않습니다.** reset은 시도를 열지 않고, 선기록 레코드는 시도 필드를 저장된
+  그대로 둡니다.
+- **계획**(`plan_attempts`, diff에서). 죽은 횟수가 `indexing.max_document_attempts`에 이른
+  변경 문서가 의심 문서입니다. 마지막으로 혼자 처리되다 죽은 문서(`crash_batch` 1)는
+  `quarantined`입니다. 그렇지 않으면 실행은 가장 작은 배치에서 죽은 의심 문서의 앞쪽
+  절반(doc id 순)만 처리하고 다른 새 문서와 변경된 문서는 모두 `deferred`(처리하지도 지우지도
+  않음)로 분류합니다. 실행이 죽으면 의심 문서가 그 절반으로 좁혀지고, 끝나면 그 절반을
+  커밋합니다. 그래서 `n`개 가운데 원인 문서 하나는 대략 `log2(n) + 1`번의 실행으로 가려지고,
+  함께 죽었다는 이유로 격리되는 문서는 없습니다.
+- **격리 레코드.** 제거 단계가 시도들이 쓴 것을 지우고, 레코드는 `QUARANTINED`(시도한 내용의
+  해시, 텍스트 단위 없음, `error_info`에 이유)가 되어 내용이나 추출 설정이 바뀔 때까지
+  unchanged로 읽힙니다.
+- 커밋하는 실행에서 텍스트 단위를 만들지 않은 문서는 혼자 죽은 것으로 셉니다.
+- **재개 검사**(`delta_still_applies`). 복원한 델타의 문서 가운데 레코드가 사라졌거나 다른
+  내용을 담았거나 죽은 횟수가 한도에 이른 것이 있으면 document_loading부터 재개합니다.
+- 지표: `total_documents_quarantined`(CDK `DocumentsQuarantined` 경보)와
+  `total_documents_deferred`.
+
+비용은 실행마다 레지스트리 일괄 쓰기 한 번(시도에 쓰기와 읽기 두 번씩 더)과 접미사마다 몇 번의 저장소 일괄 조회입니다.
 `tests/unit/test_incremental_write_ahead.py`와
 `tests/property/test_incremental_interruption_properties.py`는 실행을 쓰기 단계마다 중단하고
 다음 실행이 새 전체 빌드와 같아지는지 확인합니다.

@@ -1481,13 +1481,23 @@ after that. The details and what to do are in
 
 ### Quarantined documents
 
-A document whose indexing kills the run (out of memory, a task timeout) would
-stop every later run the same way. After `indexing.max_document_attempts`
-(default `3`) runs in a row that started its content and never finished, the
-next run removes what the attempts wrote, records it `QUARANTINED`, logs a
-WARNING naming the file and indexes the rest; it is skipped until its file or
-the extraction settings change. See
-[Operator Runbook: Quarantined documents](./operations.md#quarantined-documents).
+A document whose processing kills the task (out of memory, a parser that
+crashes the process) would stop every later run the same way. After
+`indexing.max_document_attempts` (default `3`) runs in a row that died
+processing it alone, the next run removes what the attempts wrote, records
+it `QUARANTINED`, logs a WARNING naming the file and indexes the rest; it is
+skipped until its file or the extraction settings change, or the limit is
+raised.
+
+- Only deaths count: a run that finishes, fails or is stopped by SIGTERM
+  clears its in-progress mark. A full rebuild (`indexing.reset`) counts no
+  attempt.
+- When runs died processing several documents, the next runs halve the
+  suspects until the culprit is alone, deferring the other new and changed
+  documents meanwhile (`total_documents_deferred`); the documents it died
+  with are then indexed.
+
+See [Operator Runbook: Quarantined documents](./operations.md#quarantined-documents).
 
 ### Concurrent runs
 
@@ -2346,8 +2356,11 @@ graph_indexer_factory=..., retriever_builders=...)`). Without a bundle,
   same index suffix (a full reindex's alias swap and old-index cleanup can
   delete the other run's index). The direct `IncrementalIndexer` API takes no
   lease. See [Operator Runbook: Concurrent runs](./operations.md#concurrent-runs).
-- **Quarantine does not isolate the culprit** (§5). Every document of a delta
-  whose indexing keeps dying is quarantined with the one that kills it.
+- **Isolating a document that kills the task takes runs** (§5, *Quarantined
+  documents*): about `log2(n) + 1` more runs for one culprit among `n`
+  documents that died together, and documents deferred meanwhile wait for
+  the next run. A task that dies whatever it processes quarantines the
+  delta's documents one at a time.
 - **Markdown and HTML** need the optional `unstructured` extra (Python 3.11+),
   which the container image leaves out by default.
 - **Changing the embedding model** (or its dimension) requires a reindex

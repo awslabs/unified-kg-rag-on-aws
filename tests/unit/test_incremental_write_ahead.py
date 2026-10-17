@@ -245,12 +245,14 @@ def test_commit_reads_and_writes_the_registry_in_batches(mocker) -> None:
     harness.run(R0)
 
     get.assert_not_called()
-    # One read by write_ahead, nothing re-read by the commit.
-    assert [len(c.args[0]) for c in get_many.call_args_list if c.args[0]] == [len(R0)]
-    # The write-ahead records, then the committed ones.
-    assert [len(c.args[0]) for c in put_many.call_args_list if c.args[0]] == [
+    # One read each by open_attempts, write_ahead and close_attempts, nothing
+    # re-read by the commit.
+    assert [len(c.args[0]) for c in get_many.call_args_list if c.args[0]] == [
         len(R0)
-    ] * 2
+    ] * 3
+    # The attempt records, the write-ahead records, then the committed ones
+    # (they have no open attempt left to close).
+    assert [len(list(c.args[0])) for c in put_many.call_args_list] == [len(R0)] * 3
 
 
 @pytest.mark.parametrize("outcome", ["killed", "failed"])

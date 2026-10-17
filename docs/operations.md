@@ -238,10 +238,9 @@ interrupted run's writes, since every artifact cites the text units it was
 stated in.
 
 - An interruption is not counted as a failure, but it resets the document's
-  `failure_count` toward `indexing.max_document_failures`. The `PENDING`
-  record counts instead the consecutive runs that started the same content
-  without finishing it (`attempt_count`, see
-  [Quarantined documents](#quarantined-documents)).
+  `failure_count` toward `indexing.max_document_failures`. The record counts
+  instead the consecutive runs that died processing the same content
+  (`attempt_count`, see [Quarantined documents](#quarantined-documents)).
 - A document with more text units than one DynamoDB item holds (about
   10,000; half that for an edited document, whose `PENDING` record lists the
   old and the new ones) fails the run before anything is written: split it.
@@ -306,24 +305,49 @@ document of the run). The `IndexingFailures` and `ExtractionFailures`
 
 ### Quarantined documents
 
-A document whose indexing kills the run each time (the task runs out of
-memory or hits its timeout on it) would stop every later run the same way.
-Once runs have started its unchanged content `indexing.max_document_attempts`
-times in a row (default `3`) without finishing it, the next run quarantines
-it: it logs a WARNING naming the file, removes what the attempts wrote,
-records it `QUARANTINED` (no text units, the reason in `error_info`) and
-indexes the rest. The run metric `total_documents_quarantined` counts them,
-and on the CDK stack the `DocumentsQuarantined` alarm fires.
+A document whose processing kills the task each time (it runs out of memory
+on it, a parser or client crashes the process) would stop every later run
+the same way. Runs therefore count deaths and isolate the culprit.
 
-- A quarantined document is skipped while its content stays. It is retried
-  when the file changes, when the extraction settings change, or when
+- **Only deaths count.** Right after the diff, a run marks an attempt open on
+  the record of every document it processes (`attempt_batch`: how many it
+  processes together) and clears it however it ends in the process:
+  finished, failed with an error, or stopped (SIGTERM from StopTask or a Step
+  Functions timeout, Ctrl-C). Only a task that died leaves it open; the next
+  run counts it (`attempt_count`, with the batch it died in as
+  `crash_batch`). A full rebuild (`indexing.reset`) counts nothing.
+- **Quarantine.** Once a document's content killed `indexing.max_document_attempts`
+  runs in a row (default `3`), the last one processing it alone, the next
+  run logs a WARNING naming the file, removes what the attempts wrote,
+  records it `QUARANTINED` (reason in `error_info`) and indexes the rest. The
+  metric `total_documents_quarantined` counts them; on the CDK stack the
+  `DocumentsQuarantined` alarm fires.
+- **Bisection.** When the runs died processing several documents, the next
+  run processes half of the suspects that died in the smallest batch and
+  defers every other new or changed document (a WARNING names the half;
+  `total_documents_deferred` counts the others, which keep their indexed
+  version). A death narrows the suspects to that half; a run that ends
+  commits it. One culprit among `n` suspects is quarantined after about
+  `log2(n) + 1` more runs, and the documents it died with are indexed.
+- **Deferred documents wait for the next run.** Start runs with a new
+  pipeline id until `total_documents_deferred` is 0 (a finished pipeline id
+  re-run only repeats its own delta).
+- **Retrying.** A quarantined document is skipped while its content stays.
+  It is retried when the file or the extraction settings change, or when
   `indexing.max_document_attempts` is raised.
-- Every document of a delta that keeps dying counts an attempt, so the
-  documents indexed together with the culprit are quarantined with it.
-  Retry them by touching their files (or raising the limit) once the
-  culprit is found, for example by running its folder alone.
+- **Limits.** A task that dies whatever it processes (a broken image)
+  quarantines the delta's documents one at a time: fix the deployment, then
+  edit the files or raise the limit. A one-off kill during the run that
+  processes a suspect alone quarantines it too. A document that makes runs
+  time out on SIGTERM is never counted: raise the timeout.
 - A document that produces no text units stays `PENDING` and is quarantined
   after the same number of runs.
+- **Resumed runs.** A run resumed past document_loading with the same
+  pipeline id reuses its delta, unless the registry no longer matches it
+  (another run indexed another version of one of its documents, or found it
+  deleted) or its runs died often enough to isolate a culprit: it then
+  resumes from document_loading (WARNING `... resuming from
+  'document_loading' ...`).
 
 ### Concurrent runs
 
@@ -419,7 +443,7 @@ after its retries).
 | `PipelineTimedOutOrAborted` | An execution hit the state machine timeout or was stopped |
 | `IndexingFailures` | Indexing reported failed items, even in a succeeded execution |
 | `ExtractionFailures` | Extraction, gleaning or claim extraction failed on some units |
-| `DocumentsQuarantined` | A run quarantined documents whose indexing kept dying (see [Quarantined documents](#quarantined-documents)) |
+| `DocumentsQuarantined` | A run quarantined documents whose processing kept killing the task (see [Quarantined documents](#quarantined-documents)) |
 
 The pipeline-run alarms other than the Step Functions ones read the EMF metrics
 `run-ingestion --metrics-sink cloudwatch` emits, each stage's as the stage

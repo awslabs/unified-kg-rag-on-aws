@@ -468,7 +468,8 @@ unless noted.
    to parse or load are reported `failed`, not deleted. A moved corpus is never
    adopted from (a move cannot be told from another host's corpus on the same
    path) until a run retires the old scope (`indexing.retire_source_scopes`).
-   A document whose indexing kept dying is classified `quarantined` (§5.3).
+   Documents whose processing keeps killing the run are quarantined or
+   deferred (§5.3).
 2. **Write-ahead** (`write_ahead`). Before any store write, every new and
    changed document is recorded `PENDING` (content hash `"pending"`, which no
    document hashes to) with the union of its stored text units and the ones
@@ -545,16 +546,42 @@ interrupted one:
 - Old ids of re-keyed items are deleted only after their new copies are
   written, so an interruption leaves at worst both copies, which the retry
   derives together.
-- **Quarantine.** A document whose indexing kills the run each time grows its
-  `PENDING` record's `attempt_count` by one per run that started its content;
-  at `indexing.max_document_attempts` the next run removes what the attempts
-  wrote and records it `QUARANTINED` (no text units, the reason in
-  `error_info`), skipping it until the content or the extraction settings
-  change. Every document of a delta that keeps dying is quarantined with the
-  culprit.
 
-The cost is one extra batched registry write per run and a few batched store
-lookups per suffix. `tests/unit/test_incremental_write_ahead.py` and
+**Attempts and quarantine** (`domain/ingestion/attempts.py`). A document
+whose processing kills the task would stop every later run the same way.
+
+- **Open, close, settle.** Right after the diff (and when a run resumes past
+  document_loading) the run opens an attempt on every document it processes
+  (`incremental.open_attempts`: `attempt_batch` = documents processed
+  together, `attempted_hash`; a new document gets a `PENDING` record without
+  text units). It closes them however it ends in the process: finished,
+  failed with an error, or stopped by SIGTERM or Ctrl-C (`close_attempts`).
+  An attempt still open on the next run is one more death of that content
+  (`attempt_count`) in a batch of `attempt_batch` (`crash_batch`).
+- **Rebuilds count nothing.** A reset opens no attempt and the write-ahead
+  record keeps the attempt fields as stored.
+- **Plan** (`plan_attempts`, at the diff). A changed document whose deaths
+  reach `indexing.max_document_attempts` is a suspect. One whose last death
+  was alone (`crash_batch` 1) is `quarantined`. Otherwise the run processes
+  the first half (by doc id) of the suspects that died in the smallest batch
+  and classifies every other new or changed document `deferred` (neither
+  processed nor deleted). A death narrows the suspects to that half; a run
+  that ends commits it, so one culprit among `n` is isolated in about
+  `log2(n) + 1` runs, and no document is quarantined for dying with it.
+- **Quarantined record.** The removal pass removes what the attempts wrote;
+  the record becomes `QUARANTINED` (the attempted content hash, no text
+  units, the reason in `error_info`) and reads unchanged until the content
+  or the extraction settings change.
+- A document that produces no text units in a committing run counts as a
+  death alone.
+- **Resume check** (`delta_still_applies`). A resumed run whose restored
+  delta names a document whose record is gone or holds other content, or
+  whose deaths reached the limit, resumes from document_loading instead.
+- Metrics: `total_documents_quarantined` (CDK `DocumentsQuarantined` alarm)
+  and `total_documents_deferred`.
+
+The cost is one extra batched registry write per run (two more writes and
+reads for the attempts) and a few batched store lookups per suffix. `tests/unit/test_incremental_write_ahead.py` and
 `tests/property/test_incremental_interruption_properties.py` interrupt a run at
 every write and check that the next run converges to a fresh full build.
 

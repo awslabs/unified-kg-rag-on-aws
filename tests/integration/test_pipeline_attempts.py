@@ -1,0 +1,213 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+"""Whole-pipeline runs that die, stop or resume over one registry (AWS-free).
+
+A run opens its processing attempts right after the diff and closes them
+however it ends in the process, so a document that kills a stage before
+indexing (here: chunking) is isolated and quarantined while the documents it
+died with are indexed, a run stopped by SIGTERM counts nothing, and a run
+resumed with a delta the registry no longer matches computes it again.
+"""
+
+from __future__ import annotations
+
+import signal
+from pathlib import Path
+from typing import Any
+from unittest.mock import MagicMock
+
+import pytest
+
+from tests.fixtures.fakes.chat_models import ScriptedLLMFactory
+from tests.fixtures.fakes.doc_status import FakeDocStatusStore
+from tests.fixtures.fakes.embeddings import HashingEmbeddingFactory
+from tests.fixtures.fakes.stores import FakeGraphStore, FakeVectorStore
+from tests.integration.test_ingestion_stages import _config, _respond
+from unified_kg_rag.adapters.providers import Providers
+from unified_kg_rag.application.ingestion import pipeline_stages as ps
+from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
+from unified_kg_rag.domain.models import (
+    DocStatus,
+    PipelineConfig,
+    PipelineContext,
+    PipelineStageStatus,
+    PipelineStageType,
+)
+from unified_kg_rag.shared import PipelineInterrupted
+
+pytestmark = pytest.mark.integration
+
+_POISON = "POISON"
+
+
+class _Died(BaseException):
+    """The process died: no handler of the run gets to run."""
+
+
+class _Harness:
+    def __init__(self, tmp_path: Path) -> None:
+        self.tmp_path = tmp_path
+        self.source = tmp_path / "corpus"
+        self.source.mkdir()
+        (self.source / "contract.txt").write_text("Vendor supplies widgets to Buyer.")
+        (self.source / "logistics.txt").write_text("Depot stores widgets for Vendor.")
+        (self.source / "poison.txt").write_text(f"{_POISON} Buyer pays the Depot.")
+        self.store = FakeDocStatusStore()
+        self.graph = FakeGraphStore()
+        self.config = _config()
+        self.config.processing.gleaning.enabled = False
+        self.config.processing.claim_extraction.enabled = False
+        self.vectors = FakeVectorStore(self.config.indexing.opensearch)
+        self.extractions = 0
+
+    def _respond(self, system: str, human: str) -> str:
+        if "knowledge graph extraction expert" in system:
+            self.extractions += 1
+        return _respond(system, human)
+
+    def pipeline(self) -> DataIngestionPipeline:
+        providers = Providers(
+            self.config,
+            boto_session=MagicMock(),
+            llm_factory=ScriptedLLMFactory(self._respond),
+            embedding_factory=HashingEmbeddingFactory(),
+            doc_status=self.store,
+            vector_indexer_factory=lambda: self.vectors,
+            graph_indexer_factory=lambda: self.graph,
+        )
+        pipeline = DataIngestionPipeline(
+            self.config,
+            PipelineConfig(
+                stages_enabled=dict.fromkeys(PipelineStageType, True),
+                local_directory=self.tmp_path / "cache",
+            ),
+            source_directory=self.source,
+            providers=providers,
+        )
+        for stage in pipeline.stages:
+            if isinstance(stage, ps.GraphResolutionStage):
+                stage.resolver.entity_resolver.use_process_pool = False
+                stage.resolver.relationship_resolver.use_process_pool = False
+        return pipeline
+
+    def run(
+        self,
+        pipeline_id: str,
+        monkeypatch: pytest.MonkeyPatch,
+        chunking_fails_with: type[BaseException] | None = None,
+    ) -> PipelineContext | BaseException:
+        """One run (a new process). With ``chunking_fails_with``, chunking a
+        batch holding the poison document raises it: ``_Died`` is a process
+        death (the run's handlers do not run), anything else unwinds."""
+        pipeline = self.pipeline()
+        original = ps.TextChunkingStage._execute_core
+
+        def chunk(stage: Any, context: PipelineContext) -> Any:
+            if chunking_fails_with is not None and any(
+                _POISON in document.page_content for document in context.documents
+            ):
+                if chunking_fails_with is PipelineInterrupted:
+                    raise PipelineInterrupted(signal.SIGTERM)
+                raise chunking_fails_with()
+            return original(stage, context)
+
+        with monkeypatch.context() as patch:
+            patch.setattr(ps.TextChunkingStage, "_execute_core", chunk)
+            if chunking_fails_with is _Died:
+                # A dead process closes nothing.
+                patch.setattr(pipeline, "_close_attempts", lambda context: None)
+            try:
+                return pipeline.run(self.source, pipeline_id=pipeline_id)
+            except (_Died, PipelineInterrupted) as stopped:
+                return stopped
+            finally:
+                pipeline.close()
+
+    def statuses(self) -> dict[str, DocStatus]:
+        return {
+            Path(record.file_path or "").name: record.status
+            for record in self.store.list_all()
+        }
+
+
+def test_a_document_that_kills_chunking_is_isolated_across_resumed_runs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Old behaviour: the attempt was counted only by the indexing stage, so a
+    # document that killed an earlier stage blocked every run for good.
+    harness = _Harness(tmp_path)
+    pipeline_id = "ingest-1"
+    runs = 0
+    while runs < 12:
+        runs += 1
+        outcome = harness.run(pipeline_id, monkeypatch, chunking_fails_with=_Died)
+        if isinstance(outcome, BaseException):
+            continue  # the re-run resumes the same pipeline
+        assert outcome.status is PipelineStageStatus.COMPLETED
+        if all(
+            status is not DocStatus.PENDING for status in harness.statuses().values()
+        ):
+            break
+        pipeline_id = f"ingest-{runs + 1}"  # a completed pipeline: a new one
+    statuses = harness.statuses()
+    assert statuses == {
+        "contract.txt": DocStatus.PROCESSED,
+        "logistics.txt": DocStatus.PROCESSED,
+        "poison.txt": DocStatus.QUARANTINED,
+    }
+    assert runs <= 7  # 3 deaths, then bisection of 3 suspects
+    names = {
+        entity.name
+        for entity in harness.graph.read_entities(sorted(harness.graph.ids("entities")))
+    }
+    assert {"Vendor", "Buyer", "Depot"} <= names
+
+
+def test_runs_stopped_by_sigterm_count_no_attempt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Old behaviour: a stopped run (a task timeout, StopTask) counted like a
+    # crash.
+    harness = _Harness(tmp_path)
+    for _ in range(4):
+        outcome = harness.run(
+            "ingest-1", monkeypatch, chunking_fails_with=PipelineInterrupted
+        )
+        assert isinstance(outcome, PipelineInterrupted)
+        records = harness.store.list_all()
+        assert {r.attempt_batch for r in records} == {None}
+        assert {r.attempt_count for r in records} == {0}
+
+    outcome = harness.run("ingest-1", monkeypatch)
+
+    assert isinstance(outcome, PipelineContext)
+    assert set(harness.statuses().values()) == {DocStatus.PROCESSED}
+
+
+def test_a_resume_after_another_run_committed_computes_the_delta_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    harness = _Harness(tmp_path)
+    assert isinstance(
+        harness.run("ingest-1", monkeypatch, chunking_fails_with=_Died), _Died
+    )
+    (harness.source / "poison.txt").unlink()
+    other = harness.run("ingest-2", monkeypatch)
+    assert isinstance(other, PipelineContext)
+    (harness.source / "poison.txt").write_text(f"{_POISON} Buyer pays the Depot.")
+    harness.extractions = 0
+
+    with caplog.at_level("WARNING"):
+        resumed = harness.run("ingest-1", monkeypatch)
+
+    assert isinstance(resumed, PipelineContext)
+    assert resumed.status is PipelineStageStatus.COMPLETED
+    assert "resuming from 'document_loading'" in caplog.text
+    # Only the poison document is new to the registry: the others, which
+    # the other run committed, are not extracted again.
+    assert harness.statuses() == {
+        "contract.txt": DocStatus.PROCESSED,
+        "logistics.txt": DocStatus.PROCESSED,
+        "poison.txt": DocStatus.PROCESSED,
+    }
+    assert harness.extractions == 1

@@ -351,8 +351,9 @@ def test_local_mode_runs_end_to_end_on_the_embedded_stores(
     assert _registry(providers) == registry
 
     # A graph that lost the registry's documents (another graph file here)
-    # is refused before any write: the vector store and registry stay as
-    # they were, and the new document is not recorded.
+    # is refused before any store write: the vector store and the indexed
+    # documents' records stay as they were, and the new document has only
+    # the record of the attempt the run opened (removed once it is gone).
     (source / "extra.txt").write_text("Vendor ships gadgets.")
     lost = config.model_copy(deep=True)
     lost.providers.graph.sqlite_path = str(tmp_path / "empty-graph.sqlite3")
@@ -362,7 +363,7 @@ def test_local_mode_runs_end_to_end_on_the_embedded_stores(
     assert "graph store does not hold" in _errors(context)
     assert _entity_names(lost_providers) == set()
     assert _stored_texts(config, providers) == texts
-    assert _registry(providers) == registry
+    assert _registry(providers) == {**registry, "extra.txt": DocStatus.PENDING}
     (source / "extra.txt").unlink()
 
     # Every strategy answers from the stores and cites what it used.

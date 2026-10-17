@@ -396,11 +396,15 @@ Library API (Python callers and custom backends).
   (`DocStatusPort.try_acquire_lease`, `lease_holder`, `release_lease`) and
   the new `DocStatusRecord` fields (`attempt_count`, `attempted_hash`) and
   status (`DocStatus.QUARANTINED`, unchanged while its content is).
-  `IncrementalIndexer.write_ahead` takes the run's fingerprints, and
-  `detect_delta` a `max_attempts`. `IndexingManager.clear_all_data` is
+  `detect_delta` takes a `max_attempts`. `IndexingManager.clear_all_data` is
   removed (a reset no longer clears the stores first), and a custom graph
   backend can rebuild in place through `GraphIndexer.begin_rebuild` /
   `end_rebuild` (the default still clears each label first) (#331).
+- A custom doc-status registry also stores the `DocStatusRecord` fields
+  `attempt_batch` and `crash_batch`. `detect_delta` may return
+  `DocumentDelta.deferred` documents (neither processed nor deleted), and
+  `IncrementalIndexer.write_ahead` no longer takes fingerprints: a run opens
+  its attempts with `incremental.open_attempts` (#PR).
 - Conversation memory is per chain: a `GraphRAGChain` builds its own
   `MemoryManager` instead of sharing one process-wide manager, and a
   conversation is keyed by index suffix, `user_id` and `conversation_id`
@@ -1264,6 +1268,22 @@ changed once with the full-config keys (#332).
   BM25 + vector, and `config-template.yaml` lists
   `evaluation.answer_normalization` and no longer mentions the removed
   `effort` key (#336).
+- Runs that die processing documents no longer quarantine documents that
+  did nothing wrong. Only a run that died counts: each run opens an attempt
+  on the documents it processes right after the diff and closes it however
+  it ends in the process, so a run stopped by SIGTERM (a task timeout,
+  StopTask) and a full rebuild (`indexing.reset`) count nothing; three
+  rebuilds that timed out used to make the next incremental run quarantine
+  and remove the whole corpus. The attempt opens before the first stage, so
+  a document that kills chunking, extraction or gleaning is caught too (it
+  used to block every run). A document is quarantined only once it died
+  processed alone; when runs died with several documents, the next runs
+  process half of the suspects and defer the other new and changed
+  documents (`total_documents_deferred`) until the culprit is alone, about
+  `log2(n) + 1` runs for one culprit among `n`. A resumed run whose delta
+  the registry no longer matches (another run re-indexed or deleted one of
+  its documents) or whose runs died often enough to isolate a culprit
+  resumes from document_loading instead (#PR).
 - Two corpora written to one index namespace that hold the same file with
   the same text no longer share text units, so removing one corpus's copy
   keeps the other's (#327).

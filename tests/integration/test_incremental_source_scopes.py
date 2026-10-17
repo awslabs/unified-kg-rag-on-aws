@@ -41,6 +41,7 @@ from unified_kg_rag.application.ingestion import pipeline_stages as ps
 from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
 from unified_kg_rag.domain.models import (
     Config,
+    DocStatus,
     PipelineConfig,
     PipelineContext,
     PipelineStageStatus,
@@ -531,7 +532,8 @@ def test_runs_a_stage_stops_before_indexing_keep_retrying_the_delta(
 ) -> None:
     # A stage that stops the run before indexing cannot tell one bad document
     # from a systemic failure (throttling, an outage, expired credentials), so
-    # it records nothing: however many such runs, under whichever pipeline
+    # it records nothing but the attempts it opened and closed (a run that
+    # ends is no death): however many such runs, under whichever pipeline
     # ids, the new and changed documents are diffed and processed again, and a
     # changed document keeps its indexed content and its old content hash.
     stack = ScopeStack(registry, tmp_path)
@@ -547,8 +549,19 @@ def test_runs_a_stage_stops_before_indexing_keep_retrying_the_delta(
         failed = {r.stage_name for r in context.stage_results if r.status == "failed"}
         assert "graph_extraction" in failed
         delta = context.incremental_delta
-        assert delta.changed == [indexed.doc_id]
-        assert len(delta.new) == 1
+        assert indexed.doc_id in delta.changed
+        assert len(delta.to_process) == 2
         assert stack.model.extractions
-        assert registry.list_all() == [indexed]
+        records = {r.doc_id: r for r in registry.list_all()}
+        kept = records.pop(indexed.doc_id)
+        assert kept.model_dump(
+            exclude={"attempted_hash", "attempt_count", "attempt_batch", "crash_batch"}
+        ) == indexed.model_dump(
+            exclude={"attempted_hash", "attempt_count", "attempt_batch", "crash_batch"}
+        )
+        # The new document's attempt record: no text units, nothing counted.
+        (new,) = records.values()
+        assert (new.status, new.text_unit_ids) == (DocStatus.PENDING, [])
+        assert {r.attempt_count for r in (kept, new)} == {0}
+        assert {r.attempt_batch for r in (kept, new)} == {None}
     assert stack.texts() == {A_TEXT}
