@@ -53,7 +53,6 @@ class S3CacheManager:
     data before the index and the run metadata that refer to it.
     """
 
-    DEFAULT_S3_PREFIX: ClassVar[str] = "cache"
     # Failed keys quoted in a CacheSyncError message (the full count is always
     # reported); keeps the message readable for large partial failures.
     _MAX_REPORTED_FAILURES: ClassVar[int] = 5
@@ -63,7 +62,8 @@ class S3CacheManager:
         config: Config,
         boto_session: boto3.Session | None = None,
         bucket_name: str | None = None,
-        prefix: str | None = None,
+        *,
+        prefix: str,
     ) -> None:
         self.config = config
         self.s3_config = config.aws.s3
@@ -71,7 +71,7 @@ class S3CacheManager:
         if not self.bucket_name:
             raise ConfigurationError("S3 'bucket_name' must be configured.")
 
-        self.prefix = (prefix or self.DEFAULT_S3_PREFIX).strip("/")
+        self.prefix = prefix.strip("/")
         self.boto_session = boto_session or boto3.Session(
             profile_name=self.config.aws.profile_name,
             region_name=self.config.aws.region_name,

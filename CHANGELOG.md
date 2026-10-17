@@ -2600,6 +2600,11 @@ changed once with the full-config keys (#332).
   later deleted an entity the unchanged ones still stated. A config file or
   `UKR__INDEXING__CROSS_RUN_MERGE` that still sets it loads with a WARNING
   and the key ignored; nothing to re-index (#344).
+- `S3CacheManager.DEFAULT_S3_PREFIX` (`"cache"`), which nothing used: the
+  pipeline always passes its `s3_prefix` (default `pipeline-runs`), and
+  `S3CacheManager` now requires `prefix=`, so a direct caller can no longer
+  write checkpoints under a prefix the CDK bucket lifecycle does not
+  expire (#PR).
 - The native-score blend of RRF fusion: RRF scores are plain
   `weight / (rrf_k + rank)` sums again. The blend claimed to restore order
   within a stream, which RRF already keeps; scaled to the rank-1 step, it

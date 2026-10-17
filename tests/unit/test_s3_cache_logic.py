@@ -51,7 +51,7 @@ def test_requires_bucket_name() -> None:
     config = Config()
     # config default has no s3 bucket_name -> ConfigurationError.
     with pytest.raises(ConfigurationError, match="bucket_name"):
-        S3CacheManager(config, bucket_name=None)
+        S3CacheManager(config, bucket_name=None, prefix="pipeline-runs")
 
 
 def test_prefix_is_stripped_of_slashes(s3_setup) -> None:
@@ -64,9 +64,7 @@ def test_get_base_prefix_with_and_without_prefix(s3_setup) -> None:
     config, session = s3_setup
     mgr = _manager(config, session, prefix="cache")
     assert mgr._get_base_prefix("pid-1") == "cache/pid-1"
-    # An empty prefix falls back to DEFAULT_S3_PREFIX in the constructor; force
-    # the falsy-prefix branch of _get_base_prefix directly.
-    mgr.prefix = ""
+    mgr = _manager(config, session, prefix="")
     assert mgr._get_base_prefix("pid-1") == "pid-1"
 
 

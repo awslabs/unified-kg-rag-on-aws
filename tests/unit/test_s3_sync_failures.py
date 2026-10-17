@@ -48,7 +48,9 @@ def s3_setup():
 
 
 def _manager(config, session, bucket: str = _BUCKET) -> S3CacheManager:
-    return S3CacheManager(config, boto_session=session, bucket_name=bucket)
+    return S3CacheManager(
+        config, boto_session=session, bucket_name=bucket, prefix="pipeline-runs"
+    )
 
 
 def _write_cache(root: Path, names: list[str]) -> None:
