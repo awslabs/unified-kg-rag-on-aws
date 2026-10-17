@@ -251,10 +251,10 @@ codes and JSON output*); renamed flags have no alias, so update scripts:
   `--source-dir` alias is gone; use `--source-directory`);
   `prepare-benchmark --output-dir` → `--output-directory` and `--source` →
   `--data-path`. The run manifest's `cli_args` follow the new names
-  (`data_path`, `output_directory`) (#PR).
+  (`data_path`, `output_directory`) (#333).
 - Flags must be spelled out: an abbreviation such as `--output-dir` or
   `--source-dir` is rejected (exit 2) instead of matching a longer flag
-  (#PR).
+  (#333).
 - Exit codes: `2` for every usage or configuration error before any work,
   `1` for a failed run, `130` for Ctrl-C and `143` for SIGTERM. `run-ingestion`
   exited 1 for a missing or invalid `--source-directory`, an
@@ -265,10 +265,10 @@ codes and JSON output*); renamed flags have no alias, so update scripts:
   `prepare-benchmark` exit 2 for a missing input file, `run-prompt-tuning`
   for a missing source directory. The CLIs other than `run-ingestion` now
   exit 143 on SIGTERM; as PID 1 in a container they ignored it until killed
-  (#PR).
+  (#333).
 - Every CLI takes `--output-format json` (one JSON result on stdout, the rest
   on stderr); `run-ingestion` rejects it with `--metrics-sink cloudwatch`
-  (#PR).
+  (#333).
 
 Deployment (CDK stack).
 - The ingestion state machine runs one Fargate task (state `Ingest`, over
@@ -308,7 +308,7 @@ Library API (Python callers and custom backends).
   history across chains built per request, pass them one manager
   (`GraphRAGChain(memory_manager=shared)`). `get_memory_manager` is removed,
   and `MemoryManager.load_history` / `add_turn` / `get_or_create_memory`
-  take a `ConversationKey` (#PR).
+  take a `ConversationKey` (#333).
 - The public API is what `unified_kg_rag` exports (`unified_kg_rag.__all__`):
   `Config`, `get_config`, `DataIngestionPipeline`, `IndexingManager`,
   `GraphRAGChain` with `RAGInput` / `RAGOutput` / `SearchOutput`,
@@ -323,7 +323,7 @@ Library API (Python callers and custom backends).
   `SEARCH` mode) and `stream` no longer yields nothing in `SEARCH` mode.
   Replace `GraphRAGChain(cfg, mode=ChainMode.SEARCH).ainvoke(q)` with
   `GraphRAGChain(cfg).asearch(q)` and read attributes
-  (`out.search_results.results`) instead of keys (#PR).
+  (`out.search_results.results`) instead of keys (#333).
 - Incremental removal no longer plans from registry lineage.
   `DocStatusRecord` and `DocumentLineage` keep only `text_unit_ids`
   (`DocumentLineage` rejects the removed id fields),
