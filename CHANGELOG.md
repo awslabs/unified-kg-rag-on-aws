@@ -43,6 +43,57 @@ details.
 ### Breaking changes
 Configuration. Removed or renamed keys are reported as unknown keys and
 ignored, so check the start-up warnings after upgrading.
+- Every model setting moved into one top-level `models` section: the two
+  tier models (`models.default`, `models.fast`), per-role overrides
+  (`models.roles.<role>`, a model id or a tier name), the one embedding model
+  with its dimension (`models.embedding`; indices, queries, RAGAS and the
+  visualization layout all use it) and the rerank model (`models.rerank`).
+  The provider of each family stays `providers.<llm|embedding|rerank>.kind`.
+  A config that sets a removed key fails validation naming the key that
+  replaces it (unlike other removed keys, which are only warned about); the
+  CLI flags `--llm-model`, `--embedding-model` and `--embedding-dimension`
+  set the new keys. A setting of a provider the config does not select
+  (`providers.llm.temperature` under Bedrock, `aws.bedrock.default_effort`
+  with a local model, ...) is ignored with a WARNING. With `backend: local`,
+  naming another embedding model than the preset's needs its dimension too
+  (the preset's 1024 was silently kept). Library callers read the models
+  through `Config.model_id(ModelRole.X)` (`ModelRole` is exported from
+  `unified_kg_rag`), `tier_model_id`, `model_tier`,
+  `embedding_model_id`, `embedding_dimension` and `rerank_model_id` (#334).
+
+  | Removed key | Replacement |
+  |---|---|
+  | `aws.bedrock.default_model_id` | `models.default` |
+  | `aws.bedrock.fast_model_id` | `models.fast` |
+  | `providers.llm.default_model_id` | `models.default` |
+  | `providers.llm.fast_model_id` | `models.fast` |
+  | `fixing.fixing_model_id` | `models.roles.fixing` |
+  | `processing.chunking.chunking_model_id` | `models.roles.chunking` |
+  | `processing.translation.translation_model_id` | `models.roles.translation` |
+  | `processing.graph_extraction.extraction_model_id` | `models.roles.graph_extraction` |
+  | `processing.graph_extraction.description_summarization.summary_model_id` | `models.roles.description_summary` |
+  | `processing.gleaning.graph_refinement_model_id` | `models.roles.gleaning` |
+  | `processing.claim_extraction.extraction_model_id` | `models.roles.claim_extraction` |
+  | `graph.community_detection.report_generation.report_generation_model_id` | `models.roles.community_report` |
+  | `search.translation_model_id` | `models.roles.query_translation` |
+  | `search.entity_extraction_model_id` | `models.roles.entity_extraction` |
+  | `search.strategy_selection_model_id` | `models.roles.strategy_selection` |
+  | `search.query_rewrite_model_id` | `models.roles.query_rewrite` |
+  | `search.answer_generation_model_id` | `models.roles.answer_generation` |
+  | `search.global_search.community_relevance_model_id` | `models.roles.community_relevance` |
+  | `search.global_search.map_model_id` | `models.roles.global_map` |
+  | `search.global_search.map_reduce_model_id` | `models.roles.global_reduce` |
+  | `search.drift_search.primer_model_id` | `models.roles.drift_primer` |
+  | `search.drift_search.action_model_id` | `models.roles.drift_action` |
+  | `evaluation.evaluation_model_id` | `models.roles.evaluation` |
+  | `providers.embedding.model_id` | `models.embedding.model_id` |
+  | `providers.embedding.dimension` | `models.embedding.dimension` |
+  | `indexing.opensearch.embedding_model_id` | `models.embedding.model_id` |
+  | `indexing.opensearch.embedding_dimension` | `models.embedding.dimension` |
+  | `evaluation.embedding_model_id` | `models.embedding.model_id` |
+  | `graph.visualization.embeddings` | `models.embedding.model_id` |
+  | `providers.rerank.model_id` | `models.rerank` |
+  | `search.reranking.rerank_model_id` | `models.rerank` |
 - `providers.llm.max_retries` / `providers.embedding.max_retries` (retries
   after the first try) are now `max_attempts` (total attempts, default 3)
   (#216). Every retry knob counts total attempts (#151).

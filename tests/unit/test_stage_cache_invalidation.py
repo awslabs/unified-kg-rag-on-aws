@@ -23,6 +23,7 @@ from unified_kg_rag.domain.models import (
     Config,
     Entity,
     LanguageModelId,
+    ModelRole,
     PipelineContext,
     PipelineStageResult,
     PipelineStageStatus,
@@ -100,8 +101,8 @@ def _save_and_list_keys(config: Config, root: Path) -> set[str]:
 
 def _changed_model_config() -> Config:
     config = Config()
-    current = config.processing.graph_extraction.extraction_model_id
-    config.processing.graph_extraction.extraction_model_id = next(
+    current = config.model_id(ModelRole.GRAPH_EXTRACTION)
+    config.models.roles.graph_extraction = next(
         model for model in LanguageModelId if model != current
     )
     return config
@@ -393,15 +394,18 @@ class TestFingerprintScope:
         assert fingerprint(identifier="gr-1", apply_to="all") != baseline
 
     def test_target_language_keys_extraction_with_translation_off(self) -> None:
-        def fingerprint(**translation: object) -> str:
+        def fingerprint(roles: dict | None = None, **translation: object) -> str:
             config = Config.model_validate(
-                {"processing": {"translation": {"enabled": False, **translation}}}
+                {
+                    "processing": {"translation": {"enabled": False, **translation}},
+                    "models": {"roles": roles or {}},
+                }
             )
             return stage_input_fingerprint(config, PipelineStageType.GRAPH_EXTRACTION)
 
         assert fingerprint(target_language="ko") != fingerprint()
         # The translation model is only the (skipped) translator's.
-        assert fingerprint(translation_model_id="amazon.nova-pro") == fingerprint()
+        assert fingerprint({"translation": "amazon.nova-pro"}) == fingerprint()
 
     def test_report_entity_cap_shapes_communities_with_reports_off(self) -> None:
         def fingerprint(**reports: object) -> str:

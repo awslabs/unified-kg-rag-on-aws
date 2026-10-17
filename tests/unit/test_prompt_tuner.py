@@ -353,10 +353,10 @@ class TestSampleAndParse:
     async def test_profile_corpus_uses_the_ingestion_extraction_model(
         self, tuner: PromptTuner, mocker
     ) -> None:
-        # Regression: profiling ran on search.entity_extraction_model_id, the
+        # Regression: profiling ran on models.roles.entity_extraction, the
         # query-time model, instead of the model that does the extraction.
-        tuner.config.processing.graph_extraction.extraction_model_id = "extract-m"
-        tuner.config.search.entity_extraction_model_id = "query-m"
+        tuner.config.models.roles.graph_extraction = "extract-m"
+        tuner.config.models.roles.entity_extraction = "query-m"
         chain = mocker.MagicMock()
         chain.ainvoke = mocker.AsyncMock(return_value='{"domain": "trade"}')
         setup = mocker.patch(

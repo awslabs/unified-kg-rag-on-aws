@@ -11,7 +11,7 @@ import pytest
 from unified_kg_rag.adapters.storage.embedding_settings import (
     resolve_embedding_dimension,
 )
-from unified_kg_rag.domain.models.config import OpenSearchIndexingConfig
+from unified_kg_rag.domain.models import Config
 from unified_kg_rag.ports.model_factory import EmbeddingModelInfo
 from unified_kg_rag.shared import ConfigurationError
 
@@ -30,7 +30,7 @@ class _Factory:
 
 
 def _resolve(info: EmbeddingModelInfo | None, dimension: int | None = None) -> int:
-    config = OpenSearchIndexingConfig(embedding_dimension=dimension)
+    config = Config.model_validate({"models": {"embedding": {"dimension": dimension}}})
     return resolve_embedding_dimension(_Factory(info), config)  # type: ignore[arg-type]
 
 
@@ -52,7 +52,7 @@ def test_unsupported_configured_dimension_is_a_configuration_error() -> None:
 def test_model_without_dimensions_needs_a_configured_one() -> None:
     # It used to fall back to 1024 silently, building an index the model's
     # vectors may not fit.
-    with pytest.raises(ConfigurationError, match="embedding_dimension"):
+    with pytest.raises(ConfigurationError, match="models.embedding.dimension"):
         _resolve(EmbeddingModelInfo())
 
 

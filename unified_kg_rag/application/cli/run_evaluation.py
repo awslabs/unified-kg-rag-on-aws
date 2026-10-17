@@ -179,7 +179,7 @@ class CommandLineInterface:
                 "With two or more strategies, also judge each strategy's answers "
                 "against the first's with an LLM (comprehensiveness, diversity, "
                 "empowerment, directness; both orders) using "
-                "evaluation.evaluation_model_id"
+                "models.roles.evaluation"
             ),
         )
         parser.add_argument(

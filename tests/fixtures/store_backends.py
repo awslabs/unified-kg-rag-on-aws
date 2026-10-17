@@ -94,6 +94,9 @@ def local_store_config() -> Config:
     config = get_config(str(LOCAL_CONFIG)).model_copy(deep=True)
     config.providers.graph.kind = "gremlin"
     config.providers.vector.kind = "opensearch"
+    # The suites embed with HashingEmbeddingFactory, not the preset's model:
+    # the dimension is the one that factory reports, not bge-m3's 1024.
+    config.models.embedding.dimension = None
     if port := os.getenv("LOCAL_STORES_GREMLIN_PORT"):
         config.aws.neptune.port = int(port)
     if port := os.getenv("LOCAL_STORES_OPENSEARCH_PORT"):

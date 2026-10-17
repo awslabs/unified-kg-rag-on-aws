@@ -9,7 +9,13 @@ from pydantic import BaseModel, Field
 from unified_kg_rag.adapters.llm.chain_factory import setup_chain
 from unified_kg_rag.adapters.llm.retry import transient_error_predicate
 from unified_kg_rag.adapters.providers import Providers
-from unified_kg_rag.domain.models import Config, LanguageCode, ModelPurpose, TextUnit
+from unified_kg_rag.domain.models import (
+    Config,
+    LanguageCode,
+    ModelPurpose,
+    ModelRole,
+    TextUnit,
+)
 from unified_kg_rag.domain.prompts import TextTranslationPrompt
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.utils.langchain import BATCH_ITEM_FAILED, BatchProcessor
@@ -95,7 +101,7 @@ class TextUnitTranslator:
         self.translator = setup_chain(
             model_purpose=ModelPurpose.INGESTION,
             factory=self.factory,
-            model_id=self.translation_config.translation_model_id,
+            model_id=self.config.model_id(ModelRole.TRANSLATION),
             prompt_class=TextTranslationPrompt,
             min_output_tokens=TextTranslationPrompt.output_floor(config),
             parser=StrOutputParser(),

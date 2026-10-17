@@ -12,14 +12,12 @@ support it. No boto client is invoked; factories use a stub session.
 
 from __future__ import annotations
 
-from enum import Enum
 from typing import Any
 
 import pytest
 from langchain_core.language_models.fake_chat_models import FakeListChatModel
 from langchain_core.messages import SystemMessage
 from langchain_core.output_parsers import StrOutputParser
-from pydantic import BaseModel
 
 from tests.fixtures.fakes.boto import FakeBotoSession
 from unified_kg_rag.adapters.aws import bedrock as bedrock_mod
@@ -30,7 +28,12 @@ from unified_kg_rag.adapters.aws.bedrock import (
 from unified_kg_rag.adapters.aws.bedrock_models import get_language_model_info
 from unified_kg_rag.adapters.aws.token_counter import BedrockTokenCounter
 from unified_kg_rag.adapters.llm.chain_factory import setup_chain
-from unified_kg_rag.domain.models import Config, LanguageModelId, ModelPurpose
+from unified_kg_rag.domain.models import (
+    Config,
+    LanguageModelId,
+    ModelPurpose,
+    ModelRole,
+)
 from unified_kg_rag.domain.prompts.graph_extraction import GraphRefinementPrompt
 from unified_kg_rag.shared import LanguageModelError
 
@@ -390,7 +393,7 @@ def test_token_manager_disables_count_tokens_for_gpt(mocker) -> None:
 
     counter_cls = mocker.patch.object(bedrock_module, "BedrockTokenCounter")
     config = Config()
-    config.search.answer_generation_model_id = LanguageModelId.GPT_V6_1_SOL
+    config.models.roles.answer_generation = LanguageModelId.GPT_V6_1_SOL
     tm_module.TokenManager(config)
     assert counter_cls.call_args.kwargs["api_supported"] is False
     # No CountTokens client is built for a model that cannot use it.
@@ -400,36 +403,12 @@ def test_token_manager_disables_count_tokens_for_gpt(mocker) -> None:
 # --- defaults ---------------------------------------------------------------
 
 
-def _language_model_defaults(model: BaseModel, path: str = "") -> dict[str, Any]:
-    found: dict[str, Any] = {}
-    for name in type(model).model_fields:
-        value = getattr(model, name)
-        here = f"{path}.{name}" if path else name
-        if name.endswith("_model_id") and here.split(".")[0] not in (
-            "aws",
-            "providers",
-        ):
-            if "embedding" not in name and "rerank" not in name:
-                found[here] = value
-        elif isinstance(value, BaseModel):
-            found.update(_language_model_defaults(value, here))
-        elif isinstance(value, Enum):
-            continue
-    return found
-
-
 def test_defaults_use_sonnet_5_5_and_keep_haiku() -> None:
-    defaults = _language_model_defaults(Config())
-    assert defaults, "expected language-model defaults in Config"
-    values = set(defaults.values())
-    assert LanguageModelId.CLAUDE_V5_SONNET not in values
-    assert values <= {
+    config = Config()
+    values = {config.model_id(role) for role in ModelRole}
+    assert values == {
         LanguageModelId.CLAUDE_V5_5_SONNET,
         LanguageModelId.CLAUDE_V5_5_HAIKU,
     }
-    for key in (
-        "search.answer_generation_model_id",
-        "evaluation.evaluation_model_id",
-        "fixing.fixing_model_id",
-    ):
-        assert defaults[key] == LanguageModelId.CLAUDE_V5_5_SONNET, key
+    for role in (ModelRole.ANSWER_GENERATION, ModelRole.EVALUATION, ModelRole.FIXING):
+        assert config.model_id(role) == LanguageModelId.CLAUDE_V5_5_SONNET, role

@@ -122,13 +122,13 @@ def no_aws(mocker) -> None:
 def _config(tmp_path: Path) -> Config:
     config = Config(
         backend="local",
-        providers={
-            "llm": {
-                "default_model_id": "synthetic-llm",
-                "fast_model_id": "synthetic-fast",
-            },
+        models={
+            "default": "synthetic-llm",
+            "fast": "synthetic-fast",
             "embedding": {"model_id": "synthetic-embed", "dimension": DIM},
-            "rerank": {"model_id": "synthetic-reranker"},
+            "rerank": "synthetic-reranker",
+        },
+        providers={
             "doc_status": {
                 "enabled": True,
                 "sqlite_path": str(tmp_path / "registry" / "doc-status.sqlite3"),
@@ -170,9 +170,7 @@ async def test_local_backend_ingests_and_answers_without_aws(
         retriever_builders={
             RetrieverRole.DOCUMENT: lambda: StoreRetriever(
                 vectors,
-                providers.embedding_factory.get_model(
-                    config.indexing.opensearch.embedding_model_id
-                ),
+                providers.embedding_factory.get_model(config.embedding_model_id),
             )
         },
     )

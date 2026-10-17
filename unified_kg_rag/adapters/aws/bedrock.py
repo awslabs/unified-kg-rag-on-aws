@@ -661,7 +661,7 @@ class BedrockLanguageModelFactory(
         use_converse = is_cross_region or model_info.provider != "anthropic"
         # The tier picks the configured reasoning effort (fast vs default); a
         # caller may pass model_tier explicitly.
-        kwargs.setdefault("model_tier", self.config.aws.bedrock.model_tier(model_id))
+        kwargs.setdefault("model_tier", self.config.model_tier(model_id))
         model_config = self._build_model_config(
             model_info, resolved_model_id, use_converse, **kwargs
         )

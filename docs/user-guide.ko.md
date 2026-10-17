@@ -74,10 +74,10 @@ AWS 모드에만 해당합니다. [로컬 모드](#로컬-모드-aws-없이)에�
 
 | 역할 | 기본 모델 ID | 설정 키 |
 |---|---|---|
-| 기본 계층(추출, gleaning, 커뮤니티 리포트, 답변, 판정 모델) | `anthropic.claude-sonnet-5-5` | `aws.bedrock.default_model_id` |
-| 빠른 계층(청킹, 번역, 요약, 라우팅, map 단계) | `anthropic.claude-haiku-5-5` | `aws.bedrock.fast_model_id` |
-| 임베딩(인덱싱, 평가, 시각화 레이아웃) | `amazon.titan-embed-text-v2:0` | `indexing.opensearch.embedding_model_id`, `evaluation.embedding_model_id` |
-| 재순위화 | `cohere.rerank-v3-5:0` | `search.reranking.rerank_model_id` |
+| 기본 계층(추출, gleaning, 커뮤니티 리포트, 답변, 판정 모델) | `anthropic.claude-sonnet-5-5` | `models.default` |
+| 빠른 계층(청킹, 번역, 요약, 라우팅, map 단계) | `anthropic.claude-haiku-5-5` | `models.fast` |
+| 임베딩(인덱싱, 질의, 평가, 시각화 레이아웃) | `amazon.titan-embed-text-v2:0` | `models.embedding.model_id` |
+| 재순위화 | `cohere.rerank-v3-5:0` | `models.rerank` |
 
 - **리전.** 재순위화 호출을 포함한 모든 Bedrock 호출은 `aws.bedrock.region_name`으로
   가며, 이 값의 기본값은 `aws.region_name`(`us-west-2`)입니다. 이 리전에는 기본 모델
@@ -229,9 +229,9 @@ Bedrock을 쓸 수 있습니다.
 `localhost`로 지정하는 `aws.neptune`과 `aws.opensearch` 키로 연결합니다
 ([컨테이너로 띄운 로컬 저장소](#컨테이너로-띄운-로컬-저장소) 참고).
 
-- **모델.** Bedrock이 아닌 LLM을 쓰면 `providers.llm.default_model_id`(필요하면
-  `fast_model_id`도)가 모든 역할의 Bedrock 계층 모델 두 개를 대신합니다. 역할별
-  `*_model_id`를 지정하면 그 값이 우선합니다. `providers.llm.context_window_size`와
+- **모델.** Bedrock이 아닌 LLM을 쓰면 `models.default`가 필수이고(프리셋이 지정합니다)
+  `models.fast`는 그 값을 따릅니다. `models.roles` 항목을 지정하면 그 역할에서는 그
+  값이 우선합니다. `providers.llm.context_window_size`와
   `max_output_tokens`로 모델 한도를 알려 줍니다(Bedrock 모델은 카탈로그 값을 씁니다).
   컨텍스트 창은 Ollama에 `num_ctx`로 전달됩니다. 프리셋은
   `search.token_manager.max_context_tokens`도 22000으로 설정합니다. 기본 32,768토큰
@@ -240,9 +240,10 @@ Bedrock을 쓸 수 있습니다.
   `context_window_size`를 지정하거나 `kind: bedrock`을 쓰면 모델 창에 맞춰 잘리는 일반
   기본값을 씁니다. OpenAI 호환 서버(vLLM, llama.cpp
   server, LM Studio)에는 `base_url`(`/v1` 루트)과, 필요하면 `api_key`를 지정합니다.
-- **임베딩.** Bedrock이 아닌 공급자에서는 `providers.embedding.model_id`와 `dimension`이
+- **임베딩.** Bedrock이 아닌 공급자에서는 `models.embedding.model_id`와 `dimension`이
   필수입니다. 차원은 벡터 저장소 매핑에 고정되므로 둘 중 하나를 바꾸면 전체를 다시
-  인덱싱해야 합니다.
+  인덱싱해야 합니다. 프리셋의 차원(1024)은 프리셋 모델(`bge-m3`)의 차원이므로 다른
+  모델을 지정하면 차원도 함께 지정해야 합니다.
 - **재순위화.** 크로스 인코더는 첫 질의 때 Hugging Face에서 모델을 내려받습니다.
   `[local]` extra가 없거나 `kind: none`이면 융합 순서를 그대로 씁니다. 이 경우 로그에 한 번
   남고 융합 스팬에 `kg_rag.rerank_enabled=false`로, `metadata.rerank.status`에
@@ -320,10 +321,10 @@ HTTP 4xx) 클라이언트 재시도 후에도 연결할 수 없으면, "찾을 �
 |---|---|
 | `--backend {aws,local}` | `backend`. 프리셋은 여전히 설정에서 비워 둔 키만 채웁니다. `backend: local` 파일에 `--backend aws`를 주면 로컬 프리셋과 같은 값을 모두 버려 해당 키가 AWS 기본값으로 돌아갑니다 |
 | `--llm-provider KIND` | `providers.llm.kind`: `bedrock`, `openai_compatible`, `ollama` |
-| `--llm-model MODEL` | `providers.llm.default_model_id`(Bedrock이 아닌 언어 모델) |
+| `--llm-model MODEL` | `models.default` |
 | `--embedding-provider KIND` | `providers.embedding.kind`: `bedrock`, `openai_compatible`, `ollama` |
-| `--embedding-model MODEL` | `providers.embedding.model_id`(Bedrock이 아닌 임베딩) |
-| `--embedding-dimension N` | `providers.embedding.dimension`(Bedrock이 아닌 임베딩) |
+| `--embedding-model MODEL` | `models.embedding.model_id` |
+| `--embedding-dimension N` | `models.embedding.dimension` |
 | `--rerank-provider KIND` | `providers.rerank.kind`: `bedrock`, `cross_encoder`, `none` |
 | `--model-base-url URL` | `providers.llm.base_url`과 `providers.embedding.base_url` |
 
@@ -441,12 +442,10 @@ WARNING을 남기고 버리므로, 파일을 고치거나 업그레이드한 뒤
 | `aws.profile_name` | `null` | 이름 있는 AWS 프로파일입니다. `null`이면 기본 자격 증명 체인을 씁니다. |
 | `aws.bedrock.region_name` | `null` | Bedrock 모델·임베딩·재순위화 호출을 보내는 리전이며, 가드레일도 이 리전에 있어야 합니다. `null`이면 `aws.region_name`을 씁니다. 모델을 다른 리전에서 활성화한 경우에만 지정하세요. Bedrock으로 가는 경로가 VPC 엔드포인트뿐인 프라이빗 VPC에서는 `null`로 두거나 VPC 리전을 지정하세요. |
 | `aws.bedrock.enable_global_profile` | `true` | 교차 리전(global) 추론 프로파일을 찾아 씁니다. Claude 4.7 이후 모델과 GPT 모델은 프로파일로만 호출할 수 있으므로 켜 두세요. |
-| `aws.bedrock.default_model_id` | `"anthropic.claude-sonnet-5-5"` | 기본 계층 역할 전체가 쓰는 모델입니다(모델 선택 참고 사항 참고). |
-| `aws.bedrock.fast_model_id` | `"anthropic.claude-haiku-5-5"` | 빠른 계층 역할 전체가 쓰는 모델입니다. |
 | `aws.bedrock.default_max_output_tokens` | `16384` | 요청마다 보내는 `max_tokens`이며, 모델 최대값을 넘으면 최대값으로 맞춥니다. 답변이 잘리면(`stopReason: max_tokens`) 올리세요. `null`이면 모델 최대값을 보냅니다. |
-| `aws.bedrock.default_effort` | `"high"` | `default_model_id` 호출(adaptive thinking을 쓰는 Claude 모델과 GPT 모델)의 추론 강도입니다. `low`, `medium`, `high`, `xhigh`, `max` 중 하나이며, 낮추면 비용과 지연 시간이 줄어듭니다. |
-| `aws.bedrock.ingestion_effort` | `null` | 기본 계층 수집 호출(그래프 추출, gleaning, 주장 추출, 커뮤니티 리포트. 출력 수정기는 `fixing.fixing_model_id`가 기본 계층 모델일 때만)의 추론 강도입니다. `null`이면 `default_effort`를 따릅니다. 질의 시점의 추론 강도는 그대로 두고 수집 비용만 줄이려면 낮추세요(예: `"medium"`). 빠른 계층 수집 호출은 `fast_effort`를 그대로 씁니다. |
-| `aws.bedrock.fast_effort` | `"low"` | `fast_model_id`가 `default_model_id`와 다를 때 `fast_model_id` 호출의 추론 강도입니다. 기본 제공 Claude Haiku 5.5는 adaptive thinking을 하므로 이 값이 추론 강도를 정합니다. 추론하지 않는 빠른 모델에는 영향이 없습니다. |
+| `aws.bedrock.default_effort` | `"high"` | 기본 계층 모델 호출(adaptive thinking을 쓰는 Claude 모델과 GPT 모델)의 추론 강도입니다. `low`, `medium`, `high`, `xhigh`, `max` 중 하나이며, 낮추면 비용과 지연 시간이 줄어듭니다. |
+| `aws.bedrock.ingestion_effort` | `null` | 기본 계층 수집 호출(그래프 추출, gleaning, 주장 추출, 커뮤니티 리포트. 출력 수정기는 `models.roles.fixing`가 기본 계층 모델일 때만)의 추론 강도입니다. `null`이면 `default_effort`를 따릅니다. 질의 시점의 추론 강도는 그대로 두고 수집 비용만 줄이려면 낮추세요(예: `"medium"`). 빠른 계층 수집 호출은 `fast_effort`를 그대로 씁니다. |
+| `aws.bedrock.fast_effort` | `"low"` | 빠른 계층 모델이 기본 계층 모델과 다를 때 빠른 계층 모델 호출의 추론 강도입니다. 기본 제공 Claude Haiku 5.5는 adaptive thinking을 하므로 이 값이 추론 강도를 정합니다. 추론하지 않는 빠른 모델에는 영향이 없습니다. |
 | `aws.bedrock.enable_1m_context` | `false` | 1M 컨텍스트 창이 베타인 모델에서 1M 창을 씁니다(추가 요금). Claude 5는 1M 창이 기본입니다. |
 | `aws.bedrock.model_overrides` | `{}` | 패키지가 모르는 언어 모델의 기능 정보 레코드입니다(모델 선택 참고 사항 참고). 임베딩 모델과 재순위화 모델은 정해진 목록에서만 고릅니다. |
 | `aws.bedrock.guardrail.identifier` | `null` | Bedrock 가드레일 ID 또는 ARN입니다. 지정하면 가드레일이 켜집니다. |
@@ -513,23 +512,41 @@ WARNING을 남기고 버리므로, 파일을 고치거나 업그레이드한 뒤
 
 #### 모델 선택 참고 사항
 
-모든 LLM 역할은 두 계층 중 하나에 속합니다. 추론 비중이 큰 역할은
-`aws.bedrock.default_model_id`, 가벼운 역할은 `aws.bedrock.fast_model_id`를 쓰므로
-파이프라인 전체의 모델을 한 줄로 바꿀 수 있습니다. 역할별 `*_model_id` 키를 지정하면
-계층 설정보다 우선합니다.
+최상위 `models` 섹션이 역할마다 어떤 모델을 쓸지 정합니다. 각 모델 계열의 공급자는
+`providers.llm`, `providers.embedding`, `providers.rerank`의 `kind`이며, 모델 ID는 그
+공급자를 기준으로 검사합니다.
 
-| 계층 | 역할(`*_model_id` 키) |
+| 키 | 기본값 | 설명 |
+|---|---|---|
+| `models.default` | `null` = Bedrock에서는 `anthropic.claude-sonnet-5-5` | 기본 계층 모델입니다. 다른 LLM 공급자에서는 필수입니다. |
+| `models.fast` | `null` = Bedrock에서는 `anthropic.claude-haiku-5-5` | 빠른 계층 모델입니다. 다른 공급자에서 `null`이면 기본 계층 모델을 씁니다. |
+| `models.roles.<역할>` | `null`(역할의 계층) | 모델 ID, 또는 역할을 다른 계층으로 옮기는 `default` / `fast`입니다. |
+| `models.embedding.model_id` | `null` = Bedrock에서는 `amazon.titan-embed-text-v2:0` | 하나뿐인 임베딩 모델입니다. 인덱스, 질의, RAGAS, 시각화 레이아웃이 모두 이 모델을 씁니다. 다른 공급자에서는 필수이며, 바꾸면 다시 인덱싱해야 합니다. |
+| `models.embedding.dimension` | `null` = Bedrock 모델의 최대 차원 | 인덱스 매핑에 고정됩니다(Titan Embed V2는 256, 512도 지원). 다른 공급자에서는 필수입니다. |
+| `models.rerank` | `null` = Bedrock에서는 `cohere.rerank-v3-5:0` | 재순위화 모델입니다. `cross_encoder`에서는 sentence-transformers 모델 이름이 필수입니다. |
+
+모든 LLM 역할은 두 계층 중 하나에서 실행되므로 파이프라인 전체의 모델을 한 줄로 바꿀
+수 있습니다. `models.roles` 항목은 계층 설정보다 우선합니다.
+
+| 계층 | 역할 |
 | --- | --- |
-| `default` | `fixing.fixing_model_id`, `processing.graph_extraction.extraction_model_id`, `processing.gleaning.graph_refinement_model_id`, `processing.claim_extraction.extraction_model_id`, `graph.community_detection.report_generation.report_generation_model_id`, `search.{entity_extraction,answer_generation}_model_id`, `evaluation.evaluation_model_id` |
-| `fast` | `processing.chunking.chunking_model_id`, `processing.translation.translation_model_id`, `processing.graph_extraction.description_summarization.summary_model_id`, `search.{translation,strategy_selection,query_rewrite}_model_id`, `search.global_search.{community_relevance,map_reduce,map}_model_id`, `search.drift_search.{primer,action}_model_id` |
+| `default` | `fixing`, `graph_extraction`, `gleaning`, `claim_extraction`, `community_report`, `entity_extraction`, `answer_generation`, `evaluation` |
+| `fast` | `chunking`, `translation`, `description_summary`, `query_translation`, `strategy_selection`, `query_rewrite`, `community_relevance`, `global_map`, `global_reduce`, `drift_primer`, `drift_action` |
 
 ```yaml
-aws:
-  bedrock:
-    default_model_id: "openai.gpt-6-sol"    # every default-tier role
-search:
-  answer_generation_model_id: "anthropic.claude-opus-5-5"  # one role pinned
+models:
+  default: "openai.gpt-6-sol"          # every default-tier role
+  roles:
+    answer_generation: "anthropic.claude-opus-5-5"   # one role pinned
+    query_rewrite: default                          # moved to the other tier
 ```
+
+모델 설정은 예전에 기능별 섹션에 흩어져 있었습니다(`aws.bedrock.default_model_id`,
+`search.answer_generation_model_id`, `indexing.opensearch.embedding_model_id` 등). 이런
+키가 남아 있는 설정은 대신할 `models` 키를 알려 주며 검증에 실패합니다(전체 표는
+CHANGELOG에 있습니다). 선택하지 않은 공급자의 설정(언어 모델이 Bedrock인데
+`providers.llm.temperature`를 지정했거나, 로컬 모델에서 `aws.bedrock.default_effort`를
+지정한 경우)은 무시되며 로드할 때 WARNING을 남깁니다.
 
 선별된 모델 전체 목록, Claude 세대별·OpenAI GPT 모델별 요청 차이, 프롬프트 캐싱,
 패키지가 모르는 모델을 기술하는 방법(`aws.bedrock.model_overrides`)은
@@ -626,7 +643,7 @@ LLM 단계는 Bedrock I/O가 병목이므로 동시성을 CPU 수보다 훨씬 �
 | `indexing.max_document_attempts` | `3` | 증분 실행에서 문서의 바뀌지 않은 내용을 인덱싱하기 시작하고 끝내지 못한(실행이 죽은) 실행이 연속으로 이 횟수에 이르면 문서를 격리합니다. 내용이나 추출 설정이 바뀔 때까지 건너뜁니다(§5, *격리된 문서*). |
 | `indexing.lease_seconds` | `300` | 증분 실행에서 인덱스 네임스페이스 쓰기 임대의 기간입니다. 실행은 끝날 때까지 임대를 유지하며 기간의 3분의 1마다 갱신하고, 죽은 실행의 임대는 늦어도 이 시간 뒤에 만료됩니다(§5, *동시 실행*). 최솟값은 `10`입니다. |
 | `indexing.retire_source_scopes` | `[]` | 증분 실행에서 이전 소스 범위(옮기기 전의 절대 소스 디렉터리나 이전 `source_scope` 값)를 지정하면, 실행 인덱스 접미사에서 그 범위의 레코드를 삭제된 문서로 처리해 그 문서에만 속한 내용을 지웁니다. 실행 자신의 범위는 지정할 수 없습니다. `--retire-source-scope`로 값을 더할 수 있습니다(§5 삭제 범위 참고). |
-| `indexing.opensearch.embedding_model_id` | `"amazon.titan-embed-text-v2:0"` | 임베딩 모델이며, 정해진 목록에서 고릅니다(모델 선택 참고 사항 참고). 바꾸면 다시 인덱싱해야 합니다. |
+| `models.embedding.model_id` | `"amazon.titan-embed-text-v2:0"` | 임베딩 모델이며, 정해진 목록에서 고릅니다(모델 선택 참고 사항 참고). 바꾸면 다시 인덱싱해야 합니다. |
 | `indexing.opensearch.build_relationship_vector_index` | `true` | 관계 벡터 인덱스입니다. LightRAG `mix`/`hybrid`(고수준 키워드, 연결 관계)와 GraphRAG `local`(관계 섹션, 연결 고리 관계)이 조회하고, `simple`/`drift`는 다른 인덱스와 함께 검색합니다. `false`로 두면 관계 임베딩을 만들지 않는 대신 이 기능을 쓰지 못합니다. |
 | `indexing.opensearch.persist_embedding_cache` | `false` | 임베딩 캐시를 S3에 저장해, 바뀌지 않은 텍스트를 실행마다 다시 임베딩하지 않습니다. `aws.s3.bucket_name`이 필요합니다. |
 | `indexing.opensearch.language_analyzers` | `{en: english, ko: nori}` | 언어 코드별 텍스트 분석기입니다. 목록에 없는 언어는 `default_analyzer`(`standard`)를 씁니다. |
@@ -651,7 +668,7 @@ LLM 단계는 Bedrock I/O가 병목이므로 동시성을 CPU 수보다 훨씬 �
 | `search.fusion.rrf_k` | `60` | RRF 상수 `k`입니다. |
 | `search.fusion.fusion_weights` | `{}`(모든 버킷 `1.0`) | 소스 버킷별 가중치입니다. `rrf`와 `weighted` 모두에서 각 버킷의 기여도에 곱합니다. 버킷 이름은 템플릿에 있습니다. |
 | `search.fusion.diversity_lambda` | `0.5` | MMR 균형값입니다. `1.0`은 관련도만, `0.0`은 다양성을 최대로 반영합니다. |
-| `search.reranking.enabled` | `true` | 융합 결과를 `rerank_model_id`(`cohere.rerank-v3-5:0`)로 재순위화합니다. |
+| `search.reranking.enabled` | `true` | 융합 결과를 `models.rerank`(`cohere.rerank-v3-5:0`)로 재순위화합니다. |
 | `search.reranking.top_k` | `100` | 재순위화 모델에 보내는 후보 수입니다. |
 | `search.reranking.required` | `false` | `true`이면 재순위화가 켜져 있는데 재순위화 모델을 만들 수 없거나, 재순위화 호출이 실패하거나, 쓸 수 있는 결과를 돌려주지 않을 때 질의를 `RerankModelError`로 실패시킵니다. `false`이면 이런 경우 융합 순서를 유지합니다(초기화 실패는 ERROR로 기록). 재순위화가 꺼져 있거나 `providers.rerank.kind`가 `none`이면 효과가 없습니다. [재순위화 상태](#재순위화-상태) 참고. |
 | `search.lightrag_search.kg_stream_top_k` | `40` | LightRAG 엔티티·관계 벡터 질의의 폭입니다(요청의 `top_k`에 대한 하한). |
@@ -659,7 +676,7 @@ LLM 단계는 Bedrock I/O가 병목이므로 동시성을 CPU 수보다 훨씬 �
 | `search.lightrag_search.enable_graph_expansion` | `false` | `mix`/`hybrid`에서 일치한 항목을 Neptune으로 추가 확장합니다. |
 | `search.global_search.community_depth` | `2` | `global`이 map을 적용하는 커뮤니티 계층의 단면입니다. MS GraphRAG의 `community_level`처럼 루트부터 세며(그쪽 기본값도 2), 이 깊이의 모든 커뮤니티와 그보다 위에서 끝나는 리프를 포함하므로 엔티티마다 한 번씩 포함됩니다. `0`은 루트 커뮤니티(가장 적고 넓은 리포트), 큰 값은 리프(가장 많고 좁은 리포트)입니다. |
 | `search.global_search.max_reports_per_level` | `100` | 단면 하나(또는 동적 선택의 한 단계)에서 쓰는 리포트 수의 상한입니다. 단면이 더 크면 질의와 가장 비슷한 리포트만 쓰며, 검색 메타데이터에 표시합니다(`global_level_capped`). `indexing.opensearch.max_query_size`를 넘을 수 없습니다. map에 넣는 리포트마다 map 단계 입력 토큰이 듭니다. |
-| `search.global_search.use_dynamic_selection` | `false` | 고정 단면 대신 MS GraphRAG 동적 커뮤니티 선택을 씁니다. `community_relevance_model_id`로 루트 리포트를 평가하고, 관련 있는 리포트의 자식으로 `community_depth`까지 내려간 뒤 관련 리포트에 map을 적용합니다. 평가하는 리포트마다 fast 모델 호출이 1회 듭니다. |
+| `search.global_search.use_dynamic_selection` | `false` | 고정 단면 대신 MS GraphRAG 동적 커뮤니티 선택을 씁니다. `models.roles.community_relevance`로 루트 리포트를 평가하고, 관련 있는 리포트의 자식으로 `community_depth`까지 내려간 뒤 관련 리포트에 map을 적용합니다. 평가하는 리포트마다 fast 모델 호출이 1회 듭니다. |
 | `search.global_search.relevance_threshold` | `0.2` | 동적 선택에서 남기는 리포트의 최소 평가 점수(1-10 점수 / 10)입니다. 0.2는 MS GraphRAG의 임계값(0-5 척도의 1)에 해당합니다. 이 값보다 낮은 리포트는 하위 트리 전체가 빠집니다. |
 | `search.global_search.map_context_tokens` | `12000` | map 단계 호출 하나에 넣는 리포트 토큰 수입니다(MS GraphRAG의 `data_max_tokens`). map 호출은 `processing.max_concurrency`개씩 동시에 실행합니다. |
 | `search.global_search.max_map_reduce_tokens` | `8000` | reduce 단계에 넣는, 순위를 매긴 핵심 내용의 토큰 예산입니다. |
@@ -667,7 +684,7 @@ LLM 단계는 Bedrock I/O가 병목이므로 동시성을 CPU 수보다 훨씬 �
 | `search.global_search.text_unit_slots` | `0` | 핵심 내용의 근거가 된 커뮤니티의 텍스트 단위를 재순위화해 컨텍스트에 더하는 개수입니다. `0`이면 더하지 않으며, MS GraphRAG global search와 같습니다. 청크를 함께 넣으면 핵심 내용과 리포트에 필요한 답변 예산 대부분을 청크가 차지했습니다. |
 | `search.local_search.entity_frequency_threshold` | `20` | 그래프 확장으로 얻은 엔티티 중 이보다 많은 텍스트 단위에 나오는 것(너무 일반적인 것)을 버립니다. 질의가 직접 찾은 엔티티는 항상 남깁니다. |
 | `search.local_search.include_bridge_relationships` | `true` | 확장된 엔티티에 연결된 관계도 가져오며, 검색된 두 엔티티를 잇는 간선(다중 홉 연결)을 먼저 둡니다. 관계 인덱스가 필요합니다. `false`이면 관계 벡터 질의만 씁니다. |
-| `search.drift_search.k_followups` | `20` | DRIFT primer가 읽는 커뮤니티 리포트 수이자, 라운드마다 실행하는 후속 질의 수입니다(MS GraphRAG `drift_k_followups`). 후속 질의마다 local search 1회와 `action_model_id` 호출 1회가 듭니다. |
+| `search.drift_search.k_followups` | `20` | DRIFT primer가 읽는 커뮤니티 리포트 수이자, 라운드마다 실행하는 후속 질의 수입니다(MS GraphRAG `drift_k_followups`). 후속 질의마다 local search 1회와 `models.roles.drift_action` 호출 1회가 듭니다. |
 | `search.drift_search.primer_folds` | `5` | primer 리포트를 나눠 담는 primer 호출 수입니다. 호출마다 중간 답변과 후속 질의를 만듭니다. |
 | `search.drift_search.n_depth` | `3` | 후속 질의 라운드 수입니다. 질의당 local search가 최대 `k_followups * n_depth`회 실행됩니다. |
 | `search.drift_search.local_context_tokens` | `12000` | 후속 질의 하나에 답할 때 쓰는 컨텍스트 예산입니다. |
@@ -683,7 +700,7 @@ LLM 단계는 Bedrock I/O가 병목이므로 동시성을 CPU 수보다 훨씬 �
 > **컨텍스트 예산.** `30000`은 upstream LightRAG의 전체 컨텍스트 예산과 같습니다(MS
 > GraphRAG는 12000). 1M 토큰 창에서 도출한 예산(약 785K)은 한도에 닿는 일이 없어서
 > 유형별 예산도 아무것도 잘라 내지 못합니다. 이 값은 항상
-> `search.answer_generation_model_id`가 출력 예약분
+> `models.roles.answer_generation`가 출력 예약분
 > (`aws.bedrock.default_max_output_tokens`)과 함께 받을 수 있는 크기로 줄이며, 줄일
 > 때는 경고를 남깁니다. `null`이면 그 모델의 컨텍스트 창에서 출력 예약분과 여유 비율을
 > 뺀 값으로 예산을 도출합니다. 1M이 베타인 모델에서는 `aws.bedrock.enable_1m_context`를
@@ -1148,7 +1165,7 @@ RRF + Bedrock 재순위화)를 거치며, 검색 알고리즘만 다릅니다.
 | `local` | 특정 엔티티나 개념에 관한 자세한 질문 | 질의에서 엔티티를 추출 → Neptune 그래프 순회로 이웃과 관계를 찾음 → 벡터·키워드 결과와 결합합니다. 켜져 있으면 주장(covariate)을 넣습니다. |
 | `global` | "주요 주제는 무엇인가" 같은 넓은 주제 질문 | MS GraphRAG global search입니다. 계층의 한 단면(`search.global_search.community_depth`, 기본값은 루트부터 2)에 속한 커뮤니티 리포트 전체를 토큰 크기 배치로 나눠 fast 모델로 점수 매긴 핵심 내용으로 만들고, 순위를 매긴 핵심 내용으로 답합니다. 선택 사항인 동적 선택은 대신 루트부터 계층을 따라 내려갑니다. 비용은 단면 크기에 비례합니다(리포트 `map_context_tokens`마다 map 호출 1회). 상위 수준 종합에 가장 적합합니다. |
 | `drift` | 큰 그림과 거기서 몇 단계 떨어진 구체적 사실이 함께 필요한 여러 부분으로 된 질문 | MS GraphRAG DRIFT search입니다. 가상 답변(HyDE)과 가장 비슷한 커뮤니티 리포트로 중간 답변과 후속 질의를 만들고, 후속 질의마다 local search를 실행해 fast 모델로 답하며 새 후속 질의를 얻는 과정을 `n_depth` 라운드 반복합니다. 답변 모델이 순위를 매긴 중간 답변과 그 근거를 종합합니다. 질의당 LLM 호출이 전략 중 가장 많습니다(약 `primer_folds + k_followups * n_depth`회). |
-| `auto` | 어떤 전략이 맞는지 모를 때, 일반 용도(기본값) | LLM 라우터(`search.strategy_selection_model_id`)가 질의를 보고 `search.auto_routable_strategies`(기본 local, mix, global, drift) 중 가장 알맞은 전략을 고릅니다. |
+| `auto` | 어떤 전략이 맞는지 모를 때, 일반 용도(기본값) | LLM 라우터(`models.roles.strategy_selection`)가 질의를 보고 `search.auto_routable_strategies`(기본 local, mix, global, drift) 중 가장 알맞은 전략을 고릅니다. |
 
 **LightRAG(이중 레벨 키워드):**
 
@@ -1303,7 +1320,7 @@ run-rag --interactive --conversation-id my-session --config-path config.yaml
 쓰세요. 메모리 한도는 `memory` 설정 섹션에 있습니다.
 
 검색 전에는 후속 질문을 대화 이력으로 독립된 질문으로 다시 씁니다(이력이 있는 턴마다
-`search.query_rewrite_model_id` 호출 한 번, 프롬프트 재정의 키 `query_rewrite`). 그래서
+`models.roles.query_rewrite` 호출 한 번, 프롬프트 재정의 키 `query_rewrite`). 그래서
 "그 회사의 공급업체는?" 같은 후속 질문도 앞선 턴의 엔티티 이름이 들어간 질문으로
 라우팅, 검색, 답변됩니다. 재작성은 최근 `memory.max_messages_per_conversation`개
 메시지를 읽고, 앞선 답변은 각각 앞 1,000자까지만 씁니다. `use_memory`로 이력을 찾으면
@@ -1359,8 +1376,7 @@ aws:
   레코드를 정하는 설정(모델, 추출·글리닝·주장 설정, 대상 언어, 내장 템플릿을 포함한
   프롬프트 템플릿)이 그대로이면(예: 해소나 청킹 설정만 바꾼 경우) 청크는 저장된
   레코드를 씁니다.
-- **임베딩 모델이나 차원 변경**(`indexing.opensearch.embedding_model_id` /
-  `embedding_dimension`, 로컬 모드에서는 `providers.embedding.model_id` /
+- **임베딩 모델이나 차원 변경**(`models.embedding.model_id` /
   `dimension`): 증분 실행은 새 문서와 변경된 문서만 임베딩하므로 한 인덱스에 두
   모델의 벡터가 섞입니다. OpenSearch 인덱스마다 만들 때 쓴 모델과 차원을 기록하고,
   인덱싱 단계는 그 값이 이번 실행과 다르면 아무것도 쓰기 전에 멈춥니다.
@@ -1735,7 +1751,7 @@ run-eval --data-path s3://my-bucket/eval/my_eval_data.json \
   프래그먼트를 뺀 값), 모델 ID(답변 생성, 평가 판정 모델·임베딩, 그리고
   `judge_is_answer_model`. LLM 판정 모델은 자기 출력을 선호하므로 판정 모델이 답변
   모델과 같으면(기본값. 둘 다 `default` 티어) 판정 점수가 부풀려집니다. 시스템을
-  비교할 때는 `evaluation.evaluation_model_id`를 다른 모델로 지정하세요), 패키지 버전,
+  비교할 때는 `models.roles.evaluation`를 다른 모델로 지정하세요), 패키지 버전,
   git 커밋(`git_sha`. 추적 파일이 커밋과 다르면 `git_dirty`도 기록. 패키지를 해당
   커밋을 추적하는 체크아웃에서 실행하지 않으면 둘 다 `null`), `retrieval_config_sha256`,
   `index`, `library_versions`(ragas, langchain*), 데이터셋(경로와 파일 sha256,
@@ -1780,7 +1796,7 @@ run-eval --data-path s3://my-bucket/eval/my_eval_data.json \
   10%p 차이를 질의 50개에서는 15%, 200개에서는 59%의 실행에서 찾아냈습니다(구간이 참값을
   포함한 비율은 95-98%). 그러니 수백 개 질의로 비교하세요.
 - `pairwise_vs_baseline.<s>`(`--pairwise-judge` 사용 시) — GraphRAG / LightRAG 논문의
-  맞비교 LLM 판정입니다. `evaluation.evaluation_model_id`로 포괄성(comprehensiveness),
+  맞비교 LLM 판정입니다. `models.roles.evaluation`로 포괄성(comprehensiveness),
   다양성(diversity), 이해 도움(empowerment), 직접성(directness)을 판정합니다(프롬프트:
   `custom_prompts.pairwise_comparison_*`). 판정 모델은 먼저 읽은 답변을 선호하므로 쌍마다
   순서를 바꿔 두 번 판정하고, 두 순서가 같은 답변을 고른 기준만 승리로 셉니다.
@@ -1872,8 +1888,7 @@ spring 레이아웃)도 이 노드만으로 계산합니다. 파일에는
   `"layout_degraded": true`를 기록합니다. 차원 축소가 실패해도 `ignore_errors`와
   관계없이 같은 방식으로 대체합니다(시드를 고정한 spring 레이아웃,
   `layout_degraded: true`).
-- `embeddings.bedrock_model_id`는 지원하는 임베딩 모델 ID 중 하나여야 하며, 그 밖의
-  값은 설정을 읽을 때 거부합니다.
+- 노드 임베딩은 인덱스와 같은 임베딩 모델과 차원(`models.embedding`)을 씁니다.
 - 대화형 그래프의 간선 두께와 불투명도는 그래프 자체의 가중치 범위에 맞춰
   조정합니다(로그 스케일 후 min-max 정규화). 그래서 1-10 강도 점수와 병합된 개수를
   모두 구분할 수 있습니다.
@@ -1909,7 +1924,7 @@ run-visualization --data-path visualization_data.json --renderers interactive --
 ## 8. 프롬프트 튜닝 (`run-prompt-tuning`)
 
 디렉터리에서 문서를 표본으로 뽑고 설정된 언어 모델
-(`processing.graph_extraction.extraction_model_id`)로 코퍼스 특성(도메인, 언어,
+(`models.roles.graph_extraction`)로 코퍼스 특성(도메인, 언어,
 페르소나, 엔티티 유형)을 분석한 뒤, 검토해서 `config.yaml`에 합칠 수 있는 도메인 맞춤
 `custom_prompts` YAML 조각을 씁니다.
 

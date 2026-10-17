@@ -8,7 +8,7 @@ from typing import Any, ClassVar
 from pydantic import BaseModel, Field
 
 from unified_kg_rag.adapters.providers import Providers
-from unified_kg_rag.domain.models import Config, RetrievalResult
+from unified_kg_rag.domain.models import Config, ModelRole, RetrievalResult
 from unified_kg_rag.domain.prompts import AnswerGenerationPrompt
 from unified_kg_rag.ports.model_factory import (
     LanguageModelInfo,
@@ -101,7 +101,7 @@ class TokenManager:
         # backend's counter) instead of each building its own.
         providers = Providers.resolve(config, providers)
 
-        answer_model_id = config.search.answer_generation_model_id
+        answer_model_id = config.model_id(ModelRole.ANSWER_GENERATION)
         self._enable_1m_context = config.aws.bedrock.enable_1m_context
         answer_model_info = providers.llm_model_info(answer_model_id)
         self._token_counter = providers.token_counter(

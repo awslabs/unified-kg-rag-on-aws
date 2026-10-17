@@ -34,14 +34,14 @@ Embedding and rerank model ids work differently: with the Bedrock providers
 (the default `providers.embedding.kind` / `providers.rerank.kind`) they are a
 closed list, and `model_overrides` does not apply to them. With a local
 provider any model name is accepted (see the user guide's
-[Local mode](./user-guide.md#local-mode-no-aws)). `embedding_model_id` accepts
+[Local mode](./user-guide.md#local-mode-no-aws)). `models.embedding.model_id` accepts
 `amazon.titan-embed-text-v2:0`, `amazon.titan-embed-text-v1`,
 `cohere.embed-v4:0`, `cohere.embed-english-v3` or
-`cohere.embed-multilingual-v3`; `rerank_model_id` accepts
+`cohere.embed-multilingual-v3`; `models.rerank` accepts
 `cohere.rerank-v3-5:0` or `amazon.rerank-v1:0`. Any other id fails config
 validation. The embedding dimension is written into the OpenSearch vector
 mappings and checked against the model's record, so an unknown model has no
-safe default; `indexing.opensearch.embedding_dimension` picks among the
+safe default; `models.embedding.dimension` picks among the
 dimensions a listed model supports (Titan Embed V2: 256, 512 or 1024; unset
 uses the largest). Adding a model is a code change: a member in
 `EmbeddingModelId`/`RerankModelId` (`domain/models/config.py`) and a record in
@@ -77,8 +77,8 @@ Four things differ for Claude 4.7-and-later models:
 - **`effort` replaces the thinking token budget.** `thinking_budget_tokens` is
   ignored for these models (the old `budget_tokens` request shape is rejected
   with a 400); set `bedrock.default_effort` / `bedrock.fast_effort` instead.
-  A call uses `fast_effort` when its model is `fast_model_id` (and that differs
-  from `default_model_id`), otherwise `default_effort`; the shipped fast model,
+  A call uses `fast_effort` when its model is the fast tier's (`models.fast`,
+  when that differs from `models.default`), otherwise `default_effort`; the shipped fast model,
   Claude Haiku 5.5, thinks adaptively, so `fast_effort` (default `low`) sets
   how much it reasons on fast-tier calls. A default-tier ingestion call uses
   `ingestion_effort` instead when it is set. Claude Sonnet 5.5 always thinks, so `--enable-thinking` is a

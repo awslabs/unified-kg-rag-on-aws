@@ -33,6 +33,7 @@ from unified_kg_rag.domain.models import Config
 from unified_kg_rag.domain.models.provider_config import strip_backend_preset
 from unified_kg_rag.ports.guardrail import ContentGuardPort
 from unified_kg_rag.shared import ConfigurationError, get_logger
+from unified_kg_rag.shared.config import merge_over
 
 if TYPE_CHECKING:
     import boto3
@@ -129,31 +130,33 @@ def with_provider_overrides(
     caller passes overrides through the input (as ``ConfigLoader`` does with
     the environment), not by assignment.
     """
-    providers: dict[str, dict[str, Any]] = {}
+    overrides: dict[str, dict[str, Any]] = {}
 
-    def put(section: str, key: str, value: Any) -> None:
-        if value is not None:
-            providers.setdefault(section, {})[key] = value
+    def put(path: str, value: Any) -> None:
+        if value is None:
+            return
+        *parents, key = path.split(".")
+        node = overrides
+        for part in parents:
+            node = node.setdefault(part, {})
+        node[key] = value
 
-    put("llm", "kind", llm_kind)
-    put("llm", "default_model_id", llm_model_id)
-    put("llm", "base_url", base_url)
-    put("embedding", "kind", embedding_kind)
-    put("embedding", "model_id", embedding_model_id)
-    put("embedding", "dimension", embedding_dimension)
-    put("embedding", "base_url", base_url)
-    put("rerank", "kind", rerank_kind)
-    if backend is None and not providers:
+    put("providers.llm.kind", llm_kind)
+    put("providers.llm.base_url", base_url)
+    put("providers.embedding.kind", embedding_kind)
+    put("providers.embedding.base_url", base_url)
+    put("providers.rerank.kind", rerank_kind)
+    put("models.default", llm_model_id)
+    put("models.embedding.model_id", embedding_model_id)
+    put("models.embedding.dimension", embedding_dimension)
+    if backend is None and not overrides:
         return config
     data = config.model_dump(exclude_unset=True)
     if backend is not None:
         if backend != config.backend.value:
             data = strip_backend_preset(data, config.backend)
         data["backend"] = backend
-    merged = data.get("providers") or {}
-    for section, values in providers.items():
-        merged[section] = {**(merged.get(section) or {}), **values}
-    data["providers"] = merged
+    data = merge_over(data, overrides)
     try:
         return Config.model_validate(data)
     except ValueError as e:

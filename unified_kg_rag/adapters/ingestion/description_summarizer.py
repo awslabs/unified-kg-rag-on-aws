@@ -34,7 +34,13 @@ from unified_kg_rag.adapters.llm.chain_factory import setup_chain
 from unified_kg_rag.adapters.llm.retry import transient_error_predicate
 from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
 from unified_kg_rag.adapters.providers import Providers
-from unified_kg_rag.domain.models import Config, Entity, ModelPurpose, Relationship
+from unified_kg_rag.domain.models import (
+    Config,
+    Entity,
+    ModelPurpose,
+    ModelRole,
+    Relationship,
+)
 from unified_kg_rag.domain.prompts import DescriptionSummarizationPrompt
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.utils import compute_hash
@@ -138,7 +144,7 @@ class DescriptionSummarizer:
         self.summarizer = setup_chain(
             model_purpose=ModelPurpose.INGESTION,
             factory=self.factory,
-            model_id=self.summarization_config.summary_model_id,
+            model_id=self.config.model_id(ModelRole.DESCRIPTION_SUMMARY),
             prompt_class=DescriptionSummarizationPrompt,
             parser=StrOutputParser(),
             custom_prompts=self.config.custom_prompts,
@@ -146,7 +152,7 @@ class DescriptionSummarizer:
         # Local estimate (scaled for the model) rather than the CountTokens
         # API: packing counts every line of every over-long description.
         self.token_counter = self.providers.token_counter(
-            self.summarization_config.summary_model_id, api_supported=False
+            self.config.model_id(ModelRole.DESCRIPTION_SUMMARY), api_supported=False
         )
 
     @cached_property
@@ -158,7 +164,7 @@ class DescriptionSummarizer:
         model has failed by now.
         """
         window = self.factory.get_model_info(
-            self.summarization_config.summary_model_id
+            self.config.model_id(ModelRole.DESCRIPTION_SUMMARY)
         ).effective_context_window()
         available = (window - self.summarization_config.max_summary_tokens) // 2
         return min(MAX_INPUT_TOKENS, max(_MIN_INPUT_TOKENS, available))

@@ -53,9 +53,7 @@ def test_bedrock_embedding_roundtrip(live_config) -> None:
         config=live_config,
         region_name=live_config.aws.bedrock_region,
     )
-    model = factory.get_model(
-        model_id=live_config.indexing.opensearch.embedding_model_id
-    )
+    model = factory.get_model(model_id=live_config.embedding_model_id)
     vector = model.embed_query("knowledge graph retrieval augmented generation")
     assert isinstance(vector, list) and len(vector) > 0
 

@@ -72,10 +72,10 @@ defaults; a model you configure instead replaces the one in its row.
 
 | Role | Default model id | Config key |
 |---|---|---|
-| Default tier (extraction, gleaning, community reports, answers, judges) | `anthropic.claude-sonnet-5-5` | `aws.bedrock.default_model_id` |
-| Fast tier (chunking, translation, summarization, routing, map steps) | `anthropic.claude-haiku-5-5` | `aws.bedrock.fast_model_id` |
-| Embeddings (indexing, evaluation and visualization layout) | `amazon.titan-embed-text-v2:0` | `indexing.opensearch.embedding_model_id`, `evaluation.embedding_model_id` |
-| Reranking | `cohere.rerank-v3-5:0` | `search.reranking.rerank_model_id` |
+| Default tier (extraction, gleaning, community reports, answers, judges) | `anthropic.claude-sonnet-5-5` | `models.default` |
+| Fast tier (chunking, translation, summarization, routing, map steps) | `anthropic.claude-haiku-5-5` | `models.fast` |
+| Embeddings (indexing, queries, evaluation and visualization layout) | `amazon.titan-embed-text-v2:0` | `models.embedding.model_id` |
+| Reranking | `cohere.rerank-v3-5:0` | `models.rerank` |
 
 - **Region.** Every Bedrock call, the rerank call included, goes to
   `aws.bedrock.region_name`, which defaults to `aws.region_name` (`us-west-2`).
@@ -236,9 +236,9 @@ models:
 both reached through the `aws.neptune` and `aws.opensearch` keys the preset
 points at `localhost` (see [Local stores in containers](#local-stores-in-containers)).
 
-- **Models.** With a non-Bedrock LLM, `providers.llm.default_model_id` (and
-  optionally `fast_model_id`) replaces the two Bedrock tiers for every role;
-  a role's own `*_model_id` still wins. `providers.llm.context_window_size`
+- **Models.** With a non-Bedrock LLM, `models.default` is required (the
+  preset sets it) and `models.fast` defaults to it; a `models.roles` entry
+  still wins for its role. `providers.llm.context_window_size`
   and `max_output_tokens` describe the model (Bedrock models take theirs from
   the catalog), and the window is sent to Ollama as `num_ctx`. The preset
   also sets `search.token_manager.max_context_tokens` to 22000, what the
@@ -249,9 +249,11 @@ points at `localhost` (see [Local stores in containers](#local-stores-in-contain
   applies, clamped to the model's window. An
   OpenAI-compatible server (vLLM, llama.cpp server, LM Studio) takes
   `base_url` (its `/v1` root) and, if it needs one, `api_key`.
-- **Embeddings.** `providers.embedding.model_id` and `dimension` are required
+- **Embeddings.** `models.embedding.model_id` and `dimension` are required
   with a non-Bedrock provider; the dimension is fixed into the vector store's
-  mappings, so changing either needs a full re-index.
+  mappings, so changing either needs a full re-index. The preset's dimension
+  (1024) belongs to its model (`bge-m3`): naming another model needs its
+  dimension too.
 - **Reranking.** The cross-encoder downloads its model from Hugging Face on the
   first query. Without the `[local]` extra (or with `kind: none`) queries keep
   the fused order; this is logged once and visible as
@@ -338,10 +340,10 @@ included; an omitted flag leaves the config as it is.
 |---|---|
 | `--backend {aws,local}` | `backend`. The preset still fills in only the keys the config leaves unset. `--backend aws` over a `backend: local` file drops every value equal to the local preset's, so those keys return to the AWS defaults |
 | `--llm-provider KIND` | `providers.llm.kind`: `bedrock`, `openai_compatible` or `ollama` |
-| `--llm-model MODEL` | `providers.llm.default_model_id` (non-Bedrock language models) |
+| `--llm-model MODEL` | `models.default` |
 | `--embedding-provider KIND` | `providers.embedding.kind`: `bedrock`, `openai_compatible` or `ollama` |
-| `--embedding-model MODEL` | `providers.embedding.model_id` (non-Bedrock embeddings) |
-| `--embedding-dimension N` | `providers.embedding.dimension` (non-Bedrock embeddings) |
+| `--embedding-model MODEL` | `models.embedding.model_id` |
+| `--embedding-dimension N` | `models.embedding.dimension` |
 | `--rerank-provider KIND` | `providers.rerank.kind`: `bedrock`, `cross_encoder` or `none` |
 | `--model-base-url URL` | `providers.llm.base_url` and `providers.embedding.base_url` |
 
@@ -483,12 +485,10 @@ the same values.
 | `aws.profile_name` | `null` | Named AWS profile; `null` uses the default credential chain. |
 | `aws.bedrock.region_name` | `null` | Region for Bedrock model, embedding, and rerank calls, and where the guardrail must exist. `null` uses `aws.region_name`. Set it only when your models are enabled in another region; in a private VPC whose only Bedrock route is a VPC endpoint, leave it `null` or set the VPC's region. |
 | `aws.bedrock.enable_global_profile` | `true` | Resolve cross-region (global) inference profiles. Keep it on: Claude 4.7+ and GPT models are invocable only through a profile. |
-| `aws.bedrock.default_model_id` | `"anthropic.claude-sonnet-5-5"` | Model for every default-tier role (see Model selection notes). |
-| `aws.bedrock.fast_model_id` | `"anthropic.claude-haiku-5-5"` | Model for every fast-tier role. |
 | `aws.bedrock.default_max_output_tokens` | `16384` | `max_tokens` per request, clamped to the model maximum. Raise it if answers are cut off (`stopReason: max_tokens`); `null` sends the model maximum. |
-| `aws.bedrock.default_effort` | `"high"` | Reasoning depth for calls on `default_model_id` (adaptive-thinking Claude and GPT models): `low`, `medium`, `high`, `xhigh`, `max`. Lower it to cut cost and latency. |
-| `aws.bedrock.ingestion_effort` | `null` | Reasoning depth for ingestion calls on the default tier (graph extraction, gleaning, claim extraction, community reports; the output fixer only when `fixing.fixing_model_id` is a default-tier model). `null` inherits `default_effort`; lower it (e.g. `"medium"`) to cut ingestion cost without changing query-time effort. Fast-tier ingestion calls keep `fast_effort`. |
-| `aws.bedrock.fast_effort` | `"low"` | Reasoning depth for calls on `fast_model_id` when it differs from `default_model_id`. The shipped Claude Haiku 5.5 thinks adaptively, so this sets its reasoning depth; no effect on a fast model that does not reason. |
+| `aws.bedrock.default_effort` | `"high"` | Reasoning depth for calls on the default tier's model (adaptive-thinking Claude and GPT models): `low`, `medium`, `high`, `xhigh`, `max`. Lower it to cut cost and latency. |
+| `aws.bedrock.ingestion_effort` | `null` | Reasoning depth for ingestion calls on the default tier (graph extraction, gleaning, claim extraction, community reports; the output fixer only when `models.roles.fixing` is a default-tier model). `null` inherits `default_effort`; lower it (e.g. `"medium"`) to cut ingestion cost without changing query-time effort. Fast-tier ingestion calls keep `fast_effort`. |
+| `aws.bedrock.fast_effort` | `"low"` | Reasoning depth for calls on the fast tier's model when it differs from the default tier's. The shipped Claude Haiku 5.5 thinks adaptively, so this sets its reasoning depth; no effect on a fast model that does not reason. |
 | `aws.bedrock.enable_1m_context` | `false` | Opt into the 1M window on models where it is a beta (premium billing). Claude 5 has a native 1M window. |
 | `aws.bedrock.model_overrides` | `{}` | Capability records for a language model the package does not know (see Model selection notes). Embedding and rerank models are a closed list. |
 | `aws.bedrock.guardrail.identifier` | `null` | Bedrock guardrail ID or ARN; setting it enables the guardrail. |
@@ -559,23 +559,43 @@ the same values.
 
 #### Model selection notes
 
-Every LLM role belongs to one of two tiers. `aws.bedrock.default_model_id`
-serves the reasoning-heavy roles and `aws.bedrock.fast_model_id` the light
-ones, so switching the whole pipeline to another model is one line. A role's
-own `*_model_id` key still wins over its tier:
+The top-level `models` section says which model serves each role. The
+provider of each family is `providers.llm`, `providers.embedding` and
+`providers.rerank` `.kind`, and the ids are checked against it.
 
-| Tier | Roles (`*_model_id` keys) |
+| Key | Default | What it does |
+|---|---|---|
+| `models.default` | `null` = `anthropic.claude-sonnet-5-5` on Bedrock | Model of the default tier. Required with another LLM provider. |
+| `models.fast` | `null` = `anthropic.claude-haiku-5-5` on Bedrock | Model of the fast tier; with another provider `null` is the default tier's model. |
+| `models.roles.<role>` | `null` (the role's tier) | A model id, or `default` / `fast` to move the role to the other tier. |
+| `models.embedding.model_id` | `null` = `amazon.titan-embed-text-v2:0` on Bedrock | The one embedding model: indices, queries, RAGAS and the visualization layout. Required with another provider. Changing it needs a re-index. |
+| `models.embedding.dimension` | `null` = the Bedrock model's largest | Fixed into the index mappings (Titan Embed V2 also takes 256 or 512). Required with another provider. |
+| `models.rerank` | `null` = `cohere.rerank-v3-5:0` on Bedrock | Rerank model; with `cross_encoder` a sentence-transformers model name, required. |
+
+Every LLM role runs on one of two tiers, so switching the whole pipeline to
+another model is one line; a `models.roles` entry wins over its tier:
+
+| Tier | Roles |
 | --- | --- |
-| `default` | `fixing.fixing_model_id`, `processing.graph_extraction.extraction_model_id`, `processing.gleaning.graph_refinement_model_id`, `processing.claim_extraction.extraction_model_id`, `graph.community_detection.report_generation.report_generation_model_id`, `search.{entity_extraction,answer_generation}_model_id`, `evaluation.evaluation_model_id` |
-| `fast` | `processing.chunking.chunking_model_id`, `processing.translation.translation_model_id`, `processing.graph_extraction.description_summarization.summary_model_id`, `search.{translation,strategy_selection,query_rewrite}_model_id`, `search.global_search.{community_relevance,map_reduce,map}_model_id`, `search.drift_search.{primer,action}_model_id` |
+| `default` | `fixing`, `graph_extraction`, `gleaning`, `claim_extraction`, `community_report`, `entity_extraction`, `answer_generation`, `evaluation` |
+| `fast` | `chunking`, `translation`, `description_summary`, `query_translation`, `strategy_selection`, `query_rewrite`, `community_relevance`, `global_map`, `global_reduce`, `drift_primer`, `drift_action` |
 
 ```yaml
-aws:
-  bedrock:
-    default_model_id: "openai.gpt-6-sol"    # every default-tier role
-search:
-  answer_generation_model_id: "anthropic.claude-opus-5-5"  # one role pinned
+models:
+  default: "openai.gpt-6-sol"          # every default-tier role
+  roles:
+    answer_generation: "anthropic.claude-opus-5-5"   # one role pinned
+    query_rewrite: default                          # moved to the other tier
 ```
+
+The model settings used to sit in their feature sections
+(`aws.bedrock.default_model_id`, `search.answer_generation_model_id`,
+`indexing.opensearch.embedding_model_id`, ...). A config that still sets one
+fails validation with the `models` key that replaces it (the CHANGELOG has the
+whole table). A setting of a provider the config does not select (say
+`providers.llm.temperature` while the language models are Bedrock's, or
+`aws.bedrock.default_effort` with a local model) is ignored with a WARNING at
+load.
 
 The full list of curated models, the request differences between Claude
 generations and OpenAI GPT models, prompt caching, and how to describe a model
@@ -675,7 +695,7 @@ LLM stages are Bedrock-I/O-bound, so concurrency can far exceed the CPU count.
 | `indexing.max_document_attempts` | `3` | Incremental runs: consecutive runs that started indexing a document's unchanged content and never finished it (the run died) after which the document is quarantined: skipped until its content or the extraction settings change (§5, *Quarantined documents*). |
 | `indexing.lease_seconds` | `300` | Incremental runs: term of the index namespace's write lease, which a run holds for its whole duration and renews every third of it; a dead run's lease expires at most this long after (§5, *Concurrent runs*). Minimum `10`. |
 | `indexing.retire_source_scopes` | `[]` | Incremental runs: former source scopes (an old absolute source directory, or a former `source_scope` value) whose records in the run's index suffix are treated as deleted, so their exclusive content is removed. Never the run's own scope. `--retire-source-scope` adds to it. See §5 Deletion scope. |
-| `indexing.opensearch.embedding_model_id` | `"amazon.titan-embed-text-v2:0"` | Embedding model, one of a closed list (see Model selection notes). Changing it requires a reindex. |
+| `models.embedding.model_id` | `"amazon.titan-embed-text-v2:0"` | Embedding model, one of a closed list (see Model selection notes). Changing it requires a reindex. |
 | `indexing.opensearch.build_relationship_vector_index` | `true` | Relationship vector index. LightRAG `mix`/`hybrid` (high-level keywords, incident edges) and GraphRAG `local` (relationship section, bridge relationships) query it, and `simple`/`drift` search it with the other indexes. `false` skips the relationship embeddings at the cost of those. |
 | `indexing.opensearch.persist_embedding_cache` | `false` | Persist the embedding cache to S3 so unchanged text is not re-embedded across runs. Requires `aws.s3.bucket_name`. |
 | `indexing.opensearch.language_analyzers` | `{en: english, ko: nori}` | Text analyzer per language code; unlisted languages use `default_analyzer` (`standard`). |
@@ -700,7 +720,7 @@ LLM stages are Bedrock-I/O-bound, so concurrency can far exceed the CPU count.
 | `search.fusion.rrf_k` | `60` | RRF constant `k`. |
 | `search.fusion.fusion_weights` | `{}` (every bucket `1.0`) | Per-source-bucket weights; they scale each bucket's contribution under both `rrf` and `weighted`. The template lists the bucket names. |
 | `search.fusion.diversity_lambda` | `0.5` | MMR trade-off: `1.0` = pure relevance, `0.0` = maximum diversity. |
-| `search.reranking.enabled` | `true` | Rerank fused results with `rerank_model_id` (`cohere.rerank-v3-5:0`). |
+| `search.reranking.enabled` | `true` | Rerank fused results with `models.rerank` (`cohere.rerank-v3-5:0`). |
 | `search.reranking.top_k` | `100` | Candidates sent to the reranker. |
 | `search.reranking.required` | `false` | `true` fails the query with `RerankModelError` when reranking is enabled but the rerank model cannot be built, a rerank call fails, or it returns nothing usable. `false` keeps the fused order in those cases (an initialization failure is logged at ERROR). No effect when reranking is off or `providers.rerank.kind` is `none`. See [Rerank status](#rerank-status). |
 | `search.lightrag_search.kg_stream_top_k` | `40` | Width of the LightRAG entity/relationship vector queries (a floor against the request's `top_k`). |
@@ -708,7 +728,7 @@ LLM stages are Bedrock-I/O-bound, so concurrency can far exceed the CPU count.
 | `search.lightrag_search.enable_graph_expansion` | `false` | `mix`/`hybrid`: also expand matches through Neptune. |
 | `search.global_search.community_depth` | `2` | The cut of the community hierarchy `global` maps over, counted from the root as MS GraphRAG's `community_level` (default 2 there too): every community at this depth plus the leaves above it, so each entity is covered once. `0` = the root communities (fewest, broadest reports); a large value = the leaves (most, narrowest). |
 | `search.global_search.max_reports_per_level` | `100` | Most reports one cut (or one step of the dynamic selection) contributes. A larger cut is cut to the reports most similar to the query, and the search metadata says so (`global_level_capped`). Bounded by `indexing.opensearch.max_query_size`. Each mapped report costs map-step input tokens. |
-| `search.global_search.use_dynamic_selection` | `false` | MS GraphRAG dynamic community selection instead of a fixed cut: rate the root reports with `community_relevance_model_id`, descend into the relevant ones' children down to `community_depth`, and map the relevant reports. One fast-model call per rated report. |
+| `search.global_search.use_dynamic_selection` | `false` | MS GraphRAG dynamic community selection instead of a fixed cut: rate the root reports with `models.roles.community_relevance`, descend into the relevant ones' children down to `community_depth`, and map the relevant reports. One fast-model call per rated report. |
 | `search.global_search.relevance_threshold` | `0.2` | Dynamic selection keeps a report rated at least this (its 1-10 rating / 10); 0.2 is MS GraphRAG's threshold of 1 on its 0-5 scale. A report below it prunes its subtree. |
 | `search.global_search.map_context_tokens` | `12000` | Report tokens packed into one map-step call (MS GraphRAG's `data_max_tokens`); map calls run `processing.max_concurrency` at a time. |
 | `search.global_search.max_map_reduce_tokens` | `8000` | Token budget for ranked key points fed to the reduce step. |
@@ -716,7 +736,7 @@ LLM stages are Bedrock-I/O-bound, so concurrency can far exceed the CPU count.
 | `search.global_search.text_unit_slots` | `0` | Text units of the communities behind the key points added to the context, reranked. `0` = none, as in MS GraphRAG's global search; the chunks took most of the answer budget the key points and reports need. |
 | `search.local_search.entity_frequency_threshold` | `20` | Drop graph-expanded entities that appear in more text units than this (too generic). The query's own matched entities are always kept. |
 | `search.local_search.include_bridge_relationships` | `true` | Also fetch relationships incident to the expanded entities, edges between two retrieved entities first (multi-hop bridges). Needs the relationship index. `false` = relationship vector query only. |
-| `search.drift_search.k_followups` | `20` | Community reports the DRIFT primer reads, and follow-up queries run per round (MS GraphRAG `drift_k_followups`). Each follow-up query is one local search plus one `action_model_id` call. |
+| `search.drift_search.k_followups` | `20` | Community reports the DRIFT primer reads, and follow-up queries run per round (MS GraphRAG `drift_k_followups`). Each follow-up query is one local search plus one `models.roles.drift_action` call. |
 | `search.drift_search.primer_folds` | `5` | Primer calls the primer reports are split over; each drafts an intermediate answer and follow-up queries. |
 | `search.drift_search.n_depth` | `3` | Rounds of follow-up queries: up to `k_followups * n_depth` local searches per query. |
 | `search.drift_search.local_context_tokens` | `12000` | Context budget one follow-up query is answered from. |
@@ -732,7 +752,7 @@ quotas (`search.local_search.type_quota`) are in the template.
 > **Context budget.** `30000` matches upstream LightRAG's total context budget
 > (MS GraphRAG uses 12000). A budget derived from a 1M-token window (~785K)
 > never binds, so per-type budgets would never trim anything. The value is
-> always clamped to what `search.answer_generation_model_id` accepts alongside
+> always clamped to what `models.roles.answer_generation` accepts alongside
 > its output reservation (`aws.bedrock.default_max_output_tokens`), with a
 > warning when that happens. With `null`, the budget is derived from that
 > model's window minus the output reservation and the headroom ratio;
@@ -1231,7 +1251,7 @@ rerank); only the retrieval algorithm differs.
 | `local` | Detailed questions about specific entities/concepts | Extracts query entities → Neptune graph traversal for neighbors/relationships → combined with vector/keyword hits. Injects claims (covariates) when enabled. |
 | `global` | Broad, thematic, "what are the main themes" questions | MS GraphRAG global search: maps every community report of one cut of the hierarchy (`search.global_search.community_depth`, default 2 from the root) into scored key points on the fast model, in token-sized batches, and answers from the ranked points. Optional dynamic selection walks the hierarchy from the roots instead. Cost grows with the cut: one map call per `map_context_tokens` of reports. Best for high-level synthesis. |
 | `drift` | Multi-part questions that need the broad picture and specific facts several steps away from it | MS GraphRAG DRIFT search: the community reports most similar to a hypothetical answer (HyDE) draft intermediate answers and follow-up queries; each follow-up runs a local search, is answered on the fast model and raises further follow-ups, for `n_depth` rounds; the answer model reduces the ranked intermediate answers and their evidence. The most LLM calls per query of any strategy (about `primer_folds + k_followups * n_depth`). |
-| `auto` | You don't know / general use (the default) | An LLM router (`search.strategy_selection_model_id`) picks the best strategy from the query among `search.auto_routable_strategies` (default local, mix, global, drift). |
+| `auto` | You don't know / general use (the default) | An LLM router (`models.roles.strategy_selection`) picks the best strategy from the query among `search.auto_routable_strategies` (default local, mix, global, drift). |
 
 **LightRAG (dual-level keyword):**
 
@@ -1395,7 +1415,7 @@ so `--use-memory` and `--conversation-id` have no effect on a single query
 `memory` config section.
 
 Before retrieval, a follow-up is rewritten from the history as a standalone
-question (one `search.query_rewrite_model_id` call per turn that has history;
+question (one `models.roles.query_rewrite` call per turn that has history;
 prompt override key `query_rewrite`), so "what about its suppliers?" is routed,
 searched and answered as a question that names the entity from the earlier
 turn. The rewrite reads the last `memory.max_messages_per_conversation`
@@ -1461,8 +1481,7 @@ SQLite file instead (`providers.doc_status.kind: sqlite`, switched on by
   the target language, the prompt templates, built-in ones included) are
   unchanged, e.g. after a resolution or chunking change.
 - **Change the embedding model or its dimension**
-  (`indexing.opensearch.embedding_model_id` / `embedding_dimension`, or
-  `providers.embedding.model_id` / `dimension` in local mode): an
+  (`models.embedding.model_id` / `dimension`): an
   incremental run embeds only its new and changed documents, so it would
   mix two models' vectors in one index. Each OpenSearch index records the
   model and dimension it was built with, and the indexing stage stops,
@@ -1890,7 +1909,7 @@ The summary holds, per metric, mean/median/stdev/min/max/count
   judge/embedding, and `judge_is_answer_model`: LLM judges favour their own
   outputs, so a judge that is the answer model — the default, both use the
   `default` tier — inflates the judge scores; set
-  `evaluation.evaluation_model_id` to another model when comparing systems), package version, git commit (`git_sha`, and `git_dirty`
+  `models.roles.evaluation` to another model when comparing systems), package version, git commit (`git_sha`, and `git_dirty`
   when tracked files differ from it; both `null` unless the package runs from
   a checkout that tracks it), `retrieval_config_sha256`, `index`, `library_versions`
   (ragas, langchain*), the dataset (path + file sha256, query count and a hash
@@ -1942,7 +1961,7 @@ usual and adds `evaluation_comparison_<timestamp>.json`:
   runs), so compare on a few hundred queries.
 - `pairwise_vs_baseline.<s>` (with `--pairwise-judge`) — the GraphRAG /
   LightRAG head-to-head LLM judge on comprehensiveness, diversity,
-  empowerment and directness, using `evaluation.evaluation_model_id`
+  empowerment and directness, using `models.roles.evaluation`
   (prompt: `custom_prompts.pairwise_comparison_*`). Each pair is judged in
   both orders and a criterion counts as a win only when both orders agree
   (the judge favours the answer it reads first); `candidate_win_rate` counts
@@ -2046,8 +2065,8 @@ Layout and error behaviour:
   `"layout_degraded": true` in `visualization_data.json`. A failed
   dimensionality reduction falls back the same way (seeded spring layout,
   `layout_degraded: true`) whatever `ignore_errors` says.
-- `embeddings.bedrock_model_id` must be one of the supported embedding model
-  ids; any other value is rejected when the configuration loads.
+- Node embeddings use the embedding model and dimension of the index
+  (`models.embedding`).
 - Edge width/opacity in the interactive graph is scaled relative to the graph's
   own weight range (log-scaled, then min-max normalised), so 1-10 strength
   scores and merged counts are both distinguishable.
@@ -2084,7 +2103,7 @@ run-visualization --data-path visualization_data.json --renderers interactive --
 
 Samples documents from a directory, profiles the corpus (domain / language /
 persona / entity types) with the configured language model
-(`processing.graph_extraction.extraction_model_id`), and writes a domain-adapted
+(`models.roles.graph_extraction`), and writes a domain-adapted
 `custom_prompts` YAML fragment for you to review and merge into `config.yaml`.
 
 ### CLI flags

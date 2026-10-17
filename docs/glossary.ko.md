@@ -42,7 +42,7 @@
 | 재순위화 | reranking | Bedrock rerank 모델로 후보 순위를 다시 매기는 단계 |
 | 토큰 예산 | token budget | 답변 프롬프트에 넣을 컨텍스트의 토큰 상한 |
 | 임베딩 | embedding | 텍스트의 벡터 표현 |
-| 기본 계층 / 빠른 계층 | default tier / fast tier | `default_model_id` / `fast_model_id`를 쓰는 모델 역할 묶음 |
+| 기본 계층 / 빠른 계층 | default tier / fast tier | `models.default` / `models.fast`를 쓰는 모델 역할 묶음 |
 | 추론 강도 | reasoning effort | `effort` 설정값(`low`~`max`) |
 | 추론 프로파일 | inference profile | Bedrock 교차 리전 호출 경로 |
 | 가드레일 | guardrail | Amazon Bedrock Guardrails 정책 |

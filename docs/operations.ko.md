@@ -96,7 +96,7 @@ CDK 스택에서 `start-execution` 한 번은 수집 태스크를 실행하는 �
 저장된 데이터에 반영되는 설정을 바꾼 뒤에는 `indexing.reset: true`를 쓰고, 단계
 결과도 바뀌어야 하면 `--force-rebuild`를 함께 씁니다.
 
-- 임베딩 모델 또는 `indexing.opensearch.embedding_dimension`
+- 임베딩 모델 또는 `models.embedding.dimension`
 - `processing.translation.source_language` 또는 언어 분석기(텍스트 단위 매핑이
   바뀝니다)
 - 증분 실행이 덧붙이는 커뮤니티를 새로 고치고, 엔티티에 현재 이름의 id를 줄 때
@@ -755,7 +755,7 @@ LangSmith로 업로드합니다.
 | `Model '<id>' is only available through a cross-region inference profile, but none resolved ...` | 온디맨드 처리량이 없는 모델인데 추론 프로파일을 찾지 못함 | `aws.bedrock.enable_global_profile: true`를 유지하고 `bedrock:ListInferenceProfiles`를 허용하거나 다른 리전 사용 |
 | `Reranking failed: ...` (질의마다 ERROR, `metadata.rerank.status: failed`) | Rerank 호출이 거부되었거나 해당 리전에 모델이 없음 | `bedrock:Rerank`를 `Resource: "*"`로 허용하거나, rerank 모델이 있는 리전으로 Bedrock을 옮기거나, `search.reranking.enabled: false` 설정 |
 | `RerankModelError: Reranking failed: ...` / `... returned no usable results` / `Rerank model could not be built: ...` | `search.reranking.required: true`인데 재순위화 호출이 실패했거나, 쓸 수 있는 결과를 돌려주지 않았거나, 재순위화 모델을 만들 수 없음. 융합 순서로 답하지 않고 질의가 실패함 | 위 `Reranking failed`와 같이 원인을 해결하거나, 융합만으로 답해도 되면 `required: false` 설정(`metadata.rerank.status`에 `failed`·`unavailable`로 보고됨) |
-| `Reranking initialization failed; queries keep the fused order ...` (전략을 처음 만들 때 ERROR) | 재순위화가 켜져 있지만 재순위화 모델을 만들 수 없음. 모든 질의가 `metadata.rerank.status: unavailable`을 보고함 | `search.reranking.rerank_model_id`와 재순위화 공급자(`providers.rerank`)를 확인하거나 `search.reranking.enabled: false` 설정 |
+| `Reranking initialization failed; queries keep the fused order ...` (전략을 처음 만들 때 ERROR) | 재순위화가 켜져 있지만 재순위화 모델을 만들 수 없음. 모든 질의가 `metadata.rerank.status: unavailable`을 보고함 | `models.rerank`와 재순위화 공급자(`providers.rerank`)를 확인하거나 `search.reranking.enabled: false` 설정 |
 | `No indices found for suffix '<suffix>' ...` | 그 인덱스 접미사로 수집한 데이터가 없음 | 수집을 실행하거나, 코퍼스를 수집할 때 쓴 접미사로 질의 |
 | `InvalidFilterError` | 전략이 읽는 어떤 저장소도 그 필터 키를 선언하지 않음 | 메시지에 나온 키 목록에서 선택 |
 | `OpenSearch rejected the search on <index>: ...` | 그 인덱스에 맞지 않는 요청(HTTP 400). 필드와 형식이 다른 필터 값(`query_shard_exception`). `too_many_nested_clauses` / `too_many_clauses`(HTTP 500)는 질의의 절이 클러스터 허용치보다 많은 경우로, 보통 `indices.query.bool.max_clause_count`가 기본값 1,024보다 낮음 | 필터 값을 고침. 절 한도는 `indices.query.bool.max_clause_count`를 1,024 이상으로 둠 |
@@ -763,8 +763,8 @@ LangSmith로 업로드합니다.
 | `StoreConnectionError: ... Cannot connect to host ...` / `Neptune is not reachable ...` / `... status=429 ... (still failing after the client's retries)` | OpenSearch 또는 Neptune이 연결을 거부했거나 주소를 확인할 수 없음, Neptune이 연결을 닫음(재시작, 장애 조치), 또는 OpenSearch가 `search.store_max_attempts`번 시도 후에도 429/502/503/504로 응답함(과부하, 재시작 중). 컨텍스트 없이 답하지 않고 질의가 실패함. 끊긴 Neptune 연결은 버리고 다음 질의나 수집의 다음 재시도가 다시 연결함 | 엔드포인트와 포트, 저장소 실행 여부, 네트워크 경로(보안 그룹, VPC 엔드포인트) 확인 |
 | `OpenSearch did not answer a request on <index> within N s in M attempt(s)` / `Neptune did not answer within N s` | 저장소가 연결은 받았지만 `search.store_timeout_seconds` 안에 응답하지 않음(OpenSearch는 `search.store_max_attempts`번 시도). 질의가 실패함. 수집 중 Neptune의 제한은 고정 180초이며 해당 항목을 재시도함 | 저장소 상태와 부하(CPU, 대기열, 진행 중인 장애 조치) 확인. 원래 느린 클러스터라면 `search.store_timeout_seconds`를 늘림(수집 쪽 제한은 바뀌지 않음) |
 | `OpenSearch denied the search on <index>: ... status=403 ...` (또는 `401`) | 질의 주체가 인덱스를 검색할 권한이 없음. 세분화된 액세스 제어에서 `indices:data/read/search`가 없는 역할이거나 자격 증명이 잘못됨 | 역할에 해당 인덱스의 `indices:data/read/search`(임베딩 확인용 `indices:admin/mappings/get` 포함)를 부여하거나 자격 증명을 고침 |
-| 질의 중 `ClientError: ... (ValidationException) ... InvokeModel ...` / `(ResourceNotFoundException)` / `NoCredentialsError` | 질의 임베딩 호출이 성공할 수 없음. 잘못된 모델 ID, 그 리전에서 온디맨드 처리량을 지원하지 않는 모델, 부여되지 않은 모델 액세스, 자격 증명 없음. 컨텍스트 없이 답하지 않고 질의가 실패함 | `indexing.opensearch.embedding_model_id`, `aws.bedrock.region_name`, 계정의 모델 액세스 또는 자격 증명 확인 |
-| `EmbeddingModelError: Query embedding failed: ...` | 클라이언트 재시도 후에도 질의 임베딩 모델 호출이 실패함(멈춘 Ollama 러너, 죽은 vLLM 엔진, 계속되는 Bedrock `InternalServerException`). 질의의 모든 벡터 검색에 필요하므로 "찾을 수 없음"으로 답하지 않고 질의가 실패함 | 임베딩 서버나 모델(`providers.embedding`, `indexing.opensearch.embedding_model_id`)과 그 로그를 확인한 뒤 다시 시도 |
+| 질의 중 `ClientError: ... (ValidationException) ... InvokeModel ...` / `(ResourceNotFoundException)` / `NoCredentialsError` | 질의 임베딩 호출이 성공할 수 없음. 잘못된 모델 ID, 그 리전에서 온디맨드 처리량을 지원하지 않는 모델, 부여되지 않은 모델 액세스, 자격 증명 없음. 컨텍스트 없이 답하지 않고 질의가 실패함 | `models.embedding.model_id`, `aws.bedrock.region_name`, 계정의 모델 액세스 또는 자격 증명 확인 |
+| `EmbeddingModelError: Query embedding failed: ...` | 클라이언트 재시도 후에도 질의 임베딩 모델 호출이 실패함(멈춘 Ollama 러너, 죽은 vLLM 엔진, 계속되는 Bedrock `InternalServerException`). 질의의 모든 벡터 검색에 필요하므로 "찾을 수 없음"으로 답하지 않고 질의가 실패함 | 임베딩 서버나 모델(`providers.embedding`, `models.embedding.model_id`)과 그 로그를 확인한 뒤 다시 시도 |
 | `Neptune refused the connection (HTTP 403)` | IAM 인증이 웹소켓 연결을 거부함. 정책에 클러스터의 `neptune-db:connect`가 없거나 다른 리전으로 서명함 | `neptune-db:connect`(실행에 필요한 `neptune-db:*` 데이터 작업 포함)를 부여하고 `aws.region_name`을 클러스터의 리전으로 설정 |
 | `Skipping N '.md' file(s) ...` / `No supported source files found in '<dir>'` | `unstructured` 추가 패키지가 설치되지 않음 | 설치(Python 3.11 이상)하거나 파일 형식을 변환 |
 | `ConfigurationError: Doc-status registry: DynamoDB table '...' has the key schema ... of an earlier release` | `doc_id`만으로 레코드 키를 잡던 릴리스가 만든 테이블임 | `aws.dynamodb.table_name`(`GRAPHRAG_DOC_STATUS_TABLE`)을 새 테이블로 바꾸거나 스택의 새 테이블을 배포하고, `indexing.reset: true`로 한 번 실행([증분 실행](#증분-실행) 참고) |

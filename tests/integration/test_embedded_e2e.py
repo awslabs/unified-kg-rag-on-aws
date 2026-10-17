@@ -134,13 +134,13 @@ def _config(stores: Path, viz: Path) -> Config:
     # Only the models and the files are set; the stores are the preset's.
     config = Config(
         backend="local",
-        providers={
-            "llm": {
-                "default_model_id": "synthetic-llm",
-                "fast_model_id": "synthetic-fast",
-            },
+        models={
+            "default": "synthetic-llm",
+            "fast": "synthetic-fast",
             "embedding": {"model_id": "synthetic-embed", "dimension": DIM},
-            "rerank": {"model_id": "synthetic-reranker"},
+            "rerank": "synthetic-reranker",
+        },
+        providers={
             "graph": {"sqlite_path": str(stores / "graph.sqlite3")},
             "vector": {"sqlite_path": str(stores / "vector.sqlite3")},
             "doc_status": {

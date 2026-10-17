@@ -32,6 +32,7 @@ __version__ = "0.2.3"
 _EXPORTS: dict[str, str] = {
     # Configuration and logging
     "Config": "unified_kg_rag.domain.models",
+    "ModelRole": "unified_kg_rag.domain.models",
     "get_config": "unified_kg_rag.shared.config",
     "setup_logging": "unified_kg_rag.shared.logging",
     "configure_event_loop": "unified_kg_rag.shared.utils.event_loop",
@@ -115,6 +116,7 @@ if TYPE_CHECKING:
     from unified_kg_rag.application.storage.indexing_manager import IndexingManager
     from unified_kg_rag.domain.models import (
         Config,
+        ModelRole,
         PipelineConfig,
         PipelineContext,
         PipelineStageStatus,

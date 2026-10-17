@@ -33,9 +33,8 @@ class BedrockNodeEmbedder:
         self.config = config
         self.viz_config = self.config.graph.visualization
 
-        embedding_model_id = self.viz_config.embeddings.get(
-            "bedrock_model_id", self.config.indexing.opensearch.embedding_model_id
-        )
+        # The one embedding model (models.embedding), as the index uses it.
+        embedding_model_id = self.config.embedding_model_id
 
         model_info = embedding_factory.get_model_info(embedding_model_id)
         if not model_info:
@@ -43,7 +42,9 @@ class BedrockNodeEmbedder:
                 f"Unsupported Bedrock model for visualization: '{embedding_model_id}'"
             )
 
-        if isinstance(model_info.dimensions, list):
+        if self.config.embedding_dimension is not None:
+            self.dimensions = self.config.embedding_dimension
+        elif isinstance(model_info.dimensions, list):
             self.dimensions = model_info.dimensions[-1]
         else:
             self.dimensions = model_info.dimensions or 1024

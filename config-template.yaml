@@ -14,25 +14,6 @@ aws:
     region_name: null
     assumed_role_arn: null
     enable_global_profile: true
-    # Language models, by tier. Every LLM role uses one of these two ids unless
-    # its own *_model_id key is set (e.g. search.answer_generation_model_id),
-    # which always wins. Any Bedrock model id or inference-profile id works,
-    # including models released after this package.
-    #   default tier: fixing.fixing_model_id,
-    #     processing.graph_extraction.extraction_model_id,
-    #     processing.gleaning.graph_refinement_model_id,
-    #     processing.claim_extraction.extraction_model_id,
-    #     graph.community_detection.report_generation.report_generation_model_id,
-    #     search.{entity_extraction,answer_generation}_model_id,
-    #     evaluation.evaluation_model_id
-    #   fast tier: processing.chunking.chunking_model_id,
-    #     processing.translation.translation_model_id,
-    #     processing.graph_extraction.description_summarization.summary_model_id,
-    #     search.{translation,strategy_selection,query_rewrite}_model_id,
-    #     search.global_search.{community_relevance,map_reduce,map}_model_id,
-    #     search.drift_search.{primer,action}_model_id
-    default_model_id: "anthropic.claude-sonnet-5-5"
-    fast_model_id: "anthropic.claude-haiku-5-5"
     # max_tokens per LLM request, clamped to the model maximum. Bedrock reserves
     # input + max_tokens against the tokens-per-minute quota at request start,
     # so asking for the model maximum (128K on Claude 5.x) throttles concurrent
@@ -63,8 +44,8 @@ aws:
     # reasoning depth for cost and latency; xhigh/max are only accepted by some
     # models (e.g. Claude 4.6 has no xhigh) and an unsupported level fails fast.
     # Ignored by older Claude models, which still use thinking_budget_tokens.
-    # A call's tier follows its model id: a call on fast_model_id (when it
-    # differs from default_model_id) uses fast_effort, every other call uses
+    # A call's tier follows its model id: a call on the fast tier's model (when
+    # it differs from the default tier's) uses fast_effort, every other call uses
     # default_effort. The shipped fast model (Claude Haiku 5.5) thinks
     # adaptively, so fast_effort sets how much it reasons on fast-tier calls. The former `effort` key is migrated to
     # default_effort with a deprecation warning.
@@ -72,7 +53,7 @@ aws:
     fast_effort: "low"
     # Effort for ingestion calls on the default tier (graph extraction,
     # gleaning, claim extraction, community reports; the output fixer only
-    # when fixing.fixing_model_id is a default-tier model), which use most of an ingestion's default-tier tokens. null inherits
+    # when models.roles.fixing is a default-tier model), which use most of an ingestion's default-tier tokens. null inherits
     # default_effort; set e.g. "medium" to cut ingestion cost without changing
     # query-time effort. Fast-tier ingestion calls keep fast_effort.
     ingestion_effort: null
@@ -198,10 +179,6 @@ backend: "aws"
 #     api_key: null
 #     timeout_seconds: 300.0
 #     max_attempts: 3  # per request on transient errors, including the first
-#     # Non-Bedrock only: the tier models (they replace aws.bedrock.*_model_id;
-#     # default_model_id is required, fast_model_id null = default_model_id).
-#     default_model_id: null
-#     fast_model_id: null
 #     # Non-Bedrock only: model limits (Bedrock models take theirs from the
 #     # capability catalog). context_window_size is sent to Ollama as num_ctx.
 #     context_window_size: 32768
@@ -218,20 +195,12 @@ backend: "aws"
 #     api_key: null
 #     timeout_seconds: 300.0
 #     max_attempts: 3  # per request on transient errors, including the first
-#     # Non-Bedrock only, both required: the model (default of
-#     # indexing.opensearch.embedding_model_id and evaluation.embedding_model_id)
-#     # and its vector dimension.
-#     model_id: null
-#     dimension: null
 #     max_input_tokens: 8192
 #   rerank:
 #     # bedrock | cross_encoder (sentence-transformers, [local] extra) | none.
 #     # Without a working reranker queries keep the fused order (logged, and
 #     # kg_rag.rerank_enabled=false on the fusion span).
 #     kind: "bedrock"
-#     # cross_encoder only (required): the default of
-#     # search.reranking.rerank_model_id.
-#     model_id: null
 #     device: null
 #     max_length: 512
 #     batch_size: 16
@@ -257,6 +226,41 @@ backend: "aws"
 #     enabled: null
 #     # SQLite registry file (kind: sqlite); relative to this config file.
 #     sqlite_path: ".unified-kg-rag/doc-status.sqlite3"
+
+# Which model serves each role. The provider of each family is
+# providers.llm / embedding / rerank.kind above; the ids here are checked
+# against it. Any Bedrock model id or inference-profile id works for the
+# language models, including models released after this package.
+models:
+  # The 'default' tier: output fixing, graph extraction, gleaning, claim
+  # extraction, community reports, query entity/keyword extraction, answer
+  # generation, evaluation. null = anthropic.claude-sonnet-5-5 on Bedrock;
+  # required with another provider.
+  default: null
+  # The 'fast' tier: chunking, translation, description summaries, global and
+  # DRIFT search steps, query translation, rewriting and routing. null =
+  # anthropic.claude-haiku-5-5 on Bedrock, the default tier's model otherwise.
+  fast: null
+  # Per-role overrides: a model id, or a tier name to move a role to the
+  # other tier. Roles: fixing, chunking, translation, graph_extraction,
+  # description_summary, gleaning, claim_extraction, community_report,
+  # query_translation, entity_extraction, strategy_selection, query_rewrite,
+  # answer_generation, community_relevance, global_map, global_reduce,
+  # drift_primer, drift_action, evaluation. For example
+  # {answer_generation: "anthropic.claude-opus-5-5", query_rewrite: default}.
+  roles: {}
+  # The one embedding model: indices, queries, evaluation and the
+  # visualization layout all embed with it. Bedrock: one of the supported ids,
+  # null = amazon.titan-embed-text-v2:0, dimension null = the model's largest
+  # (Titan Embed V2 also takes 256 or 512). Another provider: both required.
+  # The dimension is fixed into the index mappings: changing either needs a
+  # full re-index.
+  embedding:
+    model_id: null
+    dimension: null
+  # Bedrock: null = cohere.rerank-v3-5:0 (or amazon.rerank-v1:0).
+  # cross_encoder: a sentence-transformers model name, required.
+  rerank: null
 
 # Global Output Fixing Configuration (auto-repair malformed model responses)
 fixing:
@@ -512,14 +516,9 @@ graph:
     embedding_method: "description"
     layout_method: "umap"
 
-    # Node embeddings come from providers.embedding (the model determines
-    # dimensionality).
-    # Only 'bedrock_model_id' is honored here; when unset, the OpenSearch
-    # embedding model is reused. Set embedding_method: "none" to skip embeddings
-    # and fall back to a spring layout.
-    embeddings: {}
-    # embeddings:
-    #   bedrock_model_id: "amazon.titan-embed-text-v2:0"
+    # Node embeddings come from the embedding model (models.embedding). Set
+    # embedding_method: "none" to skip embeddings and fall back to a spring
+    # layout.
 
     # Dimensionality-reduction layout hyperparameters, keyed by method. Each
     # also takes random_state (default 42, so a re-render gives the same
@@ -600,10 +599,6 @@ indexing:
 
   # OpenSearch Indexing
   opensearch:
-    # Unset = providers.embedding.model_id, or amazon.titan-embed-text-v2:0
-    # with Bedrock embeddings.
-    # embedding_model_id: "amazon.titan-embed-text-v2:0"
-    embedding_dimension: null
     refresh_after_batch: true
     # Persist the content-hash embedding cache to S3 so unchanged text is not
     # re-embedded across separate runs (each Fargate task is a fresh
@@ -723,7 +718,7 @@ search:
   # Strategies the AUTO router may pick (simple is left out; any strategy can
   # still be selected explicitly). global and drift are skipped when
   # graph.community_detection.enabled is false (no community reports). The router model
-  # (strategy_selection_model_id) is on the fast tier: a one-word
+  # (models.roles.strategy_selection) is on the fast tier: a one-word
   # classification run before retrieval stays off the critical path.
   auto_routable_strategies: ["local", "mix", "global", "drift"]
 
@@ -754,9 +749,6 @@ search:
   # Reranking Configuration
   reranking:
     enabled: true
-    # Unset = providers.rerank.model_id, or cohere.rerank-v3-5:0
-    # with Bedrock reranking.
-    # rerank_model_id: "cohere.rerank-v3-5:0"
     top_k: 100
     # true fails the query (RerankModelError) when the rerank model cannot be
     # built, a rerank call fails or returns nothing usable. false keeps the
@@ -856,7 +848,7 @@ search:
     # primer_folds primer calls, each drafting an intermediate answer and
     # follow-up queries. Then, for n_depth rounds, the k_followups open
     # follow-up queries whose parent answer scored best each run a local
-    # search and are answered (with new follow-ups) by action_model_id.
+    # search and are answered (with new follow-ups) by models.roles.drift_action.
     # Up to k_followups * n_depth local searches and action calls per query.
     k_followups: 20
     primer_folds: 5
@@ -981,9 +973,6 @@ observability:
 # Evaluation Configuration
 evaluation:
   outputs_directory: "outputs/evaluation"
-  # Unset = providers.embedding.model_id, or amazon.titan-embed-text-v2:0
-  # with Bedrock embeddings.
-  # embedding_model_id: "amazon.titan-embed-text-v2:0"
   # The deterministic, LLM-free evaluators cost nothing and skip a query
   # that lacks their dataset fields, so they are on by default.
   enabled_evaluators:

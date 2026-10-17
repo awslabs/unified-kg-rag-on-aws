@@ -48,6 +48,7 @@ from unified_kg_rag.application.bootstrap import (
 from unified_kg_rag.domain.models import (
     Backend,
     Config,
+    ModelRole,
     PipelineConfig,
     PipelineContext,
     PipelineStageStatus,
@@ -158,7 +159,7 @@ def test_a_custom_kind_is_selected_without_code_changes(custom_kind: str) -> Non
     def _counter(providers: Providers) -> Any:
         return lambda model_id, **_: LocalTokenCounter(model_id)
 
-    config = Config(providers={"llm": {"kind": custom_kind, "default_model_id": "m"}})
+    config = Config(providers={"llm": {"kind": custom_kind}}, models={"default": "m"})
     providers = build_providers(config)
     assert isinstance(providers.llm_factory, OpenAICompatibleLanguageModelFactory)
     assert built == [providers]
@@ -206,20 +207,17 @@ def test_retriever_role_without_a_provider_is_a_configuration_error(
 def test_llm_model_info_reads_the_catalog_without_a_client(mocker) -> None:
     llm = mocker.patch.object(bedrock_module, "BedrockLanguageModelFactory")
     config = Config()
-    info = Providers(config).llm_model_info(config.search.answer_generation_model_id)
+    info = Providers(config).llm_model_info(
+        config.model_id(ModelRole.ANSWER_GENERATION)
+    )
     assert info.context_window_size >= 200000
     llm.assert_not_called()
 
 
 def test_llm_model_info_comes_from_a_local_factory() -> None:
     config = Config(
-        providers={
-            "llm": {
-                "kind": "ollama",
-                "default_model_id": "m",
-                "context_window_size": 4096,
-            }
-        }
+        providers={"llm": {"kind": "ollama", "context_window_size": 4096}},
+        models={"default": "m"},
     )
     assert Providers(config).llm_model_info("m").context_window_size == 4096
 
@@ -384,13 +382,13 @@ def test_overrides_apply_the_local_preset() -> None:
     config = with_provider_overrides(Config(), backend="local", llm_model_id="my-model")
     assert config.backend is Backend.LOCAL
     assert config.providers.llm.kind == "ollama"
-    assert config.search.answer_generation_model_id == "my-model"
+    assert config.model_id(ModelRole.ANSWER_GENERATION) == "my-model"
     assert config.aws.neptune.use_iam is False
 
 
 def test_overrides_keep_what_the_file_set() -> None:
     base = Config(
-        logging={"level": "DEBUG"}, search={"answer_generation_model_id": "x"}
+        logging={"level": "DEBUG"}, models={"roles": {"answer_generation": "x"}}
     )
     config = with_provider_overrides(
         base,
@@ -403,10 +401,10 @@ def test_overrides_keep_what_the_file_set() -> None:
         rerank_kind="none",
     )
     assert config.logging.level == "DEBUG"
-    assert config.search.answer_generation_model_id == "x"
-    assert config.processing.chunking.chunking_model_id == "served"
+    assert config.model_id(ModelRole.ANSWER_GENERATION) == "x"
+    assert config.model_id(ModelRole.CHUNKING) == "served"
     assert config.providers.embedding.base_url == "http://model-server.test/v1"
-    assert config.indexing.opensearch.embedding_model_id == "embed"
+    assert config.embedding_model_id == "embed"
     assert config.providers.rerank.kind == "none"
 
 
@@ -416,15 +414,16 @@ def test_backend_aws_over_a_local_file_drops_the_local_preset() -> None:
     local = Config(
         backend="local",
         aws={"neptune": {"endpoint": "graph.example"}},
-        providers={"llm": {"default_model_id": "served"}},
+        models={"default": "served"},
     )
     config = with_provider_overrides(local, backend="aws")
     aws = Config(
         aws={"neptune": {"endpoint": "graph.example"}},
-        providers={"llm": {"default_model_id": "served"}},
+        models={"default": "served"},
     )
     assert config.backend is Backend.AWS
     assert config.providers == aws.providers
+    assert config.models == aws.models
     assert config.aws.neptune == aws.aws.neptune
     assert config.aws.opensearch == aws.aws.opensearch
 
@@ -435,7 +434,7 @@ def test_no_overrides_returns_the_same_config() -> None:
 
 
 def test_invalid_overrides_are_configuration_errors() -> None:
-    with pytest.raises(ConfigurationError, match="providers.embedding.model_id"):
+    with pytest.raises(ConfigurationError, match="models.embedding.model_id"):
         with_provider_overrides(Config(), embedding_kind="ollama")
 
 

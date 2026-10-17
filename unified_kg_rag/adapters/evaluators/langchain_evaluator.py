@@ -27,6 +27,7 @@ from unified_kg_rag.domain.models import (
     EvaluationResult,
     EvaluatorType,
     ModelPurpose,
+    ModelRole,
 )
 from unified_kg_rag.shared import EvaluationException, get_logger
 from unified_kg_rag.shared.utils import parse_llm_json, text_digest
@@ -114,7 +115,7 @@ class LangChainEvaluator(BaseGraphRAGEvaluator):
     def _initialize_evaluator(self, **kwargs: Any) -> None:
         try:
             self.llm = self.providers.llm_factory.get_model(
-                model_id=self.config.evaluation.evaluation_model_id,
+                model_id=self.config.model_id(ModelRole.EVALUATION),
                 model_purpose=ModelPurpose.EVALUATION,
                 **judge_model_kwargs(self.config),
             )

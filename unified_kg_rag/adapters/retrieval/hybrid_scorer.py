@@ -119,7 +119,7 @@ class HybridScorer:
                 ).rerank_factory
 
             self.rerank_model = self.rerank_factory.get_model(
-                model_id=rerank_config.rerank_model_id,
+                model_id=self.config.rerank_model_id,
                 top_k=rerank_config.top_k,
             )
         except Exception as e:

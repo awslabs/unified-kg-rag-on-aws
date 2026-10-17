@@ -680,7 +680,7 @@ async def test_map_phase_a_vllm_overflow_leaves_the_batch_unrated() -> None:
 async def test_map_phase_a_400_on_every_batch_fails_the_query() -> None:
     # Regression: every 400 left its batch unrated, so a map model refusing
     # every request (an unsupported parameter, an unknown model id) answered
-    # from the unrated reports; with providers.llm.fast_model_id the answer
+    # from the unrated reports; with models.fast the answer
     # call runs on another model and did not fail either.
     import openai
 

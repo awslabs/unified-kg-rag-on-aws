@@ -61,16 +61,20 @@ def test_simple_is_not_routable_by_default() -> None:
 
 
 def test_default_routable_set_and_fast_router_model() -> None:
-    from unified_kg_rag.domain.models import Config, LanguageModelId
+    from unified_kg_rag.domain.models import Config, LanguageModelId, ModelRole
 
-    search = Config().search
+    config = Config()
+    search = config.search
     assert search.auto_routable_strategies == [
         SearchStrategy.LOCAL,
         SearchStrategy.MIX,
         SearchStrategy.GLOBAL,
         SearchStrategy.DRIFT,
     ]
-    assert search.strategy_selection_model_id == LanguageModelId.CLAUDE_V5_5_HAIKU
+    assert (
+        config.model_id(ModelRole.STRATEGY_SELECTION)
+        == LanguageModelId.CLAUDE_V5_5_HAIKU
+    )
 
 
 def test_unknown_defaults_to_the_first_routable_when_local_is_excluded() -> None:

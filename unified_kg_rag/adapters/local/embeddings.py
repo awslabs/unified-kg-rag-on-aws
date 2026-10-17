@@ -4,7 +4,7 @@
 
 Both conform to ``EmbeddingFactoryPort``. The vector dimension is not
 discoverable without a request, so it comes from
-``providers.embedding.dimension`` (``get_model_info``), which fixes the
+``models.embedding.dimension`` (``get_model_info``), which fixes the
 OpenSearch ``knn_vector`` mappings. Inputs are truncated to
 ``providers.embedding.max_input_tokens`` by the script-aware estimate (a
 server rejects or silently cuts an over-long input), and each embed call is a
@@ -158,7 +158,7 @@ class _LocalEmbeddingFactory:
     def get_model_info(self, model_id: Any) -> EmbeddingModelInfo:
         tokens = self.settings.max_input_tokens
         return EmbeddingModelInfo(
-            dimensions=self.settings.dimension,
+            dimensions=self.config.embedding_dimension,
             max_sequence_tokens=tokens,
             max_sequence_length=tokens * 4,
         )
@@ -166,10 +166,11 @@ class _LocalEmbeddingFactory:
     def get_model(self, model_id: Any, **kwargs: Any) -> TracedEmbeddings:
         name = model_id_value(model_id)
         dimensions = kwargs.get("dimensions")
-        if dimensions is not None and dimensions != self.settings.dimension:
+        configured = self.config.embedding_dimension
+        if dimensions is not None and dimensions != configured:
             raise EmbeddingModelError(
                 f"Dimension {dimensions} requested for '{name}', but "
-                f"providers.embedding.dimension is {self.settings.dimension}"
+                f"models.embedding.dimension is {configured}"
             )
         inner = self._build(name)
         logger.debug("Created %s embedding model '%s'", self.kind, name)

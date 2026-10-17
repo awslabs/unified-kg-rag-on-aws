@@ -31,7 +31,7 @@ def add_provider_arguments(parser: argparse.ArgumentParser) -> None:
         choices=[b.value for b in Backend],
         help="Provider preset: 'aws' (Bedrock, Neptune, OpenSearch, DynamoDB) or "
         "'local' (Ollama, cross-encoder, embedded SQLite stores). The preset fills in only keys the config leaves unset: a "
-        "providers.*, aws.neptune.*, aws.opensearch.* or model-id key the "
+        "providers.*, models.*, aws.neptune.* or aws.opensearch.* key the "
         "file sets always wins",
     )
     group.add_argument(
@@ -42,7 +42,7 @@ def add_provider_arguments(parser: argparse.ArgumentParser) -> None:
     group.add_argument(
         "--llm-model",
         metavar="MODEL",
-        help="providers.llm.default_model_id (non-Bedrock language models)",
+        help="models.default (the default tier's language model)",
     )
     group.add_argument(
         "--embedding-provider",
@@ -52,13 +52,13 @@ def add_provider_arguments(parser: argparse.ArgumentParser) -> None:
     group.add_argument(
         "--embedding-model",
         metavar="MODEL",
-        help="providers.embedding.model_id (non-Bedrock embeddings)",
+        help="models.embedding.model_id",
     )
     group.add_argument(
         "--embedding-dimension",
         type=int,
         metavar="N",
-        help="providers.embedding.dimension (non-Bedrock embeddings)",
+        help="models.embedding.dimension",
     )
     group.add_argument(
         "--rerank-provider",

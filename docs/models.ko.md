@@ -32,14 +32,14 @@ aws:
 임베딩 모델 ID와 재순위화 모델 ID는 다르게 동작합니다. Bedrock 공급자(기본값인
 `providers.embedding.kind` / `providers.rerank.kind`)에서는 정해진 목록의 값만 받으며
 `model_overrides`도 적용되지 않습니다. 로컬 공급자에서는 어떤 모델 이름이든 받습니다(사용자
-가이드의 [로컬 모드](./user-guide.ko.md#로컬-모드-aws-없이) 참고). `embedding_model_id`는
+가이드의 [로컬 모드](./user-guide.ko.md#로컬-모드-aws-없이) 참고). `models.embedding.model_id`는
 `amazon.titan-embed-text-v2:0`, `amazon.titan-embed-text-v1`,
 `cohere.embed-v4:0`, `cohere.embed-english-v3`,
-`cohere.embed-multilingual-v3` 중 하나를, `rerank_model_id`는
+`cohere.embed-multilingual-v3` 중 하나를, `models.rerank`는
 `cohere.rerank-v3-5:0` 또는 `amazon.rerank-v1:0`을 받습니다. 그 밖의 ID는 설정
 검증에서 실패합니다. 임베딩 차원은 OpenSearch 벡터 매핑에 기록되고 모델 레코드와
 대조하므로, 모르는 모델에는 안전한 기본값이 없습니다.
-`indexing.opensearch.embedding_dimension`은 목록에 있는 모델이 지원하는 차원 중
+`models.embedding.dimension`은 목록에 있는 모델이 지원하는 차원 중
 하나를 고릅니다(Titan Embed V2: 256, 512, 1024. 지정하지 않으면 가장 큰 값). 모델을
 추가하려면 코드를 바꿔야 합니다. `EmbeddingModelId`/`RerankModelId`
 (`domain/models/config.py`)에 멤버를, `adapters/aws/bedrock_models.py`에 레코드를
@@ -75,7 +75,7 @@ Claude 4.7 이후 모델은 네 가지가 다릅니다.
 - **`effort`가 thinking 토큰 예산을 대신합니다.** 이 모델들에서는
   `thinking_budget_tokens`를 무시합니다(구형 `budget_tokens` 요청 형식은 400으로
   거부됨). 대신 `bedrock.default_effort` / `bedrock.fast_effort`를 지정하세요. 호출
-  모델이 `fast_model_id`이고 그 값이 `default_model_id`와 다르면 `fast_effort`를, 그
+  모델이 빠른 계층 모델(`models.fast`)이고 그 값이 `models.default`와 다르면 `fast_effort`를, 그
   밖에는 `default_effort`를 씁니다. 기본 제공 빠른 모델인 Claude Haiku 5.5는 adaptive
   thinking을 하므로, `fast_effort`(기본 `low`)가 빠른 계층 호출의 추론 강도를
   정합니다. 기본 계층 수집 호출은 `ingestion_effort`가 지정되어 있으면 그 값을 씁니다.

@@ -26,7 +26,7 @@ from unified_kg_rag.adapters.retrieval.memory_manager import (
     MemoryManager,
 )
 from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain
-from unified_kg_rag.domain.models import Config, SearchStrategy
+from unified_kg_rag.domain.models import Config, ModelRole, SearchStrategy
 
 pytestmark = pytest.mark.unit
 
@@ -191,9 +191,9 @@ def test_injected_llm_factory_reaches_global_and_drift(
     assert isinstance(llm, FakeLLMFactory)
     # The strategy's own LLM chains were built from the injected factory.
     expected = (
-        config.search.global_search.map_model_id
+        config.model_id(ModelRole.GLOBAL_MAP)
         if strategy is SearchStrategy.GLOBAL
-        else config.search.drift_search.action_model_id
+        else config.model_id(ModelRole.DRIFT_ACTION)
     )
     assert str(expected) in llm.model_ids
     # Scorer and token counter came from the bundle too.

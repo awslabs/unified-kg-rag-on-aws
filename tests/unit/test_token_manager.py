@@ -25,7 +25,12 @@ from unified_kg_rag.adapters.retrieval.token_manager import (
     SectionType,
     TokenManager,
 )
-from unified_kg_rag.domain.models import Config, LanguageModelId, RetrievalResult
+from unified_kg_rag.domain.models import (
+    Config,
+    LanguageModelId,
+    ModelRole,
+    RetrievalResult,
+)
 from unified_kg_rag.domain.models.config import ContextTypeBudgetConfig
 from unified_kg_rag.ports.model_factory import effective_max_output_tokens
 
@@ -53,7 +58,7 @@ def _make_manager(
     config.aws.bedrock.enable_1m_context = enable_1m_context
     config.aws.bedrock.default_max_output_tokens = default_max_output_tokens
     if answer_model_id is not None:
-        config.search.answer_generation_model_id = answer_model_id
+        config.models.roles.answer_generation = answer_model_id
     providers = Providers(
         config,
         boto_session=mocker.Mock(),
@@ -811,7 +816,7 @@ def _manager_with_counter(
     # Default to an answer model that accepts CountTokens, where each count is
     # a round trip worth overlapping.
     config = Config()
-    config.search.answer_generation_model_id = answer_model_id
+    config.models.roles.answer_generation = answer_model_id
     providers = Providers(
         config,
         boto_session=mocker.Mock(),
@@ -865,7 +870,9 @@ class TestConcurrentCounting:
 
         counter.count_tokens = recording_count  # type: ignore[method-assign]
         mgr = _manager_with_counter(
-            mocker, counter, answer_model_id=Config().search.answer_generation_model_id
+            mocker,
+            counter,
+            answer_model_id=Config().model_id(ModelRole.ANSWER_GENERATION),
         )
         assert mgr.count_tokens_many([f"text {i}" for i in range(20)]) == [2] * 20
         assert threads == {threading.current_thread().name}

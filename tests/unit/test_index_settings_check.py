@@ -105,7 +105,7 @@ def _indexer(
 ) -> OpenSearchIndexer:
     mocker.patch.object(module, "OpenSearchClient", return_value=client)
     config = Config(
-        indexing={"opensearch": {"embedding_model_id": model_id}},
+        models={"embedding": {"model_id": model_id}},
         processing={"translation": translation or {}},
     )
     return OpenSearchIndexer(
