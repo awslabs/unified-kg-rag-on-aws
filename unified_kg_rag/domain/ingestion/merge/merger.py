@@ -18,6 +18,10 @@ from unified_kg_rag.domain.ingestion.base_resolver import (
     entity_types_compatible,
 )
 from unified_kg_rag.domain.ingestion.descriptions import merge_descriptions
+from unified_kg_rag.domain.ingestion.graph_resolver import (
+    ENTITY_KEYS_ATTRIBUTE,
+    entity_keys,
+)
 from unified_kg_rag.domain.ingestion.relationship_weights import (
     apply_text_unit_weights,
     overlay_weights,
@@ -61,7 +65,19 @@ def _merge_entity_fields(surviving: Entity, incoming: Entity) -> None:
     surviving.description = merge_descriptions(
         (surviving.description, incoming.description)
     )
+    keys = entity_keys(surviving) | entity_keys(incoming)
     surviving.attributes = merge_attributes((surviving.attributes, incoming.attributes))
+    if (
+        any(
+            ENTITY_KEYS_ATTRIBUTE in (e.attributes or {}) for e in (surviving, incoming)
+        )
+        or len(keys) > 1
+    ):
+        # The names both were resolved from (see derivation).
+        surviving.attributes = {
+            **(surviving.attributes or {}),
+            ENTITY_KEYS_ATTRIBUTE: sorted(keys),
+        }
     surviving.text_unit_ids = _dedupe_preserve_order(
         (surviving.text_unit_ids or []) + (incoming.text_unit_ids or [])
     )
@@ -317,11 +333,9 @@ def remove_text_units(
     surviving documents: they stay, but must stop citing the removed chunks.
     Returns updated copies of only the items that referenced one of
     ``text_unit_ids``. Weight follows the same rule as the merge (the sum of
-    the remaining per-text-unit strengths). Descriptions are left as they are:
-    removing a document's contribution would need an LLM re-summary. So are
-    the attributes: the document ``filters`` values the merge unioned in
-    (``merge_attributes``) stay on the shared item until a full
-    rebuild.
+    the remaining per-text-unit strengths). Descriptions and attributes are
+    left as they are: the caller derives them again from the records of the
+    text units left (``domain.ingestion.derivation``).
     """
     removed = set(text_unit_ids)
     updated_entities: list[Entity] = []
@@ -397,7 +411,7 @@ def remove_claim_text_units(
     """Strip removed text units from kept claims (see :func:`remove_text_units`).
 
     Returns updated copies of only the claims that cited one of
-    ``text_unit_ids``; descriptions are left as they are.
+    ``text_unit_ids``; the caller derives their content again.
     """
     removed = set(text_unit_ids)
     return [

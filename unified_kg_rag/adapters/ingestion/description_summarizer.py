@@ -24,8 +24,9 @@ and every non-description field is left untouched.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from functools import cached_property
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeVar
 
 from langchain_core.output_parsers import StrOutputParser
 
@@ -36,6 +37,7 @@ from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.models import Config, Entity, ModelPurpose, Relationship
 from unified_kg_rag.domain.prompts import DescriptionSummarizationPrompt
 from unified_kg_rag.shared import get_logger
+from unified_kg_rag.shared.utils import compute_hash
 from unified_kg_rag.shared.utils.langchain import BatchProcessor
 
 if TYPE_CHECKING:
@@ -54,6 +56,57 @@ _MIN_INPUT_TOKENS = 1_000
 # the input budget / max_summary_tokens, so two rounds already cover millions
 # of tokens; the cap only bounds a model that will not shorten its input.
 _MAX_MAP_ROUNDS = 4
+
+
+# Attribute of a summarized description: the hash of the description it was
+# made from, so a run that derives the same description again keeps the
+# summary instead of summarizing it again (see reuse_summaries).
+SUMMARIZED_FROM_ATTRIBUTE = "summarized_from"
+
+_Summarized = TypeVar("_Summarized", Entity, Relationship)
+
+
+def _summarized(item: Entity | Relationship, summary: str) -> None:
+    item.attributes = {
+        **(item.attributes or {}),
+        SUMMARIZED_FROM_ATTRIBUTE: compute_hash(item.description or ""),
+    }
+    item.description = summary
+
+
+def needs_summary(config: Config, description: str | None) -> bool:
+    """Whether ``description`` is over the summarization threshold (with
+    summarization on), so a summarizer is worth building."""
+    summarization = config.processing.graph_extraction.description_summarization
+    return (
+        summarization.enabled
+        and bool(description)
+        and estimate_token_count(description or "")
+        > summarization.force_summary_threshold_tokens
+    )
+
+
+def reuse_summaries(
+    items: Sequence[_Summarized], stored: Sequence[_Summarized]
+) -> None:
+    """Give each item the stored summary made from its description (in place).
+
+    An item whose description equals the one its stored copy's summary was
+    made from takes that summary and its ``summarized_from`` mark, so it is
+    not summarized again (an LLM call per touched item on every run).
+    """
+    by_id = {item.id: item for item in stored}
+    for item in items:
+        previous = by_id.get(item.id)
+        source = (
+            (previous.attributes or {}).get(SUMMARIZED_FROM_ATTRIBUTE)
+            if previous
+            else None
+        )
+        if previous is None or source != compute_hash(item.description or ""):
+            continue
+        item.description = previous.description
+        item.attributes = {**(item.attributes or {}), SUMMARIZED_FROM_ATTRIBUTE: source}
 
 
 class DescriptionSummarizer:
@@ -111,12 +164,7 @@ class DescriptionSummarizer:
         return min(MAX_INPUT_TOKENS, max(_MIN_INPUT_TOKENS, available))
 
     def _exceeds_threshold(self, description: str | None) -> bool:
-        if not description:
-            return False
-        return (
-            estimate_token_count(description)
-            > self.summarization_config.force_summary_threshold_tokens
-        )
+        return needs_summary(self.config, description)
 
     def summarize_entities(self, entities: list[Entity]) -> list[Entity]:
         """Re-summarize entity descriptions over the threshold (in place)."""
@@ -131,7 +179,7 @@ class DescriptionSummarizer:
         )
         for entity, summary in zip(over_threshold, summaries, strict=True):
             if summary:
-                entity.description = summary
+                _summarized(entity, summary)
         return entities
 
     def summarize_relationships(
@@ -153,7 +201,7 @@ class DescriptionSummarizer:
         )
         for rel, summary in zip(over_threshold, summaries, strict=True):
             if summary:
-                rel.description = summary
+                _summarized(rel, summary)
         return relationships
 
     def _build_inputs(

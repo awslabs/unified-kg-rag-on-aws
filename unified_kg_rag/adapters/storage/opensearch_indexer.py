@@ -715,6 +715,17 @@ class OpenSearchIndexer(VectorIndexer):
             self.opensearch_config.relationships_index_prefix, ids, suffix
         )
 
+    def read_text_unit_attributes(
+        self, ids: list[str], suffix: str | None = None
+    ) -> dict[str, dict[str, Any]]:
+        """Stored text units' attributes by id (see the port)."""
+        return {
+            source["id"]: dict(source.get("attributes") or {})
+            for source in self._read_sources(
+                self.opensearch_config.text_units_index_prefix, ids, suffix
+            )
+        }
+
     def read_extraction_records(
         self, keys: list[str], suffix: str | None = None
     ) -> dict[str, dict[str, Any]]:
@@ -819,23 +830,29 @@ class OpenSearchIndexer(VectorIndexer):
         return self._upsert_item_type(entities, self._spec("entities"))
 
     def update_entity_lineage(self, entities: list[Entity]) -> IndexingStats:
-        """Set stored entities' ``text_unit_ids`` in place (no re-embedding)."""
+        """Set stored entities' ``text_unit_ids`` and ``rank`` in place (no
+        re-embedding)."""
         return self._update_fields(
             entities,
             self.opensearch_config.entities_index_prefix,
-            lambda e: {"text_unit_ids": list(e.text_unit_ids or [])},
+            lambda e: {
+                "text_unit_ids": list(e.text_unit_ids or []),
+                "rank": e.rank if e.rank is not None else 1.0,
+            },
         )
 
     def update_relationship_lineage(
         self, relationships: list[Relationship]
     ) -> IndexingStats:
-        """Set stored relationships' ``text_unit_ids`` and ``weight`` in place."""
+        """Set stored relationships' ``text_unit_ids``, ``weight`` and ``rank``
+        in place."""
         return self._update_fields(
             relationships,
             self.opensearch_config.relationships_index_prefix,
             lambda r: {
                 "text_unit_ids": list(r.text_unit_ids or []),
                 "weight": r.weight if r.weight is not None else 1.0,
+                "rank": r.rank if r.rank is not None else 1.0,
             },
         )
 

@@ -191,6 +191,12 @@ Defaults. Set the old value explicitly to keep the previous behaviour.
 
 Index data. Rebuild existing indexes once with `indexing.reset: true` (or a
 full re-index of the affected index type).
+- Incremental runs derive the content of what they touch from the text units'
+  extraction records, which text units now name
+  (`attributes.extraction_records`), and resolved entities record the name
+  keys they were resolved from (`attributes.entity_keys`). Items indexed
+  before keep their stored content (a WARNING counts them) until
+  `indexing.reset: true` rebuilds the index (#PR).
 - Graph extraction and gleaning write one record per text unit (its own
   entities, relationships and rejected names) and graph resolution merges
   the records: `PipelineContext.unit_extractions` replaces `entities`,
@@ -529,6 +535,11 @@ Library API (Python callers and custom backends).
   from 172 children to 20 (median 98 to 8), with 8,426 communities instead
   of 7,580 and 5 levels instead of 4. Re-index with `indexing.reset: true`
   to rebuild an existing hierarchy (#320).
+- The records of a build are merged in text-unit id order, so the display
+  spelling and type ties a merge keeps do not depend on which documents
+  were extracted together. Removing a document's chunks from shared items
+  re-embeds the ones whose text changed; the others still update lineage,
+  weight and now rank in place (#PR).
 - Level-0 communities are bounded by the new
   `graph.community_detection.max_cluster_size` (default 20): a larger Leiden
   community is partitioned again on its own subgraph until it fits, and the
@@ -801,6 +812,18 @@ Library API (Python callers and custom backends).
   its one-edge-per-pair graph, so of "Vendor supplies Buyer" and "Vendor
   invoices Buyer" only the first reached the context. They are now
   deduplicated by relationship id (#317).
+- Incremental runs no longer keep what a changed or deleted document
+  contributed to the items it shared with other documents: their
+  description, name, type, confidence, document filters and rank, and a
+  shared claim's description, source text and status, are derived from the
+  records of the text units they cite now, by the full build's merge and
+  resolution, so they equal a full build of the current corpus. A name
+  follows the most-supported spelling (the id stays the first indexed
+  name's until a rebuild), the stored edges of an entity whose degree or
+  name changed get their new rank and endpoint name, and a description is
+  summarized again only when the text it is derived from changed. The
+  property tests and the crash-recovery fixture compare descriptions,
+  names, types, ranks and claims with a full build (#PR).
 - The CLI provider flags no longer drop environment overrides. On every CLI
   (`run-ingestion`, `run-rag`, `run-eval`, `run-prompt-tuning`,
   `run-visualization`), any provider flag (`--backend`, `--llm-provider`,

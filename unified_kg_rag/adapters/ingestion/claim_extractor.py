@@ -1,7 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 import time
-from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 
@@ -18,9 +17,9 @@ from unified_kg_rag.domain.ingestion.base_processor import (
     coerce_llm_text,
     format_entities_with_limit_task,
     group_by_text_unit,
-    union_document_filters,
 )
 from unified_kg_rag.domain.ingestion.claim_resolver import claim_identity_suffix
+from unified_kg_rag.domain.ingestion.contributions import merge_claim_contributions
 from unified_kg_rag.domain.models import Claim, Config, Entity, ModelPurpose, TextUnit
 from unified_kg_rag.domain.prompts import ClaimExtractionPrompt
 from unified_kg_rag.shared import get_logger
@@ -359,30 +358,10 @@ class ClaimExtractor(BaseProcessor):
         )
         return generate_stable_id(claim_id_content)
 
-    def merge_claims(self, claims: list[Claim]) -> list[Claim]:
-        """Merge claim statements by id (mutates the first of each id)."""
-
-        def safe_list_merge(current: list[str], new: list[str]) -> list[str]:
-            merged_current = current if current is not None else []
-            merged_new = new if new is not None else []
-            return list(dict.fromkeys(merged_current + merged_new))
-
-        field_mergers: dict[str, Callable[[Any, Any], Any]] = {
-            "description": self._merge_description,
-            "source_text": self._merge_description,
-            "text_unit_ids": safe_list_merge,
-            "attributes": union_document_filters,
-        }
-        return self._merge_items(
-            items=claims,
-            item_name="Claim",
-            field_mergers=field_mergers,
-            frequency_fields=["type", "status"],
-            log_message_formatter=lambda c: (
-                f"Claim '{c.subject_name}' -> '{c.object_name}' "
-                f"(type: '{c.type}') merged {{count}} instances"
-            ),
-        )
+    @staticmethod
+    def merge_claims(claims: list[Claim]) -> list[Claim]:
+        """Merge claim statements by id (see ``merge_claim_contributions``)."""
+        return merge_claim_contributions(claims)
 
     @staticmethod
     def _log_completion_summary(stats: ClaimExtractionStats) -> None:

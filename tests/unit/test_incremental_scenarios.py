@@ -61,10 +61,10 @@ class FakeIndexingManager:
         self.strip_calls: list[tuple] = []
         self.config = _FakeIndexingCfg(max_failure_rate)
 
-    def merge_with_existing_graph(self, entities, relationships):
+    def merge_with_existing_graph(self, entities, relationships, text_units=()):
         return CrossRunMergeResult(entities=entities, relationships=relationships)
 
-    def merge_with_stored_claims(self, claims):
+    def merge_with_stored_claims(self, claims, text_units=()):
         return claims
 
     def index_delta(self, **kwargs) -> dict[str, IndexingStats]:

@@ -26,7 +26,7 @@ from unified_kg_rag.domain.ingestion.relationship_weights import (
 )
 from unified_kg_rag.domain.models import Config, Entity, Relationship
 from unified_kg_rag.shared import GraphError, get_logger
-from unified_kg_rag.shared.utils import text_digest
+from unified_kg_rag.shared.utils import entity_key, text_digest
 from unified_kg_rag.shared.utils.concurrency import ContextThreadPoolExecutor
 
 logger = get_logger(__name__)
@@ -530,6 +530,33 @@ class RelationshipResolver(BaseResolver):
         return merged
 
 
+# The identity keys of the extracted names an entity was resolved from: an
+# incremental run finds its contributions in the text units' records by them.
+ENTITY_KEYS_ATTRIBUTE = "entity_keys"
+
+
+def entity_keys(entity: Entity) -> set[str]:
+    """The identity keys ``entity`` was resolved from (its own name's key when
+    it records none). A stored one-element list may read back as its value."""
+    stored = (entity.attributes or {}).get(ENTITY_KEYS_ATTRIBUTE)
+    keys = {stored} if isinstance(stored, str) else set(stored or ())
+    return {k for k in keys if isinstance(k, str)} | {entity_key(entity.name)}
+
+
+def record_entity_keys(
+    resolved: list[Entity], members: list[Entity], mapping: dict[str, str]
+) -> None:
+    """Set each resolved entity's ``entity_keys`` to its members' name keys."""
+    keys: dict[str, set[str]] = defaultdict(set)
+    for member in members:
+        keys[mapping.get(member.id, member.id)].add(entity_key(member.name))
+    for entity in resolved:
+        entity.attributes = {
+            **(entity.attributes or {}),
+            ENTITY_KEYS_ATTRIBUTE: sorted(keys[entity.id] | entity_keys(entity)),
+        }
+
+
 class GraphResolver:
     def __init__(
         self,
@@ -557,6 +584,7 @@ class GraphResolver:
             entity_mapping,
             entity_stats,
         ) = self.entity_resolver.resolve(entities)
+        record_entity_keys(resolved_entities, entities, entity_mapping)
 
         (
             resolved_relationships,

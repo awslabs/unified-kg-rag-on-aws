@@ -59,6 +59,7 @@ from unified_kg_rag.domain.ingestion.contributions import (
     merge_contributions,
     record_from_payload,
     record_payload,
+    set_record_key,
     unit_entities,
 )
 from unified_kg_rag.domain.ingestion.delta_detector import (
@@ -912,14 +913,23 @@ class GraphResolutionStage(PipelineStage):
             and record.text_unit_id in units
         ]
         for gleaned in (False, True):
+            fingerprint = unit_record_fingerprint(self.config, gleaned=gleaned)
             items = [
                 (units[record.text_unit_id], record_payload(record))
                 for record in fresh
                 if record.gleaned is gleaned
             ]
-            self.store.save(
-                items, unit_record_fingerprint(self.config, gleaned=gleaned)
-            )
+            self.store.save(items, fingerprint)
+            # The unit names its record, so an incremental run finds the
+            # records of the units it does not extract (see derivation).
+            for record in context.unit_extractions:
+                unit = units.get(record.text_unit_id)
+                if (
+                    unit is not None
+                    and record.gleaned is gleaned
+                    and record.text_unit_id not in failed
+                ):
+                    set_record_key(unit, "graph", self.store.key(unit, fingerprint))
         for record in fresh:
             record.stored = True
 
@@ -1034,6 +1044,13 @@ class ClaimExtractionStage(PipelineStage):
                     unit_record_fingerprint(self.config, gleaned=gleaned, claims=True),
                 )
 
+        for gleaned in (False, True):
+            fingerprint = unit_record_fingerprint(
+                self.config, gleaned=gleaned, claims=True
+            )
+            for unit in storable.values():
+                if unit.id in per_unit and records[unit.id].gleaned is gleaned:
+                    set_record_key(unit, "claims", self.store.key(unit, fingerprint))
         claims = self.extractor.merge_claims(
             [
                 claim.model_copy(deep=True)
