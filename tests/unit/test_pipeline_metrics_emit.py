@@ -133,3 +133,23 @@ def test_a_phase_emits_only_the_metrics_of_the_stages_it_ran() -> None:
         "duration_graph_extraction_seconds",
     ):
         assert name not in emitted
+
+
+def test_community_drift_is_emitted() -> None:
+    m = PipelineMetrics(
+        pipeline_id="p",
+        total_duration_seconds=1.0,
+        total_documents_processed=1,
+        total_text_units_created=1,
+        total_translated_units=0,
+        total_entities_extracted=1,
+        total_relationships_extracted=0,
+        total_claims_extracted=0,
+        total_communities_detected=1,
+        total_community_reports_generated=1,
+        community_drift_overlap_share=0.5,
+        community_rebuild_recommended=1,
+    )
+    emitted = _emit(m)
+    assert emitted["community_drift_overlap_share"] == 0.5
+    assert emitted["community_rebuild_recommended"] == 1

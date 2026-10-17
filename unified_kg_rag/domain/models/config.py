@@ -1389,14 +1389,16 @@ class CommunityDetectionConfig(BaseModel):
     max_cluster_size: int = Field(
         default=20,
         ge=2,
-        description="Maximum entities per level-0 (leaf) community. A larger "
-        "Leiden community is re-partitioned on its own subgraph, recursively, "
-        "until every piece fits or Leiden finds no finer split; coarser levels "
-        "regroup the pieces. Without the bound, modularity's resolution limit "
-        "grows leaves with the corpus beyond what one report's "
-        "max_report_context_tokens can describe. MS GraphRAG's default is 10 "
-        "with a larger report budget; 20 typically keeps a leaf's entities and "
-        "relationships within the default 4000-token report context.",
+        description="Maximum members per community: entities at level 0, "
+        "child communities above. A larger Leiden community is re-partitioned "
+        "on its own subgraph, recursively, until every piece fits or Leiden "
+        "finds no finer split; the next level regroups the pieces. Without the "
+        "bound, modularity's resolution limit grows communities with the "
+        "corpus beyond what one report's max_report_context_tokens can "
+        "describe (or a parent's roll-up can summarize). MS GraphRAG's default "
+        "is 10 with a larger report budget; 20 typically keeps a leaf's "
+        "entities and relationships, or a parent's child summaries, within the "
+        "default 4000-token report context.",
     )
     min_community_size: int = Field(
         default=3,
@@ -1784,6 +1786,18 @@ class IndexingConfig(BaseModel):
         "Delta entities match stored ones by the full build's rule "
         "(processing.fuzzy_entity_resolution), which costs an entity-name "
         "projection per delta run.",
+    )
+    community_drift_threshold: float = Field(
+        default=0.5,
+        gt=0.0,
+        le=1.0,
+        description="On incremental runs with communities on, recommend a "
+        "rebuild (WARNING and the community_rebuild_recommended metric) when "
+        "at least this share of the entities the run clustered also belongs "
+        "to an earlier level-0 community. A delta run clusters only its own "
+        "documents, so such an entity sits in two communities and the earlier "
+        "community's report misses what the run added; indexing.reset: true "
+        "re-clusters the whole graph.",
     )
     neptune: NeptuneIndexingConfig = Field(
         default_factory=NeptuneIndexingConfig,

@@ -35,6 +35,10 @@ from typing import TYPE_CHECKING, Any
 from pydantic import BaseModel, Field
 
 from unified_kg_rag.domain.ingestion.claim_resolver import resolved_claim_id
+from unified_kg_rag.domain.ingestion.community_drift import (
+    CommunityDrift,
+    measure_community_drift,
+)
 from unified_kg_rag.domain.ingestion.delta_detector import (
     assign_registry_source,
     detect_delta,
@@ -443,6 +447,8 @@ class IncrementalIndexer:
         self._pending: dict[str, DocStatusRecord] = {}
         self._overflow: dict[str, DocumentLineage] = {}
         self._in_flight: set[str] = set()
+        # Community drift of the last commit (None without communities).
+        self.community_drift: CommunityDrift | None = None
 
     def check_graph_holds_registry(self, delta: DocumentDelta) -> None:
         """Raise before any write when the stores lost the registry's documents.
@@ -864,6 +870,7 @@ class IncrementalIndexer:
         communities, claims, claim_id_remap = _remap_references(
             communities, claims, merged.id_remap_by_suffix
         )
+        self.community_drift = self._measure_drift(entities, communities)
         claims = self.indexing_manager.merge_with_stored_claims(claims)
         lineages = [
             _remap_lineage(
@@ -886,6 +893,39 @@ class IncrementalIndexer:
         )
         self.record(lineages, fingerprints, results, failed_doc_ids)
         return results
+
+    def _measure_drift(
+        self, entities: list[Entity] | None, communities: list[Community] | None
+    ) -> CommunityDrift | None:
+        """Measure and log the commit's community drift (see community_drift)."""
+        if not communities:
+            return None
+        drift = measure_community_drift(
+            entities or [],
+            communities,
+            self.indexing_manager.config.indexing.community_drift_threshold,
+        )
+        if drift is None:
+            return None
+        if drift.rebuild_recommended:
+            logger.warning(
+                "Community drift: %d of the %d entities this run clustered also "
+                "belong to an earlier level-0 community (%d earlier communities "
+                "have stale reports). Incremental runs cluster only their delta; "
+                "rebuild the communities with indexing.reset: true.",
+                drift.overlapping_entities,
+                drift.clustered_entities,
+                drift.stale_communities,
+            )
+        else:
+            logger.info(
+                "Community drift: %d of %d clustered entities also in an earlier "
+                "level-0 community (%d stale communities)",
+                drift.overlapping_entities,
+                drift.clustered_entities,
+                drift.stale_communities,
+            )
+        return drift
 
     def record(
         self,
@@ -1693,7 +1733,7 @@ def index_delta(
     communities: list[Community],
     community_reports: list[CommunityReport],
     claims: list[Claim],
-) -> dict[str, IndexingStats]:
+) -> tuple[dict[str, IndexingStats], CommunityDrift | None]:
     """Idempotent delta indexing + stale-artifact pruning + registry write-back.
 
     Routed to when a doc-status delta is present (incremental mode). The new
@@ -1765,4 +1805,4 @@ def index_delta(
             "Removing the artifacts of deleted documents failed; their "
             "registry records are kept so the next run retries the removal"
         )
-    return results
+    return results, incremental.community_drift

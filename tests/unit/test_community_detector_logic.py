@@ -226,6 +226,16 @@ class TestMaxClusterSize:
                 assert set().union(*(c.nodes for c in children)) == community.nodes
                 assert all(c.parent_id == community.community_id for c in children)
 
+    def test_parents_have_at_most_max_cluster_size_children(self) -> None:
+        # 40 one-clique leaves in a ring: one pass over their cluster graph
+        # groups more than 4 leaves under some parents.
+        cd = self._run(_ring_of_cliques(), 4)
+        parents = [c for c in cd.all_communities.values() if c.children_ids]
+        assert len(parents) > 1
+        assert max(len(c.children_ids) for c in parents) <= 4
+        # The hierarchy still converges: deeper levels regroup the parents.
+        assert max(c.level for c in cd.all_communities.values()) >= 2
+
     def test_split_ignores_insertion_order(self) -> None:
         ids = [
             sorted(self._run(_ring_of_cliques(seed), 4).all_communities)

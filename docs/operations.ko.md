@@ -131,6 +131,21 @@ CDK 스택에서 `start-execution` 한 번은 네 단계를 차례로 실행하�
 (`indexing.reset: true`)으로 둘 다 새로 고칩니다. 자세한 내용은
 [사용자 가이드](./user-guide.ko.md) §5에 있습니다.
 
+재구축할 때가 되었는지는 커뮤니티 드리프트로 판단합니다. 엔티티마다 속한 레벨 0
+커뮤니티를 기록하므로, 델타 실행의 인덱싱 단계는 `community_drift` 지표에 다음을
+남깁니다. 덧붙인 커뮤니티 수(`delta_communities`), 군집화한 엔티티 수
+(`clustered_entities`), 그중 이전 군집화에서 이미 배치된 엔티티 수
+(`overlapping_entities`, 이제 레벨 0 커뮤니티 두 개 이상에 속합니다), 이번 실행이
+추가한 내용을 리포트에 담지 못한 이전 커뮤니티 수(`stale_communities`), 그리고
+`overlap_share`(겹친 엔티티 수 / 군집화한 엔티티 수)입니다. `overlap_share`가
+`indexing.community_drift_threshold`(기본값 `0.5`)에 이르면 `indexing.reset: true`를
+권하는 WARNING 로그를 남기고, 실행 지표에 `community_drift_overlap_share`와 함께
+`community_rebuild_recommended: 1`을 기록합니다(경보를 걸 수 있습니다). 실행이
+건드린 엔티티에 대해서는 누적값입니다(세 번의 실행에서 다시 군집화된 엔티티는
+커뮤니티 세 개로 셉니다). 변경되거나 삭제된 문서와 함께 지워진 커뮤니티도 재구축
+전까지 공유 엔티티에 남으므로 상한값으로 읽어야 합니다. 커뮤니티가 없거나
+`indexing.cross_run_merge: false`인 실행은 겹침을 보고하지 않습니다.
+
 레지스트리를 읽을 수 없으면(테이블 없음, 접근 거부, 클라이언트 재시도로도 풀리지
 않는 스로틀링) `document_loading` 단계가 테이블 이름과 원인을 담은
 `DocStatusRegistryError`로 실패합니다. 모든 문서를 인덱싱하는 경로로 넘어가지

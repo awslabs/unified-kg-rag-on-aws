@@ -385,6 +385,15 @@ Library API (Python callers and custom backends).
   environments that sit idle most of the day; unset keeps the provisioned
   `neptune_instance`. The app is unchanged (same endpoints, IAM auth and
   Gremlin API) (#319).
+- Incremental runs report community drift: entities record their level-0
+  communities, and a delta run's indexing stage counts the entities an
+  earlier clustering already placed and the earlier communities whose
+  reports went stale. At `indexing.community_drift_threshold` (default 0.5)
+  of the run's clustered entities it logs a WARNING recommending
+  `indexing.reset: true` and emits `community_rebuild_recommended`
+  (with `community_drift_overlap_share`). Entities indexed before record no
+  community; re-index once with `indexing.reset: true` to start counting
+  from a full build (#320).
 - With `observability.capture_content`, the root `kg_rag.query` span records
   the redacted query as `input.value` and, outside `stream` / `astream`, the
   redacted answer as `output.value`, so the Langfuse and Phoenix trace lists
@@ -450,6 +459,13 @@ Library API (Python callers and custom backends).
   fused order. Reported by @vibhupb (#83) (#284).
 
 ### Changed
+- `graph.community_detection.max_cluster_size` also caps a parent's child
+  communities: a coarser-level community with more children is partitioned
+  again on the cluster graph, so a parent report's roll-up covers every
+  child summary. On the synthetic 50,000-entity graph the largest parent goes
+  from 172 children to 20 (median 98 to 8), with 8,426 communities instead
+  of 7,580 and 5 levels instead of 4. Re-index with `indexing.reset: true`
+  to rebuild an existing hierarchy (#320).
 - Level-0 communities are bounded by the new
   `graph.community_detection.max_cluster_size` (default 20): a larger Leiden
   community is partitioned again on its own subgraph until it fits, and the

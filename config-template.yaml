@@ -463,9 +463,10 @@ graph:
     max_levels: 5
     trials: 3
     extra_forced_iterations: 2
-    # Maximum entities per level-0 (leaf) community: a larger one is
-    # partitioned again on its own subgraph until it fits, so a leaf report
-    # sees all of its members (MS GraphRAG's default is 10).
+    # Maximum members per community (entities at level 0, child communities
+    # above): a larger one is partitioned again on its own subgraph until it
+    # fits, so a leaf report sees all of its entities and a parent's roll-up
+    # all of its child summaries (MS GraphRAG's default is 10).
     max_cluster_size: 20
     min_community_size: 3
     # When true, sweep auto_resolution_candidates and keep the resolution that
@@ -556,6 +557,11 @@ indexing:
   # the full build's rule (processing.fuzzy_entity_resolution), which costs an
   # entity-name projection per delta run.
   cross_run_merge: true
+  # Incremental runs cluster only their delta, so an entity an earlier run
+  # clustered joins a second level-0 community. At this share of the run's
+  # clustered entities the run logs a WARNING recommending indexing.reset
+  # and sets the community_rebuild_recommended metric.
+  community_drift_threshold: 0.5
   # Maximum tolerated per-index-type write failure rate before the indexing
   # stage is marked FAILED. A fully-failed index type (0 successes) always
   # fails; this additionally catches PARTIAL failures (e.g. most relationship
