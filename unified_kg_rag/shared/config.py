@@ -91,7 +91,85 @@ def load_cli_dotenv(directory: Path | None = None) -> Path | None:
     return path
 
 
+# Environment variable -> the config field it overrides. A path ending inside a
+# free-form mapping (index_settings, language_analyzers) sets that one key.
+ENV_OVERRIDES: dict[str, tuple[str, ...]] = {
+    "AWS_PROFILE": ("aws", "profile_name"),
+    "AWS_REGION": ("aws", "region_name"),
+    "LOG_LEVEL": ("logging", "level"),
+    "LOG_FORMAT": ("logging", "log_format"),
+    "LOG_TO_FILE": ("logging", "log_to_file"),
+    "LOG_FILE_PATH": ("logging", "log_file_path"),
+    "NEPTUNE_ENDPOINT": ("aws", "neptune", "endpoint"),
+    "OPENSEARCH_ENDPOINT": ("aws", "opensearch", "endpoint"),
+    "OPENSEARCH_USERNAME": ("aws", "opensearch", "username"),
+    "OPENSEARCH_PASSWORD": ("aws", "opensearch", "password"),
+    "BEDROCK_REGION": ("aws", "bedrock", "region_name"),
+    "BEDROCK_GUARDRAIL_IDENTIFIER": ("aws", "bedrock", "guardrail", "identifier"),
+    "BEDROCK_GUARDRAIL_VERSION": ("aws", "bedrock", "guardrail", "version"),
+    "S3_BUCKET_NAME": ("aws", "s3", "bucket_name"),
+    # Injected by the CDK compute stack from the domain's node count. Applies
+    # to indices created from now on; existing indices keep theirs until
+    # changed with `PUT <index>/_settings`.
+    "OPENSEARCH_NUMBER_OF_REPLICAS": (
+        "indexing",
+        "opensearch",
+        "index_settings",
+        "number_of_replicas",
+    ),
+    # Injected by the CDK compute stack: Amazon OpenSearch Service has no nori
+    # unless its optional plugin is associated, so the IaC maps Korean to an
+    # analyzer the domain has (the built-in cjk).
+    "OPENSEARCH_KOREAN_ANALYZER": (
+        "indexing",
+        "opensearch",
+        "language_analyzers",
+        "ko",
+    ),
+    # Injected by the CDK compute stack so the app uses the IaC-managed
+    # doc-status table (and never auto-creates an unmanaged one).
+    "GRAPHRAG_DOC_STATUS_TABLE": ("aws", "dynamodb", "table_name"),
+    # Set by the container entrypoint to the S3 URI the corpus was synced
+    # from, so incremental deletion is scoped to that corpus rather than the
+    # shared local staging directory.
+    "GRAPHRAG_SOURCE_SCOPE": ("processing", "document_parsing", "source_scope"),
+    "GRAPHRAG_DOC_STATUS_CREATE_TABLE": (
+        "aws",
+        "dynamodb",
+        "create_table_if_missing",
+    ),
+    # Injected by the CDK compute stack when enable_cloudwatch_tracing adds the
+    # ADOT collector sidecar, so the baked-in image config can stay
+    # tracing-free.
+    "GRAPHRAG_OBSERVABILITY_ENABLED": ("observability", "enabled"),
+    "GRAPHRAG_OBSERVABILITY_BACKEND": ("observability", "backend"),
+}
+
+
+def _merge_over(base: dict[str, Any], top: dict[str, Any]) -> dict[str, Any]:
+    """``base`` with every leaf of ``top`` written over it (nested dicts merge)."""
+    merged = dict(base)
+    for key, value in top.items():
+        below = merged.get(key)
+        merged[key] = (
+            _merge_over(below, value)
+            if isinstance(value, dict) and isinstance(below, dict)
+            else value
+        )
+    return merged
+
+
 class ConfigLoader:
+    """Loads the config from its layers: defaults < ``backend`` preset < file
+    < environment (:data:`ENV_OVERRIDES`).
+
+    The environment is a layer of the input, merged over the file's data before
+    the one validation, not assigned to the validated model: an override is
+    then part of what the config was built from (``model_fields_set``), so a
+    config rebuilt from ``model_dump(exclude_unset=True)`` (the CLI provider
+    flags, ``with_provider_overrides``) keeps it.
+    """
+
     def __init__(self, config_path: Path | None = None) -> None:
         self.config_path = Path(config_path) if config_path else None
         self._config: Config | None = None
@@ -108,143 +186,81 @@ class ConfigLoader:
         if self._config is not None:
             return self._config
 
-        if self.config_path is None:
-            self._config = Config()
-            self._apply_environment_overrides()
-            return self._config
-
-        if not self.config_path.exists():
-            raise FileNotFoundError(
-                f"Configuration file not found: '{self.config_path}'"
-            )
-
+        config_data = (
+            self._read_file(self.config_path) if self.config_path is not None else {}
+        )
+        where = f" (in '{self.config_path}')" if self.config_path else ""
         try:
-            with open(self.config_path, encoding="utf-8") as file:
+            warn_unknown_keys(config_data, Config)
+            file_config = Config(**config_data)
+            env_data = self._environment_layer(file_config)
+            config = (
+                Config(**_merge_over(config_data, env_data))
+                if env_data
+                else file_config
+            )
+        except ValidationError as e:
+            raise ConfigurationError(
+                f"Configuration validation error: {validation_summary(e)}{where}"
+            ) from e
+        if self.config_path is not None:
+            resolve_relative_paths(config, self.config_path)
+        self._config = config
+        return config
+
+    @staticmethod
+    def _read_file(config_path: Path) -> dict[str, Any]:
+        """The raw mapping in the config file ``config_path``.
+
+        Raises:
+            FileNotFoundError: The file does not exist.
+            ConfigurationError: It cannot be read or is not a YAML mapping.
+        """
+        if not config_path.exists():
+            raise FileNotFoundError(f"Configuration file not found: '{config_path}'")
+        try:
+            with open(config_path, encoding="utf-8") as file:
                 config_data = yaml.safe_load(file) or {}
         except UnicodeDecodeError as e:
             raise ConfigurationError(
-                f"Configuration file '{self.config_path}' is not valid UTF-8 "
+                f"Configuration file '{config_path}' is not valid UTF-8 "
                 f"(byte offset {e.start})"
             ) from e
         except OSError as e:
             raise ConfigurationError(
-                f"Cannot read configuration file '{self.config_path}': "
-                f"{e.strerror or e}"
+                f"Cannot read configuration file '{config_path}': {e.strerror or e}"
             ) from e
         except yaml.YAMLError as e:
             # One line: the YAML error names the file, line and column.
             raise ConfigurationError(
                 f"Invalid YAML in configuration file: {' '.join(str(e).split())}"
             ) from e
-
-        try:
-            if not isinstance(config_data, dict):
-                raise ConfigurationError(
-                    f"Configuration file '{self.config_path}' must be a YAML "
-                    f"mapping, got {type(config_data).__name__}"
-                )
-
-            warn_unknown_keys(config_data, Config)
-            self._config = Config(**config_data)
-        except ValidationError as e:
+        if not isinstance(config_data, dict):
             raise ConfigurationError(
-                f"Configuration validation error: {validation_summary(e)} "
-                f"(in '{self.config_path}')"
-            ) from e
-        self._apply_environment_overrides()
-        self._resolve_relative_paths()
-        return self._config
+                f"Configuration file '{config_path}' must be a YAML "
+                f"mapping, got {type(config_data).__name__}"
+            )
+        return config_data
 
-    def _resolve_relative_paths(self) -> None:
-        """Resolve a relative SQLite registry path against the config file's
-        directory (see :func:`resolve_relative_paths`)."""
-        if self._config is not None and self.config_path is not None:
-            resolve_relative_paths(self._config, self.config_path)
+    @staticmethod
+    def _environment_layer(config: Config) -> dict[str, Any]:
+        """The set environment overrides as raw config data.
 
-    def _apply_environment_overrides(self) -> None:
-        """Apply the environment overrides; on an invalid one, forget the config.
+        Each value is converted and checked against its field in ``config``
+        (the config without them), so an invalid one is reported by variable.
 
         Raises:
             ConfigurationError: An environment variable holds an invalid value.
         """
-        try:
-            self._apply_environment_overrides_unchecked()
-        except ConfigurationError:
-            self._config = None  # Not cached half-applied: the next load fails too.
-            raise
-
-    def _apply_environment_overrides_unchecked(self) -> None:
-        if self._config is None:
-            return
-        env_overrides = {
-            "AWS_PROFILE": ("aws", "profile_name"),
-            "AWS_REGION": ("aws", "region_name"),
-            "LOG_LEVEL": ("logging", "level"),
-            "LOG_FORMAT": ("logging", "log_format"),
-            "LOG_TO_FILE": ("logging", "log_to_file"),
-            "LOG_FILE_PATH": ("logging", "log_file_path"),
-            "NEPTUNE_ENDPOINT": ("aws", "neptune", "endpoint"),
-            "OPENSEARCH_ENDPOINT": ("aws", "opensearch", "endpoint"),
-            "OPENSEARCH_USERNAME": ("aws", "opensearch", "username"),
-            "OPENSEARCH_PASSWORD": ("aws", "opensearch", "password"),
-            "BEDROCK_REGION": ("aws", "bedrock", "region_name"),
-            "BEDROCK_GUARDRAIL_IDENTIFIER": (
-                "aws",
-                "bedrock",
-                "guardrail",
-                "identifier",
-            ),
-            "BEDROCK_GUARDRAIL_VERSION": ("aws", "bedrock", "guardrail", "version"),
-            "S3_BUCKET_NAME": ("aws", "s3", "bucket_name"),
-            # Injected by the CDK compute stack from the domain's node count.
-            # Applies to indices created from now on; existing indices keep
-            # theirs until changed with `PUT <index>/_settings`.
-            "OPENSEARCH_NUMBER_OF_REPLICAS": (
-                "indexing",
-                "opensearch",
-                "index_settings",
-                "number_of_replicas",
-            ),
-            # Injected by the CDK compute stack: Amazon OpenSearch Service has
-            # no nori unless its optional plugin is associated, so the IaC maps
-            # Korean to an analyzer the domain has (the built-in cjk).
-            "OPENSEARCH_KOREAN_ANALYZER": (
-                "indexing",
-                "opensearch",
-                "language_analyzers",
-                "ko",
-            ),
-            # Injected by the CDK compute stack so the app uses the IaC-managed
-            # doc-status table (and never auto-creates an unmanaged one).
-            "GRAPHRAG_DOC_STATUS_TABLE": ("aws", "dynamodb", "table_name"),
-            # Set by the container entrypoint to the S3 URI the corpus was
-            # synced from, so incremental deletion is scoped to that corpus
-            # rather than the shared local staging directory.
-            "GRAPHRAG_SOURCE_SCOPE": (
-                "processing",
-                "document_parsing",
-                "source_scope",
-            ),
-            "GRAPHRAG_DOC_STATUS_CREATE_TABLE": (
-                "aws",
-                "dynamodb",
-                "create_table_if_missing",
-            ),
-            # Injected by the CDK compute stack when enable_cloudwatch_tracing
-            # adds the ADOT collector sidecar, so the baked-in image config can
-            # stay tracing-free.
-            "GRAPHRAG_OBSERVABILITY_ENABLED": ("observability", "enabled"),
-            "GRAPHRAG_OBSERVABILITY_BACKEND": ("observability", "backend"),
-        }
-
-        for env_var, config_path in env_overrides.items():
+        layer: dict[str, Any] = {}
+        for env_var, config_path in ENV_OVERRIDES.items():
             env_value = os.getenv(env_var)
             if env_value is None:
                 continue
             if env_var == "LOG_LEVEL":
                 env_value = env_value.upper()  # logging accepts any case
             try:
-                self._set_nested_config_value(config_path, env_value)
+                _set_env_value(layer, config, config_path, env_value)
             except (ValueError, ValidationError) as e:
                 # The value is left out: it may be a secret.
                 reason = (
@@ -259,69 +275,7 @@ class ConfigLoader:
                     f"Invalid environment variable {env_var} "
                     f"(overrides {'.'.join(config_path)}): {reason}"
                 ) from e
-
-    def _set_nested_config_value(self, path_tuple: tuple[str, ...], value: str) -> None:
-        """Set the field at ``path_tuple`` from the environment value ``value``.
-
-        Raises:
-            ValueError: ``value`` is not a number for a numeric setting.
-            ValidationError: ``value`` breaks the field's constraints.
-        """
-        if self._config is None:
-            return
-
-        current: Any = self._config
-        for key in path_tuple[:-1]:
-            current = getattr(current, key)
-
-        final_key = path_tuple[-1]
-        # A free-form settings mapping (indexing.opensearch.index_settings) is
-        # coerced like a field, from the type of the value it already holds.
-        is_mapping = isinstance(current, dict)
-        current_value = (
-            current.get(final_key) if is_mapping else getattr(current, final_key)
-        )
-
-        # Coerce the string env value to the field's declared type. SecretStr is
-        # handled by field annotation (current_value may be None at default) so a
-        # value set from the environment stays masked and exposes
-        # .get_secret_value() regardless of validate_assignment.
-        annotation = (
-            None if is_mapping else type(current).model_fields[final_key].annotation
-        )
-        is_secret = current_value is not None and isinstance(current_value, SecretStr)
-        if not is_secret and annotation is not None:
-            is_secret = SecretStr in getattr(annotation, "__args__", (annotation,))
-
-        parsed_value: bool | int | float | str | SecretStr
-        if is_secret:
-            parsed_value = SecretStr(value)
-        elif isinstance(current_value, bool):
-            parsed_value = value.lower() in ("true", "1", "yes", "on")
-        elif isinstance(current_value, int):
-            parsed_value = int(value)
-        elif isinstance(current_value, float):
-            parsed_value = float(value)
-        else:
-            parsed_value = value
-
-        if is_mapping:
-            current[final_key] = parsed_value
-        else:
-            # Checked against the field's type and constraints (the models do
-            # not validate assignment), as the same value in the file would be.
-            # The Annotated form is built at runtime from the field, so a type
-            # checker cannot see it as the TypeForm that TypeAdapter is typed
-            # to take (pydantic >= 2.14); it is one, hence the cast.
-            field = type(current).model_fields[final_key]
-            field_type = cast("TypeForm[Any]", Annotated[field.annotation, field])
-            # The validated value is set, so an enum field holds the member
-            # (``observability.backend``), not the raw string.
-            setattr(
-                current,
-                final_key,
-                TypeAdapter(field_type).validate_python(parsed_value),
-            )
+        return layer
 
     def reload_config(self) -> Config:
         self._config = None
@@ -330,6 +284,74 @@ class ConfigLoader:
     @property
     def config(self) -> Config:
         return self._config if self._config is not None else self.load_config()
+
+
+def _set_env_value(
+    layer: dict[str, Any], config: Config, path_tuple: tuple[str, ...], value: str
+) -> None:
+    """Write the environment value ``value`` for ``path_tuple`` into ``layer``.
+
+    ``value`` is converted to the type of the field in ``config`` and checked
+    against its constraints, as the same value in the file would be. A key of a
+    free-form mapping (``indexing.opensearch.index_settings``) is coerced from
+    the type of the value it already holds, and the whole mapping is written
+    (the file's or the default one with that key replaced), since a mapping in
+    the input replaces the default rather than merging into it.
+
+    Raises:
+        ValueError: ``value`` is not a number for a numeric setting.
+        ValidationError: ``value`` breaks the field's constraints.
+    """
+    current: Any = config
+    target = layer
+    for key in path_tuple[:-1]:
+        current = getattr(current, key)
+        if isinstance(current, dict):
+            # The free-form mapping (the last step): written whole.
+            target = target.setdefault(key, dict(current))
+            break
+        target = target.setdefault(key, {})
+
+    final_key = path_tuple[-1]
+    is_mapping = isinstance(current, dict)
+    current_value = (
+        current.get(final_key) if is_mapping else getattr(current, final_key)
+    )
+
+    # Coerce the string env value to the field's declared type. SecretStr is
+    # handled by field annotation (current_value may be None at default) so a
+    # value set from the environment stays masked and exposes
+    # .get_secret_value().
+    annotation = (
+        None if is_mapping else type(current).model_fields[final_key].annotation
+    )
+    is_secret = current_value is not None and isinstance(current_value, SecretStr)
+    if not is_secret and annotation is not None:
+        is_secret = SecretStr in getattr(annotation, "__args__", (annotation,))
+
+    parsed_value: bool | int | float | str | SecretStr
+    if is_secret:
+        parsed_value = SecretStr(value)
+    elif isinstance(current_value, bool):
+        parsed_value = value.lower() in ("true", "1", "yes", "on")
+    elif isinstance(current_value, int):
+        parsed_value = int(value)
+    elif isinstance(current_value, float):
+        parsed_value = float(value)
+    else:
+        parsed_value = value
+
+    if is_mapping:
+        target[final_key] = parsed_value
+        return
+    # Checked against the field's type and constraints here, so an invalid
+    # value is reported by variable. The Annotated form is built at runtime
+    # from the field, so a type checker cannot see it as the TypeForm that
+    # TypeAdapter is typed to take (pydantic >= 2.14); it is one, hence the
+    # cast.
+    field = type(current).model_fields[final_key]
+    field_type = cast("TypeForm[Any]", Annotated[field.annotation, field])
+    target[final_key] = TypeAdapter(field_type).validate_python(parsed_value)
 
 
 _config_loader = ConfigLoader()

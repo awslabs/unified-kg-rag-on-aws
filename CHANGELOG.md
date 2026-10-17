@@ -590,6 +590,23 @@ Library API (Python callers and custom backends).
   (#300).
 
 ### Fixed
+- The CLI provider flags no longer drop environment overrides. On every CLI
+  (`run-ingestion`, `run-rag`, `run-eval`, `run-prompt-tuning`,
+  `run-visualization`), any provider flag (`--backend`, `--llm-provider`,
+  `--rerank-provider` ...) rebuilt the config from the keys the file set, so
+  an override under a section the file left out was lost: with the image's
+  `docker/config.yaml`, the deployed task's environment and
+  `--rerank-provider none`, `BEDROCK_GUARDRAIL_IDENTIFIER` (the query
+  guardrail was silently off), `BEDROCK_REGION`, `NEPTUNE_ENDPOINT`,
+  `S3_BUCKET_NAME`, `GRAPHRAG_SOURCE_SCOPE`, `OPENSEARCH_NUMBER_OF_REPLICAS`,
+  `OPENSEARCH_KOREAN_ANALYZER` and the `GRAPHRAG_OBSERVABILITY_*` settings
+  fell back to their defaults; without a config file, `--backend aws` also
+  lost `OPENSEARCH_ENDPOINT` and `LOG_LEVEL`. The environment is now a layer
+  of the input, merged over the file before the config is validated, so the
+  order is defaults < `backend` preset < file < environment < provider
+  flags. An environment value is now also checked with the rest of the
+  config: `OPENSEARCH_USERNAME` keeps the local preset's anonymous access
+  off, as the same key in the file does (#PR).
 - Community detection no longer logs the WARNING "Graph has no weighted
   edges" when the hierarchy ends normally at a level whose communities no
   edge joins; it logs that at INFO and stops, with the same communities. An

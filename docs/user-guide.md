@@ -428,17 +428,24 @@ read the template.
 
 ### How configuration is loaded
 
-Values are resolved in three layers, each overriding the one before:
+Values are resolved in layers, each overriding the one before:
 
 1. **Built-in defaults**: the Pydantic models in
    `unified_kg_rag/domain/models/config.py`. Without `--config-path`, a CLI runs
    on these defaults plus environment overrides.
-2. **Your YAML file**: every key you set replaces its default; every key you
+2. **The `backend` preset**: `backend: local` (or `--backend local`) fills in
+   the local providers and stores for every key the file and the environment
+   leave unset ([Local mode](#local-mode-no-aws)).
+3. **Your YAML file**: every key you set replaces its default; every key you
    omit keeps it. A `config.yaml` can therefore hold only the keys you change.
    A dict-valued key (for example `logging.library_levels` or
    `graph.visualization.interactive`) replaces the whole default dict rather
    than merging into it.
-3. **Environment variables** (§2.10): applied last, on top of both.
+4. **Environment variables** (§2.10): on top of the file.
+5. **Provider flags** (`--backend`, `--llm-provider`, `--rerank-provider` ...):
+   applied last, on top of all of the above. They keep every value the file
+   and the environment set; switching `--backend` away from the file's drops
+   only the values equal to the old preset's.
 
 YAML values are validated when the file loads: a wrong type or an unsupported
 value stops the CLI with `Configuration validation error: ...`, naming each

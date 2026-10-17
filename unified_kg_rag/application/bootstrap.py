@@ -13,7 +13,10 @@ single place to override a role.
 ``with_provider_overrides`` applies the CLI provider flags (``--backend``,
 ``--llm-provider`` ...) to a loaded config, re-running the ``backend`` preset
 and the model-id defaults as if the file had set them; switching the backend
-drops the values the old one's preset filled in.
+drops the values the old one's preset filled in. It rebuilds the config from
+what it was built from (``model_dump(exclude_unset=True)``): the file and the
+environment overrides, which ``ConfigLoader`` merges into the input before
+validating, so the flags are the last layer over both.
 """
 
 from __future__ import annotations
@@ -104,6 +107,11 @@ def with_provider_overrides(
     the config's preset filled in first (any value equal to the preset's), so
     ``backend="aws"`` over a ``backend: local`` file returns them to the AWS
     defaults. Returns ``config`` itself when nothing is given.
+
+    Only what ``config`` was built from is kept (its set fields): a value
+    assigned to a nested field of a default section afterwards is not, so a
+    caller passes overrides through the input (as ``ConfigLoader`` does with
+    the environment), not by assignment.
     """
     providers: dict[str, dict[str, Any]] = {}
 
