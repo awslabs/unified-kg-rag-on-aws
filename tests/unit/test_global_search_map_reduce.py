@@ -541,6 +541,43 @@ async def test_default_passes_ranked_points_without_a_reduce_call() -> None:
     assert strat._was_map_reduce_applied(out) is True
 
 
+async def test_a_point_credits_only_the_reports_it_cites() -> None:
+    # Regression: a point drawn from one report of a batch credited every
+    # report of the batch, so a dozen unrelated reports became context and
+    # sources.
+    cited = json.dumps(
+        {
+            "points": [
+                {"description": "from c1", "score": 80, "report_ids": ["cid-1"]},
+                {"description": "from c3", "score": 60, "report_ids": [" cid-3 "]},
+            ]
+        }
+    )
+    strat = _strategy(map_batch_size=4, map_outputs=[cited])
+    out = await strat._apply_map_reduce(_communities(4), SearchQuery(query="q"))
+    assert [(r.source, r.score) for r in out[1:]] == [("c1", 0.8), ("c3", 0.6)]
+
+
+@pytest.mark.parametrize("ids", [None, [], ["cid-9"], "cid-1"])
+async def test_a_point_without_valid_ids_credits_its_batch(ids: Any) -> None:
+    point: dict[str, Any] = {"description": "somewhere", "score": 70}
+    if ids is not None:
+        point["report_ids"] = ids
+    strat = _strategy(
+        map_batch_size=2, map_outputs=[json.dumps({"points": [point]}), ""]
+    )
+    out = await strat._apply_map_reduce(_communities(3), SearchQuery(query="q"))
+    assert [r.source for r in out[1:]] == ["c0", "c1"]
+
+
+def test_the_map_prompt_asks_for_the_report_ids() -> None:
+    from unified_kg_rag.domain.prompts import GlobalMapPrompt
+
+    assert '"report_ids"' in GlobalMapPrompt.system_prompt_template
+    formatted = GlobalSearchStrategy._format_reports(_communities(1))
+    assert formatted.startswith("--- Report (id: cid-0) ---")
+
+
 async def test_default_degraded_path_passes_unrated_reports_through() -> None:
     reducer = _reducer("SHOULD NOT RUN")
     strat = _strategy(

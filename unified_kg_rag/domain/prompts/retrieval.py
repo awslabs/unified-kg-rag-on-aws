@@ -204,13 +204,15 @@ Each key point MUST have:
 - "description": a comprehensive, self-contained description of the point.
 - "score": an INTEGER between 0 and 100 indicating how important this point is for answering the
   user's question. An "I don't know" / irrelevant point MUST have a score of 0.
+- "report_ids": the ids of the reports the point is drawn from, exactly as written in their
+  "--- Report (id: ...) ---" headers. List only reports that support the point.
 
 OUTPUT FORMAT — respond with a single valid JSON object and NOTHING else (no markdown fences, no
 prose before or after). The first character MUST be {{ and the last MUST be }}:
 {{
     "points": [
-        {{"description": "Description of point 1", "score": 90}},
-        {{"description": "Description of point 2", "score": 40}}
+        {{"description": "Description of point 1", "score": 90, "report_ids": ["2", "7"]}},
+        {{"description": "Description of point 2", "score": 40, "report_ids": ["3"]}}
     ]
 }}
 

@@ -1237,6 +1237,14 @@ changed once with the full-config keys (#332).
   one. Local-mode stage caches and extraction records made before miss once;
   the recorded extraction settings compare unchanged, so nothing is
   re-extracted incrementally on that account (#344).
+- Global search credits a key point only to the reports it comes from: the
+  map prompt now asks for the `report_ids` behind each point (MS GraphRAG's
+  `[Data: Reports (ids)]`), and only those reports become context and
+  sources. Every report of a map batch was credited before, so a point drawn
+  from one report put up to a dozen unrelated ones in the answer context and
+  `sources`; on a synthetic 40-topic corpus a single-topic question reported
+  4 sources (1 relevant) and now reports the 1. A point without usable ids
+  (a custom `global_map` prompt) still credits its batch (#PR).
 - One failed DRIFT action (a throttled or timed-out model call) no longer
   fails the whole query: its answer is left out, the local evidence it
   found is kept and `degraded_error` names the failure. A query fails only

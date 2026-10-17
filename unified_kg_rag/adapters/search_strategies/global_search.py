@@ -55,15 +55,24 @@ class _MapPoint:
 
     Lightweight value object (not a Pydantic model) so the map/filter/rank/pack
     plumbing stays internal to this adapter. ``batch`` is the index of the map
-    batch that produced it (-1 when unknown).
+    batch that produced it (-1 when unknown); ``report_ids`` are the ids of
+    the reports the map model says the point comes from (MS GraphRAG's
+    ``[Data: Reports (ids)]``), as it wrote them.
     """
 
-    __slots__ = ("batch", "description", "score")
+    __slots__ = ("batch", "description", "report_ids", "score")
 
-    def __init__(self, description: str, score: int, batch: int = -1) -> None:
+    def __init__(
+        self,
+        description: str,
+        score: int,
+        batch: int = -1,
+        report_ids: list[str] | None = None,
+    ) -> None:
         self.description = description
         self.score = score
         self.batch = batch
+        self.report_ids = report_ids or []
 
 
 def _record(degraded: list[str] | None, error: Exception) -> None:
@@ -474,8 +483,8 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         PACK — take ranked points up to ``max_map_reduce_tokens``.
         REDUCE — synthesize the answer from the ranked, packed points.
 
-        The result is the synthesized item followed by the reports of the
-        batches whose points were packed, best point first: the evidence the
+        The result is the synthesized item followed by the reports the
+        packed points cite (``_evidence``), best point first: the evidence the
         points came from, for the answer budget left over and the reported
         sources. Below ``map_reduce_min_results`` reports the results pass
         through unchanged. If the map phase yields no usable scored points
@@ -586,23 +595,35 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             used += cost
         return batches, sum(costs)
 
-    @staticmethod
+    @classmethod
     def _evidence(
-        points: list[_MapPoint], batches: list[list[RetrievalResult]]
+        cls, points: list[_MapPoint], batches: list[list[RetrievalResult]]
     ) -> list[RetrievalResult]:
-        """The reports of the batches the packed points came from.
+        """The reports the packed points came from, best point first.
 
-        A point is attributed to its batch, not to one report of it. Each
-        report scores its batch's best point (0-1), best batch first.
+        A point credits the reports of its batch it cites by id; one that
+        cites none of them (no ids, or ids the batch does not hold) credits
+        its whole batch. Each report scores its best crediting point (0-1).
+        Crediting every report of a batch made a point drawn from one report
+        put up to a dozen unrelated ones in the answer context and sources.
         """
-        best: dict[int, int] = {}
+        best: dict[tuple[int, int], int] = {}
         for point in points:
-            if 0 <= point.batch < len(batches):
-                best[point.batch] = max(best.get(point.batch, 0), point.score)
+            if not 0 <= point.batch < len(batches):
+                continue
+            batch = batches[point.batch]
+            cited = set(point.report_ids)
+            credited = [
+                i
+                for i, report in enumerate(batch)
+                if cls._community_id(report) in cited
+            ] or range(len(batch))
+            for i in credited:
+                key = (point.batch, i)
+                best[key] = max(best.get(key, 0), point.score)
         return [
-            report.model_copy(update={"score": best[batch] / 100.0})
-            for batch in sorted(best, key=lambda b: (-best[b], b))
-            for report in batches[batch]
+            batches[b][i].model_copy(update={"score": best[(b, i)] / 100.0})
+            for b, i in sorted(best, key=lambda key: (-best[key], key))
         ]
 
     async def _run_map_phase(
@@ -692,13 +713,12 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             )
         return points, unrated
 
-    @staticmethod
-    def _format_reports(reports: list[RetrievalResult]) -> str:
-        parts = []
-        for report in reports:
-            rid = (report.metadata or {}).get("community_id") or report.source or "?"
-            parts.append(f"--- Report (id: {rid}) ---\n{report.content}")
-        return "\n\n".join(parts)
+    @classmethod
+    def _format_reports(cls, reports: list[RetrievalResult]) -> str:
+        return "\n\n".join(
+            f"--- Report (id: {cls._community_id(report)}) ---\n{report.content}"
+            for report in reports
+        )
 
     @staticmethod
     def _parse_map_payload(raw: str) -> list[_MapPoint] | None:
@@ -731,7 +751,17 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             else:
                 score_int = int(score)
             score_int = max(0, min(100, score_int))
-            points.append(_MapPoint(description=description, score=score_int))
+            raw_ids = item.get("report_ids")
+            report_ids = (
+                [str(rid).strip() for rid in raw_ids]
+                if isinstance(raw_ids, list)
+                else []
+            )
+            points.append(
+                _MapPoint(
+                    description=description, score=score_int, report_ids=report_ids
+                )
+            )
         return points
 
     def _filter_and_rank_points(self, points: list[_MapPoint]) -> list[_MapPoint]:
