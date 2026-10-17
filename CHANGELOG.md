@@ -644,6 +644,12 @@ Library API (Python callers and custom backends).
   (#300).
 
 ### Fixed
+- LightRAG `mix`/`hybrid` incident-edge expansion and `local` search's
+  bridge relationships keep every typed edge between two entities: edges
+  were deduplicated by their endpoint pair, as upstream LightRAG does for
+  its one-edge-per-pair graph, so of "Vendor supplies Buyer" and "Vendor
+  invoices Buyer" only the first reached the context. They are now
+  deduplicated by relationship id (#PR).
 - The CLI provider flags no longer drop environment overrides. On every CLI
   (`run-ingestion`, `run-rag`, `run-eval`, `run-prompt-tuning`,
   `run-visualization`), any provider flag (`--backend`, `--llm-provider`,

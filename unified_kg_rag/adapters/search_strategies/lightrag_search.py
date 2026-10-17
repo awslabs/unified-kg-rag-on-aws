@@ -706,7 +706,7 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
 
         Upstream LightRAG's `_find_most_related_edges_from_entities` (operate.py
         ~5204) takes the entity vector hits, pulls **all** edges incident to them
-        via `get_nodes_edges_batch`, dedups by sorted endpoint pair, and orders by
+        via `get_nodes_edges_batch`, dedups them, and orders by
         `(rank, weight)` — with no top_k cut. That cross-type expansion is where the
         bulk of upstream's relationship context comes from; the relationship vector
         query alone supplies a small fraction of it. The relationship stream was never
@@ -715,10 +715,10 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
         The relationships index stores its endpoints as `source_id`/`target_id`
         keywords, but `_build_filter_clauses` ANDs every filter, so
         `source_id OR target_id` needs two queries. `known_relationships` carries
-        the hl vector query's hits, which are dropped from this stream by ENDPOINT
-        PAIR (not doc id) — that is the key upstream's round-robin merge of the
-        local and global relation lists dedups on (`_merge_context` builds
-        `rel_key = tuple(sorted([src_id, tgt_id]))` over one `seen_relations` set).
+        the hl vector query's hits, which are dropped from this stream by
+        relationship id. Upstream keys on the endpoint pair (`_merge_context`'s
+        `rel_key = tuple(sorted([src_id, tgt_id]))`) because its graph holds one
+        edge per pair; ours keeps typed, directed edges between one pair.
         """
         entity_ids = [eid for eid in self._get_ids(entity_results, "id") if eid]
         deduped = await self._fetch_incident_relationships(
