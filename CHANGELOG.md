@@ -254,7 +254,7 @@ Deployment (CDK stack).
   `env_name`, injected as `GRAPHRAG_METRICS_ENVIRONMENT`), and the stack's
   alarms and dashboard read only that series. An image built before this
   change emits the series without dimensions, which the new alarms do not
-  read: deploy the image and the stack together (#PR).
+  read: deploy the image and the stack together (#330).
 
 Library API (Python callers and custom backends).
 - Incremental removal no longer plans from registry lineage.
@@ -468,7 +468,7 @@ Library API (Python callers and custom backends).
   region's models) and `IngestionTaskMemory` (the ingestion task at 90% of
   its memory for 3 minutes, from Container Insights), and dashboard widgets
   for stage durations, the task's memory and CPU, and Bedrock invocations,
-  throttles and latency by model (#PR).
+  throttles and latency by model (#330).
 - Index build record: ingestion records in the vector index mappings'
   `_meta` which run last wrote each suffix (`pipeline_id`, `mode`,
   `built_at`, `documents`, `extraction_fingerprint`, `package_version`), and
@@ -618,7 +618,7 @@ Library API (Python callers and custom backends).
   the end, so a run that is stopped or times out still reports the stages it
   completed; the run's own metrics (duration, cache hit rate) still come at
   the end. A count several stages produce (entities after extraction and
-  gleaning) is emitted after the last of them the run has enabled (#PR).
+  gleaning) is emitted after the last of them the run has enabled (#330).
 - `graph.community_detection.max_cluster_size` also caps a parent's child
   communities: a coarser-level community with more children is partitioned
   again on the cluster graph, so a parent report's roll-up covers every
@@ -898,7 +898,7 @@ Library API (Python callers and custom backends).
   alarms in the same account and region: the EMF metrics were published
   without dimensions under one namespace, and every deployment's
   `IndexingFailures` and `ExtractionFailures` alarms read the same series
-  (#PR).
+  (#330).
 - `auto` no longer routes queries to `global` or `drift` when
   `graph.community_detection.enabled` is false: without community reports
   they answered from nothing. The routable set is now
