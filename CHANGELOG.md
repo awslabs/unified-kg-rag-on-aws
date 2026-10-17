@@ -265,7 +265,7 @@ Library API (Python callers and custom backends).
   `detect_delta` a `max_attempts`. `IndexingManager.clear_all_data` is
   removed (a reset no longer clears the stores first), and a custom graph
   backend can rebuild in place through `GraphIndexer.begin_rebuild` /
-  `end_rebuild` (the default still clears each label first) (#PR).
+  `end_rebuild` (the default still clears each label first) (#331).
 - Incremental removal no longer plans from registry lineage.
   `DocStatusRecord` and `DocumentLineage` keep only `text_unit_ids`
   (`DocumentLineage` rejects the removed id fields),
@@ -433,7 +433,7 @@ Nothing an earlier build stored is read: rebuild every index once with
 `indexing.reset: true` (registry on) in the new registry table (see
 Breaking changes), and run pipelines that resume a cached
 `--pipeline-id` with `--force-rebuild` or a new id (#327, #PR). The
-compatibility code for earlier builds is removed (#PR): an index without
+compatibility code for earlier builds is removed (#331): an index without
 recorded embedding settings (`_meta`) is refused instead of given its
 dimension, a stage-cache entry holding an absolute path is a miss, a
 parsed-document JSON's `content.text` is no longer read as its text (write
@@ -446,7 +446,7 @@ earlier schema, and a custom registry's `diff` must take
 - Roles with a custom IAM policy need `dynamodb:BatchGetItem`,
   `dynamodb:BatchWriteItem` (#191, #194), `dynamodb:Query` and
   `dynamodb:DescribeTable` (#327) on the registry table, and
-  `dynamodb:UpdateTimeToLive` where the library creates the table (#PR).
+  `dynamodb:UpdateTimeToLive` where the library creates the table (#331).
 - A `backend: local` config of your own that relied on the preset for the
   stores gets the embedded SQLite stores (#273): add
   `providers.graph.kind: gremlin` and `providers.vector.kind: opensearch` to
@@ -461,14 +461,14 @@ earlier schema, and a custom registry's `diff` must take
   writes anything; a run that dies stops renewing, and its lease expires
   (DynamoDB drops it by TTL: the CDK table and a table the library creates
   enable TTL on `lease_expires_at`). A run that lost its lease stops before
-  its next registry or store write (#PR).
+  its next registry or store write (#331).
 - Documents whose indexing keeps dying are quarantined: the write-ahead
   record counts the consecutive runs that started a document's content and
   never finished it, and once `indexing.max_document_attempts` (default 3)
   is reached the next run removes what the attempts wrote, records the
   document `QUARANTINED` and skips it until its content or the extraction
   settings change. The `total_documents_quarantined` metric and the CDK
-  `DocumentsQuarantined` alarm report it (#PR).
+  `DocumentsQuarantined` alarm report it (#331).
 - Paired strategy comparison: `run-eval --search-strategy local,mix,global
   --repeats N` answers the same queries with each strategy and writes
   `evaluation_comparison_*.json` with per-query deltas against the first
@@ -614,7 +614,7 @@ earlier schema, and a custom registry's `diff` must take
   Queries keep reading the previous content until it is replaced. The
   registry keeps its records until the rebuild recorded the corpus, so a
   failed reset leaves the previous graph and records in place for the retry
-  (#PR).
+  (#331).
 - An incremental run finds what a changed or deleted document contributed
   in the stores, by the text units every artifact cites: the graph's
   entities and communities citing them, their edges, and the vector
