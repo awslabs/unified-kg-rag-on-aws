@@ -4,31 +4,55 @@
 
 from __future__ import annotations
 
-import _thread
+import os
+import signal
 import threading
-import time
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 from langchain_core.exceptions import OutputParserException
 
+from unified_kg_rag.shared.utils import langchain as langchain_utils
 from unified_kg_rag.shared.utils.langchain import BATCH_ITEM_FAILED, BatchProcessor
 
 pytestmark = pytest.mark.unit
 
 
-def test_an_abandoned_batch_makes_no_further_attempt() -> None:
+class _RecordingEvent(threading.Event):
+    """A ``threading.Event`` that remembers the instances made from it."""
+
+    made: list[threading.Event] = []
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.made.append(self)
+
+
+def test_an_abandoned_batch_makes_no_further_attempt(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     # A stop (SIGTERM) or Ctrl-C unwinds the calling thread; an item still
     # running must not go on retrying behind it (interpreter exit waits for
     # the pool's threads, so the task would be killed mid-shutdown).
-    calls: list[int] = []
-    started = threading.Event()
+    #
+    # Ordered by events, not by time: the item's first attempt interrupts the
+    # calling thread, then waits until the batch is marked abandoned before it
+    # fails, so the retry policy always sees the abandonment.
+    monkeypatch.setattr(_RecordingEvent, "made", [])
+    monkeypatch.setattr(
+        langchain_utils,
+        "threading",
+        SimpleNamespace(Event=_RecordingEvent),
+        raising=False,
+    )
+    calls: list[threading.Thread] = []
 
     def flaky(_: dict[str, Any]) -> Any:
-        calls.append(1)
-        if not started.is_set():
-            started.set()
-            _thread.interrupt_main()
+        calls.append(threading.current_thread())
+        if len(calls) == 1:
+            os.kill(os.getpid(), signal.SIGINT)
+            # The batch's abandonment flag (the only event the batch makes).
+            (abandoned,) = _RecordingEvent.made
+            assert abandoned.wait(timeout=30), "the batch was not abandoned"
         raise OutputParserException("malformed")
 
     processor = BatchProcessor(
@@ -42,9 +66,10 @@ def test_an_abandoned_batch_makes_no_further_attempt() -> None:
         processor.execute_with_fallback(
             [{"x": 1}], lambda items: items, flaky, "task", show_progress=False
         )
-    # Three more attempts, each after a wait of at most 1 s, would be made by now.
-    time.sleep(3.5)
-    assert calls == [1]
+    # Wait for the item's thread itself: it ends after its last attempt.
+    calls[0].join(timeout=30)
+    assert not calls[0].is_alive()
+    assert len(calls) == 1
 
 
 def test_a_batch_that_is_not_abandoned_still_retries() -> None:

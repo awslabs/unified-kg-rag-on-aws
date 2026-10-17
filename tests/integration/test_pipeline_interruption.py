@@ -157,8 +157,13 @@ def test_a_stopped_stage_does_not_repeat_its_answered_model_calls(
     # The stop lands while graph extraction is running: the responses it
     # already had reach S3 with the checkpoint, and the next task (empty
     # disk) answers those prompts from them instead of asking the model.
+    #
+    # One call at a time, and the stop is sent from the second call, so the
+    # first call's response is stored before the stop, whatever the timing.
+    # (The response of the call the stop interrupts may or may not be kept.)
     harness, s3 = s3_harness
     harness.incremental = False
+    harness.config.processing.max_concurrency = 1
     extraction_prompts: list[str] = []
     respond = stages_test._respond
 
@@ -166,16 +171,18 @@ def test_a_stopped_stage_does_not_repeat_its_answered_model_calls(
         answer = respond(system, human)
         if "knowledge graph extraction expert" in system:
             extraction_prompts.append(human)
-            if len(extraction_prompts) == 1:
+            if len(extraction_prompts) == 2:
                 os.kill(os.getpid(), signal.SIGTERM)
         return answer
 
     monkeypatch.setattr(stages_test, "_respond", stop_during_extraction)
     assert _run(harness, "task-1") == 128 + signal.SIGTERM
-    assert extraction_prompts
+    answered_first = extraction_prompts[0]
     assert _s3_statuses(s3).get("graph_extraction") != "completed"
 
     assert _run(harness, "task-2") == 0
     assert _s3_statuses(s3)["graph_extraction"] == "completed"
-    # Every text unit was extracted, none twice.
-    assert len(extraction_prompts) == len(set(extraction_prompts)) == 2
+    # Both text units were extracted; the one answered before the stop was
+    # not asked again.
+    assert len(set(extraction_prompts)) == 2
+    assert extraction_prompts.count(answered_first) == 1
