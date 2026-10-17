@@ -620,6 +620,12 @@ changed once with the full-config keys (#332).
   keep the containers.
 
 ### Added
+- The community drift metrics of an incremental run report `added_roots`,
+  the root communities it appended: each joins every cut of the hierarchy,
+  so global search maps that many more reports until a rebuild (a
+  synthetic 12-topic corpus grew from 12 to 60 reports over four delta
+  runs). The cut stays bounded by `max_reports_per_level` and the fall-back
+  to a shallower cut (#PR).
 - `docs/configuration.md`, a configuration reference generated from the
   config models: every key with its type, constraints, default and
   description, and the moved keys. `scripts/gen_config_reference.py`

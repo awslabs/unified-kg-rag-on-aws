@@ -61,6 +61,8 @@ class TestMeasureCommunityDrift:
             "clustered_entities": 2,
             "overlapping_entities": 0,
             "stale_communities": 0,
+            # p's parent is not among the run's communities: both are roots.
+            "added_roots": 2,
             "overlap_share": 0.0,
             "rebuild_recommended": False,
         }
@@ -85,3 +87,18 @@ class TestMeasureCommunityDrift:
         assert drift.rebuild_recommended
         below = measure_community_drift(entities, communities, 0.6)
         assert below is not None and not below.rebuild_recommended
+
+
+def test_counts_the_roots_every_cut_gains() -> None:
+    # Regression: each delta run's roots join every cut of the hierarchy,
+    # and nothing reported how much the global-search cut grew.
+    leaf_a = _community("a", 0, ["x", "y", "z"]).model_copy(update={"parent": "p"})
+    leaf_b = _community("b", 0, ["u", "v", "w"]).model_copy(update={"parent": "p"})
+    parent = _community("p", 1, ["x", "y", "z", "u", "v", "w"])
+    lone = _community("c", 0, ["q", "r", "s"])
+    communities = [leaf_a, leaf_b, parent, lone]
+    entities = with_level0_community_ids(
+        [Entity(id=e, name=e) for e in "xyzuvwqrs"], communities
+    )
+    drift = measure_community_drift(entities, communities, 0.5)
+    assert drift is not None and drift.added_roots == 2

@@ -499,6 +499,7 @@ def test_delta_run_reports_its_community_drift(mocker) -> None:
         clustered_entities=4,
         overlapping_entities=2,
         stale_communities=1,
+        added_roots=1,
         overlap_share=0.5,
         rebuild_recommended=True,
     )
