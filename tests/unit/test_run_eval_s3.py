@@ -306,3 +306,63 @@ def test_main_reports_an_invalid_dataset_and_exits_2(
     assert message in out
     assert "unexpected error" not in out
     assert "Traceback" not in out
+
+
+def _stop_on_second_run(mocker, stop: BaseException) -> None:
+    """The second strategy's run is stopped (as the SIGTERM handler does)."""
+    real = run_evaluation.EvaluationManager.evaluate_dataset
+    calls = []
+
+    async def _evaluate(self, *args, **kwargs):
+        calls.append(1)
+        if len(calls) == 2:
+            raise stop
+        return await real(self, *args, **kwargs)
+
+    mocker.patch.object(run_evaluation.EvaluationManager, "evaluate_dataset", _evaluate)
+
+
+async def test_a_stopped_run_uploads_the_finished_runs(
+    s3, eval_config, mocker, tmp_path: Path
+) -> None:
+    # Before, SIGTERM removed the local copy of the finished runs unuploaded.
+    data = tmp_path / "eval.json"
+    data.write_text(json.dumps(DATASET))
+    work_dir = tmp_path / "work"
+    work_dir.mkdir()
+    mocker.patch.object(run_evaluation.tempfile, "mkdtemp", return_value=str(work_dir))
+    _stop_on_second_run(mocker, SystemExit(143))
+    args = _args(
+        "--data-path",
+        str(data),
+        "--search-strategy",
+        "local,mix",
+        "--output-directory",
+        f"s3://{BUCKET}/out/",
+    )
+    with pytest.raises(SystemExit):
+        await run_evaluation.EvaluationRunner(args, _Chain(), eval_config).run()
+    assert any(k.startswith("out/evaluation_summary_") for k in _keys(s3, "out/"))
+    assert not work_dir.exists()
+
+
+async def test_a_stopped_run_keeps_what_it_cannot_upload(
+    s3, eval_config, mocker, tmp_path: Path
+) -> None:
+    data = tmp_path / "eval.json"
+    data.write_text(json.dumps(DATASET))
+    work_dir = tmp_path / "work"
+    work_dir.mkdir()
+    mocker.patch.object(run_evaluation.tempfile, "mkdtemp", return_value=str(work_dir))
+    _stop_on_second_run(mocker, KeyboardInterrupt())
+    args = _args(
+        "--data-path",
+        str(data),
+        "--search-strategy",
+        "local,mix",
+        "--output-directory",
+        "s3://no-such-bucket/out",
+    )
+    with pytest.raises(KeyboardInterrupt):
+        await run_evaluation.EvaluationRunner(args, _Chain(), eval_config).run()
+    assert list((work_dir / "outputs").glob("evaluation_summary_*.json"))

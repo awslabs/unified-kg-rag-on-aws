@@ -59,6 +59,16 @@ def _run(scores: dict[str, float], strategy: str = "local"):
     return reports, results
 
 
+def _result(qid: str, answer: str, error: bool = False) -> EvaluationResult:
+    return EvaluationResult(
+        query_id=qid,
+        question="q?",
+        generated_answer=answer,
+        ground_truth="",
+        error=error,
+    )
+
+
 class TestPairedComparison:
     def test_pairs_only_queries_both_scored(self) -> None:
         out = paired_comparison(
@@ -72,6 +82,47 @@ class TestPairedComparison:
         assert delta["mean_delta"] == pytest.approx(0.2)
         assert (delta["wins"], delta["ties"], delta["losses"]) == (1, 1, 0)
         assert delta["per_query"] == {"a": pytest.approx(0.4), "b": 0.0}
+
+    def test_a_failed_answer_scores_zero_and_is_reported(self) -> None:
+        # Before, "mix" failing on the query it would lose dropped that query
+        # from the comparison and "mix" looked as good as "local" (survivor
+        # bias).
+        reports, results = _run({"easy": 1.0}, "mix")
+        results.append(_result("hard", "", error=True))
+        reports.append(
+            EvaluationReport(
+                query_id="easy",
+                evaluator_type=EvaluatorType.GRAPH_AWARE,
+                metrics=[
+                    EvaluationMetric(
+                        metric_type=EvaluationMetricType.ANSWER_LENGTH, value=9.0
+                    )
+                ],
+                evaluation_time=datetime(2026, 1, 1),
+            )
+        )
+        local = _run({"easy": 1.0, "hard": 1.0})
+        local[0].extend(
+            reports[-1].model_copy(update={"query_id": qid}) for qid in ("easy", "hard")
+        )
+        out = paired_comparison({"local": [local], "mix": [(reports, results)]})
+        mix = out["strategies"]["mix"]
+        assert mix["metrics"]["answer_match/token_f1"]["mean"] == 0.5
+        assert (mix["failed_answers"], mix["failed_queries"]) == (1, ["hard"])
+        assert out["strategies"]["local"]["failed_answers"] == 0
+        delta = out["deltas_vs_baseline"]["mix"]["answer_match/token_f1"]
+        assert (delta["pairs"], delta["unpaired"]) == (2, 0)
+        assert delta["mean_delta"] == -0.5
+        # answer_length is a diagnostic: a failed answer gets no value for it.
+        length = out["deltas_vs_baseline"]["mix"]["graph_aware/answer_length"]
+        assert (length["pairs"], length["unpaired"]) == (1, 1)
+        assert out["warnings"] and "local 0, mix 1" in out["warnings"][0]
+
+    def test_equal_failure_counts_raise_no_warning(self) -> None:
+        out = paired_comparison(
+            {"local": [_run({"a": 1.0})], "mix": [_run({"a": 0.0})]}
+        )
+        assert out["warnings"] == []
 
     def test_repeats_are_averaged_per_query(self) -> None:
         out = paired_comparison(
@@ -135,27 +186,50 @@ class TestPairwiseJudge:
         # Both orders were asked.
         assert [c["answer1"] for c in judge.chain.calls] == ["short", "detailed"]
 
-    def test_compare_skips_errored_answers_and_reports_win_rates(self, mocker) -> None:
+    def test_a_failed_answer_loses_the_pair_unjudged(self, mocker) -> None:
+        # Before, a candidate that failed on a query was left out of the
+        # pairs, so failing on hard queries could only raise its win rate.
         judge = self._judge(mocker)
-
-        def result(qid: str, answer: str, error: bool = False) -> EvaluationResult:
-            return EvaluationResult(
-                query_id=qid,
-                question="q?",
-                generated_answer=answer,
-                ground_truth="",
-                error=error,
-            )
-
         out = asyncio.run(
             judge.acompare(
-                [result("a", "short"), result("b", "short")],
-                [result("a", "detailed"), result("b", "x", error=True)],
+                [_result("a", "short"), _result("b", "short"), _result("c", "x", True)],
+                [
+                    _result("a", "detailed"),
+                    _result("b", "x", error=True),
+                    _result("c", "x", error=True),
+                ],
             )
         )
-        assert (out["pairs"], out["judged"], out["failed"]) == (1, 1, 0)
-        assert out["criteria"]["comprehensiveness"]["candidate_win_rate"] == 1.0
-        assert out["criteria"]["directness"]["candidate_win_rate"] == 0.5
+        assert (out["pairs"], out["judged"], out["failed"]) == (3, 1, 0)
+        assert (out["candidate_errors"], out["baseline_errors"]) == (1, 0)
+        assert out["both_errors"] == 1
+        assert len(judge.chain.calls) == 2  # only pair "a", in both orders
+        assert out["per_query"]["b"] == dict.fromkeys(pairwise.CRITERIA, "baseline")
+        assert out["criteria"]["comprehensiveness"]["candidate_win_rate"] == 0.5
+        assert out["criteria"]["directness"]["candidate_win_rate"] == 0.25
+
+    def test_judge_calls_nest_under_one_span(self, mocker) -> None:
+        judge = self._judge(mocker)
+        span = mocker.patch.object(pairwise.observability, "span")
+        asyncio.run(judge.acompare([_result("a", "short")], [_result("a", "long")]))
+        span.assert_called_once_with(
+            "kg_rag.evaluate", evaluator="pairwise_judge", items=1
+        )
+
+    def test_judge_failures_count_against_the_failure_budget(self, mocker) -> None:
+        from unified_kg_rag.application.cli.run_evaluation import (
+            pairwise_budget_breaches,
+        )
+
+        judge = self._judge(mocker)
+        judge.chain.ainvoke = mocker.AsyncMock(side_effect=RuntimeError("throttled"))
+        out = asyncio.run(judge.acompare([_result("a", "x")], [_result("a", "y")]))
+        assert (out["judged"], out["failed"]) == (0, 1)
+        # Every judge call failed: a breach even at the default rate of 1.0.
+        assert pairwise_budget_breaches({"mix": out}, 1.0) == [
+            "pairwise judge mix: 1/1 failed"
+        ]
+        assert pairwise_budget_breaches({"mix": {**out, "judged": 3}}, 0.5) == []
 
     def test_prompt_templates_declare_their_variables(self) -> None:
         resolved = PairwiseComparisonPrompt.resolve()
@@ -310,4 +384,18 @@ def test_prepare_benchmark_cli(tmp_path: Path, capsys) -> None:
                 str(source),
             ]
         )
-    assert exit_info.value.code == 1
+    assert exit_info.value.code == 2  # a usage error
+
+
+def test_prepare_benchmark_refuses_a_used_directory_before_downloading(
+    tmp_path: Path, mocker
+) -> None:
+    from unified_kg_rag.application.cli import prepare_benchmark
+
+    (tmp_path / "b" / "corpus").mkdir(parents=True)
+    (tmp_path / "b" / "corpus" / "old.txt").write_text("x")
+    download = mocker.patch.object(musique, "download_dev")
+    with pytest.raises(SystemExit) as exit_info:
+        prepare_benchmark.main(["musique", "--output-directory", str(tmp_path / "b")])
+    assert exit_info.value.code == 2
+    download.assert_not_called()

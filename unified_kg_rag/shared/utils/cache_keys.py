@@ -32,6 +32,12 @@ incremental run records the fingerprint of the record on each document it
 commits, and the record itself once per registry scope, so the next run can
 compare the two field by field (:func:`changed_settings`).
 
+The same classification says which settings shape what a query answers
+(:func:`answer_settings`, hashed into the ``run-eval`` manifest): every
+setting but the unkeyed ones that change no answer either (where a call goes,
+how fast it runs, telemetry, provisioning) and the few keyed ones naming where
+a run reads and writes (``_LOCATION_FIELDS``).
+
 The corpus itself is an input too: the source path alone says nothing about
 what the files contain, so with a fixed ``pipeline_id`` an edited, added, or
 removed file would otherwise resume from the previous corpus's documents (and,
@@ -90,9 +96,19 @@ class Keyed:
 
 @dataclass(frozen=True)
 class Unkeyed:
-    """A setting that shapes no cached stage output, and why."""
+    """A setting that shapes no cached stage output, and why.
+
+    ``shapes_answers`` ``False``: it changes no query answer or score either
+    (see :func:`answer_settings`).
+    """
 
     reason: str
+    shapes_answers: bool = True
+
+
+def _neutral(reason: str) -> Unkeyed:
+    """An unkeyed setting that changes no answer either."""
+    return Unkeyed(reason, shapes_answers=False)
 
 
 _EVERY_CALL = Keyed(None)
@@ -127,22 +143,22 @@ CONFIG_KEYING: dict[str, Keyed | Unkeyed] = {
     "providers.llm.temperature": _EVERY_CALL,
     "providers.llm.tokenizer": _EVERY_CALL,
     "providers.llm.tiktoken_encoding": _EVERY_CALL,
-    "providers.llm.base_url": Unkeyed(_WHERE),
-    "providers.llm.api_key": Unkeyed(_WHERE),
-    "providers.llm.timeout_seconds": Unkeyed(_THROUGHPUT),
-    "providers.llm.max_attempts": Unkeyed(_THROUGHPUT),
+    "providers.llm.base_url": _neutral(_WHERE),
+    "providers.llm.api_key": _neutral(_WHERE),
+    "providers.llm.timeout_seconds": _neutral(_THROUGHPUT),
+    "providers.llm.max_attempts": _neutral(_THROUGHPUT),
     "aws.bedrock.default_max_output_tokens": _EVERY_CALL,
     "aws.bedrock.model_overrides": _EVERY_CALL,
     "aws.bedrock.enable_1m_context": _EVERY_CALL,
     "aws.bedrock.default_effort": _EVERY_CALL,
     "aws.bedrock.fast_effort": _EVERY_CALL,
     "aws.bedrock.ingestion_effort": _EVERY_CALL,
-    "aws.bedrock.region_name": Unkeyed(_WHERE),
-    "aws.bedrock.assumed_role_arn": Unkeyed(_WHERE),
-    "aws.bedrock.enable_global_profile": Unkeyed(_WHERE),
-    "aws.bedrock.transient_retry": Unkeyed(_THROUGHPUT),
+    "aws.bedrock.region_name": _neutral(_WHERE),
+    "aws.bedrock.assumed_role_arn": _neutral(_WHERE),
+    "aws.bedrock.enable_global_profile": _neutral(_WHERE),
+    "aws.bedrock.transient_retry": _neutral(_THROUGHPUT),
     "aws.bedrock.guardrail": _EVERY_CALL,
-    "aws.bedrock.guardrail.trace": Unkeyed(
+    "aws.bedrock.guardrail.trace": _neutral(
         "adds trace details to a response, not to what the model returns"
     ),
     "aws.bedrock.guardrail.check_input": Unkeyed("screens the user query only"),
@@ -210,8 +226,8 @@ CONFIG_KEYING: dict[str, Keyed | Unkeyed] = {
         "aws.dynamodb.table_name",
         per_document=False,
     ),
-    "aws.dynamodb.create_table_if_missing": Unkeyed("provisions the table"),
-    "aws.dynamodb.billing_mode": Unkeyed("provisions the table"),
+    "aws.dynamodb.create_table_if_missing": _neutral("provisions the table"),
+    "aws.dynamodb.billing_mode": _neutral("provisions the table"),
     # --- the per-document stages -------------------------------------------
     "processing.chunking": Keyed(_P.TEXT_CHUNKING),
     "processing.translation": Keyed(_P.TRANSLATION),
@@ -241,44 +257,57 @@ CONFIG_KEYING: dict[str, Keyed | Unkeyed] = {
         "custom_prompts.claim_extraction_system",
         "custom_prompts.claim_extraction_human",
     ),
-    "processing.max_concurrency": Unkeyed(_THROUGHPUT),
-    "processing.max_attempts": Unkeyed(_THROUGHPUT),
-    "processing.io_workers": Unkeyed(_THROUGHPUT),
+    "processing.max_concurrency": _neutral(_THROUGHPUT),
+    "processing.max_attempts": _neutral(_THROUGHPUT),
+    "processing.io_workers": _neutral(_THROUGHPUT),
     # --- the corpus-wide stages --------------------------------------------
-    "graph.analysis": Unkeyed("shapes graph statistics, which no later stage reads"),
+    "graph.analysis": _neutral("shapes graph statistics, which no later stage reads"),
     **_keyed_at(
         _P.COMMUNITY_DETECTION,
         "graph.community_detection",
         "custom_prompts.community_report_system",
         "custom_prompts.community_report_human",
     ),
-    "graph.visualization": Unkeyed("renders the finished graph"),
+    "graph.visualization": _neutral("renders the finished graph"),
     # --- indexing, stores and query time -----------------------------------
     "indexing.cross_run_merge": Unkeyed(_AT_INDEXING),
     "indexing.community_drift_threshold": Unkeyed(_AT_INDEXING),
-    "indexing.lease_seconds": Unkeyed(
+    "indexing.lease_seconds": _neutral(
         "keeps concurrent runs apart, never changes what a stage produces"
     ),
-    "indexing.max_failure_rate": Unkeyed(
+    "indexing.max_failure_rate": _neutral(
         "fails a stage or the run, never changes what a stage produces"
     ),
     "indexing.neptune": Unkeyed(_AT_INDEXING),
     "indexing.opensearch": Unkeyed(_AT_INDEXING),
+    "indexing.opensearch.refresh_after_batch": _neutral(_THROUGHPUT),
+    "indexing.opensearch.persist_embedding_cache": _neutral(_THROUGHPUT),
+    "indexing.opensearch.embedding_cache_s3_key": _neutral(_WHERE),
     "providers.embedding": Unkeyed(_AT_INDEXING),
+    "providers.embedding.base_url": _neutral(_WHERE),
+    "providers.embedding.api_key": _neutral(_WHERE),
+    "providers.embedding.timeout_seconds": _neutral(_THROUGHPUT),
+    "providers.embedding.max_attempts": _neutral(_THROUGHPUT),
     "providers.rerank": Unkeyed(_QUERY),
+    "providers.rerank.device": _neutral(_THROUGHPUT),
+    "providers.rerank.batch_size": _neutral(_THROUGHPUT),
     "providers.graph": Unkeyed(_AT_INDEXING),
+    "providers.graph.sqlite_path": _neutral(_WHERE),
     "providers.vector": Unkeyed(_AT_INDEXING),
-    "aws.region_name": Unkeyed(_WHERE),
-    "aws.profile_name": Unkeyed(_WHERE),
-    "aws.neptune": Unkeyed(_WHERE),
-    "aws.opensearch": Unkeyed(_WHERE),
-    "aws.s3": Unkeyed("says where caches and exports are stored"),
-    "cache": Unkeyed("says how and how long caches are stored, not what they hold"),
+    "providers.vector.sqlite_path": _neutral(_WHERE),
+    "aws.region_name": _neutral(_WHERE),
+    "aws.profile_name": _neutral(_WHERE),
+    "aws.neptune": _neutral(_WHERE),
+    "aws.opensearch": _neutral(_WHERE),
+    "aws.s3": _neutral("says where caches and exports are stored"),
+    "cache": _neutral("says how and how long caches are stored, not what they hold"),
     "search": Unkeyed(_QUERY),
     "memory": Unkeyed(_QUERY),
     "evaluation": Unkeyed("read by run-eval only"),
-    "logging": Unkeyed("telemetry"),
-    "observability": Unkeyed("telemetry"),
+    "evaluation.outputs_directory": _neutral("says where run-eval writes"),
+    "evaluation.save_detailed_results": _neutral("says what run-eval writes"),
+    "logging": _neutral("telemetry"),
+    "observability": _neutral("telemetry"),
     "custom_prompts.answer_generation_system": _QUERY_PROMPT,
     "custom_prompts.answer_generation_human": _QUERY_PROMPT,
     "custom_prompts.entity_extraction_system": _QUERY_PROMPT,
@@ -297,11 +326,26 @@ CONFIG_KEYING: dict[str, Keyed | Unkeyed] = {
     "custom_prompts.strategy_selection_human": _QUERY_PROMPT,
     "custom_prompts.global_map_system": _QUERY_PROMPT,
     "custom_prompts.global_map_human": _QUERY_PROMPT,
-    "custom_prompts.corpus_profile_system": Unkeyed("read by run-prompt-tuning only"),
-    "custom_prompts.corpus_profile_human": Unkeyed("read by run-prompt-tuning only"),
+    "custom_prompts.corpus_profile_system": _neutral("read by run-prompt-tuning only"),
+    "custom_prompts.corpus_profile_human": _neutral("read by run-prompt-tuning only"),
     "custom_prompts.pairwise_comparison_system": Unkeyed("read by run-eval only"),
     "custom_prompts.pairwise_comparison_human": Unkeyed("read by run-eval only"),
 }
+
+# Keyed settings naming where a run reads or writes: they key the stage
+# caches (another corpus, registry or guardrail is another input) but not
+# what a query answers, so the same evaluation hashes the same in every
+# environment.
+_LOCATION_FIELDS = frozenset(
+    {
+        "processing.document_parsing.source_directory",
+        "processing.document_parsing.target_directory",
+        "providers.doc_status.sqlite_path",
+        "aws.dynamodb.table_name",
+        "aws.bedrock.guardrail.identifier",
+        "aws.bedrock.guardrail.version",
+    }
+)
 
 # What an unclassified field gets: it counts for every stage, so forgetting
 # to classify it costs a cache miss, never a stale hit.
@@ -316,6 +360,28 @@ def classify(path: str) -> Keyed | Unkeyed | None:
         if entry is not None:
             return entry
     return None
+
+
+def shapes_answers(path: str) -> bool:
+    """Whether the setting at ``path`` can change what a query answers or how
+    it is scored: every setting but the unkeyed ones marked otherwise and
+    ``_LOCATION_FIELDS``. An unclassified field counts."""
+    rule = classify(path)
+    if isinstance(rule, Unkeyed) and not rule.shapes_answers:
+        return False
+    return path not in _LOCATION_FIELDS
+
+
+def answer_settings(config: Config) -> dict[str, Any]:
+    """``{path: value}`` of every setting that can change a query's answer
+    or score (:func:`shapes_answers`), a role's model resolved through its
+    tier. Ingestion settings count too: an index built otherwise answers
+    otherwise."""
+    return {
+        path: to_jsonable_python(_resolved(config, path, value))
+        for path, value, _ in _leaves(config)
+        if shapes_answers(path)
+    }
 
 
 def _block_on(config: Config, path: str) -> bool:

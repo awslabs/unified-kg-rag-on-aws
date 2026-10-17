@@ -9,7 +9,11 @@ than against a gold answer, because global sensemaking questions have none.
 strategies' answers to the same queries. LLM judges prefer the answer they
 read first (position bias), so each pair is judged in both orders and a
 criterion counts as a win only when both orders pick the same answer;
-otherwise it is a tie. Errored or missing answers are not judged.
+otherwise it is a tie. A pair where one side's answer generation failed is
+not judged: the side that answered wins every criterion (tallied as
+``candidate_errors`` / ``baseline_errors``), so a strategy cannot improve its
+win rate by failing on hard queries. A pair both sides failed counts in
+``both_errors`` only.
 """
 
 from __future__ import annotations
@@ -30,7 +34,7 @@ from unified_kg_rag.domain.models import (
     ModelRole,
 )
 from unified_kg_rag.domain.prompts import PairwiseComparisonPrompt
-from unified_kg_rag.shared import get_logger
+from unified_kg_rag.shared import get_logger, observability
 
 logger = get_logger(__name__)
 
@@ -86,43 +90,64 @@ class PairwiseJudge:
     async def acompare(
         self, baseline: list[EvaluationResult], candidate: list[EvaluationResult]
     ) -> dict[str, Any]:
-        """Win rates of ``candidate`` over ``baseline``, per criterion."""
-        by_id = {r.query_id: r for r in baseline if r.generated_answer and not r.error}
-        pairs = [
-            (by_id[r.query_id], r)
-            for r in candidate
-            if r.query_id in by_id and r.generated_answer and not r.error
-        ]
-        outcomes: list[dict[str, str] | None] = await asyncio.gather(
-            *(self._safe_judge(b, c) for b, c in pairs)
-        )
-        judged = [o for o in outcomes if o is not None]
+        """Win rates of ``candidate`` over ``baseline``, per criterion.
+
+        ``failed`` counts the pairs the judge could not decide (its calls
+        failed); ``run-eval`` holds it to ``--max-failure-rate``.
+        """
+        by_id = {r.query_id: r for r in baseline}
+        pairs = [(by_id[r.query_id], r) for r in candidate if r.query_id in by_id]
+        outcomes: dict[str, dict[str, str]] = {}
+        errors: Counter[str] = Counter()
+        to_judge: list[tuple[EvaluationResult, EvaluationResult]] = []
+        for base, cand in pairs:
+            base_ok, cand_ok = _answered(base), _answered(cand)
+            if base_ok and cand_ok:
+                to_judge.append((base, cand))
+            elif base_ok:
+                errors["candidate_errors"] += 1
+                outcomes[cand.query_id] = dict.fromkeys(CRITERIA, "baseline")
+            elif cand_ok:
+                errors["baseline_errors"] += 1
+                outcomes[cand.query_id] = dict.fromkeys(CRITERIA, "candidate")
+            else:
+                errors["both_errors"] += 1
+        # The judge calls nest under one span instead of each starting a root
+        # trace, as the other evaluators' do.
+        with observability.span(
+            "kg_rag.evaluate", evaluator="pairwise_judge", items=len(to_judge)
+        ):
+            judged: list[dict[str, str] | None] = await asyncio.gather(
+                *(self._safe_judge(b, c) for b, c in to_judge)
+            )
+        for (_, cand), outcome in zip(to_judge, judged, strict=True):
+            if outcome is not None:
+                outcomes[cand.query_id] = outcome
+        decided = list(outcomes.values())
         criteria: dict[str, Any] = {}
         for criterion in CRITERIA:
-            counts = Counter(o[criterion] for o in judged)
-            decided = counts["candidate"] + counts["baseline"]
+            counts = Counter(o[criterion] for o in decided)
             criteria[criterion] = {
                 "candidate_wins": counts["candidate"],
                 "baseline_wins": counts["baseline"],
                 "ties": counts["tie"],
                 # Ties split evenly, as the papers report win rates.
                 "candidate_win_rate": (
-                    (counts["candidate"] + counts["tie"] / 2) / len(judged)
-                    if judged
+                    (counts["candidate"] + counts["tie"] / 2) / len(decided)
+                    if decided
                     else None
                 ),
-                "decided": decided,
+                "decided": counts["candidate"] + counts["baseline"],
             }
         return {
             "pairs": len(pairs),
-            "judged": len(judged),
-            "failed": len(pairs) - len(judged),
+            "judged": sum(o is not None for o in judged),
+            "failed": sum(o is None for o in judged),
+            "candidate_errors": errors["candidate_errors"],
+            "baseline_errors": errors["baseline_errors"],
+            "both_errors": errors["both_errors"],
             "criteria": criteria,
-            "per_query": {
-                c.query_id: o
-                for (_, c), o in zip(pairs, outcomes, strict=True)
-                if o is not None
-            },
+            "per_query": dict(sorted(outcomes.items())),
         }
 
     async def _safe_judge(
@@ -137,3 +162,7 @@ class PairwiseJudge:
         except Exception as e:  # noqa: BLE001 - a failed pair is counted, not fatal
             logger.warning("Pairwise judge failed for '%s': %s", candidate.query_id, e)
             return None
+
+
+def _answered(result: EvaluationResult) -> bool:
+    return bool(result.generated_answer) and not result.error

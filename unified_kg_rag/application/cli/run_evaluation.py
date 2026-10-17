@@ -105,12 +105,8 @@ def failure_budget_breaches(
     skipped metrics were not applicable and do not count). A share of 1.0,
     or an empty run, always breaches it.
     """
-
-    def _over(failed: int, total: int) -> bool:
-        return total == 0 or failed >= total or failed / total > max_failure_rate
-
     breaches = []
-    if _over(summary.failed_evaluations, summary.total_queries):
+    if _over(summary.failed_evaluations, summary.total_queries, max_failure_rate):
         breaches.append(
             f"{summary.failed_evaluations}/{summary.total_queries} queries failed"
         )
@@ -118,11 +114,29 @@ def failure_budget_breaches(
         for metric_name, counts in metrics.items():
             failed = counts.get("failed", 0)
             attempted = counts.get("scored", 0) + failed
-            if failed and _over(failed, attempted):
+            if failed and _over(failed, attempted, max_failure_rate):
                 breaches.append(
                     f"{evaluator_name}/{metric_name}: {failed}/{attempted} failed"
                 )
     return breaches
+
+
+def pairwise_budget_breaches(
+    pairwise: dict[str, dict[str, Any]], max_failure_rate: float
+) -> list[str]:
+    """The failure budget applied to the pairwise judge: per strategy, the
+    pairs it failed to judge over the pairs it was asked to judge."""
+    breaches = []
+    for strategy, judged in pairwise.items():
+        failed = judged["failed"]
+        attempted = judged["judged"] + failed
+        if failed and _over(failed, attempted, max_failure_rate):
+            breaches.append(f"pairwise judge {strategy}: {failed}/{attempted} failed")
+    return breaches
+
+
+def _over(failed: int, total: int, max_failure_rate: float) -> bool:
+    return total == 0 or failed >= total or failed / total > max_failure_rate
 
 
 class CommandLineInterface:
@@ -360,31 +374,74 @@ class EvaluationRunner:
             routed = stats["routed_strategies"]
             if routed and list(routed) != [strategy]:
                 console.print(f"[dim]{strategy} routed to: {routed}[/dim]")
+        for warning in comparison.get("warnings") or []:
+            console.print(f"[yellow]Warning: {escape(warning)}[/yellow]")
         for strategy, judged in (comparison.get("pairwise_vs_baseline") or {}).items():
             rates = ", ".join(
                 f"{criterion} {stats['candidate_win_rate']:.2f}"
                 for criterion, stats in judged["criteria"].items()
                 if stats["candidate_win_rate"] is not None
             )
+            errors = judged["candidate_errors"] + judged["baseline_errors"]
             console.print(
                 f"[cyan]Pairwise judge, {strategy} win rate vs {baseline} "
-                f"({judged['judged']} pairs): {rates}[/cyan]"
+                f"({judged['judged']} judged, {errors} decided by a failed "
+                f"answer, {judged['failed']} judge failures): {rates}[/cyan]"
             )
 
     async def run(self) -> int:
         """Evaluate; 0 on success, 1 on a breached failure budget or failed upload.
 
         An ``s3://`` dataset is downloaded to a temporary directory first; an
-        ``s3://`` outputs directory is written locally and then uploaded.
+        ``s3://`` outputs directory is written locally and then uploaded. A
+        run stopped part-way (SIGTERM, Ctrl-C, a crash) still uploads the
+        results of the runs that finished, or keeps them locally and logs
+        where.
         """
         work_dir = Path(tempfile.mkdtemp(prefix="graphrag-eval-"))
         keep_work_dir = False
         try:
             exit_code, keep_work_dir = await self._run(work_dir)
             return exit_code
+        except BaseException:
+            keep_work_dir = not self._upload_finished_runs(work_dir)
+            raise
         finally:
             if not keep_work_dir:
                 shutil.rmtree(work_dir, ignore_errors=True)
+
+    def _local_outputs(self, work_dir: Path) -> Path:
+        """Where the result files are written (``work_dir`` for an S3 target)."""
+        target = self._output_directory()
+        return work_dir / "outputs" if is_s3_uri(target) else Path(target)
+
+    def _upload_finished_runs(self, work_dir: Path) -> bool:
+        """Upload what an interrupted run already wrote to its S3 target.
+
+        Returns whether ``work_dir`` may go: nothing to upload, or uploaded.
+        """
+        target = self._output_directory()
+        outputs = self._local_outputs(work_dir)
+        if not is_s3_uri(target) or not any(outputs.glob("*")):
+            return True
+        try:
+            upload_directory_to_s3(
+                s3_client_for(self.config), outputs, target, self.config
+            )
+        except Exception as e:  # noqa: BLE001 - already failing; keep the files
+            logger.error(
+                "Evaluation stopped; could not upload the finished runs' "
+                "results to '%s' (%s). They are kept in '%s'.",
+                target,
+                e,
+                outputs,
+            )
+            return False
+        logger.warning(
+            "Evaluation stopped; the finished runs' results were uploaded to '%s'.",
+            target,
+        )
+        return True
 
     async def _run(self, work_dir: Path) -> tuple[int, bool]:
         """Run the evaluation; returns ``(exit code, keep work_dir)``."""
@@ -443,9 +500,7 @@ class EvaluationRunner:
                 for q in queries
             ]
 
-        local_outputs = (
-            work_dir / "outputs" if is_s3_uri(outputs_target) else Path(outputs_target)
-        )
+        local_outputs = self._local_outputs(work_dir)
         runs: dict[str, list[Run]] = {}
         summaries: list[dict[str, Any]] = []
         comparison: dict[str, Any] | None = None
@@ -539,6 +594,12 @@ class EvaluationRunner:
                     )
                     for strategy in strategies[1:]
                 }
+                breaches.extend(
+                    pairwise_budget_breaches(
+                        comparison["pairwise_vs_baseline"],
+                        self.args.max_failure_rate,
+                    )
+                )
             comparison["run_manifest"] = manifest
             self._save_comparison(comparison, local_outputs)
             self._print_comparison(comparison, time.time() - start_time)

@@ -25,7 +25,11 @@ from unified_kg_rag.application.cli import (
     run_rag_chain,
     run_visualization,
 )
-from unified_kg_rag.application.cli.conventions import exits_on_sigterm
+from unified_kg_rag.application.cli.conventions import (
+    exits_on_sigterm,
+    json_output,
+    print_json,
+)
 from unified_kg_rag.domain.models import (
     Config,
     PipelineConfig,
@@ -110,6 +114,45 @@ def test_sigterm_exits_143_through_finally_blocks() -> None:
     assert cleaned == [True]
     # The handler is the CLI's only while it runs.
     assert signal.getsignal(signal.SIGTERM) is previous
+
+
+@pytest.mark.parametrize(
+    ("stop", "code"),
+    [(lambda: os.kill(os.getpid(), signal.SIGTERM), 143), (KeyboardInterrupt, 130)],
+)
+def test_json_output_prints_a_status_when_stopped(
+    capsys, monkeypatch, stop, code
+) -> None:
+    # Before, a stopped JSON run printed nothing a consumer could parse.
+    monkeypatch.setattr(console, "stderr", console.stderr)
+
+    @exits_on_sigterm
+    def main() -> None:
+        json_output(argparse.Namespace(output_format="json"))
+        if isinstance(stop, type):
+            raise stop
+        stop()
+
+    with pytest.raises((SystemExit, KeyboardInterrupt)):
+        main()
+    assert json.loads(capsys.readouterr().out) == {
+        "status": "interrupted",
+        "exit_code": code,
+    }
+
+
+def test_a_printed_json_result_is_not_followed_by_a_status(capsys, monkeypatch) -> None:
+    monkeypatch.setattr(console, "stderr", console.stderr)
+
+    @exits_on_sigterm
+    def main() -> None:
+        json_output(argparse.Namespace(output_format="json"))
+        print_json({"done": True})
+        raise SystemExit(143)
+
+    with pytest.raises(SystemExit):
+        main()
+    assert json.loads(capsys.readouterr().out) == {"done": True}
 
 
 @pytest.mark.parametrize(

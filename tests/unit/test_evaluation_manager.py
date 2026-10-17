@@ -806,7 +806,9 @@ class TestSummaryBackwardCompat:
 
 
 class TestComparability:
-    async def _run(self, config: Config, strategies: dict[str, str]):
+    async def _run(
+        self, config: Config, strategies: dict[str, str], requested: str | None = None
+    ):
         config.evaluation.enabled_evaluators = [EvaluatorType.ANSWER_MATCH]
         chain = _FakeChain(
             {
@@ -821,6 +823,7 @@ class TestComparability:
                 question=q,
                 category="lookup" if i % 2 == 0 else None,
                 difficulty="easy",
+                metadata={"search_strategy": requested} if requested else {},
             )
             for i, q in enumerate(strategies)
         ]
@@ -855,6 +858,17 @@ class TestComparability:
         manager.save_results(results, reports, summary, tmp_path / "mixed")
         names = [f.name for f in (tmp_path / "mixed").iterdir()]
         assert names and not any("local" in n or "global" in n for n in names)
+
+    async def test_filenames_carry_the_requested_strategy(
+        self, config, tmp_path
+    ) -> None:
+        # An auto run named after where it routed was taken for a local run.
+        manager, results, reports, summary = await self._run(
+            config, {"A?": "local", "B?": "local"}, requested="auto"
+        )
+        manager.save_results(results, reports, summary, tmp_path)
+        names = [f.name for f in tmp_path.iterdir()]
+        assert names and all("_auto_" in n and "local" not in n for n in names)
 
     async def test_runs_in_the_same_second_do_not_overwrite(
         self, config, tmp_path, mocker
@@ -941,6 +955,47 @@ class TestComparability:
         assert manager.build_run_manifest()["retrieval_config_sha256"] == before
         config.models.embedding.dimension = 256
         assert manager.build_run_manifest()["retrieval_config_sha256"] != before
+
+    @pytest.mark.parametrize(
+        "update",
+        [
+            # Retrieval behaviour the old hand-kept section list left out.
+            {"graph": {"community_detection": {"enabled": False}}},
+            {"processing": {"claim_extraction": {"enabled": True}}},
+            {"processing": {"ignore_errors": True}},
+            {"indexing": {"neptune": {"max_hops": 1}}},
+            {"indexing": {"neptune": {"traversal_fetch_multiplier": 7}}},
+            {"aws": {"bedrock": {"guardrail": {"check_output": False}}}},
+        ],
+    )
+    def test_config_hash_covers_settings_that_shape_answers(self, update: dict) -> None:
+        def _hash(config: Config) -> str:
+            config.evaluation.enabled_evaluators = []
+            manager = EvaluationManager(config, rag_chain=object())
+            return manager.build_run_manifest()["retrieval_config_sha256"]
+
+        assert _hash(Config.model_validate(update)) != _hash(Config())
+
+    def test_dataset_content_hash_ignores_cli_metadata(
+        self, config: Config, tmp_path
+    ) -> None:
+        # A comparison sets each run's strategy on every query; the dataset
+        # is still the same file.
+        data = tmp_path / "eval.json"
+        data.write_text('[{"question": "Who ships?", "answer": "Vendor"}]')
+        config.evaluation.enabled_evaluators = []
+        manager = EvaluationManager(config, rag_chain=object())
+
+        def _content_hash(strategy: str) -> str:
+            queries, truths = manager.load_data(data, {"search_strategy": strategy})
+            manifest = manager.build_run_manifest(
+                data, queries=queries, ground_truths=truths
+            )
+            return manifest["dataset"]["content_sha256"]
+
+        assert _content_hash("local") == _content_hash("mix")
+        data.write_text('[{"question": "Who ships?",\n "answer": "Vendor"}]')
+        assert _content_hash("local") == _content_hash("mix")  # formatting only
 
     async def test_index_build_records_read_per_suffix(self, config: Config) -> None:
         from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain

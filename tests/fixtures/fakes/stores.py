@@ -390,7 +390,11 @@ class FakeVectorStore(_Recorder):
 
     def record_build(self, record: IndexBuildRecord, suffix: str | None) -> None:
         # The latest build per suffix, as the indices' _meta would hold it.
-        self.builds[suffix or Constants.DEFAULT_SUFFIX.value] = record
+        key = suffix or Constants.DEFAULT_SUFFIX.value
+        previous = self.builds.get(key)
+        self.builds[key] = record.over(
+            previous.model_dump(mode="json") if previous else None
+        )
 
     def initialize(self) -> None:
         return None

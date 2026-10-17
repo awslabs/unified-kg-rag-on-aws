@@ -361,3 +361,40 @@ def test_record_build_failure_is_logged_not_raised(mocker, caplog) -> None:
     with caplog.at_level("WARNING"):
         indexer.record_build(record, "default")
     assert "Could not record the build of pipeline 'run-1'" in caplog.text
+
+
+def test_an_incremental_record_keeps_the_full_build(mocker) -> None:
+    # Before, an incremental run's record replaced the full build's, so the
+    # manifest's document count shrank to the size of the last delta.
+    from unified_kg_rag.adapters.storage.embedding_settings import (
+        stored_build_record,
+    )
+    from unified_kg_rag.domain.models import IndexBuildRecord
+
+    client = _FakeOpenSearchClient()
+    indexer = _indexer(mocker, client)
+    indexer.upsert_text_units([_unit()])
+
+    def _record(pipeline_id: str, mode: str, documents: int) -> IndexBuildRecord:
+        return IndexBuildRecord(
+            pipeline_id=pipeline_id,
+            mode=mode,
+            built_at=datetime(2026, 1, 1),
+            documents=documents,
+            extraction_fingerprint="abc",
+        )
+
+    def _stored() -> dict:
+        alias = indexer._get_name(indexer._index_prefixes()[0], "default")
+        index = client.get_index_name_by_alias(alias)
+        return stored_build_record(client.get_index_mappings(index))
+
+    indexer.record_build(_record("full-1", "full", 100), "default")
+    indexer.record_build(_record("inc-1", "incremental", 3), "default")
+    indexer.record_build(_record("inc-2", "incremental", 2), "default")
+    stored = _stored()
+    assert (stored["pipeline_id"], stored["documents"]) == ("inc-2", 2)
+    assert stored["full_build"]["pipeline_id"] == "full-1"
+    assert stored["full_build"]["documents"] == 100
+    indexer.record_build(_record("full-2", "full", 90), "default")
+    assert _stored()["full_build"] is None

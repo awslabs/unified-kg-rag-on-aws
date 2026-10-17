@@ -766,7 +766,13 @@ spans and exported as given, so pass an opaque id, not an e-mail address.
   step's `kg_rag.rerank_status`) →
   `kg_rag.rerank` (`kg_rag.rerank.status` = `ok`, `empty` or `error`, document
   counts) → `kg_rag.context_build` (tokens used vs the token budget) → the
-  answer's `chat <model>` span. With a guardrail, each screened query and
+  answer's `chat <model>` span. `global` adds `kg_rag.global.select` (per
+  community level read: `kg_rag.depth`, `kg_rag.reports`, `kg_rag.dynamic`
+  with dynamic selection) and `kg_rag.global.map` (`kg_rag.reports`,
+  `kg_rag.map_calls`, `kg_rag.report_tokens`) under `kg_rag.strategy`;
+  `drift` adds `kg_rag.drift.primer` (`kg_rag.reports`, `kg_rag.answers`) and
+  one `kg_rag.drift.actions` per round (`kg_rag.depth`, `kg_rag.actions`),
+  whose local searches nest under it. With a guardrail, each screened query and
   answer adds a `kg_rag.guardrail` span under `kg_rag.query`
   (`aws.bedrock.guardrail.id`, `.source` = `input` or `output`, `.action` =
   `none`, `masked` or `blocked`, `.intervened`, `.policies`), and the query
@@ -775,7 +781,8 @@ spans and exported as given, so pass an opaque id, not an e-mail address.
   and failure counts only) → one `kg_rag.query` per question, which carries
   that question's input and output; then one `kg_rag.evaluate` root per
   evaluator (`kg_rag.evaluator`, `kg_rag.items`) → the judge model's
-  `chat <model>` spans (`langchain`, `ragas`).
+  `chat <model>` spans (`langchain`, `ragas`, and `pairwise_judge` for
+  `--pairwise-judge`).
 - Model spans follow the OpenTelemetry GenAI semantic conventions (span
   kind `CLIENT`, as for embedding and Bedrock rerank spans):
   `gen_ai.request.model`, `gen_ai.request.max_tokens` / `temperature`,
@@ -1562,6 +1569,11 @@ set `enabled_evaluators: [answer_match, retrieval, graph_aware]`.
   or description; skipped when the context had no source of that type, as
   with `global`) and `answer_length` (characters). Compare strategies on the
   retrieved coverage, and read answer-text coverage next to the length.
+  Skipped, not 0, is deliberate: a strategy that reads no entity sources by
+  design (`global`) has no retrieved coverage to measure. The cost is that a
+  strategy that finds no entity source for a query is not scored on it
+  either, so in a comparison check the metric's `pairs` and `unpaired`, and
+  `metric_outcomes`' skipped count in a single run.
 - **`retrieval`** — deterministic, LLM-free: did the sources the answer model saw
   include the gold documents? `hit_at_k`, `recall_at_k` (k =
   `evaluation.retrieval_k`, default 5) and `mrr` against `reference_sources`.
@@ -1704,8 +1716,10 @@ stops `run-eval` before any query with `Error: invalid evaluation dataset:`,
 the item index and query id, and exit code 2.
 
 Results are written to the outputs directory as
-`evaluation_{results,reports,summary}_<timestamp>.json`; when every answered
-query used the same strategy the name becomes `..._<strategy>_<timestamp>.json`.
+`evaluation_{results,reports,summary}_<timestamp>.json`; when every query
+asked for the same strategy (or, with none asked for, used the same one) the
+name becomes `..._<strategy>_<timestamp>.json`, so an `auto` run is
+`..._auto_...` whatever it routed to.
 `<timestamp>` is `YYYYMMDD_HHMMSS_<8 hex characters>`: the random part keeps
 runs started in the same second (parallel strategies, CI matrices) from
 overwriting each other's files, so a script finds the latest run by sorting
@@ -1739,21 +1753,27 @@ The summary holds, per metric, mean/median/stdev/min/max/count
   when tracked files differ from it; both `null` unless the package runs from
   a checkout that tracks it), `retrieval_config_sha256`, `index`, `library_versions`
   (ragas, langchain*), the dataset (path + file sha256, query count and a hash
-  of the parsed content) and a UTC timestamp, so two runs can be compared.
-  `retrieval_config_sha256` hashes only the settings that shape answers and
-  scores (`backend`, `search`, `custom_prompts`, `evaluation`, `providers`,
-  `processing.translation`, `indexing.additional_suffix`,
-  `indexing.opensearch` and the `aws.bedrock` models and effort), without
-  regions, endpoints, credentials, file paths, the guardrail id, output
-  directories or retry knobs, so the same evaluation hashes the same in every
-  environment. `index` names, per queried suffix, the ingestion run that
-  last wrote its vector indices: ingestion records `pipeline_id`, `mode`
-  (`full` or `incremental`), `built_at`, `documents` (documents the run
-  indexed; an incremental run counts only its new and changed ones),
-  `extraction_fingerprint`, `extraction_settings` (the extraction settings field by
-  field) and `package_version` in the index mappings'
-  `_meta` (best-effort: a role without the mapping-update permission logs a
-  warning). `null` for a backend without index metadata.
+  of the parsed file, without the metadata the command line adds to every
+  query) and a UTC timestamp, so two runs can be compared.
+  `retrieval_config_sha256` hashes every setting that can change an answer or
+  a score, the `models` roles resolved to their model ids and the ingestion
+  settings included (an index built otherwise answers otherwise). Left out
+  are the settings that change no answer, as the stage-cache classification
+  (`CONFIG_KEYING`) marks them: regions, endpoints, credentials, store and
+  output paths, table names, the guardrail id and version, timeouts, retry
+  and concurrency knobs, cache, logging and telemetry settings. So the same
+  evaluation hashes the same in every environment, and a new setting counts
+  unless it is classified as changing no answer. `index` names, per queried
+  suffix, the ingestion run that last wrote its vector indices: ingestion
+  records `pipeline_id`, `mode` (`full`, also for an incremental run that
+  found the registry empty, or `incremental`), `built_at`, `documents`
+  (documents the run indexed; an incremental run counts only its new and
+  changed ones), `extraction_fingerprint`, `extraction_settings` (the
+  extraction settings field by field), `package_version` and, on an
+  incremental record, `full_build` (the full build it was applied on top of,
+  with its own `pipeline_id`, `built_at` and `documents`) in the index
+  mappings' `_meta` (best-effort: a role without the mapping-update
+  permission logs a warning). `null` for a backend without index metadata.
   It also lists `dropped_evaluators`. `EvaluationManager.evaluate_dataset`
   builds it, so library callers get it too (pass `dataset_path=` / `cli_args=`
   to record those).
@@ -1779,8 +1799,14 @@ usual and adds `evaluation_comparison_<timestamp>.json`:
 - `deltas_vs_baseline.<s>.<metric>` — paired against the first strategy over
   the queries both scored: `mean_delta`, a 95% paired bootstrap confidence
   interval (`ci_low`/`ci_high`; 2,000 resamples of the queries, seed 0),
-  `wins`/`ties`/`losses` and the per-query deltas. A difference is supported
-  by the query sample when its interval excludes 0. In a simulation with
+  `wins`/`ties`/`losses`, the per-query deltas and `unpaired` (queries only
+  one side scored, such as a metric skipped for lack of an entity source). A
+  query whose answer generation failed scores 0 on every metric another run
+  scored it on (`answer_length` excepted), so a strategy cannot look better by
+  failing on the queries it would lose; `strategies.<s>.failed_answers` /
+  `failed_queries` count the failures, and `warnings` (printed too) names
+  strategies that failed different numbers of answers. A difference is
+  supported by the query sample when its interval excludes 0. In a simulation with
   binary metrics, a 10-point difference was detected in 15% of runs with 50
   queries and 59% with 200 (the interval held the true value in 95-98% of
   runs), so compare on a few hundred queries.
@@ -1790,8 +1816,13 @@ usual and adds `evaluation_comparison_<timestamp>.json`:
   (prompt: `custom_prompts.pairwise_comparison_*`). Each pair is judged in
   both orders and a criterion counts as a win only when both orders agree
   (the judge favours the answer it reads first); `candidate_win_rate` counts
-  a tie as half. It judges the first repeat's answers, one call per order,
-  query and strategy.
+  a tie as half. A pair where one answer failed is not judged: the other
+  side wins every criterion (`candidate_errors`, `baseline_errors`); a pair
+  where both failed counts in `both_errors` only. `failed` counts the pairs
+  the judge could not decide, and `--max-failure-rate` applies to them as to
+  a metric (every judge call failing is a breach). It judges the first
+  repeat's answers, one call per order, query and strategy, under one
+  `kg_rag.evaluate` span (`kg_rag.evaluator` = `pairwise_judge`).
 - `run_manifest` of the first run.
 
 The console prints the means, the deltas with their intervals, `auto`'s
@@ -1809,7 +1840,8 @@ the official download instead. It writes `corpus/` (one text file per
 distinct paragraph: its title, a blank line, its text; each question brings
 2-4 supporting paragraphs and up to 18 distractors) and `eval_data.json`
 (`answer`, `answer_aliases`, the supporting paragraphs' file names as
-`reference_sources`, the hop count as `category`).
+`reference_sources`, the hop count as `category`). A `corpus/` that is not
+empty is a usage error (exit 2), reported before anything is downloaded.
 
 ```bash
 # 1. 100 questions (about 1,900 paragraphs), sampled with seed 0.
@@ -2087,7 +2119,7 @@ Every CLI (`run-ingestion`, `run-rag`, `run-eval`, `run-visualization`,
 | `1` | The run failed: a failed stage or query, a breached `--max-failure-rate`, a failed upload, nothing rendered |
 | `2` | Usage or configuration error, before any work: an unknown or invalid flag, a missing input file or directory, an invalid configuration file or environment override, an unset store endpoint |
 | `130` | Interrupted with Ctrl-C (SIGINT) |
-| `143` | Stopped by SIGTERM (ECS `StopTask`, a Step Functions timeout); `run-ingestion` checkpoints its finished stages first |
+| `143` | Stopped by SIGTERM (ECS `StopTask`, a Step Functions timeout); `run-ingestion` checkpoints its finished stages first, and `run-eval` with an `s3://` output directory uploads the results of the runs that finished (or keeps them locally and logs the path when the upload fails) |
 
 Flags name files one way across the CLIs: `--source-directory` (a corpus
 directory), `--data-path` (an input data file), `--output-directory` /
@@ -2102,7 +2134,9 @@ per-stage results (`run-ingestion`; not with `--metrics-sink cloudwatch`,
 which also writes to stdout), each run's summary, the comparison and the
 failure-budget breaches (`run-eval`), the written files (`run-visualization`),
 the output path and detected profile (`run-prompt-tuning`), and the counts
-written (`prepare-benchmark`).
+written (`prepare-benchmark`). A run stopped by a signal before it printed its
+document prints `{"status": "interrupted", "exit_code": 143}` (`130` for
+Ctrl-C) instead, so stdout is always JSON.
 
 ### Large / multilingual / heterogeneous corpora
 

@@ -700,6 +700,12 @@ Secrets Manager나 태스크 시크릿에서 주입하세요.
   `kg_rag.rerank_status`) → `kg_rag.rerank`
   (`kg_rag.rerank.status` = `ok`, `empty`, `error`와 문서 수) →
   `kg_rag.context_build`(사용한 토큰과 토큰 예산) → 답변 생성의 `chat <model>` 스팬.
+  `global`은 `kg_rag.strategy` 아래에 `kg_rag.global.select`(읽은 커뮤니티 수준마다:
+  `kg_rag.depth`, `kg_rag.reports`, 동적 선택이면 `kg_rag.dynamic`)와
+  `kg_rag.global.map`(`kg_rag.reports`, `kg_rag.map_calls`, `kg_rag.report_tokens`)을
+  더하고, `drift`는 `kg_rag.drift.primer`(`kg_rag.reports`, `kg_rag.answers`)와 라운드마다
+  `kg_rag.drift.actions`(`kg_rag.depth`, `kg_rag.actions`)를 더하며, 각 액션의 로컬
+  검색은 그 아래에 들어갑니다.
   가드레일이 있으면 검사한 질의와 답변마다 `kg_rag.query` 아래에 `kg_rag.guardrail`
   스팬이 붙고(`aws.bedrock.guardrail.id`, `.source` = `input` 또는 `output`,
   `.action` = `none`, `masked`, `blocked`, `.intervened`, `.policies`), 질의 스팬에는
@@ -707,7 +713,8 @@ Secrets Manager나 태스크 시크릿에서 주입하세요.
 - 평가(`run-eval`): 답변 생성 전체가 `kg_rag.batch` 루트 하나(항목 수와 실패 수만
   기록) → 질문마다 `kg_rag.query` 하나이며, 질문별 입력과 출력은 이 자식 스팬에 있음.
   이어서 평가기마다 `kg_rag.evaluate` 루트 하나(`kg_rag.evaluator`, `kg_rag.items`) →
-  심사 모델의 `chat <model>` 스팬(`langchain`, `ragas`)
+  심사 모델의 `chat <model>` 스팬(`langchain`, `ragas`, `--pairwise-judge`일 때
+  `pairwise_judge`)
 - 모델 스팬은 OpenTelemetry GenAI 시맨틱 규약을 따릅니다(임베딩, Bedrock 재순위화
   스팬과 같이 스팬 종류는 `CLIENT`). `gen_ai.request.model`,
   `gen_ai.request.max_tokens` / `temperature`,
@@ -1412,7 +1419,11 @@ rank, 주장 문장은 남은 청크에서 다시 파생하므로 그 문서가 
   끝점에 맞춰 봅니다(쌍은 방향과 관계없이 관계 하나와 일치해야 하고, 그 밖의 문자열은
   끝점이나 설명에 나와야 함. `global`처럼 컨텍스트에 해당 유형의 출처가 없으면 건너뜀).
   `answer_length`(문자 수)도 함께 기록합니다. 전략 비교에는 검색 기준 커버리지를 쓰고,
-  답변 텍스트 기준 커버리지는 길이와 함께 읽으세요.
+  답변 텍스트 기준 커버리지는 길이와 함께 읽으세요. 0점이 아니라 건너뛰는 것은 의도한
+  동작입니다. 설계상 엔티티 출처를 읽지 않는 전략(`global`)에는 잴 검색 기준 커버리지가
+  없습니다. 대신 어떤 질의에서 엔티티 출처를 하나도 찾지 못한 전략도 그 질의는 채점되지
+  않으므로, 비교에서는 그 지표의 `pairs`와 `unpaired`를, 단일 실행에서는
+  `metric_outcomes`의 건너뛴 수를 확인하세요.
 - **`retrieval`** — 결정적이며 LLM을 쓰지 않습니다. 답변 모델이 본 출처에 정답 문서가
   들어 있었는지 봅니다. `reference_sources`를 기준으로 `hit_at_k`, `recall_at_k`(k =
   `evaluation.retrieval_k`, 기본 5), `mrr`을 계산합니다. 텍스트 단위 출처는 파일을
@@ -1540,8 +1551,9 @@ run-eval --data-path s3://my-bucket/eval/my_eval_data.json \
 항목 번호, 질의 id를 출력한 뒤 종료 코드 2로 끝납니다.
 
 결과는 출력 디렉터리에 `evaluation_{results,reports,summary}_<timestamp>.json`으로
-씁니다. 답변한 질의가 모두 같은 전략을 썼다면 파일 이름은
-`..._<strategy>_<timestamp>.json`이 됩니다. `<timestamp>`는
+씁니다. 모든 질의가 같은 전략을 요청했다면(요청한 전략이 없으면 모두 같은 전략을 썼다면)
+파일 이름은 `..._<strategy>_<timestamp>.json`이 되므로, `auto` 실행은 어느 전략으로
+분기했든 `..._auto_...`입니다. `<timestamp>`는
 `YYYYMMDD_HHMMSS_<16진수 8자리>`입니다. 임의 부분은 같은 초에 시작한 실행(여러
 전략 병렬 실행, CI 매트릭스)이 서로의 파일을 덮어쓰지 않게 하므로, 스크립트는 이름을
 만들어 내지 말고 이름이나 파일 시각으로 정렬해 최신 실행을 찾습니다. 요약에는 지표마다
@@ -1571,18 +1583,22 @@ run-eval --data-path s3://my-bucket/eval/my_eval_data.json \
   git 커밋(`git_sha`. 추적 파일이 커밋과 다르면 `git_dirty`도 기록. 패키지를 해당
   커밋을 추적하는 체크아웃에서 실행하지 않으면 둘 다 `null`), `retrieval_config_sha256`,
   `index`, `library_versions`(ragas, langchain*), 데이터셋(경로와 파일 sha256,
-  질의 수, 파싱한 내용의 해시), UTC 타임스탬프가 있어 두 실행을 비교할 수 있습니다.
-  `retrieval_config_sha256`은 답변과 점수에 영향을 주는 설정(`backend`, `search`,
-  `custom_prompts`, `evaluation`, `providers`, `processing.translation`,
-  `indexing.additional_suffix`, `indexing.opensearch`, `aws.bedrock`의 모델과 effort)만
-  해시합니다. 리전, 엔드포인트, 자격 증명, 파일 경로, 가드레일 ID, 출력 디렉터리,
-  재시도 설정은 빼므로 같은 평가는 어느 환경에서든 같은 해시가 됩니다. `index`에는
-  질의한 접미사마다 그 벡터 인덱스를 마지막으로 쓴 수집 실행이 기록됩니다. 수집은
-  인덱스 매핑의 `_meta`에 `pipeline_id`, `mode`(`full` 또는 `incremental`),
-  `built_at`, `documents`(실행이 색인한 문서 수. 증분 실행은 새 문서와 바뀐 문서만 셈),
-  `extraction_fingerprint`, `extraction_settings`(필드별 추출 설정), `package_version`을 기록합니다(최선 노력 방식. 매핑 수정
-  권한이 없는 역할이면 경고만 남김). 인덱스 메타데이터가 없는 백엔드는
-  `null`입니다.
+  질의 수, 명령줄이 질의마다 덧붙이는 메타데이터를 뺀 파싱한 파일 내용의 해시),
+  UTC 타임스탬프가 있어 두 실행을 비교할 수 있습니다.
+  `retrieval_config_sha256`은 답변이나 점수를 바꿀 수 있는 모든 설정을 해시합니다.
+  `models` 역할은 모델 ID로 풀어서 넣고, 수집 설정도 넣습니다(다르게 만든 인덱스는
+  다르게 답합니다). 단계 캐시 분류(`CONFIG_KEYING`)가 답변에 영향이 없다고 표시한
+  설정은 뺍니다. 리전, 엔드포인트, 자격 증명, 저장소와 출력 경로, 테이블 이름,
+  가드레일 ID와 버전, 시간 제한, 재시도와 동시성 설정, 캐시·로깅·텔레메트리
+  설정입니다. 따라서 같은 평가는 어느 환경에서든 같은 해시가 되고, 새 설정은 답변에
+  영향이 없다고 분류하기 전까지 해시에 들어갑니다. `index`에는 질의한 접미사마다 그
+  벡터 인덱스를 마지막으로 쓴 수집 실행이 기록됩니다. 수집은 인덱스 매핑의 `_meta`에
+  `pipeline_id`, `mode`(`full`. 레지스트리가 비어 있던 증분 실행도 `full`. 또는
+  `incremental`), `built_at`, `documents`(실행이 색인한 문서 수. 증분 실행은 새 문서와
+  바뀐 문서만 셈), `extraction_fingerprint`, `extraction_settings`(필드별 추출 설정),
+  `package_version`, 그리고 증분 레코드에는 `full_build`(이 증분 실행이 올라선 전체
+  빌드의 `pipeline_id`, `built_at`, `documents`)를 기록합니다(최선 노력 방식. 매핑 수정
+  권한이 없는 역할이면 경고만 남김). 인덱스 메타데이터가 없는 백엔드는 `null`입니다.
   `dropped_evaluators`도 기록합니다. `EvaluationManager.evaluate_dataset`이 이
   매니페스트를 만들므로 라이브러리 호출자도 얻을 수 있습니다(기록하려면
   `dataset_path=` / `cli_args=`를 넘기세요).
@@ -1607,7 +1623,12 @@ run-eval --data-path s3://my-bucket/eval/my_eval_data.json \
   분기했는지 보여 줍니다.
 - `deltas_vs_baseline.<s>.<metric>` — 두 전략이 모두 채점한 질의에서 첫 전략과 짝지어
   비교한 값입니다. `mean_delta`, 95% 짝지은 부트스트랩 신뢰 구간(`ci_low`/`ci_high`.
-  질의를 2,000번 재표집, 시드 0), `wins`/`ties`/`losses`, 질의별 차이가 있습니다. 구간이
+  질의를 2,000번 재표집, 시드 0), `wins`/`ties`/`losses`, 질의별 차이,
+  `unpaired`(한쪽만 채점한 질의 수. 엔티티 출처가 없어 건너뛴 지표 등)가 있습니다. 답변
+  생성에 실패한 질의는 다른 실행이 그 질의를 채점한 모든 지표에서 0점입니다
+  (`answer_length` 제외). 그래서 질 질의에서 실패하는 전략이 더 좋아 보일 수 없습니다.
+  실패 수는 `strategies.<s>.failed_answers` / `failed_queries`에 있고, 전략마다 실패한
+  답변 수가 다르면 `warnings`에 이름이 나오며 콘솔에도 출력됩니다. 구간이
   0을 포함하지 않으면 질의 표본이 그 차이를 뒷받침합니다. 이진 지표로 시뮬레이션해 보면
   10%p 차이를 질의 50개에서는 15%, 200개에서는 59%의 실행에서 찾아냈습니다(구간이 참값을
   포함한 비율은 95-98%). 그러니 수백 개 질의로 비교하세요.
@@ -1616,8 +1637,13 @@ run-eval --data-path s3://my-bucket/eval/my_eval_data.json \
   다양성(diversity), 이해 도움(empowerment), 직접성(directness)을 판정합니다(프롬프트:
   `custom_prompts.pairwise_comparison_*`). 판정 모델은 먼저 읽은 답변을 선호하므로 쌍마다
   순서를 바꿔 두 번 판정하고, 두 순서가 같은 답변을 고른 기준만 승리로 셉니다.
-  `candidate_win_rate`는 무승부를 0.5로 셉니다. 첫 반복 실행의 답변을 판정하며, 질의와
-  전략마다 순서별로 한 번씩 호출합니다.
+  `candidate_win_rate`는 무승부를 0.5로 셉니다. 한쪽 답변이 실패한 쌍은 판정하지 않고
+  다른 쪽이 모든 기준에서 이깁니다(`candidate_errors`, `baseline_errors`). 둘 다 실패한
+  쌍은 `both_errors`에만 셉니다. `failed`는 판정 모델이 결정하지 못한 쌍의 수이며,
+  `--max-failure-rate`가 지표와 같은 방식으로 적용됩니다(판정 호출이 모두 실패하면
+  초과). 첫 반복 실행의 답변을 판정하며, 질의와 전략마다 순서별로 한 번씩 호출하고,
+  호출은 `kg_rag.evaluate` 스팬 하나(`kg_rag.evaluator` = `pairwise_judge`) 아래에
+  모입니다.
 - 첫 실행의 `run_manifest`.
 
 콘솔에는 평균, 신뢰 구간을 붙인 차이, `auto`의 분기 결과, 맞비교 승률이 출력됩니다.
@@ -1632,7 +1658,8 @@ run-eval --data-path s3://my-bucket/eval/my_eval_data.json \
 `musique_ans_v1.0_*.jsonl`을 대신 읽을 수 있습니다. `corpus/`(서로 다른 단락마다 텍스트
 파일 하나: 제목, 빈 줄, 본문. 질문마다 근거 단락 2-4개와 방해 단락 최대 18개)와
 `eval_data.json`(`answer`, `answer_aliases`, 근거 단락의 파일 이름인
-`reference_sources`, 홉 수인 `category`)을 씁니다.
+`reference_sources`, 홉 수인 `category`)을 씁니다. `corpus/`가 비어 있지 않으면
+아무것도 내려받기 전에 사용 오류(종료 코드 2)로 끝납니다.
 
 ```bash
 # 1. 시드 0으로 질문 100개(단락 약 1,900개) 표집
@@ -1896,7 +1923,7 @@ CLI가 보고하는 메시지와 그 의미, 해결 방법은 AWS 모드와 로�
 | `1` | 실행 실패: 단계나 질의 실패, `--max-failure-rate` 초과, 업로드 실패, 렌더링한 파일 없음 |
 | `2` | 작업을 시작하기 전의 사용법·설정 오류: 알 수 없거나 잘못된 플래그, 없는 입력 파일이나 디렉터리, 잘못된 설정 파일이나 환경 변수 덮어쓰기, 설정하지 않은 저장소 엔드포인트 |
 | `130` | Ctrl-C(SIGINT)로 중단 |
-| `143` | SIGTERM으로 중지(ECS `StopTask`, Step Functions 시간 초과). `run-ingestion`은 끝난 단계를 먼저 체크포인트로 저장합니다 |
+| `143` | SIGTERM으로 중지(ECS `StopTask`, Step Functions 시간 초과). `run-ingestion`은 끝난 단계를 먼저 체크포인트로 저장하고, 출력 디렉터리가 `s3://`인 `run-eval`은 끝난 실행의 결과를 업로드합니다(업로드에 실패하면 로컬에 남기고 경로를 로그로 남김) |
 
 파일을 가리키는 플래그 이름은 모든 CLI에서 같습니다. `--source-directory`(코퍼스
 디렉터리), `--data-path`(입력 데이터 파일), `--output-directory` / `--output-path`(명령이
@@ -1908,7 +1935,9 @@ CLI가 보고하는 메시지와 그 의미, 해결 방법은 AWS 모드와 로�
 결과(`run-rag`), 파이프라인 id·상태·단계별 결과(`run-ingestion`. 표준 출력에 함께 쓰는
 `--metrics-sink cloudwatch`와는 같이 쓸 수 없음), 실행별 요약·비교·실패 허용치
 초과(`run-eval`), 쓴 파일(`run-visualization`), 출력 경로와 감지한 프로필
-(`run-prompt-tuning`), 쓴 항목 수(`prepare-benchmark`)입니다.
+(`run-prompt-tuning`), 쓴 항목 수(`prepare-benchmark`)입니다. 문서를 출력하기 전에
+신호로 중지되면 대신 `{"status": "interrupted", "exit_code": 143}`(Ctrl-C는 `130`)을
+출력하므로 표준 출력은 항상 JSON입니다.
 
 ### 대규모, 다국어, 이질적인 코퍼스
 

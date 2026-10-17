@@ -74,6 +74,11 @@ def main(argv: list[str] | None = None) -> None:
     if args.data_path is not None and not args.data_path.is_file():
         usage_error(f"benchmark data not found: '{args.data_path}'")
     try:
+        # Before the download: a used directory is a usage error.
+        musique.check_output_directory(args.output_directory)
+    except EvaluationException as e:
+        usage_error(str(e))
+    try:
         source = args.data_path or musique.download_dev(
             args.output_directory / "source" / "musique_ans_v1.0_dev.jsonl"
         )

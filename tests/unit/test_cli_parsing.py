@@ -566,9 +566,14 @@ async def test_eval_runner_runs_the_pairwise_judge(config, mocker, tmp_path) -> 
     config.evaluation.enabled_evaluators = []
     mocker.patch.object(run_evaluation, "display_ascii_art")
     judge = mocker.patch.object(run_evaluation, "PairwiseJudge")
-    judge.return_value.acompare = mocker.AsyncMock(
-        return_value={"judged": 1, "criteria": {}}
-    )
+    judged = {
+        "judged": 1,
+        "failed": 0,
+        "candidate_errors": 0,
+        "baseline_errors": 0,
+        "criteria": {},
+    }
+    judge.return_value.acompare = mocker.AsyncMock(return_value=judged)
     data = tmp_path / "eval.json"
     data.write_text(json.dumps([{"question": "Who ships?", "answer": "Vendor"}]))
     out = tmp_path / "out"
@@ -590,7 +595,7 @@ async def test_eval_runner_runs_the_pairwise_judge(config, mocker, tmp_path) -> 
     assert [r.generated_answer for r in baseline] == ["Vendor"]
     assert [r.generated_answer for r in candidate] == ["Buyer"]
     comparison = json.loads(next(out.glob("evaluation_comparison_*.json")).read_text())
-    assert comparison["pairwise_vs_baseline"] == {"mix": {"judged": 1, "criteria": {}}}
+    assert comparison["pairwise_vs_baseline"] == {"mix": judged}
 
 
 # --- run_ingestion_pipeline: parser --------------------------------------

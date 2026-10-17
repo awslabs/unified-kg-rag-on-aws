@@ -25,8 +25,10 @@ from unified_kg_rag.shared.utils.cache_keys import (
     CONFIG_KEYING,
     Keyed,
     Unkeyed,
+    answer_settings,
     classify,
     extraction_fingerprint,
+    shapes_answers,
     stage_input_fingerprint,
 )
 
@@ -153,3 +155,28 @@ def test_an_unclassified_field_keys_every_stage(monkeypatch) -> None:
     assert stage_input_fingerprint(retuned, stage) != stage_input_fingerprint(
         Config(), stage
     )
+
+
+def test_answer_settings_cover_every_field_but_the_neutral_ones() -> None:
+    # run-eval hashes these into its manifest: a field missing here would let
+    # two runs that answer differently claim the same configuration. Only
+    # fields classified as changing no answer (and the location fields) stay
+    # out, so the same evaluation hashes the same in every environment.
+    hashed = set(answer_settings(Config()))
+    excluded = {path for path in _FIELDS if not shapes_answers(path)}
+    assert hashed == set(_FIELDS) - excluded
+    for path in excluded:
+        rule = classify(path)
+        assert (
+            isinstance(rule, Unkeyed)
+            and not rule.shapes_answers
+            or (path in cache_keys._LOCATION_FIELDS)
+        ), path
+    neutral = {"telemetry", cache_keys._WHERE, cache_keys._THROUGHPUT}
+    assert {r.reason for r in CONFIG_KEYING.values() if isinstance(r, Unkeyed)} >= (
+        neutral
+    )
+
+
+def test_location_fields_are_config_fields() -> None:
+    assert cache_keys._LOCATION_FIELDS <= set(_FIELDS)

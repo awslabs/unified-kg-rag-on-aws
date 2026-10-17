@@ -602,8 +602,8 @@ Transaction Search**에서 서비스 `unified-kg-rag`로 거르세요. 수집 �
 `kg_rag.ingestion.run` 트레이스 하나, `run-rag` 질의마다 `kg_rag.query` 트레이스
 하나가 생기며 자식 스팬은 [관측성](#관측성)에 나온 그대로입니다. `run-eval`
 실행은 `kg_rag.batch` 트레이스 하나이고 질의는 그 루트 아래 `kg_rag.query` 자식
-스팬이므로, 목록에는 질의마다가 아니라 배치 하나로 나옵니다. 평가기마다 심사 모델
-호출을 담은 `kg_rag.evaluate` 트레이스가 하나씩 더 생깁니다. 스팬은 `aws/spans` 로그
+스팬이므로, 목록에는 질의마다가 아니라 배치 하나로 나옵니다. 평가기마다(`--pairwise-judge`도
+마찬가지) 심사 모델 호출을 담은 `kg_rag.evaluate` 트레이스가 하나씩 더 생깁니다. 스팬은 `aws/spans` 로그
 그룹에도 있어 Logs Insights로 볼 수 있습니다(필드가 비어 나오면 먼저
 `fields @message | limit 5`로 정확한 필드 경로를 확인하세요).
 

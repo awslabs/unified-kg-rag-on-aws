@@ -286,9 +286,9 @@ class OpenSearchIndexer(VectorIndexer):
 
         Merged into the existing ``_meta`` (the embedding settings stay), so
         it needs ``indices:admin/mapping/put``; a failure is logged and the run
-        goes on.
+        goes on. An incremental record keeps the full build the index holds
+        (``IndexBuildRecord.over``).
         """
-        payload = record.model_dump(mode="json")
         for prefix in self._index_prefixes():
             alias = self._get_name(prefix, suffix)
             try:
@@ -299,6 +299,7 @@ class OpenSearchIndexer(VectorIndexer):
                     self.opensearch_client.get_index_mappings(index_name).get("_meta")
                     or {}
                 )
+                payload = record.over(meta.get(META_BUILD)).model_dump(mode="json")
                 self.opensearch_client.put_index_meta(
                     index_name, {**meta, META_BUILD: payload}
                 )
