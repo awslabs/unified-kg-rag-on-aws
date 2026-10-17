@@ -178,7 +178,7 @@ This pattern follows the same philosophy as the existing `ParserFactory._loader_
 
 Code inside the package imports from real layer locations (`application.retrieval.rag_chain`, `application.storage.indexing_manager`, `application.ingestion.pipeline`, and the `adapters.*` / `domain.*` modules). `evaluation/` and `visualization/` are real logic packages (see the layout note in §2).
 
-**Public API.** Callers outside the package import from `unified_kg_rag` itself. Its `__all__` is the supported surface, in two groups: using the framework (`Config`, `get_config`, `setup_logging`, `configure_event_loop`, `DataIngestionPipeline` and its `PipelineConfig` / `PipelineContext` / `PipelineStageStatus` / `PipelineStageType`, `IndexingManager`, `GraphRAGChain` with `RAGInput`, `RAGOutput`, `SearchOutput`, `ProcessedQuery`, `SearchResult`, `SearchStrategy`, `SearchType`, `MemoryManager`, and `EvaluationManager`) and extending it (the ports, `Providers` / `build_providers`, `ProviderRole` / `register_provider`, `BaseSearchStrategy` / `BaseGraphRAGRetriever` / `register_strategy` / `QueryInput` / `RetrieverRole`, `ParserFactory`, `BaseRenderer` / `register_renderer`). Every other module path is internal: it can move in any release, and only a change to the exported names, configuration keys, CLI flags and exit codes, or stored formats is a breaking change. The root resolves names on first access (`__getattr__`), so `import unified_kg_rag` loads none of the package, and `tests/unit/test_public_api.py` pins the list.
+**Public API.** Callers outside the package import from `unified_kg_rag` itself. Its `__all__` is the supported surface, in two groups: using the framework (`Config`, `get_config`, `setup_logging`, `configure_event_loop`, `DataIngestionPipeline` and its `PipelineConfig` / `PipelineContext` / `PipelineStageStatus` / `PipelineStageType`, `IndexingManager`, `GraphRAGChain` with `RAGInput`, `RAGOutput`, `SearchOutput`, `ProcessedQuery`, `SearchResult`, `SearchStrategy`, `SearchType`, `MemoryManager` / `ConversationKey`, and `EvaluationManager`) and extending it (the ports, `Providers` / `build_providers`, `ProviderRole` / `register_provider`, `BaseSearchStrategy` / `BaseGraphRAGRetriever` / `register_strategy` / `QueryInput` / `RetrieverRole`, `ParserFactory`, `BaseRenderer` / `register_renderer`). Every other module path is internal: it can move in any release, and only a change to the exported names, configuration keys, CLI flags and exit codes, or stored formats is a breaking change. The root resolves names on first access (`__getattr__`), so `import unified_kg_rag` loads none of the package, and `tests/unit/test_public_api.py` pins the list.
 
 ---
 
@@ -541,12 +541,12 @@ injected or configured provider reaches all of them:
 - `GraphRAGChain`: its own prompts, every search strategy (including the
   global map/reduce and DRIFT chains), the hybrid scorer's reranker, both token
   managers, and the default OpenSearch retriever's embeddings. Conversation
-  memory (no model of its own: the follow-up rewrite is the chain's prompt) is
-  process-wide by default (so history survives a chain built per request) and
-  is created from the first chain's config; a later chain with a different
-  memory config keeps the shared manager and logs a warning once. Pass
-  `GraphRAGChain(memory_manager=MemoryManager(cfg))` to isolate a chain's
-  conversations.
+  memory (no model of its own: the follow-up rewrite is the chain's prompt)
+  belongs to the chain, built from its config, and keys each conversation by
+  index suffix, `user_id` and `conversation_id`, so one tenant's or user's
+  conversation id never reaches another's history. To keep history across
+  chains (a chain built per request), pass them one manager:
+  `GraphRAGChain(memory_manager=shared)` with `shared = MemoryManager(cfg)`.
 - `DataIngestionPipeline`: the chunker, translator, graph/claim extraction,
   gleaning, description summarization, community reports, the default
   OpenSearch indexer's embeddings and the visualization embedder.

@@ -1382,8 +1382,12 @@ Interactive mode auto-enables memory. In-session commands:
 
 Conversation memory is held in the process (`MemoryManager` keeps it in
 memory, nothing is written to disk or a store): it carries over between the
-turns of one interactive session, or between `GraphRAGChain` calls of one
-Python process that reuse a `conversation_id` with `use_memory=True`. Separate
+turns of one interactive session, or between calls of one `GraphRAGChain`
+that reuse a `conversation_id` with `use_memory=True` and the same `suffix`
+and `user_id` (a conversation belongs to its index suffix and user, so
+another tenant's or user's turns never reach it). Each chain has its own
+memory; to share it between chains, pass them one
+`MemoryManager(config)` as `memory_manager=`. Separate
 `run-rag --query` invocations do not share it: each starts with no history,
 so `--use-memory` and `--conversation-id` have no effect on a single query
 (`run-rag` logs a WARNING when they are combined with `--query`). Use

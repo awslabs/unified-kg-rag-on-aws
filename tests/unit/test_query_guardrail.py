@@ -330,10 +330,10 @@ class _Memory:
     def __init__(self) -> None:
         self.turns: list[tuple[str, str]] = []
 
-    async def load_history(self, conv_id: str) -> str:
+    async def load_history(self, key: Any) -> str:
         return ""
 
-    async def add_turn(self, conv_id: str, user: str, assistant: str) -> None:
+    async def add_turn(self, key: Any, user: str, assistant: str) -> None:
         self.turns.append((user, assistant))
 
 

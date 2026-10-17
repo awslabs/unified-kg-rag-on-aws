@@ -34,8 +34,8 @@ from unified_kg_rag.adapters.retrieval.base import (
     BaseSearchStrategy,
 )
 from unified_kg_rag.adapters.retrieval.memory_manager import (
+    ConversationKey,
     MemoryManager,
-    get_memory_manager,
 )
 from unified_kg_rag.adapters.retrieval.token_manager import (
     EMPTY_CONTEXT_PLACEHOLDER,
@@ -59,6 +59,7 @@ from unified_kg_rag.application.bootstrap import build_providers, build_query_gu
 from unified_kg_rag.application.observability import configure_observability
 from unified_kg_rag.domain.models import (
     Config,
+    Constants,
     RetrievalResult,
     RetrieverRole,
     SearchQuery,
@@ -361,13 +362,10 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         guardrail = self.config.aws.bedrock.guardrail
         self._screen_inputs = self.guard is not None and guardrail.check_input
         self._screen_outputs = self.guard is not None and guardrail.check_output
-        # Conversation memory is process-wide by default, so history survives
-        # across chain instances (e.g. a chain per request); the first chain's
-        # config creates it. Inject a MemoryManager to isolate a chain's
-        # conversations.
-        self.memory_manager: MemoryManager = memory_manager or get_memory_manager(
-            config
-        )
+        # Conversation memory belongs to the chain unless a MemoryManager is
+        # injected (to share histories between chains, e.g. one per request).
+        # Within it a conversation is keyed by namespace, user and id.
+        self.memory_manager: MemoryManager = memory_manager or MemoryManager(config)
         self.token_manager = TokenManager(self.config, providers=self.providers)
         self.factory: LLMFactoryPort = self.providers.llm_factory
         # Retrievers and strategy instances are built once per event loop and
@@ -826,7 +824,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             state["history"] = ""
             return state
 
-        state["history"] = await self.memory_manager.load_history(cid)
+        state["history"] = await self.memory_manager.load_history(
+            _conversation_key(state.get("suffix"), state.get("user_id"), cid)
+        )
         return state
 
     async def _rewrite_query_step(
@@ -1543,7 +1543,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             if guard_records:
                 output.metadata["guardrail"] = guard_records
             if isinstance(output, RAGOutput):
-                await self._save_memory(output)
+                await self._save_memory(output, rag_input)
             return output
         except Exception as e:
             if not self.ignore_errors:
@@ -1661,7 +1661,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         input_dict["start_time"] = time.time()
         return rag_input, input_dict
 
-    async def _save_memory(self, output: RAGOutput) -> None:
+    async def _save_memory(self, output: RAGOutput, rag_input: RAGInput) -> None:
         if not output.conversation_id:
             return
 
@@ -1669,9 +1669,10 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             query = (
                 output.processed_query.original_query if output.processed_query else ""
             )
-            await self.memory_manager.add_turn(
-                output.conversation_id, query, output.answer
+            key = _conversation_key(
+                rag_input.suffix, rag_input.user_id, output.conversation_id
             )
+            await self.memory_manager.add_turn(key, query, output.answer)
         except Exception as e:
             logger.error(
                 "Failed to save conversation memory for conversation '%s': %s",
@@ -1801,7 +1802,17 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             return
 
         state["answer"] = "".join(chunks)
-        await self._save_memory(self._format_output_step(state))
+        await self._save_memory(self._format_output_step(state), rag_input)
+
+
+def _conversation_key(
+    suffix: str | None, user_id: str | None, conversation_id: str
+) -> ConversationKey:
+    """The memory key of a query's conversation: one tenant's (index suffix)
+    or user's conversation id never reaches another's history."""
+    return ConversationKey(
+        suffix or Constants.DEFAULT_SUFFIX.value, user_id, conversation_id
+    )
 
 
 def _guard_record(source: GuardSource, verdict: GuardVerdict) -> dict[str, Any]:

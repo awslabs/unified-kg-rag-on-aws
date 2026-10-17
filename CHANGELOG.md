@@ -299,6 +299,16 @@ Library API (Python callers and custom backends).
   removed (a reset no longer clears the stores first), and a custom graph
   backend can rebuild in place through `GraphIndexer.begin_rebuild` /
   `end_rebuild` (the default still clears each label first) (#331).
+- Conversation memory is per chain: a `GraphRAGChain` builds its own
+  `MemoryManager` instead of sharing one process-wide manager, and a
+  conversation is keyed by index suffix, `user_id` and `conversation_id`
+  (`ConversationKey`), not by `conversation_id` alone. Every default chain
+  in a process shared one memory, so a tenant or user who reused another's
+  conversation id got that history rewritten into their query. To keep
+  history across chains built per request, pass them one manager
+  (`GraphRAGChain(memory_manager=shared)`). `get_memory_manager` is removed,
+  and `MemoryManager.load_history` / `add_turn` / `get_or_create_memory`
+  take a `ConversationKey` (#PR).
 - The public API is what `unified_kg_rag` exports (`unified_kg_rag.__all__`):
   `Config`, `get_config`, `DataIngestionPipeline`, `IndexingManager`,
   `GraphRAGChain` with `RAGInput` / `RAGOutput` / `SearchOutput`,

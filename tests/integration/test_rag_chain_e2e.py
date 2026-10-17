@@ -156,6 +156,36 @@ async def test_rag_mode_local_strategy_uses_graph_and_document_roles(
     assert out.answer == _CANNED_ANSWER
 
 
+async def test_a_conversation_id_reaches_only_its_tenants_and_users_history(
+    config: Config,
+) -> None:
+    # One chain serving several tenants (index suffixes) and users: the same
+    # conversation id must not carry one's turns into another's rewrite.
+    chain = _make_chain(config)
+
+    def turn(**fields: object) -> RAGInput:
+        return RAGInput(
+            query="What does Vendor supply to Buyer?",
+            search_strategy=SearchStrategy.SIMPLE,
+            enable_query_processing=False,
+            use_memory=True,
+            conversation_id="c-1",
+            **fields,
+        )
+
+    await chain.ainvoke(turn(suffix="tenant-a", user_id="u1"))
+
+    async def history(**fields: object) -> str:
+        state = await chain._load_memory_step(turn(**fields).model_dump())
+        return str(state["history"])
+
+    assert "Vendor" in await history(suffix="tenant-a", user_id="u1")
+    assert await history(suffix="tenant-b", user_id="u1") == ""
+    assert await history(suffix="tenant-a", user_id="u2") == ""
+    assert await history(suffix="tenant-a") == ""
+    await chain.aclose()
+
+
 class _LineageStore:
     """Document store whose search hit is an entity with chunk lineage only."""
 

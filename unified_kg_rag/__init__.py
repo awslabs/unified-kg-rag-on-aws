@@ -52,6 +52,7 @@ _EXPORTS: dict[str, str] = {
     "SearchStrategy": "unified_kg_rag.domain.models",
     "SearchType": "unified_kg_rag.domain.models",
     "MemoryManager": "unified_kg_rag.adapters.retrieval.memory_manager",
+    "ConversationKey": "unified_kg_rag.adapters.retrieval.memory_manager",
     # Evaluation
     "EvaluationManager": "unified_kg_rag.evaluation.evaluation_manager",
     # Extension: provider injection and the provider registry
@@ -98,7 +99,10 @@ if TYPE_CHECKING:
         BaseGraphRAGRetriever,
         BaseSearchStrategy,
     )
-    from unified_kg_rag.adapters.retrieval.memory_manager import MemoryManager
+    from unified_kg_rag.adapters.retrieval.memory_manager import (
+        ConversationKey,
+        MemoryManager,
+    )
     from unified_kg_rag.application.bootstrap import build_providers
     from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
     from unified_kg_rag.application.retrieval.rag_chain import (

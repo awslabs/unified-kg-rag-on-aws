@@ -26,6 +26,7 @@ PUBLIC_API = sorted(
         "__version__",
         # Using the framework
         "Config",
+        "ConversationKey",
         "DataIngestionPipeline",
         "EvaluationManager",
         "GraphRAGChain",

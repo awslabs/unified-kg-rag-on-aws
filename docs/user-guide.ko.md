@@ -1292,8 +1292,11 @@ run-rag --interactive --conversation-id my-session --config-path config.yaml
 - `quit` / `exit` — 종료
 
 대화 메모리는 프로세스 안에만 있습니다(`MemoryManager`가 메모리에 들고 있으며 디스크나
-저장소에 쓰지 않음). 한 대화형 세션의 턴 사이, 또는 한 Python 프로세스에서 같은
-`conversation_id`와 `use_memory=True`로 `GraphRAGChain`을 여러 번 호출할 때 이어집니다.
+저장소에 쓰지 않음). 한 대화형 세션의 턴 사이, 또는 한 `GraphRAGChain`을 같은
+`conversation_id`, `use_memory=True`, 같은 `suffix`와 `user_id`로 여러 번 호출할 때
+이어집니다. 대화는 인덱스 접미사와 사용자에 속하므로 다른 테넌트나 사용자의 턴은 섞이지
+않습니다. 메모리는 체인마다 따로 있으며, 여러 체인이 공유하게 하려면 `MemoryManager(config)`
+하나를 `memory_manager=`로 넘기세요.
 `run-rag --query`를 따로 실행하면 공유하지 않습니다. 실행마다 기록 없이 시작하므로 단일
 질의에서 `--use-memory`와 `--conversation-id`는 효과가 없습니다(`--query`와 함께 쓰면
 `run-rag`가 WARNING 로그를 남김). CLI에서 여러 턴을 이어 가려면 `--interactive`를

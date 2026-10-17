@@ -175,7 +175,7 @@ class LocalSearchStrategy(BaseSearchStrategy): ...
 
 패키지 안의 코드는 실제 레이어 위치(`application.retrieval.rag_chain`, `application.storage.indexing_manager`, `application.ingestion.pipeline`, `adapters.*` / `domain.*` 모듈)에서 import합니다. `evaluation/`과 `visualization/`은 실제 로직 패키지입니다(§2의 레이아웃 참고).
 
-**공개 API.** 패키지 밖의 호출자는 `unified_kg_rag`에서 바로 import합니다. 이 모듈의 `__all__`이 지원하는 범위이며 두 묶음으로 나뉩니다. 프레임워크 사용(`Config`, `get_config`, `setup_logging`, `configure_event_loop`, `DataIngestionPipeline`과 `PipelineConfig` / `PipelineContext` / `PipelineStageStatus` / `PipelineStageType`, `IndexingManager`, `GraphRAGChain`과 `RAGInput`, `RAGOutput`, `SearchOutput`, `ProcessedQuery`, `SearchResult`, `SearchStrategy`, `SearchType`, `MemoryManager`, `EvaluationManager`)과 확장(포트, `Providers` / `build_providers`, `ProviderRole` / `register_provider`, `BaseSearchStrategy` / `BaseGraphRAGRetriever` / `register_strategy` / `QueryInput` / `RetrieverRole`, `ParserFactory`, `BaseRenderer` / `register_renderer`)입니다. 그 밖의 모듈 경로는 내부 구현이라 어느 릴리스에서든 옮겨질 수 있으며, 호환성을 깨는 변경은 내보내는 이름, 설정 키, CLI 플래그와 종료 코드, 저장 형식이 바뀔 때뿐입니다. 최상위 모듈은 이름을 처음 접근할 때 불러오므로(`__getattr__`) `import unified_kg_rag`만으로는 패키지의 어떤 모듈도 로드하지 않으며, `tests/unit/test_public_api.py`가 이 목록을 고정합니다.
+**공개 API.** 패키지 밖의 호출자는 `unified_kg_rag`에서 바로 import합니다. 이 모듈의 `__all__`이 지원하는 범위이며 두 묶음으로 나뉩니다. 프레임워크 사용(`Config`, `get_config`, `setup_logging`, `configure_event_loop`, `DataIngestionPipeline`과 `PipelineConfig` / `PipelineContext` / `PipelineStageStatus` / `PipelineStageType`, `IndexingManager`, `GraphRAGChain`과 `RAGInput`, `RAGOutput`, `SearchOutput`, `ProcessedQuery`, `SearchResult`, `SearchStrategy`, `SearchType`, `MemoryManager` / `ConversationKey`, `EvaluationManager`)과 확장(포트, `Providers` / `build_providers`, `ProviderRole` / `register_provider`, `BaseSearchStrategy` / `BaseGraphRAGRetriever` / `register_strategy` / `QueryInput` / `RetrieverRole`, `ParserFactory`, `BaseRenderer` / `register_renderer`)입니다. 그 밖의 모듈 경로는 내부 구현이라 어느 릴리스에서든 옮겨질 수 있으며, 호환성을 깨는 변경은 내보내는 이름, 설정 키, CLI 플래그와 종료 코드, 저장 형식이 바뀔 때뿐입니다. 최상위 모듈은 이름을 처음 접근할 때 불러오므로(`__getattr__`) `import unified_kg_rag`만으로는 패키지의 어떤 모듈도 로드하지 않으며, `tests/unit/test_public_api.py`가 이 목록을 고정합니다.
 
 ---
 
@@ -533,11 +533,11 @@ root는 `application/bootstrap.py`(`build_providers`)로, 설정된 kind를 확�
 - `GraphRAGChain`: 체인 자체의 프롬프트, 모든 검색 전략(global map/reduce와 DRIFT
   체인 포함), 하이브리드 스코어러의 재순위화 모델, 두 토큰 매니저, 기본
   OpenSearch 리트리버의 임베딩. 대화 메모리는 자체 모델이 없고(후속 질문 재작성은 체인의
-  프롬프트입니다) 기본적으로 프로세스 전체에서 공유하므로 요청마다 체인을 새로 만들어도
-  대화 기록이 남으며, 첫 체인의 설정으로 만들어집니다.
-  메모리 설정이 다른 체인을 나중에 만들어도 공유 매니저를 그대로 쓰고 경고를 한 번
-  기록합니다. 체인의 대화를 분리하려면
-  `GraphRAGChain(memory_manager=MemoryManager(cfg))`를 넘기세요.
+  프롬프트입니다) 체인마다 따로 두며 체인의 설정으로 만듭니다. 대화는 인덱스 접미사,
+  `user_id`, `conversation_id`를 함께 키로 쓰므로 한 테넌트나 사용자의 대화 id가 다른
+  테넌트나 사용자의 기록에 닿지 않습니다. 요청마다 체인을 새로 만들면서 기록을 이어 가려면
+  체인들에 매니저 하나를 넘기세요: `shared = MemoryManager(cfg)`로 만든 뒤
+  `GraphRAGChain(memory_manager=shared)`.
 - `DataIngestionPipeline`: 청커, 번역기, 그래프·주장 추출, 추가 추출, 설명 요약,
   커뮤니티 리포트, 기본 OpenSearch 인덱서의 임베딩, 시각화 임베더.
 - `EvaluationManager`: LangChain과 RAGAS 판정 모델(LLM, 임베딩, 토큰 카운터). 기본적으로

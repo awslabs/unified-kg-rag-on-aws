@@ -21,6 +21,7 @@ from structlog.contextvars import get_contextvars
 
 import unified_kg_rag.adapters.search_strategies  # noqa: F401  (registers strategies)
 from tests.fixtures.fakes.chat_models import fake_model_info
+from unified_kg_rag.adapters.retrieval.memory_manager import ConversationKey
 from unified_kg_rag.application.retrieval.rag_chain import (
     DEFAULT_ERROR_MESSAGE,
     GraphRAGChain,
@@ -92,14 +93,14 @@ class _FakeRetriever:
 
 class _RecordingMemoryManager:
     def __init__(self) -> None:
-        self.messages: list[tuple[str, str, str]] = []
+        self.messages: list[tuple[ConversationKey, str, str]] = []
 
-    async def load_history(self, conv_id: str) -> str:
+    async def load_history(self, key: ConversationKey) -> str:
         return ""
 
-    async def add_turn(self, conv_id: str, user: str, assistant: str) -> None:
-        self.messages.append((conv_id, "user", user))
-        self.messages.append((conv_id, "assistant", assistant))
+    async def add_turn(self, key: ConversationKey, user: str, assistant: str) -> None:
+        self.messages.append((key, "user", user))
+        self.messages.append((key, "assistant", assistant))
 
 
 def _make_chain(
@@ -185,9 +186,10 @@ async def test_astream_saves_full_answer_to_memory(config: Config) -> None:
     ]
 
     assert "".join(chunks) == _ANSWER
+    key = ConversationKey("default", None, "conv-stream-1")
     assert memory.messages == [
-        ("conv-stream-1", "user", "What does Vendor supply to Buyer?"),
-        ("conv-stream-1", "assistant", _ANSWER),
+        (key, "user", "What does Vendor supply to Buyer?"),
+        (key, "assistant", _ANSWER),
     ]
 
 
