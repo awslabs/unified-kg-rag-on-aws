@@ -329,7 +329,14 @@ and every stage gets its models and stores from the run's `Providers` bundle.
   instead of an LLM call, so an edited document re-extracts only its changed
   chunks, and identical chunks elsewhere or in a rebuild reuse theirs.
   `--force-rebuild` re-extracts and refreshes every record; a store that
-  cannot be read or written is logged and the run re-extracts.
+  cannot be read is logged and the run re-extracts. A record that cannot be
+  written fails its unit (`records_not_stored`), so its document is recorded
+  `FAILED` and extracted again: incremental runs derive from the records
+  (§5.4), so none may be missing.
+- **A text unit names its stored records** in `attributes.extraction_records`.
+  The keys are computed from the run's records when the unit is indexed, not
+  set on the units the stage cache holds, so a run resumed after any stage
+  writes them too.
 - **A record stays while a stored text unit names it.** A full build or
   reset whose text units were all written keeps only the records they name
   (`VectorIndexer.retain_extraction_records` copies them into a new index and

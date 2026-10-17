@@ -1330,6 +1330,18 @@ changed once with the full-config keys (#332).
 - `prepare-benchmark` with a non-empty `corpus/` exits 2 (a usage error)
   before downloading the benchmark, instead of exiting 1 after (#340).
 - The trace-shape docs list the `global` and `drift` spans (#340).
+- A run resumed with the same pipeline id after the extraction stages wrote
+  its text units without the keys of their extraction records: the stages
+  set the keys on the units after the stage cache had saved them, so the
+  resumed run's units named none and no later incremental run could derive
+  what they state. The keys are now computed from the run's records when
+  the units are indexed (#PR).
+- A text unit whose extraction record could not be written to the
+  extraction store was still indexed naming the record, and incremental
+  runs kept the items it states as they were. A record that is not stored
+  now fails its unit (`records_not_stored` in the graph resolution and
+  claim extraction metrics): its document is recorded `FAILED` and
+  extracted again (#PR).
 - The docs no longer contradict the code: an unknown config key fails the
   load (not a warning), the four causes of a `FAILED` document are listed
   alike in the user guide, the runbook and the design doc, a second

@@ -34,7 +34,10 @@ from unified_kg_rag.adapters.ingestion.parser import (
 )
 from unified_kg_rag.adapters.ingestion.translator import TextUnitTranslator
 from unified_kg_rag.adapters.providers import Providers
-from unified_kg_rag.application.ingestion.extraction_store import ExtractionStore
+from unified_kg_rag.application.ingestion.extraction_store import (
+    ExtractionStore,
+    with_record_keys,
+)
 from unified_kg_rag.application.ingestion.incremental import (
     artifact_owners,
     clear_registry_namespaces,
@@ -60,7 +63,6 @@ from unified_kg_rag.domain.ingestion.contributions import (
     merge_contributions,
     record_from_payload,
     record_payload,
-    set_record_key,
     unit_entities,
 )
 from unified_kg_rag.domain.ingestion.delta_detector import (
@@ -783,6 +785,35 @@ def _failed_record_units(context: PipelineContext) -> set[str]:
     }
 
 
+def _with_record_keys(
+    config: Config, context: PipelineContext, text_units: list[TextUnit]
+) -> list[TextUnit]:
+    """The text units to write, naming the run's stored records of them.
+
+    Computed from what the run's stages recorded (their records and failed
+    units), never set on the cached units, so a run resumed after any stage
+    writes the keys a run without the interruption writes.
+    """
+    failures = context.failed_text_unit_ids
+    graph_failed = _failed_record_units(context) | set(
+        failures.get(PipelineStageType.GRAPH_RESOLUTION.value, [])
+    )
+    claim_stage = PipelineStageType.CLAIM_EXTRACTION.value
+    claims = any(
+        result.stage_name == claim_stage
+        and result.status == PipelineStageStatus.COMPLETED
+        for result in context.stage_results
+    )
+    return with_record_keys(
+        config,
+        text_units,
+        context.unit_extractions,
+        graph_failed=graph_failed,
+        claims=claims,
+        claims_failed={*graph_failed, *failures.get(claim_stage, [])},
+    )
+
+
 def _distinct_counts(records: list[TextUnitExtraction]) -> tuple[int, int]:
     """Distinct entity and relationship ids over the records."""
     return (
@@ -924,8 +955,12 @@ class GraphResolutionStage(PipelineStage):
     def close(self) -> None:
         self.store.close()
 
-    def _store_records(self, context: PipelineContext) -> None:
-        """Store the run's new records: the final ones, not a failed unit's."""
+    def _store_records(self, context: PipelineContext) -> set[str]:
+        """Store the run's new records: the final ones, not a failed unit's.
+
+        Returns the units whose record was not stored: they are failed (see
+        ``extraction_store``), so their documents are extracted again.
+        """
         failed = _failed_record_units(context)
         units = {u.id: u for u in context.translated_units or context.text_units}
         fresh = [
@@ -935,31 +970,31 @@ class GraphResolutionStage(PipelineStage):
             and record.text_unit_id not in failed
             and record.text_unit_id in units
         ]
+        unsaved: set[str] = set()
         for gleaned in (False, True):
-            fingerprint = unit_record_fingerprint(self.config, gleaned=gleaned)
-            items = [
-                (units[record.text_unit_id], record_payload(record))
-                for record in fresh
-                if record.gleaned is gleaned
-            ]
-            self.store.save(items, fingerprint)
-            # The unit names its record, so an incremental run finds the
-            # records of the units it does not extract (see derivation).
-            for record in context.unit_extractions:
-                unit = units.get(record.text_unit_id)
-                if (
-                    unit is not None
-                    and record.gleaned is gleaned
-                    and record.text_unit_id not in failed
-                ):
-                    set_record_key(unit, "graph", self.store.key(unit, fingerprint))
+            unsaved |= self.store.save(
+                [
+                    (units[record.text_unit_id], record_payload(record))
+                    for record in fresh
+                    if record.gleaned is gleaned
+                ],
+                unit_record_fingerprint(self.config, gleaned=gleaned),
+            )
         for record in fresh:
-            record.stored = True
+            record.stored = record.text_unit_id not in unsaved
+        if unsaved:
+            logger.warning(
+                "%d text units' extraction records were not stored: recording "
+                "them failed so their documents are extracted again",
+                len(unsaved),
+            )
+        return unsaved
 
     def _execute_core(
         self, context: PipelineContext
     ) -> tuple[int, int, dict[str, Any] | None]:
-        self._store_records(context)
+        unsaved = self._store_records(context)
+        context.failed_text_unit_ids[self.name] = sorted(unsaved)
         entities, relationships = merge_contributions(context.unit_extractions)
         resolution_result, stats = self.resolver.resolve_graph(entities, relationships)
 
@@ -994,6 +1029,7 @@ class GraphResolutionStage(PipelineStage):
                 else 0
             ),
             "resolution_stats": stats.model_dump(),
+            "records_not_stored": len(unsaved),
         }
 
         input_count = original_entities_count + original_relationships_count
@@ -1048,6 +1084,7 @@ class ClaimExtractionStage(PipelineStage):
 
         to_extract = [unit for unit in text_units if unit.id not in per_unit]
         stats = ClaimExtractionStats()
+        unsaved: set[str] = set()
         if to_extract:
             entities = [
                 entity
@@ -1058,7 +1095,7 @@ class ClaimExtractionStage(PipelineStage):
             extracted, stats = self.extractor.extract_units(to_extract, entities)
             per_unit.update(extracted)
             for gleaned in (False, True):
-                self.store.save(
+                unsaved |= self.store.save(
                     [
                         (storable[unit_id], claims_payload(claims))
                         for unit_id, claims in extracted.items()
@@ -1066,14 +1103,16 @@ class ClaimExtractionStage(PipelineStage):
                     ],
                     unit_record_fingerprint(self.config, gleaned=gleaned, claims=True),
                 )
-
-        for gleaned in (False, True):
-            fingerprint = unit_record_fingerprint(
-                self.config, gleaned=gleaned, claims=True
-            )
-            for unit in storable.values():
-                if unit.id in per_unit and records[unit.id].gleaned is gleaned:
-                    set_record_key(unit, "claims", self.store.key(unit, fingerprint))
+            if unsaved:
+                # Not stored: failed like an extraction (see extraction_store).
+                logger.warning(
+                    "%d text units' claim records were not stored: recording "
+                    "them failed so their documents are extracted again",
+                    len(unsaved),
+                )
+                stats.failed_text_unit_ids = sorted(
+                    {*stats.failed_text_unit_ids, *unsaved}
+                )
         claims = self.extractor.merge_claims(
             [
                 claim.model_copy(deep=True)
@@ -1089,6 +1128,7 @@ class ClaimExtractionStage(PipelineStage):
             "text_units_reused": reused,
             "claims_extracted": len(claims),
             "failed_units": stats.num_failed_extractions,
+            "records_not_stored": len(unsaved),
             "extraction_stats": stats.model_dump(),
         }
 
@@ -1423,7 +1463,9 @@ class IndexingStage(_RegistryStage):
 
         self.indexing_manager.initialize()
 
-        text_units = context.translated_units or context.text_units
+        text_units = _with_record_keys(
+            self.config, context, context.translated_units or context.text_units
+        )
         entities = context.resolved_entities
         relationships = context.resolved_relationships
         communities = context.communities or []

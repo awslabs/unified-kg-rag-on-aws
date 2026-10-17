@@ -7,21 +7,31 @@ Each record is stored under ``<fingerprint>:<text hash>``
 of the unit's suffix (``VectorIndexer.read_extraction_records``). A unit whose
 text and extraction settings are unchanged takes the stored record instead of
 being extracted again, so an edited document re-extracts only the chunks that
-changed. The store is a cache: a read or write that fails is logged and the
-run goes on (every unit read nothing is extracted; nothing written is
-extracted again next time).
+changed. Reading is a cache: a read that fails is logged and every unit it
+read nothing for is extracted. Writing is not: an incremental run derives the
+stored items' content from the records of the text units they cite
+(``domain.ingestion.derivation``), so :meth:`ExtractionStore.save` returns the
+units whose record it did not store and the stage fails them (their documents
+are recorded FAILED and extracted again). A text unit is written with the
+keys of its stored records (:func:`with_record_keys`), computed from the
+run's records rather than set on the unit by the stages, so a run resumed
+after the extraction stages writes the same keys.
 """
 
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Collection, Iterable
 from typing import TYPE_CHECKING, Any, TypeVar
 
-from unified_kg_rag.domain.ingestion.contributions import record_key
-from unified_kg_rag.domain.models import Config, TextUnit
+from unified_kg_rag.domain.ingestion.contributions import (
+    RECORD_KEYS_ATTRIBUTE,
+    record_key,
+)
+from unified_kg_rag.domain.models import Config, TextUnit, TextUnitExtraction
 from unified_kg_rag.ports.indexer import BaseIndexer
 from unified_kg_rag.shared import get_logger
+from unified_kg_rag.shared.utils.cache_keys import unit_record_fingerprint
 
 if TYPE_CHECKING:
     from unified_kg_rag.ports.indexer import VectorIndexer
@@ -36,6 +46,50 @@ def processed_text(config: Config, unit: TextUnit) -> str:
         target = config.processing.translation.target_language.value
         return unit.translated_texts.get(target, unit.text)
     return unit.text
+
+
+def with_record_keys(
+    config: Config,
+    units: Iterable[TextUnit],
+    records: Iterable[TextUnitExtraction],
+    *,
+    graph_failed: Collection[str],
+    claims: bool,
+    claims_failed: Collection[str] = (),
+) -> list[TextUnit]:
+    """Copies of ``units`` naming the store keys of their stored records.
+
+    A unit names its graph record unless it has none or is in
+    ``graph_failed`` (its extraction failed or its record was not stored),
+    and, when the run extracted ``claims``, its claims record unless it is
+    in ``claims_failed`` too. The keys follow from the record's settings and
+    the unit's text (``ExtractionStore.key``), so they are the ones the
+    extraction stages stored the records under.
+    """
+    gleaned = {r.text_unit_id: r.gleaned for r in records}
+    keyed: list[TextUnit] = []
+    for unit in units:
+        keys: dict[str, str] = {}
+        if unit.id in gleaned and unit.id not in graph_failed:
+            text = processed_text(config, unit)
+            fingerprint = unit_record_fingerprint(config, gleaned=gleaned[unit.id])
+            keys["graph"] = record_key(fingerprint, text)
+            if claims and unit.id not in claims_failed:
+                keys["claims"] = record_key(
+                    unit_record_fingerprint(
+                        config, gleaned=gleaned[unit.id], claims=True
+                    ),
+                    text,
+                )
+        attributes = {
+            k: v
+            for k, v in (unit.attributes or {}).items()
+            if k != RECORD_KEYS_ATTRIBUTE
+        }
+        if keys:
+            attributes[RECORD_KEYS_ATTRIBUTE] = keys
+        keyed.append(unit.model_copy(update={"attributes": attributes}))
+    return keyed
 
 
 class ExtractionStore:
@@ -128,14 +182,17 @@ class ExtractionStore:
 
     def save(
         self, items: Iterable[tuple[TextUnit, dict[str, Any]]], fingerprint: str
-    ) -> int:
-        """Store payloads for their units; returns the number written."""
+    ) -> set[str]:
+        """Store payloads for their units; returns the ids of the units whose
+        record was not stored (the store is unavailable or the write failed)."""
         items = list(items)
+        if not items:
+            return set()
         store = self._store()
-        if store is None or not items:
-            return 0
+        if store is None:
+            return {unit.id for unit, _ in items}
         payload_by_unit = {unit.id: payload for unit, payload in items}
-        written = 0
+        unsaved: set[str] = set()
         for suffix, by_key in self._keys(
             [unit for unit, _ in items], fingerprint
         ).items():
@@ -144,22 +201,27 @@ class ExtractionStore:
             }
             try:
                 stats = store.write_extraction_records(records, suffix=suffix)
-            except Exception as e:  # noqa: BLE001 - the store is a cache
+            except Exception as e:  # noqa: BLE001 - the caller fails the units
                 logger.warning(
-                    "Writing the extraction records of '%s' failed; their text "
-                    "units are extracted again next time: %s",
-                    suffix,
-                    e,
+                    "Writing the extraction records of '%s' failed: %s", suffix, e
                 )
+                unsaved.update(u.id for units in by_key.values() for u in units)
                 continue
             if stats.failed_items:
                 logger.warning(
-                    "Writing %s of %s extraction records of '%s' failed; their "
-                    "text units are extracted again next time: %s",
+                    "Writing %s of %s extraction records of '%s' failed: %s",
                     stats.failed_items,
                     len(records),
                     suffix,
                     "; ".join(stats.errors[:3]),
                 )
-            written += stats.successful_items
-        return written
+                # A failure without the key it is of fails every unit.
+                failed = (
+                    set(by_key)
+                    if stats.unattributed_failures
+                    else set(stats.failed_ids)
+                )
+                unsaved.update(
+                    u.id for key in failed & by_key.keys() for u in by_key[key]
+                )
+        return unsaved
