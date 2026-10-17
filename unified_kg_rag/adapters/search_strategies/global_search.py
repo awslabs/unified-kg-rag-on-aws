@@ -58,7 +58,11 @@ def _record(degraded: list[str] | None, error: Exception) -> None:
         degraded.append(type(error).__name__)
 
 
-@register_strategy(SearchStrategy.GLOBAL, required_roles=(RetrieverRole.DOCUMENT,))
+@register_strategy(
+    SearchStrategy.GLOBAL,
+    required_roles=(RetrieverRole.DOCUMENT,),
+    needs_community_reports=True,
+)
 class GlobalSearchStrategy(BaseSearchStrategy):
     def __init__(
         self,

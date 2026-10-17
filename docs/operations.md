@@ -336,7 +336,7 @@ Error: Missing endpoint configuration for the indexing stage: aws.neptune.endpoi
   (not for `--verify-metadata`).
 - `run-rag` and `run-eval` check the endpoints the chosen strategy's retrievers
   need: OpenSearch for every strategy, and Neptune as well for `local`,
-  `drift`, `mix` and `hybrid`. `auto` checks every strategy in `search.auto_routable_strategies`.
+  `drift`, `mix` and `hybrid`. `auto` checks every strategy it may route to: `search.auto_routable_strategies` without `global` and `drift` when `graph.community_detection.enabled` is false.
 
 The check only tests that a value is set. An endpoint that is set but wrong or
 unreachable fails at the first connection; the retrievers report such

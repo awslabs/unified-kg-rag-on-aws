@@ -97,3 +97,44 @@ async def test_router_failure_falls_back_to_a_routable_strategy() -> None:
         {"search_strategy": SearchStrategy.AUTO, "query": "q"}
     )
     assert state["resolved_strategy"] == SearchStrategy.GLOBAL
+
+
+async def test_auto_never_routes_to_report_strategies_without_communities() -> None:
+    # global and drift answer from community reports; with community detection
+    # off there are none, so the router must not be offered them.
+    from unified_kg_rag.domain.models import Config
+
+    config = Config()
+    config.graph.community_detection.enabled = False
+    chain = GraphRAGChain.__new__(GraphRAGChain)
+    chain.config = config
+    chain.ignore_errors = False
+    offered: dict[str, object] = {}
+
+    class _Router:
+        async def ainvoke(self, inputs: dict, _config: object = None) -> str:
+            offered.update(inputs)
+            return "global"
+
+    chain._get_chain_for_prompt = lambda *_a, **_k: _Router()  # type: ignore[method-assign]
+    state = await chain._resolve_strategy(
+        {"search_strategy": SearchStrategy.AUTO, "query": "q"}
+    )
+    assert offered["strategies"] == "local, mix"
+    # "global" is not routable here, so the answer falls back to local.
+    assert state["resolved_strategy"] == SearchStrategy.LOCAL
+
+
+def test_routable_set_follows_what_the_pipeline_builds() -> None:
+    import unified_kg_rag.adapters.search_strategies  # noqa: F401
+    from unified_kg_rag.domain.models import Config
+    from unified_kg_rag.domain.retrieval.strategy_registry import (
+        routable_strategies,
+    )
+
+    config = Config()
+    assert routable_strategies(config) == tuple(config.search.auto_routable_strategies)
+    config.graph.community_detection.enabled = False
+    assert routable_strategies(config) == (SearchStrategy.LOCAL, SearchStrategy.MIX)
+    config.search.auto_routable_strategies = [SearchStrategy.GLOBAL]
+    assert routable_strategies(config) == (SearchStrategy.LOCAL,)

@@ -2396,7 +2396,10 @@ class SearchConfig(BaseModel):
             "drift. simple is left out because the graph strategies already "
             "cover its direct lookups with graph context; mix (LightRAG) is "
             "included for multi-hop fact chains, which it serves from the same "
-            "index. Every strategy stays selectable explicitly."
+            "index. global and drift are skipped when "
+            "graph.community_detection.enabled is false (no community reports); "
+            "local is used when nothing is left. Every strategy stays "
+            "selectable explicitly."
         ),
     )
     query_rewrite_model_id: BedrockModelId = role_model_field(

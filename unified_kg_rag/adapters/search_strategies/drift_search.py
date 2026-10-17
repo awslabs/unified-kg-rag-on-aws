@@ -52,7 +52,7 @@ _MIN_UNIQUE_GAIN = 2
 # No query-side entity extraction: each iteration seeds graph expansion from
 # its own (original, refined or follow-up) query text, which the extracted
 # entities of the original question could only narrow.
-@register_strategy(SearchStrategy.DRIFT)
+@register_strategy(SearchStrategy.DRIFT, needs_community_reports=True)
 class DriftSearchStrategy(BaseSearchStrategy):
     def __init__(
         self,

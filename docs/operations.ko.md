@@ -312,8 +312,9 @@ Error: Missing endpoint configuration for the indexing stage: aws.neptune.endpoi
   검사합니다(`--verify-metadata`는 제외).
 - `run-rag`와 `run-eval`은 선택한 전략의 검색기가 쓰는 엔드포인트를 검사합니다.
   모든 전략에 OpenSearch가 필요하고, `local`, `drift`, `mix`, `hybrid`는
-  Neptune도 필요합니다. `auto`는 `search.auto_routable_strategies`의 모든 전략을
-  기준으로 검사합니다.
+  Neptune도 필요합니다. `auto`는 라우팅할 수 있는 모든 전략, 즉
+  `search.auto_routable_strategies`에서 `graph.community_detection.enabled`가 false일 때
+  `global`과 `drift`를 뺀 전략을 기준으로 검사합니다.
 
 이 검사는 값이 설정되어 있는지만 봅니다. 값이 틀렸거나 연결할 수 없는
 엔드포인트는 첫 연결에서 실패하며, 검색기는 인증·설정·연결 오류를 빈 결과로

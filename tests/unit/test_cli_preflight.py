@@ -60,6 +60,16 @@ def test_auto_roles_follow_the_routable_strategies() -> None:
     assert strategy_roles(config, SearchStrategy.AUTO) == {_DOC}
 
 
+def test_auto_roles_skip_strategies_the_pipeline_cannot_serve() -> None:
+    # Without community reports auto never routes to global/drift, so only the
+    # roles of local/mix (both stores) count; with only global configured, auto
+    # falls back to local.
+    config = Config()
+    config.graph.community_detection.enabled = False
+    config.search.auto_routable_strategies = [SearchStrategy.GLOBAL]
+    assert strategy_roles(config, SearchStrategy.AUTO) == {_DOC, _GRAPH}
+
+
 def test_missing_endpoints_error_names_config_key_and_env_var() -> None:
     error = missing_endpoints_error(_config(), {_DOC, _GRAPH}, "indexing")
     assert error is not None

@@ -644,6 +644,12 @@ Library API (Python callers and custom backends).
   (#300).
 
 ### Fixed
+- `auto` no longer routes queries to `global` or `drift` when
+  `graph.community_detection.enabled` is false: without community reports
+  they answered from nothing. The routable set is now
+  `search.auto_routable_strategies` without the strategies the pipeline
+  cannot serve (`local` when none is left), and the CLI endpoint preflight
+  for `auto` checks the same set (#PR).
 - LightRAG `mix`/`hybrid` incident-edge expansion and `local` search's
   bridge relationships keep every typed edge between two entities: edges
   were deduplicated by their endpoint pair, as upstream LightRAG does for

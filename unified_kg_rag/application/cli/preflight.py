@@ -18,7 +18,10 @@ from unified_kg_rag.adapters.provider_registry import (
     provider_kind,
 )
 from unified_kg_rag.domain.models import Config, RetrieverRole, SearchStrategy
-from unified_kg_rag.domain.retrieval.strategy_registry import get_strategy_spec
+from unified_kg_rag.domain.retrieval.strategy_registry import (
+    get_strategy_spec,
+    routable_strategies,
+)
 
 
 def _role_endpoint(config: Config, role: RetrieverRole) -> tuple[str, str] | None:
@@ -45,9 +48,7 @@ def strategy_roles(config: Config, strategy: SearchStrategy) -> set[RetrieverRol
     import unified_kg_rag.adapters.search_strategies  # noqa: F401
 
     strategies = (
-        config.search.auto_routable_strategies
-        if strategy is SearchStrategy.AUTO
-        else [strategy]
+        routable_strategies(config) if strategy is SearchStrategy.AUTO else [strategy]
     )
     return {role for s in strategies for role in get_strategy_spec(s).required_roles}
 

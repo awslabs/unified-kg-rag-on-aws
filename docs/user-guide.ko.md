@@ -621,7 +621,7 @@ LLM 단계는 Bedrock I/O가 병목이므로 동시성을 CPU 수보다 훨씬 �
 
 | 키 | 기본값 | 역할과 변경 시점 |
 |---|---|---|
-| `search.auto_routable_strategies` | `["local", "mix", "global", "drift"]` | `auto` 라우터가 고를 수 있는 전략입니다. 라우터 프롬프트는 이 전략들만 이 순서대로 설명합니다. `auto` 자체는 넣을 수 없습니다. 어떤 전략이든 직접 지정할 수는 있습니다. |
+| `search.auto_routable_strategies` | `["local", "mix", "global", "drift"]` | `auto` 라우터가 고를 수 있는 전략입니다. 라우터 프롬프트는 이 전략들만 이 순서대로 설명합니다. `graph.community_detection.enabled: false`이면 커뮤니티 리포트가 없으므로 `global`과 `drift`는 빠지고, 남는 전략이 없으면 `local`을 씁니다. `auto` 자체는 넣을 수 없습니다. 어떤 전략이든 직접 지정할 수는 있습니다. |
 | `search.hybrid.lexical_weight` | `0.5` | 하이브리드 검색의 어휘 검색 가중치입니다(벡터는 `vector_weight`, 역시 `0.5`). 하이브리드 검색은 인덱스마다 어휘 검색과 kNN 검색을 따로 실행하고(각각 최소 50건을 가져옴), 각각을 그 결과 안에서 min-max 정규화한 뒤 가중 평균하고 요청한 개수만 남깁니다. 정규화 범위가 고정되므로 순위가 질의가 요청한 결과 수에 따라 달라지지 않습니다. 가중치는 질의 시점에 읽습니다. |
 | `search.fusion.method` | `"rrf"` | `rrf`(reciprocal rank fusion) 또는 `weighted`입니다. |
 | `search.fusion.rrf_k` | `60` | RRF 상수 `k`입니다. |

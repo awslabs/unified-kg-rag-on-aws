@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, TypeVar
 
-from unified_kg_rag.domain.models import RetrieverRole, SearchStrategy
+from unified_kg_rag.domain.models import Config, RetrieverRole, SearchStrategy
 from unified_kg_rag.shared import get_logger
 
 if TYPE_CHECKING:
@@ -49,6 +49,8 @@ class StrategySpec:
             DOCUMENT), not concrete backends. The composition root binds each
             role to an adapter, so strategies stay backend-agnostic.
         query_inputs: Query-side extractions the strategy reads.
+        needs_community_reports: Whether the strategy answers from community
+            reports, which only ``graph.community_detection.enabled`` builds.
     """
 
     strategy_class: type[BaseSearchStrategy]
@@ -56,6 +58,7 @@ class StrategySpec:
         default=(RetrieverRole.DOCUMENT, RetrieverRole.GRAPH)
     )
     query_inputs: frozenset[QueryInput] = frozenset()
+    needs_community_reports: bool = False
 
 
 _REGISTRY: dict[SearchStrategy, StrategySpec] = {}
@@ -71,6 +74,7 @@ def register_strategy(
         RetrieverRole.GRAPH,
     ),
     query_inputs: frozenset[QueryInput] = frozenset(),
+    needs_community_reports: bool = False,
 ) -> Callable[[StrategyT], StrategyT]:
     """Class decorator that registers a search strategy under ``strategy``.
 
@@ -79,6 +83,8 @@ def register_strategy(
         required_roles: Retriever roles to inject when instantiating it.
         query_inputs: Query-side extractions the strategy reads; the chain
             skips the LLM calls for the rest.
+        needs_community_reports: The strategy answers from community reports;
+            ``auto`` does not route to it when the pipeline builds none.
 
     Raises:
         ValueError: If ``strategy`` is already registered to another class.
@@ -95,6 +101,7 @@ def register_strategy(
             strategy_class=cls,
             required_roles=tuple(required_roles),
             query_inputs=frozenset(query_inputs),
+            needs_community_reports=needs_community_reports,
         )
         logger.debug(
             "Registered search strategy '%s' -> %s", strategy.value, cls.__name__
@@ -118,3 +125,28 @@ def get_strategy_spec(strategy: SearchStrategy) -> StrategySpec:
             f"No search strategy registered for '{strategy.value}'. "
             f"Available: {available or '(none)'}."
         ) from None
+
+
+def routable_strategies(config: Config) -> tuple[SearchStrategy, ...]:
+    """The strategies ``auto`` may pick: ``search.auto_routable_strategies``
+    without those whose artifacts the configured pipeline does not build.
+
+    With ``graph.community_detection.enabled`` false there are no community
+    reports, so routing a query to global or drift answered it from nothing.
+    When no configured strategy is servable, ``local`` is the one choice.
+    """
+    communities = config.graph.community_detection.enabled
+    routable = tuple(
+        strategy
+        for strategy in config.search.auto_routable_strategies
+        if communities or not get_strategy_spec(strategy).needs_community_reports
+    )
+    if routable:
+        return routable
+    logger.warning(
+        "No strategy in search.auto_routable_strategies (%s) can run without "
+        "community reports (graph.community_detection.enabled is false); "
+        "auto uses local",
+        ", ".join(s.value for s in config.search.auto_routable_strategies),
+    )
+    return (SearchStrategy.LOCAL,)

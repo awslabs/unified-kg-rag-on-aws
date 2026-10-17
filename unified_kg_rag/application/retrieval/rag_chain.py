@@ -82,6 +82,7 @@ from unified_kg_rag.domain.prompts.retrieval import describe_routable_strategies
 from unified_kg_rag.domain.retrieval.strategy_registry import (
     QueryInput,
     get_strategy_spec,
+    routable_strategies,
 )
 from unified_kg_rag.ports.model_factory import LLMFactoryPort
 from unified_kg_rag.shared import (
@@ -426,7 +427,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             state["resolved_strategy"] = strategy
             return state
 
-        routable = tuple(self.config.search.auto_routable_strategies)
+        routable = routable_strategies(self.config)
         try:
             router = self._get_chain_for_prompt(
                 StrategySelectionPrompt, StrOutputParser()

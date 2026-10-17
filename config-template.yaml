@@ -691,7 +691,8 @@ indexing:
 # Search Configuration
 search:
   # Strategies the AUTO router may pick (simple is left out; any strategy can
-  # still be selected explicitly). The router model
+  # still be selected explicitly). global and drift are skipped when
+  # graph.community_detection.enabled is false (no community reports). The router model
   # (strategy_selection_model_id) is on the fast tier: a one-word
   # classification run before retrieval stays off the critical path.
   auto_routable_strategies: ["local", "mix", "global", "drift"]
