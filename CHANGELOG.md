@@ -437,20 +437,20 @@ Library API (Python callers and custom backends).
   were normalized over only the returned hits, so the top 4 of a 4-hit and
   a 40-hit query shared 75% of their hits; in the reviewers' simulation
   precision@4 at 4 hits rises from 0.51 to 0.71. Small hybrid queries fetch
-  more hits per search (#PR).
+  more hits per search (#317).
 - The answer context no longer leaves budget unused while sections are cut:
   a share a type cannot fill (all of its candidates fit) goes to the types
   that still have candidates, by share, and LightRAG `mix`/`hybrid` give it
   to chunks first, as upstream LightRAG does. Per-type shares were hard
   caps, which left 27-34% of the 30,000-token window empty in typical
-  `local` and `mix` queries; those now use over 99% of it (#PR).
+  `local` and `mix` queries; those now use over 99% of it (#317).
 - Fusion reranks before it diversifies: fuse, rerank, MMR diversity
   filtering, then the per-type quota (or `top_k`) cut. MMR used to cut each
   type to its quota on fused scores first, so 16-50% of the reranker's top
   20 chunks never reached it; now about 97% are kept, and MMR trades
   relevance against redundancy on the reranker's scores. The reranker
   receives the best `search.reranking.top_k` fused candidates of the types
-  it reranks, as that setting already documented (#PR).
+  it reranks, as that setting already documented (#317).
 - OpenSearch indexing keeps 16 embedding requests in flight (was 8), so it
   embeds and bulk-writes 800 items of a type at a time (was 400). In the
   real-AWS E2E 1,600 texts took 9.4 s instead of 18.8 s, with no Bedrock
@@ -649,13 +649,13 @@ Library API (Python callers and custom backends).
   they answered from nothing. The routable set is now
   `search.auto_routable_strategies` without the strategies the pipeline
   cannot serve (`local` when none is left), and the CLI endpoint preflight
-  for `auto` checks the same set (#PR).
+  for `auto` checks the same set (#317).
 - LightRAG `mix`/`hybrid` incident-edge expansion and `local` search's
   bridge relationships keep every typed edge between two entities: edges
   were deduplicated by their endpoint pair, as upstream LightRAG does for
   its one-edge-per-pair graph, so of "Vendor supplies Buyer" and "Vendor
   invoices Buyer" only the first reached the context. They are now
-  deduplicated by relationship id (#PR).
+  deduplicated by relationship id (#317).
 - The CLI provider flags no longer drop environment overrides. On every CLI
   (`run-ingestion`, `run-rag`, `run-eval`, `run-prompt-tuning`,
   `run-visualization`), any provider flag (`--backend`, `--llm-provider`,
@@ -1955,7 +1955,7 @@ Library API (Python callers and custom backends).
   within a stream, which RRF already keeps; scaled to the rank-1 step, it
   outweighed the smaller steps deeper in a list and inverted 20 positions
   of a 60-item DRIFT bucket that mixes graph-distance and index scores
-  (#PR).
+  (#317).
 - `Entity.frequency`: it counted an entity's text units in every merge path
   but no store wrote it and nothing read it (ranking uses `rank`, the local
   search frequency filter counts `text_unit_ids`). Stage caches that carry
