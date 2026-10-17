@@ -1143,6 +1143,12 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- An S3 connection error while uploading an LLM response-cache segment no
+  longer fails the model call that filled it: the cache logs the failure and
+  hands the segment over again at its next write (the stage checkpoint upload
+  sends it too), and a `BotoCoreError` (for example
+  `EndpointConnectionError`) in any S3 cache transfer now counts as a
+  per-file failure (`CacheSyncError`) instead of escaping raw (#PR).
 - The extraction store no longer grows without bound: a full build or
   `indexing.reset` whose text units were all written keeps only the
   extraction records its text units name, so records of earlier extraction

@@ -615,19 +615,12 @@ class DataIngestionPipeline:
         )
 
     def _upload_file(self, pipeline_id: str, cache_dir: Path, path: Path) -> None:
-        """Upload one cache file now (best effort; the next checkpoint upload
-        retries it). The response cache calls it from the model call that
-        filled a segment, so a task killed mid-stage keeps those responses."""
-        if self.s3_cache_manager is None:
-            return
-        try:
+        """Upload one cache file now; raises ``CacheSyncError`` on failure.
+        The response cache calls it for each segment it writes, so a task
+        killed mid-stage keeps those responses; it logs a failure and retries
+        the segment at its next write (the checkpoint upload also sends it)."""
+        if self.s3_cache_manager is not None:
             self.s3_cache_manager.upload_file(pipeline_id, cache_dir, path)
-        except CacheSyncError as e:
-            logger.warning(
-                "Upload of '%s' failed; the next checkpoint upload retries it: %s",
-                path.name,
-                e,
-            )
 
     def request_stop(self, signum: int) -> None:
         """End the run: raise ``PipelineInterrupted``, uploading the

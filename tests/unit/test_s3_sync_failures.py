@@ -106,6 +106,22 @@ def test_upload_failed_error_counts_as_file_failure(s3_setup, tmp_path, mocker) 
     assert mgr._upload_file_to_s3(f, "k/x.json") is False
 
 
+def test_connection_error_counts_as_file_failure(s3_setup, tmp_path, mocker) -> None:
+    # An endpoint the upload's retries cannot reach raises a BotoCoreError,
+    # which must surface as CacheSyncError like any other per-file failure.
+    from botocore.exceptions import EndpointConnectionError
+
+    mgr = _manager(*s3_setup)
+    client = mocker.MagicMock()
+    client.upload_file.side_effect = EndpointConnectionError(endpoint_url="https://s3")
+    mgr._s3_client = client
+    f = tmp_path / "llm-cache" / "x.json"
+    f.parent.mkdir()
+    f.write_text("{}")
+    with pytest.raises(CacheSyncError):
+        mgr.upload_file("p", tmp_path, f)
+
+
 def test_failure_message_truncates_long_key_lists(s3_setup, tmp_path, mocker) -> None:
     config, session = s3_setup
     mgr = _manager(config, session)
