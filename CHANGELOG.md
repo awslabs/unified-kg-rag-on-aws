@@ -431,6 +431,13 @@ Library API (Python callers and custom backends).
   to replace an existing index's communities (incremental runs cluster only
   their delta). Set a large `max_cluster_size` to keep the previous
   partition (#314).
+- Hybrid search ranks the same whatever the number of hits asked for: the
+  lexical and kNN searches of an index each fetch at least 50 hits, are
+  min-max normalized over those and then cut to the requested size. They
+  were normalized over only the returned hits, so the top 4 of a 4-hit and
+  a 40-hit query shared 75% of their hits; in the reviewers' simulation
+  precision@4 at 4 hits rises from 0.51 to 0.71. Small hybrid queries fetch
+  more hits per search (#PR).
 - The answer context no longer leaves budget unused while sections are cut:
   a share a type cannot fill (all of its candidates fit) goes to the types
   that still have candidates, by share, and LightRAG `mix`/`hybrid` give it

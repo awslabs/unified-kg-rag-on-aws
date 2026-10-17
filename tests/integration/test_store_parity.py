@@ -36,6 +36,7 @@ import pytest
 
 from tests.fixtures.store_backends import StoreHarness, open_harness
 from unified_kg_rag.adapters.local.search_engine.analyzers import get_analyzer
+from unified_kg_rag.adapters.retrievers.opensearch_retriever import OpenSearchRetriever
 from unified_kg_rag.domain.models import (
     Config,
     RetrievalResult,
@@ -254,7 +255,9 @@ def test_hybrid_normalizes_each_search_over_its_own_hits(tmp_path: Path) -> None
     # Forty documents match "widget"; the search returns five. The last one
     # indexed is the best lexical match, not the worst: OpenSearch 2.13's
     # hybrid query min-max normalized the lexical side against it whenever
-    # it was outside the top hits, skewing every fused score.
+    # it was outside the top hits, skewing every fused score. Each side is
+    # normalized over the hits it fetched (the normalization window, at
+    # least), then cut to the five asked for, on both stores.
     rng = random.Random(5)
     units = [
         TextUnit(
@@ -271,8 +274,9 @@ def test_hybrid_normalizes_each_search_over_its_own_hits(tmp_path: Path) -> None
         found = {
             h.kind: _search(h, SearchType.HYBRID, ["widget"], size)[0] for h in pair
         }
+        window = max(size, OpenSearchRetriever.HYBRID_NORMALIZATION_WINDOW)
         lexical, vector = (
-            _search(pair[1], search_type, ["widget"], size)[0]
+            _search(pair[1], search_type, ["widget"], window)[0]
             for search_type in (SearchType.LEXICAL, SearchType.VECTOR)
         )
     weights = pair[1].config.search.hybrid

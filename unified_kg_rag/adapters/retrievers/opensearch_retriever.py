@@ -128,6 +128,12 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
     # repeated queries. Bounded LRU: entries are only reused for identical
     # text; 256 x a 1024-dim vector is ~2 MB.
     QUERY_EMBEDDING_CACHE_SIZE: ClassVar[int] = 256
+    # Hits each search of a hybrid query fetches (at least) for the min-max
+    # normalization ``_fuse`` applies before it cuts to ``size``. Normalized
+    # over only the ``size`` hits returned, a hit's fused score, and so the
+    # ranking, depended on how many hits were asked for: the top 4 of a
+    # 4-hit and a 40-hit query shared 75% of their hits.
+    HYBRID_NORMALIZATION_WINDOW: ClassVar[int] = 50
 
     def __init__(
         self,
@@ -653,13 +659,20 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         the lexical sub-query over a document outside its returned hits (the
         last-indexed match), which skewed every fused score of the index.
         Fused here, each search is normalized over exactly the hits it
-        returned, on OpenSearch and the embedded engine alike.
+        returned, on OpenSearch and the embedded engine alike. Both fetch
+        ``HYBRID_NORMALIZATION_WINDOW`` hits at least, so the normalization
+        range does not depend on ``size``; ``_fuse`` cuts to ``size``.
         """
         filters = self._build_filter_clauses(query.filters)
         lexical = self._build_lexical_query(query, lexical_fields)
         if filters:
             lexical = {"bool": {"must": [lexical], "filter": filters}}
         if query_vector is not None and search_type != SearchType.LEXICAL:
+            if search_type != SearchType.VECTOR:
+                size = min(
+                    max(size, self.HYBRID_NORMALIZATION_WINDOW),
+                    self._max_result_window,
+                )
             knn = self._search_body(
                 self._build_vector_query(
                     query_vector, self._knn_k(size), vector_fields, filters
