@@ -615,12 +615,12 @@ with the `ApplyGuardrail` API; the guardrail must exist in
   Contextual grounding checks are not run: they need the grounding source and
   query as qualified content, which the answer screen does not send.
 - **Ingestion and evaluation.** Ingestion models, the prompt tuner and the
-  evaluation judges run unguarded by default (`apply_to: "query"`): a PII
-  guardrail that anonymizes `NAME` rewrites extracted entity names to a
-  placeholder such as `{NAME}` (distinct people merge into one node), and a
-  `PROMPT_ATTACK` filter can block instruction-like corpus text.
-  `apply_to: "all"` attaches the guardrail to those calls; use it only with a
-  policy that is safe for extraction. On the query path `NAME` anonymization
+  evaluation judges run unguarded: a PII guardrail that anonymizes `NAME`
+  rewrites extracted entity names to a placeholder such as `{NAME}`
+  (distinct people merge into one node), and a `PROMPT_ATTACK` filter can
+  block instruction-like corpus text. (`apply_to`, which attached the
+  guardrail to those calls, is removed; a config that sets it loads with a
+  warning.) On the query path `NAME` anonymization
   also hurts: a question about a person loses the name it retrieves by, and
   answers show `{NAME}`. The baseline guardrail that `iac/` creates therefore
   anonymizes email, phone and card numbers but not `NAME`.

@@ -998,8 +998,7 @@ by default**.
   on Converse it judges the retrieved corpus and the instructions as user
   input (false prompt-attack blocks, cost proportional to context times
   calls), and on InvokeModel its prompt-attack filter is inert without input
-  tags. Ingestion and evaluation models are guarded only under
-  `apply_to: all`.
+  tags. Ingestion and evaluation models are never guarded.
 
 ---
 
@@ -1055,8 +1054,8 @@ chain = GraphRAGChain(config=cfg, model_factory=MyLLMFactory())
 
 A factory must keep the `**kwargs` catch-all and ignore keys it does not
 understand: callers pass framework arguments such as
-`model_purpose=ModelPurpose.INGESTION` (which attaches a guardrail under
-`apply_to: all`), and more may be added; a strict signature raises
+`model_purpose=ModelPurpose.INGESTION` (which picks the per-path policy:
+response cache, ingestion effort, query retry), and more may be added; a strict signature raises
 `TypeError` on the first such call.
 
 **One bundle, every component.** `Providers` (`adapters/providers.py`) holds

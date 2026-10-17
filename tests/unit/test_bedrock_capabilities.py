@@ -368,50 +368,6 @@ def test_converse_models_stream(mocker, caplog, model_id: LanguageModelId) -> No
     assert "Streaming disabled" not in caplog.text
 
 
-# --- _apply_guardrail -----------------------------------------------------
-
-
-def test_apply_guardrail_noop_when_disabled() -> None:
-    config = Config()
-    # No identifier -> GuardrailConfig.enabled is False.
-    factory = _lang_factory(config)
-    cfg: dict[str, Any] = {}
-    factory._apply_guardrail(cfg, is_cross_region=True)
-    assert cfg == {}
-
-
-def test_apply_guardrail_converse_shape_when_cross_region() -> None:
-    config = Config()
-    gr = config.aws.bedrock.guardrail
-    gr.identifier = "gid-1"  # setting identifier flips .enabled to True
-    gr.version = "DRAFT"
-    gr.trace = True
-    gr.apply_to = "all"
-    factory = _lang_factory(config)
-    cfg: dict[str, Any] = {}
-    factory._apply_guardrail(cfg, is_cross_region=True, purpose=ModelPurpose.INGESTION)
-    assert cfg["guardrail_config"]["guardrailIdentifier"] == "gid-1"
-    assert cfg["guardrail_config"]["guardrailVersion"] == "DRAFT"
-    assert cfg["guardrail_config"]["trace"] == "enabled"
-
-
-def test_apply_guardrail_invoke_shape_uses_bool_trace() -> None:
-    config = Config()
-    gr = config.aws.bedrock.guardrail
-    gr.identifier = "gid-2"
-    gr.version = "1"
-    gr.trace = False
-    gr.apply_to = "all"
-    factory = _lang_factory(config)
-    cfg: dict[str, Any] = {}
-    factory._apply_guardrail(
-        cfg, is_cross_region=False, purpose=ModelPurpose.EVALUATION
-    )
-    # InvokeModel shape: trace stays a bool, not the literal "disabled".
-    assert cfg["guardrails"]["trace"] is False
-    assert cfg["guardrails"]["guardrailIdentifier"] == "gid-2"
-
-
 # --- cross-region model id construction -----------------------------------
 
 

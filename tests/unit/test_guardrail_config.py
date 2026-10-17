@@ -6,85 +6,15 @@ from __future__ import annotations
 
 import asyncio
 import importlib
-import logging
-from uuid import uuid4
 
 import pytest
-from langchain_core.messages import AIMessage
-from langchain_core.outputs import ChatGeneration, LLMResult
 
-from unified_kg_rag.adapters.aws.bedrock import (
-    BedrockLanguageModelFactory,
-    GuardrailInterventionHandler,
-)
+from unified_kg_rag.adapters.aws.bedrock import BedrockLanguageModelFactory
 from unified_kg_rag.adapters.aws.bedrock_retry import is_transient_bedrock_error
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.models import Config, ModelPurpose
 
 pytestmark = pytest.mark.unit
-
-
-def _factory_with(config: Config) -> BedrockLanguageModelFactory:
-    # The base factory opens a boto client in __init__; bypass it entirely and
-    # exercise only the pure guardrail-config logic.
-    f = BedrockLanguageModelFactory.__new__(BedrockLanguageModelFactory)
-    f.config = config
-    return f
-
-
-def test_disabled_by_default() -> None:
-    f = _factory_with(Config())
-    config: dict = {}
-    f._apply_guardrail(config, is_cross_region=True)
-    f._apply_guardrail(config, is_cross_region=False)
-    assert "guardrail_config" not in config
-    assert "guardrails" not in config
-
-
-# Only ingestion/evaluation models get an attached guardrail (apply_to: all).
-_INGESTION_MODEL = ModelPurpose.INGESTION
-
-
-def test_cross_region_uses_converse_shape() -> None:
-    cfg = Config()
-    cfg.aws.bedrock.guardrail.identifier = "gr-123"
-    cfg.aws.bedrock.guardrail.version = "3"
-    cfg.aws.bedrock.guardrail.trace = True
-    cfg.aws.bedrock.guardrail.apply_to = "all"
-    f = _factory_with(cfg)
-    config: dict = {}
-    f._apply_guardrail(config, is_cross_region=True, purpose=_INGESTION_MODEL)
-    assert config["guardrail_config"] == {
-        "guardrailIdentifier": "gr-123",
-        "guardrailVersion": "3",
-        "trace": "enabled",
-    }
-    assert "guardrails" not in config
-
-
-def test_non_cross_region_uses_invoke_shape() -> None:
-    cfg = Config()
-    cfg.aws.bedrock.guardrail.identifier = "gr-123"
-    cfg.aws.bedrock.guardrail.apply_to = "all"
-    f = _factory_with(cfg)
-    config: dict = {}
-    f._apply_guardrail(config, is_cross_region=False, purpose=_INGESTION_MODEL)
-    assert config["guardrails"]["guardrailIdentifier"] == "gr-123"
-    # InvokeModel treats trace as a truthiness flag, so it must be a real bool
-    # (a string like "disabled" would wrongly enable tracing).
-    assert config["guardrails"]["trace"] is False
-    assert "guardrail_config" not in config
-
-
-def test_invoke_model_trace_enabled_is_bool_true() -> None:
-    cfg = Config()
-    cfg.aws.bedrock.guardrail.identifier = "gr-123"
-    cfg.aws.bedrock.guardrail.trace = True
-    cfg.aws.bedrock.guardrail.apply_to = "all"
-    f = _factory_with(cfg)
-    config: dict = {}
-    f._apply_guardrail(config, is_cross_region=False, purpose=_INGESTION_MODEL)
-    assert config["guardrails"]["trace"] is True
 
 
 def test_enabled_property() -> None:
@@ -103,193 +33,6 @@ def test_guardrail_identifier_from_env(monkeypatch) -> None:
     cfg = ConfigLoader().load_config()
     assert cfg.aws.bedrock.guardrail.identifier == "gr-from-env"
     assert cfg.aws.bedrock.guardrail.enabled is True
-
-
-# --- Guardrail scope (apply_to) and intervention visibility -----------------
-
-
-def _guarded_config(apply_to: str = "all") -> Config:
-    cfg = Config()
-    cfg.aws.bedrock.guardrail.identifier = "gr-123"
-    cfg.aws.bedrock.guardrail.apply_to = apply_to  # type: ignore[assignment]
-    return cfg
-
-
-def test_apply_to_defaults_to_query() -> None:
-    assert Config().aws.bedrock.guardrail.apply_to == "query"
-
-
-def test_apply_to_rejects_unknown_value() -> None:
-    from pydantic import ValidationError
-
-    from unified_kg_rag.domain.models.config import GuardrailConfig
-
-    with pytest.raises(ValidationError):
-        GuardrailConfig(identifier="gr-123", apply_to="ingestion")  # type: ignore[arg-type]
-
-
-@pytest.mark.parametrize(
-    ("apply_to", "purpose", "expected"),
-    [
-        # Query models are screened at the chain's edges (ApplyGuardrail on
-        # the raw query and the answer), never by an attached guardrail.
-        ("query", ModelPurpose.QUERY, False),
-        ("query", ModelPurpose.INGESTION, False),
-        ("query", ModelPurpose.EVALUATION, False),
-        ("all", ModelPurpose.QUERY, False),
-        ("all", ModelPurpose.INGESTION, True),
-        ("all", ModelPurpose.EVALUATION, True),
-    ],
-)
-@pytest.mark.parametrize("is_cross_region", [True, False])
-def test_guardrail_scoped_by_purpose(
-    apply_to: str, purpose: ModelPurpose, expected: bool, is_cross_region: bool
-) -> None:
-    f = _factory_with(_guarded_config(apply_to))
-    config: dict = {"callbacks": None}
-    f._apply_guardrail(config, is_cross_region=is_cross_region, purpose=purpose)
-    key = "guardrail_config" if is_cross_region else "guardrails"
-    assert (key in config) is expected
-    handlers = config["callbacks"] or []
-    attached = any(isinstance(h, GuardrailInterventionHandler) for h in handlers)
-    assert attached is expected
-
-
-def test_disabled_guardrail_never_applies_even_with_all() -> None:
-    cfg = Config()
-    cfg.aws.bedrock.guardrail.apply_to = "all"
-    assert cfg.aws.bedrock.guardrail.applies_to(ModelPurpose.QUERY) is False
-
-
-def test_get_model_purpose_kwarg_reaches_guardrail(mocker) -> None:
-    """The ``model_purpose`` get_model kwarg (via _apply_model_features) scopes it."""
-    f = _factory_with(_guarded_config("query"))
-    spy = mocker.spy(f, "_apply_guardrail")
-    info = mocker.MagicMock(supports_thinking=False)
-    f._apply_model_features({}, info, True, model_purpose=ModelPurpose.INGESTION)
-    f._apply_model_features({}, info, True)
-    assert spy.call_args_list[0].args[2] is ModelPurpose.INGESTION
-    # Unmarked callers default to QUERY.
-    assert spy.call_args_list[1].args[2] is ModelPurpose.QUERY
-
-
-def test_handler_appended_to_existing_callbacks() -> None:
-    from langchain_core.callbacks import BaseCallbackHandler
-
-    existing = BaseCallbackHandler()
-    f = _factory_with(_guarded_config())
-    config: dict = {"callbacks": [existing]}
-    f._apply_guardrail(config, is_cross_region=True, purpose=_INGESTION_MODEL)
-    assert config["callbacks"][0] is existing
-    assert isinstance(config["callbacks"][1], GuardrailInterventionHandler)
-
-
-def test_handler_added_to_copy_of_caller_callback_manager() -> None:
-    from langchain_core.callbacks import BaseCallbackHandler, CallbackManager
-
-    existing = BaseCallbackHandler()
-    caller_manager = CallbackManager(handlers=[existing])
-    f = _factory_with(_guarded_config())
-    config: dict = {"callbacks": caller_manager}
-    f._apply_guardrail(config, is_cross_region=True, purpose=_INGESTION_MODEL)
-
-    # The caller's manager is untouched (it may be shared by unguarded models).
-    assert caller_manager.handlers == [existing]
-    assert config["callbacks"] is not caller_manager
-    assert isinstance(config["callbacks"], CallbackManager)
-    assert config["callbacks"].handlers[0] is existing
-    assert isinstance(config["callbacks"].handlers[1], GuardrailInterventionHandler)
-    assert not any(
-        isinstance(h, GuardrailInterventionHandler)
-        for h in config["callbacks"].inheritable_handlers
-    )
-
-
-def test_shared_callback_manager_not_polluted_across_models() -> None:
-    from langchain_core.callbacks import CallbackManager
-
-    shared = CallbackManager(handlers=[])
-    f = _factory_with(_guarded_config())
-    first: dict = {"callbacks": shared}
-    second: dict = {"callbacks": shared}
-    f._apply_guardrail(first, is_cross_region=True, purpose=_INGESTION_MODEL)
-    f._apply_guardrail(second, is_cross_region=False, purpose=_INGESTION_MODEL)
-    assert shared.handlers == []
-    assert len(first["callbacks"].handlers) == 1
-    assert len(second["callbacks"].handlers) == 1
-
-
-def _llm_result(metadata: dict) -> LLMResult:
-    message = AIMessage(content="x", response_metadata=metadata)
-    return LLMResult(generations=[[ChatGeneration(message=message)]])
-
-
-@pytest.fixture
-def handler(monkeypatch, caplog) -> GuardrailInterventionHandler:
-    monkeypatch.setattr(GuardrailInterventionHandler, "_count", 0)
-    caplog.set_level(logging.WARNING)
-    return GuardrailInterventionHandler("gr-123", ModelPurpose.QUERY)
-
-
-def _interventions_logged(caplog) -> int:  # noqa: ANN001
-    return sum("intervened" in r.getMessage() for r in caplog.records)
-
-
-@pytest.mark.parametrize(
-    "metadata",
-    [
-        {"stopReason": "guardrail_intervened"},
-        {"stop_reason": "guardrail_intervened"},
-        {"amazon-bedrock-guardrailAction": "INTERVENED"},
-    ],
-)
-def test_handler_detects_intervention(handler, metadata, caplog) -> None:
-    handler.on_llm_end(_llm_result(metadata), run_id=uuid4())
-    assert _interventions_logged(caplog) == 1
-    assert "interventions in this process: 1" in caplog.text
-    assert "gr-123" in caplog.text
-    assert "query" in caplog.text
-
-
-@pytest.mark.parametrize(
-    "metadata",
-    [{"stopReason": "end_turn"}, {}, {"amazon-bedrock-guardrailAction": "NONE"}],
-)
-def test_handler_ignores_normal_responses(handler, metadata, caplog) -> None:
-    handler.on_llm_end(_llm_result(metadata), run_id=uuid4())
-    assert _interventions_logged(caplog) == 0
-
-
-def test_handler_counts_invoke_model_signal_once(handler, caplog) -> None:
-    # InvokeModel + trace reports via on_llm_error, then still calls on_llm_end.
-    run_id = uuid4()
-    handler.on_llm_error(
-        Exception("guardrail"), run_id=run_id, reason="GUARDRAIL_INTERVENED"
-    )
-    handler.on_llm_end(
-        _llm_result({"amazon-bedrock-guardrailAction": "INTERVENED"}), run_id=run_id
-    )
-    assert _interventions_logged(caplog) == 1
-
-
-def test_handler_ignores_unrelated_errors(handler, caplog) -> None:
-    handler.on_llm_error(Exception("throttled"), run_id=uuid4())
-    assert _interventions_logged(caplog) == 0
-
-
-def test_handler_fires_through_a_real_chain(handler, caplog) -> None:
-    """End-to-end through LangChain callbacks: an intervened response is counted."""
-    from langchain_core.language_models.fake_chat_models import (
-        GenericFakeChatModel,
-    )
-
-    blocked = AIMessage(
-        content="This request was blocked by content policy.",
-        response_metadata={"stopReason": "guardrail_intervened"},
-    )
-    model = GenericFakeChatModel(messages=iter([blocked]), callbacks=[handler])
-    model.invoke("hello")
-    assert _interventions_logged(caplog) == 1
 
 
 # --- Call sites pass the right purpose ---------------------------------------
@@ -356,7 +99,7 @@ def test_output_fixing_llm_inherits_purpose() -> None:
 _INGESTION = "unified_kg_rag.adapters.ingestion"
 # Every component whose LLM chains process corpus text. Each must request
 # INGESTION models so the query retry (which would stack on BatchProcessor's)
-# is not attached and the guardrail only under apply_to: all.
+# is not attached.
 _INGESTION_COMPONENTS = {
     "chunker": (f"{_INGESTION}.chunker", "IntelligentTextChunker"),
     "translator": (f"{_INGESTION}.translator", "TextUnitTranslator"),

@@ -357,9 +357,8 @@ class ComputeStack(Stack):
                 resources=["*"],
             )
         )
-        # The app screens each query and answer with ApplyGuardrail (and, under
-        # apply_to: all, attaches the guardrail to ingestion model calls, which
-        # authorizes the same action). Granted on the one guardrail the task
+        # The app screens each query and answer with ApplyGuardrail. Granted on
+        # the one guardrail the task
         # is given, in the Bedrock runtime region where it lives; no guardrail,
         # no grant.
         guardrail_arn = self._guardrail_arn()

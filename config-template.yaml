@@ -78,16 +78,6 @@ aws:
       # Screen each final answer (source OUTPUT). A streamed answer is then
       # generated in full, screened, and delivered as one chunk.
       check_output: true
-      # Which model calls get the guardrail attached as well:
-      #   query - (default) none. Ingestion (chunking, translation, graph
-      #           extraction, gleaning, claims, summarization, community
-      #           reports) and evaluation judges run unguarded.
-      #   all   - every ingestion and evaluation call. A PII-anonymizing
-      #           guardrail then rewrites names in extraction output to
-      #           placeholders (distinct people merge into one entity) and a
-      #           prompt-attack filter can block instruction-like corpus text
-      #           (that chunk yields no entities).
-      apply_to: "query"
     # Retry on transient Bedrock errors that botocore does not retry, such as
     # HTTP 424 ModelErrorException. Applies to every embedding request and to
     # query-time LLM calls (strategy routing, query entity/keyword extraction,

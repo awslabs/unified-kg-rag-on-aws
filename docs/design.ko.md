@@ -858,8 +858,8 @@ JSON으로 렌더링하며, 수집이 기본으로 쓰는 데이터 전용 파�
   오류는 질의를 닫힌 쪽으로 실패시킵니다. 그 사이의 모델 호출에는 가드레일을 붙이지 않습니다.
   붙인 가드레일은 프롬프트 전체를 평가하므로 Converse에서는 검색된 코퍼스와 지시문까지 사용자
   입력으로 판정하고(잘못된 프롬프트 공격 차단, 컨텍스트 × 호출 수에 비례하는 비용), InvokeModel에서는
-  입력 태그 없이 프롬프트 공격 필터가 동작하지 않습니다. 수집과 평가 모델은 `apply_to: all`일
-  때만 가드레일을 붙입니다.
+  입력 태그 없이 프롬프트 공격 필터가 동작하지 않습니다. 수집과 평가 모델에는
+  가드레일을 붙이지 않습니다.
 
 ---
 
@@ -910,7 +910,7 @@ chain = GraphRAGChain(config=cfg, model_factory=MyLLMFactory())
 ```
 
 팩토리는 `**kwargs`를 받아 모르는 키를 무시해야 합니다. 호출자는
-`model_purpose=ModelPurpose.INGESTION`(`apply_to: all`이면 가드레일을 붙임) 같은 프레임워크
+`model_purpose=ModelPurpose.INGESTION`(경로별 정책: 응답 캐시, 수집 effort, 질의 재시도) 같은 프레임워크
 인자를 넘기며 이후에 더 추가될 수 있으므로, 엄격한 시그니처는 그런 첫 호출에서 `TypeError`를
 냅니다.
 

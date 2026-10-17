@@ -2526,6 +2526,13 @@ changed once with the full-config keys (#332).
   class is defined, instead of failing every query at evaluation time (#305).
 
 ### Removed
+- `aws.bedrock.guardrail.apply_to` and the attached-guardrail path behind
+  `apply_to: all` (`GuardrailInterventionHandler`): the guardrail screens
+  the user query and the answer with `ApplyGuardrail` only, and ingestion
+  and evaluation models are never guarded (an anonymizing or prompt-attack
+  policy silently emptied extractions). A config that sets the key loads with
+  a WARNING and the key ignored. Stage caches built under `apply_to: all`
+  miss once (#PR).
 - `indexing.cross_run_merge`: an incremental run always merges its delta
   into the stored graph. `false` overwrote an entity shared with unchanged
   documents with the delta's text units, so removing the changed document

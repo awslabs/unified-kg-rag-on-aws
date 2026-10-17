@@ -202,7 +202,6 @@ Amazon Bedrock Guardrails configuration (disabled unless identifier set)
 | `trace` | boolean | `false` | Emit guardrail trace details for observability/auditing (full assessments, including non-detected entries) |
 | `check_input` | boolean | `true` | Screen each raw user query (ApplyGuardrail, source INPUT) before retrieval: prompt attacks, denied topics, PII |
 | `check_output` | boolean | `true` | Screen each final answer (ApplyGuardrail, source OUTPUT). A streamed answer is then delivered in one chunk, after the check |
-| `apply_to` | `"query"` \| `"all"` | `"query"` | 'query': only the user query and answer are screened; ingestion and evaluation models run unguarded. 'all': the guardrail is also attached to every ingestion and evaluation model call |
 
 #### `aws.bedrock.transient_retry`
 

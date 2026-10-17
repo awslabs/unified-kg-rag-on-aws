@@ -20,8 +20,8 @@ unchanged, so its key carries a fingerprint of those inputs:
   components read whatever the switch says (``_READ_WHEN_DISABLED``); the
   local model knobs count only while the language models are not Bedrock's
   and the Bedrock ones only while they are, except the output cap every
-  model is asked for (``_EVERY_PROVIDER``); a guardrail only while it guards
-  ingestion models; a stage's prompt overrides only while the stage runs
+  model is asked for (``_EVERY_PROVIDER``); a stage's prompt overrides only
+  while the stage runs
   (``_IN_EFFECT_WHEN``).
 
 The settings that shape what a document produces (its text units, entities,
@@ -66,7 +66,6 @@ from unified_kg_rag.domain.models import (
     ChunkingStrategy,
     Config,
     ExtractionSettings,
-    ModelPurpose,
     ModelRole,
     PipelineStageType,
 )
@@ -158,12 +157,12 @@ CONFIG_KEYING: dict[str, Keyed | Unkeyed] = {
     "aws.bedrock.assumed_role_arn": _neutral(_WHERE),
     "aws.bedrock.enable_global_profile": _neutral(_WHERE),
     "aws.bedrock.transient_retry": _neutral(_THROUGHPUT),
-    "aws.bedrock.guardrail": _EVERY_CALL,
+    "aws.bedrock.guardrail": Unkeyed("screens the user query and the answer only"),
+    "aws.bedrock.guardrail.identifier": _neutral(_WHERE),
+    "aws.bedrock.guardrail.version": _neutral(_WHERE),
     "aws.bedrock.guardrail.trace": _neutral(
         "adds trace details to a response, not to what the model returns"
     ),
-    "aws.bedrock.guardrail.check_input": Unkeyed("screens the user query only"),
-    "aws.bedrock.guardrail.check_output": Unkeyed("screens the answer only"),
     # Output fixing repairs malformed model output in every stage.
     "fixing": _EVERY_CALL,
     # --- models: each role keys the stage it runs in, by its resolved id ----
@@ -333,7 +332,7 @@ CONFIG_KEYING: dict[str, Keyed | Unkeyed] = {
 }
 
 # Keyed settings naming where a run reads or writes: they key the stage
-# caches (another corpus, registry or guardrail is another input) but not
+# caches (another corpus or registry is another input) but not
 # what a query answers, so the same evaluation hashes the same in every
 # environment.
 _LOCATION_FIELDS = frozenset(
@@ -342,8 +341,6 @@ _LOCATION_FIELDS = frozenset(
         "processing.document_parsing.target_directory",
         "providers.doc_status.sqlite_path",
         "aws.dynamodb.table_name",
-        "aws.bedrock.guardrail.identifier",
-        "aws.bedrock.guardrail.version",
     }
 )
 
@@ -416,9 +413,6 @@ _IN_EFFECT_WHEN: dict[str, Callable[[Config], bool]] = {
     ),
     "providers.llm": lambda c: c.providers.llm.kind != BEDROCK,
     "aws.bedrock": lambda c: c.providers.llm.kind == BEDROCK,
-    "aws.bedrock.guardrail": lambda c: c.aws.bedrock.guardrail.applies_to(
-        ModelPurpose.INGESTION
-    ),
     **{
         f"custom_prompts.{name}_{part}": functools.partial(_block_on, path=block)
         for name, block in {
