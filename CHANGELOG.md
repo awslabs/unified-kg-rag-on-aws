@@ -1273,6 +1273,10 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- `indexing.additional_suffix` and `processing.document_parsing.index_value`
+  are checked when the config loads (lowercase letters, digits, `-`, `_`):
+  an uppercase or dotted value loaded and failed every run at indexing,
+  after the extraction had been paid for (#PR).
 - A lost lease is no longer logged as a failed cleanup by the OpenSearch
   indexer's stale-index and unswapped-index deletes; it stops the run (#PR).
 - A CLI stopped by SIGTERM or Ctrl-C exits at once (logs, tracing and

@@ -35,7 +35,12 @@ from .provider_config import (
     ProvidersConfig,
     apply_backend_preset,
 )
-from .retrieval import FusionMethod, SearchStrategy, validate_path_segment
+from .retrieval import (
+    FusionMethod,
+    SearchStrategy,
+    validate_path_segment,
+    validate_safe_name,
+)
 
 # Stdlib logger: shared.logging imports this module, so get_logger would cycle.
 _logger = logging.getLogger(__name__)
@@ -1011,7 +1016,7 @@ class DocumentParsingConfig(BaseModel):
             "label is named <prefix>-<index_value>. null = 'default'. Query "
             "the corpus with the same value as run-rag / run-eval --suffix. "
             "run-ingestion has no flag for it: use one config file per tenant "
-            "or corpus version."
+            "or corpus version. Lowercase letters, digits, '-' and '_'."
         ),
     )
     source_scope: str | None = Field(
@@ -1024,6 +1029,13 @@ class DocumentParsingConfig(BaseModel):
             "syncs from (env UKR__PROCESSING__DOCUMENT_PARSING__SOURCE_SCOPE)."
         ),
     )
+
+    @field_validator("index_value")
+    @classmethod
+    def _check_index_value(cls, value: str | None) -> str | None:
+        # Part of every index name: fail at config load, not at indexing
+        # after the extraction was paid for.
+        return value if value is None else validate_safe_name(value, "index_value")
 
 
 class ChunkingConfig(BaseModel):
@@ -2086,7 +2098,7 @@ class IndexingConfig(BaseModel):
             "suffix is processing.document_parsing.index_value at ingestion "
             "and --suffix at query time, both 'default' when unset). Set it "
             "identically for ingestion and queries, for versioned or "
-            "multi-tenant separation."
+            "multi-tenant separation. Lowercase letters, digits, '-' and '_'."
         ),
     )
     community_drift_threshold: float = Field(
@@ -2166,6 +2178,15 @@ class IndexingConfig(BaseModel):
         "records once the removal succeeded. Never the run's own scope. "
         "run-ingestion --retire-source-scope adds to this list.",
     )
+
+    @field_validator("additional_suffix")
+    @classmethod
+    def _check_additional_suffix(cls, value: str | None) -> str | None:
+        # Part of every index name: fail at config load, not at indexing
+        # after the extraction was paid for.
+        return (
+            value if value is None else validate_safe_name(value, "additional_suffix")
+        )
 
     @field_validator("retire_source_scopes")
     @classmethod

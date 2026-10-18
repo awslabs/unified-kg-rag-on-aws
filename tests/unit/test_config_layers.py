@@ -373,3 +373,27 @@ def test_any_key_can_be_set_from_the_environment(
 )
 def test_a_variable_naming_no_key_is_unknown(name: str) -> None:
     assert _env_path(name) is None
+
+
+@pytest.mark.parametrize(
+    "section",
+    [
+        {"indexing": {"additional_suffix": "{}"}},
+        {"processing": {"document_parsing": {"index_value": "{}"}}},
+    ],
+)
+@pytest.mark.parametrize("value", ["V2", "a.b", "x*", "a,b"])
+def test_an_index_name_part_that_opensearch_rejects_fails_at_load(
+    section: dict[str, Any], value: str
+) -> None:
+    # Before, an uppercase suffix loaded and failed every run at indexing,
+    # after the extraction had been paid for.
+    import json
+
+    from pydantic import ValidationError
+
+    data = json.loads(json.dumps(section).replace("{}", value))
+    with pytest.raises(ValidationError, match="lowercase letters"):
+        Config.model_validate(data)
+    ok = json.loads(json.dumps(section).replace("{}", "tenant_b-2"))
+    Config.model_validate(ok)
