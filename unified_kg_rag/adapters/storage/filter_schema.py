@@ -26,6 +26,7 @@ passes when the property matches or when it has no such property
 
 from collections.abc import Iterable
 from dataclasses import dataclass
+from typing import Any
 
 from unified_kg_rag.domain.models import Constants
 
@@ -46,6 +47,16 @@ class FilterFields:
     def describe(self) -> list[str]:
         """Sorted keys, with each prefix rendered as ``<prefix><key>``."""
         return sorted(self.fields) + sorted(f"{p}<key>" for p in self.prefixes)
+
+
+def attribute_filters(filters: dict[str, Any] | None) -> dict[str, Any]:
+    """The document attribute keys (``attr_<key>``, ``attributes.<path>``)
+    of ``filters``."""
+    return {
+        key: value
+        for key, value in (filters or {}).items()
+        if key.startswith((ATTRIBUTE_KEY_PREFIX, ATTRIBUTES_OBJECT_PREFIX))
+    }
 
 
 def union_filter_fields(items: Iterable[FilterFields]) -> FilterFields:

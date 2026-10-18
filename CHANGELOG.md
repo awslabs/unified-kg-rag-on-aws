@@ -2920,6 +2920,13 @@ changed once with the full-config keys (#332).
   instead of frozen dataclasses; they were never instantiated (#300).
 
 ### Security
+- Document attribute filters (`attr_<key>`, `attributes.<path>`) now apply
+  to relationships, claims and graph expansion, which carry no document
+  attribute: each is kept only when one of its text units passes the filter
+  (one fetch by id per sub-search), and expanded entities other than the
+  seeds likewise. local, mix, hybrid, DRIFT and simple returned
+  relationships from excluded documents, even for a filter no document
+  matches (#PR).
 - A guardrail-blocked answer no longer returns the evidence behind it:
   `sources` and `search_results.results` are empty (they carried the
   retrieved text the refused answer was built from). Masking covers the
