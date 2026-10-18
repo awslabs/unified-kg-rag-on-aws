@@ -1524,7 +1524,7 @@ Every CLI (`run-ingestion`, `run-rag`, `run-eval`, `run-visualization`,
 |---|---|
 | `0` | Success |
 | `1` | The run failed: a failed stage or query (in `run-ingestion` also a `ConfigurationError` found while running, e.g. an incremental run into an index built with the registry off), a breached `--max-failure-rate`, a failed upload, nothing rendered |
-| `2` | Usage or configuration error: a bad flag, a missing or invalid input (a `run-eval` dataset, a `run-visualization` data file), an invalid config file or override, an unset store endpoint (all before any work), or, outside `run-ingestion`, a `ConfigurationError` found while running |
+| `2` | Usage or configuration error: a bad flag, a missing or invalid input (a `run-eval` dataset, a `run-visualization` data file, a `prepare-benchmark` data file), an invalid config file or override, an unset store endpoint (all before any work), or, outside `run-ingestion`, a `ConfigurationError` found while running |
 | `130` | Interrupted with Ctrl-C (SIGINT) |
 | `143` | Stopped by SIGTERM (ECS `StopTask`, a Step Functions timeout); `run-ingestion` checkpoints its finished stages first, and `run-eval` uploads the finished runs' results to an `s3://` output (or keeps them locally and logs the path) |
 
@@ -1539,8 +1539,9 @@ breaches (`run-eval`), the written files (`run-visualization`), the output
 path and profile (`run-prompt-tuning`), or the counts written
 (`prepare-benchmark`). A run stopped by a
 signal before it printed prints `{"status": "interrupted", "exit_code": 143}`
-(`130` for Ctrl-C), so stdout is always JSON; `run-ingestion` adds the
-`pipeline_id` to resume with.
+(`130` for Ctrl-C), and one that fails before it printed prints
+`{"status": "failed", "exit_code": 1}` (or `2`), so stdout is always JSON;
+`run-ingestion` adds the `pipeline_id` to resume with.
 
 ### Large / multilingual / heterogeneous corpora
 

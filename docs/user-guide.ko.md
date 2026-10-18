@@ -1387,7 +1387,7 @@ custom_prompts:
 |---|---|
 | `0` | 성공 |
 | `1` | 실행 실패: 단계나 질의 실패(`run-ingestion`은 실행 중에 발견한 `ConfigurationError`도 포함. 예: 레지스트리를 끈 채 만든 인덱스에 대한 증분 실행), `--max-failure-rate` 초과, 업로드 실패, 렌더링한 파일 없음 |
-| `2` | 사용법·설정 오류: 잘못된 플래그, 없거나 잘못된 입력(`run-eval` 데이터셋, `run-visualization` 데이터 파일), 잘못된 설정 파일이나 덮어쓰기, 설정하지 않은 저장소 엔드포인트(모두 작업 시작 전), 또는 `run-ingestion` 외의 CLI가 실행 중에 발견한 `ConfigurationError` |
+| `2` | 사용법·설정 오류: 잘못된 플래그, 없거나 잘못된 입력(`run-eval` 데이터셋, `run-visualization` 데이터 파일, `prepare-benchmark` 데이터 파일), 잘못된 설정 파일이나 덮어쓰기, 설정하지 않은 저장소 엔드포인트(모두 작업 시작 전), 또는 `run-ingestion` 외의 CLI가 실행 중에 발견한 `ConfigurationError` |
 | `130` | Ctrl-C(SIGINT)로 중단 |
 | `143` | SIGTERM으로 중지(ECS `StopTask`, Step Functions 시간 초과). `run-ingestion`은 끝난 단계를 먼저 체크포인트로 저장하고, `run-eval`은 끝난 실행의 결과를 `s3://` 출력에 업로드함(실패하면 로컬에 남기고 경로를 로그로 남김) |
 
@@ -1399,8 +1399,9 @@ custom_prompts:
 결과(`run-rag`), 파이프라인 ID와 상태, 단계별 결과(`run-ingestion`), 실행별 요약과 비교,
 실패 예산 초과 내역(`run-eval`), 쓴 파일(`run-visualization`), 출력 경로와 프로필
 (`run-prompt-tuning`), 쓴 항목 수(`prepare-benchmark`)입니다. 문서를 출력하기 전에 신호로 중지되면
-대신 `{"status": "interrupted", "exit_code": 143}`(Ctrl-C는 `130`)을 출력하므로 표준
-출력은 항상 JSON입니다. `run-ingestion`은 재개할 때 쓸 `pipeline_id`를 덧붙입니다.
+대신 `{"status": "interrupted", "exit_code": 143}`(Ctrl-C는 `130`)을, 출력하기 전에
+실패하면 `{"status": "failed", "exit_code": 1}`(또는 `2`)을 출력하므로 표준 출력은 항상
+JSON입니다. `run-ingestion`은 재개할 때 쓸 `pipeline_id`를 덧붙입니다.
 
 ### 대규모, 다국어, 이질적인 코퍼스
 

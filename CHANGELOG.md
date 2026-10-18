@@ -1266,6 +1266,12 @@ changed once with the full-config keys (#332).
 - A lost lease is no longer swallowed by `OpenSearchClient.delete_indices`
   (reported as an `AWSServiceError` after the remaining batches were sent)
   or by the best-effort cleanup of unused extraction records (#358).
+- With `--output-format json`, a CLI that fails before printing its result
+  (`run-prompt-tuning`, `run-visualization`) prints
+  `{"status": "failed", "exit_code": 1}` (or 2) instead of nothing.
+  `prepare-benchmark` exits 130 on Ctrl-C without a traceback, and a data
+  file that is not MuSiQue JSONL (an invalid line or a malformed item) is a
+  usage error (exit 2) instead of a `KeyError` (#PR).
 - `prepare-benchmark musique` keeps file names distinct under the retrieval
   evaluator's matching (case, NFKC, `_` for a space), so two paragraphs
   titled `A_B` and `A B` no longer count as the same reference (#PR).
