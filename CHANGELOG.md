@@ -1248,36 +1248,36 @@ changed once with the full-config keys (#332).
   `providers.doc_status.enabled` (#350).
   `providers.doc_status.enabled` (#351).
 - `run-prompt-tuning --max-docs` below 1 is a usage error (exit 2) instead
-  of silently sampling one document (#PR).
+  of silently sampling one document (#353).
 - `run-visualization` exits 2 (usage error) on a data file that is not
   valid exported visualization JSON, as `run-eval` does on an invalid
-  dataset, instead of 1 (#PR).
+  dataset, instead of 1 (#353).
 - `run-ingestion --output-format json` names the `pipeline_id` in the
   interrupted status document, so a stopped run can be resumed with
-  `--pipeline-id` without reading the logs (#PR).
+  `--pipeline-id` without reading the logs (#353).
 - `run-rag --interactive --output-format json` is rejected as a usage error
-  (exit 2) instead of running a chat that printed nothing on stdout (#PR).
+  (exit 2) instead of running a chat that printed nothing on stdout (#353).
 - `run-ingestion --retire-source-scope` resolves a local path the way the
   source directory is resolved (`~`, `..`, symlinks), so a path through a
   symlink or a relative path retires the records stored under the resolved
-  directory instead of matching none (#PR).
+  directory instead of matching none (#353).
 - Ctrl-C is handled alike by every CLI: `run-prompt-tuning` and
   `run-visualization` now print the `{"status": "interrupted"}` JSON
   document with `--output-format json`, and `run-rag` exits 130 without a
-  traceback when interrupted while waiting on a model or store (#PR).
+  traceback when interrupted while waiting on a model or store (#353).
 - `prepare-benchmark musique`: a paragraph whose title starts with `.` is no
-  longer written as a hidden file the parser skips (#PR).
+  longer written as a hidden file the parser skips (#353).
 - The CLI exit-code table no longer says an index built with the registry
   off exits 2: `run-ingestion` reports a configuration conflict found while
-  running as a failed run (exit 1) (#PR).
+  running as a failed run (exit 1) (#353).
 - `run-eval --pairwise-judge`: a judge reply with a missing or malformed
   verdict for a criterion now fails the pair (counted in `failed`, held to
-  `--max-failure-rate`) instead of counting as a tie (#PR).
+  `--max-failure-rate`) instead of counting as a tie (#353).
 - Evaluation: an answer the guardrail blocked (which drops its sources) no
   longer scores as a retrieval miss; its `retrieval` metrics and retrieved
   coverage are skipped as `guardrail_blocked`. The strategy comparison
   reports each strategy's `guardrail_blocked_counts` and warns when they
-  differ, and `run-eval --output-format json` includes them per run (#PR).
+  differ, and `run-eval --output-format json` includes them per run (#353).
 - iac/README.md no longer says a second concurrent ingestion stops before it
   reads anything: it syncs the corpus and its checkpoint first, then stops
   with `NamespaceLeaseError` before it reads the stores or writes (#345).
@@ -2864,7 +2864,7 @@ changed once with the full-config keys (#332).
 - The `aws.bedrock.guardrail.intervened` attribute on model (`chat <model>`)
   spans, and the detector behind it: no model call carries a guardrail since
   the guardrail screens the query and answer through `ApplyGuardrail`, so it
-  was never set. The `kg_rag.guardrail` span keeps the attribute (#PR).
+  was never set. The `kg_rag.guardrail` span keeps the attribute (#353).
 - Unused code: `shared.config.reload_config` and `ConfigLoader.reload_config`
   (build a new `ConfigLoader` instead), the `BedrockModelId` type alias,
   `ClaimExtractor.extract_from_text_units` (`extract_units` is the stage's
