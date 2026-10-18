@@ -1268,6 +1268,10 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- A CLI stopped by SIGTERM or Ctrl-C exits at once (logs, tracing and
+  stdout flushed) instead of waiting at interpreter exit for the model calls
+  and pool tasks the stop abandoned, which could keep a stopped ECS task
+  alive past its stop timeout (#PR).
 - A stop during entity resolution or MinHash deduplication now cancels the
   process pool's queued tasks: the pool's own `with` block reset the
   cancellation, so every queued task still ran and held up the process's

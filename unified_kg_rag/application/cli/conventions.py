@@ -27,6 +27,8 @@ from __future__ import annotations
 import argparse
 import functools
 import json
+import logging
+import os
 import signal
 import sys
 import threading
@@ -34,6 +36,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, NoReturn, ParamSpec, TypeVar
 
+from unified_kg_rag.shared import observability
 from unified_kg_rag.shared.utils.display import console
 
 _P = ParamSpec("_P")
@@ -46,6 +49,9 @@ EXIT_TERMINATED = 128 + signal.SIGTERM  # 143
 
 # Whether this process prints JSON, and whether it printed its document.
 _json = {"enabled": False, "printed": False}
+# Whether a stopped CLI ends its process at once (see _exit_stopped); the
+# test suite turns it off to see the SystemExit.
+_exit_at_once = {"enabled": True}
 
 
 def usage_error(message: str) -> NoReturn:
@@ -64,7 +70,9 @@ def exits_on_sigterm(main: Callable[_P, _R]) -> Callable[_P, _R]:
     handler is restored when ``main`` returns; off the main thread, where
     Python cannot install a handler, ``main`` runs unchanged. With JSON
     output, a run stopped, or failed, before it printed its document prints a
-    status document, so a consumer parsing stdout gets JSON either way.
+    status document, so a consumer parsing stdout gets JSON either way. A
+    run stopped by a signal (Ctrl-C included) then ends its process at once
+    (:func:`_exit_stopped`), without waiting for the threads it abandoned.
     """
 
     def _exit(signum: int, _frame: object) -> None:
@@ -88,10 +96,13 @@ def exits_on_sigterm(main: Callable[_P, _R]) -> Callable[_P, _R]:
             return result
         except KeyboardInterrupt:
             _print_status(EXIT_INTERRUPTED)
+            _exit_stopped(EXIT_INTERRUPTED)
             raise
         except SystemExit as e:
             if isinstance(e.code, int) and e.code:
                 _print_status(e.code)
+                if e.code > 128:
+                    _exit_stopped(e.code)
             raise
         finally:
             signal.signal(signal.SIGTERM, previous)
@@ -141,3 +152,22 @@ def _print_status(exit_code: int) -> None:
         print_json(
             {"status": "interrupted" if stopped else "failed", "exit_code": exit_code}
         )
+
+
+def _exit_stopped(exit_code: int) -> None:
+    """End the process of a run stopped by a signal now, with ``exit_code``.
+
+    A stop does not wait for the work in flight: the model calls and pool
+    tasks it abandoned run on in threads the interpreter would join at exit,
+    keeping the stopped process alive (past ECS's stop timeout, so it was
+    killed) for as long as they take. The ``finally`` blocks of the run have
+    run by now; the logs, the tracing backend and stdout are flushed, then
+    the process exits without joining those threads.
+    """
+    if not _exit_at_once["enabled"]:
+        return
+    observability.uninstall()
+    logging.shutdown()
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(exit_code)

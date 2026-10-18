@@ -616,3 +616,36 @@ def test_an_early_usage_error_still_prints_a_json_status(
         main()
     assert exc.value.code == 2
     assert json.loads(capsys.readouterr().out) == {"status": "failed", "exit_code": 2}
+
+
+def test_a_stopped_cli_exits_without_joining_the_threads_it_abandoned() -> None:
+    # Old behaviour: the SystemExit(143) left the interpreter joining the
+    # threads of the work the stop abandoned (a model call in flight), so a
+    # stopped task lived on for as long as that call took.
+    import subprocess
+    import textwrap
+    import time
+
+    script = textwrap.dedent("""
+        import json, os, signal, threading, time
+        from unified_kg_rag.application.cli.conventions import (
+            exits_on_sigterm, json_output, print_json,
+        )
+        import argparse
+
+        @exits_on_sigterm
+        def main():
+            json_output(argparse.Namespace(output_format="json"))
+            threading.Thread(target=time.sleep, args=(30,)).start()
+            os.kill(os.getpid(), signal.SIGTERM)
+            time.sleep(5)
+
+        main()
+    """)
+    started = time.time()
+    result = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, timeout=60
+    )
+    assert result.returncode == 143
+    assert time.time() - started < 20
+    assert json.loads(result.stdout) == {"status": "interrupted", "exit_code": 143}
