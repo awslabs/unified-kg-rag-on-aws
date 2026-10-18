@@ -137,11 +137,12 @@ def test_a_small_delta_component_small_in_the_whole_graph_gets_none(
 
 @SUFFIXES
 def test_stored_entities_a_delta_links_without_a_community_are_reported(
-    tmp_path: Path, no_aws, suffix: str | None
+    tmp_path: Path, no_aws, suffix: str | None, caplog
 ) -> None:
     # Vendor - Depot is stored, a pair without a community; the delta's
     # Depot - Carrier makes it a component of three, so the delta pair is
     # clustered, but Vendor, outside the delta, stays without one.
+    caplog.set_level("INFO")
     providers, context = _ingest_all(
         tmp_path,
         [
@@ -155,6 +156,12 @@ def test_stored_entities_a_delta_links_without_a_community_are_reported(
     metrics = {r.stage_name: r.metrics for r in context.stage_results}
     assert metrics["community_detection"]["unclustered_stored_entities"] == 1
     assert metrics["indexing"]["community_drift"]["unclustered_entities"] == 1
+    # Reported at INFO: not a rebuild signal (before, a WARNING told the user
+    # to rebuild while community_rebuild_recommended stayed 0).
+    (record,) = [
+        r for r in caplog.records if "without a community are" in str(r.getMessage())
+    ]
+    assert record.levelname == "INFO" and "Rebuild" not in str(record.getMessage())
 
 
 def test_a_deleted_community_leaves_no_id_on_its_surviving_members(

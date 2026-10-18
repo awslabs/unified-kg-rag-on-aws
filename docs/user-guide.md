@@ -997,8 +997,10 @@ host's corpus), so the old content stays indexed. Either:
   scope in its suffix as deleted and indexes the new location as new
   documents. Give the scope as the registry stores it: the absolute
   directory (trailing and repeated slashes ignored) or the former
-  `source_scope`, `s3://` URIs included; the flag also tries a non-URI value
-  as a path resolved like `--source-directory`. Naming the run's own scope fails
+  `source_scope`, `s3://` URIs included; a non-URI value is also tried as a
+  path resolved like `--source-directory`. A bare value (`old`) is a name or a
+  relative path: the reading that has records is retired, and when both do
+  the run stops before any write (give `./old` or an absolute path). Naming the run's own scope fails
   before the registry is read; a scope without records logs a WARNING.
 
 A local run with the default scope and new documents logs a WARNING naming the
@@ -1273,8 +1275,10 @@ scored/failed/skipped counts (`metric_outcomes`), plus:
   blocked item is scored on the blocked message; a blocked answer drops its
   sources, so its retrieval metrics and the RAGAS context metrics
   (`context_precision`, `context_recall`, `faithfulness`) are skipped as
-  `guardrail_blocked`); each
-  result carries `guardrail_blocked`.
+  `guardrail_blocked`. A query blocked on input retrieved nothing, so it is a
+  retrieval miss and scores 0 on context precision and recall, while
+  `faithfulness` is skipped, as for any answer without context:
+  `no_contexts`); each result carries `guardrail_blocked`.
 - `run_manifest`: what was measured, so two runs can be compared:
   - the CLI arguments (URLs without credentials), versions, `git_sha` /
     `git_dirty`, the dataset (path, hashes, query count), a UTC timestamp and

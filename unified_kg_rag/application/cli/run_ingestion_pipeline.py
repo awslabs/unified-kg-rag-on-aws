@@ -83,22 +83,6 @@ def _stage_name_arg(value: str) -> str:
     return normalized
 
 
-def _retired_scopes(value: str) -> list[str]:
-    """The spellings of a ``--retire-source-scope`` the registry may store.
-
-    A URI is kept as given. Any other value may be a ``source_scope`` name,
-    an absolute directory (stored as given when configured) or a path to the
-    old source directory, which the registry stores resolved (``~``, ``..``,
-    symlinks): both are tried, except that a ``~`` or ``.`` spelling is never
-    stored as such.
-    """
-    scope = value.strip()
-    if "://" in scope:
-        return [scope]
-    resolved = Path(scope).expanduser().resolve().as_posix()
-    return list(dict.fromkeys([*([] if scope[:1] in "~." else [scope]), resolved]))
-
-
 class CommandLineInterface:
     def __init__(self) -> None:
         self.parser = self._setup_arguments()
@@ -229,7 +213,9 @@ class CommandLineInterface:
             "after moving a corpus, with the old absolute source directory or "
             "former document_parsing.source_scope value (a value that is "
             "not a URI is also tried as a path resolved like "
-            "--source-directory). Repeatable; added to "
+            "--source-directory; a bare value whose name and path readings "
+            "both have records stops the run: use ./ or an absolute path). "
+            "Repeatable; added to "
             "indexing.retire_source_scopes. Never this run's own scope.",
         )
         add_config_arguments(parser, "Path to custom configuration file")
@@ -263,7 +249,7 @@ class IngestionPipelineRunner:
                 dict.fromkeys(
                     [
                         *indexing.retire_source_scopes,
-                        *(s for value in retired for s in _retired_scopes(value)),
+                        *(value.strip() for value in retired),
                     ]
                 )
             )

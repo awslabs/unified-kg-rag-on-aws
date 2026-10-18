@@ -40,9 +40,9 @@ local source directories of the run's namespace so the run can warn.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 from unified_kg_rag.domain.ingestion.attempts import (
     plan_attempts,
@@ -82,7 +82,9 @@ __all__ = [
     "fingerprint_documents",
     "other_local_scopes",
     "registry_scope",
+    "RetiredScope",
     "retire_source_scopes",
+    "retired_scope_groups",
     "scope_namespace",
     "validate_retired_scopes",
 ]
@@ -220,7 +222,7 @@ def detect_delta(
     scope: str | None = None,
     failed_doc_ids: Iterable[str] = (),
     max_failures: int | None = None,
-    retired_scopes: Iterable[str] = (),
+    retired_scopes: Iterable[str | RetiredScope] = (),
     extraction_fingerprint: str | None = None,
     max_attempts: int | None = None,
 ) -> tuple[DocumentDelta, dict[str, str]]:
@@ -238,9 +240,9 @@ def detect_delta(
             this many consecutive times is classified unchanged instead of
             changed, so a deterministic failure is not re-extracted every run.
             ``None`` retries without limit.
-        retired_scopes: Registry scopes (:func:`registry_scope`) every record
-            of which is classified deleted this run (see
-            :func:`retire_source_scopes`). Needs a ``scope``, which it must
+        retired_scopes: Registry scopes (:func:`registry_scope`), or
+            :class:`RetiredScope` groups of them, every record of which is
+            classified deleted this run (see :func:`retire_source_scopes`). Needs a ``scope``, which it must
             not contain.
         extraction_fingerprint: The run's extraction settings fingerprint
             (``DocStatusRecord.extraction_fingerprint``). A document whose
@@ -263,8 +265,8 @@ def detect_delta(
         ConfigurationError: ``retired_scopes`` holds the run's own ``scope``,
             or is given without one.
     """
-    retired = list(dict.fromkeys(retired_scopes))
-    if retired and (scope is None or scope in retired):
+    retired = _groups(retired_scopes)
+    if retired and (scope is None or any(scope in g.scopes for g in retired)):
         raise ConfigurationError(
             f"Cannot retire the run's own registry scope ({scope!r}): every "
             "document of the run would be deleted"
@@ -317,44 +319,95 @@ def detect_delta(
     return delta, fingerprints
 
 
-def validate_retired_scopes(
-    retired: Iterable[str], source_scope: str, namespace: str
-) -> list[str]:
-    """The registry scopes to retire for the ``retired`` source scopes.
+class RetiredScope(NamedTuple):
+    """A configured retired scope and the registry scopes it may mean.
 
-    Each source scope is normalized the way the registry stores it (see
+    ``ambiguous``: the scopes are different readings of the value (a
+    ``source_scope`` name and a directory), so at most one of them may hold
+    records; otherwise they are spellings of one scope, all retired.
+    """
+
+    value: str
+    scopes: tuple[str, ...]
+    ambiguous: bool = False
+
+
+def _as_given(value: str) -> tuple[list[str], bool]:
+    return [value], False
+
+
+def retired_scope_groups(
+    retired: Iterable[str],
+    source_scope: str,
+    namespace: str,
+    readings: Callable[[str], tuple[list[str], bool]] = _as_given,
+) -> list[RetiredScope]:
+    """The registry scopes to retire for each of the ``retired`` values.
+
+    ``readings`` maps a value to the source scopes it may mean and whether
+    they are different readings (default: the value as given). Each source
+    scope is normalized the way the registry stores it (see
     :func:`normalize_source_scope`) and joined with the run's ``namespace``
     (:func:`registry_scope`), so retiring only ever reaches records of the
     namespace the run writes.
 
     Raises:
         ConfigurationError: A retired source scope is empty, or is the run's
-            own ``source_scope`` (every document of the run would be deleted).
+            own ``source_scope`` (every document of the run would be deleted;
+            for an ambiguous value, when every reading is).
     """
     own = normalize_source_scope(source_scope)
-    scopes: list[str] = []
+    groups: list[RetiredScope] = []
     for value in retired:
-        normalized = normalize_source_scope(value)
-        if not normalized:
+        spellings, ambiguous = readings(value)
+        normalized = [normalize_source_scope(s) for s in spellings]
+        if not value.strip() or not all(normalized):
             raise ConfigurationError(
                 "indexing.retire_source_scopes / --retire-source-scope: a "
                 "source scope is empty"
             )
-        if normalized == own:
+        kept = [n for n in normalized if n != own] if ambiguous else normalized
+        if not kept or own in kept:
             raise ConfigurationError(
                 "indexing.retire_source_scopes / --retire-source-scope: "
                 f"{value!r} is this run's own source scope. Retiring it would "
                 "delete every document of this corpus; retire the scope the "
                 "corpus was indexed under before it moved."
             )
-        scopes.append(registry_scope(namespace, normalized))
-    return list(dict.fromkeys(scopes))
+        scopes = tuple(dict.fromkeys(registry_scope(namespace, n) for n in kept))
+        groups.append(
+            RetiredScope(value.strip(), scopes, ambiguous and len(scopes) > 1)
+        )
+    return groups
+
+
+def validate_retired_scopes(
+    retired: Iterable[str], source_scope: str, namespace: str
+) -> list[str]:
+    """The registry scopes of the ``retired`` values taken as given (see
+    :func:`retired_scope_groups`)."""
+    return list(
+        dict.fromkeys(
+            scope
+            for group in retired_scope_groups(retired, source_scope, namespace)
+            for scope in group.scopes
+        )
+    )
+
+
+def _groups(retired_scopes: Iterable[str | RetiredScope]) -> list[RetiredScope]:
+    return list(
+        dict.fromkeys(
+            g if isinstance(g, RetiredScope) else RetiredScope(g, (g,))
+            for g in retired_scopes
+        )
+    )
 
 
 def retire_source_scopes(
     doc_status: DocStatusPort,
     delta: DocumentDelta,
-    retired_scopes: Iterable[str],
+    retired_scopes: Iterable[str | RetiredScope],
     own_scope: str | None = None,
 ) -> int:
     """Classify every record of ``retired_scopes`` as deleted in ``delta``.
@@ -373,32 +426,57 @@ def retire_source_scopes(
     value. The stored scopes come from ``delta.stored_scopes``, and
     ``own_scope`` (the run's scope) is never retired.
 
+    A :class:`RetiredScope` retires the records of all its scopes, or,
+    when ``ambiguous``, of the one reading that has records.
+
     Returns:
         The number of records added to ``delta.deleted``.
+
+    Raises:
+        ConfigurationError: More than one reading of an ambiguous value has
+            records (retiring both could delete another corpus).
     """
     deleted = set(delta.deleted)
     added = 0
-    for retired in dict.fromkeys(retired_scopes):
-        doc_ids: list[str] = []
-        for variant in _stored_spellings(retired, delta.stored_scopes):
-            if variant == own_scope:
-                continue
-            for doc_id in doc_status.diff({}, scope=variant).deleted:
-                if doc_id not in deleted:
-                    doc_ids.append(doc_id)
-                    deleted.add(doc_id)
+    for group in _groups(retired_scopes):
+        by_scope = {
+            scope: [
+                doc_id
+                for variant in _stored_spellings(scope, delta.stored_scopes)
+                if variant != own_scope
+                for doc_id in doc_status.diff({}, scope=variant).deleted
+            ]
+            for scope in group.scopes
+        }
+        matched = [scope for scope, ids in by_scope.items() if ids]
+        if group.ambiguous and len(matched) > 1:
+            raise ConfigurationError(
+                f"--retire-source-scope / indexing.retire_source_scopes "
+                f"{group.value!r} is ambiguous: the registry holds records "
+                f"under each of {', '.join(repr(s) for s in matched)}. Give "
+                "the old directory as './<path>' or an absolute path."
+            )
+        doc_ids = list(
+            dict.fromkeys(
+                doc_id
+                for scope in matched
+                for doc_id in by_scope[scope]
+                if doc_id not in deleted
+            )
+        )
+        deleted.update(doc_ids)
         if not doc_ids:
             logger.warning(
                 "Retired scope %r has no doc-status records (already retired, "
                 "or not spelled the way the registry stores it)",
-                retired,
+                group.value,
             )
             continue
         logger.warning(
             "Retiring %d doc-status records of scope %r: their exclusive "
             "artifacts are removed by this run",
             len(doc_ids),
-            retired,
+            group.value,
         )
         delta.deleted.extend(doc_ids)
         added += len(doc_ids)

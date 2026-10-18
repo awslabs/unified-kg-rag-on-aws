@@ -912,8 +912,10 @@ aws:
   `indexing.retire_source_scopes`)로 한 번 실행합니다. 이 실행은 접미사에서 이전 범위의
   레코드를 모두 삭제된 문서로 처리하고, 새 위치의 문서를 새 문서로 인덱싱합니다. 범위는
   레지스트리에 저장된 형태로 지정합니다. 절대 디렉터리(끝과 중복된 `/`는 무시)나 이전
-  `source_scope` 값이며 `s3://` URI도 됩니다. 플래그는 URI가 아닌 값을
-  `--source-directory`처럼 해석한 경로로도 찾습니다. 실행 자신의 범위를 지정하면 레지스트리를
+  `source_scope` 값이며 `s3://` URI도 됩니다. URI가 아닌 값은
+  `--source-directory`처럼 해석한 경로로도 찾습니다. 경로 표시가 없는 값(`old`)은 이름이거나
+  상대 경로이므로 레코드가 있는 쪽만 지우고, 둘 다 있으면 쓰기 전에 실행을 멈춥니다(`./old`나
+  절대 경로로 지정). 실행 자신의 범위를 지정하면 레지스트리를
   읽기 전에 실패하고, 레코드가 없는 범위는 WARNING으로 알립니다.
 
 범위가 기본값인 로컬 실행에 새 문서가 있으면, 같은 접미사에 레코드가 있는 다른 로컬
@@ -1160,7 +1162,10 @@ run-eval --data-path s3://my-bucket/eval/my_eval_data.json \
   `rerank_status`가 기록됩니다(답변 생성이 먼저 실패했으면 `null`).
 - `guardrail_blocked_counts`: `input` / `output`별 차단된 질의 수입니다(차단된 항목은
   차단 메시지로 채점. 차단된 답변은 출처를 버리므로 검색 지표와 RAGAS 컨텍스트 지표
-  (`context_precision`, `context_recall`, `faithfulness`)는 `guardrail_blocked`로 건너뜀). 각 결과에는 `guardrail_blocked`가 기록됩니다.
+  (`context_precision`, `context_recall`, `faithfulness`)는 `guardrail_blocked`로 건너뜀.
+  입력에서 차단된 질의는 아무것도 검색하지 않았으므로 검색 실패로 보아 컨텍스트 정밀도·재현율이
+  0이고, `faithfulness`는 컨텍스트 없는 다른 답변처럼 건너뜀: `no_contexts`). 각 결과에는
+  `guardrail_blocked`가 기록됩니다.
 - `run_manifest`: 무엇을 측정했는지 기록하므로 두 실행을 비교할 수 있습니다.
   - CLI 인자(URL은 자격 정보를 뺌), 버전, `git_sha` / `git_dirty`, 데이터셋(경로, 해시,
     질의 수), UTC 타임스탬프, `dropped_evaluators`

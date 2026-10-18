@@ -24,6 +24,7 @@ from unified_kg_rag.adapters.evaluators.base import (
     FAILED_METRICS_KEY,
     SKIP_REASON_EMPTY_REFERENCE,
     SKIP_REASON_GUARDRAIL_BLOCKED,
+    SKIP_REASON_NO_CONTEXTS,
     SKIPPED_METRICS_KEY,
     BaseGraphRAGEvaluator,
     judge_model_kwargs,
@@ -68,8 +69,12 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
         }
     )
 
-    # Metrics judged against the contexts: a guardrail-blocked answer dropped
+    # Metrics judged against the contexts: an answer blocked on output dropped
     # its sources, so they are skipped for it (the answer metrics still run).
+    # A query blocked on input retrieved nothing: like the retrieval
+    # evaluator, context precision/recall score that as a miss, while
+    # faithfulness, undefined without a context (RAGAS returns NaN), is
+    # skipped, as it is for an answer given without any context.
     CONTEXT_METRICS: ClassVar[frozenset[EvaluationMetricType]] = frozenset(
         {
             EvaluationMetricType.CONTEXT_PRECISION,
@@ -327,10 +332,7 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
             )
             partitions.setdefault(run, []).append(i)
         reports: dict[int, EvaluationReport] = {}
-        # The rows that run the most metrics first (the order RAGAS runs in).
-        for partition_metrics, rows in sorted(
-            partitions.items(), key=lambda item: -len(item[0])
-        ):
+        for partition_metrics, rows in partitions.items():
             row_queries = [queries[i] for i in rows]
             row_results = [results[i] for i in rows]
             if partition_metrics:
@@ -470,6 +472,15 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
         """Why ``metric_type`` does not apply to ``result``'s row, if it does not."""
         if result.guardrail_blocked == "output" and metric_type in self.CONTEXT_METRICS:
             return SKIP_REASON_GUARDRAIL_BLOCKED
+        if (
+            metric_type is EvaluationMetricType.FAITHFULNESS
+            and not result.retrieved_contexts
+        ):
+            return (
+                SKIP_REASON_GUARDRAIL_BLOCKED
+                if result.guardrail_blocked
+                else SKIP_REASON_NO_CONTEXTS
+            )
         if metric_type in self.REFERENCE_METRICS and not has_reference:
             return SKIP_REASON_EMPTY_REFERENCE
         return None

@@ -25,6 +25,7 @@ PUBLIC_API = sorted(
     [
         "__version__",
         # Using the framework
+        "CloudWatchEMFSink",
         "Config",
         "ConversationKey",
         "DataIngestionPipeline",
@@ -32,6 +33,7 @@ PUBLIC_API = sorted(
         "GraphRAGChain",
         "IndexingManager",
         "MemoryManager",
+        "MetricsSink",
         "ModelPurpose",
         "ModelRole",
         "PipelineConfig",

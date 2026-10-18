@@ -24,6 +24,7 @@ from unified_kg_rag.application.ingestion.incremental import (
     close_attempts,
     delta_still_applies,
     open_attempts,
+    retired_scope_readings,
 )
 from unified_kg_rag.application.ingestion.namespace_lease import (
     NamespaceLease,
@@ -45,7 +46,7 @@ from unified_kg_rag.application.ingestion.pipeline_stages import (
     TranslationStage,
 )
 from unified_kg_rag.application.observability import configure_observability
-from unified_kg_rag.domain.ingestion.delta_detector import validate_retired_scopes
+from unified_kg_rag.domain.ingestion.delta_detector import retired_scope_groups
 from unified_kg_rag.domain.models import (
     Config,
     ExtractionSettings,
@@ -988,10 +989,11 @@ class DataIngestionPipeline:
                 "in the doc-status registry"
             )
         parsing = self.config.processing.document_parsing
-        validate_retired_scopes(
+        retired_scope_groups(
             retired,
             parsing.source_scope or source_directory.as_posix(),
             config_registry_namespace(self.config.indexing, parsing.index_value),
+            retired_scope_readings,
         )
 
     def _resolve_pipeline_id(

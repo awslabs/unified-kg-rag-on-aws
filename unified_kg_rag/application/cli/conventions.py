@@ -74,7 +74,12 @@ def exits_on_sigterm(main: Callable[_P, _R]) -> Callable[_P, _R]:
     def wrapper(*args: _P.args, **kwargs: _P.kwargs) -> _R:
         if threading.current_thread() is not threading.main_thread():
             return main(*args, **kwargs)
-        _json.update(enabled=False, printed=False)
+        argv = next((a for a in args if isinstance(a, list)), sys.argv[1:])
+        # Set from the command line before it is parsed, so an argparse
+        # error or a config that fails to load still prints a JSON status.
+        _json.update(enabled=_wants_json(argv), printed=False)
+        if _json["enabled"]:
+            console.stderr = True
         previous = signal.signal(signal.SIGTERM, _exit)
         try:
             result = main(*args, **kwargs)
@@ -92,6 +97,16 @@ def exits_on_sigterm(main: Callable[_P, _R]) -> Callable[_P, _R]:
             signal.signal(signal.SIGTERM, previous)
 
     return wrapper
+
+
+def _wants_json(argv: list[str]) -> bool:
+    """Whether ``argv`` asks for ``--output-format json`` (read before the
+    command line is parsed; :func:`json_output` then decides)."""
+    return any(
+        arg == "--output-format=json"
+        or (arg == "--output-format" and argv[i + 1 : i + 2] == ["json"])
+        for i, arg in enumerate(argv)
+    )
 
 
 def add_output_format_argument(parser: argparse.ArgumentParser) -> None:

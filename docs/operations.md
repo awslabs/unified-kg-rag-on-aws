@@ -542,7 +542,7 @@ account-level backstop) is in
 | `kg_rag.retrieve` | strategy | Hits per result type, up to 50 source ids |
 | `kg_rag.fusion` | strategy | In/out counts, the step's `kg_rag.rerank_status` |
 | `kg_rag.rerank` | fusion | `kg_rag.rerank.status` (`ok`, `empty`, `error`), document counts |
-| `kg_rag.context_build` | strategy | Tokens used vs the token budget |
+| `kg_rag.context_build` | query (`drift`: the round's actions span) | Tokens used vs the token budget |
 | `kg_rag.global.select`, `kg_rag.global.map` | strategy (`global`) | Select, once per query: `kg_rag.depth` (configured), `kg_rag.cut` (the cut mapped after falling back to a shallower one), `kg_rag.reports`, `kg_rag.dynamic`. Map: `kg_rag.reports`, `kg_rag.map_calls`, `kg_rag.report_tokens` |
 | `kg_rag.drift.primer`, `kg_rag.drift.actions` | strategy (`drift`) | Primer: `kg_rag.reports`, `kg_rag.answers`. One actions span per round (`kg_rag.depth`, `kg_rag.actions`), with the round's local searches under it |
 | `kg_rag.guardrail` | query | One per screened query or answer: `aws.bedrock.guardrail.id`, `.source` (`input`, `output`), `.action` (`none`, `masked`, `blocked`), `.intervened`, `.policies` |

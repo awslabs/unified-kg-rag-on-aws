@@ -30,6 +30,8 @@ SKIP_REASON_EMPTY_REFERENCE = "empty_reference"
 # The guardrail blocked the answer and withdrew its sources: retrieval cannot
 # be judged from what is left.
 SKIP_REASON_GUARDRAIL_BLOCKED = "guardrail_blocked"
+# The answer had no context (the chain abstained): nothing to be faithful to.
+SKIP_REASON_NO_CONTEXTS = "no_contexts"
 
 
 def judge_model_kwargs(config: Config) -> dict[str, Any]:
