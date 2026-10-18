@@ -815,7 +815,7 @@ changed once with the full-config keys (#332).
   `LanguageModelTimeoutError` (a `LanguageModelError` and still a
   `TimeoutError`), and `degraded_error` names it; `run-eval`'s invalid
   dataset and `run-visualization`'s invalid data errors are
-  `DataProcessingError`s (#PR).
+  `DataProcessingError`s (#367).
 - A claim whose subject or object matches several entities equally well
   (spelling or legal-form variants: "Acme Inc" against "Acme" and "Acme
   Corp") binds to the one its own text unit states, then to the smallest
@@ -1276,17 +1276,17 @@ changed once with the full-config keys (#332).
 - `indexing.additional_suffix` and `processing.document_parsing.index_value`
   are checked when the config loads (lowercase letters, digits, `-`, `_`):
   an uppercase or dotted value loaded and failed every run at indexing,
-  after the extraction had been paid for (#PR).
+  after the extraction had been paid for (#367).
 - A lost lease is no longer logged as a failed cleanup by the OpenSearch
-  indexer's stale-index and unswapped-index deletes; it stops the run (#PR).
+  indexer's stale-index and unswapped-index deletes; it stops the run (#367).
 - A CLI stopped by SIGTERM or Ctrl-C exits at once (logs, tracing and
   stdout flushed) instead of waiting at interpreter exit for the model calls
   and pool tasks the stop abandoned, which could keep a stopped ECS task
-  alive past its stop timeout (#PR).
+  alive past its stop timeout (#367).
 - A stop during entity resolution or MinHash deduplication now cancels the
   process pool's queued tasks: the pool's own `with` block reset the
   cancellation, so every queued task still ran and held up the process's
-  exit (#PR).
+  exit (#367).
 - Docs match the code again: a reset skips quarantined documents and keeps
   their records, and graph queries see old and rebuilt items mixed until its
   final drop; only the final checkpoint upload fails a run; a run killed
