@@ -31,6 +31,7 @@ from unified_kg_rag.domain.models import Config
 from unified_kg_rag.shared import (
     AWSServiceError,
     GraphRAGException,
+    NamespaceLeaseError,
     StoreConnectionError,
     get_logger,
 )
@@ -848,13 +849,16 @@ class OpenSearchClient:
         line over 4 KB, so one call naming every index fails outright once
         enough have accumulated. Each batch is deleted on its own and a failed
         batch does not stop the rest; ``AWSServiceError`` is raised at the end
-        naming the indices that were not deleted.
+        naming the indices that were not deleted. A lost write lease
+        (``NamespaceLeaseError``) stops it at once.
         """
         not_deleted: list[str] = []
         errors: list[str] = []
         for batch in _index_name_batches(index_names):
             try:
                 self._delete_index_batch(batch)
+            except NamespaceLeaseError:
+                raise
             except Exception as e:
                 not_deleted.extend(batch)
                 errors.append(str(e))

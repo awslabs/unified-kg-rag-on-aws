@@ -312,6 +312,8 @@ class IndexingManager:
                 kept = self.opensearch_indexer.retain_extraction_records(
                     sorted(keys), suffix=suffix
                 )
+            except NamespaceLeaseError:
+                raise
             except Exception as e:  # noqa: BLE001 - garbage only costs space
                 logger.warning(
                     "Dropping the extraction records of '%s' its text units no "
@@ -1796,6 +1798,8 @@ class IndexingManager:
                     results[f"extraction_records_{suffix}"] = (
                         vector.delete_extraction_records(unused, suffix=suffix)
                     )
+            except NamespaceLeaseError:
+                raise
             except Exception as e:  # noqa: BLE001 - garbage only costs space
                 logger.warning(
                     "Collecting the unused extraction records of '%s' failed: %s",

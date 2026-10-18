@@ -601,3 +601,38 @@ def test_a_stop_cancels_the_queued_tasks_of_the_resolver_process_pool(
         signal.setitimer(signal.ITIMER_REAL, 0)
         signal.signal(signal.SIGALRM, previous)
     assert time.time() - started < 2.5
+
+
+def test_a_lost_lease_stops_delete_indices_at_once(mocker) -> None:
+    # Old behaviour: each batch's NamespaceLeaseError was collected, the
+    # later batches were still sent, and an AWSServiceError raised at the end.
+    client = object.__new__(OpenSearchClient)
+    batch = mocker.patch.object(
+        client, "_delete_index_batch", side_effect=NamespaceLeaseError("lost")
+    )
+    with pytest.raises(NamespaceLeaseError):
+        client.delete_indices([f"idx-{i}" for i in range(50)])
+    assert batch.call_count == 1
+
+
+@pytest.mark.parametrize("phase", ["retain", "collect"])
+def test_a_lost_lease_is_not_swallowed_by_the_record_cleanup(
+    mocker, phase: str
+) -> None:
+    # Old behaviour: the best-effort cleanup of extraction records logged the
+    # lost lease as a warning and the run went on to its next write.
+    config = Config()
+    vector = FakeVectorStore(opensearch_config=config.indexing.opensearch)
+    manager = IndexingManager(
+        config=config, vector_indexer=vector, graph_indexer=FakeGraphStore()
+    )
+    lost = NamespaceLeaseError("lost")
+    if phase == "retain":
+        mocker.patch.object(vector, "retain_extraction_records", side_effect=lost)
+        call = lambda: manager._retain_extraction_records([], ["default"])  # noqa: E731
+    else:
+        manager._removed_record_keys["default"] = {"k"}
+        mocker.patch.object(vector, "find_documents", side_effect=lost)
+        call = manager.collect_extraction_records
+    with pytest.raises(NamespaceLeaseError):
+        call()
