@@ -346,6 +346,40 @@ def test_find_ids_citing_reads_entities_and_communities_of_a_suffix(
     assert graph.find_ids_citing([], suffix="default") == {}
 
 
+def test_find_relationship_ids_citing_reads_the_edges_of_a_suffix(
+    harness: StoreHarness,
+) -> None:
+    graph = harness.graph_indexer
+    tenant = harness.suffix("s1")
+    graph.upsert_entities(
+        [
+            _entity("a"),
+            _entity("b"),
+            _entity("c"),
+            _entity("x", tenant),
+            _entity("y", tenant),
+        ]
+    )
+    stats = graph.upsert_relationships(
+        [
+            _rel("ab", "a", "b", text_unit_ids=["t1", "t2"]),
+            _rel("bc", "b", "c", text_unit_ids=["t3"]),
+            _rel("ca", "c", "a"),
+            _rel("xy", "x", "y", tenant, text_unit_ids=["t1"]),
+        ]
+    )
+    assert stats.failed_items == 0, stats.errors
+
+    found = graph.find_relationship_ids_citing(["t1", "t9"], suffix="default")
+    assert {i: sorted(units) for i, units in found.items()} == {"ab": ["t1", "t2"]}
+    assert graph.find_relationship_ids_citing(["t1"], suffix=tenant) == {"xy": ["t1"]}
+    # A unit id that only prefixes a cited one is not cited.
+    assert graph.find_relationship_ids_citing(["t"], suffix="default") == {}
+    both = graph.find_relationship_ids_citing(["t2", "t3"], suffix="default")
+    assert sorted(both) == ["ab", "bc"]
+    assert graph.find_relationship_ids_citing([], suffix="default") == {}
+
+
 def test_find_entity_ids_by_name_key_is_scoped_to_a_suffix(
     harness: StoreHarness,
 ) -> None:

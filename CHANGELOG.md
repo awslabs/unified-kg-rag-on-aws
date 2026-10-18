@@ -1617,6 +1617,16 @@ changed once with the full-config keys (#332).
   community that other documents also state): the next run touching one
   counted it as a stale earlier community, inflating the `community_drift`
   `stale_communities` and `overlap_share` (#362).
+- A removal killed after it deleted the vector copy of an edge it had
+  re-keyed, and before the graph copy, no longer leaves that edge behind
+  once resumed: the removal looked for edges only among those of the
+  entities citing the removed text units, which the dead run had already
+  stripped. The graph now finds the edges citing a text unit
+  (`GraphIndexer.find_relationship_ids_citing`, on Neptune, Gremlin Server,
+  the embedded store and the fake), and a stripped edge is derived with its
+  endpoints. On Neptune the lookup reads the suffix's edges once per batch
+  of removed text units (an edge holds its text units as one string) in
+  place of the incident edges of the entities citing them (#PR).
 - Removing a document no longer leaves its text unnoticed in community
   reports: a kept report that cites a removed text unit is counted in the
   `community_drift` metrics (`outdated_reports`, deletion-only runs

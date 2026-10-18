@@ -1356,6 +1356,15 @@ class IndexingManager:
                 if relationship_ids
                 else []
             )
+            # An edge is derived with its endpoints (the resolved entities map
+            # to them). They cite the removed units too, unless a killed run
+            # stripped them and left the edge (re-keyed, not yet deleted).
+            ends = {i for r in relationships for i in (r.source_id, r.target_id)}
+            ends -= {e.id for e in entities}
+            if ends:
+                entities += self.neptune_indexer.read_entities(
+                    sorted(ends), suffix=suffix
+                )
             entities = self._with_full_descriptions(
                 entities, self.opensearch_indexer.read_entity_descriptions, suffix
             )
@@ -1640,20 +1649,27 @@ class IndexingManager:
                 ),
                 **(found or {}),
             }
-            incident = (
-                graph.find_incident_relationship_ids(sorted(cited), suffix=suffix)
-                if cited
-                else []
-            )
+            # The graph's edges citing them; a store that cannot look edges up
+            # by text unit has them read among the cited entities' edges
+            # (which misses an edge a killed run re-keyed and did not delete:
+            # its endpoints no longer cite the units).
+            edges = graph.find_relationship_ids_citing(text_unit_ids, suffix=suffix)
+            if edges is None:
+                incident = (
+                    graph.find_incident_relationship_ids(sorted(cited), suffix=suffix)
+                    if cited
+                    else []
+                )
+                edges = {
+                    r.id: list(r.text_unit_ids or [])
+                    for r in graph.read_relationships(incident, suffix=suffix)
+                    if removed.intersection(r.text_unit_ids or [])
+                }
             relationships = {
                 **self._vector_citing(
                     prefixes.relationships_index_prefix, text_unit_ids, suffix
                 ),
-                **{
-                    r.id: list(r.text_unit_ids or [])
-                    for r in graph.read_relationships(incident, suffix=suffix)
-                    if removed.intersection(r.text_unit_ids or [])
-                },
+                **edges,
             }
             communities = (
                 graph.find_ids_citing(text_unit_ids, suffix=suffix, communities=True)
