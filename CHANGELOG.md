@@ -1250,6 +1250,12 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Ctrl-C (or a `SystemExit`) during indexing no longer lets the worker
+  threads it leaves running write after the run released its lease, when
+  another run may hold it: a released lease fails their next write, and
+  Ctrl-C sets the stop fence like SIGTERM, so they stop before the release.
+  The stop fence exempts the thread that runs the pipeline instead of the
+  main thread (#PR).
 - A SIGTERM no longer waits for the model calls in flight (up to the call
   timeout, past the task's 120 s stop timeout) or, in entity resolution and
   MinHash deduplication, for every queued process-pool task (#PR).

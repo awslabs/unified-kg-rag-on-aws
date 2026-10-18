@@ -58,14 +58,11 @@ _sleep = time.sleep
 RETRYABLE_BULK_ITEM_STATUSES = frozenset({429, 502, 503, 504})
 
 
-# Bounds for one delete-index request. The names are joined into the URL
-# path, and OpenSearch's default max request line is 4 KB; staying well under
-# it leaves room for the host, URL encoding and query string.
 # Per-request timeout and transport retries of the sync (indexing) client. The
 # async client serves queries and takes search.store_timeout_seconds and
 # search.store_max_attempts instead: a hung cluster blocked a query for
 # 6 x 180 s before it answered from no context.
-_REQUEST_TIMEOUT_SECONDS = 180
+INDEXING_REQUEST_TIMEOUT_SECONDS = 180.0
 _CLIENT_MAX_RETRIES = 5
 _CLIENT_RETRY_STATUSES = (429, 502, 503, 504)
 # Backoff between the attempts of one query request (see
@@ -83,6 +80,9 @@ _QUERY_SEARCHES_PER_QUERY = 3
 _QUERY_POOL_MIN = 10
 _QUERY_POOL_MAX = 200
 
+# Bounds for one delete-index request. The names are joined into the URL
+# path, and OpenSearch's default max request line is 4 KB; staying well under
+# it leaves room for the host, URL encoding and query string.
 _DELETE_BATCH_MAX_NAMES = 20
 _DELETE_BATCH_MAX_CHARS = 3000
 # How many undeleted names a delete_indices error message lists.
@@ -566,7 +566,9 @@ class OpenSearchClient:
             "use_ssl": self.opensearch_config.use_ssl,
             "verify_certs": self.opensearch_config.verify_certs,
             "timeout": (
-                search.store_timeout_seconds if async_mode else _REQUEST_TIMEOUT_SECONDS
+                search.store_timeout_seconds
+                if async_mode
+                else INDEXING_REQUEST_TIMEOUT_SECONDS
             ),
             # Both clients retry timeouts and 429s: with opensearch-py's
             # defaults (retry_on_timeout=False, retry_on_status=(502, 503,

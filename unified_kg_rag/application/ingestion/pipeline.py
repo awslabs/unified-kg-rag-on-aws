@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import functools
 import secrets
+import signal
 import threading
 import time
 from collections.abc import Callable, Iterator, Mapping
@@ -99,26 +100,32 @@ _STALE_DELTA = (
     "often enough to isolate the document that kills them)"
 )
 T = TypeVar("T", bound=BaseModel)
-# The longest single store request of the indexing path (the Neptune and
-# OpenSearch ingestion request timeouts); indexing.lease_seconds should be at
-# least three times it (see namespace_lease).
-_LONGEST_WRITE_REQUEST_SECONDS = 180.0
+
+
+def _longest_write_request_seconds() -> float:
+    """The longest single store request of the indexing path (the Neptune and
+    OpenSearch indexing request timeouts); indexing.lease_seconds should be
+    at least three times it (see namespace_lease)."""
+    from unified_kg_rag.adapters.aws.neptune import INGESTION_REQUEST_TIMEOUT_SECONDS
+    from unified_kg_rag.adapters.aws.opensearch import INDEXING_REQUEST_TIMEOUT_SECONDS
+
+    return max(INGESTION_REQUEST_TIMEOUT_SECONDS, INDEXING_REQUEST_TIMEOUT_SECONDS)
 
 
 class _StopFence:
     """The write fence of a pipeline run that ends its worker threads' writes
-    once a stop was requested (``request_stop``). The main thread gets the
-    ``PipelineInterrupted`` from the request itself, and its unwinding
-    (closing the attempts, uploading the checkpoint) still writes."""
+    once a stop was requested (``request_stop``, or Ctrl-C). The thread that
+    runs the pipeline gets the ``PipelineInterrupted`` (or
+    ``KeyboardInterrupt``) itself, and its unwinding (closing the attempts,
+    uploading the checkpoint) still writes."""
 
     def __init__(self, pipeline: DataIngestionPipeline) -> None:
         self._pipeline = pipeline
+        self._run_thread = threading.current_thread()
 
     def check(self) -> None:
         signum = self._pipeline._stop_signal
-        if signum is not None and threading.current_thread() is not (
-            threading.main_thread()
-        ):
+        if signum is not None and threading.current_thread() is not self._run_thread:
             raise PipelineInterrupted(signum)
 
 
@@ -652,6 +659,10 @@ class DataIngestionPipeline:
                 )
             self._execute_pipeline(context, start_stage_name)
         except KeyboardInterrupt:
+            # Ctrl-C did not go through request_stop: the stop fence must
+            # still end the writes of the worker threads it left running.
+            if self._stop_signal is None:
+                self._stop_signal = signal.SIGINT
             # A second stop request waits for the attempts and the checkpoint.
             self._checkpointing = True
             try:
@@ -742,13 +753,14 @@ class DataIngestionPipeline:
             self.config.indexing, self.config.processing.document_parsing.index_value
         )
         seconds = self.config.indexing.lease_seconds
-        if seconds < 3 * _LONGEST_WRITE_REQUEST_SECONDS:
+        longest = _longest_write_request_seconds()
+        if seconds < 3 * longest:
             logger.warning(
                 "indexing.lease_seconds (%gs) is under three times the longest "
                 "store write request (%gs): a request in flight when the lease "
                 "runs out can still write after another run took it",
                 seconds,
-                _LONGEST_WRITE_REQUEST_SECONDS,
+                longest,
             )
         return NamespaceLease(self._doc_status, namespace, seconds)
 
