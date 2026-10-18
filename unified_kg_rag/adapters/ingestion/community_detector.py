@@ -17,7 +17,10 @@ from unified_kg_rag.adapters.llm.chain_factory import (
 from unified_kg_rag.adapters.llm.retry import transient_error_predicate
 from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
 from unified_kg_rag.adapters.providers import Providers
-from unified_kg_rag.domain.ingestion.base_processor import edge_weight
+from unified_kg_rag.domain.ingestion.base_processor import (
+    edge_weight,
+    merge_attributes,
+)
 from unified_kg_rag.domain.ingestion.graph_builder import edge_relationships
 from unified_kg_rag.domain.models import (
     Community,
@@ -25,6 +28,7 @@ from unified_kg_rag.domain.models import (
     CommunityMetrics,
     CommunityReport,
     Config,
+    Constants,
     HierarchicalCommunity,
     ModelPurpose,
     ModelRole,
@@ -932,15 +936,30 @@ class CommunityDetector:
         )
 
     def _extract_attributes_from_graph(self) -> dict[str, Any]:
+        """The index suffix the communities and reports are written under.
+
+        Only that placement key: the rest of a node's attributes (its
+        document ``filters``, its own extracted attributes) describe that one
+        entity. Copying the first node's map gave every report that entity's
+        document filters, so an attribute filter kept or dropped reports by an
+        arbitrary entity's documents; a report's filters come from its own
+        text units (``_attach_report_lineage``).
+        """
+        key = Constants.INDEX.value
+        attributes: Any = None
         if hasattr(self.graph, "graph") and self.graph.graph:
-            attributes = self.graph.graph.get("attributes", {})
-            if isinstance(attributes, dict):
-                return attributes
-            return {}
-        for _, node_data in self.graph.nodes(data=True):
-            node_attributes = node_data.get("attributes")
-            if isinstance(node_attributes, dict):
-                return node_attributes
+            attributes = self.graph.graph.get("attributes")
+        else:
+            attributes = next(
+                (
+                    data.get("attributes")
+                    for _, data in self.graph.nodes(data=True)
+                    if isinstance(data.get("attributes"), dict)
+                ),
+                None,
+            )
+        if isinstance(attributes, dict) and key in attributes:
+            return {key: attributes[key]}
         return {}
 
     def _create_community_object(
@@ -1068,7 +1087,8 @@ class CommunityDetector:
         communities: list[Community],
         text_units: list[TextUnit] | None,
     ) -> None:
-        """Record each report's candidate source text units and documents.
+        """Record each report's candidate source text units, documents and
+        document ``filters``.
 
         A report is the only artifact in the index with no pointer back to its
         sources, so a retrieved report cannot be filtered by origin. Detection
@@ -1084,6 +1104,12 @@ class CommunityDetector:
         not establish sentence-level citation support; they exist so a consumer
         can filter reports by source or re-summarize them per reader.
 
+        The report's ``filters`` attribute is the union of its text units'
+        document filters, so an attribute filter matches a report when one of
+        its documents matches, as it does an entity. Without text units, or
+        when none has filters, the report has none and an attribute filter
+        excludes it (fail-closed).
+
         Args:
             reports: Reports to annotate, mutated in place.
             communities: The communities the reports were generated from.
@@ -1091,6 +1117,13 @@ class CommunityDetector:
         """
         unit_to_documents = {
             unit.id: list(unit.document_ids or []) for unit in (text_units or [])
+        }
+        filters_key = Constants.FILTERS.value
+        unit_filters = {
+            unit.id: filters
+            for unit in (text_units or [])
+            if isinstance(filters := (unit.attributes or {}).get(filters_key), dict)
+            and filters
         }
         community_units = {c.id: list(c.text_unit_ids or []) for c in communities}
 
@@ -1102,6 +1135,16 @@ class CommunityDetector:
                 document_ids.update(unit_to_documents.get(unit_id, ()))
             # Sorted for a stable, reproducible record.
             report.document_ids = sorted(document_ids)
+            attributes = {
+                k: v for k, v in (report.attributes or {}).items() if k != filters_key
+            }
+            maps = [
+                {filters_key: unit_filters[u]} for u in unit_ids if u in unit_filters
+            ]
+            filters = (merge_attributes(maps) or {}).get(filters_key)
+            if filters:
+                attributes[filters_key] = filters
+            report.attributes = attributes
 
     def _run_report_batch(
         self,

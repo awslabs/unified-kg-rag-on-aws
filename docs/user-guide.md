@@ -836,11 +836,11 @@ steps on Neptune. Each store accepts the fields its indexer writes:
   listing the filterable keys
   (`unified_kg_rag/adapters/storage/filter_schema.py`).
 - OpenSearch applies `attr_<key>` and `attributes.<path>` strictly
-  (fail-closed): an item without the attribute is excluded, so community
-  reports, which usually lack document attributes, drop out of an
-  attribute-filtered query. A vector or hybrid search skips an index none of
-  whose documents carry the attribute (OpenSearch 2.13 rejects a kNN filter
-  on a field the index does not map). Relationships and claims carry no
+  (fail-closed): an item without the attribute is excluded. A community
+  report carries the filter values of its text units' documents, so it
+  matches when one of them does. A vector or hybrid search skips an index
+  none of whose documents carry the attribute (OpenSearch 2.13 rejects a kNN
+  filter on a field the index does not map). Relationships and claims carry no
   document attribute: under an attribute filter they are kept only when one
   of their text units passes it.
 - Neptune applies `attr_<key>` where present (a vertex without the property

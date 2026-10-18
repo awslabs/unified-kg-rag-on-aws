@@ -781,9 +781,9 @@ run-rag --query "..." --verbose --filters attr_category:research type:person \
   필터 가능한 키 목록과 함께 `InvalidFilterError`를 일으킵니다
   (`unified_kg_rag/adapters/storage/filter_schema.py`).
 - OpenSearch는 `attr_<key>`와 `attributes.<path>`를 엄격하게(fail-closed) 적용합니다.
-  속성이 없는 항목은 제외되므로, 대개 문서 속성이 없는 커뮤니티 리포트는 속성 필터를 건
-  질의에서 빠집니다. 벡터나 하이브리드 검색은 그 속성을 가진 문서가 하나도 없는 인덱스를
-  건너뜁니다(OpenSearch 2.13은 인덱스가 매핑하지 않은 필드에 대한 kNN 필터를 거부함).
+  속성이 없는 항목은 제외됩니다. 커뮤니티 리포트는 자기 텍스트 단위가 속한 문서들의 필터
+  값을 가지므로 그중 하나가 일치하면 일치합니다. 벡터나 하이브리드 검색은 그 속성을 가진
+  문서가 하나도 없는 인덱스를 건너뜁니다(OpenSearch 2.13은 인덱스가 매핑하지 않은 필드에 대한 kNN 필터를 거부함).
   관계와 주장에는 문서 속성이 없으므로, 속성 필터를 걸면 텍스트 단위 중 하나라도 필터를
   통과한 경우에만 남습니다.
 - Neptune은 `attr_<key>`를 "있는 경우" 기준으로 적용합니다(그 속성이 없는 정점은 통과).
