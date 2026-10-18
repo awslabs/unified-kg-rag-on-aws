@@ -877,6 +877,11 @@ changed once with the full-config keys (#332).
   summary and the new description, and a stored edge whose rank alone
   changed is updated in place instead of embedded again (a hub's new
   neighbour: 175 to 43 embedded texts) (#PR).
+- The incremental lookups read only the fields they use: the text units'
+  `attributes` (their extraction-record keys), the `text_unit_ids` of the
+  claims and reports citing removed text units, and no field of a text unit
+  probed for its id; they fetched whole documents, a text unit's text
+  included. The embedded search engine accepts `_source.includes` (#PR).
 - The indexing stage reports `underived_items`, the stored items an
   incremental run kept as they were because a text unit they cite names no
   stored extraction record (#PR).

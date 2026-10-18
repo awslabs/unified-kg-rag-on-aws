@@ -47,7 +47,7 @@ from collections.abc import Iterator
 from contextlib import AbstractContextManager, contextmanager
 from fnmatch import fnmatchcase
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 import numpy as np
 from opensearchpy.exceptions import NotFoundError
@@ -151,8 +151,19 @@ def _is_pattern(name: str) -> bool:
     return any(ch in name for ch in "*?[")
 
 
-def _excluded(field: str, patterns: list[str]) -> bool:
-    return any(fnmatchcase(field, pattern) for pattern in patterns)
+class _SourceFilter(NamedTuple):
+    """The top-level ``_source`` fields a search returns: those matching an
+    ``includes`` pattern (all without one) and no ``excludes`` pattern."""
+
+    includes: list[str] | None
+    excludes: list[str]
+
+    def keeps(self, field: str) -> bool:
+        if self.includes is not None and not any(
+            fnmatchcase(field, pattern) for pattern in self.includes
+        ):
+            return False
+        return not any(fnmatchcase(field, pattern) for pattern in self.excludes)
 
 
 def _merge(target: dict[str, Any], partial: dict[str, Any]) -> dict[str, Any]:
@@ -841,7 +852,7 @@ class SQLiteSearchEngine:
         size = body.get("size", _DEFAULT_SIZE)
         if not isinstance(size, int) or size < 0:
             raise rejected(f"[size] must be a non-negative integer, got {size!r}")
-        excludes = self._excludes(body.get("_source", True))
+        excludes = self._source_filter(body.get("_source", True))
         query = body.get("query") or {"match_all": {}}
         # Every read of one search from one snapshot: an index another
         # process deletes meanwhile is either searched whole or not found.
@@ -891,7 +902,7 @@ class SQLiteSearchEngine:
         ids: list[str],
         score: float,
         size: int,
-        excludes: list[str] | None,
+        excludes: _SourceFilter | None,
     ) -> dict[str, Any]:
         """Answer an id lookup from SQL, without loading the index."""
         wanted = sorted(set(ids))
@@ -915,7 +926,7 @@ class SQLiteSearchEngine:
                             f"AND id IN ({marks})",
                             (name, *batch),
                         ):
-                            if doc_id in sources and not _excluded(field, excludes):
+                            if doc_id in sources and excludes.keeps(field):
                                 sources[doc_id][field] = np.frombuffer(
                                     vec, dtype=np.float32
                                 ).tolist()
@@ -930,7 +941,7 @@ class SQLiteSearchEngine:
                                 else {
                                     k: v
                                     for k, v in sources[doc_id].items()
-                                    if not _excluded(k, excludes)
+                                    if excludes.keeps(k)
                                 }
                             ),
                         )
@@ -942,30 +953,36 @@ class SQLiteSearchEngine:
 
     @staticmethod
     def _source(
-        index: LoadedIndex, doc_id: str, excludes: list[str] | None
+        index: LoadedIndex, doc_id: str, excludes: _SourceFilter | None
     ) -> dict[str, Any] | None:
         if excludes is None:
             return None
-        source = {
-            k: v for k, v in index.sources[doc_id].items() if not _excluded(k, excludes)
-        }
+        source = {k: v for k, v in index.sources[doc_id].items() if excludes.keeps(k)}
         for name, vectors in index.vectors.items():
             row = vectors.rows.get(doc_id)
-            if row is not None and not _excluded(name, excludes):
+            if row is not None and excludes.keeps(name):
                 source[name] = vectors.matrix[row].tolist()
         return source
 
     @staticmethod
-    def _excludes(source: Any) -> list[str] | None:
-        """The ``_source.excludes`` patterns (None: no source at all)."""
+    def _source_filter(source: Any) -> _SourceFilter | None:
+        """The ``_source`` setting's filter (None: no source at all)."""
         if source is True:
-            return []
+            return _SourceFilter(None, [])
         if source is False:
             return None
-        if isinstance(source, dict) and set(source) <= {"excludes"}:
-            patterns = source.get("excludes") or []
-            return [patterns] if isinstance(patterns, str) else list(patterns)
-        raise rejected("[_source] supports only true, false or {excludes: [...]}")
+        if isinstance(source, dict) and set(source) <= {"includes", "excludes"}:
+
+            def patterns(key: str) -> list[str]:
+                value = source.get(key) or []
+                return [value] if isinstance(value, str) else list(value)
+
+            includes = patterns("includes") if "includes" in source else None
+            return _SourceFilter(includes, patterns("excludes"))
+        raise rejected(
+            "[_source] supports only true, false or {includes: [...], "
+            "excludes: [...]} of top-level fields"
+        )
 
     @staticmethod
     def _response(
