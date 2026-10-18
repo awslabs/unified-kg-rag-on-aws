@@ -810,7 +810,7 @@ changed once with the full-config keys (#332).
   Corp") binds to the one its own text unit states, then to the smallest
   name. Full builds may therefore bind such a claim to another entity than
   before: the alphabetically smaller spelling came from another document
-  (#PR).
+  (#364).
 - `indexing.lease_seconds` defaults to 600 s (was 300 s), three times the
   stores' 180 s request timeout; a shorter lease logs a WARNING at the start
   of the run. A run that dies now blocks its namespace for up to 10 minutes
@@ -1640,21 +1640,21 @@ changed once with the full-config keys (#332).
 - Incremental runs over three spellings of one name converge with a full
   build: a claim resolved against all of the corpus's entities could bind
   to a spelling its text unit does not state, which an incremental run,
-  resolving against its units' entities, could not reproduce (#PR).
+  resolving against its units' entities, could not reproduce (#364).
 - A stored claim that no claim of its text units' current records matches
   under any spelling is no longer kept unresolved by an incremental run: it
   becomes the claim it shares the most text units with, or is deleted when
-  there is none (#PR).
+  there is none (#364).
 - A run resumed after it split two spellings in the graph and died before
   their edges were written now moves the other spelling's edges along when
   the stored entity no longer holds that spelling's key: an edge gleaning
-  added for "Initech Corp" stayed on "Initech" (#PR).
+  added for "Initech Corp" stayed on "Initech" (#364).
 - The same holds when the two spellings share no text unit: an edge or
   claim of the merged entity follows the spelling its text units state
   once the run is resumed (an Initech-Depot edge of double weight stayed).
   A run touching an entity now also derives the stored edges of the other
   spellings of its name (a full build keeping them apart leaves those
-  edges as they are), at the cost of reading them (#PR).
+  edges as they are), at the cost of reading them (#364).
 - Removing a document no longer leaves its text unnoticed in community
   reports: a kept report that cites a removed text unit is counted in the
   `community_drift` metrics (`outdated_reports`, deletion-only runs
