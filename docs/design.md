@@ -388,9 +388,13 @@ gets its models and stores from the run's `Providers` bundle.
   A connected component smaller than `min_community_size` (an isolated
   entity, a pair) gets no community or report; only these are skipped, unlike
   MS GraphRAG's `use_lcc`, which drops every component but the largest. On an
-  incremental run, whose graph is only the delta, a small component touching
-  an entity the graph store holds from other text units is clustered, as in
-  the whole graph. A
+  incremental run, whose graph is only the delta, a small component is
+  clustered when it reaches `min_community_size` in the whole graph a full
+  build would cluster: walking the stored relationships that cite text units
+  of documents the run neither processes nor removes, at most
+  `min_community_size` batched reads. Stored entities without a community it
+  links to stay without one until a rebuild (`community_drift`
+  `unclustered_entities`). A
   parent identical to its only child is never created, so each distinct
   community is reported once. A Leiden failure fails the stage instead of
   truncating the hierarchy.

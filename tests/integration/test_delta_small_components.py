@@ -1,11 +1,13 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""A delta's small components that touch the stored graph get a community.
+"""A delta's small components get a community when a full build's would.
 
 An incremental run clusters only its delta. A component of fewer than
 ``min_community_size`` entities gets no community (#347), so a new entity
 whose one relationship is to a stored entity, a pair in the delta graph,
-got none, where a full build clusters it with its stored neighbour.
+got none, where a full build clusters it with its stored neighbour. The
+component is measured in the whole graph a full build clusters: the stored
+graph without what the run replaces or removes.
 """
 
 from __future__ import annotations
@@ -22,38 +24,137 @@ from unified_kg_rag.domain.models import PipelineStageStatus
 pytestmark = pytest.mark.integration
 
 
-def _communities(providers, name: str) -> list[str]:
-    graph = providers.build_graph_indexer()
-    try:
-        assert isinstance(graph, SQLiteGraphIndexer)
-        ids = [i for i, n in graph.read_entity_names() if n == name]
-        return [c for e in graph.read_entities(ids) for c in e.community_ids or []]
-    finally:
-        graph.close()
+# Every case runs under the default suffix and another one: the stored graph
+# is read under the suffix of the delta's entities.
+SUFFIXES = pytest.mark.parametrize("suffix", [None, "tenant-a"])
 
 
-def test_a_new_entity_linked_only_to_a_stored_one_gets_a_community(
-    tmp_path: Path, no_aws
-) -> None:
+def _setup(tmp_path: Path, suffix: str | None):
     config = e2e._config(tmp_path / "stores", tmp_path / "viz")
+    config.processing.document_parsing.index_value = suffix
     server = FakeOllama(e2e._respond, e2e.ANSWER, e2e.DIM)
     providers = e2e._providers(
         config, server, e2e.FakeCrossEncoder("synthetic-reranker")
     )
-    source = tmp_path / "corpus"
-    source.mkdir()
-    (source / "contract.txt").write_text("Vendor supplies widgets to Buyer.")
-    (source / "logistics.txt").write_text("Depot stores widgets for Vendor.")
-    context = e2e._ingest(config, providers, source, tmp_path / "run-1")
-    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
-    assert _communities(providers, "Vendor")
+    return config, providers
 
+
+def _ingest_all(tmp_path: Path, runs: list[dict[str, str]], suffix: str | None):
+    """Ingest each corpus of ``runs`` in turn into one set of stores."""
+    config, providers = _setup(tmp_path, suffix)
+    source = tmp_path / "corpus"
+    for n, corpus in enumerate(runs):
+        source.mkdir(parents=True, exist_ok=True)
+        for old in source.iterdir():
+            old.unlink()
+        for name, text in corpus.items():
+            (source / name).write_text(text)
+        context = e2e._ingest(config, providers, source, tmp_path / f"run-{n}")
+        assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    return providers, context
+
+
+def _unclustered(providers, suffix: str | None) -> set[str]:
+    graph = providers.build_graph_indexer()
+    try:
+        assert isinstance(graph, SQLiteGraphIndexer)
+        ids = [i for i, _ in graph.read_entity_names(suffix=suffix)]
+        entities = graph.read_entities(ids, suffix=suffix)
+        assert entities
+        return {e.name for e in entities if not e.community_ids}
+    finally:
+        graph.close()
+
+
+def _communities(providers, name: str, suffix: str | None = None) -> list[str]:
+    graph = providers.build_graph_indexer()
+    try:
+        assert isinstance(graph, SQLiteGraphIndexer)
+        ids = [i for i, n in graph.read_entity_names(suffix=suffix) if n == name]
+        assert ids
+        entities = graph.read_entities(ids, suffix=suffix)
+        return [c for e in entities for c in e.community_ids or []]
+    finally:
+        graph.close()
+
+
+@SUFFIXES
+def test_a_new_entity_linked_only_to_a_stored_one_gets_a_community(
+    tmp_path: Path, no_aws, suffix: str | None
+) -> None:
     # The delta graph is the pair Carrier - Vendor; Vendor is stored.
-    (source / "freight.txt").write_text("Carrier moves widgets for Vendor.")
-    context = e2e._ingest(config, providers, source, tmp_path / "run-2")
-    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    stored = {
+        "contract.txt": "Vendor supplies widgets to Buyer.",
+        "logistics.txt": "Depot stores widgets for Vendor.",
+    }
+    providers, context = _ingest_all(
+        tmp_path,
+        [stored, {**stored, "freight.txt": "Carrier moves widgets for Vendor."}],
+        suffix,
+    )
+
     assert len(context.incremental_delta.new) == 1
-    assert _communities(providers, "Carrier")
+    assert _communities(providers, "Carrier", suffix)
+
+
+_PAIR = "Depot and Carrier trade."
+
+
+@pytest.mark.parametrize(
+    "runs",
+    [
+        # A singleton renamed: the stored entity is only the deleted file's.
+        [
+            {"a.txt": "Vendor trades.", "x.txt": "Buyer and Depot and Carrier."},
+            {"r.txt": "Vendor trades.", "x.txt": "Buyer and Depot and Carrier."},
+        ],
+        # A stored singleton gains a neighbour: a pair in the whole graph too.
+        [
+            {"a.txt": "Vendor trades.", "x.txt": _PAIR},
+            {"a.txt": "Vendor trades.", "b.txt": "Vendor and Buyer.", "x.txt": _PAIR},
+        ],
+        # The stored edge to a third entity is only the edited file's.
+        [
+            {"u.txt": "Vendor trades.", "g.txt": _PAIR, "c.txt": "Vendor and Depot."},
+            {"u.txt": "Vendor trades.", "g.txt": _PAIR, "c.txt": "Vendor and Buyer."},
+        ],
+    ],
+    ids=["renamed", "stored-singleton-pair", "edge-of-edited-file"],
+)
+@SUFFIXES
+def test_a_small_delta_component_small_in_the_whole_graph_gets_none(
+    tmp_path: Path, no_aws, runs: list[dict[str, str]], suffix: str | None
+) -> None:
+    # Old behaviour: any entity the stores held from another text unit, even
+    # one of a deleted or edited file, clustered the component, and so did a
+    # component that is a pair in the whole graph too.
+    _, delta = _ingest_all(tmp_path / "incremental", runs, suffix)
+    full, _ = _ingest_all(tmp_path / "full", runs[-1:], suffix)
+
+    assert {e.name for e in delta.resolved_entities} <= _unclustered(full, suffix)
+    assert not delta.communities
+
+
+@SUFFIXES
+def test_stored_entities_a_delta_links_without_a_community_are_reported(
+    tmp_path: Path, no_aws, suffix: str | None
+) -> None:
+    # Vendor - Depot is stored, a pair without a community; the delta's
+    # Depot - Carrier makes it a component of three, so the delta pair is
+    # clustered, but Vendor, outside the delta, stays without one.
+    providers, context = _ingest_all(
+        tmp_path,
+        [
+            {"a.txt": "Vendor and Depot."},
+            {"a.txt": "Vendor and Depot.", "b.txt": _PAIR},
+        ],
+        suffix,
+    )
+
+    assert _unclustered(providers, suffix) == {"Vendor"}
+    metrics = {r.stage_name: r.metrics for r in context.stage_results}
+    assert metrics["community_detection"]["unclustered_stored_entities"] == 1
+    assert metrics["indexing"]["community_drift"]["unclustered_entities"] == 1
 
 
 no_aws = e2e.no_aws

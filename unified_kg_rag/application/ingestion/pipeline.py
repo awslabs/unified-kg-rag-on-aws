@@ -446,7 +446,10 @@ class DataIngestionPipeline:
             PipelineStageType.CLAIM_EXTRACTION: {
                 "reuse_stored": not self.pipeline_config.force_rebuild
             },
-            PipelineStageType.COMMUNITY_DETECTION: {"cache_directory": cache_directory},
+            PipelineStageType.COMMUNITY_DETECTION: {
+                "cache_directory": cache_directory,
+                "doc_status": doc_status,
+            },
             PipelineStageType.INDEXING: {"doc_status": doc_status},
         }
 

@@ -65,6 +65,7 @@ class TestMeasureCommunityDrift:
             "added_roots": 2,
             "overlap_share": 0.0,
             "outdated_reports": 0,
+            "unclustered_entities": 0,
             "rebuild_recommended": False,
         }
 

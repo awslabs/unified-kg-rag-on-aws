@@ -92,7 +92,9 @@ run logs a WARNING and reports `community_rebuild_recommended: 1`, which an
 alarm can watch (the counts are an upper bound). A run that removes text units
 also reports `outdated_reports`, stored reports that still cite a removed
 unit and may state what was removed: any such report recommends a rebuild
-too.
+too. `unclustered_entities` counts stored entities without a community that
+a small delta component the run clustered links to: a full build clusters
+them, a delta run clusters only its delta.
 
 **Registry unreadable** (missing table, denied access, lasting throttling):
 `document_loading` fails with `DocStatusRegistryError` naming the table and

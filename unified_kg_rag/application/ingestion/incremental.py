@@ -72,6 +72,7 @@ from unified_kg_rag.domain.models import (
     Entity,
     ExtractionSettings,
     PipelineContext,
+    PipelineStageType,
     Relationship,
     TextUnit,
 )
@@ -509,6 +510,7 @@ class IncrementalIndexer:
         communities: list[Community] | None = None,
         community_reports: list[CommunityReport] | None = None,
         claims: list[Claim] | None = None,
+        unclustered_entities: int = 0,
     ) -> dict[str, IndexingStats]:
         """Upsert delta artifacts and update the registry for processed docs.
 
@@ -535,7 +537,9 @@ class IncrementalIndexer:
         communities, claims = _remap_references(
             communities, claims, merged.id_remap_by_suffix
         )
-        self.community_drift = self._measure_drift(entities, communities)
+        self.community_drift = self._measure_drift(
+            entities, communities, unclustered_entities
+        )
         claims = self.indexing_manager.merge_with_stored_claims(
             claims, text_units or ()
         )
@@ -581,7 +585,10 @@ class IncrementalIndexer:
         return results
 
     def _measure_drift(
-        self, entities: list[Entity] | None, communities: list[Community] | None
+        self,
+        entities: list[Entity] | None,
+        communities: list[Community] | None,
+        unclustered_entities: int = 0,
     ) -> CommunityDrift | None:
         """Measure and log the commit's community drift (see community_drift)."""
         outdated = self.indexing_manager.outdated_reports
@@ -592,6 +599,7 @@ class IncrementalIndexer:
             communities or [],
             self.indexing_manager.config.indexing.community_drift_threshold,
             outdated,
+            unclustered_entities,
         )
         outdated.clear()
         if drift is None:
@@ -601,7 +609,8 @@ class IncrementalIndexer:
                 "Community drift: %d of the %d entities this run clustered also "
                 "belong to an earlier level-0 community (%d earlier communities "
                 "have stale reports; %d root communities added to every global "
-                "search cut), and %d kept reports cite text this run removed. "
+                "search cut), %d kept reports cite text this run removed and "
+                "%d linked stored entities stay without a community. "
                 "Incremental runs cluster only their delta; rebuild the "
                 "communities with indexing.reset: true.",
                 drift.overlapping_entities,
@@ -609,16 +618,19 @@ class IncrementalIndexer:
                 drift.stale_communities,
                 drift.added_roots,
                 drift.outdated_reports,
+                drift.unclustered_entities,
             )
         else:
             logger.info(
                 "Community drift: %d of %d clustered entities also in an earlier "
                 "level-0 community (%d stale communities, %d root communities "
-                "added to every global search cut)",
+                "added to every global search cut, %d linked stored entities "
+                "without a community)",
                 drift.overlapping_entities,
                 drift.clustered_entities,
                 drift.stale_communities,
                 drift.added_roots,
+                drift.unclustered_entities,
             )
         return drift
 
@@ -1609,6 +1621,14 @@ def index_delta(
         communities=communities,
         community_reports=community_reports,
         claims=claims,
+        unclustered_entities=next(
+            (
+                int(r.metrics.get("unclustered_stored_entities", 0))
+                for r in context.stage_results
+                if r.stage_name == PipelineStageType.COMMUNITY_DETECTION.value
+            ),
+            0,
+        ),
     )
     if not removed:
         raise PipelineStageError(
