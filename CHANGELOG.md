@@ -628,7 +628,7 @@ changed once with the full-config keys (#332).
 ### Added
 - `ModelPurpose` is exported from `unified_kg_rag`, so custom code can pass
   `model_purpose=ModelPurpose.INGESTION` to `setup_chain` / `get_model` as
-  the user guide says without importing an internal module (#PR).
+  the user guide says without importing an internal module (#365).
 - `docs/cli.md`, a CLI reference generated from the argparse parsers of
   every CLI (`scripts/gen_cli_reference.py`; a unit test fails when it is
   stale). The flag help strings now carry what the user guide's flag tables
@@ -1277,7 +1277,7 @@ changed once with the full-config keys (#332).
   engine's re-analysis cost, blue/green OpenSearch changes (more AZs, the Nori
   package), synth failures (exclusive Neptune keys, unknown `-c` keys), the
   `run-eval` S3 session, the graph read-back a custom adapter needs, and what
-  `removal_destroy=false` does not prevent (#PR).
+  `removal_destroy=false` does not prevent (#365).
 - Ctrl-C (or a `SystemExit`) during indexing no longer lets the worker
   threads it leaves running write after the run released its lease, when
   another run may hold it: a released lease fails their next write, and
