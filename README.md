@@ -15,19 +15,18 @@ Read the [AWS Open Source Blog introduction](https://aws.amazon.com/blogs/openso
 
 ## Why this framework
 
-- **Two methodologies on one AWS stack.** GraphRAG (community summaries) and LightRAG (dual-level keywords) share ingestion, indexing, caching, and search infrastructure; only the retrieval algorithm differs, selected per query. Every answer returns the sources that were actually placed in the model's context.
-- **Triple-hybrid search.** BM25 lexical search, vector semantic search, and Neptune graph traversal are fused with Reciprocal Rank Fusion (RRF) and reranked with a Bedrock rerank model.
-- **Incremental indexing.** With `aws.dynamodb` enabled, a content-hash registry re-indexes only new or changed documents and merges them into the live graph. Deleting a document removes only the artifacts no other document shares.
-- **Multilingual.** Optional translation at indexing and query time, per-language OpenSearch analyzers (for example `nori` for Korean), and multilingual keyword extraction, for both methodologies.
-- **Prompt tuning.** `run-prompt-tuning` profiles a sample of your corpus (domain, language, persona, entity types) and writes domain-adapted `custom_prompts`.
-- **Graph-aware evaluation and standalone visualization.** `run-eval` adds deterministic entity/relationship coverage, retrieval hit@k/recall@k/MRR, and answer exact match/token F1 to LangChain and RAGAS metrics, and `run-visualization` renders an exported graph without re-ingesting.
-- **Pluggable hexagonal design.** Storage and model backends sit behind ports; search strategies and renderers register through decorator registries, so you add them without editing dispatch code; a new evaluator is a subclass plus one branch in `EvaluationManager._resolve_evaluator_class`.
+- **Two methodologies on one AWS stack.** GraphRAG (community summaries) and LightRAG (dual-level keywords) share ingestion, indexing, caching and search; only the retrieval algorithm differs, chosen per query. Every answer returns the sources that were actually in the model's context.
+- **Triple-hybrid search.** BM25, vector search and Neptune graph traversal, fused with Reciprocal Rank Fusion and reranked with a Bedrock rerank model.
+- **Incremental indexing.** With the doc-status registry on (`providers.doc_status.enabled`), only new and changed documents are re-indexed and merged into the live graph; deleting a document removes only what no other document states.
+- **Multilingual.** Optional translation at indexing and query time, per-language analyzers (for example `nori` for Korean) and multilingual keyword extraction.
+- **Prompt tuning, evaluation and visualization.** `run-prompt-tuning` writes domain-adapted prompts from a corpus sample; `run-eval` adds LLM-free coverage, retrieval and answer-match metrics to LangChain and RAGAS judges; `run-visualization` renders an exported graph.
+- **Pluggable.** Storage and model backends sit behind ports, and strategies, renderers, parsers and providers register through registries ([extension guide](./docs/design.md#15-extension-guide)).
 
 ## Architecture
 
 ![Architecture at a glance](./assets/architecture-overview.drawio.png)
 
-Ingestion is a resumable 12-stage pipeline: parse, load, chunk, optionally translate, extract entities and relationships with an LLM, optionally glean, resolve duplicates, optionally extract claims, compute graph metrics, detect Leiden communities with LLM-written reports, and index into the search and graph stores (OpenSearch and Neptune on AWS; embedded SQLite or containers in local mode). Stage checkpoints are cached locally and can be synced to S3.
+Ingestion is a resumable 12-stage pipeline (parse, chunk, extract entities and relationships, resolve, detect communities with LLM-written reports, index) into the graph and search stores: Neptune and OpenSearch on AWS, embedded SQLite or containers in local mode.
 
 Every strategy runs through the same hybrid scorer and token budget. Pick one with `--search-strategy` (CLI) or `RAGInput.search_strategy` (Python):
 
@@ -62,10 +61,7 @@ local models extract weaker graphs.
 
 ### Prerequisites
 
-- Every path: Python 3.10–3.12 and [uv](https://docs.astral.sh/uv/) (`pip` also works).
-- Local mode: [Ollama](https://ollama.com) for the models; Docker with Compose 2.23.1 or later only for the stores in containers. No AWS account is needed unless you keep Bedrock for the models.
-- Existing AWS resources: AWS credentials with access to Amazon Bedrock (model access enabled for the [required models](./docs/user-guide.md#required-models)), an Amazon Neptune cluster and an Amazon OpenSearch Service domain. DynamoDB is needed only for incremental indexing, and an S3 bucket only for stage-cache sync (`--s3-sync`) or a persisted embedding cache. The framework connects to existing services and never creates them.
-- Bundled CDK stack: the CDK CLI and Node.js listed in [`iac/README.md` Prerequisites](./iac/README.md#prerequisites), and Docker to push the image.
+Python 3.10–3.12 and [uv](https://docs.astral.sh/uv/) (`pip` also works). Local mode needs [Ollama](https://ollama.com) (and Docker with Compose 2.23.1+ only for the stores in containers); the AWS paths need credentials with Bedrock access and, for existing resources, a Neptune cluster and an OpenSearch domain (the framework connects to services and never creates them); the CDK stack needs what [`iac/README.md`](./iac/README.md#quick-start) lists.
 
 ### Install and configure
 
@@ -83,7 +79,7 @@ If OpenSearch uses username/password instead of IAM (`aws.opensearch.use_iam: fa
 `uv run` runs the CLIs in the project environment; with `pip`, activate the virtual environment instead and drop the `uv run` prefix.
 
 ```bash
-# Index a corpus (incremental when aws.dynamodb is enabled)
+# Index a corpus (incremental when the doc-status registry is on)
 uv run run-ingestion --source-directory ./source --config-path config.yaml
 
 # Query with either methodology, or chat with conversation memory
@@ -99,13 +95,13 @@ uv run run-visualization --data-path visualization_data.json --output-directory 
 uv run run-prompt-tuning --source-directory ./source --output-path tuned_prompts.yaml --config-path config.yaml
 ```
 
-The graph-aware evaluator reports entity and relationship coverage (recall) against `expected_entities` / `expected_relationships`, without an LLM. It matches on word boundaries for space-delimited scripts and falls back to substring matching for CJK text. Two more LLM-free evaluators make runs comparable: `retrieval` scores hit@k, recall@k and MRR of the reported sources against `reference_sources`, and `answer_match` scores exact match and token F1 against `answer` (plus optional `metadata.answer_aliases`). The [User Guide](./docs/user-guide.md) covers the CLI flags and the evaluation data format, and the [Configuration Reference](./docs/configuration.md) every configuration key.
+The [User Guide](./docs/user-guide.md) covers every CLI, the evaluation data format and the evaluators, and the [Configuration Reference](./docs/configuration.md) every configuration key.
 
 ## Deploy on AWS (optional)
 
 The [`iac/`](./iac/README.md) AWS CDK app provisions the whole stack: a VPC with endpoints, Neptune, OpenSearch, the DynamoDB document-status table, an S3 cache bucket, an ECS Fargate data plane, a Step Functions ingestion pipeline, CloudWatch dashboards and alarms, and an optional Bedrock Guardrail.
 
-[`iac/README.md` Usage](./iac/README.md#usage) has the `cdk synth` (preview, no AWS changes), `cdk bootstrap` and `cdk deploy --all` commands and every `-c key=value` option. The stores are reachable only from inside the VPC, so the deployed Fargate task runs the CLIs; it receives the endpoints as environment variables. [`iac/README.md` After deploy](./iac/README.md#after-deploy) has the commands to push the image, start an ingestion and run a query task.
+[`iac/README.md`](./iac/README.md#quick-start) has the `cdk synth`, `cdk bootstrap` and `cdk deploy --all` commands and every `-c key=value` option. The stores are reachable only from inside the VPC, so the deployed Fargate tasks run the CLIs; [After deploy](./iac/README.md#after-deploy) has the commands to push the image, start an ingestion and run a query or an evaluation.
 
 > **Cost and teardown.** Neptune and OpenSearch bill hourly, and `public` network mode adds NAT gateways. The default `dev` environment tears down with `cdk destroy --all`; non-dev environments default to retaining stateful stores with deletion protection on. Review the hardening options (`use_cmk`, `deletion_protection`, Multi-AZ sizing, `vpc_flow_logs`) in [`iac/README.md`](./iac/README.md) before production use.
 

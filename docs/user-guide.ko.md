@@ -110,7 +110,7 @@ AWS 모드에만 해당합니다. [로컬 모드](#로컬-모드-aws-없이)에�
   네트워킹(VPC와 엔드포인트), Neptune 클러스터, OpenSearch 도메인, DynamoDB 문서
   상태 테이블, S3 캐시 버킷, ECS Fargate 데이터 플레인, Step Functions 수집
   파이프라인, CloudWatch 관측성을 만들고, 선택적으로 리전을 고정한 Bedrock 가드레일도
-  만듭니다. 배포 명령([Usage](../iac/README.md#usage)), `-c key=value` 옵션 전체,
+  만듭니다. 배포 명령([Usage](../iac/README.md#quick-start)), `-c key=value` 옵션 전체,
   프로덕션 강화 체크리스트는 [`iac/README.md`](../iac/README.md)에 있습니다.
   Neptune과 OpenSearch는 VPC 안에서만 접근할 수 있으므로 CLI는 배포된 태스크 정의의
   태스크로 VPC 안에서 실행하며, 이 태스크는 엔드포인트를 환경 변수로 받습니다

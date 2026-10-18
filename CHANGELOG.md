@@ -794,6 +794,13 @@ changed once with the full-config keys (#332).
   fused order. Reported by @vibhupb (#83) (#284).
 
 ### Changed
+- `iac/README.md` opens with a quick start, splits the 35-row `-c` option
+  table by concern, turns the guardrail notes into a section, and now holds
+  the whole CloudWatch tracing recipe (Transaction Search, the collector
+  pull, where traces appear, cost, the collector configuration without the
+  CDK stacks, Bedrock invocation logging), which the runbook links to. The
+  README is shorter and names `providers.doc_status.enabled` as the
+  incremental switch (#PR).
 - `run-ingestion --s3-sync` takes the bucket from `aws.s3.bucket_name`
   (`UKR__AWS__S3__BUCKET_NAME`, which the CDK task sets) when
   `--s3-bucket-name` is not given, so the bucket is configured once (#344).

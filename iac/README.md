@@ -1,33 +1,92 @@
 # unified-kg-rag-on-aws — Infrastructure (AWS CDK, Python)
 
-Modular CDK app that provisions the AWS-native stack the library targets:
-Bedrock + Neptune + OpenSearch + DynamoDB + S3, an ECS Fargate data plane, and a
-Step Functions ingestion pipeline, with CloudWatch observability and an optional
-Bedrock Guardrail.
+A modular CDK app that provisions the AWS stack the library targets: Neptune,
+OpenSearch, a DynamoDB doc-status table and an S3 cache bucket in a VPC, an
+ECS Fargate data plane, a Step Functions ingestion pipeline, CloudWatch
+alarms and a dashboard, and an optional Bedrock Guardrail.
+
+- [Quick start](#quick-start): synthesize and deploy.
+- [After deploy](#after-deploy): push the image, ingest, query, evaluate.
+- [Configuration](#configuration-cdkjson-context---c-keyvalue): every
+  `-c key=value` option.
+- [Cost drivers](#cost-drivers) and [CloudWatch tracing](#cloudwatch-tracing-optional).
+
+Operating a deployment (re-ingesting, failed documents, alarms, backups) is in
+the [Operator Runbook](../docs/operations.md).
+
+## Quick start
+
+Prerequisites:
+
+- [uv](https://docs.astral.sh/uv/) and Python 3.12+. `iac/` is a uv project of
+  its own: `iac/uv.lock` pins the CDK libraries.
+- Node.js 22 or 24 (CI uses 24) and the AWS CDK CLI v2.1143.0 or later
+  (`npm install -g aws-cdk@2.1143.0`, the version CI pins); an older CLI can
+  reject the cloud assembly the locked `aws-cdk-lib` produces.
+- AWS credentials for the target account and region to bootstrap and deploy,
+  and Docker to push the app image.
+
+```bash
+cd iac
+uv sync --locked          # installs exactly what iac/uv.lock pins
+. .venv/bin/activate      # or prefix each command below with `uv run`
+
+cdk synth                                          # preview, no AWS changes
+cdk synth -c vpc_id=vpc-0abc... -c cache_bucket_name=my-cache   # reuse a VPC and bucket
+cdk synth -c network_mode=public                   # NAT egress instead of VPC endpoints
+
+cdk bootstrap            # once per account and region (and for bedrock_region
+                         # when it differs from the deploy region)
+cdk deploy --all         # creates billable resources
+```
+
+Pass every `-c key=value` as its own argument: collapsing them into one shell
+variable corrupts context parsing (`vpc_id` is silently dropped and
+`Vpc.from_lookup` falls back to a dummy VPC).
+
+> **Cost and teardown.** Neptune, OpenSearch, interface endpoints and (in
+> `public` mode) NAT gateways bill while the stack exists, whether or not
+> anything runs ([Cost drivers](#cost-drivers)). In the default `dev`
+> environment `cdk destroy --all` removes everything; other environments
+> default to `removal_destroy=false` and `deletion_protection=true`.
+
+## Deployment topology
+
+![AWS deployment](../assets/aws-deployment.drawio.png)
+
+- **One VPC holds the data plane.** The Fargate task, the Neptune cluster and
+  the OpenSearch domain share the `app` subnets and one security group that
+  allows Neptune (8182) and OpenSearch (443) between its members, so both
+  stores are reachable only from inside the VPC.
+- **`private` mode (default).** The `app` subnets have no internet route, and
+  a created VPC has no public subnet or internet gateway. The task reaches AWS
+  only through interface endpoints and the S3/DynamoDB gateway endpoints, so
+  Bedrock must be in the deploy region. In `public` mode the subnets route
+  through one NAT gateway per AZ and Bedrock may be elsewhere.
+- **Tasks.** Step Functions runs ingestion as one Fargate task; a re-run
+  execution resumes from the S3 stage checkpoints. Queries (`run-rag`,
+  `run-eval`) run as one-off tasks of a second, read-only task definition.
+- The optional guardrail stack lives in `bedrock_region`.
 
 ## Stacks
 
-Stack ids are PascalCase with a `GraphRag` prefix. The default `dev` env keeps
-the bare ids below (`GraphRagNetwork`, …); any other `env_name` adds an env
-segment (`-c env_name=prod` → `GraphRagProdNetwork`, …) so several environments
-can coexist in one account/region. Every resource also carries an `env` tag.
+Stack ids are PascalCase with a `GraphRag` prefix. The default `dev`
+environment keeps the bare ids (`GraphRagNetwork`, ...); any other `env_name`
+adds a segment (`-c env_name=prod` gives `GraphRagProdNetwork`, ...) so
+several environments coexist in one account and region.
 
 | Stack | Resources |
 |---|---|
-| `GraphRagNetwork` | VPC (reuse or create), subnets, data-plane security group, VPC endpoints for a created VPC: S3/DynamoDB gateways always; in `private` mode also interface endpoints (own security group, 443 from the data plane only) for Bedrock (`bedrock`, `bedrock-runtime`, `bedrock-agent-runtime`), ECR (`ecr.api`, `ecr.dkr`), CloudWatch Logs and STS, each with an endpoint policy that admits only this account's principals (`aws:PrincipalAccount`) |
-| `GraphRagStorage` | Neptune cluster (IAM auth), OpenSearch domain (VPC, encrypted), DynamoDB doc-status table (TTL on `lease_expires_at`, so an abandoned namespace write lease expires), S3 cache bucket |
-| `GraphRagCompute` | ECR repo (lifecycle keeps the 10 newest images and never expires the deployed `image_tag`), ECS cluster, an ingestion Fargate task definition + least-privilege task role (S3 cache read + put, no delete), and a query task definition (`run-rag` / `run-eval`) whose role only reads the stores and has no DynamoDB access. Injects `UKR__INDEXING__OPENSEARCH__INDEX_SETTINGS__NUMBER_OF_REPLICAS` = 1 on a multi-node domain (0 on a single node) |
-| `GraphRagOrchestration` | Step Functions state machine — one resumable ingestion task on Fargate (the task definition revision deployed with it), retried only when ECS cannot start the task (a task that exits non-zero is not rerun), one JSON failure notification (execution id, error, cause; the publish is retried on throttling or transient errors) + SNS alarm topic. The topic is encrypted with its own customer-managed key whose policy lets CloudWatch alarms publish (the AWS-managed `alias/aws/sns` key cannot, so alarm notifications would be dropped) |
-| `GraphRagObservability` | CloudWatch dashboard + alarms: pipeline failed (a failed task is also published by the orchestration failure notification, so it notifies twice; the alarm also covers failures the notification cannot report, such as an invalid start input), timed out or aborted, silent indexing-failure, extraction-failure and quarantined-documents (EMF, this deployment's `Environment` series only), capacity (Bedrock throttling summed over the account and region's models, ingestion task memory at least 90% via Container Insights), and store health (OpenSearch cluster-red / free-storage / JVM pressure, DynamoDB write throttling, Neptune writer CPU at least 90% for 3 × 5 minutes, writer freeable memory at most 512 MiB in 5 minutes (on Neptune Serverless only at its maximum capacity, plus an alarm when the writer stays at that maximum for 3 × 5 minutes), and Gremlin server errors in 3 consecutive minutes, so retried write conflicts during parallel writes do not page; see [Alarms](../docs/operations.md#alarms) for the alarm table) → SNS. Synth warns if `alarm_email` is unset (alarms would have no subscriber) |
-| `GraphRagSecurity` | Shared customer-managed KMS key (optional, `use_cmk`) |
-| `GraphRagGuardrail` | Bedrock Guardrail, **pinned to `bedrock_region`** (creates and keeps a baseline PII/prompt-attack guardrail; empty with `create_guardrail=false`). It anonymizes email, phone and card numbers but not `NAME`: names are corpus content, and anonymizing them in the screened query and answer removes the name a question retrieves by and puts `{NAME}` in answers. It also publishes the guardrail as a version (`GuardrailVersion` output) for the task to pin; the app applies the guardrail's mutable `DRAFT` unless `guardrail_version` is set |
+| `GraphRagNetwork` | VPC (reused or created), subnets, the data-plane security group; for a created VPC the S3/DynamoDB gateway endpoints and, in `private` mode, interface endpoints for Bedrock (`bedrock`, `bedrock-runtime`, `bedrock-agent-runtime`), ECR, CloudWatch Logs and STS, each with an endpoint policy that admits only this account's principals |
+| `GraphRagStorage` | Neptune cluster (IAM auth), OpenSearch domain (in the VPC, encrypted), DynamoDB doc-status table (TTL on `lease_expires_at`, so an abandoned write lease expires), S3 cache bucket |
+| `GraphRagCompute` | ECR repository, ECS cluster, the ingestion task definition with a least-privilege role (cache read and put, no delete), and the query task definition (`run-rag` / `run-eval`) whose role only reads the stores and has no DynamoDB access |
+| `GraphRagOrchestration` | Step Functions state machine: one resumable ingestion task (the task-definition revision deployed with it), retried only when ECS cannot start it, with a JSON failure notification to the SNS alarm topic (encrypted with its own customer-managed key, since CloudWatch alarms cannot publish to a topic under `alias/aws/sns`) |
+| `GraphRagObservability` | CloudWatch dashboard and alarms on pipeline runs, store health and capacity, reading this deployment's `Environment` series only ([Alarms](../docs/operations.md#alarms)); synth warns when `alarm_email` is unset |
+| `GraphRagSecurity` | The shared customer-managed KMS key (`use_cmk`) |
+| `GraphRagGuardrail` | A baseline Bedrock Guardrail in `bedrock_region` ([Guardrail](#guardrail)) |
 
-### Resource naming
-
-Physical resources share a single lowercase `<prefix>-<purpose>` scheme,
-following a common `<app>-<purpose>-…` convention. The prefix is `graphrag` in
-the default `dev` env and `<env>-graphrag` otherwise (e.g. `prod-graphrag-doc-status-v2`),
-so physical names do not collide across environments. Names below are for `dev`:
+**Resource naming.** Physical resources are named `<prefix>-<purpose>`, the
+prefix being `graphrag` in `dev` and `<env>-graphrag` otherwise. For `dev`:
 
 | Resource | Name |
 |---|---|
@@ -42,140 +101,126 @@ so physical names do not collide across environments. Names below are for `dev`:
 | Bedrock guardrail | `graphrag-guardrail-<region>` |
 | Log groups | `/graphrag/tasks`, `/graphrag/pipeline` |
 
-Neptune/OpenSearch/ECS task-def names are CloudFormation-generated (stack-id
-derived) to avoid replace-on-rename conflicts.
-
-> **Guardrail is region-pinned.** A guardrail must live in the Bedrock *runtime*
-> region (`bedrock_region`), which can differ from the deploy region that hosts
-> Neptune/OpenSearch. It is therefore its own stack. Because it lives in another
-> region, the two-step flow avoids cross-region CloudFormation references
-> (which churn every deploy-region stack's exports). A `bedrock_region` other
-> than the deploy region needs `network_mode=public`: the default `private`
-> mode reaches Bedrock only through the deploy region's VPC endpoints, so synth
-> fails otherwise. With a deploy region of, say, `ap-northeast-2` and Bedrock
-> in `us-west-2`:
->
-> ```bash
-> # 0) once: bootstrap bedrock_region too (cdk bootstrap covers one region)
-> cdk bootstrap aws://<account>/us-west-2
-> # 1) create the guardrail in bedrock_region, note its id and version from
-> #    the GuardrailIdentifier and GuardrailVersion outputs
-> cdk deploy GraphRagGuardrail -c network_mode=public -c bedrock_region=us-west-2 …
-> # 2) pass both so compute injects UKR__AWS__BEDROCK__GUARDRAIL__IDENTIFIER
-> #    and __VERSION
-> cdk deploy --all -c network_mode=public -c bedrock_region=us-west-2 \
->   -c guardrail_identifier=<id> -c guardrail_version=<version> …
-> ```
->
-> In `private` mode leave `bedrock_region` unset (it defaults to the deploy
-> region): the same two steps then create the guardrail in the deploy region,
-> and step 0 is not needed.
->
-> Keep passing `-c guardrail_identifier=<id>` and `-c guardrail_version=<version>`
-> on every later deploy, or compute stops injecting them (without a version
-> the task applies `DRAFT`, which every edit of the guardrail changes at once;
-> synth warns). To change the baseline policy, edit
-> `iac/stacks/guardrail_stack.py` and deploy `GraphRagGuardrail`: the policy
-> digest in the version's description changes, so CloudFormation publishes a
-> new version (new `GuardrailVersion` output) and keeps the previous one, which
-> the tasks go on applying until you redeploy with the new
-> `-c guardrail_version`. For an external guardrail, publish a version with
-> `aws bedrock create-guardrail-version` and pass its number. The guardrail stack keeps owning the guardrail in step 2
-> and afterwards: `guardrail_identifier` only selects the id compute **uses**,
-> and creation is controlled separately by `create_guardrail`. To use an
-> externally managed guardrail instead, pass
-> `-c create_guardrail=false -c guardrail_identifier=<id>`; the stack then
-> creates nothing.
->
-> Setting only `-c guardrail_identifier=<id>` still creates the baseline
-> guardrail, because `create_guardrail` defaults to `true`. Synth warns when
-> `guardrail_identifier` is set without an explicit `create_guardrail`; pass
-> `-c create_guardrail=false` for an external guardrail (or
-> `-c create_guardrail=true` to acknowledge the warning in the two-step flow).
->
-> The created guardrail follows `removal_destroy`: `DESTROY` in dev (default), so
-> deploy → destroy → deploy cycles work, and `RETAIN` otherwise because its id
-> reaches compute outside CloudFormation. After `cdk destroy` of a retained
-> guardrail, delete it manually
-> (`aws bedrock delete-guardrail --guardrail-identifier <id> --region <bedrock_region>`);
-> otherwise the next deploy fails on the duplicate `<prefix>-guardrail-<region>` name.
->
-> Always pass `-c key=value` flags as **individual arguments** — collapsing them
-> into one shell variable corrupts context parsing (vpc_id is silently dropped →
-> `Vpc.from_lookup` falls back to a dummy VPC).
-
-The orchestration runs the ingestion CLI as one Fargate task over every
-stage, with `--s3-sync`: each stage's output and the LLM response cache are
-uploaded to S3 as they are produced, so an execution re-run with the same
-`pipeline_id` resumes at the stage that was running.
+Neptune, OpenSearch and task-definition names are generated by
+CloudFormation, to avoid replace-on-rename conflicts. Every resource is tagged
+`project=unified-kg-rag-on-aws`, `env=<env_name>`, `managed-by=cdk`, `owner`
+and `cost-center`.
 
 ## Configuration (cdk.json context / `-c key=value`)
 
+Boolean keys take `true`/`false` (also `yes`/`no`, `on`/`off`, `1`/`0`); any
+other value fails synth. Counts and sizes must be positive integers; synth
+names a key whose value is out of range.
+
+**Environment and network**
+
 | Key | Default | Meaning |
 |---|---|---|
-| `env_name` | `dev` | stack/resource name prefix. `dev` keeps bare `GraphRag*`/`graphrag-*` names; a non-dev env (e.g. `prod`) scopes them (`GraphRagProd*`, `prod-graphrag-*`) so environments don't collide in one account/region |
-| `bedrock_region` | deploy region | Bedrock runtime region: injected into the task as `UKR__AWS__BEDROCK__REGION_NAME`, and the region of the `GraphRagGuardrail` stack. With `network_mode=private`, synth fails unless it equals the deploy region (the Bedrock VPC endpoints serve the deploy region only) |
-| `network_mode` | `private` | `private` = isolated subnets + VPC endpoints, **no NAT** (no internet egress); `public` = private subnets with NAT egress |
-| `vpc_id` | _(none)_ | **reuse** an existing VPC instead of creating one. The stack adds **no** VPC endpoints or subnets to it (synth warns with the list): in `private` mode it needs `PRIVATE_ISOLATED` subnets (no NAT or internet gateway route), S3/DynamoDB gateway endpoints, and private-DNS interface endpoints for `bedrock`, `bedrock-runtime`, `bedrock-agent-runtime`, `ecr.api`, `ecr.dkr`, `logs` and `sts` (and `xray` with `enable_cloudwatch_tracing`); in `public` mode it needs `PRIVATE_WITH_EGRESS` subnets (NAT route) |
-| `max_azs` | `2` | AZs for a newly-created VPC; at least `2` (the Neptune cluster needs subnets in two AZs) |
-| `cache_bucket_name` | _(none)_ | **reuse** an existing S3 cache bucket instead of creating one |
-| `corpus_bucket_name` | _(none)_ | S3 bucket the corpus is read from when it is not in the cache bucket: the task role gets read-only access and, in `private` mode, the S3 gateway endpoint policy allows it |
-| `neptune_instance` | `db.r6g.large` | Neptune instance class (Graviton); not allowed with `neptune_serverless_ncu` |
-| `neptune_serverless_ncu` | _(none)_ | `MIN-MAX` Neptune capacity units, e.g. `1-16` (1-128 in steps of 0.5; one NCU is about 2 GiB of memory, a `db.r6g.large` about 8 NCU). Set, every one of the `neptune_instances` runs as Neptune Serverless (`db.serverless`) and scales between the bounds; unset, they are provisioned `neptune_instance`. The endpoints, IAM auth and Gremlin API do not change, so the app needs no change. Switching a deployed cluster changes each instance's class in place (CloudFormation "some interruptions"): do it between runs |
-| `neptune_instances` | `1` (dev) / `2` (non-dev) | Neptune instances; `>=2` ⇒ Multi-AZ HA (reader in another AZ). dev defaults to 1 (no failover) for cost |
-| `opensearch_instance` | `r6g.large.search` | OpenSearch data node type (Graviton) |
-| `opensearch_master_instance` | `m6g.large.search` | dedicated master node type, used only when `opensearch_count > 1`. 8 GiB Graviton, which AWS sizes for up to 10 nodes / 10K shards on OpenSearch 2.13; raise it for larger domains |
-| `opensearch_count` | `1` (dev) / `2` (non-dev) | OpenSearch data node count (`>1` ⇒ 3 dedicated masters + zone awareness, e.g. 2 data nodes = 5 nodes; dev runs a single node for cost). A zone-aware domain spans as many AZs as it has data nodes, up to 3 and up to the AZs of the VPC (`max_azs` for a created VPC): 3 data nodes with `max_azs=3` use 3 AZs. A domain in 2 AZs needs an even count (OpenSearch rejects an odd one), so synth fails on, say, `opensearch_count=3` with `max_azs=2`. **Upgrading:** earlier versions pinned such domains to 2 AZs, so the first deploy of an existing domain with 3 or more data nodes in a VPC with 3 or more AZs moves it to 3 AZs, which OpenSearch applies as a blue/green deployment (new nodes, every shard copied; the domain stays available but slower, which can take hours on a large domain). Deploy it in a quiet window, with no ingestion running |
-| `opensearch_volume_gib` | `50` | GP3 volume per OpenSearch data node; the free-storage alarm fires at 40% free |
-| `opensearch_korean_analyzer` | `cjk` | OpenSearch analyzer of Korean text, injected as `UKR__INDEXING__OPENSEARCH__LANGUAGE_ANALYZERS__KO` (overrides `indexing.opensearch.language_analyzers.ko` of the image config). The domain has no `nori` unless its optional Nori package (`analysis-nori`) is associated, and an index whose mapping names a missing analyzer fails to create; `cjk` (character bigrams) is built into OpenSearch. To use `nori`, associate the package (console **Packages** or `aws opensearch associate-package`, a blue/green deployment), deploy with `nori`, and re-run once with `indexing.reset: true` |
-| `doc_status_table` | `graphrag-doc-status-v2` (dev) / `<env>-graphrag-doc-status-v2` (non-dev) | DynamoDB doc-status (incremental-indexing registry) table name, injected into the task as `UKR__AWS__DYNAMODB__TABLE_NAME`. Changing it on a deployed environment creates a new, empty registry table |
-| `backup_retention_days` | `7` | Neptune automated backup retention, 1-35 days (see [Backup and restore](../docs/operations.md#backup-and-restore)) |
-| `fargate_cpu` | `2048` | Fargate task vCPU units (in-task ProcessPool extractors scale with vCPU): `256`, `512`, `1024`, `2048`, `4096`, `8192` or `16384` |
-| `fargate_memory` | `8192` | Fargate task memory (MiB); must be a size Fargate offers for `fargate_cpu` (with `2048`: 4096-16384 in 1024 steps), else synth fails naming the valid range |
-| `ingestion_ephemeral_storage_gib` | `40` | disk of the ingestion task (GiB, 21-200): holds the synced corpus, the parsed documents and the run's stage cache; size it to about twice the corpus plus the cache |
-| `image_tag` | `latest` | container image tag the task pulls; pin a version tag to make ECR tags immutable. The ECR lifecycle keeps this tag and the 10 newest images, so pin a tag rather than a digest |
-| `sfn_timeout_hours` | `6` | ingestion state machine timeout for a whole run (at least 1); a run that hits it is `TIMED_OUT` (alarmed) |
-| `create_guardrail` | `true` | `GraphRagGuardrail` creates and keeps a baseline PII/prompt-attack guardrail in `bedrock_region` (retained on stack deletion unless `removal_destroy`). `false` = bring your own guardrail; nothing is created |
-| `guardrail_identifier` | _(none)_ | guardrail id the compute task **uses**, injected as `UKR__AWS__BEDROCK__GUARDRAIL__IDENTIFIER`. The created guardrail's id is **not** injected automatically: pass the `GuardrailIdentifier` output of `GraphRagGuardrail` here (two-step flow above), or an external id with `create_guardrail=false`. The task role gets `bedrock:ApplyGuardrail` on this guardrail only (an id resolves to `arn:…:bedrock:<bedrock_region>:<account>:guardrail/<id>`; an ARN is used as is). Unset = no guardrail on the task and no grant |
-| `guardrail_version` | _(none)_ | published guardrail version the task applies, injected as `UKR__AWS__BEDROCK__GUARDRAIL__VERSION`: the `GuardrailVersion` output of `GraphRagGuardrail`, or a version you published for an external guardrail. Unset = `DRAFT`, which changes whenever the guardrail is edited (synth warns when `guardrail_identifier` is set without it) |
-| `use_cmk` | `false` | customer-managed KMS key for at-rest encryption (S3/Neptune/OpenSearch/DDB/ECR and every log group; the key policy lets CloudWatch Logs use it for this account's log groups, and principals in this account may use it through CloudWatch Logs (`kms:ViaService`), so log writers and readers need no KMS permissions of their own). Choose it before the first deploy: ECR sets a repository's encryption only at creation, and CloudFormation cannot replace the fixed-name repository, so turning `use_cmk` on (or off) for a deployed environment fails until the compute stack is destroyed and redeployed. The SNS alarm topic always uses its own customer-managed key (see below) |
-| `vpc_flow_logs` | `false` (dev) / `true` (non-dev) | enable VPC flow logs (created VPC only) |
-| `flow_log_retention_days` | `731` | flow-log log group retention; must be a CloudWatch Logs retention value (e.g. `30`, `90`, `365`, `731`) |
-| `deletion_protection` | `false` (dev) / `true` (non-dev) | deletion protection on the Neptune cluster and the DynamoDB doc-status table (blocks a direct delete API/console call). OpenSearch domains have no deletion-protection setting; outside dev the domain is only kept by `removal_destroy=false` (CloudFormation `Retain`), which does not stop a direct `DeleteDomain` call |
-| `bedrock_model_arns` | _(none)_ | scope Bedrock `InvokeModel` IAM to specific model ARNs: a list in `cdk.json`, or a comma-separated string with `-c bedrock_model_arns=arn:...,arn:...`. The list **replaces** the default `foundation-model/*` grant. If it names only foundation models, the default `inference-profile/*` grants are kept, because the app calls models that are offered only through an inference profile (Claude 4.5 and later) by profile id; a profile call is still authorized against the listed foundation-model ARNs, so no other model becomes callable. Cross-region and global profiles route to several regions, so list foundation models with a `*` region (`arn:aws:bedrock:*::foundation-model/<model-id>`). If the list names any inference-profile ARN, it is used exactly as given and no other profile is granted. `Rerank` and `ListInferenceProfiles` stay on `*` (they have no resource scoping) |
-| `alarm_email` | _(none)_ | subscribe an email to the pipeline alarm topic |
-| `enable_cdk_nag` | `false` | run cdk-nag AwsSolutions (Well-Architected) checks at synth |
-| `enable_cloudwatch_tracing` | `false` | send the app's OpenTelemetry traces to CloudWatch through an ADOT collector sidecar ([CloudWatch tracing](#cloudwatch-tracing-optional)). Adds the sidecar, an ECR pull-through cache rule for its image, X-Ray write actions on the task role and, in `private` mode, an `xray` interface endpoint. Off, the templates are the same as without the option. Needs CloudWatch Transaction Search in the account and region, and an image built with the `otel` extra. With it on, `env_name` may be at most 10 characters (the cache prefix `<env>-graphrag-ecr-public` is limited to 30) |
-| `owner` | `aws-proserve` | `owner` tag applied to every resource |
-| `cost_center` | `unified-kg-rag-on-aws` | `cost-center` tag applied to every resource |
-| `removal_destroy` | `true` (dev) / `false` (non-dev) | `DESTROY` vs `RETAIN` on stack deletion for the stateful stores, the KMS keys, the guardrail, the OpenSearch domain log groups, and the fixed-name ECR repository (emptied first) and log groups (`/<prefix>/tasks`, `/<prefix>/pipeline`). Retained fixed-name resources make the next deploy fail on the duplicate name, so delete them by hand after a `cdk destroy` with `removal_destroy=false` |
+| `env_name` | `dev` | Name prefix: `dev` keeps the bare names, any other value scopes them (`GraphRagProd*`, `prod-graphrag-*`) |
+| `network_mode` | `private` | `private`: isolated subnets and VPC endpoints, no NAT; `public`: subnets with NAT egress |
+| `vpc_id` | — | Reuse a VPC. The stack adds no endpoints or subnets to it (synth lists what it needs): `private` needs `PRIVATE_ISOLATED` subnets, the S3/DynamoDB gateway endpoints and private-DNS interface endpoints for `bedrock`, `bedrock-runtime`, `bedrock-agent-runtime`, `ecr.api`, `ecr.dkr`, `logs`, `sts` (and `xray` with tracing); `public` needs `PRIVATE_WITH_EGRESS` subnets |
+| `max_azs` | `2` | AZs of a created VPC; at least 2 (Neptune needs two) |
+| `bedrock_region` | deploy region | Bedrock runtime region (`UKR__AWS__BEDROCK__REGION_NAME`) and the guardrail stack's region. In `private` mode it must equal the deploy region |
+| `vpc_flow_logs` | `false` (dev) / `true` | VPC flow logs (created VPC only), kept `flow_log_retention_days` (default `731`) |
 
-Boolean keys take `true`/`false` (also `yes`/`no`, `on`/`off`, `1`/`0`); any
-other value fails synth instead of reading as `false`. Counts and sizes must be
-positive integers (`opensearch_count`, `neptune_instances`, `sfn_timeout_hours`,
-`backup_retention_days`, ...); synth names the key of a value out of range.
+**Stores**
 
-> Every resource is tagged `project=unified-kg-rag-on-aws`, `env=<env_name>`,
-> `managed-by=cdk`, `owner`, and `cost-center` for cost allocation and ownership.
+| Key | Default | Meaning |
+|---|---|---|
+| `neptune_instance` | `db.r6g.large` | Provisioned Neptune instance class |
+| `neptune_serverless_ncu` | — | `MIN-MAX` capacity units (e.g. `1-16`; one NCU is about 2 GiB, a `db.r6g.large` about 8). Set, every instance runs as Neptune Serverless; switching a deployed cluster changes each instance in place, so do it between runs |
+| `neptune_instances` | `1` (dev) / `2` | Neptune instances; 2 or more is Multi-AZ |
+| `backup_retention_days` | `7` | Neptune automated backups, 1-35 days ([Backup and restore](../docs/operations.md#backup-and-restore)) |
+| `opensearch_instance` | `r6g.large.search` | OpenSearch data node type |
+| `opensearch_count` | `1` (dev) / `2` | Data nodes. Above 1: three dedicated masters (`opensearch_master_instance`, default `m6g.large.search`) and zone awareness over as many AZs as data nodes, up to 3 and the VPC's AZs; a domain in 2 AZs needs an even count |
+| `opensearch_volume_gib` | `50` | gp3 volume per data node; the free-storage alarm fires at 40% free |
+| `opensearch_korean_analyzer` | `cjk` | Analyzer of Korean text (`UKR__INDEXING__OPENSEARCH__LANGUAGE_ANALYZERS__KO`). The domain has `nori` only once its Nori package is associated; to use it, associate the package, deploy with `nori` and re-run once with `indexing.reset: true` |
+| `doc_status_table` | `graphrag-doc-status-v2` | Doc-status table (`UKR__AWS__DYNAMODB__TABLE_NAME`); changing it creates a new, empty registry |
+| `cache_bucket_name` | — | Reuse an S3 cache bucket |
+| `corpus_bucket_name` | — | A bucket the corpus (or an evaluation dataset) is read from: both task roles get read access and, in `private` mode, the S3 endpoint allows it |
 
-> **The Neptune engine version is not pinned.** A new cluster starts on the
-> engine version Neptune defaults to at creation, so clusters deployed at
-> different times run different versions. Adding a pin now would make the next
-> deploy of every cluster not already on it change its engine: an upgrade with
-> downtime, or a downgrade that Neptune rejects. The client is pinned instead:
-> `gremlinpython` stays below 3.8 until Neptune's engine supports TinkerPop 3.8
-> (see `pyproject.toml`). To fix a version for a new deployment, set
-> `engine_version` in `storage_stack.py` before its first deploy.
+**Compute**
+
+| Key | Default | Meaning |
+|---|---|---|
+| `fargate_cpu` | `2048` | Task vCPU units (`256` to `16384`) |
+| `fargate_memory` | `8192` | Task memory (MiB), a size Fargate offers for `fargate_cpu` |
+| `ingestion_ephemeral_storage_gib` | `40` | Ingestion task disk (21-200 GiB): about twice the corpus plus the stage cache |
+| `image_tag` | `latest` | Image tag the tasks pull; any other tag makes the repository's tags immutable (the ECR lifecycle keeps it and the 10 newest images) |
+| `sfn_timeout_hours` | `6` | State machine timeout for a whole run |
+
+**Security**
+
+| Key | Default | Meaning |
+|---|---|---|
+| `use_cmk` | `false` | Customer-managed KMS key for S3, Neptune, OpenSearch, DynamoDB, ECR and every log group. Choose it before the first deploy: ECR sets a repository's encryption only at creation, so switching it on a deployed environment fails until the compute stack is destroyed and redeployed |
+| `deletion_protection` | `false` (dev) / `true` | Deletion protection on the Neptune cluster and the doc-status table (OpenSearch has none; outside dev the domain is kept by `removal_destroy=false`) |
+| `removal_destroy` | `true` (dev) / `false` | `DESTROY` or `RETAIN` on stack deletion for the stores, keys, guardrail, ECR repository and fixed-name log groups. Retained fixed-name resources fail the next deploy on the duplicate name, so delete them by hand after a `cdk destroy` |
+| `bedrock_model_arns` | — | Scope Bedrock `InvokeModel` to these ARNs (a list, or a comma-separated string). Foundation-model ARNs keep the `inference-profile/*` grants (models offered only through a profile, Claude 4.5 and later, are called by profile id and still authorized against the listed models); list them with a `*` region, since profiles route across regions. Any inference-profile ARN in the list makes it exact. `Rerank` and `ListInferenceProfiles` stay on `*` |
+| `create_guardrail` | `true` | Create and keep a baseline guardrail in `bedrock_region`; `false` brings your own ([Guardrail](#guardrail)) |
+| `guardrail_identifier` | — | Guardrail id the task uses (`UKR__AWS__BEDROCK__GUARDRAIL__IDENTIFIER`); the task role gets `bedrock:ApplyGuardrail` on it only |
+| `guardrail_version` | — | Published version the task applies (`UKR__AWS__BEDROCK__GUARDRAIL__VERSION`); unset applies the mutable `DRAFT` (synth warns) |
+
+**Observability and tags**
+
+| Key | Default | Meaning |
+|---|---|---|
+| `alarm_email` | — | Subscribe an email to the alarm topic |
+| `enable_cloudwatch_tracing` | `false` | Send traces to CloudWatch through an ADOT collector sidecar ([CloudWatch tracing](#cloudwatch-tracing-optional)); `env_name` may then be at most 10 characters |
+| `enable_cdk_nag` | `false` | Run the cdk-nag AwsSolutions checks at synth |
+| `owner`, `cost_center` | `aws-proserve`, `unified-kg-rag-on-aws` | Tags applied to every resource |
+
+**The Neptune engine version is not pinned.** A new cluster starts on
+Neptune's default engine version at creation; pinning one now would change the
+engine of every deployed cluster not on it. The client is pinned instead
+(`gremlinpython` below 3.8 until Neptune supports TinkerPop 3.8). To fix a
+version for a new deployment, set `engine_version` in `storage_stack.py` before
+its first deploy.
+
+### Guardrail
+
+The guardrail must live in the Bedrock runtime region (`bedrock_region`),
+which can differ from the deploy region, so it is its own stack, and a
+two-step flow avoids cross-region CloudFormation references. The baseline
+guardrail anonymizes email, phone and card numbers but not `NAME`: names are
+corpus content, and anonymizing them in the screened query and answer removes
+the name a question retrieves by and puts `{NAME}` in answers.
+
+```bash
+# 0) once, when bedrock_region differs from the deploy region (needs network_mode=public)
+cdk bootstrap aws://<account>/us-west-2
+# 1) create the guardrail; note the GuardrailIdentifier and GuardrailVersion outputs
+cdk deploy GraphRagGuardrail -c network_mode=public -c bedrock_region=us-west-2 …
+# 2) pass both so compute injects them into the task
+cdk deploy --all -c network_mode=public -c bedrock_region=us-west-2 \
+  -c guardrail_identifier=<id> -c guardrail_version=<version> …
+```
+
+- In `private` mode leave `bedrock_region` unset: the same two steps create
+  the guardrail in the deploy region, and step 0 is not needed.
+- **Pass both flags on every later deploy**, or compute stops injecting them
+  (without a version the task applies `DRAFT`, which every edit changes at
+  once). To change the baseline policy, edit `iac/stacks/guardrail_stack.py`
+  and deploy `GraphRagGuardrail`: a new version is published and the previous
+  one kept, which the tasks apply until you redeploy with the new
+  `-c guardrail_version`.
+- **An external guardrail:** `-c create_guardrail=false
+  -c guardrail_identifier=<id>` (and a version you published with
+  `aws bedrock create-guardrail-version`); the stack then creates nothing.
+  Setting only `guardrail_identifier` still creates the baseline guardrail
+  (`create_guardrail` defaults to `true`), and synth warns.
+- The created guardrail follows `removal_destroy`: deleted in dev, retained
+  otherwise; delete a retained one by hand
+  (`aws bedrock delete-guardrail --guardrail-identifier <id> --region <bedrock_region>`)
+  or the next deploy fails on the duplicate name.
 
 ### Well-Architected
 
-The stacks apply WAF defaults out of the box — least-privilege IAM
-(`bedrock:InvokeModel` and `bedrock:CountTokens` scoped to model/inference-profile ARNs, `neptune-db:connect`,
-domain-scoped `es:ESHttp*`), encryption in transit + at rest, Graviton instances,
-S3 cache
-lifecycle (checkpoint prefixes only) + access logs, Step Functions X-Ray tracing + execution logging,
-CloudWatch dashboard + failure notifications and alarms, and an SSL-only alarm topic. Production
-hardening is opt-in via the flags above. Validate with:
+The stacks apply least-privilege IAM (Bedrock model and inference-profile
+ARNs, `neptune-db:connect`, domain-scoped `es:ESHttp*`), encryption in transit
+and at rest, Graviton instances, a lifecycle on the checkpoint prefixes, S3
+access logs, Step Functions tracing and execution logs, and an SSL-only alarm
+topic; production hardening is opt-in through the flags above. Validate with:
 
 ```bash
 cdk synth -c enable_cdk_nag=true                       # dev
@@ -183,196 +228,42 @@ cdk synth -c enable_cdk_nag=true -c use_cmk=true \
   -c vpc_flow_logs=true -c neptune_instances=2 -c opensearch_count=2 \
   -c deletion_protection=true -c removal_destroy=false  # prod-hardened
 ```
-Both report zero AwsSolutions findings, and CI runs both. These CI synths have
-no account, so account ids stay `<AWS::AccountId>` tokens; the IaC test
-`iac/tests/test_app_nag.py` repeats both shapes with a dummy concrete account,
-as a real deploy renders them. Accepted findings are
-documented in `iac/nag_suppressions.py`: `AwsSolutions-IAM5` is suppressed per
-role for the listed wildcards only (`appliesTo`), so a new wildcard fails the
-synth, the OpenSearch HA findings (OS4/OS7) are accepted only for a
-single-node domain, and OS9 only for the slow logs, which record nothing
-without index slow-log thresholds (the app sets none); the domain publishes
-its application logs.
 
-> **A few Bedrock read actions use `Resource: "*"` by necessity**, not oversight:
-> `bedrock:Rerank` (authorizes against a different resource shape than
-> `InvokeModel` — scoping it to the model ARNs denies the call) and
-> `bedrock:ListInferenceProfiles` (an account-level read with no resource
-> scoping). These are read/inference-only actions; the
-> mutating/data path (`InvokeModel`) stays ARN-scoped. Each is documented inline
-> in `compute_stack.py` and in the cdk-nag suppressions.
-
-## Deployment topology
-
-![AWS deployment](../assets/aws-deployment.drawio.png)
-
-- One VPC holds the data plane. The Fargate task, the Neptune cluster and the
-  OpenSearch domain run in the `app` subnets and share one security group that
-  allows Neptune (8182) and OpenSearch (443) traffic between its members, so
-  both stores are reachable only from inside the VPC.
-- In `private` mode (default) the `app` subnets have no route to the internet,
-  and the created VPC has no public subnet or internet gateway (the public
-  subnets' address range stays reserved, so the `app` subnets get the same
-  CIDRs in both modes). The task reaches AWS services only through the
-  interface endpoints and the S3/DynamoDB gateway endpoints shown, so Bedrock
-  calls must go to the deploy region (leave `bedrock_region` at the deploy
-  region). In `public` mode the
-  `app` subnets route through one NAT gateway per AZ, no interface endpoints are
-  created, and Bedrock may be in another region.
-- Step Functions runs ingestion as one Fargate task; a re-run execution
-  resumes from the S3 stage checkpoints.
-  Querying (`run-rag`, `run-eval`) runs as a one-off task of a second task
-  definition, same image and environment, whose role only reads the stores
-  ([After deploy](#after-deploy)).
-- The optional guardrail stack lives in `bedrock_region`, outside the deploy
-  region's stacks.
+Both report zero AwsSolutions findings and run in CI
+(`iac/tests/test_app_nag.py` repeats them with a concrete account). Accepted
+findings are documented in `iac/nag_suppressions.py`: `AwsSolutions-IAM5` is
+suppressed per role for the listed wildcards only, so a new wildcard fails
+synth. `bedrock:Rerank` and `bedrock:ListInferenceProfiles` use
+`Resource: "*"` by necessity (the Rerank API authorizes against another
+resource shape than `InvokeModel`; the profile list has no resource scoping);
+`InvokeModel` stays scoped.
 
 ## Cost drivers
 
-No prices are listed here; use the [AWS Pricing Calculator](https://calculator.aws/)
+No prices are listed; use the [AWS Pricing Calculator](https://calculator.aws/)
 for your region and sizes. What scales each service's cost:
 
-| Service | Cost grows with | Levers in this stack or the app config |
+| Service | Cost grows with | Levers |
 |---|---|---|
-| Amazon Bedrock models | Tokens per ingestion (one or more extraction calls per chunk, up to `max_rounds` gleaning calls, one report per community, optional claim extraction) and per query (routing, query processing, map steps, answer) | Fast tier for light roles, `aws.bedrock.ingestion_effort`, `processing.gleaning.max_rounds`, keep claim extraction off, incremental indexing |
-| Bedrock embeddings and rerank | Embedded text units, entities, relationships and reports; one rerank call per query over up to `search.reranking.top_k` candidates | `indexing.opensearch.persist_embedding_cache`, `search.reranking.top_k` |
-| Amazon Neptune | Provisioned: instance-hours × `neptune_instances`. Serverless (`neptune_serverless_ncu`): NCU-hours of each instance at its current capacity, never below `MIN` per instance, so an idle cluster still bills `MIN` × `neptune_instances` NCU. Both: storage and I/O, backup retention | `neptune_instance` or `neptune_serverless_ncu` (a low `MIN` for an environment that is idle most of the day, such as dev or a query-only deployment between ingestions; provisioned is usually cheaper under sustained load such as long ingestions), `neptune_instances` (1 in dev), `backup_retention_days`, tear down dev |
-| Amazon OpenSearch Service | Data node-hours × `opensearch_count`, plus three dedicated masters when `opensearch_count > 1`, and 50 GiB gp3 storage per data node | `opensearch_instance`, `opensearch_master_instance`, `opensearch_count` (1 in dev) |
-| AWS Fargate | vCPU, memory and ephemeral storage above 20 GiB per task for the run time of the ingestion and query tasks | `fargate_cpu`, `fargate_memory`, `ingestion_ephemeral_storage_gib` |
-| VPC interface endpoints (`private`) | Seven endpoints (eight with `enable_cloudwatch_tracing`) × `max_azs`, billed per AZ-hour, plus data processed | `max_azs`, or reuse a VPC's endpoints (`vpc_id`) |
-| NAT gateways (`public`) | One per AZ, billed per hour, plus data processed | `max_azs`, or use `private` mode |
-| Amazon S3 | Stage checkpoints, embedding cache, corpus, access logs | 30-day expiry on `pipeline-runs/` and `embedding-cache/` |
-| Amazon DynamoDB | On-demand reads and writes: one projected query of the run's namespace partition per ingestion plus one record per processed document; point-in-time recovery | Fewer, larger runs |
-| Amazon CloudWatch | Log ingestion and retention (task, pipeline and, with `vpc_flow_logs`, flow logs), alarms, dashboard | `vpc_flow_logs`, `flow_log_retention_days` |
-| CloudWatch Container Insights (ECS cluster, always on) | Custom metrics per cluster and task definition family, and performance log events in `/aws/ecs/containerinsights/<cluster>/performance`, for the time tasks run. It is where per-task CPU and memory use come from (sizing `fargate_cpu`/`fargate_memory`, diagnosing an out-of-memory stop); the `IngestionTaskMemory` alarm and the dashboard read it | — (cdk-nag `AwsSolutions-ECS4` requires it) |
-| AWS KMS | Customer-managed keys per month and requests: the alarm-topic key always, the data key with `use_cmk` | `use_cmk` |
-| AWS Step Functions | State transitions per ingestion run (a few) | — |
-| CloudWatch traces (`enable_cloudwatch_tracing`) | Spans ingested by Transaction Search (billed as CloudWatch Logs ingestion into `aws/spans`) and the share of spans indexed beyond the free 1% | `observability.sample_rate` in the image config, the Transaction Search indexing percentage |
-
-Neptune, OpenSearch, interface endpoints and NAT gateways bill while the stack
-exists, whether or not anything runs. `cdk destroy --all` removes them in the
-default `dev` environment.
-
-## Prerequisites
-
-- [uv](https://docs.astral.sh/uv/) and Python 3.12+ (uv downloads a matching
-  Python when none is installed). `iac/` is a uv project of its own, separate
-  from the root package: `iac/uv.lock` pins the CDK libraries.
-- Node.js on a supported LTS line (22 or 24; CI uses 24) and the AWS CDK CLI
-  v2, 2.1143.0 or later (`npm install -g aws-cdk@2.1143.0` is the version CI
-  pins). An older CLI can reject the cloud assembly that the `aws-cdk-lib`
-  release in `uv.lock` produces; check with `cdk --version`.
-- For `cdk bootstrap`/`cdk deploy`: AWS credentials for the target account
-  and region. To push the app image after deploy: Docker.
-
-## Usage
-
-```bash
-cd iac
-uv sync --locked          # installs exactly what iac/uv.lock pins
-. .venv/bin/activate      # or prefix each command below with `uv run`
-
-# Synthesize (no AWS changes)
-cdk synth
-
-# Reuse existing VPC + S3, fully private data plane (recommended for prod):
-cdk synth -c vpc_id=vpc-0abc... -c cache_bucket_name=my-cache -c network_mode=private
-
-# Public egress (simpler dev):
-cdk synth -c network_mode=public
-
-# Deploy (creates billable resources)
-cdk bootstrap            # once per account/region; with a bedrock_region other
-                         # than the deploy region, also
-                         # cdk bootstrap aws://<account>/<bedrock_region>
-                         # (the guardrail stack deploys there)
-cdk deploy --all
-```
-
-> **Cost:** deploying creates Neptune + OpenSearch (hourly billed) and
-> NAT gateways in `public` mode (see [Cost drivers](#cost-drivers)). `removal_destroy=true` (dev default) tears
-> everything down on `cdk destroy --all`; non-dev envs default to
-> `removal_destroy=false` and `deletion_protection=true`.
-
-## CloudWatch tracing (optional)
-
-`-c enable_cloudwatch_tracing=true` adds an AWS Distro for OpenTelemetry
-(ADOT) collector sidecar to the task. The app exports its spans (ingestion
-stages, queries, retrieval, rerank, and model calls with token usage) over
-OTLP/HTTP to the collector on `127.0.0.1:4318`; the collector signs them with
-the task role (SigV4) and sends them to the CloudWatch OTLP traces endpoint
-`https://xray.<region>.amazonaws.com/v1/traces`. Prompt and completion text
-is not recorded (`observability.capture_content` stays `false`).
-
-1. Turn on CloudWatch Transaction Search once per account and region; the
-   traces endpoint rejects spans until it is on. This is an account-level
-   setting that the stacks do not change: see
-   [Observability](../docs/operations.md#cloudwatch-through-the-adot-collector-sidecar)
-   for the commands and what it switches.
-2. Build the image with the `otel` extra (step 2 of [After deploy](#after-deploy)):
-   `--build-arg UV_EXTRAS="--extra otel"` (with Markdown parsing,
-   `--build-arg UV_EXTRAS="--extra otel --extra unstructured"`). An image
-   without it fails at start-up with
-   `observability.enabled is true but OpenTelemetry is not installed`.
-3. Deploy with the option on:
-   `cdk deploy --all -c enable_cloudwatch_tracing=true`.
-4. Before the first run, pull the collector image once from a workstation
-   (with Docker and permission to pull from the account's ECR). The image
-   comes through an ECR pull-through cache, and the first pull through it may
-   need an internet route when ECR is reached through an interface endpoint,
-   as the `private` data plane does. ECS fails a task when it cannot pull any
-   of its images, so until the cache holds the image every ingestion would fail.
-   The pull fills the cache; later pulls come from it. Repeat after an
-   upgrade that changes the pinned digest. Outside `dev`, use the
-   environment's stack name (for example `GraphRagProdCompute`).
-
-   ```bash
-   REGION=<deploy region>
-   COLLECTOR_IMAGE=$(aws cloudformation describe-stacks --region "$REGION" \
-     --stack-name GraphRagCompute \
-     --query "Stacks[0].Outputs[?OutputKey=='CollectorImageUri'].OutputValue" \
-     --output text)
-   aws ecr get-login-password --region "$REGION" \
-     | docker login --username AWS --password-stdin "${COLLECTOR_IMAGE%%/*}"
-   docker pull --platform linux/amd64 "$COLLECTOR_IMAGE"
-   ```
-
-What the option changes:
-
-- **Task definition**: an `otel-collector` container (ADOT collector
-  `v0.50.0`, pinned by digest in `compute_stack.py`) that is not essential, so
-  a collector that crashes or cannot export loses traces but never stops a
-  run. An image ECS cannot pull does fail the task (step 4). The `app` container
-  starts after it and gets `UKR__OBSERVABILITY__ENABLED=true`,
-  `UKR__OBSERVABILITY__BACKEND=otlp`,
-  `OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318` and
-  `OTEL_RESOURCE_ATTRIBUTES=deployment.environment=<env_name>`. The collector
-  logs to the task log group under the `otel-collector/` stream prefix.
-- **Image source**: the collector image is pulled through an ECR pull-through
-  cache rule for ECR Public (prefix `<prefix>-ecr-public`), because the
-  `private` data plane cannot reach `public.ecr.aws`. ECR creates the cached
-  repository on the first pull (step 4); `cdk destroy` removes the rule but
-  not that repository. The `GraphRagCompute` output `CollectorImageUri` is
-  the cached image.
-- **IAM**: the task role gets `xray:PutTraceSegments`, the one action the
-  OTLP traces endpoint authorizes (write-only; X-Ray has no resource-level
-  scoping), and the execution role may create and import into the one cached
-  repository.
-- **Network**: in `private` mode, an `xray` interface endpoint (same
-  security group and this-account endpoint policy as the others). A reused
-  private VPC must provide it.
-
-Traces appear in the CloudWatch console under **Application Signals,
-Transaction Search** (service `unified-kg-rag`), and spans are stored in the
-`aws/spans` log group.
+| Bedrock models | Tokens per ingestion (extraction per chunk, up to `max_rounds` gleaning calls, a report per community, optional claims) and per query | Fast tier for light roles, `aws.bedrock.ingestion_effort`, `processing.gleaning.max_rounds`, claims off, incremental indexing |
+| Bedrock embeddings and rerank | Embedded text units, entities, relationships and reports; one rerank call per query | `indexing.opensearch.persist_embedding_cache`, `search.reranking.top_k` |
+| Neptune | Provisioned instance-hours × `neptune_instances`, or Serverless NCU-hours (never below `MIN` per instance, so an idle cluster still bills `MIN`); storage, I/O, backups | `neptune_instance` or `neptune_serverless_ncu` (a low `MIN` for an environment idle most of the day), `neptune_instances`, `backup_retention_days`, tear down dev |
+| OpenSearch | Data node-hours × `opensearch_count`, three masters when above 1, gp3 storage per node | `opensearch_instance`, `opensearch_master_instance`, `opensearch_count` |
+| Fargate | vCPU, memory and disk above 20 GiB for the time tasks run | `fargate_cpu`, `fargate_memory`, `ingestion_ephemeral_storage_gib` |
+| Interface endpoints (`private`) | Seven endpoints (eight with tracing) × `max_azs` per AZ-hour, plus data | `max_azs`, or a reused VPC's endpoints |
+| NAT gateways (`public`) | One per AZ per hour, plus data | `max_azs`, or `private` mode |
+| S3 | Checkpoints, embedding cache, corpus, access logs | 30-day expiry on `pipeline-runs/` and `embedding-cache/` |
+| DynamoDB | On-demand: one projected query of the namespace per run and one record per processed document; point-in-time recovery | Fewer, larger runs |
+| CloudWatch | Log ingestion and retention, alarms, dashboard; Container Insights metrics and performance logs (always on: per-task CPU and memory, which the `IngestionTaskMemory` alarm reads) | `vpc_flow_logs`, `flow_log_retention_days` |
+| KMS | Keys per month and requests: the alarm-topic key always, the data key with `use_cmk` | `use_cmk` |
+| Step Functions | A few state transitions per run | — |
+| CloudWatch traces (`enable_cloudwatch_tracing`) | Spans ingested by Transaction Search and indexed beyond the free 1% | `observability.sample_rate` in the image config, the indexing percentage |
 
 ## After deploy
 
-The commands below assume the default `dev` environment (stack and resource
-names as in [Resource naming](#resource-naming)), a shell in the repository
+The commands assume the default `dev` environment, a shell in the repository
 root, and the AWS CLI v2, Docker and `jq`. For another `env_name`, use its
-stack names (for example `GraphRagProdStorage`) and resource prefix
-(`prod-graphrag`).
+stack names (`GraphRagProdStorage`) and prefix (`prod-graphrag`).
 
 ### 1. Read the stack outputs
 
@@ -390,17 +281,16 @@ UKR__AWS__OPENSEARCH__ENDPOINT=$(output GraphRagStorage OpenSearchEndpoint)
 
 | Stack | Output | Value |
 |---|---|---|
-| `GraphRagStorage` | `NeptuneEndpoint`, `OpenSearchEndpoint` | Bare hostnames (no `https://`), the form `aws.neptune.endpoint` / `aws.opensearch.endpoint` and `UKR__AWS__NEPTUNE__ENDPOINT` / `UKR__AWS__OPENSEARCH__ENDPOINT` expect |
-| `GraphRagStorage` | `CacheBucketName`, `DocStatusTableName` | S3 cache bucket and doc-status table |
+| `GraphRagStorage` | `NeptuneEndpoint`, `OpenSearchEndpoint` | Bare hostnames, the form `aws.neptune.endpoint` / `aws.opensearch.endpoint` expect |
+| `GraphRagStorage` | `CacheBucketName`, `DocStatusTableName` | Cache bucket and doc-status table |
 | `GraphRagOrchestration` | `StateMachineArn` | Ingestion state machine |
-| `GraphRagSecurity` | `KmsKeyArn` | Shared CMK, only with `use_cmk=true` |
-| `GraphRagGuardrail` | `GuardrailIdentifier` | Created guardrail, in `bedrock_region` |
-| `GraphRagCompute` | `QueryTaskDefinitionArn`, `QueryTaskRoleArn` | Read-only query task definition and its role (Neptune reads, OpenSearch `GET`/`HEAD` and `_search`, Bedrock, the cache bucket's `eval/` prefix; no DynamoDB, no store writes) |
-| `GraphRagCompute` | `CollectorImageUri` | Collector image to pull once after deploy, only with `enable_cloudwatch_tracing` ([CloudWatch tracing](#cloudwatch-tracing-optional)) |
+| `GraphRagSecurity` | `KmsKeyArn` | Shared CMK (`use_cmk=true` only) |
+| `GraphRagGuardrail` | `GuardrailIdentifier`, `GuardrailVersion` | Created guardrail, in `bedrock_region` |
+| `GraphRagCompute` | `QueryTaskDefinitionArn`, `QueryTaskRoleArn` | Read-only query task definition and its role |
+| `GraphRagCompute` | `CollectorImageUri` | Collector image to pull once (tracing only) |
 
-The task already receives the endpoints, bucket, table and regions as
-environment variables, so these outputs are needed only for tools that run
-elsewhere in the VPC.
+The tasks already receive the endpoints, bucket, table and regions as
+environment variables; the outputs are for tools that run elsewhere in the VPC.
 
 ### 2. Build and push the app image
 
@@ -413,28 +303,25 @@ docker build --platform linux/amd64 -f docker/Dockerfile -t "$REGISTRY/graphrag-
 docker push "$REGISTRY/graphrag-app:latest"
 ```
 
-The build context is the repository root, and the task runs on the default
-Fargate architecture (x86_64). Outside dev, push a unique version tag instead
-and deploy with `-c image_tag=<tag>`: any tag other than `latest` makes the
-repository's tags immutable, so a pushed image cannot be swapped under the
-running task definition. To parse `.md`/`.html` files, build with
-`--build-arg UV_EXTRAS="--extra unstructured"`; with `enable_cloudwatch_tracing`,
-add the `otel` extra (`--build-arg UV_EXTRAS="--extra otel"`).
-
-The image bakes in the tracked, endpoint-free `docker/config.yaml` as
-`/app/config.yaml`; the deployed values come from the environment variables the
-task injects: `UKR__AWS__NEPTUNE__ENDPOINT`, `UKR__AWS__OPENSEARCH__ENDPOINT`, `UKR__AWS__S3__BUCKET_NAME`,
-`AWS_REGION`, `UKR__AWS__BEDROCK__REGION_NAME`, `UKR__LOGGING__LOG_FORMAT`, `UKR__INDEXING__OPENSEARCH__INDEX_SETTINGS__NUMBER_OF_REPLICAS`,
-`UKR__INDEXING__OPENSEARCH__LANGUAGE_ANALYZERS__KO` (`opensearch_korean_analyzer`),
-`UKR__AWS__DYNAMODB__TABLE_NAME`
-(the table this stack created), `UKR__AWS__DYNAMODB__CREATE_TABLE_IF_MISSING=false` and
-`UKR_METRICS_ENVIRONMENT` (`env_name`, the Environment dimension of the metrics the alarms watch),
-plus `UKR__AWS__BEDROCK__GUARDRAIL__IDENTIFIER` when `guardrail_identifier` is set (and
-`UKR__AWS__BEDROCK__GUARDRAIL__VERSION` when `guardrail_version` is). The
-image config sets `providers.doc_status.enabled: true`, so ingestion runs
-incrementally. S3 cache uploads default to the bucket's own encryption
-(`aws.s3.encryption.encryption_type: BUCKET_DEFAULT`), so with `use_cmk=true`
-objects are encrypted with the CMK.
+- Outside dev, push a unique version tag and deploy with `-c image_tag=<tag>`,
+  so a pushed image cannot be swapped under the running task definition.
+- Extras: `--build-arg UV_EXTRAS="--extra unstructured"` to parse `.md` /
+  `.html` files, `--extra otel` with `enable_cloudwatch_tracing` (both:
+  `"--extra otel --extra unstructured"`).
+- The image bakes in the endpoint-free `docker/config.yaml` (it turns on
+  `providers.doc_status.enabled`, so ingestion is incremental). The task
+  injects the deployed values: `UKR__AWS__NEPTUNE__ENDPOINT`,
+  `UKR__AWS__OPENSEARCH__ENDPOINT`, `UKR__AWS__S3__BUCKET_NAME`, `AWS_REGION`,
+  `UKR__AWS__BEDROCK__REGION_NAME`, `UKR__LOGGING__LOG_FORMAT`,
+  `UKR__INDEXING__OPENSEARCH__INDEX_SETTINGS__NUMBER_OF_REPLICAS` (1 on a
+  multi-node domain, 0 on one node),
+  `UKR__INDEXING__OPENSEARCH__LANGUAGE_ANALYZERS__KO`,
+  `UKR__AWS__DYNAMODB__TABLE_NAME`,
+  `UKR__AWS__DYNAMODB__CREATE_TABLE_IF_MISSING=false`,
+  `UKR_METRICS_ENVIRONMENT` (`env_name`, the dimension the alarms watch) and,
+  when set, `UKR__AWS__BEDROCK__GUARDRAIL__IDENTIFIER` and `__VERSION`.
+- Cache uploads use the bucket's default encryption, so with `use_cmk=true`
+  objects are encrypted with the CMK.
 
 ### 3. Upload the corpus and start an ingestion run
 
@@ -455,42 +342,27 @@ aws stepfunctions describe-execution --region "$REGION" \
 aws logs tail /graphrag/tasks --region "$REGION" --follow
 ```
 
-- The input takes exactly two keys, passed to the task as
-  `UKR_SOURCE_DIRECTORY` / `UKR_PIPELINE_ID`. The task is a fresh
-  Fargate task, so `source_directory` must be an `s3://` URI: the container
-  entrypoint (`docker/entrypoint.sh`) syncs it to local scratch before running
-  the CLI (size the disk with `ingestion_ephemeral_storage_gib`).
-  `pipeline_id` accepts letters, digits, `.`, `_` and `-`, starting with a
-  letter or digit, without `..`, up to 128 characters; reuse an id to resume a
-  failed run from its S3 checkpoints: start a new execution with the same
-  input, and the task skips the stages that already completed, so only the
-  failed stage onward runs again. Checkpoints are uploaded after every stage,
-  and a task stopped by the execution's timeout or StopTask uploads its
-  checkpoint on SIGTERM (the app container's stop timeout is 120 s), so a
-  timed-out execution also resumes at the stage that was running. If the
-  corpus changed in between, the stages no longer match their checkpoints and
-  the task fails its integrity check instead of recomputing them; start the
-  execution with a new `pipeline_id` to rebuild.
-- The task role can read and write the cache bucket only. To read a corpus
-  from another bucket, deploy with `-c corpus_bucket_name=<bucket>`. In
-  `private` mode the S3 and DynamoDB gateway endpoints only allow this
-  deployment's cache and corpus buckets, its doc-status table and the ECR
-  image-layer bucket, so a bucket granted to the role by hand is still
-  unreachable from the tasks.
-- The bucket's 30-day expiry applies only to the prefixes the app writes,
-  `pipeline-runs/` (stage checkpoints) and `embedding-cache/`; any other
-  prefix never expires. Do not put the corpus under those two prefixes: with
-  incremental indexing an expired source file looks deleted, and the next run
-  removes its graph and vector artifacts. A reused bucket
-  (`cache_bucket_name`) keeps its own lifecycle rules, so check them the same
-  way.
-- **Run one ingestion at a time.** The state machine does not stop a second
-  execution from starting while one is running. With the doc-status registry
-  (on in the image config), the second run on the same index namespace stops
-  with `NamespaceLeaseError` once it has synced the corpus and its checkpoint,
-  before it reads the stores or writes anything; start it
-  again once the first one ended. See
-  [Concurrent runs](../docs/operations.md#concurrent-runs).
+- **Input.** Exactly two keys, passed as `UKR_SOURCE_DIRECTORY` /
+  `UKR_PIPELINE_ID`. `source_directory` must be an `s3://` URI: the entrypoint
+  (`docker/entrypoint.sh`) syncs it to the task's disk first. `pipeline_id`
+  takes letters, digits, `.`, `_` and `-`, starting with a letter or digit,
+  without `..`, up to 128 characters.
+- **Resume.** Start a new execution with the same input: the task skips the
+  stages that completed. Checkpoints are uploaded after every stage and on
+  SIGTERM (the container's stop timeout is 120 s), so a timed-out execution
+  resumes at the stage that was running. If the corpus changed in between,
+  the task fails its integrity check; use a new `pipeline_id` to rebuild.
+- **Buckets.** The task role reads and writes the cache bucket only
+  (`-c corpus_bucket_name=<bucket>` for another corpus bucket). In `private`
+  mode the gateway endpoints allow only this deployment's buckets, table and
+  the ECR layer bucket. The 30-day expiry applies only to `pipeline-runs/`
+  and `embedding-cache/`: do not put the corpus under them, since an expired
+  source file looks deleted to the next incremental run.
+- **One run at a time.** The state machine does not stop a second execution;
+  the doc-status registry's write lease stops the second run with
+  `NamespaceLeaseError` once it has synced the corpus, before it downloads its
+  checkpoint, reads the stores or writes anything
+  ([Concurrent runs](../docs/operations.md#concurrent-runs)).
 
 ### 4. Query from inside the VPC
 
@@ -517,27 +389,19 @@ aws ecs wait tasks-stopped --region "$REGION" --cluster "$CLUSTER" --tasks "$TAS
 aws logs tail /graphrag/tasks --region "$REGION" --since 30m
 ```
 
-The command override must name the CLI explicitly (`run-rag ...`). The answer
-is written to the task's log stream (`app/app/<task id>` in
-`/graphrag/tasks`).
-
-The query task's role cannot write or delete in Neptune or OpenSearch and has
-no DynamoDB access, so a query, or a compromised serving process, cannot
-change the index; do not run queries with the ingestion task definition
-(`Ingest.TaskDefinition`). `--suffix` selects the corpus by name only:
-anyone who can run this task can name any suffix. A serving layer in front of
-it must set the suffix from the authenticated caller on the server; see
-[Query access and tenant isolation](../docs/operations.md#query-access-and-tenant-isolation)
-for infrastructure-enforced isolation (per-tenant OpenSearch index grants or
-fine-grained access control, a Neptune cluster per tenant).
+The override must name the CLI (`run-rag ...`); the answer is in the task's
+log stream (`app/app/<task id>`). The query role cannot write or delete in
+either store and has no DynamoDB access; do not run queries with the
+ingestion task definition. `--suffix` selects a corpus by name only, so a
+serving layer must set it from the authenticated caller
+([Query access and tenant isolation](../docs/operations.md#query-access-and-tenant-isolation)).
 
 ### 5. Evaluate from inside the VPC
 
-`run-eval` runs the same way. The image holds no dataset and the task's disk is
-discarded on exit, so pass `s3://` paths for both: the dataset is downloaded
-before the run and the result files are uploaded when it ends. Keep them in
-the cache bucket under `eval/`: the query role reads and writes only that
-prefix (and the `private`-mode S3 endpoint allows the bucket). Reuse the variables from step 4:
+`run-eval` runs the same way. The task's disk is discarded on exit, so pass
+`s3://` paths for the dataset and the results, under the cache bucket's
+`eval/` prefix (the only prefix the query role reads and writes). Reuse the
+variables from step 4:
 
 ```bash
 aws s3 cp ./eval_data.json "s3://$CACHE_BUCKET/eval/eval_data.json" --region "$REGION"
@@ -559,17 +423,211 @@ aws ecs describe-tasks --region "$REGION" --cluster "$CLUSTER" --tasks "$TASK_AR
 aws s3 ls "s3://$CACHE_BUCKET/eval/results/run-001/" --region "$REGION"
 ```
 
-The container's exit code is `run-eval`'s: `1` when the failure budget
-(`--max-failure-rate`) is exceeded, the dataset cannot be downloaded, or any
-result file fails to upload; `2` for a usage or configuration error (a
-malformed `s3://` URI, an invalid dataset, an unset endpoint); `143` when the
-task is stopped. The summary and errors are in the task's log stream (see the
-user guide's
-[exit codes](../docs/user-guide.md#cli-exit-codes-and-json-output)). Uploads use the same `aws.s3.encryption` setting as the cache, so
-with `use_cmk=true` the results are encrypted with the CMK. To read a dataset
-from another bucket, deploy with `-c corpus_bucket_name=<bucket>`, which grants
-both task roles read access and, in `private` mode, allows the bucket through the
-S3 endpoint; results still go to the cache bucket.
+The container's exit code is `run-eval`'s: `1` when the failure budget is
+exceeded, the dataset cannot be downloaded or a result fails to upload; `2`
+for a usage or configuration error; `143` when the task is stopped (the
+finished runs' results are still uploaded). See
+[exit codes](../docs/user-guide.md#cli-exit-codes-and-json-output).
 
-Operational procedures (re-ingesting, failed documents, alarms, caches) are in
-the [Operator Runbook](../docs/operations.md).
+## CloudWatch tracing (optional)
+
+CloudWatch accepts OTLP traces at `https://xray.<region>.amazonaws.com/v1/traces`
+signed with SigV4. The app's exporter does not sign requests, so
+`-c enable_cloudwatch_tracing=true` adds an AWS Distro for OpenTelemetry (ADOT)
+collector sidecar that signs them with the task role and forwards them. The
+app exports its spans (stages, queries, retrieval, rerank, model calls with
+token usage) to the collector on `127.0.0.1:4318`; prompt and completion text
+is not recorded (`observability.capture_content` stays `false`).
+
+1. **Turn on Transaction Search** once per account and region; the traces
+   endpoint rejects spans until it is on. It is an account-wide setting that
+   moves all X-Ray span ingestion in the region to CloudWatch Logs (the
+   `aws/spans` log group, billed as log ingestion) and indexes 1% of spans as
+   trace summaries for free, so check it first; another workload may rely on
+   the current destination:
+
+   ```bash
+   aws xray get-trace-segment-destination --region "$REGION"
+   ```
+
+   `"Destination": "CloudWatchLogs", "Status": "ACTIVE"` means it is on.
+   Otherwise turn it on in the CloudWatch console (**Application Signals,
+   Transaction Search, Enable Transaction Search**), which also sets up the
+   log-group resource policy X-Ray needs, or follow the
+   [Transaction Search guide](https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/Enable-TransactionSearch.html).
+   Spans can take 10 minutes to become searchable. To turn it off, run
+   `aws xray update-trace-segment-destination --destination XRay`, then delete
+   the resource policy and the `aws/spans` and `/aws/application-signals/data`
+   log groups yourself if nothing else uses them.
+2. **Build the image with the `otel` extra** (step 2 of
+   [After deploy](#2-build-and-push-the-app-image)); without it the run fails
+   at start-up with `observability.enabled is true but OpenTelemetry is not installed`.
+3. **Deploy** with `cdk deploy --all -c enable_cloudwatch_tracing=true`, and
+   keep the flag on every later deploy (or in `cdk.json`), or the next deploy
+   removes the sidecar.
+4. **Pull the collector image once** from a workstation before the first run.
+   The image comes through an ECR pull-through cache whose first pull may need
+   an internet route (the `private` data plane reaches ECR only through an
+   interface endpoint), and ECS fails a task that cannot pull any of its
+   images. Repeat after an upgrade that changes the pinned digest; outside
+   `dev`, use the environment's stack name.
+
+   ```bash
+   REGION=<deploy region>
+   COLLECTOR_IMAGE=$(aws cloudformation describe-stacks --region "$REGION" \
+     --stack-name GraphRagCompute \
+     --query "Stacks[0].Outputs[?OutputKey=='CollectorImageUri'].OutputValue" \
+     --output text)
+   aws ecr get-login-password --region "$REGION" \
+     | docker login --username AWS --password-stdin "${COLLECTOR_IMAGE%%/*}"
+   docker pull --platform linux/amd64 "$COLLECTOR_IMAGE"
+   ```
+
+What the option changes:
+
+- **Task definition**: a non-essential `otel-collector` container (ADOT
+  collector `v0.50.0`, pinned by digest in `compute_stack.py`), so a collector
+  that crashes or cannot export loses traces but never stops a run (an image
+  ECS cannot pull does). The `app` container starts after it with
+  `UKR__OBSERVABILITY__ENABLED=true`, `UKR__OBSERVABILITY__BACKEND=otlp`,
+  `OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318` and
+  `OTEL_RESOURCE_ATTRIBUTES=deployment.environment=<env_name>`. The collector
+  logs under the `otel-collector/` stream prefix.
+- **Image source**: an ECR pull-through cache rule for ECR Public (prefix
+  `<prefix>-ecr-public`), because the `private` data plane cannot reach
+  `public.ecr.aws`; `cdk destroy` removes the rule but not the cached
+  repository.
+- **IAM**: `xray:PutTraceSegments` on the task role, the one action the OTLP
+  traces endpoint authorizes (`xray:PutSpans` alone gets a 403), and pull and
+  import rights on the cached repository for the execution role.
+- **Network**: in `private` mode an `xray` interface endpoint; a reused
+  private VPC must provide it.
+
+**Where to look.** Run an ingestion or a query, then open the CloudWatch
+console, **Application Signals, Transaction Search**, and filter on the
+service `unified-kg-rag`. Each ingestion run is one `kg_rag.ingestion.run`
+trace and each `run-rag` query one `kg_rag.query` trace, with the children
+listed in the [user guide's trace shape](../docs/user-guide.md#observability). A `run-eval` run is one
+`kg_rag.batch` trace: its queries are `kg_rag.query` children of that root, so
+the list shows the batch, not each query; each evaluator (and
+`--pairwise-judge`) adds one `kg_rag.evaluate` trace holding its judge model
+calls. The spans are also in the `aws/spans` log
+group, for Logs Insights (if a field comes back empty, run
+`fields @message | limit 5` first to see the exact field paths):
+
+```text
+fields @timestamp, name, durationNano, attributes.gen_ai.usage.input_tokens, traceId
+| filter resource.attributes.service.name = "unified-kg-rag"
+| sort @timestamp desc
+| limit 50
+```
+
+If no trace arrives, read the `otel-collector/` log streams of the task log
+group (`/<prefix>/tasks`): a `403` means a missing X-Ray permission or the
+wrong SigV4 service, a rejection naming the destination means Transaction
+Search is off, and a connection timeout in `private` mode means the `xray`
+interface endpoint is missing (a reused VPC must provide it). A collector
+that crashes or cannot export never fails the run, since its container is not
+essential; a collector image ECS cannot pull does (`CannotPullContainerError`
+in the stopped task's reason), so pull it once as in step 4.
+
+**Cost.** Transaction Search bills spans as CloudWatch Logs ingestion and
+storage in `aws/spans`, and charges for indexed spans above the free 1%. An
+ingestion run emits a span per stage, batch and model call, so a large corpus
+produces many spans: lower `observability.sample_rate` in the image config to
+sample root traces, and keep the indexing percentage at 1% unless you search
+trace summaries. The `xray` interface endpoint (private mode) bills per
+AZ-hour like the others.
+
+### Without the CDK stacks
+
+Run the same collector configuration yourself; the
+one the stack renders (`compute_stack.py`, after the CloudWatch OTLP guide) is,
+for `us-east-1`. The memory limit fits a 512 MiB container, and the exporter
+has no queue and no retry so a shutdown flush ends inside ECS's 30 s stop
+timeout:
+
+```yaml
+extensions:
+  health_check:
+    endpoint: 127.0.0.1:13133
+  sigv4auth/traces:
+    region: us-east-1
+    service: xray
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 127.0.0.1:4318
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 400
+    spike_limit_mib: 100
+  batch:
+    send_batch_size: 512
+    send_batch_max_size: 1000
+    timeout: 5s
+exporters:
+  otlp_http/traces:
+    traces_endpoint: https://xray.us-east-1.amazonaws.com/v1/traces
+    compression: gzip
+    auth:
+      authenticator: sigv4auth/traces
+    timeout: 10s
+    sending_queue:
+      enabled: false
+    retry_on_failure:
+      enabled: false
+service:
+  extensions: [health_check, sigv4auth/traces]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlp_http/traces]
+  telemetry:
+    metrics:
+      level: none
+```
+
+The collector's role needs `xray:PutTraceSegments`, the one action the OTLP
+traces endpoint authorizes (`xray:PutSpans` alone gets a 403). The
+`AWSXrayWriteOnlyAccess` managed policy the CloudWatch guide names includes
+it.
+
+### Account-level backstop: Bedrock model invocation logging
+
+It records
+every `InvokeModel` / `Converse` request and response in a region, embeddings
+included, to CloudWatch Logs or S3, whatever this package's tracing does:
+use it as the audit record and traces for the per-query breakdown. It does not
+cover the Rerank call (`bedrock-agent-runtime`), and it holds full prompt and
+response text, so protect its destination like captured content (restricted
+readers, the CMK, a retention period). It is one setting per account and
+region, shared by every workload there, so the CDK stacks do not manage it:
+turning it on or off from a stack would change logging for everything else in
+the account. Set it in the Bedrock runtime region (`bedrock_region`):
+
+```bash
+# Check first: an existing configuration is replaced by the put below.
+aws bedrock get-model-invocation-logging-configuration --region "$UKR__AWS__BEDROCK__REGION_NAME"
+
+aws bedrock put-model-invocation-logging-configuration --region "$UKR__AWS__BEDROCK__REGION_NAME" \
+  --logging-config '{
+    "cloudWatchConfig": {
+      "logGroupName": "/aws/bedrock/model-invocation-logs",
+      "roleArn": "arn:aws:iam::<account>:role/<bedrock-logging-role>"
+    },
+    "textDataDeliveryEnabled": true,
+    "embeddingDataDeliveryEnabled": false
+  }'
+```
+
+The log group must exist, and the role must trust `bedrock.amazonaws.com` and
+allow `logs:CreateLogStream` and `logs:PutLogEvents` on it; the console
+(**Amazon Bedrock, Settings, Model invocation logging**) can create both. See
+[Monitor model invocation using CloudWatch Logs and Amazon S3](https://docs.aws.amazon.com/bedrock/latest/userguide/model-invocation-logging.html).
+`aws bedrock delete-model-invocation-logging-configuration` turns it off.
+In the CloudWatch console, **GenAI Observability, Model Invocations** lists
+these logs next to Bedrock's own invocation, token and latency metrics.
