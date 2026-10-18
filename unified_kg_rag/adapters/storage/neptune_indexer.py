@@ -633,7 +633,6 @@ class NeptuneIndexer(GraphIndexer):
                         .values("id")
                     )
 
-                check_write_fence()
                 try:
                     present = set(
                         self._execute_with_retries(
@@ -676,7 +675,6 @@ class NeptuneIndexer(GraphIndexer):
                         .drop()
                     )
 
-                check_write_fence()
                 try:
                     self._execute_with_retries(drop_edges, "Dropping existing edges")
                     writable.extend(found)
@@ -694,7 +692,6 @@ class NeptuneIndexer(GraphIndexer):
                 rel: Relationship, entity_label: str = entity_label
             ) -> str | None:
                 """Write one edge; the error, or None once it is written."""
-                check_write_fence()
                 try:
                     if self._execute_with_retries(
                         lambda g: self._build_add_edge_traversal(g, rel, entity_label),
@@ -820,7 +817,6 @@ class NeptuneIndexer(GraphIndexer):
                     .drop()
                 )
 
-            check_write_fence()
             try:
                 self._execute_with_retries(drop_edges, "Deleting edges by id")
                 self._execute_with_retries(drop_vertices, "Deleting vertices by id")
@@ -951,7 +947,6 @@ class NeptuneIndexer(GraphIndexer):
             max_passes = math.ceil(int(initial) / batch_size) + _EXTRA_DELETE_PASSES
             total = 0
             for _ in range(max_passes):
-                check_write_fence()
                 (dropped,) = self._execute_with_retries(
                     lambda g: select(g).limit(batch_size).sideEffect(__.drop()).count(),
                     f"Dropping {what}",
@@ -1083,7 +1078,6 @@ class NeptuneIndexer(GraphIndexer):
         (concurrent) without any locking. A run that lost its write lease
         raises before the request (``check_write_fence``).
         """
-        check_write_fence()
         try:
             # Not an error yet: the per-item fallback below may still index
             # every item; one that fails there logs it.

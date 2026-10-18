@@ -178,7 +178,7 @@ def test_a_lost_lease_stops_the_next_neptune_batch(mocker) -> None:
     from unified_kg_rag.adapters.storage.neptune_indexer import NeptuneIndexer
 
     indexer = NeptuneIndexer(config=Config())
-    sent = mocker.patch.object(indexer, "_execute_with_retries")
+    sent = mocker.patch("unified_kg_rag.adapters.storage.neptune_indexer.run_traversal")
     token = _fenced(_Fence(allowed=0))
     try:
         with pytest.raises(NamespaceLeaseError):
@@ -188,6 +188,71 @@ def test_a_lost_lease_stops_the_next_neptune_batch(mocker) -> None:
     finally:
         remove_write_fence(token)
     sent.assert_not_called()
+
+
+@pytest.mark.parametrize("phase", ["rebuild", "retain"])
+def test_the_embedded_engine_swaps_no_alias_after_a_lost_lease(
+    tmp_path: Path, phase: str
+) -> None:
+    # The embedded search engine's requests do not check the fence (only
+    # OpenSearch's connection does): the indexer's own check before the swap
+    # is what keeps a run that lost its lease from swapping in its index.
+    from tests.fixtures.fakes.embeddings import HashingEmbeddingFactory
+    from unified_kg_rag.adapters.local.search_engine import SQLiteSearchEngine
+    from unified_kg_rag.adapters.storage.opensearch_indexer import OpenSearchIndexer
+
+    engine = SQLiteSearchEngine(tmp_path / "vectors.sqlite3")
+    indexer = OpenSearchIndexer(
+        Config(),
+        embedding_factory=HashingEmbeddingFactory(dimensions=8),
+        opensearch_client=engine,
+    )
+    indexer.index_text_units(
+        [TextUnit(id="old", text="old text")], suffixes=["default"]
+    )
+    indexer.write_extraction_records({"k1": {"a": 1}}, suffix="default")
+    prefix = (
+        indexer.opensearch_config.text_units_index_prefix
+        if phase == "rebuild"
+        else indexer.opensearch_config.extraction_records_index_prefix
+    )
+    alias = indexer._get_name(prefix, "default")
+    live = engine.get_indices_by_alias(alias)
+
+    token = _fenced(_Fence(allowed=0))
+    try:
+        with pytest.raises(NamespaceLeaseError):
+            if phase == "rebuild":
+                indexer.index_text_units(
+                    [TextUnit(id="new", text="new text")], suffixes=["default"]
+                )
+            else:
+                indexer.retain_extraction_records([], suffix="default")
+    finally:
+        remove_write_fence(token)
+    assert engine.get_indices_by_alias(alias) == live
+
+
+@pytest.mark.parametrize("cleanup", ["reap", "drop"])
+def test_a_lost_lease_is_not_swallowed_by_the_index_cleanup(
+    mocker, cleanup: str
+) -> None:
+    # Both cleanups are best-effort, but a lost lease must stop the run there
+    # rather than be logged as a failed delete.
+    from unified_kg_rag.adapters.storage.opensearch_indexer import OpenSearchIndexer
+
+    indexer = object.__new__(OpenSearchIndexer)
+    indexer.opensearch_client = MagicMock()
+    indexer.opensearch_client.get_aliases_by_index.return_value = {
+        "a-20260101000000000": {}
+    }
+    indexer.opensearch_client.get_indices_by_alias.return_value = []
+    indexer.opensearch_client.delete_indices.side_effect = NamespaceLeaseError("lost")
+    with pytest.raises(NamespaceLeaseError):
+        if cleanup == "reap":
+            indexer._reap_stale_indices("a", "a-20260102000000000")
+        else:
+            indexer._drop_unswapped_index("a", "a-20260102000000000")
 
 
 def _opensearch_client(mocker) -> OpenSearchClient:  # type: ignore[no-untyped-def]
@@ -306,9 +371,8 @@ def test_a_lost_lease_stops_the_neptune_retries(mocker) -> None:
         raise TimeoutError("Neptune did not answer")
 
     mocker.patch.object(neptune_mod, "run_traversal", side_effect=timed_out)
-    # The batch's own check and its first attempt pass; the lease is lost
-    # before the retry.
-    token = _fenced(_Fence(allowed=2))
+    # The first attempt's check passes; the lease is lost before the retry.
+    token = _fenced(_Fence(allowed=1))
     try:
         with pytest.raises(NamespaceLeaseError):
             indexer._execute_batch_traversal(
@@ -466,7 +530,7 @@ def test_a_lost_lease_stops_the_next_neptune_edge_write(mocker) -> None:
     from unified_kg_rag.adapters.storage.neptune_indexer import NeptuneIndexer
 
     indexer = NeptuneIndexer(config=Config())
-    sent = mocker.patch.object(indexer, "_execute_with_retries")
+    sent = mocker.patch("unified_kg_rag.adapters.storage.neptune_indexer.run_traversal")
     token = _fenced(_Fence(allowed=0))
     try:
         with pytest.raises(NamespaceLeaseError):

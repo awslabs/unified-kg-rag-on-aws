@@ -1273,6 +1273,8 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- A lost lease is no longer logged as a failed cleanup by the OpenSearch
+  indexer's stale-index and unswapped-index deletes; it stops the run (#PR).
 - A CLI stopped by SIGTERM or Ctrl-C exits at once (logs, tracing and
   stdout flushed) instead of waiting at interpreter exit for the model calls
   and pool tasks the stop abandoned, which could keep a stopped ECS task
