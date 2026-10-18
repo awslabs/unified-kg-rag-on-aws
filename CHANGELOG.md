@@ -897,6 +897,10 @@ changed once with the full-config keys (#332).
 - Derivation orders a hub's text units in linear time: the set of its
   stored units was rebuilt for every unit (40,000 units: 98 s to 18 ms)
   (#PR).
+- The indexing stage computes the extraction-record fingerprint once per
+  record kind instead of once per text unit (about 1.5 ms each; 10,000
+  units: 32 s to 0.16 s for the record keys). The keys are unchanged
+  (#PR).
 - The incremental lookups read only the fields they use: the text units'
   `attributes` (their extraction-record keys), the `text_unit_ids` of the
   claims and reports citing removed text units, and no field of a text unit

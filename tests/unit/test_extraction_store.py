@@ -18,6 +18,7 @@ from tests.fixtures.fakes.embeddings import HashingEmbeddingFactory
 from tests.fixtures.fakes.stores import FakeVectorStore
 from unified_kg_rag.adapters.local.search_engine import SQLiteSearchEngine
 from unified_kg_rag.adapters.storage.opensearch_indexer import OpenSearchIndexer
+from unified_kg_rag.application.ingestion import extraction_store
 from unified_kg_rag.application.ingestion.extraction_store import (
     ExtractionStore,
     with_record_keys,
@@ -292,6 +293,23 @@ class TestRecordKeys:
         assert units[0].attributes["extraction_records"] == {"graph": "stale"}
         assert "extraction_records" not in keyed[2].attributes
         assert keyed[1].attributes["filters"] == {"region": "north"}
+
+    def test_the_fingerprint_is_computed_once_per_kind(self, mocker) -> None:
+        # Regression: it was computed for every unit (~1.5 ms each), the bulk
+        # of the indexing stage of a large build.
+        spy = mocker.spy(extraction_store, "unit_record_fingerprint")
+        units = [_unit(f"t{i}") for i in range(50)]
+        records = [
+            TextUnitExtraction(text_unit_id=u.id, gleaned=i % 2 == 0)
+            for i, u in enumerate(units)
+        ]
+
+        keyed = with_record_keys(Config(), units, records, graph_failed=(), claims=True)
+
+        assert spy.call_count == 4  # (gleaned or not) x (graph, claims)
+        assert record_keys(keyed[0])["claims"] == record_key(
+            unit_record_fingerprint(Config(), gleaned=True, claims=True), TEXT
+        )
 
     def test_no_claims_key_when_claims_were_not_extracted(self) -> None:
         (unit,) = with_record_keys(
