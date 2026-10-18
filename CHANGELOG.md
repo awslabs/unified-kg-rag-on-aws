@@ -805,6 +805,12 @@ changed once with the full-config keys (#332).
   fused order. Reported by @vibhupb (#83) (#284).
 
 ### Changed
+- A claim whose subject or object matches several entities equally well
+  (spelling or legal-form variants: "Acme Inc" against "Acme" and "Acme
+  Corp") binds to the one its own text unit states, then to the smallest
+  name. Full builds may therefore bind such a claim to another entity than
+  before: the alphabetically smaller spelling came from another document
+  (#PR).
 - `indexing.lease_seconds` defaults to 600 s (was 300 s), three times the
   stores' 180 s request timeout; a shorter lease logs a WARNING at the start
   of the run. A run that dies now blocks its namespace for up to 10 minutes
@@ -1631,6 +1637,10 @@ changed once with the full-config keys (#332).
   holds its text units as one string). A removal whose deletion of the
   removed items failed strips no shared item, so the retry starts over
   (#363).
+- Incremental runs over three spellings of one name converge with a full
+  build: a claim resolved against all of the corpus's entities could bind
+  to a spelling its text unit does not state, which an incremental run,
+  resolving against its units' entities, could not reproduce (#PR).
 - Removing a document no longer leaves its text unnoticed in community
   reports: a kept report that cites a removed text unit is counted in the
   `community_drift` metrics (`outdated_reports`, deletion-only runs

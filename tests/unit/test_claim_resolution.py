@@ -100,3 +100,30 @@ def test_equal_scores_break_ties_on_the_name() -> None:
     reversed_order = _resolve(_claim("Gamma Lab", "x"), names[::-1])
     assert resolved is not None and reversed_order is not None
     assert resolved.subject_name == reversed_order.subject_name == "Gamma Lab Inc"
+
+
+def test_a_tie_goes_to_the_entity_stated_in_the_claims_units() -> None:
+    # "Acme Inc" matches "Acme" and "Acme Corp" equally (legal forms). The
+    # claim's unit states "Acme Corp"; "Acme" comes from another document, so
+    # an incremental run deriving the claim from its unit alone sees only
+    # "Acme Corp". Breaking the tie on the name chose "Acme" in a full build.
+    names = ["Acme", "Acme Corp", "Buyer"]
+    names_by_key = {entity_key(n): n for n in names}
+    ids_by_key = {entity_key(n): f"e-{n}" for n in names}
+    matcher = FuzzyMatcher(
+        names, resolution_method=ResolutionMethod.MINHASH, similarity_threshold=0.6
+    )
+    claim = _claim("Acme Inc", "Buyer").model_copy(update={"text_unit_ids": ["u2"]})
+
+    resolved = resolve_single_claim(
+        claim,
+        names_by_key,
+        ids_by_key,
+        matcher,
+        {"Acme": {"u1"}, "Acme Corp": {"u2"}, "Buyer": {"u2"}},
+    )
+    unhinted = resolve_single_claim(claim, names_by_key, ids_by_key, matcher)
+
+    assert resolved is not None and unhinted is not None
+    assert resolved.subject_name == "Acme Corp"
+    assert unhinted.subject_name == "Acme"

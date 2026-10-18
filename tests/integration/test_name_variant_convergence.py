@@ -44,7 +44,16 @@ pytestmark = [pytest.mark.integration, pytest.mark.usefixtures("no_aws")]
 
 no_aws = e2e.no_aws
 
-NAMES = ("Initech Corp", "Initech", "Buyer", "Depot", "Carrier", "Acme Inc", "Acme")
+NAMES = (
+    "Initech Corp",
+    "Initech",
+    "Buyer",
+    "Depot",
+    "Carrier",
+    "Acme Inc",
+    "Acme Corp",
+    "Acme",
+)
 TYPES = {"goods": "ORGANIZATION", "parts": "PERSON", "cash": "LOCATION"}
 
 
@@ -242,6 +251,31 @@ def _state(
                 },
             ],
             id="a-split-keeps-the-stored-spelling",
+        ),
+        pytest.param(
+            [
+                {"x.txt": "Acme Inc and Acme Corp trade goods 3."},
+                {
+                    "x.txt": "Acme Inc and Acme Corp trade goods 3.",
+                    "y.txt": "Acme Inc and Acme trade cash 2.",
+                },
+            ],
+            id="a-claim-of-a-third-spelling-is-not-kept-unresolved",
+        ),
+        pytest.param(
+            [
+                {
+                    "d5.txt": "Acme Inc and Acme trade parts 2. Acme Inc and Acme "
+                    "Corp and Acme trade parts 1. Acme Corp trade parts 3."
+                },
+                {"d3.txt": "Acme Inc and Buyer and Acme Corp trade cash 3."},
+                {
+                    "d3.txt": "Acme Inc and Buyer and Acme Corp trade cash 3.",
+                    "d4.txt": "Depot and Acme trade parts 1. Acme and Depot trade "
+                    "cash 2.",
+                },
+            ],
+            id="a-claim-names-the-spelling-its-unit-states",
         ),
     ],
 )
