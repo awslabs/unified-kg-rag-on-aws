@@ -1529,7 +1529,7 @@ changed once with the full-config keys (#332).
   so the retry found nothing to split and kept an edge of double weight and
   a claim of the entity about itself. A derived entity and another spelling
   of its name that share a text unit now have the other spelling's edges
-  derived with them and its claims follow (#PR).
+  derived with them and its claims follow (#357).
 - Removing a document no longer leaves its text unnoticed in community
   reports: a kept report that cites a removed text unit is counted in the
   `community_drift` metrics (`outdated_reports`, deletion-only runs
