@@ -118,6 +118,18 @@ class TestPairedComparison:
         assert (length["pairs"], length["unpaired"]) == (1, 1)
         assert out["warnings"] and "local 0, mix 1" in out["warnings"][0]
 
+    def test_blocked_answers_are_counted_and_warned(self) -> None:
+        # Before, a strategy whose answers the guardrail blocked showed no
+        # trace of it in the comparison.
+        reports, results = _run({"a": 1.0, "b": 0.0}, "mix")
+        results[1].guardrail_blocked = "output"
+        out = paired_comparison(
+            {"local": [_run({"a": 1.0, "b": 1.0})], "mix": [(reports, results)]}
+        )
+        assert out["strategies"]["mix"]["guardrail_blocked_counts"] == {"output": 1}
+        assert out["strategies"]["local"]["guardrail_blocked_counts"] == {}
+        assert any("local 0, mix 1" in w and "guardrail" in w for w in out["warnings"])
+
     def test_equal_failure_counts_raise_no_warning(self) -> None:
         out = paired_comparison(
             {"local": [_run({"a": 1.0})], "mix": [_run({"a": 0.0})]}

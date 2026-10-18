@@ -50,6 +50,29 @@ def _score(
     }
 
 
+def test_output_blocked_answer_is_skipped_not_a_miss(
+    evaluator: RetrievalEvaluator,
+) -> None:
+    # Before, the sources the guardrail dropped scored as a retrieval miss (0).
+    result = EvaluationResult(
+        query_id="q",
+        question="?",
+        generated_answer="Answer blocked.",
+        ground_truth="",
+        retrieved_source_ids=[],
+        metadata={"reference_sources": ["a.txt"]},
+        guardrail_blocked="output",
+    )
+    report = evaluator.evaluate_single(
+        EvaluationQuery(query_id="q", question="?"), result, ""
+    )
+    assert report.metrics == []
+    assert set(report.metadata["skipped_metrics"].values()) == {"guardrail_blocked"}
+    assert set(report.metadata["skipped_metrics"]) == {
+        m.value for m in evaluator.metric_types()
+    }
+
+
 class TestSourceKeys:
     @pytest.mark.parametrize(
         "identifier",

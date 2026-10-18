@@ -27,6 +27,9 @@ logger = get_logger(__name__)
 FAILED_METRICS_KEY = "failed_metrics"
 SKIPPED_METRICS_KEY = "skipped_metrics"
 SKIP_REASON_EMPTY_REFERENCE = "empty_reference"
+# The guardrail blocked the answer and withdrew its sources: retrieval cannot
+# be judged from what is left.
+SKIP_REASON_GUARDRAIL_BLOCKED = "guardrail_blocked"
 
 
 def judge_model_kwargs(config: Config) -> dict[str, Any]:

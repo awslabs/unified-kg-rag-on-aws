@@ -259,6 +259,8 @@ async def test_eval_json_output_is_the_only_stdout(
     assert [
         (r["strategy"], r["repeat"], r["total_queries"]) for r in result["runs"]
     ] == [("auto", 1, 1)]
+    # Each run reports its guardrail blocks (none here).
+    assert result["runs"][0]["guardrail_blocked_counts"] == {}
 
 
 def test_visualization_json_output_names_the_written_files(

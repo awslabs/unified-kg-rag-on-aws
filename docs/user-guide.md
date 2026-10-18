@@ -1247,8 +1247,9 @@ scored/failed/skipped counts (`metric_outcomes`), plus:
   result carries `rerank_status` (`null` when answer generation failed
   first).
 - `guardrail_blocked_counts`: blocked queries per `input` / `output` (a
-  blocked item is scored on the blocked message); each result carries
-  `guardrail_blocked`.
+  blocked item is scored on the blocked message; a blocked answer drops its
+  sources, so its retrieval metrics are skipped as `guardrail_blocked`); each
+  result carries `guardrail_blocked`.
 - `run_manifest`: what was measured, so two runs can be compared:
   - the CLI arguments (URLs without credentials), versions, `git_sha` /
     `git_dirty`, the dataset (path, hashes, query count), a UTC timestamp and
@@ -1290,7 +1291,8 @@ adds `evaluation_comparison_<timestamp>.json`:
   per-query deltas and `unpaired`. A query whose answer generation failed
   scores 0 on every metric the other run scored (`answer_length` excepted),
   so failing cannot help a strategy (`failed_answers` / `failed_queries`;
-  `warnings` names strategies that failed different numbers). A difference is
+  `guardrail_blocked_counts` counts blocks; `warnings` names strategies that
+  failed, or had blocked, different numbers). A difference is
   supported when its interval excludes 0; a 10-point difference on binary
   metrics is detected in 15% of runs with 50 queries and 59% with 200, so
   compare on a few hundred queries.

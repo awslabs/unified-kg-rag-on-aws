@@ -1247,6 +1247,11 @@ changed once with the full-config keys (#332).
   before graph copies, and the incremental switch is
   `providers.doc_status.enabled` (#350).
   `providers.doc_status.enabled` (#351).
+- Evaluation: an answer the guardrail blocked (which drops its sources) no
+  longer scores as a retrieval miss; its `retrieval` metrics and retrieved
+  coverage are skipped as `guardrail_blocked`. The strategy comparison
+  reports each strategy's `guardrail_blocked_counts` and warns when they
+  differ, and `run-eval --output-format json` includes them per run (#PR).
 - iac/README.md no longer says a second concurrent ingestion stops before it
   reads anything: it syncs the corpus and its checkpoint first, then stops
   with `NamespaceLeaseError` before it reads the stores or writes (#345).

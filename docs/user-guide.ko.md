@@ -1139,7 +1139,8 @@ run-eval --data-path s3://my-bucket/eval/my_eval_data.json \
 - `rerank_status_counts`: [재순위화 상태](#재순위화-상태)별 질의 수입니다. 각 결과에는
   `rerank_status`가 기록됩니다(답변 생성이 먼저 실패했으면 `null`).
 - `guardrail_blocked_counts`: `input` / `output`별 차단된 질의 수입니다(차단된 항목은
-  차단 메시지로 채점). 각 결과에는 `guardrail_blocked`가 기록됩니다.
+  차단 메시지로 채점. 차단된 답변은 출처를 버리므로 검색 지표는 `guardrail_blocked`로
+  건너뜀). 각 결과에는 `guardrail_blocked`가 기록됩니다.
 - `run_manifest`: 무엇을 측정했는지 기록하므로 두 실행을 비교할 수 있습니다.
   - CLI 인자(URL은 자격 정보를 뺌), 버전, `git_sha` / `git_dirty`, 데이터셋(경로, 해시,
     질의 수), UTC 타임스탬프, `dropped_evaluators`
@@ -1173,8 +1174,9 @@ run-eval --data-path s3://my-bucket/eval/my_eval_data.json \
   비교한 값입니다. `mean_delta`, 95% 짝지은 부트스트랩 구간(`ci_low`/`ci_high`. 2,000번
   재표집, 시드 0), `wins`/`ties`/`losses`, 질의별 차이, `unpaired`가 있습니다. 답변
   생성에 실패한 질의는 다른 실행이 채점한 모든 지표에서 0점이므로(`answer_length` 제외)
-  실패로 이득을 볼 수 없습니다(`failed_answers` / `failed_queries`. 전략마다 실패 수가
-  다르면 `warnings`에 이름이 나옴). 구간이 0을 포함하지 않으면 그 차이가 뒷받침됩니다.
+  실패로 이득을 볼 수 없습니다(`failed_answers` / `failed_queries`. 차단 수는
+  `guardrail_blocked_counts`. 전략마다 실패하거나 차단된 수가 다르면 `warnings`에 이름이
+  나옴). 구간이 0을 포함하지 않으면 그 차이가 뒷받침됩니다.
   이진 지표의 10%p 차이는 질의 50개에서 15%, 200개에서 59%의 실행에서만 찾아지므로 수백
   개 질의로 비교하세요.
 - `pairwise_vs_baseline.<s>`(`--pairwise-judge` 사용 시): GraphRAG / LightRAG 논문의

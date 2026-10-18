@@ -18,7 +18,9 @@ would let a strategy that crashes on the queries it would lose look as good
 as one that answers them. So a failed answer scores 0 on every metric
 another run scored that query on (``answer_length``, a diagnostic rather than
 a score, excepted), and each strategy reports its failed answers;
-``warnings`` names the strategies whose failure counts differ.
+``warnings`` names the strategies whose failure counts differ. Likewise each
+strategy reports its guardrail-blocked answers (by blocked text), and
+different counts are warned about too.
 
 ``auto`` is reported with the distribution of the strategies it routed to,
 since its scores are a mix of theirs.
@@ -154,6 +156,17 @@ def paired_comparison(
                 result.error for _, results in runs[strategy] for result in results
             ),
             "failed_queries": failed,
+            # Answers the guardrail blocked (over every repeat), by blocked text.
+            "guardrail_blocked_counts": dict(
+                sorted(
+                    Counter(
+                        result.guardrail_blocked
+                        for _, results in runs[strategy]
+                        for result in results
+                        if result.guardrail_blocked
+                    ).items()
+                )
+            ),
             "metrics": metrics,
         }
 
@@ -201,12 +214,22 @@ def paired_comparison(
 
 
 def _failure_warnings(summary: Mapping[str, Any]) -> list[str]:
-    """A warning when the strategies failed different numbers of answers."""
+    """Warnings when the strategies failed, or had blocked, different numbers
+    of answers."""
+    warnings = []
     failed = {s: stats["failed_answers"] for s, stats in summary.items()}
-    if len(set(failed.values())) <= 1:
-        return []
-    counts = ", ".join(f"{s} {n}" for s, n in failed.items())
-    return [
-        f"Strategies failed different numbers of answers ({counts}); each "
-        "failed answer scores 0, so the comparison reflects those failures."
-    ]
+    if len(set(failed.values())) > 1:
+        counts = ", ".join(f"{s} {n}" for s, n in failed.items())
+        warnings.append(
+            f"Strategies failed different numbers of answers ({counts}); each "
+            "failed answer scores 0, so the comparison reflects those failures."
+        )
+    blocked = {s: stats["guardrail_blocked_counts"] for s, stats in summary.items()}
+    if len({tuple(c.items()) for c in blocked.values()}) > 1:
+        counts = ", ".join(f"{s} {sum(c.values())}" for s, c in blocked.items())
+        warnings.append(
+            f"The guardrail blocked different numbers of answers ({counts}); "
+            "a blocked answer is scored on its blocked message, so the "
+            "comparison reflects those blocks."
+        )
+    return warnings

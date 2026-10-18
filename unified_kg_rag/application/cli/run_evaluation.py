@@ -575,6 +575,7 @@ class EvaluationRunner:
                                 "average_response_time",
                                 "metric_statistics",
                                 "metric_outcomes",
+                                "guardrail_blocked_counts",
                             },
                         ),
                     }
