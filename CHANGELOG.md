@@ -1266,6 +1266,9 @@ changed once with the full-config keys (#332).
 - A lost lease is no longer swallowed by `OpenSearchClient.delete_indices`
   (reported as an `AWSServiceError` after the remaining batches were sent)
   or by the best-effort cleanup of unused extraction records (#358).
+- `prepare-benchmark musique` keeps file names distinct under the retrieval
+  evaluator's matching (case, NFKC, `_` for a space), so two paragraphs
+  titled `A_B` and `A B` no longer count as the same reference (#PR).
 - The strategy comparison's guardrail warning no longer says every metric
   of a blocked answer is scored on the blocked message: an answer blocked on
   output has no retrieval or context score, so those queries are unpaired

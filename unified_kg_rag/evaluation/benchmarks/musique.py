@@ -29,6 +29,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
+from unified_kg_rag.evaluation.retrieval_evaluator import reference_key
 from unified_kg_rag.shared import EvaluationException, get_logger
 
 logger = get_logger(__name__)
@@ -83,9 +84,11 @@ def _file_name(title: str, taken: set[str]) -> str:
     # No leading dot: the parser skips hidden files.
     stem = " ".join(_UNSAFE.sub(" ", title).split())[:150].lstrip(". ") or "paragraph"
     name, n = f"{stem}.txt", 2
-    while name.casefold() in taken:
+    # Distinct under the retrieval evaluator's matching (case, NFKC, "_" as
+    # " "), or two paragraphs would count as one file.
+    while reference_key(name) in taken:
         name, n = f"{stem} ({n}).txt", n + 1
-    taken.add(name.casefold())
+    taken.add(reference_key(name))
     return name
 
 

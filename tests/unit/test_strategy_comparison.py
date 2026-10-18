@@ -360,6 +360,15 @@ class TestMusique:
         assert musique._file_name(".hack", taken) == "hack.txt"
         assert musique._file_name(". . .", taken) == "paragraph.txt"
 
+    def test_file_names_differ_under_reference_matching(self) -> None:
+        # Before, "A_B" and "A B" got files the retrieval evaluator reads as
+        # the same reference, so retrieving one counted as the other.
+        taken: set[str] = set()
+        assert musique._file_name("A_B", taken) == "A_B.txt"
+        assert musique._file_name("A B", taken) == "A B (2).txt"
+        assert musique._file_name("ＡＢ", taken) == "ＡＢ.txt"
+        assert musique._file_name("ab", taken) == "ab (2).txt"
+
     def test_limit_samples_with_the_seed_and_refuses_a_used_corpus(
         self, tmp_path: Path
     ) -> None:
