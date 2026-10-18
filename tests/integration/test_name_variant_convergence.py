@@ -334,6 +334,20 @@ def _state(
             ],
             id="a-claim-resolves-with-the-other-spellings-the-run-derived",
         ),
+        pytest.param(
+            [
+                {
+                    "r6.txt": "ACME Inc trade cash 2. Initech and Buyer and ACME Inc "
+                    "trade cash 2.",
+                    "d1.txt": "Buyer and Acme Inc trade cash 3.",
+                },
+                {
+                    "r6.txt": "ACME Inc trade cash 2. Initech and Buyer and ACME Inc "
+                    "trade cash 2."
+                },
+            ],
+            id="a-claim-names-an-entity-renamed-under-its-id",
+        ),
     ],
 )
 def test_incremental_runs_over_two_spellings_match_a_full_build(

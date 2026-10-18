@@ -77,7 +77,16 @@ def _vector_content(item: Entity | Relationship) -> tuple[Any, ...]:
 
 
 def _claim_text(claim: Claim) -> tuple[Any, ...]:
-    return claim.type, claim.status, claim.description, claim.source_text
+    """What a claim states beyond its lineage: its text and the names of the
+    entities it is about (a renamed entity renames them)."""
+    return (
+        claim.type,
+        claim.status,
+        claim.description,
+        claim.source_text,
+        claim.subject_name,
+        claim.object_name,
+    )
 
 
 def _other_spellings(
@@ -201,6 +210,9 @@ class IndexingManager:
         # By suffix, the entities derivation split off a stored one -> its id
         # (``Derived.split_from``): the stored claims about it follow them.
         self._split_from: dict[str, dict[str, str]] = {}
+        # Stored entities a derivation of this run renamed under their id (a
+        # case or spelling variant won): their claims name them anew.
+        self._renamed: dict[str, set[str]] = {}
         # Ids of the stored edges this run rewrites for their rank only.
         self._rank_only: set[str] = set()
         # The suffixes whose graph merge found nothing stored.
@@ -599,12 +611,15 @@ class IndexingManager:
         derived too, so they follow its new id (ids follow the current name,
         see ``derivation``).
         """
-        if not (claims or self._rekeyed or self._split_from):
+        if not (claims or self._rekeyed or self._split_from or self._renamed):
             return claims
         groups = self._group_by_suffix(claims or [])
         merged: list[Claim] = []
         for suffix in sorted(
-            groups.keys() | self._rekeyed.keys() | self._split_from.keys()
+            groups.keys()
+            | self._rekeyed.keys()
+            | self._split_from.keys()
+            | self._renamed.keys()
         ):
             group = groups.get(suffix, [])
             stored = self.opensearch_indexer.read_claims(
@@ -743,6 +758,7 @@ class IndexingManager:
                 relationships=list(merged_relationships),
             )
         rekey = derived.id_remap
+        self._note_renamed(suffix, derived.entities, existing)
 
         def final_id(delta_id: str, merged_into: Mapping[str, str]) -> str:
             """The id a delta item ends under: the stored one it merged into
@@ -1240,13 +1256,25 @@ class IndexingManager:
 
     def _rederived_entity_ids(self, suffix: str) -> list[str]:
         """The stored entity ids whose claims this run derives again: the
-        re-keyed ones and those an entity was split off."""
+        re-keyed ones, those an entity was split off and those renamed."""
         return sorted(
             {
                 *self._rekeyed.get(suffix, {}),
                 *self._split_from.get(suffix, {}).values(),
+                *self._renamed.get(suffix, set()),
             }
         )
+
+    def _note_renamed(
+        self, suffix: str, derived: Sequence[Entity], stored: Sequence[Entity]
+    ) -> list[str]:
+        """Record (and return) the stored entities ``derived`` renamed under
+        their own id."""
+        names = {e.id: e.name for e in stored}
+        renamed = [e.id for e in derived if e.id in names and names[e.id] != e.name]
+        if renamed:
+            self._renamed.setdefault(suffix, set()).update(renamed)
+        return renamed
 
     def delete_retired_ids(self) -> dict[str, IndexingStats]:
         """Delete the items whose ids a derivation replaced (see
@@ -1266,6 +1294,7 @@ class IndexingManager:
         self._rekeyed.clear()
         self._dropped.clear()
         self._split_from.clear()
+        self._renamed.clear()
         self._fresh.clear()
         self._rank_only.clear()
         self._derived_entities.clear()
@@ -1282,6 +1311,7 @@ class IndexingManager:
         self._rekeyed.clear()
         self._dropped.clear()
         self._split_from.clear()
+        self._renamed.clear()
         self._fresh.clear()
         self._rank_only.clear()
         self._derived_entities.clear()
@@ -1453,13 +1483,15 @@ class IndexingManager:
             self._derived_entities.setdefault(suffix, {}).update(
                 {e.id: e for e in new_entities}
             )
-            # The stored claims about a re-keyed or split entity follow it.
+            # The stored claims about a re-keyed, split or renamed entity
+            # follow it.
+            renamed = self._note_renamed(suffix, derived.entities, entities)
             claim_ids = sorted(
                 {
                     *claim_ids,
                     *self._claims_about(
                         suffix,
-                        [*derived.id_remap, *derived.split_from.values()],
+                        [*derived.id_remap, *derived.split_from.values(), *renamed],
                     ),
                 }
             )

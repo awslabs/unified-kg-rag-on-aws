@@ -1754,6 +1754,10 @@ changed once with the full-config keys (#332).
   into one entity) is deleted again: re-pointed at a re-keyed endpoint, it
   was rewritten among that entity's other stored edges, so it was never
   retired (a gleaned edge between two spellings of one name stayed) (#PR).
+- A stored claim names an entity as it is named now after an incremental
+  run renames the entity under its id (a case variant, "ACME Inc" for
+  "Acme Inc", takes over): its claims are derived again, and a claim whose
+  subject or object name changed is rewritten, not only its lineage (#PR).
 - Removing a document no longer leaves its text unnoticed in community
   reports: a kept report that cites a removed text unit is counted in the
   `community_drift` metrics (`outdated_reports`, deletion-only runs
