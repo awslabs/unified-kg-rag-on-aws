@@ -437,9 +437,10 @@ class IndexingManager:
 
         prefix, tail = ("", "") if suffixes is not None else ("Delta ", " (upsert)")
         # A full build replaces the graph in place where the backend can: the
-        # labels are not cleared first, so queries keep reading the previous
-        # graph until the build's writes replace it, and what the build did
-        # not write is dropped at the end (the vector indices swap aliases).
+        # labels are not cleared first, so queries read the items the build
+        # already rewrote next to the previous ones it has not reached, and
+        # what the build did not write is dropped at the end (the vector
+        # indices swap aliases).
         # A run that lost its write lease stops before each phase and before
         # the sweep, which would drop what the new holder wrote.
         check_write_fence()

@@ -279,7 +279,9 @@ class GraphIndexer(BaseIndexer):
 
     def begin_rebuild(self, suffixes: Collection[str]) -> bool:
         """Start a full build that replaces ``suffixes``' graph in place,
-        so the graph keeps serving its previous content meanwhile.
+        so the graph is never empty meanwhile: until the sweep, queries read
+        the items the build already rewrote alongside the previous ones it
+        has not reached (and the ones it will drop).
 
         Returns whether the backend can: then ``index_entities`` and
         ``index_communities`` no longer clear the labels first, and

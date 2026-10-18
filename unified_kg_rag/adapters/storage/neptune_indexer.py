@@ -977,9 +977,10 @@ class NeptuneIndexer(GraphIndexer):
 
         Until :meth:`end_rebuild`, the full-build writes no longer clear a
         label first: every vertex and edge they write carries this build's
-        tag (``build_tag``), so the graph keeps serving its previous content
-        while the new one is written, and :meth:`end_rebuild` then drops what
-        the build did not write.
+        tag (``build_tag``), so the graph is never empty while the new one is
+        written (queries read the rewritten items next to the previous ones
+        not reached yet), and :meth:`end_rebuild` then drops what the build
+        did not write.
         """
         self._rebuild_tag = uuid.uuid4().hex
         return True
