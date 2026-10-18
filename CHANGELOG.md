@@ -1221,6 +1221,14 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Docs match the code again: a document is `FAILED` in five cases (an
+  extraction record that could not be stored, `records_not_stored`, is the
+  fifth), `global` maps one cut and falls back to a shallower one over
+  `max_reports_per_level` (`kg_rag.global.select` carries `kg_rag.cut`), the
+  response-cache key no longer names the guardrail, removed config keys warn
+  and are ignored while moved ones fail, deletions remove vector copies
+  before graph copies, and the incremental switch is
+  `providers.doc_status.enabled` (#350).
 - iac/README.md no longer says a second concurrent ingestion stops before it
   reads anything: it syncs the corpus and its checkpoint first, then stops
   with `NamespaceLeaseError` before it reads the stores or writes (#345).

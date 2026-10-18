@@ -243,7 +243,7 @@ S3의 코퍼스가 원본이므로 모든 저장소는 코퍼스에서 다시 �
 
 ### 실패한 문서
 
-다음 네 경우에 문서가 `FAILED`로 기록됩니다.
+다음 다섯 경우에 문서가 `FAILED`로 기록됩니다.
 
 - 텍스트 단위 하나라도 번역, 그래프 추출, gleaning, 주장 추출에 실패함
 - 텍스트 단위를 포함한 기본 수준 커뮤니티의 리포트가 생성되지 않음. 상위 수준 리포트
@@ -254,6 +254,8 @@ S3의 코퍼스가 원본이므로 모든 저장소는 코퍼스에서 다시 �
 - `--continue-on-error` 실행에서 산출물을 만드는 단계(번역부터 커뮤니티 탐지까지)가
   비정상 종료함. 이때는 그 실행의 모든 문서가 `FAILED`로 기록됨
 - 산출물(텍스트 단위, 엔티티, 관계, 주장, 커뮤니티, 리포트) 하나를 저장소에 쓰는 데 실패함
+- 텍스트 단위의 추출 레코드를 추출 저장소에 쓰지 못함(그래프 해석과 주장 추출이
+  `records_not_stored`로 보고). 다음 실행이 그 문서를 다시 추출함
 
 다음 실행은 `FAILED` 문서를 바뀐 문서로 취급해 실패한 실행이 쓴 내용을 지우고 다시
 처리합니다. 그 밖의 단계 실패는 아무것도 기록하지 않습니다. `--continue-on-error`
@@ -405,7 +407,7 @@ run-ingestion: error: Missing endpoint configuration for the indexing stage: aws
 
 CDK 스택에서는 수집 태스크가 실패하면 실행 ID와 오류를 담은 메시지를 SNS 토픽에
 게시하고, 아래 경보도 같은 토픽으로 문제를 알립니다. 파이프라인 실행 경보가 다섯 개,
-저장소 상태 경보가 일곱 개, 용량 경보가 두 개입니다. 경보를 받으려면
+저장소 상태 경보가 일곱 개(Neptune Serverless에서는 여덟 개), 용량 경보가 두 개입니다. 경보를 받으려면
 `-c alarm_email=<address>`로 배포해 구독자를 등록해야 합니다.
 
 태스크가 실패하면 `PipelineFailures`도 발생하므로 같은 실패가 두 번 오며, 두 번째
@@ -651,7 +653,7 @@ LangSmith로 업로드합니다.
 |---|---|---|
 | `Missing endpoint configuration for ...` | 실행에 필요한 엔드포인트가 비어 있음 | 메시지에 나온 키나 환경 변수를 설정 |
 | `Configuration validation error: ...` | 설정값의 타입이나 값이 잘못됨 | 메시지에 나온 키를 수정 |
-| `ConfigurationError: Unknown config keys: '<path>' ...`(종료 코드 2) | 오타이거나 이번 릴리스에서 없어지거나 이름이 바뀐 키 | 키를 고치거나 삭제함(바뀐 이름은 [CHANGELOG](../CHANGELOG.md)에 있음). `--allow-unknown-keys`를 주면 키마다 `Unknown config key '<path>' is ignored`(WARNING)를 남기고 파일을 읽음 |
+| `ConfigurationError: Unknown config keys: '<path>' ...`(종료 코드 2) | 오타이거나 대신할 키 없이 없어진 키. 이름이 바뀐 키는 `settings moved; replace <old> -> <new>`로 실패하고, 제거 목록에 있는 키(`indexing.cross_run_merge`, `aws.bedrock.guardrail.apply_to`)는 `Config key ... is removed and ignored`만 남김 | 키를 고치거나 삭제함(바뀐 이름은 [CHANGELOG](../CHANGELOG.md)에 있음). `--allow-unknown-keys`를 주면 키마다 `Unknown config key '<path>' is ignored`(WARNING)를 남기고 파일을 읽음 |
 | `--source-directory is required for pipeline execution`(아래 사용법 오류처럼 종료 코드 2) | `--source-directory`도 `$UKR_SOURCE_DIRECTORY`도 없음 | 플래그를 넘김. `--verify-metadata`에는 대신 `--pipeline-id`가 필요 |
 | `--s3-sync needs --s3-bucket-name or aws.s3.bucket_name` | 버킷 없이 `--s3-sync`를 지정함 | `--s3-bucket-name`을 넘기거나 `aws.s3.bucket_name`(`UKR__AWS__S3__BUCKET_NAME`)을 설정 |
 | `--pipeline-id is required for --resume-from-stage` | 재개하려면 이전 실행이 필요함 | 그 실행의 `--pipeline-id`를 넘김 |

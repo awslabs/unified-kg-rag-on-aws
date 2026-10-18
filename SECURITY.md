@@ -16,7 +16,7 @@ stable hash for user queries, corpus text (including entity names) and model
 output; the text itself is logged only at `DEBUG`, and exception messages do
 not include model output. `DEBUG` logs therefore contain user and corpus data
 and must be handled with the same controls as that data. See the logging
-section of the [user guide](docs/user-guide.md#27-memory-cache-logging).
+section of the [user guide](docs/user-guide.md#what-the-logs-contain).
 
 ## Dependency advisories
 

@@ -86,8 +86,8 @@ The rules to keep in mind:
   only the retrieval algorithm differs. LightRAG `mix`/`hybrid` extract high/low
   keywords (`KeywordsExtractionPrompt`) and query a relationship vector index
   (high-level) + entity index (low-level) + Neptune expansion.
-- **Incremental indexing**: enable the doc-status registry (`aws.dynamodb`,
-  or SQLite in local mode) to diff a corpus by content hash and only
+- **Incremental indexing**: enable the doc-status registry
+  (`providers.doc_status.enabled`; DynamoDB, or SQLite in local mode) to diff a corpus by content hash and only
   (re)index new/changed documents, merging into the live graph
   (`IncrementalIndexer`, `ingestion/merge/`, idempotent `upsert_*`/`delete_by_id`
   on both indexers). The registry lists each document's text units; a

@@ -263,7 +263,7 @@ stated in.
 
 ### Failed documents
 
-A document is recorded `FAILED` in four cases:
+A document is recorded `FAILED` in five cases:
 
 - translation, graph extraction, gleaning or claim extraction failed on one
   of its text units;
@@ -277,7 +277,10 @@ A document is recorded `FAILED` in four cases:
   `--continue-on-error` run, which records every document of the run
   `FAILED`;
 - writing one of its artifacts (text unit, entity, relationship, claim,
-  community, report) to the stores failed.
+  community, report) to the stores failed;
+- the extraction record of one of its text units could not be written to
+  the extraction store (graph resolution and claim extraction report them as
+  `records_not_stored`), so the next run extracts the document again.
 
 The next run treats a `FAILED` document as changed: it removes what the
 failed run wrote and processes the document again. Any other stage failure
@@ -454,8 +457,8 @@ results.
 
 On the CDK stack, a failed ingestion task publishes a message with the
 execution id and the error to the SNS topic, and the alarms below report to
-the same topic: five on pipeline runs, seven on store health and two on
-capacity. The alarms have a subscriber only when the stack was deployed with
+the same topic: five on pipeline runs, seven on store health (eight on
+Neptune Serverless) and two on capacity. The alarms have a subscriber only when the stack was deployed with
 `-c alarm_email=<address>`.
 
 `PipelineFailures` also fires for a failed task, so such a failure arrives
@@ -717,7 +720,7 @@ Messages are abridged; the log line names the key, file or stage involved. A sto
 |---|---|---|
 | `Missing endpoint configuration for ...` | An endpoint the run needs is unset | Set the named key or environment variable |
 | `Configuration validation error: ...` | A config value has the wrong type or an unsupported value | Fix the named key |
-| `ConfigurationError: Unknown config keys: '<path>' ...` (exit code 2) | A typo, or a key removed or renamed in this release | Correct or delete the key ([CHANGELOG](../CHANGELOG.md) names the replacement). `--allow-unknown-keys` loads the file anyway, logging `Unknown config key '<path>' is ignored` (WARNING) per key |
+| `ConfigurationError: Unknown config keys: '<path>' ...` (exit code 2) | A typo, or a key dropped without a replacement. A renamed key fails with `settings moved; replace <old> -> <new>`; a key listed as removed (`indexing.cross_run_merge`, `aws.bedrock.guardrail.apply_to`) only logs `Config key ... is removed and ignored` | Correct or delete the key ([CHANGELOG](../CHANGELOG.md) names the replacement). `--allow-unknown-keys` loads the file anyway, logging `Unknown config key '<path>' is ignored` (WARNING) per key |
 | `--source-directory is required for pipeline execution` (exit 2, like the usage errors below) | No `--source-directory` and no `$UKR_SOURCE_DIRECTORY` | Pass it; `--verify-metadata` needs `--pipeline-id` instead |
 | `--s3-sync needs --s3-bucket-name or aws.s3.bucket_name` | `--s3-sync` without a bucket | Pass `--s3-bucket-name` or set `aws.s3.bucket_name` (`UKR__AWS__S3__BUCKET_NAME`) |
 | `--pipeline-id is required for --resume-from-stage` | Resuming needs the earlier run | Pass that run's `--pipeline-id` |
