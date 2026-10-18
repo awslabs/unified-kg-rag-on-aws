@@ -29,6 +29,8 @@ from unified_kg_rag.adapters.ingestion.claim_extractor import ClaimExtractor
 from unified_kg_rag.application.ingestion.incremental import (
     IncrementalIndexer,
     build_document_lineage,
+    close_attempts,
+    open_attempts,
 )
 from unified_kg_rag.application.storage.indexing_manager import IndexingManager
 from unified_kg_rag.domain.ingestion.base_processor import BaseProcessor
@@ -276,6 +278,9 @@ class IncrementalRun:
         self.manager = self._manager()
         self.store: DocStatusPort = store or FakeDocStatusStore()
         self.extracted: list[str] = []
+        # Kills the run (a process death) right after it opened its attempts
+        # when it returns True for the paths of the documents it processes.
+        self.crash_on: Callable[[list[str]], bool] | None = None
 
     def _manager(self) -> IndexingManager:
         return IndexingManager(
@@ -312,9 +317,13 @@ class IncrementalRun:
             inc.doc_status,
             max_attempts=self.config.indexing.max_document_attempts,
         )
+        # Like the document_loading stage: before any stage processes them.
+        open_attempts(inc.doc_status, delta, fingerprints)
         to_extract = set(delta.to_process)
         extracted = [d for d in documents if document_doc_id(d) in to_extract]
         self.extracted = sorted(d.file_path for d in extracted)
+        if self.crash_on is not None and self.crash_on(self.extracted):
+            raise Killed("crash_on")
         built = extract({d.file_path: corpus[d.file_path] for d in extracted})
         # The extraction stages store the units' records before indexing.
         self.vector.write_extraction_records(
@@ -328,7 +337,7 @@ class IncrementalRun:
         )
         units, entities, edges = built.units, built.entities, built.relationships
         lineages = build_document_lineage(documents=extracted, text_units=units)
-        inc.write_ahead(delta, lineages, fingerprints)
+        inc.write_ahead(delta, lineages)
         if not inc.remove_changed_and_deleted(delta):
             raise AssertionError("the fake stores never fail a removal")
         inc.commit(
@@ -339,6 +348,8 @@ class IncrementalRun:
             relationships=edges,
             claims=built.claims,
         )
+        # The run ends in the process: its attempts are not deaths.
+        close_attempts(inc.doc_status, delta, fingerprints)
 
     def _install(
         self,
@@ -393,10 +404,14 @@ class IncrementalRun:
         elif point == "before_record":
             patch(inc, "record", kill)
         elif point == "mid_commit":
-            # The k-th record of the commit (after the write-ahead ones).
+            # The k-th record of the commit (after the attempt and
+            # write-ahead ones; a commit's record has no open attempt).
             def in_commit(original: Any) -> Any:
                 def wrapper(record: Any) -> Any:
-                    if record.status is not DocStatus.PENDING:
+                    if (
+                        record.status is not DocStatus.PENDING
+                        and record.attempt_batch is None
+                    ):
                         calls["n"] += 1
                         if calls["n"] == k:
                             raise Killed(point)

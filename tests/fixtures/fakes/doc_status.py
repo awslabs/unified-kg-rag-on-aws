@@ -15,7 +15,6 @@ from collections.abc import Iterable
 
 from unified_kg_rag.domain.ingestion.delta_detector import scope_namespace
 from unified_kg_rag.domain.models import (
-    DocStatus,
     DocStatusRecord,
     DocumentDelta,
     ExtractionSettings,
@@ -136,7 +135,7 @@ class FakeDocStatusStore:
                 doc_id: StoredDocument(
                     record.content_hash,
                     record.scope,
-                    record.status is DocStatus.FAILED,
+                    record.status.value,
                     record.extraction_fingerprint,
                 )
                 for doc_id, record in stored.items()

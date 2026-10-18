@@ -105,9 +105,9 @@ def test_stored_states_are_projected_and_read_per_namespace(
     scan = mocker.spy(ddb_store.client, "scan")
 
     assert ddb_store._stored_states("ns") == {
-        "ns#d1": ("h1", None, False, None),
-        "ns#d2": ("h2", None, True, None),
-        "ns#d3": ("h3", "ns|src", False, "x1"),
+        "ns#d1": ("h1", None, "pending", None),
+        "ns#d2": ("h2", None, "failed", None),
+        "ns#d3": ("h3", "ns|src", "processed", "x1"),
     }
     assert ddb_store.diff({}, scope="ns|src").deleted == ["ns#d3"]
     scan.assert_not_called()

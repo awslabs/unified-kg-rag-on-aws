@@ -25,7 +25,6 @@ from botocore.exceptions import BotoCoreError, ClientError
 from unified_kg_rag.domain.ingestion.delta_detector import scope_namespace
 from unified_kg_rag.domain.models import (
     Config,
-    DocStatus,
     DocStatusRecord,
     DocumentDelta,
     ExtractionSettings,
@@ -66,6 +65,14 @@ _MAX_ITEM_BYTES = 400 * 1024
 # RequestLimitExceeded) and transient 5xx/connection errors. Ten attempts ride
 # out a throttling burst; an error that outlasts them fails the run.
 _RETRY_CONFIG = BotoConfig(retries={"mode": "standard", "total_max_attempts": 10})
+# The lease requests answer fast or not at all: a renewal stuck in retries
+# (10 attempts of 60 s by default) would outlive the lease it renews. A
+# renewal that fails is retried by the next heartbeat.
+_LEASE_CONFIG = BotoConfig(
+    connect_timeout=5,
+    read_timeout=10,
+    retries={"mode": "standard", "total_max_attempts": 3},
+)
 # BatchGetItem reads at most 100 keys per request. Keys it returns unprocessed
 # (throttling, or the 16 MB response limit) are re-requested with exponential
 # backoff, up to this many requests per batch.
@@ -109,6 +116,7 @@ class DynamoDBDocStatusStore:
             region_name=config.aws.region_name,
         )
         self._client: DynamoDBClient | None = None
+        self._lease_client: DynamoDBClient | None = None
 
     @property
     def client(self) -> DynamoDBClient:
@@ -121,6 +129,17 @@ class DynamoDBDocStatusStore:
                 self._check_key_schema(client)
             self._client = client
         return self._client
+
+    @property
+    def lease_client(self) -> DynamoDBClient:
+        """The client of the lease requests: short timeouts, few retries
+        (``_LEASE_CONFIG``). Built after :attr:`client` checked the table."""
+        if self._lease_client is None:
+            _ = self.client
+            self._lease_client = self.boto_session.client(
+                "dynamodb", config=_LEASE_CONFIG
+            )
+        return self._lease_client
 
     @contextmanager
     def _registry_errors(self, operation: str) -> Iterator[None]:
@@ -387,7 +406,7 @@ class DynamoDBDocStatusStore:
         now = time.time()
         with self._registry_errors("take the namespace lease"):
             try:
-                self.client.put_item(
+                self.lease_client.put_item(
                     TableName=self.table_name,
                     Item={
                         **self._lease_key(namespace),
@@ -417,7 +436,7 @@ class DynamoDBDocStatusStore:
 
     def lease_holder(self, namespace: str) -> tuple[str, float] | None:
         with self._registry_errors("read the namespace lease"):
-            item = self.client.get_item(
+            item = self.lease_client.get_item(
                 TableName=self.table_name,
                 Key=self._lease_key(namespace),
                 ConsistentRead=True,
@@ -432,7 +451,7 @@ class DynamoDBDocStatusStore:
     def release_lease(self, namespace: str, owner: str) -> None:
         with self._registry_errors("release the namespace lease"):
             try:
-                self.client.delete_item(
+                self.lease_client.delete_item(
                     TableName=self.table_name,
                     Key=self._lease_key(namespace),
                     ConditionExpression="#owner = :owner",
@@ -512,7 +531,7 @@ class DynamoDBDocStatusStore:
                 states[doc_id] = StoredDocument(
                     item.get("content_hash", {}).get("S", ""),
                     item.get(_SCOPE_ATTRIBUTE, {}).get("S"),
-                    item.get("status", {}).get("S") == DocStatus.FAILED.value,
+                    item.get("status", {}).get("S"),
                     item.get("extraction_fingerprint", {}).get("S"),
                 )
         return states
@@ -563,6 +582,12 @@ class DynamoDBDocStatusStore:
             item[attr] = {"S": value} if value is not None else {"NULL": True}
         item["failure_count"] = {"N": str(record.failure_count)}
         item["attempt_count"] = {"N": str(record.attempt_count)}
+        item["crash_batch"] = {"N": str(record.crash_batch)}
+        item["attempt_batch"] = (
+            {"N": str(record.attempt_batch)}
+            if record.attempt_batch is not None
+            else {"NULL": True}
+        )
         return item
 
     @staticmethod
@@ -594,6 +619,8 @@ class DynamoDBDocStatusStore:
             failure_count=_int("failure_count"),
             attempt_count=_int("attempt_count"),
             attempted_hash=_str("attempted_hash"),
+            crash_batch=_int("crash_batch"),
+            attempt_batch=_int("attempt_batch") or None,
             created_at=_str("created_at"),
             updated_at=_str("updated_at"),
         )

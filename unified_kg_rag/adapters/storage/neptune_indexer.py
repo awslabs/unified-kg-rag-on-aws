@@ -41,6 +41,7 @@ from unified_kg_rag.domain.models import (
 from unified_kg_rag.ports.indexer import GraphIndexer, IndexingStats
 from unified_kg_rag.shared import AWSServiceError, GraphRAGException, get_logger
 from unified_kg_rag.shared.utils.concurrency import ContextThreadPoolExecutor
+from unified_kg_rag.shared.write_fence import check_write_fence
 
 if TYPE_CHECKING:
     import boto3
@@ -916,6 +917,7 @@ class NeptuneIndexer(GraphIndexer):
             max_passes = math.ceil(int(initial) / batch_size) + _EXTRA_DELETE_PASSES
             total = 0
             for _ in range(max_passes):
+                check_write_fence()
                 (dropped,) = self._execute_with_retries(
                     lambda g: select(g).limit(batch_size).sideEffect(__.drop()).count(),
                     f"Dropping {what}",
@@ -1044,8 +1046,10 @@ class NeptuneIndexer(GraphIndexer):
 
         Accumulates into the supplied ``stats`` and returns it, so the caller can
         either share one stats object (sequential) or merge per-batch objects
-        (concurrent) without any locking.
+        (concurrent) without any locking. A run that lost its write lease
+        raises before the request (``check_write_fence``).
         """
+        check_write_fence()
         try:
             # Not an error yet: the per-item fallback below may still index
             # every item; one that fails there logs it.

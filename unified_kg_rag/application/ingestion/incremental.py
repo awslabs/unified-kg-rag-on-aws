@@ -33,6 +33,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from unified_kg_rag.application.ingestion.namespace_lease import check_lease
+from unified_kg_rag.domain.ingestion.attempts import (
+    closed_attempt,
+    opened_attempt,
+    settled_attempts,
+    unproductive_attempt,
+)
 from unified_kg_rag.domain.ingestion.claim_resolver import resolved_claim_id
 from unified_kg_rag.domain.ingestion.community_drift import (
     CommunityDrift,
@@ -156,9 +162,10 @@ _PROBE_UNITS = 100
 
 _EXTRACTION_FAILED = "extraction failed on some text units"
 _QUARANTINED_INFO = (
-    "quarantined: its indexing was started {attempts} consecutive runs and "
-    "never finished; skipped until its content or the extraction settings "
-    "change (or indexing.max_document_attempts is raised)"
+    "quarantined: its processing killed the run {attempts} consecutive runs, "
+    "the last one processing it alone (or it produced no text units); skipped "
+    "until its content or the extraction settings change (or "
+    "indexing.max_document_attempts is raised)"
 )
 _WRITE_FAILED = "writing some of its artifacts to the stores failed"
 _WRITE_AHEAD_INFO = (
@@ -347,7 +354,6 @@ class IncrementalIndexer:
         self,
         delta: DocumentDelta,
         lineages: list[DocumentLineage],
-        fingerprints: Mapping[str, str] | None = None,
     ) -> None:
         """Record the documents about to be (re)indexed PENDING, before any
         store write.
@@ -376,11 +382,10 @@ class IncrementalIndexer:
         the record stored before the PENDING one. The stored records are read
         once (batched) and kept for :meth:`commit`.
 
-        The PENDING record counts the attempt (``attempt_count``): one more
-        than the stored PENDING record's when an earlier run started this
-        same content (``attempted_hash``, from ``fingerprints``) and died
-        before committing it, else 1. ``detect_delta`` quarantines a document
-        once the count reaches ``indexing.max_document_attempts``.
+        The record's attempt fields are kept as stored: the run opened its
+        attempt before its first stage (:func:`open_attempts`), and a full
+        rebuild opens none, so a rebuild that dies never counts toward
+        quarantine.
         """
         check_lease()
         planned = {lineage.doc_id: lineage for lineage in lineages}
@@ -391,10 +396,7 @@ class IncrementalIndexer:
         self._in_flight = set(doc_ids)
         self._pending = {
             doc_id: self._pending_record(
-                doc_id,
-                self._prior.get(doc_id),
-                planned.get(doc_id),
-                (fingerprints or {}).get(doc_id),
+                doc_id, self._prior.get(doc_id), planned.get(doc_id)
             )
             for doc_id in doc_ids
         }
@@ -422,17 +424,10 @@ class IncrementalIndexer:
         doc_id: str,
         prior: DocStatusRecord | None,
         lineage: DocumentLineage | None,
-        attempted_hash: str | None,
     ) -> DocStatusRecord:
-        retried = (
-            prior is not None
-            and prior.status is DocStatus.PENDING
-            and prior.attempted_hash == attempted_hash
-        )
+        suffix = lineage.suffix if lineage else self.suffix
         base = prior or DocStatusRecord(
-            doc_id=doc_id,
-            content_hash=PENDING_CONTENT_HASH,
-            suffix=lineage.suffix if lineage else self.suffix,
+            doc_id=doc_id, content_hash=PENDING_CONTENT_HASH, suffix=suffix
         )
         return base.model_copy(
             update={
@@ -440,10 +435,11 @@ class IncrementalIndexer:
                 "status": DocStatus.PENDING,
                 "error_info": _WRITE_AHEAD_INFO,
                 "failure_count": 0,
-                "attempt_count": (prior.attempt_count + 1 if retried and prior else 1),
-                "attempted_hash": attempted_hash,
                 # The stored suffix is kept: removal groups by it, and a
-                # changed document's old artifacts were written under it.
+                # changed document's old artifacts were written under it. A
+                # record without text units (a new document's attempt
+                # record) takes the run's.
+                "suffix": base.suffix if base.text_unit_ids else suffix,
                 "scope": self.scope if self.scope is not None else base.scope,
                 "file_path": (lineage.file_path if lineage else None) or base.file_path,
                 "text_unit_ids": sorted(
@@ -782,12 +778,30 @@ class IncrementalIndexer:
         cleaned up. Not committing keeps the old lineage (inside the PENDING
         record :meth:`write_ahead` wrote), so the next run retries.
 
-        Quarantined documents (``DocumentDelta.quarantined``) are removed in
-        the same pass, since their interrupted attempts may have written
-        artifacts, and then recorded QUARANTINED, without text units.
+        Quarantined documents (``DocumentDelta.quarantined``) are recorded
+        QUARANTINED. One whose attempts reached the indexing stage (its record
+        is the write-ahead ``PENDING`` one) may have written artifacts and
+        removed some of its indexed version: it is removed in the same pass
+        and recorded without text units. One whose attempts died before (its
+        record is still the indexed version's) keeps that version: nothing of
+        the new one was written.
         """
-        doc_ids = list(dict.fromkeys(delta.changed + delta.deleted + delta.quarantined))
+        held = self.doc_status.get_many(delta.quarantined) if delta.quarantined else {}
+        kept = {
+            doc_id
+            for doc_id, record in held.items()
+            if record.status is not DocStatus.PENDING and record.text_unit_ids
+        }
+        doc_ids = list(
+            dict.fromkeys(
+                delta.changed
+                + delta.deleted
+                + [doc_id for doc_id in delta.quarantined if doc_id not in kept]
+            )
+        )
         if not doc_ids:
+            check_lease()
+            self._record_quarantined(delta.quarantined, kept)
             return True
         if not self.remove_obsolete_artifacts(doc_ids):
             if delta.deleted or delta.quarantined:
@@ -798,32 +812,46 @@ class IncrementalIndexer:
                     len(delta.deleted) + len(delta.quarantined),
                 )
             return False
+        check_lease()
         self._delete_records(delta.deleted)
-        self._record_quarantined(delta.quarantined)
+        self._record_quarantined(delta.quarantined, kept)
         return True
 
-    def _record_quarantined(self, doc_ids: list[str]) -> None:
-        """Replace the quarantined documents' PENDING records with QUARANTINED
-        ones of the content they crashed on: unchanged while it stays."""
+    def _record_quarantined(
+        self, doc_ids: list[str], kept: Collection[str] = ()
+    ) -> None:
+        """Replace the quarantined documents' records with QUARANTINED ones of
+        the content they died on (unchanged while it stays), with their deaths
+        settled. Those in ``kept`` keep the text units of their indexed
+        version, the others have none left."""
         if not doc_ids:
             return
-        self.doc_status.put_many(
-            record.model_copy(
-                update={
-                    "status": DocStatus.QUARANTINED,
-                    "content_hash": record.attempted_hash or record.content_hash,
-                    "text_unit_ids": [],
-                    "error_info": _QUARANTINED_INFO.format(
-                        attempts=record.attempt_count
-                    ),
-                    "scope": self.scope if self.scope is not None else record.scope,
-                    "extraction_fingerprint": (
-                        self.extraction_fingerprint or record.extraction_fingerprint
-                    ),
-                }
+        records = []
+        for doc_id, record in self.doc_status.get_many(doc_ids).items():
+            attempted = record.attempted_hash or record.content_hash
+            deaths, crash_batch = settled_attempts(record, attempted)
+            records.append(
+                record.model_copy(
+                    update={
+                        "status": DocStatus.QUARANTINED,
+                        "content_hash": attempted,
+                        "text_unit_ids": (
+                            record.text_unit_ids if doc_id in kept else []
+                        ),
+                        "error_info": _QUARANTINED_INFO.format(attempts=deaths),
+                        "attempt_count": deaths,
+                        "crash_batch": crash_batch,
+                        "attempt_batch": None,
+                        "scope": (
+                            self.scope if self.scope is not None else record.scope
+                        ),
+                        "extraction_fingerprint": (
+                            self.extraction_fingerprint or record.extraction_fingerprint
+                        ),
+                    }
+                )
             )
-            for record in self.doc_status.get_many(doc_ids).values()
-        )
+        self.doc_status.put_many(records)
 
     def _record_processed(
         self,
@@ -885,8 +913,18 @@ class IncrementalIndexer:
                 text_unit_ids=lineage.text_unit_ids,
             )
             records.append(record)
-        self.doc_status.put_many(records)
         unrecorded = sorted(set(self._pending) - {r.doc_id for r in records})
+        # Counted as an attempt of the document alone (unproductive_attempt),
+        # so one that never produces a text unit is quarantined instead of
+        # re-extracted on every run.
+        records += [
+            unproductive_attempt(
+                self._pending[doc_id],
+                fingerprints.get(doc_id, self._pending[doc_id].attempted_hash or ""),
+            )
+            for doc_id in unrecorded
+        ]
+        self.doc_status.put_many(records)
         if unrecorded:
             logger.warning(
                 "%d documents of the delta produced no lineage this run; their "
@@ -1112,6 +1150,19 @@ def filter_to_delta(
     context.incremental_fingerprints = fingerprints
     context.incremental_scope = scope
     context.incremental_retired_scopes = list(config.indexing.retire_source_scopes)
+    open_attempts(
+        store,
+        delta,
+        fingerprints,
+        scope=scope,
+        suffix=config.processing.document_parsing.index_value
+        or Constants.DEFAULT_SUFFIX.value,
+        file_paths={
+            document_doc_id(document): document.metadata.get(RELATIVE_PATH_KEY)
+            or document.file_path
+            for document in documents
+        },
+    )
     if delta.new and not config.processing.document_parsing.source_scope:
         _warn_about_other_local_scopes(delta, scope, namespace, retired)
     if delta.is_empty:
@@ -1119,12 +1170,117 @@ def filter_to_delta(
     to_process = filter_documents_to_process(documents, delta)
     skipped = len(documents) - len(to_process)
     logger.info(
-        "Incremental filter: %d to process, %d unchanged (skipped), %d deleted",
+        "Incremental filter: %d to process, %d unchanged (skipped), %d deleted, "
+        "%d deferred",
         len(to_process),
         skipped,
         len(delta.deleted),
+        len(delta.deferred),
     )
     return to_process, skipped
+
+
+def open_attempts(
+    store: DocStatusPort,
+    delta: DocumentDelta,
+    fingerprints: Mapping[str, str],
+    *,
+    scope: str | None = None,
+    suffix: str = DEFAULT_NAMESPACE,
+    file_paths: Mapping[str, str | None] | None = None,
+) -> None:
+    """Open an attempt on every document the run processes (``delta.to_process``).
+
+    Called before the first stage that processes them: by the
+    document_loading stage right after the diff, and by a run resumed after
+    it. Each record gets ``attempts.opened_attempt`` (an attempt a dead run
+    left open is counted first); a new document gets a ``PENDING`` record
+    without text units, under the run's ``scope``, so a run that dies before
+    the indexing stage still counts against it. Status, content hash and
+    text units of a stored record are kept: the diff, the failure count and
+    the removal read them as before. One batched read and write.
+    """
+    check_lease()
+    batch = delta.to_process
+    if not batch:
+        return
+    stored = store.get_many(batch)
+    paths = file_paths or {}
+    store.put_many(
+        [
+            opened_attempt(
+                stored.get(doc_id)
+                or DocStatusRecord(
+                    doc_id=doc_id,
+                    content_hash=PENDING_CONTENT_HASH,
+                    status=DocStatus.PENDING,
+                    error_info=_WRITE_AHEAD_INFO,
+                    suffix=suffix,
+                    scope=scope,
+                    file_path=paths.get(doc_id),
+                ),
+                fingerprints[doc_id],
+                len(batch),
+            )
+            for doc_id in batch
+        ]
+    )
+
+
+def close_attempts(
+    store: DocStatusPort, delta: DocumentDelta, fingerprints: Mapping[str, str]
+) -> int:
+    """Close the attempts :func:`open_attempts` opened for ``delta``.
+
+    Called whenever the run ends in the process (it finished, a stage
+    failed, or it was stopped): only a run that died leaves its attempts
+    open, so only deaths count toward quarantine. Records the run committed
+    are new and have none. Returns how many it closed.
+    """
+    check_lease()
+    stored = store.get_many(delta.to_process)
+    still_open = [
+        closed_attempt(record)
+        for doc_id, record in stored.items()
+        if record.attempt_batch is not None
+        and record.attempted_hash == fingerprints.get(doc_id)
+    ]
+    if still_open:
+        store.put_many(still_open)
+    return len(still_open)
+
+
+def delta_still_applies(
+    store: DocStatusPort,
+    delta: DocumentDelta,
+    fingerprints: Mapping[str, str],
+    max_attempts: int,
+) -> bool:
+    """Whether a resumed run may index ``delta`` as it was computed.
+
+    Every document the delta processes holds the attempt its run opened
+    (``attempted_hash`` at its content) until a commit replaces the record
+    with one of that content. A record that is gone (another run found the
+    document deleted) or holds other content (another run indexed another
+    version) means indexing the delta would undo what that run did. Redoing
+    a commit of the same content is idempotent, so a stage of a finished
+    pipeline can be re-run. A document whose open attempt shows the last run
+    died, with the deaths now at ``max_attempts``, needs the plan of a new
+    diff (``attempts.plan_attempts``), or the resumed runs would keep dying
+    on the same delta.
+    """
+    stored = store.get_many(delta.to_process)
+    for doc_id in delta.to_process:
+        record = stored.get(doc_id)
+        content_hash = fingerprints.get(doc_id)
+        if record is None or content_hash is None:
+            return False
+        if content_hash not in (record.attempted_hash, record.content_hash):
+            return False
+        deaths, _ = settled_attempts(record, content_hash)
+        if record.attempt_batch is not None and deaths >= max_attempts:
+            return False
+    return True
 
 
 def _stored_spelling(
@@ -1223,6 +1379,7 @@ def clear_registry_namespaces(
     for namespace in sorted(namespaces):
         for record in store.list_namespace(namespace):
             if record.doc_id not in kept:
+                check_lease()
                 store.delete(record.doc_id)
                 cleared += 1
     logger.info(
@@ -1367,7 +1524,7 @@ def index_delta(
     # interrupted from here on is repaired by the next one (the docs
     # read as changed, or as deleted when gone, and every artifact this
     # run may write is found by their lineage).
-    incremental.write_ahead(delta, lineages, context.incremental_fingerprints)
+    incremental.write_ahead(delta, lineages)
 
     # Drop the stale artifacts of changed and deleted docs in ONE removal
     # plan (before re-upsert): planning them separately keeps whatever a

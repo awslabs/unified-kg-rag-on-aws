@@ -57,8 +57,9 @@ from unified_kg_rag.ports.indexer import (
     IndexingStats,
     VectorIndexer,
 )
-from unified_kg_rag.shared import get_logger
+from unified_kg_rag.shared import NamespaceLeaseError, get_logger
 from unified_kg_rag.shared.utils.concurrency import ContextThreadPoolExecutor
+from unified_kg_rag.shared.write_fence import check_write_fence
 
 logger = get_logger(__name__)
 
@@ -382,12 +383,17 @@ class IndexingManager:
         # labels are not cleared first, so queries keep reading the previous
         # graph until the build's writes replace it, and what the build did
         # not write is dropped at the end (the vector indices swap aliases).
+        # A run that lost its write lease stops before each phase and before
+        # the sweep, which would drop what the new holder wrote.
+        check_write_fence()
         rebuilding = suffixes is not None and graph.begin_rebuild(suffixes)
         try:
             logger.info("--- Starting %sIndexing Phase 1%s ---", prefix, tail)
             results = self._run_indexing_phase(tasks(phase1))
+            check_write_fence()
             logger.info("--- Starting %sIndexing Phase 2%s ---", prefix, tail)
             results.update(self._run_indexing_phase(phase2))
+            check_write_fence()
         except BaseException:
             if rebuilding:
                 graph.end_rebuild(suffixes or [], sweep=False)
@@ -404,6 +410,15 @@ class IndexingManager:
                     "previous vertices and edges beside the new ones until a "
                     "build succeeds"
                 )
+                # Reported as a failed write: the rebuild did not replace the
+                # graph, so it must not be recorded as the corpus's build (a
+                # registry cleared now would leave the previous vertices and
+                # edges with nothing to remove them).
+                skipped = IndexingStats(total_items=1)
+                skipped.add_error(
+                    "previous graph not dropped: some graph writes failed"
+                )
+                results["neptune_sweep"] = skipped
             try:
                 graph.end_rebuild(suffixes or [], sweep=not graph_failed)
             except Exception as e:  # noqa: BLE001 - reported as a failed write
@@ -1537,6 +1552,8 @@ class IndexingManager:
                 task_name = futures_map[future]
                 try:
                     phase_results[task_name] = future.result()
+                except NamespaceLeaseError:
+                    raise
                 except Exception as e:
                     logger.error("Task '%s' failed: %s", task_name, e)
                     stats = IndexingStats()

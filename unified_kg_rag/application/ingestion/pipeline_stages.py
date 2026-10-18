@@ -472,6 +472,11 @@ class DocumentLoadingStage(_RegistryStage):
                 if context.incremental_delta is not None
                 else 0
             ),
+            "documents_deferred": (
+                len(context.incremental_delta.deferred)
+                if context.incremental_delta is not None
+                else 0
+            ),
             "failed_files": failed_files,
         }
 
@@ -1477,11 +1482,7 @@ class IndexingStage(_RegistryStage):
                     text_units,
                 )
                 lineages = context_lineages(context, incremental.suffix, text_units)
-                incremental.write_ahead(
-                    context.incremental_delta,
-                    lineages,
-                    context.incremental_fingerprints,
-                )
+                incremental.write_ahead(context.incremental_delta, lineages)
                 rebuild = (incremental, lineages)
             # A build the registry does not record must not be updated
             # incrementally later (see VectorIndexer.check_index_settings).

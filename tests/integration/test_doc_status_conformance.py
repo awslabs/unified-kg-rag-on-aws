@@ -98,6 +98,8 @@ def test_round_trip_keeps_every_field(store: DocStatusPort) -> None:
         error_info=None,
         attempt_count=2,
         attempted_hash="h0",
+        attempt_batch=3,
+        crash_batch=4,
         extraction_fingerprint="x1",
         updated_at="2026-01-01T00:00:00",
     )
@@ -255,9 +257,13 @@ def test_a_quarantined_record_is_unchanged_until_its_content_changes(
     store.put(_record("held", "h1", status=DocStatus.QUARANTINED, scope="s"))
     store.put(_record("edited", "h2", status=DocStatus.QUARANTINED, scope="s"))
 
-    delta = store.diff({"held": "h1", "edited": "h2-new"}, scope="s")
+    store.put(_record("indexed", "h3", status=DocStatus.PROCESSED, scope="s"))
 
-    assert (delta.unchanged, delta.changed) == (["held"], ["edited"])
+    delta = store.diff({"held": "h1", "edited": "h2-new", "indexed": "h3"}, scope="s")
+
+    assert (delta.unchanged, delta.changed) == (["held", "indexed"], ["edited"])
+    # Reported, so a raised indexing.max_document_attempts retries it.
+    assert delta.quarantined_unchanged == ["held"]
 
 
 def test_one_owner_holds_a_namespace_lease_at_a_time(store: DocStatusPort) -> None:

@@ -559,19 +559,23 @@ indexing:
   # stays FAILED and is skipped as unchanged (WARNING per run) until the file
   # changes or this value is raised.
   max_document_failures: 3
-  # Incremental runs only: a document whose indexing (of the same content) was
-  # started this many consecutive runs and never finished (the run died each
-  # time: out of memory, a task timeout) is quarantined. The next run removes
-  # what the attempts wrote, records it QUARANTINED, skips it until its content
-  # or the extraction settings change (or this value is raised), and emits the
-  # total_documents_quarantined metric. Every document of a delta that keeps
-  # dying counts an attempt.
+  # Incremental runs only: once runs died this many consecutive times (the task
+  # was killed, e.g. out of memory; a stopped or failed run does not count)
+  # processing a document's unchanged content, the runs isolate it. A document
+  # that died processed alone is quarantined: the next run removes what the
+  # attempts wrote, records it QUARANTINED, skips it until its content or the
+  # extraction settings change (or this value is raised), and emits the
+  # total_documents_quarantined metric. Otherwise the next runs process half of
+  # the documents it died with and defer the other new and changed documents
+  # (total_documents_deferred) until the culprit is alone.
   max_document_attempts: 3
   # Incremental runs only: the term of the index namespace's write lease. A run
-  # holds it from its first stage to its end, renewing it every third of the
+  # holds it from its first stage to its end, renewing it every sixth of the
   # term, so no other run writes the namespace meanwhile (a second run stops
-  # with NamespaceLeaseError). A run that dies stops renewing: its lease
-  # expires at most this long after.
+  # with NamespaceLeaseError). A run stops writing once less than a third of
+  # the term is left since its last renewal, so keep it at least three times
+  # the longest store write request. A run that dies stops renewing: its
+  # lease expires at most this long after.
   lease_seconds: 300
   # Incremental runs only: former source scopes whose registry records in this
   # run's index suffix are treated as deleted, so their exclusive graph and

@@ -24,9 +24,10 @@ Deletion is scoped: a run only classifies registry documents of its own scope
 (index namespace + corpus source, see :func:`registry_scope`) as deleted, and
 never a corpus file that merely failed to parse this run.
 
-A document whose indexing kept dying (its write-ahead record counts the
-attempts, see ``IncrementalIndexer.write_ahead``) is quarantined once the
-count reaches ``max_attempts``.
+A document whose processing keeps killing the run (its record counts the
+runs that died, see ``domain.ingestion.attempts``) is isolated once the count
+reaches ``max_attempts``: deferred while the run bisects the documents it
+died with, then quarantined.
 
 A corpus whose source scope changed (a local directory that moved) leaves its
 records under the old scope. They are never taken over on a guess: whether a
@@ -43,6 +44,10 @@ from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from unified_kg_rag.domain.ingestion.attempts import (
+    plan_attempts,
+    release_quarantined,
+)
 from unified_kg_rag.domain.models import (
     Constants,
     DocStatus,
@@ -242,11 +247,12 @@ def detect_delta(
             record stored another one is classified changed, so it is
             re-extracted with the current settings; a record without one is
             compared by content only. ``None`` compares by content only.
-        max_attempts: A document whose indexing of this content was started
-            and never finished this many consecutive runs (its PENDING
-            record's ``attempt_count``) is classified ``quarantined`` instead
-            of changed: it crashed the run each time, and retrying it would
-            crash this one too. ``None`` retries without limit.
+        max_attempts: A document whose processing of this content killed
+            the run this many consecutive runs (``attempts.settled_attempts``)
+            is a suspect: classified ``quarantined`` instead of changed once
+            it died alone, else the run processes half of the suspects and
+            defers the other new and changed documents
+            (``attempts.plan_attempts``). ``None`` retries without limit.
 
     Returns:
         The :class:`DocumentDelta` plus the ``{doc_id: content_hash}``
@@ -269,10 +275,14 @@ def detect_delta(
     )
     if retired:
         retire_source_scopes(doc_status, delta, retired, own_scope=scope)
+    if max_attempts is not None and delta.quarantined_unchanged:
+        release_quarantined(
+            delta, doc_status.get_many(delta.quarantined_unchanged), max_attempts
+        )
     if (max_failures is not None or max_attempts is not None) and delta.changed:
         stored = doc_status.get_many(delta.changed)
         if max_attempts is not None:
-            _quarantine_crashing(delta, stored, fingerprints, max_attempts)
+            plan_attempts(delta, stored, fingerprints, max_attempts)
         if max_failures is not None:
             _stop_retrying_exhausted(
                 delta, stored, fingerprints, max_failures, extraction_fingerprint
@@ -288,13 +298,14 @@ def detect_delta(
         )
     logger.info(
         "Delta detected: %d new, %d changed, %d unchanged, %d deleted, %d failed, "
-        "%d quarantined",
+        "%d quarantined, %d deferred",
         len(delta.new),
         len(delta.changed),
         len(delta.unchanged),
         len(delta.deleted),
         len(delta.failed),
         len(delta.quarantined),
+        len(delta.deferred),
     )
     if delta.settings_changed:
         logger.warning(
@@ -458,38 +469,6 @@ def other_local_scopes(
         if stored.startswith(prefix)
         and stored not in skip
         and is_local_path_scope(stored[len(prefix) :])
-    )
-
-
-def _quarantine_crashing(
-    delta: DocumentDelta,
-    stored: Mapping[str, DocStatusRecord],
-    fingerprints: Mapping[str, str],
-    max_attempts: int,
-) -> None:
-    """Move changed documents whose indexing of this content was started
-    ``max_attempts`` consecutive runs without finishing to ``quarantined``."""
-    crashing = [
-        doc_id
-        for doc_id in delta.changed
-        if (record := stored.get(doc_id)) is not None
-        and record.status is DocStatus.PENDING
-        and record.attempt_count >= max_attempts
-        and record.attempted_hash == fingerprints[doc_id]
-    ]
-    if not crashing:
-        return
-    delta.changed = [doc_id for doc_id in delta.changed if doc_id not in crashing]
-    delta.quarantined = crashing
-    logger.warning(
-        "Quarantining %d documents whose indexing was started %d consecutive "
-        "runs and never finished (the run died each time, or the document "
-        "produced no text units to record): they are skipped "
-        "until their content or the extraction settings change, or "
-        "indexing.max_document_attempts is raised: %s",
-        len(crashing),
-        max_attempts,
-        ", ".join(stored[doc_id].file_path or doc_id for doc_id in crashing),
     )
 
 

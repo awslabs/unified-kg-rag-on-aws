@@ -72,7 +72,11 @@ During a reset, queries keep reading the previous content: the vector
 indices swap aliases one index type at a time, and the graph holds a mix of
 previous and rebuilt vertices and edges until the rebuild drops what it did
 not write. A reset that fails leaves the previous graph and registry records
-in place (beside what it wrote); re-run it.
+in place (beside what it wrote); re-run it. A reset whose graph writes
+partly failed, even within `indexing.max_failure_rate`, cannot drop the
+previous graph either, so it fails too (`neptune_sweep` in the indexing
+results) and records nothing; the next run, reset or incremental, removes
+what the previous graph still holds.
 
 Set `indexing.reset` back to `false` afterwards; otherwise every run rebuilds.
 
@@ -238,10 +242,9 @@ interrupted run's writes, since every artifact cites the text units it was
 stated in.
 
 - An interruption is not counted as a failure, but it resets the document's
-  `failure_count` toward `indexing.max_document_failures`. The `PENDING`
-  record counts instead the consecutive runs that started the same content
-  without finishing it (`attempt_count`, see
-  [Quarantined documents](#quarantined-documents)).
+  `failure_count` toward `indexing.max_document_failures`. The record counts
+  instead the consecutive runs that died processing the same content
+  (`attempt_count`, see [Quarantined documents](#quarantined-documents)).
 - A document with more text units than one DynamoDB item holds (about
   10,000; half that for an edited document, whose `PENDING` record lists the
   old and the new ones) fails the run before anything is written: split it.
@@ -306,30 +309,61 @@ document of the run). The `IndexingFailures` and `ExtractionFailures`
 
 ### Quarantined documents
 
-A document whose indexing kills the run each time (the task runs out of
-memory or hits its timeout on it) would stop every later run the same way.
-Once runs have started its unchanged content `indexing.max_document_attempts`
-times in a row (default `3`) without finishing it, the next run quarantines
-it: it logs a WARNING naming the file, removes what the attempts wrote,
-records it `QUARANTINED` (no text units, the reason in `error_info`) and
-indexes the rest. The run metric `total_documents_quarantined` counts them,
-and on the CDK stack the `DocumentsQuarantined` alarm fires.
+A document whose processing kills the task each time (it runs out of memory
+on it, a parser or client crashes the process) would stop every later run
+the same way. Runs therefore count deaths and isolate the culprit.
 
-- A quarantined document is skipped while its content stays. It is retried
-  when the file changes, when the extraction settings change, or when
-  `indexing.max_document_attempts` is raised.
-- Every document of a delta that keeps dying counts an attempt, so the
-  documents indexed together with the culprit are quarantined with it.
-  Retry them by touching their files (or raising the limit) once the
-  culprit is found, for example by running its folder alone.
+- **Only deaths count.** Right after the diff, a run marks an attempt open on
+  the record of every document it processes (`attempt_batch`: how many it
+  processes together) and clears it however it ends in the process:
+  finished, failed with an error, or stopped (SIGTERM from StopTask or a Step
+  Functions timeout, Ctrl-C). Only a task that died leaves it open; the next
+  run counts it (`attempt_count`, with the batch it died in as
+  `crash_batch`). A full rebuild (`indexing.reset`) counts nothing.
+- **Quarantine.** Once a document's content killed `indexing.max_document_attempts`
+  runs in a row (default `3`), the last one processing it alone, the next
+  run logs a WARNING naming the file, removes what the attempts wrote,
+  records it `QUARANTINED` (reason in `error_info`) and indexes the rest. The
+  metric `total_documents_quarantined` counts them; on the CDK stack the
+  `DocumentsQuarantined` alarm fires.
+- **Bisection.** When the runs died processing several documents, the next
+  run processes half of the suspects that died in the smallest batch and
+  defers every other new or changed document (a WARNING names the half;
+  `total_documents_deferred` counts the others, which keep their indexed
+  version). A death narrows the suspects to that half; a run that ends
+  commits it. One culprit among `n` suspects is quarantined after about
+  `log2(n) + 1` more runs, and the documents it died with are indexed.
+- **Deferred documents wait for the next run.** Start runs with a new
+  pipeline id until `total_documents_deferred` is 0 (a finished pipeline id
+  re-run only repeats its own delta).
+- **Retrying.** A quarantined document is skipped while its content stays.
+  It is retried when the file or the extraction settings change, or when
+  `indexing.max_document_attempts` is raised above its deaths (the
+  `attempt_count` of its record).
+- **Kept version.** A changed document whose runs died before its indexing
+  started (in chunking, extraction, gleaning...) keeps its indexed version
+  while quarantined: nothing of the new version reached the stores. One
+  whose runs died while indexing it is removed (no text units in its
+  `QUARANTINED` record).
+- **Limits.** A task that dies whatever it processes (a broken image)
+  quarantines the delta's documents one at a time: fix the deployment, then
+  edit the files or raise the limit. A one-off kill during the run that
+  processes a suspect alone quarantines it too. A document that makes runs
+  time out on SIGTERM is never counted: raise the timeout.
 - A document that produces no text units stays `PENDING` and is quarantined
   after the same number of runs.
+- **Resumed runs.** A run resumed past document_loading with the same
+  pipeline id reuses its delta, unless the registry no longer matches it
+  (another run indexed another version of one of its documents, or found it
+  deleted) or its runs died often enough to isolate a culprit: it then
+  resumes from document_loading (WARNING `... resuming from
+  'document_loading' ...`).
 
 ### Concurrent runs
 
 With the doc-status registry, one run writes an index namespace at a time. A
 run takes its namespace's write lease before its first stage and holds it to
-its end, renewing it every third of `indexing.lease_seconds` (default 300 s).
+its end, renewing it every sixth of `indexing.lease_seconds` (default 300 s).
 A second run on the same namespace stops at once, before it reads or writes
 anything, with:
 
@@ -341,9 +375,22 @@ NamespaceLeaseError: Index namespace '<namespace>' is being written by
 Wait for that run to finish and start again. A run that dies (a killed task,
 a lost host) stops renewing, so its lease expires at most `lease_seconds`
 after its last renewal and the next run proceeds; nothing needs cleaning up.
-A run whose renewals keep failing until its lease expires, or whose lease
-another run then took, stops before its next write with
-`NamespaceLeaseError: This run lost the write lease ...`: re-run once the other run ended.
+A run whose renewals keep failing, or whose lease another run then took,
+stops before its next write with `NamespaceLeaseError: This run lost the
+write lease ...`: re-run once the other run ended.
+
+- **When a run stops writing.** Once less than a third of the term is left
+  since the last renewal that succeeded, counted from when that renewal was
+  sent. Every registry write, indexing phase, rebuild cleanup and store
+  write request (a Neptune batch or drop, an OpenSearch bulk request) checks
+  first, so the run stops while it still holds the lease, as long as no
+  single request takes longer than a third of `lease_seconds`. Keep
+  `lease_seconds` at least three times the longest write request.
+- **Lease requests** time out after about 10 s, with 3 attempts; a failed
+  renewal is retried by the next heartbeat.
+- **Checkpoints.** A run downloads its S3 checkpoint only once it holds the
+  lease, and a stopped run (SIGTERM) uploads its checkpoint before it
+  releases the lease.
 
 - **Where the lease lives.** In DynamoDB, the item with partition key
   `namespace` = `<namespace>` and sort key `doc_id` = `#lease` (owner in
@@ -419,7 +466,7 @@ after its retries).
 | `PipelineTimedOutOrAborted` | An execution hit the state machine timeout or was stopped |
 | `IndexingFailures` | Indexing reported failed items, even in a succeeded execution |
 | `ExtractionFailures` | Extraction, gleaning or claim extraction failed on some units |
-| `DocumentsQuarantined` | A run quarantined documents whose indexing kept dying (see [Quarantined documents](#quarantined-documents)) |
+| `DocumentsQuarantined` | A run quarantined documents whose processing kept killing the task (see [Quarantined documents](#quarantined-documents)) |
 
 The pipeline-run alarms other than the Step Functions ones read the EMF metrics
 `run-ingestion --metrics-sink cloudwatch` emits, each stage's as the stage

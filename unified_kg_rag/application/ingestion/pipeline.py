@@ -18,6 +18,11 @@ from unified_kg_rag.adapters.ingestion.parser import ParserFactory
 from unified_kg_rag.adapters.llm.response_cache import LLMResponseCache
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.application.bootstrap import build_providers
+from unified_kg_rag.application.ingestion.incremental import (
+    close_attempts,
+    delta_still_applies,
+    open_attempts,
+)
 from unified_kg_rag.application.ingestion.namespace_lease import NamespaceLease
 from unified_kg_rag.application.ingestion.pipeline_stages import (
     ClaimExtractionStage,
@@ -81,6 +86,13 @@ if TYPE_CHECKING:
     from unified_kg_rag.adapters.aws.s3_cache import S3CacheManager
 
 logger = get_logger(__name__)
+
+_STALE_DELTA = (
+    "the doc-status registry changed since this pipeline computed its "
+    "incremental delta (another run committed some of its documents, a "
+    "commit of this pipeline did not finish, or runs died processing it "
+    "often enough to isolate the document that kills them)"
+)
 T = TypeVar("T", bound=BaseModel)
 
 
@@ -198,6 +210,7 @@ class DataIngestionPipeline:
         "community_rebuild_recommended": frozenset({"indexing"}),
         "total_extraction_failures": frozenset({"graph_extraction"}),
         "total_documents_quarantined": frozenset({"document_loading"}),
+        "total_documents_deferred": frozenset({"document_loading"}),
         "total_gleaning_failures": frozenset({"gleaning"}),
         "total_claim_extraction_failures": frozenset({"claim_extraction"}),
     }
@@ -517,46 +530,13 @@ class DataIngestionPipeline:
 
             logger.info("Resolved pipeline ID: '%s'", resolved_pipeline_id)
 
-            if self.pipeline_config.s3_sync_enabled:
-                self._sync_cache_with_s3(resolved_pipeline_id, "download")
-                self._checkpoint_id = resolved_pipeline_id
-
-            # Part of every stage cache key, so it must be set before the
-            # resume decision reads the cache.
-            self._set_corpus_fingerprint(source_path)
-            self._open_llm_response_cache(resolved_pipeline_id)
-
-            # force_rebuild must ignore ALL existing cache: skip the resume path
-            # entirely so the run re-executes from the beginning even when a
-            # prior metadata file exists (FORCE_REFRESH alone only bypasses
-            # per-stage cache reads, not the resume decision).
-            can_resume = (
-                resolved_pipeline_id
-                and not self.pipeline_config.force_rebuild
-                and self.state_manager.pipeline_exists(resolved_pipeline_id)
-            )
-            if can_resume:
-                logger.info(
-                    "Resuming existing pipeline '%s' from stage: '%s'",
-                    resolved_pipeline_id,
-                    resolved_resume_stage or "auto-detect",
-                )
-                context, start_stage_name = self._prepare_resume(
-                    resolved_pipeline_id, resolved_resume_stage
-                )
-            else:
-                if self.pipeline_config.force_rebuild:
-                    logger.info(
-                        "Force rebuild: ignoring any existing cache for '%s'",
-                        resolved_pipeline_id,
-                    )
-                logger.info("Starting new pipeline run: '%s'", resolved_pipeline_id)
-                context, start_stage_name = self._prepare_new_run(
+            # The lease covers the checkpoint too: it is downloaded only once
+            # no other run writes the namespace, and uploaded before the
+            # lease is released.
+            with self._namespace_lease():
+                context = self._run_leased(
                     source_path, resolved_pipeline_id, resolved_resume_stage
                 )
-
-            with self._namespace_lease():
-                self._execute_pipeline(context, start_stage_name)
 
             if context.status == PipelineStageStatus.FAILED:
                 logger.warning(
@@ -585,6 +565,140 @@ class DataIngestionPipeline:
                 self.llm_response_cache.close()
             self._checkpoint_id = None
             reset_contextvars(**log_context)
+
+    def _run_leased(
+        self,
+        source_path: Path,
+        pipeline_id: str,
+        resume_stage: str | None,
+    ) -> PipelineContext:
+        """Download the checkpoint, prepare the run and execute it (under the
+        namespace's lease), closing the run's processing attempts when it
+        finishes, fails with an error or is stopped (KeyboardInterrupt,
+        ``PipelineInterrupted``), and uploading the checkpoint of a stopped
+        run."""
+        context: PipelineContext | None = None
+        try:
+            if self.pipeline_config.s3_sync_enabled:
+                self._sync_cache_with_s3(pipeline_id, "download")
+                self._checkpoint_id = pipeline_id
+
+            # Part of every stage cache key, so it must be set before the
+            # resume decision reads the cache.
+            self._set_corpus_fingerprint(source_path)
+            self._open_llm_response_cache(pipeline_id)
+
+            # force_rebuild must ignore ALL existing cache: skip the resume path
+            # entirely so the run re-executes from the beginning even when a
+            # prior metadata file exists (FORCE_REFRESH alone only bypasses
+            # per-stage cache reads, not the resume decision).
+            can_resume = (
+                pipeline_id
+                and not self.pipeline_config.force_rebuild
+                and self.state_manager.pipeline_exists(pipeline_id)
+            )
+            if can_resume:
+                logger.info(
+                    "Resuming existing pipeline '%s' from stage: '%s'",
+                    pipeline_id,
+                    resume_stage or "auto-detect",
+                )
+                context, start_stage_name = self._prepare_resume(
+                    pipeline_id, resume_stage
+                )
+                self._open_resumed_attempts(context, start_stage_name)
+            else:
+                if self.pipeline_config.force_rebuild:
+                    logger.info(
+                        "Force rebuild: ignoring any existing cache for '%s'",
+                        pipeline_id,
+                    )
+                logger.info("Starting new pipeline run: '%s'", pipeline_id)
+                context, start_stage_name = self._prepare_new_run(
+                    source_path, pipeline_id, resume_stage
+                )
+            self._execute_pipeline(context, start_stage_name)
+        except KeyboardInterrupt:
+            # A second stop request waits for the attempts and the checkpoint.
+            self._checkpointing = True
+            try:
+                self._close_attempts(context)
+                self._checkpoint_on_stop()
+            finally:
+                self._checkpointing = False
+                self._checkpoint_id = None
+            raise
+        # Any other BaseException (SystemExit, or a test's simulated death)
+        # leaves the attempts open, like a process that died.
+        except Exception:
+            self._close_attempts(context)
+            raise
+        self._close_attempts(context)
+        return context
+
+    def _incremental_delta(self, context: PipelineContext | None) -> bool:
+        """Whether ``context`` holds an incremental delta the registry tracks
+        (not a reset's, whose rebuild opens no attempt)."""
+        return (
+            context is not None
+            and context.incremental_delta is not None
+            and self._doc_status is not None
+            and not self.config.indexing.reset
+        )
+
+    def _open_resumed_attempts(
+        self, context: PipelineContext, start_stage_name: str | None
+    ) -> None:
+        """Open the processing attempts of a run resumed past document_loading
+        (which opens them on a fresh run, see ``incremental.open_attempts``)."""
+        if not self._incremental_delta(context) or not self._resumes_past_loading(
+            start_stage_name
+        ):
+            return
+        assert context.incremental_delta is not None and self._doc_status is not None
+        open_attempts(
+            self._doc_status,
+            context.incremental_delta,
+            context.incremental_fingerprints,
+            scope=context.incremental_scope,
+        )
+
+    def _close_attempts(self, context: PipelineContext | None) -> None:
+        """Close the run's processing attempts (best effort: an attempt left
+        open counts as a death of the run, see ``domain.ingestion.attempts``)."""
+        if not self._incremental_delta(context):
+            return
+        assert context is not None and context.incremental_delta is not None
+        assert self._doc_status is not None
+        try:
+            close_attempts(
+                self._doc_status,
+                context.incremental_delta,
+                context.incremental_fingerprints,
+            )
+        except Exception as e:  # noqa: BLE001 - counted as a death at worst
+            logger.warning(
+                "Closing the run's processing attempts failed (%s); the next "
+                "run counts this one as a run that died",
+                e,
+            )
+
+    def _resumes_past_loading(self, start_stage_name: str | None) -> bool:
+        """Whether a resume at ``start_stage_name`` reuses the restored delta
+        and still runs a stage up to indexing."""
+        canonical_order = [st.value for st in self.STAGE_CLASSES]
+        if start_stage_name not in canonical_order:
+            return False
+        position = canonical_order.index(start_stage_name)
+        return canonical_order.index(
+            PipelineStageType.DOCUMENT_LOADING.value
+        ) < position <= canonical_order.index(
+            PipelineStageType.INDEXING.value
+        ) and self._start_index(
+            start_stage_name
+        ) < len(
+            self.stages
+        )
 
     def _namespace_lease(self) -> AbstractContextManager[NamespaceLease | None]:
         """The write lease of the run's index namespace, held for the whole
@@ -895,6 +1009,13 @@ class DataIngestionPipeline:
             context = self.resume_manager.restore_pipeline_context(
                 pipeline_id, completed_stages
             )
+            if self._delta_is_stale(context, start_stage_name):
+                start_stage_name, completed_stages = self._rewind_to_loading(
+                    start_stage_name, completed_stages, _STALE_DELTA
+                )
+                context = self.resume_manager.restore_pipeline_context(
+                    pipeline_id, completed_stages
+                )
 
             self._prepare_context_for_resume(context, start_stage_name)
 
@@ -983,10 +1104,22 @@ class DataIngestionPipeline:
             reason = f"the extraction settings changed ({', '.join(changed)})"
         else:
             return start_stage_name, completed_stages
+        return self._rewind_to_loading(
+            start_stage_name,
+            completed_stages,
+            f"{reason} since this pipeline computed its incremental delta",
+        )
+
+    def _rewind_to_loading(
+        self, start_stage_name: str, completed_stages: list[str], reason: str
+    ) -> tuple[str, list[str]]:
+        """Resume from document_loading instead (it diffs the corpus again;
+        document_parsing stays cached), logging ``reason``."""
+        loading = PipelineStageType.DOCUMENT_LOADING.value
+        canonical_order = [st.value for st in self.STAGE_CLASSES]
         logger.warning(
-            "%s since this pipeline computed its incremental delta; resuming "
-            "from '%s' instead of '%s'",
-            reason.capitalize(),
+            "%s; resuming from '%s' instead of '%s'",
+            reason[:1].upper() + reason[1:],
             loading,
             start_stage_name,
         )
@@ -996,6 +1129,36 @@ class DataIngestionPipeline:
             for name in completed_stages
             if name in canonical_order and canonical_order.index(name) < position
         ]
+
+    def _delta_is_stale(
+        self, context: PipelineContext, start_stage_name: str | None
+    ) -> bool:
+        """Whether a resume past document_loading would index a delta the
+        registry no longer matches (``incremental.delta_still_applies``).
+
+        Raises:
+            PipelineResumeError: It would, and document_loading is not
+                enabled in this run to compute the delta again.
+        """
+        if not self._incremental_delta(context) or not self._resumes_past_loading(
+            start_stage_name
+        ):
+            return False
+        assert context.incremental_delta is not None and self._doc_status is not None
+        if delta_still_applies(
+            self._doc_status,
+            context.incremental_delta,
+            context.incremental_fingerprints,
+            self.config.indexing.max_document_attempts,
+        ):
+            return False
+        loading = PipelineStageType.DOCUMENT_LOADING.value
+        if loading not in {stage.name for stage in self.stages}:
+            raise PipelineResumeError(
+                f"{_STALE_DELTA}, so it must be computed again. Re-run with "
+                f"'{loading}' enabled (--resume-from-stage {loading})."
+            )
+        return True
 
     def _check_upstream_complete(self, pipeline_id: str, start_stage_name: str) -> None:
         """Fail when the resume point is a recorded stage upstream of every
@@ -1480,10 +1643,16 @@ class DataIngestionPipeline:
                 self._get_stage_metric(context, "claim_extraction", "failed_units")
             ),
             # Documents an incremental run stopped retrying because their
-            # indexing kept dying (the DocumentsQuarantined alarm).
+            # processing kept killing the run (the DocumentsQuarantined
+            # alarm), and those it deferred while isolating one.
             "total_documents_quarantined": int(
                 self._get_stage_metric(
                     context, "document_loading", "documents_quarantined"
+                )
+            ),
+            "total_documents_deferred": int(
+                self._get_stage_metric(
+                    context, "document_loading", "documents_deferred"
                 )
             ),
             "cache_hit_rate": cache_stats.hit_rate,

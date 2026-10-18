@@ -2128,21 +2128,25 @@ class IndexingConfig(BaseModel):
     max_document_attempts: int = Field(
         default=3,
         ge=1,
-        description="Incremental runs: a document whose indexing (of the same "
-        "content) was started this many consecutive runs and never finished "
-        "(the run died each time: out of memory, a task timeout) is "
-        "quarantined: the next run removes what the attempts wrote, records "
-        "it QUARANTINED and skips it until its content or the extraction "
-        "settings change or this value is raised. Every document of a delta "
-        "that keeps dying counts an attempt.",
+        description="Incremental runs: once runs died this many consecutive "
+        "times (the task was killed; a stopped or failed run does not count) "
+        "processing a document's unchanged content, the runs isolate it: a "
+        "document that died processed alone "
+        "is quarantined (the next run removes what the attempts wrote, "
+        "records it QUARANTINED and skips it until its content or the "
+        "extraction settings change or this value is raised); otherwise the "
+        "next runs process half of the documents it died with and defer the "
+        "other new and changed documents until the culprit is alone.",
     )
     lease_seconds: float = Field(
         default=300.0,
         ge=10.0,
         description="Incremental runs: the term of an index namespace's write "
         "lease, which a run holds from its first stage to its end so no other "
-        "run writes the namespace meanwhile. The run renews it every third of "
-        "the term; a run that dies stops renewing, so its lease expires (and "
+        "run writes the namespace meanwhile. The run renews it every sixth of "
+        "the term and stops writing once less than a third is left since its "
+        "last renewal (keep it at least three times the longest store write "
+        "request); a run that dies stops renewing, so its lease expires (and "
         "another run can start) at most this long after.",
     )
     retire_source_scopes: list[str] = Field(

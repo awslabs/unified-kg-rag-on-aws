@@ -47,10 +47,10 @@ class DocStatus(str, Enum):
 
     An incremental run records a document PENDING (the write-ahead record)
     before it touches the stores, then PROCESSED once its artifacts are
-    written, or FAILED. A document whose indexing was started and never
-    finished ``indexing.max_document_attempts`` consecutive runs (the run died
-    each time) is QUARANTINED: it is skipped until its content or the
-    extraction settings change.
+    written, or FAILED. A document whose processing killed the run
+    ``indexing.max_document_attempts`` consecutive runs, the last one
+    processing it alone, is QUARANTINED: it is skipped until its content or
+    the extraction settings change (``domain.ingestion.attempts``).
     """
 
     PENDING = "pending"
@@ -144,15 +144,30 @@ class DocStatusRecord(BaseModel):
     attempt_count: int = Field(
         default=0,
         ge=0,
-        description="Consecutive runs that started indexing this document "
-        "(wrote its PENDING record) and did not finish it: an interruption "
-        "counts, a FAILED or PROCESSED commit resets it to 0",
+        description="Consecutive runs that started processing this content "
+        "and died before ending (``domain.ingestion.attempts``): a run that "
+        "stops cleanly, even on SIGTERM, does not count, and a FAILED or "
+        "PROCESSED commit resets it to 0. The attempt in progress is counted "
+        "once the next run finds it still open (``attempt_batch``)",
     )
     attempted_hash: str | None = Field(
         default=None,
-        description="Content hash of the version the attempts indexed (a "
+        description="Content hash of the version the attempts processed (a "
         "PENDING record's ``content_hash`` is ``PENDING_CONTENT_HASH``): only "
         "attempts at the same content count toward quarantine",
+    )
+    attempt_batch: int | None = Field(
+        default=None,
+        ge=1,
+        description="Documents the run processing this one processes "
+        "together: set when a run starts processing the document, cleared "
+        "when it ends; still set on the next run means the run died",
+    )
+    crash_batch: int = Field(
+        default=0,
+        ge=0,
+        description="Documents the last attempt that died processed together "
+        "(1: it died processing this document alone; 0: unknown)",
     )
     extraction_fingerprint: str | None = Field(
         default=None,
@@ -200,7 +215,7 @@ class StoredDocument(NamedTuple):
 
     content_hash: str
     scope: str | None
-    failed: bool
+    status: str | None  # the record's ``DocStatus`` value
     extraction_fingerprint: str | None
 
 
@@ -247,10 +262,25 @@ class DocumentDelta(BaseModel):
     )
     quarantined: list[str] = Field(
         default_factory=list,
-        description="Doc ids whose indexing this content was started and never "
-        "finished ``indexing.max_document_attempts`` consecutive runs: not "
-        "processed; the run removes what the attempts wrote and records them "
-        "QUARANTINED",
+        description="Doc ids whose processing of this content died "
+        "``indexing.max_document_attempts`` consecutive runs, the last one "
+        "processing the document alone: not processed; the run removes what "
+        "the attempts wrote and records them QUARANTINED",
+    )
+    quarantined_unchanged: list[str] = Field(
+        default_factory=list,
+        description="The ``unchanged`` doc ids whose record is QUARANTINED, "
+        "reported by ``DocStatusPort.diff`` (the status is read anyway), so "
+        "a raised ``indexing.max_document_attempts`` retries them. A store "
+        "that does not report them leaves it empty, and then only an edit "
+        "or a settings change retries a quarantined document",
+    )
+    deferred: list[str] = Field(
+        default_factory=list,
+        description="New or changed doc ids left for a later run while runs "
+        "keep dying: the run processes only half of the documents suspected "
+        "of killing it (``domain.ingestion.attempts.plan_attempts``). Neither "
+        "processed nor deleted; their records are left as they are",
     )
     settings_changed: list[str] = Field(
         default_factory=list,
@@ -273,15 +303,20 @@ class DocumentDelta(BaseModel):
         store read for the diff. A document is ``new`` without a record,
         ``changed`` when its hash differs or its record is FAILED (so it is
         retried), and also when only its extraction settings changed
-        (``settings_changed`` too); else ``unchanged``. With ``scope``, only
-        stored records of that scope can be ``deleted``.
+        (``settings_changed`` too); else ``unchanged`` (and also
+        ``quarantined_unchanged`` when its record is QUARANTINED, so a raised
+        attempt limit can retry it). With ``scope``, only stored records of
+        that scope can be ``deleted``.
         """
         delta = cls()
         for doc_id, content_hash in incoming.items():
             record = stored.get(doc_id)
             if record is None:
                 delta.new.append(doc_id)
-            elif record.content_hash != content_hash or record.failed:
+            elif (
+                record.content_hash != content_hash
+                or record.status == DocStatus.FAILED.value
+            ):
                 delta.changed.append(doc_id)
             elif settings_changed(
                 record.extraction_fingerprint, extraction_fingerprint
@@ -290,6 +325,8 @@ class DocumentDelta(BaseModel):
                 delta.settings_changed.append(doc_id)
             else:
                 delta.unchanged.append(doc_id)
+                if record.status == DocStatus.QUARANTINED.value:
+                    delta.quarantined_unchanged.append(doc_id)
         delta.deleted = [
             doc_id
             for doc_id, record in stored.items()
