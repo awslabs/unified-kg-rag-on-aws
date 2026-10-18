@@ -464,3 +464,94 @@ def test_only_claims_the_given_claims_units_state_are_derived() -> None:
     )
 
     assert [c.object_name for c in derived.claims] == ["Buyer"]
+
+
+def _pays(subject: str, obj: str, units: list[str], claim_id: str = "") -> Claim:
+    return Claim(
+        id=claim_id or f"{subject}-{obj}",
+        subject_id="",
+        subject_name=subject,
+        object_name=obj,
+        type="PAYS",
+        description=f"{subject} pays {obj}",
+        text_unit_ids=units,
+    )
+
+
+def test_a_claim_no_claim_of_its_units_states_is_dropped() -> None:
+    # Its unit's records hold no claim at all now: a full build has no such
+    # claim, so the stored one goes (the caller deletes it).
+    records = {"u1": _record("u1", _entity("Acme", "u1"), _entity("Buyer", "u1"))}
+    acme, buyer = _stored("Acme", ["u1"]), _stored("Buyer", ["u1"])
+    stale = _pays("Acme", "Buyer", ["u1"], "stale").model_copy(
+        update={"subject_id": acme.id, "object_id": buyer.id}
+    )
+
+    derived = derive(Config(), [acme, buyer], [], [stale], records, {"u1": []})
+
+    assert derived.claims == []
+    assert derived.dropped == ["stale"]
+
+
+def test_an_unmatched_claim_takes_the_claim_sharing_most_of_its_units() -> None:
+    # The given claim matches no resolved claim by id; of the two its units
+    # state, the one citing both of them is it, whatever their ids.
+    from unified_kg_rag.domain.ingestion.claim_resolver import resolved_claim_id
+
+    def best(other: str) -> tuple[str, str]:
+        records = {
+            "u1": _record("u1", _entity("Acme", "u1"), _entity("Buyer", "u1")),
+            "u2": _record(
+                "u2",
+                _entity("Acme", "u2"),
+                _entity("Buyer", "u2"),
+                _entity(other, "u2"),
+            ),
+        }
+        entities = [
+            _stored("Acme", ["u1", "u2"]),
+            _stored("Buyer", ["u1", "u2"]),
+            _stored(other, ["u2"]),
+        ]
+        claim_records = {
+            "u1": [_pays("Acme", "Buyer", ["u1"])],
+            "u2": [_pays("Acme", "Buyer", ["u2"]), _pays("Acme", other, ["u2"])],
+        }
+        given = _pays("Acme", "Nobody", ["u1", "u2"], "unmatched")
+        derived = derive(Config(), entities, [], [given], records, claim_records)
+        ids = {c.object_name: c.id for c in derived.claims}
+        assert derived.id_remap["unmatched"] == ids["Buyer"]
+        return ids["Buyer"], resolved_claim_id(
+            _pays("Acme", other, ["u2"]).model_copy(
+                update={"subject_id": entities[0].id, "object_id": entities[2].id}
+            )
+        )
+
+    # One of the object names gives the one-unit claim the larger id, so a
+    # choice by id alone would pick it.
+    results = [best(name) for name in ("Depot", "Carrier", "Globex", "Initech")]
+    assert any(other > buyer for buyer, other in results)
+
+
+def test_another_spelling_is_an_endpoint_only_where_the_edge_states_it() -> None:
+    # "Acme Inc" (another type) is stated in u2 only. The stored Acme-Depot
+    # edge of u1, which u1's records no longer state, is dropped; it must not
+    # take the Acme Inc-Depot edge of u2, which shares none of its units.
+    records = {
+        "u1": _record("u1", _entity("Acme", "u1"), _entity("Depot", "u1")),
+        "u2": _record(
+            "u2",
+            _entity("Acme Inc", "u2", "PERSON"),
+            _entity("Depot", "u2"),
+            edges=[_edge("Acme Inc", "Depot", "u2")],
+        ),
+    }
+    acme = _stored("Acme", ["u1"])
+    acme_inc = _stored("Acme Inc", ["u2"], type="person")
+    depot = _stored("Depot", ["u1", "u2"])
+    stale = _edge("Acme", "Depot", "u1")
+
+    derived = derive(Config(), [acme, acme_inc, depot], [stale], [], records)
+
+    assert derived.dropped == [stale.id]
+    assert stale.id not in {r.id for r in derived.relationships}

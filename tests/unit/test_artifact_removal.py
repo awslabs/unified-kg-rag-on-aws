@@ -367,3 +367,56 @@ def test_a_claim_left_on_the_other_spelling_marks_a_leftover_split() -> None:
 
     assert left == {"e-part": "e-whole"}
     assert kept_apart == {}
+
+
+def test_only_a_deleted_communitys_id_leaves_a_stripped_entity() -> None:
+    # Removing t1 deletes "c-only" (it cites no other unit) and keeps
+    # "c-both": the stripped entity drops the one id, not both.
+    manager, graph, vector = _manager()
+    vector.upsert_text_units(
+        [TextUnit(id=unit, text="...", document_ids=["d"]) for unit in ("t1", "t2")]
+    )
+    graph.upsert_communities(
+        [
+            Community(
+                id=cid, name=cid, level="0", parent="", children=[], text_unit_ids=units
+            )
+            for cid, units in (("c-only", ["t1"]), ("c-both", ["t1", "t2"]))
+        ]
+    )
+    graph.upsert_entities(
+        [
+            Entity(
+                id="e",
+                name="E",
+                text_unit_ids=["t1", "t2"],
+                community_ids=["c-only", "c-both"],
+            )
+        ]
+    )
+
+    manager.remove_text_units("default", ["t1"])
+
+    (entity,) = graph.read_entities(["e"])
+    assert entity.community_ids == ["c-both"]
+
+
+def test_a_claim_the_derivation_drops_is_retired(mocker) -> None:
+    # A stored claim no claim of its units corresponds to is deleted with the
+    # retired ids, once the run's writes succeeded.
+    from unified_kg_rag.domain.ingestion.derivation import Derived
+    from unified_kg_rag.domain.models import Claim
+
+    manager, _, _ = _manager()
+    stale = Claim(
+        id="stale",
+        subject_id="e",
+        subject_name="E",
+        object_name="x",
+        type="PAYS",
+        text_unit_ids=["t1"],
+    )
+    mocker.patch.object(manager, "derive", return_value=Derived(dropped=["stale"]))
+
+    assert manager._derive_claims("default", [stale]) == []
+    assert "stale" in manager._dropped["default"]

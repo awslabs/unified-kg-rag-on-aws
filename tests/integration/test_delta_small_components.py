@@ -227,3 +227,75 @@ def test_the_walk_stops_at_min_size_on_a_hub(tmp_path: Path, mocker) -> None:
         assert sum(len(call.args[0]) for call in read.call_args_list) <= 64
     finally:
         graph.close()
+
+
+def test_a_quarantined_documents_edges_do_not_reach_the_whole_graph(
+    tmp_path: Path,
+) -> None:
+    # The only stored edge from the delta's entity to the rest of the graph
+    # cites a unit of a quarantined document: a full build leaves that
+    # document out, so the component stays small and gets no community.
+    from datetime import datetime
+
+    from tests.fixtures.fakes.doc_status import FakeDocStatusStore
+    from unified_kg_rag.application.ingestion import pipeline_stages as ps
+    from unified_kg_rag.domain.models import (
+        DocStatus,
+        DocStatusRecord,
+        DocumentDelta,
+        Entity,
+        PipelineContext,
+        Relationship,
+    )
+
+    config, providers = _setup(tmp_path, None)
+    graph = providers.build_graph_indexer()
+    try:
+        graph.initialize()
+        graph.upsert_entities(
+            [
+                Entity(id=i, name=i.upper(), text_unit_ids=["t-ok"])
+                for i in ("new", "s1", "s2", "s3")
+            ]
+        )
+        graph.upsert_relationships(
+            [
+                Relationship(
+                    id="r0", source_id="new", target_id="s1", text_unit_ids=["t-q"]
+                ),
+                Relationship(
+                    id="r1", source_id="s1", target_id="s2", text_unit_ids=["t-ok"]
+                ),
+                Relationship(
+                    id="r2", source_id="s2", target_id="s3", text_unit_ids=["t-ok"]
+                ),
+            ]
+        )
+    finally:
+        graph.close()
+    store = FakeDocStatusStore()
+    store.put(
+        DocStatusRecord(
+            doc_id="q",
+            content_hash="h",
+            status=DocStatus.QUARANTINED,
+            suffix="default",
+            text_unit_ids=["t-q"],
+        )
+    )
+    stage = ps.CommunityDetectionStage(config, providers=providers)
+    stage._doc_status = store
+    context = PipelineContext(
+        pipeline_id="pid",
+        config={},
+        status=PipelineStageStatus.RUNNING,
+        start_time=datetime(2026, 1, 1),
+        source_directory=str(tmp_path),
+        resolved_entities=[Entity(id="new", name="NEW", text_unit_ids=["t-new"])],
+        incremental_delta=DocumentDelta(new=["n"], unchanged=["u"], quarantined=["q"]),
+    )
+
+    large = stage._whole_graph(context)
+
+    assert large is not None
+    assert large([{"new"}]) == set()
