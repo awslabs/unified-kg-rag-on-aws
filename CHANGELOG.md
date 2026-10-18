@@ -298,7 +298,7 @@ full re-index of the affected index type).
   filter to them itself. An index built before that returns no
   relationship or claim under an attribute filter (fail-closed) until it is
   rebuilt with `indexing.reset: true`; queries without attribute filters
-  are unaffected (#PR).
+  are unaffected (#360).
 - The doc-status registry has a new format and table. A record lists only
   its document's text units (the per-artifact id lists and the lineage
   overflow items are gone), and records are keyed by index namespace: the
@@ -1299,23 +1299,23 @@ changed once with the full-config keys (#332).
   metrics still run (#359).
 - Merging document filters is linear: unioning the filters of a report's
   40,000 text units took 11 s (a membership test on a list), now 0.04 s;
-  the value order is unchanged (#PR).
+  the value order is unchanged (#360).
 - A global map phase whose every call timed out fails the query (unless
   `processing.ignore_errors`) and records `TimeoutError`: a call
   BatchProcessor abandons at `call_timeout_seconds` raised no error the map
   step saw, so it answered from the unjudged reports after the timeout with
   a parse-error label. Dynamic community selection tolerates one failed
   rating as the map phase tolerates one failed batch (the report is kept and
-  recorded); a step none of whose ratings succeeded fails the query (#PR).
+  recorded); a step none of whose ratings succeeded fails the query (#360).
 - An entity-attribute filter (`attributes.<path>` other than
   `attributes.filters.<key>`) no longer cuts graph expansion to the seeds:
   only document filters are checked against the text units, which never
-  carry an entity's own attributes (#PR).
+  carry an entity's own attributes (#360).
 - An attribute filter no longer costs a post-filter fetch per relationship
   or claim sub-search, nor fails the query when a hub entity cites more text
   units than one `terms` clause holds (`max_terms_count`). On a 3000-document
   hub corpus DRIFT's store responses under a filter fell from 42 to 29 MB
-  (1.8 to 1.0 s) and local's from 2.3 to 1.7 MB (#PR).
+  (1.8 to 1.0 s) and local's from 2.3 to 1.7 MB (#360).
 - A run that lost its namespace's write lease during a full build no longer
   swaps the OpenSearch alias onto the partial index and deletes the complete
   one: the vector indexer re-raises `NamespaceLeaseError` instead of
