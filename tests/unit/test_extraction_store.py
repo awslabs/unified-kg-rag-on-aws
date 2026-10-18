@@ -43,7 +43,7 @@ from unified_kg_rag.domain.models import (
     TextUnit,
     TextUnitExtraction,
 )
-from unified_kg_rag.domain.prompts import GraphExtractionPrompt
+from unified_kg_rag.domain.prompts import GraphExtractionPrompt, GraphRefinementPrompt
 from unified_kg_rag.ports.indexer import IndexingStats
 from unified_kg_rag.shared.utils.cache_keys import unit_record_fingerprint
 
@@ -156,6 +156,52 @@ class TestFingerprint:
         language = Config()
         language.processing.translation.target_language = LanguageCode.KO
         assert unit_record_fingerprint(language, gleaned=True) != fingerprint
+
+    def test_follows_the_gleaning_settings_of_a_gleaned_record_only(self) -> None:
+        base = Config()
+        rounds = Config()
+        rounds.processing.gleaning.max_rounds += 1
+        assert unit_record_fingerprint(rounds, gleaned=True) != (
+            unit_record_fingerprint(base, gleaned=True)
+        )
+        assert unit_record_fingerprint(rounds, gleaned=False) == (
+            unit_record_fingerprint(base, gleaned=False)
+        )
+        refinement = Config(
+            custom_prompts={
+                "graph_refinement_system": GraphRefinementPrompt.system_prompt_template
+                + "\nOne more rule."
+            }
+        )
+        assert unit_record_fingerprint(refinement, gleaned=True) != (
+            unit_record_fingerprint(base, gleaned=True)
+        )
+        assert unit_record_fingerprint(refinement, gleaned=False) == (
+            unit_record_fingerprint(base, gleaned=False)
+        )
+
+    def test_follows_the_built_in_refinement_prompt(self, monkeypatch) -> None:
+        gleaned = unit_record_fingerprint(Config(), gleaned=True)
+        plain = unit_record_fingerprint(Config(), gleaned=False)
+        monkeypatch.setattr(
+            GraphRefinementPrompt,
+            "system_prompt_template",
+            GraphRefinementPrompt.system_prompt_template + "\nOne more rule.",
+        )
+        assert unit_record_fingerprint(Config(), gleaned=True) != gleaned
+        assert unit_record_fingerprint(Config(), gleaned=False) == plain
+
+    def test_follows_the_claim_settings_of_a_claims_record_only(self) -> None:
+        base = Config()
+        base.processing.claim_extraction.enabled = True
+        wider = base.model_copy(deep=True)
+        wider.processing.claim_extraction.max_entities_per_prompt += 1
+        assert unit_record_fingerprint(wider, gleaned=False, claims=True) != (
+            unit_record_fingerprint(base, gleaned=False, claims=True)
+        )
+        assert unit_record_fingerprint(wider, gleaned=False) == (
+            unit_record_fingerprint(base, gleaned=False)
+        )
 
     def test_ignores_the_settings_that_only_shape_the_text(self) -> None:
         # The record is keyed by the text too, so a chunking change re-keys

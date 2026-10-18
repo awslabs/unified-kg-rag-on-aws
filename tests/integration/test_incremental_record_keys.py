@@ -12,6 +12,7 @@ document is extracted again by the next run.
 
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -31,7 +32,10 @@ from unified_kg_rag.domain.models import (
     DocStatus,
     PipelineConfig,
     PipelineContext,
+    PipelineStageStatus,
     PipelineStageType,
+    TextUnit,
+    TextUnitExtraction,
 )
 from unified_kg_rag.ports.indexer import IndexingStats
 
@@ -146,3 +150,40 @@ def test_a_record_that_was_not_stored_fails_its_document(tmp_path, monkeypatch) 
     assert all(
         set(keys) == {"graph", "claims"} for keys in harness.unit_keys().values()
     )
+
+
+def test_a_record_the_store_rejected_is_written_again(tmp_path) -> None:
+    # A record the store rejected is not marked stored, so the stage's next
+    # attempt in the run writes it again (and only it).
+    harness = _Harness(tmp_path)
+    providers = Providers(
+        harness.config,
+        boto_session=MagicMock(),
+        llm_factory=ScriptedLLMFactory(_respond),
+        embedding_factory=HashingEmbeddingFactory(),
+        doc_status=harness.store,
+        vector_indexer_factory=lambda: harness.vectors,
+        graph_indexer_factory=lambda: harness.graph,
+    )
+    stage = ps.GraphResolutionStage(harness.config, providers=providers)
+    written: list[set[str]] = []
+
+    def save(units, fingerprint):
+        ids = {unit.id for unit, _ in units}
+        written.append(ids)
+        return ids & {"t1"} if len(written) == 1 else set()
+
+    stage.store.save = save  # type: ignore[method-assign]
+    context = PipelineContext(
+        pipeline_id="pid",
+        config={},
+        status=PipelineStageStatus.RUNNING,
+        start_time=datetime(2026, 1, 1),
+        source_directory=str(harness.source),
+        text_units=[TextUnit(id=i, text=f"text {i}") for i in ("t1", "t2")],
+        unit_extractions=[TextUnitExtraction(text_unit_id=i) for i in ("t1", "t2")],
+    )
+
+    assert stage._store_records(context) == {"t1"}
+    assert stage._store_records(context) == set()
+    assert [ids for ids in written if ids] == [{"t1", "t2"}, {"t1"}]

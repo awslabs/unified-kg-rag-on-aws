@@ -331,6 +331,38 @@ def test_the_claim_object_name_follows_the_derived_entity() -> None:
     assert (claim.object_id, claim.object_name) == (acme.id, "Acme Inc")
 
 
+def test_the_claim_object_name_is_the_stored_entitys_when_it_is_underived() -> None:
+    # The object entity cannot be derived (a unit it cites has no record), so
+    # it keeps its stored name: the claim names it so too, not as the claim's
+    # unit spells it.
+    records = {"u1": _record("u1", _entity("Acme Inc", "u1"), _entity("Buyer", "u1"))}
+    statement = Claim(
+        id="c",
+        subject_id="",
+        subject_name="Buyer",
+        object_name="Acme Inc",
+        type="PAYS",
+        description="Buyer pays Acme Inc",
+        text_unit_ids=["u1"],
+    )
+    acme = _stored("ACME INC", ["u1", "u9"])
+    buyer = _stored("Buyer", ["u1"])
+    from unified_kg_rag.domain.ingestion.claim_resolver import resolved_claim_id
+
+    stored_claim = statement.model_copy(
+        update={"subject_id": buyer.id, "object_id": acme.id, "type": "pays"}
+    )
+    stored_claim.id = resolved_claim_id(stored_claim)
+
+    derived = derive(
+        Config(), [acme, buyer], [], [stored_claim], records, {"u1": [statement]}
+    )
+
+    assert derived.underived == [acme.id]
+    (claim,) = derived.claims
+    assert (claim.object_id, claim.object_name) == (acme.id, "ACME INC")
+
+
 def test_an_edge_neither_stored_nor_given_is_derived() -> None:
     # Two derived entities a full build links: the edge is derived when the
     # caller's stored incident edges do not hold it.
