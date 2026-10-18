@@ -1304,7 +1304,8 @@ adds `evaluation_comparison_<timestamp>.json`:
   both agree; `candidate_win_rate` counts a tie as half. A pair where one
   answer failed is not judged: the other side wins (`candidate_errors`,
   `baseline_errors`; both failed: `both_errors`). `failed` counts pairs the
-  judge could not decide, and `--max-failure-rate` applies to them.
+  judge could not decide (a failed call, or a verdict other than `1`, `2` or
+  `tie`), and `--max-failure-rate` applies to them.
 - `run_manifest` of the first run.
 
 The console prints the same summary; the failure budget applies to every run.

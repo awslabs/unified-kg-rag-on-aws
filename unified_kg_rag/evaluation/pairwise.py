@@ -9,7 +9,8 @@ than against a gold answer, because global sensemaking questions have none.
 strategies' answers to the same queries. LLM judges prefer the answer they
 read first (position bias), so each pair is judged in both orders and a
 criterion counts as a win only when both orders pick the same answer;
-otherwise it is a tie. A pair where one side's answer generation failed is
+otherwise it is a tie. A missing or malformed verdict fails the pair (counted
+in ``failed``) rather than counting as a tie. A pair where one side's answer generation failed is
 not judged: the side that answered wins every criterion (tallied as
 ``candidate_errors`` / ``baseline_errors``), so a strategy cannot improve its
 win rate by failing on hard queries. A pair both sides failed counts in
@@ -34,11 +35,12 @@ from unified_kg_rag.domain.models import (
     ModelRole,
 )
 from unified_kg_rag.domain.prompts import PairwiseComparisonPrompt
-from unified_kg_rag.shared import get_logger, observability
+from unified_kg_rag.shared import EvaluationException, get_logger, observability
 
 logger = get_logger(__name__)
 
 CRITERIA = tuple(PairwiseComparisonPrompt.output_variables or ())
+_VERDICTS = frozenset({"1", "2", "tie"})
 
 
 class PairwiseJudge:
@@ -67,7 +69,13 @@ class PairwiseJudge:
         for criterion in CRITERIA:
             entry = output.get(criterion) if isinstance(output, dict) else None
             winner = entry.get("winner") if isinstance(entry, dict) else entry
-            verdicts[criterion] = str(winner).strip().strip('"').lower()
+            verdict = str(winner).strip().strip('"').lower()
+            if verdict not in _VERDICTS:
+                # A missing or malformed verdict is a failed judgment, not a tie.
+                raise EvaluationException(
+                    f"pairwise judge gave no valid '{criterion}' winner: {winner!r}"
+                )
+            verdicts[criterion] = verdict
         return verdicts
 
     async def ajudge(self, query: str, baseline: str, candidate: str) -> dict[str, str]:

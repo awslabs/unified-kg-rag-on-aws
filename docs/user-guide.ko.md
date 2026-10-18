@@ -1186,7 +1186,7 @@ run-eval --data-path s3://my-bucket/eval/my_eval_data.json \
   판정하고 두 순서가 일치한 기준만 승리로 세며, `candidate_win_rate`는 무승부를 0.5로
   셉니다. 한쪽 답변이 실패한 쌍은 판정하지 않고 다른 쪽이 이깁니다(`candidate_errors`,
   `baseline_errors`. 둘 다 실패: `both_errors`). `failed`는 판정 모델이 결정하지 못한
-  쌍의 수이며 `--max-failure-rate`가 적용됩니다.
+  쌍(호출 실패, 또는 `1`, `2`, `tie`가 아닌 판정)의 수이며 `--max-failure-rate`가 적용됩니다.
 - 첫 실행의 `run_manifest`.
 
 콘솔에도 같은 요약이 출력되며, 실패 허용 기준은 모든 실행에 적용됩니다.

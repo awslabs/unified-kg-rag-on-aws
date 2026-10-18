@@ -1247,6 +1247,9 @@ changed once with the full-config keys (#332).
   before graph copies, and the incremental switch is
   `providers.doc_status.enabled` (#350).
   `providers.doc_status.enabled` (#351).
+- `run-eval --pairwise-judge`: a judge reply with a missing or malformed
+  verdict for a criterion now fails the pair (counted in `failed`, held to
+  `--max-failure-rate`) instead of counting as a tie (#PR).
 - Evaluation: an answer the guardrail blocked (which drops its sources) no
   longer scores as a retrieval miss; its `retrieval` metrics and retrieved
   coverage are skipped as `guardrail_blocked`. The strategy comparison

@@ -220,6 +220,16 @@ class TestPairwiseJudge:
         assert out["criteria"]["comprehensiveness"]["candidate_win_rate"] == 0.5
         assert out["criteria"]["directness"]["candidate_win_rate"] == 0.25
 
+    def test_a_malformed_verdict_fails_the_pair(self, mocker) -> None:
+        # Before, a missing criterion became a silent tie.
+        judge = self._judge(mocker)
+        judge.chain.ainvoke = mocker.AsyncMock(
+            return_value={"verdicts": {"comprehensiveness": {"winner": "2"}}}
+        )
+        out = asyncio.run(judge.acompare([_result("a", "x")], [_result("a", "y")]))
+        assert (out["judged"], out["failed"]) == (0, 1)
+        assert out["criteria"]["comprehensiveness"]["candidate_win_rate"] is None
+
     def test_judge_calls_nest_under_one_span(self, mocker) -> None:
         judge = self._judge(mocker)
         span = mocker.patch.object(pairwise.observability, "span")
