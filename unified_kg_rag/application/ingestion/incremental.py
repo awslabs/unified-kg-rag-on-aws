@@ -55,6 +55,7 @@ from unified_kg_rag.domain.ingestion.delta_detector import (
     scope_namespace,
     validate_retired_scopes,
 )
+from unified_kg_rag.domain.ingestion.derivation import with_entity_ids
 from unified_kg_rag.domain.ingestion.merge import merge_claims
 from unified_kg_rag.domain.models import (
     PENDING_CONTENT_HASH,
@@ -194,16 +195,7 @@ def _remap_claims(
         suffix = BaseIndexer.get_suffix(claim)
         remap = id_remap_by_suffix.get(suffix, {})
         if remap:
-            claim = claim.model_copy(
-                update={
-                    "subject_id": remap.get(claim.subject_id, claim.subject_id),
-                    "object_id": (
-                        remap.get(claim.object_id, claim.object_id)
-                        if claim.object_id
-                        else claim.object_id
-                    ),
-                }
-            )
+            claim = with_entity_ids(claim, remap)
             claim_id = resolved_claim_id(claim)
             if claim_id != claim.id:
                 claim = claim.model_copy(

@@ -101,7 +101,7 @@ def _union(lists: Iterable[list[str] | None]) -> list[str]:
     return list(dict.fromkeys(i for ids in lists for i in ids or []))
 
 
-def _with_entity_ids(claim: Claim, ids: Mapping[str, str]) -> Claim:
+def with_entity_ids(claim: Claim, ids: Mapping[str, str]) -> Claim:
     """``claim`` with its subject and object mapped through ``ids``."""
     return claim.model_copy(
         update={
@@ -133,7 +133,8 @@ def _ordered_units(stored: Iterable[str], units: Sequence[str]) -> list[str]:
     """``units`` in the order ``stored`` lists them, the others after."""
     wanted = set(units)
     first = [u for u in dict.fromkeys(stored) if u in wanted]
-    return [*first, *(u for u in units if u not in set(first))]
+    seen = set(first)
+    return [*first, *(u for u in units if u not in seen)]
 
 
 def _correspondence(
@@ -160,7 +161,7 @@ def _correspondence(
         units = set(item.text_unit_ids or [])
         match = max(
             candidates,
-            key=lambda r: (len(set(r.text_unit_ids or []) & units), r.id == item.id),
+            key=lambda r: (r.id == item.id, len(set(r.text_unit_ids or []) & units)),
         )
         matched[match.id].append(item)
         derives_to[item.id] = [match.id]
@@ -202,7 +203,10 @@ def derive(
     unit id and must hold every text unit the items cite; an item one of
     whose text units has none keeps its content and is listed in
     ``underived`` (its id changes only to follow a re-keyed endpoint).
-    Given claims that derive to one fact are returned as one. Returns copies.
+    Given claims that derive to one fact are returned as one, and a claim
+    their text units state that a given claim had merged (about another
+    spelling a full build keeps apart) is returned as a claim of its own.
+    Returns copies.
     """
     unit_ids = {
         unit_id
@@ -482,6 +486,9 @@ def derive(
         # re-pointed); each takes the id it has under the derived ones.
         by_id: dict[str, Claim] = {}
         for claim in resolved_claims:
+            exact = with_entity_ids(claim, derived_of)
+            by_id.setdefault(resolved_claim_id(exact), claim)
+        for claim in resolved_claims:
             for subject in sorted(aliases.get(claim.subject_id, {claim.subject_id})):
                 objects = (
                     aliases.get(claim.object_id, {claim.object_id})
@@ -505,7 +512,7 @@ def derive(
             if match_claim is None:
                 derived_claims.append(claim.model_copy(deep=True, update=endpoints))
                 continue
-            match_claim = _with_entity_ids(match_claim, derived_of)
+            match_claim = with_entity_ids(match_claim, derived_of)
             new_claim_id = resolved_claim_id(match_claim)
             if new_claim_id in blocked:
                 new_claim_id = claim.id
@@ -534,6 +541,36 @@ def derive(
                 )
             )
 
+        # Claims a full build keeps apart that a given claim merged (its
+        # subject merged with another spelling): derived as claims of their own.
+        given_units = {u for c in claims for u in c.text_unit_ids or []}
+        emitted_ids = {c.id for c in derived_claims}
+        for claim in resolved_claims:
+            split = with_entity_ids(claim, derived_of)
+            split_id = resolved_claim_id(split)
+            if (
+                split_id in emitted_ids
+                or split_id in blocked
+                or not given_units & set(claim.text_unit_ids or [])
+                or split.subject_id not in derived_ids
+                or (split.object_id and split.object_id not in derived_ids)
+            ):
+                continue
+            emitted_ids.add(split_id)
+            derived_claims.append(
+                split.model_copy(
+                    deep=True,
+                    update={
+                        "id": split_id,
+                        "subject_name": names.get(split.subject_id, split.subject_name),
+                        "object_name": (
+                            names.get(split.object_id, split.object_name)
+                            if split.object_id
+                            else split.object_name
+                        ),
+                    },
+                )
+            )
         derived_claims = _merge_same_claims(derived_claims)
 
     if underived:
@@ -551,6 +588,12 @@ def derive(
         split_from=parted_from,
         dropped=dropped,
         rewired=sorted(
-            {*parted_from.values(), *(e.id for e in entities if e.id in id_remap)}
+            {
+                *parted_from.values(),
+                *(e.id for e in entities if e.id in id_remap),
+                # The entities another one merged into: their stored edges
+                # may now equal one the merge drew.
+                *(id_remap[e.id] for e in entities if e.id in id_remap),
+            }
         ),
     )

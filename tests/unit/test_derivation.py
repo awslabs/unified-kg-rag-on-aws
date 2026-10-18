@@ -10,10 +10,12 @@ missing for keeps its stored content.
 
 from __future__ import annotations
 
+import time
+
 import pytest
 
 from unified_kg_rag.domain.ingestion.base_processor import BaseProcessor
-from unified_kg_rag.domain.ingestion.derivation import derive
+from unified_kg_rag.domain.ingestion.derivation import _ordered_units, derive
 from unified_kg_rag.domain.ingestion.graph_resolver import ENTITY_KEYS_ATTRIBUTE
 from unified_kg_rag.domain.ingestion.relationship_weights import (
     apply_text_unit_weights,
@@ -237,6 +239,30 @@ def test_a_stored_entity_a_full_build_keeps_apart_is_split() -> None:
     assert (moved.id, moved.source_id) == (edge.id, _id("Acme Inc"))
 
 
+def test_a_split_keeps_the_stored_name_under_its_id() -> None:
+    # Regression: the stored entity matched the part sharing most of its
+    # units ("Acme Inc"), so the part under its own id ("Acme") was "held by
+    # another item" and dropped.
+    records = {
+        "u1": _record("u1", _entity("Acme", "u1", "LOCATION")),
+        "u2": _record("u2", _entity("Acme Inc", "u2", "PERSON")),
+        "u3": _record("u3", _entity("Acme Inc", "u3", "PERSON")),
+    }
+    stored = _stored(
+        "Acme",
+        ["u1", "u2", "u3"],
+        attributes={ENTITY_KEYS_ATTRIBUTE: ["acme", "acme inc"]},
+    )
+
+    derived = derive(Config(), [stored], [], [], records)
+
+    by_name = {e.name: e for e in derived.entities}
+    assert set(by_name) == {"Acme", "Acme Inc"}
+    assert (by_name["Acme"].id, by_name["Acme"].text_unit_ids) == (stored.id, ["u1"])
+    assert derived.split_from == {_id("Acme Inc"): stored.id}
+    assert derived.id_remap == {}
+
+
 def test_a_claim_about_a_split_entity_follows_the_part() -> None:
     stored, records = _merged_acme()
     statement = Claim(
@@ -305,6 +331,38 @@ def test_the_claim_object_name_follows_the_derived_entity() -> None:
     assert (claim.object_id, claim.object_name) == (acme.id, "Acme Inc")
 
 
+def test_the_claim_object_name_is_the_stored_entitys_when_it_is_underived() -> None:
+    # The object entity cannot be derived (a unit it cites has no record), so
+    # it keeps its stored name: the claim names it so too, not as the claim's
+    # unit spells it.
+    records = {"u1": _record("u1", _entity("Acme Inc", "u1"), _entity("Buyer", "u1"))}
+    statement = Claim(
+        id="c",
+        subject_id="",
+        subject_name="Buyer",
+        object_name="Acme Inc",
+        type="PAYS",
+        description="Buyer pays Acme Inc",
+        text_unit_ids=["u1"],
+    )
+    acme = _stored("ACME INC", ["u1", "u9"])
+    buyer = _stored("Buyer", ["u1"])
+    from unified_kg_rag.domain.ingestion.claim_resolver import resolved_claim_id
+
+    stored_claim = statement.model_copy(
+        update={"subject_id": buyer.id, "object_id": acme.id, "type": "pays"}
+    )
+    stored_claim.id = resolved_claim_id(stored_claim)
+
+    derived = derive(
+        Config(), [acme, buyer], [], [stored_claim], records, {"u1": [statement]}
+    )
+
+    assert derived.underived == [acme.id]
+    (claim,) = derived.claims
+    assert (claim.object_id, claim.object_name) == (acme.id, "ACME INC")
+
+
 def test_an_edge_neither_stored_nor_given_is_derived() -> None:
     # Two derived entities a full build links: the edge is derived when the
     # caller's stored incident edges do not hold it.
@@ -350,3 +408,16 @@ def test_an_edge_between_entities_that_now_merge_is_dropped() -> None:
 
     assert len(derived.entities) == 1
     assert (derived.relationships, derived.dropped) == ([], [edge.id])
+
+
+def test_unit_order_is_linear_in_the_units() -> None:
+    # Regression: the set of the stored units was rebuilt for every unit, so
+    # a hub citing 40k units took ~100 s to order.
+    units = [f"u{i}" for i in range(20_000)]
+    stored = units[::-1][:-1]
+
+    started = time.perf_counter()
+    ordered = _ordered_units(stored, units)
+
+    assert time.perf_counter() - started < 1.0
+    assert ordered == [*stored, units[0]]

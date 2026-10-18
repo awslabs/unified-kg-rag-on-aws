@@ -67,20 +67,25 @@ def with_record_keys(
     extraction stages stored the records under.
     """
     gleaned = {r.text_unit_id: r.gleaned for r in records}
+    # The fingerprint depends only on the settings: one per (gleaned, claims).
+    fingerprints: dict[tuple[bool, bool], str] = {}
+
+    def fingerprint(was_gleaned: bool, of_claims: bool) -> str:
+        key = (was_gleaned, of_claims)
+        if key not in fingerprints:
+            fingerprints[key] = unit_record_fingerprint(
+                config, gleaned=was_gleaned, claims=of_claims
+            )
+        return fingerprints[key]
+
     keyed: list[TextUnit] = []
     for unit in units:
         keys: dict[str, str] = {}
         if unit.id in gleaned and unit.id not in graph_failed:
             text = processed_text(config, unit)
-            fingerprint = unit_record_fingerprint(config, gleaned=gleaned[unit.id])
-            keys["graph"] = record_key(fingerprint, text)
+            keys["graph"] = record_key(fingerprint(gleaned[unit.id], False), text)
             if claims and unit.id not in claims_failed:
-                keys["claims"] = record_key(
-                    unit_record_fingerprint(
-                        config, gleaned=gleaned[unit.id], claims=True
-                    ),
-                    text,
-                )
+                keys["claims"] = record_key(fingerprint(gleaned[unit.id], True), text)
         attributes = {
             k: v
             for k, v in (unit.attributes or {}).items()

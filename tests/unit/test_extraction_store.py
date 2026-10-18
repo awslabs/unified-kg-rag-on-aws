@@ -18,6 +18,7 @@ from tests.fixtures.fakes.embeddings import HashingEmbeddingFactory
 from tests.fixtures.fakes.stores import FakeVectorStore
 from unified_kg_rag.adapters.local.search_engine import SQLiteSearchEngine
 from unified_kg_rag.adapters.storage.opensearch_indexer import OpenSearchIndexer
+from unified_kg_rag.application.ingestion import extraction_store
 from unified_kg_rag.application.ingestion.extraction_store import (
     ExtractionStore,
     with_record_keys,
@@ -42,7 +43,7 @@ from unified_kg_rag.domain.models import (
     TextUnit,
     TextUnitExtraction,
 )
-from unified_kg_rag.domain.prompts import GraphExtractionPrompt
+from unified_kg_rag.domain.prompts import GraphExtractionPrompt, GraphRefinementPrompt
 from unified_kg_rag.ports.indexer import IndexingStats
 from unified_kg_rag.shared.utils.cache_keys import unit_record_fingerprint
 
@@ -155,6 +156,52 @@ class TestFingerprint:
         language = Config()
         language.processing.translation.target_language = LanguageCode.KO
         assert unit_record_fingerprint(language, gleaned=True) != fingerprint
+
+    def test_follows_the_gleaning_settings_of_a_gleaned_record_only(self) -> None:
+        base = Config()
+        rounds = Config()
+        rounds.processing.gleaning.max_rounds += 1
+        assert unit_record_fingerprint(rounds, gleaned=True) != (
+            unit_record_fingerprint(base, gleaned=True)
+        )
+        assert unit_record_fingerprint(rounds, gleaned=False) == (
+            unit_record_fingerprint(base, gleaned=False)
+        )
+        refinement = Config(
+            custom_prompts={
+                "graph_refinement_system": GraphRefinementPrompt.system_prompt_template
+                + "\nOne more rule."
+            }
+        )
+        assert unit_record_fingerprint(refinement, gleaned=True) != (
+            unit_record_fingerprint(base, gleaned=True)
+        )
+        assert unit_record_fingerprint(refinement, gleaned=False) == (
+            unit_record_fingerprint(base, gleaned=False)
+        )
+
+    def test_follows_the_built_in_refinement_prompt(self, monkeypatch) -> None:
+        gleaned = unit_record_fingerprint(Config(), gleaned=True)
+        plain = unit_record_fingerprint(Config(), gleaned=False)
+        monkeypatch.setattr(
+            GraphRefinementPrompt,
+            "system_prompt_template",
+            GraphRefinementPrompt.system_prompt_template + "\nOne more rule.",
+        )
+        assert unit_record_fingerprint(Config(), gleaned=True) != gleaned
+        assert unit_record_fingerprint(Config(), gleaned=False) == plain
+
+    def test_follows_the_claim_settings_of_a_claims_record_only(self) -> None:
+        base = Config()
+        base.processing.claim_extraction.enabled = True
+        wider = base.model_copy(deep=True)
+        wider.processing.claim_extraction.max_entities_per_prompt += 1
+        assert unit_record_fingerprint(wider, gleaned=False, claims=True) != (
+            unit_record_fingerprint(base, gleaned=False, claims=True)
+        )
+        assert unit_record_fingerprint(wider, gleaned=False) == (
+            unit_record_fingerprint(base, gleaned=False)
+        )
 
     def test_ignores_the_settings_that_only_shape_the_text(self) -> None:
         # The record is keyed by the text too, so a chunking change re-keys
@@ -292,6 +339,23 @@ class TestRecordKeys:
         assert units[0].attributes["extraction_records"] == {"graph": "stale"}
         assert "extraction_records" not in keyed[2].attributes
         assert keyed[1].attributes["filters"] == {"region": "north"}
+
+    def test_the_fingerprint_is_computed_once_per_kind(self, mocker) -> None:
+        # Regression: it was computed for every unit (~1.5 ms each), the bulk
+        # of the indexing stage of a large build.
+        spy = mocker.spy(extraction_store, "unit_record_fingerprint")
+        units = [_unit(f"t{i}") for i in range(50)]
+        records = [
+            TextUnitExtraction(text_unit_id=u.id, gleaned=i % 2 == 0)
+            for i, u in enumerate(units)
+        ]
+
+        keyed = with_record_keys(Config(), units, records, graph_failed=(), claims=True)
+
+        assert spy.call_count == 4  # (gleaned or not) x (graph, claims)
+        assert record_keys(keyed[0])["claims"] == record_key(
+            unit_record_fingerprint(Config(), gleaned=True, claims=True), TEXT
+        )
 
     def test_no_claims_key_when_claims_were_not_extracted(self) -> None:
         (unit,) = with_record_keys(

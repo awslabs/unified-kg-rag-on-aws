@@ -1,0 +1,268 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+"""Incremental runs over two spellings of one name converge with a full build
+(embedded stores).
+
+"Initech Corp" and "Initech" share a key; a full build merges them when their
+types agree and keeps them apart when they do not (the word a sentence trades
+in sets the type). An incremental run adding a document must end in the
+state a full build of the final corpus gives: no claim of one spelling lost
+when the other's claim takes its place, no duplicate edge between the
+entities two spellings merged into, and the same state when a finished
+pipeline id is run again.
+"""
+
+from __future__ import annotations
+
+import re
+import shutil
+from collections.abc import Callable
+from itertools import pairwise
+from pathlib import Path
+
+import pytest
+
+from tests.fixtures.fakes.model_servers import FakeOllama
+from tests.integration import test_embedded_e2e as e2e
+from tests.integration import test_ingestion_stages as stages
+from tests.integration.test_embedded_e2e import (
+    DIM,
+    FakeCrossEncoder,
+    _config,
+    _errors,
+    _ingest,
+    _providers,
+    _stored,
+)
+from unified_kg_rag.adapters.storage.sqlite_graph_indexer import SQLiteGraphIndexer
+from unified_kg_rag.domain.models import PipelineStageStatus
+
+pytestmark = [pytest.mark.integration, pytest.mark.usefixtures("no_aws")]
+
+no_aws = e2e.no_aws
+
+NAMES = ("Initech Corp", "Initech", "Buyer", "Depot", "Carrier", "Acme Inc", "Acme")
+TYPES = {"goods": "ORGANIZATION", "parts": "PERSON", "cash": "LOCATION"}
+
+
+def _names_in(text: str) -> list[str]:
+    found, rest = [], text
+    for name in sorted(NAMES, key=len, reverse=True):
+        pattern = rf"\b{re.escape(name)}\b"
+        if re.search(pattern, rest):
+            found.append(name)
+            rest = re.sub(pattern, " ", rest)
+    return sorted(found, key=text.find)
+
+
+def _respond(system: str, human: str) -> str:
+    if "extraction" not in system:
+        return stages._respond(system, human)
+    text = stages._source_text(human).strip()
+    names = _names_in(text)
+    if "knowledge graph extraction expert" in system:
+        type_ = next((v for k, v in TYPES.items() if k in text), "ORGANIZATION")
+        entities = "".join(
+            f"<entity><name>{n}</name><type>{type_}</type>"
+            f"<description>{n}: {text}</description><confidence>{7 + len(text) % 3}</confidence>"
+            f"<source_text>{n}</source_text></entity>"
+            for n in names
+        )
+        relationships = "".join(
+            f"<relationship><source>{a}</source><target>{b}</target>"
+            f"<type>WORKS_WITH</type><description>{a}-{b}: {text}</description>"
+            f"<strength>{1 + len(text) % 9}</strength><source_text>{text}</source_text>"
+            "</relationship>"
+            for a, b in pairwise(names)
+        )
+        return f"<entities>{entities}</entities><relationships>{relationships}</relationships>"
+    if "claim extraction specialist" in system:
+        if len(names) < 2:
+            return "<claims></claims>"
+        subject, obj = names[:2]
+        status = "TRUE" if "goods" in text else "SUSPECTED"
+        return (
+            f"<claims><claim><subject>{subject}</subject><object>{obj}</object>"
+            f"<claim_type>OBLIGATION</claim_type><claim_status>{status}"
+            f"</claim_status><description>{subject} owes {obj}: {text}"
+            f"</description><source_text>{text}</source_text></claim></claims>"
+        )
+    return stages._respond(system, human)
+
+
+def _state(
+    tmp: Path,
+    corpora: list[dict[str, str]],
+    repeat: int | None = None,
+    respond: Callable[[str, str], str] = _respond,
+    summarize: bool = False,
+) -> dict[str, list[tuple]]:
+    """The stored entities, edges and claims after indexing ``corpora`` one
+    after the other (run ``repeat`` twice under its pipeline id)."""
+    config = _config(tmp / "stores", tmp / "viz")
+    config.processing.claim_extraction.enabled = True
+    summarization = config.processing.graph_extraction.description_summarization
+    summarization.enabled = summarize
+    summarization.force_summary_threshold_tokens = 30
+    # Document ids (and so the text-unit order ties follow) independent of
+    # the build's directory: both builds index the same documents.
+    config.processing.document_parsing.source_scope = "fuzz-corpus"
+    providers = _providers(config, FakeOllama(respond, "x", DIM), FakeCrossEncoder("r"))
+    source = tmp / "corpus"
+    for run, corpus in enumerate(corpora):
+        if source.exists():
+            shutil.rmtree(source)
+        source.mkdir(parents=True)
+        for name, text in corpus.items():
+            (source / name).write_text(text)
+        for _ in range(2 if run == repeat else 1):
+            context = _ingest(config, providers, source, tmp / f"run-{run}")
+            assert context.status is PipelineStageStatus.COMPLETED, _errors(context)
+    graph = providers.build_graph_indexer()
+    try:
+        assert isinstance(graph, SQLiteGraphIndexer)
+        ids = [i for i, _ in graph.read_entity_names()]
+        entities = graph.read_entities(ids)
+        edges = graph.read_relationships(graph.find_incident_relationship_ids(ids))
+    finally:
+        graph.close()
+    claims = _stored(config, providers, config.indexing.opensearch.claims_index_prefix)
+    return {
+        "entities": sorted(
+            (e.id, e.name, e.type, len(e.text_unit_ids or []), e.description)
+            for e in entities
+        ),
+        "edges": sorted(
+            (r.source_name, r.target_name, r.weight, r.description) for r in edges
+        ),
+        "claims": sorted(
+            (
+                hit["_source"]["subject_name"],
+                hit["_source"]["object_name"],
+                hit["_source"]["status"],
+                hit["_source"]["description"],
+            )
+            for hit in claims
+        ),
+    }
+
+
+@pytest.mark.parametrize(
+    "runs",
+    [
+        pytest.param(
+            [
+                {
+                    "a.txt": "Initech Corp trade cash 2. Depot and Buyer trade "
+                    "cash 1. Depot and Initech Corp and Initech trade cash 1."
+                },
+                {
+                    "a.txt": "Initech Corp trade cash 2. Depot and Buyer trade "
+                    "cash 1. Depot and Initech Corp and Initech trade cash 1.",
+                    "b.txt": "Depot and Initech trade parts 1.",
+                },
+            ],
+            id="a-claim-the-other-spelling-merged-is-split-back",
+        ),
+        pytest.param(
+            [
+                {
+                    "a.txt": "Initech Corp and Depot and Buyer trade parts 2. "
+                    "Buyer and Initech and Initech Corp trade parts 2."
+                },
+                {
+                    "a.txt": "Initech Corp and Depot and Buyer trade parts 2. "
+                    "Buyer and Initech and Initech Corp trade parts 2.",
+                    "b.txt": "Initech Corp and Initech and Depot trade goods 2. "
+                    "Initech Corp and Depot trade parts 1.",
+                },
+            ],
+            id="no-duplicate-edge-when-two-spellings-merge",
+        ),
+        pytest.param(
+            [
+                {
+                    "d7.txt": "Initech trade goods 2.",
+                    "d3.txt": "Initech trade cash 1. Initech and Initech Corp "
+                    "and Acme trade parts 3.",
+                },
+                {
+                    "d3.txt": "Initech trade cash 1. Initech and Initech Corp "
+                    "and Acme trade parts 3."
+                },
+            ],
+            id="a-deletion-merges-with-a-stored-spelling-of-no-shared-unit",
+        ),
+        pytest.param(
+            [
+                {"d3.txt": "Acme trade goods 2. Depot trade cash 1."},
+                {
+                    "d1.txt": "Acme trade parts 2.",
+                    "d4.txt": "Initech and Depot trade goods 2. Initech Corp "
+                    "and Acme Inc and Carrier trade cash 2.",
+                    "d3.txt": "Acme trade goods 2. Depot trade cash 1.",
+                    "d6.txt": "Initech and Carrier and Acme Inc trade cash 1.",
+                    "d7.txt": "Acme Inc and Initech Corp trade goods 2.",
+                },
+            ],
+            id="a-split-keeps-the-stored-spelling",
+        ),
+    ],
+)
+def test_incremental_runs_over_two_spellings_match_a_full_build(
+    tmp_path: Path, runs: list[dict[str, str]]
+) -> None:
+    full = _state(tmp_path / "full", [runs[-1]])
+    incremental = _state(tmp_path / "inc", runs)
+
+    assert incremental == full
+
+
+def test_running_a_finished_pipeline_id_again_changes_nothing(
+    tmp_path: Path,
+) -> None:
+    statement = "Initech Corp and Buyer and Acme trade cash 1."
+    first = "Depot and Initech trade parts 1. Initech Corp trade cash 3."
+    second = f"{first} Initech and Buyer trade cash 2."
+    runs = [
+        {"d5.txt": statement, "d6.txt": first},
+        {"d6.txt": second, "r5.txt": statement},
+        {
+            "d6.txt": second,
+            "r5.txt": statement,
+            "d5.txt": "Buyer and Initech and " "Depot trade goods 2.",
+        },
+    ]
+    full = _state(tmp_path / "full", [runs[-1]])
+    incremental = _state(tmp_path / "inc", runs, repeat=1)
+
+    assert ("Initech Corp", "Buyer") in {c[:2] for c in full["claims"]}
+    assert incremental == full
+
+
+@pytest.mark.parametrize("spelling", ["Acme", "Acme Inc"])
+def test_a_hub_grown_under_another_spelling_extends_its_summary(
+    tmp_path: Path, spelling: str
+) -> None:
+    # Regression: a delta entity that merged into a stored one of another
+    # spelling was looked up under its own id, so the hub was summarized
+    # again from every line its text units state instead of from its stored
+    # summary and the one added line.
+    calls: list[tuple[str, int]] = []
+
+    def respond(system: str, human: str) -> str:
+        if "knowledge-graph editor" not in system:
+            return _respond(system, human)
+        match = re.search(r"<descriptions>\n(.*?)\n</descriptions>", human, re.S)
+        name = re.search(r"descriptions of '([^']*)'", human)
+        assert match and name
+        calls.append((name.group(1), match.group(1).count("\n") + 1))
+        return f"Summary of {name.group(1)}."
+
+    hub = {f"h{i}.txt": f"Acme and Buyer trade goods {i}." for i in range(8)}
+    grown = {**hub, "new.txt": f"{spelling} and Depot trade goods 9."}
+    _state(tmp_path, [hub, grown], respond=respond, summarize=True)
+
+    # Eight lines in the first run; one call (or none) on the summary and
+    # the added line in the second.
+    assert [lines for name, lines in calls if name == "Acme"] in ([8], [8, 2])
