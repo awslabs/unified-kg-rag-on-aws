@@ -181,7 +181,9 @@ class DriftSearchStrategy(BaseSearchStrategy):
 
         with observability.span("kg_rag.drift.primer") as span:
             reports = await self._primer_reports(query, stats, config, degraded)
-            answers = await self._prime(query, reports, stats, config, degraded)
+            answers = await self._prime(
+                query, reports, semaphore, stats, config, degraded
+            )
             span.set_attributes(
                 {"kg_rag.reports": len(reports), "kg_rag.answers": len(answers)}
             )
@@ -355,25 +357,28 @@ class DriftSearchStrategy(BaseSearchStrategy):
         self,
         query: SearchQuery,
         reports: list[RetrievalResult],
+        semaphore: asyncio.Semaphore,
         stats: dict[str, Any],
         config: RunnableConfig | None,
         degraded: list[str],
     ) -> list[_Answer]:
-        """One intermediate answer per fold of the primer reports."""
+        """One intermediate answer per fold of the primer reports, at most
+        ``search.max_concurrency`` folds at a time (as the actions)."""
         folds = self._folds(reports, self.drift_config.primer_folds)
 
         async def prime(fold: list[RetrievalResult]) -> _Answer | Exception | None:
             stats["drift_llm_calls"] += 1
             try:
-                raw = await self.primer.ainvoke(
-                    {
-                        "query": query.query,
-                        "community_reports": "\n\n".join(r.content for r in fold),
-                        "num_follow_ups": _FOLLOW_UPS_PER_ANSWER,
-                        "target_language": self.target_language,
-                    },
-                    config,
-                )
+                async with semaphore:
+                    raw = await self.primer.ainvoke(
+                        {
+                            "query": query.query,
+                            "community_reports": "\n\n".join(r.content for r in fold),
+                            "num_follow_ups": _FOLLOW_UPS_PER_ANSWER,
+                            "target_language": self.target_language,
+                        },
+                        config,
+                    )
             except Exception as e:
                 self._degrade("DRIFT primer", e, degraded)
                 return e

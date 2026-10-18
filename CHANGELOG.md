@@ -1283,6 +1283,10 @@ changed once with the full-config keys (#332).
   coverage are skipped as `guardrail_blocked`. The strategy comparison
   reports each strategy's `guardrail_blocked_counts` and warns when they
   differ, and `run-eval --output-format json` includes them per run (#353).
+- DRIFT's primer calls run at most `search.max_concurrency` at a time, as
+  the design and configuration reference state: the folds bypassed the
+  semaphore the follow-up actions share, so all `primer_folds` calls went
+  out at once (#PR).
 - Global search's cut probe works at the defaults: the cap is now at most
   `indexing.opensearch.max_query_size` - 1 (99 by default), so the browse
   that asks for one report more than the cap fits one request and a cut of

@@ -552,6 +552,30 @@ async def test_actions_run_concurrently() -> None:
     assert peak == 3
 
 
+async def test_primer_folds_run_at_most_max_concurrency_at_a_time() -> None:
+    # Regression: the primer folds bypassed the semaphore the actions share,
+    # so primer_folds calls went out at once whatever search.max_concurrency.
+    in_flight = 0
+    peak = 0
+    primer = _primer()
+
+    class _SlowPrimer(_Chain):
+        async def ainvoke(self, inputs: dict, config: Any = None) -> str:
+            nonlocal in_flight, peak
+            in_flight += 1
+            peak = max(peak, in_flight)
+            await asyncio.sleep(0.01)
+            in_flight -= 1
+            return await super().ainvoke(inputs, config)
+
+    strat = _strategy(n_depth=1, primer_folds=6)
+    strat.max_concurrency = 2
+    strat.primer = _SlowPrimer(primer)
+    await strat.asearch(SearchQuery(query="question"))
+    assert len(strat.primer.calls) == 6
+    assert peak == 2
+
+
 @pytest.mark.parametrize(
     ("raw", "expected"),
     [("80", 80), (250, 100), (-5, 0), ("Infinity", 0), ("NaN", 0), ("x", 0)],
