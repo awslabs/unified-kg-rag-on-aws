@@ -763,8 +763,8 @@ run-rag --query "..." --verbose --filters attr_category:research type:person \
 |---|---|
 | 텍스트 단위 | `id`, `text`, `translated_text_<language>`, `community_ids`, `n_tokens`, `attr_<key>`, `attributes.<path>` |
 | 엔티티 | `id`, `name`, `name.keyword`, `description`, `type`, `rank`, `confidence`, `text_unit_ids`, `attr_<key>`, `attributes.<path>` |
-| 관계 | `id`, `source_id`, `target_id`, `source_name`, `target_name`, `description`, `weight`, `rank`, `text_unit_ids` |
-| 주장 | `id`, `subject_id`, `object_id`, `subject_name`, `object_name`, `type`, `status`, `description`, `source_text`, `text_unit_ids` |
+| 관계 | `id`, `source_id`, `target_id`, `source_name`, `target_name`, `description`, `weight`, `rank`, `text_unit_ids`, `attr_<key>`, `attributes.filters.<key>` |
+| 주장 | `id`, `subject_id`, `object_id`, `subject_name`, `object_name`, `type`, `status`, `description`, `source_text`, `text_unit_ids`, `attr_<key>`, `attributes.filters.<key>` |
 | 커뮤니티 리포트 | `id`, `community_id`, `name`, `summary`, `full_content`, `rank`, `rating`, `text_unit_ids`, `document_ids`, `level`, `depth`, `max_cut_depth`, `parent_community_id`, `child_community_ids`, `attr_<key>`, `attributes.<path>` |
 | Neptune 엔티티 정점 | `id`, `name`, `type`, `description`, `rank`, `confidence`, `text_unit_ids`, `community_ids`, `attr_<key>`(있는 경우) |
 | Neptune 커뮤니티 정점 | `id`, `name`, `level`, `parent`, `size`, `period`, `children` |
@@ -781,14 +781,18 @@ run-rag --query "..." --verbose --filters attr_category:research type:person \
   필터 가능한 키 목록과 함께 `InvalidFilterError`를 일으킵니다
   (`unified_kg_rag/adapters/storage/filter_schema.py`).
 - OpenSearch는 `attr_<key>`와 `attributes.<path>`를 엄격하게(fail-closed) 적용합니다.
-  속성이 없는 항목은 제외됩니다. 커뮤니티 리포트는 자기 텍스트 단위가 속한 문서들의 필터
-  값을 가지므로 그중 하나가 일치하면 일치합니다. 벡터나 하이브리드 검색은 그 속성을 가진
-  문서가 하나도 없는 인덱스를 건너뜁니다(OpenSearch 2.13은 인덱스가 매핑하지 않은 필드에 대한 kNN 필터를 거부함).
-  관계와 주장에는 문서 속성이 없으므로, 속성 필터를 걸면 텍스트 단위 중 하나라도 필터를
-  통과한 경우에만 남습니다.
-- Neptune은 `attr_<key>`를 "있는 경우" 기준으로 적용합니다(그 속성이 없는 정점은 통과).
-  따라서 `attr_role:buyer`는 역할이 다른 엔티티를 제외하고, 시드를 제외한 확장 엔티티는
-  텍스트 단위 중 하나라도 속성 필터를 통과한 경우에만 남습니다. 그 밖의 키는 두 저장소
+  속성이 없는 항목은 제외됩니다. 관계, 주장, 커뮤니티 리포트는 자기 텍스트 단위가 속한
+  문서들의 필터 값을 가지므로 그중 하나가 일치하면 일치합니다. 벡터나 하이브리드 검색은 그
+  속성을 가진 문서가 하나도 없는 인덱스를 건너뜁니다(OpenSearch 2.13은 인덱스가 매핑하지
+  않은 필드에 대한 kNN 필터를 거부함). 관계와 주장이 문서 필터를 갖기 전에 만든 인덱스는
+  다시 빌드할 때까지(`indexing.reset: true`) 속성 필터를 건 질의에서 관계와 주장을 하나도
+  돌려주지 않습니다.
+- `attr_<key>`와 `attributes.filters.<key>`는 문서 속성입니다. 그래프 저장소에는 이것이
+  없으므로 그래프 확장은 시드를 제외한 확장 엔티티를 텍스트 단위 중 하나라도 이를 통과한
+  경우에만 남깁니다. 그 밖의 `attributes.<path>` 키는 항목 자체의 속성이며 엔티티 인덱스에만
+  적용됩니다. Neptune에서 `attr_<key>`는 엔티티 정점 속성(`attr_role`)이기도 해서 "있는 경우"
+  기준으로 적용되지만(그 속성이 없는 정점은 통과) 위의 텍스트 단위 확인도 적용되므로, 문서에
+  `role` 필터가 없으면 `attr_role:buyer`는 아무것도 고르지 않습니다. 그 밖의 키는 두 저장소
   모두 엄격하게 적용합니다.
 
 **필터는 접근 제어 경계가 아닙니다.** 키를 선언하지 않은 저장소는 내용을 거르지 않고

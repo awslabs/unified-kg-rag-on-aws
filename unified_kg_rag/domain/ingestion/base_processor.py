@@ -68,6 +68,10 @@ def _union_filters(
     """
     key = Constants.FILTERS.value
     values: dict[str, list[Any]] = {}
+    # The values seen per key: a membership test on the list made a merge of
+    # n maps quadratic (a report's filters over its tens of thousands of
+    # text units). An unhashable value falls back to the list.
+    seen: dict[str, set[Any]] = {}
     found = False
     for attrs in attribute_maps:
         filters = (attrs or {}).get(key)
@@ -76,9 +80,18 @@ def _union_filters(
         found = True
         for name, value in filters.items():
             merged = values.setdefault(name, [])
+            known = seen.setdefault(name, set())
             for item in value if isinstance(value, list) else [value]:
-                if item is not None and item not in merged:
-                    merged.append(item)
+                if item is None:
+                    continue
+                try:
+                    if item in known:
+                        continue
+                    known.add(item)
+                except TypeError:
+                    if item in merged:
+                        continue
+                merged.append(item)
     if not found:
         return None
     return {

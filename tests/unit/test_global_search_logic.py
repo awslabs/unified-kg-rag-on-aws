@@ -435,11 +435,29 @@ async def test_a_failed_rating_keeps_the_report_under_ignore_errors() -> None:
     assert result.metadata["degraded_error"] == "TimeoutError"
 
 
-async def test_a_failed_rating_raises_without_ignore_errors() -> None:
+async def test_every_rating_of_a_step_failing_raises_without_ignore_errors() -> None:
     strat = _strategy(use_dynamic_selection=True)
     strat.community_relevance_scorer = _Rater(set(), fail=TimeoutError("slow"))
     with pytest.raises(TimeoutError):
         await strat.asearch(SearchQuery(query="themes"))
+
+
+async def test_one_throttled_rating_keeps_its_report_without_ignore_errors() -> None:
+    # Regression: one throttled rating failed the whole query, while one
+    # failed map batch only leaves its reports unrated.
+    class _ThrottledOnR1(_Rater):
+        async def ainvoke(self, inputs: dict, config: Any = None) -> str:
+            if inputs["community_summary"] == "report R1":
+                self.rated.append("R1")
+                raise TimeoutError("throttled")
+            return await super().ainvoke(inputs, config)
+
+    strat = _strategy(use_dynamic_selection=True)
+    strat.community_relevance_scorer = _ThrottledOnR1({"R0", "A", "A1"})
+    result = await strat.asearch(SearchQuery(query="themes"))
+    # R1 is kept unrated (MS GraphRAG keeps a report it could not rate).
+    assert "A1" in _mapped(strat)
+    assert result.metadata["degraded_error"] == "TimeoutError"
 
 
 async def test_a_fatal_rating_error_raises_even_under_ignore_errors() -> None:

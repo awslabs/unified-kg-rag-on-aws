@@ -101,3 +101,59 @@ def test_a_filter_keeps_only_the_matching_documents_content(
     if strategy is not SearchStrategy.GLOBAL:
         assert _depot(_ask(chain, strategy, {})), strategy
         assert filtered.search_results.results, strategy
+
+
+def _stored_relationship_filters(config: Any, providers: Any) -> dict[str, Any]:
+    prefix = config.indexing.opensearch.relationships_index_prefix
+    return {
+        f"{h['_source']['source_name']}-{h['_source']['target_name']}": h[
+            "_source"
+        ].get("attr_category")
+        for h in e2e._stored(config, providers, prefix)
+    }
+
+
+def test_incremental_runs_keep_relationship_filters_current(
+    tmp_path: Path,
+) -> None:
+    # The relationship index carries its documents' filters, so the store
+    # applies an attribute filter itself: an edge both documents state
+    # carries both values, and one document's removal narrows them.
+    config = e2e._config(tmp_path / "stores", tmp_path / "viz")
+    server = FakeOllama(e2e._respond, e2e.ANSWER, e2e.DIM)
+    providers = e2e._providers(
+        config, server, e2e.FakeCrossEncoder("synthetic-reranker")
+    )
+    source = tmp_path / "corpus"
+    source.mkdir()
+    (source / "contract.txt").write_text("Vendor supplies widgets to Buyer.")
+    (source / "logistics.txt").write_text("Vendor ships widgets for Buyer.")
+    create = BaseChunker._create_text_unit
+
+    def with_category(
+        self: BaseChunker, chunk_text: str, document: Any, *a: Any
+    ) -> Any:
+        document.metadata["filters"] = {"category": Path(document.file_name).stem}
+        return create(self, chunk_text, document, *a)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(BaseChunker, "_create_text_unit", with_category)
+        context = e2e._ingest(config, providers, source, tmp_path / "run-1")
+        assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+        assert _stored_relationship_filters(config, providers) == {
+            "Vendor-Buyer": ["contract", "logistics"]
+        }
+
+        (source / "logistics.txt").unlink()
+        context = e2e._ingest(config, providers, source, tmp_path / "run-2")
+        assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    assert _stored_relationship_filters(config, providers) == {
+        "Vendor-Buyer": "contract"
+    }
+    rag = GraphRAGChain(config, providers=providers)
+    try:
+        for strategy in (SearchStrategy.LOCAL, SearchStrategy.MIX):
+            out = _ask(rag, strategy, {"attr_category": "logistics"})
+            assert out.sources == [], strategy
+    finally:
+        rag.close()

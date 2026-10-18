@@ -24,6 +24,7 @@ from tests.fixtures.store_backends import (
     open_harness,
 )
 from unified_kg_rag.domain.models import (
+    Claim,
     CommunityReport,
     Entity,
     Relationship,
@@ -300,6 +301,56 @@ def test_attribute_filter_skips_an_index_without_the_attribute(
         [],
         ["t2"],
         ["t2"],
+    ]
+
+
+@pytest.mark.parametrize("search_type", list(SearchType), ids=lambda t: t.value)
+def test_relationships_and_claims_are_filtered_by_their_documents(
+    harness: StoreHarness, search_type: SearchType
+) -> None:
+    # The relationship and claim indexes carry their documents' filters, so
+    # the store applies an attribute filter to them (they were searched
+    # unfiltered, and only the strategy's text-unit check excluded them).
+    h = harness
+    h.initialize()
+    edges = [
+        r.model_copy(update={"attributes": {"filters": {"category": category}}})
+        for r, category in zip(_relationships(), ("contract", "logistics"), strict=True)
+    ]
+    claims = [
+        Claim(
+            id=f"c-{category}",
+            subject_id="e-vendor",
+            subject_name="Vendor",
+            object_name="",
+            type="obligation",
+            description=f"Vendor ships widgets ({category})",
+            attributes={"filters": {"category": category}},
+        )
+        for category in ("contract", "logistics")
+    ]
+    assert h.vector_indexer.index_relationships(edges).failed_items == 0
+    assert h.vector_indexer.index_claims(claims).failed_items == 0
+    o = _prefixes(h)
+    results = _search(
+        h,
+        *(
+            _query("widgets", prefix, search_type=search_type, filters=filters)
+            for prefix in (o.relationships_index_prefix, o.claims_index_prefix)
+            for filters in (
+                {"attr_category": "logistics"},
+                {"attributes.filters.category": "logistics"},
+                {"attr_category": "nomatch"},
+            )
+        ),
+    )
+    assert [sorted(r.source for r in hits) for hits in results] == [
+        ["r-ships"],
+        ["r-ships"],
+        [],
+        ["c-logistics"],
+        ["c-logistics"],
+        [],
     ]
 
 

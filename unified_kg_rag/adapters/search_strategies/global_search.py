@@ -396,23 +396,29 @@ class GlobalSearchStrategy(BaseSearchStrategy):
                     return_exceptions=True,
                 )
                 children: list[str] = []
+                # As in the map phase: one failed rating (a throttled call)
+                # keeps its report, a step none of whose ratings succeeded is
+                # the model not answering.
+                failures = [o for o in scores if isinstance(o, BaseException)]
+                for failure in failures:
+                    if not isinstance(failure, Exception) or is_fatal_retrieval_error(
+                        failure
+                    ):
+                        raise failure
+                if failures and len(failures) == len(scores) and not self.ignore_errors:
+                    raise failures[0]
                 for report, outcome in zip(queue, scores, strict=True):
                     rated += 1
-                    if isinstance(outcome, BaseException):
-                        if (
-                            not isinstance(outcome, Exception)
-                            or not self.ignore_errors
-                            or is_fatal_retrieval_error(outcome)
-                        ):
-                            raise outcome
+                    score = threshold  # MS GraphRAG keeps a report it could not rate
+                    if isinstance(outcome, Exception):
                         logger.warning("Community rating failed: %s", outcome)
                         _record(degraded, outcome)
-                        # MS GraphRAG keeps a report it could not rate.
-                        outcome = threshold
-                    if outcome < threshold:
+                    elif not isinstance(outcome, BaseException):
+                        score = outcome
+                    if score < threshold:
                         continue
                     metadata = report.metadata or {}
-                    relevant[self._community_id(report)] = (outcome, rated, report)
+                    relevant[self._community_id(report)] = (score, rated, report)
                     children.extend(metadata.get("child_community_ids") or [])
                     if parent := metadata.get("parent_community_id"):
                         relevant.pop(str(parent), None)
@@ -780,12 +786,20 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         report_count = sum(len(batch) for batch in report_batches)
         if bad_requests and len(unrated) == report_count:
             raise bad_requests[0]
+        # A call BatchProcessor gave up on after call_timeout_seconds never
+        # raised inside sequential_func: it fails without an error of its own.
+        timeout = TimeoutError(
+            "map call gave up after " f"{self.batch_processor.call_timeout_seconds}s"
+        )
         # A prompt too long for the model is that batch's own problem (it is
-        # answered from its unrated reports); any other error on every batch
-        # is the model not answering.
+        # answered from its unrated reports); any other failure of every map
+        # call is the model not answering.
         refusals = [e for e in errors if not isinstance(e, ContextOverflowError)]
-        if refusals and failed == len(report_batches) and not self.ignore_errors:
-            raise refusals[0]
+        if failed == len(report_batches) and not self.ignore_errors:
+            if refusals:
+                raise refusals[0]
+            if not errors:
+                raise timeout
         if unrated:
             logger.warning(
                 "Global map phase left %s/%s reports unrated (failed or "
@@ -795,7 +809,13 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             )
             _record(
                 degraded,
-                errors[0] if errors else LanguageModelError("map output not JSON"),
+                (
+                    errors[0]
+                    if errors
+                    else (
+                        timeout if failed else LanguageModelError("map output not JSON")
+                    )
+                ),
             )
         return points, unrated
 

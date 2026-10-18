@@ -117,6 +117,11 @@ class SearchQuery(BaseModel):
         default=None,
         description="Attribute filters with attr_ prefix for result filtering",
     )
+    source_fields: list[str] | None = Field(
+        default=None,
+        description="The stored fields each hit returns ([] returns the ids "
+        "only); None returns every field but the embeddings",
+    )
     max_tokens: int | None = Field(
         default=None,
         ge=1,

@@ -20,7 +20,7 @@ from unified_kg_rag.adapters.retrieval.token_manager import (
 )
 from unified_kg_rag.adapters.storage.filter_schema import (
     FilterFields,
-    attribute_filters,
+    document_filters,
 )
 from unified_kg_rag.adapters.store_errors import is_fatal_retrieval_error
 from unified_kg_rag.domain.models import (
@@ -39,12 +39,6 @@ logger = get_logger(__name__)
 # Source ids recorded per retrieval span; the hit count is always complete.
 _MAX_SPAN_SOURCE_IDS = 50
 
-# Document-retriever section types whose store declares no document attribute
-# field, so an attribute filter is checked against their text units instead.
-_UNIT_VOUCHED_TYPES = frozenset(
-    {SectionType.RELATIONSHIP.value, SectionType.CLAIM.value}
-)
-
 
 def _retrieval_attributes(results: list[RetrievalResult]) -> dict[str, Any]:
     by_type: dict[str, int] = {}
@@ -60,6 +54,19 @@ def _retrieval_attributes(results: list[RetrievalResult]) -> dict[str, Any]:
     for result_type, count in by_type.items():
         attributes[f"kg_rag.hits.{result_type}"] = count
     return attributes
+
+
+def _id_batch_size(config: Config) -> int:
+    """Ids one fetch by id can name: OpenSearch's ``max_terms_count`` per
+    ``terms`` clause and ``max_result_window`` hits, either spelling."""
+    settings = config.indexing.opensearch.index_settings
+
+    def setting(name: str, default: int) -> int:
+        return int(settings.get(name, settings.get(f"index.{name}", default)))
+
+    return max(
+        1, min(setting("max_terms_count", 65536), setting("max_result_window", 10000))
+    )
 
 
 def _text_unit_ids(result: RetrievalResult) -> list[str]:
@@ -217,75 +224,95 @@ class BaseSearchStrategy(ABC):
                 span.record_exception(e)
                 span.set_attributes({"kg_rag.degraded": True, "kg_rag.hits": 0})
                 return []
-            results = await self._vouch_by_text_units(retriever, query, results)
             # Hit counts and source ids only: never the retrieved text.
             if observability.is_enabled():
                 span.set_attributes(_retrieval_attributes(results))
             return results
 
     async def _vouch_by_text_units(
-        self,
-        retriever: BaseGraphRAGRetriever,
-        query: SearchQuery,
-        results: list[RetrievalResult],
+        self, query: SearchQuery, results: list[RetrievalResult], seeds: set[str]
     ) -> list[RetrievalResult]:
-        """``results`` without the ones no text unit passing the filters cites.
+        """Graph-expansion ``results`` without the vertices no text unit
+        passing the document filters cites.
 
-        Relationships, claims and graph vertices carry no document attribute
-        (``attr_<key>``, ``attributes.<path>``), so their stores search them
-        unfiltered. Under an attribute filter each such result is kept only
-        when one of its ``text_unit_ids`` passes the filter on the text-units
-        index (one fetch by id), as an entity extracted from several documents
-        passes when one of them does. Graph-expansion seeds are kept: the
-        entities index matched them under the same filters. A result without
-        text units is dropped (fail-closed).
+        Graph vertices hold no document attribute (``document_filters``), so
+        a graph store cannot apply one. Each vertex other than the ``seeds``
+        (the entities index matched those under the same filters) is kept
+        only when one of its ``text_unit_ids`` passes the filters on the
+        text-units index, as an entity of several documents passes when one
+        of them does. The check fetches ids only, in batches one request can
+        hold (``_id_batch_size``), and asks only for the units of vertices not
+        vouched for yet. A vertex without a passing text unit is dropped
+        (fail-closed), and so is every vertex left when a fetch fails, which
+        marks the span degraded.
         """
-        attributes = attribute_filters(query.filters)
-        if not attributes or not results:
+        filters = document_filters(query.filters)
+        retriever = self.document_retriever
+        if not filters or retriever is None:
             return results
-        graph = retriever is self.graph_retriever
-        seeds = (
-            {str(s) for s in (query.filters or {}).get("id") or []} if graph else set()
-        )
-        pending = [
-            i
+        open_units = {
+            i: set(_text_unit_ids(r))
             for i, r in enumerate(results)
-            if (
-                r.source not in seeds
-                if graph
-                else r.retriever_type in _UNIT_VOUCHED_TYPES
-            )
-        ]
-        if not pending:
-            return results
-        unit_ids = list(
-            dict.fromkeys(u for i in pending for u in _text_unit_ids(results[i]))
-        )
-        passed: set[str] = set()
-        if unit_ids and self.document_retriever is not None:
-            units = await self._safe_aretrieve(
-                self.document_retriever,
-                SearchQuery(
+            if r.source not in seeds
+        }
+        pending = len(open_units)
+        dropped = {i for i, units in open_units.items() if not units}
+        open_units = {i: units for i, units in open_units.items() if units}
+        batch = _id_batch_size(self.config)
+        with observability.span(
+            "kg_rag.retrieve",
+            retriever=type(retriever).__name__,
+            label="Attribute filter check",
+        ) as span:
+            while open_units:
+                ids = list(
+                    dict.fromkeys(
+                        u for i in sorted(open_units) for u in sorted(open_units[i])
+                    )
+                )[:batch]
+                check = SearchQuery(
                     query="",
                     search_type=SearchType.LEXICAL,
-                    top_k=len(unit_ids),
+                    top_k=len(ids),
                     retrieval_multiplier=1,
                     index_prefixes=[
                         self.config.indexing.opensearch.text_units_index_prefix
                     ],
                     suffix=query.suffix,
-                    filters={**attributes, "id": unit_ids},
-                ),
-                "Attribute filter check",
-            )
-            passed = {str(unit.source) for unit in units}
-        dropped = {i for i in pending if passed.isdisjoint(_text_unit_ids(results[i]))}
+                    filters={**filters, "id": ids},
+                    source_fields=[],
+                )
+                try:
+                    passed = {str(u.source) for u in await retriever.aretrieve(check)}
+                except Exception as e:
+                    if is_fatal_retrieval_error(e):
+                        raise
+                    logger.warning(
+                        "%s: the attribute filter check failed; dropping the %s "
+                        "expanded entities it could not vouch for: %s",
+                        type(self).__name__,
+                        len(open_units),
+                        e,
+                    )
+                    span.record_exception(e)
+                    span.set_attributes({"kg_rag.degraded": True})
+                    dropped |= set(open_units)
+                    break
+                asked = set(ids)
+                for i in list(open_units):
+                    if open_units[i] & passed:
+                        del open_units[i]
+                    elif not open_units[i] - asked:
+                        dropped.add(i)
+                        del open_units[i]
+                    else:
+                        open_units[i] -= asked
         if dropped:
             logger.debug(
-                "Attribute filters dropped %s of %s results no passing text "
-                "unit cites",
+                "Document filters dropped %s of %s expanded entities no passing "
+                "text unit cites",
                 len(dropped),
-                len(results),
+                pending,
             )
         return [r for i, r in enumerate(results) if i not in dropped]
 
@@ -394,8 +421,11 @@ class BaseSearchStrategy(ABC):
         search_query.filters = (search_query.filters or {}).copy()
         search_query.filters["id"] = seed_entity_ids
 
-        return await self._safe_aretrieve(
+        expanded = await self._safe_aretrieve(
             self.graph_retriever, search_query, "graph expansion"
+        )
+        return await self._vouch_by_text_units(
+            query, expanded, {str(s) for s in seed_entity_ids}
         )
 
     def _incident_fetch_limit(self) -> int:

@@ -358,6 +358,14 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                 size=size,
                 sort=self._importance_sort(prefix, index_query, search_type),
             )
+            if query.source_fields is not None:
+                # A check that needs the ids only ships no document back.
+                for body in bodies:
+                    body["_source"] = (
+                        {"includes": query.source_fields}
+                        if query.source_fields
+                        else False
+                    )
             probe = (
                 self._attribute_probe(prefix, index_query.filters)
                 if query_vector is not None and search_type != SearchType.LEXICAL

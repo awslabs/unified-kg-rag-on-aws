@@ -816,8 +816,8 @@ steps on Neptune. Each store accepts the fields its indexer writes:
 |---|---|
 | Text units | `id`, `text`, `translated_text_<language>`, `community_ids`, `n_tokens`, `attr_<key>`, `attributes.<path>` |
 | Entities | `id`, `name`, `name.keyword`, `description`, `type`, `rank`, `confidence`, `text_unit_ids`, `attr_<key>`, `attributes.<path>` |
-| Relationships | `id`, `source_id`, `target_id`, `source_name`, `target_name`, `description`, `weight`, `rank`, `text_unit_ids` |
-| Claims | `id`, `subject_id`, `object_id`, `subject_name`, `object_name`, `type`, `status`, `description`, `source_text`, `text_unit_ids` |
+| Relationships | `id`, `source_id`, `target_id`, `source_name`, `target_name`, `description`, `weight`, `rank`, `text_unit_ids`, `attr_<key>`, `attributes.filters.<key>` |
+| Claims | `id`, `subject_id`, `object_id`, `subject_name`, `object_name`, `type`, `status`, `description`, `source_text`, `text_unit_ids`, `attr_<key>`, `attributes.filters.<key>` |
 | Community reports | `id`, `community_id`, `name`, `summary`, `full_content`, `rank`, `rating`, `text_unit_ids`, `document_ids`, `level`, `depth`, `max_cut_depth`, `parent_community_id`, `child_community_ids`, `attr_<key>`, `attributes.<path>` |
 | Neptune entity vertices | `id`, `name`, `type`, `description`, `rank`, `confidence`, `text_unit_ids`, `community_ids`, `attr_<key>` (where present) |
 | Neptune community vertices | `id`, `name`, `level`, `parent`, `size`, `period`, `children` |
@@ -836,18 +836,23 @@ steps on Neptune. Each store accepts the fields its indexer writes:
   listing the filterable keys
   (`unified_kg_rag/adapters/storage/filter_schema.py`).
 - OpenSearch applies `attr_<key>` and `attributes.<path>` strictly
-  (fail-closed): an item without the attribute is excluded. A community
-  report carries the filter values of its text units' documents, so it
-  matches when one of them does. A vector or hybrid search skips an index
-  none of whose documents carry the attribute (OpenSearch 2.13 rejects a kNN
-  filter on a field the index does not map). Relationships and claims carry no
-  document attribute: under an attribute filter they are kept only when one
-  of their text units passes it.
-- Neptune applies `attr_<key>` where present (a vertex without the property
-  passes), so `attr_role:buyer` removes entities with another role; the
-  expanded entities other than the seeds are then kept only when one of their
-  text units passes the attribute filter. Every other key is strict on both
-  stores.
+  (fail-closed): an item without the attribute is excluded. Relationships,
+  claims and community reports carry the filter values of their text units'
+  documents, so each matches when one of them does. A vector or hybrid search
+  skips an index none of whose documents carry the attribute (OpenSearch 2.13
+  rejects a kNN filter on a field the index does not map). An index built
+  before relationships and claims carried their documents' filters returns
+  none of them under an attribute filter until it is rebuilt
+  (`indexing.reset: true`).
+- `attr_<key>` and `attributes.filters.<key>` name document attributes. A
+  graph store holds none, so graph expansion keeps an expanded entity (the
+  seeds aside) only when one of its text units passes them. Other
+  `attributes.<path>` keys name an item's own attributes and apply to the
+  entities index only. On Neptune, `attr_<key>` is also an entity vertex
+  property (`attr_role`), applied where present (a vertex without it passes),
+  but the text-unit check above still applies: `attr_role:buyer` selects
+  nothing unless documents carry a `role` filter. Every other key is strict
+  on both stores.
 
 **Filters are not an access-control boundary**: a store that does not declare
 a key returns its content unfiltered, and an entity, relationship or

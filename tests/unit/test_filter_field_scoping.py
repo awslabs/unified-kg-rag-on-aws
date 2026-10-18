@@ -29,8 +29,10 @@ from unified_kg_rag.adapters.storage.neptune_indexer import NeptuneIndexer
 from unified_kg_rag.adapters.storage.opensearch_indexer import OpenSearchIndexer
 from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain
 from unified_kg_rag.domain.models import (
+    Claim,
     Config,
     Entity,
+    Relationship,
     SearchQuery,
     SearchType,
     TextUnit,
@@ -194,10 +196,11 @@ async def test_attribute_key_filters_only_attribute_bearing_indexes(
     def fields(name: str) -> set[str]:
         return _filtered_fields(client.searches[_alias(retriever, p[name])])
 
-    for name in ("text_units", "entities", "reports"):
+    # Relationships and claims carry their documents' filters too, so the
+    # store applies the filter to them as well (it used to drop the key and
+    # search them unfiltered).
+    for name in ("text_units", "entities", "reports", "relationships", "claims"):
         assert fields(name) == {"attr_category"}, name
-    for name in ("relationships", "claims"):
-        assert fields(name) == set(), name
 
 
 async def test_declared_key_filters_only_declaring_indexes(config: Config) -> None:
@@ -302,8 +305,33 @@ def test_attribute_prefixes_match_documents_carrying_attributes(
         config.processing.translation.target_language.value
     )
     attribute_kinds = {k for k, v in schema.items() if "attr_" in v.prefixes}
-    # Documents built via _prepare_common_doc_properties.
-    assert attribute_kinds == {"text_units", "entities", "community_reports"}
+    # Documents built via _prepare_common_doc_properties, and relationships
+    # and claims, which carry their document filters only.
+    assert attribute_kinds == set(schema)
+    rel = Relationship(
+        id="r1",
+        source_id="a",
+        target_id="b",
+        attributes={
+            "filters": {"category": "research"},
+            "text_unit_weights": {"tu-1": 1.0},
+        },
+    )
+    claim = Claim(
+        id="c1",
+        subject_id="a",
+        subject_name="A",
+        object_name="",
+        type="fact",
+        attributes={"filters": {"category": "research"}},
+    )
+    for doc in (
+        indexer._prepare_relationship_doc(rel, ([0.1],)),
+        indexer._prepare_claim_doc(claim, ([0.1],)),
+    ):
+        assert doc["attr_category"] == "research"
+        # Only the filters: per-unit maps would map one field per unit.
+        assert doc["attributes"] == {"filters": {"category": "research"}}
 
 
 # --------------------------------------------------------------------------- #
