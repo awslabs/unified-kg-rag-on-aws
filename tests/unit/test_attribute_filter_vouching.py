@@ -41,11 +41,16 @@ class _Store:
     """Text units ``u-ok`` pass the filter; every other search returns ``hits``."""
 
     def __init__(
-        self, units_prefix: str, hits: list[RetrievalResult], fail: bool = False
+        self,
+        units_prefix: str,
+        hits: list[RetrievalResult],
+        fail: bool = False,
+        units_suffix: str | None = None,
     ) -> None:
         self.units_prefix = units_prefix
         self.hits = hits
         self.fail = fail
+        self.units_suffix = units_suffix  # the suffix whose units are stored
         self.queries: list[SearchQuery] = []
 
     async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
@@ -53,6 +58,8 @@ class _Store:
         if query.index_prefixes == [self.units_prefix]:
             if self.fail:
                 raise RuntimeError("store hiccup")
+            if query.suffix != self.units_suffix:
+                return []
             ids = (query.filters or {}).get("id") or []
             return [_hit(u, "text", []) for u in ids if u == "u-ok"]
         return [h.model_copy() for h in self.hits]
@@ -99,6 +106,22 @@ async def test_graph_expansion_keeps_seeds_and_vouched_vertices(
     # Only the document filter keys plus the cited units, and ids only back.
     assert check.filters == {key: "x", "id": ["u-no", "u-ok"]}
     assert check.source_fields == []
+
+
+async def test_the_check_searches_the_query_suffix(config: Config) -> None:
+    # A query on another tenant/version suffix must check that suffix's text
+    # units, not the default one's (which would drop every expanded vertex).
+    prefix = config.indexing.opensearch.text_units_index_prefix
+    document = _Store(prefix, [], units_suffix="tenant-b")
+    strategy = _strategy(config, document, _graph(prefix))
+
+    kept = await strategy._expand_via_graph(
+        SearchQuery(query="q", suffix="tenant-b", filters={"attr_category": "x"}),
+        ["seed"],
+    )
+
+    assert [r.source for r in kept] == ["seed", "near", "one"]
+    assert [q.suffix for q in document.queries] == ["tenant-b"]
 
 
 async def test_an_entity_attribute_filter_is_not_vouched(config: Config) -> None:
