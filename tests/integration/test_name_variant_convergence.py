@@ -89,6 +89,24 @@ def _names_in(text: str) -> list[str]:
 
 
 def _respond(system: str, human: str) -> str:
+    if "graph refinement specialist" in system:
+        # Gleaning adds an edge between the first and last name of a unit
+        # that names three or more.
+        text = stages._source_text(human).strip()
+        names = _names_in(text)
+        issue = (
+            "<issue><issue_type>MISSING_RELATIONSHIP</issue_type><details>"
+            f"<source>{names[0]}</source><target>{names[-1]}</target>"
+            f"<type>DEALS_WITH</type><description>{names[0]} deals with "
+            f"{names[-1]}</description></details>"
+            f"<text_evidence>{text}</text_evidence></issue>"
+            if len(names) >= 3
+            else ""
+        )
+        return (
+            "<refinement_plan><identified_issues>"
+            f"{issue}</identified_issues></refinement_plan>"
+        )
     if "extraction" not in system:
         return stages._respond(system, human)
     text = stages._source_text(human).strip()
@@ -131,6 +149,7 @@ def _state(
     summarize: bool = False,
     die_in: int | None = None,
     die_at: tuple[str, int, bool] = ("upsert_claims", 1, False),
+    gleaning: bool = False,
 ) -> dict[str, list[tuple]]:
     """The stored entities, edges and claims after indexing ``corpora`` one
     after the other (run ``repeat`` twice under its pipeline id; run
@@ -140,6 +159,8 @@ def _state(
     and whether that call completes before the run dies."""
     config = _config(tmp / "stores", tmp / "viz")
     config.processing.claim_extraction.enabled = True
+    config.processing.gleaning.enabled = gleaning
+    config.processing.gleaning.max_rounds = 1
     summarization = config.processing.graph_extraction.description_summarization
     summarization.enabled = summarize
     summarization.force_summary_threshold_tokens = 30
@@ -415,4 +436,35 @@ def test_a_removal_resumed_after_dying_between_the_stores_matches_a_full_build(
         die_at=("delete_document_artifacts", 2, True),
     )
 
+    assert incremental == full
+
+
+def test_a_resumed_merge_keeps_a_gleaned_edge_on_the_spelling_it_names(
+    tmp_path: Path,
+) -> None:
+    # d7.txt moves to r0.txt. Removing d7.txt merges "Initech Corp" into
+    # "Initech" (their types now agree); indexing r0.txt splits them again.
+    # Killed after the split entities were written and before their edges,
+    # the resumed run left the edge gleaning adds for "Initech Corp" (d1.txt)
+    # on "Initech": the stored "Initech" no longer held the other spelling's
+    # key, so the edge had no derived entity to follow.
+    d1 = "Initech Corp and Initech trade cash 1. Depot and Buyer trade parts 1."
+    d7 = "Depot and Initech Corp and Buyer trade goods 1."
+    runs = [
+        {"d1.txt": "Initech trade parts 2."},
+        {"d1.txt": d1, "d5.txt": "Buyer trade cash 2."},
+        {"d1.txt": d1, "d5.txt": "Buyer trade cash 2.", "d7.txt": d7},
+        {"d1.txt": d1, "d5.txt": "Buyer trade cash 2.", "r0.txt": d7},
+    ]
+
+    full = _state(tmp_path / "full", [runs[-1]], gleaning=True)
+    incremental = _state(
+        tmp_path / "inc",
+        runs,
+        die_in=3,
+        die_at=("update_relationship_lineage", 2, False),
+        gleaning=True,
+    )
+
+    assert ("Initech Corp", "Buyer") in {e[:2] for e in full["edges"]}
     assert incremental == full

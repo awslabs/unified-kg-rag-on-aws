@@ -36,6 +36,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from unified_kg_rag.domain.ingestion.base_resolver import compact_name_key
 from unified_kg_rag.domain.ingestion.claim_resolver import (
     ClaimResolver,
     resolved_claim_id,
@@ -327,12 +328,28 @@ def derive(
     def entity_id(stored_id: str) -> str:
         return id_remap.get(stored_id) or rekeyed.get(stored_id, stored_id)
 
+    # Each given entity's other spellings among the derived entities that
+    # share a text unit with it: a run that split them and died before their
+    # edges were written left an edge of one on the other, and the stored
+    # entity no longer holds the other's key.
+    by_compact_key: dict[str, list[Entity]] = defaultdict(list)
+    for derived_entity in derived_entities:
+        by_compact_key[compact_name_key(derived_entity.name)].append(derived_entity)
+    spellings: dict[str, list[str]] = {}
+    for entity in entities:
+        units = set(entity.text_unit_ids or [])
+        spellings[entity.id] = [
+            other.id
+            for other in by_compact_key.get(compact_name_key(entity.name), ())
+            if units & set(other.text_unit_ids or [])
+        ]
+
     def endpoint_ids(stored_id: str) -> list[str]:
         """The derived ids a stored endpoint may now be (its match first)."""
         targets = [
             derived_of[r] for r in derives_to.get(stored_id, []) if r in derived_of
-        ]
-        return targets or [entity_id(stored_id)]
+        ] or [entity_id(stored_id)]
+        return list(dict.fromkeys([*targets, *spellings.get(stored_id, ())]))
 
     resolved_edges: dict[tuple[str, str, str], Relationship] = {}
     for rel in resolved["relationships"]:

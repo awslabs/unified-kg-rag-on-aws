@@ -1645,6 +1645,10 @@ changed once with the full-config keys (#332).
   under any spelling is no longer kept unresolved by an incremental run: it
   becomes the claim it shares the most text units with, or is deleted when
   there is none (#PR).
+- A run resumed after it split two spellings in the graph and died before
+  their edges were written now moves the other spelling's edges along when
+  the stored entity no longer holds that spelling's key: an edge gleaning
+  added for "Initech Corp" stayed on "Initech" (#PR).
 - Removing a document no longer leaves its text unnoticed in community
   reports: a kept report that cites a removed text unit is counted in the
   `community_drift` metrics (`outdated_reports`, deletion-only runs
