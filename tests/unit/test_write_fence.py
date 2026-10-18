@@ -15,7 +15,7 @@ import contextvars
 import signal
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -701,39 +701,106 @@ def test_a_stop_does_not_wait_for_the_model_calls_in_flight() -> None:
 
 
 def _slow_match(name: str) -> list[tuple[str, float]]:
-    time.sleep(0.05)
+    time.sleep(0.2)
     return []
+
+
+def _slow_minhash(item: tuple[int, str], **_: Any) -> None:
+    time.sleep(0.2)
+    return None
+
+
+class _RecordingProcessPool(ProcessPoolExecutor):
+    """A real process pool that keeps the futures it hands out."""
+
+    pools: list[_RecordingProcessPool] = []
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.futures: list[concurrent.futures.Future[Any]] = []
+        self.pools.append(self)
+
+    def submit(self, fn: Any, /, *args: Any, **kwargs: Any) -> Any:
+        future = super().submit(fn, *args, **kwargs)
+        self.futures.append(future)
+        return future
+
+
+def _stopped_after(seconds: float, block: Any) -> None:
+    def stop(signum: int, _: Any) -> None:
+        raise PipelineInterrupted(signum)
+
+    previous = signal.signal(signal.SIGALRM, stop)
+    try:
+        signal.setitimer(signal.ITIMER_REAL, seconds)
+        with pytest.raises(PipelineInterrupted):
+            block()
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous)
+
+
+def _assert_queued_tasks_cancelled(workers: int) -> None:
+    (pool,) = _RecordingProcessPool.pools
+    _RecordingProcessPool.pools = []
+    try:
+        ran = sum(f.done() and not f.cancelled() for f in pool.futures)
+        # Only the running tasks and the few the pool already handed to its
+        # workers' queue are not cancellable; the pool's manager thread
+        # cancels the rest once it wakes (the old code ran them all).
+        expected = len(pool.futures) - ran - 2 * workers - 1
+        deadline = time.time() + 3
+        while time.time() < deadline and (
+            sum(f.cancelled() for f in pool.futures) < expected
+        ):
+            time.sleep(0.05)
+        assert sum(f.cancelled() for f in pool.futures) >= max(expected, 1)
+    finally:
+        pool.shutdown(wait=True, cancel_futures=True)
 
 
 def test_a_stop_cancels_the_queued_tasks_of_the_resolver_process_pool(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Old behaviour: the ProcessPoolExecutor block ran every queued name
-    # before the stop got through (200 x 0.05 s on 2 workers = 5 s).
+    # Old behaviour: the pool's own with-block exit (shutdown(wait=True))
+    # reset the cancellation, so none of the queued names was cancelled and
+    # they all ran before the interpreter could exit.
     from unified_kg_rag.domain.ingestion import graph_resolver
 
     monkeypatch.setattr(graph_resolver, "find_all_matches_for_entity_task", _slow_match)
-    # A thread pool's block waits for the queued tasks the same way, without
-    # forking the test process.
-    monkeypatch.setattr(graph_resolver, "ProcessPoolExecutor", ThreadPoolExecutor)
+    monkeypatch.setattr(graph_resolver, "ProcessPoolExecutor", _RecordingProcessPool)
     resolver = graph_resolver.EntityResolver(Config(), 2, True)
 
-    def stop(signum: int, _: Any) -> None:
-        raise PipelineInterrupted(signum)
+    def resolve() -> None:
+        for _ in resolver._match_in_pool(MagicMock(), [f"n{i}" for i in range(40)]):
+            pass
 
-    previous = signal.signal(signal.SIGALRM, stop)
-    started = time.time()
-    try:
-        signal.setitimer(signal.ITIMER_REAL, 0.5)
-        with pytest.raises(PipelineInterrupted):
-            for _ in resolver._match_in_pool(
-                MagicMock(), [f"n{i}" for i in range(200)]
-            ):
-                pass
-    finally:
-        signal.setitimer(signal.ITIMER_REAL, 0)
-        signal.signal(signal.SIGALRM, previous)
-    assert time.time() - started < 2.5
+    _stopped_after(0.5, resolve)
+    _assert_queued_tasks_cancelled(workers=2)
+
+
+def test_a_stop_cancels_the_queued_tasks_of_the_dedup_process_pool(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from unified_kg_rag.adapters.ingestion import loader as loader_mod
+    from unified_kg_rag.domain.models import Document
+
+    monkeypatch.setattr(loader_mod, "compute_minhash", _slow_minhash)
+    monkeypatch.setattr(loader_mod, "ProcessPoolExecutor", _RecordingProcessPool)
+    loader = loader_mod.DirectoryLoader(tmp_path)
+    loader.max_workers = 2
+    docs = [
+        Document(
+            page_content=f"text {i}",
+            document_id=f"d{i}",
+            file_name=f"d{i}.txt",
+            file_path=str(tmp_path / f"d{i}.txt"),
+        )
+        for i in range(40)
+    ]
+
+    _stopped_after(0.5, lambda: loader._compute_minhashes(docs))
+    _assert_queued_tasks_cancelled(workers=2)
 
 
 def test_a_lost_lease_stops_delete_indices_at_once(mocker) -> None:

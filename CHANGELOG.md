@@ -1268,6 +1268,10 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- A stop during entity resolution or MinHash deduplication now cancels the
+  process pool's queued tasks: the pool's own `with` block reset the
+  cancellation, so every queued task still ran and held up the process's
+  exit (#PR).
 - Docs match the code again: a reset skips quarantined documents and keeps
   their records, and graph queries see old and rebuilt items mixed until its
   final drop; only the final checkpoint upload fails a run; a run killed
