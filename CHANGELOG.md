@@ -629,6 +629,9 @@ changed once with the full-config keys (#332).
 - `ModelPurpose` is exported from `unified_kg_rag`, so custom code can pass
   `model_purpose=ModelPurpose.INGESTION` to `setup_chain` / `get_model` as
   the user guide says without importing an internal module (#365).
+- `MetricsSink` and `CloudWatchEMFSink` are exported from `unified_kg_rag`,
+  the types of the public `DataIngestionPipeline(metrics_sink=...)`
+  argument (#PR).
 - `docs/cli.md`, a CLI reference generated from the argparse parsers of
   every CLI (`scripts/gen_cli_reference.py`; a unit test fails when it is
   stale). The flag help strings now carry what the user guide's flag tables

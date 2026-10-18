@@ -44,6 +44,9 @@ _EXPORTS: dict[str, str] = {
     "PipelineStageStatus": "unified_kg_rag.domain.models",
     "PipelineStageType": "unified_kg_rag.domain.models",
     "IndexingManager": "unified_kg_rag.application.storage.indexing_manager",
+    # DataIngestionPipeline(metrics_sink=...)
+    "MetricsSink": "unified_kg_rag.shared.metrics",
+    "CloudWatchEMFSink": "unified_kg_rag.shared.metrics",
     # Querying
     "GraphRAGChain": "unified_kg_rag.application.retrieval.rag_chain",
     "RAGInput": "unified_kg_rag.application.retrieval.rag_chain",
@@ -149,6 +152,7 @@ if TYPE_CHECKING:
     )
     from unified_kg_rag.shared.config import get_config
     from unified_kg_rag.shared.logging import setup_logging
+    from unified_kg_rag.shared.metrics import CloudWatchEMFSink, MetricsSink
     from unified_kg_rag.shared.utils.event_loop import configure_event_loop
 
 
