@@ -51,7 +51,9 @@ NAMES = (
     "Depot",
     "Carrier",
     "Acme Inc",
+    "ACME Inc",
     "Acme Corp",
+    "Acme Ltd",
     "Acme",
 )
 TYPES = {"goods": "ORGANIZATION", "parts": "PERSON", "cash": "LOCATION"}
@@ -319,6 +321,17 @@ def _state(
                 },
             ],
             id="a-claim-names-the-spelling-its-unit-states",
+        ),
+        pytest.param(
+            [
+                {"d1.txt": "ACME Inc and Acme and Buyer trade goods 1."},
+                {
+                    "d1.txt": "ACME Inc and Acme and Buyer trade goods 1.",
+                    "d2.txt": "Acme Corp trade cash 1.",
+                    "r2.txt": "Acme Ltd and Acme and Acme Corp trade parts 3.",
+                },
+            ],
+            id="a-claim-resolves-with-the-other-spellings-the-run-derived",
         ),
     ],
 )

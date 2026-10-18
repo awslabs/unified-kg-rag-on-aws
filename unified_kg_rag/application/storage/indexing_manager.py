@@ -1641,6 +1641,16 @@ class IndexingManager:
         entities += [
             derived_entities[i] for i in sorted(entity_ids) if i in derived_entities
         ]
+        # The other spellings of their names this run derived (not stored
+        # yet): their text units' records decide, with the claims' own,
+        # which spelling a claim's subject and object resolve to.
+        keys = {compact_name_key(e.name) for e in entities}
+        given = {e.id for e in entities}
+        entities += [
+            e
+            for i, e in sorted(derived_entities.items())
+            if i not in given and compact_name_key(e.name) in keys
+        ]
         derived = self.derive(
             suffix,
             entities,

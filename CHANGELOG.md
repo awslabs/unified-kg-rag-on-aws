@@ -1745,6 +1745,11 @@ changed once with the full-config keys (#332).
   the same type), which a full build merges with it. A delta entity linked
   to a stored one only through another delta component, or stated with a
   new spelling of a stored name, got no community (#PR).
+- With four spellings of one name, a claim from one spelling ("Acme Ltd
+  owes Acme") is no longer merged into the stored claim of another: an
+  incremental run resolved the claims against entities derived from the
+  claims' own text units only, where another spelling this run derived
+  ("Acme Corp") was missing, so "Acme Ltd" resolved into it (#PR).
 - Removing a document no longer leaves its text unnoticed in community
   reports: a kept report that cites a removed text unit is counted in the
   `community_drift` metrics (`outdated_reports`, deletion-only runs
