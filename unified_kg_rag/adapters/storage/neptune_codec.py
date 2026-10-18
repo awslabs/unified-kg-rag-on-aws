@@ -146,6 +146,11 @@ def _edge_list(key: str, value: Any) -> list[str] | None:
     return [str(v) for v in decoded]
 
 
+def edge_text_unit_ids(value: Any) -> list[str]:
+    """The text units of an edge's ``text_unit_ids`` property (a JSON list)."""
+    return _edge_list("text_unit_ids", _single(value)) or []
+
+
 def _attribute_value(value: Any) -> Any:
     values = _values(value)
     single = values[0] if len(values) == 1 else values

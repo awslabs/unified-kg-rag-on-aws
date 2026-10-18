@@ -312,6 +312,22 @@ class GraphIndexer(BaseIndexer):
         """
         return None
 
+    def find_relationship_ids_citing(
+        self, text_unit_ids: list[str], suffix: str | None = None
+    ) -> dict[str, list[str]] | None:
+        """``{edge id: its text_unit_ids}`` of the relationship edges of
+        ``suffix`` citing any of ``text_unit_ids``.
+
+        A removal finds the edges a removed document stated by its text
+        units, as it finds the entities (:meth:`find_ids_citing`), rather
+        than only among the edges of the entities citing them: an edge a
+        killed run re-keyed and did not get to delete still cites them after
+        its endpoints were stripped. Default returns ``None`` (the removal
+        then reads the edges incident to the entities citing the units);
+        adapters that override it raise when the read fails.
+        """
+        return None
+
     def find_entity_ids_by_name_key(
         self, name_keys: list[str], suffix: str | None = None
     ) -> list[str] | None:

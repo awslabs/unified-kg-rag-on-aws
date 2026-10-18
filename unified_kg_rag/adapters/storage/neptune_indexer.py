@@ -14,7 +14,7 @@ from gremlin_python.process.graph_traversal import (
     GraphTraversalSource,
     __,
 )
-from gremlin_python.process.traversal import Cardinality, P, Traversal
+from gremlin_python.process.traversal import Cardinality, P, TextP, Traversal
 
 from unified_kg_rag.adapters.aws.neptune import (
     INGESTION_REQUEST_TIMEOUT_SECONDS,
@@ -25,6 +25,7 @@ from unified_kg_rag.adapters.aws.neptune import (
 from unified_kg_rag.adapters.storage.neptune_codec import (
     BUILD_TAG_PROPERTY,
     NAME_KEY_PROPERTY,
+    edge_text_unit_ids,
     entity_from_vertex,
     entity_properties,
     item_properties,
@@ -239,6 +240,48 @@ class NeptuneIndexer(GraphIndexer):
             raise AWSServiceError(f"Neptune find_ids_citing failed: {e}") from e
         return {
             str(row["id"]): [str(u) for u in row.get("text_unit_ids") or []]
+            for row in rows
+            if isinstance(row, dict) and "id" in row
+        }
+
+    def find_relationship_ids_citing(
+        self, text_unit_ids: list[str], suffix: str | None = None
+    ) -> dict[str, list[str]] | None:
+        """Edges of ``suffix`` citing any of ``text_unit_ids``, with their text
+        units (see the port). An edge holds its text units as one JSON string
+        (edge properties are single-valued), so this reads the suffix's
+        out-edges once per batch of text units.
+
+        Raises:
+            AWSServiceError: The read failed.
+        """
+        if not text_unit_ids:
+            return {}
+        label = self._get_label(self.neptune_config.entity_label_prefix, suffix)
+        try:
+            rows = self._read_batches(
+                list(dict.fromkeys(text_unit_ids)),
+                lambda g, batch: g.V()
+                .hasLabel(label)
+                .outE()
+                .or_(
+                    *(
+                        __.has("text_unit_ids", TextP.containing(f'"{unit}"'))
+                        for unit in batch
+                    )
+                )
+                .dedup()
+                .project("id", "text_unit_ids")
+                .by("id")
+                .by("text_unit_ids"),
+                "find_relationship_ids_citing",
+            )
+        except Exception as e:
+            raise AWSServiceError(
+                f"Neptune find_relationship_ids_citing failed: {e}"
+            ) from e
+        return {
+            str(row["id"]): edge_text_unit_ids(row.get("text_unit_ids"))
             for row in rows
             if isinstance(row, dict) and "id" in row
         }

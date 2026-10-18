@@ -1356,6 +1356,15 @@ class IndexingManager:
                 if relationship_ids
                 else []
             )
+            # An edge is derived with its endpoints (the resolved entities map
+            # to them). They cite the removed units too, unless a killed run
+            # stripped them and left the edge (re-keyed, not yet deleted).
+            ends = {i for r in relationships for i in (r.source_id, r.target_id)}
+            ends -= {e.id for e in entities}
+            if ends:
+                entities += self.neptune_indexer.read_entities(
+                    sorted(ends), suffix=suffix
+                )
             entities = self._with_full_descriptions(
                 entities, self.opensearch_indexer.read_entity_descriptions, suffix
             )
@@ -1640,20 +1649,35 @@ class IndexingManager:
                 ),
                 **(found or {}),
             }
-            incident = (
-                graph.find_incident_relationship_ids(sorted(cited), suffix=suffix)
-                if cited
-                else []
+            # The edges citing them are among the cited entities' edges,
+            # except after an earlier removal of these units that got past
+            # deleting them (their vector copies are gone) and died: it may
+            # have stripped the entities and re-keyed an edge whose old graph
+            # copy it did not get to delete. Only then are the graph's edges
+            # looked up by text unit (on Neptune a scan of the suffix's edges).
+            still = vector.read_text_unit_ids(text_unit_ids, suffix=suffix)
+            resumed = still is None or len(set(still)) < len(removed)
+            edges = (
+                graph.find_relationship_ids_citing(text_unit_ids, suffix=suffix)
+                if resumed
+                else None
             )
+            if edges is None:
+                incident = (
+                    graph.find_incident_relationship_ids(sorted(cited), suffix=suffix)
+                    if cited
+                    else []
+                )
+                edges = {
+                    r.id: list(r.text_unit_ids or [])
+                    for r in graph.read_relationships(incident, suffix=suffix)
+                    if removed.intersection(r.text_unit_ids or [])
+                }
             relationships = {
                 **self._vector_citing(
                     prefixes.relationships_index_prefix, text_unit_ids, suffix
                 ),
-                **{
-                    r.id: list(r.text_unit_ids or [])
-                    for r in graph.read_relationships(incident, suffix=suffix)
-                    if removed.intersection(r.text_unit_ids or [])
-                },
+                **edges,
             }
             communities = (
                 graph.find_ids_citing(text_unit_ids, suffix=suffix, communities=True)
@@ -1735,6 +1759,10 @@ class IndexingManager:
             len(shared_claims),
         )
         results = self.delete_documents({suffix: doomed})
+        if any(stats.failed_items for stats in results.values() if stats):
+            # Strip nothing until the removed text units are gone: a retry
+            # tells a removal that got further by their missing copies.
+            return results
         if shared_entities or shared_relationships or shared_claims:
             results.update(
                 self.remove_text_units_from_shared(

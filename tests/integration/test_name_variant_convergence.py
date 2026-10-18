@@ -19,6 +19,7 @@ import shutil
 from collections.abc import Callable
 from itertools import pairwise
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -49,6 +50,23 @@ TYPES = {"goods": "ORGANIZATION", "parts": "PERSON", "cash": "LOCATION"}
 
 class _Died(BaseException):
     """A crash the pipeline does not catch (the task was killed)."""
+
+
+def _dying(method: str, nth: int, after: bool) -> Callable[..., Any]:
+    """``OpenSearchIndexer.<method>`` whose ``nth`` call kills the run (after
+    the call completes, if ``after``)."""
+    original = getattr(OpenSearchIndexer, method)
+    calls = {"n": 0}
+
+    def dying(self: OpenSearchIndexer, *args: Any, **kwargs: Any) -> Any:
+        calls["n"] += 1
+        if calls["n"] != nth:
+            return original(self, *args, **kwargs)
+        if after:
+            original(self, *args, **kwargs)
+        raise _Died
+
+    return dying
 
 
 def _names_in(text: str) -> list[str]:
@@ -103,10 +121,14 @@ def _state(
     respond: Callable[[str, str], str] = _respond,
     summarize: bool = False,
     die_in: int | None = None,
+    die_at: tuple[str, int, bool] = ("upsert_claims", 1, False),
 ) -> dict[str, list[tuple]]:
     """The stored entities, edges and claims after indexing ``corpora`` one
     after the other (run ``repeat`` twice under its pipeline id; run
-    ``die_in`` killed at its first claim write, then resumed under its id)."""
+    ``die_in`` killed at ``die_at``, then resumed under its id).
+
+    ``die_at`` is a vector-store method, the call that dies (1 = the first)
+    and whether that call completes before the run dies."""
     config = _config(tmp / "stores", tmp / "viz")
     config.processing.claim_extraction.enabled = True
     summarization = config.processing.graph_extraction.description_summarization
@@ -125,7 +147,7 @@ def _state(
             (source / name).write_text(text)
         if run == die_in:
             with (
-                patch.object(OpenSearchIndexer, "upsert_claims", side_effect=_Died),
+                patch.object(OpenSearchIndexer, die_at[0], _dying(*die_at)),
                 pytest.raises(_Died),
             ):
                 _ingest(config, providers, source, tmp / f"run-{run}")
@@ -297,4 +319,51 @@ def test_a_run_resumed_after_dying_mid_split_matches_a_full_build(
     incremental = _state(tmp_path / "inc", [first, final], die_in=1)
 
     assert ("Initech Corp", "Initech") in {c[:2] for c in full["claims"]}
+    assert incremental == full
+
+
+D2 = (
+    "Initech and Initech Corp trade parts 1. Buyer and Initech Corp and Depot "
+    "trade goods 1."
+)
+D5 = (
+    "Initech and Initech Corp trade goods 2. Initech and Depot and Initech Corp "
+    "trade cash 3. Initech and Buyer trade goods 1."
+)
+
+
+@pytest.mark.parametrize(
+    ("first", "kept"),
+    [
+        pytest.param({"d5.txt": D5, "d2.txt": D2}, {"d2.txt": D2}, id="edge"),
+        pytest.param(
+            {
+                "d5.txt": D5,
+                "d0.txt": "Initech Corp and Buyer and Initech trade cash 2.",
+                "d2.txt": D2,
+                "d6.txt": "Depot and Buyer and Initech Corp trade parts 2.",
+            },
+            {"d2.txt": D2, "d6.txt": "Depot and Buyer and Initech Corp trade parts 2."},
+            id="edge-with-stripped-endpoints",
+        ),
+    ],
+)
+def test_a_removal_resumed_after_dying_between_the_stores_matches_a_full_build(
+    tmp_path: Path, first: dict[str, str], kept: dict[str, str]
+) -> None:
+    # Removing d5.txt re-keys a stored Initech Corp-Buyer edge. The run is
+    # killed after the old id's vector copy is deleted and before its graph
+    # copy is. The resumed removal looked for edges only among those of the
+    # entities citing the removed units, which the dead run had stripped, so
+    # it never found the old edge and a duplicate stayed. Found by its text
+    # units, the edge is derived with its endpoints, which no longer cite
+    # them.
+    full = _state(tmp_path / "full", [kept])
+    incremental = _state(
+        tmp_path / "inc",
+        [first, kept],
+        die_in=1,
+        die_at=("delete_document_artifacts", 2, True),
+    )
+
     assert incremental == full

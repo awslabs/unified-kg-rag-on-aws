@@ -12,6 +12,7 @@ OpenSearch.
 from __future__ import annotations
 
 import copy
+import json
 from collections.abc import Collection
 from typing import Any
 
@@ -299,6 +300,18 @@ class FakeGraphStore:
                 if communities
                 else list(item.get("text_unit_ids", []))
             )
+            if s == scope and wanted.intersection(units):
+                found[item_id] = units
+        return found
+
+    def find_relationship_ids_citing(
+        self, text_unit_ids: list[str], suffix: str | None = None
+    ) -> dict[str, list[str]] | None:
+        scope = suffix or Constants.DEFAULT_SUFFIX.value
+        wanted = set(text_unit_ids)
+        found: dict[str, list[str]] = {}
+        for (s, item_id), edge in self.data.get("relationships", {}).items():
+            units = json.loads(edge["props"].get("text_unit_ids") or "[]")
             if s == scope and wanted.intersection(units):
                 found[item_id] = units
         return found

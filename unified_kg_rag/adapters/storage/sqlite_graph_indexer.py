@@ -495,6 +495,28 @@ class SQLiteGraphIndexer(GraphIndexer):
                     )
         return found
 
+    def find_relationship_ids_citing(
+        self, text_unit_ids: list[str], suffix: str | None = None
+    ) -> dict[str, list[str]] | None:
+        """Edges of ``suffix`` citing any of ``text_unit_ids``, with their text
+        units (see the port). One pass over the suffix's edges per batch."""
+        if not text_unit_ids:
+            return {}
+        label = self._entity_label(suffix)
+        found: dict[str, list[str]] = {}
+        with self.store.read("find edges citing text units") as connection:
+            for batch in batches(list(dict.fromkeys(text_unit_ids))):
+                rows = connection.execute(
+                    "SELECT id, json_extract(props, '$.text_unit_ids') FROM edges "
+                    "WHERE label = ? AND EXISTS (SELECT 1 FROM json_each("
+                    "json_extract(edges.props, '$.text_unit_ids')) "
+                    f"WHERE value IN ({placeholders(batch)}))",
+                    [label, *batch],
+                ).fetchall()
+                for edge_id, units in rows:
+                    found[edge_id] = list(json.loads(units) or [])
+        return found
+
     def find_entity_ids_by_name_key(
         self, name_keys: list[str], suffix: str | None = None
     ) -> list[str] | None:
