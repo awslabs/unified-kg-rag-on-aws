@@ -24,7 +24,9 @@ ports → domain`, with `shared` as a cross-cutting kernel any layer may use.
   imports every domain module in a clean interpreter and checks
   `sys.modules`).
 - **`ports/`**: the abstract interfaces the domain depends on — `DocStatusPort`,
-  `ModelFactoryPort`/`TokenCounterPort` (`Protocol`s) and the
+  `ContentGuardPort`, `ModelFactoryPort` (+ `LLMFactoryPort`/
+  `EmbeddingFactoryPort`/`RerankFactoryPort`)/`TokenCounterPort`
+  (`Protocol`s) and the
   write-side indexer ABCs `BaseIndexer`/`GraphIndexer`/`VectorIndexer`
   (+ `IndexingStats`). `ports/__init__` is the port catalog. The
   retrieval/evaluation abstract bases are *adapter bases* (they construct infra
@@ -167,8 +169,9 @@ Layout: `tests/{unit,integration,property,fixtures/fakes}/`. Markers: `unit`,
 
 ## Quality gate
 
-CI (`.github/workflows/quality.yml`) and `.pre-commit-config.yaml` run ruff,
-black, isort, mypy, and pytest+coverage. Install hooks with `pre-commit install`.
+CI (`.github/workflows/quality.yml`) runs ruff, black, isort, mypy, and
+pytest+coverage; `.pre-commit-config.yaml` runs the linters and mypy, not
+pytest or coverage. Install hooks with `pre-commit install`.
 
 ## Git & collaboration workflow
 

@@ -32,6 +32,7 @@ PUBLIC_API = sorted(
         "GraphRAGChain",
         "IndexingManager",
         "MemoryManager",
+        "ModelPurpose",
         "ModelRole",
         "PipelineConfig",
         "PipelineContext",

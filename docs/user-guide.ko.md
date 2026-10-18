@@ -201,7 +201,9 @@ Bedrock을 쓸 수 있습니다.
   `models.fast`는 그 값을 따릅니다. `providers.llm.context_window_size`와
   `max_output_tokens`로 모델 한도를 알려 주며(컨텍스트 창은 Ollama에 `num_ctx`로
   전달), 프리셋은 `search.token_manager.max_context_tokens`(22000)를 기본
-  32,768토큰 창에 맞춥니다. OpenAI 호환 서버(vLLM, llama.cpp server, LM Studio)에는
+  32,768토큰 창에 맞춥니다. 이 값은 그 창 그대로인 Bedrock 외 LLM에만 적용되며, Bedrock
+  LLM이나 `context_window_size`를 지정한 경우에는 `30000`을 유지합니다. OpenAI 호환
+  서버(vLLM, llama.cpp server, LM Studio)에는
   `base_url`(`/v1` 루트)과, 필요하면 `api_key`를 지정합니다.
 - **임베딩.** Bedrock이 아닌 공급자에서는 `models.embedding.model_id`와 `dimension`이
   필수입니다. 차원은 벡터 매핑에 고정되므로 둘 중 하나를 바꾸면 전체를 다시 인덱싱해야
@@ -241,7 +243,9 @@ Bedrock을 쓸 수 있습니다.
 - kNN은 정확 검색(필터를 통과한 문서를 모두 채점)이므로 비용이 인덱스 크기에 비례합니다.
 - 검색하는 인덱스를 메모리에 올리며(벡터 필드마다 약 문서 수 x 차원 x 4바이트), 문서 약
   100,000개를 기준으로 설계했습니다(더 크면 경고를 남기므로 OpenSearch를 쓰세요). 쓰기
-  뒤 첫 질의는 인덱스를 다시 읽으며, 120단어 문서 50,000개 기준 약 10초가 걸립니다.
+  뒤 첫 질의는 인덱스를 다시 읽고, 첫 어휘 검색 질의는 검색하는 필드를 다시 분석하며, 120단어
+  문서 50,000개 기준 약 10초가 걸립니다. `english`에서 서로 다른 단어가 약 65,000개를 넘으면
+  약 세 배 느립니다.
 
 **SQLite 파일**은 한 번에 한 프로세스만 씁니다. 저장소 파일마다 수집은 하나씩
 실행하고(질의는 함께 읽을 수 있음), `search.store_timeout_seconds`보다 오래 기다린
@@ -362,7 +366,7 @@ cp config-template.yaml config.yaml
 | `graph.community_detection.enabled` | `true` | LightRAG만 쓰고 수집을 가볍게 할 때(`global`, `drift`에는 필요) |
 | `search.reranking.enabled` | `true` | 리전에 재순위화 모델이 없거나 재순위화를 쓰지 않을 때 |
 | `search.token_manager.max_context_tokens` | `30000` | 컨텍스트를 늘리거나 비용을 줄이려고 줄일 때([컨텍스트 예산](#컨텍스트-예산)) |
-| `indexing.reset` | `false` | 코퍼스 전체로 저장소를 다시 만드는 한 번의 실행 |
+| `indexing.reset` | `false` | 코퍼스 전체로 저장소를 다시 만드는 한 번의 실행(격리된 문서는 건너뜀) |
 | `aws.bedrock.guardrail.identifier` | `null` | 질의와 답변 검사([가드레일](#가드레일)) |
 | `observability.enabled` | `false` | OpenTelemetry 트레이스([관측성](#관측성)) |
 
@@ -425,21 +429,23 @@ API로 검사합니다. 가드레일은 `aws.bedrock.region_name`에 있어야 �
     마스킹은 답변에만 적용되고 출처(검색된 그대로의 코퍼스 텍스트)에는 적용되지 않으므로,
     호출자가 보면 안 되는 텍스트는 코퍼스에서 빼세요.
   - 개입 내역은 `RAGOutput.metadata.guardrail`, WARNING 로그, 트레이스에 남습니다.
-    가드레일 API 오류는 질의를 실패시키며, 검사하지 않은 채로 답하지 않습니다.
+    가드레일 API 오류는 질의를 실패시키거나, `processing.ignore_errors`면 `metadata.error`가
+    붙은 저하된 답변을 돌려주며, 검사하지 않은 채로 답하지 않습니다.
 - **모델 호출에는 붙이지 않음.** 질의 안의 모델 호출은 가드레일 없이 실행합니다. 모델
   호출에 붙인 가드레일은 프롬프트 전체를 평가하므로 `PROMPT_ATTACK` 필터가 검색된 텍스트를
   사용자 입력으로 판정해 잘못 차단하고, 비용도 컨텍스트에 비례해 늘어납니다
   ([프롬프트 공격](https://docs.aws.amazon.com/bedrock/latest/userguide/guardrails-prompt-attack.html)).
   컨텍스트 근거(contextual grounding) 검사는 하지 않습니다.
-- **수집과 평가는 가드레일 없이 실행.** `NAME`을 익명화하는 PII 가드레일은 엔티티 이름을
+- **수집과 평가 심사 모델은 가드레일 없이 실행**(`run-eval`의 답변은 검사하는 질의 경로를
+  거침). `NAME`을 익명화하는 PII 가드레일은 엔티티 이름을
   `{NAME}`으로 바꿔 서로 다른 사람을 합치고, `PROMPT_ATTACK` 필터는 지시문처럼 보이는
   코퍼스 텍스트를 차단할 수 있습니다. 질의 경로에서도 `NAME` 익명화는 질문이 검색에 쓸
   이름을 지우므로, `iac/`가 만드는 기본 가드레일은 이메일, 전화번호, 카드 번호만
   익명화하고 `NAME`은 익명화하지 않습니다([iac/README.md](../iac/README.md#guardrail)(영문)).
 - **사용자 코드**에서 질의가 아닌 작업에 `setup_chain`이나 `get_model`을 쓰면
-  `model_purpose=ModelPurpose.INGESTION`(또는 `EVALUATION`)을 넘기세요. 표시하지 않은
-  호출은 `QUERY`로 간주하므로 질의 시점의 일시적 오류 재시도가 적용되고, 응답 캐시와
-  수집 effort는 적용되지 않습니다.
+  `model_purpose=ModelPurpose.INGESTION`(또는 `EVALUATION`. `from unified_kg_rag import
+  ModelPurpose`)을 넘기세요. 표시하지 않은 호출은 `QUERY`로 간주하므로 질의 시점의 일시적
+  오류 재시도가 적용되고, 응답 캐시와 수집 effort는 적용되지 않습니다.
 
 ### S3 캐시 암호화
 
@@ -662,7 +668,7 @@ processing:
 - **분석기는 클러스터에 있어야** 하며, 없으면 인덱싱 단계가
   `the cluster has no analyzer '<name>'`로 실패합니다. `nori`는 `analysis-nori`
   플러그인에서 오는데, [로컬 OpenSearch 컨테이너](#컨테이너로-띄운-로컬-저장소)에는 있고
-  Amazon OpenSearch Service 도메인은 Nori 패키지를 연결해야 갖습니다. 그래서
+  Amazon OpenSearch Service 도메인은 Nori 패키지를 연결해야 갖습니다(블루/그린 배포). 그래서
   [CDK 배포](../iac/README.md)는 `ko`를 기본 제공 `cjk` 분석기(문자 바이그램)에
   매핑합니다. 도메인을 Nori로 바꾸는 방법은
   [설정](../iac/README.md#configuration-cdkjson-context---c-keyvalue)(영문)의
@@ -880,7 +886,8 @@ aws:
   증분 실행은 아무것도 쓰기 전에 멈춥니다. 레지스트리를 켜고 `indexing.reset: true`로
   한 번 다시 실행하거나, 그 접미사는 레지스트리를 끈 채로 쓰세요.
 - **재구축**(`indexing.reset: true`): 접미사를 서비스에서 내리지 않고 코퍼스 전체를
-  다시 인덱싱하며, 실패한 reset은 아무것도 지우지 않으므로 다시 실행해도 안전합니다
+  다시 인덱싱합니다. 격리된 문서는 건너뛰고 레코드를 그대로 둡니다. 실패한 reset은 아무것도
+  지우지 않으므로 다시 실행해도 안전합니다
   (동작 방식: [운영 런북: 다시 수집하기](./operations.ko.md#다시-수집하기)).
 
 ### 삭제 범위
@@ -1128,7 +1135,9 @@ run-eval --data-path s3://my-bucket/eval/my_eval_data.json \
 두 경로 모두 `s3://` URI를 받으므로 `run-eval`도 CDK 스택에서 일회성 태스크로
 실행할 수 있습니다([After deploy](../iac/README.md#5-evaluate-from-inside-the-vpc)).
 결과는 실행이 끝날 때 `aws.s3.encryption` 설정으로 올리며, 업로드가 실패하면 0이 아닌
-코드로 끝나고 로컬 파일을 남깁니다(경로를 출력). 실행 주체에는 데이터셋에 대한
+코드로 끝나고 로컬 파일을 남깁니다(경로를 출력). S3에는 설정의 `aws.profile_name` /
+`aws.region_name`으로 접속하며, 셸의 `AWS_PROFILE` / `AWS_REGION`은 설정이 비워 둔 경우에만
+그 값을 채웁니다. 실행 주체에는 데이터셋에 대한
 `s3:GetObject`와 접두사에 대한 `s3:PutObject` 권한이 필요합니다.
 
 결과는 `evaluation_{results,reports,summary}_<timestamp>.json`으로 씁니다(모든 질의가

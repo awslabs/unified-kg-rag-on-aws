@@ -211,8 +211,10 @@ preset points at `localhost` ([containers](#local-stores-in-containers)).
   `providers.llm.context_window_size` and `max_output_tokens` describe the
   model (the window goes to Ollama as `num_ctx`); the preset fits
   `search.token_manager.max_context_tokens` (22000) to the default
-  32,768-token window. An OpenAI-compatible server (vLLM, llama.cpp server,
-  LM Studio) takes `base_url` (its `/v1` root) and, if needed, `api_key`.
+  32,768-token window, only for a non-Bedrock LLM left at that window (a
+  Bedrock LLM or an explicit `context_window_size` keeps `30000`). An
+  OpenAI-compatible server (vLLM, llama.cpp server, LM Studio) takes
+  `base_url` (its `/v1` root) and, if needed, `api_key`.
 - **Embeddings.** A non-Bedrock provider needs `models.embedding.model_id`
   and `dimension`. The dimension is fixed into the vector mappings, so
   changing either needs a full re-index; another model than `bge-m3` needs its
@@ -257,7 +259,9 @@ preset points at `localhost` ([containers](#local-stores-in-containers)).
 - Each searched index is held in memory (about documents x dimension x 4
   bytes per vector field), sized for about 100,000 documents (a larger one
   logs a warning: use OpenSearch). The first query after a write reloads the
-  index: about 10 s for 50,000 documents of 120 words.
+  index, and the first lexical one re-analyzes the searched field: about 10 s
+  for 50,000 documents of 120 words, about three times slower under
+  `english` above about 65,000 distinct words.
 
 **SQLite files** allow one writer at a time: run one ingestion per store file
 (queries can read alongside); a writer waiting longer than
@@ -387,7 +391,7 @@ disables the retry.
 | `graph.community_detection.enabled` | `true` | LightRAG-only, lighter ingestion (`global` and `drift` need it) |
 | `search.reranking.enabled` | `true` | No rerank model in the region, or no reranking wanted |
 | `search.token_manager.max_context_tokens` | `30000` | More (or cheaper, less) context ([Context budget](#context-budget)) |
-| `indexing.reset` | `false` | One run that rebuilds the stores from the whole corpus |
+| `indexing.reset` | `false` | One run that rebuilds the stores from the whole corpus (quarantined documents skipped) |
 | `aws.bedrock.guardrail.identifier` | `null` | Screen queries and answers ([Guardrail](#guardrail)) |
 | `observability.enabled` | `false` | OpenTelemetry traces ([Observability](#observability)) |
 
@@ -453,21 +457,25 @@ with the `ApplyGuardrail` API; the guardrail must exist in
     no `sources` either). Masking covers the answer, not its sources (corpus
     text as retrieved): keep text a caller must not see out of the corpus.
   - Interventions are in `RAGOutput.metadata.guardrail`, the WARNING log and
-    the trace. A guardrail API error fails the query: never unscreened.
+    the trace. A guardrail API error fails the query, or with
+    `processing.ignore_errors` gives the degraded answer with
+    `metadata.error`: never unscreened.
 - **Not on model calls.** Model calls inside a query run unguarded: attached
   to a call, a guardrail evaluates the whole prompt, so a `PROMPT_ATTACK`
   filter judges retrieved text as user input (false blocks, cost growing
   with context)
   ([prompt attacks](https://docs.aws.amazon.com/bedrock/latest/userguide/guardrails-prompt-attack.html)).
   Contextual grounding checks are not run.
-- **Ingestion and evaluation run unguarded.** A PII guardrail that anonymizes
+- **Ingestion and the evaluation judges run unguarded** (`run-eval`'s answers
+  come from the screened query path). A PII guardrail that anonymizes
   `NAME` would rewrite entity names to `{NAME}` (merging distinct people), and
   a `PROMPT_ATTACK` filter can block instruction-like corpus text. On the
   query path, `NAME` anonymization also strips the name a question retrieves
   by, so the baseline guardrail `iac/` creates anonymizes email, phone and
   card numbers but not `NAME` ([iac/README.md](../iac/README.md#guardrail)).
 - **Custom code** calling `setup_chain` or `get_model` for non-query work
-  passes `model_purpose=ModelPurpose.INGESTION` (or `EVALUATION`). Unmarked
+  passes `model_purpose=ModelPurpose.INGESTION` (or `EVALUATION`;
+  `from unified_kg_rag import ModelPurpose`). Unmarked
   calls default to `QUERY`: the query-time transient-error retry, and neither
   the response cache nor the ingestion effort.
 
@@ -711,7 +719,8 @@ translation stage is skipped at no cost, even with `enabled: true`.
   with `the cluster has no analyzer '<name>'`. `nori` comes from the
   `analysis-nori` plugin: the
   [local OpenSearch container](#local-stores-in-containers) has it, an Amazon
-  OpenSearch Service domain only once its Nori package is associated. The
+  OpenSearch Service domain only once its Nori package is associated (a
+  blue/green deployment). The
   [CDK deployment](../iac/README.md) therefore maps `ko` to the built-in `cjk`
   analyzer (character bigrams); switching a domain to Nori is the
   `opensearch_korean_analyzer` row of its
@@ -956,7 +965,8 @@ SQLite file instead (`providers.doc_status.kind: sqlite`; see
   Re-run once with `indexing.reset: true` and the registry on, or keep it off
   for that suffix.
 - **Rebuild** with `indexing.reset: true`: the whole corpus is indexed again
-  without taking the suffix offline, and a failed reset drops nothing, so it
+  without taking the suffix offline, except quarantined documents, which are
+  skipped and keep their records; a failed reset drops nothing, so it
   is safe to re-run (how it works:
   [Operator Runbook: Re-ingest](./operations.md#re-ingest)).
 
@@ -1232,8 +1242,10 @@ run-eval --data-path s3://my-bucket/eval/my_eval_data.json \
 Either path can be an `s3://` URI, so `run-eval` also runs as a one-off task on
 the CDK stack ([After deploy](../iac/README.md#5-evaluate-from-inside-the-vpc)).
 Results are uploaded at the end with the `aws.s3.encryption` settings; a
-failed upload exits non-zero and keeps the local files (path printed). The
-principal needs `s3:GetObject` on the dataset and `s3:PutObject` on the
+failed upload exits non-zero and keeps the local files (path printed). S3 is
+reached with the config's `aws.profile_name` / `aws.region_name`; the shell's
+`AWS_PROFILE` / `AWS_REGION` fill them only when the config leaves them unset.
+The principal needs `s3:GetObject` on the dataset and `s3:PutObject` on the
 prefix.
 
 Results are written as `evaluation_{results,reports,summary}_<timestamp>.json`

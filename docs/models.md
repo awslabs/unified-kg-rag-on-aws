@@ -119,8 +119,8 @@ On Claude models that support explicit prompt caching, the
 end of each system prompt is marked as a cache checkpoint: a `cachePoint` block
 on the Converse API (every inference profile) and `cache_control` on
 InvokeModel. A system prompt shorter than the model's minimum checkpoint size
-(512 tokens on Claude Sonnet/Opus 5.5 and Opus 5, 1024 on most others, 4096 on
-Claude Haiku 4.5 and Opus 4.5-4.7) gets no marker, because Bedrock would accept
+(512 tokens on Claude Sonnet/Opus/Haiku 5.5 and Opus 5, 1024 on most others,
+2048 on Claude 3.5 Haiku, 4096 on Claude Haiku 4.5 and Opus 4.5-4.7) gets no marker, because Bedrock would accept
 it but cache nothing. Cache reads show up as `cache_read` in the response's
 `usage_metadata.input_token_details`, and cached input tokens do not count
 against the tokens-per-minute quota.

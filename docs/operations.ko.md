@@ -56,7 +56,9 @@
 증분 실행이 해당 문서를 다시 추출하고 그 수를 로그로 남깁니다
 ([사용자 가이드 §5](./user-guide.ko.md#작업-흐름)).
 
-reset 동안에도 질의는 이전 내용을 읽습니다. 실패한 reset은 아무것도 지우지 않으므로
+reset 동안 벡터 질의는 새 인덱스로 하나씩 바뀔 때까지 이전 인덱스를 읽고, 그래프 질의는
+마지막 정리 전까지 이전 항목과 다시 만든 항목을 섞어 봅니다. 격리된 문서는 건너뛰고 레코드를
+그대로 둡니다. 실패한 reset은 아무것도 지우지 않으므로
 다시 실행하면 됩니다. 그래프 쓰기가 일부 실패한 reset은(`indexing.max_failure_rate`
 이내라도) 역시 실패하며(인덱싱 결과의 `neptune_sweep`), 이전 그래프에 남은 것은 다음
 실행이 지웁니다. **끝나면 `indexing.reset`을 `false`로 되돌리세요.** 그러지 않으면
@@ -106,7 +108,7 @@ reset 동안에도 질의는 이전 내용을 읽습니다. 실패한 reset은 �
 | 캐시 | 위치 | 참고 |
 |---|---|---|
 | 단계 체크포인트(로컬) | `<--cache-directory>/<pipeline_id>/`(기본값 `cache/`) | 재개할 때 재사용 |
-| 단계 체크포인트(S3) | `s3://<bucket>/<--s3-prefix>/<pipeline_id>/`(기본값 `pipeline-runs`) | `--s3-sync`일 때 단계마다, 그리고 SIGTERM을 받으면 올리므로 새 태스크가 이어서 재개함. 다운로드나 업로드가 실패하면 `CacheSyncError`로 실행이 실패함. `cache.ttl_seconds`가 아니라 버킷 수명 주기로 만료 |
+| 단계 체크포인트(S3) | `s3://<bucket>/<--s3-prefix>/<pipeline_id>/`(기본값 `pipeline-runs`) | `--s3-sync`일 때 단계마다, 그리고 SIGTERM을 받으면 올리므로 새 태스크가 이어서 재개함. 다운로드나 마지막 업로드가 실패하면 `CacheSyncError`로 실행이 실패함. 단계마다 또는 멈출 때 올리는 업로드가 실패하면 경고만 남기고(다음 업로드가 다시 시도), 쓰기 임대를 잃은 뒤 멈추면 올리지 않음. `cache.ttl_seconds`가 아니라 버킷 수명 주기로 만료 |
 | LLM 응답 캐시 | `<stage checkpoint dir>/llm-cache/` | 같은 파이프라인 ID로 다시 실행할 때 재사용. `cache.llm_responses.enabled: false`로 끄고, `--force-rebuild`는 무시함 |
 | 추출 저장소 | `graphrag-extraction-records-<suffix>`(`indexing.opensearch.extraction_records_index_prefix`) | 저장된 텍스트 단위가 가리키는 동안 이후 실행이 재사용하는 청크별 추출 결과. `clear`와 `--force-rebuild`는 유지하며, 통째로 버리려면 인덱스를 삭제 |
 | 임베딩 캐시 | `s3://<aws.s3.bucket_name>/embedding-cache/cache.json` | `indexing.opensearch.persist_embedding_cache: true`일 때만 |
@@ -242,9 +244,10 @@ curl -X PUT "https://<OpenSearch endpoint>/_all/_settings" \
   전에 죽은 바뀐 문서는 인덱싱된 버전을 유지하고, 인덱싱 중에 죽은 문서는 지워집니다.
 - **한계.** 무엇을 처리하든 죽는 태스크(망가진 이미지)는 문서를 하나씩 격리합니다.
   배포를 고친 뒤 파일을 수정하거나 한도를 올리세요. 의심 문서 하나만 처리하는 실행에서
-  우연히 한 번 죽어도 격리됩니다. SIGTERM으로 시간 초과되는 실행은 세지 않으므로 제한
-  시간을 늘리세요. 텍스트 단위를 만들지 못하는 문서는 `PENDING`으로 남고 같은 방식으로
-  격리됩니다.
+  우연히 한 번 죽어도 격리됩니다. SIGTERM 정지 제한 시간(ECS에서 120초) 안에 시도를 닫은
+  실행은 세지 않지만, 저장소 요청 하나가 180초까지 걸릴 수 있어 제한 시간이 지나 요청 도중
+  종료된 실행은 죽음으로 셀 수 있습니다. 텍스트 단위를 만들지 못하는 문서는 `PENDING`으로
+  남고 같은 방식으로 격리됩니다.
 - **재개한 실행**은 같은 파이프라인 ID의 델타를 다시 쓰지만, 레지스트리가 그 델타와
   맞지 않거나 원인 문서를 가려낼 수 있으면 `document_loading`부터 재개합니다(WARNING
   `... resuming from 'document_loading' ...`).
@@ -346,7 +349,7 @@ EMF 지표를 읽습니다(중지된 실행도 끝낸 단계는 보고함). 태�
 | `OpenSearchFreeStorageLow` | 가장 많이 찬 데이터 노드의 여유 공간이 `opensearch_volume_gib`의 40% 이하 | 쓰기 차단 기준에 이르기 전에 `opensearch_volume_gib`(또는 `opensearch_count`)를 늘려 다시 배포합니다 |
 | `OpenSearchJvmPressure` | JVM 메모리 압력이 3분 동안 95% 이상 | 더 큰 `opensearch_instance`를 쓰거나 데이터 노드를 늘립니다 |
 | `DocStatusWriteThrottled` | 문서 상태 테이블이 쓰기를 스로틀링함(5분) | 레지스트리 호출은 백오프하며 재시도하고, 그래도 스로틀링되면 `DocStatusRegistryError`로 실행이 실패합니다. 겹친 실행이 있는지 확인하고 해소된 뒤 다시 실행합니다 |
-| `NeptuneHighCpu` | 라이터의 평균 CPU가 15분 동안 90% 이상 | 지속적인 포화입니다. 더 큰 `neptune_instance`(또는 `neptune_serverless_ncu` 최댓값)를 쓰거나 `indexing.neptune.index_concurrency`를 낮춥니다 |
+| `NeptuneHighCpu` | 라이터의 평균 CPU가 15분 동안 90% 이상 | 지속적인 포화입니다. 더 큰 `neptune_instance`(또는 `neptune_serverless_ncu` 최댓값)를 쓰거나, 올려 두었다면 `indexing.neptune.index_concurrency`(기본값 `1`)를 낮춥니다 |
 | `NeptuneLowFreeableMemory` | 5분 안에 라이터의 가용 메모리가 한 번이라도 512MiB 이하. Serverless에서는 라이터가 최대 용량일 때만 | 메모리 부족 오류가 날 수 있습니다. 더 큰 `neptune_instance`(또는 `neptune_serverless_ncu` 최댓값)를 씁니다 |
 | `NeptuneServerlessAtMaxCapacity` | Serverless만: 라이터가 5분 구간 3회 연속 `neptune_serverless_ncu` 최댓값에 있음 | 최댓값을 높입니다(부하 전에 용량이 확보되도록 최솟값을 높여도 됨) |
 | `NeptuneGremlinErrors` | 3분 연속 어느 인스턴스에서든 Gremlin 서버 오류가 있음 | 지속적인 실패입니다(재시도되는 쓰기 충돌은 짧게 몰려 이 경보를 울리지 않음). 태스크 로그에서 실패한 요청을 찾습니다 |
