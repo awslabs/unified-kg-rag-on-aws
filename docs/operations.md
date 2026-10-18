@@ -231,8 +231,11 @@ would stop every later run, so runs count deaths and isolate the culprit.
 
 - **Only deaths count.** A run marks an attempt open on every document it
   processes and clears it however it ends in the process (finished, failed,
-  SIGTERM, Ctrl-C). An attempt left open by a dead task is counted
-  (`attempt_count`, batch in `crash_batch`). `indexing.reset` counts nothing.
+  SIGTERM, Ctrl-C). A run that lost its write lease retakes it to clear them
+  when no other run holds it (none does, or its lease expired); while
+  another run holds it they stay open and count as one death. An attempt
+  left open by a dead task is counted (`attempt_count`, batch in
+  `crash_batch`). `indexing.reset` counts nothing.
 - **Quarantine.** After `indexing.max_document_attempts` (default `3`)
   deaths in a row, the last with the document alone, the next run logs a
   WARNING naming the file, removes what the attempts wrote, records it

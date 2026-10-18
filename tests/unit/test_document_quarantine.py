@@ -431,3 +431,45 @@ def test_a_run_that_lost_its_lease_leaves_its_attempts_open() -> None:
     finally:
         remove_write_fence(token)
     assert {r.attempt_batch is not None for r in harness.store.list_all()} == {True}
+
+
+@pytest.mark.parametrize(
+    ("holder", "closed"),
+    [("none", True), ("this run", True), ("another run", False)],
+)
+def test_a_run_that_lost_its_lease_closes_its_attempts_unless_another_holds_it(
+    holder: str, closed: bool
+) -> None:
+    # Old behaviour: the close failed on the lost lease whoever held it, so
+    # a run that only lost its lease (a slow registry) counted as a death of
+    # every document it processed. It retakes a lease no other run holds.
+    import time
+    from types import SimpleNamespace
+
+    from unified_kg_rag.application.ingestion.namespace_lease import NamespaceLease
+    from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
+    from unified_kg_rag.domain.models import Config
+
+    harness = IncrementalRun()
+    docs = [document(path, content) for path, content in _A.items()]
+    delta, fingerprints = detect_delta(docs, harness.store, max_attempts=3)
+    open_attempts(harness.store, delta, fingerprints)
+    pipe = object.__new__(DataIngestionPipeline)
+    pipe.config = Config()
+    pipe._doc_status = harness.store
+    context = SimpleNamespace(
+        incremental_delta=delta, incremental_fingerprints=fingerprints
+    )
+    with NamespaceLease(harness.store, "ns", 60) as lease:
+        lease._lose("a renewal failed")
+        if holder == "none":
+            harness.store.release_lease("ns", lease.owner)
+        elif holder == "another run":
+            harness.store.leases["ns"] = ("other", time.time() + 60)
+        pipe._close_attempts(context, lease)  # type: ignore[arg-type]
+    still_open = {r.attempt_batch is not None for r in harness.store.list_all()}
+    assert still_open == {not closed}
+    # The retaken lease is released at the end; another run's is kept.
+    assert (harness.store.lease_holder("ns") or ("",))[0] == (
+        "other" if holder == "another run" else ""
+    )

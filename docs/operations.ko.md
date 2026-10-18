@@ -218,8 +218,11 @@ curl -X PUT "https://<OpenSearch endpoint>/_all/_settings" \
 모두 멈추게 하므로, 실행은 죽은 횟수를 세고 원인 문서를 가려냅니다.
 
 - **죽은 경우만 셉니다.** 실행은 처리하는 문서마다 시도 표시를 열고, 프로세스 안에서
-  어떻게 끝나든(완료, 실패, SIGTERM, Ctrl-C) 닫습니다. 태스크가 죽어 열린 채 남은 시도만
-  셉니다(`attempt_count`, 배치는 `crash_batch`). `indexing.reset`은 세지 않습니다.
+  어떻게 끝나든(완료, 실패, SIGTERM, Ctrl-C) 닫습니다. 쓰기 임대를 잃은 실행은 다른
+  실행이 임대를 가지고 있지 않으면(아무도 없거나 그 임대가 만료됨) 임대를 다시 얻어
+  닫습니다. 다른 실행이 가지고 있으면 열린 채 두므로 죽은 것으로 한 번 셉니다. 태스크가
+  죽어 열린 채 남은 시도는 다음 실행이 셉니다(`attempt_count`, 배치는 `crash_batch`).
+  `indexing.reset`은 세지 않습니다.
 - **격리.** `indexing.max_document_attempts`(기본값 `3`)번 연달아 죽고 마지막이 그
   문서만 처리한 실행이었다면, 다음 실행이 파일 이름을 밝힌 WARNING을 남기고 시도들이
   쓴 것을 지운 뒤 `QUARANTINED`로 기록하고(이유는 `error_info`) 나머지를 인덱싱합니다

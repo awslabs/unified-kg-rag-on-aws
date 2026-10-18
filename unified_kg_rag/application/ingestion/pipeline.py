@@ -572,9 +572,9 @@ class DataIngestionPipeline:
             # The lease covers the checkpoint too: it is downloaded only once
             # no other run writes the namespace, and uploaded before the
             # lease is released.
-            with self._namespace_lease():
+            with self._namespace_lease() as lease:
                 context = self._run_leased(
-                    source_path, resolved_pipeline_id, resolved_resume_stage
+                    source_path, resolved_pipeline_id, resolved_resume_stage, lease
                 )
 
             if context.status == PipelineStageStatus.FAILED:
@@ -611,9 +611,10 @@ class DataIngestionPipeline:
         source_path: Path,
         pipeline_id: str,
         resume_stage: str | None,
+        lease: NamespaceLease | None,
     ) -> PipelineContext:
         """Download the checkpoint, prepare the run and execute it (under the
-        namespace's lease), closing the run's processing attempts when it
+        namespace's ``lease``), closing the run's processing attempts when it
         finishes, fails with an error or is stopped (KeyboardInterrupt,
         ``PipelineInterrupted``), and uploading the checkpoint of a stopped
         run."""
@@ -666,7 +667,7 @@ class DataIngestionPipeline:
             # A second stop request waits for the attempts and the checkpoint.
             self._checkpointing = True
             try:
-                self._close_attempts(context)
+                self._close_attempts(context, lease)
                 self._checkpoint_on_stop()
             finally:
                 self._checkpointing = False
@@ -675,9 +676,9 @@ class DataIngestionPipeline:
         # Any other BaseException (SystemExit, or a test's simulated death)
         # leaves the attempts open, like a process that died.
         except Exception:
-            self._close_attempts(context)
+            self._close_attempts(context, lease)
             raise
-        self._close_attempts(context)
+        self._close_attempts(context, lease)
         return context
 
     def _incremental_delta(self, context: PipelineContext | None) -> bool:
@@ -707,19 +708,31 @@ class DataIngestionPipeline:
             scope=context.incremental_scope,
         )
 
-    def _close_attempts(self, context: PipelineContext | None) -> None:
+    def _close_attempts(
+        self, context: PipelineContext | None, lease: NamespaceLease | None
+    ) -> None:
         """Close the run's processing attempts (best effort: an attempt left
-        open counts as a death of the run, see ``domain.ingestion.attempts``)."""
+        open counts as a death of the run, see ``domain.ingestion.attempts``).
+
+        A run that lost its ``lease`` takes it back to close them unless
+        another run holds it now: a lost lease is no death of the run."""
         if not self._incremental_delta(context):
             return
         assert context is not None and context.incremental_delta is not None
         assert self._doc_status is not None
+        close = functools.partial(
+            close_attempts,
+            self._doc_status,
+            context.incremental_delta,
+            context.incremental_fingerprints,
+        )
         try:
-            close_attempts(
-                self._doc_status,
-                context.incremental_delta,
-                context.incremental_fingerprints,
-            )
+            try:
+                close()
+            except NamespaceLeaseError:
+                if lease is None or not lease.retake():
+                    raise
+                close()
         except Exception as e:  # noqa: BLE001 - counted as a death at worst
             logger.warning(
                 "Closing the run's processing attempts failed (%s); the next "

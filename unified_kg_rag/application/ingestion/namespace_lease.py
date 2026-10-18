@@ -212,3 +212,25 @@ class NamespaceLease:
                 f"'{self.namespace}' ({self._lost}): stopping before writing "
                 "over the run that holds it now. Re-run once that run ended."
             )
+
+    def retake(self) -> bool:
+        """Take the lease back after losing it, when no other run holds it
+        (it was released, or expired) or the store still has it as this
+        run's; returns whether this run holds it again. One conditional
+        write, like a renewal, so it never takes another run's lease; the
+        heartbeat is not restarted, so the term it buys is for a last short
+        write (closing the run's attempts)."""
+        sent = time.time()
+        try:
+            held = self.store.try_acquire_lease(
+                self.namespace, self.owner, self.seconds
+            )
+        except Exception as e:  # noqa: BLE001 - the lease stays lost
+            logger.warning(
+                "Retaking the lease of namespace '%s' failed: %s", self.namespace, e
+            )
+            return False
+        if held:
+            self._lost = None
+            self._renewed_at = sent
+        return held

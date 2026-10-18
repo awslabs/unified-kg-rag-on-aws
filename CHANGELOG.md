@@ -1259,6 +1259,10 @@ changed once with the full-config keys (#332).
 - A SIGTERM no longer waits for the model calls in flight (up to the call
   timeout, past the task's 120 s stop timeout) or, in entity resolution and
   MinHash deduplication, for every queued process-pool task (#PR).
+- A run that lost its write lease closes its processing attempts when no
+  other run holds the lease (it retakes it for the close) instead of
+  counting as a death of every document it processed; while another run
+  holds it the attempts stay open, as before (#PR).
 - A lost lease is no longer swallowed by `OpenSearchClient.delete_indices`
   (reported as an `AWSServiceError` after the remaining batches were sent)
   or by the best-effort cleanup of unused extraction records (#PR).

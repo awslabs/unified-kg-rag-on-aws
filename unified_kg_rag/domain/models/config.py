@@ -2131,7 +2131,9 @@ class IndexingConfig(BaseModel):
         default=3,
         ge=1,
         description="Incremental runs: once runs died this many consecutive "
-        "times (the task was killed; a stopped or failed run does not count) "
+        "times (the task was killed; a stopped or failed run does not count, "
+        "nor one that lost its write lease unless another run held it when "
+        "it ended) "
         "processing a document's unchanged content, the runs isolate it: a "
         "document that died processed alone "
         "is quarantined (the next run removes what the attempts wrote, "
