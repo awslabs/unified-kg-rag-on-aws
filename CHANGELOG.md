@@ -625,7 +625,7 @@ changed once with the full-config keys (#332).
   so global search maps that many more reports until a rebuild (a
   synthetic 12-topic corpus grew from 12 to 60 reports over four delta
   runs). The cut stays bounded by `max_reports_per_level` and the fall-back
-  to a shallower cut (#PR).
+  to a shallower cut (#347).
 - `docs/configuration.md`, a configuration reference generated from the
   config models: every key with its type, constraints, default and
   description, and the moved keys. `scripts/gen_config_reference.py`
@@ -811,7 +811,7 @@ changed once with the full-config keys (#332).
   without a router call. The router guide sends questions that chain facts
   from a named entity ("where was the founder of X born") to `local`
   instead of `mix`: on the synthetic multi-hop harness `local` answers them
-  (exact match 0.925) and `mix` does not (0.40) (#PR).
+  (exact match 0.925) and `mix` does not (0.40) (#347).
 - A connected component of fewer than
   `graph.community_detection.min_community_size` entities (an isolated
   entity, a pair linked only to each other) gets no community or report.
@@ -824,14 +824,14 @@ changed once with the full-config keys (#332).
   still partitions the whole graph, so every other community stays as it
   was. Their entities stay in local search. `min_community_size: 1` clusters every
   component. Existing indexes keep their one-entity reports until a
-  rebuild (`indexing.reset: true`) (#PR).
+  rebuild (`indexing.reset: true`) (#347).
 - A global-search cut larger than `search.global_search.max_reports_per_level`
   gives way to the deepest shallower cut that fits, which covers the same
   entities in fewer, broader reports (`global_cut_depth` in the search
   metadata); only when even the root cut does not fit are the reports most
   similar to the query mapped (`global_level_capped`). A cut of exactly the
   cap is no longer taken for a truncated one when
-  `indexing.opensearch.max_query_size` is larger than the cap (#PR).
+  `indexing.opensearch.max_query_size` is larger than the cap (#347).
 - DRIFT costs less per query: the follow-up local searches no longer rerank
   (the evidence of all of them is reranked once, at the final fusion: one
   rerank call a query instead of up to 61), the defaults are
@@ -839,11 +839,11 @@ changed once with the full-config keys (#332).
   calls a query; MS GraphRAG's 20 and 3 made up to 67). On the synthetic
   quality harness DRIFT keeps exact match 1.000 with 4.4 to 4.5 actions a
   query instead of 7.3 to 7.9 (16.9 instead of 46.8 when every answer
-  raises five follow-ups) (#PR).
+  raises five follow-ups) (#347).
 - Query-time fan-out has its own knob, `search.max_concurrency` (default 10,
   per query): the global map calls, the dynamic-selection ratings and the
   DRIFT primer calls and follow-up searches no longer use the ingestion
-  setting `processing.max_concurrency` (default 40) (#PR).
+  setting `processing.max_concurrency` (default 40) (#347).
 - The design doc is about half as long: each section opens with a summary,
   the ingestion and incremental sections are split into short subsections,
   the merge rules and the retrieval error policy are tables, the
@@ -1276,7 +1276,7 @@ changed once with the full-config keys (#332).
   `search.global_search.community_depth` bounds only the whole-depth
   ratings of a selection that found nothing relevant. The walk stopped at
   `community_depth`, so a relevant report's relevant children were never
-  rated (#PR).
+  rated (#347).
 - Global search credits a key point only to the reports it comes from: the
   map prompt now asks for the `report_ids` behind each point (MS GraphRAG's
   `[Data: Reports (ids)]`), and only those reports become context and
@@ -1284,14 +1284,14 @@ changed once with the full-config keys (#332).
   from one report put up to a dozen unrelated ones in the answer context and
   `sources`; on a synthetic 40-topic corpus a single-topic question reported
   4 sources (1 relevant) and now reports the 1. A point without usable ids
-  (a custom `global_map` prompt) still credits its batch (#PR).
+  (a custom `global_map` prompt) still credits its batch (#347).
 - One failed DRIFT action (a throttled or timed-out model call) no longer
   fails the whole query: its answer is left out, the local evidence it
   found is kept and `degraded_error` names the failure. A query fails only
   on a fatal error, or when every action (or every primer call) failed and
   `processing.ignore_errors` is off; a round whose actions all failed ends
   the rounds. When the query does fail, the actions still in flight are
-  cancelled instead of running their LLM calls to completion (#PR).
+  cancelled instead of running their LLM calls to completion (#347).
 - A paired strategy comparison no longer drops the queries a strategy
   failed to answer: a strategy that crashed on the queries it would lose
   looked as good as one that answered them. A failed answer scores 0 on
