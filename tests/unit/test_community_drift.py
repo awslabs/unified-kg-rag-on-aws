@@ -64,6 +64,7 @@ class TestMeasureCommunityDrift:
             # p's parent is not among the run's communities: both are roots.
             "added_roots": 2,
             "overlap_share": 0.0,
+            "outdated_reports": 0,
             "rebuild_recommended": False,
         }
 
@@ -87,6 +88,14 @@ class TestMeasureCommunityDrift:
         assert drift.rebuild_recommended
         below = measure_community_drift(entities, communities, 0.6)
         assert below is not None and not below.rebuild_recommended
+
+    def test_a_kept_report_citing_removed_text_recommends_a_rebuild(self) -> None:
+        # Regression: a deletion-only run appends no communities, so the drift
+        # was None although the kept reports may still state the removed text.
+        drift = measure_community_drift([], [], 0.5, {"report-1"})
+        assert drift is not None
+        assert (drift.outdated_reports, drift.clustered_entities) == (1, 0)
+        assert drift.rebuild_recommended
 
 
 def test_counts_the_roots_every_cut_gains() -> None:

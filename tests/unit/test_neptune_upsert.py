@@ -33,6 +33,13 @@ class RecordingTraversal:
         return _step
 
 
+def _stored_ends(op: str, rels: list[Relationship]) -> list[str] | None:
+    """The endpoint read before the writes: every endpoint is stored."""
+    if op == "Reading edge endpoints":
+        return [end for rel in rels for end in (rel.source_id, rel.target_id)]
+    return None
+
+
 @pytest.fixture
 def indexer(mocker):
     mocker.patch("unified_kg_rag.adapters.storage.neptune_indexer.NeptuneClient")
@@ -49,10 +56,15 @@ def test_write_relationships_isolates_a_failing_edge(indexer, mocker) -> None:
     indexer.neptune_client.g = RecordingTraversal([])
 
     calls = {"n": 0}
+    rels = [
+        Relationship(id="r1", source_id="e1", target_id="e2"),
+        Relationship(id="r2", source_id="e2", target_id="e3"),
+        Relationship(id="r3", source_id="e3", target_id="e4"),
+    ]
 
     def flaky_execute(traversal, op, *, results=False):
-        if op != "Relationship indexing":  # the drop before the writes
-            return []
+        if op != "Relationship indexing":  # the reads and drops before
+            return _stored_ends(op, rels) or []
         calls["n"] += 1
         if calls["n"] == 2:  # second edge fails
             raise RuntimeError("neptune write rejected")
@@ -60,13 +72,7 @@ def test_write_relationships_isolates_a_failing_edge(indexer, mocker) -> None:
 
     mocker.patch.object(indexer, "_execute_with_retries", side_effect=flaky_execute)
 
-    stats = indexer.upsert_relationships(
-        [
-            Relationship(id="r1", source_id="e1", target_id="e2"),
-            Relationship(id="r2", source_id="e2", target_id="e3"),
-            Relationship(id="r3", source_id="e3", target_id="e4"),
-        ]
-    )
+    stats = indexer.upsert_relationships(rels)
     assert stats.total_items == 3
     assert stats.successful_items == 2
     assert stats.failed_items == 1
@@ -78,7 +84,8 @@ def test_write_relationships_counts_an_edge_without_source_as_failed(
     indexer, mocker
 ) -> None:
     # addE off V().has(id, source) yields no traverser and no error when the
-    # source vertex is missing; the edge must not be counted as written.
+    # source vertex is missing (here: deleted after the endpoint read); the
+    # edge must not be counted as written.
     indexer.neptune_client.g = RecordingTraversal([])
     written = {"r1": ["r1"], "r2": [], "r3": ["r3"]}
     rels = [
@@ -92,7 +99,9 @@ def test_write_relationships_counts_an_edge_without_source_as_failed(
         indexer,
         "_execute_with_retries",
         side_effect=lambda traversal, op, *, results=False: (
-            written[next(order)] if op == "Relationship indexing" else []
+            written[next(order)]
+            if op == "Relationship indexing"
+            else _stored_ends(op, rels) or []
         ),
     )
 
@@ -110,7 +119,14 @@ def test_an_edge_whose_drop_failed_is_not_re_added(indexer, mocker) -> None:
     built = mocker.patch.object(indexer, "_build_add_edge_traversal")
     drops: list[str] = []
 
+    rels = [
+        Relationship(id="r1", source_id="e1", target_id="e2"),
+        Relationship(id="r2", source_id="e2", target_id="e3"),
+    ]
+
     def execute(build, op, **_kwargs):
+        if (ends := _stored_ends(op, rels)) is not None:
+            return ends
         if op == "Dropping existing edges":
             drops.append(op)
             if len(drops) == 1:  # the first batch's drop fails its retries
@@ -119,12 +135,7 @@ def test_an_edge_whose_drop_failed_is_not_re_added(indexer, mocker) -> None:
 
     mocker.patch.object(indexer, "_execute_with_retries", side_effect=execute)
 
-    stats = indexer.upsert_relationships(
-        [
-            Relationship(id="r1", source_id="e1", target_id="e2"),
-            Relationship(id="r2", source_id="e2", target_id="e3"),
-        ]
-    )
+    stats = indexer.upsert_relationships(rels)
 
     assert [c.args[1].id for c in built.call_args_list] == ["r2"]
     assert (stats.successful_items, stats.failed_ids) == (1, ["r1"])
@@ -138,17 +149,18 @@ def test_edges_are_written_index_concurrency_at_a_time(indexer, mocker) -> None:
     threads: set[int] = set()
     barrier = threading.Barrier(4, timeout=5)
 
+    rels = [
+        Relationship(id=f"r{i}", source_id=f"e{i}", target_id="e9") for i in range(8)
+    ]
+
     def execute(traversal, op, *, results=False):
-        if op != "Relationship indexing":  # the drop before the writes
-            return []
+        if op != "Relationship indexing":  # the reads and drops before
+            return _stored_ends(op, rels) or []
         threads.add(threading.get_ident())
         barrier.wait()
         return ["edge-id"]
 
     mocker.patch.object(indexer, "_execute_with_retries", side_effect=execute)
-    rels = [
-        Relationship(id=f"r{i}", source_id=f"e{i}", target_id="e9") for i in range(8)
-    ]
 
     stats = indexer.upsert_relationships(rels)
 
@@ -309,23 +321,24 @@ def test_relationship_pre_drop_is_scoped_to_the_suffix(indexer, mocker) -> None:
             return _step
 
     indexer.neptune_client.g = Recorder()
+    rels = [
+        Relationship(
+            id="r1",
+            source_id="e1",
+            target_id="e2",
+            attributes={Constants.INDEX.value: "tenant-a"},
+        )
+    ]
     mocker.patch.object(
         indexer,
         "_execute_with_retries",
-        side_effect=lambda build, op, **kw: [build(indexer.neptune_client.g)],
+        side_effect=lambda build, op, **kw: (
+            _stored_ends(op, rels) or [build(indexer.neptune_client.g)]
+        ),
     )
     mocker.patch.object(indexer, "_build_add_edge_traversal")
 
-    indexer.upsert_relationships(
-        [
-            Relationship(
-                id="r1",
-                source_id="e1",
-                target_id="e2",
-                attributes={Constants.INDEX.value: "tenant-a"},
-            )
-        ]
-    )
+    indexer.upsert_relationships(rels)
 
     names = [name for name, _ in steps]
     # The edge drop is filtered by an endpoint-vertex label before drop().

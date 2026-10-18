@@ -91,19 +91,31 @@ def _union_filters(
 def union_document_filters(
     current: dict[str, Any] | None, new: dict[str, Any] | None
 ) -> dict[str, Any] | None:
-    """``current`` attributes with ``new``'s document ``filters`` unioned in.
+    """``current`` attributes with ``new``'s document ``filters`` unioned in
+    (see :func:`union_all_document_filters`)."""
+    return union_all_document_filters([current, new])
+
+
+def union_all_document_filters(
+    attribute_maps: list[dict[str, Any] | None],
+) -> dict[str, Any] | None:
+    """The first attributes with the later ones' document ``filters``
+    unioned in.
 
     An item merged from several text units cites every one of them, so it
     belongs under each of their documents' filter values (see
-    ``_union_filters``). Every other attribute is left as ``current`` has it.
-    Without this the merged item kept the filters of whichever instance the
+    ``_union_filters``). Every other attribute is left as the first map has
+    it. Without this the merged item kept the filters of whichever instance the
     merge happened to keep.
     """
     key = Constants.FILTERS.value
-    new_filters = (new or {}).get(key)
-    if not isinstance(new_filters, dict) or not new_filters:
+    current = attribute_maps[0]
+    if not any(
+        isinstance(filters, dict) and filters
+        for filters in ((attrs or {}).get(key) for attrs in attribute_maps[1:])
+    ):
         return current
-    return {**(current or {}), key: _union_filters((current, new))}
+    return {**(current or {}), key: _union_filters(attribute_maps)}
 
 
 def merge_attributes(
@@ -414,51 +426,58 @@ class BaseProcessor:
     def _merge_items(
         items: list[T],
         item_name: str,
-        field_mergers: dict[str, Callable[[Any, Any], Any]],
+        field_mergers: dict[str, Callable[[list[Any]], Any]],
         frequency_fields: list[str] | None = None,
         log_message_formatter: Callable[[T], str] | None = None,
     ) -> list[T]:
+        """Merge items by id into the first of each id (mutated).
+
+        A field merger gets the values of one id at once, in item order:
+        the first item's value (``None`` included), then the later items'
+        values that are not ``None``. Called once per id with a later value,
+        so merging a hub's thousands of statements is linear in them, not
+        quadratic (a pairwise fold re-merged the growing result each time).
+        """
         if not items:
             return []
 
         if frequency_fields is None:
             frequency_fields = []
 
-        merged_items_map = {}
-        merge_counts: dict[str, int] = defaultdict(int)
-        frequency_counts: dict[str, dict[str, dict[str, int]]] = {
-            field: defaultdict(lambda: defaultdict(int)) for field in frequency_fields
-        }
-
+        groups: dict[Any, list[T]] = {}
         for item in items:
             item_id = getattr(item, "id", None)
-            if item_id is None:
-                continue
-            merge_counts[item_id] += 1
+            if item_id is not None:
+                groups.setdefault(item_id, []).append(item)
 
-            if item_id not in merged_items_map:
-                merged_items_map[item_id] = item
-            else:
-                existing_item = merged_items_map[item_id]
+        merged_items_map: dict[Any, T] = {}
+        merge_counts: dict[Any, int] = {}
+        for item_id, group in groups.items():
+            first = group[0]
+            merged_items_map[item_id] = first
+            merge_counts[item_id] = len(group)
+            if len(group) > 1:
                 for field, merger in field_mergers.items():
-                    new_value = getattr(item, field, None)
-                    if new_value is not None:
-                        current_value = getattr(existing_item, field, None)
-                        setattr(existing_item, field, merger(current_value, new_value))
-
+                    later = [
+                        value
+                        for value in (getattr(i, field, None) for i in group[1:])
+                        if value is not None
+                    ]
+                    if later:
+                        setattr(
+                            first,
+                            field,
+                            merger([getattr(first, field, None), *later]),
+                        )
             for field in frequency_fields:
                 # `or ""` guards an explicit None field value (e.g. model-default
                 # Relationship.type / Claim.status): getattr's "" default only
                 # applies when the attribute is missing, not when it is None.
-                value = (getattr(item, field, "") or "").lower()
-                frequency_counts[field][item_id][value] += 1
-
-        for item_id, item in merged_items_map.items():
-            for field in frequency_fields:
-                counts = frequency_counts.get(field, {}).get(item_id, {})
-                if isinstance(counts, dict) and counts:
-                    most_frequent_value = max(counts, key=lambda k: counts[k])
-                    setattr(item, field, most_frequent_value)
+                counts: dict[str, int] = defaultdict(int)
+                for i in group:
+                    counts[(getattr(i, field, "") or "").lower()] += 1
+                # The first value on a tie (dicts keep insertion order).
+                setattr(first, field, max(counts, key=lambda k: counts[k]))
 
         total_merges = 0
         for item_id, count in merge_counts.items():

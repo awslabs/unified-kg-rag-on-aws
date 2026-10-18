@@ -32,8 +32,8 @@ class IndexingStats(BaseModel):
     errors: list[str] = Field(default_factory=list)
     # Ids of the items whose write failed, where the failure site knows them,
     # kept with multiplicity: a failure site records exactly one id per failed
-    # item, so an artifact whose write failed twice (e.g. two MemberOf edge
-    # batches of one community) appears twice. An incremental commit records
+    # item, so an artifact whose write failed twice (in two batches) appears
+    # twice. An incremental commit records
     # the documents owning these artifacts FAILED so the next run rewrites
     # them; see unattributed_failures for the failures no id was reported for.
     failed_ids: list[str] = Field(default_factory=list)

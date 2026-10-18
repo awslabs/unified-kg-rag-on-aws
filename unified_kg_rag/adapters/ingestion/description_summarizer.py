@@ -24,7 +24,7 @@ and every non-description field is left untouched.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from functools import cached_property
 from typing import TYPE_CHECKING, TypeVar
 
@@ -34,6 +34,7 @@ from unified_kg_rag.adapters.llm.chain_factory import setup_chain
 from unified_kg_rag.adapters.llm.retry import transient_error_predicate
 from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
 from unified_kg_rag.adapters.providers import Providers
+from unified_kg_rag.domain.ingestion.descriptions import merge_descriptions
 from unified_kg_rag.domain.models import (
     Config,
     Entity,
@@ -95,24 +96,61 @@ def needs_summary(config: Config, description: str | None) -> bool:
 def reuse_summaries(
     items: Sequence[_Summarized], stored: Sequence[_Summarized]
 ) -> None:
-    """Give each item the stored summary made from its description (in place).
+    """Give each item the summary made from its description (in place).
 
-    An item whose description equals the one its stored copy's summary was
-    made from takes that summary and its ``summarized_from`` mark, so it is
-    not summarized again (an LLM call per touched item on every run).
+    An item whose description equals the one a ``stored`` copy of its id
+    was summarized from takes that summary and its ``summarized_from`` mark,
+    so it is not summarized again (an LLM call per touched item on every
+    run). ``stored`` may hold several copies of an id (the stored one and
+    the one this run's graph resolution summarized).
+    """
+    summaries: dict[tuple[str, str], str | None] = {}
+    for copy in stored:
+        source = (copy.attributes or {}).get(SUMMARIZED_FROM_ATTRIBUTE)
+        if isinstance(source, str):
+            summaries.setdefault((copy.id, source), copy.description)
+    for item in items:
+        source = compute_hash(item.description or "")
+        if (item.id, source) not in summaries:
+            continue
+        item.description = summaries[(item.id, source)]
+        item.attributes = {**(item.attributes or {}), SUMMARIZED_FROM_ATTRIBUTE: source}
+
+
+def extend_summaries(
+    items: Sequence[_Summarized],
+    stored: Sequence[_Summarized],
+    added: Mapping[str, str | None],
+) -> None:
+    """Summarize a grown item from its stored summary, not all its text.
+
+    An item (by id) whose stored copy is a summary, that still cites every
+    text unit the stored copy cited (nothing was removed) and that this run
+    ``added`` a description to, takes the stored summary followed by the
+    added description (in place). Summarizing that instead of every line its
+    text units state keeps a hub entity a run touches at one call, as
+    LightRAG merges a new description into the stored one. An item that lost
+    a text unit keeps the description derived from its records: only a
+    summary of those drops what the removed units said.
     """
     by_id = {item.id: item for item in stored}
     for item in items:
         previous = by_id.get(item.id)
         source = (
             (previous.attributes or {}).get(SUMMARIZED_FROM_ATTRIBUTE)
-            if previous
+            if previous is not None
             else None
         )
-        if previous is None or source != compute_hash(item.description or ""):
+        new = added.get(item.id)
+        if (
+            previous is None
+            or source is None
+            or not new
+            or source == compute_hash(item.description or "")
+            or not set(previous.text_unit_ids or []) <= set(item.text_unit_ids or [])
+        ):
             continue
-        item.description = previous.description
-        item.attributes = {**(item.attributes or {}), SUMMARIZED_FROM_ATTRIBUTE: source}
+        item.description = merge_descriptions([previous.description, new])
 
 
 class DescriptionSummarizer:

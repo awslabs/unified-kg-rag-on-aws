@@ -25,7 +25,6 @@ from tests.fixtures.fakes.embeddings import HashingEmbeddingFactory
 from tests.fixtures.fakes.stores import FakeGraphStore, FakeVectorStore
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.application.ingestion import pipeline_stages as ps
-from unified_kg_rag.application.storage.indexing_manager import IndexingManager
 from unified_kg_rag.domain.ingestion.contributions import merge_contributions
 from unified_kg_rag.domain.ingestion.delta_detector import (
     assign_document_identity,
@@ -138,11 +137,15 @@ def _run(stage: ps.PipelineStage, context: PipelineContext) -> dict:
 
 def test_stages_run_end_to_end_and_report_a_failed_extraction() -> None:
     config = _config()
+    graph, vectors = FakeGraphStore(), FakeVectorStore(config.indexing.opensearch)
     providers = Providers(
         config,
         boto_session=MagicMock(),
         llm_factory=ScriptedLLMFactory(_respond),
         embedding_factory=HashingEmbeddingFactory(),
+        # The extraction store: a record it cannot store fails its unit.
+        vector_indexer_factory=lambda: vectors,
+        graph_indexer_factory=lambda: graph,
     )
     contract = _document("contract.txt", "Vendor supplies widgets to Buyer.")
     logistics = _document(
@@ -210,10 +213,6 @@ def test_stages_run_end_to_end_and_report_a_failed_extraction() -> None:
     assert len(context.community_reports) == 1
 
     indexing = ps.IndexingStage(config, doc_status=store, providers=providers)
-    graph, vectors = FakeGraphStore(), FakeVectorStore(config.indexing.opensearch)
-    indexing.indexing_manager = IndexingManager(
-        config, vector_indexer=vectors, graph_indexer=graph, providers=providers
-    )
     metrics = _run(indexing, context)
     assert metrics["total_failed"] == 0
     assert vectors.ids("text_units") == {u.id for u in context.text_units}

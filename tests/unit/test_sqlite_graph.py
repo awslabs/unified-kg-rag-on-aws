@@ -222,14 +222,6 @@ def test_suffixes_and_additional_suffix_isolate(tmp_path: Path) -> None:
     assert tenant.read_entities(["e1"], suffix="s2") == []
 
 
-def _members(indexer: SQLiteGraphIndexer) -> set[tuple[str, str]]:
-    with indexer.store.read("test") as connection:
-        rows = connection.execute(
-            "SELECT community_id, entity_id FROM memberships"
-        ).fetchall()
-    return {(c, e) for c, e in rows}
-
-
 def _vertex_ids(indexer: SQLiteGraphIndexer, label: str) -> list[str]:
     with indexer.store.read("test") as connection:
         rows = connection.execute(
@@ -245,41 +237,29 @@ def test_communities_index_clears_and_upsert_merges(
     indexer.index_communities(
         [_community("c1", ["a", "ghost"]), _community("c2", ["b"])]
     )
-    assert _members(indexer) == {("c1", "a"), ("c2", "b")}
-
-    # The upsert never clears: c2 stays; c1's members are replaced; a
-    # community without entity_ids keeps its memberships.
+    # The upsert never clears: c2 stays.
     indexer.upsert_communities([_community("c1", ["b"]), _community("c3", [])])
     assert _vertex_ids(indexer, "Community-default") == ["c1", "c2", "c3"]
-    assert _members(indexer) == {("c1", "b"), ("c2", "b")}
-    indexer.upsert_communities([_community("c1", None, size=7)])
-    assert _members(indexer) == {("c1", "b"), ("c2", "b")}
 
     indexer.index_communities([_community("c9", ["a"])])
     assert _vertex_ids(indexer, "Community-default") == ["c9"]
-    assert _members(indexer) == {("c9", "a")}
     indexer.index_communities([], suffixes=["default"])
     assert _vertex_ids(indexer, "Community-default") == []
-    assert _members(indexer) == set()
 
 
-def test_delete_by_id_drops_edges_and_memberships(
-    indexer: SQLiteGraphIndexer,
-) -> None:
+def test_delete_by_id_drops_edges(indexer: SQLiteGraphIndexer) -> None:
     _graph(indexer, [("a", "b"), ("b", "c")])
     indexer.upsert_communities([_community("c1", ["a", "b"])])
     stats = indexer.delete_by_id(["b"], suffix="default")
     assert stats.successful_items == 1
     assert indexer.read_entity_names() == [("a", "A"), ("c", "C")]
     assert indexer.find_incident_relationship_ids(["a", "c"]) == []
-    assert _members(indexer) == {("c1", "a")}
-    # Edges by id, and community vertices with their memberships.
+    # Edges by id, and community vertices.
     indexer.upsert_entities([_entity("b")])
     indexer.upsert_relationships([_rel("r", "a", "b")])
     indexer.delete_by_id(["r", "c1"], suffix="default")
     assert indexer.read_relationships(["r"]) == []
     assert _vertex_ids(indexer, "Community-default") == []
-    assert _members(indexer) == set()
 
 
 def test_delete_by_id_stays_in_one_suffix(indexer: SQLiteGraphIndexer) -> None:
@@ -308,18 +288,6 @@ def test_delete_by_id_deletes_edges_by_id(
     assert [e.id for e in indexer.read_entities(["a", "b"])] == ["a", "b"]
 
 
-def test_rebuilding_the_entity_label_drops_its_memberships(
-    indexer: SQLiteGraphIndexer,
-) -> None:
-    # Dropping an entity vertex drops its MemberOf edges, even when the
-    # community vertex stays: a re-added entity is not a member again.
-    indexer.upsert_entities([_entity("a"), _entity("b")])
-    indexer.upsert_communities([_community("c1", ["a", "b"])])
-    indexer.index_entities([_entity("a")])
-    assert _vertex_ids(indexer, "Community-default") == ["c1"]
-    assert _members(indexer) == set()
-
-
 def test_neighbor_and_incident_reads(indexer: SQLiteGraphIndexer) -> None:
     _graph(indexer, [("a", "b"), ("c", "a"), ("a", "a")])
     indexer.upsert_entities([_entity("x", "s1"), _entity("a", "s1")])
@@ -346,7 +314,7 @@ def test_clear_drops_the_suffixes(indexer: SQLiteGraphIndexer) -> None:
     indexer.clear([])
     indexer.clear(["default"])
     assert indexer.read_entity_names() == []
-    assert _members(indexer) == set()
+    assert _vertex_ids(indexer, "Community-default") == []
     assert indexer.read_entity_names("keep") == [("k", "K")]
 
 
@@ -536,7 +504,8 @@ def test_traversal_ignores_communities_and_other_suffixes(
     assert _traverse(indexer, ["s"]) == [("s",), ("s", "a")]
 
 
-def test_degree_counts_edges_and_memberships(indexer: SQLiteGraphIndexer) -> None:
+def test_degree_counts_the_relationship_edges(indexer: SQLiteGraphIndexer) -> None:
+    # Regression: the degree counted memberships too (two for "s").
     _graph(indexer, [("s", "a"), ("s", "b")])
     indexer.upsert_communities([_community("c1", ["s"]), _community("c2", ["s"])])
     rows = _store(indexer).traverse(
@@ -548,7 +517,7 @@ def test_degree_counts_edges_and_memberships(indexer: SQLiteGraphIndexer) -> Non
         with_degree=True,
     )
     assert {row["node"]["id"][0]: row["degree"] for row in rows} == {
-        "s": 4,
+        "s": 2,
         "a": 1,
         "b": 1,
     }

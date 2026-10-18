@@ -60,7 +60,7 @@ from unified_kg_rag.domain.models import (
 pytestmark = pytest.mark.property
 
 _PATHS = ["/corpus/a.txt", "/corpus/b.txt", "/corpus/c.txt"]
-_NAMES = ["Vendor", "Depot", "Carrier", "Buyer"]
+_NAMES = ["Vendor", "Vendor Inc", "Depot", "Carrier", "Buyer"]
 _TYPE = "RELATED_TO"
 
 # Edge = (source name, target name, strength). A text unit = (the entity
@@ -259,6 +259,46 @@ def _run(inc: IncrementalIndexer, corpus: dict[str, Content]) -> None:
             _PATHS[0]: None,
             _PATHS[1]: [(["Depot"], [], [("Vendor", "Depot", 2)])],
             _PATHS[2]: None,
+        },
+    ]
+)
+# "Vendor Inc", named only inside b.txt's edge, merged into the "Vendor" it
+# lists; c.txt lists "Vendor Inc" with another type, so a full build keeps it
+# apart, with b.txt's edge to it. The stored "Vendor" must split.
+@example(
+    rounds=[
+        {
+            _PATHS[0]: None,
+            _PATHS[1]: [(["Vendor"], [], [("Depot", "Vendor Inc", 1)])],
+            _PATHS[2]: None,
+        },
+        {
+            _PATHS[0]: None,
+            _PATHS[1]: [(["Vendor"], [], [("Depot", "Vendor Inc", 1)])],
+            _PATHS[2]: [(["Vendor"], [], []), (["Vendor Inc"], [], [])],
+        },
+    ]
+)
+# The same split, where the delta's own merge of the two spellings gives the
+# delta edge other per-unit strengths than a full build.
+@example(
+    rounds=[
+        {
+            _PATHS[0]: None,
+            _PATHS[1]: [
+                (["Vendor"], [], [("Depot", "Vendor Inc", 1), ("Vendor", "Depot", 2)])
+            ],
+            _PATHS[2]: None,
+        },
+        {
+            _PATHS[0]: None,
+            _PATHS[1]: [
+                (["Vendor"], [], [("Depot", "Vendor Inc", 1), ("Vendor", "Depot", 2)])
+            ],
+            _PATHS[2]: [
+                ([], [], [("Vendor", "Depot", 1), ("Vendor Inc", "Depot", 1)]),
+                (["Vendor Inc"], [], []),
+            ],
         },
     ]
 )

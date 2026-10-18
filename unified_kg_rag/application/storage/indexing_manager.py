@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 import time
 from collections import defaultdict
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from concurrent.futures import as_completed
 from functools import partial
 from typing import Any, NamedTuple, TypeVar
@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 
 from unified_kg_rag.adapters.ingestion.description_summarizer import (
     DescriptionSummarizer,
+    extend_summaries,
     needs_summary,
     reuse_summaries,
 )
@@ -86,6 +87,40 @@ def _with_old_ids(ids: Iterable[str], rekey: Mapping[str, str]) -> list[str]:
     return sorted(wanted | {old for old, new in rekey.items() if new in wanted})
 
 
+def _edges_of_written_entities(
+    relationships: list[Relationship] | None, entity_stats: IndexingStats | None
+) -> tuple[list[Relationship] | None, IndexingStats | None]:
+    """The relationships to write after the graph entity writes, and the
+    stats of those held back.
+
+    An edge whose endpoint's write failed is not written: a re-keyed
+    entity's edges would be re-pointed at a vertex that is not there, and a
+    graph store replaces an edge by dropping its stored copy first. The held
+    back edges count as failed, so their documents are written again. A
+    failure that names no entity holds back every edge.
+    """
+    if not relationships or entity_stats is None or not entity_stats.failed_items:
+        return relationships, None
+    failed = set(entity_stats.failed_ids)
+    held = [
+        r
+        for r in relationships
+        if entity_stats.unattributed_failures
+        or r.source_id in failed
+        or r.target_id in failed
+    ]
+    if not held:
+        return relationships, None
+    logger.warning(
+        "Not writing %d relationships: an endpoint entity's graph write failed",
+        len(held),
+    )
+    stats = IndexingStats(total_items=len(held))
+    stats.add_error("endpoint entity write failed", len(held), ids=[r.id for r in held])
+    held_ids = {id(r) for r in held}
+    return [r for r in relationships if id(r) not in held_ids], stats
+
+
 class CrossRunMergeResult(BaseModel):
     """A delta merged with the stored graph state it touches."""
 
@@ -147,6 +182,23 @@ class IndexingManager:
         # name -> their new ids: the items are written under the new ids,
         # then the old ones are deleted (delete_retired_ids).
         self._rekeyed: dict[str, dict[str, str]] = {}
+        # By suffix, the entities derivation split off a stored one -> its id
+        # (``Derived.split_from``): the stored claims about it follow them.
+        self._split_from: dict[str, dict[str, str]] = {}
+        # Ids of the stored edges this run rewrites for their rank only.
+        self._rank_only: set[str] = set()
+        # The suffixes whose graph merge found nothing stored.
+        self._fresh: set[str] = set()
+        # By suffix, the stored items a full build does not have (edges
+        # ``Derived.dropped``, copies under a folded delta id): deleted with
+        # the retired ids.
+        self._dropped: dict[str, set[str]] = {}
+        # The stored community reports a removal kept although they cite a
+        # removed text unit (see community_drift).
+        self.outdated_reports: set[str] = set()
+        # Stored items derivation kept as they were: a text unit they cite
+        # names no stored record (``Derived.underived``).
+        self.underived_items = 0
         # By suffix, the entities this run's graph merge or strip derived (to
         # be written): the claims about them are derived against these.
         self._derived_entities: dict[str, dict[str, Entity]] = {}
@@ -339,7 +391,7 @@ class IndexingManager:
             phase1.append(
                 (
                     vector.index_relationships,
-                    vector.upsert_relationships,
+                    self._upsert_vector_relationships,
                     relationships,
                     "opensearch_relationships",
                 )
@@ -364,19 +416,6 @@ class IndexingManager:
             if suffixes is None
             else graph.index_relationships
         )
-        phase2 = [
-            IndexingTask(edges, [relationships], "neptune_relationships"),
-            *tasks(
-                [
-                    (
-                        graph.index_communities,
-                        graph.upsert_communities,
-                        communities,
-                        "neptune_communities",
-                    )
-                ]
-            ),
-        ]
 
         prefix, tail = ("", "") if suffixes is not None else ("Delta ", " (upsert)")
         # A full build replaces the graph in place where the backend can: the
@@ -391,9 +430,29 @@ class IndexingManager:
             logger.info("--- Starting %sIndexing Phase 1%s ---", prefix, tail)
             results = self._run_indexing_phase(tasks(phase1))
             check_write_fence()
+            writable, skipped = _edges_of_written_entities(
+                relationships, results.get("neptune_entities")
+            )
+            phase2 = [
+                IndexingTask(edges, [writable], "neptune_relationships"),
+                *tasks(
+                    [
+                        (
+                            graph.index_communities,
+                            graph.upsert_communities,
+                            communities,
+                            "neptune_communities",
+                        )
+                    ]
+                ),
+            ]
             logger.info("--- Starting %sIndexing Phase 2%s ---", prefix, tail)
             results.update(self._run_indexing_phase(phase2))
             check_write_fence()
+            if skipped is not None:
+                results.setdefault("neptune_relationships", IndexingStats()).merge(
+                    skipped
+                )
         except BaseException:
             if rebuilding:
                 graph.end_rebuild(suffixes or [], sweep=False)
@@ -429,6 +488,33 @@ class IndexingManager:
 
         self._log_completion_summary(results, time.time() - start_time)
         return results
+
+    def _upsert_vector_relationships(
+        self, relationships: list[Relationship]
+    ) -> IndexingStats:
+        """Delta upsert of the relationship vectors. An edge this run rewrites
+        for its rank only is updated in place (no embedding), unless its
+        vector copy is missing (an interrupted write): that one is upserted."""
+        rank_only, self._rank_only = self._rank_only, set()
+        vector = self.opensearch_indexer
+        candidates = [r for r in relationships if r.id in rank_only]
+        if not candidates:
+            return vector.upsert_relationships(relationships)
+        stored: set[str] = set()
+        for suffix, group in self._group_by_suffix(candidates).items():
+            stored |= set(
+                vector.read_relationship_descriptions(
+                    [r.id for r in group], suffix=suffix
+                )
+            )
+        partial = [r for r in candidates if r.id in stored]
+        kept = {r.id for r in partial}
+        full = [r for r in relationships if r.id not in kept]
+        stats = vector.update_relationship_lineage(partial)
+        if full:
+            stats.merge(vector.upsert_relationships(full))
+        stats.total_items = len(relationships)
+        return stats
 
     def merge_with_existing_graph(
         self,
@@ -494,11 +580,13 @@ class IndexingManager:
         derived too, so they follow its new id (ids follow the current name,
         see ``derivation``).
         """
-        if not (claims or self._rekeyed):
+        if not (claims or self._rekeyed or self._split_from):
             return claims
         groups = self._group_by_suffix(claims or [])
         merged: list[Claim] = []
-        for suffix in sorted(groups.keys() | self._rekeyed.keys()):
+        for suffix in sorted(
+            groups.keys() | self._rekeyed.keys() | self._split_from.keys()
+        ):
             group = groups.get(suffix, [])
             stored = self.opensearch_indexer.read_claims(
                 sorted({c.id for c in group}), suffix=suffix
@@ -507,7 +595,7 @@ class IndexingManager:
             # The stored claims about an entity the graph merge re-keyed
             # follow it (see merge_with_existing_graph).
             about = sorted(
-                set(self._claims_about(suffix, self._rekeyed.get(suffix, {})))
+                set(self._claims_about(suffix, self._rederived_entity_ids(suffix)))
                 - {c.id for c in group}
             )
             for claim in self.opensearch_indexer.read_claims(about, suffix=suffix):
@@ -517,6 +605,10 @@ class IndexingManager:
                 }
                 group.append(claim)
             if not group:
+                continue
+            if not stored and not about and suffix in self._fresh:
+                # Nothing stored: the delta claims are the full build's.
+                merged.extend(group)
                 continue
             merged.extend(
                 self._derive_claims(
@@ -619,19 +711,67 @@ class IndexingManager:
             # entity does.
             merged_relationships = [r.model_copy() for r in merged_relationships]
             sync_relationship_endpoint_names(merged_relationships, merged_entities)
-        derived = self.derive(
-            suffix, merged_entities, merged_relationships, (), text_units
-        )
+        if existing or existing_rels:
+            derived = self.derive(
+                suffix, merged_entities, merged_relationships, (), text_units
+            )
+        else:
+            # Nothing stored (a first build with the registry on): the delta
+            # is what a full build over its records gives, summaries included.
+            self._fresh.add(suffix)
+            derived = Derived(
+                entities=list(merged_entities),
+                relationships=list(merged_relationships),
+            )
         rekey = derived.id_remap
+        # A stored summary that only grew is summarized with what the delta
+        # added (see extend_summaries).
+        reuse_summaries(derived.entities, entities)
+        reuse_summaries(derived.relationships, relationships)
+        extend_summaries(
+            derived.entities,
+            [e.model_copy(update={"id": rekey.get(e.id, e.id)}) for e in existing],
+            {
+                rekey.get(entity_id_remap.get(e.id, e.id), e.id): e.description
+                for e in entities
+            },
+        )
+        extend_summaries(
+            derived.relationships,
+            [r.model_copy(update={"id": rekey.get(r.id, r.id)}) for r in existing_rels],
+            {
+                rekey.get(relationship_remap.get(r.id, r.id), r.id): r.description
+                for r in relationships
+            },
+        )
         merged_entities, merged_relationships = self._finish(
             suffix,
             derived.entities,
             derived.relationships,
-            stored_entities=existing,
-            stored_relationships=existing_rels,
+            # The delta's summaries (graph resolution made them) are reused
+            # as the stored ones are: by the description they were made from.
+            stored_entities=[*existing, *entities],
+            stored_relationships=[*existing_rels, *relationships],
             rekey=rekey,
+            rewired=set(derived.rewired),
         )
-        self._retire(suffix, rekey)
+        # A delta id the merge folded into a stored item of another id has no
+        # graph copy (the stored one of that id would have been merged), but
+        # a run that died between the stores may have left its vector copy:
+        # it goes with the retired ids, unless the derivation writes it (an
+        # entity split off under it).
+        written = {e.id for e in merged_entities} | {r.id for r in merged_relationships}
+        folded = [
+            delta_id
+            for delta_id, kept in {**entity_id_remap, **relationship_remap}.items()
+            if delta_id != kept and delta_id not in written
+        ]
+        self._retire(
+            suffix,
+            rekey,
+            derived.split_from,
+            [i for i in derived.dropped if i not in written] + folded,
+        )
         self._derived_entities.setdefault(suffix, {}).update(
             {e.id: e for e in merged_entities}
         )
@@ -660,6 +800,7 @@ class IndexingManager:
         claims: Sequence[Claim],
         text_units: Sequence[TextUnit] = (),
         rekeyed: Mapping[str, str] | None = None,
+        split_from: Mapping[str, str] | None = None,
     ) -> Derived:
         """``derivation.derive`` over the records of the items' text units:
         ``text_units`` carry their record keys, the others are read from the
@@ -670,8 +811,11 @@ class IndexingManager:
         # interrupted re-key left, or another spelling a full build merges
         # with this one, so it is derived with them (and merged when it is
         # the same item). One still held after that keeps its holder: the
-        # item keeps its id rather than overwrite another.
-        for attempt in range(3):
+        # item keeps its id rather than overwrite another. The stored edges
+        # of an entity that was re-keyed or split are derived with it
+        # (``Derived.rewired``): they may become one with a derived edge, or
+        # belong to a part it split into.
+        for attempt in range(4):
             unit_ids = sorted(
                 {
                     u
@@ -681,6 +825,14 @@ class IndexingManager:
                 }
             )
             records, claim_records = self._unit_records(suffix, unit_ids, text_units)
+            stored_edges = (
+                None
+                if claims or not items[0]
+                else self.neptune_indexer.find_incident_relationship_ids(
+                    sorted(_with_old_ids([e.id for e in items[0]], rekeyed or {})),
+                    suffix=suffix,
+                )
+            )
             derived = derive(
                 self.config,
                 *items,
@@ -688,13 +840,29 @@ class IndexingManager:
                 claim_records,
                 rekeyed=rekeyed,
                 blocked=blocked,
+                split_from=split_from,
+                stored_relationship_ids=stored_edges,
             )
             given = {item.id for group in items for item in group}
-            targets = sorted(set(derived.id_remap.values()) - given - blocked)
-            if not targets:
-                return derived
-            held = self._read_held(suffix, targets)
-            if not any(held):
+            targets = sorted(
+                (set(derived.id_remap.values()) | set(derived.split_from))
+                - given
+                - blocked
+            )
+            held = self._read_held(suffix, targets) if targets else ([], [], [])
+            parted: list[Relationship] = []
+            if derived.rewired and not claims:
+                incident = set(
+                    self.neptune_indexer.find_incident_relationship_ids(
+                        derived.rewired, suffix=suffix
+                    )
+                )
+                if incident - given:
+                    parted = self.neptune_indexer.read_relationships(
+                        sorted(incident - given), suffix=suffix
+                    )
+            if (not any(held) and not parted) or attempt == 3:
+                self.underived_items += len(set(derived.underived))
                 return derived
             if attempt == 0:
                 items = (
@@ -704,6 +872,17 @@ class IndexingManager:
                 )
             else:
                 blocked |= {item.id for group in held for item in group}
+            items[1].extend(parted)
+            # Their other endpoints too: a re-pointed edge changes their rank.
+            ends = {i for r in parted for i in (r.source_id, r.target_id)}
+            known = {e.id for e in items[0]}
+            if ends - known:
+                items[0].extend(
+                    self.neptune_indexer.read_entities(
+                        sorted(ends - known), suffix=suffix
+                    )
+                )
+        self.underived_items += len(set(derived.underived))
         return derived
 
     def _read_held(
@@ -771,6 +950,7 @@ class IndexingManager:
         stored_entities: Sequence[Entity] = (),
         stored_relationships: Sequence[Relationship] = (),
         rekey: Mapping[str, str] | None = None,
+        rewired: Collection[str] = (),
     ) -> tuple[list[Entity], list[Relationship]]:
         """Summarize, rank and complete derived items for writing.
 
@@ -781,7 +961,9 @@ class IndexingManager:
         degree or a neighbour's changed) are returned with the items, with
         the entities' names and their recomputed rank; ``rekey`` (stored id
         -> derived id, see ``Derived.id_remap``) re-points the stored edges
-        of a re-keyed entity at its new id.
+        of a re-keyed entity at its new id. The stored edges of the
+        ``rewired`` entities (``Derived.rewired``) are all among
+        ``relationships``: their stored links do not count.
         """
         rekey = rekey or {}
         reuse_summaries(entities, stored_entities)
@@ -793,7 +975,7 @@ class IndexingManager:
                 relationships
             )
         entities, relationships = self._rank_with_stored_graph(
-            suffix, entities, relationships, rekey
+            suffix, entities, relationships, rekey, rewired
         )
         written = {r.id for r in relationships} | set(rekey)
         extra_ids = sorted(
@@ -821,12 +1003,19 @@ class IndexingManager:
             )
             for r in stored_extra
         ]
+        # An edge between two entities the re-key merged is a self-loop a
+        # full build does not draw: it goes with the retired ids.
+        loops = {r.id for r in extra if r.source_id == r.target_id}
+        if loops:
+            self._dropped.setdefault(suffix, set()).update(loops)
+            extra = [r for r in extra if r.id not in loops]
+            stored_extra = [r for r in stored_extra if r.id not in loops]
         sync_relationship_endpoint_names(extra, entities)
         endpoints = sorted({i for r in extra for i in (r.source_id, r.target_id)})
         _, ranked = with_graph_ranks(
             [],
             [*relationships, *extra],
-            self._stored_neighbors(suffix, endpoints, rekey),
+            self._stored_neighbors(suffix, endpoints, rekey, rewired),
         )
         ranks = {r.id: r.rank for r in ranked}
         for rel in extra:
@@ -839,6 +1028,9 @@ class IndexingManager:
         extra = [r for r in extra if before[r.id] != shown(r)]
         if not extra:
             return entities, relationships
+        # Only the rank changed (a neighbour's degree): the vector copy is
+        # updated in place, not embedded again (_upsert_vector_relationships).
+        self._rank_only.update(r.id for r in extra if before[r.id][:4] == shown(r)[:4])
         extra = self._with_full_descriptions(
             extra, self.opensearch_indexer.read_relationship_descriptions, suffix
         )
@@ -877,6 +1069,7 @@ class IndexingManager:
         entities: list[Entity],
         relationships: list[Relationship],
         rekey: Mapping[str, str],
+        rewired: Collection[str] = (),
     ) -> tuple[list[Entity], list[Relationship]]:
         """Recompute the ranks (degrees) of the items the delta writes over the
         stored graph plus the delta's relationships.
@@ -889,27 +1082,61 @@ class IndexingManager:
             | {i for r in relationships for i in (r.source_id, r.target_id)}
         )
         return with_graph_ranks(
-            entities, relationships, self._stored_neighbors(suffix, ids, rekey)
+            entities,
+            relationships,
+            self._stored_neighbors(suffix, ids, rekey, rewired),
         )
 
     def _stored_neighbors(
-        self, suffix: str, ids: Sequence[str], rekey: Mapping[str, str]
+        self,
+        suffix: str,
+        ids: Sequence[str],
+        rekey: Mapping[str, str],
+        rewired: Collection[str] = (),
     ) -> dict[str, list[str]]:
         """``read_neighbor_ids`` of ``ids``, some of which may be re-keyed
-        (``rekey``: stored id -> new id), stated in the new ids."""
+        (``rekey``: stored id -> new id), stated in the new ids, without the
+        links of the ``rewired`` stored entities (the caller holds all their
+        edges)."""
         stored = self.neptune_indexer.read_neighbor_ids(
             _with_old_ids(ids, rekey), suffix=suffix
         )
         merged: dict[str, set[str]] = defaultdict(set)
         for i, neighbors in stored.items():
-            merged[rekey.get(i, i)].update(rekey.get(n, n) for n in neighbors)
+            if i in rewired:
+                continue
+            merged[rekey.get(i, i)].update(
+                rekey.get(n, n) for n in neighbors if n not in rewired
+            )
         return {i: sorted(neighbors - {i}) for i, neighbors in merged.items()}
 
-    def _retire(self, suffix: str, rekey: Mapping[str, str]) -> None:
-        """Mark the stored ids ``rekey`` replaced for deletion once the items
-        are written under their new ids (:meth:`delete_retired_ids`)."""
+    def _retire(
+        self,
+        suffix: str,
+        rekey: Mapping[str, str],
+        split_from: Mapping[str, str] | None = None,
+        dropped: Iterable[str] = (),
+    ) -> None:
+        """Mark the stored ids ``rekey`` replaced, and the ``dropped`` edges,
+        for deletion once the items are written under their new ids
+        (:meth:`delete_retired_ids`), and note the entities split off stored
+        ones (their claims follow)."""
         if rekey:
             self._rekeyed.setdefault(suffix, {}).update(rekey)
+        if split_from:
+            self._split_from.setdefault(suffix, {}).update(split_from)
+        if dropped:
+            self._dropped.setdefault(suffix, set()).update(dropped)
+
+    def _rederived_entity_ids(self, suffix: str) -> list[str]:
+        """The stored entity ids whose claims this run derives again: the
+        re-keyed ones and those an entity was split off."""
+        return sorted(
+            {
+                *self._rekeyed.get(suffix, {}),
+                *self._split_from.get(suffix, {}).values(),
+            }
+        )
 
     def delete_retired_ids(self) -> dict[str, IndexingStats]:
         """Delete the items whose ids a derivation replaced (see
@@ -920,10 +1147,17 @@ class IndexingManager:
         drops no edge still in use.
         """
         retired = {
-            suffix: sorted(set(rekey) - set(rekey.values()))
-            for suffix, rekey in self._rekeyed.items()
+            suffix: sorted(
+                (set(self._rekeyed.get(suffix, {})) | self._dropped.get(suffix, set()))
+                - set(self._rekeyed.get(suffix, {}).values())
+            )
+            for suffix in self._rekeyed.keys() | self._dropped.keys()
         }
         self._rekeyed.clear()
+        self._dropped.clear()
+        self._split_from.clear()
+        self._fresh.clear()
+        self._rank_only.clear()
         self._derived_entities.clear()
         if retired:
             logger.info(
@@ -936,6 +1170,10 @@ class IndexingManager:
         """Keep the re-keyed items' old ids (their writes failed: deleting
         them would lose the items)."""
         self._rekeyed.clear()
+        self._dropped.clear()
+        self._split_from.clear()
+        self._fresh.clear()
+        self._rank_only.clear()
         self._derived_entities.clear()
 
     def _match_stored_names(
@@ -1086,14 +1324,21 @@ class IndexingManager:
                 stored_entities=entities,
                 stored_relationships=relationships,
                 rekey=derived.id_remap,
+                rewired=set(derived.rewired),
             )
-            self._retire(suffix, derived.id_remap)
+            self._retire(suffix, derived.id_remap, derived.split_from, derived.dropped)
             self._derived_entities.setdefault(suffix, {}).update(
                 {e.id: e for e in new_entities}
             )
-            # The stored claims about a re-keyed entity follow it.
+            # The stored claims about a re-keyed or split entity follow it.
             claim_ids = sorted(
-                {*claim_ids, *self._claims_about(suffix, derived.id_remap)}
+                {
+                    *claim_ids,
+                    *self._claims_about(
+                        suffix,
+                        [*derived.id_remap, *derived.split_from.values()],
+                    ),
+                }
             )
         except Exception as e:  # noqa: BLE001 - reported as failed items
             logger.error("Reading shared artifacts in '%s' failed: %s", suffix, e)
@@ -1158,7 +1403,7 @@ class IndexingManager:
                     "opensearch_relationship_lineage",
                 ),
                 IndexingTask(
-                    self.opensearch_indexer.upsert_relationships,
+                    self._upsert_vector_relationships,
                     [[r for r in new_relationships if not unchanged(r)]],
                     "opensearch_relationships",
                 ),
@@ -1189,6 +1434,7 @@ class IndexingManager:
             ],
         ]
         for phase in phases:
+            check_write_fence()
             results.update(self._run_indexing_phase(phase))
         return results
 
@@ -1235,19 +1481,17 @@ class IndexingManager:
             )
         return results
 
-    def _claims_about(self, suffix: str, rekey: Mapping[str, str]) -> list[str]:
-        """Ids of the stored claims whose subject or object is one of the
-        re-keyed ids (``rekey``'s keys)."""
-        if not rekey:
+    def _claims_about(self, suffix: str, entity_ids: Iterable[str]) -> list[str]:
+        """Ids of the stored claims whose subject or object is one of
+        ``entity_ids``."""
+        ids = sorted(set(entity_ids))
+        if not ids:
             return []
         prefix = self.config.indexing.opensearch.claims_index_prefix
         found: set[str] = set()
         for field in ("subject_id", "object_id"):
             found.update(
-                self.opensearch_indexer.find_documents(
-                    prefix, field, sorted(rekey), suffix
-                )
-                or {}
+                self.opensearch_indexer.find_documents(prefix, field, ids, suffix) or {}
             )
         return sorted(found)
 
@@ -1264,9 +1508,11 @@ class IndexingManager:
         units). A claim whose derived id differs is retired (see
         :meth:`delete_retired_ids`)."""
         rekeyed = self._rekeyed.get(suffix, {})
+        split_from = self._split_from.get(suffix, {})
         derived_entities = self._derived_entities.get(suffix, {})
-        entity_ids = {
-            rekeyed.get(i, i) for c in claims for i in (c.subject_id, c.object_id) if i
+        named = {i for c in claims for i in (c.subject_id, c.object_id) if i}
+        entity_ids = {rekeyed.get(i, i) for i in named} | {
+            part for part, origin in split_from.items() if origin in named
         }
         entities = self.neptune_indexer.read_entities(
             sorted(entity_ids - set(derived_entities)), suffix=suffix
@@ -1277,7 +1523,15 @@ class IndexingManager:
         entities += [
             derived_entities[i] for i in sorted(entity_ids) if i in derived_entities
         ]
-        derived = self.derive(suffix, entities, [], claims, text_units, rekeyed=rekeyed)
+        derived = self.derive(
+            suffix,
+            entities,
+            [],
+            claims,
+            text_units,
+            rekeyed=rekeyed,
+            split_from=split_from,
+        )
         claim_ids = {c.id for c in claims}
         self._retire(
             suffix,
@@ -1379,6 +1633,17 @@ class IndexingManager:
 
         def gone(units: Iterable[str]) -> bool:
             return not (set(units) - removed) & live
+
+        outdated = sorted(i for i, units in reports.items() if not gone(units))
+        if outdated:
+            logger.warning(
+                "%d community reports in '%s' cite removed text units and other "
+                "ones: they are kept, and may state the removed text until "
+                "indexing.reset: true rebuilds them",
+                len(outdated),
+                suffix,
+            )
+            self.outdated_reports.update(outdated)
 
         shared_entities = sorted(
             i for i, units in cited.items() if not exclusive(units)
@@ -1495,6 +1760,7 @@ class IndexingManager:
         for suffix, ids in ids_by_suffix.items():
             if not ids:
                 continue
+            check_write_fence()
             # Orphan-edge cleanup: a relationship pointing AT one of these
             # deleted entities is owned (in lineage) by a SURVIVING document, so
             # it is not in `ids`. Neptune drops the incident edge on vertex drop,
@@ -1513,13 +1779,17 @@ class IndexingManager:
                 stats.add_error(str(e), count=len(ids))
                 results[f"neptune_read_{suffix}"] = stats
                 continue
-            results[f"neptune_delete_{suffix}"] = self.neptune_indexer.delete_by_id(
-                ids, suffix=suffix
-            )
+            # The vector copies first: a retry finds what to delete (and the
+            # re-keyed items it retires) through the graph, so a run that
+            # died between the stores must leave the graph copy, not an
+            # orphaned vector copy nothing finds again.
             results.update(
                 self.opensearch_indexer.delete_document_artifacts(
                     ids, suffix, extra_relationship_ids=incident_rel_ids
                 )
+            )
+            results[f"neptune_delete_{suffix}"] = self.neptune_indexer.delete_by_id(
+                ids, suffix=suffix
             )
         return results
 

@@ -228,59 +228,28 @@ def test_upsert_communities_does_not_clear_label(indexer, mocker) -> None:
     assert "coalesce" in vertex_calls
 
 
-def test_membership_is_not_re_added_when_its_drop_failed(indexer, mocker) -> None:
-    # Re-adding the members after a failed drop would keep the entities that
-    # left the community; the community is reported failed instead.
-    from unified_kg_rag.ports.indexer import IndexingStats
-
-    mocker.patch.object(
-        indexer, "_execute_batch_traversal", return_value=IndexingStats()
-    )
-    operations: list[str] = []
-
-    def execute(build, operation_name, **kwargs):
-        operations.append(operation_name)
-        raise RuntimeError("drop timed out")
-
-    mocker.patch.object(indexer, "_execute_with_retries", side_effect=execute)
-    comm = Community(
-        id="c1", name="C", level="0", parent="", children=[], entity_ids=["e1"]
-    )
-
-    stats = indexer.upsert_communities([comm])
-
-    assert operations == ["Clearing MemberOf edges"]
-    assert stats.failed_ids == ["c1"]
-
-
 @pytest.mark.parametrize("method", ["index_communities", "upsert_communities"])
-def test_member_edges_are_added_only_for_entities_not_yet_members(
+def test_communities_are_written_without_membership_edges(
     indexer, mocker, method
 ) -> None:
-    # Regression: addE('MemberOf') was unconditional, so a retry after a lost
-    # response added every edge of the batch a second time (1,244 MemberOf
-    # edges for 974 memberships).
+    # No query read the MemberOf edges, a re-keyed entity lost them and they
+    # counted toward its degree: a community is its vertex, an entity names
+    # its communities (community_ids).
     from unified_kg_rag.ports.indexer import IndexingStats
 
     mocker.patch.object(indexer, "_clear_existing_data_by_label")
-    mocker.patch.object(
+    batch = mocker.patch.object(
         indexer, "_execute_batch_traversal", return_value=IndexingStats()
     )
-    builds: dict[str, object] = {}
-    mocker.patch.object(
-        indexer,
-        "_execute_with_retries",
-        side_effect=lambda build, name, **kw: builds.setdefault(name, build),
-    )
+    execute = mocker.patch.object(indexer, "_execute_with_retries")
     comm = Community(
         id="c1", name="C", level="0", parent="", children=[], entity_ids=["e1"]
     )
 
     getattr(indexer, method)([comm])
 
-    calls: list[str] = []
-    builds["Community edge indexing"](RecordingTraversal(calls))  # type: ignore[operator]
-    assert calls.index("not_") < calls.index("addE")
+    assert batch.call_count == 1
+    execute.assert_not_called()
 
 
 def test_index_communities_empty_returns_empty_stats(indexer) -> None:
@@ -810,14 +779,55 @@ def test_delete_by_id_retries_after_a_lost_connection(indexer) -> None:
 
 def test_relationship_drop_retries_after_a_lost_connection(indexer, mocker) -> None:
     # Regression: the drop-by-id before the edge writes had one attempt, so a
-    # lost connection failed the whole batch of edges.
-    g = _LostOnce(["r1"])
+    # lost connection failed the whole batch of edges. Every request answers
+    # the endpoints' ids (the endpoint read, then the edge write).
+    g = _LostOnce(["a", "b"])
     indexer.neptune_client.g = g
     rel = Relationship(id="r1", source_id="a", target_id="b")
 
     stats = indexer.upsert_relationships([rel])
 
     assert (stats.successful_items, stats.failed_items) == (1, 0)
+
+
+def test_an_edge_whose_endpoint_is_missing_keeps_its_stored_copy(
+    indexer, mocker
+) -> None:
+    # Regression: the edges were dropped by id before the write found the
+    # endpoint missing, so an edge re-pointed at a re-keyed entity whose write
+    # failed was lost, though an unchanged document still states it.
+    dropped: list[str] = []
+
+    class _Query:
+        def __init__(self) -> None:
+            self.steps: list[tuple[str, tuple]] = []
+
+        def __getattr__(self, name: str):
+            def step(*args, **kwargs):
+                self.steps.append((name, args))
+                return self
+
+            return step
+
+    def execute(build, operation, *, results=False, **kwargs):
+        query = build(_Query())
+        if operation == "Reading edge endpoints":
+            return ["a", "b"]
+        if operation == "Dropping existing edges":
+            within = next(args for name, args in query.steps if name == "has")
+            dropped.extend(within[1].value)
+            return []
+        return ["written"]
+
+    mocker.patch.object(indexer, "_execute_with_retries", side_effect=execute)
+    kept = Relationship(id="r1", source_id="a", target_id="b")
+    repointed = Relationship(id="r2", source_id="a", target_id="gone")
+
+    stats = indexer.upsert_relationships([kept, repointed])
+
+    assert dropped == ["r1"]
+    assert (stats.successful_items, stats.failed_items) == (1, 1)
+    assert stats.failed_ids == ["r2"]
 
 
 def test_member_drop_retries_after_a_lost_connection(indexer, mocker) -> None:

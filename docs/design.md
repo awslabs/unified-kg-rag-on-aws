@@ -329,7 +329,14 @@ and every stage gets its models and stores from the run's `Providers` bundle.
   instead of an LLM call, so an edited document re-extracts only its changed
   chunks, and identical chunks elsewhere or in a rebuild reuse theirs.
   `--force-rebuild` re-extracts and refreshes every record; a store that
-  cannot be read or written is logged and the run re-extracts.
+  cannot be read is logged and the run re-extracts. A record that cannot be
+  written fails its unit (`records_not_stored`), so its document is recorded
+  `FAILED` and extracted again: incremental runs derive from the records
+  (§5.4), so none may be missing.
+- **A text unit names its stored records** in `attributes.extraction_records`.
+  The keys are computed from the run's records when the unit is indexed, not
+  set on the units the stage cache holds, so a run resumed after any stage
+  writes them too.
 - **A record stays while a stored text unit names it.** A full build or
   reset whose text units were all written keeps only the records they name
   (`VectorIndexer.retain_extraction_records` copies them into a new index and
@@ -614,7 +621,31 @@ every write and check that the next run converges to a fresh full build.
   descriptions and claims, and names and types follow the current votes. An
   entity whose derived name has another id takes the full build's id
   (`Derived.id_remap`), and its edges and claims follow. An item citing a text
-  unit without a stored record keeps its stored content, with a WARNING.
+  unit without a stored record keeps its stored content, with a WARNING and
+  the indexing stage's `underived_items` metric.
+- **Merges a full build undoes.** A stored entity may hold what a full build
+  keeps apart (two spellings merged while their types agreed): every
+  resolved entity sharing a name key and a text unit with it is derived, the
+  best match under its id and each other as an entity of its own
+  (`Derived.split_from`). The stored edges of a split or re-keyed entity and
+  their other endpoints are derived with it (`Derived.rewired`), so each
+  follows the part that states it and a re-pointed edge becomes one with the
+  derived edge it now equals; an edge a full build draws between derived
+  entities that no stored edge is (an earlier merge dropped it as a
+  self-loop) is added, and a stored edge whose endpoints now resolve to one
+  entity is deleted with the retired ids (`Derived.dropped`), as is a delta id
+  the cross-run merge folded into another (a run that died between the
+  stores may have left its vector copy). Edges take the resolution's
+  per-unit strengths; the claim stage merges a claim's statements in
+  text-unit id order, as derivation does.
+- **Cost.** Derivation runs only where something is stored (a first build
+  with the registry on writes the delta as graph resolution made it, its
+  summaries included) and matches through a key index. A stored summary that
+  only grew (the item still cites every text unit it did) is summarized from
+  itself and the run's new description, as LightRAG merges a description
+  into the stored one; an item that lost a text unit is summarized from its
+  derived description, so removed text goes. A stored edge rewritten for its
+  rank only is updated in place in the vector store, not embedded again.
 - **Merge rules** (`domain/ingestion/merge/merger.py`, ported from MS GraphRAG
   `update/*`), all idempotent:
 
@@ -847,7 +878,7 @@ multi-hop traversal, hence graph expansion is opt-in.
 | Service | Module | Purpose |
 |---|---|---|
 | **Bedrock** | `adapters/aws/bedrock.py`, `bedrock_models.py` (capability catalog) | LLM, embedding and rerank; cross-region inference-profile resolution, provider-aware request shaping (adaptive thinking and `effort` on Claude 4.6+, `reasoning.effort` on OpenAI GPT), prompt caching where supported; any model id is accepted through curated rows, provider-family defaults and `aws.bedrock.model_overrides` |
-| **Neptune** | `adapters/aws/neptune.py` | Gremlin over `wss://` with SigV4 (`ws://` for a local Gremlin Server); batch upsert and delete, concurrent batches with `indexing.neptune.index_concurrency`; every indexer request is retried over a new connection and is safe to repeat (vertices and edges are created or matched by id) |
+| **Neptune** | `adapters/aws/neptune.py` | Gremlin over `wss://` with SigV4 (`ws://` for a local Gremlin Server); batch upsert and delete, concurrent batches with `indexing.neptune.index_concurrency`; every indexer request is retried over a new connection and is safe to repeat (vertices and edges are created or matched by id); an edge whose endpoint vertex is missing is neither dropped nor written (it fails, its stored copy stays); communities are vertices only (no `MemberOf` edges: no query read them, an entity names its communities in `community_ids`) |
 | **OpenSearch** | `adapters/aws/opensearch.py` | kNN (HNSW, `lucene` engine by default, which supports `cosinesimil` on OpenSearch 2.13) and BM25, sync and async SigV4 clients, alias management, bulk upsert and delete, per-language analyzers |
 | **S3** | `adapters/aws/s3_cache.py` | Stage-cache sync (the bucket's default encryption unless `aws.s3.encryption` forces one) |
 | **DynamoDB** | `adapters/doc_status/dynamodb.py` | The doc-status registry |

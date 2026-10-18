@@ -180,13 +180,9 @@ class FakeGraphStore:
         vertices = self.data.get("entities", {})
         for rel in relationships:
             suffix = BaseIndexer.get_suffix(rel)
-            # The stored edge of this id is dropped first (as
-            # NeptuneIndexer._write_relationships does), so re-adding an edge
-            # whose endpoint is gone leaves no edge behind.
-            bucket.pop((suffix, rel.id), None)
-            # addE runs between the suffix's entity vertices: an edge whose
-            # endpoint vertex the suffix lacks is not written (see
-            # NeptuneIndexer._build_add_edge_traversal).
+            # An edge runs between the suffix's entity vertices: one whose
+            # endpoint vertex the suffix lacks is not written, and its stored
+            # copy stays (see NeptuneIndexer._write_relationships).
             missing = [
                 end
                 for end in (rel.source_id, rel.target_id)

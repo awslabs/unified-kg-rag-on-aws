@@ -674,3 +674,57 @@ def test_graph_analysis_builds_the_graph_without_centrality(mocker) -> None:
     assert result.metrics["graph_metrics"]["num_nodes"] == 2
     centrality.assert_not_called()
     assert PipelineStageType.GRAPH_ANALYSIS not in STAGE_OUTPUTS
+
+
+def test_claims_are_merged_in_text_unit_id_order(mocker) -> None:
+    # Regression: the stage merged a claim's statements in document order,
+    # derivation in text-unit id order, so the description's line order (and
+    # a status tie) of a first build and an incremental run differed.
+    from unified_kg_rag.adapters.ingestion.claim_extractor import (
+        ClaimExtractionStats,
+        ClaimExtractor,
+    )
+    from unified_kg_rag.application.ingestion import pipeline_stages as ps
+    from unified_kg_rag.domain.models import Claim, TextUnit, TextUnitExtraction
+
+    def statement(unit: str) -> Claim:
+        return Claim(
+            id="c",
+            subject_id="",
+            subject_name="Vendor",
+            object_name="Buyer",
+            type="OWES",
+            status="TRUE" if unit == "u2" else "FALSE",
+            description=f"stated in {unit}",
+            text_unit_ids=[unit],
+        )
+
+    extractor = mocker.patch.object(ps, "ClaimExtractor", autospec=True)
+    extractor.return_value.extract_units.return_value = (
+        {"u2": [statement("u2")], "u1": [statement("u1")]},
+        ClaimExtractionStats(),
+    )
+    extractor.return_value.merge_claims.side_effect = ClaimExtractor.merge_claims
+    store = mocker.patch.object(ps, "ExtractionStore", autospec=True)
+    store.return_value.load.return_value = {}
+    store.return_value.save.return_value = set()
+    stage = ps.ClaimExtractionStage(Config(), providers=mocker.MagicMock())
+    context = PipelineContext(
+        pipeline_id="p",
+        config={},
+        status=PipelineStageStatus.RUNNING,
+        start_time=datetime(2026, 1, 1),
+        source_directory="/corpus",
+        # Document order puts u2 first.
+        text_units=[TextUnit(id="u2", text="b"), TextUnit(id="u1", text="a")],
+        unit_extractions=[
+            TextUnitExtraction(text_unit_id="u2"),
+            TextUnitExtraction(text_unit_id="u1"),
+        ],
+    )
+
+    stage._execute_core(context)
+
+    (claim,) = context.claims
+    assert claim.description == "stated in u1\nstated in u2"
+    assert claim.status == "false"

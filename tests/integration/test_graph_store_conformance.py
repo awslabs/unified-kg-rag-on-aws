@@ -160,7 +160,7 @@ def test_edge_with_a_missing_endpoint_is_a_failed_id(harness: StoreHarness) -> N
     assert [r.id for r in graph.read_relationships(["r1", "r2"])] == ["r2"]
 
 
-def test_readding_an_edge_replaces_it_even_when_it_cannot_be_written(
+def test_readding_an_edge_replaces_it_unless_it_cannot_be_written(
     harness: StoreHarness,
 ) -> None:
     graph = harness.graph_indexer
@@ -170,12 +170,14 @@ def test_readding_an_edge_replaces_it_even_when_it_cannot_be_written(
     (rel,) = graph.read_relationships(["r1"])
     assert (rel.source_id, rel.target_id, rel.description) == ("b", "a", "new")
 
-    # The stored edge of the id is dropped before the new one is written, so
-    # an edge re-added towards a missing endpoint leaves no edge behind.
+    # An edge re-pointed at a missing endpoint (a re-keyed entity whose
+    # write failed) fails and the stored edge stays: an unchanged document
+    # may still state it.
     stats = graph.upsert_relationships([_rel("r1", "a", "ghost")])
     assert stats.failed_ids == ["r1"]
-    assert graph.read_relationships(["r1"]) == []
-    assert harness.stored_ids("graph.relationships") == set()
+    (rel,) = graph.read_relationships(["r1"])
+    assert (rel.source_id, rel.target_id, rel.description) == ("b", "a", "new")
+    assert harness.stored_ids("graph.relationships") == {"r1"}
 
 
 def test_deleting_a_vertex_drops_its_edges(harness: StoreHarness) -> None:
@@ -318,3 +320,61 @@ def test_neighbor_incident_and_name_reads(harness: StoreHarness) -> None:
     assert sorted(graph.read_entity_names(tenant)) == [("a", "A"), ("x", "X")]
     assert graph.read_entities(["ghost"]) == []
     assert graph.read_relationships(["ghost"]) == []
+
+
+def test_find_ids_citing_reads_entities_and_communities_of_a_suffix(
+    harness: StoreHarness,
+) -> None:
+    graph = harness.graph_indexer
+    tenant = harness.suffix("s1")
+    graph.upsert_entities(
+        [
+            _entity("a", text_unit_ids=["t1", "t2"]),
+            _entity("b", text_unit_ids=["t3"]),
+            _entity("x", tenant, text_unit_ids=["t1"]),
+        ]
+    )
+    community = _community("c1", None).model_copy(update={"text_unit_ids": ["t2"]})
+    graph.upsert_communities([community])
+
+    found = graph.find_ids_citing(["t1", "t9"], suffix="default")
+    assert {i: sorted(units) for i, units in found.items()} == {"a": ["t1", "t2"]}
+    assert graph.find_ids_citing(["t1"], suffix=tenant) == {"x": ["t1"]}
+    assert graph.find_ids_citing(["t3"], suffix="default", communities=True) == {}
+    cited = graph.find_ids_citing(["t2"], suffix="default", communities=True)
+    assert cited == {"c1": ["t2"]}
+    assert graph.find_ids_citing([], suffix="default") == {}
+
+
+def test_find_entity_ids_by_name_key_is_scoped_to_a_suffix(
+    harness: StoreHarness,
+) -> None:
+    from unified_kg_rag.domain.ingestion.base_resolver import compact_name_key
+
+    graph = harness.graph_indexer
+    tenant = harness.suffix("s1")
+    graph.upsert_entities(
+        [
+            _entity("a", name="Acme Inc"),
+            _entity("b", name="Buyer"),
+            _entity("x", tenant, name="Acme Inc"),
+        ]
+    )
+
+    key = compact_name_key("Acme Inc")
+    assert graph.find_entity_ids_by_name_key([key], suffix="default") == ["a"]
+    assert graph.find_entity_ids_by_name_key([key], suffix=tenant) == ["x"]
+    assert graph.find_entity_ids_by_name_key(["nobody"], suffix="default") == []
+
+
+def test_a_rebuild_drops_an_edge_it_did_not_write(harness: StoreHarness) -> None:
+    # Both endpoints are written again; the edge between them is not: a
+    # sweep that dropped only stale vertices would keep it.
+    graph = harness.graph_indexer
+    _graph(harness, [("a", "b")])
+    assert graph.begin_rebuild(["default"])
+    graph.index_entities([_entity("a"), _entity("b")], suffixes=["default"])
+    graph.end_rebuild(["default"])
+
+    assert harness.stored_ids("graph.entities") == {"a", "b"}
+    assert harness.stored_ids("graph.relationships") == set()

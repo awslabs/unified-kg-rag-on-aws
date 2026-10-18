@@ -866,6 +866,25 @@ changed once with the full-config keys (#332).
   by `doc_id` alone, indices without recorded settings) is covered here
   under Upgrading from pre-release builds, and the entries above name the
   current model keys (#338).
+- Incremental indexing is cheaper on large corpora and hub entities:
+  derivation matches stored entities to the resolved ones through a key
+  index instead of a scan (3,000 records: 147 s to 13 s), a first build with
+  the registry on skips it (nothing is stored), statements of one item are
+  merged once instead of pairwise (8,000 statements of a hub: 8.8 s to
+  3 ms), a description is summarized once per text (graph resolution's
+  summaries are reused at indexing: a first build makes half the summary
+  calls), a stored summary that only grew is summarized from the stored
+  summary and the new description, and a stored edge whose rank alone
+  changed is updated in place instead of embedded again (a hub's new
+  neighbour: 175 to 43 embedded texts) (#348).
+- The incremental lookups read only the fields they use: the text units'
+  `attributes` (their extraction-record keys), the `text_unit_ids` of the
+  claims and reports citing removed text units, and no field of a text unit
+  probed for its id; they fetched whole documents, a text unit's text
+  included. The embedded search engine accepts `_source.includes` (#348).
+- The indexing stage reports `underived_items`, the stored items an
+  incremental run kept as they were because a text unit they cite names no
+  stored extraction record (#348).
 - `indexing.reset` no longer takes the suffix offline. The stores are not
   cleared first: the vector indices are rebuilt into new indices and swap
   their aliases, as before, and the graph (Neptune, the embedded SQLite
@@ -1330,6 +1349,50 @@ changed once with the full-config keys (#332).
 - `prepare-benchmark` with a non-empty `corpus/` exits 2 (a usage error)
   before downloading the benchmark, instead of exiting 1 after (#340).
 - The trace-shape docs list the `global` and `drift` spans (#340).
+- A run resumed with the same pipeline id after the extraction stages wrote
+  its text units without the keys of their extraction records: the stages
+  set the keys on the units after the stage cache had saved them, so the
+  resumed run's units named none and no later incremental run could derive
+  what they state. The keys are now computed from the run's records when
+  the units are indexed (#348).
+- A text unit whose extraction record could not be written to the
+  extraction store was still indexed naming the record, and incremental
+  runs kept the items it states as they were. A record that is not stored
+  now fails its unit (`records_not_stored` in the graph resolution and
+  claim extraction metrics): its document is recorded `FAILED` and
+  extracted again (#348).
+- A graph entity write that failed while a run re-keyed an entity no longer
+  loses an edge an unchanged document states: the edges were written after
+  their endpoints' failed writes, and a graph store dropped an edge's stored
+  copy before finding its new endpoint missing. Edges of an entity whose
+  write failed are held back (counted failed), and Neptune, Gremlin Server
+  and the embedded graph keep the stored copy of an edge whose endpoint is
+  missing (#348).
+- A run killed while it deleted items between the two stores no longer
+  leaves vector copies no later run finds: the vector copies are deleted
+  first, the graph copies (through which a retry finds them) last (#348).
+- Incremental runs converge to a full build where an earlier run had merged
+  what a full build keeps apart: a stored entity holding two spellings that
+  now resolve apart is split, with its edges and claims following the part
+  that states them; the edge between them that the merge had dropped as a
+  self-loop is restored, and a stored edge whose endpoints now resolve to
+  one entity is deleted. The stored edges of a re-keyed entity are derived
+  with it, so a run retried after dying between the stores no longer keeps
+  a re-pointed copy next to the derived edge. Edges take the per-unit
+  strengths of the full build's resolution, a claim's object name follows
+  its derived entity as its subject's does, and the claim extraction stage
+  merges a claim's statements in text-unit id order, as derivation does.
+  The randomized convergence check of the review (25 sequences each over
+  three seeds, with per-chunk entity types) now finds no divergence, where
+  it found 3 to 7 per 25 (#348).
+- Removing a document no longer leaves its text unnoticed in community
+  reports: a kept report that cites a removed text unit is counted in the
+  `community_drift` metrics (`outdated_reports`, deletion-only runs
+  included) and recommends a rebuild (`community_rebuild_recommended`).
+  Reports are not regenerated on incremental runs (#348).
+- The graph-expansion degree (`indexing.neptune.entity_importance_source:
+  degree`) counts an entity's relationships only, not its community
+  memberships, as the setting describes (#348).
 - The docs no longer contradict the code: an unknown config key fails the
   load (not a warning), the four causes of a `FAILED` document are listed
   alike in the user guide, the runbook and the design doc, a second
@@ -2744,6 +2807,11 @@ changed once with the full-config keys (#332).
   `S3CacheManager` now requires `prefix=`, so a direct caller can no longer
   write checkpoints under a prefix the CDK bucket lifecycle does not
   expire (#345).
+- `MemberOf` edges from entities to communities: no query read them, a
+  re-keyed entity lost them, and they counted toward its degree. A community
+  is its vertex and an entity names its communities (`community_ids`).
+  Graphs built before keep their edges until `indexing.reset: true`; the
+  embedded graph's `memberships` table is no longer written (#348).
 - The native-score blend of RRF fusion: RRF scores are plain
   `weight / (rrf_k + rank)` sums again. The blend claimed to restore order
   within a stream, which RRF already keeps; scaled to the rank-1 step, it

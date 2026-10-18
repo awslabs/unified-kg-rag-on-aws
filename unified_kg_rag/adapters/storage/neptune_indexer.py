@@ -69,7 +69,8 @@ def _stale_edges(
 
     def select(g: GraphTraversalSource) -> GraphTraversal:
         # From the label's vertices (label-indexed) rather than a scan of
-        # every edge: relationships and memberships both leave an entity.
+        # every edge: relationships (and an older build's MemberOf edges)
+        # leave an entity.
         return g.V().hasLabel(entity_label).outE().not_(__.has(BUILD_TAG_PROPERTY, tag))
 
     return select
@@ -349,8 +350,8 @@ class NeptuneIndexer(GraphIndexer):
         Unlike :meth:`index_communities`, this does NOT clear the community label
         first — a label-wide clear on an incremental run would wipe communities
         belonging to documents outside the delta. Community vertices are upserted
-        by id (fold/coalesce) and their MemberOf edges are dropped-by-target then
-        re-added so re-runs do not duplicate membership edges.
+        by id (fold/coalesce). Membership is not written as edges: no query
+        reads it (an entity names its communities, ``community_ids``).
         """
         return self._index_communities(communities, upsert=True)
 
@@ -372,9 +373,6 @@ class NeptuneIndexer(GraphIndexer):
             start_time = time.time()
             community_label = self._get_label(
                 self.neptune_config.community_label_prefix, suffix
-            )
-            entity_label = self._get_label(
-                self.neptune_config.entity_label_prefix, suffix
             )
 
             if not upsert and self._rebuild_tag is None:
@@ -417,79 +415,6 @@ class NeptuneIndexer(GraphIndexer):
                 comms, community_vertex_builder, "Community vertex indexing"
             )
             stats.merge(vertex_stats)
-
-            logger.info("Indexing 'MemberOf' edges for %s communities...", len(comms))
-            for comm in comms:
-                if not comm.entity_ids:
-                    continue
-                if upsert or self._rebuild_tag is not None:
-                    # Drop this community's existing membership edges, so an
-                    # entity that left the community does not stay a member;
-                    # after a failed drop the membership is left as it was.
-                    def drop_members(
-                        g: GraphTraversalSource,
-                        community_label: str = community_label,
-                        community_id: str = comm.id,
-                    ) -> GraphTraversal:
-                        return (
-                            g.V()
-                            .hasLabel(community_label)
-                            .has("id", community_id)
-                            .inE("MemberOf")
-                            .drop()
-                        )
-
-                    try:
-                        self._execute_with_retries(
-                            drop_members, "Clearing MemberOf edges"
-                        )
-                    except Exception as e:
-                        stats.add_error(str(e), ids=[comm.id])
-                        logger.warning(
-                            "Failed clearing MemberOf edges for community '%s': %s",
-                            comm.id,
-                            e,
-                        )
-                        continue
-                for entity_id_batch in self._batch_iterator(comm.entity_ids):
-
-                    def add_members(
-                        g: GraphTraversalSource,
-                        entity_label: str = entity_label,
-                        community_label: str = community_label,
-                        entity_ids: list[str] = entity_id_batch,
-                        community_id: str = comm.id,
-                    ) -> GraphTraversal:
-                        # Only entities not yet members: a retry after a lost
-                        # response must not add the edges a second time.
-                        added = (
-                            g.V()
-                            .hasLabel(entity_label)
-                            .has("id", P.within(entity_ids))
-                            .not_(
-                                __.out("MemberOf")
-                                .hasLabel(community_label)
-                                .has("id", community_id)
-                            )
-                            .addE("MemberOf")
-                            .to(
-                                __.V().hasLabel(community_label).has("id", community_id)
-                            )
-                        )
-                        return self._tagged(added)
-
-                    try:
-                        self._execute_with_retries(
-                            add_members, "Community edge indexing"
-                        )
-                    except Exception as e:
-                        stats.add_error(str(e), ids=[comm.id])
-                        logger.warning(
-                            "Community edge indexing failed for community '%s': %s",
-                            comm.id,
-                            e,
-                        )
-
             stats.processing_time = time.time() - start_time
             total_stats.merge(stats)
 
@@ -636,36 +561,85 @@ class NeptuneIndexer(GraphIndexer):
             # source vertex carries THIS suffix's entity label (the scope
             # delete_by_id uses); unscoped, indexing one tenant would drop
             # another tenant's identical edges.
+            # An edge whose endpoint vertex is missing is neither dropped nor
+            # written: its stored copy (the edge an unchanged document
+            # states, before a re-key re-pointed it) stays.
             writable: list[Relationship] = []
             for batch in self._batch_iterator(rels):
+                ends = sorted(
+                    {end for rel in batch for end in (rel.source_id, rel.target_id)}
+                )
+
+                def stored_ends(
+                    g: GraphTraversalSource,
+                    entity_label: str = entity_label,
+                    ends: list[str] = ends,
+                ) -> GraphTraversal:
+                    return (
+                        g.V()
+                        .hasLabel(entity_label)
+                        .has("id", P.within(ends))
+                        .values("id")
+                    )
+
+                check_write_fence()
+                try:
+                    present = set(
+                        self._execute_with_retries(
+                            stored_ends, "Reading edge endpoints", results=True
+                        )
+                    )
+                except Exception as exc:
+                    stats.add_error(
+                        f"reading edge endpoints failed: {exc}",
+                        len(batch),
+                        ids=[rel.id for rel in batch],
+                    )
+                    logger.warning("Failed reading an edge batch's endpoints: %s", exc)
+                    continue
+                found: list[Relationship] = []
+                for rel in batch:
+                    if rel.source_id in present and rel.target_id in present:
+                        found.append(rel)
+                        continue
+                    stats.add_error("endpoint entity not found", ids=[rel.id])
+                    logger.warning(
+                        "Relationship '%s' not written: an endpoint entity is "
+                        "not stored",
+                        rel.id,
+                    )
+                if not found:
+                    continue
 
                 def drop_edges(
                     g: GraphTraversalSource,
                     entity_label: str = entity_label,
-                    batch: list[Relationship] = batch,
+                    ids: list[str] = [rel.id for rel in found],  # noqa: B006
                 ) -> GraphTraversal:
                     return (
                         g.E()
-                        .has("id", P.within([rel.id for rel in batch]))
+                        .has("id", P.within(ids))
                         .where(__.outV().hasLabel(entity_label))
                         .drop()
                     )
 
+                check_write_fence()
                 try:
                     self._execute_with_retries(drop_edges, "Dropping existing edges")
-                    writable.extend(batch)
-                except Exception as e:
+                    writable.extend(found)
+                except Exception as exc:
                     stats.add_error(
-                        f"dropping existing edges failed: {e}",
-                        len(batch),
-                        ids=[rel.id for rel in batch],
+                        f"dropping existing edges failed: {exc}",
+                        len(found),
+                        ids=[rel.id for rel in found],
                     )
-                    logger.warning("Failed dropping existing edge batch: %s", e)
+                    logger.warning("Failed dropping existing edge batch: %s", exc)
 
             def write(
                 rel: Relationship, entity_label: str = entity_label
             ) -> str | None:
                 """Write one edge; the error, or None once it is written."""
+                check_write_fence()
                 try:
                     if self._execute_with_retries(
                         lambda g: self._build_add_edge_traversal(g, rel, entity_label),
@@ -763,7 +737,7 @@ class NeptuneIndexer(GraphIndexer):
         for id_batch in self._batch_iterator(ids):
 
             # Scope the drop to this suffix. Edges are labeled by their
-            # relationship type (e.g. RELATED_TO / MemberOf), NOT by the entity
+            # relationship type (e.g. RELATED_TO), NOT by the entity
             # label, so filtering edges with hasLabel(entity_label) would match
             # nothing and leak stale edges. Instead scope edges by id AND by an
             # endpoint vertex carrying this suffix's entity label
@@ -789,6 +763,7 @@ class NeptuneIndexer(GraphIndexer):
                     .drop()
                 )
 
+            check_write_fence()
             try:
                 self._execute_with_retries(drop_edges, "Deleting edges by id")
                 self._execute_with_retries(drop_vertices, "Deleting vertices by id")
@@ -966,7 +941,7 @@ class NeptuneIndexer(GraphIndexer):
             entity_label = self._get_label(
                 self.neptune_config.entity_label_prefix, suffix
             )
-            # Edges first: relationships and memberships both leave entities.
+            # Edges first: they leave the entities.
             self._drop_in_batches(
                 _stale_edges(entity_label, tag), f"stale edges of '{entity_label}'"
             )

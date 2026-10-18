@@ -300,8 +300,13 @@ class LocalSearchStrategy(BaseSearchStrategy): ...
   추출·gleaning·주장 설정, 대상 언어, 적용 중인 프롬프트 템플릿을 포함합니다. 텍스트와
   설정에 맞는 레코드가 저장되어 있는 단위는 LLM을 호출하지 않고 그 레코드를 쓰므로, 수정한
   문서는 바뀐 청크만 다시 추출하고 다른 문서나 재구축의 같은 청크도 레코드를 재사용합니다.
-  `--force-rebuild`는 모든 레코드를 다시 추출하고 갱신하며, 저장소를 읽거나 쓸 수 없으면
-  로그를 남기고 다시 추출합니다.
+  `--force-rebuild`는 모든 레코드를 다시 추출하고 갱신하며, 저장소를 읽을 수 없으면 로그를
+  남기고 다시 추출합니다. 레코드를 쓰지 못하면 그 단위를 실패로 처리하므로
+  (`records_not_stored`) 문서는 `FAILED`로 기록되고 다시 추출됩니다. 증분 실행은 레코드에서
+  파생하므로(§5.4) 빠진 레코드가 있으면 안 됩니다.
+- **텍스트 단위는 저장된 레코드를 가리킵니다**(`attributes.extraction_records`). 키는 단위를
+  인덱싱할 때 실행의 레코드에서 계산하고 단계 캐시가 가진 단위에 써 두지 않으므로, 어느 단계
+  뒤에서 재개한 실행도 같은 키를 씁니다.
 - **레코드는 저장된 텍스트 단위가 가리키는 동안 남습니다.** 텍스트 단위를 모두 쓴 전체
   구축이나 reset은 그 단위들이 가리키는 레코드만 남기고(`VectorIndexer.retain_extraction_records`가
   새 인덱스로 복사한 뒤 별칭을 옮김), 증분 실행은 제거된 텍스트 단위만 가리키던 레코드를 지웁니다.
@@ -531,7 +536,25 @@ class LocalSearchStrategy(BaseSearchStrategy): ...
   결과는 현재 코퍼스의 전체 빌드가 그 항목에 주는 값과 같습니다. 삭제된 문서의 텍스트는
   공유 설명과 주장에서 빠지고, 이름과 유형은 현재 득표를 따릅니다. 도출한 이름의 ID가 다른
   엔티티는 전체 빌드의 ID를 받고(`Derived.id_remap`) 간선과 주장도 따라갑니다. 저장된
-  레코드가 없는 텍스트 단위를 인용하는 항목은 저장된 내용을 유지하고 WARNING을 남깁니다.
+  레코드가 없는 텍스트 단위를 인용하는 항목은 저장된 내용을 유지하고 WARNING을 남기며
+  인덱싱 단계의 `underived_items` 지표에 셉니다.
+- **전체 빌드가 되돌리는 병합.** 저장된 엔티티가 전체 빌드라면 나누어 두는 것을 함께 담고 있을
+  수 있습니다(유형이 같던 동안 합쳐진 두 표기). 이름 키와 텍스트 단위를 공유하는 해석 결과
+  엔티티를 모두 도출해, 가장 잘 맞는 것은 저장된 ID로, 나머지는 각각 별도 엔티티로 둡니다
+  (`Derived.split_from`). 나뉘거나 ID가 바뀐 엔티티의 저장된 간선과 반대쪽 끝점도 함께
+  도출하므로(`Derived.rewired`) 각 간선은 자신을 서술한 쪽을 따르고, 끝점을 바꾼 간선은
+  이제 같아진 도출 간선과 하나가 됩니다. 전체 빌드가 도출 엔티티 사이에 긋지만 저장된 간선이
+  없는 간선(이전 병합이 자기 루프로 버린 간선)은 추가하고, 끝점이 이제 한 엔티티로 해석되는
+  저장된 간선은 폐기한 ID와 함께 지우며(`Derived.dropped`), 교차 실행 병합이 다른 ID에 합친
+  델타 ID도 지웁니다(저장소 사이에서 중단된 실행이 벡터 사본을 남겼을 수 있음). 간선은
+  해석이 주는 단위별 강도를 받고, 주장 단계는 한 주장의 서술을 도출과 같이 텍스트 단위 ID
+  순서로 병합합니다.
+- **비용.** 도출은 저장된 것이 있을 때만 하고(레지스트리를 켠 첫 빌드는 그래프 해석이 만든
+  델타를 요약까지 그대로 씀) 키 색인으로 매칭합니다. 늘어나기만 한 저장 요약(항목이 이전에
+  인용한 텍스트 단위를 모두 그대로 인용)은 저장된 요약과 이번 실행의 새 설명으로 다시
+  요약합니다(LightRAG가 새 설명을 저장된 설명에 합치는 방식). 텍스트 단위를 잃은 항목은
+  도출한 설명으로 요약하므로 제거된 텍스트가 남지 않습니다. rank만 바뀌어 다시 쓰는 저장된
+  간선은 벡터 저장소에서 다시 임베딩하지 않고 그 자리에서 갱신합니다.
 - **병합 규칙**(`domain/ingestion/merge/merger.py`, MS GraphRAG `update/*`에서 옮김). 모두
   멱등적입니다.
 
@@ -725,7 +748,7 @@ map 호출은 `search.max_concurrency`개씩 실행합니다. `map_relevance_thr
 | 서비스 | 모듈 | 용도 |
 |---|---|---|
 | **Bedrock** | `adapters/aws/bedrock.py`, `bedrock_models.py`(기능 카탈로그) | LLM, 임베딩, 재순위화. 리전 간 추론 프로파일 해석, 공급자에 맞춘 요청 형식(Claude 4.6+의 adaptive thinking과 `effort`, OpenAI GPT의 `reasoning.effort`), 지원하는 모델의 프롬프트 캐싱. 선별 항목, 공급자 계열 기본값, `aws.bedrock.model_overrides`로 어떤 모델 ID든 받음 |
-| **Neptune** | `adapters/aws/neptune.py` | SigV4를 쓰는 `wss://` Gremlin(로컬 Gremlin Server는 `ws://`). 일괄 upsert와 삭제, `indexing.neptune.index_concurrency`로 동시 배치. 모든 인덱서 요청은 새 연결로 재시도하며 반복해도 안전함(정점과 간선은 ID로 만들거나 찾음) |
+| **Neptune** | `adapters/aws/neptune.py` | SigV4를 쓰는 `wss://` Gremlin(로컬 Gremlin Server는 `ws://`). 일괄 upsert와 삭제, `indexing.neptune.index_concurrency`로 동시 배치. 모든 인덱서 요청은 새 연결로 재시도하며 반복해도 안전함(정점과 간선은 ID로 만들거나 찾음). 끝점 정점이 없는 간선은 지우지도 쓰지도 않음(실패로 처리하고 저장된 사본은 남김). 커뮤니티는 정점만 씀(`MemberOf` 간선은 어떤 질의도 읽지 않아 쓰지 않고, 엔티티가 `community_ids`에 자기 커뮤니티를 적음) |
 | **OpenSearch** | `adapters/aws/opensearch.py` | kNN(HNSW, 기본 `lucene` 엔진은 OpenSearch 2.13에서 `cosinesimil` 지원)과 BM25, 동기·비동기 SigV4 클라이언트, 별칭 관리, 일괄 upsert와 삭제, 언어별 분석기 |
 | **S3** | `adapters/aws/s3_cache.py` | 단계 캐시 동기화(`aws.s3.encryption`이 강제하지 않으면 버킷 기본 암호화) |
 | **DynamoDB** | `adapters/doc_status/dynamodb.py` | 문서 상태 레지스트리 |

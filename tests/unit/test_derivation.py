@@ -178,3 +178,175 @@ def test_an_item_whose_record_is_missing_keeps_its_content(caplog) -> None:
     assert derived.entities[0].description == "stale text"
     assert derived.underived == [stored.id]
     assert "without an extraction record" in caplog.text
+
+
+def _merged_acme() -> tuple[Entity, dict[str, TextUnitExtraction]]:
+    """ "Acme" and "Acme Inc" stored as one entity (indexed when both were
+    persons); a later unit states "Acme" as a location, so a full build keeps
+    "Acme Inc" apart."""
+    records = {
+        "u1": _record(
+            "u1",
+            _entity("Acme", "u1", "PERSON"),
+            _entity("Acme Inc", "u1", "PERSON"),
+            _entity("Initech", "u1", "PERSON"),
+            edges=[_edge("Acme", "Acme Inc", "u1"), _edge("Acme Inc", "Initech", "u1")],
+        ),
+        "u0": _record("u0", _entity("Acme", "u0", "LOCATION")),
+    }
+    stored = _stored(
+        "Acme",
+        ["u1", "u0"],
+        type="person",
+        attributes={ENTITY_KEYS_ATTRIBUTE: ["acme", "acme inc"]},
+    )
+    return stored, records
+
+
+def test_a_stored_entity_a_full_build_keeps_apart_is_split() -> None:
+    # Regression: the stored entity took the content of its best match only,
+    # so "Acme Inc" and the edges and claims it states were lost until a
+    # rebuild.
+    stored, records = _merged_acme()
+    initech = _stored("Initech", ["u1"], type="person")
+    # The stored edge "Acme Inc -> Initech", merged onto "Acme".
+    edge = _edge("Acme Inc", "Initech", "u1").model_copy(
+        update={"source_id": stored.id, "source_name": "Acme"}
+    )
+
+    derived = derive(Config(), [stored, initech], [edge], [], records)
+
+    by_name = {e.name: e for e in derived.entities}
+    assert set(by_name) == {"Acme", "Acme Inc", "Initech"}
+    assert (by_name["Acme"].id, by_name["Acme"].text_unit_ids) == (
+        stored.id,
+        ["u1", "u0"],
+    )
+    assert (by_name["Acme Inc"].id, by_name["Acme Inc"].text_unit_ids) == (
+        _id("Acme Inc"),
+        ["u1"],
+    )
+    assert derived.split_from == {_id("Acme Inc"): stored.id}
+    # The stored edge follows the part that states it; the edge the merge
+    # had folded into a self-loop is back.
+    assert sorted((r.source_name, r.target_name) for r in derived.relationships) == [
+        ("Acme", "Acme Inc"),
+        ("Acme Inc", "Initech"),
+    ]
+    (moved,) = [r for r in derived.relationships if r.target_name == "Initech"]
+    assert (moved.id, moved.source_id) == (edge.id, _id("Acme Inc"))
+
+
+def test_a_claim_about_a_split_entity_follows_the_part() -> None:
+    stored, records = _merged_acme()
+    statement = Claim(
+        id="c",
+        subject_id="",
+        subject_name="Acme",
+        object_name="Acme Inc",
+        type="OWNS",
+        description="Acme owns Acme Inc",
+        text_unit_ids=["u1"],
+    )
+    from unified_kg_rag.domain.ingestion.claim_resolver import resolved_claim_id
+
+    # Stored about the merged entity, on both ends.
+    stored_claim = statement.model_copy(
+        update={"subject_id": stored.id, "object_id": stored.id, "type": "owns"}
+    )
+    stored_claim.id = resolved_claim_id(stored_claim)
+
+    derived = derive(
+        Config(), [stored], [], [stored_claim], records, {"u1": [statement]}
+    )
+
+    (claim,) = derived.claims
+    assert (claim.subject_id, claim.object_id) == (stored.id, _id("Acme Inc"))
+    # L1: the object's name is the derived entity's too.
+    assert (claim.subject_name, claim.object_name) == ("Acme", "Acme Inc")
+    assert derived.id_remap == {stored_claim.id: claim.id}
+
+
+def test_the_claim_object_name_follows_the_derived_entity() -> None:
+    # Regression: only the subject's name was derived; the object kept the
+    # spelling the unit used ("Acme"), not the entity's name ("Acme Inc").
+    records = {
+        "u1": _record("u1", _entity("Acme Inc", "u1"), _entity("Buyer", "u1")),
+        "u2": _record("u2", _entity("Acme Inc", "u2")),
+        "u3": _record("u3", _entity("Acme", "u3"), _entity("Buyer", "u3")),
+    }
+    statement = Claim(
+        id="c",
+        subject_id="",
+        subject_name="Buyer",
+        object_name="Acme",
+        type="PAYS",
+        description="Buyer pays Acme",
+        text_unit_ids=["u3"],
+    )
+    acme = _stored(
+        "Acme Inc",
+        ["u1", "u2", "u3"],
+        attributes={ENTITY_KEYS_ATTRIBUTE: ["acme", "acme inc"]},
+    )
+    buyer = _stored("Buyer", ["u1", "u3"])
+    from unified_kg_rag.domain.ingestion.claim_resolver import resolved_claim_id
+
+    stored_claim = statement.model_copy(
+        update={"subject_id": buyer.id, "object_id": acme.id, "type": "pays"}
+    )
+    stored_claim.id = resolved_claim_id(stored_claim)
+
+    derived = derive(
+        Config(), [acme, buyer], [], [stored_claim], records, {"u3": [statement]}
+    )
+
+    (claim,) = derived.claims
+    assert (claim.object_id, claim.object_name) == (acme.id, "Acme Inc")
+
+
+def test_an_edge_neither_stored_nor_given_is_derived() -> None:
+    # Two derived entities a full build links: the edge is derived when the
+    # caller's stored incident edges do not hold it.
+    records = {
+        "u1": _record(
+            "u1",
+            _entity("Acme", "u1"),
+            _entity("Buyer", "u1"),
+            edges=[_edge("Acme", "Buyer", "u1")],
+        )
+    }
+    entities = [_stored("Acme", ["u1"]), _stored("Buyer", ["u1"])]
+
+    assert derive(Config(), entities, [], [], records).relationships == []
+    derived = derive(Config(), entities, [], [], records, stored_relationship_ids=[])
+    (edge,) = derived.relationships
+    assert (edge.source_name, edge.target_name, edge.text_unit_ids) == (
+        "Acme",
+        "Buyer",
+        ["u1"],
+    )
+    stored = derive(
+        Config(), entities, [], [], records, stored_relationship_ids=[edge.id]
+    )
+    assert stored.relationships == []
+
+
+def test_an_edge_between_entities_that_now_merge_is_dropped() -> None:
+    # Regression: the stored edge "Acme -> Acme Inc" was kept, re-pointed into
+    # a self-loop a full build never draws, once both spellings merged.
+    records = {
+        "u1": _record(
+            "u1",
+            _entity("Acme", "u1"),
+            _entity("Acme Inc", "u1"),
+            edges=[_edge("Acme", "Acme Inc", "u1")],
+        )
+    }
+    acme, acme_inc = _stored("Acme", ["u1"]), _stored("Acme Inc", ["u1"])
+    edge = _edge("Acme", "Acme Inc", "u1")
+
+    derived = derive(Config(), [acme, acme_inc], [edge], [], records)
+
+    assert len(derived.entities) == 1
+    assert (derived.relationships, derived.dropped) == ([], [edge.id])

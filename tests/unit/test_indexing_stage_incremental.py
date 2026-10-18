@@ -56,6 +56,7 @@ class _RecordingManager:
         self.config = Config()
         self.calls: list[tuple[str, Any]] = []
         self._delete_failures = delete_failures
+        self.outdated_reports: set[str] = set()
         # The graph still holds what the registry lists.
         self.neptune_indexer = SimpleNamespace(
             find_ids_citing=lambda ids, suffix=None: {"e": list(ids)}

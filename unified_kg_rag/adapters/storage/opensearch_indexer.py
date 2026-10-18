@@ -588,11 +588,15 @@ class OpenSearchIndexer(VectorIndexer):
         return self._upsert_item_type(claims, self._spec("claims"))
 
     def _read_sources(
-        self, alias_prefix: str, ids: list[str], suffix: str | None
+        self,
+        alias_prefix: str,
+        ids: list[str],
+        suffix: str | None,
+        fields: list[str] | None = None,
     ) -> list[dict[str, Any]]:
-        """The stored documents (without embeddings) of ``ids`` in ``suffix``'s
-        live index of ``alias_prefix``; none without a live index. Raises when
-        the read fails."""
+        """The stored documents (without embeddings; only ``fields`` when
+        given) of ``ids`` in ``suffix``'s live index of ``alias_prefix``; none
+        without a live index. Raises when the read fails."""
         alias_name = self._get_name(alias_prefix, suffix)
         if not ids or not self.opensearch_client.get_index_name_by_alias(alias_name):
             return []
@@ -604,7 +608,12 @@ class OpenSearchIndexer(VectorIndexer):
                 body={
                     "size": len(batch),
                     "query": {"ids": {"values": batch}},
-                    "_source": {"excludes": ["*_embedding"]},
+                    # No fields: ids only (an empty ``includes`` returns all).
+                    "_source": (
+                        {"excludes": ["*_embedding"]}
+                        if fields is None
+                        else {"includes": fields} if fields else False
+                    ),
                 },
             )
             sources.extend(
@@ -620,7 +629,7 @@ class OpenSearchIndexer(VectorIndexer):
         return [
             source["id"]
             for source in self._read_sources(
-                self.opensearch_config.text_units_index_prefix, ids, suffix
+                self.opensearch_config.text_units_index_prefix, ids, suffix, fields=[]
             )
         ]
 
@@ -680,7 +689,10 @@ class OpenSearchIndexer(VectorIndexer):
         return {
             source["id"]: dict(source.get("attributes") or {})
             for source in self._read_sources(
-                self.opensearch_config.text_units_index_prefix, ids, suffix
+                self.opensearch_config.text_units_index_prefix,
+                ids,
+                suffix,
+                fields=["attributes"],
             )
         }
 
@@ -705,7 +717,7 @@ class OpenSearchIndexer(VectorIndexer):
                 body={
                     "size": _FIND_WINDOW,
                     "query": {"bool": {"filter": [{"terms": {field: batch}}]}},
-                    "_source": {"excludes": ["*_embedding"]},
+                    "_source": {"includes": ["text_unit_ids"]},
                 },
             )
             hits = response.get("hits", {})

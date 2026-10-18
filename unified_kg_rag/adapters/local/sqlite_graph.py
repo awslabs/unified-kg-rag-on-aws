@@ -16,9 +16,8 @@ the traversal); ``adapters.storage.sqlite_graph_indexer`` writes to it and
 - ``edges(label, id, type, source_id, target_id, props)``: relationship edges.
   ``label`` is the entity label of both endpoints (an edge never leaves its
   suffix), ``type`` the edge label, ``props`` the edge properties.
-- ``memberships``: the ``MemberOf`` edges from entities to communities.
 
-Dropping a vertex drops its incident edges and memberships. Each store uses
+Dropping a vertex drops its incident edges. Each store uses
 one connection behind a lock, in WAL mode (each read is one snapshot), and
 waits up to ``search.store_timeout_seconds`` for another writer's lock.
 """
@@ -73,17 +72,6 @@ _SCHEMA = (
     "CREATE INDEX IF NOT EXISTS edges_target_source "
     "ON edges (label, target_id, source_id)",
     "CREATE INDEX IF NOT EXISTS edges_id ON edges (id)",
-    """
-    CREATE TABLE IF NOT EXISTS memberships (
-        community_label TEXT NOT NULL,
-        community_id TEXT NOT NULL,
-        entity_label TEXT NOT NULL,
-        entity_id TEXT NOT NULL,
-        PRIMARY KEY (community_label, community_id, entity_label, entity_id)
-    )
-    """,
-    "CREATE INDEX IF NOT EXISTS memberships_entity "
-    "ON memberships (entity_label, entity_id)",
 )
 
 # Stay under SQLite's bound-parameter limit (999 on older builds): a
@@ -244,19 +232,16 @@ class SQLiteGraphStore:
         label: str,
         ids: Iterable[str],
     ) -> dict[str, int]:
-        """Incident edges plus memberships of each vertex (``bothE().count()``)."""
+        """Incident relationship edges of each vertex (``both().count()``)."""
         counts: dict[str, int] = {}
-        # The batch is bound three times.
-        for batch in batches(list(dict.fromkeys(ids)), BATCH_SIZE // 3):
+        # The batch is bound twice.
+        for batch in batches(list(dict.fromkeys(ids)), BATCH_SIZE // 2):
             marks = placeholders(batch)
             rows = connection.execute(
                 f"SELECT source_id FROM edges WHERE label = ? AND source_id IN ({marks}) "
                 "UNION ALL "
-                f"SELECT target_id FROM edges WHERE label = ? AND target_id IN ({marks}) "
-                "UNION ALL "
-                "SELECT entity_id FROM memberships WHERE entity_label = ? "
-                f"AND entity_id IN ({marks})",
-                [label, *batch, label, *batch, label, *batch],
+                f"SELECT target_id FROM edges WHERE label = ? AND target_id IN ({marks})",
+                [label, *batch, label, *batch],
             ).fetchall()
             for (vertex_id,) in rows:
                 counts[vertex_id] = counts.get(vertex_id, 0) + 1

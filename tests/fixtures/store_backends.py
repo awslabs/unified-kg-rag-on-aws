@@ -267,17 +267,10 @@ class StoreHarness:
                     f"SELECT id FROM {table} WHERE label = ?", (label,)
                 ).fetchall()
             return {row[0] for row in rows}
-        from gremlin_python.process.graph_traversal import __
 
         g = self.graph_indexer.neptune_client.g
         if kind == "graph.relationships":
-            traversal = (
-                g.V()
-                .hasLabel(entity_label)
-                .outE()
-                .not_(__.hasLabel("MemberOf"))
-                .values("id")
-            )
+            traversal = g.V().hasLabel(entity_label).outE().values("id")
         else:
             label = entity_label if kind == "graph.entities" else community_label
             traversal = g.V().hasLabel(label).values("id")

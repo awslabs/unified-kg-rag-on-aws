@@ -10,9 +10,14 @@ entity records the ids of the level-0 communities it belongs to
 (``community_ids``); a full build gives a clustered entity one, and the
 cross-run merge unions the stored ids with the delta's, so the count of an
 entity's level-0 communities is the number of clusterings that placed it.
+
+A run that removes text units (a deleted or edited document) deletes the
+communities and reports citing only them, but keeps the ones citing other
+text units too: their reports were written from the removed text and may
+still state it. Only a rebuild writes them again.
 """
 
-from collections.abc import Iterable
+from collections.abc import Collection, Iterable
 
 from pydantic import BaseModel, Field
 
@@ -44,8 +49,15 @@ class CommunityDrift(BaseModel):
     overlap_share: float = Field(
         description="overlapping_entities / clustered_entities"
     )
+    outdated_reports: int = Field(
+        default=0,
+        description="Stored community reports kept although they cite a text "
+        "unit this run removed: they may state a deleted or edited document's "
+        "text",
+    )
     rebuild_recommended: bool = Field(
-        description="overlap_share reached indexing.community_drift_threshold"
+        description="overlap_share reached indexing.community_drift_threshold, "
+        "or a kept report cites removed text (outdated_reports)"
     )
 
 
@@ -78,15 +90,19 @@ def with_level0_community_ids(
 
 
 def measure_community_drift(
-    entities: list[Entity], communities: list[Community], threshold: float
+    entities: list[Entity],
+    communities: list[Community],
+    threshold: float,
+    outdated_reports: Collection[str] = (),
 ) -> CommunityDrift | None:
     """Drift of a delta run, from its merged entities and its communities.
 
     ``entities`` are the run's entities after the cross-run merge (their
-    ``community_ids`` hold the stored ids too). ``None`` when the run
-    appended no communities.
+    ``community_ids`` hold the stored ids too); ``outdated_reports`` the
+    stored reports the run kept that cite a text unit it removed. ``None``
+    when the run appended no communities and kept no outdated report.
     """
-    if not communities:
+    if not communities and not outdated_reports:
         return None
     level0 = _level0(communities)
     delta_ids = {c.id for c in level0}
@@ -109,5 +125,7 @@ def measure_community_drift(
         stale_communities=len(stale),
         added_roots=sum(1 for c in communities if c.parent not in ids),
         overlap_share=round(share, 4),
-        rebuild_recommended=bool(members) and share >= threshold,
+        outdated_reports=len(outdated_reports),
+        rebuild_recommended=(bool(members) and share >= threshold)
+        or bool(outdated_reports),
     )

@@ -18,12 +18,16 @@ from tests.fixtures.fakes.embeddings import HashingEmbeddingFactory
 from tests.fixtures.fakes.stores import FakeVectorStore
 from unified_kg_rag.adapters.local.search_engine import SQLiteSearchEngine
 from unified_kg_rag.adapters.storage.opensearch_indexer import OpenSearchIndexer
-from unified_kg_rag.application.ingestion.extraction_store import ExtractionStore
+from unified_kg_rag.application.ingestion.extraction_store import (
+    ExtractionStore,
+    with_record_keys,
+)
 from unified_kg_rag.domain.ingestion.contributions import (
     claims_from_payload,
     claims_payload,
     record_from_payload,
     record_key,
+    record_keys,
     record_payload,
 )
 from unified_kg_rag.domain.ingestion.relationship_weights import (
@@ -187,8 +191,7 @@ class TestExtractionStore:
     def test_round_trip_by_text_and_suffix(self) -> None:
         vectors = FakeVectorStore()
         store = ExtractionStore(Config(), lambda: vectors)
-        written = store.save([(_unit("t1", "a"), {"p": 1})], "fp")
-        assert written == 1
+        assert store.save([(_unit("t1", "a"), {"p": 1})], "fp") == set()
 
         # Same text under the same suffix: found; another suffix: not.
         assert store.load([_unit("t9", "a"), _unit("t8", "b")], "fp", _raw) == {
@@ -202,7 +205,7 @@ class TestExtractionStore:
         ExtractionStore(Config(), lambda: vectors).save([(_unit("t1"), {"p": 1})], "fp")
         store = ExtractionStore(Config(), lambda: vectors, reuse=False)
         assert store.load([_unit("t1")], "fp", _raw) == {}
-        assert store.save([(_unit("t1"), {"p": 2})], "fp") == 1
+        assert store.save([(_unit("t1"), {"p": 2})], "fp") == set()
         assert ExtractionStore(Config(), lambda: vectors).load(
             [_unit("t1")], "fp", _raw
         ) == {"t1": {"p": 2}}
@@ -220,13 +223,85 @@ class TestExtractionStore:
 
         store = ExtractionStore(Config(), unavailable)
         assert store.load([_unit("t1")], "fp", _raw) == {}
-        assert store.save([(_unit("t1"), {"p": 1})], "fp") == 0
+        # Nothing stored: the caller fails the unit (derivation needs it).
+        assert store.save([(_unit("t1"), {"p": 1})], "fp") == {"t1"}
 
     def test_a_failing_store_is_skipped(self, caplog) -> None:
         store = ExtractionStore(Config(), _Broken)
         assert store.load([_unit("t1")], "fp", _raw) == {}
-        assert store.save([(_unit("t1"), {"p": 1})], "fp") == 0
+        assert store.save([(_unit("t1"), {"p": 1})], "fp") == {"t1"}
         assert "store down" in caplog.text
+
+    def test_save_returns_the_units_of_the_rejected_keys(self) -> None:
+        vectors = FakeVectorStore()
+        other = TextUnit(id="t2", text="Buyer pays Vendor.")
+        rejected = record_key("fp", other.text)
+
+        def partial(records, suffix=None):
+            stats = IndexingStats(total_items=len(records))
+            stats.add_error("rejected", ids=[rejected])
+            stats.successful_items = len(records) - 1
+            return stats
+
+        vectors.write_extraction_records = partial  # type: ignore[method-assign]
+        store = ExtractionStore(Config(), lambda: vectors)
+        assert store.save([(_unit("t1"), {}), (other, {})], "fp") == {"t2"}
+
+        # A failure no key is reported for fails every unit of the write.
+        def unattributed(records, suffix=None):
+            return IndexingStats(total_items=len(records), failed_items=1)
+
+        vectors.write_extraction_records = unattributed  # type: ignore[method-assign]
+        assert store.save([(_unit("t1"), {}), (other, {})], "fp") == {"t1", "t2"}
+
+
+class TestRecordKeys:
+    """Units name the keys of their stored records, computed, not stamped."""
+
+    def test_keys_follow_the_record_and_its_failures(self) -> None:
+        config = Config()
+        units = [_unit(f"t{i}") for i in range(4)]
+        units[0].attributes["extraction_records"] = {"graph": "stale"}
+        records = [
+            TextUnitExtraction(text_unit_id="t0"),
+            TextUnitExtraction(text_unit_id="t1", gleaned=True),
+            TextUnitExtraction(text_unit_id="t2"),
+        ]
+        keyed = with_record_keys(
+            config,
+            units,
+            records,
+            graph_failed={"t2"},
+            claims=True,
+            claims_failed={"t1"},
+        )
+        plain = unit_record_fingerprint(config, gleaned=False)
+        gleaned = unit_record_fingerprint(config, gleaned=True)
+        assert [record_keys(u) for u in keyed] == [
+            {
+                "graph": record_key(plain, TEXT),
+                "claims": record_key(
+                    unit_record_fingerprint(config, gleaned=False, claims=True), TEXT
+                ),
+            },
+            {"graph": record_key(gleaned, TEXT)},
+            {},  # its record was not stored
+            {},  # no record
+        ]
+        # The units themselves are left as they are (resumable caches).
+        assert units[0].attributes["extraction_records"] == {"graph": "stale"}
+        assert "extraction_records" not in keyed[2].attributes
+        assert keyed[1].attributes["filters"] == {"region": "north"}
+
+    def test_no_claims_key_when_claims_were_not_extracted(self) -> None:
+        (unit,) = with_record_keys(
+            Config(),
+            [_unit("t0")],
+            [TextUnitExtraction(text_unit_id="t0")],
+            graph_failed=(),
+            claims=False,
+        )
+        assert set(record_keys(unit)) == {"graph"}
 
 
 def _indexer(path) -> OpenSearchIndexer:

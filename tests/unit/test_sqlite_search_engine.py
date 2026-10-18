@@ -615,6 +615,13 @@ def test_source_excludes_and_vectors(engine) -> None:
         "hits"
     ]
     assert "_source" not in hit
+    # Only the included top-level fields (the incremental lookups read the
+    # attributes or the text units, not the whole document).
+    for query in ({"ids": {"values": ["a"]}}, {"term": {"id": "a"}}):
+        (hit,) = _search(
+            engine, query, body={"_source": {"includes": ["attributes", "vec"]}}
+        )["hits"]["hits"]
+        assert set(hit["_source"]) == {"attributes", "vec"}
 
 
 def test_id_lookups_read_sql_without_loading_the_index(engine, monkeypatch) -> None:
@@ -674,7 +681,7 @@ def test_invalid_query_vector_dimension_is_the_opensearch_rejection(engine) -> N
         {"index": ALIAS, "body": {"query": {"match_all": {}}, "sort": ["id"]}},
         {"index": ALIAS, "body": {"query": {"match_all": {}}}, "routing": "x"},
         {"index": ALIAS, "body": {"size": 10001}},
-        {"index": ALIAS, "body": {"_source": {"includes": ["id"]}}},
+        {"index": ALIAS, "body": {"_source": {"includes": ["id"], "fields": []}}},
         # No search pipelines either.
         {"index": ALIAS, "body": {}, "search_pipeline": "p"},
         {"index": ALIAS, "body": {"sort": [{"rank": {"order": "up"}}]}},

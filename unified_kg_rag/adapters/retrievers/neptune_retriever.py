@@ -216,16 +216,22 @@ class NeptuneRetriever(GraphExpansionRetriever):
                 )
             )
             traversal = self._apply_filters(traversal, filters)
-            return self._with_projection(traversal, with_degree=with_degree)
+            return self._with_projection(
+                traversal, degree_label=entity_label if with_degree else None
+            )
 
         return await self._execute_traversal(build)
 
     @staticmethod
     def _with_projection(
-        traversal: GraphTraversal, with_degree: bool = False
+        traversal: GraphTraversal, degree_label: str | None = None
     ) -> GraphTraversal:
+        """Project each vertex; with ``degree_label``, also its degree: its
+        edges to entities of that label (an older build's ``MemberOf`` edges
+        to communities are not relationships)."""
         # `rank` is what the indexer writes on entity vertices (see
         # NeptuneIndexer.index_entities).
+        with_degree = degree_label is not None
         keys = ["node", "path", "node_type"] + (["degree"] if with_degree else [])
         projected = (
             traversal.project(*keys)
@@ -233,8 +239,8 @@ class NeptuneRetriever(GraphExpansionRetriever):
             .by(__.path().by(__.value_map("name")))
             .by(__.label())
         )
-        if with_degree:
-            projected = projected.by(__.bothE().count())
+        if degree_label is not None:
+            projected = projected.by(__.both().hasLabel(degree_label).count())
         return projected
 
     async def _execute_traversal(

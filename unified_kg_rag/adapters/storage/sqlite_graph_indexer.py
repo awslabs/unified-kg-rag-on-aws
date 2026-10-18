@@ -62,8 +62,8 @@ class SQLiteGraphIndexer(GraphIndexer):
 
     Lists are set-cardinality, a vertex write replaces the stored properties
     (one its item lacks is dropped), re-adding an edge replaces it, an edge whose endpoint the suffix
-    lacks is not written (its id is in ``failed_ids``), and dropping a vertex
-    drops its edges and memberships. Each write is one transaction; a write
+    lacks is not written (its id is in ``failed_ids``, its stored copy stays),
+    and dropping a vertex drops its edges. Each write is one transaction; a write
     the database refuses raises (``SQLiteGraphStore``) rather than counting
     its items as failed.
     """
@@ -151,8 +151,9 @@ class SQLiteGraphIndexer(GraphIndexer):
     def upsert_relationships(self, relationships: list[Relationship]) -> IndexingStats:
         """Replace each edge by id; one whose endpoint is missing is not written.
 
-        As in Neptune the stored edge of that id is dropped first, so a
-        re-added edge whose endpoint is gone leaves no edge behind.
+        As in Neptune, such an edge fails and its stored copy stays: the
+        edge an unchanged document states is not lost to a write that
+        re-points it at a vertex that is not there.
         """
         stats = IndexingStats(total_items=len(relationships))
         if not relationships:
@@ -161,13 +162,21 @@ class SQLiteGraphIndexer(GraphIndexer):
         with self.store.transaction("write relationships") as connection:
             for suffix, rels in grouped.items():
                 label = self._entity_label(suffix)
-                self._delete_edges(connection, label, [rel.id for rel in rels])
                 stored = set(
                     self.store.vertex_maps(
                         connection,
                         label,
                         (end for rel in rels for end in (rel.source_id, rel.target_id)),
                     )
+                )
+                self._delete_edges(
+                    connection,
+                    label,
+                    [
+                        rel.id
+                        for rel in rels
+                        if rel.source_id in stored and rel.target_id in stored
+                    ],
                 )
                 for rel in rels:
                     missing = [
@@ -208,15 +217,11 @@ class SQLiteGraphIndexer(GraphIndexer):
     def index_communities(
         self, communities: list[Community], *, suffixes: Collection[str] = ()
     ) -> IndexingStats:
-        """Rebuild each suffix's community label (vertices and memberships)."""
+        """Rebuild each suffix's community label."""
         return self._write_communities(communities, upsert=False, suffixes=suffixes)
 
     def upsert_communities(self, communities: list[Community]) -> IndexingStats:
-        """Merge communities without clearing the label.
-
-        A community with ``entity_ids`` gets exactly those members (of the
-        entities stored); one without keeps its stored memberships.
-        """
+        """Merge communities without clearing the label."""
         return self._write_communities(communities, upsert=True)
 
     def _write_communities(
@@ -233,7 +238,6 @@ class SQLiteGraphIndexer(GraphIndexer):
         with self.store.transaction("write communities") as connection:
             for suffix, comms in grouped.items():
                 community_label = self._community_label(suffix)
-                entity_label = self._entity_label(suffix)
                 if not upsert and self._rebuild_tag is None:
                     self._drop_label(connection, community_label)
                 self._upsert_vertices(
@@ -241,25 +245,6 @@ class SQLiteGraphIndexer(GraphIndexer):
                     community_label,
                     [(comm.id, self._community_properties(comm)) for comm in comms],
                 )
-                for comm in comms:
-                    if not comm.entity_ids:
-                        continue
-                    connection.execute(
-                        "DELETE FROM memberships WHERE community_label = ? "
-                        "AND community_id = ?",
-                        (community_label, comm.id),
-                    )
-                    members = self.store.vertex_maps(
-                        connection, entity_label, comm.entity_ids
-                    )
-                    connection.executemany(
-                        "INSERT OR IGNORE INTO memberships (community_label, "
-                        "community_id, entity_label, entity_id) VALUES (?, ?, ?, ?)",
-                        [
-                            (community_label, comm.id, entity_label, entity_id)
-                            for entity_id in members
-                        ],
-                    )
                 stats.add_success(len(comms))
         return stats
 
@@ -337,12 +322,10 @@ class SQLiteGraphIndexer(GraphIndexer):
     def _drop_vertices(
         connection: sqlite3.Connection, pairs: list[tuple[str, str]]
     ) -> None:
-        """Drop ``(label, id)`` vertices with their edges and memberships."""
+        """Drop ``(label, id)`` vertices with their edges."""
         for statement in (
             "DELETE FROM edges WHERE label = ? AND source_id = ?",
             "DELETE FROM edges WHERE label = ? AND target_id = ?",
-            "DELETE FROM memberships WHERE entity_label = ? AND entity_id = ?",
-            "DELETE FROM memberships WHERE community_label = ? AND community_id = ?",
             "DELETE FROM vertices WHERE label = ? AND id = ?",
         ):
             connection.executemany(statement, pairs)
@@ -385,11 +368,9 @@ class SQLiteGraphIndexer(GraphIndexer):
 
     @staticmethod
     def _drop_label(connection: sqlite3.Connection, label: str) -> None:
-        """Drop every vertex of ``label`` with its edges and memberships."""
+        """Drop every vertex of ``label`` with its edges."""
         for statement in (
             "DELETE FROM edges WHERE label = ?",
-            "DELETE FROM memberships WHERE entity_label = ?",
-            "DELETE FROM memberships WHERE community_label = ?",
             "DELETE FROM vertices WHERE label = ?",
         ):
             connection.execute(statement, (label,))

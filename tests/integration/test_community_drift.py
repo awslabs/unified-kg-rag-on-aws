@@ -21,9 +21,11 @@ from unified_kg_rag.application.storage.indexing_manager import IndexingManager
 from unified_kg_rag.domain.ingestion.community_drift import with_level0_community_ids
 from unified_kg_rag.domain.models import (
     Community,
+    CommunityReport,
     Config,
     DocumentLineage,
     Entity,
+    TextUnit,
 )
 
 pytestmark = pytest.mark.integration
@@ -79,3 +81,37 @@ def test_delta_runs_report_cumulative_overlap(caplog) -> None:
     assert third is not None and third.stale_communities == 2
     (acme,) = graph.read_entities(["acme"])
     assert acme.community_ids == ["c1", "c2", "c3"]
+
+
+def test_a_deletion_only_run_reports_the_reports_citing_removed_text() -> None:
+    # Regression: a run that only removed text units appended no community, so
+    # it reported no drift, while the report kept for its other text unit may
+    # still state the removed document's text.
+    config = Config()
+    graph = FakeGraphStore()
+    vector = FakeVectorStore(opensearch_config=config.indexing.opensearch)
+    manager = IndexingManager(config=config, vector_indexer=vector, graph_indexer=graph)
+    vector.upsert_text_units(
+        [TextUnit(id="t-kept", text="kept"), TextUnit(id="t-gone", text="gone")]
+    )
+    vector.upsert_community_reports(
+        [
+            CommunityReport(
+                id="report-1",
+                community_id="c1",
+                name="c1",
+                title="Both",
+                summary="quotes the removed text",
+                text_unit_ids=["t-kept", "t-gone"],
+            )
+        ]
+    )
+    incremental = IncrementalIndexer(FakeDocStatusStore(), manager)
+
+    manager.remove_text_units("default", ["t-gone"])
+    incremental.commit(lineages=[], fingerprints={})
+
+    drift = incremental.community_drift
+    assert drift is not None
+    assert (drift.outdated_reports, drift.rebuild_recommended) == (1, True)
+    assert vector.ids("community_reports") == {"report-1"}
