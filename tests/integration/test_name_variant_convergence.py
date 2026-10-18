@@ -265,6 +265,21 @@ def _state(
         pytest.param(
             [
                 {
+                    "d5.txt": "Buyer and Acme and Acme Inc trade cash 1. Depot and "
+                    "Acme Inc and Acme Corp trade cash 2. Acme trade cash 3.",
+                    "d0.txt": "Acme Corp and Acme Inc trade goods 3. Buyer trade "
+                    "parts 3.",
+                },
+                {
+                    "d0.txt": "Acme Corp and Acme Inc trade goods 3. Buyer trade "
+                    "parts 3."
+                },
+            ],
+            id="a-stored-claim-no-claim-of-its-units-matches-is-replaced",
+        ),
+        pytest.param(
+            [
+                {
                     "d5.txt": "Acme Inc and Acme trade parts 2. Acme Inc and Acme "
                     "Corp and Acme trade parts 1. Acme Corp trade parts 3."
                 },

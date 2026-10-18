@@ -1607,6 +1607,7 @@ class IndexingManager:
         self._retire(
             suffix,
             {old: new for old, new in derived.id_remap.items() if old in claim_ids},
+            dropped=[i for i in derived.dropped if i in claim_ids],
         )
         return derived.claims
 

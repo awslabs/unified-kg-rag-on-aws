@@ -1641,6 +1641,10 @@ changed once with the full-config keys (#332).
   build: a claim resolved against all of the corpus's entities could bind
   to a spelling its text unit does not state, which an incremental run,
   resolving against its units' entities, could not reproduce (#PR).
+- A stored claim that no claim of its text units' current records matches
+  under any spelling is no longer kept unresolved by an incremental run: it
+  becomes the claim it shares the most text units with, or is deleted when
+  there is none (#PR).
 - Removing a document no longer leaves its text unnoticed in community
   reports: a kept report that cites a removed text unit is counted in the
   `community_drift` metrics (`outdated_reports`, deletion-only runs
