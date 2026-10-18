@@ -83,7 +83,8 @@ def _result(contexts=None, qid="q1") -> EvaluationResult:
         question="Who founded Acme?",
         generated_answer="Alice",
         ground_truth="",
-        retrieved_contexts=contexts or [],
+        # One context by default: faithfulness is skipped without any.
+        retrieved_contexts=["Alice founded Acme."] if contexts is None else contexts,
     )
 
 
@@ -546,6 +547,54 @@ class TestAevaluateBatch:
             "answer_correctness",
             "faithfulness",
         }
+
+    async def test_rows_without_context_skip_faithfulness_only(self, mocker) -> None:
+        # Before, an input-blocked query (or a no-context abstention) was
+        # judged on faithfulness with no context: NaN, counted as failed.
+        # Context precision/recall still score it, a miss like in the
+        # retrieval evaluator.
+        ev, _ = _make_evaluator(
+            mocker,
+            ragas_metrics=[
+                EvaluationMetricType.CONTEXT_PRECISION,
+                EvaluationMetricType.FAITHFULNESS,
+            ],
+        )
+
+        class _FakeRagasResult:
+            def __init__(self, dataset, metrics) -> None:
+                self.frame = pd.DataFrame(
+                    {m.name: [0.0] * len(dataset["question"]) for m in metrics}
+                )
+
+            def to_pandas(self):
+                return self.frame
+
+        mocker.patch.object(
+            rg_module,
+            "evaluate",
+            side_effect=lambda *, dataset, metrics, **_: _FakeRagasResult(
+                dataset, metrics
+            ),
+        )
+        mocker.patch.object(rg_module.Dataset, "from_dict", side_effect=lambda d: d)
+        blocked = _result([], qid="blocked")
+        blocked.guardrail_blocked = "input"
+        abstained = _result([], qid="abstained")
+        abstained.abstained = True
+        reports = await ev.aevaluate_batch(
+            [_query("blocked"), _query("abstained")],
+            [blocked, abstained],
+            ["truth", "truth"],
+        )
+        for report, reason in zip(
+            reports, ("guardrail_blocked", "no_contexts"), strict=True
+        ):
+            assert report.metadata["skipped_metrics"] == {"faithfulness": reason}
+            assert [m.metric_type.value for m in report.metrics] == [
+                "context_precision"
+            ]
+            assert "failed_metrics" not in report.metadata
 
     async def test_output_blocked_rows_skip_the_context_metrics(self, mocker) -> None:
         # Before, a blocked answer (its sources dropped) was judged on the

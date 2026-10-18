@@ -1162,7 +1162,10 @@ run-eval --data-path s3://my-bucket/eval/my_eval_data.json \
   `rerank_status`가 기록됩니다(답변 생성이 먼저 실패했으면 `null`).
 - `guardrail_blocked_counts`: `input` / `output`별 차단된 질의 수입니다(차단된 항목은
   차단 메시지로 채점. 차단된 답변은 출처를 버리므로 검색 지표와 RAGAS 컨텍스트 지표
-  (`context_precision`, `context_recall`, `faithfulness`)는 `guardrail_blocked`로 건너뜀). 각 결과에는 `guardrail_blocked`가 기록됩니다.
+  (`context_precision`, `context_recall`, `faithfulness`)는 `guardrail_blocked`로 건너뜀.
+  입력에서 차단된 질의는 아무것도 검색하지 않았으므로 검색 실패로 보아 컨텍스트 정밀도·재현율이
+  0이고, `faithfulness`는 컨텍스트 없는 다른 답변처럼 건너뜀: `no_contexts`). 각 결과에는
+  `guardrail_blocked`가 기록됩니다.
 - `run_manifest`: 무엇을 측정했는지 기록하므로 두 실행을 비교할 수 있습니다.
   - CLI 인자(URL은 자격 정보를 뺌), 버전, `git_sha` / `git_dirty`, 데이터셋(경로, 해시,
     질의 수), UTC 타임스탬프, `dropped_evaluators`

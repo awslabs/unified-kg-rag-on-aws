@@ -1275,8 +1275,10 @@ scored/failed/skipped counts (`metric_outcomes`), plus:
   blocked item is scored on the blocked message; a blocked answer drops its
   sources, so its retrieval metrics and the RAGAS context metrics
   (`context_precision`, `context_recall`, `faithfulness`) are skipped as
-  `guardrail_blocked`); each
-  result carries `guardrail_blocked`.
+  `guardrail_blocked`. A query blocked on input retrieved nothing, so it is a
+  retrieval miss and scores 0 on context precision and recall, while
+  `faithfulness` is skipped, as for any answer without context:
+  `no_contexts`); each result carries `guardrail_blocked`.
 - `run_manifest`: what was measured, so two runs can be compared:
   - the CLI arguments (URLs without credentials), versions, `git_sha` /
     `git_dirty`, the dataset (path, hashes, query count), a UTC timestamp and

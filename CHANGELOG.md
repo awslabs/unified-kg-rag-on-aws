@@ -1278,6 +1278,12 @@ changed once with the full-config keys (#332).
   package), synth failures (exclusive Neptune keys, unknown `-c` keys), the
   `run-eval` S3 session, the graph read-back a custom adapter needs, and what
   `removal_destroy=false` does not prevent (#365).
+- RAGAS skips `faithfulness` for an answer given without any context, a
+  query blocked on input (`guardrail_blocked`) or a no-context abstention
+  (`no_contexts`), instead of reporting the NaN as a failed metric that
+  counted toward `--max-failure-rate`. An input block still scores 0 on
+  context precision and recall, a miss as in the `retrieval` evaluator
+  (#PR).
 - A bare `--retire-source-scope` / `indexing.retire_source_scopes` value
   (`old`) no longer retires both of its readings, the `source_scope` name
   and the relative directory, which could delete another corpus's
