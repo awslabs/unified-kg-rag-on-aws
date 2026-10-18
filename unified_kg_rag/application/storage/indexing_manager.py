@@ -724,6 +724,13 @@ class IndexingManager:
                 relationships=list(merged_relationships),
             )
         rekey = derived.id_remap
+
+        def final_id(delta_id: str, merged_into: Mapping[str, str]) -> str:
+            """The id a delta item ends under: the stored one it merged into
+            (another spelling, say), as the derivation re-keyed it."""
+            kept = merged_into.get(delta_id, delta_id)
+            return rekey.get(kept, kept)
+
         # A stored summary that only grew is summarized with what the delta
         # added (see extend_summaries).
         reuse_summaries(derived.entities, entities)
@@ -731,18 +738,12 @@ class IndexingManager:
         extend_summaries(
             derived.entities,
             [e.model_copy(update={"id": rekey.get(e.id, e.id)}) for e in existing],
-            {
-                rekey.get(entity_id_remap.get(e.id, e.id), e.id): e.description
-                for e in entities
-            },
+            {final_id(e.id, entity_id_remap): e.description for e in entities},
         )
         extend_summaries(
             derived.relationships,
             [r.model_copy(update={"id": rekey.get(r.id, r.id)}) for r in existing_rels],
-            {
-                rekey.get(relationship_remap.get(r.id, r.id), r.id): r.description
-                for r in relationships
-            },
+            {final_id(r.id, relationship_remap): r.description for r in relationships},
         )
         merged_entities, merged_relationships = self._finish(
             suffix,
@@ -844,8 +845,24 @@ class IndexingManager:
                 stored_relationship_ids=stored_edges,
             )
             given = {item.id for group in items for item in group}
+            # Stored entities of a derived name's key (another spelling a
+            # full build merges with it, that cites none of these units), and
+            # stored claims of a derived claim's id, are held too.
+            siblings = (
+                self.neptune_indexer.find_entity_ids_by_name_key(
+                    sorted({compact_name_key(e.name) for e in derived.entities}),
+                    suffix,
+                )
+                if derived.entities and not claims
+                else None
+            )
             targets = sorted(
-                (set(derived.id_remap.values()) | set(derived.split_from))
+                (
+                    set(derived.id_remap.values())
+                    | set(derived.split_from)
+                    | set(siblings or ())
+                    | {c.id for c in derived.claims}
+                )
                 - given
                 - blocked
             )

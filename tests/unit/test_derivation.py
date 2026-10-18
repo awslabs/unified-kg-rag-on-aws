@@ -237,6 +237,30 @@ def test_a_stored_entity_a_full_build_keeps_apart_is_split() -> None:
     assert (moved.id, moved.source_id) == (edge.id, _id("Acme Inc"))
 
 
+def test_a_split_keeps_the_stored_name_under_its_id() -> None:
+    # Regression: the stored entity matched the part sharing most of its
+    # units ("Acme Inc"), so the part under its own id ("Acme") was "held by
+    # another item" and dropped.
+    records = {
+        "u1": _record("u1", _entity("Acme", "u1", "LOCATION")),
+        "u2": _record("u2", _entity("Acme Inc", "u2", "PERSON")),
+        "u3": _record("u3", _entity("Acme Inc", "u3", "PERSON")),
+    }
+    stored = _stored(
+        "Acme",
+        ["u1", "u2", "u3"],
+        attributes={ENTITY_KEYS_ATTRIBUTE: ["acme", "acme inc"]},
+    )
+
+    derived = derive(Config(), [stored], [], [], records)
+
+    by_name = {e.name: e for e in derived.entities}
+    assert set(by_name) == {"Acme", "Acme Inc"}
+    assert (by_name["Acme"].id, by_name["Acme"].text_unit_ids) == (stored.id, ["u1"])
+    assert derived.split_from == {_id("Acme Inc"): stored.id}
+    assert derived.id_remap == {}
+
+
 def test_a_claim_about_a_split_entity_follows_the_part() -> None:
     stored, records = _merged_acme()
     statement = Claim(

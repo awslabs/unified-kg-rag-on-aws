@@ -1411,6 +1411,22 @@ changed once with the full-config keys (#332).
   The randomized convergence check of the review (25 sequences each over
   three seeds, with per-chunk entity types) now finds no divergence, where
   it found 3 to 7 per 25 (#348).
+- Incremental runs over two spellings of one name ("Initech Corp",
+  "Initech") converge to a full build in the cases the cycle-40 review
+  found: a stored entity split into its spellings keeps its own under its
+  id (the other part was dropped as "held by another item"); a derived
+  entity is merged with a stored spelling of its name that cites none of
+  the run's text units (a deletion left a duplicate); a claim a full build
+  keeps apart from one that had merged it is derived as a claim of its own,
+  and a claim's own derived id wins over another spelling's, so running a
+  finished pipeline id again no longer deletes an unchanged document's
+  claim; and the stored edges of the entity another one merged into are
+  derived too (a duplicate edge of double weight was left). An entity
+  merged into a stored one of another spelling extends the stored summary
+  instead of summarizing every line its text units state. The extended
+  convergence fuzzer finds no divergence in 400 sequences without injected
+  crashes, where it found 7, nor in 80 on Gremlin Server and OpenSearch,
+  where it found 3 (#PR).
 - Removing a document no longer leaves its text unnoticed in community
   reports: a kept report that cites a removed text unit is counted in the
   `community_drift` metrics (`outdated_reports`, deletion-only runs
