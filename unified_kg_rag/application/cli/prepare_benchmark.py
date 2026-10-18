@@ -24,7 +24,7 @@ from unified_kg_rag.application.cli.conventions import (
     usage_error,
 )
 from unified_kg_rag.application.cli.help_text import doc_epilog
-from unified_kg_rag.application.cli.query_args import _positive_int
+from unified_kg_rag.application.cli.query_args import positive_int
 from unified_kg_rag.evaluation.benchmarks import musique
 from unified_kg_rag.shared import EvaluationException
 from unified_kg_rag.shared.utils.display import console
@@ -60,7 +60,7 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--limit",
-        type=_positive_int,
+        type=positive_int,
         help="Number of questions to sample (default: all 2,417 of dev)",
     )
     parser.add_argument("--seed", type=int, default=0, help="Sampling seed (default 0)")

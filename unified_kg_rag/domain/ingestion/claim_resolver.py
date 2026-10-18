@@ -99,7 +99,7 @@ def resolve_single_claim(
     names_by_key: dict[str, str],
     ids_by_key: dict[str, str],
     fuzzy_matcher: FuzzyMatcher,
-    units_by_name: Mapping[str, Collection[str]] | None = None,
+    units_by_name: Mapping[str, Collection[str]],
 ) -> Claim | None:
     """Point a claim's subject (required) and object (optional) at entities.
 
@@ -111,7 +111,7 @@ def resolve_single_claim(
     claim_units = set(claim.text_unit_ids or [])
 
     def stated_in(name: str) -> bool:
-        return bool(claim_units.intersection((units_by_name or {}).get(name, ())))
+        return bool(claim_units.intersection(units_by_name.get(name, ())))
 
     resolved_subject_name = resolve_entity_reference(
         claim.subject_name, names_by_key, fuzzy_matcher, stated_in
@@ -232,7 +232,7 @@ class ClaimResolver(BaseResolver):
         names_by_key: dict[str, str],
         ids_by_key: dict[str, str],
         fuzzy_matcher: FuzzyMatcher,
-        units_by_name: Mapping[str, Collection[str]] | None = None,
+        units_by_name: Mapping[str, Collection[str]],
     ) -> list[Claim]:
         """Resolve every claim in input order, in this process.
 

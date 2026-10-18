@@ -77,6 +77,11 @@ class LLMOutputTruncatedError(LanguageModelError):
     """A model response stopped at its output-token limit, cut mid-answer."""
 
 
+class LanguageModelTimeoutError(LanguageModelError, TimeoutError):
+    """Model calls gave up after their call timeout (``BatchProcessor``) without
+    an answer (also a builtin ``TimeoutError``)."""
+
+
 class PipelineExecutionError(GraphRAGException):
     pass
 

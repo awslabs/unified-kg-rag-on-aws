@@ -28,11 +28,26 @@ from contextvars import ContextVar, Token
 from typing import Protocol
 
 __all__ = [
+    "INDEXING_REQUEST_TIMEOUT_SECONDS",
+    "INGESTION_REQUEST_TIMEOUT_SECONDS",
     "WriteFence",
     "check_write_fence",
     "install_write_fence",
     "remove_write_fence",
 ]
+
+# The longest single store requests of the indexing path, which a lease must
+# outlast with margin (indexing.lease_seconds at least three times the
+# longer one, see namespace_lease).
+#
+# One Neptune ingestion request (a write, a read-back, a drop of a batch).
+# Above Neptune's own default query timeout (neptune_query_timeout, 120 s),
+# so the server ends a long but healthy request first, and the OpenSearch
+# indexing client's per-request timeout; a server that does not answer at
+# all fails the request instead of blocking ingestion.
+INGESTION_REQUEST_TIMEOUT_SECONDS = 180.0
+# The per-request timeout of the OpenSearch indexing (sync) client.
+INDEXING_REQUEST_TIMEOUT_SECONDS = 180.0
 
 
 class WriteFence(Protocol):

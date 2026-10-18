@@ -51,8 +51,8 @@ from unified_kg_rag.application.cli.provider_args import (
     apply_provider_arguments,
 )
 from unified_kg_rag.application.cli.query_args import (
-    _positive_int,
     add_query_arguments,
+    positive_int,
 )
 from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain
 from unified_kg_rag.domain.models import (
@@ -67,6 +67,7 @@ from unified_kg_rag.evaluation.pairwise import PairwiseJudge
 from unified_kg_rag.shared import (
     AWSServiceError,
     ConfigurationError,
+    DataProcessingError,
     EvaluationException,
     get_logger,
     setup_logging,
@@ -79,7 +80,7 @@ nest_asyncio.apply()
 logger = get_logger(__name__)
 
 
-class InvalidDatasetError(Exception):
+class InvalidDatasetError(DataProcessingError):
     """The evaluation dataset cannot be read or fails validation (exit 2)."""
 
 
@@ -178,7 +179,7 @@ class CommandLineInterface:
         add_query_arguments(parser, multiple_strategies=True)
         parser.add_argument(
             "--repeats",
-            type=_positive_int,
+            type=positive_int,
             default=1,
             help=(
                 "Answer and score the dataset this many times per strategy; the "

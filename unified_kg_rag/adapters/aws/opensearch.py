@@ -41,7 +41,10 @@ from unified_kg_rag.shared.exceptions import (
     StoreRequestRejectedError,
     StoreTimeoutError,
 )
-from unified_kg_rag.shared.write_fence import check_write_fence
+from unified_kg_rag.shared.write_fence import (
+    INDEXING_REQUEST_TIMEOUT_SECONDS,
+    check_write_fence,
+)
 
 if TYPE_CHECKING:
     import boto3
@@ -58,11 +61,11 @@ _sleep = time.sleep
 RETRYABLE_BULK_ITEM_STATUSES = frozenset({429, 502, 503, 504})
 
 
-# Per-request timeout and transport retries of the sync (indexing) client. The
-# async client serves queries and takes search.store_timeout_seconds and
-# search.store_max_attempts instead: a hung cluster blocked a query for
-# 6 x 180 s before it answered from no context.
-INDEXING_REQUEST_TIMEOUT_SECONDS = 180.0
+# Transport retries of the sync (indexing) client, whose per-request timeout
+# is INDEXING_REQUEST_TIMEOUT_SECONDS. The async client serves queries and
+# takes search.store_timeout_seconds and search.store_max_attempts instead: a
+# hung cluster blocked a query for 6 x 180 s before it answered from no
+# context.
 _CLIENT_MAX_RETRIES = 5
 _CLIENT_RETRY_STATUSES = (429, 502, 503, 504)
 # Backoff between the attempts of one query request (see

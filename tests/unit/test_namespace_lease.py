@@ -121,3 +121,16 @@ def test_a_renewal_after_the_lease_expired_loses_it() -> None:
             lease.check()
         # The late renewal's lease was given back.
         assert store.lease_holder("ns") is None
+
+
+def test_a_retaken_lease_is_trusted_for_a_new_term() -> None:
+    # retake() renews the term the run trusts: a lease lost because it
+    # nearly expired (no renewal for two thirds of the term) passes the
+    # fence again once retaken, instead of failing the next write.
+    store = FakeDocStatusStore()
+    with NamespaceLease(store, "ns", 60) as lease:
+        lease._renewed_at -= 50  # no renewal answered for 50 of 60 s
+        with pytest.raises(NamespaceLeaseError, match="nearly expired"):
+            lease.check()
+        assert lease.retake()
+        lease.check()

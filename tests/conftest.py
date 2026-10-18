@@ -105,6 +105,15 @@ def _scratch_working_directory(
 
 
 @pytest.fixture(autouse=True)
+def _cli_stops_raise(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A stopped CLI raises its SystemExit instead of ending the process
+    (``conventions._exit_stopped``), so the suite survives it."""
+    from unified_kg_rag.application.cli import conventions
+
+    monkeypatch.setitem(conventions._exit_at_once, "enabled", False)
+
+
+@pytest.fixture(autouse=True)
 def _isolated_aws_env(
     request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
 ) -> None:

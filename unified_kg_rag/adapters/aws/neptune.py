@@ -104,12 +104,6 @@ def is_connection_lost(exc: BaseException) -> bool:
 
 # The setting a query's Neptune requests are bounded by.
 QUERY_TIMEOUT_SETTING = "search.store_timeout_seconds"
-# The bound of one ingestion request (a write, a read-back, a drop of a
-# batch). Above Neptune's own default query timeout (neptune_query_timeout,
-# 120 s), so the server ends a long but healthy request first, and the
-# OpenSearch indexing client's per-request timeout (180 s); a server that
-# does not answer at all fails the request instead of blocking ingestion.
-INGESTION_REQUEST_TIMEOUT_SECONDS = 180.0
 
 
 def is_timeout(exc: BaseException) -> bool:

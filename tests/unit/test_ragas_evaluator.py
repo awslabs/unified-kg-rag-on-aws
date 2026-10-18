@@ -626,12 +626,17 @@ class TestAevaluateBatch:
         mocker.patch.object(rg_module.Dataset, "from_dict", side_effect=lambda d: d)
         blocked = _result(qid="blocked")
         blocked.guardrail_blocked = "output"
+        # A blocked question keeps its context metrics: only a blocked
+        # answer had its sources dropped.
+        asked = _result(qid="asked")
+        asked.guardrail_blocked = "input"
         queries = [
             EvaluationQuery(query_id="blocked", question="A?"),
             EvaluationQuery(query_id="ok", question="B?"),
+            EvaluationQuery(query_id="asked", question="C?"),
         ]
         reports = await ev.aevaluate_batch(
-            queries, [blocked, _result(qid="ok")], ["truth", "truth"]
+            queries, [blocked, _result(qid="ok"), asked], ["truth"] * 3
         )
         assert (["A?"], ["answer_relevancy"]) in runs
         assert [m.metric_type.value for m in reports[0].metrics] == ["answer_relevancy"]
@@ -642,6 +647,7 @@ class TestAevaluateBatch:
         }
         assert "failed_metrics" not in reports[0].metadata
         assert len(reports[1].metrics) == 4
+        assert len(reports[2].metrics) == 4
 
     async def test_failed_no_reference_run_fails_its_metrics_and_skips_reference(
         self, mocker

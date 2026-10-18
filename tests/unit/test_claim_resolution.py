@@ -35,7 +35,7 @@ def _resolve(claim: Claim, names: list[str], method: str = ResolutionMethod.MINH
     names_by_key = {entity_key(n): n for n in names}
     ids_by_key = {entity_key(n): f"e-{n}" for n in names}
     matcher = FuzzyMatcher(names, resolution_method=method, similarity_threshold=0.6)
-    return resolve_single_claim(claim, names_by_key, ids_by_key, matcher)
+    return resolve_single_claim(claim, names_by_key, ids_by_key, matcher, {})
 
 
 def test_object_literal_value_is_kept_with_no_object_id() -> None:
@@ -122,7 +122,7 @@ def test_a_tie_goes_to_the_entity_stated_in_the_claims_units() -> None:
         matcher,
         {"Acme": {"u1"}, "Acme Corp": {"u2"}, "Buyer": {"u2"}},
     )
-    unhinted = resolve_single_claim(claim, names_by_key, ids_by_key, matcher)
+    unhinted = resolve_single_claim(claim, names_by_key, ids_by_key, matcher, {})
 
     assert resolved is not None and unhinted is not None
     assert resolved.subject_name == "Acme Corp"

@@ -32,6 +32,15 @@ _MINHASH_SCHEME = MinHash().scheme
 
 
 @lru_cache(maxsize=8)
+def _lsh_params(threshold: float, num_perm: int) -> tuple[int, int]:
+    """The ``(bands, rows)`` datasketch picks for ``threshold`` and
+    ``num_perm``: a numerical optimisation of about 20 ms that every
+    ``MinHashLSH`` otherwise repeats, once per matcher (per resolution)."""
+    lsh = MinHashLSH(threshold=threshold, num_perm=num_perm)
+    return lsh.b, lsh.r
+
+
+@lru_cache(maxsize=8)
 def _minhash_permutations(num_perm: int) -> Any:
     """The seeded permutations ``MinHash(num_perm)`` would generate.
 
@@ -223,7 +232,9 @@ class FuzzyMatcher:
 
     def _build_minhash_lsh(self) -> None:
         self.lsh = MinHashLSH(
-            threshold=self.similarity_threshold, num_perm=self.minhash_permutations
+            threshold=self.similarity_threshold,
+            num_perm=self.minhash_permutations,
+            params=_lsh_params(self.similarity_threshold, self.minhash_permutations),
         )
         self.minhashes = {}
         for name in self.candidates:

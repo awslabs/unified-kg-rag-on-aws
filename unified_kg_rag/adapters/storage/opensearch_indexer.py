@@ -1176,7 +1176,9 @@ class OpenSearchIndexer(VectorIndexer):
                 # rebuild has nothing of this type for the suffix.
                 if not chunk_items or written.successful_items > 0:
                     # A run that lost its lease must not swap a partial index
-                    # in, nor delete the complete one.
+                    # in, nor delete the complete one. OpenSearch's requests
+                    # check the fence themselves (_FencedConnection); the
+                    # embedded engine's do not.
                     check_write_fence()
                     self.opensearch_client.update_alias(
                         alias_name, index_name, remove_pattern=f"{alias_name}-*"
@@ -1289,7 +1291,8 @@ class OpenSearchIndexer(VectorIndexer):
         alias's exact naming scheme that are older than ``live_index`` and no
         longer carry the alias are deleted, so a sibling suffix's indices and a
         newer concurrent build are left alone. A cleanup failure is logged, not
-        raised: the swap already succeeded and the live index must survive.
+        raised: the swap already succeeded and the live index must survive (a
+        lost lease is raised).
         """
         live_ts = self._index_timestamp(alias_name, live_index)
         if live_ts is None:
@@ -1309,6 +1312,8 @@ class OpenSearchIndexer(VectorIndexer):
                 logger.info(
                     "Deleted %s stale index(es) of '%s'", len(stale), alias_name
                 )
+        except NamespaceLeaseError:
+            raise
         except Exception as e:
             logger.warning(
                 "Failed to delete stale indices of '%s' (live index '%s' kept): %s",
@@ -1322,12 +1327,15 @@ class OpenSearchIndexer(VectorIndexer):
 
         Skipped if the alias already points at ``index_name`` (a new name that
         turned out to be taken), so the live index is never deleted on a
-        failed run. Best-effort: a failure is logged, not raised.
+        failed run. Best-effort: a failure is logged, not raised (a lost lease
+        is).
         """
         try:
             if index_name in self.opensearch_client.get_indices_by_alias(alias_name):
                 return
             self.opensearch_client.delete_indices([index_name])
+        except NamespaceLeaseError:
+            raise
         except Exception as e:
             logger.warning("Failed to delete unused index '%s': %s", index_name, e)
 

@@ -15,7 +15,7 @@ import contextvars
 import signal
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -178,7 +178,7 @@ def test_a_lost_lease_stops_the_next_neptune_batch(mocker) -> None:
     from unified_kg_rag.adapters.storage.neptune_indexer import NeptuneIndexer
 
     indexer = NeptuneIndexer(config=Config())
-    sent = mocker.patch.object(indexer, "_execute_with_retries")
+    sent = mocker.patch("unified_kg_rag.adapters.storage.neptune_indexer.run_traversal")
     token = _fenced(_Fence(allowed=0))
     try:
         with pytest.raises(NamespaceLeaseError):
@@ -188,6 +188,71 @@ def test_a_lost_lease_stops_the_next_neptune_batch(mocker) -> None:
     finally:
         remove_write_fence(token)
     sent.assert_not_called()
+
+
+@pytest.mark.parametrize("phase", ["rebuild", "retain"])
+def test_the_embedded_engine_swaps_no_alias_after_a_lost_lease(
+    tmp_path: Path, phase: str
+) -> None:
+    # The embedded search engine's requests do not check the fence (only
+    # OpenSearch's connection does): the indexer's own check before the swap
+    # is what keeps a run that lost its lease from swapping in its index.
+    from tests.fixtures.fakes.embeddings import HashingEmbeddingFactory
+    from unified_kg_rag.adapters.local.search_engine import SQLiteSearchEngine
+    from unified_kg_rag.adapters.storage.opensearch_indexer import OpenSearchIndexer
+
+    engine = SQLiteSearchEngine(tmp_path / "vectors.sqlite3")
+    indexer = OpenSearchIndexer(
+        Config(),
+        embedding_factory=HashingEmbeddingFactory(dimensions=8),
+        opensearch_client=engine,
+    )
+    indexer.index_text_units(
+        [TextUnit(id="old", text="old text")], suffixes=["default"]
+    )
+    indexer.write_extraction_records({"k1": {"a": 1}}, suffix="default")
+    prefix = (
+        indexer.opensearch_config.text_units_index_prefix
+        if phase == "rebuild"
+        else indexer.opensearch_config.extraction_records_index_prefix
+    )
+    alias = indexer._get_name(prefix, "default")
+    live = engine.get_indices_by_alias(alias)
+
+    token = _fenced(_Fence(allowed=0))
+    try:
+        with pytest.raises(NamespaceLeaseError):
+            if phase == "rebuild":
+                indexer.index_text_units(
+                    [TextUnit(id="new", text="new text")], suffixes=["default"]
+                )
+            else:
+                indexer.retain_extraction_records([], suffix="default")
+    finally:
+        remove_write_fence(token)
+    assert engine.get_indices_by_alias(alias) == live
+
+
+@pytest.mark.parametrize("cleanup", ["reap", "drop"])
+def test_a_lost_lease_is_not_swallowed_by_the_index_cleanup(
+    mocker, cleanup: str
+) -> None:
+    # Both cleanups are best-effort, but a lost lease must stop the run there
+    # rather than be logged as a failed delete.
+    from unified_kg_rag.adapters.storage.opensearch_indexer import OpenSearchIndexer
+
+    indexer = object.__new__(OpenSearchIndexer)
+    indexer.opensearch_client = MagicMock()
+    indexer.opensearch_client.get_aliases_by_index.return_value = {
+        "a-20260101000000000": {}
+    }
+    indexer.opensearch_client.get_indices_by_alias.return_value = []
+    indexer.opensearch_client.delete_indices.side_effect = NamespaceLeaseError("lost")
+    with pytest.raises(NamespaceLeaseError):
+        if cleanup == "reap":
+            indexer._reap_stale_indices("a", "a-20260102000000000")
+        else:
+            indexer._drop_unswapped_index("a", "a-20260102000000000")
 
 
 def _opensearch_client(mocker) -> OpenSearchClient:  # type: ignore[no-untyped-def]
@@ -306,9 +371,8 @@ def test_a_lost_lease_stops_the_neptune_retries(mocker) -> None:
         raise TimeoutError("Neptune did not answer")
 
     mocker.patch.object(neptune_mod, "run_traversal", side_effect=timed_out)
-    # The batch's own check and its first attempt pass; the lease is lost
-    # before the retry.
-    token = _fenced(_Fence(allowed=2))
+    # The first attempt's check passes; the lease is lost before the retry.
+    token = _fenced(_Fence(allowed=1))
     try:
         with pytest.raises(NamespaceLeaseError):
             indexer._execute_batch_traversal(
@@ -466,7 +530,7 @@ def test_a_lost_lease_stops_the_next_neptune_edge_write(mocker) -> None:
     from unified_kg_rag.adapters.storage.neptune_indexer import NeptuneIndexer
 
     indexer = NeptuneIndexer(config=Config())
-    sent = mocker.patch.object(indexer, "_execute_with_retries")
+    sent = mocker.patch("unified_kg_rag.adapters.storage.neptune_indexer.run_traversal")
     token = _fenced(_Fence(allowed=0))
     try:
         with pytest.raises(NamespaceLeaseError):
@@ -701,39 +765,106 @@ def test_a_stop_does_not_wait_for_the_model_calls_in_flight() -> None:
 
 
 def _slow_match(name: str) -> list[tuple[str, float]]:
-    time.sleep(0.05)
+    time.sleep(0.2)
     return []
+
+
+def _slow_minhash(item: tuple[int, str], **_: Any) -> None:
+    time.sleep(0.2)
+    return None
+
+
+class _RecordingProcessPool(ProcessPoolExecutor):
+    """A real process pool that keeps the futures it hands out."""
+
+    pools: list[_RecordingProcessPool] = []
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.futures: list[concurrent.futures.Future[Any]] = []
+        self.pools.append(self)
+
+    def submit(self, fn: Any, /, *args: Any, **kwargs: Any) -> Any:
+        future = super().submit(fn, *args, **kwargs)
+        self.futures.append(future)
+        return future
+
+
+def _stopped_after(seconds: float, block: Any) -> None:
+    def stop(signum: int, _: Any) -> None:
+        raise PipelineInterrupted(signum)
+
+    previous = signal.signal(signal.SIGALRM, stop)
+    try:
+        signal.setitimer(signal.ITIMER_REAL, seconds)
+        with pytest.raises(PipelineInterrupted):
+            block()
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous)
+
+
+def _assert_queued_tasks_cancelled(workers: int) -> None:
+    (pool,) = _RecordingProcessPool.pools
+    _RecordingProcessPool.pools = []
+    try:
+        ran = sum(f.done() and not f.cancelled() for f in pool.futures)
+        # Only the running tasks and the few the pool already handed to its
+        # workers' queue are not cancellable; the pool's manager thread
+        # cancels the rest once it wakes (the old code ran them all).
+        expected = len(pool.futures) - ran - 2 * workers - 1
+        deadline = time.time() + 3
+        while time.time() < deadline and (
+            sum(f.cancelled() for f in pool.futures) < expected
+        ):
+            time.sleep(0.05)
+        assert sum(f.cancelled() for f in pool.futures) >= max(expected, 1)
+    finally:
+        pool.shutdown(wait=True, cancel_futures=True)
 
 
 def test_a_stop_cancels_the_queued_tasks_of_the_resolver_process_pool(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Old behaviour: the ProcessPoolExecutor block ran every queued name
-    # before the stop got through (200 x 0.05 s on 2 workers = 5 s).
+    # Old behaviour: the pool's own with-block exit (shutdown(wait=True))
+    # reset the cancellation, so none of the queued names was cancelled and
+    # they all ran before the interpreter could exit.
     from unified_kg_rag.domain.ingestion import graph_resolver
 
     monkeypatch.setattr(graph_resolver, "find_all_matches_for_entity_task", _slow_match)
-    # A thread pool's block waits for the queued tasks the same way, without
-    # forking the test process.
-    monkeypatch.setattr(graph_resolver, "ProcessPoolExecutor", ThreadPoolExecutor)
+    monkeypatch.setattr(graph_resolver, "ProcessPoolExecutor", _RecordingProcessPool)
     resolver = graph_resolver.EntityResolver(Config(), 2, True)
 
-    def stop(signum: int, _: Any) -> None:
-        raise PipelineInterrupted(signum)
+    def resolve() -> None:
+        for _ in resolver._match_in_pool(MagicMock(), [f"n{i}" for i in range(40)]):
+            pass
 
-    previous = signal.signal(signal.SIGALRM, stop)
-    started = time.time()
-    try:
-        signal.setitimer(signal.ITIMER_REAL, 0.5)
-        with pytest.raises(PipelineInterrupted):
-            for _ in resolver._match_in_pool(
-                MagicMock(), [f"n{i}" for i in range(200)]
-            ):
-                pass
-    finally:
-        signal.setitimer(signal.ITIMER_REAL, 0)
-        signal.signal(signal.SIGALRM, previous)
-    assert time.time() - started < 2.5
+    _stopped_after(0.5, resolve)
+    _assert_queued_tasks_cancelled(workers=2)
+
+
+def test_a_stop_cancels_the_queued_tasks_of_the_dedup_process_pool(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from unified_kg_rag.adapters.ingestion import loader as loader_mod
+    from unified_kg_rag.domain.models import Document
+
+    monkeypatch.setattr(loader_mod, "compute_minhash", _slow_minhash)
+    monkeypatch.setattr(loader_mod, "ProcessPoolExecutor", _RecordingProcessPool)
+    loader = loader_mod.DirectoryLoader(tmp_path)
+    loader.max_workers = 2
+    docs = [
+        Document(
+            page_content=f"text {i}",
+            document_id=f"d{i}",
+            file_name=f"d{i}.txt",
+            file_path=str(tmp_path / f"d{i}.txt"),
+        )
+        for i in range(40)
+    ]
+
+    _stopped_after(0.5, lambda: loader._compute_minhashes(docs))
+    _assert_queued_tasks_cancelled(workers=2)
 
 
 def test_a_lost_lease_stops_delete_indices_at_once(mocker) -> None:
@@ -771,12 +902,12 @@ def test_a_lost_lease_is_not_swallowed_by_the_record_cleanup(
         call()
 
 
-def test_the_lease_warning_uses_the_adapters_request_timeouts(
+def test_the_lease_warning_uses_the_stores_request_timeouts(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    import unified_kg_rag.adapters.aws.neptune as neptune_mod
+    from unified_kg_rag.shared import write_fence
 
-    monkeypatch.setattr(neptune_mod, "INGESTION_REQUEST_TIMEOUT_SECONDS", 300.0)
+    monkeypatch.setattr(write_fence, "INGESTION_REQUEST_TIMEOUT_SECONDS", 300.0)
     pipe = _stopping_pipeline()
     pipe.config = Config()
     pipe._doc_status = FakeDocStatusStore()

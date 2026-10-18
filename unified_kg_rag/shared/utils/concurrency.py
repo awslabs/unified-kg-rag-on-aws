@@ -14,22 +14,28 @@ from typing import Literal, ParamSpec, TypeVar
 
 _P = ParamSpec("_P")
 _T = TypeVar("_T")
+_E = TypeVar("_E", bound=Executor)
 
 
 @contextmanager
-def cancelling_on_error(executor: Executor) -> Iterator[None]:
-    """Cancel ``executor``'s queued tasks, without waiting for the running
-    ones, when the enclosed block raises (a stop, Ctrl-C, an error).
+def shut_down_after(executor: _E) -> Iterator[_E]:
+    """Use ``executor`` for the enclosed block, then shut it down: waiting
+    for its tasks when the block ends normally, and cancelling the queued
+    ones without waiting for the running ones when it raises (a stop,
+    Ctrl-C, an error).
 
-    For the ``with`` block of a ``ProcessPoolExecutor``, whose exit otherwise
-    runs every queued task first; ``ContextThreadPoolExecutor`` does this
-    itself.
+    For a ``ProcessPoolExecutor``, used instead of its own ``with`` block:
+    that block's exit shuts it down with ``wait=True``, which runs every
+    queued task first, and resets an earlier ``cancel_futures=True``, so
+    the queued tasks also hold up the interpreter's exit.
+    ``ContextThreadPoolExecutor``'s own block already behaves like this.
     """
     try:
-        yield
+        yield executor
     except BaseException:
         executor.shutdown(wait=False, cancel_futures=True)
         raise
+    executor.shutdown()
 
 
 class ContextThreadPoolExecutor(ThreadPoolExecutor):

@@ -17,7 +17,6 @@ from gremlin_python.process.graph_traversal import (
 from gremlin_python.process.traversal import Cardinality, P, TextP, Traversal
 
 from unified_kg_rag.adapters.aws.neptune import (
-    INGESTION_REQUEST_TIMEOUT_SECONDS,
     NeptuneClient,
     is_permanent_neptune_error,
     run_traversal,
@@ -47,7 +46,10 @@ from unified_kg_rag.shared import (
     get_logger,
 )
 from unified_kg_rag.shared.utils.concurrency import ContextThreadPoolExecutor
-from unified_kg_rag.shared.write_fence import check_write_fence
+from unified_kg_rag.shared.write_fence import (
+    INGESTION_REQUEST_TIMEOUT_SECONDS,
+    check_write_fence,
+)
 
 if TYPE_CHECKING:
     import boto3
@@ -631,7 +633,6 @@ class NeptuneIndexer(GraphIndexer):
                         .values("id")
                     )
 
-                check_write_fence()
                 try:
                     present = set(
                         self._execute_with_retries(
@@ -674,7 +675,6 @@ class NeptuneIndexer(GraphIndexer):
                         .drop()
                     )
 
-                check_write_fence()
                 try:
                     self._execute_with_retries(drop_edges, "Dropping existing edges")
                     writable.extend(found)
@@ -692,7 +692,6 @@ class NeptuneIndexer(GraphIndexer):
                 rel: Relationship, entity_label: str = entity_label
             ) -> str | None:
                 """Write one edge; the error, or None once it is written."""
-                check_write_fence()
                 try:
                     if self._execute_with_retries(
                         lambda g: self._build_add_edge_traversal(g, rel, entity_label),
@@ -818,7 +817,6 @@ class NeptuneIndexer(GraphIndexer):
                     .drop()
                 )
 
-            check_write_fence()
             try:
                 self._execute_with_retries(drop_edges, "Deleting edges by id")
                 self._execute_with_retries(drop_vertices, "Deleting vertices by id")
@@ -949,7 +947,6 @@ class NeptuneIndexer(GraphIndexer):
             max_passes = math.ceil(int(initial) / batch_size) + _EXTRA_DELETE_PASSES
             total = 0
             for _ in range(max_passes):
-                check_write_fence()
                 (dropped,) = self._execute_with_retries(
                     lambda g: select(g).limit(batch_size).sideEffect(__.drop()).count(),
                     f"Dropping {what}",
@@ -980,9 +977,10 @@ class NeptuneIndexer(GraphIndexer):
 
         Until :meth:`end_rebuild`, the full-build writes no longer clear a
         label first: every vertex and edge they write carries this build's
-        tag (``build_tag``), so the graph keeps serving its previous content
-        while the new one is written, and :meth:`end_rebuild` then drops what
-        the build did not write.
+        tag (``build_tag``), so the graph is never empty while the new one is
+        written (queries read the rewritten items next to the previous ones
+        not reached yet), and :meth:`end_rebuild` then drops what the build
+        did not write.
         """
         self._rebuild_tag = uuid.uuid4().hex
         return True
@@ -1081,7 +1079,6 @@ class NeptuneIndexer(GraphIndexer):
         (concurrent) without any locking. A run that lost its write lease
         raises before the request (``check_write_fence``).
         """
-        check_write_fence()
         try:
             # Not an error yet: the per-item fallback below may still index
             # every item; one that fails there logs it.

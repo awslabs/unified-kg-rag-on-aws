@@ -67,11 +67,8 @@ def test_matcher_passed_to_pool_via_initializer_not_per_task(mocker) -> None:
             captured["initializer"] = initializer
             captured["initargs"] = initargs
 
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *a):
-            return False
+        def shutdown(self, wait=True, cancel_futures=False):
+            pass
 
         def submit(self, fn, *args):
             captured.setdefault("submit_args", []).append(args)
