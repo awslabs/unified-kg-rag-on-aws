@@ -19,6 +19,7 @@ import shutil
 from collections.abc import Callable
 from itertools import pairwise
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -34,6 +35,7 @@ from tests.integration.test_embedded_e2e import (
     _providers,
     _stored,
 )
+from unified_kg_rag.adapters.storage.opensearch_indexer import OpenSearchIndexer
 from unified_kg_rag.adapters.storage.sqlite_graph_indexer import SQLiteGraphIndexer
 from unified_kg_rag.domain.models import PipelineStageStatus
 
@@ -43,6 +45,10 @@ no_aws = e2e.no_aws
 
 NAMES = ("Initech Corp", "Initech", "Buyer", "Depot", "Carrier", "Acme Inc", "Acme")
 TYPES = {"goods": "ORGANIZATION", "parts": "PERSON", "cash": "LOCATION"}
+
+
+class _Died(BaseException):
+    """A crash the pipeline does not catch (the task was killed)."""
 
 
 def _names_in(text: str) -> list[str]:
@@ -96,9 +102,11 @@ def _state(
     repeat: int | None = None,
     respond: Callable[[str, str], str] = _respond,
     summarize: bool = False,
+    die_in: int | None = None,
 ) -> dict[str, list[tuple]]:
     """The stored entities, edges and claims after indexing ``corpora`` one
-    after the other (run ``repeat`` twice under its pipeline id)."""
+    after the other (run ``repeat`` twice under its pipeline id; run
+    ``die_in`` killed at its first claim write, then resumed under its id)."""
     config = _config(tmp / "stores", tmp / "viz")
     config.processing.claim_extraction.enabled = True
     summarization = config.processing.graph_extraction.description_summarization
@@ -115,6 +123,12 @@ def _state(
         source.mkdir(parents=True)
         for name, text in corpus.items():
             (source / name).write_text(text)
+        if run == die_in:
+            with (
+                patch.object(OpenSearchIndexer, "upsert_claims", side_effect=_Died),
+                pytest.raises(_Died),
+            ):
+                _ingest(config, providers, source, tmp / f"run-{run}")
         for _ in range(2 if run == repeat else 1):
             context = _ingest(config, providers, source, tmp / f"run-{run}")
             assert context.status is PipelineStageStatus.COMPLETED, _errors(context)
@@ -266,3 +280,21 @@ def test_a_hub_grown_under_another_spelling_extends_its_summary(
     # Eight lines in the first run; one call (or none) on the summary and
     # the added line in the second.
     assert [lines for name, lines in calls if name == "Acme"] in ([8], [8, 2])
+
+
+def test_a_run_resumed_after_dying_mid_split_matches_a_full_build(
+    tmp_path: Path,
+) -> None:
+    # The second run splits "Initech" (now a location) off "Initech Corp".
+    # Killed after the graph took the split entities but before their edges
+    # and claims were written, the resumed run found nothing left to split:
+    # the edge and the claim "Initech Corp" had absorbed kept the other
+    # spelling's statement (an edge of double weight, a claim about itself).
+    first = {"r6.txt": "Initech Corp and Buyer and Initech trade goods 1."}
+    final = {**first, "d6.txt": "Initech and Buyer trade cash 2."}
+
+    full = _state(tmp_path / "full", [final])
+    incremental = _state(tmp_path / "inc", [first, final], die_in=1)
+
+    assert ("Initech Corp", "Initech") in {c[:2] for c in full["claims"]}
+    assert incremental == full

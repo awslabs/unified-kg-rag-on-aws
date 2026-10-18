@@ -80,6 +80,24 @@ def _claim_text(claim: Claim) -> tuple[Any, ...]:
     return claim.type, claim.status, claim.description, claim.source_text
 
 
+def _spellings_sharing_units(
+    derived: Sequence[Entity], given: Sequence[Entity]
+) -> dict[str, str]:
+    """``{derived id: given id}`` of each given entity of another id whose
+    name has a derived entity's ``compact_name_key`` and that shares a text
+    unit with it."""
+    by_key: dict[str, list[Entity]] = defaultdict(list)
+    for entity in derived:
+        by_key[compact_name_key(entity.name)].append(entity)
+    pairs: dict[str, str] = {}
+    for other in given:
+        units = set(other.text_unit_ids or [])
+        for entity in by_key.get(compact_name_key(other.name), ()):
+            if entity.id != other.id and units & set(entity.text_unit_ids or []):
+                pairs.setdefault(entity.id, other.id)
+    return pairs
+
+
 def _with_old_ids(ids: Iterable[str], rekey: Mapping[str, str]) -> list[str]:
     """``ids`` and the stored ids ``rekey`` replaced by them (an item merged
     from several stored copies has its edges under each)."""
@@ -867,11 +885,28 @@ class IndexingManager:
                 - blocked
             )
             held = self._read_held(suffix, targets) if targets else ([], [], [])
+            # Another spelling of a derived entity that shares a text unit
+            # with it: a run that split them and died before their edges and
+            # claims were written leaves those on the other spelling, and only
+            # its entity copies record the split. Its edges are derived with
+            # them, and its claims follow (``split_from``).
+            spellings = (
+                {
+                    part: whole
+                    for part, whole in _spellings_sharing_units(
+                        derived.entities, items[0]
+                    ).items()
+                    if whole not in derived.id_remap
+                }
+                if not claims
+                else {}
+            )
+            rewired = sorted({*derived.rewired, *spellings.values()})
             parted: list[Relationship] = []
-            if derived.rewired and not claims:
+            if rewired and not claims:
                 incident = set(
                     self.neptune_indexer.find_incident_relationship_ids(
-                        derived.rewired, suffix=suffix
+                        rewired, suffix=suffix
                     )
                 )
                 if incident - given:
@@ -880,7 +915,12 @@ class IndexingManager:
                     )
             if (not any(held) and not parted) or attempt == 3:
                 self.underived_items += len(set(derived.underived))
-                return derived
+                return derived.model_copy(
+                    update={
+                        "rewired": rewired,
+                        "split_from": {**spellings, **derived.split_from},
+                    }
+                )
             if attempt == 0:
                 items = (
                     [*items[0], *held[0]],

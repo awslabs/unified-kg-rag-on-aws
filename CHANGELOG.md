@@ -1522,6 +1522,14 @@ changed once with the full-config keys (#332).
   convergence fuzzer finds no divergence in 400 sequences without injected
   crashes, where it found 7, nor in 80 on Gremlin Server and OpenSearch,
   where it found 3 (#352).
+- A run killed after it split two spellings of one name ("Initech Corp",
+  "Initech") in the graph but before it wrote their edges and claims no
+  longer leaves the other spelling's statements where the split took them
+  from once resumed: the graph entities were the only record of the split,
+  so the retry found nothing to split and kept an edge of double weight and
+  a claim of the entity about itself. A derived entity and another spelling
+  of its name that share a text unit now have the other spelling's edges
+  derived with them and its claims follow (#357).
 - Removing a document no longer leaves its text unnoticed in community
   reports: a kept report that cites a removed text unit is counted in the
   `community_drift` metrics (`outdated_reports`, deletion-only runs
