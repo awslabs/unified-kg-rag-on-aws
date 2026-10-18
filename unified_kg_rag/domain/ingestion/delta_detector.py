@@ -317,14 +317,6 @@ def detect_delta(
     return delta, fingerprints
 
 
-def _settings_changed(
-    record: DocStatusRecord, extraction_fingerprint: str | None
-) -> bool:
-    """Whether ``record`` was extracted with other settings than the run's
-    (unknown for a record without a fingerprint: not changed)."""
-    return settings_changed(record.extraction_fingerprint, extraction_fingerprint)
-
-
 def validate_retired_scopes(
     retired: Iterable[str], source_scope: str, namespace: str
 ) -> list[str]:
@@ -494,7 +486,9 @@ def _stop_retrying_exhausted(
             and record.status is DocStatus.FAILED
             and record.content_hash == fingerprints[doc_id]
             and record.failure_count >= max_failures
-            and not _settings_changed(record, extraction_fingerprint)
+            and not settings_changed(
+                record.extraction_fingerprint, extraction_fingerprint
+            )
         ):
             exhausted.append(doc_id)
             labels.append(record.file_path or doc_id)
