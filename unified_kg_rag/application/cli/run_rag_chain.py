@@ -624,7 +624,13 @@ def main() -> None:
     # Parse (and let argparse exit on --help or bad arguments) before the event
     # loop starts.
     args = CommandLineInterface().parse_args()
-    sys.exit(asyncio.run(async_main(args)))
+    try:
+        code = asyncio.run(async_main(args))
+    except KeyboardInterrupt:
+        # Ctrl-C while the loop waits on I/O lands here, outside the task.
+        console.print("\n[yellow]Execution interrupted by user.[/yellow]")
+        code = EXIT_INTERRUPTED
+    sys.exit(code)
 
 
 if __name__ == "__main__":

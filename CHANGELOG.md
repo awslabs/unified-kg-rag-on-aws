@@ -1247,6 +1247,10 @@ changed once with the full-config keys (#332).
   before graph copies, and the incremental switch is
   `providers.doc_status.enabled` (#350).
   `providers.doc_status.enabled` (#351).
+- Ctrl-C is handled alike by every CLI: `run-prompt-tuning` and
+  `run-visualization` now print the `{"status": "interrupted"}` JSON
+  document with `--output-format json`, and `run-rag` exits 130 without a
+  traceback when interrupted while waiting on a model or store (#PR).
 - `prepare-benchmark musique`: a paragraph whose title starts with `.` is no
   longer written as a hidden file the parser skips (#PR).
 - The CLI exit-code table no longer says an index built with the registry

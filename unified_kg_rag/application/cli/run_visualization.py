@@ -241,7 +241,8 @@ def main() -> int:
         return 0 if written else EXIT_FAILURE
     except KeyboardInterrupt:
         logger.warning("Visualization interrupted by user.")
-        return EXIT_INTERRUPTED
+        # Raised, not returned: exits_on_sigterm prints the JSON status.
+        raise SystemExit(EXIT_INTERRUPTED) from None
     except ConfigurationError as e:
         logger.error("Visualization configuration error: %s", e)
         return EXIT_USAGE

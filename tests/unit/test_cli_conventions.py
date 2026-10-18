@@ -347,3 +347,56 @@ def test_a_configuration_error_while_running_exits_2_in_every_cli(
         except SystemExit as exc:
             code = exc.code
         assert code == 2, argv[0]
+
+
+def _raise_interrupt(*_args: object, **_kwargs: object) -> None:
+    raise KeyboardInterrupt
+
+
+def test_ctrl_c_exits_130_with_a_json_status_in_every_cli(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Before, run-prompt-tuning and run-visualization returned 130 without
+    # the JSON status, and run-rag died with a KeyboardInterrupt traceback.
+    monkeypatch.setattr(console, "stderr", console.stderr)
+    monkeypatch.setattr(run_visualization, "load_cli_config", lambda _args: Config())
+    monkeypatch.setattr(run_prompt_tuning, "load_cli_config", lambda _args: Config())
+    data = tmp_path / "graph.json"
+    data.write_text("{}")
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    (corpus / "a.txt").write_text("Vendor ships parts to Buyer.")
+    monkeypatch.setattr(run_visualization, "run_visualization", _raise_interrupt)
+    monkeypatch.setattr(run_prompt_tuning, "PromptTuner", _raise_interrupt)
+
+    def _interrupted_run(coro: object) -> None:
+        # The runner has started (and chosen JSON) when the loop, waiting on
+        # I/O, gets the Ctrl-C.
+        coro.close()  # type: ignore[attr-defined]
+        json_output(argparse.Namespace(output_format="json"))
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(run_rag_chain.asyncio, "run", _interrupted_run)
+    json_flags = ["--output-format", "json"]
+    cases = [
+        (
+            run_visualization.main,
+            ["run-visualization", "--data-path", str(data), *json_flags],
+        ),
+        (
+            run_prompt_tuning.main,
+            ["run-prompt-tuning", "--source-directory", str(corpus), *json_flags],
+        ),
+        (run_rag_chain.main, ["run-rag", "--query", "Who ships?", *json_flags]),
+    ]
+    for main, argv in cases:
+        monkeypatch.setattr(sys, "argv", argv)
+        with pytest.raises(SystemExit) as exc:
+            main()
+        assert exc.value.code == 130, argv[0]
+        assert json.loads(capsys.readouterr().out) == {
+            "status": "interrupted",
+            "exit_code": 130,
+        }, argv[0]

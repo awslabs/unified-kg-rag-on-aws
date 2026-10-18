@@ -152,7 +152,8 @@ def main() -> int:
         return 0
     except KeyboardInterrupt:
         logger.warning("Prompt tuning interrupted by user.")
-        return EXIT_INTERRUPTED
+        # Raised, not returned: exits_on_sigterm prints the JSON status.
+        raise SystemExit(EXIT_INTERRUPTED) from None
     except ConfigurationError as e:
         logger.error("Prompt tuning configuration error: %s", e)
         return EXIT_USAGE
