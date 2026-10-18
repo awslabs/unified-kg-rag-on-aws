@@ -1139,7 +1139,8 @@ run-eval --data-path s3://my-bucket/eval/my_eval_data.json \
 - `rerank_status_counts`: [재순위화 상태](#재순위화-상태)별 질의 수입니다. 각 결과에는
   `rerank_status`가 기록됩니다(답변 생성이 먼저 실패했으면 `null`).
 - `guardrail_blocked_counts`: `input` / `output`별 차단된 질의 수입니다(차단된 항목은
-  차단 메시지로 채점). 각 결과에는 `guardrail_blocked`가 기록됩니다.
+  차단 메시지로 채점. 차단된 답변은 출처를 버리므로 검색 지표는 `guardrail_blocked`로
+  건너뜀). 각 결과에는 `guardrail_blocked`가 기록됩니다.
 - `run_manifest`: 무엇을 측정했는지 기록하므로 두 실행을 비교할 수 있습니다.
   - CLI 인자(URL은 자격 정보를 뺌), 버전, `git_sha` / `git_dirty`, 데이터셋(경로, 해시,
     질의 수), UTC 타임스탬프, `dropped_evaluators`
@@ -1173,8 +1174,9 @@ run-eval --data-path s3://my-bucket/eval/my_eval_data.json \
   비교한 값입니다. `mean_delta`, 95% 짝지은 부트스트랩 구간(`ci_low`/`ci_high`. 2,000번
   재표집, 시드 0), `wins`/`ties`/`losses`, 질의별 차이, `unpaired`가 있습니다. 답변
   생성에 실패한 질의는 다른 실행이 채점한 모든 지표에서 0점이므로(`answer_length` 제외)
-  실패로 이득을 볼 수 없습니다(`failed_answers` / `failed_queries`. 전략마다 실패 수가
-  다르면 `warnings`에 이름이 나옴). 구간이 0을 포함하지 않으면 그 차이가 뒷받침됩니다.
+  실패로 이득을 볼 수 없습니다(`failed_answers` / `failed_queries`. 차단 수는
+  `guardrail_blocked_counts`. 전략마다 실패하거나 차단된 수가 다르면 `warnings`에 이름이
+  나옴). 구간이 0을 포함하지 않으면 그 차이가 뒷받침됩니다.
   이진 지표의 10%p 차이는 질의 50개에서 15%, 200개에서 59%의 실행에서만 찾아지므로 수백
   개 질의로 비교하세요.
 - `pairwise_vs_baseline.<s>`(`--pairwise-judge` 사용 시): GraphRAG / LightRAG 논문의
@@ -1184,7 +1186,7 @@ run-eval --data-path s3://my-bucket/eval/my_eval_data.json \
   판정하고 두 순서가 일치한 기준만 승리로 세며, `candidate_win_rate`는 무승부를 0.5로
   셉니다. 한쪽 답변이 실패한 쌍은 판정하지 않고 다른 쪽이 이깁니다(`candidate_errors`,
   `baseline_errors`. 둘 다 실패: `both_errors`). `failed`는 판정 모델이 결정하지 못한
-  쌍의 수이며 `--max-failure-rate`가 적용됩니다.
+  쌍(호출 실패, 또는 `1`, `2`, `tie`가 아닌 판정)의 수이며 `--max-failure-rate`가 적용됩니다.
 - 첫 실행의 `run_manifest`.
 
 콘솔에도 같은 요약이 출력되며, 실패 허용 기준은 모든 실행에 적용됩니다.
@@ -1379,8 +1381,8 @@ custom_prompts:
 | 코드 | 의미 |
 |---|---|
 | `0` | 성공 |
-| `1` | 실행 실패: 단계나 질의 실패, `--max-failure-rate` 초과, 업로드 실패, 렌더링한 파일 없음 |
-| `2` | 사용법·설정 오류: 잘못된 플래그, 없는 입력, 잘못된 설정 파일이나 덮어쓰기, 설정하지 않은 저장소 엔드포인트(모두 작업 시작 전), 또는 실행 중에 발견한 `ConfigurationError`(예: 레지스트리를 끈 채 만든 인덱스) |
+| `1` | 실행 실패: 단계나 질의 실패(`run-ingestion`은 실행 중에 발견한 `ConfigurationError`도 포함. 예: 레지스트리를 끈 채 만든 인덱스에 대한 증분 실행), `--max-failure-rate` 초과, 업로드 실패, 렌더링한 파일 없음 |
+| `2` | 사용법·설정 오류: 잘못된 플래그, 없거나 잘못된 입력(`run-eval` 데이터셋, `run-visualization` 데이터 파일), 잘못된 설정 파일이나 덮어쓰기, 설정하지 않은 저장소 엔드포인트(모두 작업 시작 전), 또는 `run-ingestion` 외의 CLI가 실행 중에 발견한 `ConfigurationError` |
 | `130` | Ctrl-C(SIGINT)로 중단 |
 | `143` | SIGTERM으로 중지(ECS `StopTask`, Step Functions 시간 초과). `run-ingestion`은 끝난 단계를 먼저 체크포인트로 저장하고, `run-eval`은 끝난 실행의 결과를 `s3://` 출력에 업로드함(실패하면 로컬에 남기고 경로를 로그로 남김) |
 
@@ -1393,7 +1395,7 @@ custom_prompts:
 실패 예산 초과 내역(`run-eval`), 쓴 파일(`run-visualization`), 출력 경로와 프로필
 (`run-prompt-tuning`), 쓴 항목 수(`prepare-benchmark`)입니다. 문서를 출력하기 전에 신호로 중지되면
 대신 `{"status": "interrupted", "exit_code": 143}`(Ctrl-C는 `130`)을 출력하므로 표준
-출력은 항상 JSON입니다.
+출력은 항상 JSON입니다. `run-ingestion`은 재개할 때 쓸 `pipeline_id`를 덧붙입니다.
 
 ### 대규모, 다국어, 이질적인 코퍼스
 

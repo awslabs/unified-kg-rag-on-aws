@@ -27,7 +27,9 @@ was given — and ``answer_length`` (characters) alongside. Retrieved coverage i
 skipped for a query whose context has no entity (or relationship) source, not
 scored 0: a strategy that reads no such sources by design (``global``) has none
 to measure. A strategy that finds none for a query is therefore not scored on
-it either; a comparison reports those queries as ``unpaired``.
+it either; a comparison reports those queries as ``unpaired``. When the
+guardrail blocked the answer (dropping its sources), retrieved coverage is
+skipped as ``guardrail_blocked``.
 
 Expected artifacts are threaded onto ``EvaluationResult.metadata`` by the
 manager (keys ``expected_entities`` / ``expected_relationships``), so this
@@ -40,6 +42,7 @@ from datetime import datetime
 from typing import Any
 
 from unified_kg_rag.adapters.evaluators.base import (
+    SKIP_REASON_GUARDRAIL_BLOCKED,
     SKIPPED_METRICS_KEY,
     BaseGraphRAGEvaluator,
 )
@@ -187,17 +190,20 @@ class GraphAwareEvaluator(BaseGraphRAGEvaluator):
         # (global search reads community reports only): it is undefined there,
         # not a miss.
         skipped: dict[str, str] = {}
-        if SectionType.ENTITY.value not in source_types:
+        blocked = result.guardrail_blocked == "output"
+        if blocked or SectionType.ENTITY.value not in source_types:
             re_cov = None
             if expected_entities:
                 skipped[EvaluationMetricType.RETRIEVED_ENTITY_COVERAGE.value] = (
-                    "no_entity_sources"
+                    SKIP_REASON_GUARDRAIL_BLOCKED if blocked else "no_entity_sources"
                 )
-        if SectionType.RELATIONSHIP.value not in source_types:
+        if blocked or SectionType.RELATIONSHIP.value not in source_types:
             rr_cov = None
             if expected_relationships:
                 skipped[EvaluationMetricType.RETRIEVED_RELATIONSHIP_COVERAGE.value] = (
-                    "no_relationship_sources"
+                    SKIP_REASON_GUARDRAIL_BLOCKED
+                    if blocked
+                    else "no_relationship_sources"
                 )
         values = {
             EvaluationMetricType.ENTITY_COVERAGE: e_cov,

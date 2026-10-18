@@ -108,9 +108,28 @@ def _to_communities(entries: list[dict[str, Any]]) -> list[Community]:
     return communities
 
 
+class InvalidVisualizationDataError(Exception):
+    """The visualization data file is not exported visualization JSON (exit 2,
+    as an invalid ``run-eval`` dataset)."""
+
+
 def load_render_context(data_path: Path) -> RenderContext:
-    """Reconstruct a :class:`RenderContext` from exported visualization JSON."""
-    data = json.loads(data_path.read_text(encoding="utf-8"))
+    """Reconstruct a :class:`RenderContext` from exported visualization JSON.
+
+    Raises:
+        InvalidVisualizationDataError: The file is not valid JSON or not
+            shaped like an export.
+    """
+    try:
+        return _render_context(json.loads(data_path.read_text(encoding="utf-8")))
+    except (ValueError, KeyError, TypeError, AttributeError) as e:
+        # ValueError covers invalid JSON and UTF-8 and a failed validation.
+        raise InvalidVisualizationDataError(
+            f"'{data_path}' is not exported visualization data: {e!r}"
+        ) from e
+
+
+def _render_context(data: dict[str, Any]) -> RenderContext:
 
     graph = nx.Graph()
     for node in data.get("nodes", []):
@@ -241,9 +260,10 @@ def main() -> int:
         return 0 if written else EXIT_FAILURE
     except KeyboardInterrupt:
         logger.warning("Visualization interrupted by user.")
-        return EXIT_INTERRUPTED
-    except ConfigurationError as e:
-        logger.error("Visualization configuration error: %s", e)
+        # Raised, not returned: exits_on_sigterm prints the JSON status.
+        raise SystemExit(EXIT_INTERRUPTED) from None
+    except (ConfigurationError, InvalidVisualizationDataError) as e:
+        logger.error("Visualization input error: %s", e)
         return EXIT_USAGE
     except Exception as e:
         # Clean error line rather than a raw traceback (parity with the other

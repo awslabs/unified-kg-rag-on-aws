@@ -36,6 +36,7 @@ from unified_kg_rag.application.cli.provider_args import (
     add_provider_arguments,
     apply_provider_arguments,
 )
+from unified_kg_rag.application.cli.query_args import _positive_int
 from unified_kg_rag.application.prompts.tuner import PromptTuner
 from unified_kg_rag.domain.models import Config
 from unified_kg_rag.shared import ConfigurationError, get_logger, setup_logging
@@ -109,7 +110,10 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Where to write the tuned custom_prompts YAML",
     )
     parser.add_argument(
-        "--max-docs", type=int, default=20, help="Max documents to sample"
+        "--max-docs",
+        type=_positive_int,
+        default=20,
+        help="Max documents to sample (at least 1)",
     )
     add_config_arguments(parser)
     add_output_format_argument(parser)
@@ -152,7 +156,8 @@ def main() -> int:
         return 0
     except KeyboardInterrupt:
         logger.warning("Prompt tuning interrupted by user.")
-        return EXIT_INTERRUPTED
+        # Raised, not returned: exits_on_sigterm prints the JSON status.
+        raise SystemExit(EXIT_INTERRUPTED) from None
     except ConfigurationError as e:
         logger.error("Prompt tuning configuration error: %s", e)
         return EXIT_USAGE

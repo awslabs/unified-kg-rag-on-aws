@@ -83,6 +83,16 @@ def _stage_name_arg(value: str) -> str:
     return normalized
 
 
+def _retired_scope(value: str) -> str:
+    """A ``--retire-source-scope`` as the registry stores the scope: a local
+    path resolved the way the source directory is (``~``, ``..``, symlinks);
+    a URI or a ``source_scope`` name as given."""
+    scope = value.strip()
+    if scope.startswith(("/", "~", ".")):
+        return Path(scope).expanduser().resolve().as_posix()
+    return scope
+
+
 class CommandLineInterface:
     def __init__(self) -> None:
         self.parser = self._setup_arguments()
@@ -211,7 +221,8 @@ class CommandLineInterface:
             "former source scope (in this run's index namespace) as deleted, "
             "removing its exclusive graph and vector content. Use it once "
             "after moving a corpus, with the old absolute source directory or "
-            "former document_parsing.source_scope value. Repeatable; added to "
+            "former document_parsing.source_scope value (a local path is "
+            "resolved like --source-directory). Repeatable; added to "
             "indexing.retire_source_scopes. Never this run's own scope.",
         )
         add_config_arguments(parser, "Path to custom configuration file")
@@ -243,7 +254,7 @@ class IngestionPipelineRunner:
             indexing = self.config.indexing
             indexing.retire_source_scopes = list(
                 dict.fromkeys(
-                    [*indexing.retire_source_scopes, *(s.strip() for s in retired)]
+                    [*indexing.retire_source_scopes, *map(_retired_scope, retired)]
                 )
             )
         self.json_output = json_output(args)
@@ -603,9 +614,23 @@ class IngestionPipelineRunner:
         )
 
 
+def _print_interrupted(runner: IngestionPipelineRunner | None, exit_code: int) -> None:
+    """The JSON status of a stopped run, with the pipeline id to resume with."""
+    pipeline_id = runner.pipeline.pipeline_id if runner and runner.pipeline else None
+    if runner and runner.json_output and pipeline_id:
+        print_json(
+            {
+                "status": "interrupted",
+                "exit_code": exit_code,
+                "pipeline_id": pipeline_id,
+            }
+        )
+
+
 @exits_on_sigterm
 def main() -> None:
     load_cli_dotenv()
+    runner: IngestionPipelineRunner | None = None
     try:
         cli = CommandLineInterface()
         args = cli.parse_args()
@@ -617,9 +642,11 @@ def main() -> None:
             "stages are checkpointed, rerun with the same --pipeline-id to "
             "resume.[/yellow]"
         )
+        _print_interrupted(runner, 128 + e.signum)
         sys.exit(128 + e.signum)
     except KeyboardInterrupt:
         console.print("\n[yellow]Pipeline interrupted by user.[/yellow]")
+        _print_interrupted(runner, EXIT_INTERRUPTED)
         sys.exit(EXIT_INTERRUPTED)
     except ConfigurationError as e:
         console.print(f"\n[red]Error: {escape(str(e))}[/red]")

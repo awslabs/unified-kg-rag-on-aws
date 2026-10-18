@@ -6,9 +6,9 @@ One client span per model call, named and attributed per the OpenTelemetry
 GenAI semantic conventions: ``gen_ai.operation.name``, ``gen_ai.provider.name``,
 ``gen_ai.request.model``, the request's ``max_tokens`` and ``temperature`` (as
 the factory set them), ``gen_ai.usage.*`` token counts (cache reads and writes
-when the provider reports them), finish reasons, ``error.type`` on a failed
-call and whether a guardrail intervened. Cost is not recorded: the package has
-no model price table to derive it from.
+when the provider reports them), finish reasons and ``error.type`` on a
+failed call. Cost is not recorded: the package has no model price table to
+derive it from.
 
 A ``session_id`` / ``user_id`` in the run's metadata (``config={"metadata":
 ...}``) becomes ``session.id`` / ``user.id``, so a streamed answer, whose model
@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import json
 import threading
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any
 from uuid import UUID
 
@@ -56,7 +56,6 @@ from unified_kg_rag.shared.genai import (
     GEN_AI_USAGE_INPUT_TOKENS,
     GEN_AI_USAGE_OUTPUT_TOKENS,
     GEN_AI_USAGE_REASONING_OUTPUT_TOKENS,
-    GUARDRAIL_INTERVENED,
     PROVIDER_AWS_BEDROCK,
 )
 from unified_kg_rag.shared.observability import (
@@ -122,9 +121,7 @@ class GenAITracingCallbackHandler(BaseCallbackHandler):
 
     ``max_tokens`` / ``temperature`` are the request parameters the factory
     built the model with (LangChain's ``invocation_params`` do not carry them
-    for every provider). ``guardrail_detector`` tells from a response's
-    metadata whether a guardrail intervened (the Bedrock factory passes its
-    detector).
+    for every provider).
     """
 
     # Run in the caller's thread and context even on async calls, so the model
@@ -139,14 +136,12 @@ class GenAITracingCallbackHandler(BaseCallbackHandler):
         purpose: str | None = None,
         max_tokens: int | None = None,
         temperature: float | None = None,
-        guardrail_detector: Callable[[dict[str, Any]], bool] | None = None,
     ) -> None:
         self.model_id = model_id
         self.provider_name = provider_name
         self.purpose = purpose
         self.max_tokens = max_tokens
         self.temperature = temperature
-        self.guardrail_detector = guardrail_detector
         self._spans: dict[UUID, SpanHandle] = {}
         self._lock = threading.Lock()
 
@@ -194,14 +189,6 @@ class GenAITracingCallbackHandler(BaseCallbackHandler):
     def on_llm_error(
         self, error: BaseException, *, run_id: UUID, **kwargs: Any
     ) -> None:
-        if kwargs.get("reason") == "GUARDRAIL_INTERVENED":
-            # InvokeModel with guardrail trace reports the intervention here
-            # and then still calls on_llm_end, which ends the span.
-            with self._lock:
-                span = self._spans.get(run_id)
-            if span is not None:
-                span.set_attribute(GUARDRAIL_INTERVENED, True)
-            return
         with self._lock:
             span = self._spans.pop(run_id, None)
         if span is None:
@@ -224,7 +211,6 @@ class GenAITracingCallbackHandler(BaseCallbackHandler):
         has_usage = False
         finish_reasons: list[str] = []
         response_model: str | None = None
-        intervened = False
         outputs: list[dict[str, Any]] = []
         policy = observability.content_policy()
 
@@ -250,10 +236,6 @@ class GenAITracingCallbackHandler(BaseCallbackHandler):
                 response_model = response_model or (
                     metadata.get("model_id") or metadata.get("model_name")
                 )
-                if self.guardrail_detector is not None and self.guardrail_detector(
-                    metadata
-                ):
-                    intervened = True
                 if policy.capture_content:
                     output: dict[str, Any] = {
                         "role": "assistant",
@@ -283,7 +265,6 @@ class GenAITracingCallbackHandler(BaseCallbackHandler):
         attributes: dict[str, Any] = {
             GEN_AI_RESPONSE_MODEL: response_model,
             GEN_AI_RESPONSE_FINISH_REASONS: finish_reasons or None,
-            GUARDRAIL_INTERVENED: True if intervened else None,
         }
         if has_usage:
             attributes[GEN_AI_USAGE_INPUT_TOKENS] = input_tokens

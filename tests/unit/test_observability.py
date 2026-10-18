@@ -1073,17 +1073,11 @@ def test_rerank_failure_is_an_error_span(
     assert span.status.status_code == StatusCode.ERROR
 
 
-def test_guardrail_intervention_and_invoke_model_usage_fallback(
-    tracing: Tracing,
-) -> None:
+def test_invoke_model_usage_fallback(tracing: Tracing) -> None:
     exporter = tracing()
     handler = GenAITracingCallbackHandler("vendor.model-v1")
     run_id = uuid4()
     handler.on_chat_model_start({}, [_PROMPT], run_id=run_id)
-    # InvokeModel with guardrail trace: on_llm_error first, then on_llm_end.
-    handler.on_llm_error(
-        RuntimeError("blocked"), run_id=run_id, reason="GUARDRAIL_INTERVENED"
-    )
     handler.on_llm_end(
         LLMResult(
             generations=[[ChatGeneration(message=AIMessage(content="Blocked."))]],
@@ -1092,7 +1086,8 @@ def test_guardrail_intervention_and_invoke_model_usage_fallback(
         run_id=run_id,
     )
     attrs = _attrs(_one(exporter, "chat vendor.model-v1"))
-    assert attrs["aws.bedrock.guardrail.intervened"] is True
+    # No model call carries a guardrail (it screens the query and answer).
+    assert "aws.bedrock.guardrail.intervened" not in attrs
     assert (
         attrs["gen_ai.usage.input_tokens"],
         attrs["gen_ai.usage.output_tokens"],

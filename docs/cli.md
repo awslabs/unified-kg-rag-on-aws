@@ -50,7 +50,7 @@ Guide: [User Guide](./user-guide.md#3-ingestion-run-ingestion). Also takes the [
 | `--continue-on-error` | off | Keep going when a stage fails. When an artifact stage (translation through community detection) crashes, every document of the run is recorded FAILED, so the next incremental run processes them again. |
 | `--enabled-stages` | — | Comma-separated list of pipeline stages to enable (e.g., 'DOCUMENT_PARSING,TEXT_CHUNKING'). If not specified, all stages are enabled. |
 | `--metrics-sink` | `none` | Where to forward pipeline metrics: 'none' (default) or 'cloudwatch' (CloudWatch EMF to stdout, auto-extracted by CloudWatch Logs, with an Environment dimension when UKR_METRICS_ENVIRONMENT is set; pipeline_id is a log property, not a dimension). A stage's metrics are emitted when it finishes and only by the run that executed it, so a resumed run does not repeat restored stages' counts. |
-| `--retire-source-scope` `SCOPE` | — | Incremental runs: treat every doc-status record of this former source scope (in this run's index namespace) as deleted, removing its exclusive graph and vector content. Use it once after moving a corpus, with the old absolute source directory or former document_parsing.source_scope value. Repeatable; added to indexing.retire_source_scopes. Never this run's own scope. |
+| `--retire-source-scope` `SCOPE` | — | Incremental runs: treat every doc-status record of this former source scope (in this run's index namespace) as deleted, removing its exclusive graph and vector content. Use it once after moving a corpus, with the old absolute source directory or former document_parsing.source_scope value (a local path is resolved like --source-directory). Repeatable; added to indexing.retire_source_scopes. Never this run's own scope. |
 | `--config-path` | — | Path to custom configuration file; a missing file is a usage error. |
 | `--allow-unknown-keys` | off | Ignore config keys (and UKR__ environment variables) the configuration does not define, with a warning each, instead of failing. A misspelled key otherwise leaves its setting at the default without a word. |
 | `--output-format` | `text` | 'text' (default) for people; 'json' prints one JSON result to stdout and everything else to stderr. |
@@ -64,7 +64,7 @@ Guide: [User Guide](./user-guide.md#4-querying-run-rag). Also takes the [provide
 | Flag | Default | Description |
 |---|---|---|
 | `--query`, `-q` | — | Answer one query; give this or --interactive (exactly one). |
-| `--interactive`, `-i` | off | Launch interactive chat mode for continuous conversation (always 'rag' mode, memory on). |
+| `--interactive`, `-i` | off | Launch interactive chat mode for continuous conversation (always 'rag' mode, memory on; not with --output-format json). |
 | `--mode` | `rag` | Set the execution mode: 'rag' for full generation, 'search' for retrieval only (a single --query only; --interactive always generates). |
 | `--conversation-id` | — | Name the conversation. Memory is kept in this process only: it carries over between --interactive turns, not between separate run-rag invocations. |
 | `--use-memory` | off | Enable conversation memory, kept in this process only (auto-enabled in interactive mode; a single --query starts with no history). |
@@ -130,7 +130,7 @@ Guide: [User Guide](./user-guide.md#8-prompt-tuning-run-prompt-tuning). Also tak
 |---|---|---|
 | `--source-directory` | required | Directory of documents to sample (.txt/.md plus every format run-ingestion parses, e.g. .pdf). |
 | `--output-path` | `tuned_prompts.yaml` | Where to write the tuned custom_prompts YAML. |
-| `--max-docs` | `20` | Max documents to sample. |
+| `--max-docs` | `20` | Max documents to sample (at least 1). |
 | `--config-path` | — | Config YAML path; a missing file is a usage error. |
 | `--allow-unknown-keys` | off | Ignore config keys (and UKR__ environment variables) the configuration does not define, with a warning each, instead of failing. A misspelled key otherwise leaves its setting at the default without a word. |
 | `--output-format` | `text` | 'text' (default) for people; 'json' prints one JSON result to stdout and everything else to stderr. |

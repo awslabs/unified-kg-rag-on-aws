@@ -228,6 +228,18 @@ def test_rag_cli_rejects_search_mode_with_interactive(
     assert exc.value.code == 2
 
 
+def test_rag_cli_rejects_json_output_with_interactive(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Before, the chat printed nothing on stdout, JSON included.
+    monkeypatch.setattr(
+        sys, "argv", ["run-rag", "--interactive", "--output-format", "json"]
+    )
+    with pytest.raises(SystemExit) as exc:
+        run_rag_chain.CommandLineInterface().parse_args()
+    assert exc.value.code == 2
+
+
 async def test_rag_runner_error_fallback_is_not_success(config, mocker) -> None:
     # Under ignore_errors the chain returns DEFAULT_ERROR_MESSAGE with
     # metadata.error instead of raising; the CLI must not call that success.
@@ -749,6 +761,37 @@ def test_ingestion_retire_source_scope_is_repeatable_and_merged_into_config(
     assert runner.config.indexing.retire_source_scopes == [
         "s3://bucket/old/",
         "/corpora/old",
+    ]
+
+
+def test_ingestion_retire_source_scope_resolves_a_local_path(
+    config, mocker, tmp_path, monkeypatch
+) -> None:
+    # Before, a path through a symlink (or relative) never matched the
+    # resolved directory the registry stores, so nothing was retired.
+    mocker.patch.object(run_ingestion_pipeline, "load_cli_config", return_value=config)
+    real = tmp_path / "real"
+    (real / "old").mkdir(parents=True)
+    (tmp_path / "link").symlink_to(real)
+    src = tmp_path / "src"
+    src.mkdir()
+    monkeypatch.chdir(tmp_path)
+    args = _ing_parser().parse_args(
+        [
+            "--source-directory",
+            str(src),
+            "--retire-source-scope",
+            str(tmp_path / "link" / "old"),
+            "--retire-source-scope",
+            "./real/old/../old",
+            "--retire-source-scope",
+            "contracts",
+        ]
+    )
+    runner = run_ingestion_pipeline.IngestionPipelineRunner(args)
+    assert runner.config.indexing.retire_source_scopes == [
+        (real / "old").resolve().as_posix(),
+        "contracts",
     ]
 
 

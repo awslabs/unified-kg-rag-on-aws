@@ -524,25 +524,6 @@ class BedrockEmbeddingModelFactory(
         return model
 
 
-_GUARDRAIL_INTERVENED_STOP_REASON = "guardrail_intervened"
-# InvokeModel response-body flag (langchain_aws GUARDRAILS_BODY_KEY).
-_GUARDRAIL_ACTION_KEY = "amazon-bedrock-guardrailAction"
-
-
-def _message_guardrail_intervened(metadata: dict[str, Any]) -> bool:
-    """Best-effort detection of a guardrail intervention in response metadata.
-
-    Converse (``ChatBedrockConverse``) reports ``stopReason ==
-    "guardrail_intervened"``; InvokeModel surfaces the body flag
-    ``amazon-bedrock-guardrailAction == "INTERVENED"`` when langchain_aws
-    propagates it. Anything else is treated as "not intervened".
-    """
-    stop_reason = metadata.get("stopReason") or metadata.get("stop_reason")
-    if stop_reason == _GUARDRAIL_INTERVENED_STOP_REASON:
-        return True
-    return metadata.get(_GUARDRAIL_ACTION_KEY) == "INTERVENED"
-
-
 class BedrockLanguageModelFactory(
     BaseBedrockModelFactory[str, LanguageModelInfo, ChatBedrock | ChatBedrockConverse]
 ):
@@ -763,7 +744,6 @@ class BedrockLanguageModelFactory(
                 purpose=purpose.value,
                 max_tokens=params.get("max_tokens"),
                 temperature=params.get("temperature"),
-                guardrail_detector=_message_guardrail_intervened,
             ),
         )
 

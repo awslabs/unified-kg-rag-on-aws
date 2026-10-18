@@ -118,6 +118,18 @@ class TestPairedComparison:
         assert (length["pairs"], length["unpaired"]) == (1, 1)
         assert out["warnings"] and "local 0, mix 1" in out["warnings"][0]
 
+    def test_blocked_answers_are_counted_and_warned(self) -> None:
+        # Before, a strategy whose answers the guardrail blocked showed no
+        # trace of it in the comparison.
+        reports, results = _run({"a": 1.0, "b": 0.0}, "mix")
+        results[1].guardrail_blocked = "output"
+        out = paired_comparison(
+            {"local": [_run({"a": 1.0, "b": 1.0})], "mix": [(reports, results)]}
+        )
+        assert out["strategies"]["mix"]["guardrail_blocked_counts"] == {"output": 1}
+        assert out["strategies"]["local"]["guardrail_blocked_counts"] == {}
+        assert any("local 0, mix 1" in w and "guardrail" in w for w in out["warnings"])
+
     def test_equal_failure_counts_raise_no_warning(self) -> None:
         out = paired_comparison(
             {"local": [_run({"a": 1.0})], "mix": [_run({"a": 0.0})]}
@@ -207,6 +219,16 @@ class TestPairwiseJudge:
         assert out["per_query"]["b"] == dict.fromkeys(pairwise.CRITERIA, "baseline")
         assert out["criteria"]["comprehensiveness"]["candidate_win_rate"] == 0.5
         assert out["criteria"]["directness"]["candidate_win_rate"] == 0.25
+
+    def test_a_malformed_verdict_fails_the_pair(self, mocker) -> None:
+        # Before, a missing criterion became a silent tie.
+        judge = self._judge(mocker)
+        judge.chain.ainvoke = mocker.AsyncMock(
+            return_value={"verdicts": {"comprehensiveness": {"winner": "2"}}}
+        )
+        out = asyncio.run(judge.acompare([_result("a", "x")], [_result("a", "y")]))
+        assert (out["judged"], out["failed"]) == (0, 1)
+        assert out["criteria"]["comprehensiveness"]["candidate_win_rate"] is None
 
     def test_judge_calls_nest_under_one_span(self, mocker) -> None:
         judge = self._judge(mocker)
@@ -327,6 +349,12 @@ class TestMusique:
             len(queries) == 2
             and truths[0].reference_sources == data[0]["reference_sources"]
         )
+
+    def test_a_title_with_a_leading_dot_is_not_a_hidden_file(self) -> None:
+        # Before, ".hack" became ".hack.txt", which the parser skips.
+        taken: set[str] = set()
+        assert musique._file_name(".hack", taken) == "hack.txt"
+        assert musique._file_name(". . .", taken) == "paragraph.txt"
 
     def test_limit_samples_with_the_seed_and_refuses_a_used_corpus(
         self, tmp_path: Path

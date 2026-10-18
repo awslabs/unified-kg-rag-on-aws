@@ -1247,8 +1247,9 @@ scored/failed/skipped counts (`metric_outcomes`), plus:
   result carries `rerank_status` (`null` when answer generation failed
   first).
 - `guardrail_blocked_counts`: blocked queries per `input` / `output` (a
-  blocked item is scored on the blocked message); each result carries
-  `guardrail_blocked`.
+  blocked item is scored on the blocked message; a blocked answer drops its
+  sources, so its retrieval metrics are skipped as `guardrail_blocked`); each
+  result carries `guardrail_blocked`.
 - `run_manifest`: what was measured, so two runs can be compared:
   - the CLI arguments (URLs without credentials), versions, `git_sha` /
     `git_dirty`, the dataset (path, hashes, query count), a UTC timestamp and
@@ -1290,7 +1291,8 @@ adds `evaluation_comparison_<timestamp>.json`:
   per-query deltas and `unpaired`. A query whose answer generation failed
   scores 0 on every metric the other run scored (`answer_length` excepted),
   so failing cannot help a strategy (`failed_answers` / `failed_queries`;
-  `warnings` names strategies that failed different numbers). A difference is
+  `guardrail_blocked_counts` counts blocks; `warnings` names strategies that
+  failed, or had blocked, different numbers). A difference is
   supported when its interval excludes 0; a 10-point difference on binary
   metrics is detected in 15% of runs with 50 queries and 59% with 200, so
   compare on a few hundred queries.
@@ -1302,7 +1304,8 @@ adds `evaluation_comparison_<timestamp>.json`:
   both agree; `candidate_win_rate` counts a tie as half. A pair where one
   answer failed is not judged: the other side wins (`candidate_errors`,
   `baseline_errors`; both failed: `both_errors`). `failed` counts pairs the
-  judge could not decide, and `--max-failure-rate` applies to them.
+  judge could not decide (a failed call, or a verdict other than `1`, `2` or
+  `tie`), and `--max-failure-rate` applies to them.
 - `run_manifest` of the first run.
 
 The console prints the same summary; the failure budget applies to every run.
@@ -1513,8 +1516,8 @@ Every CLI (`run-ingestion`, `run-rag`, `run-eval`, `run-visualization`,
 | Code | Meaning |
 |---|---|
 | `0` | Success |
-| `1` | The run failed: a failed stage or query, a breached `--max-failure-rate`, a failed upload, nothing rendered |
-| `2` | Usage or configuration error: a bad flag, a missing input, an invalid config file or override, an unset store endpoint (all before any work), or a `ConfigurationError` found while running (e.g. an index built with the registry off) |
+| `1` | The run failed: a failed stage or query (in `run-ingestion` also a `ConfigurationError` found while running, e.g. an incremental run into an index built with the registry off), a breached `--max-failure-rate`, a failed upload, nothing rendered |
+| `2` | Usage or configuration error: a bad flag, a missing or invalid input (a `run-eval` dataset, a `run-visualization` data file), an invalid config file or override, an unset store endpoint (all before any work), or, outside `run-ingestion`, a `ConfigurationError` found while running |
 | `130` | Interrupted with Ctrl-C (SIGINT) |
 | `143` | Stopped by SIGTERM (ECS `StopTask`, a Step Functions timeout); `run-ingestion` checkpoints its finished stages first, and `run-eval` uploads the finished runs' results to an `s3://` output (or keeps them locally and logs the path) |
 
@@ -1529,7 +1532,8 @@ breaches (`run-eval`), the written files (`run-visualization`), the output
 path and profile (`run-prompt-tuning`), or the counts written
 (`prepare-benchmark`). A run stopped by a
 signal before it printed prints `{"status": "interrupted", "exit_code": 143}`
-(`130` for Ctrl-C), so stdout is always JSON.
+(`130` for Ctrl-C), so stdout is always JSON; `run-ingestion` adds the
+`pipeline_id` to resume with.
 
 ### Large / multilingual / heterogeneous corpora
 

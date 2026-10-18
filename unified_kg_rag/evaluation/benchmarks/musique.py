@@ -80,7 +80,8 @@ def _items(source: Path) -> Iterator[dict[str, Any]]:
 
 
 def _file_name(title: str, taken: set[str]) -> str:
-    stem = " ".join(_UNSAFE.sub(" ", title).split())[:150] or "paragraph"
+    # No leading dot: the parser skips hidden files.
+    stem = " ".join(_UNSAFE.sub(" ", title).split())[:150].lstrip(". ") or "paragraph"
     name, n = f"{stem}.txt", 2
     while name.casefold() in taken:
         name, n = f"{stem} ({n}).txt", n + 1

@@ -48,7 +48,8 @@ is part of the name, so titles such as ``"St. Louis Cardinals"``,
 The rank metrics are skipped when the query has no ``reference_sources``, or
 when it has sources but none is attributable — scoring 0 there would report
 missing metadata as a retrieval miss. A query that retrieved no sources at
-all is a miss and scores 0.
+all is a miss and scores 0. Every metric is skipped (``guardrail_blocked``)
+when the guardrail blocked the answer, since that drops its sources.
 """
 
 from __future__ import annotations
@@ -59,6 +60,7 @@ from datetime import datetime
 from typing import Any
 
 from unified_kg_rag.adapters.evaluators.base import (
+    SKIP_REASON_GUARDRAIL_BLOCKED,
     SKIPPED_METRICS_KEY,
     BaseGraphRAGEvaluator,
 )
@@ -160,6 +162,20 @@ class RetrievalEvaluator(BaseGraphRAGEvaluator):
         ground_truth: str,
         **kwargs: Any,
     ) -> EvaluationReport:
+        if result.guardrail_blocked == "output":
+            return EvaluationReport(
+                query_id=query.query_id,
+                evaluator_type=self.evaluator_type,
+                metrics=[],
+                evaluation_time=datetime.now(),
+                metadata={
+                    **self._extract_search_metadata(result),
+                    SKIPPED_METRICS_KEY: {
+                        m.value: SKIP_REASON_GUARDRAIL_BLOCKED
+                        for m in self.metric_types()
+                    },
+                },
+            )
         sources = result.retrieved_source_ids
         types = result.retrieved_source_types
         source_types = [

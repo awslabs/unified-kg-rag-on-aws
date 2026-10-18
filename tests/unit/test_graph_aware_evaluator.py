@@ -123,6 +123,25 @@ class TestEvaluateSingle:
             "retrieved_relationship_coverage": "no_relationship_sources",
         }
 
+    def test_output_blocked_skips_retrieved_coverage(
+        self, evaluator: GraphAwareEvaluator
+    ) -> None:
+        # The guardrail dropped the sources: retrieved coverage is unknown,
+        # and the skip says why (before: "no_entity_sources").
+        result = self._result(
+            "Answer blocked.",
+            expected_entities=["Alice"],
+            expected_relationships=["works at"],
+        )
+        result.guardrail_blocked = "output"
+        report = evaluator.evaluate_single(
+            EvaluationQuery(query_id="q1", question="?"), result, ground_truth=""
+        )
+        assert report.metadata["skipped_metrics"] == {
+            "retrieved_entity_coverage": "guardrail_blocked",
+            "retrieved_relationship_coverage": "guardrail_blocked",
+        }
+
     def test_absent_dimension_recorded_as_skipped(
         self, evaluator: GraphAwareEvaluator
     ) -> None:
