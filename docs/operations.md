@@ -541,6 +541,11 @@ account-level backstop) is in
 | `kg_rag.evaluate` | root | One per evaluator: `kg_rag.evaluator`, `kg_rag.items`; the judge's model spans under it |
 | `chat <model>`, `embeddings <model>` | the calling span | OpenTelemetry GenAI conventions, kind `CLIENT` (as Bedrock rerank spans): `gen_ai.request.model`, `.max_tokens`, `.temperature`, `gen_ai.usage.input_tokens` / `output_tokens`, `gen_ai.usage.cache_read.input_tokens` / `cache_creation.input_tokens` when Bedrock reports prompt-cache use, finish reasons, `error.type`. No cost |
 
+With `capture_content`, the answer model's `chat <model>` span keeps the
+answer as generated, even when the guardrail then blocks or masks it, and
+the `kg_rag.guardrail` span comes from the Bedrock guardrail adapter only (a
+custom `ContentGuardPort` emits none).
+
 `kg_rag.rerank.status` is the outcome of one Rerank call (`error`: the query
 fell back to the fused order; `empty`: nothing usable came back), while
 `kg_rag.rerank_status` is what reranking did, set even without a call:

@@ -16,6 +16,7 @@ from pathlib import Path
 
 from unified_kg_rag.application.cli.conventions import (
     EXIT_FAILURE,
+    EXIT_INTERRUPTED,
     add_output_format_argument,
     exits_on_sigterm,
     json_output,
@@ -85,6 +86,11 @@ def main(argv: list[str] | None = None) -> None:
         counts = musique.prepare(
             source, args.output_directory, limit=args.limit, seed=args.seed
         )
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Benchmark preparation interrupted by user.[/yellow]")
+        sys.exit(EXIT_INTERRUPTED)
+    except musique.InvalidBenchmarkDataError as e:
+        usage_error(str(e))
     except (EvaluationException, OSError) as e:
         console.print(f"[red]Error: {e}[/red]")
         sys.exit(EXIT_FAILURE)

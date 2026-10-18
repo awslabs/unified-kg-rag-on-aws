@@ -29,6 +29,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
+from unified_kg_rag.evaluation.retrieval_evaluator import reference_key
 from unified_kg_rag.shared import EvaluationException, get_logger
 
 logger = get_logger(__name__)
@@ -66,26 +67,52 @@ def download_dev(destination: Path, *, timeout: float = 120.0) -> Path:
     return destination
 
 
+class InvalidBenchmarkDataError(EvaluationException):
+    """The benchmark file is not MuSiQue JSONL (an input error, exit 2)."""
+
+
 def _items(source: Path) -> Iterator[dict[str, Any]]:
     with source.open(encoding="utf-8") as lines:
         for number, line in enumerate(lines, 1):
             if not line.strip():
                 continue
             try:
-                yield json.loads(line)
+                item = json.loads(line)
             except json.JSONDecodeError as e:
-                raise EvaluationException(
+                raise InvalidBenchmarkDataError(
                     f"{source}:{number} is not a JSON line: {e}"
                 ) from e
+            if not _is_item(item):
+                raise InvalidBenchmarkDataError(
+                    f"{source}:{number} is not a MuSiQue item (an object with "
+                    "'id', 'question', 'answer' and a 'paragraphs' list of "
+                    "objects)"
+                )
+            yield item
+
+
+def _is_item(item: Any) -> bool:
+    if not isinstance(item, dict):
+        return False
+    if item.get("answerable", True) is False:
+        return True  # skipped by prepare; the full files carry them
+    paragraphs = item.get("paragraphs")
+    return (
+        all(key in item for key in ("id", "question", "answer"))
+        and isinstance(paragraphs, list)
+        and all(isinstance(p, dict) for p in paragraphs)
+    )
 
 
 def _file_name(title: str, taken: set[str]) -> str:
     # No leading dot: the parser skips hidden files.
     stem = " ".join(_UNSAFE.sub(" ", title).split())[:150].lstrip(". ") or "paragraph"
     name, n = f"{stem}.txt", 2
-    while name.casefold() in taken:
+    # Distinct under the retrieval evaluator's matching (case, NFKC, "_" as
+    # " "), or two paragraphs would count as one file.
+    while reference_key(name) in taken:
         name, n = f"{stem} ({n}).txt", n + 1
-    taken.add(name.casefold())
+    taken.add(reference_key(name))
     return name
 
 

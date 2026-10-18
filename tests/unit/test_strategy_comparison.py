@@ -128,7 +128,11 @@ class TestPairedComparison:
         )
         assert out["strategies"]["mix"]["guardrail_blocked_counts"] == {"output": 1}
         assert out["strategies"]["local"]["guardrail_blocked_counts"] == {}
-        assert any("local 0, mix 1" in w and "guardrail" in w for w in out["warnings"])
+        (warning,) = [w for w in out["warnings"] if "guardrail" in w]
+        assert "local 0, mix 1" in warning
+        # Not "scored on the blocked message" for every metric: the retrieval
+        # and context metrics of an output block are not scored at all.
+        assert "no retrieval or context score (unpaired)" in warning
 
     def test_equal_failure_counts_raise_no_warning(self) -> None:
         out = paired_comparison(
@@ -355,6 +359,15 @@ class TestMusique:
         taken: set[str] = set()
         assert musique._file_name(".hack", taken) == "hack.txt"
         assert musique._file_name(". . .", taken) == "paragraph.txt"
+
+    def test_file_names_differ_under_reference_matching(self) -> None:
+        # Before, "A_B" and "A B" got files the retrieval evaluator reads as
+        # the same reference, so retrieving one counted as the other.
+        taken: set[str] = set()
+        assert musique._file_name("A_B", taken) == "A_B.txt"
+        assert musique._file_name("A B", taken) == "A B (2).txt"
+        assert musique._file_name("ＡＢ", taken) == "ＡＢ.txt"
+        assert musique._file_name("ab", taken) == "ab (2).txt"
 
     def test_limit_samples_with_the_seed_and_refuses_a_used_corpus(
         self, tmp_path: Path

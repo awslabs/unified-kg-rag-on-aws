@@ -83,14 +83,20 @@ def _stage_name_arg(value: str) -> str:
     return normalized
 
 
-def _retired_scope(value: str) -> str:
-    """A ``--retire-source-scope`` as the registry stores the scope: a local
-    path resolved the way the source directory is (``~``, ``..``, symlinks);
-    a URI or a ``source_scope`` name as given."""
+def _retired_scopes(value: str) -> list[str]:
+    """The spellings of a ``--retire-source-scope`` the registry may store.
+
+    A URI is kept as given. Any other value may be a ``source_scope`` name,
+    an absolute directory (stored as given when configured) or a path to the
+    old source directory, which the registry stores resolved (``~``, ``..``,
+    symlinks): both are tried, except that a ``~`` or ``.`` spelling is never
+    stored as such.
+    """
     scope = value.strip()
-    if scope.startswith(("/", "~", ".")):
-        return Path(scope).expanduser().resolve().as_posix()
-    return scope
+    if "://" in scope:
+        return [scope]
+    resolved = Path(scope).expanduser().resolve().as_posix()
+    return list(dict.fromkeys([*([] if scope[:1] in "~." else [scope]), resolved]))
 
 
 class CommandLineInterface:
@@ -221,8 +227,9 @@ class CommandLineInterface:
             "former source scope (in this run's index namespace) as deleted, "
             "removing its exclusive graph and vector content. Use it once "
             "after moving a corpus, with the old absolute source directory or "
-            "former document_parsing.source_scope value (a local path is "
-            "resolved like --source-directory). Repeatable; added to "
+            "former document_parsing.source_scope value (a value that is "
+            "not a URI is also tried as a path resolved like "
+            "--source-directory). Repeatable; added to "
             "indexing.retire_source_scopes. Never this run's own scope.",
         )
         add_config_arguments(parser, "Path to custom configuration file")
@@ -254,7 +261,10 @@ class IngestionPipelineRunner:
             indexing = self.config.indexing
             indexing.retire_source_scopes = list(
                 dict.fromkeys(
-                    [*indexing.retire_source_scopes, *map(_retired_scope, retired)]
+                    [
+                        *indexing.retire_source_scopes,
+                        *(s for value in retired for s in _retired_scopes(value)),
+                    ]
                 )
             )
         self.json_output = json_output(args)

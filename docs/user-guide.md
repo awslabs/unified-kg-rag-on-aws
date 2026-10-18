@@ -982,7 +982,8 @@ host's corpus), so the old content stays indexed. Either:
   scope in its suffix as deleted and indexes the new location as new
   documents. Give the scope as the registry stores it: the absolute
   directory (trailing and repeated slashes ignored) or the former
-  `source_scope`, `s3://` URIs included. Naming the run's own scope fails
+  `source_scope`, `s3://` URIs included; the flag also tries a non-URI value
+  as a path resolved like `--source-directory`. Naming the run's own scope fails
   before the registry is read; a scope without records logs a WARNING.
 
 A local run with the default scope and new documents logs a WARNING naming the
@@ -1252,7 +1253,9 @@ scored/failed/skipped counts (`metric_outcomes`), plus:
   first).
 - `guardrail_blocked_counts`: blocked queries per `input` / `output` (a
   blocked item is scored on the blocked message; a blocked answer drops its
-  sources, so its retrieval metrics are skipped as `guardrail_blocked`); each
+  sources, so its retrieval metrics and the RAGAS context metrics
+  (`context_precision`, `context_recall`, `faithfulness`) are skipped as
+  `guardrail_blocked`); each
   result carries `guardrail_blocked`.
 - `run_manifest`: what was measured, so two runs can be compared:
   - the CLI arguments (URLs without credentials), versions, `git_sha` /
@@ -1521,7 +1524,7 @@ Every CLI (`run-ingestion`, `run-rag`, `run-eval`, `run-visualization`,
 |---|---|
 | `0` | Success |
 | `1` | The run failed: a failed stage or query (in `run-ingestion` also a `ConfigurationError` found while running, e.g. an incremental run into an index built with the registry off), a breached `--max-failure-rate`, a failed upload, nothing rendered |
-| `2` | Usage or configuration error: a bad flag, a missing or invalid input (a `run-eval` dataset, a `run-visualization` data file), an invalid config file or override, an unset store endpoint (all before any work), or, outside `run-ingestion`, a `ConfigurationError` found while running |
+| `2` | Usage or configuration error: a bad flag, a missing or invalid input (a `run-eval` dataset, a `run-visualization` data file, a `prepare-benchmark` data file), an invalid config file or override, an unset store endpoint (all before any work), or, outside `run-ingestion`, a `ConfigurationError` found while running |
 | `130` | Interrupted with Ctrl-C (SIGINT) |
 | `143` | Stopped by SIGTERM (ECS `StopTask`, a Step Functions timeout); `run-ingestion` checkpoints its finished stages first, and `run-eval` uploads the finished runs' results to an `s3://` output (or keeps them locally and logs the path) |
 
@@ -1536,8 +1539,9 @@ breaches (`run-eval`), the written files (`run-visualization`), the output
 path and profile (`run-prompt-tuning`), or the counts written
 (`prepare-benchmark`). A run stopped by a
 signal before it printed prints `{"status": "interrupted", "exit_code": 143}`
-(`130` for Ctrl-C), so stdout is always JSON; `run-ingestion` adds the
-`pipeline_id` to resume with.
+(`130` for Ctrl-C), and one that fails before it printed prints
+`{"status": "failed", "exit_code": 1}` (or `2`), so stdout is always JSON;
+`run-ingestion` adds the `pipeline_id` to resume with.
 
 ### Large / multilingual / heterogeneous corpora
 

@@ -789,9 +789,13 @@ def test_ingestion_retire_source_scope_resolves_a_local_path(
         ]
     )
     runner = run_ingestion_pipeline.IngestionPipelineRunner(args)
+    resolved = (real / "old").resolve().as_posix()
     assert runner.config.indexing.retire_source_scopes == [
-        (real / "old").resolve().as_posix(),
+        str(tmp_path / "link" / "old"),
+        resolved,
         "contracts",
+        # A bare value may also be a relative path to the old directory.
+        (tmp_path / "contracts").resolve().as_posix(),
     ]
 
 

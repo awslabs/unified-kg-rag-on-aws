@@ -23,6 +23,7 @@ from ragas.run_config import RunConfig
 from unified_kg_rag.adapters.evaluators.base import (
     FAILED_METRICS_KEY,
     SKIP_REASON_EMPTY_REFERENCE,
+    SKIP_REASON_GUARDRAIL_BLOCKED,
     SKIPPED_METRICS_KEY,
     BaseGraphRAGEvaluator,
     judge_model_kwargs,
@@ -64,6 +65,16 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
             EvaluationMetricType.ANSWER_CORRECTNESS,
             EvaluationMetricType.CONTEXT_PRECISION,
             EvaluationMetricType.CONTEXT_RECALL,
+        }
+    )
+
+    # Metrics judged against the contexts: a guardrail-blocked answer dropped
+    # its sources, so they are skipped for it (the answer metrics still run).
+    CONTEXT_METRICS: ClassVar[frozenset[EvaluationMetricType]] = frozenset(
+        {
+            EvaluationMetricType.CONTEXT_PRECISION,
+            EvaluationMetricType.CONTEXT_RECALL,
+            EvaluationMetricType.FAITHFULNESS,
         }
     )
 
@@ -249,8 +260,8 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
                 metric_name = metric.name
                 if metric_type not in self.config.evaluation.ragas_metrics:
                     continue
-                if metric_type in self.REFERENCE_METRICS and not has_reference:
-                    skipped[metric_type.value] = SKIP_REASON_EMPTY_REFERENCE
+                if reason := self._skip_reason(metric_type, has_reference, results[i]):
+                    skipped[metric_type.value] = reason
                     continue
                 if metric_type in failed_runs:
                     failed[metric_type.value] = failed_runs[metric_type]
@@ -295,8 +306,10 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
         ground_truths: list[str],
         **kwargs: Any,
     ) -> list[EvaluationReport]:
-        """Score rows with a reference on every metric, the rest without the
-        reference-based ones (no judge calls for metrics that would be skipped).
+        """Score each row on the metrics that apply to it: none of the
+        reference-based ones without a reference, none of the context-based
+        ones for a guardrail-blocked answer (no judge calls for metrics that
+        would be skipped). Rows that run the same metrics share a RAGAS run.
 
         A RAGAS failure marks that run's metrics as failed for its rows rather
         than aborting the evaluation; ``--max-failure-rate`` decides the exit.
@@ -305,19 +318,19 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
         if not metric_types:
             logger.warning("No valid Ragas metrics found in configuration")
             return []
-        with_reference = [i for i, gt in enumerate(ground_truths) if gt.strip()]
-        without_reference = [i for i, gt in enumerate(ground_truths) if not gt.strip()]
-        partitions = (
-            (with_reference, metric_types),
-            (
-                without_reference,
-                [m for m in metric_types if m not in self.REFERENCE_METRICS],
-            ),
-        )
+        partitions: dict[tuple[EvaluationMetricType, ...], list[int]] = {}
+        for i, (result, gt) in enumerate(zip(results, ground_truths, strict=True)):
+            run = tuple(
+                m
+                for m in metric_types
+                if self._skip_reason(m, bool(gt.strip()), result) is None
+            )
+            partitions.setdefault(run, []).append(i)
         reports: dict[int, EvaluationReport] = {}
-        for rows, partition_metrics in partitions:
-            if not rows:
-                continue
+        # The rows that run the most metrics first (the order RAGAS runs in).
+        for partition_metrics, rows in sorted(
+            partitions.items(), key=lambda item: -len(item[0])
+        ):
             row_queries = [queries[i] for i in rows]
             row_results = [results[i] for i in rows]
             if partition_metrics:
@@ -325,12 +338,14 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
                     row_queries,
                     row_results,
                     [ground_truths[i] for i in rows],
-                    partition_metrics,
+                    list(partition_metrics),
                 )
             else:
                 scored = [
-                    self._create_skipped_report(q.query_id, r)
-                    for q, r in zip(row_queries, row_results, strict=True)
+                    self._create_skipped_report(
+                        q.query_id, r, bool(ground_truths[i].strip())
+                    )
+                    for i, q, r in zip(rows, row_queries, row_results, strict=True)
                 ]
             reports.update(zip(rows, scored, strict=True))
         return [reports[i] for i in range(len(queries))]
@@ -446,12 +461,27 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
         # Keep only score columns so two runs concatenate without duplicates.
         return frame[[c for c in frame.columns if c in self._SCORE_COLUMNS]]
 
+    def _skip_reason(
+        self,
+        metric_type: EvaluationMetricType,
+        has_reference: bool,
+        result: EvaluationResult,
+    ) -> str | None:
+        """Why ``metric_type`` does not apply to ``result``'s row, if it does not."""
+        if result.guardrail_blocked == "output" and metric_type in self.CONTEXT_METRICS:
+            return SKIP_REASON_GUARDRAIL_BLOCKED
+        if metric_type in self.REFERENCE_METRICS and not has_reference:
+            return SKIP_REASON_EMPTY_REFERENCE
+        return None
+
     def _create_skipped_report(
-        self, query_id: str, result: EvaluationResult
+        self, query_id: str, result: EvaluationResult, has_reference: bool
     ) -> EvaluationReport:
         metadata = self._extract_search_metadata(result)
         metadata[SKIPPED_METRICS_KEY] = {
-            m.value: SKIP_REASON_EMPTY_REFERENCE for m in self.metric_types()
+            m.value: reason
+            for m in self.metric_types()
+            if (reason := self._skip_reason(m, has_reference, result))
         }
         return EvaluationReport(
             query_id=query_id,

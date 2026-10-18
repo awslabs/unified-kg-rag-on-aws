@@ -229,7 +229,9 @@ def _failure_warnings(summary: Mapping[str, Any]) -> list[str]:
         counts = ", ".join(f"{s} {sum(c.values())}" for s, c in blocked.items())
         warnings.append(
             f"The guardrail blocked different numbers of answers ({counts}); "
-            "a blocked answer is scored on its blocked message, so the "
-            "comparison reflects those blocks."
+            "the answer metrics score a blocked answer on its blocked "
+            "message, and an answer blocked on output has no retrieval or "
+            "context score (unpaired), so the comparison reflects those "
+            "blocks."
         )
     return warnings

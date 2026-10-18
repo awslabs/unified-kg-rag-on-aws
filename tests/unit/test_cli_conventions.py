@@ -481,3 +481,88 @@ def test_prompt_tuning_rejects_a_non_positive_max_docs(value: str) -> None:
             ["--source-directory", ".", "--max-docs", value]
         )
     assert exc.value.code == 2
+
+
+def _raise_runtime_error(*_args: object, **_kwargs: object) -> None:
+    raise RuntimeError("renderer crashed")
+
+
+def test_a_failed_json_run_prints_a_failed_status(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Before, run-visualization and run-prompt-tuning exited 1 with nothing
+    # on stdout in JSON mode.
+    monkeypatch.setattr(console, "stderr", console.stderr)
+    monkeypatch.setattr(run_visualization, "load_cli_config", lambda _args: Config())
+    monkeypatch.setattr(run_prompt_tuning, "load_cli_config", lambda _args: Config())
+    monkeypatch.setattr(run_visualization, "run_visualization", _raise_runtime_error)
+    data = tmp_path / "graph.json"
+    data.write_text("{}")
+    empty = tmp_path / "empty"
+    empty.mkdir()  # no documents: prompt tuning fails
+    json_flags = ["--output-format", "json"]
+    cases = [
+        (
+            run_visualization.main,
+            ["run-visualization", "--data-path", str(data), *json_flags],
+        ),
+        (
+            run_prompt_tuning.main,
+            ["run-prompt-tuning", "--source-directory", str(empty), *json_flags],
+        ),
+    ]
+    for main, argv in cases:
+        monkeypatch.setattr(sys, "argv", argv)
+        assert main() == 1, argv[0]
+        assert json.loads(capsys.readouterr().out) == {
+            "status": "failed",
+            "exit_code": 1,
+        }, argv[0]
+
+
+def test_prepare_benchmark_ctrl_c_exits_130_without_a_traceback(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Before, a Ctrl-C escaped as a KeyboardInterrupt traceback.
+    monkeypatch.setattr(console, "stderr", console.stderr)
+    source = tmp_path / "dev.jsonl"
+    source.write_text("")
+    monkeypatch.setattr(prepare_benchmark.musique, "prepare", _raise_interrupt)
+    with pytest.raises(SystemExit) as exc:
+        prepare_benchmark.main(
+            [
+                "musique",
+                "--output-directory",
+                str(tmp_path / "out"),
+                "--data-path",
+                str(source),
+                "--output-format",
+                "json",
+            ]
+        )
+    assert exc.value.code == 130
+    assert json.loads(capsys.readouterr().out)["status"] == "interrupted"
+
+
+@pytest.mark.parametrize(
+    "line", ["[1, 2]", '{"id": "x"}', '{"id": "x", "question": "q", "answer": "a"}']
+)
+def test_a_malformed_musique_item_is_a_usage_error(tmp_path: Path, line: str) -> None:
+    # Before, it crashed with a KeyError or AttributeError (exit 1).
+    source = tmp_path / "dev.jsonl"
+    source.write_text(line + "\n")
+    with pytest.raises(SystemExit) as exc:
+        prepare_benchmark.main(
+            [
+                "musique",
+                "--output-directory",
+                str(tmp_path / "out"),
+                "--data-path",
+                str(source),
+            ]
+        )
+    assert exc.value.code == 2

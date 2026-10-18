@@ -547,6 +547,55 @@ class TestAevaluateBatch:
             "faithfulness",
         }
 
+    async def test_output_blocked_rows_skip_the_context_metrics(self, mocker) -> None:
+        # Before, a blocked answer (its sources dropped) was judged on the
+        # context metrics: precision/recall near 0 and faithfulness NaN, which
+        # counted as failed toward --max-failure-rate.
+        ev, _ = _make_evaluator(
+            mocker,
+            ragas_metrics=[
+                EvaluationMetricType.ANSWER_RELEVANCY,
+                EvaluationMetricType.CONTEXT_PRECISION,
+                EvaluationMetricType.CONTEXT_RECALL,
+                EvaluationMetricType.FAITHFULNESS,
+            ],
+        )
+        runs: list[tuple[list[str], list[str]]] = []
+
+        class _FakeRagasResult:
+            def __init__(self, dataset, metrics) -> None:
+                self.frame = pd.DataFrame(
+                    {m.name: [0.5] * len(dataset["question"]) for m in metrics}
+                )
+
+            def to_pandas(self):
+                return self.frame
+
+        def fake_evaluate(*, dataset, metrics, **kwargs):
+            runs.append((dataset["question"], sorted(m.name for m in metrics)))
+            return _FakeRagasResult(dataset, metrics)
+
+        mocker.patch.object(rg_module, "evaluate", side_effect=fake_evaluate)
+        mocker.patch.object(rg_module.Dataset, "from_dict", side_effect=lambda d: d)
+        blocked = _result(qid="blocked")
+        blocked.guardrail_blocked = "output"
+        queries = [
+            EvaluationQuery(query_id="blocked", question="A?"),
+            EvaluationQuery(query_id="ok", question="B?"),
+        ]
+        reports = await ev.aevaluate_batch(
+            queries, [blocked, _result(qid="ok")], ["truth", "truth"]
+        )
+        assert runs[1] == (["A?"], ["answer_relevancy"])
+        assert [m.metric_type.value for m in reports[0].metrics] == ["answer_relevancy"]
+        assert reports[0].metadata["skipped_metrics"] == {
+            "context_precision": "guardrail_blocked",
+            "context_recall": "guardrail_blocked",
+            "faithfulness": "guardrail_blocked",
+        }
+        assert "failed_metrics" not in reports[0].metadata
+        assert len(reports[1].metrics) == 4
+
     async def test_failed_no_reference_run_fails_its_metrics_and_skips_reference(
         self, mocker
     ) -> None:
