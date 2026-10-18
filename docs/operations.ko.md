@@ -502,7 +502,7 @@ CDK 스택에서는 `-c enable_cloudwatch_tracing=true`가 AWS Distro for OpenTe
 | `kg_rag.drift.primer`, `kg_rag.drift.actions` | strategy(`drift`) | primer: `kg_rag.reports`, `kg_rag.answers`. 라운드마다 actions 스팬 하나(`kg_rag.depth`, `kg_rag.actions`)이며 그 라운드의 로컬 검색이 아래에 들어감 |
 | `kg_rag.guardrail` | query | 검사한 질의나 답변마다 하나: `aws.bedrock.guardrail.id`, `.source`(`input`, `output`), `.action`(`none`, `masked`, `blocked`), `.intervened`, `.policies` |
 | `kg_rag.evaluate` | 루트 | 평가기마다 하나: `kg_rag.evaluator`, `kg_rag.items`. 심사 모델의 스팬이 아래에 들어감 |
-| `chat <model>`, `embeddings <model>` | 호출한 스팬 | OpenTelemetry GenAI 규약, 스팬 종류 `CLIENT`(Bedrock 재순위화 스팬도 같음): `gen_ai.request.model`, `.max_tokens`, `.temperature`, `gen_ai.usage.input_tokens` / `output_tokens`, Bedrock이 프롬프트 캐시 사용량을 알려 주면 `gen_ai.usage.cache_read.input_tokens` / `cache_creation.input_tokens`, 종료 사유, `error.type`, `aws.bedrock.guardrail.intervened`. 비용은 기록하지 않음 |
+| `chat <model>`, `embeddings <model>` | 호출한 스팬 | OpenTelemetry GenAI 규약, 스팬 종류 `CLIENT`(Bedrock 재순위화 스팬도 같음): `gen_ai.request.model`, `.max_tokens`, `.temperature`, `gen_ai.usage.input_tokens` / `output_tokens`, Bedrock이 프롬프트 캐시 사용량을 알려 주면 `gen_ai.usage.cache_read.input_tokens` / `cache_creation.input_tokens`, 종료 사유, `error.type`. 비용은 기록하지 않음 |
 
 `kg_rag.rerank.status`는 Rerank 호출 한 번의 결과입니다(`error`: 질의가 융합 순서로
 대체됨, `empty`: 쓸 수 있는 결과가 없음). `kg_rag.rerank_status`는 재순위화가 한 일이며

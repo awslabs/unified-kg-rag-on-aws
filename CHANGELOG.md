@@ -2861,6 +2861,10 @@ changed once with the full-config keys (#332).
   class is defined, instead of failing every query at evaluation time (#305).
 
 ### Removed
+- The `aws.bedrock.guardrail.intervened` attribute on model (`chat <model>`)
+  spans, and the detector behind it: no model call carries a guardrail since
+  the guardrail screens the query and answer through `ApplyGuardrail`, so it
+  was never set. The `kg_rag.guardrail` span keeps the attribute (#PR).
 - Unused code: `shared.config.reload_config` and `ConfigLoader.reload_config`
   (build a new `ConfigLoader` instead), the `BedrockModelId` type alias,
   `ClaimExtractor.extract_from_text_units` (`extract_units` is the stage's
