@@ -1271,6 +1271,9 @@ changed once with the full-config keys (#332).
 - `indexing.reset` skips documents recorded QUARANTINED for their current
   content and extraction settings and keeps their records; it used to
   process them and die on them every time (#PR).
+- The warning for documents that produced no text units says the run counts
+  as a death of each (with the count) rather than only that they stay
+  PENDING (#PR).
 - Docs match the code again: a document is `FAILED` in five cases (an
   extraction record that could not be stored, `records_not_stored`, is the
   fifth), `global` maps one cut and falls back to a shallower one over

@@ -322,3 +322,17 @@ def test_a_table_of_the_earlier_key_schema_is_rejected(
 
         with pytest.raises(ConfigurationError, match="indexing.reset"):
             store.get("d")
+
+
+def test_lease_requests_use_short_timeouts_and_few_attempts(
+    ddb_store: DynamoDBDocStatusStore,
+) -> None:
+    # A renewal must not hang on the registry client's long retries: the run
+    # trusts the lease only for a third of its term without one.
+    lease_client = ddb_store.lease_client
+    assert lease_client is not ddb_store.client
+    config = lease_client.meta.config
+    assert (config.connect_timeout, config.read_timeout) == (5, 10)
+    assert config.retries["total_max_attempts"] == 3
+    assert ddb_store.try_acquire_lease("ns", "run-a", 60)
+    assert not ddb_store.try_acquire_lease("ns", "run-b", 60)

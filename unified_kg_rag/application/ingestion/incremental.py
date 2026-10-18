@@ -919,22 +919,25 @@ class IncrementalIndexer:
         # Counted as an attempt of the document alone (unproductive_attempt),
         # so one that never produces a text unit is quarantined instead of
         # re-extracted on every run.
-        records += [
+        unproductive = [
             unproductive_attempt(
                 self._pending[doc_id],
                 fingerprints.get(doc_id, self._pending[doc_id].attempted_hash or ""),
             )
             for doc_id in unrecorded
         ]
-        self.doc_status.put_many(records)
-        if unrecorded:
+        self.doc_status.put_many(records + unproductive)
+        if unproductive:
             logger.warning(
                 "%d documents of the delta produced no lineage this run; their "
-                "records stay PENDING so the next run re-extracts them: %s",
-                len(unrecorded),
+                "records stay PENDING, and the run counts as a death of each "
+                "(its deaths so far in parentheses): the next run re-extracts them, "
+                "or quarantines one once its deaths reach "
+                "indexing.max_document_attempts: %s",
+                len(unproductive),
                 ", ".join(
-                    self._pending[doc_id].file_path or doc_id
-                    for doc_id in unrecorded[:10]
+                    f"{record.file_path or record.doc_id} ({record.attempt_count})"
+                    for record in unproductive[:10]
                 ),
             )
 

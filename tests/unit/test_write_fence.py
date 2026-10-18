@@ -72,8 +72,9 @@ def test_the_run_stops_writing_while_it_still_holds_the_lease() -> None:
     # once the store had expired the lease and another run could take it.
     store = _SlowStore()
     with NamespaceLease(store, "ns", 1.2) as lease:
-        # The next renewal answers 0.7 s late; the registry is then gone.
-        store.plan = [0.7, None]
+        # The next renewal answers 0.5 s late (before the run's own check
+        # would trip on the previous one); the registry is then gone.
+        store.plan = [0.5, None]
         while store.plan != [None]:
             time.sleep(0.01)
         expiry = store.leases["ns"][1]
