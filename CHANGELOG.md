@@ -1624,9 +1624,13 @@ changed once with the full-config keys (#332).
   stripped. The graph now finds the edges citing a text unit
   (`GraphIndexer.find_relationship_ids_citing`, on Neptune, Gremlin Server,
   the embedded store and the fake), and a stripped edge is derived with its
-  endpoints. On Neptune the lookup reads the suffix's edges once per batch
-  of removed text units (an edge holds its text units as one string) in
-  place of the incident edges of the entities citing them (#PR).
+  endpoints. The lookup runs only for a removal an earlier attempt got past
+  deleting the removed text units in (some are gone from the vector
+  store); ordinary removals keep reading the incident edges of the entities
+  citing them, since on Neptune the lookup scans the suffix's edges (an edge
+  holds its text units as one string). A removal whose deletion of the
+  removed items failed strips no shared item, so the retry starts over
+  (#PR).
 - Removing a document no longer leaves its text unnoticed in community
   reports: a kept report that cites a removed text unit is counted in the
   `community_drift` metrics (`outdated_reports`, deletion-only runs

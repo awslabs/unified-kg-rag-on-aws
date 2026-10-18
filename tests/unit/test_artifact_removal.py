@@ -285,3 +285,44 @@ def test_the_merged_copies_of_an_entity_rank_over_all_their_edges() -> None:
     harness.run(after)
 
     assert harness.state() == expected_state(after)
+
+
+def test_only_a_resumed_removal_looks_edges_up_by_text_unit(mocker) -> None:
+    # The lookup scans a suffix's edges on Neptune. A first removal finds the
+    # edges among those of the entities citing the removed units; only one
+    # whose units are already gone from the vector store (an earlier attempt
+    # got past deleting them and died) needs it.
+    manager, graph, vector = _manager()
+    vector.upsert_text_units(
+        [TextUnit(id=unit, text="...", document_ids=["d"]) for unit in ("t1", "t2")]
+    )
+    graph.upsert_entities([Entity(id="e", name="E", text_unit_ids=["t1", "t2"])])
+    lookup = mocker.spy(graph, "find_relationship_ids_citing")
+
+    manager.remove_text_units("default", ["t1"])
+    assert lookup.call_count == 0
+
+    manager.remove_text_units("default", ["t1"])
+    assert lookup.call_count == 1
+
+
+def test_nothing_is_stripped_until_the_removed_units_are_deleted(mocker) -> None:
+    # A retry tells that a removal got past deleting the removed units by
+    # their missing copies, so no shared item is stripped (and no edge
+    # re-keyed) while that deletion failed: the retry starts over.
+    from unified_kg_rag.ports.indexer import IndexingStats
+
+    manager, graph, vector = _manager()
+    vector.upsert_text_units(
+        [TextUnit(id=unit, text="...", document_ids=["d"]) for unit in ("t1", "t2")]
+    )
+    graph.upsert_entities([Entity(id="e", name="E", text_unit_ids=["t1", "t2"])])
+    failed = IndexingStats(total_items=1)
+    failed.add_error("store down", count=1)
+    mocker.patch.object(manager, "delete_documents", return_value={"x": failed})
+    strip = mocker.spy(manager, "remove_text_units_from_shared")
+
+    results = manager.remove_text_units("default", ["t1"])
+
+    assert results == {"x": failed}
+    assert strip.call_count == 0

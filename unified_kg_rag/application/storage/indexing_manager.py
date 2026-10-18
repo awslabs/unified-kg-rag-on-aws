@@ -1649,11 +1649,19 @@ class IndexingManager:
                 ),
                 **(found or {}),
             }
-            # The graph's edges citing them; a store that cannot look edges up
-            # by text unit has them read among the cited entities' edges
-            # (which misses an edge a killed run re-keyed and did not delete:
-            # its endpoints no longer cite the units).
-            edges = graph.find_relationship_ids_citing(text_unit_ids, suffix=suffix)
+            # The edges citing them are among the cited entities' edges,
+            # except after an earlier removal of these units that got past
+            # deleting them (their vector copies are gone) and died: it may
+            # have stripped the entities and re-keyed an edge whose old graph
+            # copy it did not get to delete. Only then are the graph's edges
+            # looked up by text unit (on Neptune a scan of the suffix's edges).
+            still = vector.read_text_unit_ids(text_unit_ids, suffix=suffix)
+            resumed = still is None or len(set(still)) < len(removed)
+            edges = (
+                graph.find_relationship_ids_citing(text_unit_ids, suffix=suffix)
+                if resumed
+                else None
+            )
             if edges is None:
                 incident = (
                     graph.find_incident_relationship_ids(sorted(cited), suffix=suffix)
@@ -1751,6 +1759,10 @@ class IndexingManager:
             len(shared_claims),
         )
         results = self.delete_documents({suffix: doomed})
+        if any(stats.failed_items for stats in results.values() if stats):
+            # Strip nothing until the removed text units are gone: a retry
+            # tells a removal that got further by their missing copies.
+            return results
         if shared_entities or shared_relationships or shared_claims:
             results.update(
                 self.remove_text_units_from_shared(
