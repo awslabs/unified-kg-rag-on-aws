@@ -768,7 +768,8 @@ depth selects the cut.
 **Map-reduce.** At least `map_reduce_min_results` reports are packed into
 batches of `map_context_tokens` (MS GraphRAG's `data_max_tokens`); each map
 call (`search.max_concurrency` at a time) extracts key points scored 0-100,
-each naming its `report_ids` (MS GraphRAG's `[Data: Reports (ids)]`). Points
+each naming its `report_ids` (MS GraphRAG's `[Data: Reports (ids)]`; a
+report's id in the prompt is its ordinal in the batch, mapped back). Points
 at or below `map_relevance_threshold` are dropped, the rest ranked, packed
 into `max_map_reduce_tokens` and by default handed to the answer model as one
 synthesized section (`reduce_with_llm: false`: a separate reduce call only

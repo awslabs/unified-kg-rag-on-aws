@@ -811,6 +811,11 @@ changed once with the full-config keys (#332).
   README is shorter and names `providers.doc_status.enabled` as the
   incremental switch (#349).
   incremental switch (#351).
+- Global search's map prompt heads each report with its ordinal in the batch
+  (`--- Report (id: 1) ---`) instead of its community UUID, and maps the
+  points' `report_ids` back to the reports: short ids cost fewer prompt
+  tokens and a model copies them back reliably. A custom `GlobalMapPrompt`
+  keeps working: the ids come in the `{reports}` variable, as before (#PR).
 - `run-ingestion --s3-sync` takes the bucket from `aws.s3.bucket_name`
   (`UKR__AWS__S3__BUCKET_NAME`, which the CDK task sets) when
   `--s3-bucket-name` is not given, so the bucket is configured once (#344).

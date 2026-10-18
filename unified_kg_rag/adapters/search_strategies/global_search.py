@@ -669,11 +669,12 @@ class GlobalSearchStrategy(BaseSearchStrategy):
     ) -> list[RetrievalResult]:
         """The reports the packed points came from, best point first.
 
-        A point credits the reports of its batch it cites by id; one that
-        cites none of them (no ids, or ids the batch does not hold) credits
-        its whole batch. Each report scores its best crediting point (0-1).
-        Crediting every report of a batch made a point drawn from one report
-        put up to a dozen unrelated ones in the answer context and sources.
+        A point credits the reports of its batch it cites by id (their
+        ordinal in the batch, ``_format_reports``); one that cites none of
+        them (no ids, or ids the batch does not hold) credits its whole
+        batch. Each report scores its best crediting point (0-1). Crediting
+        every report of a batch made a point drawn from one report put up to
+        a dozen unrelated ones in the answer context and sources.
         """
         best: dict[tuple[int, int], int] = {}
         for point in points:
@@ -682,9 +683,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             batch = batches[point.batch]
             cited = set(point.report_ids)
             credited = [
-                i
-                for i, report in enumerate(batch)
-                if cls._community_id(report) in cited
+                i for i in range(len(batch)) if cls._report_ordinal(i) in cited
             ] or range(len(batch))
             for i in credited:
                 key = (point.batch, i)
@@ -800,11 +799,19 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             )
         return points, unrated
 
+    @staticmethod
+    def _report_ordinal(index: int) -> str:
+        """The id of a batch's ``index``-th report in the map prompt."""
+        return str(index + 1)
+
     @classmethod
     def _format_reports(cls, reports: list[RetrievalResult]) -> str:
+        """``reports`` for the map prompt, each headed by its ordinal in the
+        batch: short ids a model copies back reliably, where a community
+        UUID cost tokens per report and came back garbled."""
         return "\n\n".join(
-            f"--- Report (id: {cls._community_id(report)}) ---\n{report.content}"
-            for report in reports
+            f"--- Report (id: {cls._report_ordinal(i)}) ---\n{report.content}"
+            for i, report in enumerate(reports)
         )
 
     @staticmethod
