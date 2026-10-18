@@ -1297,6 +1297,13 @@ changed once with the full-config keys (#332).
   skipped as `guardrail_blocked` (they scored near 0, and faithfulness came
   back NaN and counted as failed toward `--max-failure-rate`); the answer
   metrics still run (#359).
+- A global map phase whose every call timed out fails the query (unless
+  `processing.ignore_errors`) and records `TimeoutError`: a call
+  BatchProcessor abandons at `call_timeout_seconds` raised no error the map
+  step saw, so it answered from the unjudged reports after the timeout with
+  a parse-error label. Dynamic community selection tolerates one failed
+  rating as the map phase tolerates one failed batch (the report is kept and
+  recorded); a step none of whose ratings succeeded fails the query (#PR).
 - An entity-attribute filter (`attributes.<path>` other than
   `attributes.filters.<key>`) no longer cuts graph expansion to the seeds:
   only document filters are checked against the text units, which never

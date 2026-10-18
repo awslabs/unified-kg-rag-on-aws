@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
@@ -782,6 +783,41 @@ async def test_map_phase_failing_on_every_batch_degrades_when_ignored() -> None:
     strat = _strategy(ignore_errors=True, map_batch_size=1, reduce_with_llm=True)
     strat.batch_processor.max_attempts = 1  # as GlobalSearchStrategy configures
     strat.map_rater = _DeniedMapChain(TimeoutError("read timed out"))
+    degraded: list[str] = []
+    out = await strat._apply_map_reduce(
+        _communities(2), SearchQuery(query="q"), degraded=degraded
+    )
+    assert out
+    assert degraded == ["TimeoutError"]
+
+
+class _HangingMapChain:
+    """Map chain whose calls outlast BatchProcessor's call timeout."""
+
+    def invoke(self, single_input: dict, config: Any = None) -> str:
+        time.sleep(2.5)
+        return _map_payload(("late", 50))
+
+
+@pytest.mark.timeout(30)
+async def test_map_phase_timing_out_on_every_batch_raises_when_not_ignored() -> None:
+    # Regression: a call BatchProcessor abandons at call_timeout_seconds
+    # never raises inside sequential_func, so an all-timeout map phase
+    # recorded no error and answered from the unjudged reports.
+    strat = _strategy(ignore_errors=False, map_batch_size=1, reduce_with_llm=True)
+    strat.batch_processor.max_attempts = 1
+    strat.batch_processor.call_timeout_seconds = 1
+    strat.map_rater = _HangingMapChain()
+    with pytest.raises(TimeoutError, match="gave up after 1s"):
+        await strat._apply_map_reduce(_communities(2), SearchQuery(query="q"))
+
+
+@pytest.mark.timeout(30)
+async def test_map_phase_timeouts_are_recorded_as_timeouts() -> None:
+    strat = _strategy(ignore_errors=True, map_batch_size=1, reduce_with_llm=True)
+    strat.batch_processor.max_attempts = 1
+    strat.batch_processor.call_timeout_seconds = 1
+    strat.map_rater = _HangingMapChain()
     degraded: list[str] = []
     out = await strat._apply_map_reduce(
         _communities(2), SearchQuery(query="q"), degraded=degraded
