@@ -1255,17 +1255,17 @@ changed once with the full-config keys (#332).
   another run may hold it: a released lease fails their next write, and
   Ctrl-C sets the stop fence like SIGTERM, so they stop before the release.
   The stop fence exempts the thread that runs the pipeline instead of the
-  main thread (#PR).
+  main thread (#358).
 - A SIGTERM no longer waits for the model calls in flight (up to the call
   timeout, past the task's 120 s stop timeout) or, in entity resolution and
-  MinHash deduplication, for every queued process-pool task (#PR).
+  MinHash deduplication, for every queued process-pool task (#358).
 - A run that lost its write lease closes its processing attempts when no
   other run holds the lease (it retakes it for the close) instead of
   counting as a death of every document it processed; while another run
-  holds it the attempts stay open, as before (#PR).
+  holds it the attempts stay open, as before (#358).
 - A lost lease is no longer swallowed by `OpenSearchClient.delete_indices`
   (reported as an `AWSServiceError` after the remaining batches were sent)
-  or by the best-effort cleanup of unused extraction records (#PR).
+  or by the best-effort cleanup of unused extraction records (#358).
 - A run that lost its namespace's write lease during a full build no longer
   swaps the OpenSearch alias onto the partial index and deletes the complete
   one: the vector indexer re-raises `NamespaceLeaseError` instead of
