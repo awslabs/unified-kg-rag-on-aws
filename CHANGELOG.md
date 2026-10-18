@@ -1228,7 +1228,7 @@ changed once with the full-config keys (#332).
   response-cache key no longer names the guardrail, removed config keys warn
   and are ignored while moved ones fail, deletions remove vector copies
   before graph copies, and the incremental switch is
-  `providers.doc_status.enabled` (#PR).
+  `providers.doc_status.enabled` (#350).
 - iac/README.md no longer says a second concurrent ingestion stops before it
   reads anything: it syncs the corpus and its checkpoint first, then stops
   with `NamespaceLeaseError` before it reads the stores or writes (#345).
