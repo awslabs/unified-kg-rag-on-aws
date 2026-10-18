@@ -6,13 +6,30 @@ from __future__ import annotations
 
 import contextvars
 import functools
-from collections.abc import Callable
-from concurrent.futures import Future, ThreadPoolExecutor
+from collections.abc import Callable, Iterator
+from concurrent.futures import Executor, Future, ThreadPoolExecutor
+from contextlib import contextmanager
 from types import TracebackType
 from typing import Literal, ParamSpec, TypeVar
 
 _P = ParamSpec("_P")
 _T = TypeVar("_T")
+
+
+@contextmanager
+def cancelling_on_error(executor: Executor) -> Iterator[None]:
+    """Cancel ``executor``'s queued tasks, without waiting for the running
+    ones, when the enclosed block raises (a stop, Ctrl-C, an error).
+
+    For the ``with`` block of a ``ProcessPoolExecutor``, whose exit otherwise
+    runs every queued task first; ``ContextThreadPoolExecutor`` does this
+    itself.
+    """
+    try:
+        yield
+    except BaseException:
+        executor.shutdown(wait=False, cancel_futures=True)
+        raise
 
 
 class ContextThreadPoolExecutor(ThreadPoolExecutor):

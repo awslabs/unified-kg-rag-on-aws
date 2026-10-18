@@ -1250,6 +1250,9 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- A SIGTERM no longer waits for the model calls in flight (up to the call
+  timeout, past the task's 120 s stop timeout) or, in entity resolution and
+  MinHash deduplication, for every queued process-pool task (#PR).
 - A run that lost its namespace's write lease during a full build no longer
   swaps the OpenSearch alias onto the partial index and deletes the complete
   one: the vector indexer re-raises `NamespaceLeaseError` instead of

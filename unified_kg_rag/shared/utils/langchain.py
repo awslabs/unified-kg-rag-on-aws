@@ -287,30 +287,29 @@ class BatchProcessor(BaseModel):
 
         results: list[Any] = [BATCH_ITEM_FAILED] * len(inputs)
         progress = ProgressLogger(task_name, len(inputs))
-        executor = ContextThreadPoolExecutor(
+        # The block cancels the queued items of a batch that is being
+        # abandoned (a stop, Ctrl-C, an error) and does not wait for the
+        # running calls: a stop must not wait for a model call in flight.
+        with ContextThreadPoolExecutor(
             max_workers=min(self.max_concurrency, len(inputs))
-        )
-        try:
-            futures = {
-                executor.submit(process_one, single_input): idx
-                for idx, single_input in enumerate(inputs)
-            }
-            for future in tqdm(
-                concurrent.futures.as_completed(futures),
-                total=len(futures),
-                desc=f"Processing: {task_name}",
-                disable=None if show_progress else True,
-            ):
-                results[futures[future]] = future.result()
-                progress.update()
-        except BaseException:
-            # Do not start the queued items of a batch that is being abandoned,
-            # nor another attempt of the running ones.
-            abandoned.set()
-            executor.shutdown(wait=False, cancel_futures=True)
-            raise
-        finally:
-            executor.shutdown(wait=True)
+        ) as executor:
+            try:
+                futures = {
+                    executor.submit(process_one, single_input): idx
+                    for idx, single_input in enumerate(inputs)
+                }
+                for future in tqdm(
+                    concurrent.futures.as_completed(futures),
+                    total=len(futures),
+                    desc=f"Processing: {task_name}",
+                    disable=None if show_progress else True,
+                ):
+                    results[futures[future]] = future.result()
+                    progress.update()
+            except BaseException:
+                # Nor start another attempt of the running ones.
+                abandoned.set()
+                raise
         return self._completed(task_name, results)
 
     def _prepare(

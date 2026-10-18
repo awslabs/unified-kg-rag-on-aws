@@ -13,6 +13,7 @@ from __future__ import annotations
 import signal
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -533,3 +534,70 @@ def test_a_lease_under_three_times_the_longest_request_warns(
     with caplog.at_level("WARNING"):
         pipe._namespace_lease()
     assert "under three times the longest store write request" in caplog.text
+
+
+def test_a_stop_does_not_wait_for_the_model_calls_in_flight() -> None:
+    # Old behaviour: the batch's finally waited for the running calls, so a
+    # SIGTERM waited for the slowest model call in flight (up to the call
+    # timeout, past the task's stop timeout).
+    from unified_kg_rag.shared.utils.langchain import BatchProcessor
+
+    def call(_: dict[str, Any]) -> str:
+        time.sleep(3)
+        return "ok"
+
+    def stop(signum: int, _: Any) -> None:
+        raise PipelineInterrupted(signum)
+
+    previous = signal.signal(signal.SIGALRM, stop)
+    started = time.time()
+    try:
+        signal.setitimer(signal.ITIMER_REAL, 0.3)
+        with pytest.raises(PipelineInterrupted):
+            BatchProcessor(max_concurrency=2).execute_with_fallback(
+                list(range(4)),
+                lambda xs: [{"x": x} for x in xs],
+                call,
+                "extraction",
+                show_progress=False,
+            )
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous)
+    assert time.time() - started < 1.5
+
+
+def _slow_match(name: str) -> list[tuple[str, float]]:
+    time.sleep(0.05)
+    return []
+
+
+def test_a_stop_cancels_the_queued_tasks_of_the_resolver_process_pool(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Old behaviour: the ProcessPoolExecutor block ran every queued name
+    # before the stop got through (200 x 0.05 s on 2 workers = 5 s).
+    from unified_kg_rag.domain.ingestion import graph_resolver
+
+    monkeypatch.setattr(graph_resolver, "find_all_matches_for_entity_task", _slow_match)
+    # A thread pool's block waits for the queued tasks the same way, without
+    # forking the test process.
+    monkeypatch.setattr(graph_resolver, "ProcessPoolExecutor", ThreadPoolExecutor)
+    resolver = graph_resolver.EntityResolver(Config(), 2, True)
+
+    def stop(signum: int, _: Any) -> None:
+        raise PipelineInterrupted(signum)
+
+    previous = signal.signal(signal.SIGALRM, stop)
+    started = time.time()
+    try:
+        signal.setitimer(signal.ITIMER_REAL, 0.5)
+        with pytest.raises(PipelineInterrupted):
+            for _ in resolver._match_in_pool(
+                MagicMock(), [f"n{i}" for i in range(200)]
+            ):
+                pass
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous)
+    assert time.time() - started < 2.5
