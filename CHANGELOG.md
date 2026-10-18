@@ -2991,7 +2991,7 @@ changed once with the full-config keys (#332).
   wrong category on a synthetic corpus), and each report carried that
   entity's own attributes. A report without document filters has none and an
   attribute filter excludes it. Re-index (`indexing.reset: true`) to rewrite
-  stored reports (#PR).
+  stored reports (#356).
 - A guardrail-blocked answer no longer returns the evidence behind it:
   `sources` and `search_results.results` are empty (they carried the
   retrieved text the refused answer was built from). Masking covers the
