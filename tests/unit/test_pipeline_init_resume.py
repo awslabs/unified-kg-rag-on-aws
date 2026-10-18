@@ -523,6 +523,29 @@ def test_create_pipeline_metrics_surfaces_extraction_failures() -> None:
     assert metrics.total_claim_extraction_failures == 1
 
 
+def test_create_pipeline_metrics_surfaces_unstored_records_and_underived_items() -> (
+    None
+):
+    # Old behaviour: both were stage metrics only, absent from the EMF metrics.
+    from unified_kg_rag.domain.models.cache import CacheStats
+
+    pipe = object.__new__(DataIngestionPipeline)
+    pipe.cache_manager = SimpleNamespace(get_cache_stats=lambda pid: CacheStats())
+    ctx = _ctx_with_results(
+        [
+            _result("graph_resolution", metrics={"records_not_stored": 2}),
+            _result("claim_extraction", metrics={"records_not_stored": 1}),
+            _result("indexing", metrics={"underived_items": 4}),
+        ]
+    )
+    ctx.duration_seconds = 1.0
+
+    metrics = DataIngestionPipeline._create_pipeline_metrics(pipe, ctx)
+
+    assert metrics.total_records_not_stored == 3
+    assert metrics.underived_items == 4
+
+
 # --- helpers -------------------------------------------------------------
 
 

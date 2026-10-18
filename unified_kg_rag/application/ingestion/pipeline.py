@@ -237,6 +237,8 @@ class DataIngestionPipeline:
         "total_extraction_failures": frozenset({"graph_extraction"}),
         "total_documents_quarantined": frozenset({"document_loading"}),
         "total_documents_deferred": frozenset({"document_loading"}),
+        "total_records_not_stored": frozenset({"graph_resolution", "claim_extraction"}),
+        "underived_items": frozenset({"indexing"}),
         "total_gleaning_failures": frozenset({"gleaning"}),
         "total_claim_extraction_failures": frozenset({"claim_extraction"}),
     }
@@ -1709,6 +1711,13 @@ class DataIngestionPipeline:
                 self._get_stage_metric(
                     context, "document_loading", "documents_deferred"
                 )
+            ),
+            "total_records_not_stored": sum(
+                int(self._get_stage_metric(context, stage, "records_not_stored"))
+                for stage in ("graph_resolution", "claim_extraction")
+            ),
+            "underived_items": int(
+                self._get_stage_metric(context, "indexing", "underived_items")
             ),
             "cache_hit_rate": cache_stats.hit_rate,
             "cache_size_mb": cache_stats.total_size_mb,

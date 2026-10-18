@@ -378,7 +378,9 @@ These fire between runs too, so degradation shows before a run breaks on it:
 | `IngestionTaskMemory` | The ingestion task used at least 90% of its memory for 3 minutes (Container Insights) | Fargate kills a task over its memory, losing the running stage: raise `fargate_memory` |
 
 The dashboard also plots stage durations, task memory and CPU, and Bedrock
-calls, throttles and latency by model.
+calls, throttles and latency by model, and the incremental degradations no
+alarm watches (`total_documents_deferred`, `community_rebuild_recommended`,
+`total_records_not_stored`, `underived_items`).
 
 ## Query access and tenant isolation
 

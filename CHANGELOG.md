@@ -803,6 +803,9 @@ changed once with the full-config keys (#332).
   stores' 180 s request timeout; a shorter lease logs a WARNING at the start
   of the run. A run that dies now blocks its namespace for up to 10 minutes
   (#PR).
+- The ingestion EMF metrics add `total_records_not_stored` and
+  `underived_items`, and the CDK dashboard plots them with
+  `total_documents_deferred` and `community_rebuild_recommended` (#PR).
 - The user guide links the CLI reference instead of repeating flag tables,
   the observability trace shape (every span and attribute, the vendor
   attribute names, the known limits) moved to the runbook, and the user

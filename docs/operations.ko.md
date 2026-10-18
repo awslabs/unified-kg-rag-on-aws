@@ -352,7 +352,9 @@ EMF 지표를 읽습니다(중지된 실행도 끝낸 단계는 보고함). 태�
 | `IngestionTaskMemory` | 수집 태스크가 3분 동안 메모리의 90% 이상을 씀(Container Insights) | Fargate는 메모리를 넘은 태스크를 종료해 실행 중인 단계를 잃습니다. `fargate_memory`를 늘립니다 |
 
 대시보드에는 단계별 소요 시간, 태스크 메모리와 CPU, 모델별 Bedrock 호출·스로틀링·지연
-시간도 표시됩니다.
+시간과 경보가 보지 않는 증분 실행의 품질 저하(`total_documents_deferred`,
+`community_rebuild_recommended`, `total_records_not_stored`, `underived_items`)도
+표시됩니다.
 
 ## 질의 권한과 테넌트 격리
 

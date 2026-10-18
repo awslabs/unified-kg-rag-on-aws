@@ -240,6 +240,23 @@ class ObservabilityStack(Stack):
             cw.GraphWidget(title="Extracted artifacts (EMF)", left=extracted_metrics),
             cw.GraphWidget(title="Indexed artifacts (EMF)", left=indexed_metrics),
         )
+        # Degradations of an incremental run that succeeded: documents left
+        # for a later run, a recommended community rebuild, extraction records
+        # not stored and stored items whose derived attributes are stale.
+        dashboard.add_widgets(
+            cw.GraphWidget(
+                title="Incremental run health (EMF)",
+                left=[
+                    self._emf(name)
+                    for name in (
+                        "total_documents_deferred",
+                        "community_rebuild_recommended",
+                        "total_records_not_stored",
+                        "underived_items",
+                    )
+                ],
+            ),
+        )
         dashboard.add_widgets(
             cw.GraphWidget(
                 title="Stage durations (EMF, seconds)",
