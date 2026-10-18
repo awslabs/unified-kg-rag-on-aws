@@ -26,6 +26,7 @@ from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.application.ingestion.incremental import (
     IncrementalIndexer,
     build_document_lineage,
+    retired_scope_readings,
 )
 from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
 from unified_kg_rag.application.ingestion.pipeline_stages import (
@@ -40,6 +41,7 @@ from unified_kg_rag.domain.ingestion.delta_detector import (
     document_doc_id,
     other_local_scopes,
     retire_source_scopes,
+    retired_scope_groups,
     validate_retired_scopes,
 )
 from unified_kg_rag.domain.models import (
@@ -564,3 +566,74 @@ def test_a_pipeline_retiring_without_the_registry_fails_fast(tmp_path) -> None:
     pipeline.config.indexing.retire_source_scopes = [f"{tmp_path.as_posix()}/"]
     with pytest.raises(ConfigurationError, match="own source scope"):
         pipeline._validate_retired_scopes(tmp_path)
+
+
+def test_retired_scope_readings(tmp_path: Path, monkeypatch) -> None:
+    real = tmp_path / "real"
+    (real / "old").mkdir(parents=True)
+    (tmp_path / "link").symlink_to(real)
+    monkeypatch.chdir(tmp_path)
+    resolved = (real / "old").resolve().as_posix()
+    assert retired_scope_readings("s3://bucket/old/") == (["s3://bucket/old/"], False)
+    assert retired_scope_readings("./real/old/../old") == ([resolved], False)
+    # One directory, two spellings: both retired.
+    assert retired_scope_readings(str(tmp_path / "link" / "old")) == (
+        [str(tmp_path / "link" / "old"), resolved],
+        False,
+    )
+    # A name or a relative path: two readings, at most one may have records.
+    assert retired_scope_readings("old") == (
+        ["old", (tmp_path / "old").resolve().as_posix()],
+        True,
+    )
+
+
+def _bare_value_groups(tmp_path: Path, monkeypatch) -> tuple[list, str, str]:
+    monkeypatch.chdir(tmp_path)
+    groups = retired_scope_groups(
+        ["corpus-b"], "/corpora/new", "default", retired_scope_readings
+    )
+    name = "default|corpus-b"
+    path = f"default|{(tmp_path / 'corpus-b').resolve().as_posix()}"
+    return groups, name, path
+
+
+def test_a_bare_value_retires_the_one_reading_with_records(
+    tmp_path: Path, monkeypatch
+) -> None:
+    groups, name, _ = _bare_value_groups(tmp_path, monkeypatch)
+    store = FakeDocStatusStore()
+    store.put(_record("named", name))
+    delta = store.diff({}, scope="default|/corpora/new")
+
+    assert retire_source_scopes(store, delta, groups, "default|/corpora/new") == 1
+    assert delta.deleted == ["named"]
+
+
+def test_a_bare_value_with_records_under_both_readings_stops(
+    tmp_path: Path, monkeypatch
+) -> None:
+    # Before, both readings were retired: a corpus configured with the
+    # source_scope name "corpus-b" lost its documents to a retire of the
+    # directory ./corpus-b (or the other way round).
+    groups, name, path = _bare_value_groups(tmp_path, monkeypatch)
+    store = FakeDocStatusStore()
+    store.put(_record("named", name))
+    store.put(_record("moved", path))
+    delta = store.diff({}, scope="default|/corpora/new")
+
+    with pytest.raises(ConfigurationError, match="ambiguous"):
+        retire_source_scopes(store, delta, groups, "default|/corpora/new")
+    assert delta.deleted == []
+
+
+def test_a_bare_value_without_records_warns_once(
+    tmp_path: Path, monkeypatch, caplog
+) -> None:
+    groups, _, _ = _bare_value_groups(tmp_path, monkeypatch)
+    store = FakeDocStatusStore()
+    delta = store.diff({}, scope="default|/corpora/new")
+
+    assert retire_source_scopes(store, delta, groups, "default|/corpora/new") == 0
+    assert caplog.text.count("has no doc-status records") == 1
+    assert "'corpus-b'" in caplog.text

@@ -764,11 +764,12 @@ def test_ingestion_retire_source_scope_is_repeatable_and_merged_into_config(
     ]
 
 
-def test_ingestion_retire_source_scope_resolves_a_local_path(
+def test_ingestion_retire_source_scope_is_kept_as_given(
     config, mocker, tmp_path, monkeypatch
 ) -> None:
-    # Before, a path through a symlink (or relative) never matched the
-    # resolved directory the registry stores, so nothing was retired.
+    # The run tries each value's readings (incremental.retired_scope_readings),
+    # so the CLI must not expand them: a bare value expanded into both
+    # readings retired both.
     mocker.patch.object(run_ingestion_pipeline, "load_cli_config", return_value=config)
     real = tmp_path / "real"
     (real / "old").mkdir(parents=True)
@@ -789,13 +790,12 @@ def test_ingestion_retire_source_scope_resolves_a_local_path(
         ]
     )
     runner = run_ingestion_pipeline.IngestionPipelineRunner(args)
-    resolved = (real / "old").resolve().as_posix()
+    # Kept as given: the run resolves the readings of each value (see
+    # incremental.retired_scope_readings).
     assert runner.config.indexing.retire_source_scopes == [
         str(tmp_path / "link" / "old"),
-        resolved,
+        "./real/old/../old",
         "contracts",
-        # A bare value may also be a relative path to the old directory.
-        (tmp_path / "contracts").resolve().as_posix(),
     ]
 
 

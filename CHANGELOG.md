@@ -1278,6 +1278,14 @@ changed once with the full-config keys (#332).
   package), synth failures (exclusive Neptune keys, unknown `-c` keys), the
   `run-eval` S3 session, the graph read-back a custom adapter needs, and what
   `removal_destroy=false` does not prevent (#365).
+- A bare `--retire-source-scope` / `indexing.retire_source_scopes` value
+  (`old`) no longer retires both of its readings, the `source_scope` name
+  and the relative directory, which could delete another corpus's
+  documents: the reading with records is retired, and when both have
+  records the run stops before any write and asks for `./old` or an
+  absolute path. Values are now resolved by the run, so config entries get
+  the same treatment as the flag, and a value with no records warns once
+  (#PR).
 - Ctrl-C (or a `SystemExit`) during indexing no longer lets the worker
   threads it leaves running write after the run released its lease, when
   another run may hold it: a released lease fails their next write, and

@@ -52,8 +52,8 @@ from unified_kg_rag.domain.ingestion.delta_detector import (
     fingerprint_documents,
     other_local_scopes,
     registry_scope,
+    retired_scope_groups,
     scope_namespace,
-    validate_retired_scopes,
 )
 from unified_kg_rag.domain.ingestion.derivation import with_entity_ids
 from unified_kg_rag.domain.ingestion.merge import merge_claims
@@ -958,6 +958,26 @@ class IncrementalIndexer:
 # reset (``clear_registry_namespaces``); both stages only delegate here.
 
 
+def retired_scope_readings(value: str) -> tuple[list[str], bool]:
+    """The source scopes a retired value may mean, and whether they differ.
+
+    A URI is the scope as given. A ``~`` or ``.`` path is the old source
+    directory, resolved the way the run resolves its own (``~``, ``..``,
+    symlinks). An absolute path is that directory as given (a configured
+    ``source_scope`` is stored so) and resolved: one directory. A bare value
+    is either a ``source_scope`` name or a path relative to the working
+    directory: two readings, of which only one may have records.
+    """
+    scope = value.strip()
+    if "://" in scope:
+        return [scope], False
+    resolved = Path(scope).expanduser().resolve().as_posix()
+    if scope[:1] in ("~", "."):
+        return [resolved], False
+    readings = list(dict.fromkeys([scope, resolved]))
+    return readings, not scope.startswith("/") and len(readings) > 1
+
+
 def run_registry_scope(
     config: Config, source_directory: Path, failed_source_files: list[str]
 ) -> tuple[str, str, str, list[str]]:
@@ -1130,8 +1150,11 @@ def filter_to_delta(
     )
     # Fails before any registry read or write when the run would retire
     # its own scope.
-    retired = validate_retired_scopes(
-        config.indexing.retire_source_scopes, source_scope, namespace
+    retired = retired_scope_groups(
+        config.indexing.retire_source_scopes,
+        source_scope,
+        namespace,
+        retired_scope_readings,
     )
     for document in documents:
         assign_registry_source(document, source_scope)
@@ -1232,7 +1255,9 @@ def filter_to_delta(
         },
     )
     if delta.new and not config.processing.document_parsing.source_scope:
-        _warn_about_other_local_scopes(delta, scope, namespace, retired)
+        _warn_about_other_local_scopes(
+            delta, scope, namespace, [s for group in retired for s in group.scopes]
+        )
     if delta.is_empty:
         logger.info("Incremental: no new/changed documents detected")
     to_process = filter_documents_to_process(documents, delta)
