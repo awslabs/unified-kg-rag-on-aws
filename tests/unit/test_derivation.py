@@ -555,3 +555,22 @@ def test_another_spelling_is_an_endpoint_only_where_the_edge_states_it() -> None
 
     assert derived.dropped == [stale.id]
     assert stale.id not in {r.id for r in derived.relationships}
+
+
+def test_a_tie_between_candidates_does_not_depend_on_their_order() -> None:
+    # The candidates of a stored entity are collected over its keys, a set
+    # whose order follows PYTHONHASHSEED: a tie went to whichever came first.
+    from unified_kg_rag.domain.ingestion.derivation import _correspondence
+
+    stored = _stored("Acme", ["u1", "u2"])
+    a = _entity("Acme Corp", "u1").model_copy(update={"text_unit_ids": ["u1"]})
+    b = _entity("Acme Ltd", "u2").model_copy(update={"text_unit_ids": ["u2"]})
+
+    matches = {
+        _correspondence([stored], {stored.id: order}, {stored.id: True})[2][stored.id][
+            0
+        ]
+        for order in ([a, b], [b, a])
+    }
+
+    assert matches == {min(a.id, b.id)}

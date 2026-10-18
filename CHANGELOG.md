@@ -1735,6 +1735,10 @@ changed once with the full-config keys (#332).
   5,000 edges: 5,000 edges read, now 64). `unclustered_stored_entities`
   counts the stored entities without a community the walk reached, a lower
   bound (#PR).
+- Incremental runs over several spellings of one name no longer depend on
+  `PYTHONHASHSEED`: a stored entity's candidates were collected over its
+  keys (a set), and a tie between equally good ones went to whichever came
+  first. Ties now go to the smallest id (#PR).
 - Removing a document no longer leaves its text unnoticed in community
   reports: a kept report that cites a removed text unit is counted in the
   `community_drift` metrics (`outdated_reports`, deletion-only runs

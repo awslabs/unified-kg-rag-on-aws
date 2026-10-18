@@ -147,7 +147,8 @@ def _correspondence(
     """Match given items to the resolved items they correspond to.
 
     ``candidates_of`` holds each given item's candidates (by its id). Its
-    match is the one sharing most of its text units (its own id on a tie);
+    match is the one of its own id, else the one sharing most of its text
+    units (the smallest id on a tie);
     every other one sharing a text unit with it is a part a full build keeps
     apart. Returns, by resolved id, the given items it is the match of and
     those it is a part of, and by given id, the resolved ids it derives to
@@ -157,7 +158,9 @@ def _correspondence(
     parts: dict[str, list[Any]] = defaultdict(list)
     derives_to: dict[str, list[str]] = {}
     for item in given:
-        candidates = candidates_of.get(item.id, [])
+        # In id order: a tie goes to the smallest id, whatever order the
+        # candidates were collected in (an entity's keys are a set).
+        candidates = sorted(candidates_of.get(item.id, []), key=lambda r: r.id)
         if not complete[item.id] or not candidates:
             continue
         units = set(item.text_unit_ids or [])
