@@ -421,3 +421,46 @@ def test_unit_order_is_linear_in_the_units() -> None:
 
     assert time.perf_counter() - started < 1.0
     assert ordered == [*stored, units[0]]
+
+
+def test_only_claims_the_given_claims_units_state_are_derived() -> None:
+    # The entities' text units hold claims too, but only the given claims'
+    # units are in scope: a claim of another unit may be stored with more
+    # text units than the ones read here, and deriving it from these alone
+    # would overwrite it.
+    from unified_kg_rag.domain.ingestion.claim_resolver import resolved_claim_id
+
+    records = {
+        "u1": _record("u1", _entity("Acme", "u1"), _entity("Buyer", "u1")),
+        "u2": _record("u2", _entity("Acme", "u2"), _entity("Depot", "u2")),
+    }
+
+    def statement(obj: str, unit: str) -> Claim:
+        return Claim(
+            id=f"c-{unit}",
+            subject_id="",
+            subject_name="Acme",
+            object_name=obj,
+            type="PAYS",
+            description=f"Acme pays {obj}",
+            text_unit_ids=[unit],
+        )
+
+    acme = _stored("Acme", ["u1", "u2"])
+    buyer = _stored("Buyer", ["u1"])
+    depot = _stored("Depot", ["u2"])
+    given = statement("Buyer", "u1").model_copy(
+        update={"subject_id": acme.id, "object_id": buyer.id, "type": "pays"}
+    )
+    given.id = resolved_claim_id(given)
+
+    derived = derive(
+        Config(),
+        [acme, buyer, depot],
+        [],
+        [given],
+        records,
+        {"u1": [statement("Buyer", "u1")], "u2": [statement("Depot", "u2")]},
+    )
+
+    assert [c.object_name for c in derived.claims] == ["Buyer"]

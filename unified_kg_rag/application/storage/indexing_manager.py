@@ -80,20 +80,18 @@ def _claim_text(claim: Claim) -> tuple[Any, ...]:
     return claim.type, claim.status, claim.description, claim.source_text
 
 
-def _spellings_sharing_units(
+def _other_spellings(
     derived: Sequence[Entity], given: Sequence[Entity]
 ) -> dict[str, str]:
     """``{derived id: given id}`` of each given entity of another id whose
-    name has a derived entity's ``compact_name_key`` and that shares a text
-    unit with it."""
+    name has a derived entity's ``compact_name_key``."""
     by_key: dict[str, list[Entity]] = defaultdict(list)
     for entity in derived:
         by_key[compact_name_key(entity.name)].append(entity)
     pairs: dict[str, str] = {}
     for other in given:
-        units = set(other.text_unit_ids or [])
         for entity in by_key.get(compact_name_key(other.name), ()):
-            if entity.id != other.id and units & set(entity.text_unit_ids or []):
+            if entity.id != other.id:
                 pairs.setdefault(entity.id, other.id)
     return pairs
 
@@ -887,15 +885,17 @@ class IndexingManager:
                 - blocked
             )
             held = self._read_held(suffix, targets) if targets else ([], [], [])
-            # Another spelling of a derived entity that shares a text unit
-            # with it: a run that split them and died before their edges and
-            # claims were written leaves those on the other spelling, and only
-            # its entity copies record the split. Its edges are derived with
-            # them, and its claims follow (``split_from``).
+            # Another spelling of a derived entity: a run that split them and
+            # died before their edges and claims were written leaves those on
+            # the other spelling, and only its entity copies record the split
+            # (the two need not share a text unit). Its edges are derived with
+            # them, and its claims follow (``split_from``). Spellings a full
+            # build keeps apart are derived again unchanged, at the cost of
+            # reading their edges.
             spellings = (
                 {
                     part: whole
-                    for part, whole in _spellings_sharing_units(
+                    for part, whole in _other_spellings(
                         derived.entities, items[0]
                     ).items()
                     if whole not in derived.id_remap
@@ -1607,6 +1607,7 @@ class IndexingManager:
         self._retire(
             suffix,
             {old: new for old, new in derived.id_remap.items() if old in claim_ids},
+            dropped=[i for i in derived.dropped if i in claim_ids],
         )
         return derived.claims
 

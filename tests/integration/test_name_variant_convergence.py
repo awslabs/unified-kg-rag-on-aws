@@ -44,7 +44,16 @@ pytestmark = [pytest.mark.integration, pytest.mark.usefixtures("no_aws")]
 
 no_aws = e2e.no_aws
 
-NAMES = ("Initech Corp", "Initech", "Buyer", "Depot", "Carrier", "Acme Inc", "Acme")
+NAMES = (
+    "Initech Corp",
+    "Initech",
+    "Buyer",
+    "Depot",
+    "Carrier",
+    "Acme Inc",
+    "Acme Corp",
+    "Acme",
+)
 TYPES = {"goods": "ORGANIZATION", "parts": "PERSON", "cash": "LOCATION"}
 
 
@@ -52,13 +61,15 @@ class _Died(BaseException):
     """A crash the pipeline does not catch (the task was killed)."""
 
 
-def _dying(method: str, nth: int, after: bool) -> Callable[..., Any]:
-    """``OpenSearchIndexer.<method>`` whose ``nth`` call kills the run (after
-    the call completes, if ``after``)."""
-    original = getattr(OpenSearchIndexer, method)
+def _dying(
+    method: str, nth: int, after: bool, owner: type = OpenSearchIndexer
+) -> Callable[..., Any]:
+    """``owner.<method>`` whose ``nth`` call kills the run (after the call
+    completes, if ``after``)."""
+    original = getattr(owner, method)
     calls = {"n": 0}
 
-    def dying(self: OpenSearchIndexer, *args: Any, **kwargs: Any) -> Any:
+    def dying(self: Any, *args: Any, **kwargs: Any) -> Any:
         calls["n"] += 1
         if calls["n"] != nth:
             return original(self, *args, **kwargs)
@@ -80,6 +91,24 @@ def _names_in(text: str) -> list[str]:
 
 
 def _respond(system: str, human: str) -> str:
+    if "graph refinement specialist" in system:
+        # Gleaning adds an edge between the first and last name of a unit
+        # that names three or more.
+        text = stages._source_text(human).strip()
+        names = _names_in(text)
+        issue = (
+            "<issue><issue_type>MISSING_RELATIONSHIP</issue_type><details>"
+            f"<source>{names[0]}</source><target>{names[-1]}</target>"
+            f"<type>DEALS_WITH</type><description>{names[0]} deals with "
+            f"{names[-1]}</description></details>"
+            f"<text_evidence>{text}</text_evidence></issue>"
+            if len(names) >= 3
+            else ""
+        )
+        return (
+            "<refinement_plan><identified_issues>"
+            f"{issue}</identified_issues></refinement_plan>"
+        )
     if "extraction" not in system:
         return stages._respond(system, human)
     text = stages._source_text(human).strip()
@@ -121,16 +150,23 @@ def _state(
     respond: Callable[[str, str], str] = _respond,
     summarize: bool = False,
     die_in: int | None = None,
-    die_at: tuple[str, int, bool] = ("upsert_claims", 1, False),
+    die_at: tuple[Any, ...] = ("upsert_claims", 1, False),
+    gleaning: bool = False,
+    suffix: str | None = None,
 ) -> dict[str, list[tuple]]:
     """The stored entities, edges and claims after indexing ``corpora`` one
     after the other (run ``repeat`` twice under its pipeline id; run
     ``die_in`` killed at ``die_at``, then resumed under its id).
 
-    ``die_at`` is a vector-store method, the call that dies (1 = the first)
-    and whether that call completes before the run dies."""
+    ``die_at`` is a method, the call that dies (1 = the first), whether
+    that call completes before the run dies and, optionally, the class
+    (default the vector store's)."""
     config = _config(tmp / "stores", tmp / "viz")
     config.processing.claim_extraction.enabled = True
+    config.processing.gleaning.enabled = gleaning
+    if suffix:
+        config.indexing.additional_suffix = suffix
+    config.processing.gleaning.max_rounds = 1
     summarization = config.processing.graph_extraction.description_summarization
     summarization.enabled = summarize
     summarization.force_summary_threshold_tokens = 30
@@ -146,8 +182,9 @@ def _state(
         for name, text in corpus.items():
             (source / name).write_text(text)
         if run == die_in:
+            owner = die_at[3] if len(die_at) > 3 else OpenSearchIndexer
             with (
-                patch.object(OpenSearchIndexer, die_at[0], _dying(*die_at)),
+                patch.object(owner, die_at[0], _dying(*die_at)),
                 pytest.raises(_Died),
             ):
                 _ingest(config, providers, source, tmp / f"run-{run}")
@@ -242,6 +279,46 @@ def _state(
                 },
             ],
             id="a-split-keeps-the-stored-spelling",
+        ),
+        pytest.param(
+            [
+                {"x.txt": "Acme Inc and Acme Corp trade goods 3."},
+                {
+                    "x.txt": "Acme Inc and Acme Corp trade goods 3.",
+                    "y.txt": "Acme Inc and Acme trade cash 2.",
+                },
+            ],
+            id="a-claim-of-a-third-spelling-is-not-kept-unresolved",
+        ),
+        pytest.param(
+            [
+                {
+                    "d5.txt": "Buyer and Acme and Acme Inc trade cash 1. Depot and "
+                    "Acme Inc and Acme Corp trade cash 2. Acme trade cash 3.",
+                    "d0.txt": "Acme Corp and Acme Inc trade goods 3. Buyer trade "
+                    "parts 3.",
+                },
+                {
+                    "d0.txt": "Acme Corp and Acme Inc trade goods 3. Buyer trade "
+                    "parts 3."
+                },
+            ],
+            id="a-stored-claim-no-claim-of-its-units-matches-is-replaced",
+        ),
+        pytest.param(
+            [
+                {
+                    "d5.txt": "Acme Inc and Acme trade parts 2. Acme Inc and Acme "
+                    "Corp and Acme trade parts 1. Acme Corp trade parts 3."
+                },
+                {"d3.txt": "Acme Inc and Buyer and Acme Corp trade cash 3."},
+                {
+                    "d3.txt": "Acme Inc and Buyer and Acme Corp trade cash 3.",
+                    "d4.txt": "Depot and Acme trade parts 1. Acme and Depot trade "
+                    "cash 2.",
+                },
+            ],
+            id="a-claim-names-the-spelling-its-unit-states",
         ),
     ],
 )
@@ -366,4 +443,145 @@ def test_a_removal_resumed_after_dying_between_the_stores_matches_a_full_build(
         die_at=("delete_document_artifacts", 2, True),
     )
 
+    assert incremental == full
+
+
+def test_a_resumed_merge_keeps_a_gleaned_edge_on_the_spelling_it_names(
+    tmp_path: Path,
+) -> None:
+    # d7.txt moves to r0.txt. Removing d7.txt merges "Initech Corp" into
+    # "Initech" (their types now agree); indexing r0.txt splits them again.
+    # Killed after the split entities were written and before their edges,
+    # the resumed run left the edge gleaning adds for "Initech Corp" (d1.txt)
+    # on "Initech": the stored "Initech" no longer held the other spelling's
+    # key, so the edge had no derived entity to follow.
+    d1 = "Initech Corp and Initech trade cash 1. Depot and Buyer trade parts 1."
+    d7 = "Depot and Initech Corp and Buyer trade goods 1."
+    runs = [
+        {"d1.txt": "Initech trade parts 2."},
+        {"d1.txt": d1, "d5.txt": "Buyer trade cash 2."},
+        {"d1.txt": d1, "d5.txt": "Buyer trade cash 2.", "d7.txt": d7},
+        {"d1.txt": d1, "d5.txt": "Buyer trade cash 2.", "r0.txt": d7},
+    ]
+
+    full = _state(tmp_path / "full", [runs[-1]], gleaning=True)
+    incremental = _state(
+        tmp_path / "inc",
+        runs,
+        die_in=3,
+        die_at=("update_relationship_lineage", 2, False),
+        gleaning=True,
+    )
+
+    assert ("Initech Corp", "Buyer") in {e[:2] for e in full["edges"]}
+    assert incremental == full
+
+
+def test_a_hub_that_changes_its_name_extends_its_summary(tmp_path: Path) -> None:
+    # Nine new documents call the hub "Acme Inc", one more than say "Acme":
+    # the delta entity merges into the stored "Acme", which the derivation
+    # then re-keys to "Acme Inc". The delta's descriptions must be found
+    # under that final id, or the hub is summarized again from every line.
+    calls: list[tuple[str, int]] = []
+
+    def respond(system: str, human: str) -> str:
+        if "knowledge-graph editor" not in system:
+            return _respond(system, human)
+        match = re.search(r"<descriptions>\n(.*?)\n</descriptions>", human, re.S)
+        name = re.search(r"descriptions of '([^']*)'", human)
+        assert match and name
+        calls.append((name.group(1), match.group(1).count("\n") + 1))
+        return f"Summary of {name.group(1)}."
+
+    hub = {f"h{i}.txt": f"Acme and Buyer trade goods {i}." for i in range(8)}
+    grown = {
+        **hub,
+        **{f"n{i}.txt": f"Acme Inc and Depot trade goods {i}." for i in range(9)},
+    }
+    _state(tmp_path, [hub, grown], respond=respond, summarize=True)
+
+    hub_calls = [lines for name, lines in calls if name in ("Acme", "Acme Inc")]
+    # Eight lines in the first run; in the second the nine new lines (graph
+    # resolution), then the stored summary and that one at most: never all
+    # seventeen.
+    assert hub_calls[:2] == [8, 9]
+    assert all(lines <= 2 for lines in hub_calls[2:])
+
+
+@pytest.mark.parametrize(
+    "runs",
+    [
+        pytest.param(
+            [
+                {f"h{i}.txt": f"Acme and Buyer trade goods {i}." for i in range(2)},
+                {
+                    **{
+                        f"h{i}.txt": f"Acme and Buyer trade goods {i}."
+                        for i in range(2)
+                    },
+                    **{
+                        f"n{i}.txt": f"Acme Inc and Depot trade goods {i}."
+                        for i in range(3)
+                    },
+                },
+            ],
+            id="a-spelling-re-keyed-to-the-other",
+        ),
+    ],
+)
+def test_a_spelling_re_keyed_into_another_is_not_a_split_origin(
+    tmp_path: Path, runs: list[dict[str, str]], mocker: Any
+) -> None:
+    # Another spelling of a derived entity is taken for a split origin (its
+    # edges derived again, its claims followed), but not when the derivation
+    # re-keyed it into the derived entity: that costs reads and leaves the
+    # result as it is.
+    from unified_kg_rag.application.storage.indexing_manager import IndexingManager
+
+    derive = mocker.spy(IndexingManager, "derive")
+
+    _state(tmp_path, runs)
+
+    results = [d for d in derive.spy_return_list if d.entities]
+    assert results
+    for derived in results:
+        assert not set(derived.split_from.values()) & set(derived.id_remap)
+
+
+def test_a_resumed_split_moves_an_edge_of_a_spelling_sharing_no_unit(
+    tmp_path: Path,
+) -> None:
+    # r2.txt states "Initech" and "Initech Corp" in two units; while their
+    # types agree they are one entity with one Initech-Depot edge citing
+    # both. d4.txt makes "Initech" a location: the run splits them, and is
+    # killed after the graph took the entities and before their edges. The
+    # split entities share no text unit, so the resumed run did not take
+    # "Initech Corp" for a split origin and the merged edge (and the claim)
+    # stayed on "Initech". The suffix fixes the document ids, so that the
+    # type tie of the second run goes the way that merges them.
+    r2 = (
+        "Acme and Buyer trade goods 2. Initech and Depot trade cash 1. Initech "
+        "Corp and Depot trade goods 1."
+    )
+    runs = [
+        {"d5.txt": "Acme and Buyer trade goods 2."},
+        {"d5.txt": "Acme and Buyer trade goods 2. Initech and Depot trade cash 1."},
+        {"r2.txt": r2},
+        {
+            "r2.txt": r2,
+            "d4.txt": "Acme and Initech and Buyer trade cash 2. Acme Inc and Depot "
+            "trade cash 1.",
+        },
+    ]
+
+    full = _state(tmp_path / "full", [runs[-1]], suffix="c41dvt14")
+    incremental = _state(
+        tmp_path / "inc",
+        runs,
+        die_in=3,
+        die_at=("upsert_relationships", 1, False, SQLiteGraphIndexer),
+        suffix="c41dvt14",
+    )
+
+    assert ("Initech Corp", "Depot") in {e[:2] for e in full["edges"]}
     assert incremental == full

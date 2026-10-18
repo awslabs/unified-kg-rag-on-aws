@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 import time
 from collections import defaultdict
+from collections.abc import Callable, Collection, Mapping
 from datetime import datetime
 from typing import Any
 
@@ -63,6 +64,7 @@ def resolve_entity_reference(
     entity_reference: str,
     names_by_key: dict[str, str],
     fuzzy_matcher: FuzzyMatcher,
+    stated_in: Callable[[str], bool] = lambda name: False,
 ) -> str | None:
     """Return the name of the entity ``entity_reference`` denotes, else None.
 
@@ -70,8 +72,10 @@ def resolve_entity_reference(
     :meth:`FuzzyMatcher.find_all_matches` (spelling and legal-form variants
     share a ``compact_name_key`` and score 1.0; a candidate whose identifier
     tokens or head character differ is never returned), the best score
-    winning. The guards matter as much here as in entity grouping: "PO 1003"
-    must not become "PO 1002", and a literal value must stay a literal value.
+    winning; among equal scores the one ``stated_in`` the claim's text units
+    (it names an entity extracted there), then the smallest name. The guards
+    matter as much here as in entity grouping: "PO 1003" must not become
+    "PO 1002", and a literal value must stay a literal value.
     """
     key = entity_key(entity_reference)
     if not key:
@@ -81,9 +85,13 @@ def resolve_entity_reference(
     matches = fuzzy_matcher.find_all_matches(entity_reference)
     if not matches:
         return None
-    # Equal scores break on the name, so the choice does not depend on the
-    # order the LSH returns candidates in.
-    return min(matches, key=lambda match: (-match[1], match[0]))[0]
+    # Equal scores break on the claim's own text units, then the name: the
+    # choice depends neither on the order the LSH returns candidates in nor
+    # on entities stated elsewhere in the corpus (an incremental run resolves
+    # a claim against its units' entities only).
+    return min(
+        matches, key=lambda match: (-match[1], not stated_in(match[0]), match[0])
+    )[0]
 
 
 def resolve_single_claim(
@@ -91,16 +99,22 @@ def resolve_single_claim(
     names_by_key: dict[str, str],
     ids_by_key: dict[str, str],
     fuzzy_matcher: FuzzyMatcher,
+    units_by_name: Mapping[str, Collection[str]] | None = None,
 ) -> Claim | None:
     """Point a claim's subject (required) and object (optional) at entities.
 
     ``names_by_key`` / ``ids_by_key`` map an ``entity_key`` to the entity's
-    name and id; ``fuzzy_matcher`` holds the entity names as candidates.
+    name and id; ``fuzzy_matcher`` holds the entity names as candidates;
+    ``units_by_name`` the text units of each entity name (a tie between
+    candidates goes to one stated in the claim's units).
     """
+    claim_units = set(claim.text_unit_ids or [])
+
+    def stated_in(name: str) -> bool:
+        return bool(claim_units.intersection((units_by_name or {}).get(name, ())))
+
     resolved_subject_name = resolve_entity_reference(
-        claim.subject_name,
-        names_by_key,
-        fuzzy_matcher,
+        claim.subject_name, names_by_key, fuzzy_matcher, stated_in
     )
 
     # A claim is anchored to its SUBJECT entity. The object may legitimately be a
@@ -115,7 +129,7 @@ def resolve_single_claim(
         return None
 
     object_name = resolve_entity_reference(
-        claim.object_name, names_by_key, fuzzy_matcher
+        claim.object_name, names_by_key, fuzzy_matcher, stated_in
     )
     return claim.model_copy(
         update={
@@ -167,11 +181,13 @@ class ClaimResolver(BaseResolver):
 
         names_by_key: dict[str, str] = {}
         ids_by_key: dict[str, str] = {}
+        units_by_name: dict[str, set[str]] = defaultdict(set)
         for entity in entities:
             key = entity_key(entity.name)
             if key:
                 names_by_key[key] = entity.name
                 ids_by_key[key] = entity.id
+                units_by_name[entity.name].update(entity.text_unit_ids or ())
 
         logger.info("Created normalized entity map with %s entries.", len(ids_by_key))
 
@@ -183,7 +199,7 @@ class ClaimResolver(BaseResolver):
             candidate_texts=list(names_by_key.values())
         )
         resolved_claims = self._resolve_all_claims(
-            claims, names_by_key, ids_by_key, fuzzy_matcher
+            claims, names_by_key, ids_by_key, fuzzy_matcher, units_by_name
         )
 
         claim_groups = self._group_similar_claims(resolved_claims)
@@ -216,6 +232,7 @@ class ClaimResolver(BaseResolver):
         names_by_key: dict[str, str],
         ids_by_key: dict[str, str],
         fuzzy_matcher: FuzzyMatcher,
+        units_by_name: Mapping[str, Collection[str]] | None = None,
     ) -> list[Claim]:
         """Resolve every claim in input order, in this process.
 
@@ -230,7 +247,7 @@ class ClaimResolver(BaseResolver):
             if self.show_progress and done % _RESOLVE_PROGRESS_EVERY == 0:
                 logger.info("  ...resolved %s/%s claims", done, total)
             resolved_claim = resolve_single_claim(
-                claim, names_by_key, ids_by_key, fuzzy_matcher
+                claim, names_by_key, ids_by_key, fuzzy_matcher, units_by_name
             )
             if resolved_claim:
                 resolved_claims.append(resolved_claim)

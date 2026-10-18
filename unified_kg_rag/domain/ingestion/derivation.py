@@ -36,6 +36,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from unified_kg_rag.domain.ingestion.base_resolver import compact_name_key
 from unified_kg_rag.domain.ingestion.claim_resolver import (
     ClaimResolver,
     resolved_claim_id,
@@ -83,7 +84,8 @@ class Derived(BaseModel):
     # now belong to it).
     split_from: dict[str, str] = Field(default_factory=dict)
     # Ids of the given edges a full build does not draw (their endpoints now
-    # resolve to one entity): the caller deletes them.
+    # resolve to one entity), and of the given claims no claim of their text
+    # units corresponds to: the caller deletes them.
     dropped: list[str] = Field(default_factory=list)
     # Stored entities whose stored edges may now belong to another derived
     # entity (they were re-keyed or split): the caller derives those edges
@@ -326,12 +328,32 @@ def derive(
     def entity_id(stored_id: str) -> str:
         return id_remap.get(stored_id) or rekeyed.get(stored_id, stored_id)
 
-    def endpoint_ids(stored_id: str) -> list[str]:
-        """The derived ids a stored endpoint may now be (its match first)."""
+    # A stored endpoint may also be another spelling of its name stated in
+    # the edge's text units: a run that split the two and died before their
+    # edges were written left an edge of one on the other, and the stored
+    # entity no longer holds the other's key (nor, always, the edge's units).
+    by_compact_key: dict[str, list[Entity]] = defaultdict(list)
+    for derived_entity in derived_entities:
+        by_compact_key[compact_name_key(derived_entity.name)].append(derived_entity)
+    names_of = {entity.id: entity.name for entity in entities}
+
+    def endpoint_ids(stored_id: str, units: Collection[str] = ()) -> list[str]:
+        """The derived ids a stored endpoint may now be (its match first),
+        then its other spellings stated in ``units``."""
         targets = [
             derived_of[r] for r in derives_to.get(stored_id, []) if r in derived_of
-        ]
-        return targets or [entity_id(stored_id)]
+        ] or [entity_id(stored_id)]
+        name = names_of.get(stored_id)
+        spelled = (
+            [
+                other.id
+                for other in by_compact_key.get(compact_name_key(name), ())
+                if set(units) & set(other.text_unit_ids or [])
+            ]
+            if name is not None
+            else []
+        )
+        return list(dict.fromkeys([*targets, *spelled]))
 
     resolved_edges: dict[tuple[str, str, str], Relationship] = {}
     for rel in resolved["relationships"]:
@@ -348,8 +370,8 @@ def derive(
         type_ = _type_key(rel.type)
         edge_candidates[rel.id] = [
             resolved_edges[(source, target, type_)]
-            for source in endpoint_ids(rel.source_id)
-            for target in endpoint_ids(rel.target_id)
+            for source in endpoint_ids(rel.source_id, rel.text_unit_ids or ())
+            for target in endpoint_ids(rel.target_id, rel.text_unit_ids or ())
             if (source, target, type_) in resolved_edges
         ]
     edge_complete = {r.id: complete(r) for r in relationships}
@@ -506,9 +528,28 @@ def derive(
                 "subject_id": entity_id(claim.subject_id),
                 "object_id": entity_id(claim.object_id) if claim.object_id else None,
             }
-            if not all(u in claim_records for u in claim.text_unit_ids or []):
+            units = set(claim.text_unit_ids or [])
+            if not all(u in claim_records for u in units):
                 underived.append(claim.id)
                 match_claim = None
+            elif match_claim is None and units:
+                # No resolved claim has its id under any spelling (its subject
+                # or object resolves to an entity of a third spelling): it is
+                # the resolved claim stated in most of its text units, else a
+                # full build has no such claim.
+                sharing = [
+                    r for r in resolved_claims if units & set(r.text_unit_ids or [])
+                ]
+                if not sharing:
+                    dropped.append(claim.id)
+                    continue
+                match_claim = max(
+                    sharing,
+                    key=lambda r: (
+                        len(units & set(r.text_unit_ids or [])),
+                        resolved_claim_id(with_entity_ids(r, derived_of)),
+                    ),
+                )
             if match_claim is None:
                 derived_claims.append(claim.model_copy(deep=True, update=endpoints))
                 continue
