@@ -1269,28 +1269,28 @@ changed once with the full-config keys (#332).
 - The operations runbook says that with `capture_content` the answer
   model's span keeps the answer as generated even when the guardrail blocks
   it, and that a custom `ContentGuardPort` emits no `kg_rag.guardrail` span
-  (#PR).
+  (#359).
 - With `--output-format json`, a CLI that fails before printing its result
   (`run-prompt-tuning`, `run-visualization`) prints
   `{"status": "failed", "exit_code": 1}` (or 2) instead of nothing.
   `prepare-benchmark` exits 130 on Ctrl-C without a traceback, and a data
   file that is not MuSiQue JSONL (an invalid line or a malformed item) is a
-  usage error (exit 2) instead of a `KeyError` (#PR).
+  usage error (exit 2) instead of a `KeyError` (#359).
 - `prepare-benchmark musique` keeps file names distinct under the retrieval
   evaluator's matching (case, NFKC, `_` for a space), so two paragraphs
-  titled `A_B` and `A B` no longer count as the same reference (#PR).
+  titled `A_B` and `A B` no longer count as the same reference (#359).
 - The strategy comparison's guardrail warning no longer says every metric
   of a blocked answer is scored on the blocked message: an answer blocked on
   output has no retrieval or context score, so those queries are unpaired
-  (#PR).
+  (#359).
 - `run-ingestion --retire-source-scope` also tries any value that is not a
   URI as a path resolved like `--source-directory`, so a bare relative path
-  (`old-corpus`) retires the old directory's records (#PR).
+  (`old-corpus`) retires the old directory's records (#359).
 - RAGAS no longer judges a guardrail-blocked answer on its (dropped)
   contexts: `context_precision`, `context_recall` and `faithfulness` are
   skipped as `guardrail_blocked` (they scored near 0, and faithfulness came
   back NaN and counted as failed toward `--max-failure-rate`); the answer
-  metrics still run (#PR).
+  metrics still run (#359).
 - A run that lost its namespace's write lease during a full build no longer
   swaps the OpenSearch alias onto the partial index and deletes the complete
   one: the vector indexer re-raises `NamespaceLeaseError` instead of
