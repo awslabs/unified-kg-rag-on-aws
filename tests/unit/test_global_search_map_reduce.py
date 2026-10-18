@@ -29,6 +29,7 @@ from unified_kg_rag.adapters.search_strategies.global_search import (
     _MapPoint,
 )
 from unified_kg_rag.domain.models import Config, RetrievalResult, SearchQuery
+from unified_kg_rag.shared import LanguageModelTimeoutError
 from unified_kg_rag.shared.utils.langchain import BATCH_ITEM_FAILED
 
 pytestmark = pytest.mark.unit
@@ -808,7 +809,7 @@ async def test_map_phase_timing_out_on_every_batch_raises_when_not_ignored() -> 
     strat.batch_processor.max_attempts = 1
     strat.batch_processor.call_timeout_seconds = 1
     strat.map_rater = _HangingMapChain()
-    with pytest.raises(TimeoutError, match="gave up after 1s"):
+    with pytest.raises(LanguageModelTimeoutError, match="gave up after 1s"):
         await strat._apply_map_reduce(_communities(2), SearchQuery(query="q"))
 
 
@@ -823,7 +824,7 @@ async def test_map_phase_timeouts_are_recorded_as_timeouts() -> None:
         _communities(2), SearchQuery(query="q"), degraded=degraded
     )
     assert out
-    assert degraded == ["TimeoutError"]
+    assert degraded == ["LanguageModelTimeoutError"]
 
 
 class _TimingOutFirstReport(_SyncMapChain):

@@ -36,7 +36,7 @@ from unified_kg_rag.application.cli.provider_args import (
     add_provider_arguments,
     apply_provider_arguments,
 )
-from unified_kg_rag.application.cli.query_args import _positive_int
+from unified_kg_rag.application.cli.query_args import positive_int
 from unified_kg_rag.application.prompts.tuner import PromptTuner
 from unified_kg_rag.domain.models import Config
 from unified_kg_rag.shared import ConfigurationError, get_logger, setup_logging
@@ -111,7 +111,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--max-docs",
-        type=_positive_int,
+        type=positive_int,
         default=20,
         help="Max documents to sample (at least 1)",
     )

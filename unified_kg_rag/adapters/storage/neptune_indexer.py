@@ -17,7 +17,6 @@ from gremlin_python.process.graph_traversal import (
 from gremlin_python.process.traversal import Cardinality, P, TextP, Traversal
 
 from unified_kg_rag.adapters.aws.neptune import (
-    INGESTION_REQUEST_TIMEOUT_SECONDS,
     NeptuneClient,
     is_permanent_neptune_error,
     run_traversal,
@@ -47,7 +46,10 @@ from unified_kg_rag.shared import (
     get_logger,
 )
 from unified_kg_rag.shared.utils.concurrency import ContextThreadPoolExecutor
-from unified_kg_rag.shared.write_fence import check_write_fence
+from unified_kg_rag.shared.write_fence import (
+    INGESTION_REQUEST_TIMEOUT_SECONDS,
+    check_write_fence,
+)
 
 if TYPE_CHECKING:
     import boto3

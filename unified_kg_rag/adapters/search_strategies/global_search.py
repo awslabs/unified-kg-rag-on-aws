@@ -47,6 +47,7 @@ from unified_kg_rag.domain.retrieval.strategy_registry import register_strategy
 from unified_kg_rag.shared import (
     ConfigurationError,
     LanguageModelError,
+    LanguageModelTimeoutError,
     get_logger,
     observability,
 )
@@ -788,7 +789,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             raise bad_requests[0]
         # A call BatchProcessor gave up on after call_timeout_seconds never
         # raised inside sequential_func: it fails without an error of its own.
-        timeout = TimeoutError(
+        timeout = LanguageModelTimeoutError(
             "map call gave up after " f"{self.batch_processor.call_timeout_seconds}s"
         )
         # A prompt too long for the model is that batch's own problem (it is

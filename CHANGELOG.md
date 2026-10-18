@@ -811,6 +811,11 @@ changed once with the full-config keys (#332).
   fused order. Reported by @vibhupb (#83) (#284).
 
 ### Changed
+- A global-search map phase whose every call timed out raises
+  `LanguageModelTimeoutError` (a `LanguageModelError` and still a
+  `TimeoutError`), and `degraded_error` names it; `run-eval`'s invalid
+  dataset and `run-visualization`'s invalid data errors are
+  `DataProcessingError`s (#PR).
 - A claim whose subject or object matches several entities equally well
   (spelling or legal-form variants: "Acme Inc" against "Acme" and "Acme
   Corp") binds to the one its own text unit states, then to the smallest

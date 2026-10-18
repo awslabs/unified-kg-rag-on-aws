@@ -838,12 +838,12 @@ def test_a_lost_lease_is_not_swallowed_by_the_record_cleanup(
         call()
 
 
-def test_the_lease_warning_uses_the_adapters_request_timeouts(
+def test_the_lease_warning_uses_the_stores_request_timeouts(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    import unified_kg_rag.adapters.aws.neptune as neptune_mod
+    from unified_kg_rag.shared import write_fence
 
-    monkeypatch.setattr(neptune_mod, "INGESTION_REQUEST_TIMEOUT_SECONDS", 300.0)
+    monkeypatch.setattr(write_fence, "INGESTION_REQUEST_TIMEOUT_SECONDS", 300.0)
     pipe = _stopping_pipeline()
     pipe.config = Config()
     pipe._doc_status = FakeDocStatusStore()

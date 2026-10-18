@@ -71,6 +71,7 @@ from unified_kg_rag.shared import (
     PipelineStateManager,
     get_logger,
     observability,
+    write_fence,
 )
 from unified_kg_rag.shared.cache_manager import CacheManager, CacheStrategy
 from unified_kg_rag.shared.metrics import MetricsSink, NullMetricsSink
@@ -107,10 +108,10 @@ def _longest_write_request_seconds() -> float:
     """The longest single store request of the indexing path (the Neptune and
     OpenSearch indexing request timeouts); indexing.lease_seconds should be
     at least three times it (see namespace_lease)."""
-    from unified_kg_rag.adapters.aws.neptune import INGESTION_REQUEST_TIMEOUT_SECONDS
-    from unified_kg_rag.adapters.aws.opensearch import INDEXING_REQUEST_TIMEOUT_SECONDS
-
-    return max(INGESTION_REQUEST_TIMEOUT_SECONDS, INDEXING_REQUEST_TIMEOUT_SECONDS)
+    return max(
+        write_fence.INGESTION_REQUEST_TIMEOUT_SECONDS,
+        write_fence.INDEXING_REQUEST_TIMEOUT_SECONDS,
+    )
 
 
 class _StopFence:

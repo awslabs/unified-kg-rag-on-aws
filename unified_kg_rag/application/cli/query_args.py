@@ -9,7 +9,8 @@ import argparse
 from unified_kg_rag.domain.models import SearchStrategy, SearchType
 
 
-def _positive_int(value: str) -> int:
+def positive_int(value: str) -> int:
+    """An argparse ``type``: an integer of at least 1."""
     number = int(value)
     if number < 1:
         raise argparse.ArgumentTypeError(f"must be at least 1, got {number}")
@@ -83,13 +84,13 @@ def add_query_arguments(
     )
     parser.add_argument(
         "--top-k",
-        type=_positive_int,
+        type=positive_int,
         default=10,
         help="Set the maximum number of search results",
     )
     parser.add_argument(
         "--retrieval-multiplier",
-        type=_positive_int,
+        type=positive_int,
         default=1,
         help="Multiplier that increases the retrieval depth",
     )

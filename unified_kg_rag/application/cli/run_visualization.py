@@ -52,7 +52,12 @@ from unified_kg_rag.domain.ingestion.graph_analyzer import (
     GraphAnalyzer,
 )
 from unified_kg_rag.domain.models import Community, HierarchicalCommunity
-from unified_kg_rag.shared import ConfigurationError, get_logger, setup_logging
+from unified_kg_rag.shared import (
+    ConfigurationError,
+    DataProcessingError,
+    get_logger,
+    setup_logging,
+)
 from unified_kg_rag.shared.config import load_cli_dotenv
 
 logger = get_logger(__name__)
@@ -108,7 +113,7 @@ def _to_communities(entries: list[dict[str, Any]]) -> list[Community]:
     return communities
 
 
-class InvalidVisualizationDataError(Exception):
+class InvalidVisualizationDataError(DataProcessingError):
     """The visualization data file is not exported visualization JSON (exit 2,
     as an invalid ``run-eval`` dataset)."""
 

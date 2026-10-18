@@ -26,13 +26,12 @@ import json
 from collections.abc import Mapping
 from typing import Any
 
+from unified_kg_rag.adapters.storage.filter_schema import ATTRIBUTE_KEY_PREFIX
 from unified_kg_rag.domain.ingestion.base_resolver import compact_name_key
 from unified_kg_rag.domain.models import Constants, Entity, Relationship
 from unified_kg_rag.shared import get_logger
 
 logger = get_logger(__name__)
-
-ATTRIBUTE_KEY_PREFIX = f"{Constants.ATTRIBUTE_PREFIX.value}_"
 
 
 def property_value(value: Any, max_length: int) -> Any:
