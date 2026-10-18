@@ -764,12 +764,55 @@ async def test_map_phase_fatal_error_degrades_when_ignored() -> None:
     assert out  # degraded to concat-and-reduce over the unrated reports
 
 
-async def test_map_phase_transient_failures_still_degrade_when_not_ignored() -> None:
+async def test_map_phase_failing_on_every_batch_raises_when_not_ignored() -> None:
+    # Regression: a map model that answered no batch (throttled past its
+    # retries, timing out) degraded silently to an answer from the unjudged
+    # reports; DRIFT raises the first error when a whole step fails.
     strat = _strategy(ignore_errors=False, map_batch_size=1, reduce_with_llm=True)
     strat.batch_processor.max_attempts = 1  # as GlobalSearchStrategy configures
     strat.map_rater = _DeniedMapChain(TimeoutError("read timed out"))
-    out = await strat._apply_map_reduce(_communities(2), SearchQuery(query="q"))
+    with pytest.raises(TimeoutError, match="read timed out"):
+        await strat._apply_map_reduce(_communities(2), SearchQuery(query="q"))
+
+
+async def test_map_phase_failing_on_every_batch_degrades_when_ignored() -> None:
+    strat = _strategy(ignore_errors=True, map_batch_size=1, reduce_with_llm=True)
+    strat.batch_processor.max_attempts = 1  # as GlobalSearchStrategy configures
+    strat.map_rater = _DeniedMapChain(TimeoutError("read timed out"))
+    degraded: list[str] = []
+    out = await strat._apply_map_reduce(
+        _communities(2), SearchQuery(query="q"), degraded=degraded
+    )
     assert out
+    assert degraded == ["TimeoutError"]
+
+
+class _TimingOutFirstReport(_SyncMapChain):
+    def invoke(self, single_input: dict, config: Any = None) -> str:
+        if "community report 0" in single_input["reports"]:
+            raise TimeoutError("read timed out")
+        return super().invoke(single_input, config)
+
+
+async def test_map_phase_unrated_batches_are_recorded_as_degraded() -> None:
+    # Regression: a failed or unparseable map batch left no trace in the
+    # search metadata (degraded_error) or the strategy span.
+    strat = _strategy(ignore_errors=False, map_batch_size=1)
+    strat.batch_processor.max_attempts = 1  # as GlobalSearchStrategy configures
+    strat.map_rater = _TimingOutFirstReport([_map_payload(("point", 50))])
+    degraded: list[str] = []
+    points, unrated = await strat._run_map_phase(
+        _batches(strat, _communities(2)), SearchQuery(query="q"), degraded=degraded
+    )
+    assert ([r.source for r in unrated], len(points)) == (["c0"], 1)
+    assert degraded == ["TimeoutError"]
+
+    strat.map_rater = _SyncMapChain(["not json", _map_payload(("point", 50))])
+    degraded = []
+    await strat._run_map_phase(
+        _batches(strat, _communities(2)), SearchQuery(query="q"), degraded=degraded
+    )
+    assert degraded == ["LanguageModelError"]
 
 
 class _SlowMapChain:

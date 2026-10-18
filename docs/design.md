@@ -774,7 +774,10 @@ point citing none of its batch's reports credits the whole batch.
 
 **Degradation.** A batch whose map call failed or returned unparseable output
 is *unrated*; when no point passed but some reports were never rated, those
-reports pass through, so global search still answers. When every batch was
+reports pass through, so global search still answers, and the search
+metadata records it (`degraded_error`). When every map call failed (other than
+on a prompt longer than the model's context) and `processing.ignore_errors` is
+off, the query fails with the first error, as DRIFT does. When every batch was
 rated and every point rejected, it returns nothing
 (`map_reduce_no_relevant_points`) and the chain says it cannot answer, as MS
 GraphRAG does.

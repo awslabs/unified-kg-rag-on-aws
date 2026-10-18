@@ -1278,6 +1278,11 @@ changed once with the full-config keys (#332).
   coverage are skipped as `guardrail_blocked`. The strategy comparison
   reports each strategy's `guardrail_blocked_counts` and warns when they
   differ, and `run-eval --output-format json` includes them per run (#353).
+- Global search no longer answers silently from unjudged reports when its map
+  step fails: an unrated batch (a failed or unparseable map call) is recorded
+  in the search metadata (`degraded_error`), and when every map call failed,
+  other than on a prompt too long for the model, the query fails with the
+  first error unless `processing.ignore_errors` is on, as DRIFT does (#PR).
 - iac/README.md no longer says a second concurrent ingestion stops before it
   reads anything: it syncs the corpus and its checkpoint first, then stops
   with `NamespaceLeaseError` before it reads the stores or writes (#345).
