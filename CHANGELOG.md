@@ -1266,6 +1266,10 @@ changed once with the full-config keys (#332).
 - A lost lease is no longer swallowed by `OpenSearchClient.delete_indices`
   (reported as an `AWSServiceError` after the remaining batches were sent)
   or by the best-effort cleanup of unused extraction records (#358).
+- The operations runbook says that with `capture_content` the answer
+  model's span keeps the answer as generated even when the guardrail blocks
+  it, and that a custom `ContentGuardPort` emits no `kg_rag.guardrail` span
+  (#PR).
 - With `--output-format json`, a CLI that fails before printing its result
   (`run-prompt-tuning`, `run-visualization`) prints
   `{"status": "failed", "exit_code": 1}` (or 2) instead of nothing.

@@ -510,6 +510,10 @@ CDK 스택에서는 `-c enable_cloudwatch_tracing=true`가 AWS Distro for OpenTe
 | `kg_rag.evaluate` | 루트 | 평가기마다 하나: `kg_rag.evaluator`, `kg_rag.items`. 심사 모델의 스팬이 아래에 들어감 |
 | `chat <model>`, `embeddings <model>` | 호출한 스팬 | OpenTelemetry GenAI 규약, 스팬 종류 `CLIENT`(Bedrock 재순위화 스팬도 같음): `gen_ai.request.model`, `.max_tokens`, `.temperature`, `gen_ai.usage.input_tokens` / `output_tokens`, Bedrock이 프롬프트 캐시 사용량을 알려 주면 `gen_ai.usage.cache_read.input_tokens` / `cache_creation.input_tokens`, 종료 사유, `error.type`. 비용은 기록하지 않음 |
 
+`capture_content`이면 답변 모델의 `chat <model>` 스팬에는 가드레일이 나중에 차단하거나
+마스킹한 답변도 생성된 그대로 남고, `kg_rag.guardrail` 스팬은 Bedrock 가드레일 어댑터만
+만듭니다(직접 구현한 `ContentGuardPort`는 만들지 않음).
+
 `kg_rag.rerank.status`는 Rerank 호출 한 번의 결과입니다(`error`: 질의가 융합 순서로
 대체됨, `empty`: 쓸 수 있는 결과가 없음). `kg_rag.rerank_status`는 재순위화가 한 일이며
 호출이 없었어도 설정됩니다. 값은 `applied`, `disabled`, `unavailable`(재순위화 모델
