@@ -29,9 +29,15 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.ports.indexer import IndexingStats, VectorIndexer
 from unified_kg_rag.ports.model_factory import EmbeddingFactoryPort
-from unified_kg_rag.shared import ConfigurationError, DataProcessingError, get_logger
+from unified_kg_rag.shared import (
+    ConfigurationError,
+    DataProcessingError,
+    NamespaceLeaseError,
+    get_logger,
+)
 from unified_kg_rag.shared.utils.common import compute_hash
 from unified_kg_rag.shared.utils.concurrency import ContextThreadPoolExecutor
+from unified_kg_rag.shared.write_fence import check_write_fence
 
 if TYPE_CHECKING:
     import boto3
@@ -303,6 +309,8 @@ class OpenSearchIndexer(VectorIndexer):
                 self.opensearch_client.put_index_meta(
                     index_name, {**meta, META_BUILD: payload}
                 )
+            except NamespaceLeaseError:
+                raise
             except Exception as e:  # noqa: BLE001 - the record is optional
                 logger.warning(
                     "Could not record the build of pipeline '%s' in the _meta of "
@@ -790,12 +798,16 @@ class OpenSearchIndexer(VectorIndexer):
                         f"to '{index_name}' failed"
                     )
                 stats.add_success(len(documents))
+            check_write_fence()
             self.opensearch_client.update_alias(
                 alias_name, index_name, remove_pattern=f"{alias_name}-*"
             )
+        except NamespaceLeaseError:
+            raise
         except Exception:
             self._drop_unswapped_index(alias_name, index_name)
             raise
+        check_write_fence()
         self._reap_stale_indices(alias_name, index_name)
         stats.total_items = stats.successful_items
         return stats
@@ -854,6 +866,8 @@ class OpenSearchIndexer(VectorIndexer):
                     str(next(iter(item.values())).get("_id"))
                     for item in response.get("items", [])
                 ]
+        except NamespaceLeaseError:
+            raise
         except Exception as e:  # noqa: BLE001 - reported as failed items
             logger.error("Writing extraction records to '%s' failed: %s", alias_name, e)
             stats.add_error(str(e), len(records), ids=list(records))
@@ -963,6 +977,8 @@ class OpenSearchIndexer(VectorIndexer):
                         len(failed),
                         ids=[str(f["_id"]) for f in failed if "_id" in f],
                     )
+            except NamespaceLeaseError:
+                raise
             except Exception as e:
                 stats.add_error(
                     f"Update of '{alias_name}' failed: {e}",
@@ -996,6 +1012,8 @@ class OpenSearchIndexer(VectorIndexer):
             stats.add_success(len(ids) - failed)
             if failed:
                 stats.add_error(f"Bulk delete errors: {failed}", failed)
+        except NamespaceLeaseError:
+            raise
         except Exception as e:
             stats.add_error(f"Delete-by-id failed: {e}", len(ids))
         return stats
@@ -1068,6 +1086,8 @@ class OpenSearchIndexer(VectorIndexer):
                     self.opensearch_client.update_alias(alias_name, index_name)
 
                 total_stats.merge(self._embed_and_write(index_name, chunk_items, spec))
+            except NamespaceLeaseError:
+                raise
             except Exception as e:
                 logger.error(
                     "Failed to upsert %s (suffix=%s): %s", spec.name, suffix, e
@@ -1122,15 +1142,21 @@ class OpenSearchIndexer(VectorIndexer):
                 # Swap onto the new index when it holds something, or when the
                 # rebuild has nothing of this type for the suffix.
                 if not chunk_items or written.successful_items > 0:
+                    # A run that lost its lease must not swap a partial index
+                    # in, nor delete the complete one.
+                    check_write_fence()
                     self.opensearch_client.update_alias(
                         alias_name, index_name, remove_pattern=f"{alias_name}-*"
                     )
+                    check_write_fence()
                     self._reap_stale_indices(alias_name, index_name)
                 else:
                     # Nothing was written, so the alias stays on the previous
                     # index; drop the unused new one instead of leaking it.
                     self._drop_unswapped_index(alias_name, index_name)
 
+            except NamespaceLeaseError:
+                raise
             except Exception as e:
                 logger.error("Failed to index %s (suffix=%s): %s", spec.name, suffix, e)
                 # A failed empty replacement still fails the run.
@@ -1450,6 +1476,8 @@ class OpenSearchIndexer(VectorIndexer):
                     ids=[str(item["_id"]) for item in failed if "_id" in item],
                 )
                 stats.add_success(len(documents) - len(failed))
+        except NamespaceLeaseError:
+            raise
         except Exception as e:
             stats.add_error(
                 f"Bulk indexing failed: {e}",

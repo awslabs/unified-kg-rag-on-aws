@@ -88,7 +88,7 @@ class NamespaceLease:
         self._lost: str | None = None
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
-        self._token: Token[WriteFence | None] | None = None
+        self._token: Token[tuple[WriteFence, ...]] | None = None
 
     def __enter__(self) -> NamespaceLease:
         sent = time.time()
@@ -163,6 +163,14 @@ class NamespaceLease:
                 continue
             if not held:
                 self._lose("another run took it")
+                return
+            if time.time() - self._renewed_at >= self.seconds:
+                # The lease expired before this renewal answered (the process
+                # was frozen, or the registry slow): another run may have
+                # taken it, written and released it meanwhile, and the
+                # renewal then took a free lease. Give it back.
+                self._lose("it expired before a renewal succeeded")
+                self._release()
                 return
             self._renewed_at = sent
             if self._stop.is_set():

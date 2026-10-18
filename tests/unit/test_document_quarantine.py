@@ -30,7 +30,10 @@ from unified_kg_rag.application.ingestion.incremental import (
     delta_still_applies,
     open_attempts,
 )
-from unified_kg_rag.domain.ingestion.attempts import settled_attempts
+from unified_kg_rag.domain.ingestion.attempts import (
+    settled_attempts,
+    unproductive_attempt,
+)
 from unified_kg_rag.domain.ingestion.delta_detector import (
     compute_content_hash,
     detect_delta,
@@ -385,3 +388,46 @@ def test_a_retried_quarantined_document_counts_on_from_its_deaths() -> None:
 
     record = _record_of(harness, "/c/a.txt", _A)
     assert (record.status, record.attempt_count) == (DocStatus.QUARANTINED, 4)
+
+
+def test_a_run_without_text_units_counts_a_death_of_the_document_alone() -> None:
+    record = DocStatusRecord(
+        doc_id="d",
+        content_hash=PENDING_CONTENT_HASH,
+        status=DocStatus.PENDING,
+        attempt_count=2,
+        crash_batch=3,
+        attempted_hash="h1",
+        attempt_batch=1,
+    )
+    again = unproductive_attempt(record, "h1")
+    assert (again.attempt_count, again.crash_batch, again.attempt_batch) == (3, 1, None)
+    # Deaths on another content do not count toward this one.
+    edited = unproductive_attempt(record, "h2")
+    assert (edited.attempt_count, edited.attempted_hash) == (1, "h2")
+
+
+def test_a_run_that_lost_its_lease_leaves_its_attempts_open() -> None:
+    # The run holding the lease now owns the records: closing the attempts
+    # would overwrite what it wrote. Left open, they count as one death.
+    from unified_kg_rag.shared import NamespaceLeaseError
+    from unified_kg_rag.shared.write_fence import (
+        install_write_fence,
+        remove_write_fence,
+    )
+
+    class _Lost:
+        def check(self) -> None:
+            raise NamespaceLeaseError("lost")
+
+    harness = IncrementalRun()
+    docs = [document(path, content) for path, content in _A.items()]
+    delta, fingerprints = detect_delta(docs, harness.store, max_attempts=3)
+    open_attempts(harness.store, delta, fingerprints)
+    token = install_write_fence(_Lost())
+    try:
+        with pytest.raises(NamespaceLeaseError):
+            close_attempts(harness.store, delta, fingerprints)
+    finally:
+        remove_write_fence(token)
+    assert {r.attempt_batch is not None for r in harness.store.list_all()} == {True}

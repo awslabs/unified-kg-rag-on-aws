@@ -578,9 +578,9 @@ indexing:
   # term, so no other run writes the namespace meanwhile (a second run stops
   # with NamespaceLeaseError). A run stops writing once less than a third of
   # the term is left since its last renewal, so keep it at least three times
-  # the longest store write request. A run that dies stops renewing: its
-  # lease expires at most this long after.
-  lease_seconds: 300
+  # the longest store write request (180 s). A run that dies stops renewing:
+  # its lease expires at most this long after.
+  lease_seconds: 600
   # Incremental runs only: former source scopes whose registry records in this
   # run's index suffix are treated as deleted, so their exclusive graph and
   # vector content is removed (shared content is kept). Use it once after

@@ -265,13 +265,8 @@ class DynamoDBDocStatusStore:
                 records[record.doc_id] = record
         return records
 
-    def _batch_get(
-        self, keys: list[str], consistent: bool = False
-    ) -> list[dict[str, Any]]:
-        table: dict[str, Any] = {"Keys": [_key(k) for k in keys]}
-        if consistent:
-            table["ConsistentRead"] = True
-        request: dict[str, Any] = {self.table_name: table}
+    def _batch_get(self, keys: list[str]) -> list[dict[str, Any]]:
+        request: dict[str, Any] = {self.table_name: {"Keys": [_key(k) for k in keys]}}
         items: list[dict[str, Any]] = []
         for attempt in range(_BATCH_GET_MAX_ATTEMPTS):
             _backoff_before(attempt)

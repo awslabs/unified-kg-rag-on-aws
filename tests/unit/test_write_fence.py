@@ -19,6 +19,8 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
+from opensearchpy import RequestsHttpConnection
+from opensearchpy.exceptions import ConnectionError as OpenSearchConnectionError
 
 import unified_kg_rag.adapters.aws.opensearch as opensearch_mod
 import unified_kg_rag.application.ingestion.namespace_lease as lease_mod
@@ -70,8 +72,9 @@ def test_the_run_stops_writing_while_it_still_holds_the_lease() -> None:
     # once the store had expired the lease and another run could take it.
     store = _SlowStore()
     with NamespaceLease(store, "ns", 1.2) as lease:
-        # The next renewal answers 0.7 s late; the registry is then gone.
-        store.plan = [0.7, None]
+        # The next renewal answers 0.5 s late (before the run's own check
+        # would trip on the previous one); the registry is then gone.
+        store.plan = [0.5, None]
         while store.plan != [None]:
             time.sleep(0.01)
         expiry = store.leases["ns"][1]
@@ -179,32 +182,210 @@ def test_a_lost_lease_stops_the_next_neptune_batch(mocker) -> None:
     sent.assert_not_called()
 
 
-def test_a_lost_lease_stops_the_next_opensearch_bulk_request(mocker) -> None:
-    client = OpenSearchClient.__new__(OpenSearchClient)
-    client._client = MagicMock()
-    requests: list[int] = []
+def _opensearch_client(mocker) -> OpenSearchClient:  # type: ignore[no-untyped-def]
+    config = Config()
+    config.aws.opensearch.endpoint = "localhost"
+    config.aws.opensearch.port = 1
+    config.aws.opensearch.use_iam = False
+    config.aws.opensearch.use_ssl = False
+    config.aws.opensearch.allow_anonymous = True
+    mocker.patch.object(opensearch_mod.OpenSearch, "ping", return_value=True)
+    mocker.patch.object(opensearch_mod.OpenSearch, "info", return_value={})
+    return OpenSearchClient(config)
 
-    def streaming_bulk(client, actions, chunk_size, **kwargs):  # type: ignore[no-untyped-def]
-        chunk: list[Any] = []
-        for action in actions:
-            chunk.append(action)
-            if len(chunk) == chunk_size:
-                requests.append(len(chunk))
-                yield from ((True, {}) for _ in chunk)
-                chunk = []
-        if chunk:
-            requests.append(len(chunk))
-            yield from ((True, {}) for _ in chunk)
 
-    mocker.patch.object(opensearch_mod, "streaming_bulk", side_effect=streaming_bulk)
-    mocker.patch.object(OpenSearchClient, "BULK_CHUNK_SIZE", 2)
-    token = _fenced(_Fence(allowed=1))
+def test_a_lost_lease_stops_the_opensearch_transport_retries(mocker) -> None:
+    # Old behaviour: the fence was checked once per bulk request, and the
+    # transport then made up to 6 attempts of 180 s each without checking.
+    client = _opensearch_client(mocker)
+    sent: list[str] = []
+
+    def unreachable(self, method, url, *args, **kwargs):  # type: ignore[no-untyped-def]
+        sent.append(method)
+        raise OpenSearchConnectionError("N/A", "unreachable", Exception())
+
+    mocker.patch.object(RequestsHttpConnection, "perform_request", unreachable)
+    token = _fenced(_Fence(allowed=2))
     try:
         with pytest.raises(NamespaceLeaseError):
             client.bulk_index("idx", [{"id": str(i)} for i in range(5)])
+        # Reads do not check it.
+        with pytest.raises(Exception, match="unreachable"):
+            client.get_indices_by_alias("alias")
     finally:
         remove_write_fence(token)
-    assert requests == [2]
+    assert sent[:2] == ["POST", "POST"]
+    assert sent.count("POST") == 2
+
+
+def test_a_lost_lease_stops_a_full_build_before_its_alias_swap(tmp_path: Path) -> None:
+    # Old behaviour: the indexer recorded the lost lease as failed items,
+    # swapped the alias onto the partial index and deleted the complete one.
+    from tests.fixtures.fakes.embeddings import HashingEmbeddingFactory
+    from unified_kg_rag.adapters.local.search_engine import SQLiteSearchEngine
+    from unified_kg_rag.adapters.storage.opensearch_indexer import (
+        _WRITE_SLICE_SIZE,
+        OpenSearchIndexer,
+    )
+    from unified_kg_rag.shared.write_fence import check_write_fence
+
+    class _FencedEngine(SQLiteSearchEngine):
+        def bulk_index(self, *args: Any, **kwargs: Any) -> Any:
+            check_write_fence()  # as the OpenSearch client's requests do
+            return super().bulk_index(*args, **kwargs)
+
+    engine = _FencedEngine(tmp_path / "vectors.sqlite3")
+    indexer = OpenSearchIndexer(
+        Config(),
+        embedding_factory=HashingEmbeddingFactory(dimensions=8),
+        opensearch_client=engine,
+    )
+    count = _WRITE_SLICE_SIZE * 2
+    indexer.index_text_units(
+        [TextUnit(id=f"old{i}", text=f"old text {i}") for i in range(count)],
+        suffixes=["default"],
+    )
+    alias = indexer._get_name(
+        indexer.opensearch_config.text_units_index_prefix, "default"
+    )
+    live = engine.get_indices_by_alias(alias)
+    indexer.write_extraction_records({"k1": {"a": 1}}, suffix="default")
+    records = indexer._get_name(
+        indexer.opensearch_config.extraction_records_index_prefix, "default"
+    )
+    live_records = engine.get_indices_by_alias(records)
+
+    token = _fenced(_Fence(allowed=1))  # lost after the first slice
+    try:
+        with pytest.raises(NamespaceLeaseError):
+            indexer.index_text_units(
+                [TextUnit(id=f"new{i}", text=f"new text {i}") for i in range(count)],
+                suffixes=["default"],
+            )
+    finally:
+        remove_write_fence(token)
+    token = _fenced(_Fence(allowed=0))
+    try:
+        with pytest.raises(NamespaceLeaseError):
+            indexer.retain_extraction_records(["k1"], suffix="default")
+        with pytest.raises(NamespaceLeaseError):
+            indexer.upsert_text_units([TextUnit(id="u", text="text")])
+        with pytest.raises(NamespaceLeaseError):
+            indexer.write_extraction_records({"k2": {"a": 2}}, suffix="default")
+    finally:
+        remove_write_fence(token)
+
+    assert engine.get_indices_by_alias(alias) == live
+    hits = engine.search(index=alias, body={"query": {"match_all": {}}, "size": 1})
+    assert hits["hits"]["total"]["value"] == count
+    assert engine.get_indices_by_alias(records) == live_records
+
+
+def test_a_lost_lease_stops_the_neptune_retries(mocker) -> None:
+    # Old behaviour: the fence was checked once before a write, which was
+    # then retried (neptune.max_attempts, up to 180 s each) without a check,
+    # and a batch's failure fell back to writing its items one by one.
+    mocker.patch("unified_kg_rag.adapters.storage.neptune_indexer.NeptuneClient")
+    from unified_kg_rag.adapters.storage import neptune_indexer as neptune_mod
+
+    config = Config()
+    config.indexing.neptune.retry_delay_seconds = 0
+    indexer = neptune_mod.NeptuneIndexer(config=config)
+    sent: list[int] = []
+
+    def timed_out(*args: Any, **kwargs: Any) -> Any:
+        sent.append(1)
+        raise TimeoutError("Neptune did not answer")
+
+    mocker.patch.object(neptune_mod, "run_traversal", side_effect=timed_out)
+    # The batch's own check and its first attempt pass; the lease is lost
+    # before the retry.
+    token = _fenced(_Fence(allowed=2))
+    try:
+        with pytest.raises(NamespaceLeaseError):
+            indexer._execute_batch_traversal(
+                [1, 2, 3], lambda g, batch: MagicMock(), "Indexing entities"
+            )
+    finally:
+        remove_write_fence(token)
+    assert len(sent) == 1
+
+
+def _stopping_pipeline() -> DataIngestionPipeline:
+    pipe = object.__new__(DataIngestionPipeline)
+    pipe._stop_signal = None
+    pipe._checkpointing = False
+    return pipe
+
+
+def test_a_stop_ends_the_indexing_phase_at_the_next_write(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Old behaviour: the main thread's PipelineInterrupted waited in the
+    # pool's exit for every task of the phase to finish (> the task's 120 s
+    # stop timeout on a real phase), and the tasks kept writing.
+    from unified_kg_rag.application.ingestion.pipeline import _StopFence
+    from unified_kg_rag.application.storage.indexing_manager import IndexingTask
+    from unified_kg_rag.ports import IndexingStats
+    from unified_kg_rag.shared.write_fence import check_write_fence
+
+    config = Config()
+    manager = IndexingManager(
+        config=config,
+        vector_indexer=FakeVectorStore(opensearch_config=config.indexing.opensearch),
+        graph_indexer=FakeGraphStore(),
+    )
+    written: list[float] = []
+
+    def write(items: list[int]) -> IndexingStats:
+        for _ in items:
+            check_write_fence()  # each store request checks the fence
+            time.sleep(0.2)
+            written.append(time.time())
+        return IndexingStats(total_items=len(items), successful_items=len(items))
+
+    pipe = _stopping_pipeline()
+    previous = signal.signal(
+        signal.SIGALRM, lambda signum, _: pipe.request_stop(signal.SIGTERM)
+    )
+    token = install_write_fence(_StopFence(pipe))
+    tasks = [IndexingTask(write, [list(range(20))], f"t{i}") for i in range(3)]
+    started = time.time()
+    try:
+        signal.setitimer(signal.ITIMER_REAL, 0.5)
+        with pytest.raises(PipelineInterrupted):
+            manager._run_indexing_phase(tasks)
+        stopped = time.time()
+        time.sleep(0.5)
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous)
+        remove_write_fence(token)
+    assert stopped - started < 1.5
+    # Each task finished at most the request it was sending.
+    assert len(written) <= 3 * 4
+    assert not [at for at in written if at > stopped + 0.3]
+
+
+def test_the_stop_fence_lets_the_main_thread_unwind() -> None:
+    from unified_kg_rag.application.ingestion.pipeline import _StopFence
+
+    pipe = _stopping_pipeline()
+    pipe._stop_signal = signal.SIGTERM
+    fence = _StopFence(pipe)
+    fence.check()  # the main thread closes the attempts, uploads the checkpoint
+    errors: list[BaseException] = []
+
+    def worker() -> None:
+        try:
+            fence.check()
+        except BaseException as e:  # noqa: BLE001 - collected
+            errors.append(e)
+
+    thread = threading.Thread(target=worker)
+    thread.start()
+    thread.join()
+    assert [type(e) for e in errors] == [PipelineInterrupted]
 
 
 def test_a_stopped_run_uploads_its_checkpoint_before_releasing_the_lease(
@@ -289,3 +470,66 @@ def test_a_lost_lease_stops_the_next_neptune_edge_write(mocker) -> None:
     finally:
         remove_write_fence(token)
     sent.assert_not_called()
+
+
+@pytest.mark.parametrize("s3", [False, True])
+def test_a_lost_lease_stops_the_run_at_the_next_stage(mocker, s3: bool) -> None:
+    # Old behaviour: a run that lost its lease in a stage that does not
+    # write (extraction) only noticed at the next store write: it started
+    # the next stage and uploaded its checkpoint in between.
+    pipe = _stopping_pipeline()
+    pipe.stages = [SimpleNamespace(name="chunking"), SimpleNamespace(name="indexing")]
+    pipe.s3_cache_manager = mocker.MagicMock() if s3 else None
+    pipe.cache_manager = mocker.MagicMock()
+    pipe.llm_response_cache = None
+    executed: list[str] = []
+    mocker.patch.object(
+        pipe,
+        "_execute_stage",
+        side_effect=lambda stage, context: executed.append(stage.name)
+        or SimpleNamespace(status=None),
+    )
+    mocker.patch.object(pipe, "_emit_stage_metrics")
+    mocker.patch.object(pipe, "_should_stop_pipeline", return_value=False)
+    mocker.patch.object(pipe, "_start_index", return_value=0)
+    upload = mocker.patch.object(
+        pipe, "_sync_cache_with_s3", wraps=pipe._sync_cache_with_s3
+    )
+    context = SimpleNamespace(stage_results=[], pipeline_id="pid")
+    token = _fenced(_Fence(allowed=1))  # lost while the first stage runs
+    try:
+        with pytest.raises(NamespaceLeaseError):
+            pipe._execute_pipeline_stages(context, None)  # type: ignore[arg-type]
+    finally:
+        remove_write_fence(token)
+    assert executed == ["chunking"]
+    if s3:
+        pipe.s3_cache_manager.sync_pipeline_to_s3.assert_not_called()
+    assert upload.call_count == int(s3)
+
+
+def test_a_run_that_lost_its_lease_uploads_no_checkpoint_on_stop(mocker) -> None:
+    pipe = _stopping_pipeline()
+    pipe._checkpoint_id = "pid"
+    upload = mocker.patch.object(pipe, "_upload_checkpoint")
+    token = _fenced(_Fence(allowed=0))
+    try:
+        pipe._checkpoint_on_stop()
+    finally:
+        remove_write_fence(token)
+    upload.assert_not_called()
+
+
+def test_a_lease_under_three_times_the_longest_request_warns(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    pipe = _stopping_pipeline()
+    pipe.config = Config()
+    pipe._doc_status = FakeDocStatusStore()
+    with caplog.at_level("WARNING"):
+        pipe._namespace_lease()
+    assert "lease_seconds" not in caplog.text  # the default is long enough
+    pipe.config.indexing.lease_seconds = 300
+    with caplog.at_level("WARNING"):
+        pipe._namespace_lease()
+    assert "under three times the longest store write request" in caplog.text

@@ -9,8 +9,10 @@ fence of its context; worker threads inherit it through
 the indexing manager's phases and the store adapters' write requests (a
 Neptune batch or drop, an OpenSearch bulk request) call
 :func:`check_write_fence` first, so a run whose lease was lost stops at its
-next request instead of writing over the run that holds it now. Outside a
-fenced run (no registry, the direct APIs) the check does nothing.
+next request instead of writing over the run that holds it now. A pipeline
+run also installs a fence that ends its worker threads' writes once a stop
+was requested (``request_stop``). Fences stack: the check asks each one, the
+innermost first. Outside a fenced run (the direct APIs) it does nothing.
 
 Kept in the shared kernel so the adapters can check it without depending on
 the application layer.
@@ -37,23 +39,23 @@ class WriteFence(Protocol):
         ...
 
 
-_FENCE: ContextVar[WriteFence | None] = ContextVar("write_fence", default=None)
+_FENCES: ContextVar[tuple[WriteFence, ...]] = ContextVar("write_fences", default=())
 
 
 def check_write_fence() -> None:
     """Raise if this context's run lost the right to write (no-op outside a
-    fenced run). A lease fence raises ``NamespaceLeaseError``."""
-    fence = _FENCE.get()
-    if fence is not None:
+    fenced run). A lease fence raises ``NamespaceLeaseError``, a requested
+    stop ``PipelineInterrupted``."""
+    for fence in reversed(_FENCES.get()):
         fence.check()
 
 
-def install_write_fence(fence: WriteFence) -> Token[WriteFence | None]:
-    """Make ``fence`` this context's fence until :func:`remove_write_fence`
+def install_write_fence(fence: WriteFence) -> Token[tuple[WriteFence, ...]]:
+    """Add ``fence`` to this context's fences until :func:`remove_write_fence`
     is given the returned token."""
-    return _FENCE.set(fence)
+    return _FENCES.set((*_FENCES.get(), fence))
 
 
-def remove_write_fence(token: Token[WriteFence | None]) -> None:
-    """Restore the fence :func:`install_write_fence` replaced."""
-    _FENCE.reset(token)
+def remove_write_fence(token: Token[tuple[WriteFence, ...]]) -> None:
+    """Restore the fences before :func:`install_write_fence` added one."""
+    _FENCES.reset(token)

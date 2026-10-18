@@ -5,7 +5,7 @@ import json
 import logging
 import re
 import time
-from collections.abc import Awaitable, Callable, Iterator
+from collections.abc import Awaitable, Callable
 from functools import cached_property, wraps
 from typing import TYPE_CHECKING, Any
 
@@ -113,13 +113,16 @@ def _index_name_batches(index_names: list[str]) -> list[list[str]]:
     return batches
 
 
-def _fenced(actions: list[dict[str, Any]], chunk_size: int) -> Iterator[dict[str, Any]]:
-    """``actions``, checking the run's write fence before each bulk request's
-    first action is taken (a run that lost its write lease stops sending)."""
-    for index, action in enumerate(actions):
-        if index % chunk_size == 0:
+class _FencedConnection(RequestsHttpConnection):
+    """The indexing client's connection: every request attempt that may write
+    (any but a GET or HEAD), the transport's retries included, checks the
+    run's write fence first, so a run that lost its lease stops between
+    attempts instead of after the transport's last one."""
+
+    def perform_request(self, method: str, url: str, *args: Any, **kwargs: Any) -> Any:
+        if method not in ("GET", "HEAD"):
             check_write_fence()
-        yield action
+        return super().perform_request(method, url, *args, **kwargs)
 
 
 def _bulk_item_status(result: dict[str, Any]) -> int | None:
@@ -522,7 +525,7 @@ class OpenSearchClient:
 
     def _create_client(self) -> OpenSearch:
         params = self._get_base_connection_params(async_mode=False)
-        params["connection_class"] = RequestsHttpConnection
+        params["connection_class"] = _FencedConnection
 
         try:
             client = OpenSearch(**params)
@@ -760,7 +763,7 @@ class OpenSearchClient:
             retry_results = []
             results = streaming_bulk(
                 client=self.client,
-                actions=_fenced(pending, self.BULK_CHUNK_SIZE),
+                actions=pending,
                 chunk_size=self.BULK_CHUNK_SIZE,
                 raise_on_error=False,
             )

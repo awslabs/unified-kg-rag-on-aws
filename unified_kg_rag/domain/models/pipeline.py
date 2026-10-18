@@ -164,6 +164,16 @@ class PipelineMetrics(BaseModel):
         "later run while the run isolates the document that keeps killing "
         "runs (it processes half of the suspects)",
     )
+    total_records_not_stored: int = Field(
+        default=0,
+        description="Extraction records graph resolution and claim extraction "
+        "could not store; their documents are recorded FAILED and re-extracted",
+    )
+    underived_items: int = Field(
+        default=0,
+        description="Incremental runs: stored items whose derived attributes "
+        "the indexing stage could not recompute (they keep their stored ones)",
+    )
     gleaning_improvement_rate: float = Field(
         default=0.0,
         description="Entities plus relationships gleaning added, per entity "
