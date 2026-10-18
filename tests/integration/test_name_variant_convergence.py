@@ -61,13 +61,15 @@ class _Died(BaseException):
     """A crash the pipeline does not catch (the task was killed)."""
 
 
-def _dying(method: str, nth: int, after: bool) -> Callable[..., Any]:
-    """``OpenSearchIndexer.<method>`` whose ``nth`` call kills the run (after
-    the call completes, if ``after``)."""
-    original = getattr(OpenSearchIndexer, method)
+def _dying(
+    method: str, nth: int, after: bool, owner: type = OpenSearchIndexer
+) -> Callable[..., Any]:
+    """``owner.<method>`` whose ``nth`` call kills the run (after the call
+    completes, if ``after``)."""
+    original = getattr(owner, method)
     calls = {"n": 0}
 
-    def dying(self: OpenSearchIndexer, *args: Any, **kwargs: Any) -> Any:
+    def dying(self: Any, *args: Any, **kwargs: Any) -> Any:
         calls["n"] += 1
         if calls["n"] != nth:
             return original(self, *args, **kwargs)
@@ -148,18 +150,22 @@ def _state(
     respond: Callable[[str, str], str] = _respond,
     summarize: bool = False,
     die_in: int | None = None,
-    die_at: tuple[str, int, bool] = ("upsert_claims", 1, False),
+    die_at: tuple[Any, ...] = ("upsert_claims", 1, False),
     gleaning: bool = False,
+    suffix: str | None = None,
 ) -> dict[str, list[tuple]]:
     """The stored entities, edges and claims after indexing ``corpora`` one
     after the other (run ``repeat`` twice under its pipeline id; run
     ``die_in`` killed at ``die_at``, then resumed under its id).
 
-    ``die_at`` is a vector-store method, the call that dies (1 = the first)
-    and whether that call completes before the run dies."""
+    ``die_at`` is a method, the call that dies (1 = the first), whether
+    that call completes before the run dies and, optionally, the class
+    (default the vector store's)."""
     config = _config(tmp / "stores", tmp / "viz")
     config.processing.claim_extraction.enabled = True
     config.processing.gleaning.enabled = gleaning
+    if suffix:
+        config.indexing.additional_suffix = suffix
     config.processing.gleaning.max_rounds = 1
     summarization = config.processing.graph_extraction.description_summarization
     summarization.enabled = summarize
@@ -176,8 +182,9 @@ def _state(
         for name, text in corpus.items():
             (source / name).write_text(text)
         if run == die_in:
+            owner = die_at[3] if len(die_at) > 3 else OpenSearchIndexer
             with (
-                patch.object(OpenSearchIndexer, die_at[0], _dying(*die_at)),
+                patch.object(owner, die_at[0], _dying(*die_at)),
                 pytest.raises(_Died),
             ):
                 _ingest(config, providers, source, tmp / f"run-{run}")
@@ -506,16 +513,6 @@ def test_a_hub_that_changes_its_name_extends_its_summary(tmp_path: Path) -> None
     [
         pytest.param(
             [
-                {"a.txt": "Acme and Depot trade goods 1."},
-                {
-                    "a.txt": "Acme and Depot trade goods 1.",
-                    "b.txt": "Acme Inc and Depot trade cash 1.",
-                },
-            ],
-            id="spellings-kept-apart-in-other-units",
-        ),
-        pytest.param(
-            [
                 {f"h{i}.txt": f"Acme and Buyer trade goods {i}." for i in range(2)},
                 {
                     **{
@@ -532,14 +529,13 @@ def test_a_hub_that_changes_its_name_extends_its_summary(tmp_path: Path) -> None
         ),
     ],
 )
-def test_only_a_half_written_split_marks_another_spelling_a_split_origin(
+def test_a_spelling_re_keyed_into_another_is_not_a_split_origin(
     tmp_path: Path, runs: list[dict[str, str]], mocker: Any
 ) -> None:
     # Another spelling of a derived entity is taken for a split origin (its
-    # edges derived again, its claims followed) only when the two share a
-    # text unit, as a split a killed run left half-written does, and not
-    # when the derivation re-keyed it into the derived entity: those cost
-    # reads and leave the result as it is.
+    # edges derived again, its claims followed), but not when the derivation
+    # re-keyed it into the derived entity: that costs reads and leaves the
+    # result as it is.
     from unified_kg_rag.application.storage.indexing_manager import IndexingManager
 
     derive = mocker.spy(IndexingManager, "derive")
@@ -550,4 +546,42 @@ def test_only_a_half_written_split_marks_another_spelling_a_split_origin(
     assert results
     for derived in results:
         assert not set(derived.split_from.values()) & set(derived.id_remap)
-        assert not derived.split_from
+
+
+def test_a_resumed_split_moves_an_edge_of_a_spelling_sharing_no_unit(
+    tmp_path: Path,
+) -> None:
+    # r2.txt states "Initech" and "Initech Corp" in two units; while their
+    # types agree they are one entity with one Initech-Depot edge citing
+    # both. d4.txt makes "Initech" a location: the run splits them, and is
+    # killed after the graph took the entities and before their edges. The
+    # split entities share no text unit, so the resumed run did not take
+    # "Initech Corp" for a split origin and the merged edge (and the claim)
+    # stayed on "Initech". The suffix fixes the document ids, so that the
+    # type tie of the second run goes the way that merges them.
+    r2 = (
+        "Acme and Buyer trade goods 2. Initech and Depot trade cash 1. Initech "
+        "Corp and Depot trade goods 1."
+    )
+    runs = [
+        {"d5.txt": "Acme and Buyer trade goods 2."},
+        {"d5.txt": "Acme and Buyer trade goods 2. Initech and Depot trade cash 1."},
+        {"r2.txt": r2},
+        {
+            "r2.txt": r2,
+            "d4.txt": "Acme and Initech and Buyer trade cash 2. Acme Inc and Depot "
+            "trade cash 1.",
+        },
+    ]
+
+    full = _state(tmp_path / "full", [runs[-1]], suffix="c41dvt14")
+    incremental = _state(
+        tmp_path / "inc",
+        runs,
+        die_in=3,
+        die_at=("upsert_relationships", 1, False, SQLiteGraphIndexer),
+        suffix="c41dvt14",
+    )
+
+    assert ("Initech Corp", "Depot") in {e[:2] for e in full["edges"]}
+    assert incremental == full

@@ -328,28 +328,32 @@ def derive(
     def entity_id(stored_id: str) -> str:
         return id_remap.get(stored_id) or rekeyed.get(stored_id, stored_id)
 
-    # Each given entity's other spellings among the derived entities that
-    # share a text unit with it: a run that split them and died before their
+    # A stored endpoint may also be another spelling of its name stated in
+    # the edge's text units: a run that split the two and died before their
     # edges were written left an edge of one on the other, and the stored
-    # entity no longer holds the other's key.
+    # entity no longer holds the other's key (nor, always, the edge's units).
     by_compact_key: dict[str, list[Entity]] = defaultdict(list)
     for derived_entity in derived_entities:
         by_compact_key[compact_name_key(derived_entity.name)].append(derived_entity)
-    spellings: dict[str, list[str]] = {}
-    for entity in entities:
-        units = set(entity.text_unit_ids or [])
-        spellings[entity.id] = [
-            other.id
-            for other in by_compact_key.get(compact_name_key(entity.name), ())
-            if units & set(other.text_unit_ids or [])
-        ]
+    names_of = {entity.id: entity.name for entity in entities}
 
-    def endpoint_ids(stored_id: str) -> list[str]:
-        """The derived ids a stored endpoint may now be (its match first)."""
+    def endpoint_ids(stored_id: str, units: Collection[str] = ()) -> list[str]:
+        """The derived ids a stored endpoint may now be (its match first),
+        then its other spellings stated in ``units``."""
         targets = [
             derived_of[r] for r in derives_to.get(stored_id, []) if r in derived_of
         ] or [entity_id(stored_id)]
-        return list(dict.fromkeys([*targets, *spellings.get(stored_id, ())]))
+        name = names_of.get(stored_id)
+        spelled = (
+            [
+                other.id
+                for other in by_compact_key.get(compact_name_key(name), ())
+                if set(units) & set(other.text_unit_ids or [])
+            ]
+            if name is not None
+            else []
+        )
+        return list(dict.fromkeys([*targets, *spelled]))
 
     resolved_edges: dict[tuple[str, str, str], Relationship] = {}
     for rel in resolved["relationships"]:
@@ -366,8 +370,8 @@ def derive(
         type_ = _type_key(rel.type)
         edge_candidates[rel.id] = [
             resolved_edges[(source, target, type_)]
-            for source in endpoint_ids(rel.source_id)
-            for target in endpoint_ids(rel.target_id)
+            for source in endpoint_ids(rel.source_id, rel.text_unit_ids or ())
+            for target in endpoint_ids(rel.target_id, rel.text_unit_ids or ())
             if (source, target, type_) in resolved_edges
         ]
     edge_complete = {r.id: complete(r) for r in relationships}

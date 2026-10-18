@@ -1649,6 +1649,12 @@ changed once with the full-config keys (#332).
   their edges were written now moves the other spelling's edges along when
   the stored entity no longer holds that spelling's key: an edge gleaning
   added for "Initech Corp" stayed on "Initech" (#PR).
+- The same holds when the two spellings share no text unit: an edge or
+  claim of the merged entity follows the spelling its text units state
+  once the run is resumed (an Initech-Depot edge of double weight stayed).
+  A run touching an entity now also derives the stored edges of the other
+  spellings of its name (a full build keeping them apart leaves those
+  edges as they are), at the cost of reading them (#PR).
 - Removing a document no longer leaves its text unnoticed in community
   reports: a kept report that cites a removed text unit is counted in the
   `community_drift` metrics (`outdated_reports`, deletion-only runs
