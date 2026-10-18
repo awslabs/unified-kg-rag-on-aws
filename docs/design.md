@@ -240,7 +240,8 @@ dependency:
   `Community` / `CommunityReport`, `TextUnit`, `Covariate` (claim);
 - `DocStatus` (a `PENDING` write-ahead record, then `PROCESSED` / `FAILED` /
   `QUARANTINED`), `DocStatusRecord` (content hash, the document's text units,
-  suffix), `DocumentDelta` (new / changed / unchanged / deleted),
+  suffix), `DocumentDelta` (new / changed / unchanged / deleted, plus failed,
+  quarantined, quarantined-unchanged, deferred and settings-changed ids),
   `DocumentLineage` (the text units one document produced);
 - `SearchQuery` / `SearchResult` / `RetrievalResult`, `SearchStrategy` /
   `SearchType` / `RetrieverRole`.
@@ -500,14 +501,16 @@ unless noted.
 5. **Deletion propagation** (`IndexingManager.remove_text_units`). The stores
    are asked what cites the removed text units (`GraphIndexer.find_ids_citing`,
    `VectorIndexer.find_documents`). An item citing only removed text units is
-   deleted from both stores; one citing others too is stripped of them, its
+   deleted from both stores, the vector copy first (a retry finds what to
+   delete through the graph, so an interrupted run leaves a graph copy, not
+   an orphaned vector copy); one citing others too is stripped of them, its
    weight recomputed and its content derived again from the text units left.
    A community or report goes once none of its text units is stored. A failed
    removal keeps the deleted documents' records for a retry and fails the
    stage (before the commit when the delta has changed documents).
 6. **Registry update** (`commit`). The `PENDING` records are replaced, in one
    batched write, by `PROCESSED` or `FAILED` records with each document's text
-   units, scope and relative path. The four causes of `FAILED` are listed in
+   units, scope and relative path. The five causes of `FAILED` are listed in
    the [runbook](./operations.md#failed-documents); `failure_count` counts
    consecutive failures of the same content, and after
    `indexing.max_document_failures` the document reads unchanged. Extraction
@@ -1033,8 +1036,9 @@ fails when it is stale; `config-template.yaml` is the commented starting file.
   generic: `UKR__<SECTION>__<KEY>` sets any key, resolved against the model
   tree, so no table of variables needs keeping in step; `AWS_PROFILE` /
   `AWS_REGION` fill only keys the file leaves unset. Unknown keys fail the
-  load unless `allow_unknown_keys`, and a moved key (`MOVED_KEYS`) fails
-  naming its replacement. `Config` keeps the input it was validated from, so
+  load unless `allow_unknown_keys`, a moved key (`MOVED_KEYS`) fails
+  naming its replacement, and a removed key (`REMOVED_KEYS`) logs a warning
+  and is ignored. `Config` keeps the input it was validated from, so
   `with_provider_overrides` (the CLI provider flags) rebuilds from it plus
   every later change, and switching `--backend` drops only what the old preset
   filled in.

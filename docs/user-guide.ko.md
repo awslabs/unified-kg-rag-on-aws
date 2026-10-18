@@ -582,7 +582,7 @@ API로 검사합니다. 가드레일은 `aws.bedrock.region_name`에 있어야 �
 - **사용자 코드.** `setup_chain`으로 체인을 만들거나 질의가 아닌 작업에서 `get_model`을
   호출하는 코드는 `model_purpose=ModelPurpose.INGESTION`(또는 `EVALUATION`)을 넘겨야
   합니다. 표시하지 않은 호출은 `QUERY`로 간주하므로 질의 시점의 일시적 오류 재시도가
-  적용되고, 가드레일은 붙지 않습니다.
+  적용되고, 응답 캐시와 수집 effort는 적용되지 않습니다.
 
 ### S3 캐시 암호화
 
@@ -744,8 +744,9 @@ Secrets Manager나 태스크 시크릿에서 주입하세요.
   `kg_rag.rerank_status`) → `kg_rag.rerank`
   (`kg_rag.rerank.status` = `ok`, `empty`, `error`와 문서 수) →
   `kg_rag.context_build`(사용한 토큰과 토큰 예산) → 답변 생성의 `chat <model>` 스팬.
-  `global`은 `kg_rag.strategy` 아래에 `kg_rag.global.select`(읽은 커뮤니티 수준마다:
-  `kg_rag.depth`, `kg_rag.reports`, 동적 선택이면 `kg_rag.dynamic`)와
+  `global`은 `kg_rag.strategy` 아래에 질의마다 `kg_rag.global.select` 하나(`kg_rag.depth` =
+  설정한 깊이, `kg_rag.cut` = 더 얕은 단면으로 내려간 뒤 실제로 map한 단면, `kg_rag.reports`,
+  동적 선택이면 `kg_rag.dynamic`)와
   `kg_rag.global.map`(`kg_rag.reports`, `kg_rag.map_calls`, `kg_rag.report_tokens`)을
   더하고, `drift`는 `kg_rag.drift.primer`(`kg_rag.reports`, `kg_rag.answers`)와 라운드마다
   `kg_rag.drift.actions`(`kg_rag.depth`, `kg_rag.actions`)를 더하며, 각 액션의 로컬
@@ -915,7 +916,7 @@ run-ingestion --source-directory ./documents --config-path config.yaml --metrics
 `llm-cache/`에 두고 단계 캐시와 함께 동기화합니다. 같은 pipeline id로 다시 실행하면 이미 보낸
 프롬프트는 여기서 답하므로, 중지되거나 시간 초과되거나 비정상 종료된 단계는 하지 않은 호출만
 다시 합니다. 키는 렌더링한 프롬프트와 모델 및 생성 설정(모델 ID, 최대 토큰, temperature,
-추론, 가드레일)이므로 프롬프트, 모델, 설정이 바뀌면 모델을 다시 호출합니다.
+추론)이므로 프롬프트, 모델, 설정이 바뀌면 모델을 다시 호출합니다.
 알아 둘 점은 다음과 같습니다.
 
 - 캐시한 응답은 실행마다 한 번까지만, 그리고 이전 실행의 응답만 씁니다. 실행 안에서 다시
@@ -1042,7 +1043,7 @@ RRF + Bedrock 재순위화)를 거치며, 검색 알고리즘만 다릅니다.
 |---|---|---|
 | `simple` | 빠른 사실 조회, 단순한 질문 | OpenSearch 벡터·키워드 직접 검색이며 그래프 순회가 없습니다. 가장 빠릅니다. 주장 추출이 켜져 있으면 주장 인덱스도 포함합니다. |
 | `local` | 특정 엔티티나 개념에 관한 자세한 질문 | 질의에서 엔티티를 추출 → Neptune 그래프 순회로 이웃과 관계를 찾음 → 벡터·키워드 결과와 결합합니다. 켜져 있으면 주장(covariate)을 넣습니다. |
-| `global` | "주요 주제는 무엇인가" 같은 넓은 주제 질문 | MS GraphRAG global search입니다. 계층의 한 단면(`search.global_search.community_depth`, 기본값은 루트부터 2)에 속한 커뮤니티 리포트 전체를 토큰 크기 배치로 나눠 fast 모델로 점수 매긴 핵심 내용으로 만들고, 순위를 매긴 핵심 내용으로 답합니다. 선택 사항인 동적 선택은 대신 루트부터 계층을 따라 내려갑니다. 비용은 단면 크기에 비례합니다(리포트 `map_context_tokens`마다 map 호출 1회). 상위 수준 종합에 가장 적합합니다. |
+| `global` | "주요 주제는 무엇인가" 같은 넓은 주제 질문 | MS GraphRAG global search입니다. 계층의 한 단면(`search.global_search.community_depth`, 기본값은 루트부터 2. 리포트가 `max_reports_per_level`보다 많은 단면은 들어맞는 가장 깊은 얕은 단면으로 내려감)에 속한 커뮤니티 리포트를 토큰 크기 배치로 나눠 fast 모델로 점수 매긴 핵심 내용으로 만들고, 순위를 매긴 핵심 내용으로 답합니다. 선택 사항인 동적 선택은 대신 루트부터 계층을 따라 내려갑니다. 비용은 단면 크기에 비례합니다(리포트 `map_context_tokens`마다 map 호출 1회). 상위 수준 종합에 가장 적합합니다. |
 | `drift` | 큰 그림과 거기서 몇 단계 떨어진 구체적 사실이 함께 필요한 여러 부분으로 된 질문 | MS GraphRAG DRIFT search입니다. 가상 답변(HyDE)과 가장 비슷한 커뮤니티 리포트로 중간 답변과 후속 질의를 만들고, 후속 질의마다 local search를 실행해 fast 모델로 답하며 새 후속 질의를 얻는 과정을 `n_depth` 라운드 반복합니다. 답변 모델이 순위를 매긴 중간 답변과 그 근거를 종합합니다. 질의당 LLM 호출이 전략 중 가장 많습니다(약 `primer_folds + k_followups * n_depth`회). |
 | `auto` | 어떤 전략이 맞는지 모를 때, 일반 용도(기본값) | LLM 라우터(`models.roles.strategy_selection`)가 질의를 보고 `search.auto_routable_strategies`(기본 local, mix, global. 질의마다 LLM 호출이 최대 27번인 drift는 추가했을 때만 고름) 중 가장 알맞은 전략을 고릅니다. |
 
@@ -1340,7 +1341,7 @@ aws:
 
 텍스트 단위 하나라도 번역, 추출, gleaning, 주장 추출에 실패했거나, 그 문서를 포함한 기본
 수준 커뮤니티의 리포트가 생성되지 않았거나, `--continue-on-error` 실행에서 산출물 단계가
-비정상 종료했거나, 산출물 하나를 쓰는 데 실패한 문서는 `FAILED`로 기록됩니다. 다음 실행은
+비정상 종료했거나, 산출물 하나를 쓰는 데 실패했거나, 텍스트 단위의 추출 레코드를 저장하지 못한 문서는 `FAILED`로 기록됩니다. 다음 실행은
 파일이 바뀌지 않았더라도 이 문서를 변경된 문서로 보고 다시 처리하며, 같은 내용으로
 `indexing.max_document_failures`(기본값 `3`)번 연속 실패하면 더 재시도하지 않습니다. 그
 뒤에는 파일을 수정하거나 한도를 올리면 다시 시도합니다. 자세한 내용과 조치는

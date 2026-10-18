@@ -224,7 +224,7 @@ class LocalSearchStrategy(BaseSearchStrategy): ...
   `Covariate`(주장)
 - `DocStatus`(선기록 레코드 `PENDING` 다음에 `PROCESSED` / `FAILED` / `QUARANTINED`),
   `DocStatusRecord`(내용 해시, 문서의 텍스트 단위, 접미사), `DocumentDelta`(new / changed /
-  unchanged / deleted), `DocumentLineage`(문서 하나가 만든 텍스트 단위)
+  unchanged / deleted와 failed, quarantined, quarantined_unchanged, deferred, settings_changed ID), `DocumentLineage`(문서 하나가 만든 텍스트 단위)
 - `SearchQuery` / `SearchResult` / `RetrievalResult`, `SearchStrategy` / `SearchType` /
   `RetrieverRole`
 
@@ -437,13 +437,14 @@ class LocalSearchStrategy(BaseSearchStrategy): ...
    인덱스에 ID로 씁니다. 키가 바뀐 항목의 이전 ID는 쓰기가 성공한 뒤에만 지웁니다.
 5. **삭제 전파**(`IndexingManager.remove_text_units`). 제거한 텍스트 단위를 인용하는 항목을
    저장소에 묻습니다(`GraphIndexer.find_ids_citing`, `VectorIndexer.find_documents`). 제거한
-   텍스트 단위만 인용하는 항목은 두 저장소에서 지우고, 다른 텍스트 단위도 인용하는 항목은
+   텍스트 단위만 인용하는 항목은 두 저장소에서 지우되 벡터 사본을 먼저 지웁니다(재시도는 그래프로
+   지울 대상을 찾으므로, 중단된 실행은 고아 벡터 사본이 아니라 그래프 사본을 남김). 다른 텍스트 단위도 인용하는 항목은
    그 텍스트 단위를 빼고 가중치를 다시 계산하며 남은 텍스트 단위로 내용을 다시 도출합니다.
    커뮤니티와 리포트는 인용하는 텍스트 단위가 하나도 남지 않으면 지웁니다. 제거가 실패하면
    삭제된 문서의 레코드를 재시도용으로 남기고 단계가 실패합니다(델타에 바뀐 문서가 있으면
    커밋 전에).
 6. **레지스트리 갱신**(`commit`). `PENDING` 레코드를 일괄 쓰기 한 번으로 문서별 텍스트 단위,
-   범위, 상대 경로가 담긴 `PROCESSED`나 `FAILED` 레코드로 바꿉니다. `FAILED`의 네 가지
+   범위, 상대 경로가 담긴 `PROCESSED`나 `FAILED` 레코드로 바꿉니다. `FAILED`의 다섯 가지
    원인은 [운영 런북](./operations.ko.md#실패한-문서)에 있습니다. `failure_count`는 같은 내용의
    연속 실패를 세며, `indexing.max_document_failures`에 이르면 문서를 변경 없음으로 봅니다.
    그 뒤 제거된 텍스트 단위만 가리키던 추출 레코드를 지웁니다(최선 노력 방식).
@@ -880,7 +881,8 @@ JSON으로 렌더링하며, 수집이 기본으로 쓰는 데이터 전용 파�
   번 검증합니다. 환경 변수는 일반적입니다. `UKR__<SECTION>__<KEY>`는 모델 트리에 맞춰 어떤
   키든 지정하므로 맞춰 둘 변수 표가 없고, `AWS_PROFILE` / `AWS_REGION`은 파일이 비워 둔
   키만 채웁니다. 알 수 없는 키는 `allow_unknown_keys`가 아니면 실패하고, 옮겨진
-  키(`MOVED_KEYS`)는 대신할 키를 알려 주며 실패합니다. `Config`는 검증에 쓴 입력을 보관하므로
+  키(`MOVED_KEYS`)는 대신할 키를 알려 주며 실패하고, 제거된 키(`REMOVED_KEYS`)는 경고를 남기고
+  무시됩니다. `Config`는 검증에 쓴 입력을 보관하므로
   `with_provider_overrides`(CLI 공급자 플래그)가 그 입력과 이후 변경으로 다시 만들고,
   `--backend`를 바꾸면 이전 프리셋이 채운 값만 사라집니다.
 - **모델 선택**(`ModelsConfig`). `models` 섹션 하나가 모든 모델을 정합니다: 두 계층, 역할별

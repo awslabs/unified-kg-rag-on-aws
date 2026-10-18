@@ -636,7 +636,8 @@ with the `ApplyGuardrail` API; the guardrail must exist in
 - **Custom code** that builds chains with `setup_chain` or calls `get_model`
   for non-query work should pass `model_purpose=ModelPurpose.INGESTION` (or
   `EVALUATION`). Unmarked calls default to `QUERY`: they get the query-time
-  transient-error retry, and never an attached guardrail.
+  transient-error retry, and neither the response cache nor the ingestion
+  effort.
 
 ### S3 cache encryption
 
@@ -812,9 +813,10 @@ spans and exported as given, so pass an opaque id, not an e-mail address.
   step's `kg_rag.rerank_status`) →
   `kg_rag.rerank` (`kg_rag.rerank.status` = `ok`, `empty` or `error`, document
   counts) → `kg_rag.context_build` (tokens used vs the token budget) → the
-  answer's `chat <model>` span. `global` adds `kg_rag.global.select` (per
-  community level read: `kg_rag.depth`, `kg_rag.reports`, `kg_rag.dynamic`
-  with dynamic selection) and `kg_rag.global.map` (`kg_rag.reports`,
+  answer's `chat <model>` span. `global` adds one `kg_rag.global.select`
+  (`kg_rag.depth` = the configured depth, `kg_rag.cut` = the cut mapped after
+  falling back to a shallower one, `kg_rag.reports`, `kg_rag.dynamic` with
+  dynamic selection) and `kg_rag.global.map` (`kg_rag.reports`,
   `kg_rag.map_calls`, `kg_rag.report_tokens`) under `kg_rag.strategy`;
   `drift` adds `kg_rag.drift.primer` (`kg_rag.reports`, `kg_rag.answers`) and
   one `kg_rag.drift.actions` per round (`kg_rag.depth`, `kg_rag.actions`),
@@ -998,8 +1000,7 @@ kept in the run's cache directory under `llm-cache/`, and synced with the
 stage cache. A re-run with the same pipeline id answers a prompt it already
 sent from there, so a stage that was stopped, timed out or crashed repays
 only the calls it had not made. The key is the rendered prompt plus the model
-and its generation settings (model id, max tokens, temperature, reasoning,
-guardrail), so a changed prompt, model or setting asks the model again.
+and its generation settings (model id, max tokens, temperature, reasoning), so a changed prompt, model or setting asks the model again.
 Things to know:
 
 - Each cached response is served at most once per run, and only responses of
@@ -1128,8 +1129,8 @@ strategy retrieves.
 ### Search strategies — when to use which
 
 **Choosing the methodology.** GraphRAG strategies excel at *summarization and
-thematic synthesis* over a corpus (`global` maps over every community report of
-one level of the hierarchy).
+thematic synthesis* over a corpus (`global` maps over the community reports of
+one cut of the hierarchy).
 LightRAG strategies are faster and lean on *dual-level keyword* retrieval — good
 for keyword-driven lookups and as a low-cost baseline. Both run through the same
 hybrid scorer (BM25 lexical + vector semantic + graph traversal + RRF + Bedrock
@@ -1141,7 +1142,7 @@ rerank); only the retrieval algorithm differs.
 |---|---|---|
 | `simple` | Fast factual lookups; straightforward questions | Direct OpenSearch vector + keyword retrieval, no graph traversal. Fastest. Includes the claims index when claim extraction is on. |
 | `local` | Detailed questions about specific entities/concepts | Extracts query entities → Neptune graph traversal for neighbors/relationships → combined with vector/keyword hits. Injects claims (covariates) when enabled. |
-| `global` | Broad, thematic, "what are the main themes" questions | MS GraphRAG global search: maps every community report of one cut of the hierarchy (`search.global_search.community_depth`, default 2 from the root) into scored key points on the fast model, in token-sized batches, and answers from the ranked points. Optional dynamic selection walks the hierarchy from the roots instead. Cost grows with the cut: one map call per `map_context_tokens` of reports. Best for high-level synthesis. |
+| `global` | Broad, thematic, "what are the main themes" questions | MS GraphRAG global search: maps the community reports of one cut of the hierarchy (`search.global_search.community_depth`, default 2 from the root; a cut with more than `max_reports_per_level` reports falls back to the deepest shallower cut that fits) into scored key points on the fast model, in token-sized batches, and answers from the ranked points. Optional dynamic selection walks the hierarchy from the roots instead. Cost grows with the cut: one map call per `map_context_tokens` of reports. Best for high-level synthesis. |
 | `drift` | Multi-part questions that need the broad picture and specific facts several steps away from it | MS GraphRAG DRIFT search: the community reports most similar to a hypothetical answer (HyDE) draft intermediate answers and follow-up queries; each follow-up runs a local search, is answered on the fast model and raises further follow-ups, for `n_depth` rounds; the answer model reduces the ranked intermediate answers and their evidence. The most LLM calls per query of any strategy (about `primer_folds + k_followups * n_depth`). |
 | `auto` | You don't know / general use (the default) | An LLM router (`models.roles.strategy_selection`) picks the best strategy from the query among `search.auto_routable_strategies` (default local, mix, global: drift, at up to 27 LLM calls a query, is routed to only when added). |
 
@@ -1472,7 +1473,8 @@ rejected at first use: switch to a new table and run once with
 A document is recorded `FAILED` when one of its text units failed in
 translation, extraction, gleaning or claim extraction, when a base-level
 community covering it got no report, when an artifact stage crashed in a
-`--continue-on-error` run, or when writing one of its artifacts failed. The
+`--continue-on-error` run, when writing one of its artifacts failed, or when
+the extraction record of one of its text units could not be stored. The
 next run treats it as changed, even if the file did not change, and processes
 it again, until `indexing.max_document_failures` (default `3`) consecutive
 failures of the same content; editing the file or raising the limit retries it

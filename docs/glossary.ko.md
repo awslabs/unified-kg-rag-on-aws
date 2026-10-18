@@ -12,7 +12,7 @@
 | 파이프라인 단계 | pipeline stage | 수집 파이프라인의 12개 처리 단계(`document_parsing` 등) |
 | 체크포인트 | checkpoint | 단계별 결과 캐시. 재개(resume)에 사용 |
 | 증분 인덱싱 | incremental indexing | 새 문서와 바뀐 문서만 다시 인덱싱하는 방식 |
-| 문서 상태 레지스트리 | doc-status registry | 증분 인덱싱용 DynamoDB 테이블 |
+| 문서 상태 레지스트리 | doc-status registry | 증분 인덱싱용 DynamoDB 테이블(로컬 모드에서는 SQLite) |
 | 쓰기 임대 | write lease | 실행이 인덱스 네임스페이스에 혼자 쓰도록 레지스트리에서 얻어 갱신하는 기한부 잠금 |
 | 격리 | quarantine | 처리할 때마다 태스크를 죽인 문서를 내용이 바뀔 때까지 건너뛰는 처리(`QUARANTINED`) |
 | 미룸 | deferred | 실행을 죽이는 문서를 가려내는 동안 다음 실행으로 넘긴 새 문서와 변경된 문서 |
