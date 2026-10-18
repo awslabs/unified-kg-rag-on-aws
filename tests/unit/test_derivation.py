@@ -10,10 +10,12 @@ missing for keeps its stored content.
 
 from __future__ import annotations
 
+import time
+
 import pytest
 
 from unified_kg_rag.domain.ingestion.base_processor import BaseProcessor
-from unified_kg_rag.domain.ingestion.derivation import derive
+from unified_kg_rag.domain.ingestion.derivation import _ordered_units, derive
 from unified_kg_rag.domain.ingestion.graph_resolver import ENTITY_KEYS_ATTRIBUTE
 from unified_kg_rag.domain.ingestion.relationship_weights import (
     apply_text_unit_weights,
@@ -374,3 +376,16 @@ def test_an_edge_between_entities_that_now_merge_is_dropped() -> None:
 
     assert len(derived.entities) == 1
     assert (derived.relationships, derived.dropped) == ([], [edge.id])
+
+
+def test_unit_order_is_linear_in_the_units() -> None:
+    # Regression: the set of the stored units was rebuilt for every unit, so
+    # a hub citing 40k units took ~100 s to order.
+    units = [f"u{i}" for i in range(20_000)]
+    stored = units[::-1][:-1]
+
+    started = time.perf_counter()
+    ordered = _ordered_units(stored, units)
+
+    assert time.perf_counter() - started < 1.0
+    assert ordered == [*stored, units[0]]

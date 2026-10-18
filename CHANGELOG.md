@@ -894,6 +894,9 @@ changed once with the full-config keys (#332).
   summary and the new description, and a stored edge whose rank alone
   changed is updated in place instead of embedded again (a hub's new
   neighbour: 175 to 43 embedded texts) (#348).
+- Derivation orders a hub's text units in linear time: the set of its
+  stored units was rebuilt for every unit (40,000 units: 98 s to 18 ms)
+  (#PR).
 - The incremental lookups read only the fields they use: the text units'
   `attributes` (their extraction-record keys), the `text_unit_ids` of the
   claims and reports citing removed text units, and no field of a text unit

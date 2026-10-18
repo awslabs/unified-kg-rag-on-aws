@@ -133,7 +133,8 @@ def _ordered_units(stored: Iterable[str], units: Sequence[str]) -> list[str]:
     """``units`` in the order ``stored`` lists them, the others after."""
     wanted = set(units)
     first = [u for u in dict.fromkeys(stored) if u in wanted]
-    return [*first, *(u for u in units if u not in set(first))]
+    seen = set(first)
+    return [*first, *(u for u in units if u not in seen)]
 
 
 def _correspondence(
