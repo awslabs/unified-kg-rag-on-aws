@@ -112,7 +112,7 @@ them. Choose one of three ways to run it:
   ECS Fargate data plane, a Step Functions ingestion pipeline, and CloudWatch
   observability, plus an optional region-pinned Bedrock Guardrail.
   [`iac/README.md`](../iac/README.md) has the deploy commands
-  ([Usage](../iac/README.md#usage)), every `-c key=value` option and the
+  ([Usage](../iac/README.md#quick-start)), every `-c key=value` option and the
   production-hardening checklist. Neptune and OpenSearch are VPC-only, so the
   CLIs run inside the VPC as a task of the deployed task definition, which
   receives the endpoints as environment variables

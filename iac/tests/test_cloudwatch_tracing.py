@@ -257,8 +257,7 @@ def _yaml(node: Any, indent: str = "") -> str:
     return "".join(lines)
 
 
-@pytest.mark.parametrize("doc", ["operations.md", "operations.ko.md"])
-def test_runbook_shows_the_collector_config_the_stack_renders(doc: str) -> None:
+def test_readme_shows_the_collector_config_the_stack_renders() -> None:
     _, compute = _stacks(_ON)
     rendered = _render(
         _env(_containers(compute)["otel-collector"])["AOT_CONFIG_CONTENT"]
@@ -268,7 +267,7 @@ def test_runbook_shows_the_collector_config_the_stack_renders(doc: str) -> None:
             "<AWS::URLSuffix>", "amazonaws.com"
         )
     )
-    text = (Path(__file__).parents[2] / "docs" / doc).read_text(encoding="utf-8")
+    text = (Path(__file__).parents[1] / "README.md").read_text(encoding="utf-8")
     start = text.index("```yaml\nextensions:\n  health_check:")
     block = text[start + len("```yaml\n") : text.index("```\n", start + 7)]
-    assert block == _yaml(config), doc
+    assert block == _yaml(config)

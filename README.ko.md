@@ -15,19 +15,18 @@
 
 ## 이 프레임워크를 쓰는 이유
 
-- **하나의 AWS 스택에서 두 방법론 사용.** GraphRAG(커뮤니티 요약)와 LightRAG(이중 레벨 키워드)가 수집, 인덱싱, 캐싱, 검색 인프라를 공유하고 검색 알고리즘만 다릅니다. 방법론은 질의마다 선택합니다. 모든 답변에는 실제로 모델 컨텍스트에 들어간 출처가 함께 반환됩니다.
-- **3중 하이브리드 검색.** BM25 어휘 검색, 벡터 의미 검색, Neptune 그래프 순회 결과를 RRF(Reciprocal Rank Fusion)로 합치고 Bedrock rerank 모델로 재순위화합니다.
-- **증분 인덱싱.** `aws.dynamodb`를 켜면 콘텐츠 해시 레지스트리가 새 문서와 변경된 문서만 다시 인덱싱해 운영 중인 그래프에 병합합니다. 문서를 삭제하면 다른 문서와 공유하지 않는 산출물만 제거합니다.
-- **다국어 지원.** 인덱싱과 질의 시점의 선택적 번역, 언어별 OpenSearch 분석기(예: 한국어 `nori`), 다국어 키워드 추출을 두 방법론 모두에 적용합니다.
-- **프롬프트 튜닝.** `run-prompt-tuning`이 코퍼스 표본을 분석(도메인, 언어, 페르소나, 엔티티 유형)해 도메인에 맞춘 `custom_prompts`를 생성합니다.
-- **그래프 인식 평가와 독립 시각화.** `run-eval`은 LangChain·RAGAS 지표에 결정적인 엔티티·관계 커버리지, 검색 hit@k/recall@k/MRR, 답변 exact match/token F1 지표를 더하고, `run-visualization`은 다시 수집하지 않고 내보낸 그래프를 렌더링합니다.
-- **교체 가능한 헥사고날 설계.** 스토리지와 모델 백엔드는 포트 뒤에 두고, 검색 전략·렌더러는 데코레이터 레지스트리로 등록하므로 디스패치 코드를 고치지 않고 추가할 수 있습니다. 새 평가기는 하위 클래스를 만들고 `EvaluationManager._resolve_evaluator_class`에 분기 하나를 추가합니다.
+- **하나의 AWS 스택에서 두 방법론.** GraphRAG(커뮤니티 요약)와 LightRAG(이중 레벨 키워드)가 수집, 인덱싱, 캐싱, 검색을 함께 쓰고 검색 알고리즘만 다르며, 방법론은 질의마다 고릅니다. 모든 답변은 실제로 모델 컨텍스트에 들어간 출처를 함께 돌려줍니다.
+- **3중 하이브리드 검색.** BM25, 벡터 검색, Neptune 그래프 순회를 RRF(Reciprocal Rank Fusion)로 합치고 Bedrock rerank 모델로 재순위화합니다.
+- **증분 인덱싱.** 문서 상태 레지스트리(`providers.doc_status.enabled`)를 켜면 새 문서와 바뀐 문서만 다시 인덱싱해 운영 중인 그래프에 병합하고, 문서를 지우면 다른 문서가 기술하지 않는 내용만 제거합니다.
+- **다국어.** 인덱싱과 질의 시점의 선택적 번역, 언어별 분석기(예: 한국어 `nori`), 다국어 키워드 추출을 지원합니다.
+- **프롬프트 튜닝, 평가, 시각화.** `run-prompt-tuning`은 코퍼스 표본에서 도메인에 맞춘 프롬프트를 쓰고, `run-eval`은 LangChain·RAGAS 심사에 LLM 없는 커버리지·검색·답변 일치 지표를 더하며, `run-visualization`은 내보낸 그래프를 렌더링합니다.
+- **교체 가능한 구조.** 저장소와 모델 백엔드는 포트 뒤에 있고, 전략·렌더러·파서·공급자는 레지스트리로 등록합니다([확장 가이드](./docs/design.ko.md#15-확장-가이드)).
 
 ## 아키텍처
 
 ![아키텍처 한눈에 보기](./assets/architecture-overview.drawio.png)
 
-수집은 중단 후 재개할 수 있는 12단계 파이프라인입니다. 파싱, 로딩, 청킹, (선택) 번역, LLM 기반 엔티티·관계 추출, (선택) 추가 추출(gleaning), 중복 해소, (선택) 주장 추출, 그래프 지표 계산, Leiden 커뮤니티 탐지와 LLM 커뮤니티 리포트 작성을 거쳐 검색·그래프 저장소에 인덱싱합니다(AWS에서는 OpenSearch와 Neptune, 로컬 모드에서는 내장 SQLite 또는 컨테이너). 단계별 체크포인트는 로컬에 캐시되며 S3와 동기화할 수 있습니다.
+수집은 중단 후 재개할 수 있는 12단계 파이프라인(파싱, 청킹, 엔티티·관계 추출, 해석, LLM 리포트가 붙는 커뮤니티 탐지, 인덱싱)으로 그래프·검색 저장소에 씁니다. AWS에서는 Neptune과 OpenSearch, 로컬 모드에서는 내장 SQLite나 컨테이너입니다.
 
 모든 전략은 같은 하이브리드 스코어러와 토큰 예산을 거칩니다. CLI에서는 `--search-strategy`, Python에서는 `RAGInput.search_strategy`로 전략을 고릅니다.
 
@@ -61,10 +60,7 @@ AWS 방식은 Amazon Bedrock을 호출하므로 먼저 [필요한 모델](./docs
 
 ### 사전 요구사항
 
-- 모든 방식: Python 3.10–3.12와 [uv](https://docs.astral.sh/uv/) (`pip`도 사용할 수 있습니다).
-- 로컬 모드: 모델용 [Ollama](https://ollama.com). 저장소를 컨테이너로 띄울 때만 Docker와 Compose 2.23.1 이상이 필요합니다. 모델에 Bedrock을 쓰지 않으면 AWS 계정이 필요 없습니다.
-- 기존 AWS 리소스: Amazon Bedrock([필요한 모델](./docs/user-guide.ko.md#필수-모델)의 액세스 활성화)에 접근할 수 있는 AWS 자격 증명, Amazon Neptune 클러스터, Amazon OpenSearch Service 도메인. DynamoDB는 증분 인덱싱을 쓸 때만, S3 버킷은 단계 캐시 동기화(`--s3-sync`)나 임베딩 캐시 저장을 쓸 때만 필요합니다. 프레임워크는 이미 있는 서비스에 연결할 뿐 서비스를 만들지 않습니다.
-- 번들 CDK 스택: [`iac/README.md`의 Prerequisites](./iac/README.md#prerequisites)에 있는 CDK CLI와 Node.js, 이미지 푸시용 Docker.
+Python 3.10–3.12와 [uv](https://docs.astral.sh/uv/)(`pip`도 가능)가 필요합니다. 로컬 모드에는 [Ollama](https://ollama.com)(컨테이너 저장소를 쓸 때만 Compose 2.23.1 이상의 Docker)가, AWS 방식에는 Bedrock 접근 권한이 있는 자격 증명과, 기존 리소스를 쓸 때 Neptune 클러스터와 OpenSearch 도메인이 필요합니다(프레임워크는 서비스에 연결만 하고 만들지 않음). CDK 스택에 필요한 것은 [`iac/README.md`](./iac/README.md#quick-start)에 있습니다.
 
 ### 설치와 설정
 
@@ -82,7 +78,7 @@ OpenSearch가 IAM 대신 사용자 이름/비밀번호 인증을 쓴다면(`aws.
 `uv run`은 프로젝트 환경에서 CLI를 실행합니다. `pip`으로 설치했다면 가상 환경을 활성화하고 `uv run` 없이 실행하세요.
 
 ```bash
-# 코퍼스 수집과 인덱싱 (aws.dynamodb를 켜면 증분 인덱싱)
+# 코퍼스 수집과 인덱싱 (문서 상태 레지스트리를 켜면 증분 인덱싱)
 uv run run-ingestion --source-directory ./source --config-path config.yaml
 
 # 두 방법론 중 하나로 질의하거나 대화 메모리를 켜고 대화형으로 실행
@@ -98,13 +94,13 @@ uv run run-visualization --data-path visualization_data.json --output-directory 
 uv run run-prompt-tuning --source-directory ./source --output-path tuned_prompts.yaml --config-path config.yaml
 ```
 
-그래프 인식 평가기는 LLM 없이 `expected_entities` / `expected_relationships` 대비 엔티티·관계 커버리지(재현율)를 계산합니다. 띄어쓰기로 단어를 구분하는 문자는 단어 경계로 매칭하고, CJK 텍스트는 부분 문자열 매칭으로 대신합니다. LLM을 쓰지 않는 평가기가 두 가지 더 있어 실행 간 비교가 쉽습니다. `retrieval`은 보고된 출처를 `reference_sources`와 비교해 hit@k, recall@k, MRR을 계산하고, `answer_match`는 `answer`(선택 항목 `metadata.answer_aliases` 포함)와 비교해 exact match와 token F1을 계산합니다. CLI 플래그와 평가 데이터 형식은 [사용자 가이드](./docs/user-guide.ko.md)에, 모든 설정 키는 [설정 레퍼런스](./docs/configuration.md)(영문)에 정리되어 있습니다.
+모든 CLI, 평가 데이터 형식과 평가기는 [사용자 가이드](./docs/user-guide.ko.md)에, 모든 설정 키는 [설정 레퍼런스](./docs/configuration.md)(영문)에 있습니다.
 
 ## AWS에 배포(선택)
 
 [`iac/`](./iac/README.md)의 AWS CDK 앱이 스택 전체를 만듭니다. 엔드포인트를 갖춘 VPC, Neptune, OpenSearch, DynamoDB 문서 상태 테이블, S3 캐시 버킷, ECS Fargate 데이터 플레인, Step Functions 수집 파이프라인, CloudWatch 대시보드와 경보, 선택적 Bedrock Guardrail이 포함됩니다.
 
-`cdk synth`(미리 보기, AWS 변경 없음), `cdk bootstrap`, `cdk deploy --all` 명령과 `-c key=value` 옵션 전체는 [`iac/README.md`의 Usage](./iac/README.md#usage)에 있습니다. 저장소는 VPC 안에서만 접근할 수 있으므로 CLI는 배포된 Fargate 태스크에서 실행합니다. 태스크는 엔드포인트를 환경 변수로 받습니다. 이미지 푸시, 수집 시작, 질의 태스크 실행 명령은 [`iac/README.md`의 After deploy](./iac/README.md#after-deploy)에 있습니다.
+`cdk synth`, `cdk bootstrap`, `cdk deploy --all` 명령과 `-c key=value` 옵션 전체는 [`iac/README.md`](./iac/README.md#quick-start)에 있습니다. 저장소는 VPC 안에서만 접근할 수 있으므로 배포된 Fargate 태스크가 CLI를 실행하며, 이미지를 올리고 수집을 시작하고 질의나 평가 태스크를 실행하는 명령은 [After deploy](./iac/README.md#after-deploy)에 있습니다.
 
 > **비용과 정리.** Neptune과 OpenSearch는 시간 단위로 과금되며, `public` 네트워크 모드에서는 NAT 게이트웨이 비용이 추가됩니다. 기본 `dev` 환경은 `cdk destroy --all`로 정리되지만, dev가 아닌 환경은 기본적으로 상태 저장소를 보존하고 삭제 방지를 켭니다. 프로덕션에 쓰기 전에 [`iac/README.md`](./iac/README.md)의 강화 옵션(`use_cmk`, `deletion_protection`, 다중 AZ 구성, `vpc_flow_logs`)을 검토하세요.
 
