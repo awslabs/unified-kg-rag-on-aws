@@ -67,7 +67,7 @@ def test_injected_providers_reach_every_ingestion_stage(
     config = Config()
     config.processing.gleaning.enabled = True
     config.processing.claim_extraction.enabled = True
-    config.aws.dynamodb.enabled = False
+    config.providers.doc_status.enabled = False
     llm = _FakeLLMFactory()
     embedding = _FakeEmbeddingFactory()
     providers = Providers(
@@ -137,7 +137,7 @@ def test_pipeline_without_providers_builds_one_default_bundle(
         return_value=_FakeEmbeddingFactory(),
     )
     config = Config()
-    config.aws.dynamodb.enabled = False
+    config.providers.doc_status.enabled = False
 
     pipeline = DataIngestionPipeline(
         config=config,

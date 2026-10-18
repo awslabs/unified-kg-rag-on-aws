@@ -400,11 +400,17 @@ class TestParseClaimDataExceptions:
 
 
 # --------------------------------------------------------------------------- #
-# extract_from_text_units (batch chain mocked)
+# extract_units (batch chain mocked)
 # --------------------------------------------------------------------------- #
-class TestExtractFromTextUnits:
+def _extracted(extractor, units):
+    per_unit, stats = extractor.extract_units(units)
+    claims = extractor.merge_claims([c for cs in per_unit.values() for c in cs])
+    return claims, stats
+
+
+class TestExtractUnits:
     def test_empty_units_returns_empty(self, extractor) -> None:
-        claims, stats = extractor.extract_from_text_units([])
+        claims, stats = _extracted(extractor, [])
         assert claims == []
         assert stats.num_total_units == 0
 
@@ -423,7 +429,7 @@ class TestExtractFromTextUnits:
                 }
             ]
         )
-        claims, stats = extractor.extract_from_text_units(units)
+        claims, stats = _extracted(extractor, units)
         assert len(claims) == 1
         assert claims[0].subject_name == "Acme"
         assert stats.total_claims_extracted == 1
@@ -436,8 +442,8 @@ class TestExtractFromTextUnits:
         fake_bp = mocker.Mock()
         fake_bp.execute_with_fallback.side_effect = RuntimeError("boom")
         extractor.batch_processor = fake_bp
-        claims, stats = extractor.extract_from_text_units(
-            [TextUnit(id="t1", text="x"), TextUnit(id="t2", text="y")]
+        claims, stats = _extracted(
+            extractor, [TextUnit(id="t1", text="x"), TextUnit(id="t2", text="y")]
         )
         assert claims == []
         # Every unit failed; the stats must say so, not report zero failures.
@@ -456,7 +462,7 @@ class TestExtractFromTextUnits:
         )
         extractor.batch_processor = mocker.Mock()
         extractor.batch_processor.execute_with_fallback.return_value = [{"claims": {}}]
-        _, stats = extractor.extract_from_text_units(units)
+        _, stats = _extracted(extractor, units)
         assert stats.num_successful_extractions == 1
         assert stats.num_failed_extractions == 1
         assert stats.failed_text_unit_ids == ["t2"]
@@ -467,7 +473,7 @@ class TestExtractFromTextUnits:
         fake_bp.execute_with_fallback.side_effect = RuntimeError("boom")
         extractor.batch_processor = fake_bp
         with pytest.raises(RuntimeError, match="boom"):
-            extractor.extract_from_text_units([TextUnit(id="t1", text="x")])
+            _extracted(extractor, [TextUnit(id="t1", text="x")])
 
 
 # --------------------------------------------------------------------------- #

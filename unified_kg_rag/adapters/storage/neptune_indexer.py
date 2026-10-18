@@ -723,15 +723,12 @@ class NeptuneIndexer(GraphIndexer):
         """
         if not entity_ids:
             return []
-        label = (
-            self._get_label(self.neptune_config.entity_label_prefix, suffix)
-            if suffix is not None
-            else None
-        )
+        label = self._get_label(self.neptune_config.entity_label_prefix, suffix)
         try:
             rows = self._read_batches(
                 entity_ids,
-                lambda g, batch: (g.V().hasLabel(label) if label is not None else g.V())
+                lambda g, batch: g.V()
+                .hasLabel(label)
                 .has("id", P.within(batch))
                 .bothE()
                 .values("id")
@@ -747,25 +744,20 @@ class NeptuneIndexer(GraphIndexer):
     def delete_by_id(self, ids: list[str], suffix: str | None = None) -> IndexingStats:
         """Delete vertices and edges by their ``id`` property (delta removals).
 
-        When ``suffix`` is given, the drop is scoped to that suffix's entity and
-        community labels. Entity ids are content-hash derived, so the SAME id can
-        exist under another suffix (another tenant/version); an unscoped
-        ``V().has('id', ...)`` would delete that other tenant's vertex too.
-        Scoping by label prevents cross-suffix data loss. ``suffix=None`` keeps
-        the legacy unscoped behaviour (single-tenant).
+        The drop is scoped to the suffix's entity and community labels
+        (``None``: the default suffix's, as for every other method). Entity
+        ids are content-hash derived, so the SAME id can exist under another
+        suffix (another tenant/version); an unscoped ``V().has('id', ...)``
+        would delete that other tenant's vertex too.
         """
         stats = IndexingStats(total_items=len(ids))
         if not ids:
             return stats
 
-        entity_label = community_label = None
-        if suffix is not None:
-            entity_label = self._get_label(
-                self.neptune_config.entity_label_prefix, suffix
-            )
-            community_label = self._get_label(
-                self.neptune_config.community_label_prefix, suffix
-            )
+        entity_label = self._get_label(self.neptune_config.entity_label_prefix, suffix)
+        community_label = self._get_label(
+            self.neptune_config.community_label_prefix, suffix
+        )
 
         for id_batch in self._batch_iterator(ids):
 
@@ -779,20 +771,22 @@ class NeptuneIndexer(GraphIndexer):
             def drop_edges(
                 g: GraphTraversalSource, id_batch: list[str] = id_batch
             ) -> GraphTraversal:
-                edges = g.E().has("id", P.within(id_batch))
-                if entity_label:
-                    edges = edges.where(__.outV().hasLabel(entity_label))
-                return edges.drop()
+                return (
+                    g.E()
+                    .has("id", P.within(id_batch))
+                    .where(__.outV().hasLabel(entity_label))
+                    .drop()
+                )
 
             def drop_vertices(
                 g: GraphTraversalSource, id_batch: list[str] = id_batch
             ) -> GraphTraversal:
-                vertices = (
-                    g.V().hasLabel(entity_label, community_label)
-                    if entity_label and community_label
-                    else g.V()
+                return (
+                    g.V()
+                    .hasLabel(entity_label, community_label)
+                    .has("id", P.within(id_batch))
+                    .drop()
                 )
-                return vertices.has("id", P.within(id_batch)).drop()
 
             try:
                 self._execute_with_retries(drop_edges, "Deleting edges by id")

@@ -587,10 +587,10 @@ def test_find_incident_relationship_ids_scopes_to_entity_label(indexer, mocker) 
 def test_find_incident_relationship_ids_coerces_and_drops_none(indexer, mocker) -> None:
     g = mocker.MagicMock()
     (
-        g.V.return_value.has.return_value.bothE.return_value.values.return_value.dedup.return_value.toList.return_value
+        g.V.return_value.hasLabel.return_value.has.return_value.bothE.return_value.values.return_value.dedup.return_value.toList.return_value
     ) = [1, None, "r3"]
     indexer.neptune_client.g = g
-    # No suffix -> unscoped V().has(...) path; results coerced to str, None dropped.
+    # Results coerced to str, None dropped.
     out = indexer.find_incident_relationship_ids(["e1"])
     assert out == ["1", "r3"]
 
@@ -612,7 +612,7 @@ def test_find_incident_relationship_ids_raises_on_a_failed_read(
 def test_find_incident_relationship_ids_batches_the_ids(indexer, mocker) -> None:
     indexer.neptune_config.batch_size = 2
     g = mocker.MagicMock()
-    has = g.V.return_value.has
+    has = g.V.return_value.hasLabel.return_value.has
     has.return_value.bothE.return_value.values.return_value.dedup.return_value.toList.side_effect = [
         ["r1"],
         ["r1", "r2"],

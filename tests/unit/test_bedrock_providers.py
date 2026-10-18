@@ -312,18 +312,22 @@ def test_undocumented_effort_level_fails_fast() -> None:
     assert out == {"reasoning": {"effort": "max"}}
 
 
-def test_guardrail_applies_to_gpt_converse_request() -> None:
-    config = Config()
-    config.aws.bedrock.guardrail.identifier = "gid-1"
-    config.aws.bedrock.guardrail.apply_to = "all"
-    factory = _factory(config)
-    cfg = factory._build_model_config(
-        _info(LanguageModelId.GPT_V6_SOL),
-        "us.openai.gpt-6-sol",
-        True,
-        model_purpose=ModelPurpose.INGESTION,
+@pytest.mark.parametrize("purpose", list(ModelPurpose))
+def test_no_model_call_gets_the_guardrail_attached(purpose: ModelPurpose) -> None:
+    # The removed apply_to: all attached the guardrail to ingestion and
+    # evaluation calls; the guardrail now screens the query and answer only.
+    config = Config.model_validate(
+        {"aws": {"bedrock": {"guardrail": {"identifier": "gid-1", "apply_to": "all"}}}}
     )
-    assert cfg["guardrail_config"]["guardrailIdentifier"] == "gid-1"
+    factory = _factory(config)
+    for cross_region in (True, False):
+        cfg = factory._build_model_config(
+            _info(LanguageModelId.GPT_V6_SOL),
+            "us.openai.gpt-6-sol",
+            cross_region,
+            model_purpose=purpose,
+        )
+        assert "guardrail_config" not in cfg and "guardrails" not in cfg
 
 
 # --- prompt caching -------------------------------------------------------

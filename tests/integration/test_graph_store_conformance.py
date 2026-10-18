@@ -192,9 +192,10 @@ def test_deleting_a_vertex_drops_its_edges(harness: StoreHarness) -> None:
     assert harness.stored_ids("graph.communities") == set()
 
 
-def test_unscoped_delete_reaches_every_suffix(harness: StoreHarness) -> None:
+def test_a_delete_without_a_suffix_stays_in_the_default(harness: StoreHarness) -> None:
+    # No suffix is the default suffix for deletes too: an unscoped delete
+    # removed another tenant's vertex with the same content-derived id.
     graph = harness.graph_indexer
-    # Ids of this run only: an unscoped delete is graph-wide.
     e1, e2 = f"{harness.tag}-e1", f"{harness.tag}-e2"
     tenant = harness.suffix("s1")
     graph.upsert_entities([_entity(e1), _entity(e1, tenant), _entity(e2, tenant)])
@@ -206,10 +207,12 @@ def test_unscoped_delete_reaches_every_suffix(harness: StoreHarness) -> None:
 
     graph.upsert_entities([_entity(e1, tenant)])
     graph.upsert_relationships([_rel("r1", e1, e2, tenant)])
-    assert graph.find_incident_relationship_ids([e1], suffix=None) == ["r1"]
+    assert graph.find_incident_relationship_ids([e1], suffix=None) == []
+    assert graph.find_incident_relationship_ids([e1], suffix=tenant) == ["r1"]
+    graph.upsert_entities([_entity(e1)])
     graph.delete_by_id([e1])
     assert graph.read_entities([e1]) == []
-    assert graph.read_entities([e1], suffix=tenant) == []
+    assert [e.id for e in graph.read_entities([e1], suffix=tenant)] == [e1]
     assert [e.id for e in graph.read_entities([e2], suffix=tenant)] == [e2]
 
 

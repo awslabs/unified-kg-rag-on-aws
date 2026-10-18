@@ -211,11 +211,12 @@ class DocStatusProviderConfig(BaseModel):
         default=DYNAMODB,
         description="Document-status registry for incremental indexing: dynamodb | sqlite.",
     )
-    enabled: bool | None = Field(
-        default=None,
+    enabled: bool = Field(
+        default=False,
         description=(
-            "Turn incremental indexing (the registry) on or off. null follows "
-            "aws.dynamodb.enabled, so existing configs keep their behaviour."
+            "Turn on the doc-status registry, which makes ingestion "
+            "incremental (only new, changed and failed documents are "
+            "processed)."
         ),
     )
     sqlite_path: str = Field(

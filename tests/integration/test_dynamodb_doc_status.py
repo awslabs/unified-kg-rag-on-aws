@@ -36,7 +36,7 @@ pytestmark = pytest.mark.integration
 def ddb_store() -> DynamoDBDocStatusStore:
     with mock_aws():
         config = Config()
-        config.aws.dynamodb.enabled = True
+        config.providers.doc_status.enabled = True
         config.aws.dynamodb.table_name = "test-doc-status"
         # moto needs a region/session; profile_name None is fine under mock.
         session = boto3.Session(region_name="us-east-1")

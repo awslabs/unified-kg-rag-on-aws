@@ -276,8 +276,8 @@ Bedrock을 쓸 수 있습니다.
   기준으로 해석합니다. `indexing.neptune`과 `indexing.opensearch` 설정(인덱스 접두사,
   배치 크기, 임베딩 설정)은 Neptune과 OpenSearch에서처럼 이 저장소에도 적용되며, 쓰기는
   다른 프로세스의 잠금을 `search.store_timeout_seconds`까지 기다립니다.
-- **증분 인덱싱**은 `providers.doc_status.enabled: true`(또는 기존 스위치인
-  `aws.dynamodb.enabled: true`)일 때 SQLite 레지스트리를 씁니다.
+- **증분 인덱싱**은 `providers.doc_status.enabled: true`일 때 SQLite 레지스트리를
+  씁니다.
   [`docker/config.local.yaml`](../docker/config.local.yaml)은 이를 켭니다.
   상대 경로 `sqlite_path`는 저장소와 같은 방식으로 해석하며, 실행 로그에
   데이터베이스의 절대 경로를 남깁니다.
@@ -467,7 +467,7 @@ cp config-template.yaml config.yaml
 |---|---|---|
 | `aws.region_name` | `"us-west-2"` | 저장소가 다른 리전에 있을 때. `aws.bedrock.region_name`을 지정하지 않으면 Bedrock도 따름 |
 | `aws.neptune.endpoint`, `aws.opensearch.endpoint` | `null` | AWS 저장소를 쓸 때 항상(CDK 스택이 주입함) |
-| `aws.dynamodb.enabled` | `false` | 증분 인덱싱을 쓸 때([§5](#5-증분-인덱싱)) |
+| `providers.doc_status.enabled` | `false` | 증분 인덱싱을 쓸 때([§5](#5-증분-인덱싱)) |
 | `models.default`, `models.fast` | Claude Sonnet 5.5, Claude Haiku 5.5 | 다른 모델을 쓸 때([모델 선택 참고 사항](#모델-선택-참고-사항)) |
 | `processing.max_concurrency` | `40` | 로그에 `ThrottlingException` 재시도가 보일 때(낮춤), Bedrock 할당량이 허용할 때(높임) |
 | `processing.graph_extraction.entity_types` | 일반 유형 7개 | 추출을 도메인에 맞출 때([§9](#9-도메인-적응)) |
@@ -565,11 +565,11 @@ API로 검사합니다. 가드레일은 `aws.bedrock.region_name`에 있어야 �
   컨텍스트 근거(contextual grounding) 검사는 하지 않습니다. 근거 자료와 질의를
   한정자(qualifier)가 붙은 콘텐츠로 보내야 하는데 답변 검사는 이를 보내지 않습니다.
 - **수집과 평가.** 수집 모델, 프롬프트 튜너, 평가용 판정 모델은 기본적으로
-  가드레일 없이 실행합니다(`apply_to: "query"`). `NAME`을 익명화하는 PII 가드레일은
-  추출된 엔티티 이름을 `{NAME}` 같은 자리 표시자로 바꿔 서로 다른 사람을 한 노드로
-  합치고, `PROMPT_ATTACK` 필터는 지시문처럼 보이는 코퍼스 텍스트를 차단할 수 있기
-  때문입니다. `apply_to: "all"`은 이 호출에도 가드레일을 붙이므로 추출에 써도 안전한
-  정책일 때만 쓰세요. 질의 경로에서도 `NAME` 익명화는 문제가 됩니다. 인물에 관한 질문은
+  가드레일 없이 실행합니다. `NAME`을 익명화하는 PII 가드레일은 추출된 엔티티 이름을
+  `{NAME}` 같은 자리 표시자로 바꿔 서로 다른 사람을 한 노드로 합치고, `PROMPT_ATTACK`
+  필터는 지시문처럼 보이는 코퍼스 텍스트를 차단할 수 있기 때문입니다(이 호출에
+  가드레일을 붙이던 `apply_to`는 제거했고, 이 키를 설정한 구성은 경고를 남기고
+  로드됩니다). 질의 경로에서도 `NAME` 익명화는 문제가 됩니다. 인물에 관한 질문은
   검색에 쓸 이름을 잃고, 답변에는 `{NAME}`이 나옵니다. 그래서 `iac/`가 만드는 기본
   가드레일은 이메일, 전화번호, 카드 번호만 익명화하고 `NAME`은 익명화하지 않습니다.
 - **사용자 코드.** `setup_chain`으로 체인을 만들거나 질의가 아닌 작업에서 `get_model`을
@@ -604,8 +604,11 @@ API로 검사합니다. 가드레일은 `aws.bedrock.region_name`에 있어야 �
 
 ### 사용자 정의 프롬프트
 
-모든 프롬프트에는 `custom_prompts.*_system` / `*_human` 재정의 키가 있습니다(기본값
-`null` = `unified_kg_rag/domain/prompts/`의 내장 프롬프트). 필요한 것만 재정의하고
+지능형 청커(`TextChunkingPrompt`), 문서 번역(`TextTranslationPrompt`), 질의 번역
+(`TranslationPrompt`), 전역 검색의 커뮤니티 평가(`CommunityRelevancePrompt`)와 축약 단계
+(`MapReduceSummaryPrompt`)의 프롬프트를 뺀 모든 프롬프트에는 `custom_prompts.*_system` /
+`*_human` 재정의 키가 있습니다(기본값 `null` = `unified_kg_rag/domain/prompts/`의 내장
+프롬프트). 이 다섯 개는 재정의할 수 없습니다. 필요한 것만 재정의하고
 나머지는 `null`로 두세요([§9](#9-도메인-적응)). 재정의는 설정을 읽을 때 검사합니다. 알
 수 없는 `{variables}`와 빠진 데이터 변수(`{input_text}` 등)는 오류이며, 중괄호를
 글자 그대로 쓰려면 `{{` / `}}`로 씁니다.
@@ -655,7 +658,7 @@ CloudShell이 그렇게 합니다) 파일에 적은 리전은 바뀌지 않습�
 직접 지정하면 플래그가 우선합니다. `UKR_METRICS_ENVIRONMENT`는
 `--metrics-sink cloudwatch`의 `Environment` 차원입니다. CDK compute 스택이 주입하는
 변수는 [`iac/README.md`](../iac/README.md#2-build-and-push-the-app-image)에 있습니다.
-그 환경에서도 증분 인덱싱을 쓰려면 설정 파일에 `aws.dynamodb.enabled: true`가 있어야
+그 환경에서도 증분 인덱싱을 쓰려면 설정 파일에 `providers.doc_status.enabled: true`가 있어야
 합니다(이미지의 설정 파일에는 들어 있습니다).
 
 CLI는 python-dotenv로 `.env` 파일도 읽습니다. 현재 작업 디렉터리의 `./.env`만 읽고
@@ -803,8 +806,8 @@ CloudWatch로 보내려면 태스크 옆에 ADOT나 OpenTelemetry Collector를 �
 | `--output-directory` | 없음(내보내지 않음) | 파싱한 문서를 확인용 JSON으로 내보낼 위치(소스 디렉터리는 지정 불가) |
 | `--cache-directory` | `cache` | 파이프라인 캐시와 중간 결과 |
 | `--force-rebuild` | off | 캐시된 단계 출력을 무시하고 모든 단계를 다시 계산. 새 출력으로 캐시를 다시 씀 |
-| `--s3-sync` | off | 캐시를 S3에 동기화(`--s3-bucket-name` 필요) |
-| `--s3-bucket-name` | — | 캐시 동기화용 S3 버킷 |
+| `--s3-sync` | off | 캐시를 S3에 동기화(`--s3-bucket-name` 또는 `aws.s3.bucket_name` 필요) |
+| `--s3-bucket-name` | `aws.s3.bucket_name` | 캐시 동기화용 S3 버킷 |
 | `--s3-prefix` | `pipeline-runs` | 캐시 파일의 S3 키 접두사 |
 | `--pipeline-id` | `$UKR_PIPELINE_ID` | 재개하거나 검사할 기존 실행입니다. 플래그를 생략하면 환경 변수 `UKR_PIPELINE_ID`를 씁니다. 이 ID가 실행의 캐시 디렉터리와 S3 접두사 이름이 되므로 영문 소문자, 숫자, 하이픈, 밑줄만 쓸 수 있습니다. |
 | `--resume-from-stage` | — | 재개할 단계 이름(대소문자 무관, `--pipeline-id` 필요). 없는 이름이면 사용법 오류(종료 코드 2) |
@@ -1207,9 +1210,11 @@ run-rag --interactive --conversation-id my-session --config-path config.yaml
 ### 켜기
 
 ```yaml
+providers:
+  doc_status:
+    enabled: true          # kind: dynamodb(기본값) 또는 sqlite
 aws:
   dynamodb:
-    enabled: true
     table_name: "unified-kg-rag-on-aws-doc-status-v2"
     create_table_if_missing: true
 ```
@@ -1360,13 +1365,16 @@ ID와 새 청크 ID를 함께 담으므로, 수정하는 문서의 한도는 그
 
 ### 실행 간 병합
 
-기본값(`indexing.cross_run_merge: true`)에서 증분 실행은 건드리는 엔티티와 관계를
-그래프에서 다시 읽고, upsert 전에 변경분을 그 안에 병합합니다(설명, `text_unit_ids`,
-가중치). 그래서 변경되지 않은 문서와 공유하는 엔티티는 그 문서들의 설명과 청크
-계보(`mix`가 따라감)를 유지합니다. 요약 예산을 넘은 병합 설명은 다시 요약합니다.
-`false`이면 이 필드를 변경분의 값으로 덮어쓰고, 엔티티는 변경되지 않은 문서의 청크와의
-계보를 잃습니다. 다시 읽기를 지원하지 않는 그래프 어댑터는 이 방식으로 동작합니다.
+증분 실행은 건드리는 엔티티와 관계를 그래프에서 다시 읽고, upsert 전에 변경분을 그
+안에 병합합니다(설명, `text_unit_ids`, 가중치). 그래서 변경되지 않은 문서와 공유하는
+엔티티는 그 문서들의 설명과 청크 계보(`mix`가 따라감)를 유지합니다. 요약 예산을 넘은
+병합 설명은 다시 요약합니다. 다시 읽기를 지원하지 않는 그래프 어댑터는 이 필드를
+변경분의 값으로 덮어씁니다.
 
+- **항상 켜져 있습니다.** 병합은 끌 수 없습니다. 제거된 `indexing.cross_run_merge`
+  키를 아직 설정한 구성이나 `UKR__` 변수는 WARNING을 남기고 키를 무시합니다.
+- **`false`를 제거한 이유.** `false`는 공유 엔티티를 변경분의 계보로 덮어썼기 때문에,
+  나중에 바뀐 문서를 지우면 변경되지 않은 문서가 아직 기술하는 엔티티까지 지웠습니다.
 - **주장**도 같은 방식으로 병합합니다. 주장 ID는 문서나 철자가 아니라 주체와 객체가
   가리키는 엔티티, 유형, 날짜로 정하므로, 여러 문서가 기술한 주장(한 문서는 "Acme
   Inc", 다른 문서는 "Acme")은 각 문서의 설명, 원문, 텍스트 단위를 모두 유지하는 주장
@@ -1865,8 +1873,8 @@ processing:
 
 ### B. `custom_prompts` 재정의
 
-어떤 프롬프트든 `*_system` / `*_human` 텍스트를 재정의할 수 있습니다(기본값 `null` =
-내장 프롬프트 사용). `{braces}` 안의 변수는 프레임워크가 채우므로 그대로 두세요. 자주
+프롬프트의 `*_system` / `*_human` 텍스트를 재정의할 수 있습니다(기본값 `null` =
+내장 프롬프트 사용. 재정의 키가 없는 프롬프트 다섯 개는 [사용자 정의 프롬프트](#사용자-정의-프롬프트) 참고). `{braces}` 안의 변수는 프레임워크가 채우므로 그대로 두세요. 자주
 쓰는 재정의는 다음과 같습니다.
 
 ```yaml
@@ -1936,7 +1944,7 @@ primer, 후속 질의 답변),
 |---|---|
 | `0` | 성공 |
 | `1` | 실행 실패: 단계나 질의 실패, `--max-failure-rate` 초과, 업로드 실패, 렌더링한 파일 없음 |
-| `2` | 작업을 시작하기 전의 사용법·설정 오류: 알 수 없거나 잘못된 플래그, 없는 입력 파일이나 디렉터리, 잘못된 설정 파일이나 환경 변수 덮어쓰기, 설정하지 않은 저장소 엔드포인트 |
+| `2` | 사용법·설정 오류: 알 수 없거나 잘못된 플래그, 없는 입력 파일이나 디렉터리, 잘못된 설정 파일이나 환경 변수 덮어쓰기, 설정하지 않은 저장소 엔드포인트(모두 작업 시작 전), 또는 실행 중에 발견한 설정 충돌(`ConfigurationError`. 예: 레지스트리를 끈 채 만든 인덱스) |
 | `130` | Ctrl-C(SIGINT)로 중단 |
 | `143` | SIGTERM으로 중지(ECS `StopTask`, Step Functions 시간 초과). `run-ingestion`은 끝난 단계를 먼저 체크포인트로 저장하고, 출력 디렉터리가 `s3://`인 `run-eval`은 끝난 실행의 결과를 업로드합니다(업로드에 실패하면 로컬에 남기고 경로를 로그로 남김) |
 

@@ -35,6 +35,8 @@ from .document import (
     DocumentDelta,
     DocumentLineage,
     ExtractionSettings,
+    StoredDocument,
+    settings_changed,
 )
 from .entity import Entity
 from .evaluation import (
@@ -91,6 +93,8 @@ __all__ = [
     "DocStatusRecord",
     "Document",
     "DocumentDelta",
+    "StoredDocument",
+    "settings_changed",
     "DocumentLineage",
     "EmbeddingModelId",
     "Entity",

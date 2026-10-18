@@ -32,7 +32,6 @@ from tests.fixtures.config_template import (
     commented_key_paths,
     uncommented_template,
 )
-from unified_kg_rag.adapters.renderers.interactive import InteractiveRenderer
 from unified_kg_rag.domain.models import Config
 from unified_kg_rag.domain.models.provider_config import LOCAL_PRESET
 
@@ -41,12 +40,7 @@ pytestmark = pytest.mark.unit
 _TEMPLATE = TEMPLATE_PATH
 
 # Dotted template path -> why the template value may differ from Config().
-_INTENTIONAL: dict[str, str] = {
-    "graph.visualization.interactive.max_nodes": (
-        "free-form renderer dict; the default lives in "
-        "InteractiveRenderer.DEFAULT_MAX_NODES (checked separately below)"
-    ),
-}
+_INTENTIONAL: dict[str, str] = {}
 
 # Commented-out keys that show an example rather than the default, and why.
 _COMMENTED_EXAMPLES: dict[str, str] = {
@@ -211,13 +205,6 @@ def test_commented_examples_are_still_commented_examples(
         == _lookup(defaults, tuple(dotted.split(".")))
     ]
     assert not stale, f"stale _COMMENTED_EXAMPLES entries: {stale}"
-
-
-def test_interactive_max_nodes_matches_renderer_default(
-    raw_template: dict[str, Any],
-) -> None:
-    shown = raw_template["graph"]["visualization"]["interactive"]["max_nodes"]
-    assert shown == InteractiveRenderer.DEFAULT_MAX_NODES
 
 
 def test_backend_local_alone_switches_the_template_to_the_preset(

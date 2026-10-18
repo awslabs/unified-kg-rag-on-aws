@@ -473,8 +473,7 @@ unless noted.
 3. **Stale cleanup** (`remove_changed_and_deleted`). The text units of changed
    and deleted documents are removed in one pass per suffix (step 5), so an
    artifact only a changed and a deleted document state goes too.
-4. **Delta upsert** (`commit`). With `indexing.cross_run_merge` (default on),
-   the stored entities and relationships the delta touches are read back and
+4. **Delta upsert** (`commit`). The stored entities and relationships the delta touches are read back and
    the delta is merged into them (§5.4), found by compact name key (all stored
    names with fuzzy matching on), together with the stored edges of the
    delta's entities. Their content is then derived from the extraction
@@ -999,8 +998,7 @@ by default**.
   on Converse it judges the retrieved corpus and the instructions as user
   input (false prompt-attack blocks, cost proportional to context times
   calls), and on InvokeModel its prompt-attack filter is inert without input
-  tags. Ingestion and evaluation models are guarded only under
-  `apply_to: all`.
+  tags. Ingestion and evaluation models are never guarded.
 
 ---
 
@@ -1056,8 +1054,8 @@ chain = GraphRAGChain(config=cfg, model_factory=MyLLMFactory())
 
 A factory must keep the `**kwargs` catch-all and ignore keys it does not
 understand: callers pass framework arguments such as
-`model_purpose=ModelPurpose.INGESTION` (which attaches a guardrail under
-`apply_to: all`), and more may be added; a strict signature raises
+`model_purpose=ModelPurpose.INGESTION` (which picks the per-path policy:
+response cache, ingestion effort, query retry), and more may be added; a strict signature raises
 `TypeError` on the first such call.
 
 **One bundle, every component.** `Providers` (`adapters/providers.py`) holds

@@ -19,9 +19,12 @@ aws:
     # The IaC domain authorizes IAM-signed (SigV4) requests from the task role;
     # it has no basic-auth user.
     use_iam: true
-  dynamodb:
-    # The stack provisions the doc-status table (KMS, PITR, alarms) for
-    # incremental indexing; its name is injected via UKR__AWS__DYNAMODB__TABLE_NAME.
+
+providers:
+  doc_status:
+    # Incremental indexing on the DynamoDB registry. The stack provisions the
+    # table (KMS, PITR, alarms); its name is injected via
+    # UKR__AWS__DYNAMODB__TABLE_NAME.
     enabled: true
 
 graph:

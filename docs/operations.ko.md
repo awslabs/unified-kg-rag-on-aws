@@ -80,7 +80,7 @@ reset 동안에도 질의는 이전 내용을 읽습니다. 벡터 인덱스는 
 
 ### 증분 실행
 
-`aws.dynamodb.enabled: true`(컨테이너 이미지에 설정되어 있음)이면 `run-ingestion`은
+`providers.doc_status.enabled: true`(컨테이너 이미지에 설정되어 있음)이면 `run-ingestion`은
 실행할 때마다 문서 상태 레지스트리와 코퍼스를 내용 해시로 비교해 새 문서와 바뀐 문서만
 인덱싱합니다. 원본에서 사라진 파일은 삭제된 것으로 보고, 그 파일만 기술하던 내용을
 지웁니다.
@@ -117,15 +117,14 @@ reset 동안에도 질의는 이전 내용을 읽습니다. 벡터 인덱스는 
 `0.5`)에 이르면 실행은 `indexing.reset: true`를 권하는 WARNING을 남기고
 `community_drift_overlap_share`와 함께 `community_rebuild_recommended: 1`을 보고하므로
 경보로 감시할 수 있습니다. 이 수치는 엔티티를 건드린 실행들에 걸쳐 누적되므로 상한으로
-읽으세요. 커뮤니티가 없거나 `indexing.cross_run_merge: false`인 실행은 겹침을 보고하지
-않습니다.
+읽으세요. 커뮤니티가 없는 실행은 겹침을 보고하지 않습니다.
 
 **레지스트리를 읽을 수 없으면**(테이블 없음, 접근 거부, 클라이언트 재시도로도 풀리지
 않는 스로틀링) `document_loading` 단계가 테이블과 원인을 밝힌
 `DocStatusRegistryError`로 실패합니다. 실행은 모든 문서를 인덱싱하는 경로로 넘어가지
 않습니다. 그 경로는 접미사의 내용을 이번 실행의 문서로만 바꾸기 때문입니다.
 레지스트리를 고친 뒤 같은 `--pipeline-id`로 다시 실행하거나,
-`aws.dynamodb.enabled: false`로 증분 인덱싱 없이 실행하세요.
+`providers.doc_status.enabled: false`로 증분 인덱싱 없이 실행하세요.
 
 시험판(pre-release) 빌드에서 올 때: 그 빌드가 저장한 것은 읽지 않습니다.
 [CHANGELOG: Upgrading from pre-release builds](../CHANGELOG.md#upgrading-from-pre-release-builds)를
@@ -762,7 +761,7 @@ LangSmith로 업로드합니다.
 | `Configuration validation error: ...` | 설정값의 타입이나 값이 잘못됨 | 메시지에 나온 키를 수정 |
 | `ConfigurationError: Unknown config keys: '<path>' ...`(종료 코드 2) | 오타이거나 이번 릴리스에서 없어지거나 이름이 바뀐 키 | 키를 고치거나 삭제함(바뀐 이름은 [CHANGELOG](../CHANGELOG.md)에 있음). `--allow-unknown-keys`를 주면 키마다 `Unknown config key '<path>' is ignored`(WARNING)를 남기고 파일을 읽음 |
 | `--source-directory is required for pipeline execution`(아래 사용법 오류처럼 종료 코드 2) | `--source-directory`도 `$UKR_SOURCE_DIRECTORY`도 없음 | 플래그를 넘김. `--verify-metadata`에는 대신 `--pipeline-id`가 필요 |
-| `--s3-bucket-name must be specified for --s3-sync` | 버킷 없이 `--s3-sync`를 지정함 | `--s3-bucket-name`을 넘김 |
+| `--s3-sync needs --s3-bucket-name or aws.s3.bucket_name` | 버킷 없이 `--s3-sync`를 지정함 | `--s3-bucket-name`을 넘기거나 `aws.s3.bucket_name`(`UKR__AWS__S3__BUCKET_NAME`)을 설정 |
 | `--pipeline-id is required for --resume-from-stage` | 재개하려면 이전 실행이 필요함 | 그 실행의 `--pipeline-id`를 넘김 |
 | `--enabled-stages: invalid stage names ...` | `--enabled-stages`에 없는 단계 이름이 있음 | 메시지에 나온 목록의 이름을 사용 |
 | `argument --resume-from-stage: Unknown pipeline stage ...`(종료 코드 2) | `--resume-from-stage`에 없는 단계 이름을 넘김 | 메시지에 나온 목록의 이름을 사용(대소문자 무관) |

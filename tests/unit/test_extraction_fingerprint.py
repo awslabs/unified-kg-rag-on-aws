@@ -102,30 +102,13 @@ def _guardrail(**fields: object) -> Config:
         {"identifier": "gr-query"},
         {"identifier": "gr-query", "version": "3"},
         {"identifier": "gr-query", "trace": True},
-        # No identifier: nothing is guarded whatever the scope.
-        {"apply_to": "all"},
     ],
 )
-def test_a_guardrail_that_skips_ingestion_does_not_move_it(
+def test_the_query_guardrail_does_not_move_it(
     fields: dict[str, object],
 ) -> None:
     assert extraction_fingerprint(_guardrail(**fields)) == extraction_fingerprint(
         Config()
-    )
-
-
-def test_a_guardrail_that_guards_ingestion_moves_it() -> None:
-    guarded = extraction_fingerprint(_guardrail(identifier="gr-1", apply_to="all"))
-    assert guarded != extraction_fingerprint(Config())
-    assert guarded != extraction_fingerprint(
-        _guardrail(identifier="gr-2", apply_to="all")
-    )
-    assert guarded != extraction_fingerprint(
-        _guardrail(identifier="gr-1", version="2", apply_to="all")
-    )
-    # Trace details do not change what the guarded model returns.
-    assert guarded == extraction_fingerprint(
-        _guardrail(identifier="gr-1", apply_to="all", trace=True)
     )
 
 
@@ -352,24 +335,13 @@ class TestChangedSettings:
         )
         assert changed_settings(removed, new) == []
 
-        guarded = self._settings(
-            Config.model_validate(
-                {"aws": {"bedrock": {"guardrail": {"identifier": "gr-1"}}}}
-            )
+        gleaning = self._settings(Config())
+        no_gleaning = self._settings(
+            Config.model_validate({"processing": {"gleaning": {"enabled": False}}})
         )
-        guarded_ingestion = self._settings(
-            Config.model_validate(
-                {
-                    "aws": {
-                        "bedrock": {
-                            "guardrail": {"identifier": "gr-1", "apply_to": "all"}
-                        }
-                    }
-                }
-            )
-        )
-        assert changed_settings(guarded_ingestion, guarded)
-        assert changed_settings(guarded, guarded_ingestion)
+        assert "processing.gleaning.max_rounds" not in no_gleaning.values
+        assert changed_settings(gleaning, no_gleaning)
+        assert changed_settings(no_gleaning, gleaning)
 
     def test_another_format_version_differs_as_a_whole(self) -> None:
         new = self._settings(Config())

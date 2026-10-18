@@ -39,6 +39,7 @@ from unified_kg_rag.domain.models import (
     DocStatusRecord,
     DocumentDelta,
     ExtractionSettings,
+    StoredDocument,
 )
 from unified_kg_rag.shared import DocStatusRegistryError, get_logger
 from unified_kg_rag.shared.utils.document_identity import doc_id_namespace
@@ -286,11 +287,8 @@ class SQLiteDocStatusStore:
     ) -> DocumentDelta:
         """Classify ``{doc_id: content_hash}`` against the stored records.
 
-        Same partition as ``FakeDocStatusStore.diff``: with ``scope``, only
-        the scope's namespace is read and only its records of that scope can
-        be deleted; a FAILED record, or one
-        whose extraction fingerprint is set and differs from
-        ``extraction_fingerprint``, is changed even with an unchanged hash.
+        With ``scope``, only the scope's namespace is read; the partition is
+        ``DocumentDelta.classify``, as for every registry.
         """
         columns = "doc_id, content_hash, status, scope, extraction_fingerprint"
         namespace = scope_namespace(scope)
@@ -306,30 +304,9 @@ class SQLiteDocStatusStore:
                     (namespace,),
                 ).fetchall()
         stored = {
-            doc_id: (content_hash, status, stored_scope, stored_extraction)
-            for doc_id, content_hash, status, stored_scope, stored_extraction in rows
+            doc_id: StoredDocument(
+                content_hash, stored_scope, status == DocStatus.FAILED.value, extraction
+            )
+            for doc_id, content_hash, status, stored_scope, extraction in rows
         }
-        delta = DocumentDelta()
-        for doc_id, content_hash in incoming.items():
-            existing = stored.get(doc_id)
-            if existing is None:
-                delta.new.append(doc_id)
-            elif existing[0] != content_hash or existing[1] == DocStatus.FAILED.value:
-                delta.changed.append(doc_id)
-            elif extraction_fingerprint is not None and (
-                existing[3] not in (None, extraction_fingerprint)
-            ):
-                delta.changed.append(doc_id)
-                delta.settings_changed.append(doc_id)
-            else:
-                delta.unchanged.append(doc_id)
-        incoming_ids = set(incoming)
-        delta.deleted = [
-            doc_id
-            for doc_id, (_, _, stored_scope, _) in stored.items()
-            if doc_id not in incoming_ids and (scope is None or stored_scope == scope)
-        ]
-        delta.stored_scopes = sorted(
-            {s for _, _, s, _ in stored.values() if s is not None}
-        )
-        return delta
+        return DocumentDelta.classify(incoming, stored, scope, extraction_fingerprint)

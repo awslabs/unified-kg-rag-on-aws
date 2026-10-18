@@ -380,7 +380,7 @@ class TestFingerprintScope:
         key = stage_cache_key(config, PipelineStageType.DOCUMENT_LOADING, "documents")
         assert key == f"documents-{expected}"
 
-    def test_guardrail_is_an_input_only_while_it_guards_ingestion(self) -> None:
+    def test_the_guardrail_is_no_input(self) -> None:
         def fingerprint(**guardrail: object) -> str:
             config = Config.model_validate(
                 {"aws": {"bedrock": {"guardrail": guardrail}}}
@@ -391,7 +391,6 @@ class TestFingerprintScope:
 
         baseline = fingerprint()
         assert fingerprint(identifier="gr-1", version="2", trace=True) == baseline
-        assert fingerprint(identifier="gr-1", apply_to="all") != baseline
 
     def test_target_language_keys_extraction_with_translation_off(self) -> None:
         def fingerprint(roles: dict | None = None, **translation: object) -> str:

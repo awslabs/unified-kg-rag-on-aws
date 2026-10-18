@@ -21,6 +21,7 @@ from unified_kg_rag.application.cli.config_args import (
 from unified_kg_rag.application.cli.conventions import (
     EXIT_FAILURE,
     EXIT_INTERRUPTED,
+    EXIT_USAGE,
     add_output_format_argument,
     exits_on_sigterm,
     json_output,
@@ -43,7 +44,7 @@ from unified_kg_rag.application.retrieval.rag_chain import (
     create_rag_chain,
 )
 from unified_kg_rag.domain.models import Constants, SearchStrategy
-from unified_kg_rag.shared import get_logger, setup_logging
+from unified_kg_rag.shared import ConfigurationError, get_logger, setup_logging
 from unified_kg_rag.shared.config import load_cli_dotenv
 from unified_kg_rag.shared.utils import event_loop
 from unified_kg_rag.shared.utils.display import console, display_ascii_art
@@ -605,6 +606,10 @@ async def async_main(args: argparse.Namespace) -> int:
     except KeyboardInterrupt:
         console.print("\n[yellow]Execution interrupted by user.[/yellow]")
         return EXIT_INTERRUPTED
+    except ConfigurationError as e:
+        console.print(f"\n[red]Error: {_markup_safe(e)}[/red]")
+        logger.error("Configuration error: %s", e)
+        return EXIT_USAGE
     except Exception as e:
         console.print(f"\n[red]An unexpected error occurred: {_markup_safe(e)}[/red]")
         logger.exception("Unexpected error during execution")

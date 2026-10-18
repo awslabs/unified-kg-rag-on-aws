@@ -43,6 +43,13 @@ details.
 ### Breaking changes
 Configuration. An unknown key fails the load (see below); a moved key fails
 naming the key that replaces it.
+- One switch turns incremental indexing on: `providers.doc_status.enabled`
+  (default `false`; `kind` picks DynamoDB or SQLite). `aws.dynamodb.enabled`
+  is a moved key: a config that sets it fails naming the replacement, so move
+  `aws.dynamodb.enabled: true` to `providers.doc_status.enabled: true`
+  (`UKR__PROVIDERS__DOC_STATUS__ENABLED`). The container image config does.
+  The document-loading stage cache keys change, so a resumed pipeline id
+  re-runs from document loading once (#344).
 - Unknown config keys, in the file or as `UKR__` environment variables, are
   an error instead of a warning: a misspelled key (a guardrail identifier
   under `aws.bedrock.guardrail.identifer`) left its setting at the default
@@ -775,6 +782,16 @@ changed once with the full-config keys (#332).
   fused order. Reported by @vibhupb (#83) (#284).
 
 ### Changed
+- `run-ingestion --s3-sync` takes the bucket from `aws.s3.bucket_name`
+  (`UKR__AWS__S3__BUCKET_NAME`, which the CDK task sets) when
+  `--s3-bucket-name` is not given, so the bucket is configured once (#344).
+- `graph.visualization.layout`, `interactive` and `static` are typed
+  sections instead of free-form maps: a misspelled renderer setting is an
+  unknown key (an error by default) rather than silently ignored, values are
+  validated, and setting one key no longer drops the others' defaults (#344).
+- The DynamoDB, SQLite and in-memory doc-status registries classify a
+  corpus with one rule, `DocumentDelta.classify` (with `settings_changed`
+  shared with the delta detector), instead of a copy each (#344).
 - The design doc is about half as long: each section opens with a summary,
   the ingestion and incremental sections are split into short subsections,
   the merge rules and the retrieval error policy are tables, the
@@ -1135,6 +1152,32 @@ changed once with the full-config keys (#332).
   rank order. A test runs a full build, an incremental run and every search
   strategy in two processes with different hash seeds and requires
   identical stores, prompts, exports and answers (#343).
+- `GraphIndexer.delete_by_id` and `find_incident_relationship_ids` without a
+  suffix act on the default suffix, as every other indexer method does;
+  they reached every suffix, so a library caller that left the suffix out
+  deleted another tenant's vertex with the same content-derived id (#344).
+- The warning that a `custom_prompts` override drops the output tags its
+  parser reads is logged once per override, not once per validation (each
+  config layer and provider-flag rebuild repeated it) (#344).
+- Hybrid min-max fusion raises every normalized score to at least 0.001, not
+  only an exact 0: a hit just above its sub-query's minimum ranked below the
+  minimum hit itself, as in the OpenSearch plugin (#344).
+- The user guide names the five prompts that have no `custom_prompts`
+  override (chunking, document and query translation, global search's
+  community rating and reduce step) instead of saying every prompt has one;
+  two docstrings named the removed `aws.bedrock_region` and `action_model_id`
+  keys (#344).
+- Every CLI exits 2 on a `ConfigurationError` met while running (an index
+  built with the registry off, a parsed-JSON directory equal to the corpus);
+  only `run-eval` did, the others exited 1. Invalid provider flags are
+  reported with the loader's one-line summary, not pydantic's raw text (#344).
+- In local mode the stage cache keys, the extraction settings and the
+  extraction-record keys count `aws.bedrock.default_max_output_tokens`: a
+  local model is asked for that cap too, but the keys dropped it with the
+  other Bedrock settings, so a changed cap reused output made under the old
+  one. Local-mode stage caches and extraction records made before miss once;
+  the recorded extraction settings compare unchanged, so nothing is
+  re-extracted incrementally on that account (#344).
 - A paired strategy comparison no longer drops the queries a strategy
   failed to answer: a strategy that crashed on the queries it would lose
   looked as good as one that answered them. A failed answer scores 0 on
@@ -2516,6 +2559,27 @@ changed once with the full-config keys (#332).
   class is defined, instead of failing every query at evaluation time (#305).
 
 ### Removed
+- Unused code: `shared.config.reload_config` and `ConfigLoader.reload_config`
+  (build a new `ConfigLoader` instead), the `BedrockModelId` type alias,
+  `ClaimExtractor.extract_from_text_units` (`extract_units` is the stage's
+  path), `BaseProcessor._merge_description`, the `match_none` clause of the
+  embedded search engine (no query sends it) and an unreachable
+  unknown-fusion-method error. A stage-cache entry without content hashes
+  (written by pre-release builds) is now a miss instead of being read
+  unverified (#344).
+- `aws.bedrock.guardrail.apply_to` and the attached-guardrail path behind
+  `apply_to: all` (`GuardrailInterventionHandler`): the guardrail screens
+  the user query and the answer with `ApplyGuardrail` only, and ingestion
+  and evaluation models are never guarded (an anonymizing or prompt-attack
+  policy silently emptied extractions). A config that sets the key loads with
+  a WARNING and the key ignored. Stage caches built under `apply_to: all`
+  miss once (#344).
+- `indexing.cross_run_merge`: an incremental run always merges its delta
+  into the stored graph. `false` overwrote an entity shared with unchanged
+  documents with the delta's text units, so removing the changed document
+  later deleted an entity the unchanged ones still stated. A config file or
+  `UKR__INDEXING__CROSS_RUN_MERGE` that still sets it loads with a WARNING
+  and the key ignored; nothing to re-index (#344).
 - The native-score blend of RRF fusion: RRF scores are plain
   `weight / (rrf_k + rank)` sums again. The blend claimed to restore order
   within a stream, which RRF already keeps; scaled to the rank-1 step, it

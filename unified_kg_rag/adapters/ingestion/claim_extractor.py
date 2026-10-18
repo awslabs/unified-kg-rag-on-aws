@@ -120,22 +120,6 @@ class ClaimExtractor(BaseProcessor):
 
         self.stats: ClaimExtractionStats = ClaimExtractionStats()
 
-    def extract_from_text_units(
-        self, text_units: list[TextUnit], entities: list[Entity] | None = None
-    ) -> tuple[list[Claim], ClaimExtractionStats]:
-        """The claims of ``text_units``, merged across units (see
-        :meth:`extract_units`)."""
-        per_unit, stats = self.extract_units(text_units, entities)
-        all_claims = [claim for claims in per_unit.values() for claim in claims]
-        merged_claims = self.merge_claims(all_claims)
-        stats.total_claims_extracted = len(merged_claims)
-        logger.info(
-            "Claim extraction completed: extracted %s claims, merged to %s unique claims",
-            len(all_claims),
-            len(merged_claims),
-        )
-        return merged_claims, stats
-
     def extract_units(
         self, text_units: list[TextUnit], entities: list[Entity] | None = None
     ) -> tuple[dict[str, list[Claim]], ClaimExtractionStats]:

@@ -561,3 +561,17 @@ def test_local_pipeline_ignores_a_missing_aws_profile(no_aws, tmp_path) -> None:
     assert result.status is PipelineStageStatus.COMPLETED
     assert len(context.documents) == 1
     pipeline.close()
+
+
+def test_invalid_provider_settings_read_like_a_config_error() -> None:
+    # The raw pydantic text (error counts, input dumps, documentation links)
+    # reached the user; it is now the loader's one-line summary.
+    from unified_kg_rag.application.bootstrap import with_provider_overrides
+    from unified_kg_rag.shared import ConfigurationError
+
+    with pytest.raises(ConfigurationError) as raised:
+        with_provider_overrides(Config(), embedding_dimension=-1)
+    message = str(raised.value)
+    assert message.startswith("Invalid provider settings: ")
+    assert "models.embedding.dimension" in message
+    assert "errors.pydantic.dev" not in message

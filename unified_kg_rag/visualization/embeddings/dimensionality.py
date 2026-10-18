@@ -1,13 +1,14 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
+from collections.abc import Mapping
 from typing import Any
 
 import numpy as np
 import umap
-from pydantic import BaseModel, Field
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
 
+from unified_kg_rag.domain.models.config import LayoutSettings
 from unified_kg_rag.shared import get_logger
 
 from .node_embedder import NodeEmbeddings
@@ -15,43 +16,12 @@ from .node_embedder import NodeEmbeddings
 logger = get_logger(__name__)
 
 
-class ReducerConfig(BaseModel):
-    n_components: int = Field(2, description="Number of dimensions for the output.")
-    metric: str = Field(
-        "euclidean", description="Metric used for distance calculation."
-    )
-    random_state: int | None = Field(
-        default=42,
-        description="Random seed, so a re-render gives the same layout; None "
-        "for a random one (UMAP then runs in parallel)",
-    )
-
-
-class UMAPConfig(ReducerConfig):
-    n_neighbors: int = Field(
-        default=15,
-        description="Number of neighboring points used in local approximation",
-    )
-    min_dist: float = Field(
-        default=0.1,
-        description="Minimum distance between points in the low-dimensional representation",
-    )
-
-
-class TSNEConfig(ReducerConfig):
-    perplexity: int = Field(
-        default=30, description="Balance between local and global aspects of the data"
-    )
-    max_iter: int = Field(
-        default=1000, description="Maximum number of iterations for optimization"
-    )
-
-
 class DimensionalityReducer:
-    def __init__(self, config: dict[str, Any]):
-        self.umap_config = UMAPConfig(**config.get("umap", {}))
-        self.tsne_config = TSNEConfig(**config.get("tsne", {}))
-        self.pca_config = ReducerConfig(**config.get("pca", {}))
+    def __init__(self, config: LayoutSettings | Mapping[str, Any]):
+        settings = LayoutSettings.model_validate(config)
+        self.umap_config = settings.umap
+        self.tsne_config = settings.tsne
+        self.pca_config = settings.pca
 
     def reduce_dimensions(
         self, embeddings: NodeEmbeddings, method: str = "umap"

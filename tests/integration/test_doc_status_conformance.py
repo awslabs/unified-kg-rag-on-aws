@@ -57,7 +57,7 @@ def _sqlite(tmp_path: Path) -> Iterator[DocStatusPort]:
 def _dynamodb(_: Path) -> Iterator[DocStatusPort]:
     with mock_aws():
         config = Config()
-        config.aws.dynamodb.enabled = True
+        config.providers.doc_status.enabled = True
         config.aws.dynamodb.table_name = "conformance-doc-status"
         store = DynamoDBDocStatusStore(
             config, boto_session=boto3.Session(region_name="us-east-1")

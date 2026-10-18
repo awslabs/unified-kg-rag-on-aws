@@ -6,7 +6,6 @@ from collections.abc import Callable, Iterable
 from datetime import datetime
 from typing import Any, TypeVar
 
-from unified_kg_rag.domain.ingestion.descriptions import merge_descriptions
 from unified_kg_rag.domain.models import (
     Config,
     Constants,
@@ -410,12 +409,6 @@ class BaseProcessor:
             logger.warning("Invalid confidence value, using default %s", default)
             logger.debug("Invalid confidence value: '%s'", value)
             return default
-
-    @staticmethod
-    def _merge_description(current: str | None, new: str | None) -> str | None:
-        # Same rule as the resolver and the cross-run merge, so the extraction
-        # merge does not make a full build differ from an incremental one.
-        return merge_descriptions((current, new))
 
     @staticmethod
     def _merge_items(

@@ -152,16 +152,6 @@ def test_deleting_a_document_strips_its_text_units_from_a_shared_claim(
     assert stored.attributes == {"index": suffix}
 
 
-def test_cross_run_merge_off_overwrites_the_stored_claim(stores) -> None:
-    store, manager, vector = stores
-    manager.config.indexing.cross_run_merge = False
-    _run(store, manager, ["a.txt"])
-    _run(store, manager, ["a.txt", "b.txt"])
-
-    (stored,) = vector.data["claims"].values()
-    assert stored.text_unit_ids == ["tu-b.txt"]
-
-
 def test_merge_claims_is_idempotent_and_keeps_the_stored_status() -> None:
     stored = _claim("a.txt").model_copy(update={"status": "SUSPECTED"})
     delta = _claim("b.txt")

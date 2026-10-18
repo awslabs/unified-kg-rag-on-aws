@@ -232,16 +232,11 @@ class FakeGraphStore:
 
     def delete_by_id(self, ids: list[str], suffix: str | None = None) -> IndexingStats:
         stats = IndexingStats(total_items=len(ids))
-        suffixes = (
-            [suffix]
-            if suffix is not None
-            else sorted({s for bucket in self.data.values() for s, _ in bucket})
-        )
-        for scope in suffixes:
-            edges = self.data.get("relationships", {})
-            for item_id in ids:
-                edges.pop((scope, item_id), None)
-            self._drop_vertices(scope, ids)
+        scope = suffix or Constants.DEFAULT_SUFFIX.value
+        edges = self.data.get("relationships", {})
+        for item_id in ids:
+            edges.pop((scope, item_id), None)
+        self._drop_vertices(scope, ids)
         stats.add_success(len(ids))
         return stats
 
@@ -351,7 +346,7 @@ class FakeGraphStore:
             {
                 item_id
                 for (s, item_id), edge in self.data.get("relationships", {}).items()
-                if (suffix is None or s == suffix)
+                if s == (suffix or Constants.DEFAULT_SUFFIX.value)
                 and (edge["source_id"] in targets or edge["target_id"] in targets)
             }
         )

@@ -47,7 +47,7 @@ def _doc(path: str, text: str) -> Document:
 
 def _reset_config() -> Config:
     config = Config()
-    config.aws.dynamodb.enabled = True
+    config.providers.doc_status.enabled = True
     config.indexing.reset = True
     return config
 

@@ -47,7 +47,7 @@ def test_deletion_only_run_allows_empty_output() -> None:
     from unified_kg_rag.domain.models import DocumentDelta
 
     config = Config()
-    config.aws.dynamodb.enabled = True
+    config.providers.doc_status.enabled = True
     stage = _stage(config, boto3.Session(region_name="us-east-1"))
 
     ctx = _Ctx()
@@ -85,7 +85,7 @@ def _stage(config: Config, session: boto3.Session) -> DocumentLoadingStage:
 def test_filter_skips_unchanged_documents() -> None:
     with mock_aws():
         config = Config()
-        config.aws.dynamodb.enabled = True
+        config.providers.doc_status.enabled = True
         config.aws.dynamodb.table_name = "test-doc-status"
         session = boto3.Session(region_name="us-east-1")
         store = DynamoDBDocStatusStore(config, boto_session=session)
@@ -115,7 +115,7 @@ def test_filter_skips_unchanged_documents() -> None:
 def test_filter_stops_retrying_a_document_after_max_failures() -> None:
     with mock_aws():
         config = Config()
-        config.aws.dynamodb.enabled = True
+        config.providers.doc_status.enabled = True
         config.aws.dynamodb.table_name = "test-doc-status"
         config.indexing.max_document_failures = 3
         session = boto3.Session(region_name="us-east-1")
@@ -147,7 +147,7 @@ def test_filter_fails_fast_on_a_missing_table() -> None:
     # run's documents only.
     with mock_aws():
         config = Config()
-        config.aws.dynamodb.enabled = True
+        config.providers.doc_status.enabled = True
         config.aws.dynamodb.table_name = "absent-doc-status"
         config.aws.dynamodb.create_table_if_missing = False
         stage = _stage(config, boto3.Session(region_name="us-east-1"))

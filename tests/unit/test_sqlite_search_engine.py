@@ -170,9 +170,8 @@ def _ids(engine: SQLiteSearchEngine, query: dict[str, Any], **extra: Any) -> lis
 # --------------------------------------------------------------------------- #
 
 
-def test_match_all_scores_one_and_match_none_matches_nothing(engine) -> None:
+def test_match_all_scores_one(engine) -> None:
     assert _hits(engine, {"match_all": {}}) == {"a": 1.0, "b": 1.0, "c": 1.0}
-    assert _hits(engine, {"match_none": {}}) == {}
 
 
 def test_ids_query_scores_one_and_skips_missing_ids(engine) -> None:

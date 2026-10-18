@@ -1,6 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 import copy
+import functools
 import logging
 import math
 import re
@@ -225,20 +226,13 @@ def _coerce_model_id(value: Any) -> Any:
     return value.strip() if isinstance(value, str) else value
 
 
-# Any Bedrock model id (or cross-region inference-profile id) as a plain str.
-BedrockModelId = Annotated[
-    str, BeforeValidator(_coerce_model_id), StringConstraints(min_length=1)
-]
-
-
 class ModelPurpose(str, Enum):
     """Why a language model is being created, so per-path policies can differ.
 
-    Callers pass it to the LLM factory (``get_model(model_purpose=...)``). The
-    Bedrock factory uses it to attach a guardrail to ingestion and evaluation
-    models under ``GuardrailConfig.apply_to: all`` (query models never get
-    one: the query chain screens the user's query and answer instead), and
-    query chains get a transient-error retry. Unspecified means ``QUERY``.
+    Callers pass it to the LLM factory (``get_model(model_purpose=...)``):
+    the response cache and the ingestion effort apply to ``INGESTION``
+    models, and query chains get a transient-error retry. Unspecified means
+    ``QUERY``.
     """
 
     QUERY = "query"
@@ -519,20 +513,40 @@ MOVED_KEYS: dict[str, str] = {
     "evaluation.embedding_model_id": "models.embedding.model_id",
     "graph.visualization.embeddings": "models.embedding.model_id",
     "providers.rerank.model_id": "models.rerank",
+    "aws.dynamodb.enabled": "providers.doc_status.enabled",
     "search.reranking.rerank_model_id": "models.rerank",
 }
 
 
+# Removed settings -> why they are gone. A config that sets one loads with
+# a WARNING and the setting ignored.
+REMOVED_KEYS: dict[str, str] = {
+    "aws.bedrock.guardrail.apply_to": (
+        "the guardrail screens the user query and the answer only; ingestion "
+        "and evaluation models are never guarded"
+    ),
+    "indexing.cross_run_merge": (
+        "an incremental run always merges its delta into the stored graph; "
+        "turning that off overwrote entities other documents still cite"
+    ),
+}
+
+
+def _sets(data: Any, path: str) -> bool:
+    node = data
+    for part in path.split("."):
+        node = node.get(part, _ABSENT) if isinstance(node, dict) else _ABSENT
+    return node is not _ABSENT
+
+
 def moved_keys(data: Any) -> list[str]:
     """``"old -> new"`` for each moved setting ``data`` sets."""
-    found = []
-    for old, new in MOVED_KEYS.items():
-        node = data
-        for part in old.split("."):
-            node = node.get(part, _ABSENT) if isinstance(node, dict) else _ABSENT
-        if node is not _ABSENT:
-            found.append(f"{old} -> {new}")
-    return found
+    return [f"{old} -> {new}" for old, new in MOVED_KEYS.items() if _sets(data, old)]
+
+
+def removed_keys(data: Any) -> list[str]:
+    """The removed settings ``data`` sets (see ``REMOVED_KEYS``)."""
+    return [path for path in REMOVED_KEYS if _sets(data, path)]
 
 
 _ABSENT: Any = object()
@@ -554,15 +568,10 @@ class GuardrailConfig(BaseModel):
     (rewrite, routing, keyword extraction, map steps, answer generation) run
     unguarded: their prompts carry retrieved corpus text and developer
     instructions, which an attached guardrail would judge as user input.
-
-    ``apply_to`` scopes the guardrail beyond queries. The default ``"query"``
-    leaves ingestion (chunking, translation, graph extraction, gleaning,
-    claims, description summarization, community reports) and evaluation
-    judges unguarded, because a PII-anonymizing guardrail rewrites names to
-    placeholders (every person merges into one entity) and a prompt-attack
-    filter blocks instruction-like corpus text, which silently yields empty
-    extractions. ``"all"`` also attaches the guardrail to every ingestion and
-    evaluation model call.
+    Ingestion and evaluation models run unguarded: a PII-anonymizing
+    guardrail rewrites names to placeholders (every person merges into one
+    entity) and a prompt-attack filter blocks instruction-like corpus text,
+    which silently yields empty extractions.
     """
 
     identifier: str | None = Field(
@@ -593,28 +602,10 @@ class GuardrailConfig(BaseModel):
         description="Screen each final answer (ApplyGuardrail, source OUTPUT). "
         "A streamed answer is then delivered in one chunk, after the check",
     )
-    apply_to: Literal["query", "all"] = Field(
-        default="query",
-        description=(
-            "'query': only the user query and answer are screened; ingestion "
-            "and evaluation models run unguarded. 'all': the guardrail is also "
-            "attached to every ingestion and evaluation model call"
-        ),
-    )
 
     @property
     def enabled(self) -> bool:
         return bool(self.identifier)
-
-    def applies_to(self, purpose: ModelPurpose) -> bool:
-        """Whether a model created for ``purpose`` gets the guardrail attached.
-
-        Never for ``QUERY`` models: the query path is screened at its edges
-        (``check_input`` / ``check_output``) instead.
-        """
-        if not self.enabled or purpose is ModelPurpose.QUERY:
-            return False
-        return self.apply_to == "all"
 
 
 class TransientRetryConfig(BaseModel):
@@ -909,14 +900,6 @@ class S3Config(BaseModel):
 
 
 class DynamoDBConfig(BaseModel):
-    enabled: bool = Field(
-        default=False,
-        description=(
-            "Turn on the DynamoDB doc-status registry, which makes ingestion "
-            "incremental (only new, changed and failed documents are "
-            "processed)."
-        ),
-    )
     table_name: str = Field(
         default="unified-kg-rag-on-aws-doc-status-v2",
         min_length=1,
@@ -987,7 +970,7 @@ class AWSConfig(BaseModel):
 
     @property
     def bedrock_region(self) -> str:
-        """Region Bedrock calls go to: aws.bedrock_region, else aws.region_name."""
+        """Region Bedrock calls go to: aws.bedrock.region_name, else aws.region_name."""
         return self.bedrock.region_name or self.region_name
 
 
@@ -1707,6 +1690,76 @@ class CommunityDetectionConfig(BaseModel):
         return self
 
 
+class ReducerSettings(BaseModel):
+    """A dimensionality reduction of the node layout (PCA; the base of the others)."""
+
+    n_components: int = Field(default=2, ge=1, description="Output dimensions.")
+    metric: str = Field(default="euclidean", description="Distance metric.")
+    random_state: int | None = Field(
+        default=42,
+        description="Random seed, so a re-render gives the same layout; null "
+        "for a random one (UMAP then runs in parallel).",
+    )
+
+
+class UMAPSettings(ReducerSettings):
+    n_neighbors: int = Field(
+        default=15, ge=2, description="Neighbours of the local approximation."
+    )
+    min_dist: float = Field(
+        default=0.1, ge=0.0, description="Minimum distance between laid-out points."
+    )
+
+
+class TSNESettings(ReducerSettings):
+    perplexity: int = Field(
+        default=30, ge=1, description="Balance of local and global structure."
+    )
+    max_iter: int = Field(default=1000, ge=250, description="Optimization iterations.")
+
+
+class LayoutSettings(BaseModel):
+    """Parameters of each ``layout_method``."""
+
+    umap: UMAPSettings = Field(default_factory=UMAPSettings)
+    tsne: TSNESettings = Field(default_factory=TSNESettings)
+    pca: ReducerSettings = Field(default_factory=ReducerSettings)
+
+
+class InteractiveGraphSettings(BaseModel):
+    """The interactive pyvis graph (``interactive_graph.html``)."""
+
+    height: str = Field(default="900px", description="Canvas height (CSS).")
+    width: str = Field(default="100%", description="Canvas width (CSS).")
+    physics_enabled: bool = Field(
+        default=False, description="Run the pyvis physics simulation."
+    )
+    cdn_resources: str = Field(
+        default="in_line", description="pyvis cdn_resources: in_line, local or remote."
+    )
+    background_color: str = Field(default="#f8fafc", description="Canvas colour.")
+    font_family: str = Field(default="Arial", description="Label font.")
+    tooltip_delay: int = Field(default=200, ge=0, description="Tooltip delay (ms).")
+    max_nodes: int | None = Field(
+        default=2000,
+        ge=0,
+        description="Keep the top-N nodes by degree; 0 or null disables the cap "
+        "(a browser cannot lay out tens of thousands of nodes).",
+    )
+
+
+class StaticChartSettings(BaseModel):
+    """The static Bokeh charts."""
+
+    figure_width: int = Field(default=900, ge=100, description="Chart width (px).")
+    figure_height: int = Field(default=600, ge=100, description="Chart height (px).")
+    font: str = Field(default="Arial, sans-serif", description="Chart font.")
+    background_color: str = Field(default="#fdfdfd", description="Chart background.")
+    log_scale_x: bool = Field(
+        default=False, description="Logarithmic x axis on distributions."
+    )
+
+
 class VisualizationConfig(BaseModel):
     centrality: CentralityConfig = Field(
         default_factory=CentralityConfig,
@@ -1749,33 +1802,17 @@ class VisualizationConfig(BaseModel):
         pattern="^(umap|tsne|pca)$",
         description=("Dimensionality reduction of the node layout: umap, tsne or pca."),
     )
-    layout: dict[str, Any] = Field(
-        default={
-            "umap": {"n_neighbors": 15, "min_dist": 0.1},
-            "tsne": {},
-            "pca": {},
-        },
-        description=(
-            "Parameters per layout_method (umap: n_neighbors 15, min_dist 0.1;"
-            " tsne and pca: none by default). Setting the key replaces the "
-            "whole map."
-        ),
+    layout: LayoutSettings = Field(
+        default_factory=LayoutSettings,
+        description="Parameters per layout_method.",
     )
-    interactive: dict[str, Any] = Field(
-        default={"physics_enabled": False},
-        description=(
-            "Settings of the interactive pyvis graph (interactive_graph.html),"
-            " e.g. max_nodes (top-N nodes by degree kept, default 2000; 0 or "
-            "null disables the cap) and physics_enabled (false). Setting the "
-            "key replaces the whole map."
-        ),
+    interactive: InteractiveGraphSettings = Field(
+        default_factory=InteractiveGraphSettings,
+        description="Settings of the interactive pyvis graph.",
     )
-    static: dict[str, Any] = Field(
-        default={"figure_width": 900, "figure_height": 600},
-        description=(
-            "Settings of the static Bokeh charts (figure_width, "
-            "figure_height). Setting the key replaces the whole map."
-        ),
+    static: StaticChartSettings = Field(
+        default_factory=StaticChartSettings,
+        description="Settings of the static Bokeh charts.",
     )
 
 
@@ -2046,18 +2083,6 @@ class IndexingConfig(BaseModel):
             "and --suffix at query time, both 'default' when unset). Set it "
             "identically for ingestion and queries, for versioned or "
             "multi-tenant separation."
-        ),
-    )
-    cross_run_merge: bool = Field(
-        default=True,
-        description=(
-            "On incremental runs, read back the stored entities and "
-            "relationships the delta touches and merge the delta into them "
-            "(descriptions, text units, weights) before the upsert, so an "
-            "entity shared with unchanged documents keeps what they "
-            "contributed. false overwrites stored items with their delta-only "
-            "content. Delta names match stored ones by the full build's rule "
-            "(processing.fuzzy_entity_resolution)."
         ),
     )
     community_drift_threshold: float = Field(
@@ -2439,7 +2464,7 @@ class DriftSearchConfig(BaseModel):
     ``k_followups`` community reports most similar to it in ``primer_folds``
     calls and drafts intermediate answers plus follow-up queries. Each of
     ``n_depth`` rounds then runs the ``k_followups`` best-placed open follow-up
-    queries as local searches, each answered by ``action_model_id`` with its
+    queries as local searches, each answered by ``models.roles.drift_action`` with its
     own follow-up queries. The answer model reduces the ranked intermediate
     answers with the local evidence they came from.
     """
@@ -3169,6 +3194,7 @@ _REQUIRED_PROMPT_VARIABLES: dict[str, frozenset[str]] = {
 }
 
 
+@functools.cache
 def _warn_missing_output_tags(
     key: str, templates: str, required_tags: tuple[str, ...]
 ) -> None:
@@ -3178,6 +3204,8 @@ def _warn_missing_output_tags(
     where the output schema lives for the XML-parsed prompts; without it the
     model answers in a free format the parser drops. Some users teach the
     format in prose or a human override, so this warns rather than fails.
+    Once per override text: a config is validated several times per load
+    (each layer, each rebuild under provider flags).
     """
     missing = [tag for tag in required_tags if tag not in templates]
     if missing:
@@ -3634,13 +3662,9 @@ class Config(BaseModel):
 
     @property
     def doc_status_enabled(self) -> bool:
-        """Whether incremental indexing (the doc-status registry) is on.
-
-        ``providers.doc_status.enabled`` when set, else ``aws.dynamodb.enabled``
-        (the original switch, so existing configs keep their behaviour).
-        """
-        enabled = self.providers.doc_status.enabled
-        return self.aws.dynamodb.enabled if enabled is None else enabled
+        """Whether incremental indexing (the doc-status registry) is on:
+        ``providers.doc_status.enabled``."""
+        return self.providers.doc_status.enabled
 
 
 class PipelineConfig(BaseModel):

@@ -1,5 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
+from collections.abc import Mapping
 from typing import Any
 
 import networkx as nx
@@ -15,18 +16,20 @@ from bokeh.transform import dodge
 
 from unified_kg_rag.domain.ingestion.graph_analyzer import CentralityMetrics
 from unified_kg_rag.domain.models import Community
+from unified_kg_rag.domain.models.config import StaticChartSettings
 from unified_kg_rag.shared import get_logger
 
 logger = get_logger(__name__)
 
 
 class StaticRenderer:
-    def __init__(self, config: dict[str, Any]) -> None:
-        self.figure_width = config.get("figure_width", 900)
-        self.figure_height = config.get("figure_height", 600)
-        self.font = config.get("font", "Arial, sans-serif")
-        self.background_color = config.get("background_color", "#fdfdfd")
-        self.log_scale_x = config.get("log_scale_x", False)
+    def __init__(self, config: StaticChartSettings | Mapping[str, Any]) -> None:
+        settings = StaticChartSettings.model_validate(config)
+        self.figure_width = settings.figure_width
+        self.figure_height = settings.figure_height
+        self.font = settings.font
+        self.background_color = settings.background_color
+        self.log_scale_x = settings.log_scale_x
 
     def plot_degree_distribution(self, graph: nx.Graph, outputs_path: str) -> None:
         if not graph or graph.number_of_nodes() == 0:
@@ -238,7 +241,7 @@ class StaticRenderer:
     def _create_figure(
         self, title: str, x_label: str, y_label: str, **kwargs: Any
     ) -> figure:
-        defaults = {
+        defaults: dict[str, Any] = {
             "width": self.figure_width,
             "height": self.figure_height,
             "tools": "pan,wheel_zoom,box_zoom,reset,save",

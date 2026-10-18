@@ -59,7 +59,7 @@ pytestmark = pytest.mark.unit
 
 def _config(index_value: str | None = None) -> Config:
     config = Config()
-    config.aws.dynamodb.enabled = True
+    config.providers.doc_status.enabled = True
     config.processing.document_parsing.index_value = index_value
     return config
 
@@ -553,7 +553,7 @@ def test_is_local_path_scope_reads_only_the_string() -> None:
 def test_a_pipeline_retiring_without_the_registry_fails_fast(tmp_path) -> None:
     pipeline = object.__new__(DataIngestionPipeline)
     pipeline.config = _config()
-    pipeline.config.aws.dynamodb.enabled = False
+    pipeline.config.providers.doc_status.enabled = False
     pipeline.config.indexing.retire_source_scopes = ["/corpora/old"]
     pipeline.providers = Providers(pipeline.config)
     with pytest.raises(ConfigurationError, match="needs incremental indexing"):

@@ -118,7 +118,7 @@ Document-status registry
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `kind` | string (min length 1) | `"dynamodb"` | Document-status registry for incremental indexing: dynamodb \| sqlite. |
-| `enabled` | boolean \| null | `null` | Turn incremental indexing (the registry) on or off. null follows aws.dynamodb.enabled, so existing configs keep their behaviour. |
+| `enabled` | boolean | `false` | Turn on the doc-status registry, which makes ingestion incremental (only new, changed and failed documents are processed). |
 | `sqlite_path` | string (min length 1) | `".unified-kg-rag/doc-status.sqlite3"` | SQLite database file when kind is sqlite (created on first use). A relative path is resolved against the config file's directory (the working directory without a config file). |
 
 ## `models`
@@ -202,7 +202,6 @@ Amazon Bedrock Guardrails configuration (disabled unless identifier set)
 | `trace` | boolean | `false` | Emit guardrail trace details for observability/auditing (full assessments, including non-detected entries) |
 | `check_input` | boolean | `true` | Screen each raw user query (ApplyGuardrail, source INPUT) before retrieval: prompt attacks, denied topics, PII |
 | `check_output` | boolean | `true` | Screen each final answer (ApplyGuardrail, source OUTPUT). A streamed answer is then delivered in one chunk, after the check |
-| `apply_to` | `"query"` \| `"all"` | `"query"` | 'query': only the user query and answer are screened; ingestion and evaluation models run unguarded. 'all': the guardrail is also attached to every ingestion and evaluation model call |
 
 #### `aws.bedrock.transient_retry`
 
@@ -266,7 +265,6 @@ AWS DynamoDB document-status registry configuration
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `enabled` | boolean | `false` | Turn on the DynamoDB doc-status registry, which makes ingestion incremental (only new, changed and failed documents are processed). |
 | `table_name` | string (min length 1) | `"unified-kg-rag-on-aws-doc-status-v2"` | DynamoDB table holding each document's status and text units, partitioned by index namespace. |
 | `create_table_if_missing` | boolean | `true` | Create the doc-status table on first use. Set false when the table is managed by IaC (the CDK stack does). |
 | `billing_mode` | string | `"PAY_PER_REQUEST"` | Billing mode used when auto-creating the table |
@@ -444,9 +442,6 @@ Visualization configuration
 | `outputs_directory` | string \| path \| null | `null` | Directory to save visualization files. When unset, ingestion writes to '<cache directory>/<pipeline_id>/visualization' (--cache-directory), so visualization_data.json is synced to S3 with the cache; other callers fall back to 'outputs/visualization'. |
 | `embedding_method` | string | `"description"` | Node embedding for the layout: 'description' embeds each node's 'name: description' with the embedding model; 'none' uses a spring layout from the graph topology. |
 | `layout_method` | string | `"umap"` | Dimensionality reduction of the node layout: umap, tsne or pca. |
-| `layout` | dict[string, Any] | see `config-template.yaml` | Parameters per layout_method (umap: n_neighbors 15, min_dist 0.1; tsne and pca: none by default). Setting the key replaces the whole map. |
-| `interactive` | dict[string, Any] | `{"physics_enabled": false}` | Settings of the interactive pyvis graph (interactive_graph.html), e.g. max_nodes (top-N nodes by degree kept, default 2000; 0 or null disables the cap) and physics_enabled (false). Setting the key replaces the whole map. |
-| `static` | dict[string, Any] | `{"figure_width": 900, "figure_height": 600}` | Settings of the static Bokeh charts (figure_width, figure_height). Setting the key replaces the whole map. |
 
 #### `graph.visualization.centrality`
 
@@ -467,6 +462,71 @@ Node centrality metrics the visualization sizes nodes and plots by (computed at 
 | `eigenvector_max_iter` | integer (≥ 1) | `1000` | Maximum iterations for eigenvector centrality convergence |
 | `eigenvector_tol` | number (> 0.0) | `0.001` | Convergence tolerance for eigenvector centrality |
 
+#### `graph.visualization.layout`
+
+Parameters per layout_method.
+
+#### `graph.visualization.layout.umap`
+
+A dimensionality reduction of the node layout (PCA; the base of the others).
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `n_components` | integer (≥ 1) | `2` | Output dimensions. |
+| `metric` | string | `"euclidean"` | Distance metric. |
+| `random_state` | integer \| null | `42` | Random seed, so a re-render gives the same layout; null for a random one (UMAP then runs in parallel). |
+| `n_neighbors` | integer (≥ 2) | `15` | Neighbours of the local approximation. |
+| `min_dist` | number (≥ 0.0) | `0.1` | Minimum distance between laid-out points. |
+
+#### `graph.visualization.layout.tsne`
+
+A dimensionality reduction of the node layout (PCA; the base of the others).
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `n_components` | integer (≥ 1) | `2` | Output dimensions. |
+| `metric` | string | `"euclidean"` | Distance metric. |
+| `random_state` | integer \| null | `42` | Random seed, so a re-render gives the same layout; null for a random one (UMAP then runs in parallel). |
+| `perplexity` | integer (≥ 1) | `30` | Balance of local and global structure. |
+| `max_iter` | integer (≥ 250) | `1000` | Optimization iterations. |
+
+#### `graph.visualization.layout.pca`
+
+A dimensionality reduction of the node layout (PCA; the base of the others).
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `n_components` | integer (≥ 1) | `2` | Output dimensions. |
+| `metric` | string | `"euclidean"` | Distance metric. |
+| `random_state` | integer \| null | `42` | Random seed, so a re-render gives the same layout; null for a random one (UMAP then runs in parallel). |
+
+#### `graph.visualization.interactive`
+
+Settings of the interactive pyvis graph.
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `height` | string | `"900px"` | Canvas height (CSS). |
+| `width` | string | `"100%"` | Canvas width (CSS). |
+| `physics_enabled` | boolean | `false` | Run the pyvis physics simulation. |
+| `cdn_resources` | string | `"in_line"` | pyvis cdn_resources: in_line, local or remote. |
+| `background_color` | string | `"#f8fafc"` | Canvas colour. |
+| `font_family` | string | `"Arial"` | Label font. |
+| `tooltip_delay` | integer (≥ 0) | `200` | Tooltip delay (ms). |
+| `max_nodes` | integer \| null (≥ 0) | `2000` | Keep the top-N nodes by degree; 0 or null disables the cap (a browser cannot lay out tens of thousands of nodes). |
+
+#### `graph.visualization.static`
+
+Settings of the static Bokeh charts.
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `figure_width` | integer (≥ 100) | `900` | Chart width (px). |
+| `figure_height` | integer (≥ 100) | `600` | Chart height (px). |
+| `font` | string | `"Arial, sans-serif"` | Chart font. |
+| `background_color` | string | `"#fdfdfd"` | Chart background. |
+| `log_scale_x` | boolean | `false` | Logarithmic x axis on distributions. |
+
 ## `indexing`
 
 Data indexing configuration
@@ -475,7 +535,6 @@ Data indexing configuration
 |---|---|---|---|
 | `reset` | boolean | `false` | Rebuild the run's index namespace from the whole corpus instead of applying a delta, without taking it offline: the vector indices swap aliases, the graph is rewritten in place and what the rebuild did not write is dropped at the end; then the namespace's registry records are written again. Set it for one run. |
 | `additional_suffix` | string \| null (min length 1) | `null` | Appended after the run's suffix in every OpenSearch index name and Neptune label (<prefix>-<suffix>-<additional_suffix>; the suffix is processing.document_parsing.index_value at ingestion and --suffix at query time, both 'default' when unset). Set it identically for ingestion and queries, for versioned or multi-tenant separation. |
-| `cross_run_merge` | boolean | `true` | On incremental runs, read back the stored entities and relationships the delta touches and merge the delta into them (descriptions, text units, weights) before the upsert, so an entity shared with unchanged documents keeps what they contributed. false overwrites stored items with their delta-only content. Delta names match stored ones by the full build's rule (processing.fuzzy_entity_resolution). |
 | `community_drift_threshold` | number (> 0.0, ≤ 1.0) | `0.5` | On incremental runs with communities on, recommend a rebuild (WARNING and the community_rebuild_recommended metric) when at least this share of the entities the run clustered also belongs to an earlier level-0 community. A delta run clusters only its own documents, so such an entity sits in two communities and the earlier community's report misses what the run added; indexing.reset: true re-clusters the whole graph. |
 | `max_failure_rate` | number (≥ 0.0, ≤ 1.0) | `0.2` | Per-index-type write failure rate above which the indexing stage fails, and share of communities without a report above which community detection fails; below it the affected documents are recorded FAILED and retried. A fully failed index type always fails the stage. 1.0 disables the partial-failure gate. |
 | `max_document_failures` | integer (≥ 1) | `3` | Incremental runs: a document recorded FAILED this many consecutive runs with unchanged content is no longer retried. It stays FAILED and is skipped as unchanged (with a WARNING) until its content changes or this value is raised. |
@@ -814,4 +873,5 @@ These keys are refused at load with the key that replaced them.
 | `evaluation.embedding_model_id` | `models.embedding.model_id` |
 | `graph.visualization.embeddings` | `models.embedding.model_id` |
 | `providers.rerank.model_id` | `models.rerank` |
+| `aws.dynamodb.enabled` | `providers.doc_status.enabled` |
 | `search.reranking.rerank_model_id` | `models.rerank` |

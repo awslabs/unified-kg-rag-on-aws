@@ -19,6 +19,7 @@ from unified_kg_rag.domain.models import (
     DocStatusRecord,
     DocumentDelta,
     ExtractionSettings,
+    StoredDocument,
 )
 from unified_kg_rag.shared import DataProcessingError
 from unified_kg_rag.shared.utils.document_identity import doc_id_namespace
@@ -129,30 +130,17 @@ class FakeDocStatusStore:
             for doc_id, record in self._records.items()
             if namespace is None or doc_id_namespace(doc_id) == namespace
         }
-        delta = DocumentDelta()
-        for doc_id, content_hash in incoming.items():
-            existing = stored.get(doc_id)
-            if existing is None:
-                delta.new.append(doc_id)
-            elif (
-                existing.content_hash != content_hash
-                or existing.status is DocStatus.FAILED
-            ):
-                delta.changed.append(doc_id)
-            elif extraction_fingerprint is not None and (
-                existing.extraction_fingerprint not in (None, extraction_fingerprint)
-            ):
-                delta.changed.append(doc_id)
-                delta.settings_changed.append(doc_id)
-            else:
-                delta.unchanged.append(doc_id)
-        incoming_ids = set(incoming)
-        delta.deleted = [
-            doc_id
-            for doc_id, record in stored.items()
-            if doc_id not in incoming_ids and (scope is None or record.scope == scope)
-        ]
-        delta.stored_scopes = sorted(
-            {r.scope for r in stored.values() if r.scope is not None}
+        return DocumentDelta.classify(
+            incoming,
+            {
+                doc_id: StoredDocument(
+                    record.content_hash,
+                    record.scope,
+                    record.status is DocStatus.FAILED,
+                    record.extraction_fingerprint,
+                )
+                for doc_id, record in stored.items()
+            },
+            scope,
+            extraction_fingerprint,
         )
-        return delta

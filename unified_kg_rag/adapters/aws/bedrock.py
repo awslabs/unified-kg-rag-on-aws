@@ -7,7 +7,6 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import AbstractContextManager
 from typing import Any, ClassVar, Generic, Literal, TypeVar
-from uuid import UUID
 
 import boto3
 from aws_assume_role_lib.aws_assume_role_lib import assume_role
@@ -23,7 +22,6 @@ from langchain_aws import BedrockEmbeddings, ChatBedrock, ChatBedrockConverse
 from langchain_aws.document_compressors.rerank import BedrockRerank
 from langchain_core.callbacks import BaseCallbackHandler, BaseCallbackManager
 from langchain_core.documents import Document
-from langchain_core.outputs import ChatGeneration, LLMResult
 from pydantic import Field, PrivateAttr
 
 from unified_kg_rag.adapters.aws.bedrock_models import (
@@ -545,63 +543,6 @@ def _message_guardrail_intervened(metadata: dict[str, Any]) -> bool:
     return metadata.get(_GUARDRAIL_ACTION_KEY) == "INTERVENED"
 
 
-class GuardrailInterventionHandler(BaseCallbackHandler):
-    """Make guardrail interventions visible instead of silently degrading.
-
-    When a guardrail blocks or masks a call, Bedrock still returns a normal
-    response (the configured "blocked" message), so a downstream parser just
-    sees text with no entities/answer. This handler logs each intervention at
-    WARNING with the model purpose and a process-wide running count.
-
-    It deliberately does NOT raise: on the query path the blocked message *is*
-    the intended user-facing response, and raising from a callback would turn
-    it into an opaque chain error. Operators alert on the WARNING.
-    """
-
-    _count: ClassVar[int] = 0
-    _lock: ClassVar[threading.Lock] = threading.Lock()
-
-    def __init__(self, guardrail_identifier: str, purpose: ModelPurpose) -> None:
-        self.guardrail_identifier = guardrail_identifier
-        self.purpose = purpose
-        # InvokeModel with trace enabled reports through on_llm_error and then
-        # still calls on_llm_end; remember those runs to count each call once.
-        self._flagged_runs: set[UUID] = set()
-
-    def _record(self) -> None:
-        with self._lock:
-            type(self)._count += 1
-            total = type(self)._count
-        logger.warning(
-            "Bedrock guardrail '%s' intervened on a %s model call; the response "
-            "was blocked or masked (interventions in this process: %d)",
-            self.guardrail_identifier,
-            self.purpose.value,
-            total,
-        )
-
-    def on_llm_error(
-        self, error: BaseException, *, run_id: UUID, **kwargs: Any
-    ) -> None:
-        if kwargs.get("reason") == "GUARDRAIL_INTERVENED":
-            self._flagged_runs.add(run_id)
-            self._record()
-
-    def on_llm_end(self, response: LLMResult, *, run_id: UUID, **kwargs: Any) -> None:
-        if run_id in self._flagged_runs:
-            self._flagged_runs.discard(run_id)
-            return
-        for generations in response.generations:
-            for generation in generations:
-                if isinstance(
-                    generation, ChatGeneration
-                ) and _message_guardrail_intervened(
-                    generation.message.response_metadata
-                ):
-                    self._record()
-                    return
-
-
 class BedrockLanguageModelFactory(
     BaseBedrockModelFactory[str, LanguageModelInfo, ChatBedrock | ChatBedrockConverse]
 ):
@@ -796,11 +737,6 @@ class BedrockLanguageModelFactory(
                 )
             else:
                 config.setdefault("model_kwargs", {}).update(think_config)
-        self._apply_guardrail(
-            config,
-            is_cross_region,
-            ModelPurpose(kwargs.get("model_purpose", ModelPurpose.QUERY)),
-        )
 
     @staticmethod
     def _apply_tracing(
@@ -892,61 +828,6 @@ class BedrockLanguageModelFactory(
                 f"model. Supported levels: {sorted(allowed)}"
             )
         return str(effort)
-
-    def _apply_guardrail(
-        self,
-        config: dict[str, Any],
-        is_cross_region: bool,
-        purpose: ModelPurpose = ModelPurpose.QUERY,
-    ) -> None:
-        """Attach the guardrail to an ingestion/evaluation model under ``apply_to: all``.
-
-        ChatBedrockConverse exposes ``guardrail_config`` (Converse-API shape);
-        ChatBedrock exposes ``guardrails`` (InvokeModel shape). Query models
-        never get one (``GuardrailConfig.applies_to``): an attached guardrail
-        evaluates the whole prompt, so on Converse it judges the retrieved
-        corpus and the developer instructions as user input, and on
-        InvokeModel its prompt-attack filter does nothing without input tags.
-        The query chain screens the raw query and the answer with
-        ``ApplyGuardrail`` instead (``adapters.guardrail.bedrock``). A guarded
-        model also gets a :class:`GuardrailInterventionHandler` so
-        interventions are logged.
-        """
-        guardrail = self.config.aws.bedrock.guardrail
-        if guardrail.identifier is None or not guardrail.applies_to(purpose):
-            if guardrail.enabled:
-                logger.debug(
-                    "Not attaching Bedrock guardrail to %s model (apply_to='%s')",
-                    purpose.value,
-                    guardrail.apply_to,
-                )
-            return
-        if is_cross_region:
-            # ChatBedrockConverse passes guardrail_config straight to the
-            # Converse API, whose trace field is the literal "enabled"/"disabled".
-            config["guardrail_config"] = {
-                "guardrailIdentifier": guardrail.identifier,
-                "guardrailVersion": guardrail.version,
-                "trace": "enabled" if guardrail.trace else "disabled",
-            }
-        else:
-            # ChatBedrock (InvokeModel) treats guardrails["trace"] as a
-            # truthiness flag (`if self.guardrails.get("trace")`), so a non-empty
-            # string like "disabled" would wrongly enable tracing — pass a bool.
-            config["guardrails"] = {
-                "guardrailIdentifier": guardrail.identifier,
-                "guardrailVersion": guardrail.version,
-                "trace": guardrail.trace,
-            }
-        config["callbacks"] = with_callback(
-            config.get("callbacks"),
-            GuardrailInterventionHandler(guardrail.identifier, purpose),
-        )
-        logger.debug(
-            "Applied Bedrock guardrail '%s' to %s model",
-            guardrail.identifier,
-            purpose.value,
-        )
 
     @staticmethod
     def _validate_max_tokens(max_tokens: int, model_info: LanguageModelInfo) -> int:

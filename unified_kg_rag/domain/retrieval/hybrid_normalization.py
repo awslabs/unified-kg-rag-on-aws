@@ -9,15 +9,16 @@ fuses the hits of a hybrid search's lexical and kNN searches with
 ``vector_weight``), on every engine:
 
 * each sub-query's scores are min-max normalized over that sub-query's own
-  hits: ``(score - min) / (max - min)``; a normalized 0 becomes
-  ``MIN_SCORE`` (0.001), and when ``max == min`` every hit scores 1.0;
+  hits: ``(score - min) / (max - min)``, at least ``MIN_SCORE`` (0.001), and
+  when ``max == min`` every hit scores 1.0;
 * the combined score is the weighted arithmetic mean over *every* sub-query: a
   document a sub-query did not return scores 0 there, and that sub-query's
   weight still counts in the denominator.
 
-Because of ``MIN_SCORE``, a hit just above its sub-query's minimum can
-normalize below the minimum hit itself (0.0001 < 0.001); this mirrors the
-plugin rather than correcting it.
+The plugin raises only an exact 0 to ``MIN_SCORE``, so a hit just above its
+sub-query's minimum normalized below the minimum hit itself (0.0001 < 0.001)
+and lost its rank to it. The fusion runs client-side, so it floors every
+normalized score instead: the order within a sub-query is kept.
 """
 
 MIN_SCORE = 0.001
@@ -36,8 +37,7 @@ def _normalize(hits: list[tuple[str, float]]) -> dict[str, float]:
         return dict.fromkeys(scores, SINGLE_RESULT_SCORE)
     span = high - low
     return {
-        doc_id: (score - low) / span if score != low else MIN_SCORE
-        for doc_id, score in scores.items()
+        doc_id: max((score - low) / span, MIN_SCORE) for doc_id, score in scores.items()
     }
 
 

@@ -533,7 +533,7 @@ class IncrementalIndexer:
         prunes what this run wrote.
 
         Entities and relationships are first merged with the stored graph state
-        they touch (``indexing.cross_run_merge``); the communities and claims
+        they touch; the communities and claims
         referencing a delta item that merged into a stored one under another
         id are pointed at that id. Claims are merged with the stored claims
         of the same id, which other documents may have contributed to. Once
@@ -1087,7 +1087,7 @@ def filter_to_delta(
             f"Doc-status registry: could not diff the corpus against the "
             f"registry ({type(e).__name__}: {e}). Incremental indexing needs "
             "the registry; fix it and re-run, or turn incremental indexing off "
-            "(aws.dynamodb.enabled / providers.doc_status.enabled: false) to "
+            "(providers.doc_status.enabled: false) to "
             "run without it."
         ) from e
     stored_spelling = _stored_spelling(source_scope, namespace, scope, delta)

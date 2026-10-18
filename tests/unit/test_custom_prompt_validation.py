@@ -90,6 +90,25 @@ def test_documented_user_guide_example_is_valid(
     assert "output tag" not in caplog.text
 
 
+@pytest.fixture(autouse=True)
+def _fresh_warnings() -> None:
+    # The warning is emitted once per override text and process.
+    from unified_kg_rag.domain.models import config as config_module
+
+    config_module._warn_missing_output_tags.cache_clear()
+
+
+def test_the_output_tag_warning_is_given_once_per_override(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # A config is validated once per layer and again per provider-flag
+    # rebuild; the same override warned each time.
+    with caplog.at_level("WARNING", logger=_CONFIG_LOGGER):
+        for _ in range(3):
+            Config(custom_prompts={"graph_extraction_system": "You extract entities."})
+    assert sum("output tag" in r.getMessage() for r in caplog.records) == 1
+
+
 def test_system_override_without_the_output_format_warns(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

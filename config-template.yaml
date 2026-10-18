@@ -78,16 +78,6 @@ aws:
       # Screen each final answer (source OUTPUT). A streamed answer is then
       # generated in full, screened, and delivered as one chunk.
       check_output: true
-      # Which model calls get the guardrail attached as well:
-      #   query - (default) none. Ingestion (chunking, translation, graph
-      #           extraction, gleaning, claims, summarization, community
-      #           reports) and evaluation judges run unguarded.
-      #   all   - every ingestion and evaluation call. A PII-anonymizing
-      #           guardrail then rewrites names in extraction output to
-      #           placeholders (distinct people merge into one entity) and a
-      #           prompt-attack filter can block instruction-like corpus text
-      #           (that chunk yields no entities).
-      apply_to: "query"
     # Retry on transient Bedrock errors that botocore does not retry, such as
     # HTTP 424 ModelErrorException. Applies to every embedding request and to
     # query-time LLM calls (strategy routing, query entity/keyword extraction,
@@ -143,11 +133,12 @@ aws:
       # aws:kms: force SSE-KMS with kms_key_id (required).
       encryption_type: "BUCKET_DEFAULT"
       kms_key_id: null
-  # DynamoDB document-status registry for incremental indexing. When enabled,
-  # each indexing run diffs the corpus against this table (by content hash) and
-  # only re-indexes new/changed documents, merging into the live graph.
+  # DynamoDB document-status registry for incremental indexing (with
+  # providers.doc_status.kind dynamodb, the default). With
+  # providers.doc_status.enabled: true each indexing run diffs the corpus
+  # against this table (by content hash) and only re-indexes new/changed
+  # documents, merging into the live graph.
   dynamodb:
-    enabled: false
     # On the bundled CDK app (iac/) the Fargate task injects
     # UKR__AWS__DYNAMODB__TABLE_NAME (the IaC table, "graphrag-doc-status-v2" in dev) and
     # UKR__AWS__DYNAMODB__CREATE_TABLE_IF_MISSING=false; these env vars override both keys
@@ -224,8 +215,8 @@ backend: "aws"
 #   doc_status:
 #     # dynamodb | sqlite
 #     kind: "dynamodb"
-#     # Incremental indexing on/off; null follows aws.dynamodb.enabled.
-#     enabled: null
+#     # Incremental indexing on/off (the one switch; was aws.dynamodb.enabled).
+#     enabled: false
 #     # SQLite registry file (kind: sqlite); relative to this config file.
 #     sqlite_path: ".unified-kg-rag/doc-status.sqlite3"
 
@@ -549,15 +540,6 @@ graph:
 indexing:
   reset: false
   additional_suffix: null
-  # On incremental (delta) runs, union the delta with existing graph state
-  # (description/text_unit_ids/weight) before upsert instead of
-  # overwriting. Requires a graph adapter that supports read-back. On by
-  # default: with false, an entity shared with unchanged documents is replaced
-  # by its delta-only description and text_unit_ids (its lineage to the
-  # unchanged documents' chunks is lost). Delta entities match stored ones by
-  # the full build's rule (processing.fuzzy_entity_resolution), which costs an
-  # entity-name projection per delta run.
-  cross_run_merge: true
   # Incremental runs cluster only their delta, so an entity an earlier run
   # clustered joins a second level-0 community. At this share of the run's
   # clustered entities the run logs a WARNING recommending indexing.reset
@@ -572,7 +554,7 @@ indexing:
   # FAILED and retried on the next incremental run. Set to 1.0 to disable the
   # partial-failure gate.
   max_failure_rate: 0.2
-  # Incremental runs only (aws.dynamodb.enabled): a document recorded FAILED
+  # Incremental runs only (providers.doc_status.enabled): a document recorded FAILED
   # this many consecutive runs with unchanged content is no longer retried. It
   # stays FAILED and is skipped as unchanged (WARNING per run) until the file
   # changes or this value is raised.

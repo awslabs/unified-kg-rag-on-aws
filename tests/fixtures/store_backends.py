@@ -15,7 +15,7 @@ so one test states a store contract once and runs it on each:
   ``LOCAL_STORES_OPENSEARCH_PORT`` point it at a stack published on other
   ports.
 - ``aws``: Neptune and OpenSearch Service (``pytest.mark.aws``). The config is
-  ``GRAPHRAG_TEST_CONFIG`` if set, else the defaults; ``UKR__AWS__NEPTUNE__ENDPOINT`` and
+  ``UKR_TEST_CONFIG`` if set, else the defaults; ``UKR__AWS__NEPTUNE__ENDPOINT`` and
   ``UKR__AWS__OPENSEARCH__ENDPOINT`` override the endpoints. Skipped without both
   endpoints.
 
@@ -105,7 +105,7 @@ def local_store_config() -> Config:
 
 
 def _aws_config() -> Config:
-    path = os.getenv("GRAPHRAG_TEST_CONFIG")
+    path = os.getenv("UKR_TEST_CONFIG")
     config = (
         get_config(path).model_copy(deep=True)
         if path and Path(path).is_file()

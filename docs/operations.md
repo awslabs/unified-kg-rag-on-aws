@@ -81,7 +81,7 @@ exits non-zero when it is missing or corrupt.
 
 ### Incremental runs
 
-With `aws.dynamodb.enabled: true` (the container image sets it), every
+With `providers.doc_status.enabled: true` (the container image sets it), every
 `run-ingestion` diffs the corpus against the doc-status registry by content
 hash and indexes only the new and changed documents. A file missing from the
 source is treated as deleted, and what only it stated is removed.
@@ -124,15 +124,15 @@ When `overlap_share` reaches `indexing.community_drift_threshold` (default
 `0.5`) the run logs a WARNING recommending `indexing.reset: true` and reports
 `community_rebuild_recommended: 1` next to `community_drift_overlap_share`,
 which an alarm can watch. The counts accumulate over the runs that touch an
-entity, so read them as an upper bound. A run without communities or with
-`indexing.cross_run_merge: false` reports no overlap.
+entity, so read them as an upper bound. A run without communities reports no
+overlap.
 
 **When the registry cannot be read** (missing table, denied access,
 throttling that outlasts the client's retries), the `document_loading` stage
 fails with `DocStatusRegistryError`, naming the table and the cause. The run
 does not fall back to indexing every document, which would replace the
 suffix's content with this run's documents only. Fix the registry and re-run
-with the same `--pipeline-id`, or set `aws.dynamodb.enabled: false` to run
+with the same `--pipeline-id`, or set `providers.doc_status.enabled: false` to run
 without incremental indexing.
 
 Coming from a pre-release build: nothing it stored is read; see
@@ -825,7 +825,7 @@ Messages are abridged; the log line names the key, file or stage involved. A sto
 | `Configuration validation error: ...` | A config value has the wrong type or an unsupported value | Fix the named key |
 | `ConfigurationError: Unknown config keys: '<path>' ...` (exit code 2) | A typo, or a key removed or renamed in this release | Correct or delete the key ([CHANGELOG](../CHANGELOG.md) names the replacement). `--allow-unknown-keys` loads the file anyway, logging `Unknown config key '<path>' is ignored` (WARNING) per key |
 | `--source-directory is required for pipeline execution` (exit 2, like the usage errors below) | No `--source-directory` and no `$UKR_SOURCE_DIRECTORY` | Pass it; `--verify-metadata` needs `--pipeline-id` instead |
-| `--s3-bucket-name must be specified for --s3-sync` | `--s3-sync` without a bucket | Pass `--s3-bucket-name` |
+| `--s3-sync needs --s3-bucket-name or aws.s3.bucket_name` | `--s3-sync` without a bucket | Pass `--s3-bucket-name` or set `aws.s3.bucket_name` (`UKR__AWS__S3__BUCKET_NAME`) |
 | `--pipeline-id is required for --resume-from-stage` | Resuming needs the earlier run | Pass that run's `--pipeline-id` |
 | `--enabled-stages: invalid stage names ...` | `--enabled-stages` names an unknown stage | Use a name from the list in the message |
 | `argument --resume-from-stage: Unknown pipeline stage ...` (exit 2) | `--resume-from-stage` names an unknown stage | Use a name from the list in the message (any case) |

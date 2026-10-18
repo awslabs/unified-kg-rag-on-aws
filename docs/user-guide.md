@@ -292,8 +292,7 @@ points at `localhost` (see [Local stores in containers](#local-stores-in-contain
   settings) apply to them as to Neptune and OpenSearch, and a write waits up
   to `search.store_timeout_seconds` for another process's lock.
 - **Incremental indexing** uses the SQLite registry when
-  `providers.doc_status.enabled: true` (or `aws.dynamodb.enabled: true`, the
-  original switch); [`docker/config.local.yaml`](../docker/config.local.yaml)
+  `providers.doc_status.enabled: true`; [`docker/config.local.yaml`](../docker/config.local.yaml)
   turns it on. A relative `sqlite_path` is resolved like the stores', and the
   run logs the database's absolute path.
 - **Token counting** uses the script-aware estimate (the same one Bedrock falls
@@ -505,7 +504,7 @@ disables the retry.
 |---|---|---|
 | `aws.region_name` | `"us-west-2"` | Your stores are in another region. Bedrock follows it unless `aws.bedrock.region_name` is set |
 | `aws.neptune.endpoint`, `aws.opensearch.endpoint` | `null` | Always, for the AWS stores (the CDK stack injects them) |
-| `aws.dynamodb.enabled` | `false` | You want incremental indexing ([§5](#5-incremental-indexing)) |
+| `providers.doc_status.enabled` | `false` | You want incremental indexing ([§5](#5-incremental-indexing)) |
 | `models.default`, `models.fast` | Claude Sonnet 5.5, Claude Haiku 5.5 | You use other models ([Model selection notes](#model-selection-notes)) |
 | `processing.max_concurrency` | `40` | The logs show `ThrottlingException` retries (lower it), or your Bedrock quota allows more |
 | `processing.graph_extraction.entity_types` | 7 generic types | You adapt extraction to a domain ([§9](#9-domain-adaptation)) |
@@ -615,12 +614,12 @@ with the `ApplyGuardrail` API; the guardrail must exist in
   Contextual grounding checks are not run: they need the grounding source and
   query as qualified content, which the answer screen does not send.
 - **Ingestion and evaluation.** Ingestion models, the prompt tuner and the
-  evaluation judges run unguarded by default (`apply_to: "query"`): a PII
-  guardrail that anonymizes `NAME` rewrites extracted entity names to a
-  placeholder such as `{NAME}` (distinct people merge into one node), and a
-  `PROMPT_ATTACK` filter can block instruction-like corpus text.
-  `apply_to: "all"` attaches the guardrail to those calls; use it only with a
-  policy that is safe for extraction. On the query path `NAME` anonymization
+  evaluation judges run unguarded: a PII guardrail that anonymizes `NAME`
+  rewrites extracted entity names to a placeholder such as `{NAME}`
+  (distinct people merge into one node), and a `PROMPT_ATTACK` filter can
+  block instruction-like corpus text. (`apply_to`, which attached the
+  guardrail to those calls, is removed; a config that sets it loads with a
+  warning.) On the query path `NAME` anonymization
   also hurts: a question about a person loses the name it retrieves by, and
   answers show `{NAME}`. The baseline guardrail that `iac/` creates therefore
   anonymizes email, phone and card numbers but not `NAME`.
@@ -660,7 +659,11 @@ are attributes of the log record.
 ### Custom prompts
 
 Every prompt has a `custom_prompts.*_system` / `*_human` override (default
-`null` = the built-in prompt in `unified_kg_rag/domain/prompts/`). Override
+`null` = the built-in prompt in `unified_kg_rag/domain/prompts/`) except
+the prompts of the intelligent chunker (`TextChunkingPrompt`), document
+translation (`TextTranslationPrompt`), query translation
+(`TranslationPrompt`), global search's community rating
+(`CommunityRelevancePrompt`) and reduce step (`MapReduceSummaryPrompt`), which are not overridable. Override
 what you need and leave the rest `null` ([§9](#9-domain-adaptation)).
 Overrides are validated at load: unknown `{variables}` and missing data
 variables (such as `{input_text}`) are errors, and a literal brace is written
@@ -713,7 +716,7 @@ and `--pipeline-id`; an explicit flag wins. `UKR_METRICS_ENVIRONMENT` is the
 `Environment` dimension of `--metrics-sink cloudwatch`. The variables the CDK
 compute stack injects are listed in
 [`iac/README.md`](../iac/README.md#2-build-and-push-the-app-image); incremental
-indexing there still needs `aws.dynamodb.enabled: true` in the config file
+indexing there still needs `providers.doc_status.enabled: true` in the config file
 (the image's config sets it).
 
 The CLIs also load a `.env` file with python-dotenv: only `./.env` in the
@@ -876,8 +879,8 @@ the same `--pipeline-id`. With the doc-status registry on it is incremental
 | `--output-directory` | none (no export) | Export parsed documents as JSON here for inspection (must not be the source directory) |
 | `--cache-directory` | `cache` | Pipeline cache + intermediate results |
 | `--force-rebuild` | off | Recompute every stage, ignoring the cached stage outputs; the cache is rewritten with the new outputs |
-| `--s3-sync` | off | Sync cache to S3 (requires `--s3-bucket-name`) |
-| `--s3-bucket-name` | — | S3 bucket for cache sync |
+| `--s3-sync` | off | Sync cache to S3 (needs `--s3-bucket-name` or `aws.s3.bucket_name`) |
+| `--s3-bucket-name` | `aws.s3.bucket_name` | S3 bucket for cache sync |
 | `--s3-prefix` | `pipeline-runs` | S3 key prefix for cache files |
 | `--pipeline-id` | `$UKR_PIPELINE_ID` | Existing run to resume/inspect. If the flag is omitted it falls back to the `UKR_PIPELINE_ID` environment variable. The id names the run's cache directory and S3 prefix, so it accepts letters, digits, `.`, `_` and `-` only: up to 128 characters, starting with a letter or digit, with no `..`. |
 | `--resume-from-stage` | — | Stage to resume from, by name, case-insensitive (requires `--pipeline-id`); an unknown name is a usage error (exit 2) |
@@ -1315,9 +1318,11 @@ rebuilding everything.
 ### Enable it
 
 ```yaml
+providers:
+  doc_status:
+    enabled: true          # kind: dynamodb (the default) or sqlite
 aws:
   dynamodb:
-    enabled: true
     table_name: "unified-kg-rag-on-aws-doc-status-v2"
     create_table_if_missing: true
 ```
@@ -1493,15 +1498,19 @@ The SQLite registry of local mode has no such limit.
 
 ### Cross-run merge
 
-By default (`indexing.cross_run_merge: true`) a delta run reads the
-entities and relationships it touches back from the graph and merges the delta
-into them (descriptions, `text_unit_ids`, weights) before the upsert, so an
-entity shared with unchanged documents keeps their descriptions and chunk
-lineage (which `mix` follows). Merged descriptions over the summarization
-budget are re-summarized. `false` overwrites those fields with the delta's
-values, and the entity loses its lineage to the unchanged documents' chunks; a
-graph adapter without read-back degrades to that.
+A delta run reads the entities and relationships it touches back from the
+graph and merges the delta into them (descriptions, `text_unit_ids`, weights)
+before the upsert, so an entity shared with unchanged documents keeps their
+descriptions and chunk lineage (which `mix` follows). Merged descriptions over
+the summarization budget are re-summarized. A graph adapter without read-back
+degrades to overwriting those fields with the delta's values.
 
+- **Always on.** The merge cannot be turned off. A config or `UKR__` variable
+  that still sets the removed `indexing.cross_run_merge` key logs a WARNING and
+  the key is ignored.
+- **Why `false` was removed.** It overwrote a shared entity with the delta's
+  lineage, so removing the changed document later deleted an entity that
+  unchanged documents still stated.
 - **Claims** merge the same way. A claim id is keyed on the entities its
   subject and object resolve to, its type and its dates, not on the document
   or the spelling, so a claim several documents state ("Acme Inc" in one,
@@ -2061,8 +2070,8 @@ processing:
 
 ### B. `custom_prompts` overrides
 
-Override any prompt's `*_system` / `*_human` text (defaults are `null` = use the
-built-in prompt). Variables in `{braces}` are filled by the framework — keep
+Override a prompt's `*_system` / `*_human` text (defaults are `null` = use the
+built-in prompt; five prompts have no override, see [Custom prompts](#custom-prompts)). Variables in `{braces}` are filled by the framework — keep
 them. Common overrides:
 
 ```yaml
@@ -2134,7 +2143,7 @@ Every CLI (`run-ingestion`, `run-rag`, `run-eval`, `run-visualization`,
 |---|---|
 | `0` | Success |
 | `1` | The run failed: a failed stage or query, a breached `--max-failure-rate`, a failed upload, nothing rendered |
-| `2` | Usage or configuration error, before any work: an unknown or invalid flag, a missing input file or directory, an invalid configuration file or environment override, an unset store endpoint |
+| `2` | Usage or configuration error: an unknown or invalid flag, a missing input file or directory, an invalid configuration file or environment override, an unset store endpoint (all before any work), or a configuration conflict found while running (`ConfigurationError`, e.g. an index built with the registry off) |
 | `130` | Interrupted with Ctrl-C (SIGINT) |
 | `143` | Stopped by SIGTERM (ECS `StopTask`, a Step Functions timeout); `run-ingestion` checkpoints its finished stages first, and `run-eval` with an `s3://` output directory uploads the results of the runs that finished (or keeps them locally and logs the path when the upload fails) |
 

@@ -3,8 +3,7 @@
 """Invariants of ``combine_min_max`` (OpenSearch hybrid min-max fusion).
 
 Raw scores are drawn as integers in [0, 100]: any normalized score other than
-the floored minimum is then at least 0.01, above ``MIN_SCORE``, so the
-plugin's flooring quirk (see the module docstring) cannot reorder hits.
+the floored minimum is then at least 0.01, above ``MIN_SCORE``.
 """
 
 from __future__ import annotations

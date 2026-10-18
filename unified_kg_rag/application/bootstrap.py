@@ -23,6 +23,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from pydantic import ValidationError
+
 from unified_kg_rag.adapters.provider_registry import (
     ProviderRole,
     get_provider_builder,
@@ -33,14 +35,12 @@ from unified_kg_rag.domain.models import Config
 from unified_kg_rag.domain.models.config import merge_over
 from unified_kg_rag.ports.guardrail import ContentGuardPort
 from unified_kg_rag.shared import ConfigurationError, get_logger
+from unified_kg_rag.shared.config import validation_summary
 
 if TYPE_CHECKING:
     import boto3
 
 logger = get_logger(__name__)
-
-# Roles whose kind the run needs; the token counter follows the LLM's.
-_CHECKED_ROLES = tuple(ProviderRole)
 
 
 def check_providers(config: Config) -> dict[ProviderRole, str]:
@@ -50,7 +50,7 @@ def check_providers(config: Config) -> dict[ProviderRole, str]:
         ConfigurationError: A role names a kind nothing is registered for.
     """
     selected: dict[ProviderRole, str] = {}
-    for role in _CHECKED_ROLES:
+    for role in ProviderRole:
         kind = provider_kind(config, role)
         get_provider_builder(role, kind)
         selected[role] = kind
@@ -153,5 +153,7 @@ def with_provider_overrides(
     data = merge_over(data, overrides)
     try:
         return Config.model_validate(data)
-    except ValueError as e:
-        raise ConfigurationError(f"Invalid provider settings: {e}") from e
+    except ValidationError as e:
+        raise ConfigurationError(
+            f"Invalid provider settings: {validation_summary(e)}"
+        ) from e

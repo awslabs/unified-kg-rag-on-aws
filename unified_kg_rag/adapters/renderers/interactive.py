@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 import html
 import json
+from collections.abc import Mapping
 from typing import Any, ClassVar
 
 import networkx as nx
@@ -9,6 +10,7 @@ import numpy as np
 from pyvis.network import Network
 
 from unified_kg_rag.domain.models import HierarchicalCommunity
+from unified_kg_rag.domain.models.config import InteractiveGraphSettings
 from unified_kg_rag.shared import get_logger
 
 logger = get_logger(__name__)
@@ -21,23 +23,21 @@ class InteractiveRenderer:
     MAX_EDGE_WIDTH: ClassVar[float] = 7.0
     MIN_EDGE_OPACITY: ClassVar[float] = 0.3
     MAX_EDGE_OPACITY: ClassVar[float] = 0.8
-    DEFAULT_MAX_NODES: ClassVar[int] = 2000
     # Largest distance of a node from the layout centre, in canvas pixels.
     LAYOUT_EXTENT: ClassVar[float] = 1200
 
-    def __init__(self, config: dict[str, Any]) -> None:
-        self.height = config.get("height", "900px")
-        self.width = config.get("width", "100%")
-        # The same default as graph.visualization.interactive, which a
-        # user-set dict replaces whole.
-        self.physics_enabled = config.get("physics_enabled", False)
-        self.cdn_resources = config.get("cdn_resources", "in_line")
-        self.background_color = config.get("background_color", "#f8fafc")
-        self.font_family = config.get("font_family", "Arial")
-        self.tooltip_delay = config.get("tooltip_delay", 200)
+    def __init__(self, config: InteractiveGraphSettings | Mapping[str, Any]) -> None:
+        settings = InteractiveGraphSettings.model_validate(config)
+        self.height = settings.height
+        self.width = settings.width
+        self.physics_enabled = settings.physics_enabled
+        self.cdn_resources = settings.cdn_resources
+        self.background_color = settings.background_color
+        self.font_family = settings.font_family
+        self.tooltip_delay = settings.tooltip_delay
         # A browser cannot lay out a pyvis page of tens of thousands of nodes;
         # keep the top-N by degree (None/0 = no cap).
-        self.max_nodes = config.get("max_nodes", self.DEFAULT_MAX_NODES)
+        self.max_nodes = settings.max_nodes
 
     def create_network_visualization(
         self, graph: nx.Graph, layout: dict[str, tuple[float, float]], outputs_path: str

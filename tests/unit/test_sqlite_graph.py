@@ -282,7 +282,7 @@ def test_delete_by_id_drops_edges_and_memberships(
     assert _members(indexer) == set()
 
 
-def test_delete_by_id_scoped_and_unscoped(indexer: SQLiteGraphIndexer) -> None:
+def test_delete_by_id_stays_in_one_suffix(indexer: SQLiteGraphIndexer) -> None:
     indexer.upsert_entities([_entity("e1"), _entity("e1", "s1"), _entity("e2", "s1")])
     indexer.upsert_relationships([_rel("r1", "e1", "e2", "s1")])
     indexer.delete_by_id(["e1"], suffix="s1")
@@ -290,14 +290,16 @@ def test_delete_by_id_scoped_and_unscoped(indexer: SQLiteGraphIndexer) -> None:
     assert indexer.read_entities(["e1"], suffix="s1") == []
     assert indexer.read_relationships(["r1"], suffix="s1") == []
 
+    # Without a suffix: the default suffix's only. It used to delete the id
+    # under every label, another tenant's vertex included.
     indexer.upsert_entities([_entity("e1", "s1")])
     indexer.delete_by_id(["e1"])
     assert indexer.read_entities(["e1"]) == []
-    assert indexer.read_entities(["e1"], suffix="s1") == []
+    assert [e.id for e in indexer.read_entities(["e1"], suffix="s1")] == ["e1"]
     assert [e.id for e in indexer.read_entities(["e2"], suffix="s1")] == ["e2"]
 
 
-def test_unscoped_delete_by_id_deletes_edges_by_id(
+def test_delete_by_id_deletes_edges_by_id(
     indexer: SQLiteGraphIndexer,
 ) -> None:
     _graph(indexer, [("a", "b")])
@@ -329,11 +331,11 @@ def test_neighbor_and_incident_reads(indexer: SQLiteGraphIndexer) -> None:
     assert indexer.read_neighbor_ids(["a"], suffix="s1") == {"a": ["x"]}
     assert indexer.find_incident_relationship_ids(["b"]) == ["a-b"]
     assert indexer.find_incident_relationship_ids(["a"], suffix="s1") == ["s-r"]
+    # No suffix is the default suffix, not every suffix.
     assert indexer.find_incident_relationship_ids(["a"], suffix=None) == [
         "a-a",
         "a-b",
         "c-a",
-        "s-r",
     ]
 
 
