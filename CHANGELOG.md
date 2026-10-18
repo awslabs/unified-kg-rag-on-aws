@@ -1758,6 +1758,9 @@ changed once with the full-config keys (#332).
   run renames the entity under its id (a case variant, "ACME Inc" for
   "Acme Inc", takes over): its claims are derived again, and a claim whose
   subject or object name changed is rewritten, not only its lineage (#PR).
+- A deleted community's id leaves the stored text units that still name
+  it (a later delta wrote the community anew under its id without them):
+  `VectorIndexer.prune_text_unit_communities` (#PR).
 - Removing a document no longer leaves its text unnoticed in community
   reports: a kept report that cites a removed text unit is counted in the
   `community_drift` metrics (`outdated_reports`, deletion-only runs

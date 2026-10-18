@@ -581,3 +581,38 @@ def test_the_build_record_is_read_back_by_the_retriever(
         2,
         "full",
     )
+
+
+def test_deleted_communities_leave_the_text_units_naming_them(
+    harness: StoreHarness,
+) -> None:
+    indexer = harness.vector_indexer
+    tenant = harness.suffix("s1")
+    t1, t2 = _text_units()
+    _write(
+        harness,
+        "text_units",
+        "index",
+        [
+            t1.model_copy(update={"community_ids": ["c1", "c2"]}),
+            t2.model_copy(update={"community_ids": ["c1"]}),
+        ],
+    )
+    _write(
+        harness,
+        "text_units",
+        "upsert",
+        _tagged([t1.model_copy(update={"id": "t9", "community_ids": ["c1"]})], tenant),
+    )
+    prefix = indexer.opensearch_config.text_units_index_prefix
+
+    stats = indexer.prune_text_unit_communities(["c1"], "default")
+
+    assert stats.failed_items == 0, stats.errors
+    assert not indexer.find_documents(prefix, "community_ids", ["c1"], "default")
+    assert set(indexer.find_documents(prefix, "community_ids", ["c2"], "default")) == {
+        "t1"
+    }
+    assert set(indexer.find_documents(prefix, "community_ids", ["c1"], tenant)) == {
+        "t9"
+    }

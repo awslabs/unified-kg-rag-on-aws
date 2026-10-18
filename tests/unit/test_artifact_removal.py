@@ -420,3 +420,32 @@ def test_a_claim_the_derivation_drops_is_retired(mocker) -> None:
 
     assert manager._derive_claims("default", [stale]) == []
     assert "stale" in manager._dropped["default"]
+
+
+def test_a_deleted_community_leaves_a_kept_text_unit_naming_it() -> None:
+    # A later delta wrote "c" anew under its id without t2, which still names
+    # it; once "c" goes with t1, t2 names it no more.
+    manager, graph, vector = _manager()
+    vector.upsert_text_units(
+        [
+            TextUnit(id="t1", text="...", document_ids=["d"], community_ids=["c"]),
+            TextUnit(id="t2", text="...", document_ids=["e"], community_ids=["c"]),
+        ]
+    )
+    graph.upsert_communities(
+        [
+            Community(
+                id="c",
+                name="c",
+                level="0",
+                parent="",
+                children=[],
+                text_unit_ids=["t1"],
+            )
+        ]
+    )
+
+    manager.remove_text_units("default", ["t1"])
+
+    assert graph.ids("communities") == set()
+    assert vector.data["text_units"]["t2"].community_ids == []

@@ -1858,6 +1858,13 @@ class IndexingManager:
             # Strip nothing until the removed text units are gone: a retry
             # tells a removal that got further by their missing copies.
             return results
+        deleted_communities = [i for i, u in communities.items() if gone(u)]
+        if deleted_communities:
+            # A kept text unit may still name one: a later delta wrote the
+            # community anew under its id without that unit.
+            results[f"opensearch_text_unit_communities_{suffix}"] = (
+                vector.prune_text_unit_communities(deleted_communities, suffix)
+            )
         if shared_entities or shared_relationships or shared_claims:
             results.update(
                 self.remove_text_units_from_shared(
@@ -1866,7 +1873,7 @@ class IndexingManager:
                     relationship_ids=shared_relationships,
                     text_unit_ids=text_unit_ids,
                     claim_ids=shared_claims,
-                    community_ids=[i for i, u in communities.items() if gone(u)],
+                    community_ids=deleted_communities,
                 )
             )
         return results
