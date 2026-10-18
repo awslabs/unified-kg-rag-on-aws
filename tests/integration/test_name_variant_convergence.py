@@ -54,6 +54,7 @@ NAMES = (
     "ACME Inc",
     "Acme Corp",
     "Acme Ltd",
+    "Acme LLC",
     "Acme",
 )
 TYPES = {"goods": "ORGANIZATION", "parts": "PERSON", "cash": "LOCATION"}
@@ -627,3 +628,25 @@ def test_a_spelling_kept_apart_is_not_rewritten_by_a_delta_of_the_other(
     assert written.count(("Acme Inc", "Buyer")) == 1
     assert stated.count("Acme Inc") == 1
     assert incremental == _state(tmp_path / "full", [second])
+
+
+def test_an_edge_the_derivation_drops_is_not_rewritten_as_a_stored_one(
+    tmp_path: Path,
+) -> None:
+    # Gleaning links "Acme LLC" to "Acme Inc" in d1.txt. After the first run
+    # that edge runs from "Acme LLC" to "Acme" (Acme Inc merged into it);
+    # d2.txt makes "Acme LLC" and "Acme Inc" one entity, so the derivation
+    # drops the edge as a self-loop. Re-pointed with its re-keyed endpoint,
+    # it was written back among the entity's other stored edges and so not
+    # deleted.
+    d1 = (
+        "Acme LLC and Acme Corp and Acme trade cash 2. Acme Inc and Acme LLC "
+        "trade goods 3."
+    )
+    runs = [{"d1.txt": d1}, {"d1.txt": d1, "d2.txt": "Acme Inc trade goods 2."}]
+
+    full = _state(tmp_path / "full", [runs[-1]], gleaning=True)
+    incremental = _state(tmp_path / "inc", runs, gleaning=True)
+
+    assert not any("deals with" in (e[3] or "") for e in full["edges"])
+    assert incremental == full

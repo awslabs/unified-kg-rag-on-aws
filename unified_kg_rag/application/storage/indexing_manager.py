@@ -774,6 +774,7 @@ class IndexingManager:
             stored_relationships=[*existing_rels, *relationships],
             rekey=rekey,
             rewired=set(derived.rewired),
+            dropped=derived.dropped,
         )
         # A delta id the merge folded into a stored item of another id has no
         # graph copy (the stored one of that id would have been merged), but
@@ -1057,6 +1058,7 @@ class IndexingManager:
         stored_relationships: Sequence[Relationship] = (),
         rekey: Mapping[str, str] | None = None,
         rewired: Collection[str] = (),
+        dropped: Collection[str] = (),
     ) -> tuple[list[Entity], list[Relationship]]:
         """Summarize, rank and complete derived items for writing.
 
@@ -1083,7 +1085,9 @@ class IndexingManager:
         entities, relationships = self._rank_with_stored_graph(
             suffix, entities, relationships, rekey, rewired
         )
-        written = {r.id for r in relationships} | set(rekey)
+        # The edges the derivation dropped go with the retired ids: they are
+        # not rewritten as other stored edges of the touched entities.
+        written = {r.id for r in relationships} | set(rekey) | set(dropped)
         extra_ids = sorted(
             set(
                 self.neptune_indexer.find_incident_relationship_ids(
@@ -1443,6 +1447,7 @@ class IndexingManager:
                 stored_relationships=relationships,
                 rekey=derived.id_remap,
                 rewired=set(derived.rewired),
+                dropped=derived.dropped,
             )
             self._retire(suffix, derived.id_remap, derived.split_from, derived.dropped)
             self._derived_entities.setdefault(suffix, {}).update(

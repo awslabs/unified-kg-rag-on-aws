@@ -1750,6 +1750,10 @@ changed once with the full-config keys (#332).
   incremental run resolved the claims against entities derived from the
   claims' own text units only, where another spelling this run derived
   ("Acme Corp") was missing, so "Acme Ltd" resolved into it (#PR).
+- An edge an incremental run's derivation drops (its endpoints now merge
+  into one entity) is deleted again: re-pointed at a re-keyed endpoint, it
+  was rewritten among that entity's other stored edges, so it was never
+  retired (a gleaned edge between two spellings of one name stayed) (#PR).
 - Removing a document no longer leaves its text unnoticed in community
   reports: a kept report that cites a removed text unit is counted in the
   `community_drift` metrics (`outdated_reports`, deletion-only runs
