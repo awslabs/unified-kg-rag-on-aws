@@ -99,7 +99,9 @@ The rules to keep in mind:
   `prepare-benchmark` (MuSiQue → corpus + `run-eval` dataset, downloaded at
   run time, never committed). `run-eval --search-strategy a,b --repeats N`
   runs a paired comparison (`evaluation/comparison.py`, optional
-  `--pairwise-judge`).
+  `--pairwise-judge`). `docs/cli.md` lists every flag; it is generated from
+  the parsers by `scripts/gen_cli_reference.py`, so change a flag's `help=`
+  and regenerate (a unit test fails when it is stale).
 - **Evaluation**: `langchain` + `ragas` (LLM judges) plus three LLM-free
   evaluators: `graph_aware` (entity/relationship coverage = recall, from
   ground-truth `expected_entities`/`expected_relationships`; precision/F1

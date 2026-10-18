@@ -103,8 +103,8 @@ class CommandLineInterface:
             "--source-directory",
             type=str,
             default=os.getenv("UKR_SOURCE_DIRECTORY"),
-            help="Path to directory containing source documents to be processed "
-            "(falls back to the UKR_SOURCE_DIRECTORY env var)",
+            help="Directory of the source documents to process; required unless "
+            "--verify-metadata (falls back to the UKR_SOURCE_DIRECTORY env var)",
         )
         parser.add_argument(
             "--output-directory",
@@ -116,7 +116,8 @@ class CommandLineInterface:
         parser.add_argument(
             "--cache-directory",
             type=str,
-            help="Path to directory for storing pipeline cache and intermediate results",
+            help="Directory of the pipeline cache and intermediate results "
+            "(default: cache)",
         )
         parser.add_argument(
             "--force-rebuild",
@@ -127,7 +128,8 @@ class CommandLineInterface:
         parser.add_argument(
             "--s3-sync",
             action="store_true",
-            help="Enable automatic synchronization of cache data with Amazon S3",
+            help="Synchronize the cache with Amazon S3 (needs --s3-bucket-name "
+            "or aws.s3.bucket_name)",
         )
         parser.add_argument(
             "--s3-bucket-name",
@@ -147,19 +149,24 @@ class CommandLineInterface:
             # var (set by the Step Functions task) is validated as well.
             type=_pipeline_id_arg,
             default=os.getenv("UKR_PIPELINE_ID"),
-            help="Unique identifier of an existing pipeline run to resume or inspect "
-            "(falls back to the UKR_PIPELINE_ID env var)",
+            help="Identifier of the pipeline run to resume or inspect (falls "
+            "back to the UKR_PIPELINE_ID env var). It names the run's cache "
+            "directory and S3 prefix, so it takes letters, digits, '.', '_' and "
+            "'-' only: up to 128 characters, starting with a letter or digit, "
+            "with no '..'",
         )
         parser.add_argument(
             "--resume-from-stage",
             type=_stage_name_arg,
-            help="Specific pipeline stage to resume execution from, by name "
-            "(case-insensitive; requires --pipeline-id)",
+            help="Pipeline stage to resume from, by name (case-insensitive; "
+            "requires --pipeline-id); an unknown name is a usage error",
         )
         parser.add_argument(
             "--verify-metadata",
             action="store_true",
-            help="Verify the integrity and consistency of pipeline metadata files",
+            help="Verify the integrity of the run's pipeline metadata (needs "
+            "--pipeline-id); exits non-zero when it is corrupt or the run is "
+            "not found",
         )
         parser.add_argument(
             "--yes",
@@ -172,7 +179,10 @@ class CommandLineInterface:
         parser.add_argument(
             "--continue-on-error",
             action="store_true",
-            help="Continue pipeline execution even when individual stages encounter errors",
+            help="Keep going when a stage fails. When an artifact stage "
+            "(translation through community detection) crashes, every document "
+            "of the run is recorded FAILED, so the next incremental run "
+            "processes them again",
         )
         parser.add_argument(
             "--enabled-stages",
@@ -185,7 +195,12 @@ class CommandLineInterface:
             choices=["none", "cloudwatch"],
             default="none",
             help="Where to forward pipeline metrics: 'none' (default) or "
-            "'cloudwatch' (CloudWatch EMF to stdout, auto-extracted by CloudWatch Logs)",
+            "'cloudwatch' (CloudWatch EMF to stdout, auto-extracted by "
+            "CloudWatch Logs, with an Environment dimension when "
+            "UKR_METRICS_ENVIRONMENT is set; pipeline_id is a log property, not "
+            "a dimension). A stage's metrics are emitted when it finishes and "
+            "only by the run that executed it, so a resumed run does not "
+            "repeat restored stages' counts",
         )
         parser.add_argument(
             "--retire-source-scope",

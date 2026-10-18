@@ -25,159 +25,104 @@ commands are in [`iac/README.md`](../iac/README.md#after-deploy).
 ## Before a run
 
 1. **Region and credentials.** `aws.region_name` in the config file wins;
-   `AWS_REGION` sets it only when the file leaves it unset, and
+   `AWS_REGION` fills it only when the file leaves it unset, and
    `UKR__AWS__REGION_NAME` overrides it (Bedrock follows it while
    `aws.bedrock.region_name` is unset). Check with
    `env | grep -E '^(AWS_REGION|UKR__AWS__)'` and `aws sts get-caller-identity`.
-2. **Models.** The models in
-   [Required models](./user-guide.md#required-models) are enabled in the
-   Bedrock region.
-3. **Endpoints.** `run-ingestion`, `run-rag` and `run-eval` check at start-up,
-   before any model call, that the store endpoints they need are set (see
-   [Start-up endpoint check](#start-up-endpoint-check)).
-4. **No other ingestion is running** against the same stores. With the
-   doc-status registry a second run on one index namespace stops with
-   `NamespaceLeaseError`; without it concurrent runs are not supported (see
-   [Concurrent runs](#concurrent-runs)). On the CDK stack:
+2. **Models.** The [required models](./user-guide.md#required-models) are
+   enabled in the Bedrock region.
+3. **Endpoints** are set ([Start-up endpoint check](#start-up-endpoint-check)).
+4. **No other ingestion runs** against the same stores
+   ([Concurrent runs](#concurrent-runs)). On the CDK stack:
    `aws stepfunctions list-executions --state-machine-arn <arn> --status-filter RUNNING`.
 
 ## Routine operations
 
 ### Re-ingest
 
-Three operations look alike but act on different state:
-
 | Goal | How | Stage cache | Stores and registry |
 |---|---|---|---|
-| Finish an interrupted run | Re-run with the same `--pipeline-id` (on the CDK stack, start a new execution with the same `pipeline_id`); it resumes at the first failed or incomplete stage and skips the stages that completed. `--resume-from-stage <stage>` picks the stage. | Reused | Written by the stages that run |
+| Finish an interrupted run | Re-run with the same `--pipeline-id` (CDK: a new execution with the same `pipeline_id`); it resumes at the first failed or incomplete stage, or at `--resume-from-stage <stage>` | Reused | Written by the stages that run |
 | Recompute every stage | `--force-rebuild` | Ignored and rewritten | Written as usual (incremental when enabled) |
-| Rebuild the stores from scratch | `indexing.reset: true` for one run | Unchanged | Rebuilt without going offline: new vector indices replace the old ones by an alias swap, the graph is rewritten in place and what the rebuild did not write is dropped at the end; every document is recorded again, then the namespace's other records are deleted (other namespaces in the table keep theirs). A failed reset drops nothing |
+| Rebuild the stores | `indexing.reset: true` for one run | Unchanged | Rebuilt without going offline; the namespace's other records are deleted at the end ([Design §5.2](./design.md#52-full-rebuild-indexingreset)) |
 
-Use `indexing.reset: true` (and `--force-rebuild` if stage outputs must change
-too) after changing anything that is baked into the stored data:
+Use `indexing.reset: true` (plus `--force-rebuild` if stage outputs must
+change too) after changing what is baked into the stored data: the embedding
+model or `models.embedding.dimension`, `processing.translation.source_language`
+or the language analyzers, or a built-in prompt template (code). Reset also
+refreshes the communities incremental runs append to and gives entities their
+current names' ids. Other extraction settings need no reset: the next
+incremental run re-extracts the affected documents and logs how many
+([User Guide §5](./user-guide.md#workflows)).
 
-- the embedding model or `models.embedding.dimension`;
-- `processing.translation.source_language` or the language analyzers (they
-  change the text-unit mapping);
-- to refresh the communities incremental runs append to, and to give
-  entities the ids of their current names (see
-  [Incremental runs](#incremental-runs));
-- a built-in prompt template (code) you edited. Other extraction settings
-  (prompts, `entity_types`, extraction or chunking models, chunk sizes...)
-  need no reset: an incremental run re-extracts the unchanged documents
-  whose stored fingerprint differs from the current settings on its own and
-  logs how many (see [User Guide §5](./user-guide.md#workflows)).
-
-During a reset, queries keep reading the previous content: the vector
-indices swap aliases one index type at a time, and the graph holds a mix of
-previous and rebuilt vertices and edges until the rebuild drops what it did
-not write. A reset that fails leaves the previous graph and registry records
-in place (beside what it wrote); re-run it. A reset whose graph writes
-partly failed, even within `indexing.max_failure_rate`, cannot drop the
-previous graph either, so it fails too (`neptune_sweep` in the indexing
-results) and records nothing; the next run, reset or incremental, removes
-what the previous graph still holds.
-
-Set `indexing.reset` back to `false` afterwards; otherwise every run rebuilds.
-
-`--verify-metadata` (needs `--pipeline-id`) checks a run's stage metadata and
-exits non-zero when it is missing or corrupt.
+Queries keep reading the previous content during a reset. A failed reset
+drops nothing: re-run it. One whose graph writes partly failed (even within
+`indexing.max_failure_rate`) fails too (`neptune_sweep` in the indexing
+results); the next run removes what the previous graph still holds.
+**Set `indexing.reset` back to `false` afterwards**, or every run rebuilds.
 
 ### Incremental runs
 
-With `providers.doc_status.enabled: true` (the container image sets it), every
-`run-ingestion` diffs the corpus against the doc-status registry by content
-hash and indexes only the new and changed documents. A file missing from the
-source is treated as deleted, and what only it stated is removed.
+With `providers.doc_status.enabled: true` (the container image sets it), each
+run indexes only new and changed documents and removes what only a missing
+file stated. The diff is scoped to the run's
+[index suffix](./user-guide.md#index-suffix) and source scope
+(`processing.document_parsing.source_scope`: the resolved source directory, or
+the `s3://` URI in the container; with and without a trailing slash is one
+scope, and a WARNING names the spelling used). So:
 
-The diff is scoped to the run's [index suffix](./user-guide.md#index-suffix)
-and its source scope (`processing.document_parsing.source_scope`; by default
-the resolved source directory, and the `s3://` source URI in the container).
-Both are part of each document's registry key, so two corpora on one suffix
-never share a record, even for files with the same relative path. An `s3://`
-URI with and without a trailing slash is one scope: a run uses the spelling
-the registry holds and logs a WARNING. Therefore:
+- **Keep a corpus at one source** (or a fixed `source_scope`). A moved corpus
+  with the default scope leaves the old scope's content indexed: set
+  `source_scope` before moving, or run once with
+  `--retire-source-scope <old source directory>`
+  ([Deletion scope](./user-guide.md#deletion-scope)). A run with new documents
+  logs a WARNING naming the suffix's other local source directories.
+- **Never let corpus files expire or disappear**: the next run removes their
+  content.
+- **One index suffix and config file per tenant or corpus version.**
 
-- **Keep the same source directory** (or a fixed `source_scope`) for a
-  corpus. Moving a corpus with the default scope changes the scope, and the
-  old scope's records are never adopted or deleted on their own, so the old
-  content stays indexed. Set a fixed `source_scope` before moving it, or run
-  once from the new location with
-  `--retire-source-scope <old source directory>` ([User Guide: Deletion scope](./user-guide.md#deletion-scope)).
-  A run with new documents logs a WARNING naming the other local source
-  directories of its suffix.
-- **Never let corpus files expire or disappear** unintentionally: the next
-  run removes their graph and vector content.
-- **Index each tenant or corpus version under its own index suffix**, with
-  its own config file.
+**Rebuild periodically.** Delta runs append communities instead of
+re-clustering, and stored communities and reports keep an entity's old id
+after it took its current name's id; `indexing.reset: true` refreshes both.
+Watch the indexing stage's `community_drift` metrics: `delta_communities`,
+`clustered_entities`, `overlapping_entities`, `stale_communities`,
+`added_roots` (each adds a report to every global-search cut) and
+`overlap_share`. At `indexing.community_drift_threshold` (default `0.5`) the
+run logs a WARNING and reports `community_rebuild_recommended: 1`, which an
+alarm can watch (the counts are an upper bound). A run that removes text units
+also reports `outdated_reports`, stored reports that still cite a removed
+unit and may state what was removed: any such report recommends a rebuild
+too.
 
-**What incremental runs do not refresh.** Delta runs append communities
-rather than re-clustering, and stored communities and reports keep listing an
-entity's old id after the entity took its current name's id. A periodic full
-rebuild (`indexing.reset: true`) refreshes both; shared descriptions, names,
-ids, types, ranks and claims are derived from the current documents on every
-run ([User Guide §5](./user-guide.md#5-incremental-indexing)).
+**Registry unreadable** (missing table, denied access, lasting throttling):
+`document_loading` fails with `DocStatusRegistryError` naming the table and
+cause, rather than reindexing everything. Fix the registry and re-run with the
+same `--pipeline-id`, or set `providers.doc_status.enabled: false`.
 
-**When to rebuild: community drift.** A delta run's indexing stage reports
-`community_drift` metrics: the communities it appended (`delta_communities`),
-the entities it clustered (`clustered_entities`), how many of those an
-earlier clustering already placed (`overlapping_entities`, now in two or more
-level-0 communities), the earlier communities whose reports miss what the run
-added (`stale_communities`), the root communities it appended (`added_roots`:
-each is in every cut of the hierarchy, so global search maps that many more
-reports until the rebuild), and `overlap_share` (overlapping / clustered).
-When `overlap_share` reaches `indexing.community_drift_threshold` (default
-`0.5`) the run logs a WARNING recommending `indexing.reset: true` and reports
-`community_rebuild_recommended: 1` next to `community_drift_overlap_share`,
-which an alarm can watch. The counts accumulate over the runs that touch an
-entity, so read them as an upper bound. A run without communities reports no
-overlap. A run that removes text units (an edited or deleted document) also
-counts the stored reports it keeps although they cite a removed unit
-(`outdated_reports`, deletion-only runs included): a report is written from
-its units' text and may still state what was removed, so any such report
-recommends the rebuild too.
-
-**When the registry cannot be read** (missing table, denied access,
-throttling that outlasts the client's retries), the `document_loading` stage
-fails with `DocStatusRegistryError`, naming the table and the cause. The run
-does not fall back to indexing every document, which would replace the
-suffix's content with this run's documents only. Fix the registry and re-run
-with the same `--pipeline-id`, or set `providers.doc_status.enabled: false` to run
-without incremental indexing.
-
-Coming from a pre-release build: nothing it stored is read; see
+Coming from a pre-release build: see
 [CHANGELOG: Upgrading from pre-release builds](../CHANGELOG.md#upgrading-from-pre-release-builds).
 
 ### Caches and prefixes
 
 | Cache | Location | Notes |
 |---|---|---|
-| Stage checkpoints (local) | `<--cache-directory>/<pipeline_id>/` (default `cache/`) | Reused on resume; `--force-rebuild` ignores it and writes the recomputed outputs |
-| Stage checkpoints (S3) | `s3://<bucket>/<--s3-prefix>/<pipeline_id>/` (default prefix `pipeline-runs`) | With `--s3-sync`; uploaded after every stage and on SIGTERM; a re-run in a fresh task resumes from it. A failed initial download or final upload fails the run with `CacheSyncError`. Expired by the bucket lifecycle, not `cache.ttl_seconds` |
-| LLM response cache | `<stage checkpoint dir>/llm-cache/` (local, and in S3 with `--s3-sync`) | Ingestion model responses reused by a re-run with the same pipeline id; `cache.llm_responses.enabled: false` turns it off, `--force-rebuild` ignores it |
-| Extraction store | The vector store's `<indexing.opensearch.extraction_records_index_prefix>-<suffix>` index (`graphrag-extraction-records-<suffix>`) | Per-chunk extraction results (entities, relationships, claims, as the model returned them for the chunk's text) reused by later runs. A record stays while a stored text unit names it: an incremental run deletes the records only removed text units named, and a full build or `indexing.reset` keeps only the records its text units name (other extraction settings, deleted or edited documents' chunks go). `clear` and `--force-rebuild` keep it; delete the index to drop it whole |
-| Embedding cache | `s3://<aws.s3.bucket_name>/embedding-cache/cache.json` (`indexing.opensearch.embedding_cache_s3_key`) | Only with `indexing.opensearch.persist_embedding_cache: true` |
+| Stage checkpoints (local) | `<--cache-directory>/<pipeline_id>/` (default `cache/`) | Reused on resume |
+| Stage checkpoints (S3) | `s3://<bucket>/<--s3-prefix>/<pipeline_id>/` (default `pipeline-runs`) | With `--s3-sync`: uploaded after every stage and on SIGTERM, so a fresh task resumes from it; a failed download or upload fails the run with `CacheSyncError`. Expired by the bucket lifecycle, not `cache.ttl_seconds` |
+| LLM response cache | `<stage checkpoint dir>/llm-cache/` | Reused by a re-run with the same pipeline id; `cache.llm_responses.enabled: false` turns it off, `--force-rebuild` ignores it |
+| Extraction store | `graphrag-extraction-records-<suffix>` (`indexing.opensearch.extraction_records_index_prefix`) | Per-chunk extraction results reused by later runs while a stored text unit names them. `clear` and `--force-rebuild` keep it; delete the index to drop it |
+| Embedding cache | `s3://<aws.s3.bucket_name>/embedding-cache/cache.json` | Only with `indexing.opensearch.persist_embedding_cache: true` |
 | Visualization data | `<cache directory>/<pipeline_id>/visualization/` unless `graph.visualization.outputs_directory` is set | Synced with the stage cache (`.json` only) |
 
-The CDK cache bucket expires objects after 30 days under `pipeline-runs/` and
-`embedding-cache/` only. Put the corpus under another prefix (for example
-`corpus/`): an expired corpus file looks deleted to the next incremental run.
-A reused bucket (`cache_bucket_name`) keeps its own lifecycle rules, so check
-them.
-
-A `pipeline_id` names the cache directory and S3 prefix, so it accepts only
-letters, digits, `.`, `_` and `-`: up to 128 characters, starting with a
-letter or digit, with no `..`.
+The CDK bucket expires `pipeline-runs/` and `embedding-cache/` after 30
+days: keep the corpus under another prefix (`corpus/`), since an expired file
+looks deleted. Check a reused bucket's own lifecycle rules.
 
 ### OpenSearch replicas
 
-On the CDK stack, a multi-node domain (`opensearch_count` > 1, the non-dev
-default) gets one replica per index, so losing a node or an AZ keeps every
-shard available; a single-node dev domain gets none. The compute stack sets
-`UKR__INDEXING__OPENSEARCH__INDEX_SETTINGS__NUMBER_OF_REPLICAS`, which overrides
-`indexing.opensearch.index_settings.number_of_replicas` when an index is
-created. Indices created before that keep their replica count, so set it on
-them once from inside the VPC:
+On the CDK stack a multi-node domain (`opensearch_count` > 1) gets one replica
+per index and a single-node domain none, through
+`UKR__INDEXING__OPENSEARCH__INDEX_SETTINGS__NUMBER_OF_REPLICAS`, applied when
+an index is created. Set older indices once from inside the VPC:
 
 ```bash
 curl -X PUT "https://<OpenSearch endpoint>/_all/_settings" \
@@ -188,78 +133,56 @@ curl -X PUT "https://<OpenSearch endpoint>/_all/_settings" \
 
 ### Backup and restore
 
-The three stores are backed up on different schedules, and their contents
-refer to each other (the registry lists each document's text units, which the
-graph and index artifacts cite), so restore them to one common point or not at all:
+The stores refer to each other (the registry lists each document's text
+units, which the graph and index artifacts cite), so restore them to one
+common point or not at all. The corpus in S3 is the source of truth.
 
 | Store | Backup | Window |
 |---|---|---|
 | Neptune | Automated backups, point-in-time restore | `backup_retention_days` (default 7 days) |
-| OpenSearch | Automated hourly snapshots (`cs-automated-enc` repository) | 14 days |
+| OpenSearch | Automated hourly snapshots (`cs-automated-enc`) | 14 days |
 | DynamoDB doc-status table | Point-in-time recovery | 35 days |
-| S3 cache bucket | None (unversioned; stage checkpoints are re-creatable) | — |
+| S3 cache bucket | None (checkpoints are re-creatable) | — |
 
-The corpus in S3 is the source of truth: every store can be rebuilt from it.
+**Within Neptune's window:**
 
-**Within Neptune's window**, restore all three to the same time:
-
-1. Stop ingestion (no `RUNNING` execution) so nothing writes during the restore.
+1. Stop ingestion (no `RUNNING` execution).
 2. Pick an OpenSearch snapshot (`GET _snapshot/cs-automated-enc/_all`) taken
-   after the last ingestion run finished, and use its start time as the
-   restore point.
-3. Restore Neptune to that time with
-   `aws neptune restore-db-cluster-to-point-in-time`, and the table with
-   `aws dynamodb restore-table-to-point-in-time`. Both create *new* resources
-   with default settings (add instances to the Neptune cluster, re-enable
-   PITR and deletion protection on the table).
+   after the last run finished; its start time is the restore point.
+3. Restore Neptune (`aws neptune restore-db-cluster-to-point-in-time`) and the
+   table (`aws dynamodb restore-table-to-point-in-time`) to it. Both create
+   new resources with default settings: add Neptune instances, re-enable PITR
+   and deletion protection.
 4. Delete the domain's current indices, then restore the snapshot's indices
    and aliases (`POST _snapshot/cs-automated-enc/<snapshot>/_restore`).
-5. Point the data plane at the restored cluster endpoint and table
-   (`UKR__AWS__NEPTUNE__ENDPOINT`, `UKR__AWS__DYNAMODB__TABLE_NAME`). The task role, the
-   DynamoDB gateway-endpoint policy and the alarms are scoped to the stack's
-   own cluster and table, so grant them on the restored resources too.
+5. Point the data plane at the restored cluster and table
+   (`UKR__AWS__NEPTUNE__ENDPOINT`, `UKR__AWS__DYNAMODB__TABLE_NAME`), and grant
+   the task role, the DynamoDB gateway-endpoint policy and the alarms on them
+   (they are scoped to the stack's own resources).
 
-**Outside Neptune's window** (or when step 5 is not worth it), there is no
-common point: run one full rebuild with `indexing.reset: true` (see
-[Re-ingest](#re-ingest)). It re-indexes the whole corpus into this index
-namespace and drops what the rebuild did not write. Restore the table first
-only if other namespaces share it.
+**Otherwise**, run one full rebuild with `indexing.reset: true`
+([Re-ingest](#re-ingest)); restore the table first only if other namespaces
+share it.
 
 ## When a run fails
 
 ### Interrupted runs
 
-An incremental run that stops inside the indexing stage (the task is killed,
-a store or the registry becomes unreachable, the failure gate trips) needs no
-manual repair: re-run. Before it removes or writes anything, the indexing
-stage records every new and changed document `PENDING`, listing both the text
-units it had and the ones the run is about to write; the records become
-`PROCESSED` (or `FAILED`) only after the writes. The next run therefore:
+An incremental run that stops inside indexing (killed task, unreachable store
+or registry, tripped failure gate) needs no repair: re-run. Indexing first
+records every new and changed document `PENDING` with its old and new text
+units, and marks it `PROCESSED` or `FAILED` only after the writes, so the next
+run re-extracts each `PENDING` document still in the corpus and removes what
+was written for one that is gone
+([Design §5.3](./design.md#53-crash-recovery-write-ahead-protocol)).
 
-- re-extracts each `PENDING` document still in the corpus, even if its file
-  was reverted to the version indexed before;
-- removes everything the interrupted run may have written for a `PENDING`
-  document that is no longer in the corpus.
-
-**Leave `PENDING` records alone.** They (`status` `pending`, `content_hash`
-`pending`, `error_info` naming the write-ahead record) are expected after a
-failed run, and their text units are what lets the next run find the
-interrupted run's writes, since every artifact cites the text units it was
-stated in.
-
-- An interruption is not counted as a failure, but it resets the document's
-  `failure_count` toward `indexing.max_document_failures`. The record counts
-  instead the consecutive runs that died processing the same content
-  (`attempt_count`, see [Quarantined documents](#quarantined-documents)).
-- A document with more text units than one DynamoDB item holds (about
-  10,000; half that for an edited document, whose `PENDING` record lists the
-  old and the new ones) fails the run before anything is written: split it.
-- Extraction records that only removed text units named are deleted after
-  each successful commit; a run that stops between its removal and its
-  commit leaves them behind, which costs space only.
-- The stage writes the registry in batches, so a role with a custom policy
-  needs `dynamodb:BatchWriteItem` as well as `BatchGetItem` (the CDK stack's
-  grant covers both).
+- **Leave `PENDING` records alone** (`status` `pending`, `content_hash`
+  `pending`): their text units are how the next run finds the interrupted
+  writes.
+- An interruption is not a failure, but resets `failure_count`; deaths are
+  counted in `attempt_count` ([Quarantined documents](#quarantined-documents)).
+- A custom registry policy needs `dynamodb:BatchWriteItem` and
+  `BatchGetItem` (the CDK grant covers both).
 
 ### Failed documents
 
@@ -267,205 +190,150 @@ A document is recorded `FAILED` in five cases:
 
 - translation, graph extraction, gleaning or claim extraction failed on one
   of its text units;
-- a base-level community covering one of its text units got no report. A
-  failed parent-level report is logged as a WARNING and counted in the
-  stage's `reports_failed` metric but marks no document: a parent covers many
-  documents, and retrying them all for one report would re-extract most of
-  the corpus. Above `indexing.max_failure_rate` of the communities without a
-  report, the community detection stage fails instead;
+- a base-level community covering one of its text units got no report (a
+  failed parent-level report only logs a WARNING and counts in
+  `reports_failed`; above `indexing.max_failure_rate` of communities without
+  a report, community detection fails);
 - an artifact stage (translation through community detection) crashed in a
-  `--continue-on-error` run, which records every document of the run
-  `FAILED`;
-- writing one of its artifacts (text unit, entity, relationship, claim,
-  community, report) to the stores failed;
-- the extraction record of one of its text units could not be written to
-  the extraction store (graph resolution and claim extraction report them as
-  `records_not_stored`), so the next run extracts the document again.
+  `--continue-on-error` run, which records every document of the run `FAILED`;
+- writing one of its artifacts to the stores failed;
+- the extraction record of one of its text units could not be written to the
+  extraction store (`records_not_stored` in graph resolution and claim
+  extraction).
 
-The next run treats a `FAILED` document as changed: it removes what the
-failed run wrote and processes the document again. Any other stage failure
-records nothing: when parsing, loading or chunking crashed in a
-`--continue-on-error` run, or any stage failed without it, the run stops
-before indexing and the stores and the registry keep their previous state,
-because a stage failure does not say whether one document or the backend
-(throttling, an outage, expired credentials) is at fault. The next run
-processes the same new and changed documents again.
+The next run treats a `FAILED` document as changed: it removes what the failed
+run wrote and processes it again. Any other stage failure records nothing and
+stops the run before indexing, leaving the stores and registry as they were;
+the next run processes the same delta again.
 
 - **Retry limit.** After `indexing.max_document_failures` (default `3`)
-  consecutive failures with unchanged content, the document is no longer
-  retried: it stays `FAILED`, keeps what it indexed, and each run logs a
-  WARNING naming the file. To retry it, fix the cause (often an oversized or
-  malformed file), edit the file so its content hash changes, or raise the
+  consecutive failures of unchanged content the document stays `FAILED`,
+  keeps what it indexed, and each run logs a WARNING naming the file. Fix the
+  cause (often an oversized or malformed file), edit the file, or raise the
   limit.
 - **Too large for the registry.** A document whose text-unit ids exceed one
-  DynamoDB item (400 KB, roughly 10,000 ids, half that for an edited
-  document) fails the indexing stage before anything is written for the
-  delta, with an error naming the file and its text-unit count. Split the
-  file.
-
-**Write failures** are retried first. OpenSearch bulk items rejected with a
-retryable status (429, 502, 503, 504), and a whole bulk request still
-answered with one after the client's own retries, are resent up to four times
-with backoff. Every Neptune request of a run is retried up to
-`indexing.neptune.max_attempts` times (default `4`) over a new connection,
-and each is safe to repeat. If more than `indexing.max_failure_rate` (default
-`0.2`) of one artifact type's writes still fail, the indexing stage fails and
-records no document, so the next run retries them all. Below that rate the
-run succeeds and only the documents that own a failed artifact are recorded
-`FAILED` (a failure the backend reports without an item id marks every
-document of the run). The `IndexingFailures` and `ExtractionFailures`
-[alarms](#alarms) report both.
+  DynamoDB item (400 KB, about 10,000 ids, half that for an edited document)
+  fails indexing before anything is written, with an error naming the file:
+  split it.
+- **Write failures** are retried first: OpenSearch bulk items rejected with
+  429, 502, 503 or 504 up to four times with backoff, every Neptune request up
+  to `indexing.neptune.max_attempts` (default `4`) over a new connection. If
+  more than `indexing.max_failure_rate` (default `0.2`) of one artifact type's
+  writes still fail, indexing fails and records no document; below it, only
+  the documents owning a failed artifact are `FAILED` (all of the run's when
+  the backend names no item). The `IndexingFailures` and
+  `ExtractionFailures` [alarms](#alarms) report both.
 
 ### Quarantined documents
 
-A document whose processing kills the task each time (it runs out of memory
-on it, a parser or client crashes the process) would stop every later run
-the same way. Runs therefore count deaths and isolate the culprit.
+A document that kills the task each time (out of memory, a crashing parser)
+would stop every later run, so runs count deaths and isolate the culprit.
 
-- **Only deaths count.** Right after the diff, a run marks an attempt open on
-  the record of every document it processes (`attempt_batch`: how many it
-  processes together) and clears it however it ends in the process:
-  finished, failed with an error, or stopped (SIGTERM from StopTask or a Step
-  Functions timeout, Ctrl-C). Only a task that died leaves it open; the next
-  run counts it (`attempt_count`, with the batch it died in as
-  `crash_batch`). A full rebuild (`indexing.reset`) counts nothing.
-- **Quarantine.** Once a document's content killed `indexing.max_document_attempts`
-  runs in a row (default `3`), the last one processing it alone, the next
-  run logs a WARNING naming the file, removes what the attempts wrote,
-  records it `QUARANTINED` (reason in `error_info`) and indexes the rest. The
-  metric `total_documents_quarantined` counts them; on the CDK stack the
-  `DocumentsQuarantined` alarm fires.
-- **Bisection.** When the runs died processing several documents, the next
-  run processes half of the suspects that died in the smallest batch and
-  defers every other new or changed document (a WARNING names the half;
-  `total_documents_deferred` counts the others, which keep their indexed
-  version). A death narrows the suspects to that half; a run that ends
-  commits it. One culprit among `n` suspects is quarantined after about
-  `log2(n) + 1` more runs, and the documents it died with are indexed.
-- **Deferred documents wait for the next run.** Start runs with a new
-  pipeline id until `total_documents_deferred` is 0 (a finished pipeline id
-  re-run only repeats its own delta).
-- **Retrying.** A quarantined document is skipped while its content stays.
-  It is retried when the file or the extraction settings change, or when
-  `indexing.max_document_attempts` is raised above its deaths (the
-  `attempt_count` of its record).
-- **Kept version.** A changed document whose runs died before its indexing
-  started (in chunking, extraction, gleaning...) keeps its indexed version
-  while quarantined: nothing of the new version reached the stores. One
-  whose runs died while indexing it is removed (no text units in its
-  `QUARANTINED` record).
+- **Only deaths count.** A run marks an attempt open on every document it
+  processes and clears it however it ends in the process (finished, failed,
+  SIGTERM, Ctrl-C). An attempt left open by a dead task is counted
+  (`attempt_count`, batch in `crash_batch`). `indexing.reset` counts nothing.
+- **Quarantine.** After `indexing.max_document_attempts` (default `3`)
+  deaths in a row, the last with the document alone, the next run logs a
+  WARNING naming the file, removes what the attempts wrote, records it
+  `QUARANTINED` (reason in `error_info`) and indexes the rest
+  (`total_documents_quarantined`; CDK alarm `DocumentsQuarantined`).
+- **Bisection.** When runs died with several documents, the next run
+  processes half of the smallest dying batch and defers the other new and
+  changed documents (a WARNING names the half; `total_documents_deferred`
+  counts the rest, which keep their indexed version). One culprit among `n`
+  is quarantined after about `log2(n) + 1` runs. **Start runs with a new
+  pipeline id until `total_documents_deferred` is 0.**
+- **Retrying.** A quarantined document is retried when its file or the
+  extraction settings change, or when `indexing.max_document_attempts` is
+  raised above its `attempt_count`. A changed document whose runs died before
+  indexing keeps its indexed version; one that died while indexing is
+  removed.
 - **Limits.** A task that dies whatever it processes (a broken image)
-  quarantines the delta's documents one at a time: fix the deployment, then
-  edit the files or raise the limit. A one-off kill during the run that
-  processes a suspect alone quarantines it too. A document that makes runs
-  time out on SIGTERM is never counted: raise the timeout.
-- A document that produces no text units stays `PENDING` and is quarantined
-  after the same number of runs.
-- **Resumed runs.** A run resumed past document_loading with the same
-  pipeline id reuses its delta, unless the registry no longer matches it
-  (another run indexed another version of one of its documents, or found it
-  deleted) or its runs died often enough to isolate a culprit: it then
-  resumes from document_loading (WARNING `... resuming from
-  'document_loading' ...`).
+  quarantines documents one at a time: fix the deployment, then edit the files
+  or raise the limit. A one-off kill during a lone-suspect run quarantines it
+  too. Runs that time out on SIGTERM are never counted: raise the timeout. A
+  document producing no text units stays `PENDING` and is quarantined the
+  same way.
+- **Resumed runs** with the same pipeline id reuse their delta unless the
+  registry no longer matches it or a culprit can be isolated; they then
+  resume from `document_loading` (WARNING
+  `... resuming from 'document_loading' ...`).
 
 ### Concurrent runs
 
-With the doc-status registry, one run writes an index namespace at a time. A
-run takes its namespace's write lease before its first stage and holds it to
-its end, renewing it every sixth of `indexing.lease_seconds` (default 300 s).
-A second run on the same namespace stops at once, before it reads or writes
-anything, with:
+With the registry, one run writes an index namespace at a time: it takes the
+namespace's write lease before its first stage and renews it every sixth of
+`indexing.lease_seconds` (default 300 s). A second run stops before it reads
+the stores or writes anything:
 
 ```text
 NamespaceLeaseError: Index namespace '<namespace>' is being written by
 <host>:<pid>:<id> (its lease runs until <time> unless renewed) ...
 ```
 
-Wait for that run to finish and start again. A run that dies (a killed task,
-a lost host) stops renewing, so its lease expires at most `lease_seconds`
-after its last renewal and the next run proceeds; nothing needs cleaning up.
-A run whose renewals keep failing, or whose lease another run then took,
-stops before its next write with `NamespaceLeaseError: This run lost the
-write lease ...`: re-run once the other run ended.
+Wait for that run and start again. A dead run's lease expires within
+`lease_seconds` of its last renewal; nothing needs cleaning up. A run whose
+renewals keep failing, or whose lease was taken, stops before its next write
+with `NamespaceLeaseError: This run lost the write lease ...`: re-run once the
+other run ended.
 
-- **When a run stops writing.** Once less than a third of the term is left
-  since the last renewal that succeeded, counted from when that renewal was
-  sent. Every registry write, indexing phase, rebuild cleanup and store
-  write request (a Neptune batch or drop, an OpenSearch bulk request) checks
-  first, so the run stops while it still holds the lease, as long as no
-  single request takes longer than a third of `lease_seconds`. Keep
-  `lease_seconds` at least three times the longest write request.
-- **Lease requests** time out after about 10 s, with 3 attempts; a failed
-  renewal is retried by the next heartbeat.
+- **Fencing.** Every registry write, indexing phase and store write request
+  checks the lease first and stops once less than a third of the term is left
+  since the last successful renewal. Keep `lease_seconds` at least three
+  times the longest write request ([Design §5.6](./design.md#56-concurrency)).
 - **Checkpoints.** A run downloads its S3 checkpoint only once it holds the
-  lease, and a stopped run (SIGTERM) uploads its checkpoint before it
-  releases the lease.
+  lease; a stopped run uploads its checkpoint before releasing it.
+- **Where the lease lives.** DynamoDB item `namespace` = `<namespace>`,
+  `doc_id` = `#lease` (`lease_owner`, `lease_expires_at`, the table's TTL
+  attribute); SQLite: the namespace's row of `leases`. Delete it by hand only
+  after making sure its run is gone.
+- **Permissions.** A custom policy needs `dynamodb:PutItem`, `GetItem` and
+  `DeleteItem` (and `UpdateTimeToLive` when the library creates the table).
+- **Namespace** = index suffix (`index_value`, `default` when unset) plus
+  `indexing.additional_suffix`, plus a tag of non-default
+  `indexing.opensearch.*_index_prefix` / `indexing.neptune.*_label_prefix`
+  values. Different namespaces can run side by side.
 
-- **Where the lease lives.** In DynamoDB, the item with partition key
-  `namespace` = `<namespace>` and sort key `doc_id` = `#lease` (owner in
-  `lease_owner`, expiry in `lease_expires_at`, the table's TTL attribute, so
-  DynamoDB also deletes it once expired); in the SQLite registry, the
-  namespace's row of the `leases` table. Delete it by hand only after making
-  sure the run named in it is gone.
-- **Permissions.** A registry on a custom policy needs `dynamodb:PutItem`,
-  `GetItem` and `DeleteItem` for the lease (the CDK stack's grant covers
-  them), and `dynamodb:UpdateTimeToLive` when the library creates the table.
-- **What a namespace is.** The index suffix (`index_value`, `default` when
-  unset) plus `indexing.additional_suffix`, plus a tag of the
-  `indexing.opensearch.*_index_prefix` and `indexing.neptune.*_label_prefix`
-  values when any is not the default. Two configurations that differ only in
-  those prefixes write different stores, so they keep separate records even
-  in one table. Runs on different namespaces lease apart and can run side by
-  side.
+**Without the registry nothing locks** and concurrent runs on one index
+suffix are not supported: a full reindex swaps the alias and deletes the older
+indices, so one run can delete the index the other is writing. The direct
+`IncrementalIndexer` API takes no lease either.
 
-**Without the registry nothing locks**, and concurrent runs are not
-supported. Do not start a run while another one runs against the same index
-suffix (the same OpenSearch aliases and Neptune labels): a full reindex writes
-a new timestamped index, swaps the alias onto it and deletes the alias's
-older indices, so one run can delete the index the other is writing. The
-direct `IncrementalIndexer` API takes no lease either.
-
-**On the CDK stack**, each `start-execution` starts one execution that runs
-the ingestion task, and the stack defines no schedule or trigger. The state
-machine does not stop a second execution from starting while one runs; the
-lease then fails the second one. Check for a `RUNNING` execution first
-([Before a run](#before-a-run)), and let a schedule you add fire only when a
-previous execution cannot still be running (up to `sfn_timeout_hours`, 6
-hours by default).
+**On the CDK stack** nothing schedules runs and the state machine does not
+stop a second execution (the lease fails it). Check for a `RUNNING` execution
+first ([Before a run](#before-a-run)), and let a schedule you add fire only
+when a previous execution cannot still run (up to `sfn_timeout_hours`,
+default 6).
 
 ### Start-up endpoint check
 
-Before the first paid model call, the CLIs check that the store endpoints the
-run needs are set, and exit with status 2 (a configuration error) otherwise:
+Before the first model call, the CLIs check that the store endpoints the run
+needs are set and otherwise exit 2:
 
 ```text
 run-ingestion: error: Missing endpoint configuration for the indexing stage: aws.neptune.endpoint (env UKR__AWS__NEPTUNE__ENDPOINT), aws.opensearch.endpoint (env UKR__AWS__OPENSEARCH__ENDPOINT). Set them in the config file or the environment.
 ```
 
-- `run-ingestion` checks both endpoints when the `indexing` stage is enabled
-  (not for `--verify-metadata`).
-- `run-rag` and `run-eval` check the endpoints the chosen strategy's retrievers
-  need: OpenSearch for every strategy, and Neptune as well for `local`,
-  `drift`, `mix` and `hybrid`. `auto` checks every strategy it may route to: `search.auto_routable_strategies` without `global` and `drift` when `graph.community_detection.enabled` is false.
+- `run-ingestion` checks both when the `indexing` stage is enabled (not for
+  `--verify-metadata`).
+- `run-rag` and `run-eval` check OpenSearch for every strategy and Neptune
+  too for `local`, `drift`, `mix` and `hybrid`; `auto` checks every strategy
+  it may route to (`search.auto_routable_strategies`, without `global` and
+  `drift` when `graph.community_detection.enabled` is false).
 
-The check only tests that a value is set. An endpoint that is set but wrong or
-unreachable fails at the first connection; the retrievers report such
-authentication, configuration and connection errors instead of returning empty
-results.
+A set but wrong or unreachable endpoint fails at the first connection with
+an error, not empty results.
 
 ## Alarms
 
-On the CDK stack, a failed ingestion task publishes a message with the
-execution id and the error to the SNS topic, and the alarms below report to
-the same topic: five on pipeline runs, seven on store health (eight on
-Neptune Serverless) and two on capacity. The alarms have a subscriber only when the stack was deployed with
-`-c alarm_email=<address>`.
-
-`PipelineFailures` also fires for a failed task, so such a failure arrives
-twice, the second time without context; the alarm stays because it also
-covers failures the message cannot report (an error the task's handler cannot
-catch, such as a start input without `pipeline_id`, or a publish that fails
-after its retries).
+On the CDK stack, a failed ingestion task publishes the execution id and the
+error to the SNS topic, and the alarms below report to the same topic: five
+on pipeline runs, seven on store health (eight on Neptune Serverless) and two
+on capacity. They have a subscriber only with `-c alarm_email=<address>`.
+A failed task also fires `PipelineFailures`, a second notice without context
+that also covers what the message cannot report (an error the task's handler
+cannot catch, such as an input without `pipeline_id`, or a failed publish).
 
 **Pipeline runs**
 
@@ -475,93 +343,75 @@ after its retries).
 | `PipelineTimedOutOrAborted` | An execution hit the state machine timeout or was stopped |
 | `IndexingFailures` | Indexing reported failed items, even in a succeeded execution |
 | `ExtractionFailures` | Extraction, gleaning or claim extraction failed on some units |
-| `DocumentsQuarantined` | A run quarantined documents whose processing kept killing the task (see [Quarantined documents](#quarantined-documents)) |
+| `DocumentsQuarantined` | A run quarantined documents ([Quarantined documents](#quarantined-documents)) |
 
-The pipeline-run alarms other than the Step Functions ones read the EMF metrics
-`run-ingestion --metrics-sink cloudwatch` emits, each stage's as the stage
-finishes (so a run that is stopped or times out still reports the stages it
-completed) and the run's own (duration, cache hit rate) when it ends. The
-task tags them with an `Environment` dimension, the stack's `env_name`, and
-the alarms and dashboard read only that series: a dev deployment's runs in
-the same account and region do not trip a prod deployment's alarms. Runs
-without `UKR_METRICS_ENVIRONMENT` (outside the CDK task) publish a series
-without dimensions, which no alarm reads.
+The last three read the EMF metrics of `run-ingestion --metrics-sink cloudwatch`,
+emitted as each stage finishes (a stopped run still reports its completed
+stages). The task tags them with an `Environment` dimension (`env_name`), and
+the alarms and dashboard read only that series, so dev runs do not trip prod's
+alarms; runs without `UKR_METRICS_ENVIRONMENT` publish a series no alarm reads.
 
 **Store health**
 
-The store-health alarms fire between runs too, so degradation shows before
-the next run breaks on it:
+These fire between runs too, so degradation shows before a run breaks on it:
 
 | Alarm | Fires when | What to do |
 |---|---|---|
-| `OpenSearchClusterRed` | A primary shard is unallocated (5 minutes) | Check the domain's cluster health and the failed node; queries on the affected index miss data, so hold ingestion until it is green or yellow |
-| `OpenSearchFreeStorageLow` | The fullest data node has 40% or less of `opensearch_volume_gib` free | Raise `opensearch_volume_gib` (or `opensearch_count`) and redeploy before the node reaches the write-block watermark |
-| `OpenSearchJvmPressure` | JVM memory pressure is at least 95% in 3 consecutive minutes | Out-of-memory risk: use a larger `opensearch_instance` or more data nodes |
-| `DocStatusWriteThrottled` | The doc-status table throttled a write (5 minutes) | The app retries throttled registry calls with backoff; one still throttled after that fails the run with `DocStatusRegistryError`. Check for overlapping runs on the table and rerun a failed run once the throttling clears |
-| `NeptuneHighCpu` | Average writer CPU is at least 90% for 15 minutes (3 × 5 minutes) | Sustained saturation, not a bulk-write peak: use a larger `neptune_instance` (or a higher `neptune_serverless_ncu` maximum) or lower `indexing.neptune.index_concurrency` |
-| `NeptuneLowFreeableMemory` | Writer freeable memory falls to 512 MiB or less at any point in 5 minutes (minimum); on Neptune Serverless only while the writer is at its maximum capacity (below it, low memory makes it scale up) | Queries and writes may fail with out-of-memory errors: use a larger `neptune_instance` (or a higher `neptune_serverless_ncu` maximum) |
-| `NeptuneServerlessAtMaxCapacity` | Neptune Serverless only: the writer's capacity is at the `neptune_serverless_ncu` maximum in 3 consecutive 5-minute periods | The workload needs more than the range allows: raise the maximum (or its minimum, so capacity is there before the burst) |
-| `NeptuneGremlinErrors` | Gremlin server errors on any instance in 3 consecutive minutes | Persistent write or query failures (retried write conflicts come in short bursts and do not fire it): check the task log for the failing request |
+| `OpenSearchClusterRed` | A primary shard is unallocated (5 minutes) | Check cluster health and the failed node; queries on the index miss data, so hold ingestion until green or yellow |
+| `OpenSearchFreeStorageLow` | The fullest data node has 40% or less of `opensearch_volume_gib` free | Raise `opensearch_volume_gib` (or `opensearch_count`) and redeploy before the write-block watermark |
+| `OpenSearchJvmPressure` | JVM memory pressure at least 95% for 3 minutes | Use a larger `opensearch_instance` or more data nodes |
+| `DocStatusWriteThrottled` | The doc-status table throttled a write (5 minutes) | Registry calls retry with backoff; one still throttled fails the run with `DocStatusRegistryError`. Look for overlapping runs, rerun once it clears |
+| `NeptuneHighCpu` | Average writer CPU at least 90% for 15 minutes | Sustained saturation: a larger `neptune_instance` (or `neptune_serverless_ncu` maximum), or a lower `indexing.neptune.index_concurrency` |
+| `NeptuneLowFreeableMemory` | Writer freeable memory at or below 512 MiB at any point in 5 minutes; on Serverless only while the writer is at maximum capacity | Out-of-memory failures ahead: a larger `neptune_instance` (or `neptune_serverless_ncu` maximum) |
+| `NeptuneServerlessAtMaxCapacity` | Serverless only: the writer is at the `neptune_serverless_ncu` maximum for 3 consecutive 5-minute periods | Raise the maximum (or the minimum, so capacity is there before a burst) |
+| `NeptuneGremlinErrors` | Gremlin server errors on any instance for 3 consecutive minutes | Persistent failures (retried write conflicts come in short bursts and do not fire it): find the failing request in the task log |
 
 **Capacity**
 
-The capacity alarms catch a run that slows down or is about to be killed:
-
 | Alarm | Fires when | What to do |
 |---|---|---|
-| `BedrockThrottling` | Bedrock throttled at least 100 calls in each of 3 consecutive 5-minute periods, summed over every model in the account and region (Bedrock publishes per model only, and the stack does not know which models the app resolves) | The run retries each throttled call, so it slows down rather than fails: lower `processing.max_concurrency` or ask for a higher Bedrock quota. Other Bedrock users in the account and region count too |
-| `IngestionTaskMemory` | The ingestion task used at least 90% of its memory for 3 minutes (Container Insights) | Fargate kills a task over its memory, which loses the running stage: raise `fargate_memory` |
+| `BedrockThrottling` | At least 100 throttled calls in each of 3 consecutive 5-minute periods, summed over every model in the account and region (other Bedrock users count too) | Throttled calls are retried, so the run slows rather than fails: lower `processing.max_concurrency` or ask for a higher quota |
+| `IngestionTaskMemory` | The ingestion task used at least 90% of its memory for 3 minutes (Container Insights) | Fargate kills a task over its memory, losing the running stage: raise `fargate_memory` |
 
-The dashboard also plots each stage's duration, the ingestion task's memory
-and CPU use, and Bedrock invocations, throttles and latency by model.
+The dashboard also plots stage durations, task memory and CPU, and Bedrock
+calls, throttles and latency by model.
 
 ## Query access and tenant isolation
 
-Queries (`run-rag`, `run-eval`, or an application that embeds
-`GraphRAGChain`) need far less than ingestion. The CDK stack gives them their
-own task definition and role (`QueryTaskDefinitionArn`, `QueryTaskRoleArn`
-outputs of `GraphRagCompute`; see
+Queries (`run-rag`, `run-eval`, an embedded `GraphRAGChain`) get their own
+task definition and role (`QueryTaskDefinitionArn`, `QueryTaskRoleArn`; see
 [`iac/README.md`](../iac/README.md#4-query-from-inside-the-vpc)): Neptune
-`connect` and `ReadDataViaQuery`, OpenSearch `GET`/`HEAD` on the domain and
-`POST` only on `<index>/_search` (OpenSearch authorizes by HTTP method and URL
-path, so `_bulk`, `_doc`, `_delete_by_query` and index changes are denied; an
-IAM `*` also matches `/`, so an explicit deny covers the deeper paths that end
-in `_search` but write, such as `POST <index>/_doc/_search`, which creates a
-document with the id `_search`), Bedrock model, rerank and guardrail calls,
-and the cache bucket's `eval/` prefix (its objects, and listing only within
-it). It has no DynamoDB access and cannot write or delete in either store.
-Run queries with it, not with the ingestion task definition, whose role
-holds `neptune-db:DeleteDataViaQuery`, `es:ESHttp*` and read/write on the
-doc-status table. A serving layer of your own should assume a role with the
-same grants.
+`connect` and `ReadDataViaQuery`; OpenSearch `GET`/`HEAD` and `POST` only on
+`<index>/_search`, with an explicit deny for deeper paths that end in
+`_search` but write (`POST <index>/_doc/_search` creates a document);
+Bedrock model, rerank and guardrail calls; and the cache bucket's `eval/`
+prefix. It has no DynamoDB access and cannot write or delete in either store.
+Do not query with the ingestion task definition (its role can delete); a
+serving layer of your own should assume a role with the same grants.
 
 **The index suffix is a naming separation, not an access-control boundary.**
-`RAGInput.suffix` / `--suffix` selects which indices and labels a query
-reads, and the chain validates it so it cannot widen the index target, but
-any caller that holds the query role can name any suffix. A multi-tenant
-serving layer must therefore set the suffix server-side from the
-authenticated principal (for example a tenant claim in the caller's token),
-never from a request field. When tenants must be isolated by the
-infrastructure rather than by that code:
+`RAGInput.suffix` / `--suffix` selects the indices and labels a query reads
+(validated so it cannot widen the target), but any holder of the query role
+can name any suffix. A multi-tenant serving layer must set it server-side
+from the authenticated principal (a tenant claim in the caller's token),
+never from a request field. To isolate tenants in the infrastructure:
 
-- OpenSearch: give each tenant its own query role whose `es:ESHttpGet`,
-  `es:ESHttpHead` and `es:ESHttpPost` resources name only its indices, such
-  as `<domain ARN>/graphrag-*-<suffix>` and `<domain ARN>/graphrag-*-<suffix>/*`
-  (aliases are `<index prefix>-<suffix>`; pick suffixes that never end in
-  `-<another suffix>`, or set distinct index prefixes per tenant), and keep
-  the query role's deny statement for the document and bulk APIs. For
-  document- or field-level rules, enable fine-grained access control on the
-  domain and map each tenant role to an OpenSearch role whose index
-  permissions cover only `*-<suffix>*`.
-- Neptune: IAM authorizes a whole cluster, with no per-label scope, so a
-  tenant whose graph must be unreadable by others needs its own Neptune
-  cluster (one deployment, or one `env_name`, per tenant).
+- OpenSearch: one query role per tenant whose `es:ESHttpGet`, `es:ESHttpHead`
+  and `es:ESHttpPost` resources name only its indices
+  (`<domain ARN>/graphrag-*-<suffix>` and `<domain ARN>/graphrag-*-<suffix>/*`;
+  pick suffixes that never end in `-<another suffix>`, or distinct index
+  prefixes), keeping the deny on the document and bulk APIs. For document- or
+  field-level rules, enable fine-grained access control and map each tenant
+  role to an OpenSearch role limited to `*-<suffix>*`.
+- Neptune: IAM authorizes a whole cluster, so a tenant whose graph others must
+  not read needs its own cluster (one deployment or `env_name` per tenant).
 - Bedrock and the guardrail are shared and hold no tenant data.
 
 ## Observability
 
-Tracing is off by default (`observability.enabled: false`). To send traces to
-a local Jaeger, which accepts OTLP on port 4318:
+Tracing is off by default; the settings are in the
+[User Guide](./user-guide.md#observability). To send traces to a local
+Jaeger, which accepts OTLP on port 4318:
 
 ```bash
 docker run --rm -d --name jaeger -p 16686:16686 -p 4318:4318 \
@@ -576,44 +426,32 @@ observability:
   backend: "otlp"
 ```
 
-Run a query (`run-rag --config-path config.yaml --query "..."`) and open
-<http://localhost:16686>: the service `unified-kg-rag` shows one
-`kg_rag.query` trace per query and one `kg_rag.ingestion.run` trace per
-ingestion run. For an OpenTelemetry Collector or a vendor endpoint, point
-`OTEL_EXPORTER_OTLP_ENDPOINT` at it and pass any credential in
-`OTEL_EXPORTER_OTLP_HEADERS` from Secrets Manager or task secrets, never in the
-config file. Set `OTEL_EXPORTER_OTLP_PROTOCOL=grpc` for a gRPC endpoint (port
-4317).
+Run a query and open <http://localhost:16686>: the service `unified-kg-rag`
+shows one `kg_rag.query` trace per query and one `kg_rag.ingestion.run` trace
+per ingestion run. For a collector or a vendor endpoint, point
+`OTEL_EXPORTER_OTLP_ENDPOINT` at it, pass credentials in
+`OTEL_EXPORTER_OTLP_HEADERS` from Secrets Manager or task secrets, and set
+`OTEL_EXPORTER_OTLP_PROTOCOL=grpc` for a gRPC endpoint (port 4317).
 
-To check it works:
-
-- The start-up log has `Observability enabled (backend: 'otlp', ...)`.
-- Log records written inside a span carry `trace_id` and `span_id`; search the
-  trace backend for that id.
-- A query trace has `kg_rag.retrieve`, `kg_rag.fusion`, `kg_rag.context_build`
-  and `chat <model>` children; `gen_ai.usage.input_tokens` on the model spans
-  is the token usage of the run.
-- `kg_rag.rerank.status` on the `kg_rag.rerank` span is the outcome of that
-  one Rerank call: `ok`, `error` when the call failed and the query fell back
-  to the fused order, or `empty` when the model returned nothing usable.
-- `kg_rag.rerank_status` is what reranking did, set even when no Rerank call
-  was made: on a `kg_rag.fusion` span for that fusion step, and on the
-  `kg_rag.strategy` span for the whole query (the worst step, the same value
-  as `metadata.rerank.status`). Values: `applied`, `disabled`, `unavailable`
-  (the rerank model could not be built), `skipped` (nothing to rerank) or
-  `failed`.
+To check it works: the start-up log has
+`Observability enabled (backend: 'otlp', ...)`; log records written inside a
+span carry its `trace_id` and `span_id`; a query trace has `kg_rag.retrieve`,
+`kg_rag.fusion`, `kg_rag.context_build` and `chat <model>` children, whose
+`gen_ai.usage.input_tokens` is the run's token usage.
 
 ### Langfuse
 
-A local Langfuse runs from its Docker Compose file (it pulls Langfuse v4; v3
-works the same way):
+Langfuse and Phoenix ingest OTLP, so they need only the `otel` extra, no
+vendor SDK; their settings come from the environment only, and a standard
+`OTEL_EXPORTER_OTLP_*` variable wins over the vendor one. A local Langfuse
+runs from its Docker Compose file (Langfuse v4; v3 works the same way):
 
 ```bash
 git clone --depth 1 https://github.com/langfuse/langfuse.git
 cd langfuse && docker compose up -d     # UI on http://localhost:3000
 ```
 
-Create a project in the UI and an API key pair for it, then:
+Create a project and an API key pair in the UI, then:
 
 ```bash
 uv sync --extra otel
@@ -628,19 +466,19 @@ observability:
   backend: "langfuse"
 ```
 
-Each query is a `kg_rag.query` trace, grouped under its conversation in
-Sessions when `RAGInput.conversation_id` is set (and under `RAGInput.user_id`
-in Users); model calls show as generations with their token usage. Langfuse v4
-runs in `events_only` mode by default, where the public `/api/public/traces`,
-`/api/public/observations` and `/api/public/sessions` endpoints are disabled:
-read spans through `/api/public/v2/observations` or the UI. For Langfuse Cloud set `LANGFUSE_HOST` to
-the region's URL (for example `https://cloud.langfuse.com`). Langfuse accepts
-OTLP over HTTP only. If you set `OTEL_EXPORTER_OTLP_ENDPOINT` instead of
-`LANGFUSE_HOST`, give it `<host>/api/public/otel` (the exporter appends
-`/v1/traces`; the host root returns 404). If you set
-`OTEL_EXPORTER_OTLP_HEADERS` yourself instead of the two keys, include
-`x-langfuse-ingestion-version=4`: Langfuse Cloud can otherwise take minutes to
-show traces (a self-hosted v4 server writes them at once either way).
+- `LANGFUSE_HOST` is required (there is no default host); for Langfuse Cloud
+  use the region's URL, for example `https://cloud.langfuse.com`. The
+  exporter posts to `<host>/api/public/otel/v1/traces` over HTTP only (gRPC
+  fails at start-up); with `OTEL_EXPORTER_OTLP_ENDPOINT` instead, give
+  `<host>/api/public/otel` (the host root returns 404).
+- Both keys are required and sent as a Basic `Authorization` header with
+  `x-langfuse-ingestion-version: 4`. If you set `OTEL_EXPORTER_OTLP_HEADERS`
+  yourself, include that version header, or Langfuse Cloud can take minutes
+  to show traces.
+- Traces group in Sessions by `RAGInput.conversation_id` and in Users by
+  `RAGInput.user_id`. Langfuse v4's default `events_only` mode disables
+  `/api/public/traces`, `/observations` and `/sessions`: read spans through
+  `/api/public/v2/observations` or the UI.
 
 ### Arize Phoenix
 
@@ -656,13 +494,13 @@ observability:
   backend: "phoenix"
 ```
 
-With nothing else set, spans go to `http://localhost:6006/v1/traces` and land
-in the project named by `service_name` (`PHOENIX_PROJECT_NAME` wins). For a
-remote or authenticated Phoenix set `PHOENIX_COLLECTOR_ENDPOINT` (the server
-root, e.g. `https://phoenix.example.com`) and `PHOENIX_API_KEY`. Spans carry
-OpenInference kinds (`LLM`, `EMBEDDING`, `RETRIEVER`, `RERANKER`, `CHAIN`), so
-model calls show their token counts and the Sessions view groups a
-conversation's queries.
+With nothing else set, spans go to `http://localhost:6006/v1/traces` (`:4317`
+with `OTEL_EXPORTER_OTLP_PROTOCOL=grpc`) and land in the project named by
+`service_name` (`PHOENIX_PROJECT_NAME` wins). For a remote Phoenix set
+`PHOENIX_COLLECTOR_ENDPOINT` to the server root and, when it needs one,
+`PHOENIX_API_KEY` (sent as a Bearer `authorization` header). Spans carry
+OpenInference kinds (`LLM`, `EMBEDDING`, `RETRIEVER`, `RERANKER`, `CHAIN`), and
+the Sessions view groups a conversation's queries.
 
 ### CloudWatch through the ADOT collector sidecar
 
@@ -675,114 +513,153 @@ without the CDK stacks, and Bedrock model invocation logging as an
 account-level backstop) is in
 [iac/README.md: CloudWatch tracing](../iac/README.md#cloudwatch-tracing-optional).
 
+### Trace shape
+
+| Span | Parent | Attributes |
+|---|---|---|
+| `kg_rag.ingestion.run` | root | Status `ERROR` when the run failed |
+| `kg_rag.ingestion.stage` | run | One per stage: input/output counts, status, the stage's numeric metrics as `kg_rag.stage.<metric>`, `error.type` and the exception when it crashed |
+| `kg_rag.batch` | stage, or root for `run-eval` answer generation | Item and failure counts |
+| `kg_rag.query` | root, or the `run-eval` batch | `session.id`, `user.id`, `kg_rag.blocked`; with `capture_content` the redacted query as `input.value` and (outside `stream` / `astream`) the answer as `output.value` |
+| `kg_rag.strategy` | query | `kg_rag.rerank_status` for the whole query |
+| `kg_rag.retrieve` | strategy | Hits per result type, up to 50 source ids |
+| `kg_rag.fusion` | strategy | In/out counts, the step's `kg_rag.rerank_status` |
+| `kg_rag.rerank` | fusion | `kg_rag.rerank.status` (`ok`, `empty`, `error`), document counts |
+| `kg_rag.context_build` | strategy | Tokens used vs the token budget |
+| `kg_rag.global.select`, `kg_rag.global.map` | strategy (`global`) | Select, once per query: `kg_rag.depth` (configured), `kg_rag.cut` (the cut mapped after falling back to a shallower one), `kg_rag.reports`, `kg_rag.dynamic`. Map: `kg_rag.reports`, `kg_rag.map_calls`, `kg_rag.report_tokens` |
+| `kg_rag.drift.primer`, `kg_rag.drift.actions` | strategy (`drift`) | Primer: `kg_rag.reports`, `kg_rag.answers`. One actions span per round (`kg_rag.depth`, `kg_rag.actions`), with the round's local searches under it |
+| `kg_rag.guardrail` | query | One per screened query or answer: `aws.bedrock.guardrail.id`, `.source` (`input`, `output`), `.action` (`none`, `masked`, `blocked`), `.intervened`, `.policies` |
+| `kg_rag.evaluate` | root | One per evaluator: `kg_rag.evaluator`, `kg_rag.items`; the judge's model spans under it |
+| `chat <model>`, `embeddings <model>` | the calling span | OpenTelemetry GenAI conventions, kind `CLIENT` (as Bedrock rerank spans): `gen_ai.request.model`, `.max_tokens`, `.temperature`, `gen_ai.usage.input_tokens` / `output_tokens`, `gen_ai.usage.cache_read.input_tokens` / `cache_creation.input_tokens` when Bedrock reports prompt-cache use, finish reasons, `error.type`, `aws.bedrock.guardrail.intervened`. No cost |
+
+`kg_rag.rerank.status` is the outcome of one Rerank call (`error`: the query
+fell back to the fused order; `empty`: nothing usable came back), while
+`kg_rag.rerank_status` is what reranking did, set even without a call:
+`applied`, `disabled`, `unavailable` (no rerank model), `skipped` (nothing to
+rerank) or `failed`; on the strategy span it is the worst step, as in
+[`metadata.rerank.status`](./user-guide.md#rerank-status).
+
+On export, spans keep their `gen_ai.*` and `kg_rag.*` attributes and gain the
+vendor's names: Langfuse `langfuse.observation.type` (`generation` for model
+calls, `embedding`, `retriever` for retrieval and rerank, `span` otherwise)
+and, with `capture_content`, `langfuse.observation.input` / `output`; Phoenix
+`openinference.span.kind`, `llm.model_name`, `llm.provider`,
+`llm.token_count.*` and, with `capture_content`, `input.value` /
+`output.value`.
+
+Known limits:
+
+- A streamed answer (`stream` / `astream`) is its own trace; its model span
+  takes `session.id` / `user.id` from the answer step's run metadata, so it
+  still groups with its session.
+- The async batch path records one span per batch, not per chunk.
+- A model call cancelled during `ainvoke` (for example by `asyncio.wait_for`)
+  leaves no model span: LangChain reports no callback for it. A stream the
+  caller stops reading early ends its span normally.
+- With `otlp`, `langfuse` or `phoenix` the first backend the process installs
+  also becomes OpenTelemetry's global tracer provider, which can be set only
+  once: after a later configuration with other settings, the package's spans
+  use the new exporter, but spans other libraries emit through the global API
+  are dropped.
+
 ### Export limits, private VPCs and privacy
 
-Spans are exported from a background thread, so an unreachable collector does
-not slow runs down: each export request is bounded by
-`observability.export_timeout_seconds` (10 s; `OTEL_EXPORTER_OTLP_TIMEOUT`
-wins when set), a full queue drops spans instead of blocking, and the exporter
-logs its failures (at `ERROR`; `logging.library_levels` hides its per-retry
-warnings). The flush at exit sends what is still queued, one request per batch
-of up to 512 spans, so against an unreachable collector it takes about one
-timeout per remaining batch, and at most about 30 s (the batch processor's
-shutdown wait) before the process exits and drops the rest.
-In a private VPC the endpoint must be reachable from the tasks: a collector
-sidecar on `localhost`, a Langfuse or Phoenix hosted inside the VPC, or the
-X-Ray interface VPC endpoint for the collector's CloudWatch export. Hosted
-Langfuse or Phoenix needs internet egress, which the private-mode stacks do
-not have. The data-plane image includes the extra only when built with
-`--build-arg UV_EXTRAS="--extra otel"`.
+- **Export never blocks a run.** Spans leave from a background thread; each
+  request is bounded by `observability.export_timeout_seconds` (10 s;
+  `OTEL_EXPORTER_OTLP_TIMEOUT` wins), a full queue drops spans, and failures
+  are logged at `ERROR`. Against an unreachable collector the flush at exit
+  takes about one timeout per remaining batch of 512 spans, at most about
+  30 s, then drops the rest.
+- **Private VPCs.** The endpoint must be reachable from the tasks: a
+  collector sidecar on `localhost`, a Langfuse or Phoenix inside the VPC, or
+  the X-Ray interface endpoint for the collector; hosted Langfuse or Phoenix
+  needs internet egress, which `private` mode does not have. Build the image
+  with `--build-arg UV_EXTRAS="--extra otel"`.
+- **Credentials** (`LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY`,
+  `PHOENIX_API_KEY`, `OTEL_EXPORTER_OTLP_HEADERS`) come from the environment
+  only: inject them as ECS task secrets. The start-up line
+  `Observability exporter for backend '...'` shows the endpoint and header
+  names, never values.
 
-Credentials (`LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY`, `PHOENIX_API_KEY`,
-`OTEL_EXPORTER_OTLP_HEADERS`) are read from the environment only: inject them
-as ECS task secrets from Secrets Manager. The start-up line
-`Observability exporter for backend '...'` shows the endpoint without
-credentials and the header names, never their values.
-
-Privacy defaults: spans carry counts, ids, model names and token usage only.
+Spans carry counts, ids, model names and token usage only.
 `capture_content: true` adds prompt and completion text to model spans, and
-the query and answer to the `kg_rag.query` span (after `redact_patterns`); enable it only where the trace backend may hold corpus
-data. With `otlp`, `langfuse` or `phoenix`, `redact_patterns` also applies at
-export to every string attribute, event attribute (an exception message can
-quote a query) and status message, `session.id` and `user.id` included; with
-`none` the host's pipeline exports spans as recorded, so redact in its
-collector. `RAGInput.user_id` is exported as given: pass an opaque id. With
-LangSmith tracing also on (`LANGSMITH_TRACING=true`), LangChain uploads
-content to LangSmith independently of this setting.
+the query and answer to the `kg_rag.query` span (after `redact_patterns`):
+enable it only where the trace backend may hold corpus data. With `otlp`,
+`langfuse` or `phoenix`, `redact_patterns` also applies at export to every
+string attribute, event attribute (an exception message can quote a query)
+and status message, `session.id` and `user.id` included; with `none` the
+host's pipeline exports spans as recorded, so redact in its collector.
+`RAGInput.user_id` is exported as given: pass an opaque id, not an e-mail
+address. With LangSmith tracing on (`LANGSMITH_TRACING=true`), LangChain
+uploads content to LangSmith independently of these settings.
 
 ## Common errors
 
-Messages are abridged; the log line names the key, file or stage involved. A store, model or credential error during a query fails the query instead of answering from no context ("could not find"), since every later query would fail the same way.
+Messages are abridged; the log line names the key, file or stage. A store,
+model or credential error fails a query rather than answering from no context.
 
 ### Configuration and start-up
 
 | Message (abridged) | Meaning | Action |
 |---|---|---|
-| `Missing endpoint configuration for ...` | An endpoint the run needs is unset | Set the named key or environment variable |
-| `Configuration validation error: ...` | A config value has the wrong type or an unsupported value | Fix the named key |
-| `ConfigurationError: Unknown config keys: '<path>' ...` (exit code 2) | A typo, or a key dropped without a replacement. A renamed key fails with `settings moved; replace <old> -> <new>`; a key listed as removed (`indexing.cross_run_merge`, `aws.bedrock.guardrail.apply_to`) only logs `Config key ... is removed and ignored` | Correct or delete the key ([CHANGELOG](../CHANGELOG.md) names the replacement). `--allow-unknown-keys` loads the file anyway, logging `Unknown config key '<path>' is ignored` (WARNING) per key |
-| `--source-directory is required for pipeline execution` (exit 2, like the usage errors below) | No `--source-directory` and no `$UKR_SOURCE_DIRECTORY` | Pass it; `--verify-metadata` needs `--pipeline-id` instead |
-| `--s3-sync needs --s3-bucket-name or aws.s3.bucket_name` | `--s3-sync` without a bucket | Pass `--s3-bucket-name` or set `aws.s3.bucket_name` (`UKR__AWS__S3__BUCKET_NAME`) |
-| `--pipeline-id is required for --resume-from-stage` | Resuming needs the earlier run | Pass that run's `--pipeline-id` |
-| `--enabled-stages: invalid stage names ...` | `--enabled-stages` names an unknown stage | Use a name from the list in the message |
-| `argument --resume-from-stage: Unknown pipeline stage ...` (exit 2) | `--resume-from-stage` names an unknown stage | Use a name from the list in the message (any case) |
-| `... needs confirmation, but stdin is not a terminal` | A re-run found completed stages whose output is no longer cached under the current inputs, without a terminal to ask on | Pass `--yes` to go on (the resume recomputes those stages), or use a new `--pipeline-id` |
-| `Stage '<stage>', upstream of this run's enabled stages, has not completed` | An `--enabled-stages` window resumed while an earlier stage failed or lost its cached output | Run the earlier stages first |
-| `observability.enabled is true but OpenTelemetry is not installed` | Tracing is on but the `otel` extra is missing | `uv sync --extra otel`, or set `observability.enabled: false` |
+| `Missing endpoint configuration for ...` / `Configuration validation error: ...` | An endpoint the run needs is unset, or a value has the wrong type | Set or fix the named key |
+| `ConfigurationError: Unknown config keys: '<path>' ...` (exit 2) | A typo, or a key dropped without a replacement (a renamed key fails with `settings moved; replace <old> -> <new>`; a removed one, `indexing.cross_run_merge` or `aws.bedrock.guardrail.apply_to`, only logs `Config key ... is removed and ignored`) | Fix or delete the key; `--allow-unknown-keys` loads anyway with a WARNING per key |
+| Usage errors (exit 2): `--source-directory is required for pipeline execution`, `--s3-sync needs --s3-bucket-name or aws.s3.bucket_name`, `--pipeline-id is required for --resume-from-stage`, `--enabled-stages: invalid stage names ...`, `argument --resume-from-stage: Unknown pipeline stage ...` | A required flag is missing, or a stage name is unknown | Pass the flag, or a stage name from the message ([CLI Reference](./cli.md#run-ingestion)) |
+| `... needs confirmation, but stdin is not a terminal` | Completed stages' outputs are no longer cached under the current inputs | `--yes` (recomputes them), or a new `--pipeline-id` |
+| `Stage '<stage>', upstream of this run's enabled stages, has not completed` | An earlier stage failed or lost its output | Run the earlier stages first |
+| `observability.enabled is true but OpenTelemetry is not installed` | The `otel` extra is missing | `uv sync --extra otel`, or turn tracing off |
 | `Skipping N '.md' file(s) ...` / `No supported source files found in '<dir>'` | The `unstructured` extra is not installed | Install it (Python 3.11+) or convert the files |
 
 ### Credentials and models
 
 | Message (abridged) | Meaning | Action |
 |---|---|---|
-| `No valid AWS credentials for Amazon Bedrock in region ...` | Credentials are missing or expired | Refresh credentials; check `AWS_PROFILE` / `aws.profile_name` |
-| `Model '<id>' is only available through a cross-region inference profile, but none resolved ...` | The model has no on-demand throughput and no profile was found | Keep `aws.bedrock.enable_global_profile: true`, grant `bedrock:ListInferenceProfiles`, or use another region |
-| `Reranking failed: ...` (ERROR, per query; `metadata.rerank.status: failed`) | The Rerank call was denied or the model is unavailable in the region | Grant `bedrock:Rerank` on `Resource: "*"`, move Bedrock to a region with the rerank model, or set `search.reranking.enabled: false` |
-| `RerankModelError: Reranking failed: ...` / `... returned no usable results` / `Rerank model could not be built: ...` | `search.reranking.required: true`, and the rerank call failed, returned nothing usable, or the model could not be built | Fix the cause as for `Reranking failed`, or set `required: false` to answer from the fused order (`metadata.rerank.status` `failed` / `unavailable`) |
-| `Reranking initialization failed; queries keep the fused order ...` (ERROR, when a strategy is first built) | Reranking is enabled but the rerank model could not be built; every query reports `metadata.rerank.status: unavailable` | Check `models.rerank` and the rerank provider (`providers.rerank`), or set `search.reranking.enabled: false` |
-| `ClientError: ... (ValidationException) ... InvokeModel ...` / `(ResourceNotFoundException)` / `NoCredentialsError` during a query | The query embedding call cannot succeed: an invalid model id, no on-demand throughput in the region, no model access, or no credentials | Check `models.embedding.model_id`, `aws.bedrock.region_name`, the account's model access and the credentials |
-| `EmbeddingModelError: Query embedding failed: ...` | The query embedding call failed after the client's retries (a crashed Ollama runner, a dead vLLM engine, a persistent Bedrock `InternalServerException`); every vector search of the query needs it | Check the embedding server or model (`providers.embedding`, `models.embedding.model_id`) and its logs, then retry |
-| Bedrock calls hang in a private VPC | Bedrock is called in a region the VPC endpoint does not serve | Keep `aws.bedrock.region_name` unset or equal to the VPC's region |
+| `No valid AWS credentials for Amazon Bedrock in region ...` | Missing or expired credentials | Refresh them; check `AWS_PROFILE` / `aws.profile_name` |
+| `Model '<id>' is only available through a cross-region inference profile, but none resolved ...` | No on-demand throughput and no profile found | Keep `aws.bedrock.enable_global_profile: true`, grant `bedrock:ListInferenceProfiles`, or use another region |
+| `Reranking failed: ...` (per query, `metadata.rerank.status: failed`) / `Reranking initialization failed; queries keep the fused order ...` (`unavailable`) | The Rerank call was denied or the model is not in the region; or the rerank model could not be built | Grant `bedrock:Rerank` on `Resource: "*"`, use a region with the model, check `models.rerank` / `providers.rerank`, or set `search.reranking.enabled: false` |
+| `RerankModelError: ...` | As above, with `search.reranking.required: true` | Fix the cause, or `required: false` to answer from the fused order |
+| `ClientError: ... (ValidationException) ... InvokeModel ...` / `(ResourceNotFoundException)` / `NoCredentialsError` during a query | The query embedding call cannot succeed | Check `models.embedding.model_id`, `aws.bedrock.region_name`, model access and credentials |
+| `EmbeddingModelError: Query embedding failed: ...` | The embedding call failed after retries (a crashed Ollama runner or vLLM engine, a persistent `InternalServerException`) | Check the embedding server and its logs; retry |
+| Bedrock calls hang in a private VPC | Bedrock is called in another region than the VPC endpoint's | Keep `aws.bedrock.region_name` unset or the VPC's region |
 
 ### Stores: connection, permissions, requests
 
 | Message (abridged) | Meaning | Action |
 |---|---|---|
-| `StoreConnectionError: ... Cannot connect to host ...` / `Neptune is not reachable ...` / `... status=429 ... (still failing after the client's retries)` | The store refused the connection or could not be resolved, Neptune closed it (a restart or failover), or OpenSearch still answered 429/502/503/504 after `search.store_max_attempts` attempts. A lost Neptune connection is reopened by the next query or retry | Check the endpoint and port, that the store runs, and the network path (security groups, VPC endpoints) |
-| `OpenSearch did not answer a request on <index> within N s in M attempt(s)` / `Neptune did not answer within N s` | The store accepted the connection but did not answer within `search.store_timeout_seconds`. During ingestion the Neptune bound is a fixed 180 s and the item is retried | Check the store's health and load (CPU, queues, a failover); raise `search.store_timeout_seconds` for a cluster that is slow by design |
-| `OpenSearch denied the search on <index>: ... status=403 ...` (or `401`) | The query principal may not search the index: under fine-grained access control, a role without `indices:data/read/search`; or invalid credentials | Grant the role `indices:data/read/search` on the indices (and `indices:admin/mappings/get` for the embedding check), or fix the credentials |
-| `Neptune refused the connection (HTTP 403)` | IAM authentication denied the websocket: the policy lacks `neptune-db:connect` on the cluster, or the request was signed for another region | Grant `neptune-db:connect` (and the `neptune-db:*` data actions the run needs); set `aws.region_name` to the cluster's region |
-| OpenSearch authentication fails with `use_iam: false` | No basic-auth credentials | Set `UKR__AWS__OPENSEARCH__USERNAME` / `UKR__AWS__OPENSEARCH__PASSWORD` (for example in `.env`) |
-| `OpenSearch rejected the search on <index>: ...` | HTTP 400: a filter value of another type than the field's (`query_shard_exception`). HTTP 500 `too_many_clauses` / `too_many_nested_clauses`: `indices.query.bool.max_clause_count` is below the default 1,024 | Fix the filter value, or keep `indices.query.bool.max_clause_count` at 1,024 or more |
-| `Cannot create the OpenSearch index '<index>': the cluster has no analyzer '<name>'` (raw: `mapper_parsing_exception`) | `indexing.opensearch.language_analyzers` names an analyzer whose plugin the cluster lacks, typically `ko: nori` on an Amazon OpenSearch Service domain without the Nori package | Map the language to an analyzer the cluster has (`ko: cjk` is built in; the CDK stack's default, `-c opensearch_korean_analyzer`), or associate the package; then re-run |
+| `StoreConnectionError: ... Cannot connect to host ...` / `Neptune is not reachable ...` / `... status=429 ... (still failing after the client's retries)` | Refused or unresolved, closed by Neptune (restart, failover; reopened next time), or OpenSearch 429/502/503/504 for all `search.store_max_attempts` attempts | Check endpoint, port, that the store runs, security groups and VPC endpoints |
+| `OpenSearch did not answer a request on <index> within N s in M attempt(s)` / `Neptune did not answer within N s` | No answer within `search.store_timeout_seconds` (ingestion: Neptune fixed 180 s, item retried) | Check the store's health and load, or raise the timeout |
+| `OpenSearch denied the search on <index>: ... status=403 ...` (or `401`) | Fine-grained access control: the role lacks `indices:data/read/search`; or bad credentials | Grant it (and `indices:admin/mappings/get`), or fix the credentials |
+| `Neptune refused the connection (HTTP 403)` | No `neptune-db:connect` on the cluster, or signed for another region | Grant it (and the needed `neptune-db:*` data actions); set `aws.region_name` to the cluster's region |
+| OpenSearch authentication fails with `use_iam: false` | No basic-auth credentials | Set `UKR__AWS__OPENSEARCH__USERNAME` / `__PASSWORD` (for example in `.env`) |
+| `OpenSearch rejected the search on <index>: ...` | 400 `query_shard_exception`: a filter value of the wrong type. 500 `too_many_clauses` / `too_many_nested_clauses`: `indices.query.bool.max_clause_count` below 1,024 | Fix the value, or keep the limit at 1,024 or more |
+| `Cannot create the OpenSearch index '<index>': the cluster has no analyzer '<name>'` (`mapper_parsing_exception`) | An analyzer in `indexing.opensearch.language_analyzers` is missing, typically `ko: nori` without the Nori package | Use one the cluster has (`ko: cjk`, the CDK default), or associate the package; re-run |
 
 ### Ingestion runs and the doc-status registry
 
 | Message (abridged) | Meaning | Action |
 |---|---|---|
-| `Pipeline failed at stage(s): ...` | A stage failed; the CLI exits 1 | Read the stage's log lines, fix, resume with the same `--pipeline-id`. `--verify-metadata` checks the run's metadata, `--force-rebuild` starts clean |
-| `CacheSyncError` | The S3 stage-cache download or upload failed | Check bucket permissions and `aws.s3.encryption`, then resume with the same `--pipeline-id` |
-| `DocStatusRegistryError` | The doc-status registry table is missing, not accessible, or throttled | Create the table or fix `aws.dynamodb.table_name`, grant the DynamoDB permissions named in the message, then resume with the same `--pipeline-id` |
-| `Incremental indexing is enabled but no document delta was computed` | The indexing stage ran without a registry diff (the loading stage failed under `continue_on_error`) | Re-run from `document_loading` once the registry is reachable |
-| `NamespaceLeaseError: Index namespace '...' is being written by ...` | Another run holds the namespace's write lease | Wait for it to finish; a dead run's lease expires within `indexing.lease_seconds` (see [Concurrent runs](#concurrent-runs)) |
-| `NamespaceLeaseError: This run lost the write lease ...` | The run's lease renewals failed until it expired, or another run took it | Re-run once the other run ended; check the registry's reachability |
-| `ConfigurationError: Doc-status registry: DynamoDB table '...' has the key schema ... of an earlier release` | The table was created by a release that keyed records by `doc_id` alone | Point `aws.dynamodb.table_name` (`UKR__AWS__DYNAMODB__TABLE_NAME`) at a new table or deploy the stack's new one, and run once with `indexing.reset: true` (see [Incremental runs](#incremental-runs)) |
+| `Pipeline failed at stage(s): ...` | A stage failed; exit 1 | Fix from the stage's log and resume with the same `--pipeline-id` (`--force-rebuild` starts clean) |
+| `CacheSyncError` | The S3 stage-cache download or upload failed | Check bucket permissions and `aws.s3.encryption`; resume |
+| `DocStatusRegistryError` | The registry table is missing, not accessible, or throttled | Create it or fix `aws.dynamodb.table_name`, grant the permissions the message names; resume |
+| `Incremental indexing is enabled but no document delta was computed` | Indexing ran without a registry diff (loading failed under `continue_on_error`) | Re-run from `document_loading` once the registry is reachable |
+| `NamespaceLeaseError: Index namespace '...' is being written by ...` | Another run holds the write lease | Wait; a dead run's lease expires within `indexing.lease_seconds` ([Concurrent runs](#concurrent-runs)) |
+| `NamespaceLeaseError: This run lost the write lease ...` | Renewals failed until the lease expired, or another run took it | Re-run after the other run; check the registry is reachable |
+| `ConfigurationError: Doc-status registry: DynamoDB table '...' has the key schema ... of an earlier release` | A table keyed by `doc_id` alone | Point `aws.dynamodb.table_name` at a new table (or the stack's), and run once with `indexing.reset: true` ([Incremental runs](#incremental-runs)) |
 | `ConfigurationError: The OpenSearch index '...' records no embedding settings ...` | An earlier release built the index | Run once with `indexing.reset: true` |
-| `The doc-status registry lists indexed documents of this namespace whose entities the graph store does not hold` | The graph lost what the registry records (a restarted Gremlin Server, `docker compose ... down -v`, a restored or replaced graph) | Re-run with `indexing.reset: true`, or delete the namespace's registry records (local mode: the SQLite file) |
-| `The doc-status registry lists indexed documents of this namespace whose text units the vector store does not hold` | The vector store lost what the registry records (deleted indices; local mode: `vector.sqlite3` moved or deleted, or `providers.vector.sqlite_path` changed) | As above; in local mode delete the three store files together or restore the vector file |
+| `The doc-status registry lists indexed documents of this namespace whose entities the graph store does not hold` (or `whose text units the vector store does not hold`) | A store lost what the registry records (a restarted Gremlin Server, `down -v`, a restored graph, deleted indices, a moved `vector.sqlite3`) | Re-run with `indexing.reset: true`, or delete the namespace's records; locally delete the three store files together or restore the moved one |
 
 ### Queries
 
 | Message (abridged) | Meaning | Action |
 |---|---|---|
-| `No indices found for suffix '<suffix>' ...` | Nothing was ingested under that index suffix | Run ingestion, or query with the suffix the corpus was ingested under |
-| `InvalidFilterError` | No store the strategy reads declares a filter key | Use a key from the list in the message |
-| LightRAG `mix` / `hybrid` returns nothing | No relationship index, or keyword extraction produced no keywords | Check that ingestion built the relationships index; very short queries fall back to the raw query only under `raw_query_fallback_max_len` |
+| `No indices found for suffix '<suffix>' ...` | Nothing was ingested under that suffix | Ingest, or query the corpus's suffix |
+| `InvalidFilterError` | No store the strategy reads declares the filter key | Use a key the message lists |
+| LightRAG `mix` / `hybrid` returns nothing | No relationship index, or no keywords extracted | Check the relationships index exists; short queries fall back to the raw query only under `raw_query_fallback_max_len` |
 
 ### Local mode
 
 | Message (abridged) | Meaning | Action |
 |---|---|---|
-| `... stayed locked ...` (`database is locked`) from an embedded store or the SQLite registry | Another process (a second ingestion, say) held the SQLite file's write lock longer than `search.store_timeout_seconds`; SQLite allows one writer at a time | Run one ingestion per store file at a time, or raise `search.store_timeout_seconds`. Keep the files on a local disk, not a network filesystem |
-| `... processed N inputs but produced 0 outputs`, with `Connection refused` in the log (local mode) | Ollama or the OpenAI-compatible server is not reachable at `providers.llm.base_url` / `providers.embedding.base_url` | Start it (`ollama serve`, or `docker compose -f docker/compose.local.yaml --profile models up -d --wait`), check `base_url` (or `--model-base-url`), and pull the models |
-| A query fails with `AuthenticationError` / `NotFoundError` (401 / 404), `APIConnectionError` / `APITimeoutError`, or `ResponseError: model ... not found` | The OpenAI-compatible or Ollama server refused the key, does not serve the model, or could not be reached after the client's retries | Check `base_url` and `api_key` under `providers.llm` / `providers.embedding`, the model names (`models.default`, `models.embedding.model_id`), that the server runs, and pull the models |
+| `... stayed locked ...` (`database is locked`) | Another process held the SQLite write lock longer than `search.store_timeout_seconds` | One ingestion per store file at a time, or raise the timeout; use a local disk |
+| `... processed N inputs but produced 0 outputs`, with `Connection refused` in the log | Ollama or the OpenAI-compatible server is not reachable at `providers.llm.base_url` / `providers.embedding.base_url` | Start it (`ollama serve`, or `docker compose -f docker/compose.local.yaml --profile models up -d --wait`), check `base_url` (`--model-base-url`), pull the models |
+| `AuthenticationError` / `NotFoundError` (401 / 404), `APIConnectionError` / `APITimeoutError`, `ResponseError: model ... not found` | Key refused, model not served, or server unreachable | Check `base_url`, `api_key` and the model names under `providers.llm` / `providers.embedding`; pull the models |

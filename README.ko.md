@@ -94,7 +94,7 @@ uv run run-visualization --data-path visualization_data.json --output-directory 
 uv run run-prompt-tuning --source-directory ./source --output-path tuned_prompts.yaml --config-path config.yaml
 ```
 
-모든 CLI, 평가 데이터 형식과 평가기는 [사용자 가이드](./docs/user-guide.ko.md)에, 모든 설정 키는 [설정 레퍼런스](./docs/configuration.md)(영문)에 있습니다.
+모든 CLI, 평가 데이터 형식과 평가기는 [사용자 가이드](./docs/user-guide.ko.md)에, 모든 플래그는 [CLI 레퍼런스](./docs/cli.md)(영문)에, 모든 설정 키는 [설정 레퍼런스](./docs/configuration.md)(영문)에 있습니다.
 
 ## AWS에 배포(선택)
 
@@ -109,6 +109,7 @@ uv run run-prompt-tuning --source-directory ./source --output-path tuned_prompts
 | 문서 | 내용 |
 |---|---|
 | [사용자 가이드](./docs/user-guide.ko.md) ([English](./docs/user-guide.md)) | 설정, CLI 플래그, 증분 인덱싱, 평가, 라이브러리 사용법, [제한 사항](./docs/user-guide.ko.md#12-제한-사항) |
+| [CLI 레퍼런스](./docs/cli.md) (영문) | 모든 CLI 플래그의 기본값과 설명(파서에서 생성) |
 | [설정 레퍼런스](./docs/configuration.md) (영문) | 모든 설정 키의 타입, 기본값, 설명(코드에서 생성) |
 | [모델 카탈로그](./docs/models.ko.md) ([English](./docs/models.md)) | 지원하는 Bedrock 모델과 공급자별 요청 차이 |
 | [운영 런북](./docs/operations.ko.md) ([English](./docs/operations.md)) | 재수집, 증분 실행, 실패한 문서, 캐시, 자주 보는 오류 |

@@ -149,6 +149,9 @@ than an edit to dispatch code.
 - Every configuration key has a user-facing `Field(description=...)`. After changing a config field, run
   `uv run python scripts/gen_config_reference.py` to regenerate [docs/configuration.md](./docs/configuration.md)
   (a unit test fails when it is stale), and update `config-template.yaml`, the commented starting file.
+- Every CLI flag has a user-facing `help=`. After adding or changing a flag, run
+  `uv run python scripts/gen_cli_reference.py` to regenerate [docs/cli.md](./docs/cli.md) (a unit test fails when it is
+  stale).
 
 
 ## Finding contributions to work on

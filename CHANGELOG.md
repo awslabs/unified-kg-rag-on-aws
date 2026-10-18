@@ -620,6 +620,11 @@ changed once with the full-config keys (#332).
   keep the containers.
 
 ### Added
+- `docs/cli.md`, a CLI reference generated from the argparse parsers of
+  every CLI (`scripts/gen_cli_reference.py`; a unit test fails when it is
+  stale). The flag help strings now carry what the user guide's flag tables
+  said, such as the `--pipeline-id` character rules and the
+  `--continue-on-error` FAILED records (#351).
 - The community drift metrics of an incremental run report `added_roots`,
   the root communities it appended: each joins every cut of the hierarchy,
   so global search maps that many more reports until a rebuild (a
@@ -794,6 +799,10 @@ changed once with the full-config keys (#332).
   fused order. Reported by @vibhupb (#83) (#284).
 
 ### Changed
+- The user guide links the CLI reference instead of repeating flag tables,
+  the observability trace shape (every span and attribute, the vendor
+  attribute names, the known limits) moved to the runbook, and the user
+  guide, runbook and design document were condensed (#351).
 - `iac/README.md` opens with a quick start, splits the 35-row `-c` option
   table by concern, turns the guardrail notes into a section, and now holds
   the whole CloudWatch tracing recipe (Transaction Search, the collector
@@ -801,6 +810,7 @@ changed once with the full-config keys (#332).
   CDK stacks, Bedrock invocation logging), which the runbook links to. The
   README is shorter and names `providers.doc_status.enabled` as the
   incremental switch (#349).
+  incremental switch (#351).
 - `run-ingestion --s3-sync` takes the bucket from `aws.s3.bucket_name`
   (`UKR__AWS__S3__BUCKET_NAME`, which the CDK task sets) when
   `--s3-bucket-name` is not given, so the bucket is configured once (#344).
@@ -1229,6 +1239,7 @@ changed once with the full-config keys (#332).
   and are ignored while moved ones fail, deletions remove vector copies
   before graph copies, and the incremental switch is
   `providers.doc_status.enabled` (#350).
+  `providers.doc_status.enabled` (#351).
 - iac/README.md no longer says a second concurrent ingestion stops before it
   reads anything: it syncs the corpus and its checkpoint first, then stops
   with `NamespaceLeaseError` before it reads the stores or writes (#345).
