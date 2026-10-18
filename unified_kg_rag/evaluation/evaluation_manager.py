@@ -11,7 +11,7 @@ from collections.abc import Callable
 from datetime import datetime, timezone
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from langchain_core.runnables import Runnable
 from pydantic import ValidationError
@@ -44,6 +44,7 @@ from unified_kg_rag.domain.models import (
     RetrieverRole,
     model_id_value,
 )
+from unified_kg_rag.ports.guardrail import GuardAction
 from unified_kg_rag.shared import EvaluationException, get_logger, observability
 from unified_kg_rag.shared.utils.cache_keys import answer_settings
 from unified_kg_rag.shared.utils.langchain import BATCH_ITEM_FAILED, BatchProcessor
@@ -415,6 +416,7 @@ class EvaluationManager:
                         abstained=error_message is None
                         and self._is_abstention(answer, rag_metadata),
                         rerank_status=(rag_metadata.get("rerank") or {}).get("status"),
+                        guardrail_blocked=self._guardrail_block(rag_metadata),
                     )
                 )
             except Exception as e:
@@ -487,6 +489,17 @@ class EvaluationManager:
         """
         support = Counter(mapping[u] for u in unit_ids if u in mapping)
         return sorted(support, key=lambda name: (-support[name], name))
+
+    @staticmethod
+    def _guardrail_block(rag_metadata: Any) -> Literal["input", "output"] | None:
+        """Which text the guardrail blocked (the query or the answer), if any."""
+        records = (
+            rag_metadata.get("guardrail") if isinstance(rag_metadata, dict) else None
+        )
+        for record in records or []:
+            if record.get("action") == GuardAction.BLOCKED.value:
+                return "output" if record.get("source") == "output" else "input"
+        return None
 
     @staticmethod
     def _is_abstention(answer: Any, rag_metadata: Any) -> bool:
@@ -827,6 +840,13 @@ class EvaluationManager:
                 sorted(
                     Counter(
                         r.rerank_status.value for r in results if r.rerank_status
+                    ).items()
+                )
+            ),
+            guardrail_blocked_counts=dict(
+                sorted(
+                    Counter(
+                        r.guardrail_blocked for r in results if r.guardrail_blocked
                     ).items()
                 )
             ),

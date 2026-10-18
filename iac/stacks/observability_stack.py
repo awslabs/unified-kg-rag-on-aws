@@ -484,15 +484,52 @@ class ObservabilityStack(Stack):
             "ingestion writes and queries may stall",
             evaluation_periods=3,
         )
-        _alarm(
-            "NeptuneLowFreeableMemory",
-            # Minimum: the lowest point in the window, not a mean that hides it.
-            _neptune_metric("FreeableMemory", statistic="Minimum", writer=True),
-            # bytes; ~512 MiB. Low freeable memory precedes query/write failures.
-            536870912,
-            "Neptune writer freeable memory is low (<512 MiB)",
-            comparison=cw.ComparisonOperator.LESS_THAN_OR_EQUAL_TO_THRESHOLD,
-        )
+        # Minimum: the lowest point in the window, not a mean that hides it.
+        freeable = _neptune_metric("FreeableMemory", statistic="Minimum", writer=True)
+        # bytes; ~512 MiB. Low freeable memory precedes query/write failures.
+        low_memory = 536870912
+        serverless = self.config.neptune_serverless_ncu
+        if serverless is None:
+            _alarm(
+                "NeptuneLowFreeableMemory",
+                freeable,
+                low_memory,
+                "Neptune writer freeable memory is low (<512 MiB)",
+                comparison=cw.ComparisonOperator.LESS_THAN_OR_EQUAL_TO_THRESHOLD,
+            )
+        else:
+            # Neptune Serverless adds capacity when memory runs low, so at its
+            # minimum (1 NCU is about 2 GiB) little free memory is the normal
+            # state, not a fault. Two conditions matter instead: memory low
+            # once the writer is at its maximum capacity (it cannot grow), and
+            # the writer pinned at that maximum (the NCU range is too small).
+            max_ncu = serverless[1]
+            capacity = _neptune_metric(
+                "ServerlessDatabaseCapacity", statistic="Maximum", writer=True
+            )
+            _alarm(
+                "NeptuneLowFreeableMemory",
+                cw.MathExpression(
+                    # A huge constant below the maximum: never "low".
+                    expression=f"IF(capacity >= {max_ncu:g}, memory, 1000000000000000)",
+                    using_metrics={"capacity": capacity, "memory": freeable},
+                    period=Duration.minutes(5),
+                    label="Writer freeable memory at maximum capacity",
+                ),
+                low_memory,
+                "Neptune Serverless writer is at its maximum capacity "
+                f"({max_ncu:g} NCU) with low freeable memory (<512 MiB)",
+                comparison=cw.ComparisonOperator.LESS_THAN_OR_EQUAL_TO_THRESHOLD,
+            )
+            _alarm(
+                "NeptuneServerlessAtMaxCapacity",
+                capacity,
+                max_ncu,
+                "Neptune Serverless writer has run at its maximum capacity "
+                f"({max_ncu:g} NCU) for 15 minutes: raise the maximum of "
+                "neptune_serverless_ncu",
+                evaluation_periods=3,
+            )
         # The app talks Gremlin over WebSocket, which the deprecated HTTP-only
         # GremlinHttp5xx never counts; this per-second rate covers both.
         # Parallel edge writes hit ConcurrentModificationException, which the

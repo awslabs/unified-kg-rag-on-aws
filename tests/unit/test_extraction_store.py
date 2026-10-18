@@ -6,7 +6,8 @@ A text unit's record is stored without what ties it to the unit (its id and
 placement attributes) and re-stamped onto any unit with the same text; the
 key follows the settings that shape the record, built-in prompt templates
 included; the OpenSearch extraction-records index (here on the embedded
-engine) is upsert-only and outside the artifact indices a reset clears.
+engine) is outside the artifact indices a reset clears, and keeps only the
+records a full build names when asked to.
 """
 
 from __future__ import annotations
@@ -259,6 +260,47 @@ class TestOpenSearchExtractionRecords:
 
         assert indexer.read_text_unit_ids(["t1"], suffix="x") == []
         assert indexer.read_extraction_records(["k1"], suffix="x") == {"k1": {"a": 1}}
+
+    def test_retain_keeps_only_the_named_records_of_the_suffix(self, tmp_path) -> None:
+        indexer = _indexer(tmp_path / "vector.sqlite3")
+        indexer.write_extraction_records(
+            {"k1": {"a": 1}, "k2": {"a": 2}, "k3": {"a": 3}}, suffix="x"
+        )
+        indexer.write_extraction_records({"k2": {"a": 2}}, suffix="y")
+
+        kept = indexer.retain_extraction_records(["k1", "k3", "gone"], suffix="x")
+
+        assert kept.successful_items == 2
+        assert indexer.read_extraction_records(["k1", "k2", "k3"], suffix="x") == {
+            "k1": {"a": 1},
+            "k3": {"a": 3},
+        }
+        assert indexer.read_extraction_records(["k2"], suffix="y") == {"k2": {"a": 2}}
+        # The old index went with the dropped records; one live index is left.
+        alias = indexer._get_name(
+            indexer.opensearch_config.extraction_records_index_prefix, "x"
+        )
+        assert len(indexer.opensearch_client.get_aliases_by_index(f"{alias}-*")) == 1
+        # Records written afterwards land in the live index.
+        indexer.write_extraction_records({"k4": {}}, suffix="x")
+        assert indexer.read_extraction_records(["k4"], suffix="x") == {"k4": {}}
+
+    def test_a_failed_retain_keeps_every_record(self, tmp_path, mocker) -> None:
+        indexer = _indexer(tmp_path / "vector.sqlite3")
+        indexer.write_extraction_records({"k1": {}, "k2": {}}, suffix="x")
+        mocker.patch.object(
+            indexer.opensearch_client, "bulk_index", side_effect=RuntimeError("full")
+        )
+        with pytest.raises(RuntimeError):
+            indexer.retain_extraction_records(["k1"], suffix="x")
+        assert set(indexer.read_extraction_records(["k1", "k2"], suffix="x")) == {
+            "k1",
+            "k2",
+        }
+        alias = indexer._get_name(
+            indexer.opensearch_config.extraction_records_index_prefix, "x"
+        )
+        assert len(indexer.opensearch_client.get_aliases_by_index(f"{alias}-*")) == 1
 
     def test_a_failed_write_is_reported(self, tmp_path, mocker) -> None:
         indexer = _indexer(tmp_path / "vector.sqlite3")

@@ -84,6 +84,8 @@ class LLMResponseCache(BaseCache):
         self._served: set[str] = set()
         self._pending: list[dict[str, Any]] = []
         self._on_segment: Callable[[Path], None] | None = None
+        # Segments ``on_segment`` failed on, retried at the next flush.
+        self._unsynced: list[Path] = []
         self.hits = 0
         self.misses = 0
 
@@ -100,7 +102,9 @@ class LLMResponseCache(BaseCache):
             lookups: ``False`` stores responses but serves none (a force
                 rebuild).
             on_segment: Called with each segment file once it is written
-                (the pipeline uploads it to S3).
+                (the pipeline uploads it to S3). An error it raises is logged,
+                never raised to the model call, and the segment is passed
+                again at the next flush.
         """
         entries: dict[str, list[dict[str, Any]]] = {}
         # Named by write time, so a later response for a key replaces an earlier one.
@@ -120,6 +124,7 @@ class LLMResponseCache(BaseCache):
             self._served = set()
             self._pending = []
             self._on_segment = on_segment
+            self._unsynced = []
             self.hits = self.misses = 0
         logger.info(
             "LLM response cache at '%s': %s cached responses%s",
@@ -171,7 +176,9 @@ class LLMResponseCache(BaseCache):
             self.flush()
 
     def flush(self) -> None:
-        """Write the pending responses as a new segment (no-op when none)."""
+        """Write the pending responses as a new segment (no-op when none)
+        and hand it, with any segment ``on_segment`` failed on before, to
+        ``on_segment``."""
         with self._lock:
             directory, pending = self._directory, self._pending
             if directory is None or not pending:
@@ -188,8 +195,24 @@ class LLMResponseCache(BaseCache):
                 encoding="utf-8",
             )
             temp.replace(path)
-        if on_segment is not None:
-            on_segment(path)
+            due, self._unsynced = [*self._unsynced, path], []
+        if on_segment is None:
+            return
+        for done, segment in enumerate(due):
+            try:
+                on_segment(segment)
+            except Exception as e:  # noqa: BLE001 - a model call must not fail on it
+                # The rest would likely fail alike: keep them all for the next
+                # write rather than wait on each inside this model call.
+                logger.warning(
+                    "Handing off %d LLM cache segment(s) failed; retrying at the "
+                    "next write: %s",
+                    len(due) - done,
+                    e,
+                )
+                with self._lock:
+                    self._unsynced = [*due[done:], *self._unsynced]
+                return
 
     def clear(self, **kwargs: Any) -> None:
         with self._lock:

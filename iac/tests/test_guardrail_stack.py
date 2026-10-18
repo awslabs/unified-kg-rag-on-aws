@@ -142,3 +142,39 @@ def test_create_guardrail_context_parsing() -> None:
     assert explicit({"create_guardrail": "true"}) is True
     assert explicit({"create_guardrail": False}) is True
     assert parse(False) is False
+
+
+_VERSION = "AWS::Bedrock::GuardrailVersion"
+
+
+def test_the_created_guardrail_is_published_as_a_retained_version() -> None:
+    for context in ({}, {"env_name": "prod"}):
+        _, template = _synth(context)
+        template.resource_count_is(_VERSION, 1)
+        # Retained even in dev: a replaced version stays usable by a task
+        # still pinned to it; the versions go with the guardrail.
+        template.has_resource(
+            _VERSION, {"DeletionPolicy": "Retain", "UpdateReplacePolicy": "Retain"}
+        )
+        template.has_output("GuardrailVersion", {})
+
+
+def test_a_policy_change_publishes_a_new_version(monkeypatch) -> None:  # noqa: ANN001
+    from iac.stacks import guardrail_stack
+
+    def description() -> str:
+        (version,) = _synth({})[1].find_resources(_VERSION).values()
+        return str(version["Properties"]["Description"])
+
+    before = description()
+    assert description() == before  # deterministic across synths
+    monkeypatch.setattr(guardrail_stack, "PII_ANONYMIZED", ("EMAIL",))
+    # A replaced description replaces the version resource: a new version.
+    assert description() != before
+
+
+def test_bring_your_own_publishes_no_version() -> None:
+    _, template = _synth(
+        {"create_guardrail": "false", "guardrail_identifier": "gr-external456"}
+    )
+    template.resource_count_is(_VERSION, 0)

@@ -1978,8 +1978,8 @@ class OpenSearchIndexingConfig(BaseModel):
         description="Index name prefix for the extraction store: each text "
         "unit's extracted entities, relationships and claims, keyed by its "
         "text and the extraction settings, so an unchanged chunk is not "
-        "extracted again (no embeddings; never cleared by a full build or a "
-        "reset)",
+        "extracted again (no embeddings). A full build or reset keeps only "
+        "the records its text units name",
     )
     default_analyzer: str = Field(
         default="standard",

@@ -24,6 +24,14 @@ stable:
   disables creation. To bring your own externally managed guardrail, pass
   ``-c create_guardrail=false -c guardrail_identifier=<id>``.
 
+The created guardrail is also published as a version (``CfnGuardrailVersion``,
+output ``GuardrailVersion``): ``DRAFT`` changes with every edit, so the task
+should apply a pinned version (``-c guardrail_version=<GuardrailVersion>``).
+The version's description carries a digest of the policy, so a change to the
+policy in this file publishes a new version on the next deploy; versions are
+retained (they go with the guardrail), so a task still pinned to the previous
+one keeps working until compute is redeployed with the new number.
+
 The removal policy follows ``removal_destroy``: ``DESTROY`` in dev (so a
 deploy -> destroy -> deploy cycle does not collide on the fixed guardrail name)
 and ``RETAIN`` otherwise as a safety net, because the id is consumed out-of-band
@@ -32,6 +40,9 @@ break compute.
 """
 
 from __future__ import annotations
+
+import hashlib
+import json
 
 from aws_cdk import Annotations, CfnOutput, RemovalPolicy, Stack
 from aws_cdk import aws_bedrock as bedrock
@@ -51,10 +62,18 @@ class GuardrailStack(Stack):
         super().__init__(scope, construct_id, **kwargs)
         self.config = config
         self.guardrail: bedrock.CfnGuardrail | None = None
+        self.guardrail_version: bedrock.CfnGuardrailVersion | None = None
         self.guardrail_identifier: str | None
         if config.create_guardrail:
             self.guardrail = self._build_guardrail()
             self.guardrail_identifier = self.guardrail.attr_guardrail_id
+            self.guardrail_version = self._publish_version(self.guardrail)
+            CfnOutput(
+                self,
+                "GuardrailVersion",
+                value=self.guardrail_version.attr_version,
+                description="Pin it with -c guardrail_version=<this value>",
+            )
             if config.guardrail_identifier and not config.create_guardrail_explicit:
                 # Behaviour change for bring-your-own users: setting only
                 # guardrail_identifier used to skip creation; it no longer does.
@@ -70,7 +89,8 @@ class GuardrailStack(Stack):
                 Annotations.of(self).add_info(
                     "Guardrail created but not attached to compute yet: re-run "
                     "`cdk deploy --all -c guardrail_identifier=<GuardrailIdentifier "
-                    "output>` to inject UKR__AWS__BEDROCK__GUARDRAIL__IDENTIFIER."
+                    "output> -c guardrail_version=<GuardrailVersion output>` to "
+                    "inject UKR__AWS__BEDROCK__GUARDRAIL__IDENTIFIER and __VERSION."
                 )
         else:
             # Bring-your-own path: nothing is created; surface the external id.
@@ -131,3 +151,40 @@ class GuardrailStack(Stack):
             else RemovalPolicy.RETAIN
         )
         return guardrail
+
+    def _publish_version(
+        self, guardrail: bedrock.CfnGuardrail
+    ) -> bedrock.CfnGuardrailVersion:
+        """An immutable version of the guardrail's current policy.
+
+        A version is published when the resource is created or replaced, and
+        a description change replaces it: naming the policy's digest there
+        publishes a new version whenever the policy changes. Retained, so
+        the replacement leaves the previous version in place for a task
+        still pinned to it (the versions go when the guardrail is deleted).
+        """
+        policy = self.resolve(
+            [
+                getattr(guardrail, name)
+                for name in (
+                    "blocked_input_messaging",
+                    "blocked_outputs_messaging",
+                    "content_policy_config",
+                    "contextual_grounding_policy_config",
+                    "sensitive_information_policy_config",
+                    "topic_policy_config",
+                    "word_policy_config",
+                )
+            ]
+        )
+        digest = hashlib.sha256(
+            json.dumps(policy, sort_keys=True).encode()
+        ).hexdigest()[:16]
+        version = bedrock.CfnGuardrailVersion(
+            self,
+            "PublishedVersion",
+            guardrail_identifier=guardrail.attr_guardrail_id,
+            description=f"Policy {digest}",
+        )
+        version.apply_removal_policy(RemovalPolicy.RETAIN)
+        return version

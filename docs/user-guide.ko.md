@@ -547,14 +547,21 @@ API로 검사합니다. 가드레일은 `aws.bedrock.region_name`에 있어야 �
 - **검사 대상.** 대화 메모리, 후속 질문 재작성, 라우팅, 검색보다 먼저 한 번 검사하는
   사용자 원본 질의(`check_input`)와 최종 답변(`check_output`. 스트리밍 답변은 검사 뒤
   한 덩어리로 전달됨)입니다. 이 두 텍스트만 평가하고 과금합니다.
-- **결과.** 차단된 질의에는 가드레일의 차단 메시지로 답하고, 검색도 메모리 저장도 하지
-  않으며 `RAGOutput.metadata.blocked`가 `true`입니다. 마스킹된 질의(PII 익명화)는
-  마스킹된 텍스트로 계속 처리하므로 검색, 모델, 메모리 어디에도 원문이 가지 않습니다.
-  답변이 차단되거나 마스킹되면 가드레일이 돌려준 텍스트로 바꿉니다. 모든 개입은
-  `RAGOutput.metadata.guardrail`(source, action, policies)에 남고, 누적 횟수와 함께
-  WARNING 로그와 `kg_rag.guardrail` 스팬으로도 기록됩니다. 가드레일 API가 실패하면
-  질의가 실패합니다(`processing.ignore_errors`면 표준 오류 답변). 검사하지 않은 채로
-  답하지는 않습니다.
+- **결과.**
+  - 차단된 질의에는 가드레일의 차단 메시지로 답하고, 검색도 메모리 저장도 하지 않으며
+    `RAGOutput.metadata.blocked`가 `true`입니다.
+  - 마스킹된 질의(PII 익명화)는 마스킹된 텍스트로 계속 처리하므로 검색, 모델, 메모리
+    어디에도 원문이 가지 않습니다. `observability.capture_content`를 켠 추적에는 마스킹된
+    질의가 기록되고, 차단된 질의는 텍스트를 남기지 않습니다.
+  - 답변이 차단되거나 마스킹되면 가드레일이 돌려준 텍스트로 바꿉니다. 답변이 차단되면
+    `sources`와 검색 결과도 비웁니다(`metadata.blocked`는 질의가 차단된 경우에만 씁니다).
+  - 마스킹은 답변에만 적용됩니다. 마스킹된 답변의 출처는 검색된 그대로의 색인 코퍼스
+    텍스트입니다(출처마다 검사하면 질의마다 검색된 청크 전부가 과금됩니다). 호출자가 보면
+    안 되는 텍스트는 코퍼스에서 빼거나 서빙 계층에서 거르세요.
+  - 모든 개입은 `RAGOutput.metadata.guardrail`(source, action, policies)에 남고, 누적
+    횟수와 함께 WARNING 로그와 `kg_rag.guardrail` 스팬으로도 기록됩니다.
+  - 가드레일 API가 실패하면 질의가 실패합니다(`processing.ignore_errors`면 표준 오류
+    답변). 검사하지 않은 채로 답하지는 않습니다.
 - **모델 호출에 붙이지 않는 이유.** 질의 안의 모델 호출(재작성, 라우팅, 키워드 추출,
   global/DRIFT map 단계, 답변 생성)에는 가드레일을 붙이지 않습니다. 모델 호출에 붙인
   가드레일은 프롬프트 전체를 평가합니다. Converse API에서는 검색된 코퍼스 텍스트와
@@ -1623,6 +1630,10 @@ run-eval --data-path s3://my-bucket/eval/my_eval_data.json \
   `{"applied": 48, "failed": 2}`). 각 결과에는 `rerank_status`(`applied`,
   `disabled`, `unavailable`, `skipped`, `failed`, 답변 생성이 먼저 실패했으면 `null`)가
   기록됩니다([재순위화 상태](#재순위화-상태) 참고).
+- `guardrail_blocked_counts` — 가드레일이 차단한 질의 수를 차단한 텍스트별로 셉니다(예:
+  `{"input": 2, "output": 1}`). 각 결과에는 `guardrail_blocked`(`input`, `output`,
+  `null`)가 기록됩니다. 차단된 항목은 차단 메시지로 채점하므로 낮은 점수가 가드레일
+  때문일 수 있습니다.
 - `run_manifest` — 무엇을 측정했는지 기록하므로 두 실행을 비교할 수 있습니다.
   - CLI 인자(`--model-base-url` 같은 `*_url` 인자는 사용자 정보·쿼리·프래그먼트를 뺌),
     패키지 버전, `library_versions`(ragas, langchain*), git 커밋(`git_sha`, 추적하는
@@ -1636,7 +1647,7 @@ run-eval --data-path s3://my-bucket/eval/my_eval_data.json \
   - `retrieval_config_sha256`. 답변이나 점수를 바꿀 수 있는 모든 설정을 해시합니다(`models`
     역할은 모델 ID로 풀어서 넣고 수집 설정도 넣음. 다르게 만든 인덱스는 다르게 답하기
     때문). 단계 캐시 분류(`CONFIG_KEYING`)가 답변에 영향이 없다고 표시한 설정, 즉 리전,
-    엔드포인트, 자격 증명, 저장소와 출력 경로, 테이블 이름, 가드레일 ID와 버전, 시간 제한,
+    엔드포인트, 자격 증명, 저장소와 출력 경로, 테이블 이름, 가드레일 ID와 버전(가드레일 사용 여부는 포함), 시간 제한,
     재시도와 동시성 설정, 캐시·로깅·텔레메트리 설정은 뺍니다. 따라서 같은 평가는 어느
     환경에서든 같은 해시가 되고, 새 설정은 답변에 영향이 없다고 분류하기 전까지 해시에
     들어갑니다.

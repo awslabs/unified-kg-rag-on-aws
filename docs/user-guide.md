@@ -592,16 +592,26 @@ with the `ApplyGuardrail` API; the guardrail must exist in
   the follow-up rewrite, routing and retrieval (`check_input`), and the final
   answer (`check_output`; a streamed answer is then delivered as one chunk
   after the check). Only those texts are evaluated and billed.
-- **What happens.** A blocked query is answered with the guardrail's blocked
-  message; nothing is retrieved or written to memory, and
-  `RAGOutput.metadata.blocked` is `true`. A masked query (PII anonymized)
-  continues with the masked text, so retrieval, the models and memory never
-  see the original. A blocked or masked answer is replaced by the guardrail's
-  text. Every intervention is listed in `RAGOutput.metadata.guardrail`
-  (source, action, policies), logged at WARNING with a running count, and
-  recorded on a `kg_rag.guardrail` span. A guardrail API error fails the
-  query (with `processing.ignore_errors`, the standard error answer); it is
-  never answered unscreened.
+- **What happens.**
+  - A blocked query is answered with the guardrail's blocked message; nothing
+    is retrieved or written to memory, and `RAGOutput.metadata.blocked` is
+    `true`.
+  - A masked query (PII anonymized) continues with the masked text, so
+    retrieval, the models and memory never see the original. A trace with
+    `observability.capture_content` records the masked query, and no text
+    for a blocked one.
+  - A blocked or masked answer is replaced by the guardrail's text. A blocked
+    answer also returns no `sources` or search results (`metadata.blocked`
+    stays reserved for a blocked query).
+  - Masking covers the answer only: a masked answer's sources are the indexed
+    corpus text as retrieved (screening each would bill every retrieved chunk
+    on every query). Keep text a caller must not see out of the corpus, or
+    filter it in the serving layer.
+  - Every intervention is listed in `RAGOutput.metadata.guardrail` (source,
+    action, policies), logged at WARNING with a running count, and recorded
+    on a `kg_rag.guardrail` span.
+  - A guardrail API error fails the query (with `processing.ignore_errors`,
+    the standard error answer); it is never answered unscreened.
 - **Why not on the model calls.** The model calls inside a query (rewrite,
   routing, keyword extraction, global/DRIFT map steps, answer generation) run
   without a guardrail. Attached to a model call, a guardrail evaluates the
@@ -1796,6 +1806,10 @@ The summary holds, per metric, mean/median/stdev/min/max/count
   `{"applied": 48, "failed": 2}`; each result carries `rerank_status`
   (`applied`, `disabled`, `unavailable`, `skipped`, `failed`, or `null` when
   answer generation failed first; see [Rerank status](#rerank-status)).
+- `guardrail_blocked_counts` — queries the guardrail blocked, per blocked
+  text, e.g. `{"input": 2, "output": 1}`; each result carries
+  `guardrail_blocked` (`input`, `output` or `null`). A blocked item is scored
+  on the blocked message, so a low score may be the guardrail's doing.
 - `run_manifest` — what was measured, so two runs can be compared:
   - the CLI arguments (a `*_url` argument such as `--model-base-url` without
     its userinfo, query and fragment), the package version, `library_versions`
@@ -1814,7 +1828,8 @@ The summary holds, per metric, mean/median/stdev/min/max/count
     ingestion settings included: an index built otherwise answers otherwise).
     The settings the stage-cache classification (`CONFIG_KEYING`) marks as
     changing no answer are left out: regions, endpoints, credentials, store
-    and output paths, table names, the guardrail id and version, timeouts,
+    and output paths, table names, the guardrail id and version (whether a
+    guardrail is on still counts), timeouts,
     retry and concurrency knobs, cache, logging and telemetry. So the same
     evaluation hashes the same in every environment, and a new setting counts
     until it is classified as changing no answer;

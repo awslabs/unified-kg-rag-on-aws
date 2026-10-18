@@ -147,6 +147,30 @@ def test_a_full_segment_is_written_and_handed_over(tmp_path: Path) -> None:
     assert len(written) == 2
 
 
+def test_a_failed_hand_off_never_fails_the_model_call(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    handed: list[Path] = []
+    down = [True]
+
+    def upload(path: Path) -> None:
+        if down[0]:
+            raise ConnectionError("s3 unreachable")
+        handed.append(path)
+
+    cache = LLMResponseCache(flush_every=1)
+    cache.open(tmp_path, on_segment=upload)
+    model = _model(cache, _Counter())
+    assert _ask(model, "a") == "answer to a"
+    assert _ask(model, "b") == "answer to b"
+    assert "s3 unreachable" in caplog.text and handed == []
+    # Back up: the next write hands off the earlier segments too, in order.
+    down[0] = False
+    _ask(model, "c")
+    assert handed == sorted(tmp_path.glob("*.json"))
+    assert len(handed) == 3
+
+
 def test_an_unreadable_segment_is_skipped(tmp_path: Path) -> None:
     respond = _Counter()
     first = LLMResponseCache()

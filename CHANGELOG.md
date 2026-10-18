@@ -1143,6 +1143,47 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- iac/README.md no longer says a second concurrent ingestion stops before it
+  reads anything: it syncs the corpus and its checkpoint first, then stops
+  with `NamespaceLeaseError` before it reads the stores or writes (#345).
+- IaC: on Neptune Serverless (`neptune_serverless_ncu`) the writer's
+  low-freeable-memory alarm fires only while the writer is at its maximum
+  capacity (at its minimum, about 2 GiB, low free memory is what makes it
+  scale up, so the fixed 512 MiB floor alarmed on an idle cluster), and a
+  new `NeptuneServerlessAtMaxCapacity` alarm fires when the writer stays at
+  the maximum for 15 minutes (#345).
+- IaC: the guardrail stack publishes the guardrail it creates as a version
+  (`AWS::Bedrock::GuardrailVersion`, `GuardrailVersion` output) for the
+  tasks to pin with `-c guardrail_version=<version>`; synth warns when
+  `guardrail_identifier` is set without one, since the tasks then apply the
+  mutable `DRAFT`. A change to the baseline policy publishes a new version
+  and keeps the old one until compute is redeployed with the new number
+  (iac/README.md) (#345).
+- IaC: a misspelled CDK context key (`-c neptune_instnace=...`) fails the
+  synth naming the closest setting, as an unknown app config key does,
+  instead of leaving its setting silently at the default; CDK's own keys
+  (feature flags, `aws:cdk:*`, cached lookups) and `_doc` notes are not
+  checked (#345).
+- An S3 connection error while uploading an LLM response-cache segment no
+  longer fails the model call that filled it: the cache logs the failure and
+  hands the segment over again at its next write (the stage checkpoint upload
+  sends it too), and a `BotoCoreError` (for example
+  `EndpointConnectionError`) in any S3 cache transfer now counts as a
+  per-file failure (`CacheSyncError`) instead of escaping raw (#345).
+- The extraction store no longer grows without bound: a full build or
+  `indexing.reset` whose text units were all written keeps only the
+  extraction records its text units name, so records of earlier extraction
+  settings and of deleted or edited documents' chunks (their extracted
+  content included) are dropped instead of kept forever; incremental runs
+  already deleted the records only removed text units named. The operator
+  runbook states the retention. A switch of extraction settings and back
+  re-extracts once (#345).
+- Evaluation counts guardrail blocks: each result records whether the
+  guardrail blocked its query or answer (`guardrail_blocked`), and the
+  summary counts them (`guardrail_blocked_counts`, also printed by
+  `run-eval`), since a blocked item is scored on the blocked message, and
+  `retrieval_config_sha256` covers whether a guardrail is on (its id stays
+  out), so a guarded and an unguarded run no longer hash the same (#345).
 - The last outputs that followed the interpreter's hash seed
   (`PYTHONHASHSEED`, a new salt per process) no longer do: the community
   members in `visualization_data.json` are listed sorted rather than in set
@@ -2580,6 +2621,11 @@ changed once with the full-config keys (#332).
   later deleted an entity the unchanged ones still stated. A config file or
   `UKR__INDEXING__CROSS_RUN_MERGE` that still sets it loads with a WARNING
   and the key ignored; nothing to re-index (#344).
+- `S3CacheManager.DEFAULT_S3_PREFIX` (`"cache"`), which nothing used: the
+  pipeline always passes its `s3_prefix` (default `pipeline-runs`), and
+  `S3CacheManager` now requires `prefix=`, so a direct caller can no longer
+  write checkpoints under a prefix the CDK bucket lifecycle does not
+  expire (#345).
 - The native-score blend of RRF fusion: RRF scores are plain
   `weight / (rrf_k + rank)` sums again. The blend claimed to restore order
   within a stream, which RRF already keeps; scaled to the rank-1 step, it
@@ -2604,6 +2650,20 @@ changed once with the full-config keys (#332).
   instead of frozen dataclasses; they were never instantiated (#300).
 
 ### Security
+- A guardrail-blocked answer no longer returns the evidence behind it:
+  `sources` and `search_results.results` are empty (they carried the
+  retrieved text the refused answer was built from). Masking covers the
+  answer only, as the user guide now states. The query span records the
+  query only once screened (the masked text, nothing for a blocked query)
+  rather than the raw query before screening, and a masked query no longer
+  rewrites the caller's `RAGInput` (#345).
+- IaC: the query role can no longer write documents through a path that
+  ends in `_search`. Its `POST` grant on `<domain>/*/_search` also matched
+  `<index>/_doc/_search`, `_create/_search` and `_update/_search` (an IAM `*`
+  spans `/`), which OpenSearch serves as a document create or update with the
+  id `_search`; an explicit deny now covers any deeper `_search` path and the
+  document and bulk APIs. Its S3 listing is limited to the `eval/` prefix
+  (it listed the whole cache bucket) (#345).
 - Prompts delimit corpus and retrieved text as data, and inputs cannot close
   their delimiter tags (#179, #182).
 - IaC: queries get their own task definition and role

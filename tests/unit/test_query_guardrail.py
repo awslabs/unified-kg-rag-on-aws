@@ -422,10 +422,12 @@ async def test_masked_query_is_all_that_retrieval_models_and_memory_see(
     stubber.add_response("apply_guardrail", _anonymized(masked, "EMAIL"), _request(raw))
     stubber.add_response("apply_guardrail", _NONE, _request(_ANSWER, "OUTPUT"))
     chain, factory, retriever, memory = _chain(_guarded_config(), client)
+    rag_input = _input(raw)
 
-    output = await chain.ainvoke(_input(raw))
+    output = await chain.ainvoke(rag_input)
 
     assert isinstance(output, RAGOutput)
+    assert rag_input.query == raw  # the caller's object is not rewritten
     assert retriever.queries and set(retriever.queries) == {masked}
     assert factory.prompts and all("a@example.com" not in p for p in factory.prompts)
     assert output.processed_query.original_query == masked
@@ -448,6 +450,27 @@ async def test_blocked_answer_is_replaced_before_memory(
     assert output.metadata["guardrail"][0]["source"] == "output"
     assert "blocked" not in output.metadata  # the query itself was answered
     assert memory.turns == [(_QUERY, _REFUSAL)]
+    # Nor does the refused answer hand out the evidence it was built from.
+    assert output.sources == []
+    assert output.search_results.results == []
+    assert output.search_results.total_results == 0
+
+
+async def test_masked_answer_keeps_its_sources(runtime) -> None:  # noqa: ANN001
+    client, stubber = runtime
+    stubber.add_response("apply_guardrail", _NONE, _request(_QUERY))
+    stubber.add_response(
+        "apply_guardrail",
+        _anonymized("masked answer", "EMAIL"),
+        _request(_ANSWER, "OUTPUT"),
+    )
+    chain, *_ = _chain(_guarded_config(), client)
+
+    output = await chain.ainvoke(_input())
+
+    assert isinstance(output, RAGOutput)
+    assert output.answer == "masked answer"
+    assert output.sources and output.search_results.results
 
 
 async def test_checks_follow_their_switches(runtime) -> None:  # noqa: ANN001
@@ -585,3 +608,75 @@ async def test_screening_spans_name_the_guardrail_action_and_policies(
         "contentPolicy:PROMPT_ATTACK"
     ]
     assert dict(query.attributes or {})["kg_rag.blocked"] is True
+
+
+async def _query_span_input(run: Any) -> Any:
+    """The ``input.value`` of the ``kg_rag.query`` span ``run`` produces,
+    with content capture on."""
+    pytest.importorskip("opentelemetry.sdk")
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
+        InMemorySpanExporter,
+    )
+
+    from unified_kg_rag.application.observability import configure_observability
+    from unified_kg_rag.domain.models import ObservabilityConfig
+    from unified_kg_rag.shared import observability
+
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    configure_observability(
+        ObservabilityConfig(enabled=True, capture_content=True),
+        tracer_provider=provider,
+    )
+    try:
+        await run()
+    finally:
+        observability.uninstall()
+    (query,) = [s for s in exporter.get_finished_spans() if s.name == "kg_rag.query"]
+    return dict(query.attributes or {}).get("input.value")
+
+
+_RAW = "What did a@example.com order from Vendor?"
+_MASKED = "What did {EMAIL} order from Vendor?"
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_query_span_records_only_the_masked_query(
+    runtime, stream: bool  # noqa: ANN001
+) -> None:
+    client, stubber = runtime
+    stubber.add_response(
+        "apply_guardrail", _anonymized(_MASKED, "EMAIL"), _request(_RAW)
+    )
+    stubber.add_response("apply_guardrail", _NONE, _request(_ANSWER, "OUTPUT"))
+    chain, *_ = _chain(_guarded_config(), client)
+
+    async def run() -> None:
+        if stream:
+            async for _ in chain.astream(_input(_RAW)):
+                pass
+        else:
+            await chain.ainvoke(_input(_RAW))
+
+    assert await _query_span_input(run) == _MASKED
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_query_span_records_no_text_for_a_blocked_query(
+    runtime, stream: bool  # noqa: ANN001
+) -> None:
+    client, stubber = runtime
+    stubber.add_response("apply_guardrail", _PROMPT_ATTACK, _request(_QUERY))
+    chain, *_ = _chain(_guarded_config(), client)
+
+    async def run() -> None:
+        if stream:
+            async for _ in chain.astream(_input()):
+                pass
+        else:
+            await chain.ainvoke(_input())
+
+    assert await _query_span_input(run) is None

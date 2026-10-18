@@ -137,6 +137,7 @@ reset 동안에도 질의는 이전 내용을 읽습니다. 벡터 인덱스는 
 | 단계 체크포인트(로컬) | `<--cache-directory>/<pipeline_id>/` (기본값 `cache/`) | 재개할 때 재사용하며, `--force-rebuild`는 읽지 않고 다시 계산한 출력을 씁니다 |
 | 단계 체크포인트(S3) | `s3://<bucket>/<--s3-prefix>/<pipeline_id>/` (기본 접두사 `pipeline-runs`) | `--s3-sync` 사용 시. 단계가 끝날 때마다, 그리고 SIGTERM을 받으면 업로드하며 새 태스크에서 다시 실행하면 여기서 재개합니다. 시작 시 다운로드나 마지막 업로드가 실패하면 `CacheSyncError`로 실행이 실패합니다. `cache.ttl_seconds`가 아니라 버킷 수명 주기가 만료시킵니다 |
 | LLM 응답 캐시 | `<단계 체크포인트 디렉터리>/llm-cache/`(로컬, `--s3-sync`면 S3에도) | 같은 pipeline id로 다시 실행할 때 재사용하는 수집 모델 응답입니다. `cache.llm_responses.enabled: false`로 끄며, `--force-rebuild`는 무시합니다 |
+| 추출 저장소 | 벡터 저장소의 `<indexing.opensearch.extraction_records_index_prefix>-<suffix>` 인덱스(`graphrag-extraction-records-<suffix>`) | 이후 실행이 재사용하는 청크별 추출 결과(청크 본문에 대해 모델이 돌려준 엔티티, 관계, 주장)입니다. 저장된 텍스트 단위가 가리키는 동안 레코드가 남습니다. 증분 실행은 제거된 텍스트 단위만 가리키던 레코드를 지우고, 전체 구축과 `indexing.reset`은 자기 텍스트 단위가 가리키는 레코드만 남깁니다(다른 추출 설정의 레코드와 삭제·수정된 문서의 청크 레코드는 지웁니다). `clear`와 `--force-rebuild`는 그대로 두므로 전부 지우려면 인덱스를 삭제합니다 |
 | 임베딩 캐시 | `s3://<aws.s3.bucket_name>/embedding-cache/cache.json` (`indexing.opensearch.embedding_cache_s3_key`) | `indexing.opensearch.persist_embedding_cache: true`일 때만 |
 | 시각화 데이터 | `graph.visualization.outputs_directory`가 없으면 `<cache directory>/<pipeline_id>/visualization/` | 단계 캐시와 함께 동기화(`.json`만) |
 
@@ -398,7 +399,8 @@ Step Functions 경보를 뺀 파이프라인 실행 경보는 `run-ingestion --m
 | `OpenSearchJvmPressure` | JVM 메모리 압력이 3분 연속 95% 이상 | 메모리 부족 위험입니다. 더 큰 `opensearch_instance`를 쓰거나 데이터 노드를 늘립니다 |
 | `DocStatusWriteThrottled` | 문서 상태 테이블이 쓰기를 스로틀링함(5분) | 앱은 스로틀링된 레지스트리 호출을 백오프하며 재시도하고, 그래도 스로틀링되면 `DocStatusRegistryError`로 실행이 실패합니다. 같은 테이블에 겹쳐 실행되는 수집이 있는지 확인하고, 스로틀링이 해소된 뒤 실패한 실행을 다시 실행합니다 |
 | `NeptuneHighCpu` | 라이터(writer)의 평균 CPU가 15분(5분 × 3) 동안 90% 이상 | 대량 쓰기의 일시적 최고치가 아니라 지속적인 포화입니다. 더 큰 `neptune_instance`(또는 더 높은 `neptune_serverless_ncu` 최댓값)를 쓰거나 `indexing.neptune.index_concurrency`를 낮춥니다 |
-| `NeptuneLowFreeableMemory` | 5분 안에 라이터의 가용 메모리가 한 번이라도 512MiB 이하로 떨어짐(최솟값) | 쿼리와 쓰기가 메모리 부족으로 실패할 수 있습니다. 더 큰 `neptune_instance`를 쓰거나, 부하가 몰리기 전에 용량이 확보되도록 `neptune_serverless_ncu` 최솟값을 높입니다 |
+| `NeptuneLowFreeableMemory` | 5분 안에 라이터의 가용 메모리가 한 번이라도 512MiB 이하로 떨어짐(최솟값). Neptune Serverless에서는 라이터가 최대 용량일 때만(그보다 작으면 메모리가 부족할 때 용량을 늘림) | 쿼리와 쓰기가 메모리 부족으로 실패할 수 있습니다. 더 큰 `neptune_instance`를 쓰거나 `neptune_serverless_ncu` 최댓값을 높입니다 |
+| `NeptuneServerlessAtMaxCapacity` | Neptune Serverless만: 라이터 용량이 5분 단위 3회 연속으로 `neptune_serverless_ncu` 최댓값에 있음 | 작업량이 범위보다 큽니다. 최댓값을 높입니다(부하가 몰리기 전에 용량이 확보되도록 최솟값을 높여도 됩니다) |
 | `NeptuneGremlinErrors` | 3분 연속 어느 인스턴스에서든 Gremlin 서버 오류가 있음 | 지속적인 쓰기·쿼리 실패입니다(재시도되는 쓰기 충돌은 짧게 몰려 발생하므로 이 경보를 울리지 않음). 작업 로그에서 실패한 요청을 확인합니다 |
 
 **용량**
@@ -419,9 +421,12 @@ Step Functions 경보를 뺀 파이프라인 실행 경보는 `run-ingestion --m
 (`GraphRagCompute`의 `QueryTaskDefinitionArn`, `QueryTaskRoleArn` 출력.
 [`iac/README.md`](../iac/README.md#4-query-from-inside-the-vpc) 참고). 이 역할은
 Neptune `connect`와 `ReadDataViaQuery`, 도메인에 대한 OpenSearch `GET`/`HEAD`와
-`_search` 경로에만 허용한 `POST`(OpenSearch는 HTTP 메서드와 URL 경로로 권한을
-판단하므로 `_bulk`, `_doc`, `_delete_by_query`, 인덱스 변경은 거부됩니다), Bedrock
-모델·재순위화·가드레일 호출, 캐시 버킷의 `eval/` 접두사만 가집니다. DynamoDB에는
+`<index>/_search`에만 허용한 `POST`(OpenSearch는 HTTP 메서드와 URL 경로로 권한을
+판단하므로 `_bulk`, `_doc`, `_delete_by_query`, 인덱스 변경은 거부됩니다. IAM의
+`*`는 `/`도 포함하므로, `_search`로 끝나지만 쓰기인 더 깊은 경로는 명시적 거부로
+막습니다. 예를 들어 `POST <index>/_doc/_search`는 ID가 `_search`인 문서를 만듭니다),
+Bedrock 모델·재순위화·가드레일 호출, 캐시 버킷의 `eval/` 접두사(그 안의 객체와 그
+안에서만 허용한 목록 조회)만 가집니다. DynamoDB에는
 접근할 수 없고 두 저장소 어디에도 쓰거나 지울 수 없습니다. 질의는 이 태스크 정의로
 실행하세요. 수집 태스크 정의의 역할에는 `neptune-db:DeleteDataViaQuery`,
 `es:ESHttp*`, 문서 상태 테이블 읽기·쓰기 권한이 있습니다. 직접 만든 서빙 계층도 같은
@@ -438,7 +443,8 @@ Neptune `connect`와 `ReadDataViaQuery`, 도메인에 대한 OpenSearch `GET`/`H
   `es:ESHttpPost`의 리소스를 그 테넌트의 인덱스로 한정합니다. 예:
   `<도메인 ARN>/graphrag-*-<suffix>`, `<도메인 ARN>/graphrag-*-<suffix>/*`
   (별칭은 `<인덱스 접두사>-<suffix>`입니다. 어떤 접미사도 `-<다른 접미사>`로 끝나지
-  않게 정하거나 테넌트마다 인덱스 접두사를 다르게 두세요). 문서·필드 수준 규칙이
+  않게 정하거나 테넌트마다 인덱스 접두사를 다르게 두세요). 문서·벌크 API를 막는
+  질의 역할의 거부 구문은 그대로 두세요. 문서·필드 수준 규칙이
   필요하면 도메인에서 세분화된 액세스 제어(fine-grained access control)를 켜고,
   테넌트 역할마다 `*-<suffix>*` 인덱스 권한만 가진 OpenSearch 역할을 매핑하세요.
 - Neptune: IAM은 클러스터 단위로만 권한을 주고 레이블 단위 범위가 없습니다. 다른

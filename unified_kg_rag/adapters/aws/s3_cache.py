@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, ClassVar
 
 import boto3
 from boto3.exceptions import S3UploadFailedError
-from botocore.exceptions import ClientError, NoCredentialsError
+from botocore.exceptions import BotoCoreError, ClientError, NoCredentialsError
 
 from unified_kg_rag.domain.models import Config, S3EncryptionType
 from unified_kg_rag.shared import CacheSyncError, ConfigurationError, get_logger
@@ -53,7 +53,6 @@ class S3CacheManager:
     data before the index and the run metadata that refer to it.
     """
 
-    DEFAULT_S3_PREFIX: ClassVar[str] = "cache"
     # Failed keys quoted in a CacheSyncError message (the full count is always
     # reported); keeps the message readable for large partial failures.
     _MAX_REPORTED_FAILURES: ClassVar[int] = 5
@@ -63,7 +62,8 @@ class S3CacheManager:
         config: Config,
         boto_session: boto3.Session | None = None,
         bucket_name: str | None = None,
-        prefix: str | None = None,
+        *,
+        prefix: str,
     ) -> None:
         self.config = config
         self.s3_config = config.aws.s3
@@ -71,7 +71,7 @@ class S3CacheManager:
         if not self.bucket_name:
             raise ConfigurationError("S3 'bucket_name' must be configured.")
 
-        self.prefix = (prefix or self.DEFAULT_S3_PREFIX).strip("/")
+        self.prefix = prefix.strip("/")
         self.boto_session = boto_session or boto3.Session(
             profile_name=self.config.aws.profile_name,
             region_name=self.config.aws.region_name,
@@ -298,7 +298,7 @@ class S3CacheManager:
         try:
             self.s3_client.download_file(str(self.bucket_name), s3_key, str(local_path))
             return True
-        except ClientError as e:
+        except (ClientError, BotoCoreError) as e:
             logger.warning(
                 "Failed to download 's3://%s/%s': %s", self.bucket_name, s3_key, e
             )
@@ -311,9 +311,16 @@ class S3CacheManager:
                 str(local_path), str(self.bucket_name), s3_key, ExtraArgs=extra_args
             )
             return True
-        except (ClientError, S3UploadFailedError, FileNotFoundError) as e:
+        except (
+            ClientError,
+            BotoCoreError,
+            S3UploadFailedError,
+            FileNotFoundError,
+        ) as e:
             # boto3's managed upload_file wraps ClientError in
-            # S3UploadFailedError, so both must count as a per-file failure.
+            # S3UploadFailedError, so both must count as a per-file failure,
+            # and so must a connection error (BotoCoreError, e.g.
+            # EndpointConnectionError) that its retries did not overcome.
             logger.warning(
                 "Failed to upload '%s' to 's3://%s/%s': %s",
                 local_path,

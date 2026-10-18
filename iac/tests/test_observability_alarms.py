@@ -118,6 +118,33 @@ def test_neptune_resource_alarms_watch_the_writer() -> None:
     assert [d["Name"] for d in gremlin["Dimensions"]] == ["DBClusterIdentifier"]
 
 
+def test_serverless_memory_alarm_fires_only_at_maximum_capacity() -> None:
+    # At its minimum a serverless writer runs with little free memory by
+    # design (it scales up on it): a fixed 512 MiB floor would always fire.
+    alarms = _alarms({"neptune_serverless_ncu": "1-16"})
+    memory = alarms["NeptuneLowFreeableMemory"]
+    (expression,) = [m for m in memory["Metrics"] if "Expression" in m]
+    assert expression["Expression"] == "IF(capacity >= 16, memory, 1000000000000000)"
+    used = {
+        m["Id"]: m["MetricStat"]["Metric"]["MetricName"]
+        for m in memory["Metrics"]
+        if "MetricStat" in m
+    }
+    assert used == {
+        "capacity": "ServerlessDatabaseCapacity",
+        "memory": "FreeableMemory",
+    }
+    at_max = alarms["NeptuneServerlessAtMaxCapacity"]
+    assert at_max["MetricName"] == "ServerlessDatabaseCapacity"
+    assert at_max["Threshold"] == 16
+    assert at_max["ComparisonOperator"] == "GreaterThanOrEqualToThreshold"
+    assert at_max["EvaluationPeriods"] == 3
+    # Provisioned: the fixed floor, and no capacity alarm.
+    provisioned = _alarms()
+    assert provisioned["NeptuneLowFreeableMemory"]["Threshold"] == 536870912
+    assert "NeptuneServerlessAtMaxCapacity" not in provisioned
+
+
 def test_free_storage_threshold_follows_volume_size() -> None:
     alarm = _alarms({"opensearch_volume_gib": 100})["OpenSearchFreeStorageLow"]
     assert alarm["Threshold"] == 100 * 1024 * 0.4

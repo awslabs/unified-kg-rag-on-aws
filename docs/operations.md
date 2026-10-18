@@ -145,6 +145,7 @@ Coming from a pre-release build: nothing it stored is read; see
 | Stage checkpoints (local) | `<--cache-directory>/<pipeline_id>/` (default `cache/`) | Reused on resume; `--force-rebuild` ignores it and writes the recomputed outputs |
 | Stage checkpoints (S3) | `s3://<bucket>/<--s3-prefix>/<pipeline_id>/` (default prefix `pipeline-runs`) | With `--s3-sync`; uploaded after every stage and on SIGTERM; a re-run in a fresh task resumes from it. A failed initial download or final upload fails the run with `CacheSyncError`. Expired by the bucket lifecycle, not `cache.ttl_seconds` |
 | LLM response cache | `<stage checkpoint dir>/llm-cache/` (local, and in S3 with `--s3-sync`) | Ingestion model responses reused by a re-run with the same pipeline id; `cache.llm_responses.enabled: false` turns it off, `--force-rebuild` ignores it |
+| Extraction store | The vector store's `<indexing.opensearch.extraction_records_index_prefix>-<suffix>` index (`graphrag-extraction-records-<suffix>`) | Per-chunk extraction results (entities, relationships, claims, as the model returned them for the chunk's text) reused by later runs. A record stays while a stored text unit names it: an incremental run deletes the records only removed text units named, and a full build or `indexing.reset` keeps only the records its text units name (other extraction settings, deleted or edited documents' chunks go). `clear` and `--force-rebuild` keep it; delete the index to drop it whole |
 | Embedding cache | `s3://<aws.s3.bucket_name>/embedding-cache/cache.json` (`indexing.opensearch.embedding_cache_s3_key`) | Only with `indexing.opensearch.persist_embedding_cache: true` |
 | Visualization data | `<cache directory>/<pipeline_id>/visualization/` unless `graph.visualization.outputs_directory` is set | Synced with the stage cache (`.json` only) |
 
@@ -442,7 +443,8 @@ the next run breaks on it:
 | `OpenSearchJvmPressure` | JVM memory pressure is at least 95% in 3 consecutive minutes | Out-of-memory risk: use a larger `opensearch_instance` or more data nodes |
 | `DocStatusWriteThrottled` | The doc-status table throttled a write (5 minutes) | The app retries throttled registry calls with backoff; one still throttled after that fails the run with `DocStatusRegistryError`. Check for overlapping runs on the table and rerun a failed run once the throttling clears |
 | `NeptuneHighCpu` | Average writer CPU is at least 90% for 15 minutes (3 × 5 minutes) | Sustained saturation, not a bulk-write peak: use a larger `neptune_instance` (or a higher `neptune_serverless_ncu` maximum) or lower `indexing.neptune.index_concurrency` |
-| `NeptuneLowFreeableMemory` | Writer freeable memory falls to 512 MiB or less at any point in 5 minutes (minimum) | Queries and writes may fail with out-of-memory errors: use a larger `neptune_instance` (or a higher `neptune_serverless_ncu` minimum, so capacity is there before the burst) |
+| `NeptuneLowFreeableMemory` | Writer freeable memory falls to 512 MiB or less at any point in 5 minutes (minimum); on Neptune Serverless only while the writer is at its maximum capacity (below it, low memory makes it scale up) | Queries and writes may fail with out-of-memory errors: use a larger `neptune_instance` (or a higher `neptune_serverless_ncu` maximum) |
+| `NeptuneServerlessAtMaxCapacity` | Neptune Serverless only: the writer's capacity is at the `neptune_serverless_ncu` maximum in 3 consecutive 5-minute periods | The workload needs more than the range allows: raise the maximum (or its minimum, so capacity is there before the burst) |
 | `NeptuneGremlinErrors` | Gremlin server errors on any instance in 3 consecutive minutes | Persistent write or query failures (retried write conflicts come in short bursts and do not fire it): check the task log for the failing request |
 
 **Capacity**
@@ -465,10 +467,13 @@ own task definition and role (`QueryTaskDefinitionArn`, `QueryTaskRoleArn`
 outputs of `GraphRagCompute`; see
 [`iac/README.md`](../iac/README.md#4-query-from-inside-the-vpc)): Neptune
 `connect` and `ReadDataViaQuery`, OpenSearch `GET`/`HEAD` on the domain and
-`POST` only on `_search` paths (OpenSearch authorizes by HTTP method and URL
-path, so `_bulk`, `_doc`, `_delete_by_query` and index changes are denied),
-Bedrock model, rerank and guardrail calls, and the cache bucket's `eval/`
-prefix. It has no DynamoDB access and cannot write or delete in either store.
+`POST` only on `<index>/_search` (OpenSearch authorizes by HTTP method and URL
+path, so `_bulk`, `_doc`, `_delete_by_query` and index changes are denied; an
+IAM `*` also matches `/`, so an explicit deny covers the deeper paths that end
+in `_search` but write, such as `POST <index>/_doc/_search`, which creates a
+document with the id `_search`), Bedrock model, rerank and guardrail calls,
+and the cache bucket's `eval/` prefix (its objects, and listing only within
+it). It has no DynamoDB access and cannot write or delete in either store.
 Run queries with it, not with the ingestion task definition, whose role
 holds `neptune-db:DeleteDataViaQuery`, `es:ESHttp*` and read/write on the
 doc-status table. A serving layer of your own should assume a role with the
@@ -487,7 +492,8 @@ infrastructure rather than by that code:
   `es:ESHttpHead` and `es:ESHttpPost` resources name only its indices, such
   as `<domain ARN>/graphrag-*-<suffix>` and `<domain ARN>/graphrag-*-<suffix>/*`
   (aliases are `<index prefix>-<suffix>`; pick suffixes that never end in
-  `-<another suffix>`, or set distinct index prefixes per tenant). For
+  `-<another suffix>`, or set distinct index prefixes per tenant), and keep
+  the query role's deny statement for the document and bulk APIs. For
   document- or field-level rules, enable fine-grained access control on the
   domain and map each tenant role to an OpenSearch role whose index
   permissions cover only `*-<suffix>*`.

@@ -563,6 +563,17 @@ class FakeVectorStore(_Recorder):
             self.extraction_records.pop((wanted, key), None)
         return IndexingStats(total_items=len(keys), successful_items=len(keys))
 
+    def retain_extraction_records(
+        self, keys: list[str], suffix: str | None = None
+    ) -> IndexingStats:
+        wanted = suffix or Constants.DEFAULT_SUFFIX.value
+        kept = set(keys)
+        for stored, key in list(self.extraction_records):
+            if stored == wanted and key not in kept:
+                del self.extraction_records[(stored, key)]
+        retained = sum(1 for stored, _ in self.extraction_records if stored == wanted)
+        return IndexingStats(total_items=retained, successful_items=retained)
+
     def write_extraction_records(
         self, records: dict[str, dict[str, Any]], suffix: str | None = None
     ) -> IndexingStats:

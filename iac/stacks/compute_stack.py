@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import json
 
-from aws_cdk import CfnOutput, Duration, RemovalPolicy, Stack
+from aws_cdk import Annotations, CfnOutput, Duration, RemovalPolicy, Stack
 from aws_cdk import aws_ecr as ecr
 from aws_cdk import aws_ecs as ecs
 from aws_cdk import aws_iam as iam
@@ -150,6 +150,13 @@ class ComputeStack(Stack):
             if config.corpus_bucket_name
             else None
         )
+        if self.guardrail_identifier and not config.guardrail_version:
+            Annotations.of(self).add_warning(
+                "guardrail_identifier is set without guardrail_version: the "
+                "tasks apply the guardrail's DRAFT, which changes with every "
+                "edit. Pin a published version with "
+                "-c guardrail_version=<GuardrailVersion output>."
+            )
         self.task_role = self._build_task_role(storage)
         self.task_definition = self._build_task_definition(
             storage,
@@ -233,8 +240,8 @@ class ComputeStack(Stack):
         (``HEAD`` index exists, ``GET`` mappings, ``POST <index>/_search``) and
         calls Bedrock; it never touches the doc-status table. OpenSearch
         authorizes by HTTP method and URL path, so ``POST`` is granted only on
-        ``_search`` paths: ``_bulk``, ``_doc``, ``_delete_by_query`` and index
-        creation stay denied. ``run-eval`` reads its dataset from and writes
+        ``<index>/_search``: ``_bulk``, ``_doc``, ``_delete_by_query`` and
+        index creation stay denied. ``run-eval`` reads its dataset from and writes
         its results to the cache bucket's ``eval/`` prefix (and may read an
         evaluation dataset kept in ``corpus_bucket_name``).
         """
@@ -264,8 +271,48 @@ class ComputeStack(Stack):
                 resources=[f"{domain_arn}/*/_search"],
             )
         )
-        storage.cache_bucket.grant_read(role, f"{EVAL_PREFIX}*")
-        storage.cache_bucket.grant_put(role, f"{EVAL_PREFIX}*")
+        # An IAM `*` also matches `/`, so the grant above covers every path
+        # ending in `/_search`, including the document APIs given a document
+        # id of `_search` (`POST <index>/_doc/_search` creates a document,
+        # `_update/_search` and `_create/_search` too). The query only ever
+        # posts `<index>/_search`: deny any deeper `_search` path and the
+        # document and bulk APIs outright, whatever the id or its encoding.
+        role.add_to_policy(
+            iam.PolicyStatement(
+                effect=iam.Effect.DENY,
+                actions=[
+                    "es:ESHttpPost",
+                    "es:ESHttpPut",
+                    "es:ESHttpDelete",
+                    "es:ESHttpPatch",
+                ],
+                resources=[
+                    f"{domain_arn}/*/*/_search",
+                    f"{domain_arn}/*/_doc/*",
+                    f"{domain_arn}/*/_create/*",
+                    f"{domain_arn}/*/_update/*",
+                    f"{domain_arn}/_bulk*",
+                    f"{domain_arn}/*/_bulk*",
+                ],
+            )
+        )
+        # Objects under eval/ only, and listing only within it (a HeadObject
+        # on a missing key then reports 404 rather than 403).
+        bucket = storage.cache_bucket
+        role.add_to_policy(
+            iam.PolicyStatement(
+                actions=["s3:GetObject"],
+                resources=[bucket.arn_for_objects(f"{EVAL_PREFIX}*")],
+            )
+        )
+        role.add_to_policy(
+            iam.PolicyStatement(
+                actions=["s3:ListBucket"],
+                resources=[bucket.bucket_arn],
+                conditions={"StringLike": {"s3:prefix": [f"{EVAL_PREFIX}*"]}},
+            )
+        )
+        bucket.grant_put(role, f"{EVAL_PREFIX}*")
         if self.corpus_bucket is not None:
             self.corpus_bucket.grant_read(role)
         self._grant_tracing(role)

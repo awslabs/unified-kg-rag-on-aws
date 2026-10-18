@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 import aws_cdk as cdk
@@ -136,6 +137,31 @@ def test_korean_analyzer_is_one_the_domain_has(
     )
 
 
+def test_an_unpinned_guardrail_warns_that_the_tasks_apply_draft() -> None:
+    from aws_cdk.assertions import Annotations, Match
+
+    def compute(context: dict[str, Any]) -> ComputeStack:
+        app = cdk.App(context=context)
+        config = DeploymentConfig.from_context(app)
+        net = NetworkingStack(app, "Net", config=config, env=_ENV)
+        store = StorageStack(app, "Store", config=config, networking=net, env=_ENV)
+        return ComputeStack(
+            app,
+            "Compute",
+            config=config,
+            networking=net,
+            storage=store,
+            guardrail_identifier=config.guardrail_identifier,
+            env=_ENV,
+        )
+
+    draft = Match.string_like_regexp("without guardrail_version")
+    unpinned = compute({"guardrail_identifier": "gr-1"})
+    Annotations.from_stack(unpinned).has_warning("*", draft)
+    pinned = compute({"guardrail_identifier": "gr-1", "guardrail_version": "3"})
+    Annotations.from_stack(pinned).has_no_warning("*", draft)
+
+
 def test_guardrail_version_is_injected_only_when_set() -> None:
     assert "UKR__AWS__BEDROCK__GUARDRAIL__VERSION" not in _task_environment()
     env = _task_environment({"guardrail_identifier": "gr-1", "guardrail_version": "2"})
@@ -259,7 +285,7 @@ def test_query_role_cannot_write_or_delete_any_store() -> None:
     statements = _role_statements(
         _compute_template(guardrail_identifier="gr-1"), "QueryTaskRole"
     )
-    actions = _actions(statements)
+    actions = _actions([s for s in statements if s["Effect"] == "Allow"])
     assert {"neptune-db:connect", "neptune-db:ReadDataViaQuery"} <= actions
     assert {
         "bedrock:InvokeModel",
@@ -275,19 +301,142 @@ def test_query_role_cannot_write_or_delete_any_store() -> None:
         "es:ESHttpDelete",
         "es:ESHttpPatch",
     }
-    # POST (also the verb of _bulk, _doc and _delete_by_query) only on _search.
-    (post,) = [s for s in statements if "es:ESHttpPost" in _actions([s])]
-    assert json.dumps(post["Resource"]).endswith('"/*/_search"]]}')
-    # S3 only under eval/ (run-eval's dataset and results).
-    s3_resources = json.dumps(
-        [
-            s["Resource"]
-            for s in statements
-            if any(a.startswith("s3:") for a in _actions([s]))
-        ]
+
+
+# Stand-ins for the cross-stack ARNs a policy names, so a statement resolves
+# to the strings IAM would match.
+_DOMAIN = "arn:aws:es:us-west-2:111111111111:domain/graphrag"
+_BUCKET = "arn:aws:s3:::cache-bucket"
+
+
+def _resolve(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    if "Fn::Join" in value:
+        separator, parts = value["Fn::Join"]
+        return str(separator).join(_resolve(part) for part in parts)
+    if "Ref" in value:
+        return {"AWS::Partition": "aws"}.get(value["Ref"], value["Ref"])
+    name = json.dumps(value)
+    if "OpenSearch" in name:
+        return _DOMAIN
+    if "CacheBucket" in name:
+        return _BUCKET
+    return name
+
+
+def _glob(pattern: str, value: str) -> bool:
+    """IAM wildcard matching: ``*`` is any run of characters, ``/`` included,
+    and ``?`` any one character."""
+    regex = "".join(
+        ".*" if c == "*" else "." if c == "?" else re.escape(c) for c in pattern
     )
-    assert "/eval/*" in s3_resources
-    assert '"/*"' not in s3_resources
+    return re.fullmatch(regex, value) is not None
+
+
+def _listed(value: Any) -> list[Any]:
+    return value if isinstance(value, list) else [value]
+
+
+def _matches(
+    statement: dict[str, Any], action: str, resource: str, context: dict[str, str]
+) -> bool:
+    if not any(_glob(a, action) for a in _listed(statement["Action"])):
+        return False
+    if not any(_glob(_resolve(r), resource) for r in _listed(statement["Resource"])):
+        return False
+    for operator, keys in statement.get("Condition", {}).items():
+        assert operator == "StringLike", operator
+        for key, patterns in keys.items():
+            if key not in context or not any(
+                _glob(p, context[key]) for p in _listed(patterns)
+            ):
+                return False
+    return True
+
+
+def _allowed(
+    statements: list[dict[str, Any]],
+    action: str,
+    resource: str,
+    context: dict[str, str] | None = None,
+) -> bool:
+    """IAM's evaluation of one request against a role's own statements: an
+    explicit deny wins, else any allow, else the implicit deny."""
+    hits = [s for s in statements if _matches(s, action, resource, context or {})]
+    if any(s["Effect"] == "Deny" for s in hits):
+        return False
+    return any(s["Effect"] == "Allow" for s in hits)
+
+
+@pytest.fixture(scope="module")
+def query_statements() -> list[dict[str, Any]]:
+    return _role_statements(
+        _compute_template(guardrail_identifier="gr-1"), "QueryTaskRole"
+    )
+
+
+# Every request the query strategies send (recorded against OpenSearch 2.13:
+# HEAD on an index, GET mappings and aliases, POST <index>/_search, also over
+# several indices).
+_QUERY_REQUESTS = [
+    ("HEAD", "/graphrag-entities-default"),
+    ("GET", "/graphrag-entities-default/_mapping"),
+    ("GET", "/_alias/graphrag-entities-default"),
+    ("POST", "/graphrag-entities-default/_search"),
+    ("POST", "/graphrag-text-units-default,graphrag-entities-default/_search"),
+]
+# Writes, including those OpenSearch serves on a path ending in `_search`
+# (a document id `_search`, also percent-encoded) and admin requests.
+_WRITE_REQUESTS = [
+    ("POST", "/idx/_doc/_search"),
+    ("POST", "/idx/_doc/%5Fsearch"),
+    ("PUT", "/idx/_doc/_search"),
+    ("POST", "/idx/_create/_search"),
+    ("POST", "/idx/_update/_search"),
+    ("POST", "/idx/_doc"),
+    ("PUT", "/idx/_doc/1"),
+    ("DELETE", "/idx/_doc/1"),
+    ("POST", "/_bulk"),
+    ("POST", "/idx/_bulk"),
+    ("POST", "/idx/_delete_by_query"),
+    ("POST", "/idx/_update_by_query"),
+    ("POST", "/_reindex"),
+    ("POST", "/_aliases"),
+    ("PUT", "/idx"),
+    ("PUT", "/idx/_mapping"),
+    ("DELETE", "/idx"),
+]
+
+
+@pytest.mark.parametrize(("method", "path"), _QUERY_REQUESTS)
+def test_query_role_may_send_the_query_requests(
+    query_statements: list[dict[str, Any]], method: str, path: str
+) -> None:
+    action = f"es:ESHttp{method.title()}"
+    assert _allowed(query_statements, action, f"{_DOMAIN}{path}")
+
+
+@pytest.mark.parametrize(("method", "path"), _WRITE_REQUESTS)
+def test_query_role_may_not_write_to_opensearch(
+    query_statements: list[dict[str, Any]], method: str, path: str
+) -> None:
+    action = f"es:ESHttp{method.title()}"
+    assert not _allowed(query_statements, action, f"{_DOMAIN}{path}")
+
+
+def test_query_role_reads_and_lists_only_the_eval_prefix(
+    query_statements: list[dict[str, Any]],
+) -> None:
+    s = query_statements
+    assert _allowed(s, "s3:GetObject", f"{_BUCKET}/eval/data.json")
+    assert _allowed(s, "s3:PutObject", f"{_BUCKET}/eval/out/result.json")
+    assert _allowed(s, "s3:ListBucket", _BUCKET, {"s3:prefix": "eval/data.json"})
+    assert not _allowed(s, "s3:GetObject", f"{_BUCKET}/pipeline-runs/p/stage.json")
+    assert not _allowed(s, "s3:PutObject", f"{_BUCKET}/pipeline-runs/p/stage.json")
+    assert not _allowed(s, "s3:ListBucket", _BUCKET, {"s3:prefix": "pipeline-runs/"})
+    assert not _allowed(s, "s3:ListBucket", _BUCKET)
+    assert not _allowed(s, "s3:DeleteObject", f"{_BUCKET}/eval/data.json")
 
 
 def test_query_task_definition_runs_the_same_app_with_the_query_role() -> None:

@@ -237,7 +237,9 @@ class RAGOutput(BaseModel):
     configured, ``metadata["guardrail"]`` lists its interventions (source,
     action, policies), and ``metadata["blocked"]`` is ``True`` when it
     blocked the query (the answer is then its blocked message and nothing
-    was retrieved).
+    was retrieved). A blocked answer is replaced by the blocked message and
+    returns no ``sources`` or ``search_results.results``; a masked answer
+    keeps its sources as retrieved (masking covers the answer only).
     """
 
     answer: str = Field(description="The generated answer to the user's query")
@@ -1458,7 +1460,8 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 {
                     **self._query_outcome_attributes(result),
                     **_captured_content(
-                        output=result.answer if isinstance(result, RAGOutput) else None
+                        input=_screened_query(rag_input, result.metadata),
+                        output=result.answer if isinstance(result, RAGOutput) else None,
                     ),
                 }
             )
@@ -1484,15 +1487,14 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
     def _query_span_attributes(
         self, rag_input: RAGInput, search: bool
     ) -> dict[str, Any]:
-        """Query-span attributes: the request's settings; its text only when
-        ``observability.capture_content`` is on (redacted)."""
+        """Query-span attributes: the request's settings. The query text is
+        recorded once screened (``_screened_query``), never before."""
         return {
             GEN_AI_CONVERSATION_ID: rag_input.conversation_id,
             "kg_rag.mode": "search" if search else "rag",
             "kg_rag.requested_strategy": rag_input.search_strategy,
             "kg_rag.top_k": rag_input.top_k,
             "kg_rag.use_memory": rag_input.use_memory,
-            **_captured_content(input=rag_input.query),
         }
 
     @staticmethod
@@ -1540,7 +1542,14 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 input_dict, config
             )
             if isinstance(output, RAGOutput):
-                output.answer = await self._screen_output(output.answer, guard_records)
+                verdict = await self._screen_output(output.answer, guard_records)
+                output.answer = verdict.text
+                if verdict.action is GuardAction.BLOCKED:
+                    # A refused answer keeps none of the evidence behind it.
+                    output.sources = []
+                    output.search_results = output.search_results.model_copy(
+                        update={"results": [], "total_results": 0}
+                    )
             if guard_records:
                 output.metadata["guardrail"] = guard_records
             if isinstance(output, RAGOutput):
@@ -1635,25 +1644,34 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         rag_input.query = input_dict["query"] = verdict.text
         return None
 
-    async def _screen_output(self, answer: str, records: list[dict[str, Any]]) -> str:
-        """The answer as the user may see it: unchanged, masked or refused.
+    async def _screen_output(
+        self, answer: str, records: list[dict[str, Any]]
+    ) -> GuardVerdict:
+        """The verdict on the answer; its text is what the user may see:
+        unchanged, masked or refused.
 
-        The fixed no-context answer is not model output and is not screened.
+        Only the answer is screened: the sources and search results are the
+        caller's own indexed corpus text, returned as retrieved (a blocked
+        answer drops them). The fixed no-context answer is not model output
+        and is not screened.
         """
         if not self._screen_outputs or not answer or answer == NO_CONTEXT_ANSWER:
-            return answer
+            return GuardVerdict(action=GuardAction.NONE, text=answer)
         assert self.guard is not None
         verdict = await self.guard.acheck(answer, GuardSource.OUTPUT)
-        if not verdict.intervened:
-            return answer
-        records.append(_guard_record(GuardSource.OUTPUT, verdict))
-        return verdict.text
+        if verdict.intervened:
+            records.append(_guard_record(GuardSource.OUTPUT, verdict))
+        return verdict
 
     @staticmethod
     def _prepare_invoke(
         inputs: RAGInput | dict[str, Any],
     ) -> tuple[RAGInput, dict[str, Any]]:
-        rag_input = RAGInput(**inputs) if isinstance(inputs, dict) else inputs
+        # A copy: the generated conversation id and a masked query must not
+        # change the caller's object.
+        rag_input = (
+            RAGInput(**inputs) if isinstance(inputs, dict) else inputs.model_copy()
+        )
 
         if rag_input.use_memory and not rag_input.conversation_id:
             rag_input.conversation_id = str(uuid.uuid4())
@@ -1748,12 +1766,13 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                     observability.span(
                         "kg_rag.query",
                         self._query_span_attributes(rag_input, search=False),
-                    ),
+                    ) as span,
                 ):
                     blocking = await self._screen_input(
                         rag_input, input_dict, guard_records
                     )
                     if blocking is None:
+                        span.set_attributes(_captured_content(input=rag_input.query))
                         state: dict[str, Any] = (
                             await self._stream_context_chain.ainvoke(input_dict, config)
                         )
@@ -1779,7 +1798,8 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                     yield text
             if self._screen_outputs:
                 # Nothing was delivered yet: the user sees only screened text.
-                chunks = [await self._screen_output("".join(chunks), guard_records)]
+                verdict = await self._screen_output("".join(chunks), guard_records)
+                chunks = [verdict.text]
                 if chunks[0]:
                     delivered = True
                     yield chunks[0]
@@ -1814,6 +1834,17 @@ def _conversation_key(
     return ConversationKey(
         suffix or Constants.DEFAULT_SUFFIX.value, user_id, conversation_id
     )
+
+
+def _screened_query(rag_input: RAGInput, metadata: dict[str, Any]) -> str | None:
+    """The query as screened (masked, if the guardrail masked it), or
+    ``None`` when the guardrail blocked it: a blocked query is not recorded."""
+    input_blocked = any(
+        record["source"] == GuardSource.INPUT.value
+        and record["action"] == GuardAction.BLOCKED.value
+        for record in metadata.get("guardrail") or []
+    )
+    return None if input_blocked else rag_input.query
 
 
 def _guard_record(source: GuardSource, verdict: GuardVerdict) -> dict[str, Any]:
