@@ -36,7 +36,12 @@ from unified_kg_rag.application.ingestion.namespace_lease import (
 )
 from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
 from unified_kg_rag.application.storage.indexing_manager import IndexingManager
-from unified_kg_rag.domain.models import Config, Entity, TextUnit
+from unified_kg_rag.domain.models import (
+    Config,
+    Entity,
+    PipelineStageStatus,
+    TextUnit,
+)
 from unified_kg_rag.shared import NamespaceLeaseError, PipelineInterrupted
 from unified_kg_rag.shared.write_fence import (
     install_write_fence,
@@ -552,16 +557,11 @@ def test_a_released_lease_fails_the_writes_of_orphaned_workers() -> None:
         worker_context.run(check_write_fence)
 
 
-def test_ctrl_c_stops_the_workers_writes_before_the_lease_is_released(
-    tmp_path: Path, mocker
-) -> None:
-    # Old behaviour: a KeyboardInterrupt did not set the stop fence, so the
-    # worker a phase left running kept writing until (and, before the
-    # lease's release marked it lost, after) the lease was released.
-    from unified_kg_rag.shared.utils.concurrency import ContextThreadPoolExecutor
-    from unified_kg_rag.shared.write_fence import check_write_fence
-
-    store = FakeDocStatusStore()
+def _leased_pipeline(
+    tmp_path: Path, mocker, store: FakeDocStatusStore
+) -> DataIngestionPipeline:
+    """A pipeline whose ``run`` takes ``store``'s lease and calls a mocked
+    ``_execute_pipeline`` (patch it), with no S3 and no incremental delta."""
     pipe = object.__new__(DataIngestionPipeline)
     pipe.config = Config()
     pipe._doc_status = store
@@ -576,7 +576,15 @@ def test_ctrl_c_stops_the_workers_writes_before_the_lease_is_released(
     pipe.state_manager = mocker.MagicMock()
     pipe.state_manager.pipeline_exists.return_value = False
     pipe._prepare_new_run = mocker.MagicMock(
-        return_value=(SimpleNamespace(incremental_delta=None), None)
+        return_value=(
+            SimpleNamespace(
+                incremental_delta=None,
+                status=PipelineStageStatus.COMPLETED,
+                pipeline_id="pid",
+                stage_results=[],
+            ),
+            None,
+        )
     )
     for name in (
         "_set_corpus_fingerprint",
@@ -584,6 +592,20 @@ def test_ctrl_c_stops_the_workers_writes_before_the_lease_is_released(
         "_use_source_directory",
     ):
         mocker.patch.object(pipe, name)
+    return pipe
+
+
+def test_ctrl_c_stops_the_workers_writes_before_the_lease_is_released(
+    tmp_path: Path, mocker
+) -> None:
+    # Old behaviour: a KeyboardInterrupt did not set the stop fence, so the
+    # worker a phase left running kept writing until (and, before the
+    # lease's release marked it lost, after) the lease was released.
+    from unified_kg_rag.shared.utils.concurrency import ContextThreadPoolExecutor
+    from unified_kg_rag.shared.write_fence import check_write_fence
+
+    store = FakeDocStatusStore()
+    pipe = _leased_pipeline(tmp_path, mocker, store)
     stopped = threading.Event()
     writes_after_stop: list[int] = []
 
@@ -761,3 +783,70 @@ def test_the_lease_warning_uses_the_adapters_request_timeouts(
     with caplog.at_level("WARNING"):
         pipe._namespace_lease()  # 600 s < 3 x 300 s
     assert "longest store write request (300s)" in caplog.text
+
+
+def test_a_worker_checks_both_the_stop_and_the_lease_fence(
+    tmp_path: Path, mocker
+) -> None:
+    # A run stacks its stop fence and its lease fence; a worker thread must
+    # be stopped by either, the lease (innermost) first.
+    from unified_kg_rag.shared import write_fence
+    from unified_kg_rag.shared.utils.concurrency import ContextThreadPoolExecutor
+    from unified_kg_rag.shared.write_fence import check_write_fence
+
+    store = FakeDocStatusStore()
+    pipe = _leased_pipeline(tmp_path, mocker, store)
+    seen: list[Any] = []
+
+    def check() -> Any:
+        try:
+            check_write_fence()
+        except (NamespaceLeaseError, PipelineInterrupted) as e:
+            return type(e)
+        return None
+
+    def execute(context, start):  # type: ignore[no-untyped-def]
+        lease = write_fence._FENCES.get()[-1]
+        assert isinstance(lease, NamespaceLease)
+        with ContextThreadPoolExecutor(max_workers=1) as pool:
+            seen.append(pool.submit(check).result())
+            pipe._stop_signal = signal.SIGTERM
+            seen.append(pool.submit(check).result())
+            pipe._stop_signal = None
+            lease._lose("taken in the test")
+            seen.append(pool.submit(check).result())
+            pipe._stop_signal = signal.SIGTERM
+            seen.append(pool.submit(check).result())
+            pipe._stop_signal = None
+
+    mocker.patch.object(pipe, "_execute_pipeline", side_effect=execute)
+    pipe.run(tmp_path, pipeline_id="pid")
+    assert seen == [
+        None,
+        PipelineInterrupted,
+        NamespaceLeaseError,
+        NamespaceLeaseError,
+    ]
+
+
+def test_a_raising_pool_block_does_not_wait_for_its_running_tasks() -> None:
+    from unified_kg_rag.shared.utils.concurrency import ContextThreadPoolExecutor
+
+    release = threading.Event()
+    started = threading.Event()
+
+    def task() -> None:
+        started.set()
+        release.wait(10)
+
+    began = time.time()
+    try:
+        with pytest.raises(RuntimeError):
+            with ContextThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(task)
+                started.wait(5)
+                raise RuntimeError("phase failed")
+        assert time.time() - began < 2
+        assert not future.done()
+    finally:
+        release.set()
