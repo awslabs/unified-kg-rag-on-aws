@@ -631,7 +631,7 @@ changed once with the full-config keys (#332).
   the user guide says without importing an internal module (#365).
 - `MetricsSink` and `CloudWatchEMFSink` are exported from `unified_kg_rag`,
   the types of the public `DataIngestionPipeline(metrics_sink=...)`
-  argument (#PR).
+  argument (#366).
 - `docs/cli.md`, a CLI reference generated from the argparse parsers of
   every CLI (`scripts/gen_cli_reference.py`; a unit test fails when it is
   stale). The flag help strings now carry what the user guide's flag tables
@@ -1284,23 +1284,23 @@ changed once with the full-config keys (#332).
 - The note that stored entities without a community link to a small delta
   component is logged at INFO and no longer tells the user to rebuild: it is
   reported as `community_drift.unclustered_entities`, which does not set
-  `community_rebuild_recommended` (#PR).
+  `community_rebuild_recommended` (#366).
 - `prepare-benchmark musique` checks field types too (`question` and
   `answer` strings, `answer_aliases` a list of strings), so a malformed
-  item is a usage error (exit 2) instead of reaching `eval_data.json` (#PR).
+  item is a usage error (exit 2) instead of reaching `eval_data.json` (#366).
 - The operations runbook names `kg_rag.query` (a DRIFT round's actions span
   for its local searches) as the parent of `kg_rag.context_build`, not the
-  strategy span (#PR).
+  strategy span (#366).
 - `--output-format json` holds for errors found before the command line is
   parsed or the config is loaded: an argparse error or a config file that
   fails to load now prints `{"status": "failed", "exit_code": 2}` on stdout
-  too (#PR).
+  too (#366).
 - RAGAS skips `faithfulness` for an answer given without any context, a
   query blocked on input (`guardrail_blocked`) or a no-context abstention
   (`no_contexts`), instead of reporting the NaN as a failed metric that
   counted toward `--max-failure-rate`. An input block still scores 0 on
   context precision and recall, a miss as in the `retrieval` evaluator
-  (#PR).
+  (#366).
 - A bare `--retire-source-scope` / `indexing.retire_source_scopes` value
   (`old`) no longer retires both of its readings, the `source_scope` name
   and the relative directory, which could delete another corpus's
@@ -1308,7 +1308,7 @@ changed once with the full-config keys (#332).
   records the run stops before any write and asks for `./old` or an
   absolute path. Values are now resolved by the run, so config entries get
   the same treatment as the flag, and a value with no records warns once
-  (#PR).
+  (#366).
 - Ctrl-C (or a `SystemExit`) during indexing no longer lets the worker
   threads it leaves running write after the run released its lease, when
   another run may hold it: a released lease fails their next write, and
