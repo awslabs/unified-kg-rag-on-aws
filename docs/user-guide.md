@@ -2281,8 +2281,11 @@ graph_indexer_factory=..., retriever_builders=...)`). Without a bundle,
 - **Runs are not reproducible.** Extraction, gleaning, community reports, the
   `auto` router and answers are LLM outputs, so two ingestions of the same
   corpus build different graphs and the same query can get different answers.
-  Leiden clustering is deterministic for a given graph. Compare configurations
-  over more than one ingestion and query run.
+  Leiden clustering is deterministic for a given graph, and everything else
+  is too: given the same model responses, ingestion and queries produce the
+  same ids, graph, prompts and answers in any process (whatever its
+  `PYTHONHASHSEED`). Compare configurations over more than one ingestion and
+  query run.
 - **Reranking is regional.** The rerank models are not offered in every
   Bedrock region (see [Required models](#required-models)). Without reranking,
   results are ranked by fusion only; `metadata.rerank` shows it per query

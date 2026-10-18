@@ -89,6 +89,14 @@ def test_get_ids_collects_scalar_and_list_metadata() -> None:
     assert ids == {"x1", "x2", "x3"}
 
 
+def test_get_ids_keeps_rank_order() -> None:
+    # A set lost the rank order (its order of str ids follows the hash seed).
+    ids = [f"entity-{i:02d}" for i in range(30)]
+    results = [_result(i, metadata={"id": i}) for i in reversed(ids)]
+    results.append(_result("x", metadata={"id": [ids[5], ids[0]]}))
+    assert LocalSearchStrategy._get_ids(results, "id") == ids[::-1]
+
+
 def test_get_ids_falls_back_to_source_for_id_key() -> None:
     # When metadata lacks "id" but a source is present, source is used as the id.
     results = [_result("seed-1", metadata={})]

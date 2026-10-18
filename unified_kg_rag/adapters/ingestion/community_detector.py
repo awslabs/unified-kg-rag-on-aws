@@ -1,5 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
+import math
 import re
 import time
 from collections import defaultdict
@@ -614,8 +615,11 @@ class CommunityDetector:
 
                 # Total edge weight to each neighboring community: the merge
                 # goes where the community is most strongly tied, not where it
-                # merely has the most edges.
-                neighbor_weights: dict[int, float] = defaultdict(float)
+                # merely has the most edges. Summed with ``fsum``: ``nodes`` is
+                # a set iterated in hash-seed order, and a plain float sum in
+                # that order can split an exact tie by one ulp, overriding the
+                # lowest-label rule below differently from run to run.
+                neighbor_weights: dict[int, list[float]] = defaultdict(list)
                 for node in nodes:
                     for neighbor, data in graph[node].items():
                         if neighbor in node_to_comm:
@@ -631,16 +635,15 @@ class CommunityDetector:
                                     <= max_size
                                 )
                             ):
-                                neighbor_weights[neighbor_comm] += data.get(
-                                    "weight", 1.0
+                                neighbor_weights[neighbor_comm].append(
+                                    data.get("weight", 1.0)
                                 )
 
                 if neighbor_weights:
                     # Ties go to the lowest (canonical) label, not to whichever
                     # neighbor a set iteration happened to reach first.
-                    target_comm = max(
-                        neighbor_weights, key=lambda x: (neighbor_weights[x], -x)
-                    )
+                    totals = {c: math.fsum(w) for c, w in neighbor_weights.items()}
+                    target_comm = max(totals, key=lambda x: (totals[x], -x))
                     communities[target_comm].update(nodes)
                     for node in nodes:
                         node_to_comm[node] = target_comm
@@ -797,7 +800,8 @@ class CommunityDetector:
             {
                 "community_id": comm.community_id,
                 "level": comm.level,
-                "nodes": list(comm.nodes),
+                # ``nodes`` is a set: its order of str ids follows the hash seed.
+                "nodes": sorted(comm.nodes, key=str),
                 "size": len(comm.nodes),
                 "parent": comm.parent_id,
                 "children": comm.children_ids,

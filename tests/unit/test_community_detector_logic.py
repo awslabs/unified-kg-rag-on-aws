@@ -168,6 +168,37 @@ class TestMergeSmallCommunities:
             1: {"b1", "b2", "b3", "s1", "s2"},
         }
 
+    @pytest.mark.parametrize("order", [("a", "b", "c"), ("c", "b", "a")])
+    def test_tied_weights_go_to_the_lowest_label_in_any_member_order(
+        self, order: tuple[str, ...]
+    ) -> None:
+        # {a, b, c} is tied 0.6 to each neighbour: 0.1 + 0.2 + 0.3 to community
+        # 1 and 0.6 to community 0. Summed in set order, a, b, c gives
+        # 0.6000000000000001 and c, b, a gives 0.6, so the set's (hash-seed)
+        # order used to pick the community; the tie rule picks the lowest label.
+        class Ordered(set):
+            def __iter__(self):
+                return iter(order)
+
+        cd = _detector()
+        g = nx.Graph()
+        for group in (("p1", "p2", "p3", "p4"), ("q1", "q2", "q3", "q4")):
+            g.add_edges_from(
+                (u, v, {"weight": 1.0}) for u in group for v in group if u < v
+            )
+        g.add_edge("a", "q1", weight=0.1)
+        g.add_edge("b", "q1", weight=0.2)
+        g.add_edge("c", "q1", weight=0.3)
+        g.add_edge("a", "p1", weight=0.6)
+        communities = {
+            0: {"p1", "p2", "p3", "p4"},
+            1: {"q1", "q2", "q3", "q4"},
+            2: Ordered(order),
+        }
+        merged = cd._merge_small_communities(communities, g, min_size=4)
+        assert merged[0] == {"p1", "p2", "p3", "p4", "a", "b", "c"}
+        assert merged[1] == {"q1", "q2", "q3", "q4"}
+
     def test_merge_does_not_exceed_max_size(self) -> None:
         # {z} would join the clique, but that would make 6 > max_size 5: it
         # stays small instead of undoing the max_cluster_size split.
@@ -730,6 +761,18 @@ class TestMetricsAndExport:
         assert entry["community_id"] == "L0_C0"
         assert entry["size"] == 3
         assert entry["level"] == 0
+
+    def test_export_lists_members_sorted(self) -> None:
+        # ``nodes`` is a set; listing it as is wrote the members in hash-seed
+        # order, so two runs of one build exported different files.
+        cd = _detector()
+        cd.graph = _two_triangle_graph()
+        members = {f"entity-{i:02d}" for i in range(30)}
+        cd.all_communities = {
+            "L0_C0": HierarchicalCommunity(community_id="L0_C0", level=0, nodes=members)
+        }
+        entry = cd.export_community_data()["hierarchy"][0]
+        assert entry["nodes"] == sorted(members)
 
 
 class TestGenerateCommunityObjects:
