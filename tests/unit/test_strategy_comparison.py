@@ -128,7 +128,11 @@ class TestPairedComparison:
         )
         assert out["strategies"]["mix"]["guardrail_blocked_counts"] == {"output": 1}
         assert out["strategies"]["local"]["guardrail_blocked_counts"] == {}
-        assert any("local 0, mix 1" in w and "guardrail" in w for w in out["warnings"])
+        (warning,) = [w for w in out["warnings"] if "guardrail" in w]
+        assert "local 0, mix 1" in warning
+        # Not "scored on the blocked message" for every metric: the retrieval
+        # and context metrics of an output block are not scored at all.
+        assert "no retrieval or context score (unpaired)" in warning
 
     def test_equal_failure_counts_raise_no_warning(self) -> None:
         out = paired_comparison(

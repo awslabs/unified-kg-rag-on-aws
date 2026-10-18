@@ -1266,6 +1266,10 @@ changed once with the full-config keys (#332).
 - A lost lease is no longer swallowed by `OpenSearchClient.delete_indices`
   (reported as an `AWSServiceError` after the remaining batches were sent)
   or by the best-effort cleanup of unused extraction records (#358).
+- The strategy comparison's guardrail warning no longer says every metric
+  of a blocked answer is scored on the blocked message: an answer blocked on
+  output has no retrieval or context score, so those queries are unpaired
+  (#PR).
 - `run-ingestion --retire-source-scope` also tries any value that is not a
   URI as a path resolved like `--source-directory`, so a bare relative path
   (`old-corpus`) retires the old directory's records (#PR).
