@@ -1252,7 +1252,9 @@ scored/failed/skipped counts (`metric_outcomes`), plus:
   first).
 - `guardrail_blocked_counts`: blocked queries per `input` / `output` (a
   blocked item is scored on the blocked message; a blocked answer drops its
-  sources, so its retrieval metrics are skipped as `guardrail_blocked`); each
+  sources, so its retrieval metrics and the RAGAS context metrics
+  (`context_precision`, `context_recall`, `faithfulness`) are skipped as
+  `guardrail_blocked`); each
   result carries `guardrail_blocked`.
 - `run_manifest`: what was measured, so two runs can be compared:
   - the CLI arguments (URLs without credentials), versions, `git_sha` /

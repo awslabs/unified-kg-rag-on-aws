@@ -1266,6 +1266,11 @@ changed once with the full-config keys (#332).
 - A lost lease is no longer swallowed by `OpenSearchClient.delete_indices`
   (reported as an `AWSServiceError` after the remaining batches were sent)
   or by the best-effort cleanup of unused extraction records (#358).
+- RAGAS no longer judges a guardrail-blocked answer on its (dropped)
+  contexts: `context_precision`, `context_recall` and `faithfulness` are
+  skipped as `guardrail_blocked` (they scored near 0, and faithfulness came
+  back NaN and counted as failed toward `--max-failure-rate`); the answer
+  metrics still run (#PR).
 - A run that lost its namespace's write lease during a full build no longer
   swaps the OpenSearch alias onto the partial index and deletes the complete
   one: the vector indexer re-raises `NamespaceLeaseError` instead of
