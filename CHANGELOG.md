@@ -896,11 +896,11 @@ changed once with the full-config keys (#332).
   neighbour: 175 to 43 embedded texts) (#348).
 - Derivation orders a hub's text units in linear time: the set of its
   stored units was rebuilt for every unit (40,000 units: 98 s to 18 ms)
-  (#PR).
+  (#352).
 - The indexing stage computes the extraction-record fingerprint once per
   record kind instead of once per text unit (about 1.5 ms each; 10,000
   units: 32 s to 0.16 s for the record keys). The keys are unchanged
-  (#PR).
+  (#352).
 - The incremental lookups read only the fields they use: the text units'
   `attributes` (their extraction-record keys), the `text_unit_ids` of the
   claims and reports citing removed text units, and no field of a text unit
@@ -1433,7 +1433,7 @@ changed once with the full-config keys (#332).
   instead of summarizing every line its text units state. The extended
   convergence fuzzer finds no divergence in 400 sequences without injected
   crashes, where it found 7, nor in 80 on Gremlin Server and OpenSearch,
-  where it found 3 (#PR).
+  where it found 3 (#352).
 - Removing a document no longer leaves its text unnoticed in community
   reports: a kept report that cites a removed text unit is counted in the
   `community_drift` metrics (`outdated_reports`, deletion-only runs
