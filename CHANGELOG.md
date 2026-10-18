@@ -1335,6 +1335,12 @@ changed once with the full-config keys (#332).
   absolute path. Values are now resolved by the run, so config entries get
   the same treatment as the flag, and a value with no records warns once
   (#366).
+- An entity-attribute filter (`attributes.role:buyer`) filters the entities
+  index only, as the user guide states: every index declared the whole
+  `attributes.` prefix, so it emptied the text units, relationships, claims
+  and reports and local, mix and hybrid answered from entities alone. The
+  other indexes declare `attributes.filters.<key>` (and `attr_<key>`) only,
+  and drop other `attributes.<path>` keys as they drop `type` (#PR).
 - Ctrl-C (or a `SystemExit`) during indexing no longer lets the worker
   threads it leaves running write after the run released its lease, when
   another run may hold it: a released lease fails their next write, and
@@ -3223,6 +3229,14 @@ changed once with the full-config keys (#332).
   instead of frozen dataclasses; they were never instantiated (#300).
 
 ### Security
+- A removed document's filter keys stop matching the entities,
+  relationships and claims that outlive it: their lineage update is a
+  partial update, which kept every field it did not name, so with
+  `logistics.txt` (`clearance: secret`) deleted, `attr_clearance:secret`
+  still returned `contract.txt`'s content through local and mix. A lineage
+  update (also an edge rewritten for its rank only) reads the stored filter
+  fields and sets the ones the item lost to null, on OpenSearch and the
+  embedded engine alike (#PR).
 - ragas no longer sends usage telemetry from `run-eval`: the evaluators
   package sets `RAGAS_DO_NOT_TRACK=true` unless it is already set (set it
   to `false` to opt back in) (#361).

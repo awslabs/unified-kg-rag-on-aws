@@ -647,11 +647,13 @@ class OpenSearchIndexer(VectorIndexer):
         """Read stored claims by id from ``suffix``'s live claims index.
 
         A claim indexed before claims stored their ``text_unit_ids`` reads
-        back without them. The stored document does not hold the claim's
-        ``attributes``, so each claim is tagged with ``suffix`` (the index
-        it was read from): a write of the claim, e.g. the
-        ``update_claim_lineage`` of a document deletion, goes back to that
-        index rather than the default one. Raises when the read fails.
+        back without them. The stored document holds only the document
+        filters of the claim's ``attributes``, which are not read back (the
+        claim's write derives them again from its text units), so each claim
+        is tagged with ``suffix`` (the index it was read from): a write of the
+        claim, e.g. the ``update_claim_lineage`` of a document deletion, goes
+        back to that index rather than the default one. Raises when the read
+        fails.
         """
         attributes = {Constants.INDEX.value: suffix} if suffix else {}
         return [
@@ -940,7 +942,6 @@ class OpenSearchIndexer(VectorIndexer):
             self.opensearch_config.claims_index_prefix,
             lambda c: {
                 "text_unit_ids": list(c.text_unit_ids or []),
-                **self._document_filter_properties(c),
             },
         )
 
@@ -961,7 +962,6 @@ class OpenSearchIndexer(VectorIndexer):
             lambda e: {
                 "text_unit_ids": list(e.text_unit_ids or []),
                 "rank": e.rank if e.rank is not None else 1.0,
-                **self._document_filter_properties(e),
             },
         )
 
@@ -977,7 +977,6 @@ class OpenSearchIndexer(VectorIndexer):
                 "text_unit_ids": list(r.text_unit_ids or []),
                 "weight": r.weight if r.weight is not None else 1.0,
                 "rank": r.rank if r.rank is not None else 1.0,
-                **self._document_filter_properties(r),
             },
         )
 
@@ -987,7 +986,8 @@ class OpenSearchIndexer(VectorIndexer):
         alias_prefix: str,
         fields: Callable[[Any], dict[str, Any]],
     ) -> IndexingStats:
-        """Partially update ``items`` by id in their suffix's live index.
+        """Partially update ``items`` by id in their suffix's live index,
+        ``fields`` plus the items' document filters (``_filter_update``).
 
         A suffix without a live index, or an item without a document, has
         nothing to update.
@@ -1000,9 +1000,25 @@ class OpenSearchIndexer(VectorIndexer):
                 if not index_name:
                     stats.add_success(len(chunk))
                     continue
+                stored = {
+                    source["id"]: source
+                    for source in self._read_sources(
+                        alias_prefix,
+                        [item.id for item in chunk],
+                        suffix,
+                        fields=[f"{Constants.ATTRIBUTE_PREFIX.value}_*", "attributes"],
+                    )
+                }
                 response = self.opensearch_client.bulk_update(
                     index_name,
-                    [{"id": item.id, **fields(item)} for item in chunk],
+                    [
+                        {
+                            "id": item.id,
+                            **fields(item),
+                            **self._filter_update(item, stored.get(item.id) or {}),
+                        }
+                        for item in chunk
+                    ],
                     refresh=self.opensearch_config.refresh_after_batch,
                 )
                 failed = [next(iter(r.values())) for r in response.get("items", [])]
@@ -1160,6 +1176,29 @@ class OpenSearchIndexer(VectorIndexer):
         }
         doc["attributes"] = {Constants.FILTERS.value: filters}
         return doc
+
+    @classmethod
+    def _filter_update(cls, item: Any, stored: dict[str, Any]) -> dict[str, Any]:
+        """The partial update that sets ``item``'s document filters on its
+        ``stored`` document.
+
+        A partial update merges objects recursively and keeps every field it
+        does not name, so a filter key the item lost (its last document with
+        that key was removed) would keep matching: such keys are set to
+        null, which no ``term`` filter matches.
+        """
+        update = cls._document_filter_properties(item)
+        prefix = f"{Constants.ATTRIBUTE_PREFIX.value}_"
+        for key in stored:
+            if key.startswith(prefix) and key not in update:
+                update[key] = None
+        key = Constants.FILTERS.value
+        old = (stored.get("attributes") or {}).get(key)
+        new = (update.get("attributes") or {}).get(key) or {}
+        dropped = {k: None for k in old or {} if k not in new}
+        if dropped:
+            update["attributes"] = {key: {**new, **dropped}}
+        return update
 
     @staticmethod
     def _prepare_common_doc_properties(item: Any) -> dict[str, Any]:

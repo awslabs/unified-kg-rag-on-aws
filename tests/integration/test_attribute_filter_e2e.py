@@ -157,3 +157,49 @@ def test_incremental_runs_keep_relationship_filters_current(
             assert out.sources == [], strategy
     finally:
         rag.close()
+
+
+@pytest.mark.parametrize(
+    "kept", [{"category": "contract"}, {}], ids=["other-filters", "no-filters"]
+)
+def test_a_removed_documents_filter_keys_stop_matching(
+    tmp_path: Path, kept: dict[str, Any]
+) -> None:
+    # Regression: the lineage update after a removal is a partial update,
+    # which kept the removed document's ``clearance`` on the entities and
+    # the relationship, so a ``clearance:secret`` filter still returned the
+    # remaining document's content.
+    config = e2e._config(tmp_path / "stores", tmp_path / "viz")
+    server = FakeOllama(e2e._respond, e2e.ANSWER, e2e.DIM)
+    providers = e2e._providers(
+        config, server, e2e.FakeCrossEncoder("synthetic-reranker")
+    )
+    source = tmp_path / "corpus"
+    source.mkdir()
+    (source / "contract.txt").write_text("Vendor supplies widgets to Buyer.")
+    (source / "logistics.txt").write_text("Vendor ships widgets for Buyer.")
+    per_file = {
+        "contract": kept,
+        "logistics": {"category": "logistics", "clearance": "secret"},
+    }
+    create = BaseChunker._create_text_unit
+
+    def with_filters(self: BaseChunker, chunk_text: str, document: Any, *a: Any) -> Any:
+        if filters := per_file[Path(document.file_name).stem]:
+            document.metadata["filters"] = dict(filters)
+        return create(self, chunk_text, document, *a)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(BaseChunker, "_create_text_unit", with_filters)
+        context = e2e._ingest(config, providers, source, tmp_path / "run-1")
+        assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+        (source / "logistics.txt").unlink()
+        context = e2e._ingest(config, providers, source, tmp_path / "run-2")
+        assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    rag = GraphRAGChain(config, providers=providers)
+    try:
+        for strategy in (SearchStrategy.LOCAL, SearchStrategy.MIX):
+            for key in ("attr_clearance", "attributes.filters.clearance"):
+                assert _ask(rag, strategy, {key: "secret"}).sources == [], strategy
+    finally:
+        rag.close()

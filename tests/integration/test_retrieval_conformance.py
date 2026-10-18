@@ -354,6 +354,82 @@ def test_relationships_and_claims_are_filtered_by_their_documents(
     ]
 
 
+_SECRET = {"category": "logistics", "clearance": "secret"}
+
+
+def _filtered_items(filters: dict[str, Any]) -> tuple[Entity, Relationship, Claim]:
+    attributes = {"filters": dict(filters)} if filters else None
+    return (
+        _entities()[0].model_copy(update={"attributes": attributes}),
+        _relationships()[0].model_copy(update={"attributes": attributes}),
+        Claim(
+            id="c-supplies",
+            subject_id="e-vendor",
+            subject_name="Vendor",
+            object_name="",
+            type="obligation",
+            description="Vendor supplies widgets",
+            attributes=attributes,
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    "kept",
+    [{"category": "contract"}, {}],
+    ids=["other-filters", "no-filters"],
+)
+def test_a_lineage_update_clears_the_filter_keys_an_item_lost(
+    harness: StoreHarness, kept: dict[str, Any]
+) -> None:
+    # Regression: a lineage update is a partial update, which keeps every
+    # field it does not name, so the filters of a removed document stayed
+    # on the entity, relationship and claim and still matched.
+    h = harness
+    h.initialize()
+    indexer = h.vector_indexer
+    entity, edge, claim = _filtered_items(_SECRET)
+    for stats in (
+        indexer.index_entities([entity]),
+        indexer.index_relationships([edge]),
+        indexer.index_claims([claim]),
+    ):
+        assert stats.failed_items == 0, stats.errors
+    entity, edge, claim = _filtered_items(kept)
+    for stats in (
+        indexer.update_entity_lineage([entity]),
+        indexer.update_relationship_lineage([edge]),
+        indexer.update_claim_lineage([claim]),
+    ):
+        assert stats.failed_items == 0, stats.errors
+    o = _prefixes(h)
+    prefixes = (
+        o.entities_index_prefix,
+        o.relationships_index_prefix,
+        o.claims_index_prefix,
+    )
+    filters = (
+        {"attr_clearance": "secret"},
+        {"attributes.filters.clearance": "secret"},
+        {"attr_category": "logistics"},
+        {"attr_category": "contract"},
+    )
+    results = _search(
+        h,
+        *(
+            _query("widgets", prefix, search_type=SearchType.LEXICAL, filters=f)
+            for prefix in prefixes
+            for f in filters
+        ),
+    )
+    found = [[r.source for r in hits] for hits in results]
+    assert found == [
+        hit
+        for item in ("e-vendor", "r-supplies", "c-supplies")
+        for hit in [[], [], [], [item] if kept else []]
+    ]
+
+
 def test_untranslated_korean_corpus_has_lexical_recall(harness: StoreHarness) -> None:
     # A Korean corpus with a Korean target is never translated, so only the
     # ``text`` field carries it, with the source-language analyzer (nori, or
