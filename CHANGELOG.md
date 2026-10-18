@@ -1247,6 +1247,9 @@ changed once with the full-config keys (#332).
   before graph copies, and the incremental switch is
   `providers.doc_status.enabled` (#350).
   `providers.doc_status.enabled` (#351).
+- `run-ingestion --output-format json` names the `pipeline_id` in the
+  interrupted status document, so a stopped run can be resumed with
+  `--pipeline-id` without reading the logs (#PR).
 - `run-rag --interactive --output-format json` is rejected as a usage error
   (exit 2) instead of running a chat that printed nothing on stdout (#PR).
 - `run-ingestion --retire-source-scope` resolves a local path the way the

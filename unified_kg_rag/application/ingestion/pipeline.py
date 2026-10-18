@@ -224,6 +224,8 @@ class DataIngestionPipeline:
     # Fingerprint of the run's corpus contents, computed in run(); part of every
     # stage cache key so a changed corpus is a cache miss, not a stale resume.
     corpus_fingerprint: str | None = None
+    # The id of the latest run, once resolved (the CLI reports it on a stop).
+    pipeline_id: str | None = None
 
     # Stop handling (see request_stop): the run's pipeline id once its S3
     # checkpoint is in place, whether a checkpoint is being written, and the
@@ -520,6 +522,7 @@ class DataIngestionPipeline:
             self._validate_retired_scopes(source_path)
 
             resolved_pipeline_id = self._resolve_pipeline_id(source_path, pipeline_id)
+            self.pipeline_id = resolved_pipeline_id
             # Every log line of the run, the S3 sync and the failure report
             # included, carries the id (also in worker threads, see
             # ContextThreadPoolExecutor).

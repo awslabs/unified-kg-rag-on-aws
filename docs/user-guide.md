@@ -1532,7 +1532,8 @@ breaches (`run-eval`), the written files (`run-visualization`), the output
 path and profile (`run-prompt-tuning`), or the counts written
 (`prepare-benchmark`). A run stopped by a
 signal before it printed prints `{"status": "interrupted", "exit_code": 143}`
-(`130` for Ctrl-C), so stdout is always JSON.
+(`130` for Ctrl-C), so stdout is always JSON; `run-ingestion` adds the
+`pipeline_id` to resume with.
 
 ### Large / multilingual / heterogeneous corpora
 

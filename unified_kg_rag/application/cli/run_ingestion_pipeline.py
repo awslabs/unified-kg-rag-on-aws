@@ -614,9 +614,23 @@ class IngestionPipelineRunner:
         )
 
 
+def _print_interrupted(runner: IngestionPipelineRunner | None, exit_code: int) -> None:
+    """The JSON status of a stopped run, with the pipeline id to resume with."""
+    pipeline_id = runner.pipeline.pipeline_id if runner and runner.pipeline else None
+    if runner and runner.json_output and pipeline_id:
+        print_json(
+            {
+                "status": "interrupted",
+                "exit_code": exit_code,
+                "pipeline_id": pipeline_id,
+            }
+        )
+
+
 @exits_on_sigterm
 def main() -> None:
     load_cli_dotenv()
+    runner: IngestionPipelineRunner | None = None
     try:
         cli = CommandLineInterface()
         args = cli.parse_args()
@@ -628,9 +642,11 @@ def main() -> None:
             "stages are checkpointed, rerun with the same --pipeline-id to "
             "resume.[/yellow]"
         )
+        _print_interrupted(runner, 128 + e.signum)
         sys.exit(128 + e.signum)
     except KeyboardInterrupt:
         console.print("\n[yellow]Pipeline interrupted by user.[/yellow]")
+        _print_interrupted(runner, EXIT_INTERRUPTED)
         sys.exit(EXIT_INTERRUPTED)
     except ConfigurationError as e:
         console.print(f"\n[red]Error: {escape(str(e))}[/red]")

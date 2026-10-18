@@ -1395,7 +1395,7 @@ custom_prompts:
 실패 예산 초과 내역(`run-eval`), 쓴 파일(`run-visualization`), 출력 경로와 프로필
 (`run-prompt-tuning`), 쓴 항목 수(`prepare-benchmark`)입니다. 문서를 출력하기 전에 신호로 중지되면
 대신 `{"status": "interrupted", "exit_code": 143}`(Ctrl-C는 `130`)을 출력하므로 표준
-출력은 항상 JSON입니다.
+출력은 항상 JSON입니다. `run-ingestion`은 재개할 때 쓸 `pipeline_id`를 덧붙입니다.
 
 ### 대규모, 다국어, 이질적인 코퍼스
 

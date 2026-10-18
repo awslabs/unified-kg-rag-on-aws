@@ -400,3 +400,52 @@ def test_ctrl_c_exits_130_with_a_json_status_in_every_cli(
             "status": "interrupted",
             "exit_code": 130,
         }, argv[0]
+
+
+@pytest.mark.parametrize("signum", [signal.SIGINT, signal.SIGTERM])
+def test_interrupted_ingestion_json_names_the_pipeline_id(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    signum: int,
+) -> None:
+    # Before, the status gave no id to rerun with --pipeline-id.
+    from types import SimpleNamespace
+
+    from unified_kg_rag.shared import PipelineInterrupted
+
+    monkeypatch.setattr(console, "stderr", console.stderr)
+    monkeypatch.setattr(
+        run_ingestion_pipeline, "load_cli_config", lambda _args: Config()
+    )
+
+    def _run(self: run_ingestion_pipeline.IngestionPipelineRunner) -> None:
+        self.pipeline = SimpleNamespace(pipeline_id="run-7")  # type: ignore[assignment]
+        if signum == signal.SIGINT:
+            raise KeyboardInterrupt
+        raise PipelineInterrupted(signum)
+
+    monkeypatch.setattr(run_ingestion_pipeline.IngestionPipelineRunner, "run", _run)
+    src = tmp_path / "src"
+    src.mkdir()
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run-ingestion",
+            "--source-directory",
+            str(src),
+            "--cache-directory",
+            str(tmp_path / "cache"),
+            "--output-format",
+            "json",
+        ],
+    )
+    with pytest.raises(SystemExit) as exc:
+        run_ingestion_pipeline.main()
+    assert exc.value.code == 128 + signum
+    assert json.loads(capsys.readouterr().out) == {
+        "status": "interrupted",
+        "exit_code": 128 + signum,
+        "pipeline_id": "run-7",
+    }
