@@ -350,6 +350,12 @@ class TestMusique:
             and truths[0].reference_sources == data[0]["reference_sources"]
         )
 
+    def test_a_title_with_a_leading_dot_is_not_a_hidden_file(self) -> None:
+        # Before, ".hack" became ".hack.txt", which the parser skips.
+        taken: set[str] = set()
+        assert musique._file_name(".hack", taken) == "hack.txt"
+        assert musique._file_name(". . .", taken) == "paragraph.txt"
+
     def test_limit_samples_with_the_seed_and_refuses_a_used_corpus(
         self, tmp_path: Path
     ) -> None:

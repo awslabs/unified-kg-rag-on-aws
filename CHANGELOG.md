@@ -1247,6 +1247,8 @@ changed once with the full-config keys (#332).
   before graph copies, and the incremental switch is
   `providers.doc_status.enabled` (#350).
   `providers.doc_status.enabled` (#351).
+- `prepare-benchmark musique`: a paragraph whose title starts with `.` is no
+  longer written as a hidden file the parser skips (#PR).
 - The CLI exit-code table no longer says an index built with the registry
   off exits 2: `run-ingestion` reports a configuration conflict found while
   running as a failed run (exit 1) (#PR).
