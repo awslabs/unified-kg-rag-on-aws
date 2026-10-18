@@ -218,12 +218,17 @@ class GlobalSearchStrategy(BaseSearchStrategy):
     def _report_cap(self) -> int:
         """Reports one cut or selection step contributes at most.
 
-        A store request returns at most ``max_query_size`` hits, so a larger
-        configured cap could not be told apart from a complete cut.
+        A store request returns at most ``max_query_size`` hits and the cut
+        probe asks for one more than the cap (``_browse_reports``), so the cap
+        is at most ``max_query_size - 1``: at the cap of ``max_query_size`` a
+        cut of exactly the cap could not be told apart from a larger one.
         """
-        return min(
-            self.global_search_config.max_reports_per_level,
-            self.config.indexing.opensearch.max_query_size,
+        return max(
+            1,
+            min(
+                self.global_search_config.max_reports_per_level,
+                self.config.indexing.opensearch.max_query_size - 1,
+            ),
         )
 
     async def _browse_reports(
@@ -233,14 +238,13 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         filters), most important (``rank``) first, and whether that is all.
 
         One more report than the cap is asked for, so a set of exactly the
-        cap is complete; with the cap at ``max_query_size`` the store cannot
-        return more, and a full answer counts as incomplete.
+        cap is complete (``_report_cap`` leaves room for it in one request).
         """
         retriever = self.document_retriever
         if retriever is None:
             return [], True
         cap = self._report_cap()
-        probe = min(cap + 1, self.config.indexing.opensearch.max_query_size)
+        probe = cap + 1
         browse = SearchQuery(
             query="",
             search_type=SearchType.LEXICAL,
@@ -284,8 +288,8 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         stats["global_level_capped"] = True
         logger.warning(
             "%s: more than %s community reports; mapping the %s most similar "
-            "to the query (search.global_search.max_reports_per_level, bounded "
-            "by indexing.opensearch.max_query_size).",
+            "to the query (search.global_search.max_reports_per_level, at most "
+            "indexing.opensearch.max_query_size - 1).",
             label,
             cap,
             cap,

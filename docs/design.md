@@ -751,9 +751,9 @@ every entity once; MS GraphRAG counts `community_level` from the root, so the
 depth selects the cut.
 
 - **Fixed cut (default)** — the cut is browsed by rank, one report more than
-  `max_reports_per_level` (bounded by `max_query_size`) so a cut of exactly
-  the cap is complete. A larger cut gives way to the deepest shallower cut
-  that fits (`global_cut_depth`), covering the same entities in broader
+  the cap (`max_reports_per_level`, at most `max_query_size` - 1 so the probe
+  fits one request) so a cut of exactly the cap is complete. A larger cut
+  gives way to the deepest shallower cut that fits (`global_cut_depth`), covering the same entities in broader
   reports. Only when even the root cut does not fit does a hybrid search,
   restricted to the configured cut, pick that many most similar reports
   (`global_level_capped`): the only place similarity enters global search.

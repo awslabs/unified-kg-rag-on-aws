@@ -641,8 +641,8 @@ import는 순환이 됨).
 번씩 덮는 MS GraphRAG의 roll-up이며, MS GraphRAG는 `community_level`을 루트에서 세므로
 깊이로 단면을 고릅니다.
 
-- **고정 단면(기본값)** — 단면을 순위순으로 훑되 `max_reports_per_level`보다 하나 더
-  요청하므로(`max_query_size`를 넘지 않음) 상한과 정확히 같은 단면도 완전합니다. 더 큰 단면은
+- **고정 단면(기본값)** — 단면을 순위순으로 훑되 상한(`max_reports_per_level`, 한 요청에
+  들도록 최대 `max_query_size` - 1)보다 하나 더 요청하므로 상한과 정확히 같은 단면도 완전합니다. 더 큰 단면은
   상한 안에 드는 가장 깊은 얕은 단면에 자리를 내주며(`global_cut_depth`), 같은 엔티티를 더 넓은
   리포트로 덮습니다. 루트 단면조차 들지 않을 때만 설정한 단면으로 제한한 하이브리드 검색이
   가장 비슷한 리포트를 그만큼 고릅니다(`global_level_capped`). global 검색에서 유사도가 쓰이는
