@@ -802,10 +802,10 @@ changed once with the full-config keys (#332).
 - `indexing.lease_seconds` defaults to 600 s (was 300 s), three times the
   stores' 180 s request timeout; a shorter lease logs a WARNING at the start
   of the run. A run that dies now blocks its namespace for up to 10 minutes
-  (#PR).
+  (#355).
 - The ingestion EMF metrics add `total_records_not_stored` and
   `underived_items`, and the CDK dashboard plots them with
-  `total_documents_deferred` and `community_rebuild_recommended` (#PR).
+  `total_documents_deferred` and `community_rebuild_recommended` (#355).
 - The user guide links the CLI reference instead of repeating flag tables,
   the observability trace shape (every span and attribute, the vendor
   attribute names, the known limits) moved to the runbook, and the user
@@ -1254,26 +1254,26 @@ changed once with the full-config keys (#332).
   swaps the OpenSearch alias onto the partial index and deletes the complete
   one: the vector indexer re-raises `NamespaceLeaseError` instead of
   recording it as failed items, and checks the lease before each alias swap
-  and stale-index deletion (#PR).
+  and stale-index deletion (#355).
 - A SIGTERM during indexing stops the run within seconds instead of after
   the whole indexing phase (often past the task's 120 s stop timeout, so the
   task was killed, counted as a death and lost its checkpoint): the store
   writes of the worker threads stop at their next request, and the thread
-  pools no longer wait for their running tasks once the block raised (#PR).
+  pools no longer wait for their running tasks once the block raised (#355).
 - Every attempt of a Neptune or OpenSearch write request checks the lease,
-  the transport's retries included (up to 6 x 180 s before) (#PR).
+  the transport's retries included (up to 6 x 180 s before) (#355).
 - A renewal that answers after the lease expired (a frozen process, a slow
   registry) loses the lease instead of re-taking it: another run may have
-  written and released the namespace meanwhile (#PR).
+  written and released the namespace meanwhile (#355).
 - A run checks its lease at each stage start and before each checkpoint
   upload, so one that lost it in a long stage that does not write stops
-  there, and a stopped run that lost it uploads no checkpoint (#PR).
+  there, and a stopped run that lost it uploads no checkpoint (#355).
 - `indexing.reset` skips documents recorded QUARANTINED for their current
   content and extraction settings and keeps their records; it used to
-  process them and die on them every time (#PR).
+  process them and die on them every time (#355).
 - The warning for documents that produced no text units says the run counts
   as a death of each (with the count) rather than only that they stay
-  PENDING (#PR).
+  PENDING (#355).
 - Docs match the code again: a document is `FAILED` in five cases (an
   extraction record that could not be stored, `records_not_stored`, is the
   fifth), `global` maps one cut and falls back to a shallower one over
