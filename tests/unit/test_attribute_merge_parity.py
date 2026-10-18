@@ -79,3 +79,22 @@ def test_folding_two_at_a_time_equals_merging_at_once(maps) -> None:
     # merges every instance in one call.
     folded = reduce(lambda stored, new: merge_attributes((stored, new)), maps)
     assert folded == merge_attributes(maps)
+
+
+def test_unhashable_filter_values_are_unioned_once() -> None:
+    # A filter value the set cannot hold (a dict) falls back to the list;
+    # a repeat of it must still be dropped, not listed twice.
+    from unified_kg_rag.domain.ingestion.base_processor import (
+        union_all_document_filters,
+    )
+
+    region = {"code": "eu"}
+    merged = union_all_document_filters(
+        [
+            {"filters": {"region": region}},
+            {"filters": {"region": dict(region)}},
+            {"filters": {"region": {"code": "us"}}},
+        ]
+    )
+    assert merged is not None
+    assert merged["filters"]["region"] == [{"code": "eu"}, {"code": "us"}]

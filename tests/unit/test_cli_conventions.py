@@ -649,3 +649,22 @@ def test_a_stopped_cli_exits_without_joining_the_threads_it_abandoned() -> None:
     assert result.returncode == 143
     assert time.time() - started < 20
     assert json.loads(result.stdout) == {"status": "interrupted", "exit_code": 143}
+
+
+@pytest.mark.parametrize("code", [1, 2])
+def test_a_json_run_that_exits_with_an_error_prints_a_failed_status(
+    capsys, monkeypatch, code: int
+) -> None:
+    monkeypatch.setattr(console, "stderr", console.stderr)
+
+    @exits_on_sigterm
+    def main() -> None:
+        json_output(argparse.Namespace(output_format="json"))
+        raise SystemExit(code)
+
+    with pytest.raises(SystemExit):
+        main()
+    assert json.loads(capsys.readouterr().out) == {
+        "status": "failed",
+        "exit_code": code,
+    }
