@@ -4,6 +4,7 @@ import math
 import re
 import time
 from collections import defaultdict
+from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 
@@ -210,10 +211,21 @@ class CommunityDetector:
                 custom_prompts=self.config.custom_prompts,
             )
 
-    def __call__(self, graph: nx.Graph) -> "CommunityDetector":
+    def __call__(
+        self,
+        graph: nx.Graph,
+        stored: Callable[[list[Any]], set[Any]] | None = None,
+    ) -> "CommunityDetector":
+        """Detect the communities of ``graph``.
+
+        ``stored`` (an incremental run) returns which of the given entities
+        the stores already hold from other text units: a small component
+        touching one is part of a larger component of the whole graph, so it
+        is clustered (see ``_small_component_nodes``).
+        """
         self.graph = self._with_usable_weights(self._entity_subgraph(graph))
         graph = self.graph
-        self.unclustered = self._small_component_nodes(graph)
+        self.unclustered = self._small_component_nodes(graph, stored)
         logger.info(
             "Starting community detection on graph with %s nodes and %s edges",
             graph.number_of_nodes(),
@@ -248,7 +260,11 @@ class CommunityDetector:
         entity_graph.remove_nodes_from(non_entity_nodes)
         return entity_graph
 
-    def _small_component_nodes(self, graph: nx.Graph) -> set[Any]:
+    def _small_component_nodes(
+        self,
+        graph: nx.Graph,
+        stored: Callable[[list[Any]], set[Any]] | None = None,
+    ) -> set[Any]:
         """The entities of ``graph``'s connected components of fewer than
         ``min_community_size`` entities, which get no community.
 
@@ -263,14 +279,22 @@ class CommunityDetector:
         ones it finds with them (``_process_hierarchical_partitions`` only
         skips these); the left-out entities stay reachable through local
         search.
+
+        An incremental run's graph holds only its delta, so a new entity
+        whose one relationship is to a stored entity is a small component
+        here but not in the whole graph: a component with a ``stored``
+        entity is clustered, as a full build would.
         """
         min_size = self.community_detection_config.min_community_size
-        small = {
-            node
+        components = [
+            component
             for component in nx.connected_components(graph)
             if len(component) < min_size
-            for node in component
-        }
+        ]
+        if components and stored is not None:
+            held = stored(sorted({n for c in components for n in c}, key=str))
+            components = [c for c in components if held.isdisjoint(c)]
+        small = {node for component in components for node in component}
         if small:
             logger.info(
                 "Leaving %s entities in connected components of fewer than %s "

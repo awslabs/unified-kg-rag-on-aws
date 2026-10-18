@@ -13,6 +13,7 @@ import math
 import time
 from typing import Any
 
+from langchain_core.exceptions import ContextOverflowError
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import Runnable, RunnableConfig
 
@@ -43,7 +44,12 @@ from unified_kg_rag.domain.prompts import (
     MapReduceSummaryPrompt,
 )
 from unified_kg_rag.domain.retrieval.strategy_registry import register_strategy
-from unified_kg_rag.shared import ConfigurationError, get_logger, observability
+from unified_kg_rag.shared import (
+    ConfigurationError,
+    LanguageModelError,
+    get_logger,
+    observability,
+)
 from unified_kg_rag.shared.utils import parse_llm_json, safe_float_parse, text_digest
 from unified_kg_rag.shared.utils.langchain import BatchProcessor
 
@@ -212,12 +218,17 @@ class GlobalSearchStrategy(BaseSearchStrategy):
     def _report_cap(self) -> int:
         """Reports one cut or selection step contributes at most.
 
-        A store request returns at most ``max_query_size`` hits, so a larger
-        configured cap could not be told apart from a complete cut.
+        A store request returns at most ``max_query_size`` hits and the cut
+        probe asks for one more than the cap (``_browse_reports``), so the cap
+        is at most ``max_query_size - 1``: at the cap of ``max_query_size`` a
+        cut of exactly the cap could not be told apart from a larger one.
         """
-        return min(
-            self.global_search_config.max_reports_per_level,
-            self.config.indexing.opensearch.max_query_size,
+        return max(
+            1,
+            min(
+                self.global_search_config.max_reports_per_level,
+                self.config.indexing.opensearch.max_query_size - 1,
+            ),
         )
 
     async def _browse_reports(
@@ -227,14 +238,13 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         filters), most important (``rank``) first, and whether that is all.
 
         One more report than the cap is asked for, so a set of exactly the
-        cap is complete; with the cap at ``max_query_size`` the store cannot
-        return more, and a full answer counts as incomplete.
+        cap is complete (``_report_cap`` leaves room for it in one request).
         """
         retriever = self.document_retriever
         if retriever is None:
             return [], True
         cap = self._report_cap()
-        probe = min(cap + 1, self.config.indexing.opensearch.max_query_size)
+        probe = cap + 1
         browse = SearchQuery(
             query="",
             search_type=SearchType.LEXICAL,
@@ -278,8 +288,8 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         stats["global_level_capped"] = True
         logger.warning(
             "%s: more than %s community reports; mapping the %s most similar "
-            "to the query (search.global_search.max_reports_per_level, bounded "
-            "by indexing.opensearch.max_query_size).",
+            "to the query (search.global_search.max_reports_per_level, at most "
+            "indexing.opensearch.max_query_size - 1).",
             label,
             cap,
             cap,
@@ -588,7 +598,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
                 report_tokens=report_tokens,
             ):
                 map_points, unrated = await self._run_map_phase(
-                    batches, query, config=config
+                    batches, query, config=config, degraded=degraded
                 )
         except Exception as e:
             if not self.ignore_errors:
@@ -659,11 +669,12 @@ class GlobalSearchStrategy(BaseSearchStrategy):
     ) -> list[RetrievalResult]:
         """The reports the packed points came from, best point first.
 
-        A point credits the reports of its batch it cites by id; one that
-        cites none of them (no ids, or ids the batch does not hold) credits
-        its whole batch. Each report scores its best crediting point (0-1).
-        Crediting every report of a batch made a point drawn from one report
-        put up to a dozen unrelated ones in the answer context and sources.
+        A point credits the reports of its batch it cites by id (their
+        ordinal in the batch, ``_format_reports``); one that cites none of
+        them (no ids, or ids the batch does not hold) credits its whole
+        batch. Each report scores its best crediting point (0-1). Crediting
+        every report of a batch made a point drawn from one report put up to
+        a dozen unrelated ones in the answer context and sources.
         """
         best: dict[tuple[int, int], int] = {}
         for point in points:
@@ -672,9 +683,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             batch = batches[point.batch]
             cited = set(point.report_ids)
             credited = [
-                i
-                for i, report in enumerate(batch)
-                if cls._community_id(report) in cited
+                i for i in range(len(batch)) if cls._report_ordinal(i) in cited
             ] or range(len(batch))
             for i in credited:
                 key = (point.batch, i)
@@ -690,6 +699,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         query: SearchQuery,
         *,
         config: RunnableConfig | None = None,
+        degraded: list[str] | None = None,
     ) -> tuple[list[_MapPoint], list[RetrievalResult]]:
         """Fan one map call per batch of reports and parse the scored points.
 
@@ -697,7 +707,11 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         fallback. Returns the scored points (each tagged with its batch) and
         the reports of every batch that was NOT rated (the call failed, or its
         output was not parseable map JSON), so the caller can tell "rated
-        irrelevant" apart from "never rated".
+        irrelevant" apart from "never rated". An unrated batch is recorded in
+        ``degraded``; when every map call failed (other than on a prompt
+        longer than the model's context) and ``ignore_errors`` is off, the
+        first error is raised (as DRIFT does when a step fails entirely), not
+        answered from the unjudged reports.
         """
 
         def prepare_inputs(
@@ -723,11 +737,13 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         # parameter, an unknown model id): with a fast map model the answer
         # call, on another model, would not fail on it.
         bad_requests: list[Exception] = []
+        errors: list[Exception] = []
 
         def sequential_func(single_input: dict[str, Any]) -> str:
             try:
                 return str(self.map_rater.invoke(single_input, config))
             except Exception as e:
+                errors.append(e)
                 if is_bad_request(e):
                     bad_requests.append(e)
                 elif is_fatal_retrieval_error(e):
@@ -747,8 +763,10 @@ class GlobalSearchStrategy(BaseSearchStrategy):
 
         points: list[_MapPoint] = []
         unrated: list[RetrievalResult] = []
+        failed = 0
         for i, batch in enumerate(report_batches):
             raw = raw_outputs[i] if i < len(raw_outputs) else None
+            failed += not isinstance(raw, str)
             # A failed item is BATCH_ITEM_FAILED, not a string.
             batch_points = (
                 self._parse_map_payload(raw) if isinstance(raw, str) and raw else None
@@ -762,6 +780,12 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         report_count = sum(len(batch) for batch in report_batches)
         if bad_requests and len(unrated) == report_count:
             raise bad_requests[0]
+        # A prompt too long for the model is that batch's own problem (it is
+        # answered from its unrated reports); any other error on every batch
+        # is the model not answering.
+        refusals = [e for e in errors if not isinstance(e, ContextOverflowError)]
+        if refusals and failed == len(report_batches) and not self.ignore_errors:
+            raise refusals[0]
         if unrated:
             logger.warning(
                 "Global map phase left %s/%s reports unrated (failed or "
@@ -769,13 +793,25 @@ class GlobalSearchStrategy(BaseSearchStrategy):
                 len(unrated),
                 report_count,
             )
+            _record(
+                degraded,
+                errors[0] if errors else LanguageModelError("map output not JSON"),
+            )
         return points, unrated
+
+    @staticmethod
+    def _report_ordinal(index: int) -> str:
+        """The id of a batch's ``index``-th report in the map prompt."""
+        return str(index + 1)
 
     @classmethod
     def _format_reports(cls, reports: list[RetrievalResult]) -> str:
+        """``reports`` for the map prompt, each headed by its ordinal in the
+        batch: short ids a model copies back reliably, where a community
+        UUID cost tokens per report and came back garbled."""
         return "\n\n".join(
-            f"--- Report (id: {cls._community_id(report)}) ---\n{report.content}"
-            for report in reports
+            f"--- Report (id: {cls._report_ordinal(i)}) ---\n{report.content}"
+            for i, report in enumerate(reports)
         )
 
     @staticmethod

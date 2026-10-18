@@ -192,11 +192,11 @@ async def test_map_phase_batches_reports_per_call() -> None:
         assert batch["query"] == "q"
         assert batch["target_language"] == "English"
     # The first batch packs two reports into one "reports" string.
-    assert "cid-0" in first["reports"] and "cid-1" in first["reports"]
-    assert "cid-2" not in first["reports"]
+    assert "report 0" in first["reports"] and "report 1" in first["reports"]
+    assert "report 2" not in first["reports"]
     # The remaining report gets its own call.
-    assert "cid-2" in second["reports"]
-    assert "cid-0" not in second["reports"] and "cid-1" not in second["reports"]
+    assert "report 2" in second["reports"]
+    assert "report 0" not in second["reports"] and "report 1" not in second["reports"]
 
 
 def test_map_batches_pack_reports_by_tokens() -> None:
@@ -548,8 +548,8 @@ async def test_a_point_credits_only_the_reports_it_cites() -> None:
     cited = json.dumps(
         {
             "points": [
-                {"description": "from c1", "score": 80, "report_ids": ["cid-1"]},
-                {"description": "from c3", "score": 60, "report_ids": [" cid-3 "]},
+                {"description": "from c1", "score": 80, "report_ids": ["2"]},
+                {"description": "from c3", "score": 60, "report_ids": [" 4 "]},
             ]
         }
     )
@@ -558,7 +558,7 @@ async def test_a_point_credits_only_the_reports_it_cites() -> None:
     assert [(r.source, r.score) for r in out[1:]] == [("c1", 0.8), ("c3", 0.6)]
 
 
-@pytest.mark.parametrize("ids", [None, [], ["cid-9"], "cid-1"])
+@pytest.mark.parametrize("ids", [None, [], ["9"], ["cid-0"], "1"])
 async def test_a_point_without_valid_ids_credits_its_batch(ids: Any) -> None:
     point: dict[str, Any] = {"description": "somewhere", "score": 70}
     if ids is not None:
@@ -574,8 +574,11 @@ def test_the_map_prompt_asks_for_the_report_ids() -> None:
     from unified_kg_rag.domain.prompts import GlobalMapPrompt
 
     assert '"report_ids"' in GlobalMapPrompt.system_prompt_template
-    formatted = GlobalSearchStrategy._format_reports(_communities(1))
-    assert formatted.startswith("--- Report (id: cid-0) ---")
+    # Each report is headed by its ordinal in the batch, not its UUID.
+    formatted = GlobalSearchStrategy._format_reports(_communities(2))
+    assert formatted.startswith("--- Report (id: 1) ---\ncommunity report 0")
+    assert "--- Report (id: 2) ---\ncommunity report 1" in formatted
+    assert "cid-" not in formatted
 
 
 async def test_default_degraded_path_passes_unrated_reports_through() -> None:
@@ -764,12 +767,55 @@ async def test_map_phase_fatal_error_degrades_when_ignored() -> None:
     assert out  # degraded to concat-and-reduce over the unrated reports
 
 
-async def test_map_phase_transient_failures_still_degrade_when_not_ignored() -> None:
+async def test_map_phase_failing_on_every_batch_raises_when_not_ignored() -> None:
+    # Regression: a map model that answered no batch (throttled past its
+    # retries, timing out) degraded silently to an answer from the unjudged
+    # reports; DRIFT raises the first error when a whole step fails.
     strat = _strategy(ignore_errors=False, map_batch_size=1, reduce_with_llm=True)
     strat.batch_processor.max_attempts = 1  # as GlobalSearchStrategy configures
     strat.map_rater = _DeniedMapChain(TimeoutError("read timed out"))
-    out = await strat._apply_map_reduce(_communities(2), SearchQuery(query="q"))
+    with pytest.raises(TimeoutError, match="read timed out"):
+        await strat._apply_map_reduce(_communities(2), SearchQuery(query="q"))
+
+
+async def test_map_phase_failing_on_every_batch_degrades_when_ignored() -> None:
+    strat = _strategy(ignore_errors=True, map_batch_size=1, reduce_with_llm=True)
+    strat.batch_processor.max_attempts = 1  # as GlobalSearchStrategy configures
+    strat.map_rater = _DeniedMapChain(TimeoutError("read timed out"))
+    degraded: list[str] = []
+    out = await strat._apply_map_reduce(
+        _communities(2), SearchQuery(query="q"), degraded=degraded
+    )
     assert out
+    assert degraded == ["TimeoutError"]
+
+
+class _TimingOutFirstReport(_SyncMapChain):
+    def invoke(self, single_input: dict, config: Any = None) -> str:
+        if "community report 0" in single_input["reports"]:
+            raise TimeoutError("read timed out")
+        return super().invoke(single_input, config)
+
+
+async def test_map_phase_unrated_batches_are_recorded_as_degraded() -> None:
+    # Regression: a failed or unparseable map batch left no trace in the
+    # search metadata (degraded_error) or the strategy span.
+    strat = _strategy(ignore_errors=False, map_batch_size=1)
+    strat.batch_processor.max_attempts = 1  # as GlobalSearchStrategy configures
+    strat.map_rater = _TimingOutFirstReport([_map_payload(("point", 50))])
+    degraded: list[str] = []
+    points, unrated = await strat._run_map_phase(
+        _batches(strat, _communities(2)), SearchQuery(query="q"), degraded=degraded
+    )
+    assert ([r.source for r in unrated], len(points)) == (["c0"], 1)
+    assert degraded == ["TimeoutError"]
+
+    strat.map_rater = _SyncMapChain(["not json", _map_payload(("point", 50))])
+    degraded = []
+    await strat._run_map_phase(
+        _batches(strat, _communities(2)), SearchQuery(query="q"), degraded=degraded
+    )
+    assert degraded == ["LanguageModelError"]
 
 
 class _SlowMapChain:

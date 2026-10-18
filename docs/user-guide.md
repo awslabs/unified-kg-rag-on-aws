@@ -840,15 +840,19 @@ steps on Neptune. Each store accepts the fields its indexer writes:
   reports, which usually lack document attributes, drop out of an
   attribute-filtered query. A vector or hybrid search skips an index none of
   whose documents carry the attribute (OpenSearch 2.13 rejects a kNN filter
-  on a field the index does not map).
+  on a field the index does not map). Relationships and claims carry no
+  document attribute: under an attribute filter they are kept only when one
+  of their text units passes it.
 - Neptune applies `attr_<key>` where present (a vertex without the property
-  passes), so `attr_category` leaves graph expansion intact while
-  `attr_role:buyer` removes entities with another role. Every other key is
-  strict on both stores.
+  passes), so `attr_role:buyer` removes entities with another role; the
+  expanded entities other than the seeds are then kept only when one of their
+  text units passes the attribute filter. Every other key is strict on both
+  stores.
 
 **Filters are not an access-control boundary**: a store that does not declare
-a key returns its content unfiltered, and graph expansion and community
-reports can bring in excluded documents' content. Separate tenants or users by
+a key returns its content unfiltered, and an entity, relationship or
+community report drawn from several documents passes when one of them
+matches, so it can carry excluded documents' content. Separate tenants or users by
 [index suffix](#index-suffix), chosen server-side.
 
 ### Interactive mode & conversation memory

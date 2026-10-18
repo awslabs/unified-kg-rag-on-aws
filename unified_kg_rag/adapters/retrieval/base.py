@@ -18,7 +18,10 @@ from unified_kg_rag.adapters.retrieval.token_manager import (
     SectionType,
     TokenManager,
 )
-from unified_kg_rag.adapters.storage.filter_schema import FilterFields
+from unified_kg_rag.adapters.storage.filter_schema import (
+    FilterFields,
+    attribute_filters,
+)
 from unified_kg_rag.adapters.store_errors import is_fatal_retrieval_error
 from unified_kg_rag.domain.models import (
     Config,
@@ -36,6 +39,12 @@ logger = get_logger(__name__)
 # Source ids recorded per retrieval span; the hit count is always complete.
 _MAX_SPAN_SOURCE_IDS = 50
 
+# Document-retriever section types whose store declares no document attribute
+# field, so an attribute filter is checked against their text units instead.
+_UNIT_VOUCHED_TYPES = frozenset(
+    {SectionType.RELATIONSHIP.value, SectionType.CLAIM.value}
+)
+
 
 def _retrieval_attributes(results: list[RetrievalResult]) -> dict[str, Any]:
     by_type: dict[str, int] = {}
@@ -51,6 +60,12 @@ def _retrieval_attributes(results: list[RetrievalResult]) -> dict[str, Any]:
     for result_type, count in by_type.items():
         attributes[f"kg_rag.hits.{result_type}"] = count
     return attributes
+
+
+def _text_unit_ids(result: RetrievalResult) -> list[str]:
+    """The ``text_unit_ids`` a result cites (a graph store unwraps one to a str)."""
+    ids = (result.metadata or {}).get("text_unit_ids") or []
+    return [str(ids)] if isinstance(ids, str) else [str(i) for i in ids]
 
 
 class BaseGraphRAGRetriever(BaseRetriever, ABC):
@@ -202,10 +217,77 @@ class BaseSearchStrategy(ABC):
                 span.record_exception(e)
                 span.set_attributes({"kg_rag.degraded": True, "kg_rag.hits": 0})
                 return []
+            results = await self._vouch_by_text_units(retriever, query, results)
             # Hit counts and source ids only: never the retrieved text.
             if observability.is_enabled():
                 span.set_attributes(_retrieval_attributes(results))
             return results
+
+    async def _vouch_by_text_units(
+        self,
+        retriever: BaseGraphRAGRetriever,
+        query: SearchQuery,
+        results: list[RetrievalResult],
+    ) -> list[RetrievalResult]:
+        """``results`` without the ones no text unit passing the filters cites.
+
+        Relationships, claims and graph vertices carry no document attribute
+        (``attr_<key>``, ``attributes.<path>``), so their stores search them
+        unfiltered. Under an attribute filter each such result is kept only
+        when one of its ``text_unit_ids`` passes the filter on the text-units
+        index (one fetch by id), as an entity extracted from several documents
+        passes when one of them does. Graph-expansion seeds are kept: the
+        entities index matched them under the same filters. A result without
+        text units is dropped (fail-closed).
+        """
+        attributes = attribute_filters(query.filters)
+        if not attributes or not results:
+            return results
+        graph = retriever is self.graph_retriever
+        seeds = (
+            {str(s) for s in (query.filters or {}).get("id") or []} if graph else set()
+        )
+        pending = [
+            i
+            for i, r in enumerate(results)
+            if (
+                r.source not in seeds
+                if graph
+                else r.retriever_type in _UNIT_VOUCHED_TYPES
+            )
+        ]
+        if not pending:
+            return results
+        unit_ids = list(
+            dict.fromkeys(u for i in pending for u in _text_unit_ids(results[i]))
+        )
+        passed: set[str] = set()
+        if unit_ids and self.document_retriever is not None:
+            units = await self._safe_aretrieve(
+                self.document_retriever,
+                SearchQuery(
+                    query="",
+                    search_type=SearchType.LEXICAL,
+                    top_k=len(unit_ids),
+                    retrieval_multiplier=1,
+                    index_prefixes=[
+                        self.config.indexing.opensearch.text_units_index_prefix
+                    ],
+                    suffix=query.suffix,
+                    filters={**attributes, "id": unit_ids},
+                ),
+                "Attribute filter check",
+            )
+            passed = {str(unit.source) for unit in units}
+        dropped = {i for i in pending if passed.isdisjoint(_text_unit_ids(results[i]))}
+        if dropped:
+            logger.debug(
+                "Attribute filters dropped %s of %s results no passing text "
+                "unit cites",
+                len(dropped),
+                len(results),
+            )
+        return [r for i, r in enumerate(results) if i not in dropped]
 
     def _new_rerank_trace(self) -> RerankTrace:
         """The per-query rerank record ``asearch`` passes to ``_fuse_and_rerank``

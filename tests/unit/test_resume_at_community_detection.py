@@ -53,7 +53,7 @@ class _Detector:
         self.fail = fail
         self.graphs: list[nx.Graph] = []
 
-    def __call__(self, graph: nx.Graph) -> None:
+    def __call__(self, graph: nx.Graph, stored: object = None) -> None:
         self.graphs.append(graph)
         if self.fail:
             raise RuntimeError("community report model unavailable")

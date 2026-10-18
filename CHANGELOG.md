@@ -811,6 +811,11 @@ changed once with the full-config keys (#332).
   README is shorter and names `providers.doc_status.enabled` as the
   incremental switch (#349).
   incremental switch (#351).
+- Global search's map prompt heads each report with its ordinal in the batch
+  (`--- Report (id: 1) ---`) instead of its community UUID, and maps the
+  points' `report_ids` back to the reports: short ids cost fewer prompt
+  tokens and a model copies them back reliably. A custom `GlobalMapPrompt`
+  keeps working: the ids come in the `{reports}` variable, as before (#354).
 - `run-ingestion --s3-sync` takes the bucket from `aws.s3.bucket_name`
   (`UKR__AWS__S3__BUCKET_NAME`, which the CDK task sets) when
   `--s3-bucket-name` is not given, so the bucket is configured once (#344).
@@ -1278,6 +1283,27 @@ changed once with the full-config keys (#332).
   coverage are skipped as `guardrail_blocked`. The strategy comparison
   reports each strategy's `guardrail_blocked_counts` and warns when they
   differ, and `run-eval --output-format json` includes them per run (#353).
+- DRIFT's primer calls run at most `search.max_concurrency` at a time, as
+  the design and configuration reference state: the folds bypassed the
+  semaphore the follow-up actions share, so all `primer_folds` calls went
+  out at once (#354).
+- Global search's cut probe works at the defaults: the cap is now at most
+  `indexing.opensearch.max_query_size` - 1 (99 by default), so the browse
+  that asks for one report more than the cap fits one request and a cut of
+  exactly the cap counts as complete. With `max_reports_per_level` equal to
+  `max_query_size` (both 100 by default) the probe could ask for no more
+  than the cap, so a cut of exactly the cap was taken for a larger one (#354).
+- An incremental run clusters a small delta component that touches a stored
+  entity: a new entity whose only relationship is to an existing one was a
+  pair in the delta graph and got no community or report since components
+  under `min_community_size` are left out, where a full build clusters it with
+  its stored neighbour. The community stage reads the stored entities of the
+  small components' members (one graph read by id) on incremental runs (#354).
+- Global search no longer answers silently from unjudged reports when its map
+  step fails: an unrated batch (a failed or unparseable map call) is recorded
+  in the search metadata (`degraded_error`), and when every map call failed,
+  other than on a prompt too long for the model, the query fails with the
+  first error unless `processing.ignore_errors` is on, as DRIFT does (#354).
 - iac/README.md no longer says a second concurrent ingestion stops before it
   reads anything: it syncs the corpus and its checkpoint first, then stops
   with `NamespaceLeaseError` before it reads the stores or writes (#345).
@@ -2920,6 +2946,13 @@ changed once with the full-config keys (#332).
   instead of frozen dataclasses; they were never instantiated (#300).
 
 ### Security
+- Document attribute filters (`attr_<key>`, `attributes.<path>`) now apply
+  to relationships, claims and graph expansion, which carry no document
+  attribute: each is kept only when one of its text units passes the filter
+  (one fetch by id per sub-search), and expanded entities other than the
+  seeds likewise. local, mix, hybrid, DRIFT and simple returned
+  relationships from excluded documents, even for a filter no document
+  matches (#354).
 - A guardrail-blocked answer no longer returns the evidence behind it:
   `sources` and `search_results.results` are empty (they carried the
   retrieved text the refused answer was built from). Masking covers the

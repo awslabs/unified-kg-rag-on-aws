@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 from abc import ABC, abstractmethod
 from collections import Counter
+from collections.abc import Callable
 from datetime import datetime, timezone
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
@@ -1334,6 +1335,49 @@ class CommunityDetectionStage(PipelineStage):
             bool(context.resolved_entities) and not context.communities
         )
 
+    def _stored_elsewhere(
+        self, context: PipelineContext
+    ) -> Callable[[list[Any]], set[Any]] | None:
+        """On an incremental run, which entities the graph store holds from
+        text units other than this run's (``CommunityDetector.__call__``).
+
+        A read failure keeps the entities left out, as before this check.
+        """
+        delta = context.incremental_delta
+        if delta is None or not delta.unchanged:
+            return None
+        entities = {e.id: e for e in context.resolved_entities}
+        units = {u.id for u in context.text_units or context.translated_units}
+
+        def stored(ids: list[Any]) -> set[Any]:
+            by_suffix: dict[str, list[str]] = {}
+            for entity_id in ids:
+                entity = entities.get(str(entity_id))
+                by_suffix.setdefault(BaseIndexer.get_suffix(entity), []).append(
+                    str(entity_id)
+                )
+            try:
+                graph = self.providers.build_graph_indexer()
+                try:
+                    return {
+                        held.id
+                        for suffix, group in by_suffix.items()
+                        for held in graph.read_entities(group, suffix=suffix)
+                        if set(held.text_unit_ids or []) - units
+                    }
+                finally:
+                    graph.close()
+            except Exception as e:
+                logger.warning(
+                    "Could not read the stored entities of %s small delta "
+                    "components' entities; leaving them out of the communities: %s",
+                    len(ids),
+                    e,
+                )
+                return set()
+
+        return stored
+
     @staticmethod
     def _get_detection_stats_dict(metrics_obj: CommunityMetrics) -> dict[str, Any]:
         return {
@@ -1361,7 +1405,7 @@ class CommunityDetectionStage(PipelineStage):
             )
             context.knowledge_graph = _build_knowledge_graph(context)
 
-        self.detector(context.knowledge_graph)
+        self.detector(context.knowledge_graph, self._stored_elsewhere(context))
         community_objects = self.detector.generate_community_objects()
         # Text units resolve each report's source documents (report lineage).
         community_reports, failed_community_ids = self.detector.generate_reports(

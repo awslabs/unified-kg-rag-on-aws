@@ -343,7 +343,8 @@ import는 순환이 됨).
   `min_community_size`보다 작은 레벨 0 커뮤니티는 가장 강하게 연결된 이웃에 합칩니다.
   `min_community_size`보다 작은 연결 요소(관계가 없는 엔티티, 서로만 이어진 두 엔티티)는
   커뮤니티와 리포트를 만들지 않습니다. 건너뛰는 것은 이것뿐이며, 가장 큰 요소 말고는 모두
-  버리는 MS GraphRAG의 `use_lcc`와 다릅니다. 유일한 자식과 같은 부모는 만들지 않으므로 서로
+  버리는 MS GraphRAG의 `use_lcc`와 다릅니다. 그래프가 델타뿐인 증분 실행에서는 그래프 저장소가
+  다른 텍스트 단위에서 이미 가진 엔티티와 닿는 작은 연결 요소를 전체 그래프에서처럼 묶습니다. 유일한 자식과 같은 부모는 만들지 않으므로 서로
   다른 커뮤니티는 리포트를 한 번만 받습니다. Leiden이 실패하면 계층을 자르지 않고 단계가
   실패합니다.
 - **결정성.** Leiden의 분할은 삽입 순서에 좌우되고 `graspologic_native`는 프로세스마다 다른
@@ -640,8 +641,8 @@ import는 순환이 됨).
 번씩 덮는 MS GraphRAG의 roll-up이며, MS GraphRAG는 `community_level`을 루트에서 세므로
 깊이로 단면을 고릅니다.
 
-- **고정 단면(기본값)** — 단면을 순위순으로 훑되 `max_reports_per_level`보다 하나 더
-  요청하므로(`max_query_size`를 넘지 않음) 상한과 정확히 같은 단면도 완전합니다. 더 큰 단면은
+- **고정 단면(기본값)** — 단면을 순위순으로 훑되 상한(`max_reports_per_level`, 한 요청에
+  들도록 최대 `max_query_size` - 1)보다 하나 더 요청하므로 상한과 정확히 같은 단면도 완전합니다. 더 큰 단면은
   상한 안에 드는 가장 깊은 얕은 단면에 자리를 내주며(`global_cut_depth`), 같은 엔티티를 더 넓은
   리포트로 덮습니다. 루트 단면조차 들지 않을 때만 설정한 단면으로 제한한 하이브리드 검색이
   가장 비슷한 리포트를 그만큼 고릅니다(`global_level_capped`). global 검색에서 유사도가 쓰이는
@@ -654,7 +655,8 @@ import는 순환이 됨).
 **map-reduce.** 리포트가 `map_reduce_min_results`개 이상이면 `map_context_tokens`(MS GraphRAG의
 `data_max_tokens`) 크기의 배치로 담고, 배치마다 map 호출(`search.max_concurrency`개씩)이 0-100점이
 붙은 핵심 포인트를 뽑으며 포인트마다 근거 리포트의 `report_ids`를 적습니다(MS GraphRAG의
-`[Data: Reports (ids)]`). `map_relevance_threshold` 이하인 포인트를 버리고 나머지를 순위대로
+`[Data: Reports (ids)]`. 프롬프트의 리포트 id는 배치 안의 순번이며 다시 리포트로 매핑합니다).
+`map_relevance_threshold` 이하인 포인트를 버리고 나머지를 순위대로
 `max_map_reduce_tokens`에 담아, 기본값(`reduce_with_llm: false`)에서는 합성 섹션 하나로 답변
 모델에 바로 넘기고(별도의 reduce 호출은 사실을 빠뜨릴 수 있는 재작성만 더했음) 그 뒤에
 포인트가 인용한 리포트를 붙입니다. 배치의 리포트를 하나도 인용하지 않은 포인트는 배치 전체를
@@ -662,7 +664,9 @@ import는 순환이 됨).
 
 **성능 저하 처리.** map 호출이 실패했거나 파싱할 수 없는 출력을 낸 배치는 *평가되지 않음*으로
 둡니다. 통과한 포인트가 없지만 평가되지 않은 리포트가 있으면 그 리포트를 그대로 넘기므로 global
-검색은 여전히 답합니다. 모든 배치를 평가했는데 모든 포인트가 버려졌으면 아무것도 돌려주지
+검색은 여전히 답하고, 검색 메타데이터에 이를 기록합니다(`degraded_error`). 모든 map 호출이
+실패했고(모델 컨텍스트보다 긴 프롬프트로 인한 실패는 제외) `processing.ignore_errors`가 꺼져
+있으면 DRIFT처럼 첫 오류로 질의가 실패합니다. 모든 배치를 평가했는데 모든 포인트가 버려졌으면 아무것도 돌려주지
 않고(`map_reduce_no_relevant_points`), 체인은 MS GraphRAG처럼 답할 수 없다고 답합니다.
 
 ### 6.2 LightRAG 방법론 (`lightrag_search.py`)

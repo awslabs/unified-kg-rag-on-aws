@@ -2311,8 +2311,9 @@ class GlobalSearchConfig(BaseModel):
             "metadata); when even the root cut does not fit, to the reports "
             "of the cut most similar to the query (a hybrid search restricted "
             "to the cut, global_level_capped). "
-            "Bounded by indexing.opensearch.max_query_size, the most hits one "
-            "store request returns. Each report costs map-step input tokens."
+            "At most indexing.opensearch.max_query_size - 1: one store request "
+            "returns at most max_query_size hits and the cut asks for one more "
+            "than the cap. Each report costs map-step input tokens."
         ),
     )
     use_dynamic_selection: bool = Field(

@@ -387,7 +387,10 @@ gets its models and stores from the run's `Providers` bundle.
   communities under `min_community_size` merge into their strongest neighbour.
   A connected component smaller than `min_community_size` (an isolated
   entity, a pair) gets no community or report; only these are skipped, unlike
-  MS GraphRAG's `use_lcc`, which drops every component but the largest. A
+  MS GraphRAG's `use_lcc`, which drops every component but the largest. On an
+  incremental run, whose graph is only the delta, a small component touching
+  an entity the graph store holds from other text units is clustered, as in
+  the whole graph. A
   parent identical to its only child is never created, so each distinct
   community is reported once. A Leiden failure fails the stage instead of
   truncating the hierarchy.
@@ -748,9 +751,9 @@ every entity once; MS GraphRAG counts `community_level` from the root, so the
 depth selects the cut.
 
 - **Fixed cut (default)** — the cut is browsed by rank, one report more than
-  `max_reports_per_level` (bounded by `max_query_size`) so a cut of exactly
-  the cap is complete. A larger cut gives way to the deepest shallower cut
-  that fits (`global_cut_depth`), covering the same entities in broader
+  the cap (`max_reports_per_level`, at most `max_query_size` - 1 so the probe
+  fits one request) so a cut of exactly the cap is complete. A larger cut
+  gives way to the deepest shallower cut that fits (`global_cut_depth`), covering the same entities in broader
   reports. Only when even the root cut does not fit does a hybrid search,
   restricted to the configured cut, pick that many most similar reports
   (`global_level_capped`): the only place similarity enters global search.
@@ -765,7 +768,8 @@ depth selects the cut.
 **Map-reduce.** At least `map_reduce_min_results` reports are packed into
 batches of `map_context_tokens` (MS GraphRAG's `data_max_tokens`); each map
 call (`search.max_concurrency` at a time) extracts key points scored 0-100,
-each naming its `report_ids` (MS GraphRAG's `[Data: Reports (ids)]`). Points
+each naming its `report_ids` (MS GraphRAG's `[Data: Reports (ids)]`; a
+report's id in the prompt is its ordinal in the batch, mapped back). Points
 at or below `map_relevance_threshold` are dropped, the rest ranked, packed
 into `max_map_reduce_tokens` and by default handed to the answer model as one
 synthesized section (`reduce_with_llm: false`: a separate reduce call only
@@ -774,7 +778,10 @@ point citing none of its batch's reports credits the whole batch.
 
 **Degradation.** A batch whose map call failed or returned unparseable output
 is *unrated*; when no point passed but some reports were never rated, those
-reports pass through, so global search still answers. When every batch was
+reports pass through, so global search still answers, and the search
+metadata records it (`degraded_error`). When every map call failed (other than
+on a prompt longer than the model's context) and `processing.ignore_errors` is
+off, the query fails with the first error, as DRIFT does. When every batch was
 rated and every point rejected, it returns nothing
 (`map_reduce_no_relevant_points`) and the chain says it cannot answer, as MS
 GraphRAG does.
