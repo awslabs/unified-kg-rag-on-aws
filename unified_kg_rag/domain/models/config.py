@@ -2137,8 +2137,8 @@ class IndexingConfig(BaseModel):
         "processing a document's unchanged content, the runs isolate it: a "
         "document that died processed alone "
         "is quarantined (the next run removes what the attempts wrote, "
-        "records it QUARANTINED and skips it until its content or the "
-        "extraction settings change or this value is raised); otherwise the "
+        "records it QUARANTINED and skips it, a reset included, until its "
+        "content changes or this value is raised); otherwise the "
         "next runs process half of the documents it died with and defer the "
         "other new and changed documents until the culprit is alone.",
     )

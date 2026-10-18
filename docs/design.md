@@ -564,9 +564,10 @@ whose processing kills the task would stop every later run the same way.
   (the record is the write-ahead `PENDING` one), the removal pass removes what
   they wrote and no text units are kept; otherwise the indexed version and its
   text units stay. It reads unchanged (`diff` lists it in
-  `DocumentDelta.quarantined_unchanged`) until the content or the extraction
-  settings change, or the limit is raised above its deaths
-  (`release_quarantined` then classifies it changed).
+  `DocumentDelta.quarantined_unchanged`) until the content changes or the
+  limit is raised above its deaths (`release_quarantined` then classifies it
+  changed); deaths count per content, so new extraction settings quarantine
+  it again, and a reset skips it too.
 - **Resume check** (`delta_still_applies`). A resumed run whose restored
   delta names a document whose record is gone, holds other content or reached
   the limit resumes from document_loading instead. Metrics:

@@ -1596,6 +1596,12 @@ changed once with the full-config keys (#332).
   a claim of the entity about itself. A derived entity and another spelling
   of its name that share a text unit now have the other spelling's edges
   derived with them and its claims follow (#357).
+- `indexing.reset` after an extraction-settings change no longer dies on
+  every attempt on a quarantined document: quarantine is per content, as on
+  incremental runs, so the reset skips the document whatever the settings.
+  The quarantine warning and the record's `error_info` no longer say a
+  settings change retries the document; only an edit or a raised
+  `indexing.max_document_attempts` does (#PR).
 - Removing a document no longer leaves its text unnoticed in community
   reports: a kept report that cites a removed text unit is counted in the
   `community_drift` metrics (`outdated_reports`, deletion-only runs

@@ -195,12 +195,29 @@ def test_a_run_that_fails_with_an_error_closes_its_attempts(
     assert {r.attempt_count for r in harness.store.list_all()} == {0}
 
 
+@pytest.mark.parametrize(
+    ("change", "poison_status"),
+    [
+        # Nothing changed, or only the extraction settings: deaths count per
+        # content, so the reset still skips the document and keeps its record.
+        ("none", DocStatus.QUARANTINED),
+        ("settings", DocStatus.QUARANTINED),
+        # An edit or a limit above its deaths retries it, as an incremental
+        # run would (here it no longer kills chunking).
+        ("content", DocStatus.PROCESSED),
+        ("limit", DocStatus.PROCESSED),
+    ],
+)
 def test_a_reset_skips_a_quarantined_document_and_keeps_its_record(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    change: str,
+    poison_status: DocStatus,
 ) -> None:
     # Old behaviour: the reset processed every document, so the quarantined
     # one killed every reset (a reset opens no attempt, so it was never
-    # quarantined again), and its record would have been cleared.
+    # quarantined again), and its record would have been cleared. With new
+    # extraction settings, the reset still processed it and died every time.
     harness = _Harness(tmp_path)
     for run in range(1, 13):
         harness.run(f"ingest-{run}", monkeypatch, chunking_fails_with=_Died)
@@ -208,18 +225,26 @@ def test_a_reset_skips_a_quarantined_document_and_keeps_its_record(
             break
     assert harness.statuses()["poison.txt"] is DocStatus.QUARANTINED
     harness.config.indexing.reset = True
+    if change == "settings":
+        harness.config.processing.gleaning.enabled = True
+    elif change == "content":
+        (harness.source / "poison.txt").write_text("Buyer pays the Depot.")
+    elif change == "limit":
+        harness.config.indexing.max_document_attempts = 10
+    # A retried document that still killed chunking would kill the reset.
+    dies = None if poison_status is DocStatus.PROCESSED else _Died
 
     for run in range(2):
-        reset = harness.run(f"reset-{run}", monkeypatch, chunking_fails_with=_Died)
+        reset = harness.run(f"reset-{run}", monkeypatch, chunking_fails_with=dies)
         assert isinstance(reset, PipelineContext)
         assert reset.status is PipelineStageStatus.COMPLETED
         assert harness.statuses() == {
             "contract.txt": DocStatus.PROCESSED,
             "logistics.txt": DocStatus.PROCESSED,
-            "poison.txt": DocStatus.QUARANTINED,
+            "poison.txt": poison_status,
         }
 
-    # Raising the limit still retries it (here: it no longer kills chunking).
+    # Raising the limit retries it on an incremental run too.
     harness.config.indexing.reset = False
     harness.config.indexing.max_document_attempts = 10
     retried = harness.run("ingest-retry", monkeypatch)

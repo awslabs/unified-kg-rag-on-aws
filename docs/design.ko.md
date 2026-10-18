@@ -487,9 +487,10 @@ import는 순환이 됨).
 - **격리 레코드**: 시도한 내용의 해시, 죽은 횟수, `error_info`의 이유가 담긴 `QUARANTINED`.
   시도가 인덱싱에 이르렀다면(레코드가 선기록 `PENDING` 레코드) 제거 단계가 시도들이 쓴 것을
   지우고 텍스트 단위를 남기지 않으며, 그렇지 않으면 인덱싱된 버전과 그 텍스트 단위를
-  유지합니다. 내용이나 추출 설정이 바뀌거나 한도를 죽은 횟수보다 크게 올릴 때까지
-  unchanged로 읽힙니다(`diff`가 `DocumentDelta.quarantined_unchanged`에 넣고, 한도를 올리면
-  `release_quarantined`가 changed로 분류).
+  유지합니다. 내용이 바뀌거나 한도를 죽은 횟수보다 크게 올릴 때까지 unchanged로
+  읽힙니다(`diff`가 `DocumentDelta.quarantined_unchanged`에 넣고, 한도를 올리면
+  `release_quarantined`가 changed로 분류). 죽은 횟수는 내용별로 세므로 추출 설정을 바꿔도
+  다시 격리되고, 전체 재구축도 이 문서를 건너뜁니다.
 - **재개 검사**(`delta_still_applies`). 복원한 델타의 문서 가운데 레코드가 사라졌거나 다른
   내용을 담았거나 한도에 이른 것이 있으면 document_loading부터 재개합니다. 지표:
   `total_documents_quarantined`(CDK `DocumentsQuarantined` 경보)와 `total_documents_deferred`.

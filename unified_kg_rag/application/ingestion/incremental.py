@@ -74,7 +74,6 @@ from unified_kg_rag.domain.models import (
     PipelineContext,
     Relationship,
     TextUnit,
-    settings_changed,
 )
 from unified_kg_rag.ports import DocStatusPort
 from unified_kg_rag.ports.indexer import BaseIndexer
@@ -166,8 +165,7 @@ _EXTRACTION_FAILED = "extraction failed on some text units"
 _QUARANTINED_INFO = (
     "quarantined: its processing killed the run {attempts} consecutive runs, "
     "the last one processing it alone (or it produced no text units); skipped "
-    "until its content or the extraction settings change (or "
-    "indexing.max_document_attempts is raised)"
+    "until its content changes (or indexing.max_document_attempts is raised)"
 )
 _WRITE_FAILED = "writing some of its artifacts to the stores failed"
 _WRITE_AHEAD_INFO = (
@@ -1060,12 +1058,14 @@ def run_extraction_fingerprint(
 def _quarantined_on_reset(
     doc_status: Callable[[], DocStatusPort],
     fingerprints: Mapping[str, str],
-    settings: ExtractionSettings,
     max_attempts: int,
 ) -> dict[str, str]:
     """The corpus documents a reset skips, by doc id with their file paths:
-    those recorded QUARANTINED for this content and extraction settings that
-    the current ``indexing.max_document_attempts`` still quarantines."""
+    those recorded QUARANTINED for this content that the current
+    ``indexing.max_document_attempts`` still quarantines. Quarantine is per
+    content, as on an incremental run (``plan_attempts`` counts deaths per
+    content hash): new extraction settings do not make the document stop
+    killing the task."""
     try:
         stored = doc_status().get_many(list(fingerprints))
     except DocStatusRegistryError:
@@ -1080,7 +1080,6 @@ def _quarantined_on_reset(
         for doc_id, record in stored.items()
         if record.status is DocStatus.QUARANTINED
         and record.content_hash == fingerprints.get(doc_id)
-        and not settings_changed(record.extraction_fingerprint, settings.fingerprint)
         and record.attempt_count >= max_attempts
     }
     if quarantined:
@@ -1135,7 +1134,7 @@ def filter_to_delta(
         # would kill the reset as they killed the runs that quarantined them.
         fingerprints = fingerprint_documents(documents)
         quarantined = _quarantined_on_reset(
-            doc_status, fingerprints, settings, config.indexing.max_document_attempts
+            doc_status, fingerprints, config.indexing.max_document_attempts
         )
         if quarantined:
             documents = [

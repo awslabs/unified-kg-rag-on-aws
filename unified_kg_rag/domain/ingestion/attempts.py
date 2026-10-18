@@ -137,8 +137,7 @@ def plan_attempts(
             "Quarantining %d documents whose processing killed the run %d or "
             "more consecutive runs, the last one processing it alone (or that "
             "produced no text units to record): they are skipped until their "
-            "content or the extraction settings change, or "
-            "indexing.max_document_attempts is raised: %s",
+            "content changes or indexing.max_document_attempts is raised: %s",
             len(alone),
             max_attempts,
             ", ".join(_label(stored, doc_id) for doc_id in alone),
