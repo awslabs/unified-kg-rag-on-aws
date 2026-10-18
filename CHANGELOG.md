@@ -1247,6 +1247,10 @@ changed once with the full-config keys (#332).
   before graph copies, and the incremental switch is
   `providers.doc_status.enabled` (#350).
   `providers.doc_status.enabled` (#351).
+- `run-ingestion --retire-source-scope` resolves a local path the way the
+  source directory is resolved (`~`, `..`, symlinks), so a path through a
+  symlink or a relative path retires the records stored under the resolved
+  directory instead of matching none (#PR).
 - Ctrl-C is handled alike by every CLI: `run-prompt-tuning` and
   `run-visualization` now print the `{"status": "interrupted"}` JSON
   document with `--output-format json`, and `run-rag` exits 130 without a

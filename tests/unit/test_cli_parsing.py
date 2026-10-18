@@ -752,6 +752,37 @@ def test_ingestion_retire_source_scope_is_repeatable_and_merged_into_config(
     ]
 
 
+def test_ingestion_retire_source_scope_resolves_a_local_path(
+    config, mocker, tmp_path, monkeypatch
+) -> None:
+    # Before, a path through a symlink (or relative) never matched the
+    # resolved directory the registry stores, so nothing was retired.
+    mocker.patch.object(run_ingestion_pipeline, "load_cli_config", return_value=config)
+    real = tmp_path / "real"
+    (real / "old").mkdir(parents=True)
+    (tmp_path / "link").symlink_to(real)
+    src = tmp_path / "src"
+    src.mkdir()
+    monkeypatch.chdir(tmp_path)
+    args = _ing_parser().parse_args(
+        [
+            "--source-directory",
+            str(src),
+            "--retire-source-scope",
+            str(tmp_path / "link" / "old"),
+            "--retire-source-scope",
+            "./real/old/../old",
+            "--retire-source-scope",
+            "contracts",
+        ]
+    )
+    runner = run_ingestion_pipeline.IngestionPipelineRunner(args)
+    assert runner.config.indexing.retire_source_scopes == [
+        (real / "old").resolve().as_posix(),
+        "contracts",
+    ]
+
+
 def test_ingestion_create_pipeline_config_rejects_invalid_stage(
     config, mocker, tmp_path
 ) -> None:
