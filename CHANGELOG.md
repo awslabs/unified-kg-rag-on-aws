@@ -1247,6 +1247,8 @@ changed once with the full-config keys (#332).
   before graph copies, and the incremental switch is
   `providers.doc_status.enabled` (#350).
   `providers.doc_status.enabled` (#351).
+- `run-prompt-tuning --max-docs` below 1 is a usage error (exit 2) instead
+  of silently sampling one document (#PR).
 - `run-visualization` exits 2 (usage error) on a data file that is not
   valid exported visualization JSON, as `run-eval` does on an invalid
   dataset, instead of 1 (#PR).

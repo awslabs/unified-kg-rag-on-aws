@@ -130,7 +130,7 @@ Guide: [User Guide](./user-guide.md#8-prompt-tuning-run-prompt-tuning). Also tak
 |---|---|---|
 | `--source-directory` | required | Directory of documents to sample (.txt/.md plus every format run-ingestion parses, e.g. .pdf). |
 | `--output-path` | `tuned_prompts.yaml` | Where to write the tuned custom_prompts YAML. |
-| `--max-docs` | `20` | Max documents to sample. |
+| `--max-docs` | `20` | Max documents to sample (at least 1). |
 | `--config-path` | — | Config YAML path; a missing file is a usage error. |
 | `--allow-unknown-keys` | off | Ignore config keys (and UKR__ environment variables) the configuration does not define, with a warning each, instead of failing. A misspelled key otherwise leaves its setting at the default without a word. |
 | `--output-format` | `text` | 'text' (default) for people; 'json' prints one JSON result to stdout and everything else to stderr. |

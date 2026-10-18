@@ -471,3 +471,13 @@ def test_interrupted_ingestion_json_names_the_pipeline_id(
         "exit_code": 128 + signum,
         "pipeline_id": "run-7",
     }
+
+
+@pytest.mark.parametrize("value", ["0", "-3"])
+def test_prompt_tuning_rejects_a_non_positive_max_docs(value: str) -> None:
+    # Before, --max-docs 0 was accepted and then sampled nothing.
+    with pytest.raises(SystemExit) as exc:
+        run_prompt_tuning._build_parser().parse_args(
+            ["--source-directory", ".", "--max-docs", value]
+        )
+    assert exc.value.code == 2
