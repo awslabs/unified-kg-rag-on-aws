@@ -1279,7 +1279,7 @@ changed once with the full-config keys (#332).
   prompt's and model's serialized form at its first call without a lock
   (Python 3.12+). The error is not retried, so the item (a text unit's
   extraction or claims, a community report) was lost for the run. Chains
-  now compute it when they are built (#PR).
+  now compute it when they are built (#369).
 - `indexing.additional_suffix` and `processing.document_parsing.index_value`
   are checked when the config loads (lowercase letters, digits, `-`, `_`):
   an uppercase or dotted value loaded and failed every run at indexing,
