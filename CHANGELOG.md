@@ -1278,6 +1278,9 @@ changed once with the full-config keys (#332).
   package), synth failures (exclusive Neptune keys, unknown `-c` keys), the
   `run-eval` S3 session, the graph read-back a custom adapter needs, and what
   `removal_destroy=false` does not prevent (#365).
+- `prepare-benchmark musique` checks field types too (`question` and
+  `answer` strings, `answer_aliases` a list of strings), so a malformed
+  item is a usage error (exit 2) instead of reaching `eval_data.json` (#PR).
 - The operations runbook names `kg_rag.query` (a DRIFT round's actions span
   for its local searches) as the parent of `kg_rag.context_build`, not the
   strategy span (#PR).

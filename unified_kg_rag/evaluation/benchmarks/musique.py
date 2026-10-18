@@ -85,8 +85,8 @@ def _items(source: Path) -> Iterator[dict[str, Any]]:
             if not _is_item(item):
                 raise InvalidBenchmarkDataError(
                     f"{source}:{number} is not a MuSiQue item (an object with "
-                    "'id', 'question', 'answer' and a 'paragraphs' list of "
-                    "objects)"
+                    "an 'id', string 'question' and 'answer', a list of string "
+                    "'answer_aliases' and a 'paragraphs' list of objects)"
                 )
             yield item
 
@@ -97,8 +97,13 @@ def _is_item(item: Any) -> bool:
     if item.get("answerable", True) is False:
         return True  # skipped by prepare; the full files carry them
     paragraphs = item.get("paragraphs")
+    aliases = item.get("answer_aliases") or []
     return (
-        all(key in item for key in ("id", "question", "answer"))
+        "id" in item
+        and isinstance(item.get("question"), str)
+        and isinstance(item.get("answer"), str)
+        and isinstance(aliases, list)
+        and all(isinstance(alias, str) for alias in aliases)
         and isinstance(paragraphs, list)
         and all(isinstance(p, dict) for p in paragraphs)
     )

@@ -549,7 +549,18 @@ def test_prepare_benchmark_ctrl_c_exits_130_without_a_traceback(
 
 
 @pytest.mark.parametrize(
-    "line", ["[1, 2]", '{"id": "x"}', '{"id": "x", "question": "q", "answer": "a"}']
+    "line",
+    [
+        "[1, 2]",
+        '{"id": "x"}',
+        '{"id": "x", "question": "q", "answer": "a"}',
+        # Wrong types (before, they reached the dataset as is).
+        '{"id": "x", "question": 7, "answer": "a", "paragraphs": []}',
+        '{"id": "x", "question": "q", "answer": "a", "paragraphs": [],'
+        ' "answer_aliases": "a"}',
+        '{"id": "x", "question": "q", "answer": "a", "paragraphs": [],'
+        ' "answer_aliases": [1]}',
+    ],
 )
 def test_a_malformed_musique_item_is_a_usage_error(tmp_path: Path, line: str) -> None:
     # Before, it crashed with a KeyError or AttributeError (exit 1).
