@@ -1265,6 +1265,9 @@ changed once with the full-config keys (#332).
 - A run checks its lease at each stage start and before each checkpoint
   upload, so one that lost it in a long stage that does not write stops
   there, and a stopped run that lost it uploads no checkpoint (#PR).
+- `indexing.reset` skips documents recorded QUARANTINED for their current
+  content and extraction settings and keeps their records; it used to
+  process them and die on them every time (#PR).
 - Docs match the code again: a document is `FAILED` in five cases (an
   extraction record that could not be stored, `records_not_stored`, is the
   fifth), `global` maps one cut and falls back to a shallower one over

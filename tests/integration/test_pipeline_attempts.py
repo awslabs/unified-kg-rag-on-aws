@@ -171,6 +171,38 @@ def test_a_document_that_kills_chunking_is_isolated_across_resumed_runs(
     assert {"Vendor", "Buyer", "Depot"} <= names
 
 
+def test_a_reset_skips_a_quarantined_document_and_keeps_its_record(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Old behaviour: the reset processed every document, so the quarantined
+    # one killed every reset (a reset opens no attempt, so it was never
+    # quarantined again), and its record would have been cleared.
+    harness = _Harness(tmp_path)
+    for run in range(1, 13):
+        harness.run(f"ingest-{run}", monkeypatch, chunking_fails_with=_Died)
+        if harness.statuses().get("poison.txt") is DocStatus.QUARANTINED:
+            break
+    assert harness.statuses()["poison.txt"] is DocStatus.QUARANTINED
+    harness.config.indexing.reset = True
+
+    for run in range(2):
+        reset = harness.run(f"reset-{run}", monkeypatch, chunking_fails_with=_Died)
+        assert isinstance(reset, PipelineContext)
+        assert reset.status is PipelineStageStatus.COMPLETED
+        assert harness.statuses() == {
+            "contract.txt": DocStatus.PROCESSED,
+            "logistics.txt": DocStatus.PROCESSED,
+            "poison.txt": DocStatus.QUARANTINED,
+        }
+
+    # Raising the limit still retries it (here: it no longer kills chunking).
+    harness.config.indexing.reset = False
+    harness.config.indexing.max_document_attempts = 10
+    retried = harness.run("ingest-retry", monkeypatch)
+    assert isinstance(retried, PipelineContext)
+    assert harness.statuses()["poison.txt"] is DocStatus.PROCESSED
+
+
 @pytest.mark.parametrize("stage", ["chunking", "indexing"])
 def test_runs_stopped_by_sigterm_count_no_attempt(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stage: str

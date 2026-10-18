@@ -74,6 +74,7 @@ from unified_kg_rag.domain.models import (
     PipelineContext,
     Relationship,
     TextUnit,
+    settings_changed,
 )
 from unified_kg_rag.ports import DocStatusPort
 from unified_kg_rag.ports.indexer import BaseIndexer
@@ -1053,6 +1054,44 @@ def run_extraction_fingerprint(
     return settings.fingerprint
 
 
+def _quarantined_on_reset(
+    doc_status: Callable[[], DocStatusPort],
+    fingerprints: Mapping[str, str],
+    settings: ExtractionSettings,
+    max_attempts: int,
+) -> dict[str, str]:
+    """The corpus documents a reset skips, by doc id with their file paths:
+    those recorded QUARANTINED for this content and extraction settings that
+    the current ``indexing.max_document_attempts`` still quarantines."""
+    try:
+        stored = doc_status().get_many(list(fingerprints))
+    except DocStatusRegistryError:
+        raise
+    except Exception as e:
+        raise DocStatusRegistryError(
+            f"Doc-status registry: could not read the corpus' records for the "
+            f"reset ({type(e).__name__}: {e})"
+        ) from e
+    quarantined = {
+        doc_id: record.file_path or doc_id
+        for doc_id, record in stored.items()
+        if record.status is DocStatus.QUARANTINED
+        and record.content_hash == fingerprints.get(doc_id)
+        and not settings_changed(record.extraction_fingerprint, settings.fingerprint)
+        and record.attempt_count >= max_attempts
+    }
+    if quarantined:
+        logger.warning(
+            "The reset skips %d quarantined documents (their processing "
+            "killed the runs; edit them or raise "
+            "indexing.max_document_attempts to retry them) and keeps their "
+            "records: %s",
+            len(quarantined),
+            ", ".join(sorted(quarantined.values())[:10]),
+        )
+    return quarantined
+
+
 def filter_to_delta(
     documents: list[Document],
     context: PipelineContext,
@@ -1086,11 +1125,25 @@ def filter_to_delta(
     context.incremental_extraction_settings = settings
     context.incremental_extraction_fingerprint = settings.fingerprint
     if config.indexing.reset:
-        # A reset clears the stores and the registry before indexing, so
-        # every document is new: diffing against the registry here would
-        # rebuild from the delta alone and lose the unchanged documents.
+        # A reset rebuilds the namespace from the whole corpus and then
+        # replaces the registry's records, so every document is new: diffing
+        # against the registry here would rebuild from the delta alone and
+        # lose the unchanged documents. Quarantined ones stay skipped: they
+        # would kill the reset as they killed the runs that quarantined them.
         fingerprints = fingerprint_documents(documents)
-        context.incremental_delta = DocumentDelta(new=list(fingerprints))
+        quarantined = _quarantined_on_reset(
+            doc_status, fingerprints, settings, config.indexing.max_document_attempts
+        )
+        if quarantined:
+            documents = [
+                document
+                for document in documents
+                if document_doc_id(document) not in quarantined
+            ]
+        context.incremental_delta = DocumentDelta(
+            new=[doc_id for doc_id in fingerprints if doc_id not in quarantined]
+        )
+        # The quarantined documents' records are kept (clear_registry_namespaces).
         context.incremental_fingerprints = fingerprints
         context.incremental_scope = scope
         logger.info(

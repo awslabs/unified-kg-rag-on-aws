@@ -246,7 +246,8 @@ would stop every later run, so runs count deaths and isolate the culprit.
   pipeline id until `total_documents_deferred` is 0.**
 - **Retrying.** A quarantined document is retried when its file or the
   extraction settings change, or when `indexing.max_document_attempts` is
-  raised above its `attempt_count`. A changed document whose runs died before
+  raised above its `attempt_count`; `indexing.reset` skips it too and keeps
+  its record. A changed document whose runs died before
   indexing keeps its indexed version; one that died while indexing is
   removed.
 - **Limits.** A task that dies whatever it processes (a broken image)
