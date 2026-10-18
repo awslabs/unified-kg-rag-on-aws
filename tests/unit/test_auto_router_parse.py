@@ -18,12 +18,20 @@ from unified_kg_rag.domain.models import SearchStrategy
 pytestmark = pytest.mark.unit
 
 parse = GraphRAGChain._parse_routed_strategy
+# drift is routable only when configured so.
+WITH_DRIFT = (
+    SearchStrategy.LOCAL,
+    SearchStrategy.MIX,
+    SearchStrategy.GLOBAL,
+    SearchStrategy.DRIFT,
+)
 
 
 def test_exact_word() -> None:
     assert parse("local") == SearchStrategy.LOCAL
     assert parse("GLOBAL") == SearchStrategy.GLOBAL
-    assert parse("  drift  ") == SearchStrategy.DRIFT
+    assert parse("  drift  ", WITH_DRIFT) == SearchStrategy.DRIFT
+    assert parse("drift") == SearchStrategy.LOCAL  # not routable by default
     assert parse("mix") == SearchStrategy.MIX
 
 
@@ -45,8 +53,8 @@ def test_exact_match_precedence_over_substring() -> None:
 
 def test_first_mentioned_strategy_wins_not_list_order() -> None:
     # A substring scan returned whichever name it checked first.
-    assert parse("drift, or else local") == SearchStrategy.DRIFT
-    assert parse("local rather than drift") == SearchStrategy.LOCAL
+    assert parse("drift, or else local", WITH_DRIFT) == SearchStrategy.DRIFT
+    assert parse("local rather than drift", WITH_DRIFT) == SearchStrategy.LOCAL
 
 
 def test_words_are_matched_whole() -> None:
@@ -65,11 +73,11 @@ def test_default_routable_set_and_fast_router_model() -> None:
 
     config = Config()
     search = config.search
+    # drift (up to 27 LLM calls a query) is selectable but not routed to.
     assert search.auto_routable_strategies == [
         SearchStrategy.LOCAL,
         SearchStrategy.MIX,
         SearchStrategy.GLOBAL,
-        SearchStrategy.DRIFT,
     ]
     assert (
         config.model_id(ModelRole.STRATEGY_SELECTION)
@@ -88,7 +96,7 @@ async def test_router_failure_falls_back_to_a_routable_strategy() -> None:
     from unified_kg_rag.domain.models import Config
 
     config = Config()
-    config.search.auto_routable_strategies = [SearchStrategy.GLOBAL]
+    config.search.auto_routable_strategies = [SearchStrategy.GLOBAL, SearchStrategy.MIX]
     chain = GraphRAGChain.__new__(GraphRAGChain)
     chain.config = config
     chain.ignore_errors = True
@@ -97,6 +105,26 @@ async def test_router_failure_falls_back_to_a_routable_strategy() -> None:
         raise RuntimeError("router down")
 
     chain._get_chain_for_prompt = _failing_router  # type: ignore[method-assign]
+    state = await chain._resolve_strategy(
+        {"search_strategy": SearchStrategy.AUTO, "query": "q"}
+    )
+    assert state["resolved_strategy"] == SearchStrategy.GLOBAL
+
+
+async def test_one_routable_strategy_needs_no_router_call() -> None:
+    # Regression: the router LLM was called to choose among one strategy.
+    from unified_kg_rag.domain.models import Config
+
+    config = Config()
+    config.search.auto_routable_strategies = [SearchStrategy.GLOBAL]
+    chain = GraphRAGChain.__new__(GraphRAGChain)
+    chain.config = config
+    chain.ignore_errors = False
+
+    def _no_router(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("the router was called")
+
+    chain._get_chain_for_prompt = _no_router  # type: ignore[method-assign]
     state = await chain._resolve_strategy(
         {"search_strategy": SearchStrategy.AUTO, "query": "q"}
     )

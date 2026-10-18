@@ -123,7 +123,9 @@ run ([User Guide §5](./user-guide.md#5-incremental-indexing)).
 the entities it clustered (`clustered_entities`), how many of those an
 earlier clustering already placed (`overlapping_entities`, now in two or more
 level-0 communities), the earlier communities whose reports miss what the run
-added (`stale_communities`), and `overlap_share` (overlapping / clustered).
+added (`stale_communities`), the root communities it appended (`added_roots`:
+each is in every cut of the hierarchy, so global search maps that many more
+reports until the rebuild), and `overlap_share` (overlapping / clustered).
 When `overlap_share` reaches `indexing.community_drift_threshold` (default
 `0.5`) the run logs a WARNING recommending `indexing.reset: true` and reports
 `community_rebuild_recommended: 1` next to `community_drift_overlap_share`,

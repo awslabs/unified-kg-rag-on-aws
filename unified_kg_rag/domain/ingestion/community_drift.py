@@ -36,6 +36,11 @@ class CommunityDrift(BaseModel):
         description="Earlier level-0 communities of the overlapping entities: "
         "their reports (and their parents') miss what this run added"
     )
+    added_roots: int = Field(
+        description="Root communities this run appended. A root is in every "
+        "cut of the hierarchy, so global search maps this many more reports "
+        "until a rebuild, however few entities they hold"
+    )
     overlap_share: float = Field(
         description="overlapping_entities / clustered_entities"
     )
@@ -96,11 +101,13 @@ def measure_community_drift(
             overlapping += 1
             stale |= earlier
     share = overlapping / len(members) if members else 0.0
+    ids = {c.id for c in communities}
     return CommunityDrift(
         delta_communities=len(communities),
         clustered_entities=len(members),
         overlapping_entities=overlapping,
         stale_communities=len(stale),
+        added_roots=sum(1 for c in communities if c.parent not in ids),
         overlap_share=round(share, 4),
         rebuild_recommended=bool(members) and share >= threshold,
     )

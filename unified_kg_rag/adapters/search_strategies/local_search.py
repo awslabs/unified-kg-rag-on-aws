@@ -37,6 +37,9 @@ def _consume_outcome(future: asyncio.Future[Any]) -> None:
 class LocalSearchStrategy(BaseSearchStrategy):
     # Entities-index candidates fetched per focus entity.
     ENTITY_CANDIDATES_PER_FOCUS: ClassVar[int] = 2
+    # The section types reranked against the query. DRIFT, whose follow-up
+    # queries are local searches, clears it and reranks their evidence once.
+    rerank_types: frozenset[str] = frozenset({SectionType.TEXT.value})
 
     async def asearch(
         self, query: SearchQuery, config: RunnableConfig | None = None
@@ -99,7 +102,7 @@ class LocalSearchStrategy(BaseSearchStrategy):
             retrieval_multiplier=query.retrieval_multiplier,
             query=query.query,
             per_type_quota=self._per_type_quota(query.top_k),
-            rerank_only_types={SectionType.TEXT.value},
+            rerank_only_types=set(self.rerank_types),
         )
 
         processing_time = time.time() - start_time

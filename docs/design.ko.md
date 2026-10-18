@@ -356,8 +356,10 @@ class LocalSearchStrategy(BaseSearchStrategy): ...
   한계 때문에 레벨 0 커뮤니티가 코퍼스와 함께 커져 리포트 하나로 설명할 수 없게 되므로,
   `max_cluster_size`(기본 20)개를 넘는 엔티티나 하위 커뮤니티를 가진 커뮤니티는 자기 하위
   그래프에서 다시 분할합니다. `min_community_size`보다 작은 레벨 0 커뮤니티는 가장 강하게
-  연결된 이웃에 합치며, 관계가 없는 엔티티는 한 엔티티짜리 커뮤니티로 남깁니다(MS GraphRAG는
-  최대 연결 요소 단계에서 버림). 유일한 자식과 같은 부모는 만들지 않으므로 서로 다른
+  연결된 이웃에 합칩니다. 엔티티가 `min_community_size`개보다 적은 연결 요소(관계가 없는
+  엔티티, 서로만 이어진 두 엔티티)는 합칠 이웃이 없으므로 커뮤니티와 리포트를 만들지 않습니다.
+  Leiden은 여전히 그래프 전체를 분할하고 이것만 건너뛰므로 나머지 커뮤니티는 바뀌지 않습니다.
+  MS GraphRAG의 최대 연결 요소 단계(`use_lcc`)는 가장 큰 요소 말고는 모두 버립니다. 유일한 자식과 같은 부모는 만들지 않으므로 서로 다른
   커뮤니티는 리포트를 한 번만 받습니다. Leiden이 실패하면 계층을 자르지 않고 단계가
   실패합니다.
 - **결정성.** Leiden의 분할은 삽입 순서에 좌우되고 `graspologic_native`는 프로세스마다 다른
@@ -547,7 +549,12 @@ class LocalSearchStrategy(BaseSearchStrategy): ...
 `L{level}_C{i}`는 표시 이름으로만 남음), 델타의 커뮤니티와 리포트는 코퍼스의 것을 덮어쓰지
 않고 그 옆에 덧붙습니다. 코퍼스 커뮤니티는 인용하는 텍스트 단위가 하나도 남지 않으면
 지우고, 공유 커뮤니티는 그래프 전체를 다시 분할하는 유일한 경로인 전체 재구축 때까지 리포트를
-유지합니다(`indexing.community_drift_threshold`가 재구축이 필요할 때를 알림). 델타 실행마다
+유지합니다(`indexing.community_drift_threshold`가 재구축이 필요할 때를 알림). 델타의 루트
+커뮤니티는 계층의 모든 단면에 들어가므로 global 검색의 단면은 재구축 전까지 커집니다. 단면
+상한과 더 얕은 단면으로 내려가는 처리(§6.1.1)가 이를 제한하고, 드리프트 지표가
+보고합니다(`added_roots`). 이미 클러스터링된 엔티티로 된 델타 커뮤니티를 단면에서 빼는 방식은
+채택하지 않았습니다. 그 리포트만 델타의 내용을 설명하고, 저장된 커뮤니티 ID에는 지워진
+커뮤니티도 남아 있기 때문입니다. 델타 실행마다
 전체 그래프를 다시 탐지하는 방식은 실행마다 모든 리포트(리포트마다 LLM 호출)를 다시 만들게
 되므로 채택하지 않았습니다.
 
@@ -614,13 +621,25 @@ class LocalSearchStrategy(BaseSearchStrategy): ...
   *프라이머:* 가장 중요한 리포트 모양의 가상 답변(`DriftHydePrompt`)으로 가장 비슷한 리포트
   `k_followups`개를 고르고 `primer_folds`개 묶음으로 나누며, 묶음마다 중간 답변, 점수, 후속
   질의를 돌려받습니다. *액션:* `n_depth` 라운드 동안 점수가 가장 좋은 열린 후속 질의마다
-  local 검색을 실행하고, 그 결과에 점수와 새 후속 질의가 붙은 답을 받습니다. *리듀스:* 중간
-  답변(합성 섹션 하나이며 보고된 출처가 되지 않음)과 local 근거를 답변 모델에 넘깁니다.
-  리포트가 없거나 프라이머가 후속 질의를 내지 않으면 질문 자체를 후속 질의 하나로 씁니다.
+  local 검색을 실행하고, 그 결과에 점수와 새 후속 질의가 붙은 답을 받습니다. 후속 검색은
+  재순위화하지 않습니다. *리듀스:* 중간 답변(합성 섹션 하나이며 보고된 출처가 되지 않음)과 한
+  번 재순위화한 local 근거를 답변 모델에 넘깁니다. 리포트가 없거나 프라이머가 후속 질의를 내지
+  않으면 질문 자체를 후속 질의 하나로 씁니다.
+  - 기본값 `k_followups` 10, `n_depth` 2: 질의마다 LLM 호출 최대 27번(MS GraphRAG의 20, 3은
+    67번). 프라이머 호출과 액션은 `search.max_concurrency`개씩 동시에 실행합니다.
+  - 프라이머는 MS GraphRAG처럼 `community_level` 하나가 아니라 모든 깊이의 리포트를
+    검색합니다. 세분도는 유사도가 고릅니다(합성 6홉 코퍼스에서 깊이 2 단면은 하위 질문 21개 중
+    16개, 모든 깊이는 21개에 답함).
+  - 치명적 오류는 질의를 실패시키고 진행 중인 호출을 취소합니다. 그 밖의 실패는 그 답변만
+    빼고(`degraded_error`), 한 단계 전체가 실패하고 `processing.ignore_errors`가 꺼져 있을 때만
+    질의가 실패하며, 액션이 모두 실패한 라운드에서 라운드를 끝냅니다.
 - **auto** — LLM 라우터(`StrategySelectionPrompt`)가 `search.auto_routable_strategies`에서
   파이프라인이 제공할 수 없는 전략을 뺀 것 가운데 고릅니다(`global`과 `drift`는
   `needs_community_reports=True`로 등록). 프롬프트는 라우팅할 수 있는 전략만 정확히 설명하며,
-  알아볼 수 없는 출력은 `local`로 대신합니다.
+  알아볼 수 없는 출력은 `local`로 대신합니다. 기본 집합은 `local`, `mix`, `global`입니다.
+  `drift`는 질의마다 LLM 호출이 최대 27번이기 때문입니다. 라우팅할 전략이 하나뿐이면 라우터를
+  호출하지 않습니다. 이름이 있는 엔티티에서 이어지는 질문은 `local`로 안내합니다(합성 다중 홉
+  하네스의 exact match: `local` 0.925, `mix` 0.40).
 
 #### 6.1.1 Global search (`global_search.py`)
 
@@ -630,19 +649,25 @@ class LocalSearchStrategy(BaseSearchStrategy): ...
 번씩 덮는 MS GraphRAG의 roll-up이며, MS GraphRAG는 `community_level`을 루트에서 세므로
 깊이로 단면을 고릅니다.
 
-- **고정 단면(기본값)** — 단면을 순위순으로 훑습니다. 단면이 `max_reports_per_level`보다 클
-  때만 그 단면으로 제한한 질의 하이브리드 검색이 가장 비슷한 리포트를 그만큼
-  고릅니다(`global_level_capped`). global 검색에서 유사도가 쓰이는 곳은 여기뿐입니다.
+- **고정 단면(기본값)** — 단면을 순위순으로 훑되 `max_reports_per_level`보다 하나 더
+  요청하므로(`max_query_size`를 넘지 않음) 상한과 정확히 같은 단면도 완전합니다. 더 큰 단면은
+  상한 안에 드는 가장 깊은 얕은 단면에 자리를 내주며(`global_cut_depth`), 같은 엔티티를 더 넓은
+  리포트로 덮습니다. 루트 단면도 들지 않을 때만 설정한 단면으로 제한한 질의 하이브리드 검색이
+  가장 비슷한 리포트를 그만큼 고릅니다(`global_level_capped`). global 검색에서 유사도가 쓰이는
+  곳은 여기뿐입니다. 상한은 리포트 수로 세며 이것이 map 호출 수를 제한합니다.
 - **동적 선택**(`use_dynamic_selection`) — MS GraphRAG의 `DynamicCommunitySelection`입니다.
-  루트 리포트의 관련성을 평가하고, 관련 있는 리포트의 자식으로 내려가며, 어떤 깊이에서
-  관련 리포트가 없으면 다음 깊이 전체를 평가해 `community_depth`까지 갑니다.
+  루트 리포트의 관련성을 평가하고, 관련 있는 리포트의 자식을 리프까지 따라가며, 어떤 깊이에서
+  관련 리포트가 없으면 다음 깊이 전체를 `community_depth`까지 평가합니다(MS GraphRAG의
+  `max_level`처럼 이 대체 경로만 제한). 평가는 `search.max_concurrency`개씩 실행합니다.
 
 **map-reduce.** 리포트가 `map_reduce_min_results`개 이상이면 `map_context_tokens`(MS GraphRAG의
 `data_max_tokens`) 크기의 배치로 담고, 배치마다 map 호출이 0-100점이 붙은 핵심 포인트를
-뽑습니다. `map_relevance_threshold` 이하인 포인트를 버리고 나머지를 순위대로
+뽑으며 포인트마다 근거 리포트의 `report_ids`를 적습니다(MS GraphRAG의 `[Data: Reports (ids)]`).
+map 호출은 `search.max_concurrency`개씩 실행합니다. `map_relevance_threshold` 이하인 포인트를 버리고 나머지를 순위대로
 `max_map_reduce_tokens`에 담아, 기본값(`reduce_with_llm: false`)에서는 합성 섹션 하나로 답변
-모델에 바로 넘기고(별도의 reduce 호출은 사실을 빠뜨릴 수 있는 재작성만 더했음) 그 뒤에 근거
-리포트를 붙입니다.
+모델에 바로 넘기고(별도의 reduce 호출은 사실을 빠뜨릴 수 있는 재작성만 더했음) 그 뒤에
+포인트가 인용한 리포트를 붙입니다. 배치의 리포트를 하나도 인용하지 않은 포인트는 배치 전체를
+근거로 삼습니다.
 
 **성능 저하 처리.** map 호출이 실패했거나 파싱할 수 없는 출력을 낸 배치는 *평가되지 않음*으로
 둡니다. 통과한 포인트가 없지만 평가되지 않은 리포트가 있으면 그 리포트를 그대로 넘기므로 global

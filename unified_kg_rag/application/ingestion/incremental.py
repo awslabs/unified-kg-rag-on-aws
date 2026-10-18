@@ -606,19 +606,23 @@ class IncrementalIndexer:
             logger.warning(
                 "Community drift: %d of the %d entities this run clustered also "
                 "belong to an earlier level-0 community (%d earlier communities "
-                "have stale reports). Incremental runs cluster only their delta; "
+                "have stale reports; %d root communities added to every global "
+                "search cut). Incremental runs cluster only their delta; "
                 "rebuild the communities with indexing.reset: true.",
                 drift.overlapping_entities,
                 drift.clustered_entities,
                 drift.stale_communities,
+                drift.added_roots,
             )
         else:
             logger.info(
                 "Community drift: %d of %d clustered entities also in an earlier "
-                "level-0 community (%d stale communities)",
+                "level-0 community (%d stale communities, %d root communities "
+                "added to every global search cut)",
                 drift.overlapping_entities,
                 drift.clustered_entities,
                 drift.stale_communities,
+                drift.added_roots,
             )
         return drift
 

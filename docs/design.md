@@ -398,9 +398,12 @@ and every stage gets its models and stores from the run's `Providers` bundle.
   limit would grow level-0 communities with the corpus beyond what one report
   can describe, so any community over `max_cluster_size` (default 20) entities,
   or child communities, is partitioned again on its own subgraph. Level-0
-  communities under `min_community_size` merge into their strongest neighbour;
-  an entity with no relationships stays a one-entity community, where MS
-  GraphRAG's largest-component step drops it. A parent identical to its only
+  communities under `min_community_size` merge into their strongest neighbour.
+  A connected component of fewer than `min_community_size` entities (an
+  isolated entity, a pair) has no neighbour and gets no community or report;
+  Leiden still partitions the whole graph and only these are skipped, so the
+  other communities are unchanged. MS GraphRAG's largest-component step
+  (`use_lcc`) drops every component but the largest. A parent identical to its only
   child is never created, so each distinct community is reported once. A
   Leiden failure fails the stage instead of truncating the hierarchy.
 - **Determinism.** Leiden's partition depends on insertion order and
@@ -631,7 +634,13 @@ as a display name), so a delta's communities and reports are appended next to
 the corpus's instead of overwriting them. A corpus community goes once none of
 its text units is stored; shared ones keep their report until a full rebuild,
 the only path that re-partitions the whole graph
-(`indexing.community_drift_threshold` reports when one is due). Re-detecting
+(`indexing.community_drift_threshold` reports when one is due). Each delta's
+root communities join every cut of the hierarchy, so global search's cut
+grows until a rebuild; the cap and the shallower-cut fallback (§6.1.1) bound
+it, and the drift metrics report it (`added_roots`). Leaving delta
+communities whose entities are already clustered out of the cuts was
+rejected: their reports are the only ones describing the delta, and stored
+community ids still name removed communities. Re-detecting
 the full graph on every delta run was rejected: it would regenerate every
 report (an LLM call each) per run.
 
@@ -712,15 +721,30 @@ budget and answer. `RAGInput.search_strategy` picks the methodology.
   into `primer_folds` folds; each fold returns an intermediate answer, a score
   and follow-up queries. *Actions:* for `n_depth` rounds the best-scored open
   follow-ups each run the local search, and its results are answered with a
-  score and new follow-ups. *Reduce:* the intermediate answers (one
-  synthesized section, never a reported source) and the local evidence go to
-  the answer model. Without reports, or with no follow-up from the primer,
-  the question itself is the one follow-up.
+  score and new follow-ups; the follow-up searches do not rerank. *Reduce:*
+  the intermediate answers (one synthesized section, never a reported source)
+  and the local evidence, reranked once, go to the answer model. Without
+  reports, or with no follow-up from the primer, the question itself is the
+  one follow-up.
+  - Defaults `k_followups` 10, `n_depth` 2: at most 27 LLM calls a query (MS
+    GraphRAG's 20 and 3: 67). Primer calls and actions run
+    `search.max_concurrency` at a time.
+  - The primer searches reports of every depth, not MS GraphRAG's one
+    `community_level`: similarity picks the granularity (a depth-2 cut
+    answered 16 of 21 sub-questions on a synthetic six-hop corpus, every
+    depth 21).
+  - A fatal error fails the query and cancels the calls in flight. Any other
+    failure leaves only its own answer out (`degraded_error`); the query fails
+    only when a whole step failed and `processing.ignore_errors` is off, and a
+    round whose actions all failed ends the rounds.
 - **auto** — an LLM router (`StrategySelectionPrompt`) picks among
   `search.auto_routable_strategies` minus those the pipeline cannot serve
   (`global` and `drift` register `needs_community_reports=True`); the prompt
   describes exactly the routable strategies, and unrecognized output falls
-  back to `local`.
+  back to `local`. The default set is `local`, `mix`, `global`: `drift` costs
+  up to 27 LLM calls a query. With one routable strategy no router call is
+  made. The guide sends questions that chain from a named entity to `local`
+  (synthetic multi-hop harness: `local` 0.925, `mix` 0.40 exact match).
 
 #### 6.1.1 Global search (`global_search.py`)
 
@@ -731,22 +755,31 @@ above it (`depth <= D <= max_cut_depth`), MS GraphRAG's roll-up that covers
 every entity once; MS GraphRAG counts `community_level` from the root, so the
 depth selects the cut.
 
-- **Fixed cut (default)** — the cut is browsed by rank. Only when it is larger
-  than `max_reports_per_level` does a hybrid search for the query, restricted
-  to the cut, pick that many most similar reports (`global_level_capped`):
-  the only place similarity enters global search.
+- **Fixed cut (default)** — the cut is browsed by rank, one report more than
+  `max_reports_per_level` (bounded by `max_query_size`) so a cut of exactly
+  the cap is complete. A larger cut gives way to the deepest shallower cut
+  that fits (`global_cut_depth`), which covers the same entities in broader
+  reports. Only when the root cut does not fit either does a hybrid search
+  for the query, restricted to the configured cut, pick that many most
+  similar reports (`global_level_capped`): the only place similarity enters
+  global search. The cap counts reports, which bounds the map calls.
 - **Dynamic selection** (`use_dynamic_selection`) — MS GraphRAG's
-  `DynamicCommunitySelection`: rate the root reports for relevance, descend
-  into the children of the relevant ones, rate the whole next depth when a
-  depth yields none, down to `community_depth`.
+  `DynamicCommunitySelection`: rate the root reports for relevance, follow
+  the children of the relevant ones to the leaves, and rate the whole next
+  depth when a depth yields none, down to `community_depth` (MS GraphRAG's
+  `max_level`, which bounds only this fallback). Ratings run
+  `search.max_concurrency` at a time.
 
 **Map-reduce.** At least `map_reduce_min_results` reports are packed into
 batches of `map_context_tokens` (MS GraphRAG's `data_max_tokens`), and each
-batch's map call extracts key points scored 0-100. Points at or below
+batch's map call extracts key points scored 0-100, each naming the
+`report_ids` it is drawn from (MS GraphRAG's `[Data: Reports (ids)]`); map
+calls run `search.max_concurrency` at a time. Points at or below
 `map_relevance_threshold` are dropped, the rest ranked and packed into
 `max_map_reduce_tokens`, and by default handed to the answer model directly as
 one synthesized section (`reduce_with_llm: false`: a separate reduce call only
-added a rewrite that could drop facts), followed by the reports behind them.
+added a rewrite that could drop facts), followed by the reports the points
+cite; a point citing none of its batch's reports credits the whole batch.
 
 **Degradation.** A batch whose map call failed or returned unparseable output
 is *unrated*; when no point passed but some reports were never rated, those

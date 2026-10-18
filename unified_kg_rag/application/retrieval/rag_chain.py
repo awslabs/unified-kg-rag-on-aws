@@ -459,6 +459,10 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             return state
 
         routable = routable_strategies(self.config)
+        if len(routable) == 1:
+            # Nothing to choose between: no router call.
+            state["resolved_strategy"] = routable[0]
+            return state
         try:
             router = self._get_chain_for_prompt(
                 StrategySelectionPrompt, StrOutputParser()

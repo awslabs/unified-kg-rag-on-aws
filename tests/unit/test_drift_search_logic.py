@@ -24,6 +24,9 @@ from unified_kg_rag.adapters.search_strategies.drift_search import (
     DriftSearchStrategy,
     _score,
 )
+from unified_kg_rag.adapters.search_strategies.local_search import (
+    LocalSearchStrategy,
+)
 from unified_kg_rag.domain.models import (
     Config,
     RetrievalResult,
@@ -199,9 +202,13 @@ def _answers(result: SearchResult) -> str:
 # --------------------------------------------------------------------------- #
 
 
-def test_defaults_follow_ms_graphrag() -> None:
+def test_defaults_bound_the_llm_calls() -> None:
+    # MS GraphRAG's 20 follow-ups over 3 rounds made up to 67 LLM calls a
+    # query; the defaults make at most 27.
     drift = Config().search.drift_search
-    assert (drift.k_followups, drift.primer_folds, drift.n_depth) == (20, 5, 3)
+    assert (drift.k_followups, drift.primer_folds, drift.n_depth) == (10, 5, 2)
+    calls = 1 + drift.primer_folds + drift.k_followups * drift.n_depth + 1
+    assert calls == 27
 
 
 async def test_the_primer_reads_the_reports_similar_to_the_expanded_query() -> None:
@@ -222,6 +229,19 @@ async def test_the_primer_reads_the_reports_similar_to_the_expanded_query() -> N
         "report 2\n\nreport 3",
         "report 4\n\nreport 5",
     ]
+
+
+def test_follow_up_searches_do_not_rerank_and_use_the_search_concurrency() -> None:
+    # Regression: every follow-up's local search made its own rerank call
+    # (up to 60 a query) whose outcome was never reported, and the fan-out
+    # read the ingestion knob processing.max_concurrency.
+    config = Config()
+    config.search.max_concurrency = 3
+    config.processing.max_concurrency = 40
+    strat = DriftSearchStrategy(config, {})
+    assert strat.local_search.rerank_types == frozenset()
+    assert strat.max_concurrency == 3
+    assert LocalSearchStrategy(config, {}).rerank_types == {"text"}
 
 
 def test_folds_are_contiguous_and_never_empty() -> None:
@@ -271,7 +291,7 @@ async def test_follow_ups_run_as_local_searches_round_by_round() -> None:
         "about report 2?": (30, ["deeper B?"]),
         "deeper A?": (70, ["deepest?"]),
     }
-    strat = _strategy(local=local, action=_action(tree))
+    strat = _strategy(local=local, action=_action(tree), n_depth=3)
     result = await strat.asearch(SearchQuery(query="question"))
 
     assert local.queries[:3] == [
@@ -305,6 +325,35 @@ async def test_rounds_stop_at_n_depth_and_k_followups() -> None:
     assert local.queries == ["about report 0?", "about report 1?"]
 
 
+async def test_a_round_runs_at_most_k_followups_of_the_open_queries() -> None:
+    # k_followups 2: two reports, one per fold, give six open follow-ups;
+    # two run, the earliest of the equally placed first, and four stay open.
+    local = _Local()
+    primer = _primer({f"report {i}": [f"{i}a?", f"{i}b?", f"{i}c?"] for i in (0, 1)})
+    strat = _strategy(local=local, primer=primer, n_depth=1)
+    strat.drift_config.k_followups = 2
+    result = await strat.asearch(SearchQuery(query="question"))
+    assert local.queries == ["0a?", "0b?"]
+    assert result.metadata["drift_follow_up_queries"] == 2
+    assert result.metadata["drift_open_follow_ups"] == 4
+
+
+async def test_an_action_reads_its_local_context_within_the_budget() -> None:
+    budgets: list[int] = []
+
+    class _Budget(_Tokens):
+        def optimize_context(self, results, query, max_tokens):
+            budgets.append(max_tokens)
+            return results[:0] if max_tokens < 1000 else results
+
+    strat = _strategy(n_depth=1, local_context_tokens=999)
+    strat.token_manager = _Budget()  # type: ignore[assignment]
+    await strat.asearch(SearchQuery(query="question"))
+    assert budgets and set(budgets) == {999}
+    # What the budget kept is the context the action answers from.
+    assert all(c["context"] == "" for c in strat.action.calls)
+
+
 async def test_a_follow_up_asked_twice_runs_once() -> None:
     local = _Local()
     primer = _primer({f"report {i}": ["same?", "question"] for i in (0, 2, 4)})
@@ -331,6 +380,85 @@ async def test_a_failed_action_raises_without_ignore_errors() -> None:
     strat = _strategy(action=lambda _: TimeoutError("slow"))
     with pytest.raises(TimeoutError):
         await strat.asearch(SearchQuery(query="question"))
+
+
+async def test_one_failed_action_leaves_only_its_answer_out() -> None:
+    # Regression: one throttled action failed the whole query, after every
+    # other action had been paid for.
+    def action(inputs: dict):
+        if inputs["query"] == "about report 2?":
+            return TimeoutError("throttled")
+        return _action()(inputs)
+
+    strat = _strategy(action=action, n_depth=1)
+    result = await strat.asearch(SearchQuery(query="question"))
+    assert result.metadata["degraded_error"] == "TimeoutError"
+    text = _answers(result)
+    assert "answer to about report 0?" in text
+    assert "answer to about report 2?" not in text
+    # The failed action's local evidence is kept.
+    assert "t:about report 2?" in {r.source for r in result.results}
+
+
+async def test_a_failed_round_stops_the_rounds() -> None:
+    tree = {f"about report {i}?": (50, [f"next {i}?"]) for i in (0, 2, 4)}
+
+    def action(inputs: dict):
+        if inputs["query"].startswith("next"):
+            return TimeoutError("throttled")
+        return _action(tree)(inputs)
+
+    local = _Local()
+    strat = _strategy(local=local, action=action, n_depth=3, k_followups=6)
+    # Two follow-ups a round, so round 2 leaves one "next" query queued.
+    strat.drift_config.k_followups = 2
+    result = await strat.asearch(SearchQuery(query="question"))
+    # Round 1 answered, round 2 failed entirely: no round 3.
+    assert result.metadata["drift_depth"] == 2
+    assert result.metadata["degraded_error"] == "TimeoutError"
+
+
+async def test_one_failed_primer_fold_leaves_only_its_answer_out() -> None:
+    def primer(inputs: dict):
+        if inputs["community_reports"].startswith("report 2"):
+            return TimeoutError("throttled")
+        return _primer()(inputs)
+
+    local = _Local()
+    strat = _strategy(primer=primer, local=local, n_depth=1)
+    result = await strat.asearch(SearchQuery(query="question"))
+    assert local.queries == ["about report 0?", "about report 4?"]
+    assert result.metadata["degraded_error"] == "TimeoutError"
+
+
+async def test_every_primer_fold_failing_raises_without_ignore_errors() -> None:
+    strat = _strategy(primer=lambda _: TimeoutError("slow"))
+    with pytest.raises(TimeoutError):
+        await strat.asearch(SearchQuery(query="question"))
+
+
+async def test_a_fatal_error_cancels_the_other_actions() -> None:
+    # Regression: the query raised while its sibling actions kept running
+    # (and paying for) their LLM calls.
+    denied = ClientError(
+        {"Error": {"Code": "AccessDeniedException", "Message": "no"}}, "Converse"
+    )
+    finished: list[str] = []
+
+    class _Slow(_Chain):
+        async def ainvoke(self, inputs: dict, config: Any = None) -> str:
+            if inputs["query"] == "about report 0?":
+                raise denied
+            await asyncio.sleep(0.2)
+            finished.append(inputs["query"])
+            return _action()(inputs)
+
+    strat = _strategy(n_depth=1)
+    strat.action = _Slow(None)
+    with pytest.raises(ClientError):
+        await strat.asearch(SearchQuery(query="question"))
+    await asyncio.sleep(0.3)
+    assert finished == []
 
 
 async def test_a_fatal_action_error_raises_even_under_ignore_errors() -> None:

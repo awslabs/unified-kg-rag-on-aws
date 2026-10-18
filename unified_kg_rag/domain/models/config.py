@@ -1647,7 +1647,9 @@ class CommunityDetectionConfig(BaseModel):
         description=(
             "Minimum entities per level-0 community: a smaller one merges into"
             " the neighbour it shares the most edge weight with, unless that "
-            "would exceed max_cluster_size."
+            "would exceed max_cluster_size. A connected component of fewer "
+            "entities (an isolated entity, a pair) has no neighbour and gets "
+            "no community or report. 1 = cluster every component."
         ),
     )
     auto_resolution: bool = Field(
@@ -2281,7 +2283,8 @@ class GlobalSearchConfig(BaseModel):
 
     The reports of one cut (``community_depth``), or of a root-down dynamic
     selection (``use_dynamic_selection``), are all mapped in token-sized
-    batches; similarity only caps a cut larger than ``max_reports_per_level``.
+    batches; a cut larger than ``max_reports_per_level`` gives way to a
+    shallower one, and similarity caps it only when no cut fits.
     """
 
     community_depth: int = Field(
@@ -2293,8 +2296,9 @@ class GlobalSearchConfig(BaseModel):
             "(default 2 there too): the communities at this depth plus the "
             "leaves above it, so every entity is covered once. 0 = the root "
             "communities (fewest, broadest reports); a large value = the "
-            "leaves. With use_dynamic_selection it bounds how deep the "
-            "selection descends."
+            "leaves. With use_dynamic_selection it bounds only the depths a "
+            "selection that found nothing relevant rates whole (MS GraphRAG's "
+            "max_level); relevant reports are followed to the leaves."
         ),
     )
     max_reports_per_level: int = Field(
@@ -2302,9 +2306,11 @@ class GlobalSearchConfig(BaseModel):
         ge=1,
         description=(
             "Upper bound on the reports one cut (or one step of the dynamic "
-            "selection) contributes. A cut with more reports is cut to the "
-            "ones most similar to the query (a hybrid search restricted to the "
-            "cut) and the search metadata says so (global_level_capped). "
+            "selection) contributes. A cut with more reports gives way to the "
+            "deepest shallower cut that fits (global_cut_depth in the search "
+            "metadata); when even the root cut does not fit, to the reports "
+            "of the cut most similar to the query (a hybrid search restricted "
+            "to the cut, global_level_capped). "
             "Bounded by indexing.opensearch.max_query_size, the most hits one "
             "store request returns. Each report costs map-step input tokens."
         ),
@@ -2315,10 +2321,11 @@ class GlobalSearchConfig(BaseModel):
             "MS GraphRAG dynamic community selection instead of a fixed cut: "
             "rate the root reports for the query with "
             "models.roles.community_relevance, descend into the children of "
-            "the relevant ones (dropping a parent once a child is relevant), "
-            "and rate the whole next depth when a depth yields none, down to "
-            "community_depth. One fast-model call per rated report, "
-            "processing.max_concurrency at a time; the relevant reports are "
+            "the relevant ones down to the leaves (dropping a parent once a "
+            "child is relevant), and rate the whole next depth when a depth "
+            "yields none, down to community_depth. One fast-model call per "
+            "rated report, "
+            "search.max_concurrency at a time; the relevant reports are "
             "then mapped. Off by default, as in MS GraphRAG."
         ),
     )
@@ -2351,7 +2358,7 @@ class GlobalSearchConfig(BaseModel):
             "Report tokens packed into one map-step LLM call (MS GraphRAG's "
             "data_max_tokens, 12000). Reports are packed in order until the "
             "next one would exceed it; a longer report gets a call of its own. "
-            "Map calls run processing.max_concurrency at a time."
+            "Map calls run search.max_concurrency at a time."
         ),
     )
     map_relevance_threshold: int = Field(
@@ -2470,15 +2477,15 @@ class DriftSearchConfig(BaseModel):
     ``n_depth`` rounds then runs the ``k_followups`` best-placed open follow-up
     queries as local searches, each answered by ``models.roles.drift_action`` with its
     own follow-up queries. The answer model reduces the ranked intermediate
-    answers with the local evidence they came from.
+    answers with the local evidence they came from, reranked once.
     """
 
     k_followups: int = Field(
-        default=20,
+        default=10,
         ge=1,
         description=(
             "Community reports the primer reads, and follow-up queries run per"
-            " round (MS GraphRAG drift_k_followups, 20). Each follow-up query "
+            " round (MS GraphRAG drift_k_followups: 20). Each follow-up query "
             "is one local search plus one models.roles.drift_action call."
         ),
     )
@@ -2490,10 +2497,12 @@ class DriftSearchConfig(BaseModel):
         "follow-up queries.",
     )
     n_depth: int = Field(
-        default=3,
+        default=2,
         ge=1,
-        description="Rounds of follow-up queries (MS GraphRAG n_depth, 3). Up to "
-        "k_followups * n_depth local searches per query.",
+        description="Rounds of follow-up queries (MS GraphRAG n_depth: 3). Up to "
+        "k_followups * n_depth local searches per query, so the defaults make "
+        "at most 1 + primer_folds + 20 + 1 = 27 LLM calls (MS GraphRAG's "
+        "defaults: 67).",
     )
     local_context_tokens: int = Field(
         default=12000,
@@ -2688,17 +2697,19 @@ class SearchConfig(BaseModel):
             SearchStrategy.LOCAL,
             SearchStrategy.MIX,
             SearchStrategy.GLOBAL,
-            SearchStrategy.DRIFT,
         ],
         min_length=1,
         description=(
             "Strategies the auto router may pick; its prompt describes exactly"
             " these, in this order. simple is left out by default because the "
-            "graph strategies cover its direct lookups with graph context. "
-            "global and drift are skipped when "
+            "graph strategies cover its direct lookups with graph context, and"
+            " drift because it costs up to 27 LLM calls a query (local: 2), a "
+            "price one misrouted question should not pay; add it to route to "
+            "it. global and drift are skipped when "
             "graph.community_detection.enabled is false (no community "
-            "reports), and local is used when nothing is left. auto itself is "
-            "rejected; every strategy stays selectable explicitly."
+            "reports), and local is used when nothing is left; with one "
+            "strategy left no router call is made. auto itself is rejected; "
+            "every strategy stays selectable explicitly."
         ),
     )
     hybrid: HybridConfig = Field(
@@ -2725,6 +2736,17 @@ class SearchConfig(BaseModel):
     )
     token_manager: TokenManagerConfig = Field(
         default_factory=TokenManagerConfig, description="Token management configuration"
+    )
+    max_concurrency: int = Field(
+        default=10,
+        ge=1,
+        description=(
+            "LLM calls and sub-searches one query keeps in flight: the global "
+            "map calls, the dynamic-selection ratings, and the DRIFT primer "
+            "calls and follow-up local searches. Per query, so concurrent "
+            "queries (run-eval keeps processing.max_concurrency of them in "
+            "flight) multiply it; lower it if a query's calls are throttled."
+        ),
     )
     store_timeout_seconds: float = Field(
         default=30.0,

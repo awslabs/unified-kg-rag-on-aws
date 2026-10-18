@@ -115,7 +115,9 @@ reset은 `indexing.max_failure_rate` 안이더라도 이전 그래프를 지울 
 보고합니다. 덧붙인 커뮤니티(`delta_communities`), 클러스터링한
 엔티티(`clustered_entities`), 그중 이전 클러스터링이 이미 배치한
 엔티티(`overlapping_entities`, 이제 기본 수준 커뮤니티 둘 이상에 속함), 이번 실행이
-더한 내용이 리포트에 빠진 이전 커뮤니티(`stale_communities`), `overlap_share`(겹친 수 /
+더한 내용이 리포트에 빠진 이전 커뮤니티(`stale_communities`), 덧붙인 루트
+커뮤니티(`added_roots`, 루트는 계층의 모든 단면에 들어가므로 global search가 재구축 전까지
+그만큼 더 많은 리포트에 map을 적용함), `overlap_share`(겹친 수 /
 클러스터링한 수)입니다. `overlap_share`가 `indexing.community_drift_threshold`(기본값
 `0.5`)에 이르면 실행은 `indexing.reset: true`를 권하는 WARNING을 남기고
 `community_drift_overlap_share`와 함께 `community_rebuild_recommended: 1`을 보고하므로

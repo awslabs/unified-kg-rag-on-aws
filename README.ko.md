@@ -33,7 +33,7 @@
 
 | 전략 | 방법론 | 적합한 경우 |
 |---|---|---|
-| `auto`(기본값) | GraphRAG | 어떤 전략이 맞을지 모를 때. LLM 라우터가 질의마다 `search.auto_routable_strategies`(기본값 `local`, `mix`, `global`, `drift`) 중 하나를 고릅니다 |
+| `auto`(기본값) | GraphRAG | 어떤 전략이 맞을지 모를 때. LLM 라우터가 질의마다 `search.auto_routable_strategies`(기본값 `local`, `mix`, `global`. `drift`도 고르게 하려면 추가) 중 하나를 고릅니다 |
 | `simple` | GraphRAG | 빠른 사실 조회. 그래프 순회 없이 벡터와 키워드로 검색합니다 |
 | `local` | GraphRAG | 특정 엔티티와 그 관계에 대한 질문 |
 | `global` | GraphRAG | 넓은 범위나 주제 중심 질문. 커뮤니티 리포트에 map-reduce를 적용해 답합니다 |

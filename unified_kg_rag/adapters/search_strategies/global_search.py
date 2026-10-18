@@ -55,15 +55,24 @@ class _MapPoint:
 
     Lightweight value object (not a Pydantic model) so the map/filter/rank/pack
     plumbing stays internal to this adapter. ``batch`` is the index of the map
-    batch that produced it (-1 when unknown).
+    batch that produced it (-1 when unknown); ``report_ids`` are the ids of
+    the reports the map model says the point comes from (MS GraphRAG's
+    ``[Data: Reports (ids)]``), as it wrote them.
     """
 
-    __slots__ = ("batch", "description", "score")
+    __slots__ = ("batch", "description", "report_ids", "score")
 
-    def __init__(self, description: str, score: int, batch: int = -1) -> None:
+    def __init__(
+        self,
+        description: str,
+        score: int,
+        batch: int = -1,
+        report_ids: list[str] | None = None,
+    ) -> None:
         self.description = description
         self.score = score
         self.batch = batch
+        self.report_ids = report_ids or []
 
 
 def _record(degraded: list[str] | None, error: Exception) -> None:
@@ -86,7 +95,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         super().__init__(config, retrievers, **kwargs)
         self.global_search_config = config.search.global_search
         self.ignore_errors = config.processing.ignore_errors
-        self.max_concurrency = config.processing.max_concurrency
+        self.max_concurrency = config.search.max_concurrency
         self.target_language = language_name(
             config.processing.translation.target_language
         )
@@ -126,7 +135,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         # flight. The map chain already retries transient Bedrock errors as a
         # query chain, so BatchProcessor calls each input once (max_attempts=1).
         self.batch_processor = BatchProcessor(
-            max_concurrency=config.processing.max_concurrency, max_attempts=1
+            max_concurrency=config.search.max_concurrency, max_attempts=1
         )
 
     async def asearch(
@@ -211,43 +220,56 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             self.config.indexing.opensearch.max_query_size,
         )
 
-    async def _fetch_reports(
+    async def _browse_reports(
+        self, query: SearchQuery, scope: dict[str, Any], label: str
+    ) -> tuple[list[RetrievalResult], bool]:
+        """Up to the cap of the reports matching ``scope`` (and the caller's
+        filters), most important (``rank``) first, and whether that is all.
+
+        One more report than the cap is asked for, so a set of exactly the
+        cap is complete; with the cap at ``max_query_size`` the store cannot
+        return more, and a full answer counts as incomplete.
+        """
+        retriever = self.document_retriever
+        if retriever is None:
+            return [], True
+        cap = self._report_cap()
+        probe = min(cap + 1, self.config.indexing.opensearch.max_query_size)
+        browse = SearchQuery(
+            query="",
+            search_type=SearchType.LEXICAL,
+            top_k=probe,
+            index_prefixes=[
+                self.config.indexing.opensearch.community_reports_index_prefix
+            ],
+            suffix=query.suffix,
+            filters=self._scoped_filters(query, **scope),
+        )
+        reports = await self._safe_aretrieve(retriever, browse, label)
+        return reports[:cap], len(reports) < probe
+
+    async def _most_similar_reports(
         self,
         query: SearchQuery,
         scope: dict[str, Any],
         label: str,
         stats: dict[str, Any],
     ) -> list[RetrievalResult]:
-        """Every report matching ``scope`` (and the caller's filters).
-
-        A text-less browse returns them by importance (``rank``); when it
-        fills the cap, the part of the cut a query can afford is chosen by
-        similarity instead: a search for the query restricted to the same
-        reports. That is the only use of similarity in global search.
-        """
+        """The cap of the reports matching ``scope`` most similar to the query:
+        the part of a set larger than the cap a query can afford. That is the
+        only use of similarity in global search."""
         retriever = self.document_retriever
         if retriever is None:
             return []
         cap = self._report_cap()
-        prefix = self.config.indexing.opensearch.community_reports_index_prefix
-        filters = self._scoped_filters(query, **scope)
-        browse = SearchQuery(
-            query="",
-            search_type=SearchType.LEXICAL,
-            top_k=cap,
-            index_prefixes=[prefix],
-            suffix=query.suffix,
-            filters=filters,
-        )
-        reports = await self._safe_aretrieve(retriever, browse, label)
-        if len(reports) < cap:
-            return reports
         similar = query.model_copy(
             update={
                 "top_k": cap,
                 "retrieval_multiplier": 1,
-                "index_prefixes": [prefix],
-                "filters": filters,
+                "index_prefixes": [
+                    self.config.indexing.opensearch.community_reports_index_prefix
+                ],
+                "filters": self._scoped_filters(query, **scope),
             }
         )
         ranked = await self._safe_aretrieve(
@@ -255,29 +277,75 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         )
         stats["global_level_capped"] = True
         logger.warning(
-            "%s: at least %s community reports; mapping the %s most similar "
+            "%s: more than %s community reports; mapping the %s most similar "
             "to the query (search.global_search.max_reports_per_level, bounded "
-            "by indexing.opensearch.max_query_size). A smaller "
-            "community_depth maps fewer, broader reports.",
+            "by indexing.opensearch.max_query_size).",
             label,
             cap,
             cap,
         )
-        return ranked or reports
+        return ranked
+
+    async def _fetch_reports(
+        self,
+        query: SearchQuery,
+        scope: dict[str, Any],
+        label: str,
+        stats: dict[str, Any],
+    ) -> list[RetrievalResult]:
+        """Every report matching ``scope``, or the cap of them most similar
+        to the query when there are more."""
+        reports, complete = await self._browse_reports(query, scope, label)
+        if complete:
+            return reports
+        return await self._most_similar_reports(query, scope, label, stats) or reports
 
     async def _cut_reports(
         self, query: SearchQuery, stats: dict[str, Any]
     ) -> list[RetrievalResult]:
         """The reports of the ``community_depth`` cut (MS GraphRAG's fixed
         ``community_level``): every community at that depth plus the leaves
-        above it."""
+        above it.
+
+        A cut with more reports than the cap gives way to the deepest
+        shallower cut that fits, which still covers every entity, in fewer,
+        broader reports. Only when even the root cut does not fit are the
+        reports of the configured cut most similar to the query mapped.
+        """
         depth = self.global_search_config.community_depth
+        label = "Community report cut"
         with observability.span("kg_rag.global.select", depth=depth) as span:
-            reports = await self._fetch_reports(
-                query, cut_filter(depth), "Community report cut", stats
+            first, complete = await self._browse_reports(
+                query, cut_filter(depth), label
             )
-            span.set_attributes({"kg_rag.reports": len(reports)})
-        logger.info("Global search cut at depth %s: %s reports", depth, len(reports))
+            reports, used = first, depth
+            while not complete and used > 0:
+                used -= 1
+                reports, complete = await self._browse_reports(
+                    query, cut_filter(used), label
+                )
+            if not complete:
+                used = depth
+                reports = (
+                    await self._most_similar_reports(
+                        query, cut_filter(depth), label, stats
+                    )
+                    or first
+                )
+            elif used < depth:
+                logger.warning(
+                    "The depth-%s cut has more than %s community reports; "
+                    "mapping the depth-%s cut (%s reports), which covers the "
+                    "same entities in broader reports "
+                    "(search.global_search.max_reports_per_level)",
+                    depth,
+                    self._report_cap(),
+                    used,
+                    len(reports),
+                )
+            stats["global_cut_depth"] = used
+            span.set_attributes({"kg_rag.reports": len(reports), "kg_rag.cut": used})
+        logger.info("Global search cut at depth %s: %s reports", used, len(reports))
         return reports
 
     async def _select_dynamically(
@@ -291,10 +359,11 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         """MS GraphRAG dynamic community selection, root down.
 
         Rates the root reports; the children of each relevant report are
-        rated next, and a relevant child drops its parent. A depth with no
-        relevant report and nothing queued rates the whole next depth. The
-        walk stops below ``community_depth``. Returns the relevant reports,
-        most relevant first.
+        rated next, down to the leaves, and a relevant child drops its
+        parent. A depth with no relevant report and nothing queued rates the
+        whole next depth, down to ``community_depth`` (MS GraphRAG's
+        ``max_level``, which bounds only that fallback). Returns the relevant
+        reports, most relevant first.
         """
         max_depth = self.global_search_config.community_depth
         threshold = self.global_search_config.relevance_threshold
@@ -338,8 +407,6 @@ class GlobalSearchStrategy(BaseSearchStrategy):
                     if parent := metadata.get("parent_community_id"):
                         relevant.pop(str(parent), None)
                 depth += 1
-                if depth > max_depth:
-                    break
                 if children:
                     queue = await self._fetch_reports(
                         query,
@@ -347,7 +414,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
                         "Child community reports",
                         stats,
                     )
-                elif not relevant:
+                elif not relevant and depth <= max_depth:
                     queue = await self._fetch_reports(
                         query, {"depth": depth}, "Community reports", stats
                     )
@@ -474,8 +541,8 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         PACK — take ranked points up to ``max_map_reduce_tokens``.
         REDUCE — synthesize the answer from the ranked, packed points.
 
-        The result is the synthesized item followed by the reports of the
-        batches whose points were packed, best point first: the evidence the
+        The result is the synthesized item followed by the reports the
+        packed points cite (``_evidence``), best point first: the evidence the
         points came from, for the answer budget left over and the reported
         sources. Below ``map_reduce_min_results`` reports the results pass
         through unchanged. If the map phase yields no usable scored points
@@ -586,23 +653,35 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             used += cost
         return batches, sum(costs)
 
-    @staticmethod
+    @classmethod
     def _evidence(
-        points: list[_MapPoint], batches: list[list[RetrievalResult]]
+        cls, points: list[_MapPoint], batches: list[list[RetrievalResult]]
     ) -> list[RetrievalResult]:
-        """The reports of the batches the packed points came from.
+        """The reports the packed points came from, best point first.
 
-        A point is attributed to its batch, not to one report of it. Each
-        report scores its batch's best point (0-1), best batch first.
+        A point credits the reports of its batch it cites by id; one that
+        cites none of them (no ids, or ids the batch does not hold) credits
+        its whole batch. Each report scores its best crediting point (0-1).
+        Crediting every report of a batch made a point drawn from one report
+        put up to a dozen unrelated ones in the answer context and sources.
         """
-        best: dict[int, int] = {}
+        best: dict[tuple[int, int], int] = {}
         for point in points:
-            if 0 <= point.batch < len(batches):
-                best[point.batch] = max(best.get(point.batch, 0), point.score)
+            if not 0 <= point.batch < len(batches):
+                continue
+            batch = batches[point.batch]
+            cited = set(point.report_ids)
+            credited = [
+                i
+                for i, report in enumerate(batch)
+                if cls._community_id(report) in cited
+            ] or range(len(batch))
+            for i in credited:
+                key = (point.batch, i)
+                best[key] = max(best.get(key, 0), point.score)
         return [
-            report.model_copy(update={"score": best[batch] / 100.0})
-            for batch in sorted(best, key=lambda b: (-best[b], b))
-            for report in batches[batch]
+            batches[b][i].model_copy(update={"score": best[(b, i)] / 100.0})
+            for b, i in sorted(best, key=lambda key: (-best[key], key))
         ]
 
     async def _run_map_phase(
@@ -692,13 +771,12 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             )
         return points, unrated
 
-    @staticmethod
-    def _format_reports(reports: list[RetrievalResult]) -> str:
-        parts = []
-        for report in reports:
-            rid = (report.metadata or {}).get("community_id") or report.source or "?"
-            parts.append(f"--- Report (id: {rid}) ---\n{report.content}")
-        return "\n\n".join(parts)
+    @classmethod
+    def _format_reports(cls, reports: list[RetrievalResult]) -> str:
+        return "\n\n".join(
+            f"--- Report (id: {cls._community_id(report)}) ---\n{report.content}"
+            for report in reports
+        )
 
     @staticmethod
     def _parse_map_payload(raw: str) -> list[_MapPoint] | None:
@@ -731,7 +809,17 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             else:
                 score_int = int(score)
             score_int = max(0, min(100, score_int))
-            points.append(_MapPoint(description=description, score=score_int))
+            raw_ids = item.get("report_ids")
+            report_ids = (
+                [str(rid).strip() for rid in raw_ids]
+                if isinstance(raw_ids, list)
+                else []
+            )
+            points.append(
+                _MapPoint(
+                    description=description, score=score_int, report_ids=report_ids
+                )
+            )
         return points
 
     def _filter_and_rank_points(self, points: list[_MapPoint]) -> list[_MapPoint]:

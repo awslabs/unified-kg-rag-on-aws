@@ -236,11 +236,11 @@ async def test_auto_router_is_told_the_routable_strategies(
         _chain_with(same_language_config, factory), SearchStrategy.AUTO
     )
     route_inputs = [i for cls, i in factory.calls if cls is StrategySelectionPrompt]
-    assert route_inputs and route_inputs[0]["strategies"] == "local, mix, global, drift"
+    assert route_inputs and route_inputs[0]["strategies"] == "local, mix, global"
     # The guide describes exactly the routable set, in its order.
     guide = route_inputs[0]["strategy_descriptions"]
     headings = re.findall(r"^\d+\. (\w+) SEARCH$", guide, re.MULTILINE)
-    assert headings == ["LOCAL", "MIX", "GLOBAL", "DRIFT"]
+    assert headings == ["LOCAL", "MIX", "GLOBAL"]
     assert "SIMPLE" not in guide
     # Routed to mix -> the LightRAG keyword extraction runs.
     assert factory.counts[KeywordsExtractionPrompt] == 1

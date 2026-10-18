@@ -3,22 +3,25 @@
 """MS GraphRAG DRIFT search: a community-report primer, then local search.
 
 1. PRIMER — the query is expanded into a hypothetical answer shaped like a
-   community report (HyDE); the ``k_followups`` reports most similar to it are
-   split into ``primer_folds`` and each fold drafts an intermediate answer, a
-   0-100 score and follow-up queries.
+   community report (HyDE); the ``k_followups`` reports (of any depth of the
+   hierarchy) most similar to it are split into ``primer_folds`` and each
+   fold drafts an intermediate answer, a 0-100 score and follow-up queries.
 2. ACTIONS — for ``n_depth`` rounds, the ``k_followups`` open follow-up queries
-   whose parent answer scored best run as local searches; each local context
-   is answered with its own score and follow-up queries.
+   whose parent answer scored best run as local searches (not reranked);
+   each local context is answered with its own score and follow-up queries.
 3. REDUCE — the ranked intermediate answers are one synthesized context
-   section and the local evidence behind them follows it; the answer model
-   reduces them into the answer.
+   section and the local evidence behind them, reranked once, follows it;
+   the answer model reduces them into the answer.
+
+``search.max_concurrency`` primer calls and actions run at a time.
 """
 
 import asyncio
 import math
 import time
+from collections.abc import Awaitable, Iterable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, TypeVar
 
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import Runnable, RunnableConfig
@@ -62,6 +65,8 @@ logger = get_logger(__name__)
 # primer asks for "at least five").
 _FOLLOW_UPS_PER_ANSWER = 5
 
+_T = TypeVar("_T")
+
 
 @dataclass
 class _Answer:
@@ -72,6 +77,8 @@ class _Answer:
     score: int
     follow_ups: list[str] = field(default_factory=list)
     evidence: list[RetrievalResult] = field(default_factory=list)
+    # The non-fatal error that left the answer without text, if any.
+    error: Exception | None = None
 
 
 def _score(value: Any) -> int:
@@ -80,6 +87,22 @@ def _score(value: Any) -> int:
     if number is None or not math.isfinite(number):
         return 0
     return max(0, min(100, int(number)))
+
+
+async def _gather_or_cancel(coroutines: Iterable[Awaitable[_T]]) -> list[_T]:
+    """``asyncio.gather`` that cancels the others once one raises.
+
+    A plain gather raises the first error and leaves its siblings running:
+    their LLM calls kept spending after the query had already failed.
+    """
+    tasks = [asyncio.ensure_future(c) for c in coroutines]
+    try:
+        return list(await asyncio.gather(*tasks))
+    except BaseException:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        raise
 
 
 def _follow_ups(payload: dict[str, Any]) -> list[str]:
@@ -100,7 +123,7 @@ class DriftSearchStrategy(BaseSearchStrategy):
         super().__init__(config, retrievers, **kwargs)
         self.drift_config = self.config.search.drift_search
         self.ignore_errors = config.processing.ignore_errors
-        self.max_concurrency = config.processing.max_concurrency
+        self.max_concurrency = config.search.max_concurrency
         # Follow-up queries are written in the corpus language so they hit the
         # language-analyzed index.
         self.target_language = language_name(
@@ -131,12 +154,16 @@ class DriftSearchStrategy(BaseSearchStrategy):
             custom_prompts=self.config.custom_prompts,
         )
         # Each follow-up query is a local search, as in MS GraphRAG. It shares
-        # this strategy's providers, scorer and token counter.
+        # this strategy's providers, scorer and token counter, and does not
+        # rerank: the evidence of every follow-up is reranked once, at the
+        # final fusion (one rerank call per action cost a model call each,
+        # and their outcomes were never reported).
         self.local_search = LocalSearchStrategy(
             config, retrievers, providers=self.providers
         )
         self.local_search.hybrid_scorer = self.hybrid_scorer
         self.local_search.token_manager = self.token_manager
+        self.local_search.rerank_types = frozenset()
 
     async def asearch(
         self, query: SearchQuery, config: RunnableConfig | None = None
@@ -181,6 +208,8 @@ class DriftSearchStrategy(BaseSearchStrategy):
 
         actions = 0
         depth = 0
+        # Whether any action ran without an error.
+        acted = False
         while queue and depth < self.drift_config.n_depth:
             queue.sort(key=lambda item: (-item[0], item[1]))
             batch = [q for _, _, q in queue[: self.drift_config.k_followups]]
@@ -188,17 +217,30 @@ class DriftSearchStrategy(BaseSearchStrategy):
             with observability.span(
                 "kg_rag.drift.actions", depth=depth, actions=len(batch)
             ):
-                done = await asyncio.gather(
-                    *(
-                        self._act(sub, query, semaphore, stats, config, degraded)
-                        for sub in batch
-                    )
+                done = await _gather_or_cancel(
+                    self._act(sub, query, semaphore, stats, config, degraded)
+                    for sub in batch
                 )
             actions += len(batch)
             depth += 1
+            failed = [a.error for a in done if a.error is not None]
+            acted = acted or len(failed) < len(done)
             for answer in done:
                 answers.append(answer)
                 enqueue(answer)
+            if failed and len(failed) == len(done):
+                # Every action of the round failed: the model is not answering
+                # (throttled past its retries, timing out), so another round
+                # would fail the same way. One failed action among others only
+                # leaves its own answer out.
+                if not acted and not self.ignore_errors:
+                    raise failed[0]
+                logger.warning(
+                    "All %s DRIFT actions of round %s failed; stopping the rounds",
+                    len(done),
+                    depth,
+                )
+                break
 
         evidence = [r for answer in answers for r in answer.evidence]
         fused = (
@@ -251,6 +293,13 @@ class DriftSearchStrategy(BaseSearchStrategy):
     # ------------------------------------------------------------------ #
 
     def _reports_query(self, base: SearchQuery, **update: Any) -> SearchQuery:
+        """A search of the community reports, of any depth.
+
+        MS GraphRAG reads the reports of one community_level. Across every
+        depth, similarity picks the granularity that fits the hypothetical
+        answer: on a synthetic six-hop corpus the depth-2 cut (its leaves)
+        answered 16 of 21 sub-questions where every depth answered 21.
+        """
         return base.model_copy(
             update={
                 "index_prefixes": [
@@ -291,6 +340,8 @@ class DriftSearchStrategy(BaseSearchStrategy):
             )
             expanded = str(hypothetical).strip() or query.query
         except Exception as e:
+            if not self.ignore_errors:
+                raise
             self._degrade("DRIFT query expansion", e, degraded)
         return await self._safe_aretrieve(
             retriever,
@@ -311,7 +362,7 @@ class DriftSearchStrategy(BaseSearchStrategy):
         """One intermediate answer per fold of the primer reports."""
         folds = self._folds(reports, self.drift_config.primer_folds)
 
-        async def prime(fold: list[RetrievalResult]) -> _Answer | None:
+        async def prime(fold: list[RetrievalResult]) -> _Answer | Exception | None:
             stats["drift_llm_calls"] += 1
             try:
                 raw = await self.primer.ainvoke(
@@ -325,7 +376,7 @@ class DriftSearchStrategy(BaseSearchStrategy):
                 )
             except Exception as e:
                 self._degrade("DRIFT primer", e, degraded)
-                return None
+                return e
             payload = parse_llm_json(str(raw))
             if not payload:
                 logger.warning("DRIFT primer returned no JSON; fold skipped")
@@ -337,8 +388,11 @@ class DriftSearchStrategy(BaseSearchStrategy):
                 follow_ups=_follow_ups(payload),
             )
 
-        primed = await asyncio.gather(*(prime(fold) for fold in folds))
-        return [answer for answer in primed if answer is not None]
+        primed = await _gather_or_cancel(prime(fold) for fold in folds)
+        failed = [p for p in primed if isinstance(p, Exception)]
+        if failed and len(failed) == len(primed) and not self.ignore_errors:
+            raise failed[0]
+        return [answer for answer in primed if isinstance(answer, _Answer)]
 
     @staticmethod
     def _folds(items: list[RetrievalResult], folds: int) -> list[list[RetrievalResult]]:
@@ -367,12 +421,21 @@ class DriftSearchStrategy(BaseSearchStrategy):
         config: RunnableConfig | None,
         degraded: list[str],
     ) -> _Answer:
-        """A local search for ``follow_up`` and its answer from that context."""
+        """A local search for ``follow_up`` and its answer from that context.
+
+        A failure that is not fatal leaves the answer without text, keeps
+        what the local search found, and records the error on the answer;
+        the round decides whether the query can go on without it.
+        """
         async with semaphore:
             sub_query = query.model_copy(
                 update={"query": follow_up, "entity_focus": [], "optional_keywords": []}
             )
-            local = await self.local_search.asearch(sub_query, config)
+            try:
+                local = await self.local_search.asearch(sub_query, config)
+            except Exception as e:
+                self._degrade("DRIFT action search", e, degraded)
+                return _Answer(query=follow_up, text="", score=0, error=e)
             # Counting can be one CountTokens request per section: off the loop.
             optimized = await asyncio.to_thread(
                 self.token_manager.optimize_context,
@@ -398,6 +461,7 @@ class DriftSearchStrategy(BaseSearchStrategy):
                 )
             except Exception as e:
                 self._degrade("DRIFT action", e, degraded)
+                answer.error = e
                 return answer
         payload = parse_llm_json(str(raw))
         if not payload:
@@ -411,11 +475,13 @@ class DriftSearchStrategy(BaseSearchStrategy):
         return answer
 
     def _degrade(self, step: str, error: Exception, degraded: list[str]) -> None:
-        """Raise ``error`` unless ``ignore_errors`` lets ``step`` degrade.
+        """Record ``step``'s failure, or raise ``error`` when it is fatal.
 
-        A fatal error (no model access, an unusable store) raises either way.
+        A fatal error (no model access, an unusable store) fails the query.
+        Any other leaves its own answer out: the caller raises it only when
+        nothing of that step succeeded and ``ignore_errors`` is off.
         """
-        if not self.ignore_errors or is_fatal_retrieval_error(error):
+        if is_fatal_retrieval_error(error):
             raise error
         logger.error("%s failed: %s", step, error)
         degraded.append(type(error).__name__)
@@ -471,11 +537,11 @@ class DriftSearchStrategy(BaseSearchStrategy):
     def _rank_within_type(results: list[RetrievalResult]) -> list[RetrievalResult]:
         """Order each section type of each store by native score, in place.
 
-        Results arrive per retrieval call (seed communities, then each
-        iteration's graph and document results), so within a type the arrival
-        order ranked a later iteration's best item below an earlier one's worst.
-        The slots each group occupies are kept, so the mix of types that reaches
-        the diversity cut is unchanged; only the order within a group changes.
+        Results arrive per follow-up local search, so within a type the
+        arrival order ranked a later search's best item below an earlier
+        one's worst. The slots each group occupies are kept, so the mix of
+        types that reaches the diversity cut is unchanged; only the order
+        within a group changes.
         A group is one type from one store: entities come from the graph
         (distance bands in (0, 1]) and from the entity index (BM25, or the sum
         of two kNN scores), whose scores do not compare, so sorting them

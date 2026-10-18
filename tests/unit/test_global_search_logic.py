@@ -249,17 +249,45 @@ async def test_the_cut_is_a_browse_without_query_text() -> None:
     }
 
 
-async def test_a_cut_over_the_cap_maps_the_most_similar_reports() -> None:
+async def test_a_cut_over_the_cap_gives_way_to_the_deepest_cut_that_fits() -> None:
+    # Regression: a depth-2 cut of 5 reports over a cap of 3 mapped the 3
+    # most similar, leaving entities of the other two out; the depth-1 cut
+    # covers them all in 3 broader reports.
     store = _ReportStore(_documents())
-    strat = _strategy(store, max_reports_per_level=2)
+    strat = _strategy(store, max_reports_per_level=3)
     result = await strat.asearch(SearchQuery(query="C1 C2 themes"))
 
-    assert _mapped(strat) == {"C1", "C2"}
+    assert _mapped(strat) == {"A", "B", "C"}
+    assert result.metadata["global_level_capped"] is False
+    assert result.metadata["global_cut_depth"] == 1
+    assert [c.filters["depth"] for c in store.calls] == [{"lte": 2}, {"lte": 1}]
+    assert all(not c.query for c in store.calls)
+
+
+async def test_a_cut_no_depth_fits_maps_the_most_similar_reports() -> None:
+    store = _ReportStore(_documents())
+    strat = _strategy(store, max_reports_per_level=1)
+    result = await strat.asearch(SearchQuery(query="C1 themes"))
+
+    assert _mapped(strat) == {"C1"}
     assert result.metadata["global_level_capped"] is True
-    similar = store.calls[1]
-    assert similar.query == "C1 C2 themes"
-    assert similar.top_k == 2
+    assert result.metadata["global_cut_depth"] == 2
+    similar = store.calls[-1]
+    assert similar.query == "C1 themes"
+    assert similar.top_k == 1
     assert similar.filters == store.calls[0].filters
+
+
+async def test_a_cut_of_exactly_the_cap_is_complete() -> None:
+    # Regression: a cut of exactly max_reports_per_level reports was taken
+    # for a truncated one and re-fetched by similarity.
+    store = _ReportStore(_documents())
+    strat = _strategy(store, max_reports_per_level=5)
+    result = await strat.asearch(SearchQuery(query="themes"))
+    assert result.metadata["global_level_capped"] is False
+    assert result.metadata["global_cut_depth"] == 2
+    assert _mapped(strat) == {"A1", "A2", "B", "C1", "C2"}
+    assert store.calls[0].top_k == 6
 
 
 def test_the_cap_is_bounded_by_the_store_page() -> None:
@@ -320,11 +348,31 @@ async def test_dynamic_selection_descends_from_the_roots() -> None:
     assert result.metadata["global_rated_report_count"] == 6
 
 
-async def test_dynamic_selection_stops_at_community_depth() -> None:
+async def test_dynamic_selection_follows_relevant_children_past_community_depth() -> (
+    None
+):
+    # Regression: the walk stopped at community_depth, so a relevant A kept
+    # its relevant child A1 from being rated. MS GraphRAG follows relevant
+    # children to the leaves; its max_level bounds only the fallback.
     strat = _strategy(use_dynamic_selection=True, community_depth=1)
     strat.community_relevance_scorer = _Rater({"R0", "A", "A1"})
     await strat.asearch(SearchQuery(query="themes"))
-    assert _mapped(strat) == {"A"}
+    assert _mapped(strat) == {"A1"}
+
+
+async def test_community_depth_bounds_the_whole_depth_fallback() -> None:
+    # Nothing relevant at depths 0 and 1: depth 2 is rated only when
+    # community_depth reaches it.
+    strat = _strategy(use_dynamic_selection=True, community_depth=1)
+    rater = _Rater({"C1"})
+    strat.community_relevance_scorer = rater
+    await strat.asearch(SearchQuery(query="themes"))
+    assert sorted(rater.rated) == ["A", "B", "C", "R0", "R1"]
+
+    strat = _strategy(use_dynamic_selection=True, community_depth=2)
+    strat.community_relevance_scorer = _Rater({"C1"})
+    await strat.asearch(SearchQuery(query="themes"))
+    assert _mapped(strat) == {"C1"}
 
 
 async def test_dynamic_selection_rates_the_next_depth_when_none_is_relevant() -> None:

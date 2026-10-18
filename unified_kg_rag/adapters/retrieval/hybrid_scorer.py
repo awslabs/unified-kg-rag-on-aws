@@ -448,13 +448,10 @@ class HybridScorer:
 
         Fusion sums one contribution per bucket an artifact appears in; that is
         the cross-stream reinforcement it exists for. A retriever leg is one
-        query over one index, so an id cannot repeat within it and the rule
-        holds implicitly. DRIFT breaks the assumption: it concatenates every
-        iteration into a single bucket and dedupes by RENDERED content
-        (`DriftSearchStrategy._filter_unique_results`), so an entity reached
-        over two different paths renders two `Path:` lines and arrives twice.
-        Summing both let repetition outrank rank — an item at ranks 2 and 3 beat
-        the item at rank 1. Repetition within a bucket is not a signal, so the
+        query over one index, so an id cannot repeat within it, but a bucket a
+        strategy assembles from several calls can repeat one: summing both
+        copies let repetition outrank rank (an item at ranks 2 and 3 beat the
+        item at rank 1). Repetition within a bucket is not a signal, so the
         artifact keeps its best position there and later occurrences are
         dropped before ranks are assigned.
         """
