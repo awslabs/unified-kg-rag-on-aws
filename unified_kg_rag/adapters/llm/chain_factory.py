@@ -128,6 +128,20 @@ def _build_chat_prompt(
     return prompt.model_copy(update={"delimiter_tags": tags})
 
 
+def _serialize_once(*runnables: Any) -> None:
+    """Compute each runnable's cached serialized form now, in this thread.
+
+    LangChain prompts and chat models compute it at their first call and keep
+    it in the instance (``_serialized``, a ``functools.cached_property``,
+    unlocked since Python 3.12). Computing it iterates the instance's
+    ``__dict__``, so when a batch's worker threads make their first calls on
+    one shared chain together, one thread's cache write fails another's call
+    with "dictionary changed size during iteration".
+    """
+    for runnable in runnables:
+        getattr(runnable, "_serialized", None)
+
+
 class DelimitedChatPromptTemplate(ChatPromptTemplate):
     """Chat prompt that escapes its delimiter tags in every string input.
 
@@ -427,7 +441,9 @@ def create_robust_xml_output_parser(
         logger.info(
             "Created OutputFixingParser with model: '%s'", output_fixing_model_id
         )
-        return XMLOutputFixingParser.from_llm(parser=base_parser, llm=fixing_llm)
+        fixer = XMLOutputFixingParser.from_llm(parser=base_parser, llm=fixing_llm)
+        _serialize_once(*getattr(fixer.retry_chain, "steps", ()))
+        return fixer
     except Exception as e:
         logger.error(
             "Failed to create OutputFixingParser with model %s: %s",
@@ -475,9 +491,10 @@ def setup_chain(
         prompt = _build_chat_prompt(
             resolved, _prompt_cache_marker(llm, model_info, resolved)
         )
+        _serialize_once(prompt, llm)
+        guard = TruncationGuard(prompt_class.__name__, model_id, model_purpose)
         # Named after the prompt, so a trace shows "AnswerGenerationPrompt"
         # instead of an anonymous "RunnableSequence".
-        guard = TruncationGuard(prompt_class.__name__, model_id, model_purpose)
         chain: Runnable = (prompt | llm | guard | parser).with_config(
             run_name=prompt_class.__name__
         )
