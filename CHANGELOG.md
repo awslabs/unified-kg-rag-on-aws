@@ -1266,6 +1266,9 @@ changed once with the full-config keys (#332).
 - A lost lease is no longer swallowed by `OpenSearchClient.delete_indices`
   (reported as an `AWSServiceError` after the remaining batches were sent)
   or by the best-effort cleanup of unused extraction records (#358).
+- `run-ingestion --retire-source-scope` also tries any value that is not a
+  URI as a path resolved like `--source-directory`, so a bare relative path
+  (`old-corpus`) retires the old directory's records (#PR).
 - RAGAS no longer judges a guardrail-blocked answer on its (dropped)
   contexts: `context_precision`, `context_recall` and `faithfulness` are
   skipped as `guardrail_blocked` (they scored near 0, and faithfulness came
