@@ -889,10 +889,11 @@ class IndexingManager:
             # Another spelling of a derived entity: a run that split them and
             # died before their edges and claims were written leaves those on
             # the other spelling, and only its entity copies record the split
-            # (the two need not share a text unit). Its edges are derived with
-            # them, and its claims follow (``split_from``). Spellings a full
-            # build keeps apart are derived again unchanged, at the cost of
-            # reading their edges.
+            # (the two need not share a text unit). Such a leftover cites a
+            # unit of the spelling it belongs to: only a spelling holding one
+            # is rederived (all its edges, and its claims follow through
+            # ``split_from``). A spelling a full build keeps apart holds none,
+            # and is left as stored.
             spellings = (
                 {
                     part: whole
@@ -904,18 +905,26 @@ class IndexingManager:
                 if not claims
                 else {}
             )
-            rewired = sorted({*derived.rewired, *spellings.values()})
+            moved = set(derived.rewired)
+            candidates = sorted({*moved, *spellings.values()})
             parted: list[Relationship] = []
-            if rewired and not claims:
+            if candidates and not claims:
                 incident = set(
                     self.neptune_indexer.find_incident_relationship_ids(
-                        rewired, suffix=suffix
+                        candidates, suffix=suffix
                     )
                 )
                 if incident - given:
                     parted = self.neptune_indexer.read_relationships(
                         sorted(incident - given), suffix=suffix
                     )
+            if spellings:
+                spellings = self._leftover_spellings(
+                    suffix, derived.entities, spellings, parted
+                )
+                moved |= set(spellings.values())
+                parted = [r for r in parted if {r.source_id, r.target_id} & moved]
+            rewired = sorted(moved)
             if (not any(held) and not parted) or attempt == 3:
                 self.underived_items += len(set(derived.underived))
                 return derived.model_copy(
@@ -944,6 +953,43 @@ class IndexingManager:
                 )
         self.underived_items += len(set(derived.underived))
         return derived
+
+    def _leftover_spellings(
+        self,
+        suffix: str,
+        derived: Sequence[Entity],
+        spellings: Mapping[str, str],
+        edges: Sequence[Relationship],
+    ) -> dict[str, str]:
+        """The ``{part: whole}`` of ``spellings`` whose whole holds an edge
+        among ``edges``, or a stored claim, that cites a unit of the part:
+        what a split a killed run left half-written leaves behind."""
+        units_of = {e.id: set(e.text_unit_ids or []) for e in derived}
+        left: dict[str, str] = {}
+        for part, whole in spellings.items():
+            units = units_of.get(part, set())
+            if any(
+                whole in (r.source_id, r.target_id)
+                and units.intersection(r.text_unit_ids or [])
+                for r in edges
+            ):
+                left[part] = whole
+        pending = {p: w for p, w in spellings.items() if p not in left}
+        if pending:
+            prefix = self.config.indexing.opensearch.claims_index_prefix
+            for part, whole in pending.items():
+                part_units = sorted(units_of.get(part, set()))
+                citing = (
+                    self.opensearch_indexer.find_documents(
+                        prefix, "text_unit_ids", part_units, suffix
+                    )
+                    or {}
+                    if part_units
+                    else {}
+                )
+                if citing and set(citing) & set(self._claims_about(suffix, [whole])):
+                    left[part] = whole
+        return left
 
     def _read_held(
         self, suffix: str, ids: list[str]

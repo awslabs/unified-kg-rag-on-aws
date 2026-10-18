@@ -585,3 +585,32 @@ def test_a_resumed_split_moves_an_edge_of_a_spelling_sharing_no_unit(
 
     assert ("Initech Corp", "Depot") in {e[:2] for e in full["edges"]}
     assert incremental == full
+
+
+def test_a_spelling_kept_apart_is_not_rewritten_by_a_delta_of_the_other(
+    tmp_path: Path, mocker: Any
+) -> None:
+    # "Acme" (an organization) and "Acme Inc" (a location) share a name key
+    # but a full build keeps them apart. A document about "Acme" must not
+    # derive, rewrite and re-embed "Acme Inc"'s edges and claims: none of
+    # them cites a unit "Acme" is stated in, so there is no half-written
+    # split to finish. Each is written once, by the first run.
+    first = {
+        "a.txt": "Acme and Depot trade goods 1.",
+        "b.txt": "Acme Inc and Buyer trade cash 1.",
+    }
+    second = {**first, "c.txt": "Acme and Carrier trade goods 2."}
+    edges = mocker.spy(SQLiteGraphIndexer, "upsert_relationships")
+    claims = mocker.spy(OpenSearchIndexer, "upsert_claims")
+
+    incremental = _state(tmp_path / "inc", [first, second])
+
+    written = [
+        (r.source_name, r.target_name)
+        for call in edges.call_args_list
+        for r in call.args[1]
+    ]
+    stated = [c.subject_name for call in claims.call_args_list for c in call.args[1]]
+    assert written.count(("Acme Inc", "Buyer")) == 1
+    assert stated.count("Acme Inc") == 1
+    assert incremental == _state(tmp_path / "full", [second])

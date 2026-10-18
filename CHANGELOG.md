@@ -1721,6 +1721,14 @@ changed once with the full-config keys (#332).
   A run touching an entity now also derives the stored edges of the other
   spellings of its name (a full build keeping them apart leaves those
   edges as they are), at the cost of reading them (#364).
+- A delta touching one of two spellings a full build keeps apart (same
+  name key, different types) no longer re-derives, rewrites and re-embeds
+  the other spelling's whole neighbourhood and claims (#364 did, for every
+  such delta). Only a spelling holding a leftover of a split a killed run
+  left half-written (an edge or claim citing a unit of the split-off part)
+  is rederived. A one-document add to a 3,000-document corpus with such a
+  pair: 4,259 embedded texts and 948 entities, 1,196 edges and 1,179 claims
+  written, now 15 texts and 4, 20 and 1 (#PR).
 - Removing a document no longer leaves its text unnoticed in community
   reports: a kept report that cites a removed text unit is counted in the
   `community_drift` metrics (`outdated_reports`, deletion-only runs

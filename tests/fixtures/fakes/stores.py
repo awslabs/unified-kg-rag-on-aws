@@ -542,7 +542,9 @@ class FakeVectorStore(_Recorder):
         values: list[str],
         suffix: str | None = None,
     ) -> dict[str, list[str]] | None:
-        oc = self.opensearch_config
+        # Without a config, the default prefixes (what an IndexingManager on
+        # a default Config passes).
+        oc = self.opensearch_config or Config().indexing.opensearch
         collection = {
             getattr(oc, f"{name}_index_prefix", name.replace("_", "-")): name
             for name in (
