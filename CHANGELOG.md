@@ -1630,7 +1630,7 @@ changed once with the full-config keys (#332).
   citing them, since on Neptune the lookup scans the suffix's edges (an edge
   holds its text units as one string). A removal whose deletion of the
   removed items failed strips no shared item, so the retry starts over
-  (#PR).
+  (#363).
 - Removing a document no longer leaves its text unnoticed in community
   reports: a kept report that cites a removed text unit is counted in the
   `community_drift` metrics (`outdated_reports`, deletion-only runs
