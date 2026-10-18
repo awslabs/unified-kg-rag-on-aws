@@ -206,6 +206,90 @@ class TestGenerateReportsAttachesLineage:
         assert reports[0].document_ids == ["d1"]
 
 
+class TestReportFilters:
+    """A report's document filters are its own text units', not one entity's."""
+
+    def test_each_report_carries_its_own_documents_filters(
+        self, config: Config, indexer, mocker
+    ) -> None:
+        # Regression: every report copied the attributes of the graph's first
+        # node, so a report of logistics documents carried the contract
+        # filters (and the entity's own attributes) and an attribute filter
+        # kept or dropped it by that entity's documents.
+        detector = CommunityDetector.__new__(CommunityDetector)
+        detector.config = config
+        detector.community_detection_config = config.graph.community_detection
+        detector.community_detection_config.report_generation.enabled = True
+        detector.community_detection_config.report_generation.enable_sub_community_rollup = (
+            False
+        )
+        detector.ignore_errors = False
+        detector.show_progress = False
+        detector.graph = nx.Graph()
+        detector.graph.add_node(
+            "e1",
+            attributes={
+                "index": "tenant-a",
+                "filters": {"category": "contract"},
+                "role": "vendor",
+            },
+        )
+        detector.report_generator = mocker.Mock()
+        detector.batch_processor = mocker.Mock()
+        detector.batch_processor.execute_with_fallback.return_value = [
+            {"community_name": "Supply", "summary": "A vendor supplies a buyer."}
+        ] * 3
+        mocker.patch.object(CommunityDetector, "_prepare_report_input", return_value={})
+        mocker.patch.object(detector_module, "estimate_token_count", return_value=1)
+        units = [
+            TextUnit(
+                id="t1", text="a", attributes={"filters": {"category": "contract"}}
+            ),
+            TextUnit(
+                id="t2", text="b", attributes={"filters": {"category": "logistics"}}
+            ),
+            TextUnit(id="t3", text="c"),
+        ]
+
+        reports, _ = detector.generate_reports(
+            [
+                _community("c1", ["t1"]),
+                _community("c2", ["t2"]),
+                _community("c3", ["t3"]),
+            ],
+            text_units=units,
+        )
+
+        by_community = {r.community_id: r for r in reports}
+        docs = {
+            cid: indexer._prepare_common_doc_properties(r)
+            for cid, r in by_community.items()
+        }
+        assert docs["c1"].get("attr_category") == "contract"
+        assert docs["c2"].get("attr_category") == "logistics"
+        # No document filters: the report has none (an attribute filter
+        # excludes it), and no entity's own attribute leaks onto any report.
+        assert "attr_category" not in docs["c3"]
+        for report in reports:
+            assert report.attributes["index"] == "tenant-a"
+            assert "role" not in report.attributes
+
+    def test_a_report_of_several_documents_carries_all_their_values(self) -> None:
+        report = _report("c1")
+        units = [
+            TextUnit(
+                id="t1", text="a", attributes={"filters": {"category": "contract"}}
+            ),
+            TextUnit(
+                id="t2", text="b", attributes={"filters": {"category": "logistics"}}
+            ),
+        ]
+        CommunityDetector._attach_report_lineage(
+            [report], [_community("c1", ["t1", "t2"])], units
+        )
+        assert report.attributes["filters"] == {"category": ["contract", "logistics"]}
+
+
 class TestLineageRoundTrip:
     def test_mapping_declares_both_lineage_fields_as_keyword(self, indexer) -> None:
         properties = indexer._get_community_reports_mapping()["mappings"]["properties"]

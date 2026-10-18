@@ -2984,6 +2984,14 @@ changed once with the full-config keys (#332).
   seeds likewise. local, mix, hybrid, DRIFT and simple returned
   relationships from excluded documents, even for a filter no document
   matches (#354).
+- A community report's document filters (`attr_<key>`, `attributes.filters.*`)
+  are the union of its own text units' document filters. Every report copied
+  the attributes of the graph's first entity, so an attribute filter kept or
+  dropped reports by that entity's documents (8 of 13 reports carried the
+  wrong category on a synthetic corpus), and each report carried that
+  entity's own attributes. A report without document filters has none and an
+  attribute filter excludes it. Re-index (`indexing.reset: true`) to rewrite
+  stored reports (#PR).
 - A guardrail-blocked answer no longer returns the evidence behind it:
   `sources` and `search_results.results` are empty (they carried the
   retrieved text the refused answer was built from). Masking covers the
