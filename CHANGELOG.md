@@ -1247,6 +1247,9 @@ changed once with the full-config keys (#332).
   before graph copies, and the incremental switch is
   `providers.doc_status.enabled` (#350).
   `providers.doc_status.enabled` (#351).
+- `run-visualization` exits 2 (usage error) on a data file that is not
+  valid exported visualization JSON, as `run-eval` does on an invalid
+  dataset, instead of 1 (#PR).
 - `run-ingestion --output-format json` names the `pipeline_id` in the
   interrupted status document, so a stopped run can be resumed with
   `--pipeline-id` without reading the logs (#PR).

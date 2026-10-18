@@ -1517,7 +1517,7 @@ Every CLI (`run-ingestion`, `run-rag`, `run-eval`, `run-visualization`,
 |---|---|
 | `0` | Success |
 | `1` | The run failed: a failed stage or query (in `run-ingestion` also a `ConfigurationError` found while running, e.g. an incremental run into an index built with the registry off), a breached `--max-failure-rate`, a failed upload, nothing rendered |
-| `2` | Usage or configuration error: a bad flag, a missing input, an invalid config file or override, an unset store endpoint (all before any work), or, outside `run-ingestion`, a `ConfigurationError` found while running |
+| `2` | Usage or configuration error: a bad flag, a missing or invalid input (a `run-eval` dataset, a `run-visualization` data file), an invalid config file or override, an unset store endpoint (all before any work), or, outside `run-ingestion`, a `ConfigurationError` found while running |
 | `130` | Interrupted with Ctrl-C (SIGINT) |
 | `143` | Stopped by SIGTERM (ECS `StopTask`, a Step Functions timeout); `run-ingestion` checkpoints its finished stages first, and `run-eval` uploads the finished runs' results to an `s3://` output (or keeps them locally and logs the path) |
 

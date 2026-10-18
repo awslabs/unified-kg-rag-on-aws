@@ -303,6 +303,28 @@ def test_a_missing_input_file_is_a_usage_error(
     assert exc.value.code == 2
 
 
+@pytest.mark.parametrize("content", ["{bad", "[]", '{"nodes": [{}]}'])
+def test_an_invalid_visualization_data_file_is_a_usage_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, content: str
+) -> None:
+    # Before, it exited 1, while run-eval exits 2 on an invalid dataset.
+    data = tmp_path / "bad.json"
+    data.write_text(content)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run-visualization",
+            "--data-path",
+            str(data),
+            "--output-directory",
+            str(tmp_path / "out"),
+        ],
+    )
+    monkeypatch.setattr(run_visualization, "load_cli_config", lambda _args: Config())
+    assert run_visualization.main() == 2
+
+
 def _raise_config_error(*_args: object, **_kwargs: object) -> None:
     raise ConfigurationError("index built with the registry off")
 
