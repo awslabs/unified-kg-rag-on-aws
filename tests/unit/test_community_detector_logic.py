@@ -351,7 +351,7 @@ class TestSmallComponents:
         skipped = _detector(auto_resolution=False)(graph)
         assert len(skipped.unclustered) == 60
         monkeypatch.setattr(
-            CommunityDetector, "_small_component_nodes", lambda self, g: set()
+            CommunityDetector, "_small_component_nodes", lambda self, g, a: set()
         )
         every = _detector(auto_resolution=False)(graph).generate_community_objects()
         assert {c.id for c in skipped.generate_community_objects()} == {
@@ -372,6 +372,26 @@ class TestSmallComponents:
         cd = _detector()(g)
         assert cd.generate_community_objects() == []
         assert g.number_of_nodes() == 3  # the caller's graph is left as it is
+
+    def test_a_small_component_touching_a_stored_entity_is_clustered(self) -> None:
+        # An incremental run's graph is its delta: "a" - "new" is a pair here,
+        # but "a" is stored, so the whole graph clusters it with a's neighbours.
+        g = nx.Graph()
+        g.add_edge("a", "new")
+        g.add_node("lonely")
+        asked: list[list] = []
+
+        def stored(ids: list) -> set:
+            asked.append(ids)
+            return {"a"}
+
+        cd = _detector()(g, stored)
+        assert asked == [["a", "lonely", "new"]]
+        assert cd.unclustered == {"lonely"}
+        clustered = {
+            n for c in cd.generate_community_objects() for n in c.entity_ids or []
+        }
+        assert clustered == {"a", "new"}
 
 
 class TestCanonicalOrder:

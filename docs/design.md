@@ -387,7 +387,10 @@ gets its models and stores from the run's `Providers` bundle.
   communities under `min_community_size` merge into their strongest neighbour.
   A connected component smaller than `min_community_size` (an isolated
   entity, a pair) gets no community or report; only these are skipped, unlike
-  MS GraphRAG's `use_lcc`, which drops every component but the largest. A
+  MS GraphRAG's `use_lcc`, which drops every component but the largest. On an
+  incremental run, whose graph is only the delta, a small component touching
+  an entity the graph store holds from other text units is clustered, as in
+  the whole graph. A
   parent identical to its only child is never created, so each distinct
   community is reported once. A Leiden failure fails the stage instead of
   truncating the hierarchy.

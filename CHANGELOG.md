@@ -1278,6 +1278,12 @@ changed once with the full-config keys (#332).
   coverage are skipped as `guardrail_blocked`. The strategy comparison
   reports each strategy's `guardrail_blocked_counts` and warns when they
   differ, and `run-eval --output-format json` includes them per run (#353).
+- An incremental run clusters a small delta component that touches a stored
+  entity: a new entity whose only relationship is to an existing one was a
+  pair in the delta graph and got no community or report since components
+  under `min_community_size` are left out, where a full build clusters it with
+  its stored neighbour. The community stage reads the stored entities of the
+  small components' members (one graph read by id) on incremental runs (#PR).
 - Global search no longer answers silently from unjudged reports when its map
   step fails: an unrated batch (a failed or unparseable map call) is recorded
   in the search metadata (`degraded_error`), and when every map call failed,
