@@ -51,7 +51,10 @@ NAMES = (
     "Depot",
     "Carrier",
     "Acme Inc",
+    "ACME Inc",
     "Acme Corp",
+    "Acme Ltd",
+    "Acme LLC",
     "Acme",
 )
 TYPES = {"goods": "ORGANIZATION", "parts": "PERSON", "cash": "LOCATION"}
@@ -320,6 +323,31 @@ def _state(
             ],
             id="a-claim-names-the-spelling-its-unit-states",
         ),
+        pytest.param(
+            [
+                {"d1.txt": "ACME Inc and Acme and Buyer trade goods 1."},
+                {
+                    "d1.txt": "ACME Inc and Acme and Buyer trade goods 1.",
+                    "d2.txt": "Acme Corp trade cash 1.",
+                    "r2.txt": "Acme Ltd and Acme and Acme Corp trade parts 3.",
+                },
+            ],
+            id="a-claim-resolves-with-the-other-spellings-the-run-derived",
+        ),
+        pytest.param(
+            [
+                {
+                    "r6.txt": "ACME Inc trade cash 2. Initech and Buyer and ACME Inc "
+                    "trade cash 2.",
+                    "d1.txt": "Buyer and Acme Inc trade cash 3.",
+                },
+                {
+                    "r6.txt": "ACME Inc trade cash 2. Initech and Buyer and ACME Inc "
+                    "trade cash 2."
+                },
+            ],
+            id="a-claim-names-an-entity-renamed-under-its-id",
+        ),
     ],
 )
 def test_incremental_runs_over_two_spellings_match_a_full_build(
@@ -584,4 +612,55 @@ def test_a_resumed_split_moves_an_edge_of_a_spelling_sharing_no_unit(
     )
 
     assert ("Initech Corp", "Depot") in {e[:2] for e in full["edges"]}
+    assert incremental == full
+
+
+def test_a_spelling_kept_apart_is_not_rewritten_by_a_delta_of_the_other(
+    tmp_path: Path, mocker: Any
+) -> None:
+    # "Acme" (an organization) and "Acme Inc" (a location) share a name key
+    # but a full build keeps them apart. A document about "Acme" must not
+    # derive, rewrite and re-embed "Acme Inc"'s edges and claims: none of
+    # them cites a unit "Acme" is stated in, so there is no half-written
+    # split to finish. Each is written once, by the first run.
+    first = {
+        "a.txt": "Acme and Depot trade goods 1.",
+        "b.txt": "Acme Inc and Buyer trade cash 1.",
+    }
+    second = {**first, "c.txt": "Acme and Carrier trade goods 2."}
+    edges = mocker.spy(SQLiteGraphIndexer, "upsert_relationships")
+    claims = mocker.spy(OpenSearchIndexer, "upsert_claims")
+
+    incremental = _state(tmp_path / "inc", [first, second])
+
+    written = [
+        (r.source_name, r.target_name)
+        for call in edges.call_args_list
+        for r in call.args[1]
+    ]
+    stated = [c.subject_name for call in claims.call_args_list for c in call.args[1]]
+    assert written.count(("Acme Inc", "Buyer")) == 1
+    assert stated.count("Acme Inc") == 1
+    assert incremental == _state(tmp_path / "full", [second])
+
+
+def test_an_edge_the_derivation_drops_is_not_rewritten_as_a_stored_one(
+    tmp_path: Path,
+) -> None:
+    # Gleaning links "Acme LLC" to "Acme Inc" in d1.txt. After the first run
+    # that edge runs from "Acme LLC" to "Acme" (Acme Inc merged into it);
+    # d2.txt makes "Acme LLC" and "Acme Inc" one entity, so the derivation
+    # drops the edge as a self-loop. Re-pointed with its re-keyed endpoint,
+    # it was written back among the entity's other stored edges and so not
+    # deleted.
+    d1 = (
+        "Acme LLC and Acme Corp and Acme trade cash 2. Acme Inc and Acme LLC "
+        "trade goods 3."
+    )
+    runs = [{"d1.txt": d1}, {"d1.txt": d1, "d2.txt": "Acme Inc trade goods 2."}]
+
+    full = _state(tmp_path / "full", [runs[-1]], gleaning=True)
+    incremental = _state(tmp_path / "inc", runs, gleaning=True)
+
+    assert not any("deals with" in (e[3] or "") for e in full["edges"])
     assert incremental == full

@@ -326,3 +326,126 @@ def test_nothing_is_stripped_until_the_removed_units_are_deleted(mocker) -> None
 
     assert results == {"x": failed}
     assert strip.call_count == 0
+
+
+def test_a_claim_left_on_the_other_spelling_marks_a_leftover_split() -> None:
+    # A split a killed run left half-written leaves the claims it did not
+    # rewrite on the other spelling, citing the split-off part's units. Only
+    # such a spelling is rederived; one with neither such an edge nor such a
+    # claim (a full build keeps the two apart) is left as stored.
+    from unified_kg_rag.domain.models import Claim
+
+    manager, _, vector = _manager()
+    part = Entity(id="e-part", name="Acme Inc", text_unit_ids=["t-part"])
+    vector.upsert_claims(
+        [
+            Claim(
+                id="c-left",
+                subject_id="e-whole",
+                subject_name="Acme",
+                object_name="100",
+                type="PAYS",
+                text_unit_ids=["t-part"],
+            ),
+            Claim(
+                id="c-own",
+                subject_id="e-apart",
+                subject_name="Acme",
+                object_name="200",
+                type="PAYS",
+                text_unit_ids=["t-apart"],
+            ),
+        ]
+    )
+
+    left = manager._leftover_spellings(
+        "default", [part], {"e-part": "e-whole"}, edges=[]
+    )
+    kept_apart = manager._leftover_spellings(
+        "default", [part], {"e-part": "e-apart"}, edges=[]
+    )
+
+    assert left == {"e-part": "e-whole"}
+    assert kept_apart == {}
+
+
+def test_only_a_deleted_communitys_id_leaves_a_stripped_entity() -> None:
+    # Removing t1 deletes "c-only" (it cites no other unit) and keeps
+    # "c-both": the stripped entity drops the one id, not both.
+    manager, graph, vector = _manager()
+    vector.upsert_text_units(
+        [TextUnit(id=unit, text="...", document_ids=["d"]) for unit in ("t1", "t2")]
+    )
+    graph.upsert_communities(
+        [
+            Community(
+                id=cid, name=cid, level="0", parent="", children=[], text_unit_ids=units
+            )
+            for cid, units in (("c-only", ["t1"]), ("c-both", ["t1", "t2"]))
+        ]
+    )
+    graph.upsert_entities(
+        [
+            Entity(
+                id="e",
+                name="E",
+                text_unit_ids=["t1", "t2"],
+                community_ids=["c-only", "c-both"],
+            )
+        ]
+    )
+
+    manager.remove_text_units("default", ["t1"])
+
+    (entity,) = graph.read_entities(["e"])
+    assert entity.community_ids == ["c-both"]
+
+
+def test_a_claim_the_derivation_drops_is_retired(mocker) -> None:
+    # A stored claim no claim of its units corresponds to is deleted with the
+    # retired ids, once the run's writes succeeded.
+    from unified_kg_rag.domain.ingestion.derivation import Derived
+    from unified_kg_rag.domain.models import Claim
+
+    manager, _, _ = _manager()
+    stale = Claim(
+        id="stale",
+        subject_id="e",
+        subject_name="E",
+        object_name="x",
+        type="PAYS",
+        text_unit_ids=["t1"],
+    )
+    mocker.patch.object(manager, "derive", return_value=Derived(dropped=["stale"]))
+
+    assert manager._derive_claims("default", [stale]) == []
+    assert "stale" in manager._dropped["default"]
+
+
+def test_a_deleted_community_leaves_a_kept_text_unit_naming_it() -> None:
+    # A later delta wrote "c" anew under its id without t2, which still names
+    # it; once "c" goes with t1, t2 names it no more.
+    manager, graph, vector = _manager()
+    vector.upsert_text_units(
+        [
+            TextUnit(id="t1", text="...", document_ids=["d"], community_ids=["c"]),
+            TextUnit(id="t2", text="...", document_ids=["e"], community_ids=["c"]),
+        ]
+    )
+    graph.upsert_communities(
+        [
+            Community(
+                id="c",
+                name="c",
+                level="0",
+                parent="",
+                children=[],
+                text_unit_ids=["t1"],
+            )
+        ]
+    )
+
+    manager.remove_text_units("default", ["t1"])
+
+    assert graph.ids("communities") == set()
+    assert vector.data["text_units"]["t2"].community_ids == []

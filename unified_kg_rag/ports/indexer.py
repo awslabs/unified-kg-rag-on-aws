@@ -471,6 +471,14 @@ class VectorIndexer(BaseIndexer):
         """
         return None
 
+    def prune_text_unit_communities(
+        self, community_ids: list[str], suffix: str | None = None
+    ) -> IndexingStats:
+        """Remove ``community_ids`` (deleted communities) from the
+        ``community_ids`` of ``suffix``'s stored text units. Default does
+        nothing; adapters that override it raise when the read fails."""
+        return IndexingStats()
+
     def read_text_unit_ids(
         self, ids: list[str], suffix: str | None = None
     ) -> list[str] | None:

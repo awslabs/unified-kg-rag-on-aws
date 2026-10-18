@@ -77,7 +77,16 @@ def _vector_content(item: Entity | Relationship) -> tuple[Any, ...]:
 
 
 def _claim_text(claim: Claim) -> tuple[Any, ...]:
-    return claim.type, claim.status, claim.description, claim.source_text
+    """What a claim states beyond its lineage: its text and the names of the
+    entities it is about (a renamed entity renames them)."""
+    return (
+        claim.type,
+        claim.status,
+        claim.description,
+        claim.source_text,
+        claim.subject_name,
+        claim.object_name,
+    )
 
 
 def _other_spellings(
@@ -201,6 +210,9 @@ class IndexingManager:
         # By suffix, the entities derivation split off a stored one -> its id
         # (``Derived.split_from``): the stored claims about it follow them.
         self._split_from: dict[str, dict[str, str]] = {}
+        # Stored entities a derivation of this run renamed under their id (a
+        # case or spelling variant won): their claims name them anew.
+        self._renamed: dict[str, set[str]] = {}
         # Ids of the stored edges this run rewrites for their rank only.
         self._rank_only: set[str] = set()
         # The suffixes whose graph merge found nothing stored.
@@ -599,12 +611,15 @@ class IndexingManager:
         derived too, so they follow its new id (ids follow the current name,
         see ``derivation``).
         """
-        if not (claims or self._rekeyed or self._split_from):
+        if not (claims or self._rekeyed or self._split_from or self._renamed):
             return claims
         groups = self._group_by_suffix(claims or [])
         merged: list[Claim] = []
         for suffix in sorted(
-            groups.keys() | self._rekeyed.keys() | self._split_from.keys()
+            groups.keys()
+            | self._rekeyed.keys()
+            | self._split_from.keys()
+            | self._renamed.keys()
         ):
             group = groups.get(suffix, [])
             stored = self.opensearch_indexer.read_claims(
@@ -743,6 +758,7 @@ class IndexingManager:
                 relationships=list(merged_relationships),
             )
         rekey = derived.id_remap
+        self._note_renamed(suffix, derived.entities, existing)
 
         def final_id(delta_id: str, merged_into: Mapping[str, str]) -> str:
             """The id a delta item ends under: the stored one it merged into
@@ -774,6 +790,7 @@ class IndexingManager:
             stored_relationships=[*existing_rels, *relationships],
             rekey=rekey,
             rewired=set(derived.rewired),
+            dropped=derived.dropped,
         )
         # A delta id the merge folded into a stored item of another id has no
         # graph copy (the stored one of that id would have been merged), but
@@ -889,10 +906,11 @@ class IndexingManager:
             # Another spelling of a derived entity: a run that split them and
             # died before their edges and claims were written leaves those on
             # the other spelling, and only its entity copies record the split
-            # (the two need not share a text unit). Its edges are derived with
-            # them, and its claims follow (``split_from``). Spellings a full
-            # build keeps apart are derived again unchanged, at the cost of
-            # reading their edges.
+            # (the two need not share a text unit). Such a leftover cites a
+            # unit of the spelling it belongs to: only a spelling holding one
+            # is rederived (all its edges, and its claims follow through
+            # ``split_from``). A spelling a full build keeps apart holds none,
+            # and is left as stored.
             spellings = (
                 {
                     part: whole
@@ -904,18 +922,26 @@ class IndexingManager:
                 if not claims
                 else {}
             )
-            rewired = sorted({*derived.rewired, *spellings.values()})
+            moved = set(derived.rewired)
+            candidates = sorted({*moved, *spellings.values()})
             parted: list[Relationship] = []
-            if rewired and not claims:
+            if candidates and not claims:
                 incident = set(
                     self.neptune_indexer.find_incident_relationship_ids(
-                        rewired, suffix=suffix
+                        candidates, suffix=suffix
                     )
                 )
                 if incident - given:
                     parted = self.neptune_indexer.read_relationships(
                         sorted(incident - given), suffix=suffix
                     )
+            if spellings:
+                spellings = self._leftover_spellings(
+                    suffix, derived.entities, spellings, parted
+                )
+                moved |= set(spellings.values())
+                parted = [r for r in parted if {r.source_id, r.target_id} & moved]
+            rewired = sorted(moved)
             if (not any(held) and not parted) or attempt == 3:
                 self.underived_items += len(set(derived.underived))
                 return derived.model_copy(
@@ -944,6 +970,43 @@ class IndexingManager:
                 )
         self.underived_items += len(set(derived.underived))
         return derived
+
+    def _leftover_spellings(
+        self,
+        suffix: str,
+        derived: Sequence[Entity],
+        spellings: Mapping[str, str],
+        edges: Sequence[Relationship],
+    ) -> dict[str, str]:
+        """The ``{part: whole}`` of ``spellings`` whose whole holds an edge
+        among ``edges``, or a stored claim, that cites a unit of the part:
+        what a split a killed run left half-written leaves behind."""
+        units_of = {e.id: set(e.text_unit_ids or []) for e in derived}
+        left: dict[str, str] = {}
+        for part, whole in spellings.items():
+            units = units_of.get(part, set())
+            if any(
+                whole in (r.source_id, r.target_id)
+                and units.intersection(r.text_unit_ids or [])
+                for r in edges
+            ):
+                left[part] = whole
+        pending = {p: w for p, w in spellings.items() if p not in left}
+        if pending:
+            prefix = self.config.indexing.opensearch.claims_index_prefix
+            for part, whole in pending.items():
+                part_units = sorted(units_of.get(part, set()))
+                citing = (
+                    self.opensearch_indexer.find_documents(
+                        prefix, "text_unit_ids", part_units, suffix
+                    )
+                    or {}
+                    if part_units
+                    else {}
+                )
+                if citing and set(citing) & set(self._claims_about(suffix, [whole])):
+                    left[part] = whole
+        return left
 
     def _read_held(
         self, suffix: str, ids: list[str]
@@ -1011,6 +1074,7 @@ class IndexingManager:
         stored_relationships: Sequence[Relationship] = (),
         rekey: Mapping[str, str] | None = None,
         rewired: Collection[str] = (),
+        dropped: Collection[str] = (),
     ) -> tuple[list[Entity], list[Relationship]]:
         """Summarize, rank and complete derived items for writing.
 
@@ -1037,7 +1101,9 @@ class IndexingManager:
         entities, relationships = self._rank_with_stored_graph(
             suffix, entities, relationships, rekey, rewired
         )
-        written = {r.id for r in relationships} | set(rekey)
+        # The edges the derivation dropped go with the retired ids: they are
+        # not rewritten as other stored edges of the touched entities.
+        written = {r.id for r in relationships} | set(rekey) | set(dropped)
         extra_ids = sorted(
             set(
                 self.neptune_indexer.find_incident_relationship_ids(
@@ -1190,13 +1256,25 @@ class IndexingManager:
 
     def _rederived_entity_ids(self, suffix: str) -> list[str]:
         """The stored entity ids whose claims this run derives again: the
-        re-keyed ones and those an entity was split off."""
+        re-keyed ones, those an entity was split off and those renamed."""
         return sorted(
             {
                 *self._rekeyed.get(suffix, {}),
                 *self._split_from.get(suffix, {}).values(),
+                *self._renamed.get(suffix, set()),
             }
         )
+
+    def _note_renamed(
+        self, suffix: str, derived: Sequence[Entity], stored: Sequence[Entity]
+    ) -> list[str]:
+        """Record (and return) the stored entities ``derived`` renamed under
+        their own id."""
+        names = {e.id: e.name for e in stored}
+        renamed = [e.id for e in derived if e.id in names and names[e.id] != e.name]
+        if renamed:
+            self._renamed.setdefault(suffix, set()).update(renamed)
+        return renamed
 
     def delete_retired_ids(self) -> dict[str, IndexingStats]:
         """Delete the items whose ids a derivation replaced (see
@@ -1216,6 +1294,7 @@ class IndexingManager:
         self._rekeyed.clear()
         self._dropped.clear()
         self._split_from.clear()
+        self._renamed.clear()
         self._fresh.clear()
         self._rank_only.clear()
         self._derived_entities.clear()
@@ -1232,6 +1311,7 @@ class IndexingManager:
         self._rekeyed.clear()
         self._dropped.clear()
         self._split_from.clear()
+        self._renamed.clear()
         self._fresh.clear()
         self._rank_only.clear()
         self._derived_entities.clear()
@@ -1397,18 +1477,21 @@ class IndexingManager:
                 stored_relationships=relationships,
                 rekey=derived.id_remap,
                 rewired=set(derived.rewired),
+                dropped=derived.dropped,
             )
             self._retire(suffix, derived.id_remap, derived.split_from, derived.dropped)
             self._derived_entities.setdefault(suffix, {}).update(
                 {e.id: e for e in new_entities}
             )
-            # The stored claims about a re-keyed or split entity follow it.
+            # The stored claims about a re-keyed, split or renamed entity
+            # follow it.
+            renamed = self._note_renamed(suffix, derived.entities, entities)
             claim_ids = sorted(
                 {
                     *claim_ids,
                     *self._claims_about(
                         suffix,
-                        [*derived.id_remap, *derived.split_from.values()],
+                        [*derived.id_remap, *derived.split_from.values(), *renamed],
                     ),
                 }
             )
@@ -1595,6 +1678,16 @@ class IndexingManager:
         entities += [
             derived_entities[i] for i in sorted(entity_ids) if i in derived_entities
         ]
+        # The other spellings of their names this run derived (not stored
+        # yet): their text units' records decide, with the claims' own,
+        # which spelling a claim's subject and object resolve to.
+        keys = {compact_name_key(e.name) for e in entities}
+        given = {e.id for e in entities}
+        entities += [
+            e
+            for i, e in sorted(derived_entities.items())
+            if i not in given and compact_name_key(e.name) in keys
+        ]
         derived = self.derive(
             suffix,
             entities,
@@ -1765,6 +1858,13 @@ class IndexingManager:
             # Strip nothing until the removed text units are gone: a retry
             # tells a removal that got further by their missing copies.
             return results
+        deleted_communities = [i for i, u in communities.items() if gone(u)]
+        if deleted_communities:
+            # A kept text unit may still name one: a later delta wrote the
+            # community anew under its id without that unit.
+            results[f"opensearch_text_unit_communities_{suffix}"] = (
+                vector.prune_text_unit_communities(deleted_communities, suffix)
+            )
         if shared_entities or shared_relationships or shared_claims:
             results.update(
                 self.remove_text_units_from_shared(
@@ -1773,7 +1873,7 @@ class IndexingManager:
                     relationship_ids=shared_relationships,
                     text_unit_ids=text_unit_ids,
                     claim_ids=shared_claims,
-                    community_ids=[i for i, u in communities.items() if gone(u)],
+                    community_ids=deleted_communities,
                 )
             )
         return results

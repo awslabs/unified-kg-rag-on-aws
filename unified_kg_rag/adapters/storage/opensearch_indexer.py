@@ -692,6 +692,35 @@ class OpenSearchIndexer(VectorIndexer):
             self.opensearch_config.relationships_index_prefix, ids, suffix
         )
 
+    def prune_text_unit_communities(
+        self, community_ids: list[str], suffix: str | None = None
+    ) -> IndexingStats:
+        """Remove deleted communities' ids from the stored text units naming
+        them (see the port), in place."""
+        prefix = self.opensearch_config.text_units_index_prefix
+        found = self.find_documents(prefix, "community_ids", community_ids, suffix)
+        if not found:
+            return IndexingStats()
+        gone = set(community_ids)
+        units = [
+            TextUnit.model_validate(
+                {
+                    "id": source["id"],
+                    "text": "",
+                    "community_ids": [
+                        c for c in source.get("community_ids") or [] if c not in gone
+                    ],
+                    "attributes": {Constants.INDEX.value: suffix} if suffix else None,
+                }
+            )
+            for source in self._read_sources(
+                prefix, sorted(found), suffix, fields=["id", "community_ids"]
+            )
+        ]
+        return self._update_fields(
+            units, prefix, lambda u: {"community_ids": list(u.community_ids or [])}
+        )
+
     def read_text_unit_attributes(
         self, ids: list[str], suffix: str | None = None
     ) -> dict[str, dict[str, Any]]:

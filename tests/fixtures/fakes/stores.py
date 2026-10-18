@@ -488,6 +488,22 @@ class FakeVectorStore(_Recorder):
             if i in bucket and BaseIndexer.get_suffix(bucket[i]) == wanted
         }
 
+    def prune_text_unit_communities(
+        self, community_ids: list[str], suffix: str | None = None
+    ) -> IndexingStats:
+        wanted = suffix or Constants.DEFAULT_SUFFIX.value
+        gone = set(community_ids)
+        stats = IndexingStats()
+        for unit in self.data.get("text_units", {}).values():
+            if BaseIndexer.get_suffix(unit) == wanted and gone & set(
+                unit.community_ids or []
+            ):
+                unit.community_ids = [
+                    c for c in unit.community_ids or [] if c not in gone
+                ]
+                stats.add_success()
+        return stats
+
     def read_text_unit_ids(
         self, ids: list[str], suffix: str | None = None
     ) -> list[str] | None:
@@ -542,7 +558,9 @@ class FakeVectorStore(_Recorder):
         values: list[str],
         suffix: str | None = None,
     ) -> dict[str, list[str]] | None:
-        oc = self.opensearch_config
+        # Without a config, the default prefixes (what an IndexingManager on
+        # a default Config passes).
+        oc = self.opensearch_config or Config().indexing.opensearch
         collection = {
             getattr(oc, f"{name}_index_prefix", name.replace("_", "-")): name
             for name in (

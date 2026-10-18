@@ -127,3 +127,22 @@ def test_a_tie_goes_to_the_entity_stated_in_the_claims_units() -> None:
     assert resolved is not None and unhinted is not None
     assert resolved.subject_name == "Acme Corp"
     assert unhinted.subject_name == "Acme"
+
+
+def test_the_claim_resolver_breaks_a_tie_on_the_claims_units() -> None:
+    # Through ClaimResolver: it hands each entity's text units to the tie.
+    from unified_kg_rag.domain.ingestion.claim_resolver import ClaimResolver
+    from unified_kg_rag.domain.models import Config, Entity
+
+    entities = [
+        Entity(id="e-acme", name="Acme", text_unit_ids=["u1"]),
+        Entity(id="e-corp", name="Acme Corp", text_unit_ids=["u2"]),
+        Entity(id="e-buyer", name="Buyer", text_unit_ids=["u2"]),
+    ]
+    claim = _claim("Acme Inc", "Buyer").model_copy(update={"text_unit_ids": ["u2"]})
+
+    (resolved,), _ = ClaimResolver(
+        Config(), max_workers=1, use_process_pool=False
+    ).resolve([claim], entities)
+
+    assert resolved.subject_id == "e-corp"

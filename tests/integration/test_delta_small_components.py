@@ -188,3 +188,198 @@ def test_a_deleted_community_leaves_no_id_on_its_surviving_members(
 
 
 no_aws = e2e.no_aws
+
+
+def test_the_walk_stops_at_min_size_on_a_hub(tmp_path: Path, mocker) -> None:
+    # A delta component linked to a hub of 500 stored neighbours reaches
+    # min_community_size within the hub's first edges: the walk reads a
+    # batch of them, not the hub's whole neighbourhood.
+    from unified_kg_rag.application.ingestion import pipeline_stages as ps
+    from unified_kg_rag.domain.models import Entity, Relationship
+
+    config, providers = _setup(tmp_path, None)
+    graph = providers.build_graph_indexer()
+    try:
+        assert isinstance(graph, SQLiteGraphIndexer)
+        graph.initialize()
+        hub = Entity(id="hub", name="Hub", text_unit_ids=["t-hub"])
+        others = [
+            Entity(id=f"o{i}", name=f"Org {i}", text_unit_ids=[f"t{i}"])
+            for i in range(500)
+        ]
+        graph.upsert_entities([hub, *others])
+        graph.upsert_relationships(
+            [
+                Relationship(
+                    id=f"r{i}",
+                    source_id="hub",
+                    target_id=f"o{i}",
+                    text_unit_ids=[f"t{i}"],
+                )
+                for i in range(500)
+            ]
+        )
+        read = mocker.spy(graph, "read_relationships")
+
+        found, _ = ps._components_reaching(graph, [{"hub", "new"}], {}, set(), 3)
+
+        assert found == {"hub", "new"}
+        assert sum(len(call.args[0]) for call in read.call_args_list) <= 64
+    finally:
+        graph.close()
+
+
+def test_a_quarantined_documents_edges_do_not_reach_the_whole_graph(
+    tmp_path: Path,
+) -> None:
+    # The only stored edge from the delta's entity to the rest of the graph
+    # cites a unit of a quarantined document: a full build leaves that
+    # document out, so the component stays small and gets no community.
+    from datetime import datetime
+
+    from tests.fixtures.fakes.doc_status import FakeDocStatusStore
+    from unified_kg_rag.application.ingestion import pipeline_stages as ps
+    from unified_kg_rag.domain.models import (
+        DocStatus,
+        DocStatusRecord,
+        DocumentDelta,
+        Entity,
+        PipelineContext,
+        Relationship,
+    )
+
+    config, providers = _setup(tmp_path, None)
+    graph = providers.build_graph_indexer()
+    try:
+        graph.initialize()
+        graph.upsert_entities(
+            [
+                Entity(id=i, name=i.upper(), text_unit_ids=["t-ok"])
+                for i in ("new", "s1", "s2", "s3")
+            ]
+        )
+        graph.upsert_relationships(
+            [
+                Relationship(
+                    id="r0", source_id="new", target_id="s1", text_unit_ids=["t-q"]
+                ),
+                Relationship(
+                    id="r1", source_id="s1", target_id="s2", text_unit_ids=["t-ok"]
+                ),
+                Relationship(
+                    id="r2", source_id="s2", target_id="s3", text_unit_ids=["t-ok"]
+                ),
+            ]
+        )
+    finally:
+        graph.close()
+    store = FakeDocStatusStore()
+    store.put(
+        DocStatusRecord(
+            doc_id="q",
+            content_hash="h",
+            status=DocStatus.QUARANTINED,
+            suffix="default",
+            text_unit_ids=["t-q"],
+        )
+    )
+    stage = ps.CommunityDetectionStage(config, providers=providers)
+    stage._doc_status = store
+    context = PipelineContext(
+        pipeline_id="pid",
+        config={},
+        status=PipelineStageStatus.RUNNING,
+        start_time=datetime(2026, 1, 1),
+        source_directory=str(tmp_path),
+        resolved_entities=[Entity(id="new", name="NEW", text_unit_ids=["t-new"])],
+        incremental_delta=DocumentDelta(new=["n"], unchanged=["u"], quarantined=["q"]),
+    )
+
+    large = stage._whole_graph(context)
+
+    assert large is not None
+    assert large([{"new"}]) == set()
+
+
+@SUFFIXES
+def test_a_delta_entity_linked_through_another_delta_component_gets_one(
+    tmp_path: Path, no_aws, suffix: str | None
+) -> None:
+    # Vendor - Depot is stored; the delta states Vendor alone and Depot -
+    # Carrier: the whole graph is the path Vendor - Depot - Carrier. The walk
+    # from Vendor read only stored edges, found Vendor - Depot and stopped.
+    stored = {"s.txt": "Vendor and Depot."}
+    runs = [
+        stored,
+        {**stored, "a.txt": "Vendor trades.", "b.txt": "Depot and Carrier."},
+    ]
+    providers, _ = _ingest_all(tmp_path / "incremental", runs, suffix)
+    full, _ = _ingest_all(tmp_path / "full", runs[-1:], suffix)
+
+    assert not _unclustered(full, suffix)
+    assert "Vendor" not in _unclustered(providers, suffix)
+
+
+def test_the_walk_starts_from_another_spelling_of_a_delta_entity(
+    tmp_path: Path,
+) -> None:
+    # "Acme Inc" - Globex is stored; the delta pair is "Acme Corp" - Buyer. A
+    # full build merges the two spellings (same type): Globex, Buyer and the
+    # one Acme are a component of three. The walk seeded by the delta ids
+    # found nothing stored.
+    from unified_kg_rag.application.ingestion import pipeline_stages as ps
+    from unified_kg_rag.domain.models import Entity, Relationship
+
+    _, providers = _setup(tmp_path, None)
+    graph = providers.build_graph_indexer()
+    try:
+        graph.initialize()
+        graph.upsert_entities(
+            [
+                Entity(
+                    id="e-inc",
+                    name="Acme Inc",
+                    type="ORGANIZATION",
+                    text_unit_ids=["t1"],
+                ),
+                Entity(
+                    id="e-globex",
+                    name="Globex",
+                    type="ORGANIZATION",
+                    text_unit_ids=["t1"],
+                ),
+            ]
+        )
+        graph.upsert_relationships(
+            [
+                Relationship(
+                    id="r",
+                    source_id="e-inc",
+                    target_id="e-globex",
+                    text_unit_ids=["t1"],
+                )
+            ]
+        )
+        delta = [
+            Entity(
+                id="e-corp", name="Acme Corp", type="ORGANIZATION", text_unit_ids=["t2"]
+            ),
+            Entity(
+                id="e-buyer", name="Buyer", type="ORGANIZATION", text_unit_ids=["t2"]
+            ),
+        ]
+        component = {"e-corp", "e-buyer"}
+        neighbors = {"e-corp": {"e-buyer"}, "e-buyer": {"e-corp"}}
+
+        found, _ = ps._components_reaching(
+            graph, [component], {}, set(), 3, neighbors, delta
+        )
+        apart = [e.model_copy(update={"type": "PERSON"}) for e in delta]
+        kept_apart, _ = ps._components_reaching(
+            graph, [component], {}, set(), 3, neighbors, apart
+        )
+    finally:
+        graph.close()
+
+    assert found == component
+    assert kept_apart == set()
