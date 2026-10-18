@@ -92,12 +92,17 @@ class _Reports:
 class _Local:
     """Local search: one chunk naming the follow-up query."""
 
-    def __init__(self, empty: set[str] | None = None) -> None:
+    def __init__(
+        self, empty: set[str] | None = None, fail: set[str] | None = None
+    ) -> None:
         self.queries: list[str] = []
         self.empty = empty or set()
+        self.fail = fail  # queries whose search times out (None: all of them)
 
     async def asearch(self, query: SearchQuery, config: Any = None) -> SearchResult:
         self.queries.append(query.query)
+        if self.fail is not None and (not self.fail or query.query in self.fail):
+            raise TimeoutError("search timed out")
         results = (
             []
             if query.query in self.empty
@@ -400,8 +405,27 @@ async def test_one_failed_action_leaves_only_its_answer_out() -> None:
     assert "t:about report 2?" in {r.source for r in result.results}
 
 
+async def test_a_failed_action_search_leaves_only_its_answer_out() -> None:
+    strat = _strategy(local=_Local(fail={"about report 2?"}), n_depth=1)
+    result = await strat.asearch(SearchQuery(query="question"))
+    assert result.metadata["degraded_error"] == "TimeoutError"
+    text = _answers(result)
+    assert "answer to about report 0?" in text
+    assert "about report 2?" not in text
+    assert "about report 2?" not in [c["query"] for c in strat.action.calls]
+
+
+async def test_every_action_search_failing_raises_without_ignore_errors() -> None:
+    strat = _strategy(local=_Local(fail=set()))
+    with pytest.raises(TimeoutError, match="search timed out"):
+        await strat.asearch(SearchQuery(query="question"))
+    assert strat.action.calls == []
+
+
 async def test_a_failed_round_stops_the_rounds() -> None:
-    tree = {f"about report {i}?": (50, [f"next {i}?"]) for i in (0, 2, 4)}
+    tree = {
+        f"about report {i}?": (50, [f"next {i}a?", f"next {i}b?"]) for i in range(6)
+    }
 
     def action(inputs: dict):
         if inputs["query"].startswith("next"):

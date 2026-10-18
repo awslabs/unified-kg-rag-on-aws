@@ -290,6 +290,17 @@ async def test_a_cut_of_exactly_the_cap_is_complete() -> None:
     assert store.calls[0].top_k == 6
 
 
+def test_the_fan_out_uses_the_search_concurrency() -> None:
+    # The map calls and the dynamic selection's ratings are query-time work:
+    # processing.max_concurrency is the ingestion knob.
+    config = Config()
+    config.search.max_concurrency = 3
+    config.processing.max_concurrency = 40
+    strat = GlobalSearchStrategy(config, {})
+    assert strat.max_concurrency == 3
+    assert strat.batch_processor.max_concurrency == 3
+
+
 def test_the_cap_leaves_the_probe_room_in_the_store_page() -> None:
     strat = _strategy(max_reports_per_level=500)
     strat.config.indexing.opensearch.max_query_size = 100
