@@ -406,7 +406,7 @@ Library API (Python callers and custom backends).
   `IncrementalIndexer.write_ahead` no longer takes fingerprints: a run opens
   its attempts with `incremental.open_attempts`. Its `diff` should list the
   unchanged `QUARANTINED` records in `DocumentDelta.quarantined_unchanged`,
-  or a raised `indexing.max_document_attempts` does not retry them (#PR).
+  or a raised `indexing.max_document_attempts` does not retry them (#346).
 - Conversation memory is per chain: a `GraphRAGChain` builds its own
   `MemoryManager` instead of sharing one process-wide manager, and a
   conversation is keyed by index suffix, `user_id` and `conversation_id`
@@ -1285,7 +1285,7 @@ changed once with the full-config keys (#332).
   `log2(n) + 1` runs for one culprit among `n`. A resumed run whose delta
   the registry no longer matches (another run re-indexed or deleted one of
   its documents) or whose runs died often enough to isolate a culprit
-  resumes from document_loading instead (#PR).
+  resumes from document_loading instead (#346).
 - A run that failed with an error (a store outage) no longer counts toward
   quarantine either: three such runs used to make the first healthy run
   quarantine and remove the documents. A changed document whose runs died
@@ -1293,13 +1293,13 @@ changed once with the full-config keys (#332).
   and raising `indexing.max_document_attempts` above a quarantined
   document's deaths retries it, as the setting promised (`DocStatusPort.diff`
   reports the unchanged quarantined records in
-  `DocumentDelta.quarantined_unchanged`) (#PR).
+  `DocumentDelta.quarantined_unchanged`) (#346).
 - A reset whose graph writes partly failed (within
   `indexing.max_failure_rate`) kept the previous graph beside the new one,
   yet recorded the corpus and cleared the replaced documents' records, so
   their vertices and edges were never removed. The skipped drop is now a
   failed write (`neptune_sweep`): the rebuild fails and records nothing, and
-  the next run removes what the previous graph still holds (#PR).
+  the next run removes what the previous graph still holds (#346).
 - A run that lost its namespace's write lease could keep writing: the lease
   was checked once per step, not before the commit's store writes, each
   indexing phase or the rebuild's sweep (which could drop what the new
@@ -1314,7 +1314,7 @@ changed once with the full-config keys (#332).
   requests use short timeouts and 3 attempts, the end of a run no longer
   waits for a hung renewal, a stopped run uploads its checkpoint before it
   releases the lease, and a run downloads its checkpoint only once it holds
-  the lease (#PR).
+  the lease (#346).
 - Two corpora written to one index namespace that hold the same file with
   the same text no longer share text units, so removing one corpus's copy
   keeps the other's (#327).
