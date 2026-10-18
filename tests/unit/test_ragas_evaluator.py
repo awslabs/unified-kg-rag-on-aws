@@ -528,16 +528,14 @@ class TestAevaluateBatch:
             queries, [_result(), _result()], ["", "truth"]
         )
         metrics = rg_module.RagasEvaluator.RAGAS_METRICS
-        assert runs == [
-            (
-                ["B?"],
-                [
-                    metrics[EvaluationMetricType.ANSWER_CORRECTNESS],
-                    metrics[EvaluationMetricType.FAITHFULNESS],
-                ],
-            ),
-            (["A?"], [metrics[EvaluationMetricType.FAITHFULNESS]]),
-        ]
+        # One run per set of metrics, in no particular order.
+        assert {tuple(questions): run for questions, run in runs} == {
+            ("B?",): [
+                metrics[EvaluationMetricType.ANSWER_CORRECTNESS],
+                metrics[EvaluationMetricType.FAITHFULNESS],
+            ],
+            ("A?",): [metrics[EvaluationMetricType.FAITHFULNESS]],
+        }
         assert [r.query_id for r in reports] == ["no-ref", "ref"]
         assert [m.metric_type.value for m in reports[0].metrics] == ["faithfulness"]
         assert reports[0].metadata["skipped_metrics"] == {
@@ -635,7 +633,7 @@ class TestAevaluateBatch:
         reports = await ev.aevaluate_batch(
             queries, [blocked, _result(qid="ok")], ["truth", "truth"]
         )
-        assert runs[1] == (["A?"], ["answer_relevancy"])
+        assert (["A?"], ["answer_relevancy"]) in runs
         assert [m.metric_type.value for m in reports[0].metrics] == ["answer_relevancy"]
         assert reports[0].metadata["skipped_metrics"] == {
             "context_precision": "guardrail_blocked",

@@ -332,10 +332,7 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
             )
             partitions.setdefault(run, []).append(i)
         reports: dict[int, EvaluationReport] = {}
-        # The rows that run the most metrics first (the order RAGAS runs in).
-        for partition_metrics, rows in sorted(
-            partitions.items(), key=lambda item: -len(item[0])
-        ):
+        for partition_metrics, rows in partitions.items():
             row_queries = [queries[i] for i in rows]
             row_results = [results[i] for i in rows]
             if partition_metrics:
