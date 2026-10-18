@@ -468,3 +468,86 @@ def test_a_resumed_merge_keeps_a_gleaned_edge_on_the_spelling_it_names(
 
     assert ("Initech Corp", "Buyer") in {e[:2] for e in full["edges"]}
     assert incremental == full
+
+
+def test_a_hub_that_changes_its_name_extends_its_summary(tmp_path: Path) -> None:
+    # Nine new documents call the hub "Acme Inc", one more than say "Acme":
+    # the delta entity merges into the stored "Acme", which the derivation
+    # then re-keys to "Acme Inc". The delta's descriptions must be found
+    # under that final id, or the hub is summarized again from every line.
+    calls: list[tuple[str, int]] = []
+
+    def respond(system: str, human: str) -> str:
+        if "knowledge-graph editor" not in system:
+            return _respond(system, human)
+        match = re.search(r"<descriptions>\n(.*?)\n</descriptions>", human, re.S)
+        name = re.search(r"descriptions of '([^']*)'", human)
+        assert match and name
+        calls.append((name.group(1), match.group(1).count("\n") + 1))
+        return f"Summary of {name.group(1)}."
+
+    hub = {f"h{i}.txt": f"Acme and Buyer trade goods {i}." for i in range(8)}
+    grown = {
+        **hub,
+        **{f"n{i}.txt": f"Acme Inc and Depot trade goods {i}." for i in range(9)},
+    }
+    _state(tmp_path, [hub, grown], respond=respond, summarize=True)
+
+    hub_calls = [lines for name, lines in calls if name in ("Acme", "Acme Inc")]
+    # Eight lines in the first run; in the second the nine new lines (graph
+    # resolution), then the stored summary and that one at most: never all
+    # seventeen.
+    assert hub_calls[:2] == [8, 9]
+    assert all(lines <= 2 for lines in hub_calls[2:])
+
+
+@pytest.mark.parametrize(
+    "runs",
+    [
+        pytest.param(
+            [
+                {"a.txt": "Acme and Depot trade goods 1."},
+                {
+                    "a.txt": "Acme and Depot trade goods 1.",
+                    "b.txt": "Acme Inc and Depot trade cash 1.",
+                },
+            ],
+            id="spellings-kept-apart-in-other-units",
+        ),
+        pytest.param(
+            [
+                {f"h{i}.txt": f"Acme and Buyer trade goods {i}." for i in range(2)},
+                {
+                    **{
+                        f"h{i}.txt": f"Acme and Buyer trade goods {i}."
+                        for i in range(2)
+                    },
+                    **{
+                        f"n{i}.txt": f"Acme Inc and Depot trade goods {i}."
+                        for i in range(3)
+                    },
+                },
+            ],
+            id="a-spelling-re-keyed-to-the-other",
+        ),
+    ],
+)
+def test_only_a_half_written_split_marks_another_spelling_a_split_origin(
+    tmp_path: Path, runs: list[dict[str, str]], mocker: Any
+) -> None:
+    # Another spelling of a derived entity is taken for a split origin (its
+    # edges derived again, its claims followed) only when the two share a
+    # text unit, as a split a killed run left half-written does, and not
+    # when the derivation re-keyed it into the derived entity: those cost
+    # reads and leave the result as it is.
+    from unified_kg_rag.application.storage.indexing_manager import IndexingManager
+
+    derive = mocker.spy(IndexingManager, "derive")
+
+    _state(tmp_path, runs)
+
+    results = [d for d in derive.spy_return_list if d.entities]
+    assert results
+    for derived in results:
+        assert not set(derived.split_from.values()) & set(derived.id_remap)
+        assert not derived.split_from
