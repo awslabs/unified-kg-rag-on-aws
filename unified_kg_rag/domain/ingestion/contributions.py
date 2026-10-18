@@ -180,14 +180,6 @@ def attribute_record_keys(attributes: dict[str, Any] | None) -> dict[str, str]:
     return {kind: key for kind, key in keys.items() if isinstance(key, str)}
 
 
-def set_record_key(unit: TextUnit, kind: str, key: str) -> None:
-    """Record the extraction-store ``key`` of the unit's ``kind`` record."""
-    unit.attributes = {
-        **(unit.attributes or {}),
-        RECORD_KEYS_ATTRIBUTE: {**record_keys(unit), kind: key},
-    }
-
-
 def text_hash(text: str) -> str:
     """Key of a text unit's text in the extraction store (SHA-256)."""
     return compute_hash(text, length=64)

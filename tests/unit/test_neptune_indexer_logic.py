@@ -142,8 +142,8 @@ def test_index_entities_writes_list_props_multi_valued(indexer) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# index_communities (full path: clear + create-or-match, MemberOf edges, NO
-# drop-by-target)
+# index_communities (full path: clear + create-or-match; membership is not
+# written as edges, an entity names its communities)
 # --------------------------------------------------------------------------- #
 
 
@@ -168,7 +168,7 @@ def test_index_communities_full_clears_label_and_builds_vertices(
     mocker.patch.object(
         indexer, "_execute_batch_traversal", side_effect=fake_execute_batch
     )
-    # Stub out the edge creation traversal calls (they touch neptune_client.g).
+    # Stub out the other traversals (they touch neptune_client.g).
     mocker.patch.object(indexer, "_execute_with_retries")
 
     comm = Community(
@@ -208,8 +208,8 @@ def test_upsert_communities_does_not_clear_label(indexer, mocker) -> None:
         indexer, "_execute_batch_traversal", side_effect=fake_execute_batch
     )
     mocker.patch.object(indexer, "_execute_with_retries")
-    # upsert drops existing MemberOf edges through neptune_client.g — that is a
-    # MagicMock (NeptuneClient was patched), so the chained calls are inert.
+    # Any other traversal goes through neptune_client.g — that is a MagicMock
+    # (NeptuneClient was patched), so the chained calls are inert.
 
     comm = Community(
         id="c1",
