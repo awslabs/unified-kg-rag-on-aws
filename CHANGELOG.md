@@ -1273,6 +1273,13 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- The first model calls of a batch (ingestion stages, global search's map)
+  no longer fail at random with "dictionary changed size during
+  iteration": the worker threads share one chain, and LangChain caches each
+  prompt's and model's serialized form at its first call without a lock
+  (Python 3.12+). The error is not retried, so the item (a text unit's
+  extraction or claims, a community report) was lost for the run. Chains
+  now compute it when they are built (#369).
 - `indexing.additional_suffix` and `processing.document_parsing.index_value`
   are checked when the config loads (lowercase letters, digits, `-`, `_`):
   an uppercase or dotted value loaded and failed every run at indexing,
