@@ -293,6 +293,12 @@ Defaults. Set the old value explicitly to keep the previous behaviour.
 
 Index data. Rebuild existing indexes once with `indexing.reset: true` (or a
 full re-index of the affected index type).
+- The relationship and claim indexes carry their documents' filters
+  (`attr_<key>`, `attributes.filters`), so OpenSearch applies an attribute
+  filter to them itself. An index built before that returns no
+  relationship or claim under an attribute filter (fail-closed) until it is
+  rebuilt with `indexing.reset: true`; queries without attribute filters
+  are unaffected (#PR).
 - The doc-status registry has a new format and table. A record lists only
   its document's text units (the per-artifact id lists and the lineage
   overflow items are gone), and records are keyed by index namespace: the
@@ -1291,6 +1297,15 @@ changed once with the full-config keys (#332).
   skipped as `guardrail_blocked` (they scored near 0, and faithfulness came
   back NaN and counted as failed toward `--max-failure-rate`); the answer
   metrics still run (#359).
+- An entity-attribute filter (`attributes.<path>` other than
+  `attributes.filters.<key>`) no longer cuts graph expansion to the seeds:
+  only document filters are checked against the text units, which never
+  carry an entity's own attributes (#PR).
+- An attribute filter no longer costs a post-filter fetch per relationship
+  or claim sub-search, nor fails the query when a hub entity cites more text
+  units than one `terms` clause holds (`max_terms_count`). On a 3000-document
+  hub corpus DRIFT's store responses under a filter fell from 42 to 29 MB
+  (1.8 to 1.0 s) and local's from 2.3 to 1.7 MB (#PR).
 - A run that lost its namespace's write lease during a full build no longer
   swaps the OpenSearch alias onto the partial index and deletes the complete
   one: the vector indexer re-raises `NamespaceLeaseError` instead of
@@ -3026,13 +3041,14 @@ changed once with the full-config keys (#332).
   instead of frozen dataclasses; they were never instantiated (#300).
 
 ### Security
-- Document attribute filters (`attr_<key>`, `attributes.<path>`) now apply
-  to relationships, claims and graph expansion, which carry no document
-  attribute: each is kept only when one of its text units passes the filter
-  (one fetch by id per sub-search), and expanded entities other than the
-  seeds likewise. local, mix, hybrid, DRIFT and simple returned
-  relationships from excluded documents, even for a filter no document
-  matches (#354).
+- Document attribute filters (`attr_<key>`, `attributes.filters.<key>`) now
+  apply to relationships, claims and graph expansion: local, mix, hybrid,
+  DRIFT and simple returned relationships from excluded documents, even for
+  a filter no document matches. The relationship and claim indexes carry
+  their documents' filters and OpenSearch applies the filter (a document's
+  removal narrows them); graph expansion keeps an expanded entity other
+  than the seeds only when one of its text units passes the filter, checked
+  by an ids-only fetch in batches one request holds (#354, #PR).
 - A community report's document filters (`attr_<key>`, `attributes.filters.*`)
   are the union of its own text units' document filters. Every report copied
   the attributes of the graph's first entity, so an attribute filter kept or

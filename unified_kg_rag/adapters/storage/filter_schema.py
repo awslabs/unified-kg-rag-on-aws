@@ -12,9 +12,11 @@ strategy reads declares.
 On OpenSearch, dynamically mapped document fields are declared by prefix on
 the indexes whose documents carry them: ``attr_<key>`` (one per entry of an
 item's ``filters`` attribute) and ``attributes.<path>`` (the dynamic
-``attributes`` object). A prefix key applies to every such index, so an index
-whose documents lack the field returns nothing for that filter rather than
-being searched unfiltered.
+``attributes`` object; relationships and claims hold only its ``filters``).
+Every index declares both, so an index whose documents lack the field
+returns nothing for that filter rather than being searched unfiltered.
+Graph vertices hold no document filters: strategies check graph expansion
+against the text units (``BaseSearchStrategy._vouch_by_text_units``).
 
 Neptune entity vertices carry ``attr_<key>`` for the entity's raw top-level
 attributes (e.g. ``attr_role`` from LLM extraction); document attribute filters
@@ -49,13 +51,18 @@ class FilterFields:
         return sorted(self.fields) + sorted(f"{p}<key>" for p in self.prefixes)
 
 
-def attribute_filters(filters: dict[str, Any] | None) -> dict[str, Any]:
-    """The document attribute keys (``attr_<key>``, ``attributes.<path>``)
-    of ``filters``."""
+DOCUMENT_FILTERS_PREFIX = f"{ATTRIBUTES_OBJECT_PREFIX}{Constants.FILTERS.value}."
+
+
+def document_filters(filters: dict[str, Any] | None) -> dict[str, Any]:
+    """The document attribute keys of ``filters``: ``attr_<key>`` and
+    ``attributes.filters.<key>``, an entry of the documents' ``filters``
+    metadata. Other ``attributes.<path>`` keys name an item's own
+    attributes (an entity's extracted ``role``), not its documents'."""
     return {
         key: value
         for key, value in (filters or {}).items()
-        if key.startswith((ATTRIBUTE_KEY_PREFIX, ATTRIBUTES_OBJECT_PREFIX))
+        if key.startswith((ATTRIBUTE_KEY_PREFIX, DOCUMENT_FILTERS_PREFIX))
     }
 
 
@@ -116,7 +123,8 @@ def opensearch_filter_fields(
                     "rank",
                     "text_unit_ids",
                 }
-            )
+            ),
+            _OPENSEARCH_ATTRIBUTE_PREFIXES,
         ),
         "claims": FilterFields(
             frozenset(
@@ -132,7 +140,8 @@ def opensearch_filter_fields(
                     "source_text",
                     "text_unit_ids",
                 }
-            )
+            ),
+            _OPENSEARCH_ATTRIBUTE_PREFIXES,
         ),
         "community_reports": FilterFields(
             frozenset(

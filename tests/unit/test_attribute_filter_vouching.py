@@ -1,9 +1,11 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Attribute filters on results whose store has no document attribute.
+"""Document filters on graph expansion, whose store has no document attribute.
 
-Relationships, claims and graph vertices are kept under an ``attr_<key>`` /
-``attributes.<path>`` filter only when one of their text units passes it.
+The relationship and claim indexes carry their documents' filters, so the
+store applies them. Graph vertices are kept under an ``attr_<key>`` /
+``attributes.filters.<key>`` filter only when one of their text units passes
+it (the expansion seeds aside).
 """
 
 from __future__ import annotations
@@ -38,14 +40,19 @@ def _hit(source: str, kind: str, units: Any) -> RetrievalResult:
 class _Store:
     """Text units ``u-ok`` pass the filter; every other search returns ``hits``."""
 
-    def __init__(self, units_prefix: str, hits: list[RetrievalResult]) -> None:
+    def __init__(
+        self, units_prefix: str, hits: list[RetrievalResult], fail: bool = False
+    ) -> None:
         self.units_prefix = units_prefix
         self.hits = hits
+        self.fail = fail
         self.queries: list[SearchQuery] = []
 
     async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
         self.queries.append(query)
         if query.index_prefixes == [self.units_prefix]:
+            if self.fail:
+                raise RuntimeError("store hiccup")
             ids = (query.filters or {}).get("id") or []
             return [_hit(u, "text", []) for u in ids if u == "u-ok"]
         return [h.model_copy() for h in self.hits]
@@ -61,62 +68,111 @@ def _strategy(config: Config, document: _Store, graph: _Store) -> Any:
     )
 
 
-@pytest.mark.parametrize("key", ["attr_category", "attributes.filters.category"])
-async def test_relationships_and_claims_need_a_passing_text_unit(
-    config: Config, key: str
-) -> None:
-    prefix = config.indexing.opensearch.text_units_index_prefix
-    store = _Store(
-        prefix,
-        [
-            _hit("r-ok", "relationship", ["u-no", "u-ok"]),
-            _hit("r-no", "relationship", ["u-no"]),
-            _hit("c-ok", "claim", "u-ok"),  # a graph store unwraps one id
-            _hit("c-none", "claim", []),
-            _hit("e-1", "entity", ["u-no"]),  # filtered by its own index
-        ],
-    )
-    strategy = _strategy(config, store, _Store(prefix, []))
-
-    kept = await strategy._safe_aretrieve(
-        store, SearchQuery(query="q", filters={key: "x", "type": "t"}), "test"
-    )
-
-    assert [r.source for r in kept] == ["r-ok", "c-ok", "e-1"]
-    check = store.queries[-1]
-    assert check.index_prefixes == [prefix]
-    # Only the attribute keys, plus the cited units.
-    assert check.filters == {key: "x", "id": ["u-no", "u-ok"]}
-
-
-async def test_graph_expansion_keeps_seeds_and_vouched_vertices(
-    config: Config,
-) -> None:
-    prefix = config.indexing.opensearch.text_units_index_prefix
-    graph = _Store(
+def _graph(prefix: str) -> _Store:
+    return _Store(
         prefix,
         [
             _hit("seed", "entity", ["u-no"]),
-            _hit("near", "entity", ["u-ok"]),
+            _hit("near", "entity", ["u-no", "u-ok"]),
+            _hit("one", "entity", "u-ok"),  # a graph store unwraps one id
             _hit("far", "entity", ["u-no"]),
+            _hit("bare", "entity", []),
         ],
     )
-    strategy = _strategy(config, _Store(prefix, []), graph)
+
+
+@pytest.mark.parametrize("key", ["attr_category", "attributes.filters.category"])
+async def test_graph_expansion_keeps_seeds_and_vouched_vertices(
+    config: Config, key: str
+) -> None:
+    prefix = config.indexing.opensearch.text_units_index_prefix
+    document = _Store(prefix, [])
+    strategy = _strategy(config, document, _graph(prefix))
+
+    kept = await strategy._expand_via_graph(
+        SearchQuery(query="q", filters={key: "x", "type": "t"}), ["seed"]
+    )
+
+    assert [r.source for r in kept] == ["seed", "near", "one"]
+    (check,) = document.queries
+    assert check.index_prefixes == [prefix]
+    # Only the document filter keys plus the cited units, and ids only back.
+    assert check.filters == {key: "x", "id": ["u-no", "u-ok"]}
+    assert check.source_fields == []
+
+
+async def test_an_entity_attribute_filter_is_not_vouched(config: Config) -> None:
+    # Regression: an entity's own attribute (attributes.role) was checked
+    # against the text units, which never carry it, cutting the expansion
+    # to the seeds.
+    prefix = config.indexing.opensearch.text_units_index_prefix
+    document = _Store(prefix, [])
+    strategy = _strategy(config, document, _graph(prefix))
+
+    kept = await strategy._expand_via_graph(
+        SearchQuery(query="q", filters={"attributes.role": "buyer"}), ["seed"]
+    )
+
+    assert len(kept) == 5
+    assert document.queries == []
+
+
+async def test_the_check_batches_and_stops_once_every_vertex_is_vouched(
+    config: Config,
+) -> None:
+    # Regression: one fetch named every cited unit (a hub cites tens of
+    # thousands): over max_terms_count the store rejected it and the query
+    # failed, and whole units came back for an id check.
+    config.indexing.opensearch.index_settings = {"index.max_result_window": 2}
+    prefix = config.indexing.opensearch.text_units_index_prefix
+    document = _Store(prefix, [])
+    graph = _Store(
+        prefix,
+        [
+            _hit("a", "entity", ["u-ok", "u-1", "u-2", "u-3"]),
+            _hit("b", "entity", ["u-4", "u-5", "u-6"]),
+        ],
+    )
+    strategy = _strategy(config, document, graph)
 
     kept = await strategy._expand_via_graph(
         SearchQuery(query="q", filters={"attr_category": "x"}), ["seed"]
     )
 
-    assert [r.source for r in kept] == ["seed", "near"]
+    assert [r.source for r in kept] == ["a"]
+    asked = [q.filters["id"] for q in document.queries]
+    assert all(len(ids) <= 2 for ids in asked)
+    # Each unit is asked once, and none of "a" once "a" is vouched for.
+    flat = [u for ids in asked for u in ids]
+    assert len(flat) == len(set(flat))
+    assert {"u-4", "u-5", "u-6"} <= set(flat)
+    assert not {"u-1", "u-2", "u-3", "u-ok"} & set(flat[flat.index("u-ok") + 1 :])
 
 
-async def test_no_attribute_filter_checks_nothing(config: Config) -> None:
+async def test_a_failed_check_drops_what_it_could_not_vouch_for(
+    config: Config,
+) -> None:
+    prefix = config.indexing.opensearch.text_units_index_prefix
+    strategy = _strategy(config, _Store(prefix, [], fail=True), _graph(prefix))
+
+    kept = await strategy._expand_via_graph(
+        SearchQuery(query="q", filters={"attr_category": "x"}), ["seed"]
+    )
+
+    assert [r.source for r in kept] == ["seed"]
+
+
+async def test_document_store_results_are_filtered_by_the_store(
+    config: Config,
+) -> None:
+    # Relationship and claim indexes apply document filters server-side:
+    # nothing post-filters them (an extra fetch per sub-search).
     prefix = config.indexing.opensearch.text_units_index_prefix
     store = _Store(prefix, [_hit("r-no", "relationship", ["u-no"])])
     strategy = _strategy(config, store, _Store(prefix, []))
 
     kept = await strategy._safe_aretrieve(
-        store, SearchQuery(query="q", filters={"type": "t"}), "test"
+        store, SearchQuery(query="q", filters={"attr_category": "x"}), "test"
     )
 
     assert [r.source for r in kept] == ["r-no"]

@@ -527,11 +527,12 @@ class OpenSearchIndexer(VectorIndexer):
             "text_unit_ids": list(entity.text_unit_ids or []),
         }
 
-    @staticmethod
+    @classmethod
     def _prepare_relationship_doc(
-        rel: Relationship, embeddings: tuple[list[float], ...]
+        cls, rel: Relationship, embeddings: tuple[list[float], ...]
     ) -> dict[str, Any]:
         return {
+            **cls._document_filter_properties(rel),
             "id": rel.id,
             "source_id": rel.source_id,
             "target_id": rel.target_id,
@@ -562,11 +563,12 @@ class OpenSearchIndexer(VectorIndexer):
         """Upsert relationship vectors by id into the live index (delta)."""
         return self._upsert_item_type(relationships, self._spec("relationships"))
 
-    @staticmethod
+    @classmethod
     def _prepare_claim_doc(
-        claim: Claim, embeddings: tuple[list[float], ...]
+        cls, claim: Claim, embeddings: tuple[list[float], ...]
     ) -> dict[str, Any]:
         return {
+            **cls._document_filter_properties(claim),
             "id": claim.id,
             "subject_id": claim.subject_id,
             "subject_name": claim.subject_name or "",
@@ -907,7 +909,10 @@ class OpenSearchIndexer(VectorIndexer):
         return self._update_fields(
             claims,
             self.opensearch_config.claims_index_prefix,
-            lambda c: {"text_unit_ids": list(c.text_unit_ids or [])},
+            lambda c: {
+                "text_unit_ids": list(c.text_unit_ids or []),
+                **self._document_filter_properties(c),
+            },
         )
 
     def upsert_text_units(self, text_units: list[TextUnit]) -> IndexingStats:
@@ -927,6 +932,7 @@ class OpenSearchIndexer(VectorIndexer):
             lambda e: {
                 "text_unit_ids": list(e.text_unit_ids or []),
                 "rank": e.rank if e.rank is not None else 1.0,
+                **self._document_filter_properties(e),
             },
         )
 
@@ -942,6 +948,7 @@ class OpenSearchIndexer(VectorIndexer):
                 "text_unit_ids": list(r.text_unit_ids or []),
                 "weight": r.weight if r.weight is not None else 1.0,
                 "rank": r.rank if r.rank is not None else 1.0,
+                **self._document_filter_properties(r),
             },
         )
 
@@ -1098,6 +1105,32 @@ class OpenSearchIndexer(VectorIndexer):
 
         self._flush_embedding_cache()
         return total_stats
+
+    @staticmethod
+    def _document_filter_properties(item: Any) -> dict[str, Any]:
+        """The item's document ``filters`` as the fields an attribute filter
+        matches: ``attr_<key>`` and ``attributes.filters``.
+
+        Relationships and claims carry only these, not their whole
+        ``attributes``: those hold per-text-unit maps (edge weights) a
+        dynamic mapping would turn into one field per text unit. A lineage
+        update writes them too, so a document's removal narrows them.
+        """
+        attributes = getattr(item, "attributes", None)
+        filters = (
+            attributes.get(Constants.FILTERS.value)
+            if isinstance(attributes, dict)
+            else None
+        )
+        if not isinstance(filters, dict) or not filters:
+            return {}
+        doc: dict[str, Any] = {
+            f"{Constants.ATTRIBUTE_PREFIX.value}_{key}": value
+            for key, value in filters.items()
+            if value is not None
+        }
+        doc["attributes"] = {Constants.FILTERS.value: filters}
+        return doc
 
     @staticmethod
     def _prepare_common_doc_properties(item: Any) -> dict[str, Any]:
