@@ -510,7 +510,7 @@ CDK 스택에서는 `-c enable_cloudwatch_tracing=true`가 AWS Distro for OpenTe
 | `kg_rag.retrieve` | strategy | 결과 유형별 적중 수, 최대 50개의 소스 ID |
 | `kg_rag.fusion` | strategy | 입력·출력 수, 해당 단계의 `kg_rag.rerank_status` |
 | `kg_rag.rerank` | fusion | `kg_rag.rerank.status`(`ok`, `empty`, `error`), 문서 수 |
-| `kg_rag.context_build` | strategy | 사용한 토큰과 토큰 예산 |
+| `kg_rag.context_build` | query(`drift`: 해당 라운드의 actions 스팬) | 사용한 토큰과 토큰 예산 |
 | `kg_rag.global.select`, `kg_rag.global.map` | strategy(`global`) | select는 질의마다 하나: `kg_rag.depth`(설정한 깊이), `kg_rag.cut`(더 얕은 단면으로 내려간 뒤 실제로 map한 단면), `kg_rag.reports`, `kg_rag.dynamic`. map: `kg_rag.reports`, `kg_rag.map_calls`, `kg_rag.report_tokens` |
 | `kg_rag.drift.primer`, `kg_rag.drift.actions` | strategy(`drift`) | primer: `kg_rag.reports`, `kg_rag.answers`. 라운드마다 actions 스팬 하나(`kg_rag.depth`, `kg_rag.actions`)이며 그 라운드의 로컬 검색이 아래에 들어감 |
 | `kg_rag.guardrail` | query | 검사한 질의나 답변마다 하나: `aws.bedrock.guardrail.id`, `.source`(`input`, `output`), `.action`(`none`, `masked`, `blocked`), `.intervened`, `.policies` |
