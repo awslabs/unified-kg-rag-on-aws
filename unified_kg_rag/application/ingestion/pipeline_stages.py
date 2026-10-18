@@ -1225,6 +1225,11 @@ class GraphAnalysisStage(PipelineStage):
         return input_count, output_count, metrics
 
 
+# Incident edges read per batch while a delta component's stored
+# neighbourhood is walked (see _components_reaching).
+_COMPONENT_EDGE_BATCH = 64
+
+
 def _components_reaching(
     graph: GraphIndexer,
     components: list[set[Any]],
@@ -1233,13 +1238,16 @@ def _components_reaching(
     min_size: int,
 ) -> tuple[set[Any], int]:
     """The entities of ``components`` (of the delta graph) whose component of
-    the whole graph holds ``min_size`` entities or more, and how many stored
-    entities without a community those link to.
+    the whole graph holds ``min_size`` entities or more, and how many of the
+    stored entities the walk reached have no community (a lower bound: the
+    walk stops at ``min_size``).
 
     Walks out from each component over the stored relationships that cite a
     text unit outside ``removed`` (the ones a full build still extracts),
-    reading the incident edges of a hop's entities in one batch, and stops
-    once the component reaches ``min_size``: at most ``min_size`` hops.
+    reading the incident edges of a hop's entities a batch at a time, and
+    stops once the component reaches ``min_size``: at most ``min_size`` hops,
+    and about ``min_size`` edges past it per hop rather than a hub's whole
+    neighbourhood.
     """
 
     def kept(item: Relationship) -> bool:
@@ -1262,21 +1270,34 @@ def _components_reaching(
             groups.setdefault(suffix_of[node], []).append(node)
         return groups
 
+    def reaches(k: int) -> bool:
+        return (
+            len(members[k] | set().union(*(neighbors.get(n, ()) for n in frontier[k])))
+            >= min_size
+        )
+
+    # Edges are read a batch at a time and the hop stops once every open
+    # component reaches min_size: a hub's whole neighbourhood is not read.
+    step = max(min_size, _COMPONENT_EDGE_BATCH)
     while open_:
         hop = set().union(*(frontier[k] for k in open_)) - neighbors.keys()
         for suffix, group in by_suffix(hop).items():
             neighbors.update({node: set() for node in group})
             ids = graph.find_incident_relationship_ids(group, suffix=suffix)
-            for edge in graph.read_relationships(ids, suffix=suffix) if ids else []:
-                if not kept(edge):
-                    continue
-                for a, b in (
-                    (edge.source_id, edge.target_id),
-                    (edge.target_id, edge.source_id),
-                ):
-                    if a in neighbors:
-                        neighbors[a].add(b)
-                        suffix_of.setdefault(b, suffix)
+            for start in range(0, len(ids), step):
+                batch = ids[start : start + step]
+                for edge in graph.read_relationships(batch, suffix=suffix):
+                    if not kept(edge):
+                        continue
+                    for a, b in (
+                        (edge.source_id, edge.target_id),
+                        (edge.target_id, edge.source_id),
+                    ):
+                        if a in neighbors:
+                            neighbors[a].add(b)
+                            suffix_of.setdefault(b, suffix)
+                if all(reaches(k) for k in open_):
+                    break
         for k in sorted(open_):
             new = set().union(*(neighbors.get(n, set()) for n in frontier[k]))
             new -= members[k]

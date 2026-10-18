@@ -1729,6 +1729,12 @@ changed once with the full-config keys (#332).
   is rederived. A one-document add to a 3,000-document corpus with such a
   pair: 4,259 embedded texts and 948 entities, 1,196 edges and 1,179 claims
   written, now 15 texts and 4, 20 and 1 (#PR).
+- Clustering a small delta component reads the stored graph around it a
+  batch of edges at a time and stops once the component reaches
+  `min_community_size`, instead of a hub's whole neighbourhood (a hub of
+  5,000 edges: 5,000 edges read, now 64). `unclustered_stored_entities`
+  counts the stored entities without a community the walk reached, a lower
+  bound (#PR).
 - Removing a document no longer leaves its text unnoticed in community
   reports: a kept report that cites a removed text unit is counted in the
   `community_drift` metrics (`outdated_reports`, deletion-only runs

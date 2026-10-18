@@ -188,3 +188,42 @@ def test_a_deleted_community_leaves_no_id_on_its_surviving_members(
 
 
 no_aws = e2e.no_aws
+
+
+def test_the_walk_stops_at_min_size_on_a_hub(tmp_path: Path, mocker) -> None:
+    # A delta component linked to a hub of 500 stored neighbours reaches
+    # min_community_size within the hub's first edges: the walk reads a
+    # batch of them, not the hub's whole neighbourhood.
+    from unified_kg_rag.application.ingestion import pipeline_stages as ps
+    from unified_kg_rag.domain.models import Entity, Relationship
+
+    config, providers = _setup(tmp_path, None)
+    graph = providers.build_graph_indexer()
+    try:
+        assert isinstance(graph, SQLiteGraphIndexer)
+        graph.initialize()
+        hub = Entity(id="hub", name="Hub", text_unit_ids=["t-hub"])
+        others = [
+            Entity(id=f"o{i}", name=f"Org {i}", text_unit_ids=[f"t{i}"])
+            for i in range(500)
+        ]
+        graph.upsert_entities([hub, *others])
+        graph.upsert_relationships(
+            [
+                Relationship(
+                    id=f"r{i}",
+                    source_id="hub",
+                    target_id=f"o{i}",
+                    text_unit_ids=[f"t{i}"],
+                )
+                for i in range(500)
+            ]
+        )
+        read = mocker.spy(graph, "read_relationships")
+
+        found, _ = ps._components_reaching(graph, [{"hub", "new"}], {}, set(), 3)
+
+        assert found == {"hub", "new"}
+        assert sum(len(call.args[0]) for call in read.call_args_list) <= 64
+    finally:
+        graph.close()
