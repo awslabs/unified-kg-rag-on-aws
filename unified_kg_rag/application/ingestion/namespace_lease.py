@@ -15,10 +15,11 @@ lease from the registry before its first stage and holds it until it ends:
 - a heartbeat thread renews it every sixth of ``indexing.lease_seconds``, so
   a run that dies stops renewing and its lease expires (DynamoDB also drops
   the expired item, ``lease_expires_at`` being the table's TTL attribute);
-- the lease is the run's write fence (``shared.write_fence``): every registry
-  write of the incremental path, every indexing phase and every store write
-  request (a Neptune batch or drop, an OpenSearch bulk request) first calls
-  :func:`check_lease`, which fails once less than a third of the term is
+- the lease is a write fence of the run (``shared.write_fence``): every
+  registry write of the incremental path, every indexing phase and every
+  store request that may write (a Neptune batch, edge write or drop, an
+  OpenSearch indexing request but a GET or HEAD) first checks it; it fails
+  once the run released it, and once less than a third of the term is
   left since the last renewal that succeeded, counted from when that
   renewal was *sent*. The store expires the lease no earlier than a term
   after the request was sent, so a run stops while it still holds the lease
@@ -66,9 +67,11 @@ _HEARTBEAT_JOIN_SECONDS = 5.0
 
 
 def check_lease() -> None:
-    """Raise :class:`NamespaceLeaseError` if this run's lease was lost or is
-    about to expire (no-op outside a leased run); see
-    :func:`~unified_kg_rag.shared.write_fence.check_write_fence`."""
+    """Raise if this run may not write any more: :class:`NamespaceLeaseError`
+    once its lease was lost, is about to expire or was released, and
+    ``PipelineInterrupted`` in a worker thread once a stop was requested.
+    An alias of :func:`~unified_kg_rag.shared.write_fence.check_write_fence`,
+    which asks every fence of the context (no-op outside a fenced run)."""
     check_write_fence()
 
 
@@ -121,13 +124,18 @@ class NamespaceLease:
         if self._token is not None:
             remove_write_fence(self._token)
             self._token = None
+        # Worker threads a stop or a failure left running (their pool does
+        # not wait for them) still check this lease through their copy of
+        # the run's context: they must fail once it is released, before
+        # another run can take it.
+        held, self._lost = self._lost is None, "the run ended and released it"
         self._stop.set()
         if self._thread is not None:
             # A renewal in flight may hang on an unreachable registry: the
             # run does not wait for it (the heartbeat releases what it
             # renews once stopped).
             self._thread.join(_HEARTBEAT_JOIN_SECONDS)
-        if self._lost is None:
+        if held:
             self._release()
 
     def _release(self) -> None:
@@ -204,3 +212,25 @@ class NamespaceLease:
                 f"'{self.namespace}' ({self._lost}): stopping before writing "
                 "over the run that holds it now. Re-run once that run ended."
             )
+
+    def retake(self) -> bool:
+        """Take the lease back after losing it, when no other run holds it
+        (it was released, or expired) or the store still has it as this
+        run's; returns whether this run holds it again. One conditional
+        write, like a renewal, so it never takes another run's lease; the
+        heartbeat is not restarted, so the term it buys is for a last short
+        write (closing the run's attempts)."""
+        sent = time.time()
+        try:
+            held = self.store.try_acquire_lease(
+                self.namespace, self.owner, self.seconds
+            )
+        except Exception as e:  # noqa: BLE001 - the lease stays lost
+            logger.warning(
+                "Retaking the lease of namespace '%s' failed: %s", self.namespace, e
+            )
+            return False
+        if held:
+            self._lost = None
+            self._renewed_at = sent
+        return held

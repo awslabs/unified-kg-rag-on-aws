@@ -27,7 +27,10 @@ from unified_kg_rag.domain.ingestion.relationship_weights import (
 from unified_kg_rag.domain.models import Config, Entity, Relationship
 from unified_kg_rag.shared import GraphError, get_logger
 from unified_kg_rag.shared.utils import entity_key, text_digest
-from unified_kg_rag.shared.utils.concurrency import ContextThreadPoolExecutor
+from unified_kg_rag.shared.utils.concurrency import (
+    ContextThreadPoolExecutor,
+    cancelling_on_error,
+)
 
 logger = get_logger(__name__)
 
@@ -307,11 +310,14 @@ class EntityResolver(BaseResolver):
         # thread-pool path (initializer runs once per thread; the matcher
         # is shared in-process anyway). The thread pool accepts the same
         # initializer/initargs signature.
-        with executor_class(
-            max_workers=self.max_workers,
-            initializer=_init_worker_fuzzy_matcher,
-            initargs=(fuzzy_matcher,),
-        ) as executor:
+        with (
+            executor_class(
+                max_workers=self.max_workers,
+                initializer=_init_worker_fuzzy_matcher,
+                initargs=(fuzzy_matcher,),
+            ) as executor,
+            cancelling_on_error(executor),
+        ):
             future_to_name = {
                 executor.submit(find_all_matches_for_entity_task, name): name
                 for name in entity_names

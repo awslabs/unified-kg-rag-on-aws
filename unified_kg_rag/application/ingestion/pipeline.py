@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import functools
 import secrets
+import signal
 import threading
 import time
 from collections.abc import Callable, Iterator, Mapping
@@ -99,26 +100,32 @@ _STALE_DELTA = (
     "often enough to isolate the document that kills them)"
 )
 T = TypeVar("T", bound=BaseModel)
-# The longest single store request of the indexing path (the Neptune and
-# OpenSearch ingestion request timeouts); indexing.lease_seconds should be at
-# least three times it (see namespace_lease).
-_LONGEST_WRITE_REQUEST_SECONDS = 180.0
+
+
+def _longest_write_request_seconds() -> float:
+    """The longest single store request of the indexing path (the Neptune and
+    OpenSearch indexing request timeouts); indexing.lease_seconds should be
+    at least three times it (see namespace_lease)."""
+    from unified_kg_rag.adapters.aws.neptune import INGESTION_REQUEST_TIMEOUT_SECONDS
+    from unified_kg_rag.adapters.aws.opensearch import INDEXING_REQUEST_TIMEOUT_SECONDS
+
+    return max(INGESTION_REQUEST_TIMEOUT_SECONDS, INDEXING_REQUEST_TIMEOUT_SECONDS)
 
 
 class _StopFence:
     """The write fence of a pipeline run that ends its worker threads' writes
-    once a stop was requested (``request_stop``). The main thread gets the
-    ``PipelineInterrupted`` from the request itself, and its unwinding
-    (closing the attempts, uploading the checkpoint) still writes."""
+    once a stop was requested (``request_stop``, or Ctrl-C). The thread that
+    runs the pipeline gets the ``PipelineInterrupted`` (or
+    ``KeyboardInterrupt``) itself, and its unwinding (closing the attempts,
+    uploading the checkpoint) still writes."""
 
     def __init__(self, pipeline: DataIngestionPipeline) -> None:
         self._pipeline = pipeline
+        self._run_thread = threading.current_thread()
 
     def check(self) -> None:
         signum = self._pipeline._stop_signal
-        if signum is not None and threading.current_thread() is not (
-            threading.main_thread()
-        ):
+        if signum is not None and threading.current_thread() is not self._run_thread:
             raise PipelineInterrupted(signum)
 
 
@@ -565,9 +572,9 @@ class DataIngestionPipeline:
             # The lease covers the checkpoint too: it is downloaded only once
             # no other run writes the namespace, and uploaded before the
             # lease is released.
-            with self._namespace_lease():
+            with self._namespace_lease() as lease:
                 context = self._run_leased(
-                    source_path, resolved_pipeline_id, resolved_resume_stage
+                    source_path, resolved_pipeline_id, resolved_resume_stage, lease
                 )
 
             if context.status == PipelineStageStatus.FAILED:
@@ -604,9 +611,10 @@ class DataIngestionPipeline:
         source_path: Path,
         pipeline_id: str,
         resume_stage: str | None,
+        lease: NamespaceLease | None,
     ) -> PipelineContext:
         """Download the checkpoint, prepare the run and execute it (under the
-        namespace's lease), closing the run's processing attempts when it
+        namespace's ``lease``), closing the run's processing attempts when it
         finishes, fails with an error or is stopped (KeyboardInterrupt,
         ``PipelineInterrupted``), and uploading the checkpoint of a stopped
         run."""
@@ -652,10 +660,14 @@ class DataIngestionPipeline:
                 )
             self._execute_pipeline(context, start_stage_name)
         except KeyboardInterrupt:
+            # Ctrl-C did not go through request_stop: the stop fence must
+            # still end the writes of the worker threads it left running.
+            if self._stop_signal is None:
+                self._stop_signal = signal.SIGINT
             # A second stop request waits for the attempts and the checkpoint.
             self._checkpointing = True
             try:
-                self._close_attempts(context)
+                self._close_attempts(context, lease)
                 self._checkpoint_on_stop()
             finally:
                 self._checkpointing = False
@@ -664,9 +676,9 @@ class DataIngestionPipeline:
         # Any other BaseException (SystemExit, or a test's simulated death)
         # leaves the attempts open, like a process that died.
         except Exception:
-            self._close_attempts(context)
+            self._close_attempts(context, lease)
             raise
-        self._close_attempts(context)
+        self._close_attempts(context, lease)
         return context
 
     def _incremental_delta(self, context: PipelineContext | None) -> bool:
@@ -696,19 +708,31 @@ class DataIngestionPipeline:
             scope=context.incremental_scope,
         )
 
-    def _close_attempts(self, context: PipelineContext | None) -> None:
+    def _close_attempts(
+        self, context: PipelineContext | None, lease: NamespaceLease | None
+    ) -> None:
         """Close the run's processing attempts (best effort: an attempt left
-        open counts as a death of the run, see ``domain.ingestion.attempts``)."""
+        open counts as a death of the run, see ``domain.ingestion.attempts``).
+
+        A run that lost its ``lease`` takes it back to close them unless
+        another run holds it now: a lost lease is no death of the run."""
         if not self._incremental_delta(context):
             return
         assert context is not None and context.incremental_delta is not None
         assert self._doc_status is not None
+        close = functools.partial(
+            close_attempts,
+            self._doc_status,
+            context.incremental_delta,
+            context.incremental_fingerprints,
+        )
         try:
-            close_attempts(
-                self._doc_status,
-                context.incremental_delta,
-                context.incremental_fingerprints,
-            )
+            try:
+                close()
+            except NamespaceLeaseError:
+                if lease is None or not lease.retake():
+                    raise
+                close()
         except Exception as e:  # noqa: BLE001 - counted as a death at worst
             logger.warning(
                 "Closing the run's processing attempts failed (%s); the next "
@@ -742,13 +766,14 @@ class DataIngestionPipeline:
             self.config.indexing, self.config.processing.document_parsing.index_value
         )
         seconds = self.config.indexing.lease_seconds
-        if seconds < 3 * _LONGEST_WRITE_REQUEST_SECONDS:
+        longest = _longest_write_request_seconds()
+        if seconds < 3 * longest:
             logger.warning(
                 "indexing.lease_seconds (%gs) is under three times the longest "
                 "store write request (%gs): a request in flight when the lease "
                 "runs out can still write after another run took it",
                 seconds,
-                _LONGEST_WRITE_REQUEST_SECONDS,
+                longest,
             )
         return NamespaceLease(self._doc_status, namespace, seconds)
 

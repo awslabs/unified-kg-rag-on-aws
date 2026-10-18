@@ -654,11 +654,15 @@ one conditional registry write, renewed by a heartbeat every sixth of
 second run fails with `NamespaceLeaseError` before it reads or writes.
 
 - **Write fence** (`shared/write_fence.py`). Every incremental registry
-  write, indexing phase, rebuild sweep, Neptune batch or drop and OpenSearch
-  bulk request checks the lease first. The check fails once less than a third
-  of the term is left since the last successful renewal was sent (the store's
-  expiry runs from then), so a run that lost the lease stops while it still
-  holds it, provided no single write request outlasts a third of the term.
+  write, indexing phase, rebuild sweep, Neptune write batch or drop and
+  OpenSearch indexing request other than a GET or HEAD checks the lease
+  first. The check fails once the lease was released, and once less than a
+  third of the term is left since the last successful renewal was sent (the
+  store's expiry runs from then), so a run that lost the lease stops while
+  it still holds it, provided no single write request outlasts a third of
+  the term. A second fence fails the worker threads' writes once a stop
+  (SIGTERM or Ctrl-C) was requested; the thread running the pipeline still
+  writes while it unwinds.
 - **No conditional writes.** `BatchWriteItem` takes no condition and store
   writes cannot be conditioned on the registry, so the margin is the fence.
 - **Checkpoint.** The lease is taken before the S3 checkpoint is downloaded

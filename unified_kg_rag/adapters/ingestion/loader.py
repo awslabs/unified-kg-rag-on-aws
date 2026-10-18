@@ -12,7 +12,10 @@ from unified_kg_rag.domain.models import Document
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.utils import default_max_workers
 from unified_kg_rag.shared.utils.cache_keys import is_excluded_source_path
-from unified_kg_rag.shared.utils.concurrency import ContextThreadPoolExecutor
+from unified_kg_rag.shared.utils.concurrency import (
+    ContextThreadPoolExecutor,
+    cancelling_on_error,
+)
 
 logger = get_logger(__name__)
 
@@ -218,7 +221,10 @@ class DirectoryLoader:
             n_grams=DEDUP_N_GRAMS,
         )
 
-        with ProcessPoolExecutor(max_workers=self.max_workers) as executor:
+        with (
+            ProcessPoolExecutor(max_workers=self.max_workers) as executor,
+            cancelling_on_error(executor),
+        ):
             tasks = {
                 executor.submit(compute_func, (i, doc.page_content)): i
                 for i, doc in enumerate(documents)

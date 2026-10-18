@@ -10,9 +10,12 @@ request.
 
 from __future__ import annotations
 
+import concurrent.futures
+import contextvars
 import signal
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -533,3 +536,228 @@ def test_a_lease_under_three_times_the_longest_request_warns(
     with caplog.at_level("WARNING"):
         pipe._namespace_lease()
     assert "under three times the longest store write request" in caplog.text
+
+
+def test_a_released_lease_fails_the_writes_of_orphaned_workers() -> None:
+    # Old behaviour: the fence of the released lease kept passing in the
+    # worker threads a failed block left running (their context still holds
+    # it), for up to two thirds of a term after another run took the lease.
+    from unified_kg_rag.shared.write_fence import check_write_fence
+
+    store = FakeDocStatusStore()
+    with NamespaceLease(store, "ns", 60):
+        worker_context = contextvars.copy_context()
+    assert FakeDocStatusStore.try_acquire_lease(store, "ns", "next-run", 60)
+    with pytest.raises(NamespaceLeaseError, match="released"):
+        worker_context.run(check_write_fence)
+
+
+def test_ctrl_c_stops_the_workers_writes_before_the_lease_is_released(
+    tmp_path: Path, mocker
+) -> None:
+    # Old behaviour: a KeyboardInterrupt did not set the stop fence, so the
+    # worker a phase left running kept writing until (and, before the
+    # lease's release marked it lost, after) the lease was released.
+    from unified_kg_rag.shared.utils.concurrency import ContextThreadPoolExecutor
+    from unified_kg_rag.shared.write_fence import check_write_fence
+
+    store = FakeDocStatusStore()
+    pipe = object.__new__(DataIngestionPipeline)
+    pipe.config = Config()
+    pipe._doc_status = store
+    pipe.source_directory = tmp_path
+    pipe.pipeline_config = SimpleNamespace(
+        s3_sync_enabled=False,
+        pipeline_id=None,
+        resume_from_stage=None,
+        force_rebuild=False,
+    )
+    pipe.llm_response_cache = None
+    pipe.state_manager = mocker.MagicMock()
+    pipe.state_manager.pipeline_exists.return_value = False
+    pipe._prepare_new_run = mocker.MagicMock(
+        return_value=(SimpleNamespace(incremental_delta=None), None)
+    )
+    for name in (
+        "_set_corpus_fingerprint",
+        "_validate_retired_scopes",
+        "_use_source_directory",
+    ):
+        mocker.patch.object(pipe, name)
+    stopped = threading.Event()
+    writes_after_stop: list[int] = []
+
+    def worker() -> None:
+        for _ in range(150):
+            check_write_fence()
+            if stopped.is_set():
+                writes_after_stop.append(1)
+            time.sleep(0.02)
+
+    worker_future: list[Any] = []
+
+    def execute(context, start):  # type: ignore[no-untyped-def]
+        with ContextThreadPoolExecutor(max_workers=1) as pool:
+            worker_future.append(pool.submit(worker))
+            time.sleep(0.1)
+            raise KeyboardInterrupt
+
+    mocker.patch.object(pipe, "_execute_pipeline", side_effect=execute)
+    # The run unwinds (closes its attempts, uploads its checkpoint) while
+    # the worker still runs: the stop fence alone must end its writes.
+    mocker.patch.object(
+        pipe,
+        "_checkpoint_on_stop",
+        side_effect=lambda: concurrent.futures.wait(worker_future, timeout=2),
+    )
+    release = store.release_lease
+
+    def released(namespace: str, owner: str) -> None:
+        stopped.set()
+        release(namespace, owner)
+
+    mocker.patch.object(store, "release_lease", side_effect=released)
+    with pytest.raises(KeyboardInterrupt):
+        pipe.run(tmp_path, pipeline_id="pid")
+    error = worker_future[0].exception(timeout=5)
+    assert type(error) is PipelineInterrupted
+    assert writes_after_stop == []
+
+
+def test_the_stop_fence_exempts_the_thread_that_runs_the_pipeline() -> None:
+    # Old behaviour: it exempted the main thread, so a pipeline run from
+    # another thread failed its own unwinding writes (closing the attempts)
+    # while the main thread's writes passed.
+    from unified_kg_rag.application.ingestion.pipeline import _StopFence
+
+    pipe = _stopping_pipeline()
+    pipe._stop_signal = signal.SIGTERM
+    outcome: list[Any] = []
+
+    def run() -> None:  # a pipeline run in a worker thread
+        fence = _StopFence(pipe)
+        fence.check()  # its own unwinding writes pass
+        outcome.append(fence)
+
+    thread = threading.Thread(target=run)
+    thread.start()
+    thread.join()
+    assert len(outcome) == 1
+    with pytest.raises(PipelineInterrupted):
+        outcome[0].check()  # any other thread's, the main thread's included
+
+
+def test_a_stop_does_not_wait_for_the_model_calls_in_flight() -> None:
+    # Old behaviour: the batch's finally waited for the running calls, so a
+    # SIGTERM waited for the slowest model call in flight (up to the call
+    # timeout, past the task's stop timeout).
+    from unified_kg_rag.shared.utils.langchain import BatchProcessor
+
+    def call(_: dict[str, Any]) -> str:
+        time.sleep(3)
+        return "ok"
+
+    def stop(signum: int, _: Any) -> None:
+        raise PipelineInterrupted(signum)
+
+    previous = signal.signal(signal.SIGALRM, stop)
+    started = time.time()
+    try:
+        signal.setitimer(signal.ITIMER_REAL, 0.3)
+        with pytest.raises(PipelineInterrupted):
+            BatchProcessor(max_concurrency=2).execute_with_fallback(
+                list(range(4)),
+                lambda xs: [{"x": x} for x in xs],
+                call,
+                "extraction",
+                show_progress=False,
+            )
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous)
+    assert time.time() - started < 1.5
+
+
+def _slow_match(name: str) -> list[tuple[str, float]]:
+    time.sleep(0.05)
+    return []
+
+
+def test_a_stop_cancels_the_queued_tasks_of_the_resolver_process_pool(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Old behaviour: the ProcessPoolExecutor block ran every queued name
+    # before the stop got through (200 x 0.05 s on 2 workers = 5 s).
+    from unified_kg_rag.domain.ingestion import graph_resolver
+
+    monkeypatch.setattr(graph_resolver, "find_all_matches_for_entity_task", _slow_match)
+    # A thread pool's block waits for the queued tasks the same way, without
+    # forking the test process.
+    monkeypatch.setattr(graph_resolver, "ProcessPoolExecutor", ThreadPoolExecutor)
+    resolver = graph_resolver.EntityResolver(Config(), 2, True)
+
+    def stop(signum: int, _: Any) -> None:
+        raise PipelineInterrupted(signum)
+
+    previous = signal.signal(signal.SIGALRM, stop)
+    started = time.time()
+    try:
+        signal.setitimer(signal.ITIMER_REAL, 0.5)
+        with pytest.raises(PipelineInterrupted):
+            for _ in resolver._match_in_pool(
+                MagicMock(), [f"n{i}" for i in range(200)]
+            ):
+                pass
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous)
+    assert time.time() - started < 2.5
+
+
+def test_a_lost_lease_stops_delete_indices_at_once(mocker) -> None:
+    # Old behaviour: each batch's NamespaceLeaseError was collected, the
+    # later batches were still sent, and an AWSServiceError raised at the end.
+    client = object.__new__(OpenSearchClient)
+    batch = mocker.patch.object(
+        client, "_delete_index_batch", side_effect=NamespaceLeaseError("lost")
+    )
+    with pytest.raises(NamespaceLeaseError):
+        client.delete_indices([f"idx-{i}" for i in range(50)])
+    assert batch.call_count == 1
+
+
+@pytest.mark.parametrize("phase", ["retain", "collect"])
+def test_a_lost_lease_is_not_swallowed_by_the_record_cleanup(
+    mocker, phase: str
+) -> None:
+    # Old behaviour: the best-effort cleanup of extraction records logged the
+    # lost lease as a warning and the run went on to its next write.
+    config = Config()
+    vector = FakeVectorStore(opensearch_config=config.indexing.opensearch)
+    manager = IndexingManager(
+        config=config, vector_indexer=vector, graph_indexer=FakeGraphStore()
+    )
+    lost = NamespaceLeaseError("lost")
+    if phase == "retain":
+        mocker.patch.object(vector, "retain_extraction_records", side_effect=lost)
+        call = lambda: manager._retain_extraction_records([], ["default"])  # noqa: E731
+    else:
+        manager._removed_record_keys["default"] = {"k"}
+        mocker.patch.object(vector, "find_documents", side_effect=lost)
+        call = manager.collect_extraction_records
+    with pytest.raises(NamespaceLeaseError):
+        call()
+
+
+def test_the_lease_warning_uses_the_adapters_request_timeouts(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    import unified_kg_rag.adapters.aws.neptune as neptune_mod
+
+    monkeypatch.setattr(neptune_mod, "INGESTION_REQUEST_TIMEOUT_SECONDS", 300.0)
+    pipe = _stopping_pipeline()
+    pipe.config = Config()
+    pipe._doc_status = FakeDocStatusStore()
+    with caplog.at_level("WARNING"):
+        pipe._namespace_lease()  # 600 s < 3 x 300 s
+    assert "longest store write request (300s)" in caplog.text

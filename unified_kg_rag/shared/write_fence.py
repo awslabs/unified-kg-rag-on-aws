@@ -2,17 +2,21 @@
 # SPDX-License-Identifier: Apache-2.0
 """The write fence of a run: stop writing once the run lost the right to.
 
-A pipeline run with the doc-status registry holds its index namespace's write
-lease (``application.ingestion.namespace_lease``) and installs it as the
-fence of its context; worker threads inherit it through
+A pipeline run installs a fence that ends its worker threads' writes once a
+stop was requested (``request_stop``, or Ctrl-C); with the doc-status
+registry it also holds its index namespace's write lease
+(``application.ingestion.namespace_lease``) and installs it as a second
+fence, which fails once the lease was lost, is about to expire or was
+released at the end of the run. Worker threads inherit the fences through
 ``ContextThreadPoolExecutor``. The registry writes of the incremental path,
-the indexing manager's phases and the store adapters' write requests (a
-Neptune batch or drop, an OpenSearch bulk request) call
-:func:`check_write_fence` first, so a run whose lease was lost stops at its
-next request instead of writing over the run that holds it now. A pipeline
-run also installs a fence that ends its worker threads' writes once a stop
-was requested (``request_stop``). Fences stack: the check asks each one, the
-innermost first. Outside a fenced run (the direct APIs) it does nothing.
+the indexing manager's phases and the store adapters' requests call
+:func:`check_write_fence` first: a Neptune write batch, edge write or drop,
+and every attempt of an OpenSearch indexing-client request but a GET or HEAD
+(the bulk writes, index and alias changes, and also the POST searches and
+reads of the indexing path). A run that may not write any more then stops at
+its next request instead of writing over the run that holds the lease now.
+Fences stack: the check asks each one, the innermost (the lease) first.
+Outside a fenced run (the direct APIs) it does nothing.
 
 Kept in the shared kernel so the adapters can check it without depending on
 the application layer.
@@ -44,8 +48,9 @@ _FENCES: ContextVar[tuple[WriteFence, ...]] = ContextVar("write_fences", default
 
 def check_write_fence() -> None:
     """Raise if this context's run lost the right to write (no-op outside a
-    fenced run). A lease fence raises ``NamespaceLeaseError``, a requested
-    stop ``PipelineInterrupted``."""
+    fenced run). The lease fence raises ``NamespaceLeaseError``; the stop
+    fence raises ``PipelineInterrupted`` in any thread but the one running
+    the pipeline, which unwinds the stop itself."""
     for fence in reversed(_FENCES.get()):
         fence.check()
 
