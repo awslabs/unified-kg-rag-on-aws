@@ -417,7 +417,10 @@ import는 순환이 됨).
    Neptune은 멱등적 `coalesce(unfold, addV)` upsert로, OpenSearch는 살아 있는 별칭 인덱스에
    ID로 쓰며, 키가 바뀐 항목의 이전 ID는 쓰기가 성공한 뒤에만 지웁니다.
 5. **삭제 전파**(`IndexingManager.remove_text_units`). 제거한 텍스트 단위를 인용하는 항목을
-   저장소에 묻습니다(엔터티는 `GraphIndexer.find_ids_citing`, 엣지는 `find_relationship_ids_citing`, `VectorIndexer.find_documents`). 제거한
+   저장소에 묻습니다(엔터티는 `GraphIndexer.find_ids_citing`, `VectorIndexer.find_documents`).
+   엣지는 인용된 엔터티에 닿는 엣지에서 찾고, 재개한 제거(제거한 텍스트 단위 일부가 이미 벡터
+   저장소에 없거나 벡터 저장소가 알 수 없음)만 `find_relationship_ids_citing`으로 텍스트 단위에서
+   찾습니다(Neptune에서는 접미사의 엣지 전체 스캔). 제거한
    텍스트 단위만 인용하는 항목은 두 저장소에서 지우되 벡터 사본을 먼저 지웁니다(재시도는 그래프로
    지울 대상을 찾으므로, 중단된 실행은 고아 벡터 사본이 아니라 그래프 사본을 남김). 다른 텍스트 단위도 인용하는 항목은
    그 텍스트 단위를 빼고 가중치를 다시 계산하며 남은 텍스트 단위로 내용을 다시 도출합니다.
@@ -437,11 +440,13 @@ import는 순환이 됨).
 ### 5.2 전체 재구축 (`indexing.reset`)
 
 `indexing.reset`은 비교를 건너뛰고 접미사를 오프라인으로 만들지 않은 채 전체 인덱싱 경로로
-코퍼스 전체를 다시 만듭니다. 모든 문서를 `PENDING`으로 기록하고, 벡터 인덱스는 새
+코퍼스 전체를 다시 만듭니다. 격리된 문서(§5.3)는 건너뛰고 레코드를 그대로 두며, 나머지
+모든 문서를 `PENDING`으로 기록하고, 벡터 인덱스는 새
 타임스탬프 인덱스에 쓴 뒤 각각 다 만들어지면 별칭을 옮기며, 그래프는 제자리에서 다시
 만듭니다(`GraphIndexer.begin_rebuild`가 빌드가 쓰는 모든 정점과 간선에 태그를 붙이고,
-`end_rebuild`가 태그 없는 접미사의 엔티티, 커뮤니티, 간선을 지움). 그동안 질의는 이전
-그래프를 계속 읽습니다. 모든 문서를 다시 기록한 뒤에야 네임스페이스의 다른 레코드를 지우므로,
+`end_rebuild`가 태그 없는 접미사의 엔티티, 커뮤니티, 간선을 지움). 쓰기가 제자리 upsert이므로
+그래프 질의는 마지막 정리 전까지 이전 항목과 다시 만든 항목을 섞어 봅니다. 모든 문서를 다시
+기록한 뒤에야 네임스페이스의 다른 레코드를 지우므로,
 실패한 재구축은 아무것도 지우지 않습니다. 그래프 쓰기가 일부 실패한 재구축
 (`indexing.max_failure_rate` 안)은 재시도가 이전 사본을 찾도록 정리를 건너뛰고, 기록하지
 않고 실패로 보고합니다(`neptune_sweep`). 대체된 문서의 레코드를 지우면 그 정점과 간선이
@@ -925,7 +930,7 @@ JSON으로 렌더링하며, 수집이 기본으로 쓰는 레이아웃 없는 �
 
 프레임워크 확장 방법은 이 절 한 곳에 모았습니다. 전략, 렌더러, 파서는 레지스트리로, 평가기는 타입 맵의 분기 하나로, 백엔드는 생성자 주입으로 확장하며, 어느 경우에도 디스패치 코드를 고치지 않습니다. 포트, `Providers`, 레지스트리는 `unified_kg_rag`에서 내보냅니다(§2.5).
 
-- **새 검색 전략**: `SearchStrategy` enum 멤버 추가(`domain/models/retrieval.py`. CLI 선택지도 이를 따릅니다) + `BaseSearchStrategy` 상속 + `@register_strategy(SearchStrategy.X, required_roles=(...), query_inputs=frozenset({QueryInput.ENTITIES}))` + `adapters/search_strategies/__init__.py`에서 export. `query_inputs`는 전략이 읽는 질의 측 LLM 추출을 선언하며(`entity_focus`용 `ENTITIES`, `hl_keywords`/`ll_keywords`용 `DUAL_KEYWORDS`), 체인은 나머지 추출을 건너뜁니다. 커뮤니티 리포트로 답하는 전략은 `needs_community_reports=True`도 넘겨, 리포트가 없는 구성에서 `auto`가 고르지 않게 합니다. `rag_chain`은 고치지 않습니다. `auto`가 고를 수 있게 하려면 `search.auto_routable_strategies`에 추가하세요.
+- **새 검색 전략**: `SearchStrategy` enum 멤버 추가(`domain/models/retrieval.py`. CLI 선택지도 이를 따릅니다) + `BaseSearchStrategy` 상속 + `@register_strategy(SearchStrategy.X, required_roles=(...), query_inputs=frozenset({QueryInput.ENTITIES}))` + `adapters/search_strategies/__init__.py`에서 export + `STRATEGY_ROUTING_GUIDE`(`domain/prompts/retrieval.py`)에 항목 추가(단위 테스트가 `auto`를 뺀 모든 전략에 항목을 요구). `query_inputs`는 전략이 읽는 질의 측 LLM 추출을 선언하며(`entity_focus`용 `ENTITIES`, `hl_keywords`/`ll_keywords`용 `DUAL_KEYWORDS`), 체인은 나머지 추출을 건너뜁니다. 커뮤니티 리포트로 답하는 전략은 `needs_community_reports=True`도 넘겨, 리포트가 없는 구성에서 `auto`가 고르지 않게 합니다. `rag_chain`은 고치지 않습니다. `auto`가 고를 수 있게 하려면 `search.auto_routable_strategies`에 추가하세요.
 - **새 스토리지/LLM 백엔드**: 해당 포트를 구현한 뒤, `@register_provider(ProviderRole.X, "kind")`(`adapters/provider_registry.py`)로 새 `providers.<역할>.kind`의 빌더를 등록하고 설정에서 고르거나, 그 포트를 쓰는 생성자에 넘깁니다(아래 "커스텀 백엔드" 참고). 매니저의 `__init__`에 하드코딩하지 마세요.
 - **새 평가기**: `BaseGraphRAGEvaluator` 상속 + `EvaluationManager._resolve_evaluator_class`에 분기 추가 + `EvaluatorType` enum 추가.
 - **새 렌더러**: `BaseRenderer` 상속 + `@register_renderer("name")`. 등록은 import할 때 일어납니다. `GraphVisualizationManager`는 프로세스에서 import된 모든 렌더러를 보지만, `run-visualization`은 `adapters/renderers/__init__.py`가 import하는 렌더러만 봅니다.
@@ -944,7 +949,7 @@ JSON으로 렌더링하며, 수집이 기본으로 쓰는 레이아웃 없는 �
 |---|---|---|---|
 | `LLMFactoryPort` / `EmbeddingFactoryPort` / `RerankFactoryPort` (`ports/model_factory.py`, `Protocol`) | LangChain 호환 모델을 반환하는 `get_model()` / `get_model_info()` | `BedrockLanguageModelFactory` / `BedrockEmbeddingModelFactory` / `BedrockRerankModelFactory`(`openai_compatible`, `ollama`. `cross_encoder`, `none`) | `GraphRAGChain`, `DataIngestionPipeline`, `EvaluationManager`의 `providers=`(아래). `GraphRAGChain(model_factory=...)`는 LLM만 담은 묶음 |
 | `TokenCounterPort` (`ports/model_factory.py`, `Protocol`) | `count_tokens()` / `truncate_to_token_limit()` | `BedrockTokenCounter`(`LocalTokenCounter`: 추정치 또는 tiktoken. LLM kind를 따름) | `Providers(token_counter_factory=...)` |
-| `VectorIndexer` / `GraphIndexer` (`ports/indexer.py`, ABC) | `index_*` / `upsert_*` / `delete_by_id`. 증분 조회(`GraphIndexer.find_ids_citing` / `find_relationship_ids_citing` / `find_entity_ids_by_name_key`, `VectorIndexer.find_documents` / `delete_extraction_records` / `retain_extraction_records`)의 기본 구현은 "알 수 없음"(`None`: 이를 통해 찾는 것이 없고 병합은 이름을 모두 읽음)과 아무것도 지우지 않음. `GraphIndexer.begin_rebuild` / `end_rebuild`(제자리 전체 구축, §5.2)의 기본값은 `False`(전체 구축이 레이블마다 먼저 지움). `initialize()`(기본값은 아무 작업 없음) / `clear()`는 `None`을 반환하고 실패하면 타입이 있는 저장소 예외(`StoreConnectionError`, `StoreConfigurationError` 등)를 발생시킴. `False`를 반환해도 무시됨 | `OpenSearchIndexer` / `NeptuneIndexer`(`gremlin`: 같은 어댑터로 Gremlin Server 사용. `sqlite`: `SQLiteSearchEngine` 위의 `OpenSearchIndexer` / `SQLiteGraphIndexer`) | `Providers(vector_indexer_factory=..., graph_indexer_factory=...)`, `DataIngestionPipeline(..., vector_indexer=..., graph_indexer=...)` 또는 `IndexingManager(vector_indexer=..., graph_indexer=...)` |
+| `VectorIndexer` / `GraphIndexer` (`ports/indexer.py`, ABC) | `index_*` / `upsert_*` / `delete_by_id`. 증분 조회(`GraphIndexer.find_ids_citing` / `find_relationship_ids_citing` / `find_entity_ids_by_name_key`, `VectorIndexer.find_documents` / `delete_extraction_records` / `retain_extraction_records`)의 기본 구현은 "알 수 없음"(`None`: 이를 통해 찾는 것이 없고 병합은 이름을 모두 읽음)과 아무것도 지우지 않음. `GraphIndexer.read_entities` / `read_relationships`의 기본값은 `[]`이므로, 재정의하지 않으면 델타 병합이 저장된 설명, 계보(`text_unit_ids`), 가중치를 덮어씀. `GraphIndexer.begin_rebuild` / `end_rebuild`(제자리 전체 구축, §5.2)의 기본값은 `False`(전체 구축이 레이블마다 먼저 지움). `initialize()`(기본값은 아무 작업 없음) / `clear()`는 `None`을 반환하고 실패하면 타입이 있는 저장소 예외(`StoreConnectionError`, `StoreConfigurationError` 등)를 발생시킴. `False`를 반환해도 무시됨 | `OpenSearchIndexer` / `NeptuneIndexer`(`gremlin`: 같은 어댑터로 Gremlin Server 사용. `sqlite`: `SQLiteSearchEngine` 위의 `OpenSearchIndexer` / `SQLiteGraphIndexer`) | `Providers(vector_indexer_factory=..., graph_indexer_factory=...)`, `DataIngestionPipeline(..., vector_indexer=..., graph_indexer=...)` 또는 `IndexingManager(vector_indexer=..., graph_indexer=...)` |
 | 리트리버(역할별 빌더) | `BaseGraphRAGRetriever.aretrieve` | `OpenSearchRetriever` / `NeptuneRetriever`(`sqlite`: `SQLiteSearchEngine` 위의 `OpenSearchRetriever` / `SQLiteGraphRetriever`) | `Providers(retriever_builders=...)` 또는 `GraphRAGChain(retriever_builders={RetrieverRole.GRAPH: lambda: MyGraphRetriever(...)})` |
 | `ContentGuardPort` (`ports/guardrail.py`, `Protocol`) | `async acheck(text, source)`가 `GuardVerdict`(`none` / `masked` / `blocked`, 이어서 쓸 텍스트)를 반환. 판정할 수 없으면 예외를 냄 | `BedrockGuardrail`(`aws.bedrock.guardrail.identifier`를 지정하면 생성) | `GraphRAGChain(guard=...)` |
 | `DocStatusPort` (`ports/doc_status.py`, `Protocol`) | `get` / `get_many` / `put` / `put_many` / `delete` / `list_namespace` / `list_all` / `diff`(`extraction_fingerprint`를 받고 `DocumentDelta.quarantined_unchanged`를 채워야 함), `record_fits`, 쓰기 임대(`try_acquire_lease` / `lease_holder` / `release_lease`), 범위의 마지막 추출 설정(`get_extraction_settings` / `put_extraction_settings`). 모두 직접 호출합니다. 레코드의 네임스페이스는 `doc_id`의 `<namespace>#` 접두사이고(`doc_id_namespace`), 범위를 준 `diff`는 그 네임스페이스만 읽습니다. 상속하면 `get_many` / `put_many` / `record_fits` 기본 구현(호출마다 레코드 하나, 크기 한도 없음)을 물려받습니다 | `DynamoDBDocStatusStore`(`SQLiteDocStatusStore`) | `Providers(doc_status=...)` 또는 `DataIngestionPipeline(..., doc_status=...)`(어느 쪽이든 증분 인덱싱이 켜짐). `tests/integration/test_doc_status_conformance.py`를 통과해야 함 |

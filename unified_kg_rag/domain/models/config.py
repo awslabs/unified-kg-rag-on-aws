@@ -568,7 +568,8 @@ class GuardrailConfig(BaseModel):
     (rewrite, routing, keyword extraction, map steps, answer generation) run
     unguarded: their prompts carry retrieved corpus text and developer
     instructions, which an attached guardrail would judge as user input.
-    Ingestion and evaluation models run unguarded: a PII-anonymizing
+    Ingestion and the evaluation judges run unguarded (run-eval's answers
+    come from the screened query path): a PII-anonymizing
     guardrail rewrites names to placeholders (every person merges into one
     entity) and a prompt-attack filter blocks instruction-like corpus text,
     which silently yields empty extractions.
@@ -2070,7 +2071,8 @@ class IndexingConfig(BaseModel):
             "of applying a delta, without taking it offline: the vector "
             "indices swap aliases, the graph is rewritten in place and what "
             "the rebuild did not write is dropped at the end; then the "
-            "namespace's registry records are written again. Set it for one "
+            "namespace's registry records are written again. Quarantined "
+            "documents are skipped and keep their records. Set it for one "
             "run."
         ),
     )

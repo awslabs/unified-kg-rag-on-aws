@@ -55,7 +55,9 @@ current names' ids. Other extraction settings need no reset: the next
 incremental run re-extracts the affected documents and logs how many
 ([User Guide §5](./user-guide.md#workflows)).
 
-Queries keep reading the previous content during a reset. A failed reset
+During a reset, vector queries read the previous indices until each new one
+swaps in; graph queries see previous and rebuilt items mixed until the final
+drop. Quarantined documents are skipped and keep their records. A failed reset
 drops nothing: re-run it. One whose graph writes partly failed (even within
 `indexing.max_failure_rate`) fails too (`neptune_sweep` in the indexing
 results); the next run removes what the previous graph still holds.
@@ -109,7 +111,7 @@ Coming from a pre-release build: see
 | Cache | Location | Notes |
 |---|---|---|
 | Stage checkpoints (local) | `<--cache-directory>/<pipeline_id>/` (default `cache/`) | Reused on resume |
-| Stage checkpoints (S3) | `s3://<bucket>/<--s3-prefix>/<pipeline_id>/` (default `pipeline-runs`) | With `--s3-sync`: uploaded after every stage and on SIGTERM, so a fresh task resumes from it; a failed download or upload fails the run with `CacheSyncError`. Expired by the bucket lifecycle, not `cache.ttl_seconds` |
+| Stage checkpoints (S3) | `s3://<bucket>/<--s3-prefix>/<pipeline_id>/` (default `pipeline-runs`) | With `--s3-sync`: uploaded after every stage and on SIGTERM, so a fresh task resumes from it. A failed download or final upload fails the run with `CacheSyncError`; a failed per-stage or on-stop upload only warns (the next upload retries it), and a stop after a lost lease skips the upload. Expired by the bucket lifecycle, not `cache.ttl_seconds` |
 | LLM response cache | `<stage checkpoint dir>/llm-cache/` | Reused by a re-run with the same pipeline id; `cache.llm_responses.enabled: false` turns it off, `--force-rebuild` ignores it |
 | Extraction store | `graphrag-extraction-records-<suffix>` (`indexing.opensearch.extraction_records_index_prefix`) | Per-chunk extraction results reused by later runs while a stored text unit names them. `clear` and `--force-rebuild` keep it; delete the index to drop it |
 | Embedding cache | `s3://<aws.s3.bucket_name>/embedding-cache/cache.json` | Only with `indexing.opensearch.persist_embedding_cache: true` |
@@ -260,7 +262,9 @@ would stop every later run, so runs count deaths and isolate the culprit.
 - **Limits.** A task that dies whatever it processes (a broken image)
   quarantines documents one at a time: fix the deployment, then edit the files
   or raise the limit. A one-off kill during a lone-suspect run quarantines it
-  too. Runs that time out on SIGTERM are never counted: raise the timeout. A
+  too. A run that closes its attempts within the SIGTERM stop timeout (120 s
+  on ECS) is not counted, but one store request can take 180 s, so a run
+  killed mid-request after the timeout can count as a death. A
   document producing no text units stays `PENDING` and is quarantined the
   same way.
 - **Resumed runs** with the same pipeline id reuse their delta unless the
@@ -372,7 +376,7 @@ These fire between runs too, so degradation shows before a run breaks on it:
 | `OpenSearchFreeStorageLow` | The fullest data node has 40% or less of `opensearch_volume_gib` free | Raise `opensearch_volume_gib` (or `opensearch_count`) and redeploy before the write-block watermark |
 | `OpenSearchJvmPressure` | JVM memory pressure at least 95% for 3 minutes | Use a larger `opensearch_instance` or more data nodes |
 | `DocStatusWriteThrottled` | The doc-status table throttled a write (5 minutes) | Registry calls retry with backoff; one still throttled fails the run with `DocStatusRegistryError`. Look for overlapping runs, rerun once it clears |
-| `NeptuneHighCpu` | Average writer CPU at least 90% for 15 minutes | Sustained saturation: a larger `neptune_instance` (or `neptune_serverless_ncu` maximum), or a lower `indexing.neptune.index_concurrency` |
+| `NeptuneHighCpu` | Average writer CPU at least 90% for 15 minutes | Sustained saturation: a larger `neptune_instance` (or `neptune_serverless_ncu` maximum), or, if you raised it, a lower `indexing.neptune.index_concurrency` (default `1`) |
 | `NeptuneLowFreeableMemory` | Writer freeable memory at or below 512 MiB at any point in 5 minutes; on Serverless only while the writer is at maximum capacity | Out-of-memory failures ahead: a larger `neptune_instance` (or `neptune_serverless_ncu` maximum) |
 | `NeptuneServerlessAtMaxCapacity` | Serverless only: the writer is at the `neptune_serverless_ncu` maximum for 3 consecutive 5-minute periods | Raise the maximum (or the minimum, so capacity is there before a burst) |
 | `NeptuneGremlinErrors` | Gremlin server errors on any instance for 3 consecutive minutes | Persistent failures (retried write conflicts come in short bursts and do not fire it): find the failing request in the task log |

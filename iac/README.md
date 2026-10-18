@@ -110,7 +110,8 @@ and `cost-center`.
 
 Boolean keys take `true`/`false` (also `yes`/`no`, `on`/`off`, `1`/`0`); any
 other value fails synth. Counts and sizes must be positive integers; synth
-names a key whose value is out of range.
+names a key whose value is out of range. An unknown key fails synth with a
+did-you-mean hint.
 
 **Environment and network**
 
@@ -127,15 +128,15 @@ names a key whose value is out of range.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `neptune_instance` | `db.r6g.large` | Provisioned Neptune instance class |
+| `neptune_instance` | `db.r6g.large` | Provisioned Neptune instance class; setting it with `neptune_serverless_ncu` fails synth |
 | `neptune_serverless_ncu` | — | `MIN-MAX` capacity units (e.g. `1-16`; one NCU is about 2 GiB, a `db.r6g.large` about 8). Set, every instance runs as Neptune Serverless; switching a deployed cluster changes each instance in place, so do it between runs |
 | `neptune_instances` | `1` (dev) / `2` | Neptune instances; 2 or more is Multi-AZ |
 | `backup_retention_days` | `7` | Neptune automated backups, 1-35 days ([Backup and restore](../docs/operations.md#backup-and-restore)) |
 | `opensearch_instance` | `r6g.large.search` | OpenSearch data node type |
-| `opensearch_count` | `1` (dev) / `2` | Data nodes. Above 1: three dedicated masters (`opensearch_master_instance`, default `m6g.large.search`) and zone awareness over as many AZs as data nodes, up to 3 and the VPC's AZs; a domain in 2 AZs needs an even count |
+| `opensearch_count` | `1` (dev) / `2` | Data nodes. Above 1: three dedicated masters (`opensearch_master_instance`, default `m6g.large.search`) and zone awareness over as many AZs as data nodes, up to 3 and the VPC's AZs; a domain in 2 AZs needs an even count. Moving a deployed domain to more AZs (e.g. to 3) is a blue/green deployment (every shard copied, slower for hours on a large domain): deploy it with no ingestion running |
 | `opensearch_volume_gib` | `50` | gp3 volume per data node; the free-storage alarm fires at 40% free |
-| `opensearch_korean_analyzer` | `cjk` | Analyzer of Korean text (`UKR__INDEXING__OPENSEARCH__LANGUAGE_ANALYZERS__KO`). The domain has `nori` only once its Nori package is associated; to use it, associate the package, deploy with `nori` and re-run once with `indexing.reset: true` |
-| `doc_status_table` | `graphrag-doc-status-v2` | Doc-status table (`UKR__AWS__DYNAMODB__TABLE_NAME`); changing it creates a new, empty registry |
+| `opensearch_korean_analyzer` | `cjk` | Analyzer of Korean text (`UKR__INDEXING__OPENSEARCH__LANGUAGE_ANALYZERS__KO`). The domain has `nori` only once its Nori package is associated; to use it, associate the package (a blue/green deployment), deploy with `nori` and re-run once with `indexing.reset: true` |
+| `doc_status_table` | `graphrag-doc-status-v2` (dev) / `<env>-graphrag-doc-status-v2` | Doc-status table (`UKR__AWS__DYNAMODB__TABLE_NAME`); changing it creates a new, empty registry |
 | `cache_bucket_name` | — | Reuse an S3 cache bucket |
 | `corpus_bucket_name` | — | A bucket the corpus (or an evaluation dataset) is read from: both task roles get read access and, in `private` mode, the S3 endpoint allows it |
 
@@ -154,7 +155,7 @@ names a key whose value is out of range.
 | Key | Default | Meaning |
 |---|---|---|
 | `use_cmk` | `false` | Customer-managed KMS key for S3, Neptune, OpenSearch, DynamoDB, ECR and every log group. Choose it before the first deploy: ECR sets a repository's encryption only at creation, so switching it on a deployed environment fails until the compute stack is destroyed and redeployed |
-| `deletion_protection` | `false` (dev) / `true` | Deletion protection on the Neptune cluster and the doc-status table (OpenSearch has none; outside dev the domain is kept by `removal_destroy=false`) |
+| `deletion_protection` | `false` (dev) / `true` | Deletion protection on the Neptune cluster and the doc-status table (OpenSearch has none; outside dev the domain is kept on stack deletion by `removal_destroy=false`, which does not stop a direct `DeleteDomain` call) |
 | `removal_destroy` | `true` (dev) / `false` | `DESTROY` or `RETAIN` on stack deletion for the stores, keys, guardrail, ECR repository and fixed-name log groups. Retained fixed-name resources fail the next deploy on the duplicate name, so delete them by hand after a `cdk destroy` |
 | `bedrock_model_arns` | — | Scope Bedrock `InvokeModel` to these ARNs (a list, or a comma-separated string). Foundation-model ARNs keep the `inference-profile/*` grants (models offered only through a profile, Claude 4.5 and later, are called by profile id and still authorized against the listed models); list them with a `*` region, since profiles route across regions. Any inference-profile ARN in the list makes it exact. `Rerank` and `ListInferenceProfiles` stay on `*` |
 | `create_guardrail` | `true` | Create and keep a baseline guardrail in `bedrock_region`; `false` brings your own ([Guardrail](#guardrail)) |
@@ -351,7 +352,9 @@ aws logs tail /graphrag/tasks --region "$REGION" --follow
   stages that completed. Checkpoints are uploaded after every stage and on
   SIGTERM (the container's stop timeout is 120 s; the stage's store writes
   stop at their next request), so a timed-out execution resumes at the stage
-  that was running. If the corpus changed in between,
+  that was running. Of the uploads, only the final one fails the run; a
+  failed per-stage or on-stop upload only warns, and a stop after a lost
+  lease skips it. If the corpus changed in between,
   the task fails its integrity check; use a new `pipeline_id` to rebuild.
 - **Buckets.** The task role reads and writes the cache bucket only
   (`-c corpus_bucket_name=<bucket>` for another corpus bucket). In `private`
@@ -508,7 +511,7 @@ What the option changes:
 console, **Application Signals, Transaction Search**, and filter on the
 service `unified-kg-rag`. Each ingestion run is one `kg_rag.ingestion.run`
 trace and each `run-rag` query one `kg_rag.query` trace, with the children
-listed in the [user guide's trace shape](../docs/user-guide.md#observability). A `run-eval` run is one
+listed in the [runbook's trace shape](../docs/operations.md#trace-shape). A `run-eval` run is one
 `kg_rag.batch` trace: its queries are `kg_rag.query` children of that root, so
 the list shows the batch, not each query; each evaluator (and
 `--pairwise-judge`) adds one `kg_rag.evaluate` trace holding its judge model

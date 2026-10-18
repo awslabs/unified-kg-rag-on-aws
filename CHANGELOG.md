@@ -626,6 +626,9 @@ changed once with the full-config keys (#332).
   keep the containers.
 
 ### Added
+- `ModelPurpose` is exported from `unified_kg_rag`, so custom code can pass
+  `model_purpose=ModelPurpose.INGESTION` to `setup_chain` / `get_model` as
+  the user guide says without importing an internal module (#365).
 - `docs/cli.md`, a CLI reference generated from the argparse parsers of
   every CLI (`scripts/gen_cli_reference.py`; a unit test fails when it is
   stale). The flag help strings now carry what the user guide's flag tables
@@ -1262,6 +1265,19 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Docs match the code again: a reset skips quarantined documents and keeps
+  their records, and graph queries see old and rebuilt items mixed until its
+  final drop; only the final checkpoint upload fails a run; a run killed
+  mid-request past the 120 s stop timeout can count as a death; a guardrail
+  error under `processing.ignore_errors` gives the degraded answer; only
+  ingestion and the evaluation judges run unguarded; a removal looks edges up
+  by text unit only when resumed; the `--search-type` help says Hangul, Han
+  and Kana questions get no typo tolerance. Operator facts the condensed docs
+  had lost are back: when the local 22000-token budget applies, the embedded
+  engine's re-analysis cost, blue/green OpenSearch changes (more AZs, the Nori
+  package), synth failures (exclusive Neptune keys, unknown `-c` keys), the
+  `run-eval` S3 session, the graph read-back a custom adapter needs, and what
+  `removal_destroy=false` does not prevent (#365).
 - Ctrl-C (or a `SystemExit`) during indexing no longer lets the worker
   threads it leaves running write after the run released its lease, when
   another run may hold it: a released lease fails their next write, and

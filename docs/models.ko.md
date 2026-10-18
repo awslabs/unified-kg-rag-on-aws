@@ -115,8 +115,8 @@ Retention API로만 설정 가능)가 필요하며, 기본 모드 계정에서�
 명시적 프롬프트 캐싱을 지원하는 Claude 모델에서는 각 시스템 프롬프트의 끝을 캐시
 체크포인트로 표시합니다. Converse API(모든 추론 프로파일)에서는 `cachePoint` 블록을,
 InvokeModel에서는 `cache_control`을 씁니다. 시스템 프롬프트가 모델의 최소 체크포인트
-크기(Claude Sonnet/Opus 5.5와 Opus 5는 512토큰, 대부분은 1024토큰, Claude Haiku 4.5와
-Opus 4.5-4.7은 4096토큰)보다 짧으면 표시하지 않습니다. Bedrock이 요청은 받지만
+크기(Claude Sonnet/Opus/Haiku 5.5와 Opus 5는 512토큰, 대부분은 1024토큰, Claude 3.5
+Haiku는 2048토큰, Claude Haiku 4.5와 Opus 4.5-4.7은 4096토큰)보다 짧으면 표시하지 않습니다. Bedrock이 요청은 받지만
 아무것도 캐시하지 않기 때문입니다. 캐시 읽기는 응답의
 `usage_metadata.input_token_details`에 `cache_read`로 나타나며, 캐시된 입력 토큰은
 분당 토큰 할당량에 포함되지 않습니다.

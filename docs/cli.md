@@ -71,7 +71,7 @@ Guide: [User Guide](./user-guide.md#4-querying-run-rag). Also takes the [provide
 | `--suffix` | — | Index suffix to query (default: 'default'); must match the corpus's processing.document_parsing.index_value. |
 | `--enable-thinking` | off | Enable thinking mode for language model reasoning and step-by-step problem solving. No-op for models that always reason (Claude 4.7+ / 5.x, OpenAI GPT); tune their depth with aws.bedrock.default_effort / fast_effort in the config. |
 | `--search-strategy` | `auto` | Choose the search strategy. One of `auto`, `drift`, `global`, `local`, `simple`, `mix`, `hybrid`, `naive`. |
-| `--search-type` | `hybrid` | Search method. The lexical side searches the first 150 words of the question (a Hangul, Han or Kana character counts as a word) and tolerates typos only in questions of up to 10 words; the vector side embeds the whole question. One of `hybrid`, `lexical`, `vector`. |
+| `--search-type` | `hybrid` | Search method. The lexical side searches the first 150 words of the question (a Hangul, Han or Kana character counts as a word) and, on OpenSearch, tolerates typos only in questions of up to 10 words with no Hangul, Han or Kana; the vector side embeds the whole question. One of `hybrid`, `lexical`, `vector`. |
 | `--top-k` | `10` | Set the maximum number of search results. |
 | `--retrieval-multiplier` | `1` | Multiplier that increases the retrieval depth. |
 | `--disable-query-processing` | off | Skip query translation and entity extraction. |
@@ -94,7 +94,7 @@ Guide: [User Guide](./user-guide.md#6-evaluation-run-eval). Also takes the [prov
 | `--suffix` | — | Index suffix to query (default: 'default'); must match the corpus's processing.document_parsing.index_value. |
 | `--enable-thinking` | off | Enable thinking mode for language model reasoning and step-by-step problem solving. No-op for models that always reason (Claude 4.7+ / 5.x, OpenAI GPT); tune their depth with aws.bedrock.default_effort / fast_effort in the config. |
 | `--search-strategy` | `auto` | Search strategy, or a comma-separated list (e.g. local,mix,global) to answer the same queries with each and compare them pairwise against the first. |
-| `--search-type` | `hybrid` | Search method. The lexical side searches the first 150 words of the question (a Hangul, Han or Kana character counts as a word) and tolerates typos only in questions of up to 10 words; the vector side embeds the whole question. One of `hybrid`, `lexical`, `vector`. |
+| `--search-type` | `hybrid` | Search method. The lexical side searches the first 150 words of the question (a Hangul, Han or Kana character counts as a word) and, on OpenSearch, tolerates typos only in questions of up to 10 words with no Hangul, Han or Kana; the vector side embeds the whole question. One of `hybrid`, `lexical`, `vector`. |
 | `--top-k` | `10` | Set the maximum number of search results. |
 | `--retrieval-multiplier` | `1` | Multiplier that increases the retrieval depth. |
 | `--repeats` | `1` | Answer and score the dataset this many times per strategy; the comparison averages each query over the repeats and reports the run-to-run spread (default 1). |

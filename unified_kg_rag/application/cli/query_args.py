@@ -77,9 +77,9 @@ def add_query_arguments(
         default="hybrid",
         choices=[st.value for st in SearchType],
         help="Search method. The lexical side searches the first 150 words of "
-        "the question (a Hangul, Han or Kana character counts as a word) and "
-        "tolerates typos only in questions of up to 10 words; the vector side "
-        "embeds the whole question",
+        "the question (a Hangul, Han or Kana character counts as a word) and, "
+        "on OpenSearch, tolerates typos only in questions of up to 10 words "
+        "with no Hangul, Han or Kana; the vector side embeds the whole question",
     )
     parser.add_argument(
         "--top-k",
