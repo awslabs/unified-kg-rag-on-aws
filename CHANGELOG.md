@@ -1134,7 +1134,7 @@ changed once with the full-config keys (#332).
   and the entity and chunk ids a strategy collects from its hits keep their
   rank order. A test runs a full build, an incremental run and every search
   strategy in two processes with different hash seeds and requires
-  identical stores, prompts, exports and answers (#PR).
+  identical stores, prompts, exports and answers (#343).
 - A paired strategy comparison no longer drops the queries a strategy
   failed to answer: a strategy that crashed on the queries it would lose
   looked as good as one that answered them. A failed answer scores 0 on
