@@ -8,7 +8,8 @@ import contextvars
 import functools
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
-from typing import ParamSpec, TypeVar
+from types import TracebackType
+from typing import Literal, ParamSpec, TypeVar
 
 _P = ParamSpec("_P")
 _T = TypeVar("_T")
@@ -26,7 +27,22 @@ class ContextThreadPoolExecutor(ThreadPoolExecutor):
     Process pools stay plain ``ProcessPoolExecutor``s: a ``Context`` cannot be
     pickled to another process, and a worker process has its own logging and
     contextvars anyway.
+
+    A ``with`` block that raises (a task's error re-raised, a lost write lease,
+    or ``PipelineInterrupted`` from a stop request) cancels the queued tasks
+    and does not wait for the running ones: they end at their next write
+    fence check (``shared.write_fence``), so a stop is not held up until
+    every task of the block finished.
     """
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> Literal[False]:
+        self.shutdown(wait=exc_type is None, cancel_futures=exc_type is not None)
+        return False
 
     def submit(
         self, fn: Callable[_P, _T], /, *args: _P.args, **kwargs: _P.kwargs

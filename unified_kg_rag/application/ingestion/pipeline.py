@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import functools
 import secrets
+import threading
 import time
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import AbstractContextManager, contextmanager, nullcontext
@@ -23,7 +24,10 @@ from unified_kg_rag.application.ingestion.incremental import (
     delta_still_applies,
     open_attempts,
 )
-from unified_kg_rag.application.ingestion.namespace_lease import NamespaceLease
+from unified_kg_rag.application.ingestion.namespace_lease import (
+    NamespaceLease,
+    check_lease,
+)
 from unified_kg_rag.application.ingestion.pipeline_stages import (
     ClaimExtractionStage,
     ClaimResolutionStage,
@@ -79,6 +83,7 @@ from unified_kg_rag.shared.utils.cache_keys import (
     extraction_settings,
 )
 from unified_kg_rag.shared.utils.document_identity import config_registry_namespace
+from unified_kg_rag.shared.write_fence import install_write_fence, remove_write_fence
 
 if TYPE_CHECKING:
     import boto3
@@ -94,6 +99,27 @@ _STALE_DELTA = (
     "often enough to isolate the document that kills them)"
 )
 T = TypeVar("T", bound=BaseModel)
+# The longest single store request of the indexing path (the Neptune and
+# OpenSearch ingestion request timeouts); indexing.lease_seconds should be at
+# least three times it (see namespace_lease).
+_LONGEST_WRITE_REQUEST_SECONDS = 180.0
+
+
+class _StopFence:
+    """The write fence of a pipeline run that ends its worker threads' writes
+    once a stop was requested (``request_stop``). The main thread gets the
+    ``PipelineInterrupted`` from the request itself, and its unwinding
+    (closing the attempts, uploading the checkpoint) still writes."""
+
+    def __init__(self, pipeline: DataIngestionPipeline) -> None:
+        self._pipeline = pipeline
+
+    def check(self) -> None:
+        signum = self._pipeline._stop_signal
+        if signum is not None and threading.current_thread() is not (
+            threading.main_thread()
+        ):
+            raise PipelineInterrupted(signum)
 
 
 class DataIngestionPipeline:
@@ -508,6 +534,7 @@ class DataIngestionPipeline:
     ) -> PipelineContext:
         log_context: Mapping[str, Any] = {}
         self._stop_signal = None
+        stop_fence = install_write_fence(_StopFence(self))
         try:
             source_path = Path(source_directory).resolve()
             logger.info(
@@ -568,6 +595,7 @@ class DataIngestionPipeline:
                 self.llm_response_cache.close()
             self._checkpoint_id = None
             reset_contextvars(**log_context)
+            remove_write_fence(stop_fence)
 
     def _run_leased(
         self,
@@ -711,9 +739,16 @@ class DataIngestionPipeline:
         namespace = config_registry_namespace(
             self.config.indexing, self.config.processing.document_parsing.index_value
         )
-        return NamespaceLease(
-            self._doc_status, namespace, self.config.indexing.lease_seconds
-        )
+        seconds = self.config.indexing.lease_seconds
+        if seconds < 3 * _LONGEST_WRITE_REQUEST_SECONDS:
+            logger.warning(
+                "indexing.lease_seconds (%gs) is under three times the longest "
+                "store write request (%gs): a request in flight when the lease "
+                "runs out can still write after another run took it",
+                seconds,
+                _LONGEST_WRITE_REQUEST_SECONDS,
+            )
+        return NamespaceLease(self._doc_status, namespace, seconds)
 
     def _open_llm_response_cache(self, pipeline_id: str) -> None:
         """Serve this run's ingestion model calls from the responses earlier
@@ -773,6 +808,16 @@ class DataIngestionPipeline:
         """Upload the checkpoint of a run that is stopping (``request_stop``
         or Ctrl-C), once the stage it interrupted has unwound."""
         if self._checkpoint_id is None:
+            return
+        try:
+            check_lease()
+        except NamespaceLeaseError as e:
+            # Another run may write this pipeline's checkpoint now.
+            logger.warning(
+                "Run stopped without uploading the checkpoint of '%s': %s",
+                self._checkpoint_id,
+                e,
+            )
             return
         logger.warning(
             "Run stopped (signal %s): uploading the checkpoint of '%s'",
@@ -964,6 +1009,10 @@ class DataIngestionPipeline:
 
         cache_dir = self.cache_manager.get_pipeline_cache_dir(pipeline_id)
 
+        if direction == "upload":
+            # A run that lost its lease must not replace the checkpoint the
+            # run holding it now may write.
+            check_lease()
         try:
             if direction == "upload":
                 if self.llm_response_cache is not None:
@@ -1278,6 +1327,9 @@ class DataIngestionPipeline:
                 logger.info("Skipping previously completed stage: '%s'", stage.name)
             else:
                 logger.info("Executing stage: '%s'", stage.name)
+                # A run whose lease was lost meanwhile (in a long stage that
+                # does not write) stops here, not at its next write.
+                check_lease()
                 result = self._execute_stage(stage, context)
                 self._emit_stage_metrics(context, stage.name)
                 with self._checkpoint_write():

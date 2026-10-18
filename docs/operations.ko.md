@@ -244,7 +244,7 @@ curl -X PUT "https://<OpenSearch endpoint>/_all/_settings" \
 ### 동시 실행
 
 레지스트리를 쓰면 한 인덱스 네임스페이스에는 한 번에 한 실행만 씁니다. 실행은 첫 단계
-전에 네임스페이스의 쓰기 임대를 얻고 `indexing.lease_seconds`(기본값 300초)의 6분의 1마다
+전에 네임스페이스의 쓰기 임대를 얻고 `indexing.lease_seconds`(기본값 600초)의 6분의 1마다
 갱신합니다. 두 번째 실행은 저장소를 읽거나 무엇을 쓰기 전에 멈춥니다.
 
 ```text
@@ -258,12 +258,12 @@ NamespaceLeaseError: Index namespace '<namespace>' is being written by
 `NamespaceLeaseError: This run lost the write lease ...`로 멈춥니다. 다른 실행이 끝난
 뒤 다시 실행하세요.
 
-- **쓰기 차단.** 모든 레지스트리 쓰기, 인덱싱 단계, 저장소 쓰기 요청은 먼저 임대를
-  확인하고, 마지막으로 성공한 갱신 뒤 남은 기간이 3분의 1 미만이면 멈춥니다.
-  `lease_seconds`는 가장 긴 쓰기 요청의 세 배 이상으로 두세요
-  ([설계 §5.6](./design.ko.md#56-동시성)).
+- **쓰기 차단.** 모든 단계 시작, 체크포인트 업로드, 레지스트리 쓰기, 인덱싱 단계, 저장소
+  쓰기 시도(재시도 포함)는 먼저 임대를 확인하고, 마지막으로 성공한 갱신 뒤 남은 기간이
+  3분의 1 미만이면 멈춥니다. `lease_seconds`는 가장 긴 쓰기 요청(180초)의 세 배 이상으로
+  두세요(더 짧으면 WARNING을 남김) ([설계 §5.6](./design.ko.md#56-동시성)).
 - **체크포인트.** 실행은 임대를 얻은 뒤에만 S3 체크포인트를 내려받고, 멈춘 실행은
-  임대를 놓기 전에 체크포인트를 올립니다.
+  임대를 놓기 전에 체크포인트를 올리며, 임대를 잃은 실행은 올리지 않습니다.
 - **임대 위치.** DynamoDB에서는 `namespace` = `<namespace>`, `doc_id` = `#lease`인
   항목(`lease_owner`, 테이블의 TTL 속성인 `lease_expires_at`), SQLite에서는 `leases`
   테이블의 네임스페이스 행입니다. 그 실행이 없어진 것을 확인한 뒤에만 손으로 지우세요.

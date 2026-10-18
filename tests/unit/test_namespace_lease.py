@@ -87,3 +87,37 @@ def test_incremental_writes_check_the_lease() -> None:
     # Nothing was written: neither registry record nor artifact.
     assert harness.store.list_all() == []
     assert harness.graph.ids("entities") == set()
+
+
+class _FrozenRenewal(FakeDocStatusStore):
+    """A renewal that reaches the store ``delay`` seconds after it was sent
+    (a frozen process, a slow registry), once."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.delay = 0.0
+        self.renewals = 0
+
+    def try_acquire_lease(self, namespace: str, owner: str, seconds: float) -> bool:
+        delay, self.delay = self.delay, 0.0
+        time.sleep(delay)
+        self.renewals += 1
+        return super().try_acquire_lease(namespace, owner, seconds)
+
+
+def test_a_renewal_after_the_lease_expired_loses_it() -> None:
+    # Old behaviour: the late renewal took the free lease again (another run
+    # had taken, written and released it meanwhile), the next renewal reset
+    # the clock and the run went on writing its stale delta.
+    store = _FrozenRenewal()
+    with NamespaceLease(store, "ns", 1.2) as lease:
+        store.delay = 1.6  # the next renewal, sent at 0.2 s, lands at 1.8 s
+        time.sleep(1.4)
+        # The lease expired at 1.2 s: another run takes it and finishes.
+        assert FakeDocStatusStore.try_acquire_lease(store, "ns", "other", 1.2)
+        store.release_lease("ns", "other")
+        time.sleep(1.0)  # later renewals (every 0.2 s) would have succeeded
+        with pytest.raises(NamespaceLeaseError, match="expired before a renewal"):
+            lease.check()
+        # The late renewal's lease was given back.
+        assert store.lease_holder("ns") is None

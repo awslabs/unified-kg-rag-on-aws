@@ -349,8 +349,9 @@ aws logs tail /graphrag/tasks --region "$REGION" --follow
   without `..`, up to 128 characters.
 - **Resume.** Start a new execution with the same input: the task skips the
   stages that completed. Checkpoints are uploaded after every stage and on
-  SIGTERM (the container's stop timeout is 120 s), so a timed-out execution
-  resumes at the stage that was running. If the corpus changed in between,
+  SIGTERM (the container's stop timeout is 120 s; the stage's store writes
+  stop at their next request), so a timed-out execution resumes at the stage
+  that was running. If the corpus changed in between,
   the task fails its integrity check; use a new `pipeline_id` to rebuild.
 - **Buckets.** The task role reads and writes the cache bucket only
   (`-c corpus_bucket_name=<bucket>` for another corpus bucket). In `private`

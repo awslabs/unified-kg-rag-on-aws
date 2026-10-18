@@ -264,7 +264,7 @@ would stop every later run, so runs count deaths and isolate the culprit.
 
 With the registry, one run writes an index namespace at a time: it takes the
 namespace's write lease before its first stage and renews it every sixth of
-`indexing.lease_seconds` (default 300 s). A second run stops before it reads
+`indexing.lease_seconds` (default 600 s). A second run stops before it reads
 the stores or writes anything:
 
 ```text
@@ -278,12 +278,15 @@ renewals keep failing, or whose lease was taken, stops before its next write
 with `NamespaceLeaseError: This run lost the write lease ...`: re-run once the
 other run ended.
 
-- **Fencing.** Every registry write, indexing phase and store write request
-  checks the lease first and stops once less than a third of the term is left
-  since the last successful renewal. Keep `lease_seconds` at least three
-  times the longest write request ([Design §5.6](./design.md#56-concurrency)).
+- **Fencing.** Every stage start, checkpoint upload, registry write, indexing
+  phase and store write attempt (retries included) checks the lease first and
+  stops once less than a third of the term is left since the last successful
+  renewal. Keep `lease_seconds` at least three times the longest write
+  request (180 s; less logs a WARNING)
+  ([Design §5.6](./design.md#56-concurrency)).
 - **Checkpoints.** A run downloads its S3 checkpoint only once it holds the
-  lease; a stopped run uploads its checkpoint before releasing it.
+  lease; a stopped run uploads its checkpoint before releasing it, one that
+  lost the lease uploads none.
 - **Where the lease lives.** DynamoDB item `namespace` = `<namespace>`,
   `doc_id` = `#lease` (`lease_owner`, `lease_expires_at`, the table's TTL
   attribute); SQLite: the namespace's row of `leases`. Delete it by hand only

@@ -39,7 +39,12 @@ from unified_kg_rag.domain.models import (
     Relationship,
 )
 from unified_kg_rag.ports.indexer import GraphIndexer, IndexingStats
-from unified_kg_rag.shared import AWSServiceError, GraphRAGException, get_logger
+from unified_kg_rag.shared import (
+    AWSServiceError,
+    GraphRAGException,
+    NamespaceLeaseError,
+    get_logger,
+)
 from unified_kg_rag.shared.utils.concurrency import ContextThreadPoolExecutor
 from unified_kg_rag.shared.write_fence import check_write_fence
 
@@ -309,6 +314,7 @@ class NeptuneIndexer(GraphIndexer):
                 .by("name"),
                 "read_entity_names",
                 results=True,
+                fenced=False,
             )
             pairs: list[tuple[str, str]] = []
             for row in rows:
@@ -589,6 +595,8 @@ class NeptuneIndexer(GraphIndexer):
                             stored_ends, "Reading edge endpoints", results=True
                         )
                     )
+                except NamespaceLeaseError:
+                    raise
                 except Exception as exc:
                     stats.add_error(
                         f"reading edge endpoints failed: {exc}",
@@ -627,6 +635,8 @@ class NeptuneIndexer(GraphIndexer):
                 try:
                     self._execute_with_retries(drop_edges, "Dropping existing edges")
                     writable.extend(found)
+                except NamespaceLeaseError:
+                    raise
                 except Exception as exc:
                     stats.add_error(
                         f"dropping existing edges failed: {exc}",
@@ -648,6 +658,8 @@ class NeptuneIndexer(GraphIndexer):
                     ):
                         return None
                     return f"source entity '{rel.source_id}' not found"
+                except NamespaceLeaseError:
+                    raise
                 except Exception as e:
                     return str(e)
 
@@ -768,6 +780,8 @@ class NeptuneIndexer(GraphIndexer):
                 self._execute_with_retries(drop_edges, "Deleting edges by id")
                 self._execute_with_retries(drop_vertices, "Deleting vertices by id")
                 stats.add_success(len(id_batch))
+            except NamespaceLeaseError:
+                raise
             except Exception as e:
                 stats.add_error(str(e), len(id_batch), ids=list(id_batch))
                 logger.warning("Failed to delete ids batch: %s", e)
@@ -1034,6 +1048,8 @@ class NeptuneIndexer(GraphIndexer):
                 exhausted_level=logging.WARNING,
             )
             stats.add_success(len(batch))
+        except NamespaceLeaseError:
+            raise
         except Exception as batch_error:
             logger.warning(
                 "Batch %s failed (%s items), falling back to individual indexing: %s",
@@ -1051,6 +1067,8 @@ class NeptuneIndexer(GraphIndexer):
                 try:
                     self._execute_with_retries(build_one, operation_name)
                     stats.add_success(1)
+                except NamespaceLeaseError:
+                    raise
                 except Exception as item_error:
                     item_id = getattr(item, "id", None)
                     stats.add_error(
@@ -1069,18 +1087,23 @@ class NeptuneIndexer(GraphIndexer):
         *,
         results: bool = False,
         exhausted_level: int = logging.ERROR,
+        fenced: bool = True,
     ) -> list[Any]:
         """Run the traversal ``build`` makes, with retries (``run_traversal``).
 
         Each attempt builds it anew from the client's current source, so after
         a lost connection (a Neptune restart or failover) the retry goes over
         a new one. With ``results`` its results are returned, else ``[]``.
-        The final failure is logged at ``exhausted_level``.
+        The final failure is logged at ``exhausted_level``. Unless it only
+        reads (``fenced=False``), each attempt checks the run's write fence
+        first, so a run that lost its lease stops between attempts.
         """
         max_attempts = self.neptune_config.max_attempts
         delay = self.neptune_config.retry_delay_seconds
         attempt = 0
         while True:
+            if fenced:
+                check_write_fence()
             try:
                 return run_traversal(self.neptune_client, build, results=results)
             except Exception as e:
@@ -1122,7 +1145,11 @@ class NeptuneIndexer(GraphIndexer):
             ) -> Traversal:
                 return query(g, id_batch)
 
-            rows.extend(self._execute_with_retries(build, operation_name, results=True))
+            rows.extend(
+                self._execute_with_retries(
+                    build, operation_name, results=True, fenced=False
+                )
+            )
         return rows
 
     def _batch_iterator(self, items: list[Any]) -> Iterator[list[Any]]:
