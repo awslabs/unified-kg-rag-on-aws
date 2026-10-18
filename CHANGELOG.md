@@ -3051,6 +3051,9 @@ changed once with the full-config keys (#332).
   instead of frozen dataclasses; they were never instantiated (#300).
 
 ### Security
+- ragas no longer sends usage telemetry from `run-eval`: the evaluators
+  package sets `RAGAS_DO_NOT_TRACK=true` unless it is already set (set it
+  to `false` to opt back in) (#PR).
 - Document attribute filters (`attr_<key>`, `attributes.filters.<key>`) now
   apply to relationships, claims and graph expansion: local, mix, hybrid,
   DRIFT and simple returned relationships from excluded documents, even for

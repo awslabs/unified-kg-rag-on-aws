@@ -1012,6 +1012,8 @@ SQLite 레지스트리에는 이 한도가 없습니다.
   컨텍스트로 채점합니다. 더 작은 값을 지정하면 경고를 남깁니다.
 - 보고서마다 심사 모델이 본 내용을 기록하며(`judge_contexts`, `judge_context_tokens`
   등), 이 설정들은 답변 모델이 본 내용을 바꾸지 않습니다.
+- ragas 사용 통계 전송은 꺼져 있습니다(기본값 `RAGAS_DO_NOT_TRACK=true`). 다시 켜려면
+  환경 변수 `RAGAS_DO_NOT_TRACK=false`를 지정합니다.
 
 #### `graph_aware`
 

@@ -824,3 +824,33 @@ class TestRunConfigAndJudgeEffort:
         factory = bedrock_module.BedrockLanguageModelFactory.return_value
         _, kwargs = factory.get_model.call_args
         assert "effort" not in kwargs
+
+
+@pytest.mark.parametrize(("preset", "tracked"), [(None, False), ("false", True)])
+def test_ragas_telemetry_is_off_unless_the_user_opts_in(
+    preset: str | None, tracked: bool
+) -> None:
+    # Old behaviour: ragas POSTed usage telemetry on every evaluation unless
+    # the user knew to set RAGAS_DO_NOT_TRACK=true.
+    import os
+    import subprocess
+    import sys
+
+    env = {k: v for k, v in os.environ.items() if k != "RAGAS_DO_NOT_TRACK"}
+    if preset is not None:
+        env["RAGAS_DO_NOT_TRACK"] = preset
+    code = (
+        "import unified_kg_rag.evaluation\n"
+        "import unified_kg_rag.adapters.evaluators.ragas_evaluator\n"
+        "from ragas._analytics import do_not_track\n"
+        "print(do_not_track())\n"
+    )
+    out = subprocess.run(
+        [sys.executable, "-c", code],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=110,
+    ).stdout.split()[-1]
+    assert out == str(not tracked)

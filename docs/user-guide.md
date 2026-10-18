@@ -1107,6 +1107,8 @@ score, never 0), and `--max-failure-rate` decides the exit code.
 - Each report records what the judge saw (`judge_contexts`,
   `judge_context_tokens`, ...); none of this changes what the answer model
   saw.
+- ragas usage telemetry is off (`RAGAS_DO_NOT_TRACK=true` by default); set
+  `RAGAS_DO_NOT_TRACK=false` in the environment to opt back in.
 
 #### `graph_aware`
 
