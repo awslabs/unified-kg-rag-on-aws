@@ -11,6 +11,7 @@ graph references stay stable.
 from __future__ import annotations
 
 from collections.abc import Collection
+from typing import Any
 
 from unified_kg_rag.domain.ingestion.base_processor import merge_attributes
 from unified_kg_rag.domain.ingestion.base_resolver import (
@@ -326,6 +327,7 @@ def remove_text_units(
     entities: list[Entity],
     relationships: list[Relationship],
     text_unit_ids: Collection[str],
+    community_ids: Collection[str] = (),
 ) -> tuple[list[Entity], list[Relationship]]:
     """Strip removed text units from kept artifacts, recomputing derived counts.
 
@@ -335,17 +337,24 @@ def remove_text_units(
     ``text_unit_ids``. Weight follows the same rule as the merge (the sum of
     the remaining per-text-unit strengths). Descriptions and attributes are
     left as they are: the caller derives them again from the records of the
-    text units left (``domain.ingestion.derivation``).
+    text units left (``domain.ingestion.derivation``). The ids of the
+    communities deleted with the text units (``community_ids``) are dropped
+    from the entities' ``community_ids``: every surviving member of one cites
+    a removed text unit.
     """
     removed = set(text_unit_ids)
+    deleted = set(community_ids)
     updated_entities: list[Entity] = []
     for entity in entities:
         if removed.isdisjoint(entity.text_unit_ids or []):
             continue
         kept = [t for t in entity.text_unit_ids or [] if t not in removed]
-        updated_entities.append(
-            entity.model_copy(deep=True, update={"text_unit_ids": kept})
-        )
+        update: dict[str, Any] = {"text_unit_ids": kept}
+        if deleted.intersection(entity.community_ids or []):
+            update["community_ids"] = [
+                c for c in entity.community_ids or [] if c not in deleted
+            ]
+        updated_entities.append(entity.model_copy(deep=True, update=update))
     updated_relationships: list[Relationship] = []
     for rel in relationships:
         if removed.isdisjoint(rel.text_unit_ids or []):

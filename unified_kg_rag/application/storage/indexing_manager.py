@@ -1293,6 +1293,7 @@ class IndexingManager:
         relationship_ids: list[str],
         text_unit_ids: list[str],
         claim_ids: Sequence[str] = (),
+        community_ids: Collection[str] = (),
     ) -> dict[str, IndexingStats]:
         """Strip removed text units from kept entities/relationships/claims of a
         suffix, and derive their content again from the text units left.
@@ -1324,6 +1325,7 @@ class IndexingManager:
             relationship_ids=relationship_ids,
             text_unit_ids=text_unit_ids,
             claim_ids=claim_ids,
+            community_ids=community_ids,
         )
         if any(stats.failed_items for stats in results.values() if stats):
             self.discard_retired_ids()
@@ -1338,6 +1340,7 @@ class IndexingManager:
         relationship_ids: list[str],
         text_unit_ids: list[str],
         claim_ids: Sequence[str] = (),
+        community_ids: Collection[str] = (),
     ) -> dict[str, IndexingStats]:
         """:meth:`remove_text_units_from_shared` before the old ids of the
         re-keyed items are deleted."""
@@ -1362,7 +1365,7 @@ class IndexingManager:
                 suffix,
             )
             stripped_entities, stripped_relationships = remove_text_units(
-                entities, relationships, text_unit_ids
+                entities, relationships, text_unit_ids, community_ids
             )
             # Every item read back is rewritten, stripped or not: the graph
             # copy is the reference, and after a strip that was interrupted
@@ -1740,6 +1743,7 @@ class IndexingManager:
                     relationship_ids=shared_relationships,
                     text_unit_ids=text_unit_ids,
                     claim_ids=shared_claims,
+                    community_ids=[i for i, u in communities.items() if gone(u)],
                 )
             )
         return results

@@ -373,20 +373,20 @@ class TestSmallComponents:
         assert cd.generate_community_objects() == []
         assert g.number_of_nodes() == 3  # the caller's graph is left as it is
 
-    def test_a_small_component_touching_a_stored_entity_is_clustered(self) -> None:
+    def test_a_small_component_large_in_the_whole_graph_is_clustered(self) -> None:
         # An incremental run's graph is its delta: "a" - "new" is a pair here,
-        # but "a" is stored, so the whole graph clusters it with a's neighbours.
+        # but large in the whole graph, so it is clustered as a full build's.
         g = nx.Graph()
         g.add_edge("a", "new")
         g.add_node("lonely")
         asked: list[list] = []
 
-        def stored(ids: list) -> set:
-            asked.append(ids)
-            return {"a"}
+        def whole_graph(components: list) -> set:
+            asked.append(components)
+            return {"a", "new"}
 
-        cd = _detector()(g, stored)
-        assert asked == [["a", "lonely", "new"]]
+        cd = _detector()(g, whole_graph)
+        assert sorted(map(sorted, asked[0])) == [["a", "new"], ["lonely"]]
         assert cd.unclustered == {"lonely"}
         clustered = {
             n for c in cd.generate_community_objects() for n in c.entity_ids or []

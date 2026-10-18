@@ -92,7 +92,9 @@ run logs a WARNING and reports `community_rebuild_recommended: 1`, which an
 alarm can watch (the counts are an upper bound). A run that removes text units
 also reports `outdated_reports`, stored reports that still cite a removed
 unit and may state what was removed: any such report recommends a rebuild
-too.
+too. `unclustered_entities` counts stored entities without a community that
+a small delta component the run clustered links to: a full build clusters
+them, a delta run clusters only its delta.
 
 **Registry unreadable** (missing table, denied access, lasting throttling):
 `document_loading` fails with `DocStatusRegistryError` naming the table and
@@ -247,10 +249,12 @@ would stop every later run, so runs count deaths and isolate the culprit.
   counts the rest, which keep their indexed version). One culprit among `n`
   is quarantined after about `log2(n) + 1` runs. **Start runs with a new
   pipeline id until `total_documents_deferred` is 0.**
-- **Retrying.** A quarantined document is retried when its file or the
-  extraction settings change, or when `indexing.max_document_attempts` is
-  raised above its `attempt_count`; `indexing.reset` skips it too and keeps
-  its record. A changed document whose runs died before
+- **Retrying.** A quarantined document is retried when its file changes, or
+  when `indexing.max_document_attempts` is raised above its `attempt_count`
+  (new extraction settings do not retry it); `indexing.reset` skips it too and
+  keeps its record. A reset counts no attempts, so a document never indexed
+  before that kills the task kills every reset: run incremental runs until
+  it is quarantined. A changed document whose runs died before
   indexing keeps its indexed version; one that died while indexing is
   removed.
 - **Limits.** A task that dies whatever it processes (a broken image)

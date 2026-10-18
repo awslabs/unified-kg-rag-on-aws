@@ -388,9 +388,13 @@ gets its models and stores from the run's `Providers` bundle.
   A connected component smaller than `min_community_size` (an isolated
   entity, a pair) gets no community or report; only these are skipped, unlike
   MS GraphRAG's `use_lcc`, which drops every component but the largest. On an
-  incremental run, whose graph is only the delta, a small component touching
-  an entity the graph store holds from other text units is clustered, as in
-  the whole graph. A
+  incremental run, whose graph is only the delta, a small component is
+  clustered when it reaches `min_community_size` in the whole graph a full
+  build would cluster: walking the stored relationships that cite text units
+  of documents the run neither processes nor removes, at most
+  `min_community_size` batched reads. Stored entities without a community it
+  links to stay without one until a rebuild (`community_drift`
+  `unclustered_entities`). A
   parent identical to its only child is never created, so each distinct
   community is reported once. A Leiden failure fails the stage instead of
   truncating the hierarchy.
@@ -564,9 +568,10 @@ whose processing kills the task would stop every later run the same way.
   (the record is the write-ahead `PENDING` one), the removal pass removes what
   they wrote and no text units are kept; otherwise the indexed version and its
   text units stay. It reads unchanged (`diff` lists it in
-  `DocumentDelta.quarantined_unchanged`) until the content or the extraction
-  settings change, or the limit is raised above its deaths
-  (`release_quarantined` then classifies it changed).
+  `DocumentDelta.quarantined_unchanged`) until the content changes or the
+  limit is raised above its deaths (`release_quarantined` then classifies it
+  changed); deaths count per content, so new extraction settings quarantine
+  it again, and a reset skips it too.
 - **Resume check** (`delta_still_applies`). A resumed run whose restored
   delta names a document whose record is gone, holds other content or reached
   the limit resumes from document_loading instead. Metrics:

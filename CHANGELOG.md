@@ -1596,6 +1596,27 @@ changed once with the full-config keys (#332).
   a claim of the entity about itself. A derived entity and another spelling
   of its name that share a text unit now have the other spelling's edges
   derived with them and its claims follow (#357).
+- `indexing.reset` after an extraction-settings change no longer dies on
+  every attempt on a quarantined document: quarantine is per content, as on
+  incremental runs, so the reset skips the document whatever the settings.
+  The quarantine warning and the record's `error_info` no longer say a
+  settings change retries the document; only an edit or a raised
+  `indexing.max_document_attempts` does (#362).
+- A small delta component (an entity, a pair) gets a community only when it
+  reaches `graph.community_detection.min_community_size` in the graph a full
+  build would cluster. Any entity the stores held from another text unit
+  clustered it before, even one held only by the file the run deleted,
+  renamed or edited, and so did a pair that is a pair in the whole graph
+  too: the run created communities and reports a full build does not have.
+  The run walks the stored relationships of the documents it keeps (at most
+  `min_community_size` batched reads), and the `community_drift` metrics
+  report `unclustered_entities`, stored entities without a community linked
+  to a component it clustered (#362).
+- A community deleted with the text units it cites no longer stays in the
+  `community_ids` of its surviving members (an entity merged into a delta
+  community that other documents also state): the next run touching one
+  counted it as a stale earlier community, inflating the `community_drift`
+  `stale_communities` and `overlap_share` (#362).
 - Removing a document no longer leaves its text unnoticed in community
   reports: a kept report that cites a removed text unit is counted in the
   `community_drift` metrics (`outdated_reports`, deletion-only runs

@@ -343,8 +343,11 @@ import는 순환이 됨).
   `min_community_size`보다 작은 레벨 0 커뮤니티는 가장 강하게 연결된 이웃에 합칩니다.
   `min_community_size`보다 작은 연결 요소(관계가 없는 엔티티, 서로만 이어진 두 엔티티)는
   커뮤니티와 리포트를 만들지 않습니다. 건너뛰는 것은 이것뿐이며, 가장 큰 요소 말고는 모두
-  버리는 MS GraphRAG의 `use_lcc`와 다릅니다. 그래프가 델타뿐인 증분 실행에서는 그래프 저장소가
-  다른 텍스트 단위에서 이미 가진 엔티티와 닿는 작은 연결 요소를 전체 그래프에서처럼 묶습니다. 유일한 자식과 같은 부모는 만들지 않으므로 서로
+  버리는 MS GraphRAG의 `use_lcc`와 다릅니다. 그래프가 델타뿐인 증분 실행에서는 작은 연결
+  요소가 전체 빌드가 묶을 전체 그래프에서 `min_community_size`에 이르면 묶습니다. 실행이
+  처리하지도 지우지도 않는 문서의 텍스트 단위를 인용하는 저장된 관계를 따라가며, 일괄 읽기는
+  많아야 `min_community_size`번입니다. 이 요소와 이어진, 커뮤니티가 없는 저장된 엔티티는
+  재구축 전까지 커뮤니티 없이 남습니다(`community_drift`의 `unclustered_entities`). 유일한 자식과 같은 부모는 만들지 않으므로 서로
   다른 커뮤니티는 리포트를 한 번만 받습니다. Leiden이 실패하면 계층을 자르지 않고 단계가
   실패합니다.
 - **결정성.** Leiden의 분할은 삽입 순서에 좌우되고 `graspologic_native`는 프로세스마다 다른
@@ -487,9 +490,10 @@ import는 순환이 됨).
 - **격리 레코드**: 시도한 내용의 해시, 죽은 횟수, `error_info`의 이유가 담긴 `QUARANTINED`.
   시도가 인덱싱에 이르렀다면(레코드가 선기록 `PENDING` 레코드) 제거 단계가 시도들이 쓴 것을
   지우고 텍스트 단위를 남기지 않으며, 그렇지 않으면 인덱싱된 버전과 그 텍스트 단위를
-  유지합니다. 내용이나 추출 설정이 바뀌거나 한도를 죽은 횟수보다 크게 올릴 때까지
-  unchanged로 읽힙니다(`diff`가 `DocumentDelta.quarantined_unchanged`에 넣고, 한도를 올리면
-  `release_quarantined`가 changed로 분류).
+  유지합니다. 내용이 바뀌거나 한도를 죽은 횟수보다 크게 올릴 때까지 unchanged로
+  읽힙니다(`diff`가 `DocumentDelta.quarantined_unchanged`에 넣고, 한도를 올리면
+  `release_quarantined`가 changed로 분류). 죽은 횟수는 내용별로 세므로 추출 설정을 바꿔도
+  다시 격리되고, 전체 재구축도 이 문서를 건너뜁니다.
 - **재개 검사**(`delta_still_applies`). 복원한 델타의 문서 가운데 레코드가 사라졌거나 다른
   내용을 담았거나 한도에 이른 것이 있으면 document_loading부터 재개합니다. 지표:
   `total_documents_quarantined`(CDK `DocumentsQuarantined` 경보)와 `total_documents_deferred`.

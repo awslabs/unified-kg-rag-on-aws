@@ -1021,8 +1021,7 @@ would stop every later run the same way. After
 `indexing.max_document_attempts` (default `3`) runs in a row that died
 processing it alone, the next run removes what the attempts wrote, records it
 `QUARANTINED`, logs a WARNING naming the file and indexes the rest; it is
-skipped until its file or the extraction settings change, or the limit is
-raised.
+skipped until its file changes or the limit is raised.
 
 - Only deaths count: a run that finishes, fails or is stopped by SIGTERM
   clears its in-progress mark, and a full rebuild counts no attempt.

@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 from abc import ABC, abstractmethod
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from datetime import datetime, timezone
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
@@ -89,7 +89,7 @@ from unified_kg_rag.domain.models import (
     TextUnit,
     TextUnitExtraction,
 )
-from unified_kg_rag.ports.indexer import BaseIndexer
+from unified_kg_rag.ports.indexer import BaseIndexer, GraphIndexer
 from unified_kg_rag.shared import (
     ConfigurationError,
     PipelineStageError,
@@ -1225,16 +1225,94 @@ class GraphAnalysisStage(PipelineStage):
         return input_count, output_count, metrics
 
 
-class CommunityDetectionStage(PipelineStage):
+def _components_reaching(
+    graph: GraphIndexer,
+    components: list[set[Any]],
+    suffixes: dict[str, str],
+    removed: set[str],
+    min_size: int,
+) -> tuple[set[Any], int]:
+    """The entities of ``components`` (of the delta graph) whose component of
+    the whole graph holds ``min_size`` entities or more, and how many stored
+    entities without a community those link to.
+
+    Walks out from each component over the stored relationships that cite a
+    text unit outside ``removed`` (the ones a full build still extracts),
+    reading the incident edges of a hop's entities in one batch, and stops
+    once the component reaches ``min_size``: at most ``min_size`` hops.
+    """
+
+    def kept(item: Relationship) -> bool:
+        return bool(set(item.text_unit_ids or []) - removed)
+
+    suffix_of = {
+        str(n): suffixes.get(str(n), Constants.DEFAULT_SUFFIX.value)
+        for c in components
+        for n in c
+    }
+    members = [{str(n) for n in c} for c in components]
+    frontier = [set(m) for m in members]
+    neighbors: dict[str, set[str]] = {}
+    open_ = set(range(len(components)))
+    reached: set[int] = set()
+
+    def by_suffix(ids: Iterable[str]) -> dict[str, list[str]]:
+        groups: dict[str, list[str]] = {}
+        for node in sorted(ids):
+            groups.setdefault(suffix_of[node], []).append(node)
+        return groups
+
+    while open_:
+        hop = set().union(*(frontier[k] for k in open_)) - neighbors.keys()
+        for suffix, group in by_suffix(hop).items():
+            neighbors.update({node: set() for node in group})
+            ids = graph.find_incident_relationship_ids(group, suffix=suffix)
+            for edge in graph.read_relationships(ids, suffix=suffix) if ids else []:
+                if not kept(edge):
+                    continue
+                for a, b in (
+                    (edge.source_id, edge.target_id),
+                    (edge.target_id, edge.source_id),
+                ):
+                    if a in neighbors:
+                        neighbors[a].add(b)
+                        suffix_of.setdefault(b, suffix)
+        for k in sorted(open_):
+            new = set().union(*(neighbors.get(n, set()) for n in frontier[k]))
+            new -= members[k]
+            members[k] |= new
+            frontier[k] = new
+            if len(members[k]) >= min_size:
+                reached.add(k)
+            if len(members[k]) >= min_size or not new:
+                open_.discard(k)
+    found = {n for k in reached for n in components[k]}
+    linked = {n for k in reached for n in members[k]} - {str(n) for n in found}
+    unclustered = sum(
+        1
+        for suffix, group in by_suffix(linked).items()
+        for entity in graph.read_entities(group, suffix=suffix)
+        if not entity.community_ids
+    )
+    return found, unclustered
+
+
+class CommunityDetectionStage(_RegistryStage):
+    # Stored entities without a community linked to the small delta
+    # components the last run clustered (``_whole_graph``).
+    unclustered_stored = 0
+
     def __init__(
         self,
         config: Config,
         cache_directory: Path | None = None,
         providers: Providers | None = None,
+        doc_status: "DocStatusPort | None" = None,
     ):
         super().__init__(PipelineStageType.COMMUNITY_DETECTION, config, providers)
         self.detector = CommunityDetector(config, providers=self.providers)
         self.cache_directory = Path(cache_directory) if cache_directory else None
+        self._doc_status = doc_status
 
     def _visualization_outputs_dir(self, context: PipelineContext) -> Path | None:
         # Unset outputs_directory -> the pipeline's cache dir, which the S3 cache
@@ -1335,48 +1413,61 @@ class CommunityDetectionStage(PipelineStage):
             bool(context.resolved_entities) and not context.communities
         )
 
-    def _stored_elsewhere(
+    def _whole_graph(
         self, context: PipelineContext
-    ) -> Callable[[list[Any]], set[Any]] | None:
-        """On an incremental run, which entities the graph store holds from
-        text units other than this run's (``CommunityDetector.__call__``).
+    ) -> Callable[[list[set[Any]]], set[Any]] | None:
+        """On an incremental run, the entities of the delta's small
+        components that reach ``min_community_size`` entities in the whole
+        graph (``CommunityDetector.__call__``).
 
-        A read failure keeps the entities left out, as before this check.
+        The whole graph is the one a full build of the corpus would cluster:
+        the stored graph without what this run replaces or removes (the
+        text units of the documents it processes, deletes or quarantines).
+        A read failure keeps the components left out, as a full build of a
+        smaller graph would.
         """
         delta = context.incremental_delta
         if delta is None or not delta.unchanged:
             return None
-        entities = {e.id: e for e in context.resolved_entities}
-        units = {u.id for u in context.text_units or context.translated_units}
+        suffixes = {e.id: BaseIndexer.get_suffix(e) for e in context.resolved_entities}
+        min_size = self.config.graph.community_detection.min_community_size
 
-        def stored(ids: list[Any]) -> set[Any]:
-            by_suffix: dict[str, list[str]] = {}
-            for entity_id in ids:
-                entity = entities.get(str(entity_id))
-                by_suffix.setdefault(BaseIndexer.get_suffix(entity), []).append(
-                    str(entity_id)
-                )
+        def large(components: list[set[Any]]) -> set[Any]:
             try:
+                records = self._build_doc_status_store().get_many(
+                    [*delta.to_process, *delta.deleted, *delta.quarantined]
+                )
+                removed = {
+                    u.id for u in context.text_units or context.translated_units
+                }.union(*(r.text_unit_ids for r in records.values()))
                 graph = self.providers.build_graph_indexer()
                 try:
-                    return {
-                        held.id
-                        for suffix, group in by_suffix.items()
-                        for held in graph.read_entities(group, suffix=suffix)
-                        if set(held.text_unit_ids or []) - units
-                    }
+                    found, unclustered = _components_reaching(
+                        graph, components, suffixes, removed, min_size
+                    )
                 finally:
                     graph.close()
             except Exception as e:
                 logger.warning(
-                    "Could not read the stored entities of %s small delta "
-                    "components' entities; leaving them out of the communities: %s",
-                    len(ids),
+                    "Could not read the stored graph around %s small delta "
+                    "components; leaving them out of the communities: %s",
+                    len(components),
                     e,
                 )
                 return set()
+            if unclustered:
+                logger.warning(
+                    "%s stored entities without a community are linked to "
+                    "small delta components this run clusters: a full build "
+                    "clusters them with those, an incremental run clusters "
+                    "only its delta. Rebuild the communities with "
+                    "indexing.reset: true to include them.",
+                    unclustered,
+                )
+            self.unclustered_stored = unclustered
+            return found
 
-        return stored
+        return large
 
     @staticmethod
     def _get_detection_stats_dict(metrics_obj: CommunityMetrics) -> dict[str, Any]:
@@ -1405,7 +1496,8 @@ class CommunityDetectionStage(PipelineStage):
             )
             context.knowledge_graph = _build_knowledge_graph(context)
 
-        self.detector(context.knowledge_graph, self._stored_elsewhere(context))
+        self.unclustered_stored = 0
+        self.detector(context.knowledge_graph, self._whole_graph(context))
         community_objects = self.detector.generate_community_objects()
         # Text units resolve each report's source documents (report lineage).
         community_reports, failed_community_ids = self.detector.generate_reports(
@@ -1468,6 +1560,7 @@ class CommunityDetectionStage(PipelineStage):
             "communities_detected": communities_count,
             "reports_generated": reports_count,
             "reports_failed": len(failed_community_ids),
+            "unclustered_stored_entities": self.unclustered_stored,
             "modularity_score": metrics_obj.modularity if metrics_obj else 0.0,
             "detection_stats": (
                 self._get_detection_stats_dict(metrics_obj) if metrics_obj else {}

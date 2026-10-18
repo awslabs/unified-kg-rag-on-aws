@@ -55,6 +55,12 @@ class CommunityDrift(BaseModel):
         "unit this run removed: they may state a deleted or edited document's "
         "text",
     )
+    unclustered_entities: int = Field(
+        default=0,
+        description="Stored entities without a community that a small delta "
+        "component this run clustered links to: a full build clusters them "
+        "with it, an incremental run clusters only its delta",
+    )
     rebuild_recommended: bool = Field(
         description="overlap_share reached indexing.community_drift_threshold, "
         "or a kept report cites removed text (outdated_reports)"
@@ -94,12 +100,15 @@ def measure_community_drift(
     communities: list[Community],
     threshold: float,
     outdated_reports: Collection[str] = (),
+    unclustered_entities: int = 0,
 ) -> CommunityDrift | None:
     """Drift of a delta run, from its merged entities and its communities.
 
     ``entities`` are the run's entities after the cross-run merge (their
     ``community_ids`` hold the stored ids too); ``outdated_reports`` the
-    stored reports the run kept that cite a text unit it removed. ``None``
+    stored reports the run kept that cite a text unit it removed;
+    ``unclustered_entities`` the stored entities left without a community
+    that the run's clustered small components link to. ``None``
     when the run appended no communities and kept no outdated report.
     """
     if not communities and not outdated_reports:
@@ -126,6 +135,7 @@ def measure_community_drift(
         added_roots=sum(1 for c in communities if c.parent not in ids),
         overlap_share=round(share, 4),
         outdated_reports=len(outdated_reports),
+        unclustered_entities=unclustered_entities,
         rebuild_recommended=(bool(members) and share >= threshold)
         or bool(outdated_reports),
     )

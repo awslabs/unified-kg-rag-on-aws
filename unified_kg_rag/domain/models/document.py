@@ -49,8 +49,8 @@ class DocStatus(str, Enum):
     before it touches the stores, then PROCESSED once its artifacts are
     written, or FAILED. A document whose processing killed the run
     ``indexing.max_document_attempts`` consecutive runs, the last one
-    processing it alone, is QUARANTINED: it is skipped until its content or
-    the extraction settings change (``domain.ingestion.attempts``).
+    processing it alone, is QUARANTINED: it is skipped until its content
+    changes (``domain.ingestion.attempts``).
     """
 
     PENDING = "pending"
@@ -273,7 +273,7 @@ class DocumentDelta(BaseModel):
         "reported by ``DocStatusPort.diff`` (the status is read anyway), so "
         "a raised ``indexing.max_document_attempts`` retries them. A store "
         "that does not report them leaves it empty, and then only an edit "
-        "or a settings change retries a quarantined document",
+        "retries a quarantined document",
     )
     deferred: list[str] = Field(
         default_factory=list,
