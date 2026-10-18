@@ -157,4 +157,27 @@ def test_stored_entities_a_delta_links_without_a_community_are_reported(
     assert metrics["indexing"]["community_drift"]["unclustered_entities"] == 1
 
 
+def test_a_deleted_community_leaves_no_id_on_its_surviving_members(
+    tmp_path: Path, no_aws
+) -> None:
+    # Old behaviour: Carrier kept the id of the delta community n.txt made,
+    # deleted with n.txt, so the next run touching it counted two stale
+    # earlier communities (stale_communities, overlap_share) instead of one.
+    base = {"b.txt": "Buyer and Depot and Carrier."}
+    providers, context = _ingest_all(
+        tmp_path,
+        [
+            base,
+            {**base, "n.txt": "Vendor and Carrier."},
+            base,
+            {**base, "m.txt": "Depot and Carrier."},
+        ],
+        None,
+    )
+
+    drift = {r.stage_name: r.metrics for r in context.stage_results}["indexing"]
+    assert drift["community_drift"]["stale_communities"] == 1
+    assert len(_communities(providers, "Carrier")) == 2
+
+
 no_aws = e2e.no_aws

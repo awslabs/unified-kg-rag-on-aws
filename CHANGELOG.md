@@ -1612,6 +1612,11 @@ changed once with the full-config keys (#332).
   `min_community_size` batched reads), and the `community_drift` metrics
   report `unclustered_entities`, stored entities without a community linked
   to a component it clustered (#PR).
+- A community deleted with the text units it cites no longer stays in the
+  `community_ids` of its surviving members (an entity merged into a delta
+  community that other documents also state): the next run touching one
+  counted it as a stale earlier community, inflating the `community_drift`
+  `stale_communities` and `overlap_share` (#PR).
 - Removing a document no longer leaves its text unnoticed in community
   reports: a kept report that cites a removed text unit is counted in the
   `community_drift` metrics (`outdated_reports`, deletion-only runs
