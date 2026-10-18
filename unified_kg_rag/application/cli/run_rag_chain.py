@@ -116,7 +116,7 @@ class CommandLineInterface:
             "-i",
             action="store_true",
             help="Launch interactive chat mode for continuous conversation "
-            "(always 'rag' mode, memory on)",
+            "(always 'rag' mode, memory on; not with --output-format json)",
         )
         parser.add_argument(
             "--mode",
@@ -168,6 +168,11 @@ class CommandLineInterface:
             self.parser.error(
                 f"--mode {args.mode} is not supported with --interactive, which "
                 "always generates answers; use --query for retrieval-only output"
+            )
+        if args.interactive and args.output_format == "json":
+            self.parser.error(
+                "--output-format json is not supported with --interactive, a "
+                "chat on the terminal; use --query for JSON output"
             )
         return args
 

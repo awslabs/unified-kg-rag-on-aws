@@ -64,7 +64,7 @@ Guide: [User Guide](./user-guide.md#4-querying-run-rag). Also takes the [provide
 | Flag | Default | Description |
 |---|---|---|
 | `--query`, `-q` | — | Answer one query; give this or --interactive (exactly one). |
-| `--interactive`, `-i` | off | Launch interactive chat mode for continuous conversation (always 'rag' mode, memory on). |
+| `--interactive`, `-i` | off | Launch interactive chat mode for continuous conversation (always 'rag' mode, memory on; not with --output-format json). |
 | `--mode` | `rag` | Set the execution mode: 'rag' for full generation, 'search' for retrieval only (a single --query only; --interactive always generates). |
 | `--conversation-id` | — | Name the conversation. Memory is kept in this process only: it carries over between --interactive turns, not between separate run-rag invocations. |
 | `--use-memory` | off | Enable conversation memory, kept in this process only (auto-enabled in interactive mode; a single --query starts with no history). |
