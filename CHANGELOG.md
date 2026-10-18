@@ -1278,6 +1278,10 @@ changed once with the full-config keys (#332).
   package), synth failures (exclusive Neptune keys, unknown `-c` keys), the
   `run-eval` S3 session, the graph read-back a custom adapter needs, and what
   `removal_destroy=false` does not prevent (#365).
+- `--output-format json` holds for errors found before the command line is
+  parsed or the config is loaded: an argparse error or a config file that
+  fails to load now prints `{"status": "failed", "exit_code": 2}` on stdout
+  too (#PR).
 - RAGAS skips `faithfulness` for an answer given without any context, a
   query blocked on input (`guardrail_blocked`) or a no-context abstention
   (`no_contexts`), instead of reporting the NaN as a failed metric that

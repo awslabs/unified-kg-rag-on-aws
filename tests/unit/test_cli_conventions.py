@@ -566,3 +566,42 @@ def test_a_malformed_musique_item_is_a_usage_error(tmp_path: Path, line: str) ->
             ]
         )
     assert exc.value.code == 2
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        # An argparse error.
+        ["run-rag", "--output-format", "json", "--top-k", "0", "--query", "q"],
+        # A config file that fails to load, before json_output ran.
+        [
+            "run-rag",
+            "--output-format=json",
+            "--query",
+            "q",
+            "--config-path",
+            "nope.yaml",
+        ],
+        ["run-eval", "--output-format", "json", "--config-path", "nope.yaml"],
+        ["run-ingestion", "--output-format", "json", "--config-path", "nope.yaml"],
+    ],
+)
+def test_an_early_usage_error_still_prints_a_json_status(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    argv: list[str],
+) -> None:
+    # Before, stdout was empty: the error came before json_output(args).
+    monkeypatch.setattr(console, "stderr", console.stderr)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", argv)
+    main = {
+        "run-rag": run_rag_chain.main,
+        "run-eval": run_evaluation.main,
+        "run-ingestion": run_ingestion_pipeline.main,
+    }[argv[0]]
+    with pytest.raises(SystemExit) as exc:
+        main()
+    assert exc.value.code == 2
+    assert json.loads(capsys.readouterr().out) == {"status": "failed", "exit_code": 2}
