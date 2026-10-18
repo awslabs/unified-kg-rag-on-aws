@@ -620,6 +620,11 @@ changed once with the full-config keys (#332).
   keep the containers.
 
 ### Added
+- `docs/cli.md`, a CLI reference generated from the argparse parsers of
+  every CLI (`scripts/gen_cli_reference.py`; a unit test fails when it is
+  stale). The flag help strings now carry what the user guide's flag tables
+  said, such as the `--pipeline-id` character rules and the
+  `--continue-on-error` FAILED records (#PR).
 - The community drift metrics of an incremental run report `added_roots`,
   the root communities it appended: each joins every cut of the hierarchy,
   so global search maps that many more reports until a rebuild (a
@@ -794,6 +799,10 @@ changed once with the full-config keys (#332).
   fused order. Reported by @vibhupb (#83) (#284).
 
 ### Changed
+- The user guide links the CLI reference instead of repeating flag tables,
+  the observability trace shape (every span and attribute, the vendor
+  attribute names, the known limits) moved to the runbook, and the user
+  guide, runbook and design document were condensed (#PR).
 - `iac/README.md` opens with a quick start, splits the 35-row `-c` option
   table by concern, turns the guardrail notes into a section, and now holds
   the whole CloudWatch tracing recipe (Transaction Search, the collector

@@ -3,13 +3,10 @@
 > 🇰🇷 한국어판: [docs/design.ko.md](./design.ko.md)
 
 This is the **design reference for contributors and advanced users**: how the
-library is built and why. Each section opens with a short summary and, where
-one exists, a diagram; the details follow. For the "what/why" and a quick
-start see [README.md](../README.md), for "how to use it" the
-[User Guide](user-guide.md), for every configuration key the
-[Configuration Reference](./configuration.md), and for the contribution
-workflow [CONTRIBUTING.md](../CONTRIBUTING.md). Extension recipes are in
-[§15](#15-extension-guide).
+library is built and why. Usage is in the [User Guide](user-guide.md), every
+configuration key in the [Configuration Reference](./configuration.md), the
+contribution workflow in [CONTRIBUTING.md](../CONTRIBUTING.md), and extension
+recipes in [§15](#15-extension-guide).
 
 ## Table of Contents
 
@@ -42,17 +39,15 @@ DynamoDB). Its design principles:
   and LightRAG (dual-level keywords) share ingestion, indexing, caching,
   multilingual processing and hybrid search; **only the retrieval algorithm
   differs**.
-- **Generalization first.** No hardcoded domain rules, regex heuristics or
-  overfitting: semantic judgments go to the LLM or to authoritative data,
-  token counts come from the model's tokenizer API where it has one (a
-  script-aware estimate otherwise), and thresholds and weights are
-  configuration.
+- **Generalization first.** No hardcoded domain rules or regex heuristics:
+  semantic judgments go to the LLM or to authoritative data, token counts to
+  the model's tokenizer API where it has one (a script-aware estimate
+  otherwise), and thresholds and weights are configuration.
 - **Hexagonal boundaries.** Domain and algorithm code depends on abstract
   ports; the AWS (and local) adapters sit behind them.
 - **Registry-based extension.** Search strategies, renderers, parsers and
-  providers register through registries, so extending them needs no change to
-  dispatch code; evaluators map from `EvaluatorType` in one method
-  (`EvaluationManager._resolve_evaluator_class`).
+  providers register through registries, with no change to dispatch code;
+  evaluators map from `EvaluatorType` in one method (§2.4).
 
 ![Architecture at a glance](../assets/architecture-overview.drawio.png)
 
@@ -63,13 +58,12 @@ DynamoDB). Its design principles:
 ### 2.1 Dependency Rule and Layer Map
 
 Imports point **inward**: `application → adapters → ports → domain`, and any
-layer may import the cross-cutting `shared/` kernel. Importing any `domain/`
-module must not load LangChain, LangSmith, boto3/botocore, lxml,
-opensearch-py or gremlin-python, even transitively, so `shared/` and
-`shared/utils/` stay dependency-light (LangChain-coupled helpers live in
-`shared.utils.langchain` and `shared.utils.document_converter`, rich helpers
-in `shared.utils.display`). `tests/unit/test_domain_purity.py` checks this in
-a clean interpreter.
+layer may import the cross-cutting `shared/` kernel. No `domain/` module may
+load LangChain, LangSmith, boto3/botocore, lxml, opensearch-py or
+gremlin-python, even transitively, so `shared/` and `shared/utils/` stay
+dependency-light (LangChain-coupled helpers in `shared.utils.langchain` and
+`shared.utils.document_converter`, rich ones in `shared.utils.display`);
+`tests/unit/test_domain_purity.py` checks this in a clean interpreter.
 
 ```mermaid
 flowchart TB
@@ -84,9 +78,9 @@ flowchart TB
     domain -.-> shared
 ```
 
-Solid arrows are the dependency rule; dotted arrows show that any layer may
-import `shared/`. Search strategies are adapters: the domain holds only their
-registry, so both methodologies plug into the same ports.
+Dotted arrows: any layer may import `shared/`. Search strategies are
+adapters; the domain holds only their registry, so both methodologies plug
+into the same ports.
 
 
 ```
@@ -96,7 +90,6 @@ unified_kg_rag/
 │  ├─ models/           #   Pydantic domain models
 │  ├─ ingestion/        #   pure algorithms: delta_detector, graph_builder/resolver/analyzer,
 │  │  └─ merge/         #   claim_resolver, contributions, derivation; merge/ = cross-run merger
-│                       #   (IncrementalIndexer is orchestration, so it lives in application/)
 │  ├─ retrieval/        #   strategy_registry, index_prefixes, hybrid_normalization
 │  └─ prompts/          #   version-controlled prompt templates
 ├─ ports/               # abstract interfaces the domain depends on (DocStatusPort,
@@ -116,8 +109,7 @@ unified_kg_rag/
 │  ├─ ingestion/        #   LLM/IO coupled: chunker, *_extractor, loader, parser,
 │  │                    #   translator, gleaner, community_detector
 │  ├─ renderers/        #   graph visualization renderers
-│  ├─ evaluators/       #   evaluator bases + langchain/ragas evaluators (the LLM-free graph_aware,
-│                       #   retrieval and answer_match evaluators live in evaluation/)
+│  ├─ evaluators/       #   evaluator bases + langchain/ragas evaluators
 │  ├─ store_errors.py   #   is_fatal_retrieval_error: the fatal-vs-degraded policy (§8.1)
 │  ├─ providers.py      #   Providers: the per-run bundle of model and store providers
 │  └─ provider_registry.py # @register_provider: builders keyed by role and kind
@@ -138,19 +130,17 @@ unified_kg_rag/
 └─ visualization/       # real logic package: render loop + embeddings/exporters
 ```
 
-- **Real logic packages.** `evaluation/` holds `evaluation_manager` and the
-  LLM-free evaluators; `visualization/` holds the render loop and the
-  `embeddings/` and `exporters/` subpackages (the renderers are in
-  `adapters/renderers/`). Inside the package, everything else is imported
-  from its real location (`application.retrieval.rag_chain`,
-  `application.storage.indexing_manager`, `adapters.*`, `domain.*`).
+- **Real logic packages.** `evaluation/` (the manager and the LLM-free
+  evaluators) and `visualization/` (the render loop, `embeddings/`,
+  `exporters/`; renderers are in `adapters/renderers/`). Everything else is
+  imported from its real location (`application.*`, `adapters.*`,
+  `domain.*`).
 - **Vendor and role packages.** Vendor packages (`adapters/aws/`,
-  `adapters/local/`) hold technology bindings: transport clients, embedded
-  engines and stores, model factories, token counters, caches. Role packages
-  hold the port implementations the application wires: `storage/`
-  (`GraphIndexer` / `VectorIndexer`), `retrievers/`, `doc_status/`
-  (`DocStatusPort`) and `guardrail/` (`ContentGuardPort`). A role package
-  imports a vendor package, never the reverse: `SQLiteGraphIndexer` writes to
+  `adapters/local/`) hold technology bindings (clients, embedded engines and
+  stores, model factories, token counters, caches); role packages
+  (`storage/`, `retrievers/`, `doc_status/`, `guardrail/`) hold the port
+  implementations the application wires. A role package imports a vendor
+  package, never the reverse: `SQLiteGraphIndexer` writes to
   `SQLiteGraphStore` as `NeptuneIndexer` writes through `NeptuneClient`.
 
 ### 2.2 Ports (Abstract Interfaces)
@@ -164,10 +154,10 @@ unified_kg_rag/
 | `BaseGraphRAGRetriever` (read) | `adapters/retrieval/base.py` | `adapters/retrievers/{neptune,opensearch,sqlite_graph}_retriever.py` | Retrieval adapters |
 | Model factories, token counter | `ports/model_factory.py` (`ModelFactoryPort`, `TokenCounterPort`, the `*ModelInfo` records) | `adapters/aws/bedrock.py`, `bedrock_models.py`, `token_counter.py`; local `adapters/local/{models,embeddings,rerank,token_counter}.py` | Carried by one `Providers` bundle (§15) |
 
-Pure ports are gathered in `ports/`. The read-side bases
-(`BaseGraphRAGRetriever`, `BaseSearchStrategy`) and `BaseGraphRAGEvaluator`
-are *adapter bases*: they build infrastructure (scorer, token manager) in
-`__init__`, so they live in `adapters/` and `ports/__init__` only names them.
+The read-side bases (`BaseGraphRAGRetriever`, `BaseSearchStrategy`) and
+`BaseGraphRAGEvaluator` are *adapter bases*: they build infrastructure
+(scorer, token manager) in `__init__`, so they live in `adapters/` and
+`ports/__init__` only names them.
 
 ### 2.3 Role-Based Retriever Injection
 
@@ -184,26 +174,24 @@ no strategy code.
 class LocalSearchStrategy(BaseSearchStrategy): ...
 ```
 
-The write path has two fixed store roles as well: `IndexingManager` always
-writes a graph store and a vector store, because the per-role fan-out
-(entities to both stores, entities before edges, the orphan-edge cascade) is
-domain knowledge, not arbitrary dispatch. Which backend fills each role is
-open (`providers.graph.kind` / `providers.vector.kind`, or an injected
-indexer).
+The write path has two fixed store roles: `IndexingManager` always writes a
+graph store and a vector store, because the fan-out (entities to both stores,
+entities before edges, the orphan-edge cascade) is domain knowledge; which
+backend fills each role is open (`providers.graph.kind` /
+`providers.vector.kind`, or an injected indexer).
 
 ### 2.4 Registries
 
-- **Search strategies**: `@register_strategy(...)` in
-  `domain/retrieval/strategy_registry.py` registers a class, its required
-  roles and its query inputs against the `SearchStrategy` enum.
-- **Providers**: `@register_provider(ProviderRole.X, "kind")` in
-  `adapters/provider_registry.py` registers the builder that
-  `providers.<role>.kind` selects (LLM, embedding, rerank, token counter,
-  graph and vector indexer and retriever, doc-status registry).
-- **Renderers**: `@register_renderer("name")` in `adapters/renderers/base.py`.
-- **Parsers**: `ParserFactory.register_loader(".ext", Loader)`.
-- **Evaluators**: one explicit branch per `EvaluatorType` in
-  `EvaluationManager._resolve_evaluator_class` (lazy import).
+- **Search strategies**: `@register_strategy(...)`
+  (`domain/retrieval/strategy_registry.py`): a class, its required roles and
+  query inputs, keyed by `SearchStrategy`.
+- **Providers**: `@register_provider(ProviderRole.X, "kind")`
+  (`adapters/provider_registry.py`): the builder `providers.<role>.kind`
+  selects, for every model, store and registry role.
+- **Renderers**: `@register_renderer("name")` (`adapters/renderers/base.py`);
+  **parsers**: `ParserFactory.register_loader(".ext", Loader)`.
+- **Evaluators**: one lazy-import branch per `EvaluatorType` in
+  `EvaluationManager._resolve_evaluator_class`.
 
 ### 2.5 Dependency Rule Verification and Public API
 
@@ -211,21 +199,20 @@ indexer).
 import, `TYPE_CHECKING` ones included: `domain/` imports no
 `ports`/`adapters`/`application` module, `ports/` and `shared/` import no other
 layer, `adapters/` import no `application`, `evaluation` or `visualization`
-module, and `evaluation/` reaches the application only through the chain. Two
-type-only references stay under `TYPE_CHECKING`, and the test checks that they
-do: the strategy registry names `BaseSearchStrategy` (it stores strategy
-subclasses), and the delta detector annotates with `DocStatusPort` (a runtime
-import would be a cycle).
+module, and `evaluation/` reaches the application only through the chain. It
+also checks that the two type-only references stay under `TYPE_CHECKING`: the
+strategy registry naming `BaseSearchStrategy` and the delta detector's
+`DocStatusPort` annotation (a runtime import would be a cycle).
 
-**Public API.** Callers outside the package import from `unified_kg_rag`. Its
-`__all__` is the supported surface: the names for using the framework
+**Public API.** Callers outside the package import from `unified_kg_rag`,
+whose `__all__` is the supported surface: the names for using the framework
 (`Config`, `get_config`, `DataIngestionPipeline`, `GraphRAGChain`, `RAGInput`
 / `RAGOutput` / `SearchOutput`, `EvaluationManager`, ...) and for extending it
-(the ports, `Providers` / `build_providers`, the registries). Every other
-module path is internal and may move in any release; only a change to the
-exported names, configuration keys, CLI flags and exit codes, or stored
-formats is breaking. Names resolve on first access, so `import unified_kg_rag`
-loads nothing, and `tests/unit/test_public_api.py` pins the list.
+(the ports, `Providers` / `build_providers`, the registries). Other module
+paths are internal; only a change to the exported names, configuration keys,
+CLI flags and exit codes, or stored formats is breaking. Names resolve on
+first access (`import unified_kg_rag` loads nothing), and
+`tests/unit/test_public_api.py` pins the list.
 
 ---
 
@@ -248,8 +235,8 @@ dependency:
 
 **Lineage is the core data.** Entities and relationships record the
 `text_unit_ids` they were stated in. This lineage, not a token-overlap
-heuristic, decides whether an entity relates to a text unit, accurately and
-in any language, and it is what incremental removal follows (§5).
+heuristic, decides whether an entity relates to a text unit, in any
+language, and incremental removal follows it (§5).
 
 **Rank (MS GraphRAG parity).** An entity's `rank` is its degree, a
 relationship's the sum of its endpoints' degrees (`domain/ingestion/graph_rank.py`).
@@ -257,10 +244,10 @@ A full build sets them; an incremental merge recomputes them for what it
 writes over the stored graph's neighbours.
 
 **Index suffix.** Every OpenSearch index and Neptune label is named
-`<prefix>-<suffix>[-<additional_suffix>]`. Ingestion writes the suffix from
-`processing.document_parsing.index_value`, queries select it with
-`RAGInput.suffix` (`--suffix`); both default to `default`. One suffix per
-tenant or corpus version is the intended use.
+`<prefix>-<suffix>[-<additional_suffix>]`: ingestion writes
+`processing.document_parsing.index_value`, queries select `RAGInput.suffix`
+(`--suffix`), both `default` when unset; one suffix per tenant or corpus
+version.
 
 **Display names and identity keys.**
 
@@ -271,22 +258,20 @@ tenant or corpus version is the intended use.
   and `-` as spaces, quote marks and commas dropped, whitespace collapsed,
   trailing sentence punctuation stripped, **every other symbol and the
   letters and digits of all scripts kept**. "ACME  Corp." and "Acme Corp"
-  share an id; "C++" and "C#" do not; Korean, CJK and accented names get
-  unique ids; a non-empty name never yields an empty key.
-- Exact-name matching everywhere (extraction, gleaning, claim resolution,
+  share an id; "C++" and "C#" do not; a non-empty name never yields an empty
+  key. Every exact-name match (extraction, gleaning, claim resolution,
   incremental merges) and the fuzzy matcher's shingles use the same key.
-- **Changing the key changes every id**, so a graph indexed under another key
-  must be fully re-indexed.
+- **Changing the key changes every id**, so it requires a full re-index.
 
 ---
 
 ## 4. Ingestion Pipeline
 
-`DataIngestionPipeline` (`application/ingestion/pipeline.py`) runs 12 stages
-in order, each checkpointed so a re-run resumes after the last valid one.
-Extraction works per text unit and the graph is resolved from the merged
-per-unit records, so a full build does not depend on how units were batched
-and an incremental run can re-derive what it touches (§5).
+`DataIngestionPipeline` (`application/ingestion/pipeline.py`) runs 12
+checkpointed stages, so a re-run resumes after the last valid one. Extraction
+works per text unit and the graph is resolved from the merged per-unit
+records, so a full build does not depend on batching and an incremental run
+can re-derive what it touches (§5).
 
 ![Ingestion pipeline](../assets/ingestion-pipeline.drawio.png)
 
@@ -304,8 +289,8 @@ and an incremental run can re-derive what it touches (§5).
 | 11 | Community detection | `community_detector.py` | hierarchical Leiden and structured reports |
 | 12 | Indexing | `application/storage/indexing_manager.py` | graph and vector stores; full build or delta |
 
-The stage order is single-sourced in `DataIngestionPipeline.STAGE_CLASSES`,
-and every stage gets its models and stores from the run's `Providers` bundle.
+The stage order lives in `DataIngestionPipeline.STAGE_CLASSES`; every stage
+gets its models and stores from the run's `Providers` bundle.
 
 ### 4.1 Extraction records and the extraction store (stages 5-8)
 
@@ -329,24 +314,22 @@ and every stage gets its models and stores from the run's `Providers` bundle.
   effect. A unit whose text and settings have a stored record takes it
   instead of an LLM call, so an edited document re-extracts only its changed
   chunks, and identical chunks elsewhere or in a rebuild reuse theirs.
-  `--force-rebuild` re-extracts and refreshes every record; a store that
-  cannot be read is logged and the run re-extracts. A record that cannot be
-  written fails its unit (`records_not_stored`), so its document is recorded
-  `FAILED` and extracted again: incremental runs derive from the records
-  (§5.4), so none may be missing.
-- **A text unit names its stored records** in `attributes.extraction_records`.
-  The keys are computed from the run's records when the unit is indexed, not
-  set on the units the stage cache holds, so a run resumed after any stage
-  writes them too.
+  `--force-rebuild` re-extracts and refreshes every record; an unreadable
+  store is logged and the run re-extracts. A record that cannot be written
+  fails its unit (`records_not_stored`), so its document is recorded `FAILED`
+  and extracted again: incremental runs derive from the records (§5.4).
+- **A text unit names its stored records** in `attributes.extraction_records`,
+  computed from the run's records when the unit is indexed (not set on the
+  cached units), so a resumed run writes them too.
 - **A record stays while a stored text unit names it.** A full build or
   reset whose text units were all written keeps only the records they name
   (`VectorIndexer.retain_extraction_records` copies them into a new index and
   swaps the alias); an incremental run deletes the records only removed text
   units named.
 - **Gleaning stops on observed output**: a unit is re-sent (up to
-  `max_rounds`) only while its previous answer added something its record did
-  not have. An empty answer is the model saying nothing is missing, the signal
-  MS GraphRAG asks for with a separate yes/no prompt, so no call is spent on it.
+  `max_rounds`) only while its previous answer added something new. An empty
+  answer is the "nothing missing" signal MS GraphRAG asks for with a separate
+  yes/no prompt, so no call is spent on it.
 
 ### 4.2 Graph identity and merging (stages 5-7)
 
@@ -355,22 +338,19 @@ and every stage gets its models and stores from the run's `Providers` bundle.
   so the model-written `type` is part of the identity and the edge is
   directed: two types between one pair are two edges here and one in MS
   GraphRAG and LightRAG (the community graph still joins them, §4.3). The
-  parts are joined with `:` unescaped, so a `:` in a name or type can collide
-  with another split of the same string; fixing it would re-key every stored
-  relationship, so the format is kept.
+  parts are joined with `:` unescaped, so a `:` in a name or type can collide;
+  the format is kept because fixing it would re-key every stored relationship.
 - **Endpoints cite their relationships' text units (deliberate
-  divergence).** Every relationship endpoint also cites the text units of
-  each relationship it is an endpoint of, and an endpoint no unit listed
-  becomes a stub entity citing them
-  (`relationship_endpoints.cite_relationship_endpoints`). Upstream, an
+  divergence).** An entity also cites the text units of each relationship it
+  is an endpoint of, and an endpoint no unit listed becomes a stub entity
+  citing them (`relationship_endpoints.cite_relationship_endpoints`). Upstream, an
   entity's text units depend on which chunks were extracted together; here
   they depend only on the chunks that name it, so an incremental run cites
   what a full build cites and a removed document strips an entity to exactly
   the surviving text units that name it. The cost: local search and
   community lineage also reach chunks that mention an entity only through a
-  relationship. With entity grounding on, gleaning drops a relationship that
-  names an entity rejected as ungrounded for its chunk, so the stub step
-  cannot bring it back.
+  relationship. With entity grounding on, gleaning drops a relationship naming
+  an entity rejected as ungrounded for its chunk, so no stub brings it back.
 - **Entity merging.** Two names merge when their `compact_name_key` is equal:
   `entity_key` without a short, fixed list of legal-form designators (`(주)`,
   `주식회사`, `株式会社`, `有限公司`, a trailing `Inc` / `Ltd` / `LLC` / `Co` /
@@ -385,15 +365,13 @@ and every stage gets its models and stores from the run's `Providers` bundle.
   *discriminator tokens* (tokens with a digit, single letters, Roman numerals)
   are identical, their types are compatible, and, for names ending in Han,
   Hangul or Kana, their final (head) characters are equal ("가나다연구원" and
-  "가나다연구소" stay apart). The resolver groups with a type-aware union-find
-  that never puts two differently typed names in one group. The incremental
-  merge uses the same matcher and settings, so full and incremental builds
-  group the same names.
-- **Merged descriptions** are concatenated, so a popular entity's description
-  would grow without bound. `DescriptionSummarizer` re-summarizes only
-  descriptions over a token budget with a cheap model (MS GraphRAG
-  `summarize_descriptions` / LightRAG parity), map-reduce when one is longer
-  than one call's input; a failed call keeps the concatenation.
+  "가나다연구소" stay apart). A type-aware union-find never groups two
+  differently typed names; the incremental merge uses the same matcher, so
+  full and incremental builds group the same names.
+- **Merged descriptions** are concatenated, so `DescriptionSummarizer`
+  re-summarizes those over a token budget with a cheap model (MS GraphRAG
+  `summarize_descriptions` / LightRAG parity; map-reduce when one exceeds a
+  call's input); a failed call keeps the concatenation.
 
 ### 4.3 Communities (stages 10-11)
 
@@ -401,19 +379,18 @@ and every stage gets its models and stores from the run's `Providers` bundle.
   per entity pair; relationships of other types or directions between the pair
   share it, with the summed weight, so Leiden sees the pair's total strength.
 - **Hierarchy (deliberate divergence).** Level 0 is one Leiden partition of the
-  whole entity graph, and each coarser level partitions the graph of the
-  previous level's communities, up to `max_levels`. Modularity's resolution
-  limit would grow level-0 communities with the corpus beyond what one report
-  can describe, so any community over `max_cluster_size` (default 20) entities,
-  or child communities, is partitioned again on its own subgraph. Level-0
+  whole entity graph; each coarser level partitions the graph of the previous
+  level's communities, up to `max_levels`. Because modularity's resolution
+  limit grows level-0 communities with the corpus beyond what one report can
+  describe, a community over `max_cluster_size` (default 20) members is
+  partitioned again on its own subgraph. Level-0
   communities under `min_community_size` merge into their strongest neighbour.
-  A connected component of fewer than `min_community_size` entities (an
-  isolated entity, a pair) has no neighbour and gets no community or report;
-  Leiden still partitions the whole graph and only these are skipped, so the
-  other communities are unchanged. MS GraphRAG's largest-component step
-  (`use_lcc`) drops every component but the largest. A parent identical to its only
-  child is never created, so each distinct community is reported once. A
-  Leiden failure fails the stage instead of truncating the hierarchy.
+  A connected component smaller than `min_community_size` (an isolated
+  entity, a pair) gets no community or report; only these are skipped, unlike
+  MS GraphRAG's `use_lcc`, which drops every component but the largest. A
+  parent identical to its only child is never created, so each distinct
+  community is reported once. A Leiden failure fails the stage instead of
+  truncating the hierarchy.
 - **Determinism.** Leiden's partition depends on insertion order and
   `graspologic_native` returns labels in a per-process order, so the detector
   sorts nodes and edges and renumbers each level by its smallest member id:
@@ -427,9 +404,8 @@ and every stage gets its models and stores from the run's `Providers` bundle.
   (summary, 0-10 rating with explanation, findings); `full_content` for
   embedding and search is rendered from it, with no second call.
 - **Report lineage.** Each report carries `text_unit_ids` and `document_ids`
-  (the union over its members: membership provenance, not citation support)
-  and its place in the hierarchy (`level`, `depth`, parent and children,
-  `max_cut_depth`), which global search selects by (§6.1).
+  (the union over its members: provenance, not citation support) and its
+  place in the hierarchy, which global search selects by (§6.1.1).
 
 ### 4.4 Pipeline infrastructure
 
@@ -437,15 +413,14 @@ and every stage gets its models and stores from the run's `Providers` bundle.
   (`shared/pipeline_manager.py`, `shared/cache_manager.py`); the stage cache
   key is described in §12.
 - **S3 sync** (`adapters/aws/s3_cache.py`) uploads the changed files after
-  every stage, stage data before the metadata that refers to it. On SIGTERM,
-  `run-ingestion` stops the running stage (`request_stop`, deferred while a
-  checkpoint is written, with no I/O in the handler) and uploads its
-  checkpoint as the run unwinds.
+  every stage, data before the metadata that refers to it. On SIGTERM,
+  `run-ingestion` stops the running stage (`request_stop`: deferred while a
+  checkpoint is written, no I/O in the handler) and uploads its checkpoint.
 - **LLM response cache** (`adapters/llm/response_cache.py`): a LangChain
   `BaseCache` on every ingestion model, keyed by the rendered messages and the
-  model and generation settings, stored as segment files with the stage cache.
-  Each earlier-run entry is served at most once per run and truncated responses
-  are not kept, so a retry after a bad response asks the model again.
+  model and generation settings, stored with the stage cache. An earlier
+  run's entry is served at most once per run and truncated responses are not
+  kept, so a retry after a bad response asks the model again.
 - **Output fixing.** Structured outputs are parsed with a
   `FixingConfig`-based output-fixing parser.
 - **Resources.** The pipeline releases indexer and client resources in
@@ -457,10 +432,9 @@ and every stage gets its models and stores from the run's `Providers` bundle.
 
 With the doc-status registry on, a run diffs the corpus against the registry
 by content hash and processes only new, changed and failed documents. The
-registry lists each document's text units; removal asks the stores what
-cites them. A write-ahead protocol makes every interruption repairable by the
-next run, and the result converges to what a full build of the current corpus
-would write.
+registry lists each document's text units, and removal asks the stores what
+cites them. A write-ahead protocol lets the next run repair any
+interruption, and the result converges to a full build of the current corpus.
 
 ![Incremental indexing](../assets/incremental-indexing.drawio.png)
 
@@ -476,28 +450,28 @@ unless noted.
    namespace is the registry partition, so a run reads only its namespace (one
    projected DynamoDB `Query`) and two corpora or tenants never share a record.
    Only records of the run's scope are deletion candidates; files that failed
-   to parse or load are reported `failed`, not deleted. A moved corpus is never
-   adopted from (a move cannot be told from another host's corpus on the same
-   path) until a run retires the old scope (`indexing.retire_source_scopes`).
-   Documents whose processing keeps killing the run are quarantined or
-   deferred (§5.3).
+   to parse or load are reported `failed`, not deleted. A moved corpus's old
+   records are never adopted (a move cannot be told from another host's corpus
+   on the same path) until a run retires the old scope
+   (`indexing.retire_source_scopes`). Documents whose processing keeps killing
+   the run are quarantined or deferred (§5.3).
 2. **Write-ahead** (`write_ahead`). Before any store write, every new and
    changed document is recorded `PENDING` (content hash `"pending"`, which no
    document hashes to) with the union of its stored text units and the ones
-   this run is about to write, in one batched write. A record over the
-   registry's item limit (DynamoDB 400 KB, about 10,000 text units) fails the
-   run here, before anything is written.
+   this run will write, in one batched write. A record over the registry's
+   item limit (DynamoDB 400 KB, about 10,000 text units) fails the run here,
+   before anything is written.
 3. **Stale cleanup** (`remove_changed_and_deleted`). The text units of changed
    and deleted documents are removed in one pass per suffix (step 5), so an
-   artifact only a changed and a deleted document state goes too.
-4. **Delta upsert** (`commit`). The stored entities and relationships the delta touches are read back and
-   the delta is merged into them (§5.4), found by compact name key (all stored
-   names with fuzzy matching on), together with the stored edges of the
-   delta's entities. Their content is then derived from the extraction
-   records (§5.4), delta claims merge with the stored claims of the same id,
-   and the result is written: Neptune with an idempotent
-   `coalesce(unfold, addV)` upsert, OpenSearch by id into the live alias index.
-   Old ids of re-keyed items are deleted only after the writes succeeded.
+   artifact only they state goes too.
+4. **Delta upsert** (`commit`). The stored entities and relationships the
+   delta touches (found by compact name key, every stored name with fuzzy
+   matching on) and the stored edges of its entities are read back, the delta
+   is merged into them and their content derived from the extraction records
+   (§5.4); delta claims merge with the stored claims of the same id. Neptune
+   writes with an idempotent `coalesce(unfold, addV)` upsert, OpenSearch by id
+   into the live alias index; old ids of re-keyed items are deleted only after
+   the writes succeeded.
 5. **Deletion propagation** (`IndexingManager.remove_text_units`). The stores
    are asked what cites the removed text units (`GraphIndexer.find_ids_citing`,
    `VectorIndexer.find_documents`). An item citing only removed text units is
@@ -510,16 +484,16 @@ unless noted.
    stage (before the commit when the delta has changed documents).
 6. **Registry update** (`commit`). The `PENDING` records are replaced, in one
    batched write, by `PROCESSED` or `FAILED` records with each document's text
-   units, scope and relative path. The five causes of `FAILED` are listed in
-   the [runbook](./operations.md#failed-documents); `failure_count` counts
-   consecutive failures of the same content, and after
+   units, scope and relative path (the five causes of `FAILED`:
+   [runbook](./operations.md#failed-documents)). `failure_count` counts
+   consecutive failures of the same content; after
    `indexing.max_document_failures` the document reads unchanged. Extraction
    records only removed text units named are then deleted (best effort).
 
 **Limitation:** shared communities and reports keep what a changed or deleted
-document contributed, and an entity's old id after it was re-keyed, until a
-full rebuild (§5.5). Descriptions, names, ids, types, filters, ranks and claims
-are derived again on every run.
+document contributed, and a re-keyed entity's old id, until a full rebuild
+(§5.5); descriptions, names, ids, types, filters, ranks and claims are
+derived again on every run.
 
 ### 5.2 Full rebuild (`indexing.reset`)
 
@@ -532,10 +506,9 @@ aliases swap when each is built; the graph is rebuilt in place
 tag). Queries keep reading the previous graph meanwhile. Only after every
 document is recorded again are the namespace's other records deleted, so a
 failed rebuild drops nothing. A rebuild whose graph writes partly failed
-(within `indexing.max_failure_rate`) skips the drop so a retry still finds the
-previous copies, and is reported failed (`neptune_sweep`): recording it and
-clearing the replaced documents' records would leave their vertices and edges
-with nothing to remove them.
+(within `indexing.max_failure_rate`) skips the drop, so a retry still finds the
+previous copies, and is reported failed (`neptune_sweep`) rather than recorded:
+clearing the replaced documents' records would orphan their vertices and edges.
 
 A generation switch (new labels plus a pointer) was rejected: Neptune labels
 cannot be renamed, so every retriever would resolve the current generation on
@@ -544,20 +517,18 @@ each query and the graph would be stored twice during the rebuild.
 ### 5.3 Crash recovery (write-ahead protocol)
 
 The registry is not updated atomically with the stores, so a run can stop
-between any two writes. The protocol keeps one invariant: **before the stores
-hold anything the registry cannot account for, the registry already lists
-it.** Write-ahead records precede every removal and upsert, deleted
-documents' rows go only after their artifacts, and a `PENDING` record is
-replaced only after the document's writes landed. The next run repairs an
-interrupted one:
+between any two writes. One invariant holds: **before the stores hold
+anything the registry cannot account for, the registry already lists it.**
+Write-ahead records precede every removal and upsert, deleted documents' rows
+go only after their artifacts, and a `PENDING` record is replaced only after
+the document's writes landed. The next run repairs an interrupted one:
 
 - `PENDING` never equals a content hash, so a document still in the corpus
-  reads changed, even if its file went back to the previously indexed version.
-- A `PENDING` document no longer in the corpus reads deleted, and its text
-  units cover everything the interrupted run may have written.
+  reads changed, even if its file went back to the indexed version; one no
+  longer in the corpus reads deleted, and its text units cover everything the
+  interrupted run may have written.
 - The removal plans from the record stored before the current run's own
-  `PENDING` record, so a recovery run removes the interrupted run's partial
-  writes before writing again.
+  `PENDING` record, so a recovery run removes the partial writes first.
 - An interruption is not counted toward `indexing.max_document_failures`
   (a `PENDING` record has `failure_count` 0).
 - Old ids of re-keyed items are deleted only after their new copies are
@@ -567,43 +538,41 @@ interrupted one:
 **Attempts and quarantine** (`domain/ingestion/attempts.py`). A document
 whose processing kills the task would stop every later run the same way.
 
-- **Open, close, settle.** Right after the diff (and when a run resumes past
+- **Open and close.** After the diff (and when a run resumes past
   document_loading) the run opens an attempt on every document it processes
   (`incremental.open_attempts`: `attempt_batch` = documents processed
   together, `attempted_hash`; a new document gets a `PENDING` record without
-  text units). It closes them however it ends in the process: finished,
-  failed with an error, or stopped by SIGTERM or Ctrl-C (`close_attempts`).
-  An attempt still open on the next run is one more death of that content
-  (`attempt_count`) in a batch of `attempt_batch` (`crash_batch`).
-- **Rebuilds count nothing.** A reset opens no attempt and the write-ahead
-  record keeps the attempt fields as stored.
+  text units) and closes them however the process ends: finished, failed,
+  SIGTERM or Ctrl-C (`close_attempts`). An attempt still open on the next run
+  is one more death of that content (`attempt_count`) in a batch of
+  `attempt_batch` (`crash_batch`). A reset opens none (the write-ahead record
+  keeps the stored attempt fields); a document that produces no text units in
+  a committing run counts as a death alone.
 - **Plan** (`plan_attempts`, at the diff). A changed document whose deaths
-  reach `indexing.max_document_attempts` is a suspect. One whose last death
+  reach `indexing.max_document_attempts` is a suspect; one whose last death
   was alone (`crash_batch` 1) is `quarantined`. Otherwise the run processes
   the first half (by doc id) of the suspects that died in the smallest batch
   and classifies every other new or changed document `deferred` (neither
-  processed nor deleted). A death narrows the suspects to that half; a run
+  processed nor deleted). A death narrows the suspects to that half and a run
   that ends commits it, so one culprit among `n` is isolated in about
-  `log2(n) + 1` runs, and no document is quarantined for dying with it.
-- **Quarantined record.** It becomes `QUARANTINED` (the attempted content
-  hash, its deaths, the reason in `error_info`). When the attempts reached
-  indexing (the record is the write-ahead `PENDING` one) the removal pass
-  removes what they wrote and no text units are kept; when they died before,
-  the indexed version and its text units stay. It reads unchanged until the
-  content or the extraction settings change, or the limit is raised above
-  its deaths: `diff` lists unchanged `QUARANTINED` records
-  (`DocumentDelta.quarantined_unchanged`) and `release_quarantined`
-  classifies those below the limit changed.
-- A document that produces no text units in a committing run counts as a
-  death alone.
+  `log2(n) + 1` runs and no document is quarantined for dying with it.
+- **Quarantined record**: `QUARANTINED` with the attempted content hash, its
+  deaths and the reason in `error_info`. When the attempts reached indexing
+  (the record is the write-ahead `PENDING` one), the removal pass removes what
+  they wrote and no text units are kept; otherwise the indexed version and its
+  text units stay. It reads unchanged (`diff` lists it in
+  `DocumentDelta.quarantined_unchanged`) until the content or the extraction
+  settings change, or the limit is raised above its deaths
+  (`release_quarantined` then classifies it changed).
 - **Resume check** (`delta_still_applies`). A resumed run whose restored
-  delta names a document whose record is gone or holds other content, or
-  whose deaths reached the limit, resumes from document_loading instead.
-- Metrics: `total_documents_quarantined` (CDK `DocumentsQuarantined` alarm)
-  and `total_documents_deferred`.
+  delta names a document whose record is gone, holds other content or reached
+  the limit resumes from document_loading instead. Metrics:
+  `total_documents_quarantined` (CDK `DocumentsQuarantined` alarm) and
+  `total_documents_deferred`.
 
 The cost is one extra batched registry write per run (two more writes and
-reads for the attempts) and a few batched store lookups per suffix. `tests/unit/test_incremental_write_ahead.py` and
+reads for the attempts) and a few batched store lookups per suffix.
+`tests/unit/test_incremental_write_ahead.py` and
 `tests/property/test_incremental_interruption_properties.py` interrupt a run at
 every write and check that the next run converges to a fresh full build.
 
@@ -611,44 +580,40 @@ every write and check that the next run converges to a fresh full build.
 
 - **Document identity** (`shared/utils/document_identity.py`). A document
   version's id hashes its path relative to the corpus root and its full text,
-  so the same corpus yields the same ids wherever it is checked out. An
-  incremental run keys text units by the registry `doc_id`, so a text unit
-  belongs to exactly one registry record. Changing either rule requires a
-  re-index.
+  so a corpus yields the same ids wherever it is checked out; an incremental
+  run keys text units by the registry `doc_id`, so each belongs to one record.
+  Changing either rule requires a re-index.
 - **Derived content** (`domain/ingestion/derivation.py`). The merge and the
   strip keep each touched item's structure (id, text units, per-unit
   weights); its content is then derived from the records of the text units it
   cites now, by the full build's own code (`merge_contributions`,
-  `GraphResolver`, `ClaimResolver`). The result is what a full build over the
-  current corpus gives the item: a deleted document's text leaves shared
-  descriptions and claims, and names and types follow the current votes. An
-  entity whose derived name has another id takes the full build's id
-  (`Derived.id_remap`), and its edges and claims follow. An item citing a text
-  unit without a stored record keeps its stored content, with a WARNING and
-  the indexing stage's `underived_items` metric.
+  `GraphResolver`, `ClaimResolver`), so the item gets what a full build of the
+  current corpus gives it: a deleted document's text leaves shared
+  descriptions and claims, names and types follow the current votes, and an
+  entity whose derived name has another id takes that id
+  (`Derived.id_remap`), its edges and claims following. An item citing a text
+  unit without a stored record keeps its stored content (a WARNING and the
+  indexing stage's `underived_items` metric).
 - **Merges a full build undoes.** A stored entity may hold what a full build
-  keeps apart (two spellings merged while their types agreed): every
-  resolved entity sharing a name key and a text unit with it is derived, the
-  best match under its id and each other as an entity of its own
-  (`Derived.split_from`). The stored edges of a split or re-keyed entity and
-  their other endpoints are derived with it (`Derived.rewired`), so each
-  follows the part that states it and a re-pointed edge becomes one with the
-  derived edge it now equals; an edge a full build draws between derived
-  entities that no stored edge is (an earlier merge dropped it as a
-  self-loop) is added, and a stored edge whose endpoints now resolve to one
-  entity is deleted with the retired ids (`Derived.dropped`), as is a delta id
-  the cross-run merge folded into another (a run that died between the
-  stores may have left its vector copy). Edges take the resolution's
-  per-unit strengths; the claim stage merges a claim's statements in
-  text-unit id order, as derivation does.
+  keeps apart (two spellings merged while their types agreed): every resolved
+  entity sharing a name key and a text unit with it is derived, the best
+  match under its id and each other as its own entity (`Derived.split_from`).
+  The stored edges of a split or re-keyed entity are derived with it
+  (`Derived.rewired`), so each follows the part that states it and a
+  re-pointed edge merges with the derived edge it now equals. An edge a full
+  build draws that no stored edge is (an earlier merge dropped it as a
+  self-loop) is added; a stored edge whose endpoints now resolve to one
+  entity is deleted with the retired ids (`Derived.dropped`), as is a delta
+  id the cross-run merge folded into another (an interrupted run may have
+  left its vector copy). Edges take the resolution's per-unit strengths, and
+  claim statements merge in text-unit id order, as in a full build.
 - **Cost.** Derivation runs only where something is stored (a first build
-  with the registry on writes the delta as graph resolution made it, its
-  summaries included) and matches through a key index. A stored summary that
-  only grew (the item still cites every text unit it did) is summarized from
-  itself and the run's new description, as LightRAG merges a description
-  into the stored one; an item that lost a text unit is summarized from its
-  derived description, so removed text goes. A stored edge rewritten for its
-  rank only is updated in place in the vector store, not embedded again.
+  writes the delta as graph resolution made it) and matches through a key
+  index. A stored summary that only grew (the item still cites every text unit
+  it did) is summarized from itself and the new description, as LightRAG
+  merges into the stored one; an item that lost a text unit is summarized from
+  its derived description, so removed text goes. A stored edge rewritten for
+  its rank only is updated in place, not embedded again.
 - **Merge rules** (`domain/ingestion/merge/merger.py`, ported from MS GraphRAG
   `update/*`), all idempotent:
 
@@ -671,12 +636,11 @@ the only path that re-partitions the whole graph
 (`indexing.community_drift_threshold` reports when one is due). Each delta's
 root communities join every cut of the hierarchy, so global search's cut
 grows until a rebuild; the cap and the shallower-cut fallback (§6.1.1) bound
-it, and the drift metrics report it (`added_roots`). Leaving delta
-communities whose entities are already clustered out of the cuts was
-rejected: their reports are the only ones describing the delta, and stored
-community ids still name removed communities. Re-detecting
-the full graph on every delta run was rejected: it would regenerate every
-report (an LLM call each) per run.
+it, and the drift metrics report it (`added_roots`). Rejected alternatives:
+leaving delta communities of already clustered entities out of the cuts
+(their reports are the only ones describing the delta, and stored community
+ids still name removed communities), and re-detecting the full graph on every
+delta run (it would regenerate every report, an LLM call each).
 
 ### 5.6 Concurrency
 
@@ -686,23 +650,19 @@ one conditional registry write, renewed by a heartbeat every sixth of
 `indexing.lease_seconds` (lease requests: short timeouts, 3 attempts). A
 second run fails with `NamespaceLeaseError` before it reads or writes.
 
-- **Write fence** (`shared/write_fence.py`). The lease is the run's fence:
-  every incremental registry write, indexing phase, rebuild sweep, Neptune
-  batch or drop and OpenSearch bulk request checks it first. The check fails
-  once less than a third of the term is left since the last successful
-  renewal, counted from when it was sent (the store's expiry runs from then),
-  so a run that lost the lease stops while it still holds it, provided no
-  single write request outlasts a third of the term.
-- **No conditional registry writes.** `BatchWriteItem` takes no condition and
-  the store writes cannot be conditioned on the registry, so the margin is
-  the fence for every write.
+- **Write fence** (`shared/write_fence.py`). Every incremental registry
+  write, indexing phase, rebuild sweep, Neptune batch or drop and OpenSearch
+  bulk request checks the lease first. The check fails once less than a third
+  of the term is left since the last successful renewal was sent (the store's
+  expiry runs from then), so a run that lost the lease stops while it still
+  holds it, provided no single write request outlasts a third of the term.
+- **No conditional writes.** `BatchWriteItem` takes no condition and store
+  writes cannot be conditioned on the registry, so the margin is the fence.
 - **Checkpoint.** The lease is taken before the S3 checkpoint is downloaded
-  and released only after a stopped run uploaded its checkpoint.
+  and released only after a stopped run uploaded it.
 
-Without the
-registry nothing locks, and concurrent runs on one suffix race on its aliases
-and labels. The operator view is in the
-[runbook](./operations.md#concurrent-runs).
+Without the registry nothing locks, and concurrent runs on one suffix race on
+its aliases and labels ([runbook](./operations.md#concurrent-runs)).
 
 ---
 
@@ -719,20 +679,19 @@ budget and answer. `RAGInput.search_strategy` picks the methodology.
 ![Search strategies](../assets/retrieval-strategies.drawio.png)
 
 - **Where the chain stops.** `search` / `asearch` return the fused, ranked
-  results (a `SearchOutput`); `invoke` / `ainvoke` / `stream` pack them into
-  the token budget (§7), generate the answer and return a `RAGOutput` whose
-  sources are exactly the sections the answer model saw. Both run the same
-  steps up to retrieval, so they retrieve the same results. An empty budgeted
-  context is answered "cannot answer" without calling the LLM.
+  results (a `SearchOutput`); `invoke` / `ainvoke` / `stream` run the same
+  steps, pack the results into the token budget (§7) and return a `RAGOutput`
+  whose sources are exactly the sections the answer model saw. An empty
+  budgeted context is answered "cannot answer" without calling the LLM.
 - **Graph expansion** is part of `local` and `drift`, and opt-in for `mix` /
   `hybrid` (`search.lightrag_search.enable_graph_expansion`). Strategies find
   the seed entities in the vector store and pass their ids to the graph
   retriever, which expands from those ids only.
 - **One index, both methodologies (deliberate extension).** Ingestion builds
-  the union of what both need: MS GraphRAG builds no relationship vector
-  index, and LightRAG no communities. A LightRAG-only deployment can set
+  the union of what both need (MS GraphRAG builds no relationship vector
+  index, LightRAG no communities). A LightRAG-only deployment can set
   `graph.community_detection.enabled: false` to skip Leiden and every report
-  call (`global` and `drift` then are unavailable).
+  call, leaving `global` and `drift` unavailable.
 
 ### 6.1 GraphRAG Methodology (`adapters/search_strategies/`)
 
@@ -744,7 +703,7 @@ budget and answer. `RAGInput.search_strategy` picks the methodology.
   `search.local_search.include_bridge_relationships` (default on), the
   relationships incident to the expanded entities are fetched too, edges
   between two retrieved entities first: they carry the hops of a multi-hop
-  chain that the relationship vector query rarely matches. With claims on,
+  chain the relationship vector query rarely matches. With claims on,
   matching claims are injected (MS GraphRAG covariates). The section lookups
   run concurrently with the entity chain.
 - **global** — MS GraphRAG global search over one cut of the community
@@ -752,33 +711,32 @@ budget and answer. `RAGInput.search_strategy` picks the methodology.
 - **drift** — MS GraphRAG DRIFT search (`drift_search.py`).
   *Primer:* a hypothetical answer shaped like the most important report
   (`DriftHydePrompt`) selects the `k_followups` most similar reports, split
-  into `primer_folds` folds; each fold returns an intermediate answer, a score
+  into `primer_folds` folds, each returning an intermediate answer, a score
   and follow-up queries. *Actions:* for `n_depth` rounds the best-scored open
-  follow-ups each run the local search, and its results are answered with a
-  score and new follow-ups; the follow-up searches do not rerank. *Reduce:*
-  the intermediate answers (one synthesized section, never a reported source)
-  and the local evidence, reranked once, go to the answer model. Without
-  reports, or with no follow-up from the primer, the question itself is the
-  one follow-up.
+  follow-ups each run the local search (without rerank) and are answered with
+  a score and new follow-ups. *Reduce:* the intermediate answers (one
+  synthesized section, never a reported source) and the local evidence,
+  reranked once, go to the answer model. Without reports or primer follow-ups,
+  the question itself is the one follow-up.
   - Defaults `k_followups` 10, `n_depth` 2: at most 27 LLM calls a query (MS
     GraphRAG's 20 and 3: 67). Primer calls and actions run
     `search.max_concurrency` at a time.
   - The primer searches reports of every depth, not MS GraphRAG's one
-    `community_level`: similarity picks the granularity (a depth-2 cut
-    answered 16 of 21 sub-questions on a synthetic six-hop corpus, every
-    depth 21).
-  - A fatal error fails the query and cancels the calls in flight. Any other
-    failure leaves only its own answer out (`degraded_error`); the query fails
-    only when a whole step failed and `processing.ignore_errors` is off, and a
+    `community_level`, so similarity picks the granularity (on a synthetic
+    six-hop corpus a depth-2 cut answered 16 of 21 sub-questions, every depth
+    21).
+  - A fatal error fails the query and cancels the calls in flight; any other
+    failure leaves only its own answer out (`degraded_error`). The query fails
+    only when a whole step failed and `processing.ignore_errors` is off; a
     round whose actions all failed ends the rounds.
 - **auto** — an LLM router (`StrategySelectionPrompt`) picks among
   `search.auto_routable_strategies` minus those the pipeline cannot serve
-  (`global` and `drift` register `needs_community_reports=True`); the prompt
-  describes exactly the routable strategies, and unrecognized output falls
-  back to `local`. The default set is `local`, `mix`, `global`: `drift` costs
-  up to 27 LLM calls a query. With one routable strategy no router call is
-  made. The guide sends questions that chain from a named entity to `local`
-  (synthetic multi-hop harness: `local` 0.925, `mix` 0.40 exact match).
+  (`global` and `drift` need community reports); the prompt describes
+  exactly the routable strategies, and unrecognized output falls back to
+  `local`. The default set is `local`, `mix`, `global` (`drift` costs
+  up to 27 LLM calls); with one routable strategy no router call is made. The
+  prompt sends questions that chain from a named entity to `local` (synthetic
+  multi-hop harness: `local` 0.925, `mix` 0.40 exact match).
 
 #### 6.1.1 Global search (`global_search.py`)
 
@@ -792,11 +750,11 @@ depth selects the cut.
 - **Fixed cut (default)** — the cut is browsed by rank, one report more than
   `max_reports_per_level` (bounded by `max_query_size`) so a cut of exactly
   the cap is complete. A larger cut gives way to the deepest shallower cut
-  that fits (`global_cut_depth`), which covers the same entities in broader
-  reports. Only when the root cut does not fit either does a hybrid search
-  for the query, restricted to the configured cut, pick that many most
-  similar reports (`global_level_capped`): the only place similarity enters
-  global search. The cap counts reports, which bounds the map calls.
+  that fits (`global_cut_depth`), covering the same entities in broader
+  reports. Only when even the root cut does not fit does a hybrid search,
+  restricted to the configured cut, pick that many most similar reports
+  (`global_level_capped`): the only place similarity enters global search.
+  The cap counts reports, which bounds the map calls.
 - **Dynamic selection** (`use_dynamic_selection`) — MS GraphRAG's
   `DynamicCommunitySelection`: rate the root reports for relevance, follow
   the children of the relevant ones to the leaves, and rate the whole next
@@ -805,21 +763,20 @@ depth selects the cut.
   `search.max_concurrency` at a time.
 
 **Map-reduce.** At least `map_reduce_min_results` reports are packed into
-batches of `map_context_tokens` (MS GraphRAG's `data_max_tokens`), and each
-batch's map call extracts key points scored 0-100, each naming the
-`report_ids` it is drawn from (MS GraphRAG's `[Data: Reports (ids)]`); map
-calls run `search.max_concurrency` at a time. Points at or below
-`map_relevance_threshold` are dropped, the rest ranked and packed into
-`max_map_reduce_tokens`, and by default handed to the answer model directly as
-one synthesized section (`reduce_with_llm: false`: a separate reduce call only
-added a rewrite that could drop facts), followed by the reports the points
-cite; a point citing none of its batch's reports credits the whole batch.
+batches of `map_context_tokens` (MS GraphRAG's `data_max_tokens`); each map
+call (`search.max_concurrency` at a time) extracts key points scored 0-100,
+each naming its `report_ids` (MS GraphRAG's `[Data: Reports (ids)]`). Points
+at or below `map_relevance_threshold` are dropped, the rest ranked, packed
+into `max_map_reduce_tokens` and by default handed to the answer model as one
+synthesized section (`reduce_with_llm: false`: a separate reduce call only
+added a rewrite that could drop facts), followed by the reports they cite; a
+point citing none of its batch's reports credits the whole batch.
 
 **Degradation.** A batch whose map call failed or returned unparseable output
 is *unrated*; when no point passed but some reports were never rated, those
 reports pass through, so global search still answers. When every batch was
-rated and every point rejected, global search returns nothing
-(`map_reduce_no_relevant_points`) and the chain answers that it cannot, as MS
+rated and every point rejected, it returns nothing
+(`map_reduce_no_relevant_points`) and the chain says it cannot answer, as MS
 GraphRAG does.
 
 ### 6.2 LightRAG Methodology (`lightrag_search.py`)
@@ -838,9 +795,9 @@ low-level keywords) on the shared hybrid infrastructure:
   LightRAG's `_find_related_text_unit_*`) and a naive chunk retrieval.
 
 The independent queries run concurrently, then the expansions, then the cited
-chunks. Short queries without keywords fall back to the raw query as
-low-level keywords (`raw_query_fallback_max_len`). Upstream LightRAG has no
-multi-hop traversal, hence graph expansion is opt-in.
+chunks. Short queries without keywords use the raw query as low-level
+keywords (`raw_query_fallback_max_len`). Upstream LightRAG has no multi-hop
+traversal, hence graph expansion is opt-in.
 
 ---
 
@@ -849,12 +806,11 @@ multi-hop traversal, hence graph expansion is opt-in.
 - **HybridScorer** (`adapters/retrieval/hybrid_scorer.py`) fuses the
   per-source results by RRF (`rrf_k`) or weights, reranks, applies MMR
   diversity (`diversity_lambda`) and cuts to the per-type quota or `top_k`.
-  Reranking comes before diversity, as upstream LightRAG reranks every chunk
-  candidate before truncating, so a cut on fused scores cannot drop what the
+  Reranking comes before diversity (as upstream LightRAG reranks every chunk
+  candidate before truncating), so a cut on fused scores cannot drop what the
   reranker ranks first. Each query records its rerank outcome on its own
-  `RerankTrace` (never on the shared scorer), reported as
-  `SearchResult.metadata["rerank"]`; a rerank model that cannot be built
-  leaves the fused order (`unavailable`) or raises under
+  `RerankTrace`, reported as `SearchResult.metadata["rerank"]`; a rerank model
+  that cannot be built leaves the fused order (`unavailable`) or raises under
   `search.reranking.required`.
 - **TokenManager** (`adapters/retrieval/token_manager.py`) packs the context
   into the answer model's budget. Each section type gets a hard-capped share
@@ -863,9 +819,9 @@ multi-hop traversal, hence graph expansion is opt-in.
   to the types that still have candidates (first to the strategy's
   `spare_context_budget_first` types, as LightRAG gives chunks what its graph
   sections leave), so shares, never cross-type score comparisons, decide the
-  mix and no share is wasted. Synthesized global sections are seated first.
-  The chain keeps this selection and builds `RAGOutput.sources` from it, so
-  sources list only what the answer model saw, truncated text included.
+  mix. Synthesized global sections are seated first. `RAGOutput.sources` is
+  built from this selection, so it lists only what the answer model saw,
+  truncated text included.
 - **Token counting** (`adapters/aws/token_counter.py`,
   `adapters/local/token_counter.py`). The Bedrock `count_tokens` API is used
   for language models that accept it, with a script-aware estimate otherwise
@@ -880,23 +836,22 @@ multi-hop traversal, hence graph expansion is opt-in.
 
 | Service | Module | Purpose |
 |---|---|---|
-| **Bedrock** | `adapters/aws/bedrock.py`, `bedrock_models.py` (capability catalog) | LLM, embedding and rerank; cross-region inference-profile resolution, provider-aware request shaping (adaptive thinking and `effort` on Claude 4.6+, `reasoning.effort` on OpenAI GPT), prompt caching where supported; any model id is accepted through curated rows, provider-family defaults and `aws.bedrock.model_overrides` |
-| **Neptune** | `adapters/aws/neptune.py` | Gremlin over `wss://` with SigV4 (`ws://` for a local Gremlin Server); batch upsert and delete, concurrent batches with `indexing.neptune.index_concurrency`; every indexer request is retried over a new connection and is safe to repeat (vertices and edges are created or matched by id); an edge whose endpoint vertex is missing is neither dropped nor written (it fails, its stored copy stays); communities are vertices only (no `MemberOf` edges: no query read them, an entity names its communities in `community_ids`) |
+| **Bedrock** | `adapters/aws/bedrock.py`, `bedrock_models.py` (capability catalog) | LLM, embedding and rerank; inference-profile resolution, provider-aware request shaping (adaptive thinking and `effort` on Claude 4.6+, `reasoning.effort` on OpenAI GPT), prompt caching where supported; any model id works through curated rows, provider-family defaults and `aws.bedrock.model_overrides` |
+| **Neptune** | `adapters/aws/neptune.py` | Gremlin over `wss://` with SigV4 (`ws://` for a local Gremlin Server); batch upsert and delete, `indexing.neptune.index_concurrency` concurrent batches; every indexer request is retried over a new connection and safe to repeat (vertices and edges are created or matched by id); an edge whose endpoint vertex is missing fails and keeps its stored copy; communities are vertices only (no `MemberOf` edges: an entity names its communities in `community_ids`) |
 | **OpenSearch** | `adapters/aws/opensearch.py` | kNN (HNSW, `lucene` engine by default, which supports `cosinesimil` on OpenSearch 2.13) and BM25, sync and async SigV4 clients, alias management, bulk upsert and delete, per-language analyzers |
 | **S3** | `adapters/aws/s3_cache.py` | Stage-cache sync (the bucket's default encryption unless `aws.s3.encryption` forces one) |
 | **DynamoDB** | `adapters/doc_status/dynamodb.py` | The doc-status registry |
 
-The AWS session is the bundle's (`Providers(boto_session=...)`), created from
-`aws.profile_name` on first use, so a fake or moto session can be injected;
-only an AWS client asks for it.
+The AWS session is the bundle's (`Providers(boto_session=...)`, so a fake or
+moto session can be injected), created from `aws.profile_name` when an AWS
+client first asks for it.
 
 ### 8.1 Retrieval Error Visibility
 
-The retrievers do not disguise authentication, configuration or store
-failures as "no results". One policy, `is_fatal_retrieval_error()`
-(`adapters/store_errors.py`), decides **by exception type alone**, never by
-message: fatal errors are re-raised and fail the query; the rest degrade only
-the section that raised them. Every sub-retrieval goes through
+Authentication, configuration and store failures are never disguised as "no
+results". One policy, `is_fatal_retrieval_error()` (`adapters/store_errors.py`),
+decides **by exception type alone**: fatal errors fail the query, the rest
+degrade only the section that raised them. Every sub-retrieval goes through
 `BaseSearchStrategy._safe_aretrieve`, so a section handler cannot swallow a
 fatal error.
 
@@ -913,17 +868,16 @@ fatal error.
 | One failed request (an HTTP 500 for one search) | any other exception | degrades that section |
 
 Neptune specifics: a lost connection is dropped so the next query or retry
-opens a new one; a query traversal runs on threads the retriever owns and is
-bounded by twice `search.store_timeout_seconds`; closing the client wakes and
-fails requests still waiting for a pooled connection or a late read instead of
-leaving them hanging; the indexer's read timeout is a fixed 180 s, above
-Neptune's own 120 s query timeout.
+opens a new one; a query traversal runs on retriever-owned threads, bounded by
+twice `search.store_timeout_seconds`; closing the client fails requests still
+waiting for a pooled connection or a late read; the indexer's read timeout is
+a fixed 180 s, above Neptune's own 120 s query timeout.
 
 ### 8.2 Client Lifecycle / Resource Release
 
-Each retriever opens a Neptune WebSocket and thread pool and OpenSearch HTTP
-pools, which leak until garbage collection unless closed. Every layer
-therefore exposes a best-effort `close()` / `aclose()` that never raises:
+Retrievers open a Neptune WebSocket and thread pool and OpenSearch HTTP
+pools, which leak until garbage collection unless closed, so every layer
+exposes a best-effort `close()` / `aclose()` that never raises:
 
 - `OpenSearchClient` and `NeptuneClient` close their pools (OpenSearch also
   when the event loop changes, awaiting the old client on its own loop).
@@ -932,21 +886,20 @@ therefore exposes a best-effort `close()` / `aclose()` that never raises:
   safety net. The CLIs close in `finally`.
 - `GraphRAGChain` caches retrievers and strategies per event loop; its sync
   entry points run on one chain-owned loop thread, so repeated sync calls reuse
-  one set of clients. Blocking calls stay off the loop (`asyncio.to_thread`),
-  and the loop's default executor, which bounds concurrent Bedrock calls, is
-  sized to `processing.io_workers` (`configure_event_loop` for async hosts).
+  one set of clients. Blocking calls run in `asyncio.to_thread`, on a default
+  executor sized to `processing.io_workers` (which bounds concurrent Bedrock
+  calls; `configure_event_loop` for async hosts).
 
 ### 8.3 Multilingual Processing
 
 - **Analyzers.** `indexing.opensearch.language_analyzers` maps a language to an
-  OpenSearch analyzer (default `en: english`, `ko: nori`), extendable without
-  code. An Amazon OpenSearch Service domain has `nori` only once its Nori
-  package is associated, so the CDK deployment maps `ko` to the built-in `cjk`
-  analyzer; a mapping the cluster lacks fails index creation with an error
-  naming it.
+  OpenSearch analyzer (default `en: english`, `ko: nori`). An Amazon OpenSearch
+  Service domain has `nori` only once its Nori package is associated, so the
+  CDK deployment maps `ko` to the built-in `cjk`; an analyzer the cluster
+  lacks fails index creation with an error naming it.
 - **Identity keys** keep the letters of all scripts (§3).
-- **Translation** is skipped at no cost when the source and target languages
-  match and no other target is set (`TranslationConfig.is_noop`).
+- **Translation** is skipped when the source and target languages match and
+  no other target is set (`TranslationConfig.is_noop`).
 - **Encoding.** A non-UTF-8 text file is re-read with the encoding
   `charset-normalizer` detects.
 
@@ -957,8 +910,8 @@ therefore exposes a best-effort `close()` / `aclose()` that never raises:
 `EvaluationManager` (`evaluation/`) builds the evaluators through
 `_resolve_evaluator_class` (one lazy-import branch per `EvaluatorType`) and
 scores every result after all answers are generated. What each evaluator
-measures and needs is in the
-[User Guide §6](./user-guide.md#evaluators); the design choices:
+measures is in the [User Guide §6](./user-guide.md#evaluators); the design
+choices:
 
 - **LLM-free evaluators are first-class.** `answer_match`, `retrieval` and
   `graph_aware` are deterministic and free, so they run by default next to the
@@ -973,20 +926,19 @@ measures and needs is in the
 - **Strategy comparison** (`evaluation/comparison.py`, `pairwise.py`). Several
   strategies or `--repeats` run the same queries; each metric is averaged per
   query over repeats and compared per query with a seeded paired bootstrap
-  interval (pooled means would mix query difficulty and run-to-run noise into
-  the difference). The optional pairwise judge (comprehensiveness, diversity,
+  interval (pooled means would mix query difficulty and noise into the
+  difference). The optional pairwise judge (comprehensiveness, diversity,
   empowerment, directness, as in the GraphRAG and LightRAG papers) judges both
   answer orders and keeps only order-stable verdicts. A failed answer is never
-  dropped from a comparison (that would let a strategy that fails on the
-  queries it would lose look as good as one that answers them): it scores 0
-  on every metric another run scored the query on, and a pair with one failed
-  answer goes to the other side unjudged.
+  dropped (a strategy failing on the queries it would lose would look as good
+  as one answering them): it scores 0 on every metric another run scored the
+  query on, and a pair with one failed answer goes to the other side
+  unjudged.
 - **Run manifest.** Ingestion records an `IndexBuildRecord` (pipeline id,
   mode, build time, documents, extraction fingerprint and settings, package
-  version) in the vector index mappings' `_meta` (`VectorIndexer.record_build`);
-  the manager reads it back per queried suffix. The manifest's config hash
-  covers only the settings that shape answers (§12), so it is equal across
-  environments.
+  version) in the vector index mappings' `_meta` (`VectorIndexer.record_build`),
+  read back per queried suffix. The config hash covers only the settings that
+  shape answers (§12), so it is equal across environments.
 - **Benchmarks.** `prepare-benchmark` (`evaluation/benchmarks/musique.py`)
   builds a MuSiQue corpus and dataset at run time;
   `evaluation.answer_normalization: official_squad` makes EM/F1 comparable
@@ -1002,24 +954,25 @@ renderers of `adapters/renderers/` (`BaseRenderer`, `@register_renderer`,
 hierarchy) and `StaticRenderer` (Bokeh degree, centrality and community-size
 charts). The layout embeds each node's `name: description` and reduces it
 (UMAP by default, a spring layout on failure). `run-visualization` renders
-from exported graph JSON without ingestion; the data-only file ingestion writes
-by default has no layout, so the CLI computes a seeded spring layout and the
-configured centrality for it.
+exported graph JSON without ingestion, computing a seeded spring layout and
+the configured centrality for the layout-free file ingestion writes by
+default.
 
 ---
 
 ## 11. Prompts and Prompt Tuning
 
 - **Prompts** (`domain/prompts/`) are `BasePrompt` classes whose templates and
-  variables are class attributes, version-controlled as code. Every prompt can
-  be overridden from config (`custom_prompts`).
+  variables are class attributes, version-controlled as code. All but five
+  can be overridden from config (`custom_prompts`); the
+  [User Guide](./user-guide.md#custom-prompts) lists the five.
 - **Prompt tuning** (`application/prompts/tuner.py`, after MS GraphRAG
   `prompt_tune`) profiles a corpus sample (domain, language, persona, entity
-  types) and writes a domain-adapted `custom_prompts` fragment for the user to
-  review and apply; nothing is applied at run time. A tuned prompt replaces
-  only the persona preamble: the built-in output rules (the XML schema, the
-  verbatim `source_text` grounding) are kept verbatim, so the parser and the
-  grounding guard keep working.
+  types) and writes a domain-adapted `custom_prompts` fragment to review and
+  apply; nothing is applied at run time. A tuned prompt replaces only the
+  persona preamble and keeps the built-in output rules (the XML schema, the
+  verbatim `source_text` grounding), so the parser and grounding guard keep
+  working.
 
 ---
 
@@ -1030,12 +983,13 @@ root `Config`) loaded by `shared/config.py` (`get_config`).
 [docs/configuration.md](./configuration.md) is generated from it by
 `scripts/gen_config_reference.py`, and `tests/unit/test_config_reference.py`
 fails when it is stale; `config-template.yaml` is the commented starting file.
+[docs/cli.md](./cli.md) is generated the same way from the CLI parsers
+(`scripts/gen_cli_reference.py`, `tests/unit/test_cli_reference.py`).
 
 - **Loading** (`Config.as_input`). The config is validated once from its
-  layers: defaults < `backend` preset < file < environment. The environment is
-  generic: `UKR__<SECTION>__<KEY>` sets any key, resolved against the model
-  tree, so no table of variables needs keeping in step; `AWS_PROFILE` /
-  `AWS_REGION` fill only keys the file leaves unset. Unknown keys fail the
+  layers: defaults < `backend` preset < file < environment. `UKR__<SECTION>__<KEY>`
+  sets any key, resolved against the model tree (no variable table to keep in
+  step); `AWS_PROFILE` / `AWS_REGION` fill only keys the file leaves unset. Unknown keys fail the
   load unless `allow_unknown_keys`, a moved key (`MOVED_KEYS`) fails
   naming its replacement, and a removed key (`REMOVED_KEYS`) logs a warning
   and is ignored. `Config` keeps the input it was validated from, so
@@ -1047,31 +1001,25 @@ fails when it is stale; `config-template.yaml` is the commented starting file.
   with its dimension and the rerank model. Each family's provider stays
   `providers.<family>.kind`, and `Config._check_models` validates the ids
   against it. Values stay as written and resolve on read (`Config.model_id`,
-  `embedding_model_id`, `rerank_model_id`), so nothing resolved is written
-  back. A setting of a provider the config does not select is reported at
-  load.
+  `embedding_model_id`, `rerank_model_id`); a setting of a provider the config
+  does not select is reported at load.
 - **Stage cache keys** (`shared/utils/cache_keys.py`). `CONFIG_KEYING`
   classifies every field: keyed from the first stage whose output it shapes,
-  or unkeyed with the reason (a throughput knob, a query-time setting, ...).
-  A stage's key hashes the keyed fields in effect for it and every upstream
-  stage, the package version and the corpus manifest; only settings in effect
-  count (a disabled block contributes its switch alone). An unclassified field
+  or unkeyed with the reason. A stage's key hashes the keyed fields in effect
+  for it and every upstream stage (a disabled block contributes its switch
+  alone), the package version and the corpus manifest. An unclassified field
   keys every stage (a miss, never a stale hit), and
   `tests/unit/test_cache_key_coverage.py` fails until it is classified. The
   same table decides what the `run-eval` manifest's `retrieval_config_sha256`
   hashes (`answer_settings`): every field except the unkeyed ones marked
-  `shapes_answers=False` (where a call goes, throughput, telemetry,
-  provisioning, cache storage) and a few location fields (corpus and registry
-  paths, the table name, the guardrail id), so a new field counts until it is
-  classified as changing no answer.
+  `shapes_answers=False` (call routing, throughput, telemetry, provisioning,
+  cache storage) and a few location fields (corpus and registry paths, the
+  table name, the guardrail id).
 - **Extraction settings.** The keyed fields marked `per_document` form a
-  document's extraction settings; their fingerprint is recorded on each
-  committed document and the settings once per registry scope. The next run
-  compares field by field, so a setting a release adds is no change while it
-  holds its default, and a WARNING names the settings that changed.
-- **Adding a section**: a Pydantic `BaseModel` attached to its parent with
-  `Field(default_factory=...)`, a user-facing `description` on every field,
-  then regenerate `docs/configuration.md` and add it to the template.
+  document's extraction settings: their fingerprint is recorded on each
+  committed document and the settings once per registry scope, compared field
+  by field on the next run (a setting a release adds is no change while it
+  holds its default). Adding a section: §15.
 
 ---
 
@@ -1081,8 +1029,7 @@ Tests (`tests/{unit,integration,property,fixtures/fakes}/`) run **without AWS
 by default**.
 
 - **Port-based fakes** (`tests/fixtures/fakes/`) implement the stores and the
-  registry in memory, the test-side benefit of the hexagonal layout; `moto`
-  covers the DynamoDB and S3 adapters against the boto3 surface.
+  registry in memory; `moto` covers the DynamoDB and S3 adapters.
 - **Property tests** (hypothesis) cover merge laws, incremental-versus-full
   convergence, interrupted runs, fusion monotonicity, MinHash and token-estimate
   equivalence; `tests/integration/test_doc_status_conformance.py` checks the
@@ -1091,11 +1038,10 @@ by default**.
   (`tests/integration/test_{graph_store,vector_store,retrieval}_conformance.py`)
   write each store contract once and run it on every backend through the
   `StoreHarness` (`tests/fixtures/store_backends.py`): the fakes, the embedded
-  SQLite stores, the containers of `docker/compose.local.yaml`
-  (`LOCAL_STORES=1`) and Neptune and OpenSearch Service (`-m aws`).
-  `tests/integration/test_store_parity.py` checks that the SQLite engine and an
-  OpenSearch container rank one synthetic corpus alike (same lexical and
-  hybrid top 10, approximate kNN recall@10 ≥ 0.98).
+  SQLite stores, the `docker/compose.local.yaml` containers (`LOCAL_STORES=1`)
+  and Neptune and OpenSearch Service (`-m aws`); `test_store_parity.py`
+  checks that SQLite and an OpenSearch container rank a synthetic corpus alike
+  (same lexical and hybrid top 10, kNN recall@10 ≥ 0.98).
 - **Markers**: `unit`, `integration`, `property`, `aws` (real AWS, excluded in
   CI), `slow`. Run `uv run pytest -m "not aws" --cov=unified_kg_rag`.
 
@@ -1105,9 +1051,9 @@ by default**.
 
 - **CI** (`.github/workflows/`): `quality` gates pull requests and pushes to
   `main` (lint, types, tests with the coverage floor, the image build, the IaC
-  synth with cdk-nag); `licenses` checks dependency licenses; `security` runs
-  a report-only ASH scan. [CONTRIBUTING.md](../CONTRIBUTING.md#checks-to-run-before-pushing)
-  lists the local checks, and `.pre-commit-config.yaml` mirrors the gates.
+  synth with cdk-nag), `licenses` checks dependency licenses, `security` runs
+  a report-only ASH scan; the local checks are in
+  [CONTRIBUTING.md](../CONTRIBUTING.md#checks-to-run-before-pushing).
 - **Dependabot** updates the `uv` locks (root and `iac/`) and the SHA-pinned
   Actions weekly; known-breaking bumps are held back with a recorded reason.
 - **Hardening.** Content hashes use SHA-256 only; credentials come from the
@@ -1117,19 +1063,19 @@ by default**.
   (source `INPUT`) before memory, routing and retrieval, and the final answer
   (`OUTPUT`) after generation; a block short-circuits, a mask replaces the
   text, and a guardrail error fails the query closed. The model calls in
-  between run unguarded: an attached guardrail evaluates the whole prompt, so
-  on Converse it judges the retrieved corpus and the instructions as user
-  input (false prompt-attack blocks, cost proportional to context times
-  calls), and on InvokeModel its prompt-attack filter is inert without input
-  tags. Ingestion and evaluation models are never guarded.
+  between run unguarded: an attached guardrail judges the whole prompt, so on
+  Converse it treats the retrieved corpus and the instructions as user input
+  (false prompt-attack blocks, cost of context times calls), and on
+  InvokeModel its prompt-attack filter is inert without input tags. Ingestion
+  and evaluation models are never guarded.
 
 ---
 
 ## 15. Extension Guide
 
-This section is the single reference for extending the framework; the README, user guide and CONTRIBUTING.md link here. Strategies, renderers and parsers extend through registries, evaluators through one branch in their type map, and backends through constructor injection; none needs a change to dispatch code. The ports, `Providers` and the registries an extension uses are exported from `unified_kg_rag` (the extension half of the public API, §2.5).
+This section is the single reference for extending the framework. Strategies, renderers and parsers extend through registries, evaluators through one branch in their type map, and backends through constructor injection; none needs a change to dispatch code. The ports, `Providers` and the registries are exported from `unified_kg_rag` (§2.5).
 
-- **New search strategy**: Add a `SearchStrategy` enum member (`domain/models/retrieval.py`; strategies are keyed by this closed enum, and the CLI choices follow it) + subclass `BaseSearchStrategy` + `@register_strategy(SearchStrategy.X, required_roles=(...), query_inputs=frozenset({QueryInput.ENTITIES}))` + export from `adapters/search_strategies/__init__.py`. `query_inputs` declares the query-side LLM extractions the strategy reads (`ENTITIES` for `entity_focus`, `DUAL_KEYWORDS` for `hl_keywords`/`ll_keywords`); the chain skips the rest. A strategy that answers from community reports also passes `needs_community_reports=True`, so `auto` skips it when none are built. No edit to `rag_chain` is needed; add the strategy to `search.auto_routable_strategies` if `auto` may pick it.
+- **New search strategy**: Add a `SearchStrategy` enum member (`domain/models/retrieval.py`; the CLI choices follow it) + subclass `BaseSearchStrategy` + `@register_strategy(SearchStrategy.X, required_roles=(...), query_inputs=frozenset({QueryInput.ENTITIES}))` + export from `adapters/search_strategies/__init__.py`. `query_inputs` declares the query-side LLM extractions it reads (`ENTITIES` for `entity_focus`, `DUAL_KEYWORDS` for `hl_keywords`/`ll_keywords`); the chain skips the rest. A strategy answering from community reports also passes `needs_community_reports=True`, so `auto` skips it when none are built. No edit to `rag_chain`; add it to `search.auto_routable_strategies` if `auto` may pick it.
 - **New storage/LLM backend**: Implement the relevant port, then either register a builder for a new `providers.<role>.kind` with `@register_provider(ProviderRole.X, "kind")` (`adapters/provider_registry.py`) and select it in config, or pass the port to the constructor that uses it (see "Custom backends" below). Do not hardcode it into a manager's `__init__`.
 - **New evaluator**: Subclass `BaseGraphRAGEvaluator` + add a branch in `EvaluationManager._resolve_evaluator_class` + an `EvaluatorType` enum.
 - **New renderer**: Subclass `BaseRenderer` + `@register_renderer("name")`. Registration happens on import: `GraphVisualizationManager` sees any renderer imported in the process, `run-visualization` only those that `adapters/renderers/__init__.py` imports.
@@ -1140,28 +1086,25 @@ This section is the single reference for extending the framework; the README, us
 ### Custom backends (run without AWS)
 
 Every cross-service dependency is behind a port. Each port is a role in the
-provider bundle, the role's adapter is the one `providers.<role>.kind` selects
-through the provider registry, and the orchestrators also accept any port by
-**constructor injection**, so a custom backend is wired in without
-subclassing or editing dispatch code. The ports, their default adapters and
-the local ones (`adapters/local/` and the SQLite role implementations, the
+provider bundle whose adapter `providers.<role>.kind` selects through the
+provider registry, and the orchestrators also accept any port by
+**constructor injection**, so a custom backend needs no subclassing or
+dispatch edit. The ports, their default adapters and the local ones (the
 `[local]` extra):
 
 | Port | Contract | Default adapter (local adapters) | Inject via |
 |---|---|---|---|
-| `LLMFactoryPort` / `EmbeddingFactoryPort` / `RerankFactoryPort` (`ports/model_factory.py`, `Protocol`) | `get_model()` / `get_model_info()` returning a LangChain-compatible model | `BedrockLanguageModelFactory` / `BedrockEmbeddingModelFactory` / `BedrockRerankModelFactory` (`openai_compatible`, `ollama`; `cross_encoder`, `none`) | a `Providers` bundle (see below): `GraphRAGChain(providers=...)`, `DataIngestionPipeline(..., providers=...)`, `EvaluationManager(..., providers=...)`; `GraphRAGChain(model_factory=...)` is shorthand for an LLM-only bundle |
+| `LLMFactoryPort` / `EmbeddingFactoryPort` / `RerankFactoryPort` (`ports/model_factory.py`, `Protocol`) | `get_model()` / `get_model_info()` returning a LangChain-compatible model | `BedrockLanguageModelFactory` / `BedrockEmbeddingModelFactory` / `BedrockRerankModelFactory` (`openai_compatible`, `ollama`; `cross_encoder`, `none`) | `providers=` (below) on `GraphRAGChain`, `DataIngestionPipeline`, `EvaluationManager`; `GraphRAGChain(model_factory=...)` is an LLM-only bundle |
 | `TokenCounterPort` (`ports/model_factory.py`, `Protocol`) | `count_tokens()` / `truncate_to_token_limit()` | `BedrockTokenCounter` (`LocalTokenCounter`: estimate or tiktoken; follows the LLM kind) | `Providers(token_counter_factory=...)` |
-| `VectorIndexer` / `GraphIndexer` (`ports/indexer.py`, ABC) | `index_*` / `upsert_*` / `delete_by_id`; the incremental lookups `GraphIndexer.find_ids_citing` / `find_entity_ids_by_name_key` and `VectorIndexer.find_documents` / `delete_extraction_records` / `retain_extraction_records` default to "cannot tell" (`None`: nothing is found through them, and the merge reads every name) and to deleting nothing; `GraphIndexer.begin_rebuild` / `end_rebuild` (an in-place full build, see the reset above) default to "cannot" (`False`: the full-build writes clear each label first); `initialize()` (a no-op unless overridden) / `clear()` return `None` and must raise a typed store error (`StoreConnectionError`, `StoreConfigurationError`, ...) on failure: a returned `False` is ignored | `OpenSearchIndexer` / `NeptuneIndexer` (`gremlin`: the same adapter on Gremlin Server; `sqlite`: `OpenSearchIndexer` on `SQLiteSearchEngine` / `SQLiteGraphIndexer`) | `Providers(vector_indexer_factory=..., graph_indexer_factory=...)`, `DataIngestionPipeline(..., vector_indexer=..., graph_indexer=...)` or `IndexingManager(vector_indexer=..., graph_indexer=...)` |
+| `VectorIndexer` / `GraphIndexer` (`ports/indexer.py`, ABC) | `index_*` / `upsert_*` / `delete_by_id`; the incremental lookups (`GraphIndexer.find_ids_citing` / `find_entity_ids_by_name_key`, `VectorIndexer.find_documents` / `delete_extraction_records` / `retain_extraction_records`) default to "cannot tell" (`None`: nothing is found through them, the merge reads every name) and to deleting nothing; `GraphIndexer.begin_rebuild` / `end_rebuild` (in-place full build, §5.2) default to `False` (the full build clears each label first); `initialize()` (no-op by default) / `clear()` return `None` and raise a typed store error (`StoreConnectionError`, `StoreConfigurationError`, ...) on failure: a returned `False` is ignored | `OpenSearchIndexer` / `NeptuneIndexer` (`gremlin`: the same adapter on Gremlin Server; `sqlite`: `OpenSearchIndexer` on `SQLiteSearchEngine` / `SQLiteGraphIndexer`) | `Providers(vector_indexer_factory=..., graph_indexer_factory=...)`, `DataIngestionPipeline(..., vector_indexer=..., graph_indexer=...)` or `IndexingManager(vector_indexer=..., graph_indexer=...)` |
 | retriever (role-keyed builder) | `BaseGraphRAGRetriever.aretrieve` | `OpenSearchRetriever` / `NeptuneRetriever` (`sqlite`: `OpenSearchRetriever` on `SQLiteSearchEngine` / `SQLiteGraphRetriever`) | `Providers(retriever_builders=...)` or `GraphRAGChain(retriever_builders={RetrieverRole.GRAPH: lambda: MyGraphRetriever(...)})` |
-| `ContentGuardPort` (`ports/guardrail.py`, `Protocol`) | `async acheck(text, source)` returning a `GuardVerdict` (`none` / `masked` / `blocked` and the text to continue with); raise when it cannot decide | `BedrockGuardrail` (built when `aws.bedrock.guardrail.identifier` is set) | `GraphRAGChain(guard=...)` |
-| `DocStatusPort` (`ports/doc_status.py`, `Protocol`) | `get` / `get_many` / `put` / `put_many` / `delete` / `list_namespace` / `list_all` / `diff` (which must take `extraction_fingerprint`), `record_fits`, the namespace write lease (`try_acquire_lease` / `lease_holder` / `release_lease`) and a scope's last extraction settings (`get_extraction_settings` / `put_extraction_settings`), all called directly; a record's namespace is the `<namespace>#` prefix of its `doc_id` (`doc_id_namespace`), and `diff` with a scope reads only that scope's namespace. Subclassing `DocStatusPort` inherits defaults for `get_many` / `put_many` / `record_fits` (one record per call, no size limit) | `DynamoDBDocStatusStore` (`SQLiteDocStatusStore`) | `Providers(doc_status=...)` or `DataIngestionPipeline(..., doc_status=...)` (either turns incremental indexing on); conform structurally and pass `tests/integration/test_doc_status_conformance.py` |
+| `ContentGuardPort` (`ports/guardrail.py`, `Protocol`) | `async acheck(text, source)` returning a `GuardVerdict` (`none` / `masked` / `blocked`, the text to continue with); raises when it cannot decide | `BedrockGuardrail` (built when `aws.bedrock.guardrail.identifier` is set) | `GraphRAGChain(guard=...)` |
+| `DocStatusPort` (`ports/doc_status.py`, `Protocol`) | `get` / `get_many` / `put` / `put_many` / `delete` / `list_namespace` / `list_all` / `diff` (which must take `extraction_fingerprint` and fill `DocumentDelta.quarantined_unchanged`), `record_fits`, the write lease (`try_acquire_lease` / `lease_holder` / `release_lease`) and a scope's last extraction settings (`get_extraction_settings` / `put_extraction_settings`), all called directly; a record's namespace is the `<namespace>#` prefix of its `doc_id` (`doc_id_namespace`), and `diff` with a scope reads only that namespace. A subclass inherits `get_many` / `put_many` / `record_fits` defaults (one record per call, no size limit) | `DynamoDBDocStatusStore` (`SQLiteDocStatusStore`) | `Providers(doc_status=...)` or `DataIngestionPipeline(..., doc_status=...)` (either turns incremental indexing on); pass `tests/integration/test_doc_status_conformance.py` |
 
 **Errors from a custom backend** are classified by type, never by message
-(`adapters/store_errors.is_fatal_retrieval_error`, §8.1). To fail the query
-instead of answering from no context, raise a `ConnectionError` or
-`ConfigurationError` subclass (the typed store errors in
-`shared/exceptions.py` cover the usual cases); any other exception degrades
-only the section that raised it.
+(§8.1): raise a `ConnectionError` or `ConfigurationError` subclass (the typed
+store errors in `shared/exceptions.py`) to fail the query; any other
+exception degrades only the section that raised it.
 
 **Protocols, not base classes.** The model-factory and doc-status ports are
 `runtime_checkable` `Protocol`s, so a custom class only needs the right method
@@ -1177,18 +1120,17 @@ chain = GraphRAGChain(config=cfg, model_factory=MyLLMFactory())
 
 A factory must keep the `**kwargs` catch-all and ignore keys it does not
 understand: callers pass framework arguments such as
-`model_purpose=ModelPurpose.INGESTION` (which picks the per-path policy:
-response cache, ingestion effort, query retry), and more may be added; a strict signature raises
-`TypeError` on the first such call.
+`model_purpose=ModelPurpose.INGESTION` (the per-path policy: response cache,
+ingestion effort, query retry), and a strict signature raises `TypeError` on
+the first one.
 
 **One bundle, every component.** `Providers` (`adapters/providers.py`) holds
-the boto3 session, the model and token-counter providers and the builders of
-the stores and the registry; `application/bootstrap.py` (`build_providers`)
-is the composition root. Each orchestrator builds one bundle (or receives one)
-and passes it to everything it constructs: `GraphRAGChain` to its prompts,
-every strategy, the reranker, the token managers and the default retrievers;
-`DataIngestionPipeline` to every model-using stage and the default indexers;
-`EvaluationManager` to the judges (reusing the chain's bundle by default).
+the boto3 session, the model and token-counter providers and the store and
+registry builders; `application/bootstrap.py` (`build_providers`) is the
+composition root. Each orchestrator builds or receives one bundle and passes
+it to everything it constructs (the chain's prompts, strategies, reranker,
+token managers and retrievers; the pipeline's stages and indexers; the
+evaluation judges, which reuse the chain's bundle by default).
 
 ```python
 providers = Providers(
@@ -1204,14 +1146,14 @@ chain = GraphRAGChain(config=cfg, providers=providers)
 pipeline = DataIngestionPipeline(cfg, pipeline_config, providers=providers)
 ```
 
-- Orchestrator arguments such as `retriever_builders=`, `doc_status=`,
-  `vector_indexer=` / `graph_indexer=` and `GraphRAGChain(model_factory=...)`
-  are shorthand for a bundle built with them; with `providers=`, set them on
-  the bundle (passing both raises `ValueError`).
-- Anything not supplied is built lazily by the builder of the configured kind,
-  the model factories at most once per bundle. A component built without a
-  bundle builds a default one from the same config. There is deliberately no
-  DI container: the bundle covers exactly what the framework consumes.
+- Orchestrator arguments (`retriever_builders=`, `doc_status=`,
+  `vector_indexer=` / `graph_indexer=`, `GraphRAGChain(model_factory=...)`)
+  are shorthand for a bundle built with them; passing one together with
+  `providers=` raises `ValueError`.
+- Anything not supplied is built lazily by the configured kind's builder (the
+  model factories at most once per bundle); a component built without a bundle
+  builds a default one. There is deliberately no DI container: the bundle
+  covers exactly what the framework consumes.
 - Conversation memory belongs to the chain and keys each conversation by index
   suffix, `user_id` and `conversation_id`; pass one `MemoryManager(cfg)` as
   `memory_manager=` to share history across chains.
@@ -1230,38 +1172,36 @@ def _build(providers):
 
 `providers.llm.kind: my_server` then selects it (a non-Bedrock LLM kind also
 needs a token-counter builder of the same kind). `backend: local` is a config
-preset (`domain/models/provider_config.py`), not a code path: it only fills in
-`providers`, `aws.neptune`, `aws.opensearch` and the context budget where the
-config leaves them unset.
+preset (`domain/models/provider_config.py`), not a code path: it fills in
+`providers`, `aws.neptune`, `aws.opensearch` and the context budget only
+where the config leaves them unset.
 
 **Reference implementations.** The in-memory fakes of `tests/fixtures/fakes/`
-are working implementations of the indexer ports, and the whole pipeline runs
-on them (`tests/integration/test_ingestion_stages.py`): the recommended
-starting point for a custom store. The embedded SQLite stores show the two
-ways to add a backend: the vector store (`adapters/local/search_engine/`)
-implements the OpenSearch client calls the indexer and retriever make
-(`SearchEngineClient`), so the unchanged OpenSearch indexer and retriever run
-on it; Gremlin cannot be emulated that way, so the graph store is its own
-`GraphIndexer` (`SQLiteGraphIndexer`) and a `GraphExpansionRetriever` subclass
-that implements only the traversal.
+implement the indexer ports and run the whole pipeline
+(`tests/integration/test_ingestion_stages.py`): the starting point for a
+custom store. The embedded SQLite stores show the two ways to add a backend:
+the vector store (`adapters/local/search_engine/`) implements the OpenSearch
+client calls (`SearchEngineClient`), so the unchanged OpenSearch indexer and
+retriever run on it; Gremlin cannot be emulated that way, so the graph store
+is its own `GraphIndexer` (`SQLiteGraphIndexer`) plus a
+`GraphExpansionRetriever` subclass implementing only the traversal.
 
 ### Deliberate Design Boundaries
 
-Two boundary calls are intentional, not oversights:
+Two boundaries are intentional:
 
 - **`SearchQuery` carries adapter vocabulary (index and label prefixes).** A
-  prefix names a logical collection that each store pairing maps to its own
-  storage; the embedded SQLite stores reuse the same prefixes without a new
-  abstraction. The boundary that matters, the write-side indexer ports and the
-  model-factory ports, is abstracted and injected; hoisting the vocabulary
-  behind a backend-neutral query model would be a large, behaviour-risking
-  churn that only a backend unable to map named collections would justify.
+  prefix names a logical collection each store pairing maps to its own storage
+  (the embedded SQLite stores reuse them). The boundaries that matter, the
+  indexer and model-factory ports, are abstracted and injected; a
+  backend-neutral query model would be a large, risky churn that only a
+  backend unable to map named collections would justify.
 - **One physical OpenSearch index per index suffix and artifact type.** Fine
-  for a handful of tenants; with tens of thousands of suffixes it multiplies
-  the cluster's shard count. The scale-out fix (one index per artifact type
-  with an enforced tenant field and routing) changes the index, search and
-  delete paths and is deferred. Today's metadata filters are relevance
-  filters, not access control: isolation comes from separate suffixes
+  for a handful of tenants; tens of thousands of suffixes multiply the shard
+  count. The scale-out fix (one index per artifact type with an enforced
+  tenant field and routing) changes the index, search and delete paths and is
+  deferred. Metadata filters are relevance filters, not access control:
+  isolation comes from separate suffixes
   ([runbook](./operations.md#query-access-and-tenant-isolation)).
 
 ---

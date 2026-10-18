@@ -41,7 +41,8 @@ def add_query_arguments(
     """
     parser.add_argument(
         "--suffix",
-        help="Suffix for multi-tenant or versioned indices",
+        help="Index suffix to query (default: 'default'); must match the "
+        "corpus's processing.document_parsing.index_value",
     )
     parser.add_argument(
         "--enable-thinking",
@@ -75,7 +76,10 @@ def add_query_arguments(
         "--search-type",
         default="hybrid",
         choices=[st.value for st in SearchType],
-        help="Specify the search method",
+        help="Search method. The lexical side searches the first 150 words of "
+        "the question (a Hangul, Han or Kana character counts as a word) and "
+        "tolerates typos only in questions of up to 10 words; the vector side "
+        "embeds the whole question",
     )
     parser.add_argument(
         "--top-k",
@@ -87,5 +91,5 @@ def add_query_arguments(
         "--retrieval-multiplier",
         type=_positive_int,
         default=1,
-        help="Set the retrieval multiplier for increasing search depth",
+        help="Multiplier that increases the retrieval depth",
     )

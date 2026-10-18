@@ -47,7 +47,10 @@ def add_config_arguments(
 ) -> None:
     """Add ``--config-path`` and ``--allow-unknown-keys``."""
     parser.add_argument(
-        "--config-path", type=config_path_arg, default=None, help=help_text
+        "--config-path",
+        type=config_path_arg,
+        default=None,
+        help=f"{help_text}; a missing file is a usage error",
     )
     parser.add_argument(
         "--allow-unknown-keys",

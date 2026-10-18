@@ -107,7 +107,9 @@ class CommandLineInterface:
         )
 
         parser.add_argument(
-            "--query", "-q", help="Execute a single query against the knowledge graph"
+            "--query",
+            "-q",
+            help="Answer one query; give this or --interactive (exactly one)",
         )
         parser.add_argument(
             "--interactive",
@@ -140,19 +142,19 @@ class CommandLineInterface:
         parser.add_argument(
             "--disable-query-processing",
             action="store_true",
-            help="Skip automatic query processing",
+            help="Skip query translation and entity extraction",
         )
         parser.add_argument(
             "--filters",
             nargs="*",
-            help="Apply attribute filters using 'key:value' format",
+            help="Attribute filters as space-separated 'key:value' pairs",
         )
         add_output_format_argument(parser)
         parser.add_argument(
             "--verbose",
             "-v",
             action="store_true",
-            help="Display detailed information",
+            help="Show query-processing details, sources and metrics",
         )
         add_config_arguments(parser, "Path to custom configuration file")
         add_provider_arguments(parser)

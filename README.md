@@ -95,7 +95,7 @@ uv run run-visualization --data-path visualization_data.json --output-directory 
 uv run run-prompt-tuning --source-directory ./source --output-path tuned_prompts.yaml --config-path config.yaml
 ```
 
-The [User Guide](./docs/user-guide.md) covers every CLI, the evaluation data format and the evaluators, and the [Configuration Reference](./docs/configuration.md) every configuration key.
+The [User Guide](./docs/user-guide.md) covers every CLI, the evaluation data format and the evaluators, the [CLI Reference](./docs/cli.md) every flag, and the [Configuration Reference](./docs/configuration.md) every configuration key.
 
 ## Deploy on AWS (optional)
 
@@ -110,6 +110,7 @@ The [`iac/`](./iac/README.md) AWS CDK app provisions the whole stack: a VPC with
 | Document | Covers |
 |---|---|
 | [User Guide](./docs/user-guide.md) ([한국어](./docs/user-guide.ko.md)) | Configuration, CLI flags, incremental indexing, evaluation, library usage, [limitations](./docs/user-guide.md#12-limitations) |
+| [CLI Reference](./docs/cli.md) | Every flag of every CLI: default and description (generated from the parsers) |
 | [Configuration Reference](./docs/configuration.md) | Every configuration key: type, default, description (generated from the code) |
 | [Model Catalog](./docs/models.md) ([한국어](./docs/models.ko.md)) | Supported Bedrock models and per-provider request differences |
 | [Operator Runbook](./docs/operations.md) ([한국어](./docs/operations.ko.md)) | Re-ingestion, incremental runs, failed documents, caches, common errors |
