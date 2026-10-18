@@ -1739,6 +1739,12 @@ changed once with the full-config keys (#332).
   `PYTHONHASHSEED`: a stored entity's candidates were collected over its
   keys (a set), and a tie between equally good ones went to whichever came
   first. Ties now go to the smallest id (#PR).
+- A small delta component is measured in the whole graph a full build
+  clusters: the stored graph joined with the delta's other components, and
+  through a stored entity of another spelling of a delta entity's name (of
+  the same type), which a full build merges with it. A delta entity linked
+  to a stored one only through another delta component, or stated with a
+  new spelling of a stored name, got no community (#PR).
 - Removing a document no longer leaves its text unnoticed in community
   reports: a kept report that cites a removed text unit is counted in the
   `community_drift` metrics (`outdated_reports`, deletion-only runs

@@ -1,8 +1,8 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 from abc import ABC, abstractmethod
-from collections import Counter
-from collections.abc import Callable, Iterable
+from collections import Counter, defaultdict
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from datetime import datetime, timezone
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
@@ -53,6 +53,10 @@ from unified_kg_rag.application.ingestion.incremental import (
 )
 from unified_kg_rag.application.ingestion.namespace_lease import check_lease
 from unified_kg_rag.application.storage.indexing_manager import IndexingManager
+from unified_kg_rag.domain.ingestion.base_resolver import (
+    compact_name_key,
+    normalize_entity_type,
+)
 from unified_kg_rag.domain.ingestion.claim_resolver import ClaimResolver
 from unified_kg_rag.domain.ingestion.community_drift import (
     CommunityDrift,
@@ -1236,30 +1240,49 @@ def _components_reaching(
     suffixes: dict[str, str],
     removed: set[str],
     min_size: int,
+    delta_neighbors: Mapping[str, Iterable[str]] | None = None,
+    delta_entities: Sequence[Entity] = (),
 ) -> tuple[set[Any], int]:
     """The entities of ``components`` (of the delta graph) whose component of
     the whole graph holds ``min_size`` entities or more, and how many of the
     stored entities the walk reached have no community (a lower bound: the
     walk stops at ``min_size``).
 
-    Walks out from each component over the stored relationships that cite a
-    text unit outside ``removed`` (the ones a full build still extracts),
-    reading the incident edges of a hop's entities a batch at a time, and
-    stops once the component reaches ``min_size``: at most ``min_size`` hops,
-    and about ``min_size`` edges past it per hop rather than a hub's whole
-    neighbourhood.
+    The whole graph is the stored one, without the relationships that cite
+    only ``removed`` text units (the ones a full build no longer extracts),
+    joined with the delta graph (``delta_neighbors``: the other delta
+    components). A stored entity of another spelling of a delta entity's
+    name (its ``compact_name_key``, of the same type) is the same entity
+    there: the walk starts from it too. Each component is walked out from,
+    a hop at a time, reading the incident edges of a hop's entities a batch
+    at a time, and stops once it reaches ``min_size``: at most ``min_size``
+    hops, and about ``min_size`` edges past it per hop rather than a hub's
+    whole neighbourhood.
     """
 
     def kept(item: Relationship) -> bool:
         return bool(set(item.text_unit_ids or []) - removed)
 
+    delta_neighbors = delta_neighbors or {}
     suffix_of = {
         str(n): suffixes.get(str(n), Constants.DEFAULT_SUFFIX.value)
         for c in components
         for n in c
     }
+    canon = _stored_spellings(graph, components, suffix_of, delta_entities)
+    aliases: dict[str, set[str]] = defaultdict(set)
+    for stored_id, delta_id in canon.items():
+        aliases[delta_id].add(stored_id)
+        suffix_of.setdefault(stored_id, suffix_of[delta_id])
+
+    def same(node: str) -> str:
+        return canon.get(node, node)
+
+    def nodes_of(ids: Iterable[str]) -> set[str]:
+        return {n for i in ids for n in (i, *aliases.get(i, ()))}
+
     members = [{str(n) for n in c} for c in components]
-    frontier = [set(m) for m in members]
+    frontier = [nodes_of(m) for m in members]
     neighbors: dict[str, set[str]] = {}
     open_ = set(range(len(components)))
     reached: set[int] = set()
@@ -1270,19 +1293,19 @@ def _components_reaching(
             groups.setdefault(suffix_of[node], []).append(node)
         return groups
 
-    def reaches(k: int) -> bool:
-        return (
-            len(members[k] | set().union(*(neighbors.get(n, ()) for n in frontier[k])))
-            >= min_size
-        )
+    def grown(k: int) -> set[str]:
+        return members[k] | {same(b) for n in frontier[k] for b in neighbors.get(n, ())}
 
     # Edges are read a batch at a time and the hop stops once every open
     # component reaches min_size: a hub's whole neighbourhood is not read.
     step = max(min_size, _COMPONENT_EDGE_BATCH)
     while open_:
         hop = set().union(*(frontier[k] for k in open_)) - neighbors.keys()
+        for node in hop:
+            neighbors[node] = {str(b) for b in delta_neighbors.get(node, ())}
+            for b in neighbors[node]:
+                suffix_of.setdefault(b, suffix_of[node])
         for suffix, group in by_suffix(hop).items():
-            neighbors.update({node: set() for node in group})
             ids = graph.find_incident_relationship_ids(group, suffix=suffix)
             for start in range(0, len(ids), step):
                 batch = ids[start : start + step]
@@ -1296,13 +1319,12 @@ def _components_reaching(
                         if a in neighbors:
                             neighbors[a].add(b)
                             suffix_of.setdefault(b, suffix)
-                if all(reaches(k) for k in open_):
+                if all(len(grown(k)) >= min_size for k in open_):
                     break
         for k in sorted(open_):
-            new = set().union(*(neighbors.get(n, set()) for n in frontier[k]))
-            new -= members[k]
+            new = grown(k) - members[k]
             members[k] |= new
-            frontier[k] = new
+            frontier[k] = nodes_of(new)
             if len(members[k]) >= min_size:
                 reached.add(k)
             if len(members[k]) >= min_size or not new:
@@ -1316,6 +1338,43 @@ def _components_reaching(
         if not entity.community_ids
     )
     return found, unclustered
+
+
+def _stored_spellings(
+    graph: GraphIndexer,
+    components: list[set[Any]],
+    suffix_of: Mapping[str, str],
+    delta_entities: Sequence[Entity],
+) -> dict[str, str]:
+    """``{stored id: delta id}`` of the stored entities of another id whose
+    name has a component entity's ``compact_name_key`` and whose type is
+    its (a full build merges the two)."""
+    in_components = {str(n) for c in components for n in c}
+    keyed: dict[tuple[str, str], list[Entity]] = defaultdict(list)
+    for entity in delta_entities:
+        if entity.id in in_components:
+            keyed[(suffix_of[entity.id], compact_name_key(entity.name))].append(entity)
+    found: dict[str, str] = {}
+    by_suffix: dict[str, set[str]] = defaultdict(set)
+    for suffix, key in keyed:
+        by_suffix[suffix].add(key)
+    for suffix, keys in sorted(by_suffix.items()):
+        ids = graph.find_entity_ids_by_name_key(sorted(keys), suffix) or []
+        ids = [i for i in ids if i not in in_components]
+        for stored in graph.read_entities(ids, suffix=suffix) if ids else []:
+            for entity in keyed.get((suffix, compact_name_key(stored.name)), ()):
+                if normalize_entity_type(entity.type) == normalize_entity_type(
+                    stored.type
+                ):
+                    found.setdefault(stored.id, entity.id)
+    return found
+
+
+def _neighbor_ids(graph: Any) -> dict[str, set[str]]:
+    """``{node: its neighbours}`` of the run's delta graph (networkx)."""
+    if graph is None:
+        return {}
+    return {str(n): {str(m) for m in graph.neighbors(n)} for n in graph.nodes}
 
 
 class CommunityDetectionStage(_RegistryStage):
@@ -1464,7 +1523,13 @@ class CommunityDetectionStage(_RegistryStage):
                 graph = self.providers.build_graph_indexer()
                 try:
                     found, unclustered = _components_reaching(
-                        graph, components, suffixes, removed, min_size
+                        graph,
+                        components,
+                        suffixes,
+                        removed,
+                        min_size,
+                        delta_neighbors=_neighbor_ids(context.knowledge_graph),
+                        delta_entities=context.resolved_entities,
                     )
                 finally:
                     graph.close()

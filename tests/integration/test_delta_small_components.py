@@ -299,3 +299,87 @@ def test_a_quarantined_documents_edges_do_not_reach_the_whole_graph(
 
     assert large is not None
     assert large([{"new"}]) == set()
+
+
+@SUFFIXES
+def test_a_delta_entity_linked_through_another_delta_component_gets_one(
+    tmp_path: Path, no_aws, suffix: str | None
+) -> None:
+    # Vendor - Depot is stored; the delta states Vendor alone and Depot -
+    # Carrier: the whole graph is the path Vendor - Depot - Carrier. The walk
+    # from Vendor read only stored edges, found Vendor - Depot and stopped.
+    stored = {"s.txt": "Vendor and Depot."}
+    runs = [
+        stored,
+        {**stored, "a.txt": "Vendor trades.", "b.txt": "Depot and Carrier."},
+    ]
+    providers, _ = _ingest_all(tmp_path / "incremental", runs, suffix)
+    full, _ = _ingest_all(tmp_path / "full", runs[-1:], suffix)
+
+    assert not _unclustered(full, suffix)
+    assert "Vendor" not in _unclustered(providers, suffix)
+
+
+def test_the_walk_starts_from_another_spelling_of_a_delta_entity(
+    tmp_path: Path,
+) -> None:
+    # "Acme Inc" - Globex is stored; the delta pair is "Acme Corp" - Buyer. A
+    # full build merges the two spellings (same type): Globex, Buyer and the
+    # one Acme are a component of three. The walk seeded by the delta ids
+    # found nothing stored.
+    from unified_kg_rag.application.ingestion import pipeline_stages as ps
+    from unified_kg_rag.domain.models import Entity, Relationship
+
+    _, providers = _setup(tmp_path, None)
+    graph = providers.build_graph_indexer()
+    try:
+        graph.initialize()
+        graph.upsert_entities(
+            [
+                Entity(
+                    id="e-inc",
+                    name="Acme Inc",
+                    type="ORGANIZATION",
+                    text_unit_ids=["t1"],
+                ),
+                Entity(
+                    id="e-globex",
+                    name="Globex",
+                    type="ORGANIZATION",
+                    text_unit_ids=["t1"],
+                ),
+            ]
+        )
+        graph.upsert_relationships(
+            [
+                Relationship(
+                    id="r",
+                    source_id="e-inc",
+                    target_id="e-globex",
+                    text_unit_ids=["t1"],
+                )
+            ]
+        )
+        delta = [
+            Entity(
+                id="e-corp", name="Acme Corp", type="ORGANIZATION", text_unit_ids=["t2"]
+            ),
+            Entity(
+                id="e-buyer", name="Buyer", type="ORGANIZATION", text_unit_ids=["t2"]
+            ),
+        ]
+        component = {"e-corp", "e-buyer"}
+        neighbors = {"e-corp": {"e-buyer"}, "e-buyer": {"e-corp"}}
+
+        found, _ = ps._components_reaching(
+            graph, [component], {}, set(), 3, neighbors, delta
+        )
+        apart = [e.model_copy(update={"type": "PERSON"}) for e in delta]
+        kept_apart, _ = ps._components_reaching(
+            graph, [component], {}, set(), 3, neighbors, apart
+        )
+    finally:
+        graph.close()
+
+    assert found == component
+    assert kept_apart == set()
