@@ -1278,6 +1278,10 @@ changed once with the full-config keys (#332).
   package), synth failures (exclusive Neptune keys, unknown `-c` keys), the
   `run-eval` S3 session, the graph read-back a custom adapter needs, and what
   `removal_destroy=false` does not prevent (#365).
+- The note that stored entities without a community link to a small delta
+  component is logged at INFO and no longer tells the user to rebuild: it is
+  reported as `community_drift.unclustered_entities`, which does not set
+  `community_rebuild_recommended` (#PR).
 - `prepare-benchmark musique` checks field types too (`question` and
   `answer` strings, `answer_aliases` a list of strings), so a malformed
   item is a usage error (exit 2) instead of reaching `eval_data.json` (#PR).

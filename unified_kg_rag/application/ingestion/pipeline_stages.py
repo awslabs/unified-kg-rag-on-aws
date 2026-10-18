@@ -1456,12 +1456,14 @@ class CommunityDetectionStage(_RegistryStage):
                 )
                 return set()
             if unclustered:
-                logger.warning(
+                # Reported, not a rebuild signal (community_drift's
+                # rebuild_recommended does not count them).
+                logger.info(
                     "%s stored entities without a community are linked to "
                     "small delta components this run clusters: a full build "
                     "clusters them with those, an incremental run clusters "
-                    "only its delta. Rebuild the communities with "
-                    "indexing.reset: true to include them.",
+                    "only its delta (community_drift.unclustered_entities; "
+                    "indexing.reset: true clusters them).",
                     unclustered,
                 )
             self.unclustered_stored = unclustered
