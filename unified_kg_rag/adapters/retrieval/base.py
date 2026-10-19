@@ -89,6 +89,20 @@ def _retrieval_attributes(results: list[RetrievalResult]) -> dict[str, Any]:
     return attributes
 
 
+def entity_content(node: dict[str, Any], path_names: list[str]) -> str:
+    """A graph-expansion entity's content: its name, description and, when
+    reached from a seed, the ``Path:`` of entity names (seed first). The one
+    place the format is written (``GraphExpansionRetriever`` and the
+    filtered expansion's redrawn paths)."""
+    parts = [
+        f"Entity: {node.get('name', 'Unknown')}",
+        f"Description: {node.get('description', 'N/A')}",
+    ]
+    if names := [name for name in path_names if name]:
+        parts.append(f"Path: {' -> '.join(names)}")
+    return "\n".join(parts)
+
+
 def _text_unit_ids(result: RetrievalResult) -> list[str]:
     """The ``text_unit_ids`` a result cites (a graph store unwraps one to a str)."""
     ids = (result.metadata or {}).get("text_unit_ids") or []
@@ -155,6 +169,11 @@ class BaseGraphRAGRetriever(BaseRetriever, ABC):
         of whose endpoints are among ``vertex_ids``, for a graph backend.
         ``None`` (the default, for a retriever without a graph) when the
         backend cannot tell."""
+        return None
+
+    async def ahas_index(self, prefix: str, suffix: str | None) -> bool | None:
+        """Whether ``prefix``'s index exists for ``suffix``; ``None`` (the
+        default) when the backend cannot tell."""
         return None
 
     async def aread_build_record(self, suffix: str | None) -> dict[str, Any] | None:
@@ -266,67 +285,90 @@ class BaseSearchStrategy(ABC):
         filters: dict[str, Any],
         *,
         enough: int | None = None,
+        checked: set[str] | None = None,
     ) -> set[str]:
         """The ``ids`` of ``prefix``'s index that pass ``filters``.
 
         Ids only come back, in batches one request can hold
-        (``id_batch_size``), in the order given; with ``enough`` the batches
-        stop once that many passed. A failed request ends the check with what
-        passed so far (the caller treats the rest as failing: fail-closed)
-        and marks the span degraded. Within a query (``query_scope``) each
-        id's outcome is asked once: DRIFT's follow-ups check the same units.
+        (``id_batch_size``) of the ids not known yet. With ``enough`` the ids
+        are counted in the order given and the check stops once ``enough`` of
+        them passed: every id ranked above the ``enough``-th passing one is
+        known, so a caller cutting the ranked ids to the passing ones keeps
+        the right ones (an outcome memoized lower down cannot stand in for
+        an unchecked id above it). Within a query (``query_scope``) each id's
+        outcome is asked once (DRIFT's follow-ups check the same units).
+        ``checked`` collects the ids whose outcome is known. A failed request
+        ends the check with what passed so far (the caller treats the rest as
+        failing: fail-closed) and marks the span degraded.
         """
         retriever = self.document_retriever
         ordered = list(dict.fromkeys(ids))
+        passed: set[str] = set()
         if retriever is None or not ordered:
-            return set()
+            return passed
         memo = current_query_scope()
         key = "passing\n" + json.dumps(
             [prefix, query.suffix, filters], sort_keys=True, default=str
         )
         known: dict[str, bool] = memo.setdefault(key, {}) if memo is not None else {}
-        passed = {i for i in ordered if known.get(i)}
-        ordered = [i for i in ordered if i not in known]
-        if not ordered or (enough is not None and len(passed) >= enough):
-            return passed
         batch = id_batch_size(self.config.indexing.opensearch.index_settings)
+
+        def note(outcomes: dict[str, bool]) -> None:
+            if checked is not None:
+                checked.update(outcomes)
+
+        async def check(chunk: list[str]) -> bool:
+            request = SearchQuery(
+                query="",
+                search_type=SearchType.LEXICAL,
+                top_k=len(chunk),
+                retrieval_multiplier=1,
+                index_prefixes=[prefix],
+                suffix=query.suffix,
+                filters={**filters, "id": chunk},
+                source_fields=[],
+            )
+            try:
+                found = {str(h.source) for h in await retriever.aretrieve(request)}
+            except Exception as e:
+                if is_fatal_retrieval_error(e):
+                    raise
+                logger.warning(
+                    "%s: the attribute filter check on '%s' failed; what it "
+                    "could not check counts as failing: %s",
+                    type(self).__name__,
+                    prefix,
+                    e,
+                )
+                span.record_exception(e)
+                span.set_attributes({"kg_rag.degraded": True})
+                return False
+            outcomes = {i: i in found for i in chunk}
+            known.update(outcomes)
+            note(outcomes)
+            return True
+
         with observability.span(
             "kg_rag.retrieve",
             retriever=type(retriever).__name__,
             label="Attribute filter check",
             index=prefix,
         ) as span:
-            for start in range(0, len(ordered), batch):
-                chunk = ordered[start : start + batch]
-                check = SearchQuery(
-                    query="",
-                    search_type=SearchType.LEXICAL,
-                    top_k=len(chunk),
-                    retrieval_multiplier=1,
-                    index_prefixes=[prefix],
-                    suffix=query.suffix,
-                    filters={**filters, "id": chunk},
-                    source_fields=[],
-                )
-                try:
-                    found = {str(h.source) for h in await retriever.aretrieve(check)}
-                except Exception as e:
-                    if is_fatal_retrieval_error(e):
-                        raise
-                    logger.warning(
-                        "%s: the attribute filter check on '%s' failed; what it "
-                        "could not check counts as failing: %s",
-                        type(self).__name__,
-                        prefix,
-                        e,
-                    )
-                    span.record_exception(e)
-                    span.set_attributes({"kg_rag.degraded": True})
+            position = 0
+            while position < len(ordered):
+                unknown = [i for i in ordered[position:] if i not in known][:batch]
+                if unknown and not await check(unknown):
                     break
-                passed |= found
-                known.update((i, i in found) for i in chunk)
-                if enough is not None and len(passed) >= enough:
-                    break
+                # Count in rank order up to the last id known now.
+                last = ordered.index(unknown[-1]) if unknown else len(ordered) - 1
+                while position <= last:
+                    vertex = ordered[position]
+                    position += 1
+                    note({vertex: known[vertex]})
+                    if known[vertex]:
+                        passed.add(vertex)
+                        if enough is not None and len(passed) >= enough:
+                            return passed
         return passed
 
     def _text_unit_filters(self, filters: dict[str, Any] | None) -> dict[str, Any]:
@@ -541,12 +583,19 @@ class BaseSearchStrategy(ABC):
         within ``max_hops``; its ``Path:`` is redrawn along that walk. A
         vertex reached by both a failing and a passing path is kept. Without
         a document filter nothing changes and nothing is asked.
+
+        Without a relationships index (``build_relationship_vector_index``
+        off, or an index missing at query time) no edge can be checked, and
+        every non-seed would be dropped: the entities-index check alone then
+        decides, as before edges were checked, and a missing index is logged.
         """
         filters = document_filters(query.filters)
         graph = self.graph_retriever
+        opensearch = self.config.indexing.opensearch
         if (
             not filters
             or graph is None
+            or not opensearch.build_relationship_vector_index
             or not any(r.source not in seeds for r in results)
         ):
             return results
@@ -567,10 +616,25 @@ class BaseSearchStrategy(ABC):
             return results
         passed = await self._ids_passing(
             query,
-            self.config.indexing.opensearch.relationships_index_prefix,
+            opensearch.relationships_index_prefix,
             (edge for edge, _, _ in edges),
             filters,
         )
+        if edges and not passed and self.document_retriever is not None:
+            # No edge passing may mean no index to check them in (a missing
+            # index reads as no hits): asked only then, so the usual path
+            # costs nothing more.
+            exists = await self.document_retriever.ahas_index(
+                opensearch.relationships_index_prefix, query.suffix
+            )
+            if exists is False:
+                logger.warning(
+                    "%s: no relationships index for suffix '%s'; graph "
+                    "expansion under document filters checks the entities only",
+                    type(self).__name__,
+                    query.suffix,
+                )
+                return results
         neighbours: dict[str, set[str]] = {}
         for edge, a, b in edges:
             if edge in passed:
@@ -620,13 +684,8 @@ class BaseSearchStrategy(ABC):
         names = [
             str((by_id[v].metadata or {}).get("name") or v) for v in reversed(chain)
         ]
-        lines = [
-            line
-            for line in result.content.splitlines()
-            if not line.startswith("Path: ")
-        ]
         return result.model_copy(
-            update={"content": "\n".join([*lines, f"Path: {' -> '.join(names)}"])}
+            update={"content": entity_content(result.metadata or {}, names)}
         )
 
     def _incident_fetch_limit(self) -> int:

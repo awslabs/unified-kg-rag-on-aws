@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import OrderedDict
+from typing import Any
 
 import pytest
 
@@ -727,6 +728,45 @@ async def test_concurrent_identical_probes_share_one_request(
         results = await asyncio.gather(*(search(f"q{i}") for i in range(4)))
     assert client.probes == 1
     assert all(results)
+
+
+async def test_a_probe_waiter_shares_a_failure_and_survives_a_cancelled_owner(
+    retriever,
+) -> None:
+    alias = "reports-default"
+    probe = {"size": 1, "query": {"match_all": {}}, "_source": False}
+    calls: list[str] = []
+    release = asyncio.Event()
+
+    async def search(alias_: str, body: dict) -> Any:
+        calls.append(alias_)
+        await release.wait()
+        return failure if len(calls) == 1 else [{"_id": "cr1"}]
+
+    failure = RuntimeError("probe failed")
+    object.__setattr__(retriever, "_search", search)
+    with query_scope():
+        owner = asyncio.ensure_future(retriever._probe(alias, probe))
+        await asyncio.sleep(0)
+        waiter = asyncio.ensure_future(retriever._probe(alias, probe))
+        await asyncio.sleep(0)
+        release.set()
+        # The waiter gets the owner's failure, not a silent "no match".
+        assert await owner is failure
+        assert await waiter is failure
+    release.clear()
+    calls.clear()
+    with query_scope():
+        owner = asyncio.ensure_future(retriever._probe(alias, probe))
+        await asyncio.sleep(0)
+        waiter = asyncio.ensure_future(retriever._probe(alias, probe))
+        await asyncio.sleep(0)
+        owner.cancel()
+        await asyncio.sleep(0)
+        release.set()
+        # A cancelled owner does not cancel the waiter: it probes itself.
+        assert await waiter
+        assert len(calls) == 2
 
 
 async def test_index_sweep_takes_each_index_in_turn(retriever, config, mocker) -> None:

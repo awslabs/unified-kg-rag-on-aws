@@ -24,6 +24,7 @@ from unified_kg_rag.adapters.storage.filter_schema import (
     DEFAULT_MAX_RESULT_WINDOW,
     DEFAULT_MAX_TERMS_COUNT,
     FilterFields,
+    check_filter_values,
     index_setting,
     opensearch_filter_fields,
     union_filter_fields,
@@ -818,38 +819,20 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         ``max_terms_count`` (65,536 by default), which the cluster would
         otherwise answer with a 400.
 
-        A ``None`` value, alone, in a list or as a range bound, is rejected
-        too, and so is a list item that is not a scalar (a list or a mapping):
-        OpenSearch answers such a ``terms``/``range`` query with a 400, and
-        the embedded engine would match it instead (a null field, say).
+        A value OpenSearch would refuse is rejected too (``check_filter_values``),
+        so both engines refuse the same filters.
 
         Raises:
             InvalidFilterError: A list filter has more values than that, or a
-                filter value, list item or range bound is ``None`` or not a
-                scalar.
+                value is malformed.
         """
         limit = index_setting(
             self._opensearch_config.index_settings,
             "max_terms_count",
             DEFAULT_MAX_TERMS_COUNT,
         )
+        check_filter_values(filters)
         for key, value in (filters or {}).items():
-            if value is None or (isinstance(value, list) and None in value):
-                raise InvalidFilterError(
-                    f"Filter '{key}' has no value (None); give the value to match."
-                )
-            if isinstance(value, dict) and any(v is None for v in value.values()):
-                raise InvalidFilterError(
-                    f"Filter '{key}' has a range bound of None; drop the bound "
-                    "or give its value."
-                )
-            if isinstance(value, list) and any(
-                isinstance(item, (list, dict, set, tuple)) for item in value
-            ):
-                raise InvalidFilterError(
-                    f"Filter '{key}' lists a value that is not a scalar; list "
-                    "strings, numbers or booleans."
-                )
             if isinstance(value, list) and len(value) > limit:
                 raise InvalidFilterError(
                     f"Filter '{key}' lists {len(value)} values; an OpenSearch "
@@ -911,28 +894,34 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         The sub-searches of one query (DRIFT's follow-ups above all) probe
         the same index with the same filters; the outcome is kept in the
         query's memo (``query_scope``) only, so the next query sees what an
-        ingestion or reset in between changed. A failed probe is not kept.
+        ingestion or reset in between changed. A concurrent sub-search waits
+        for the probe in flight and gets its outcome, a failure included (it
+        degrades as the owner does). A failed probe is not kept, and when
+        the owner is cancelled or raises, a waiter probes for itself.
         """
         memo = current_query_scope()
         key = f"probe\n{alias}\n{json.dumps(probe, sort_keys=True, default=str)}"
         if memo is None:
             return await self._search(alias, probe)
-        if key in memo:
-            # A probe of the same index and filters already ran or is in
-            # flight (concurrent sub-searches): share its outcome.
-            return bool(await asyncio.shield(memo[key]))
-        outcome: asyncio.Future[bool] = asyncio.get_running_loop().create_future()
+        pending = memo.get(key)
+        if pending is not None:
+            shared: list[dict[str, Any]] | Exception | bool | None = (
+                await asyncio.shield(pending)
+            )
+            if shared is not None:
+                return shared
+            return await self._search(alias, probe)
+        outcome: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
         memo[key] = outcome
         try:
             found = await self._search(alias, probe)
-        except BaseException as e:
+        except BaseException:
             del memo[key]
-            outcome.set_exception(e)
-            outcome.exception()  # retrieved: the waiters re-raise it
+            outcome.set_result(None)  # the waiters probe for themselves
             raise
         if isinstance(found, Exception):
             del memo[key]  # not kept: the next sub-search probes again
-            outcome.set_result(False)
+            outcome.set_result(found)
         else:
             outcome.set_result(bool(found))
         return found
@@ -1034,6 +1023,18 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             return []
         logger.error("Search failed on %s: %s", alias, error)
         return []
+
+    async def ahas_index(self, prefix: str, suffix: str | None) -> bool | None:
+        try:
+            return bool(
+                await self._opensearch_client.aindex_exists(
+                    self._get_name(prefix, suffix)
+                )
+            )
+        except Exception as e:
+            if is_fatal_retrieval_error(e):
+                raise
+            return None  # cannot tell
 
     async def _require_ingested_suffix(
         self, suffix: str | None, cause: Exception

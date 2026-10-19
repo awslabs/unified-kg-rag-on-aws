@@ -251,19 +251,21 @@ class SQLiteGraphStore:
         """``(edge id, source id, target id)`` of ``label``'s edges both of
         whose endpoints are among ``ids``."""
         wanted = list(dict.fromkeys(str(i) for i in ids))
-        among = set(wanted)
         edges: list[tuple[str, str, str]] = []
+        # Both endpoints in the query (the target ids as one JSON array), so
+        # the covering (label, source_id, target_id) index answers it: no
+        # scan of the label's edges, nor of a hub's whole fan-out.
+        targets = json.dumps(wanted)
         with self.read("read the edges among vertices") as connection:
-            for batch in batches(wanted):
+            for sources in batches(wanted):
                 rows = connection.execute(
                     "SELECT id, source_id, target_id FROM edges WHERE label = ? "
-                    f"AND source_id IN ({placeholders(batch)}) ORDER BY id",
-                    [label, *batch],
+                    f"AND source_id IN ({placeholders(sources)}) "
+                    "AND target_id IN (SELECT value FROM json_each(?))",
+                    [label, *sources, targets],
                 ).fetchall()
-                edges.extend(
-                    (str(e), str(a), str(b)) for e, a, b in rows if str(b) in among
-                )
-        return edges
+                edges.extend((str(e), str(a), str(b)) for e, a, b in rows)
+        return sorted(edges)
 
     def traverse(
         self,
