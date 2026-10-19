@@ -1284,7 +1284,7 @@ changed once with the full-config keys (#332).
   statistics dict across threads and clears it on each call, so a worker
   about to back off hit `KeyError('idle_for')`, which is not retried (about
   3% of the items of a 3,000-item batch under load). Each item now retries
-  with a policy copy of its own (#PR).
+  with a policy copy of its own (#378).
 - Neptune no longer loses relationship edges when a run is interrupted
   while it writes them: a batch's stored edges were dropped by one request
   and re-added one request each, so a kill, a stop, a lost lease or a write
