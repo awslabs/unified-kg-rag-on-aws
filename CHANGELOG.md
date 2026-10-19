@@ -1813,7 +1813,7 @@ changed once with the full-config keys (#332).
   it is short of the size, and each component's size is counted as it
   grows instead of rebuilt per batch. A hub of 50,000 edges next to such a
   component: 782 reads of all 50,000 edges in 8.7 s, now one read of 64 in
-  0.15 s (#PR).
+  0.15 s (#375).
 - Incremental runs over several spellings of one name no longer depend on
   `PYTHONHASHSEED`: a stored entity's candidates were collected over its
   keys (a set), and a tie between equally good ones went to whichever came
