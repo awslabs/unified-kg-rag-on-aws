@@ -1287,23 +1287,23 @@ changed once with the full-config keys (#332).
   and the other spelling stayed with its edges; the strip now notes the
   items it merges in the extraction store (`pending-strip#<text unit id>`)
   until their old ids are deleted. 5 of 24 crash points of one such removal
-  diverged from a full build; none do now (#PR).
+  diverged from a full build; none do now (#379).
 - Incremental indexing: when a spelling splits off a stored entity, the
   stored claims naming that spelling follow it even when they were resolved
   to another entity of the same name key ("Depot owes Acme Ltd" stayed on
   "Acme" after "Acme Ltd" split off "Acme Inc"); likewise when removing a
-  document splits the spelling off (#PR).
+  document splits the spelling off (#379).
 - Incremental indexing finishes a spelling split a killed run left
   half-written also when the stored spelling holds an edge or claim of a
   third spelling of the name (one citing that spelling's units, none of the
   split-off part's); #368 checked only the part's own units, and the stale
-  edge stayed (#PR).
+  edge stayed (#379).
 - Incremental indexing: a claim matched to a statement of another spelling
   of its subject or object (the two are one entity in a full build) cites
   the text units that statement is in, as a full build's does, instead of
   the units the stored claim cited; a removed document's claim text no
   longer survives on such a claim. Two fuzz configurations over four and
-  six spellings ended so in 12 and 20 of 300 sequences; none do now (#PR).
+  six spellings ended so in 12 and 20 of 300 sequences; none do now (#379).
 - A model call that failed once could fail its item for good when other
   items of the batch were retrying too: tenacity's retry wrapper shares one
   statistics dict across threads and clears it on each call, so a worker
