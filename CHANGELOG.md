@@ -1291,6 +1291,25 @@ changed once with the full-config keys (#332).
   manager thread reading a flag through a weak reference to the pool,
   which a pool held in a local had often lost, and then every queued task
   still ran (#372).
+- Under a filter on text units (a document filter, or `n_tokens`), local
+  and mix fetch the content of only the chunks they keep: an ids-only check
+  finds the first ranked chunks that pass, where #370 fetched every ranked
+  chunk's text to cut afterwards. On a 1,500-chunk hub, local fetched 1,504
+  chunks (57.5k characters) for a 20-chunk quota, now 20 (733); DRIFT 5,067
+  (188k) now 400 (11k), for the same context. A filter on text units other
+  than a document filter (`n_tokens`) fills the quota too, and mix's per-hit
+  chunk slots go to chunks that pass (#373).
+- Graph expansion under two or more document filter keys keeps an expanded
+  entity only when one of its text units passes all of them: entity
+  documents union their documents' values per key, so an entity of a
+  `{category: x, grp: a}` and a `{category: y, grp: b}` document passed
+  `category:x grp:b` (#373).
+- An attribute probe's outcome is kept for the query only, not 30 s by
+  alias: right after an ingestion or reset in the same process a filtered
+  query returned nothing until the entry expired (#373).
+- A filter value of `None` is rejected (`InvalidFilterError`): OpenSearch
+  rejects a `terms` query naming null, and the embedded engine matched it
+  against cleared filter fields (#373).
 - The first model calls of a batch (ingestion stages, global search's map)
   no longer fail at random with "dictionary changed size during
   iteration": the worker threads share one chain, and LangChain caches each

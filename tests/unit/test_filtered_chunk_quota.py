@@ -1,11 +1,12 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Entity-linked chunks under a document filter fill their quota.
+"""Entity-linked chunks under a filter on text units fill their quota.
 
 Local and LightRAG mix rank the chunks their entities cite and fetch them by
 id under the caller's filters. Cutting the ranked ids to the quota first
-spent the quota on ids the filter then dropped, while passing chunks further
-down went unasked.
+spent the quota on ids the filter then dropped (#370 then fetched every
+ranked chunk's content to cut afterwards); an ids-only check now finds the
+first chunks that pass, and only those are fetched with their content.
 """
 
 from __future__ import annotations
@@ -45,15 +46,19 @@ class _Store:
     def __init__(self, units_prefix: str, entities: list[RetrievalResult]) -> None:
         self.units_prefix = units_prefix
         self.entities = entities
-        self.fetches: list[list[str]] = []
+        self.fetches: list[list[str]] = []  # content fetches
+        self.checks: list[list[str]] = []  # ids-only checks
 
     async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
         filters = query.filters or {}
         if query.index_prefixes == [self.units_prefix] and "id" in filters:
             ids = list(filters["id"])
-            self.fetches.append(ids)
+            (self.checks if query.source_fields == [] else self.fetches).append(ids)
             passing = [
-                i for i in ids if "attr_grp" not in filters or int(i[1:]) % 2 == 1
+                i
+                for i in ids
+                if ("attr_grp" not in filters and "n_tokens" not in filters)
+                or int(i[1:]) % 2 == 1
             ]
             return [
                 RetrievalResult(content=i, score=0.0, source=i, retriever_type="text")
@@ -69,10 +74,18 @@ def _entities() -> list[RetrievalResult]:
     return [_entity(f"e{k}", _UNITS[: 12 - k]) for k in range(12)]
 
 
-@pytest.mark.parametrize("filtered", [False, True])
+_FILTERS = {
+    "none": None,
+    "document": {"attr_grp": "a"},
+    "text-unit": {"n_tokens": {"gte": 1}},
+}
+
+
+@pytest.mark.parametrize("kind", list(_FILTERS))
 async def test_local_fills_the_text_quota_with_chunks_that_pass(
-    config: Config, filtered: bool
+    config: Config, kind: str
 ) -> None:
+    filtered = _FILTERS[kind] is not None
     config.search.local_search.type_quota.text_multiplier = 0.0
     config.search.local_search.type_quota.text_floor = 4
     config.search.local_search.entity_frequency_threshold = 100
@@ -81,40 +94,40 @@ async def test_local_fills_the_text_quota_with_chunks_that_pass(
     strategy = get_strategy_spec(SearchStrategy.LOCAL).strategy_class(
         config=config, retrievers={RetrieverRole.DOCUMENT.value: store}
     )
-    filters = {"attr_grp": "a"} if filtered else None
-
-    sections, _ = await strategy._retrieve_entity_chain(
-        SearchQuery(query="q", entity_focus=["e0"], filters=filters)
+    sections, stats = await strategy._retrieve_entity_chain(
+        SearchQuery(query="q", entity_focus=["e0"], filters=_FILTERS[kind])
     )
 
     chunks = [r.source for r in sections["text_units"]]
     assert chunks == (["u1", "u3", "u5", "u7"] if filtered else _UNITS[:4])
-    # One request either way; the unfiltered one asks for the quota only.
-    (asked,) = store.fetches
-    assert len(asked) == (12 if filtered else 4)
+    assert stats["text_unit_count"] == 4
+    # Content is fetched for the quota only; a filter adds one ids-only check.
+    assert store.fetches == [chunks if filtered else _UNITS[:4]]
+    assert store.checks == ([_UNITS] if filtered else [])
     assert strategy._per_type_quota(10)[SectionType.TEXT.value] == 4
 
 
-@pytest.mark.parametrize("filtered", [False, True])
+@pytest.mark.parametrize("kind", list(_FILTERS))
 async def test_mix_fills_the_linked_chunk_stream_with_chunks_that_pass(
-    config: Config, filtered: bool
+    config: Config, kind: str
 ) -> None:
+    filtered = _FILTERS[kind] is not None
     config.search.lightrag_search.chunk_stream_top_k = 3
-    config.search.lightrag_search.related_chunk_number = 12
+    # A per-hit cap smaller than the lineage: the slots must go to chunks that
+    # pass, not to the first ones cited.
+    config.search.lightrag_search.related_chunk_number = 3
     units_prefix = config.indexing.opensearch.text_units_index_prefix
     store = _Store(units_prefix, [])
     strategy: Any = get_strategy_spec(SearchStrategy.MIX).strategy_class(
         config=config, retrievers={RetrieverRole.DOCUMENT.value: store}
     )
-    filters = {"attr_grp": "a"} if filtered else None
-
     linked = await strategy._retrieve_linked_chunks(
-        SearchQuery(query="q", top_k=3, filters=filters),
+        SearchQuery(query="q", top_k=3, filters=_FILTERS[kind]),
         [_entity("e0", _UNITS)],
         [],
     )
 
     chunks = [r.source for r in linked["lightrag_linked_chunks"]]
     assert chunks == (["u1", "u3", "u5"] if filtered else _UNITS[:3])
-    (asked,) = store.fetches
-    assert len(asked) == (12 if filtered else 3)
+    assert store.fetches == [chunks]
+    assert store.checks == ([_UNITS] if filtered else [])

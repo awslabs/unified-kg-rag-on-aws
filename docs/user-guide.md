@@ -862,9 +862,11 @@ steps on Neptune. Each store accepts the fields its indexer writes:
 - `attr_<key>` and `attributes.filters.<key>` name document attributes. A
   graph store holds none, so graph expansion keeps an expanded entity (the
   seeds aside) only when its entities-index document, which carries the
-  filters of every document the entity comes from, passes them. Under a
-  document filter, local and mix also fill their chunk quota with the
-  entity-linked chunks that pass, not the top-ranked ones only. Other
+  filters of every document the entity comes from, passes them; under two or
+  more keys, one of its text units (one document's) must also pass them all.
+  Under a filter on text units, local and mix also fill their chunk quota
+  with the entity-linked chunks that pass, not the top-ranked ones only.
+  Other
   `attributes.<path>` keys name an item's own attributes and apply to the
   entities index only. On Neptune, `attr_<key>` is also an entity vertex
   property (`attr_role`), applied where present (a vertex without it passes),
@@ -875,7 +877,12 @@ steps on Neptune. Each store accepts the fields its indexer writes:
 **Filters are not an access-control boundary**: a store that does not declare
 a key returns its content unfiltered, and an entity, relationship or
 community report drawn from several documents passes when one of them
-matches, so it can carry excluded documents' content. Separate tenants or users by
+matches, so it can carry excluded documents' content. An item from several
+documents also matches each key of a multi-key filter independently: the
+seeds, relationships, claims and community reports carry each key's values of
+all their documents, so `attr_category:x attr_grp:b` matches one whose
+documents are `{category: x, grp: a}` and `{category: y, grp: b}`, although
+no document is both. Separate tenants or users by
 [index suffix](#index-suffix), chosen server-side.
 
 ### Interactive mode & conversation memory

@@ -32,6 +32,7 @@ from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.adapters.retrieval.base import (
     BaseGraphRAGRetriever,
     BaseSearchStrategy,
+    query_scope,
 )
 from unified_kg_rag.adapters.retrieval.memory_manager import (
     ConversationKey,
@@ -948,7 +949,10 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             top_k=search_query.top_k,
             filtered=bool(search_query.filters),
         ) as span:
-            result = await strategy_instance.asearch(search_query, config=config)
+            # One memo of store lookups per query (attribute probes), never
+            # kept past it.
+            with query_scope():
+                result = await strategy_instance.asearch(search_query, config=config)
             # A failure ignore_errors absorbed still degraded the answer.
             if degraded := result.metadata.get("degraded_error"):
                 span.set_attribute(ERROR_TYPE, degraded)

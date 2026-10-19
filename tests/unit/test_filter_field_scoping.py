@@ -534,3 +534,11 @@ def test_chain_accepts_any_key_for_a_backend_without_schema(config: Config) -> N
         {"anything": "goes"},
         [_neptune(config), _CustomRetriever()],  # type: ignore[list-item]
     )
+
+
+@pytest.mark.parametrize("value", [None, ["a", None]], ids=["none", "none-in-list"])
+async def test_a_filter_without_a_value_is_rejected(config: Config, value) -> None:
+    # OpenSearch answers a terms query naming null with a 400; the embedded
+    # engine matched it against null fields (a cleared filter key).
+    with pytest.raises(InvalidFilterError, match="has no value"):
+        await _search_all(config, {"attr_category": value})

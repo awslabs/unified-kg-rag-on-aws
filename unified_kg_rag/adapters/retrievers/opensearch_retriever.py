@@ -9,7 +9,10 @@ from itertools import zip_longest
 from typing import Any, ClassVar
 
 from unified_kg_rag.adapters.aws.opensearch import is_index_not_found
-from unified_kg_rag.adapters.retrieval.base import BaseGraphRAGRetriever
+from unified_kg_rag.adapters.retrieval.base import (
+    BaseGraphRAGRetriever,
+    current_query_scope,
+)
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
 from unified_kg_rag.adapters.storage.embedding_settings import (
     configured_embedding_model,
@@ -61,15 +64,9 @@ from unified_kg_rag.shared.utils.scripts import (
 
 logger = get_logger(__name__)
 
-# How long an attribute probe's outcome is reused, and how many are kept.
-_PROBE_TTL_SECONDS = 30.0
-_PROBE_CACHE_SIZE = 256
-
 # OpenSearch's kNN rejection of a query vector of another dimension than the
 # index's (the reason of a 400).
 _INVALID_DIMENSION_MARKER = "query vector has invalid dimension"
-# OpenSearch's default index.max_terms_count: the most values one terms query
-# may hold.
 # How much of a query the lexical (multi_match) side searches for. Lucene
 # allows 1,024 clauses per query (indices.query.bool.max_clause_count), and a
 # multi_match makes one per analyzed term per field, so a long question failed
@@ -173,10 +170,6 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         # Whether skipping the check for want of permission was logged.
         self._embedding_check_denied_logged = False
         self._query_embedding_cache: OrderedDict[str, list[float]] = OrderedDict()
-        # Recent attribute-probe outcomes by (alias, probe): the sub-searches
-        # of one query (DRIFT's follow-ups above all) probe the same index
-        # with the same filters, a request each (``_probe``).
-        self._probe_outcomes: OrderedDict[str, tuple[float, bool]] = OrderedDict()
         # One embedding call per text in flight: concurrent sub-queries of one
         # search share it instead of each missing the cache.
         self._pending_embeddings: dict[str, asyncio.Future[list[float]]] = {}
@@ -825,8 +818,13 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         ``max_terms_count`` (65,536 by default), which the cluster would
         otherwise answer with a 400.
 
+        A ``None`` value, alone or in a list, is rejected too: OpenSearch
+        answers a ``terms`` query naming null with a 400, and the embedded
+        engine would match it against null fields instead.
+
         Raises:
-            InvalidFilterError: A list filter has more values than that.
+            InvalidFilterError: A list filter has more values than that, or a
+                filter value is ``None``.
         """
         limit = index_setting(
             self._opensearch_config.index_settings,
@@ -834,6 +832,10 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             DEFAULT_MAX_TERMS_COUNT,
         )
         for key, value in (filters or {}).items():
+            if value is None or (isinstance(value, list) and None in value):
+                raise InvalidFilterError(
+                    f"Filter '{key}' has no value (None); give the value to match."
+                )
             if isinstance(value, list) and len(value) > limit:
                 raise InvalidFilterError(
                     f"Filter '{key}' lists {len(value)} values; an OpenSearch "
@@ -890,23 +892,20 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
     async def _probe(
         self, alias: str, probe: dict[str, Any]
     ) -> list[dict[str, Any]] | Exception | bool:
-        """``probe``'s hits on ``alias``, or a recent outcome of the same probe.
+        """``probe``'s hits on ``alias``, or its outcome earlier in this query.
 
-        Outcomes are kept ``_PROBE_TTL_SECONDS``: long enough for the
-        sub-searches of one query, short enough that a document an
-        ingestion adds is probed again soon. A failed probe is not kept.
+        The sub-searches of one query (DRIFT's follow-ups above all) probe
+        the same index with the same filters; the outcome is kept in the
+        query's memo (``query_scope``) only, so the next query sees what an
+        ingestion or reset in between changed. A failed probe is not kept.
         """
-        key = f"{alias}\n{json.dumps(probe, sort_keys=True, default=str)}"
-        now = time.monotonic()
-        kept = self._probe_outcomes.get(key)
-        if kept is not None and now - kept[0] < _PROBE_TTL_SECONDS:
-            return kept[1]
+        memo = current_query_scope()
+        key = f"probe\n{alias}\n{json.dumps(probe, sort_keys=True, default=str)}"
+        if memo is not None and key in memo:
+            return bool(memo[key])
         found = await self._search(alias, probe)
-        if not isinstance(found, Exception):
-            self._probe_outcomes[key] = (now, bool(found))
-            self._probe_outcomes.move_to_end(key)
-            while len(self._probe_outcomes) > _PROBE_CACHE_SIZE:
-                self._probe_outcomes.popitem(last=False)
+        if memo is not None and not isinstance(found, Exception):
+            memo[key] = bool(found)
         return found
 
     def _fuse(

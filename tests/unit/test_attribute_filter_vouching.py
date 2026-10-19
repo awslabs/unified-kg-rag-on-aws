@@ -28,13 +28,15 @@ from unified_kg_rag.domain.retrieval.strategy_registry import get_strategy_spec
 pytestmark = pytest.mark.unit
 
 
-def _hit(source: str, kind: str = "entity") -> RetrievalResult:
+def _hit(
+    source: str, kind: str = "entity", units: list[str] | None = None
+) -> RetrievalResult:
     return RetrievalResult(
         content=source,
         score=1.0,
         source=source,
         retriever_type=kind,
-        metadata={"id": source},
+        metadata={"id": source, "text_unit_ids": units or [f"u-{source}"]},
     )
 
 
@@ -49,7 +51,9 @@ class _Store:
         passing: frozenset[str] = frozenset({"near", "one"}),
         fail: bool = False,
         entities_suffix: str | None = None,
+        passing_units: frozenset[str] = frozenset(),
     ) -> None:
+        self.passing_units = passing_units
         self.entities_prefix = entities_prefix
         self.hits = hits
         self.passing = passing
@@ -59,6 +63,12 @@ class _Store:
 
     async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
         self.queries.append(query)
+        units_prefix = self.entities_prefix.replace("entities", "text-units")
+        if query.index_prefixes == [units_prefix] and query.query == "":
+            # A text unit is one document's: it passes when its id is in
+            # ``passing_units``.
+            ids = (query.filters or {}).get("id") or []
+            return [_hit(i, "text") for i in ids if i in self.passing_units]
         if query.index_prefixes == [self.entities_prefix] and query.query == "":
             if self.fail:
                 raise RuntimeError("store hiccup")
@@ -179,3 +189,51 @@ async def test_document_store_results_are_filtered_by_the_store(
 
     assert [r.source for r in kept] == ["r-no"]
     assert len(store.queries) == 1
+
+
+async def test_two_keys_need_one_document_passing_both(config: Config) -> None:
+    # Regression: an entity's index document unions its documents' values per
+    # key, so an entity of a {category: x, grp: a} document and a
+    # {category: y, grp: b} one passed category:x + grp:b, which no document
+    # does. Under two or more keys its text units (one document each) decide.
+    o = config.indexing.opensearch
+    assert o.text_units_index_prefix == o.entities_index_prefix.replace(
+        "entities", "text-units"
+    )
+    document = _Store(
+        o.entities_index_prefix,
+        [],
+        passing=frozenset({"near", "split"}),
+        passing_units=frozenset({"u-near"}),
+    )
+    graph = _Store(
+        o.entities_index_prefix,
+        [
+            _hit("seed"),
+            _hit("near", units=["u-near", "u-other"]),
+            _hit("split", units=["u-split-x", "u-split-b"]),
+        ],
+    )
+    strategy = _strategy(config, document, graph)
+
+    two = {"attr_category": "x", "attr_grp": "b"}
+    kept = await strategy._expand_via_graph(
+        SearchQuery(query="q", filters=two), ["seed"]
+    )
+    assert [r.source for r in kept] == ["seed", "near"]
+    entity_check, unit_check = document.queries
+    assert entity_check.filters == {**two, "id": ["near", "split"]}
+    # Only the entity check's survivors' units, ids only.
+    assert unit_check.filters == {
+        **two,
+        "id": ["u-near", "u-other", "u-split-x", "u-split-b"],
+    }
+    assert unit_check.source_fields == []
+
+    # One key: the entity check alone decides, in one request.
+    document.queries.clear()
+    kept = await strategy._expand_via_graph(
+        SearchQuery(query="q", filters={"attr_category": "x"}), ["seed"]
+    )
+    assert [r.source for r in kept] == ["seed", "near", "split"]
+    assert len(document.queries) == 1

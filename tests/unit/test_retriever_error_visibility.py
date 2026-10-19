@@ -769,7 +769,6 @@ def _opensearch_retriever(config: Config) -> OpenSearchRetriever:
     object.__setattr__(inst, "_opensearch_config", config.indexing.opensearch)
     object.__setattr__(inst, "_max_size", config.indexing.opensearch.max_query_size)
     object.__setattr__(inst, "_max_result_window", 10000)
-    object.__setattr__(inst, "_probe_outcomes", OrderedDict())
     object.__setattr__(inst, "_field_mappings", inst._initialize_field_mappings())
     object.__setattr__(
         inst,
@@ -915,7 +914,6 @@ async def test_a_failed_query_embedding_fails_the_retrieval(
     # Regression: a 5xx from the embedding server read as transient, so every
     # vector section (and the lexical half of hybrid with it) came back empty
     # and the query answered "could not find relevant information".
-    from collections import OrderedDict
 
     class _FailingEmbedder:
         async def aembed_query(self, text: str) -> list[float]:

@@ -581,10 +581,25 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
         # a truncation of the combined pool to `chunk_top_k` — so with 40 KG hits its
         # pool is far larger than a flat top_k=10 before the final cut.
         limit = self._chunk_stream_top_k(query.top_k)
+        exclude = set(exclude or ())
+        if filters := self._text_unit_filters(query.filters):
+            # The per-hit slots go to chunks that pass a filter on text units:
+            # the lineage is checked first, ids only, and the failing chunks
+            # excluded like the vector stream's.
+            lineage = [
+                unit
+                for unit_ids in self._lineages([*entity_results, *relationship_results])
+                for unit in unit_ids
+                if unit not in exclude
+            ]
+            passed = await self._ids_passing(
+                query, self._os_config.text_units_index_prefix, lineage, filters
+            )
+            exclude |= set(lineage) - passed
         chunk_ids = self._collect_linked_chunk_ids(
             entity_results,
             relationship_results,
-            limit=self._candidate_limit(query, limit),
+            limit=limit,
             exclude=exclude,
         )
         if not chunk_ids:
@@ -602,9 +617,7 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
         )
         if not results:
             return {}
-        return {
-            "lightrag_linked_chunks": self._restore_rank(results, chunk_ids)[:limit]
-        }
+        return {"lightrag_linked_chunks": self._restore_rank(results, chunk_ids)}
 
     @staticmethod
     def _relationship_endpoint_ids(
