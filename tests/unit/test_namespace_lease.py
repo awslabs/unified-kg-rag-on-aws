@@ -191,3 +191,34 @@ def test_a_takeover_wait_ends_on_a_stop(monkeypatch: pytest.MonkeyPatch) -> None
         with pytest.raises(PipelineInterrupted):
             check_write_fence()
     assert time.time() - started < 2
+
+
+def test_a_late_write_of_a_dead_holder_lands_before_the_new_holders_writes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The scenario of the concurrent-run harness, in time order: run A dies
+    # (or freezes) holding the lease with a write past its fence; that write
+    # lands a moment after the lease expired. Run B takes the expired lease;
+    # its first write must come after A's late one, which it then
+    # overwrites. Before, B wrote at once and A's stale write stayed.
+    import threading
+
+    _short_requests(monkeypatch, 0.6)
+    store = FakeDocStatusStore()
+    expiry = time.time() + 0.3
+    store.leases["ns"] = ("frozen-run", expiry)  # never released
+    value: list[str] = []
+
+    def late_write() -> None:
+        time.sleep(max(0.0, expiry + 0.3 - time.time()))
+        value.append("stale")  # within expiry + the longest request
+
+    writer = threading.Thread(target=late_write)
+    writer.start()
+    while time.time() < expiry:
+        time.sleep(0.01)
+    with NamespaceLease(store, "ns", 60):
+        check_write_fence()
+        value.append("fresh")
+    writer.join()
+    assert value == ["stale", "fresh"]
