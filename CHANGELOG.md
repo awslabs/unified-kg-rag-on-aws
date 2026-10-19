@@ -1310,6 +1310,10 @@ changed once with the full-config keys (#332).
 - A filter value of `None` is rejected (`InvalidFilterError`): OpenSearch
   rejects a `terms` query naming null, and the embedded engine matched it
   against cleared filter fields (#373).
+- `run-rag` / `run-eval --suffix` is validated like
+  `processing.document_parsing.index_value` when the command line is parsed:
+  an invalid suffix is a usage error (exit 2) instead of failing every query
+  (exit 1) (#PR).
 - A bare `--retire-source-scope` value that is also the run's own directory
   (`docs` over `./docs`) is refused as the run's own scope again, instead of
   dropping that reading and retiring another corpus configured with

@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import argparse
 
-from unified_kg_rag.domain.models import SearchStrategy, SearchType
+from unified_kg_rag.domain.models import SearchStrategy, SearchType, validate_safe_name
 
 
 def positive_int(value: str) -> int:
@@ -15,6 +15,14 @@ def positive_int(value: str) -> int:
     if number < 1:
         raise argparse.ArgumentTypeError(f"must be at least 1, got {number}")
     return number
+
+
+def _suffix(value: str) -> str:
+    """An argparse ``type``: an index suffix, validated like ``index_value``."""
+    try:
+        return validate_safe_name(value, "--suffix")
+    except ValueError as e:
+        raise argparse.ArgumentTypeError(str(e)) from e
 
 
 def _strategy_list(value: str) -> list[str]:
@@ -42,6 +50,7 @@ def add_query_arguments(
     """
     parser.add_argument(
         "--suffix",
+        type=_suffix,
         help="Index suffix to query (default: 'default'); must match the "
         "corpus's processing.document_parsing.index_value",
     )
