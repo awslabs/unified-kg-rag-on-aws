@@ -1310,6 +1310,14 @@ changed once with the full-config keys (#332).
   cancelled item is no longer retried. The batch processor and the evaluators
   awaited their items through `as_completed`, which leaves them running when
   the caller is cancelled (#386).
+- Filtered graph expansion fills its slots as an index of the passing
+  documents does: the walk goes four times wider and is cut after the
+  document-filter checks, not before (on a 1,500-degree hub, 6 of 10
+  entities and 12 of 14 chunks, now 10 and 14); it passes through entities
+  a vertex filter leaves out of the results (`{grp: a, type: person}`: 4 of
+  6 entities, now 6); under two or more filter keys an edge must be stated
+  by one passing document, as an entity must; and a redrawn `Path:` moves
+  the entity's score to that path's distance band (#PR).
 - The filtered chunk check counts passing chunks in rank order: a chunk a
   query already knew to pass was counted wherever it ranked, so higher-ranked
   chunks went unchecked and lower-ranked ones took their slots (DRIFT: up to

@@ -89,6 +89,34 @@ def _retrieval_attributes(results: list[RetrievalResult]) -> dict[str, Any]:
     return attributes
 
 
+# How much wider graph expansion walks under a document filter, whose checks
+# drop entities after the walk's per-seed budget and cut (``_expand_via_graph``).
+_FILTERED_WALK_WIDTH = 4
+
+
+def _cut_expanded(
+    results: list[RetrievalResult], limit: int, seeds: set[str]
+) -> list[RetrievalResult]:
+    """The seeds plus the ``limit`` best other entities, by score (the cut
+    ``GraphExpansionRetriever`` makes, after the filtered checks)."""
+    kept: list[RetrievalResult] = []
+    others = 0
+    for result in sorted(results, key=lambda r: r.score or 0.0, reverse=True):
+        if str(result.source) not in seeds:
+            if others >= limit:
+                continue
+            others += 1
+        kept.append(result)
+    return kept
+
+
+def _distance_band(length: int) -> tuple[float, float]:
+    """The score band of a vertex ``length - 1`` hops out (see
+    ``GraphExpansionRetriever._calculate_relevance``): ``(far, near]``."""
+    length = max(length, 1)
+    return 1.0 / (length + 1), 1.0 / length
+
+
 def entity_content(node: dict[str, Any], path_names: list[str]) -> str:
     """A graph-expansion entity's content: its name, description and, when
     reached from a seed, the ``Path:`` of entity names (seed first). The one
@@ -559,13 +587,23 @@ class BaseSearchStrategy(ABC):
         search_query = query.model_copy(deep=True)
         search_query.filters = (search_query.filters or {}).copy()
         search_query.filters["id"] = seed_entity_ids
+        filtered = bool(document_filters(query.filters))
+        if filtered:
+            # The checks below drop what only excluded documents state, after
+            # the walk spent its budget and cut: walk wider, cut after them.
+            search_query.retrieval_multiplier *= _FILTERED_WALK_WIDTH
 
         expanded = await self._safe_aretrieve(
             self.graph_retriever, search_query, "graph expansion"
         )
         seeds = {str(s) for s in seed_entity_ids}
         expanded = await self._vouch_by_entities_index(query, expanded, seeds)
-        return await self._reached_by_passing_edges(query, expanded, seeds)
+        expanded = await self._reached_by_passing_edges(query, expanded, seeds)
+        if filtered:
+            expanded = _cut_expanded(
+                expanded, query.top_k * query.retrieval_multiplier, seeds
+            )
+        return expanded
 
     async def _reached_by_passing_edges(
         self, query: SearchQuery, results: list[RetrievalResult], seeds: set[str]
@@ -600,8 +638,14 @@ class BaseSearchStrategy(ABC):
         ):
             return results
         by_id = {str(r.source): r for r in results}
+        # The walk's intermediate vertices too: one a vertex filter (``type``)
+        # left out of the results still connects the ones it kept.
+        names = {v: str((r.metadata or {}).get("name") or v) for v, r in by_id.items()}
+        for result in results:
+            for vertex, name in (result.metadata or {}).get("_path") or []:
+                names.setdefault(str(vertex), str(name or vertex))
         try:
-            edges = await graph.aedges_among(sorted(by_id), query.suffix)
+            edges = await graph.aedges_among(sorted(names), query.suffix)
         except Exception as e:
             if is_fatal_retrieval_error(e):
                 raise
@@ -635,6 +679,8 @@ class BaseSearchStrategy(ABC):
                     query.suffix,
                 )
                 return results
+        if len(filters) > 1 and passed:
+            passed = await self._edges_one_document_passes(query, passed, filters)
         neighbours: dict[str, set[str]] = {}
         for edge, a, b in edges:
             if edge in passed:
@@ -656,7 +702,7 @@ class BaseSearchStrategy(ABC):
             if vertex not in parent:
                 continue
             if parent[vertex] is not None:
-                result = self._with_path(result, vertex, parent, by_id)
+                result = self._with_path(result, vertex, parent, names)
             kept.append(result)
         if len(kept) < len(results):
             logger.debug(
@@ -672,21 +718,70 @@ class BaseSearchStrategy(ABC):
         result: RetrievalResult,
         vertex: str,
         parent: dict[str, str | None],
-        by_id: dict[str, RetrievalResult],
+        names: dict[str, str],
     ) -> RetrievalResult:
-        """``result`` with its ``Path:`` line drawn along ``parent`` (seed
-        first), the walk over passing edges."""
+        """``result`` with its ``Path:`` drawn along ``parent`` (seed first),
+        the walk over passing edges, and its score moved to that path's
+        distance band, keeping its place inside the band (its importance)."""
         chain: list[str] = []
         current: str | None = vertex
         while current is not None:
             chain.append(current)
             current = parent[current]
-        names = [
-            str((by_id[v].metadata or {}).get("name") or v) for v in reversed(chain)
-        ]
+        path = [names.get(v, v) for v in reversed(chain)]
+        old = len((result.metadata or {}).get("_path") or []) or len(path)
+        far, near = _distance_band(old)
+        new_far, new_near = _distance_band(len(path))
+        score = result.score or 0.0
+        within = (score - far) / (near - far) if near > far else 0.5
+        within = min(max(within, 0.0), 1.0)
         return result.model_copy(
-            update={"content": entity_content(result.metadata or {}, names)}
+            update={
+                "content": entity_content(result.metadata or {}, path),
+                "score": new_far + (new_near - new_far) * within,
+            }
         )
+
+    async def _edges_one_document_passes(
+        self, query: SearchQuery, edges: set[str], filters: dict[str, Any]
+    ) -> set[str]:
+        """Of the ``edges`` the relationships index passed, those one document
+        passes under every key: the index unions each key's values over an
+        edge's documents, so under two or more keys an edge of a
+        ``{category: x, grp: a}`` and a ``{category: y, grp: b}`` document
+        passes ``category:x grp:b``. Checked by the edges' text units (one
+        document each), as the entity check is."""
+        retriever = self.document_retriever
+        if retriever is None:
+            return edges
+        o = self.config.indexing.opensearch
+        units: dict[str, list[str]] = {}
+        ordered = sorted(edges)
+        batch = id_batch_size(o.index_settings)
+        for start in range(0, len(ordered), batch):
+            chunk = ordered[start : start + batch]
+            hits = await self._safe_aretrieve(
+                retriever,
+                SearchQuery(
+                    query="",
+                    search_type=SearchType.LEXICAL,
+                    top_k=len(chunk),
+                    retrieval_multiplier=1,
+                    index_prefixes=[o.relationships_index_prefix],
+                    suffix=query.suffix,
+                    filters={"id": chunk},
+                    source_fields=["text_unit_ids"],
+                ),
+                "Relationship text units",
+            )
+            units.update((str(h.source), _text_unit_ids(h)) for h in hits)
+        vouched = await self._ids_passing(
+            query,
+            o.text_units_index_prefix,
+            (u for ids in units.values() for u in ids),
+            filters,
+        )
+        return {e for e, ids in units.items() if vouched.intersection(ids)}
 
     def _incident_fetch_limit(self) -> int:
         """How many incident edges to request per endpoint side.

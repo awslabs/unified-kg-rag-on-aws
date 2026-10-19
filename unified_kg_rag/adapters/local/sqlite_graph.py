@@ -323,7 +323,11 @@ class SQLiteGraphStore:
             row: dict[str, Any] = {
                 "node": {key: node[key] for key in _NODE_KEYS if key in node},
                 "path": [
-                    {"name": maps[v]["name"]} if "name" in maps[v] else {} for v in walk
+                    {
+                        "id": [v],
+                        **({"name": maps[v]["name"]} if "name" in maps[v] else {}),
+                    }
+                    for v in walk
                 ],
                 "node_type": label,
             }
