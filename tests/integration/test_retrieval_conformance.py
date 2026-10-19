@@ -423,6 +423,10 @@ def test_a_lineage_update_clears_the_filter_keys_an_item_lost(
         ),
     )
     found = [[r.source for r in hits] for hits in results]
+    # A claim reads back with the document filters it stores, so a claim a
+    # later run rewrites keeps them.
+    (read,) = indexer.read_claims(["c-supplies"], suffix=_SUFFIX)
+    assert (read.attributes or {}).get("filters") == (kept or None)
     assert found == [
         hit
         for item in ("e-vendor", "r-supplies", "c-supplies")

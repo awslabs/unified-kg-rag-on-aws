@@ -648,14 +648,20 @@ class OpenSearchIndexer(VectorIndexer):
 
         A claim indexed before claims stored their ``text_unit_ids`` reads
         back without them. The stored document holds only the document
-        filters of the claim's ``attributes``, which are not read back (the
-        claim's write derives them again from its text units), so each claim
-        is tagged with ``suffix`` (the index it was read from): a write of the
-        claim, e.g. the ``update_claim_lineage`` of a document deletion, goes
+        filters of the claim's ``attributes`` (``_document_filter_properties``):
+        they are read back, and each claim is tagged with ``suffix`` (the
+        index it was read from), so a write of the claim, e.g. the
+        ``update_claim_lineage`` of a document deletion, keeps them and goes
         back to that index rather than the default one. Raises when the read
         fails.
         """
-        attributes = {Constants.INDEX.value: suffix} if suffix else {}
+        placement = {Constants.INDEX.value: suffix} if suffix else {}
+
+        def attributes(source: dict[str, Any]) -> dict[str, Any]:
+            filters = (source.get("attributes") or {}).get(Constants.FILTERS.value)
+            kept = {k: v for k, v in (filters or {}).items() if v is not None}
+            return {**placement, **({Constants.FILTERS.value: kept} if kept else {})}
+
         return [
             Claim.model_validate(
                 {
@@ -669,7 +675,7 @@ class OpenSearchIndexer(VectorIndexer):
                     "description": source.get("description") or None,
                     "source_text": source.get("source_text") or None,
                     "text_unit_ids": list(source.get("text_unit_ids") or []),
-                    "attributes": dict(attributes),
+                    "attributes": attributes(source),
                 }
             )
             for source in self._read_sources(

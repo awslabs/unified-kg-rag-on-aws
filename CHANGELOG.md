@@ -3241,6 +3241,14 @@ changed once with the full-config keys (#332).
   instead of frozen dataclasses; they were never instantiated (#300).
 
 ### Security
+- A claim keeps its documents' filters across incremental runs: a stored
+  claim read back for a merge or a removal came back without them, and
+  claim derivation never took them from its text units, so a claim an
+  unfiltered document joined lost `attr_category` (it no longer matched its
+  own document's filter) and a removal kept the removed document's values.
+  Claims now read back their stored filters and take their text units'
+  filters when derived, as relationships do; incremental runs match a full
+  build on both stores (#PR).
 - A removed document's filter keys stop matching the entities,
   relationships and claims that outlive it: their lineage update is a
   partial update, which kept every field it did not name, so with
