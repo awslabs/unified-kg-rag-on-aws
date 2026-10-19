@@ -11,7 +11,7 @@ with Gremlin::
     {
         "node": {"id": [...], "name": [...], "description": [...],
                  "rank": [...], "text_unit_ids": [...]},  # value_map
-        "path": [{"name": [...]}, ...],  # seed first, the node last
+        "path": [{"id": [...], "name": [...]}, ...],  # seed first, node last
         "node_type": "<vertex label>",
         "degree": <int>,  # only when entity_importance_source == "degree"
     }
@@ -275,7 +275,17 @@ class GraphExpansionRetriever(BaseGraphRAGRetriever):
             ),
             source=str(node_data.get("id")),
             retriever_type=str(SectionType.ENTITY.value),
-            metadata={**node_data, "_node_type": item.get("node_type", "unknown")},
+            metadata={
+                **node_data,
+                "_node_type": item.get("node_type", "unknown"),
+                # The walk's vertices (seed first): filtered expansion checks
+                # the edges along it, intermediate vertices included.
+                "_path": [
+                    [str(p.get("id", [""])[0]), str(p.get("name", [""])[0])]
+                    for p in path_data
+                    if isinstance(p, dict) and p.get("id")
+                ],
+            },
         )
 
     @staticmethod

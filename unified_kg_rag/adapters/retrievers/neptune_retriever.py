@@ -323,7 +323,7 @@ class NeptuneRetriever(GraphExpansionRetriever):
         projected = (
             traversal.project(*keys)
             .by(__.value_map("id", "name", "description", "rank", "text_unit_ids"))
-            .by(__.path().by(__.value_map("name")))
+            .by(__.path().by(__.value_map("id", "name")))
             .by(__.label())
         )
         if degree_label is not None:
