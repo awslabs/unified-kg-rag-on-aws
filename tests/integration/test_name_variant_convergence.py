@@ -38,6 +38,7 @@ from tests.integration.test_embedded_e2e import (
 )
 from unified_kg_rag.adapters.storage.opensearch_indexer import OpenSearchIndexer
 from unified_kg_rag.adapters.storage.sqlite_graph_indexer import SQLiteGraphIndexer
+from unified_kg_rag.application.storage.indexing_manager import IndexingManager
 from unified_kg_rag.domain.models import PipelineStageStatus
 
 pytestmark = [pytest.mark.integration, pytest.mark.usefixtures("no_aws")]
@@ -56,6 +57,7 @@ NAMES = (
     "Acme Ltd",
     "Acme LLC",
     "Acme",
+    "ACME",
 )
 TYPES = {"goods": "ORGANIZATION", "parts": "PERSON", "cash": "LOCATION"}
 
@@ -652,8 +654,6 @@ def test_a_spelling_re_keyed_into_another_is_not_a_split_origin(
     # edges derived again, its claims followed), but not when the derivation
     # re-keyed it into the derived entity: that costs reads and leaves the
     # result as it is.
-    from unified_kg_rag.application.storage.indexing_manager import IndexingManager
-
     derive = mocker.spy(IndexingManager, "derive")
 
     _state(tmp_path, runs)
@@ -928,6 +928,40 @@ def test_a_resumed_run_derives_the_claims_its_removal_re_derived(
     full = _state(tmp_path / "full", [runs[-1]], gleaning=gleaning)
     incremental = _state(
         tmp_path / "inc", runs, die_in=1, die_at=die_at, gleaning=gleaning
+    )
+
+    assert incremental == full
+
+
+def test_a_removal_resumed_with_a_note_derives_the_claims_it_re_keyed(
+    tmp_path: Path,
+) -> None:
+    # The third run's removal merges spellings, notes them and re-keys a
+    # claim onto a noted entity, and is killed once the claims were
+    # stripped. The claim then cites no removed unit: the next run (an
+    # edited corpus) removed the units again without finding it, and the
+    # orphan stayed next to the claim a full build derives.
+    d3 = "Acme LLC trade parts 3. Acme LLC and Acme Corp and Acme Ltd trade cash 2."
+    d0 = "ACME and Buyer and Acme Ltd trade parts 3. ACME Inc and Buyer trade parts 1."
+    runs = [
+        {"d2.txt": "Acme Corp trade parts 3."},
+        {"d2.txt": "ACME Inc trade parts 3.", "d3.txt": d3, "d0.txt": d0},
+        {"d2.txt": "Acme Ltd trade parts 3.", "d3.txt": d3, "d0.txt": d0},
+        {
+            "d2.txt": "Acme Ltd trade parts 3.",
+            "d3.txt": d3,
+            "d0.txt": d0.replace("and Acme Ltd", "and Acme Corp"),
+        },
+    ]
+
+    full = _state(tmp_path / "full", [runs[-1]], gleaning=True)
+    incremental = _state(
+        tmp_path / "inc",
+        runs,
+        die_in=2,
+        die_at=("_remove_text_units_from_claims", 1, True, IndexingManager),
+        gleaning=True,
+        resume=False,
     )
 
     assert incremental == full

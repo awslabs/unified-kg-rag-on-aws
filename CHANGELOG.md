@@ -1299,6 +1299,11 @@ changed once with the full-config keys (#332).
   killed run's claim of a delta text unit against a graph without the
   delta's entities, under an id the delta does not write. The commit now
   also derives the stored claims citing a delta text unit (#PR).
+- A removal resumed after its strip had merged spellings now also derives
+  the stored claims about the entities its note names: a claim the killed
+  strip re-keyed onto one of them cites no removed text unit, so it was
+  never found again and stayed as an orphan next to the claim a full build
+  derives (#PR).
 - The error for a bare `--retire-source-scope` value whose reading is the
   run's own scope gives the right way out: `./<value>` when the own scope is
   the name, and, when it is the run's own directory, running from another

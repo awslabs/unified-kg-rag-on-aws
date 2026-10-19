@@ -78,6 +78,16 @@ def _pending_strip_keys(text_unit_ids: Iterable[str]) -> list[str]:
     return [f"{_PENDING_STRIP}{unit}" for unit in sorted(set(text_unit_ids))]
 
 
+def _noted(notes: Mapping[str, Mapping[str, Any]], field: str) -> set[str]:
+    """The ids the strip notes ``notes`` list under ``field``."""
+    return {
+        i
+        for note in notes.values()
+        for i in note.get(field) or []
+        if isinstance(i, str)
+    }
+
+
 def _other_spellings_of_parts(
     split_from: Mapping[str, str], derived: Mapping[str, Entity]
 ) -> list[str]:
@@ -1953,6 +1963,9 @@ class IndexingManager:
                 if resumed
                 else {}
             )
+            # A claim the earlier strip re-keyed onto a noted entity cites no
+            # removed unit: it is found through its subject or object.
+            noted_claims = self._claims_about(suffix, _noted(notes, "entity_ids"))
         except Exception as e:  # noqa: BLE001 - reported as failed items
             logger.error("Finding the removed text units' items failed: %s", e)
             stats = IndexingStats(total_items=len(text_unit_ids))
@@ -1994,20 +2007,15 @@ class IndexingManager:
             }
         )
         if notes:
-
-            def noted(field: str) -> set[str]:
-                return {
-                    i
-                    for note in notes.values()
-                    for i in note.get(field) or []
-                    if isinstance(i, str)
-                }
-
             shared_entities = sorted(
-                (set(shared_entities) | noted("entity_ids")) - set(doomed)
+                (set(shared_entities) | _noted(notes, "entity_ids")) - set(doomed)
             )
             shared_relationships = sorted(
-                (set(shared_relationships) | noted("relationship_ids")) - set(doomed)
+                (set(shared_relationships) | _noted(notes, "relationship_ids"))
+                - set(doomed)
+            )
+            shared_claims = sorted(
+                (set(shared_claims) | set(noted_claims)) - set(doomed)
             )
         logger.info(
             "Removing %d artifacts of %d text units in '%s'; stripping %d "
