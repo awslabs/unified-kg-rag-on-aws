@@ -1241,7 +1241,10 @@ run-eval --data-path s3://my-bucket/eval/my_eval_data.json \
 가능, 다중 홉, CC BY 4.0. Trivedi 외, TACL 2022)를 코퍼스와 `run-eval` 데이터셋으로
 바꿉니다. 데이터는 이 저장소에 포함하지 않습니다. 기본적으로 공개 미러의 고정 리비전에서
 답변 가능 dev 분할(질문 2,417개)을 내려받아 SHA-256을 확인하며, `--data-path`로 로컬
-`musique_ans_v1.0_*.jsonl`을 대신 읽을 수 있습니다. `corpus/`(서로 다른 단락마다 텍스트
+`musique_ans_v1.0_*.jsonl`을 대신 읽을 수 있습니다. 전체 파일(`musique_full_v1.0_*.jsonl`)도
+읽지만 그 답변 가능한 절반은 MuSiQue-Ans가 아니므로(단락과 답변 별칭이 다름) 행에
+`musique` 대신 `metadata.benchmark: musique-full-answerable`을 붙이고, 점수를 MuSiQue-Ans
+결과와 비교할 수 없다는 WARNING을 남깁니다. `corpus/`(서로 다른 단락마다 텍스트
 파일 하나. 질문마다 근거 단락 2-4개와 방해 단락 최대 18개)와 `eval_data.json`(`answer`,
 `answer_aliases`, 근거 단락인 `reference_sources`, 홉 수인 `category`)을 씁니다.
 `corpus/`가 비어 있지 않으면 아무것도 내려받기 전에 사용 오류(종료 코드 2)로 끝납니다.

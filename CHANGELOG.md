@@ -1286,6 +1286,11 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- `prepare-benchmark musique` labels the rows built from a full file
+  `metadata.benchmark: musique-full-answerable` instead of `musique`, and
+  logs a WARNING: the answerable half of the full file has other paragraphs
+  and answer aliases than MuSiQue-Ans, so its scores are not comparable to
+  MuSiQue-Ans results (#PR).
 - Cancelling a batch cancels its items: an interrupted, timed-out or
   host-cancelled `run-eval` / `EvaluationManager` call no longer keeps
   answering (and judging) the rest of the dataset in the background, and a
@@ -1337,10 +1342,12 @@ changed once with the full-config keys (#332).
   the name, and, when it is the run's own directory, running from another
   working directory with the same configuration (`--config-path`, so the same
   stores and registry) (#380).
-- `prepare-benchmark musique` accepts the official full file
+- `prepare-benchmark musique` reads the official full file
   (`musique_full_v1.0_dev.jsonl`) again: it carries each question once
   answerable and once not under the same id, which the repeated-id check
-  refused; only answerable items are checked for repeated ids now (#380).
+  refused; only answerable items are checked for repeated ids now. Its
+  answerable half is a different benchmark from MuSiQue-Ans, labelled
+  `musique-full-answerable` (#380, #PR).
 - Tracing: a span whose coroutine is cancelled (`asyncio.CancelledError`:
   `kg_rag.query` / `kg_rag.batch` on Ctrl-C or SIGTERM, or a host cancelling
   `ainvoke`) also exports as `ERROR` with `error.type`; #374 covered only

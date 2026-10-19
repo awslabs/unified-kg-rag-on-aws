@@ -67,6 +67,12 @@ def download_dev(destination: Path, *, timeout: float = 120.0) -> Path:
     return destination
 
 
+# metadata.benchmark of the rows: MuSiQue-Ans, or the answerable half of a
+# full file (not the same benchmark).
+BENCHMARK_NAME = "musique"
+FULL_ANSWERABLE = "musique-full-answerable"
+
+
 class InvalidBenchmarkDataError(EvaluationException):
     """The benchmark file is not MuSiQue JSONL (an input error, exit 2)."""
 
@@ -154,11 +160,26 @@ def prepare(
     """Write ``corpus/`` and ``eval_data.json`` for (a sample of) ``source``.
 
     ``limit`` questions are drawn with ``seed`` (all when ``None``);
-    unanswerable items (in the full, non-``ans`` files) are skipped.
+    unanswerable items (in the full, non-``ans`` files) are skipped. The
+    answerable half of a full file is not MuSiQue-Ans (its paragraphs and
+    answer aliases differ), so its rows are labelled
+    ``musique-full-answerable`` instead of ``musique``, with a WARNING.
     """
     check_output_directory(output_dir)
     corpus = output_dir / "corpus"
-    items = [i for i in _items(source) if i.get("answerable", True)]
+    every_item = list(_items(source))
+    items = [i for i in every_item if i.get("answerable", True)]
+    benchmark = FULL_ANSWERABLE if len(items) < len(every_item) else BENCHMARK_NAME
+    if benchmark == FULL_ANSWERABLE:
+        logger.warning(
+            "%s is a MuSiQue full file: its answerable items are written as "
+            "'%s', whose paragraphs and answer aliases differ from "
+            "MuSiQue-Ans, so the scores are not comparable to MuSiQue-Ans "
+            "results (use musique_ans_v1.0_*.jsonl, or the default download, "
+            "for those).",
+            source,
+            FULL_ANSWERABLE,
+        )
     if limit is not None and limit < len(items):
         items = random.Random(seed).sample(items, limit)
     corpus.mkdir(parents=True, exist_ok=True)
@@ -189,7 +210,7 @@ def prepare(
                     if (hops := _HOPS.match(item_id))
                     else item_id.split("__", 1)[0]
                 ),
-                "metadata": {"benchmark": "musique"},
+                "metadata": {"benchmark": benchmark},
             }
         )
     (output_dir / "eval_data.json").write_text(
