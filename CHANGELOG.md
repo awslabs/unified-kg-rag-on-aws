@@ -827,7 +827,7 @@ changed once with the full-config keys (#332).
   (Neptune `limit` before `count`): the community walk only asks whether an
   entity has more neighbours than its step. A Neptune edge write no longer
   reads its batch's endpoints first; the edge rewrite looks both up itself
-  and leaves the stored edge when one is missing (#PR).
+  and leaves the stored edge when one is missing (#388).
 - A global-search map phase whose every call timed out raises
   `LanguageModelTimeoutError` (a `LanguageModelError` and still a
   `TimeoutError`), and `degraded_error` names it; `run-eval`'s invalid
@@ -1338,7 +1338,7 @@ changed once with the full-config keys (#332).
   went on writing the registry for up to ~10 minutes after its check, over
   the records of the run that took the lease, past the takeover wait (8 of
   10 requests of one call after the loss). The takeover wait counts one
-  registry attempt in the longest request (#PR).
+  registry attempt in the longest request (#388).
 - A stopped run gives its lease up as expired (owner kept) instead of
   releasing it, so the next run waits for the stopped run's requests still
   in flight, as after a crash: it released it, and the next run wrote at
@@ -1348,9 +1348,9 @@ changed once with the full-config keys (#332).
   between the takeover's read and its acquire no longer makes it wait, and
   the wait holds the first write only: a stage start no longer waits, so
   the stages before the first registry or store write (parsing) run
-  meanwhile (#PR).
+  meanwhile (#388).
 - The write-ahead `PENDING` record of a deleted document has
-  `failure_count` 0, as every `PENDING` record (#PR).
+  `failure_count` 0, as every `PENDING` record (#388).
 - Incremental indexing: a removal that both merges and splits spellings
   ("Acme Ltd" into "ACME Inc", "Acme" split off) and is killed between its
   writes and the deletion of the old ids is resumed to a full build's
