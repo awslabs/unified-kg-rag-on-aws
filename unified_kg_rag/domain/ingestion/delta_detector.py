@@ -351,9 +351,10 @@ def retired_scope_groups(
     namespace the run writes.
 
     Raises:
-        ConfigurationError: A retired source scope is empty, or is the run's
-            own ``source_scope`` (every document of the run would be deleted;
-            for an ambiguous value, when every reading is).
+        ConfigurationError: A retired source scope is empty, or any reading
+            of it is the run's own ``source_scope`` (every document of the
+            run would be deleted, or, for a bare value that is also a name,
+            possibly another corpus's).
     """
     own = normalize_source_scope(source_scope)
     groups: list[RetiredScope] = []
@@ -365,15 +366,24 @@ def retired_scope_groups(
                 "indexing.retire_source_scopes / --retire-source-scope: a "
                 "source scope is empty"
             )
-        kept = [n for n in normalized if n != own] if ambiguous else normalized
-        if not kept or own in kept:
+        if own in normalized:
+            # A bare value that is this run's directory may still name
+            # another corpus's source_scope: retiring that reading on a
+            # guess deleted the other corpus.
+            hint = (
+                f" As a name, {value!r} may also be another corpus's "
+                "source_scope; to retire that scope, run from a working "
+                f"directory where {value!r} is not this run's directory."
+                if ambiguous
+                else ""
+            )
             raise ConfigurationError(
                 "indexing.retire_source_scopes / --retire-source-scope: "
                 f"{value!r} is this run's own source scope. Retiring it would "
                 "delete every document of this corpus; retire the scope the "
-                "corpus was indexed under before it moved."
+                f"corpus was indexed under before it moved.{hint}"
             )
-        scopes = tuple(dict.fromkeys(registry_scope(namespace, n) for n in kept))
+        scopes = tuple(dict.fromkeys(registry_scope(namespace, n) for n in normalized))
         groups.append(
             RetiredScope(value.strip(), scopes, ambiguous and len(scopes) > 1)
         )

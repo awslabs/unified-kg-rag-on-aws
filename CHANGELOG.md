@@ -1310,6 +1310,22 @@ changed once with the full-config keys (#332).
 - A filter value of `None` is rejected (`InvalidFilterError`): OpenSearch
   rejects a `terms` query naming null, and the embedded engine matched it
   against cleared filter fields (#373).
+- Tracing: a span left by Ctrl-C, SIGTERM or a pipeline stop
+  (`KeyboardInterrupt`, `SystemExit`, `PipelineInterrupted`) now exports with
+  status `ERROR` and `error.type`, instead of `UNSET` like a success (#374).
+- `prepare-benchmark musique` also refuses an empty `question`, a repeated
+  `id`, an `answerable` that is not a boolean (`"false"` used to count as
+  answerable) and a non-string `paragraph_text`, as a usage error (exit 2)
+  (#374).
+- `run-rag` / `run-eval --suffix` is validated like
+  `processing.document_parsing.index_value` when the command line is parsed:
+  an invalid suffix is a usage error (exit 2) instead of failing every query
+  (exit 1) (#374).
+- A bare `--retire-source-scope` value that is also the run's own directory
+  (`docs` over `./docs`) is refused as the run's own scope again, instead of
+  dropping that reading and retiring another corpus configured with
+  `source_scope: docs` (exit 0, a WARNING only); the error says how to
+  retire such a name (#374).
 - The first model calls of a batch (ingestion stages, global search's map)
   no longer fail at random with "dictionary changed size during
   iteration": the worker threads share one chain, and LangChain caches each

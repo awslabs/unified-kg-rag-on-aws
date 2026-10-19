@@ -1250,3 +1250,24 @@ def test_help_epilog_shows_an_example_and_a_live_guide_section(parser, command) 
         "https://github.com/awslabs/unified-kg-rag-on-aws/blob/main/docs/user-guide.md#"
     )
     assert url.split("#", 1)[1] in _guide_section_slugs()
+
+
+@pytest.mark.parametrize("suffix", ["Bad", "a/b", "a,b", "x*", ""])
+def test_an_invalid_suffix_is_a_usage_error(suffix: str) -> None:
+    # Before, it was accepted and every query failed (exit 1).
+    eval_parser = run_evaluation.CommandLineInterface._setup_arguments()
+    for parser, args in (
+        (_rag_parser(), ["--query", "q"]),
+        (eval_parser, ["--data-path", "eval.json"]),
+    ):
+        assert parser.parse_args([*args, "--suffix", "ok"]).suffix == "ok"
+        with pytest.raises(SystemExit) as exc:
+            parser.parse_args([*args, "--suffix", suffix])
+        assert exc.value.code == 2
+
+
+def test_a_valid_suffix_is_kept() -> None:
+    assert (
+        _rag_parser().parse_args(["--query", "q", "--suffix", "tenant-a"]).suffix
+        == "tenant-a"
+    )
