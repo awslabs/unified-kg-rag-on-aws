@@ -1286,6 +1286,10 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Tracing: a cancelled model call (`ainvoke` / `agenerate`, which gets no
+  end callback from LangChain) ends its `chat <model>` span as `ERROR`
+  (`error.type: CancelledError`) when its task finishes, instead of leaving
+  it open in the tracing handler, never exported and held in memory (#PR).
 - `prepare-benchmark musique` labels the rows built from a full file
   `metadata.benchmark: musique-full-answerable` instead of `musique`, and
   logs a WARNING: the answerable half of the full file has other paragraphs

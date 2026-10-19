@@ -1119,6 +1119,39 @@ def test_rerank_failure_is_an_error_span(
     assert span.status.status_code == StatusCode.ERROR
 
 
+def test_a_cancelled_model_call_ends_its_span(tracing: Tracing) -> None:
+    # LangChain calls no end callback for a cancelled ainvoke: before, the
+    # span stayed open in the handler (never exported, _spans kept growing).
+    exporter = tracing()
+    handler = GenAITracingCallbackHandler("vendor.model-v1")
+    finished = uuid4()
+
+    async def call(run_id) -> None:
+        handler.on_chat_model_start({}, [_PROMPT], run_id=run_id)
+        await asyncio.sleep(10)
+
+    async def main() -> None:
+        # A call that ended normally is not touched when its task ends.
+        handler.on_chat_model_start({}, [_PROMPT], run_id=finished)
+        handler.on_llm_end(
+            LLMResult(generations=[[ChatGeneration(message=AIMessage(content="a"))]]),
+            run_id=finished,
+        )
+        task = asyncio.create_task(call(uuid4()))
+        await asyncio.sleep(0.05)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(main())
+    statuses = sorted(
+        (span.status.status_code.name, _attrs(span).get("error.type"))
+        for span in exporter.get_finished_spans()
+    )
+    assert statuses == [("ERROR", "CancelledError"), ("UNSET", None)]
+    assert handler._spans == {} and handler._watches == {}
+
+
 def test_invoke_model_usage_fallback(tracing: Tracing) -> None:
     exporter = tracing()
     handler = GenAITracingCallbackHandler("vendor.model-v1")
