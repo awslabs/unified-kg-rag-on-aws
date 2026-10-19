@@ -82,7 +82,8 @@ class _FakeOpenSearchClient:
     def get_aliases_by_index(self, index_pattern: str) -> dict[str, list[str]]:
         return {
             name: sorted(a for a, i in self.aliases.items() if i == name)
-            for name in self.mappings
+            # A copy: the indexer's threads add indices meanwhile.
+            for name in list(self.mappings)
             if fnmatch.fnmatch(name, index_pattern)
         }
 

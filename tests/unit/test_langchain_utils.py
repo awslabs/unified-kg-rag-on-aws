@@ -977,3 +977,45 @@ def test_record_tag_inside_an_open_field_closes_the_record() -> None:
         "</relationships>"
     )
     assert _relationship_pairs(raw) == [("A", "B"), ("B", "C")]
+
+
+def test_concurrent_retries_of_one_batch_do_not_share_retry_state() -> None:
+    # Regression: tenacity.retry's wrapper keeps one statistics dict for all
+    # calls and clears it on each, so a worker about to back off read a dict
+    # another worker had just cleared (KeyError 'idle_for', not retried) and
+    # its item failed: ~3% of 3,000 items under a short switch interval.
+    import sys
+
+    from unified_kg_rag.shared.utils.langchain import BATCH_ITEM_FAILED
+
+    calls: Counter[int] = Counter()
+    lock = threading.Lock()
+
+    def fails_once(single_input: dict) -> int:
+        with lock:
+            calls[single_input["v"]] += 1
+            first = calls[single_input["v"]] == 1
+        if first:
+            raise ValueError("transient")
+        return single_input["v"]
+
+    bp = BatchProcessor(
+        max_attempts=3,
+        retry_multiplier=1.0,
+        retry_max_wait=0,
+        max_concurrency=16,
+        call_timeout_seconds=0,
+    )
+    previous = sys.getswitchinterval()
+    sys.setswitchinterval(1e-6)
+    try:
+        out = bp.execute_with_fallback(
+            list(range(3000)),
+            lambda xs: [{"v": x} for x in xs],
+            fails_once,
+            "race",
+            show_progress=False,
+        )
+    finally:
+        sys.setswitchinterval(previous)
+    assert sum(o is BATCH_ITEM_FAILED for o in out) == 0

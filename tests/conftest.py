@@ -88,6 +88,26 @@ _FAKE_AWS_ENV = {
 
 
 @pytest.fixture(autouse=True, scope="session")
+def _thread_only_tqdm_lock() -> None:
+    """Give tqdm a plain thread lock for the session.
+
+    tqdm's default write lock pairs a threading RLock with a multiprocessing
+    one, a semaphore shared with every process forked from this one (the
+    tests' real process pools) and acquired in two steps. A worker once hung
+    for the whole test timeout in ``tqdm.__new__`` with no live thread
+    holding the lock (test_chain_factory_output_guards, under load), the
+    shape of a lock left held across a fork or by an exception between the
+    two steps. The tests draw no bars across processes, so one atomic thread
+    lock is enough.
+    """
+    import threading
+
+    from tqdm import tqdm
+
+    tqdm.set_lock(threading.RLock())
+
+
+@pytest.fixture(autouse=True, scope="session")
 def _scratch_working_directory(
     tmp_path_factory: pytest.TempPathFactory,
 ) -> Iterator[None]:

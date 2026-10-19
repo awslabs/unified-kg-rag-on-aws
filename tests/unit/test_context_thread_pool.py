@@ -85,3 +85,40 @@ def test_batch_processor_workers_see_the_bound_log_context() -> None:
 
     assert results == [1, 2]
     assert [ctx.get("query_id") for ctx in seen] == ["q-1", "q-1"]
+
+
+def test_shut_down_after_shuts_the_pool_down_when_the_block_ends() -> None:
+    from unified_kg_rag.shared.utils.concurrency import shut_down_after
+
+    with shut_down_after(ThreadPoolExecutor(max_workers=1)) as pool:
+        future = pool.submit(lambda: 1)
+    assert future.result() == 1
+    with pytest.raises(RuntimeError, match="shutdown"):
+        pool.submit(lambda: 2)
+
+
+def test_shut_down_after_does_not_wait_for_running_tasks_on_error() -> None:
+    import threading
+    import time
+
+    from unified_kg_rag.shared.utils.concurrency import shut_down_after
+
+    release = threading.Event()
+    started = threading.Event()
+
+    def running() -> None:
+        started.set()
+        release.wait(10)
+
+    began = time.time()
+    try:
+        with pytest.raises(RuntimeError, match="stage failed"):
+            with shut_down_after(ThreadPoolExecutor(max_workers=1)) as pool:
+                future = pool.submit(running)
+                queued = pool.submit(running)
+                started.wait(5)
+                raise RuntimeError("stage failed")
+        assert time.time() - began < 2
+        assert queued.cancelled() and not future.done()
+    finally:
+        release.set()

@@ -14,6 +14,7 @@ import sys
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -712,3 +713,84 @@ def test_a_stopped_cli_leaves_no_pool_worker_running() -> None:
     for pid in workers:
         with pytest.raises(ProcessLookupError):
             os.kill(pid, 0)
+
+
+def test_an_explicit_argv_decides_json_output(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # main(argv) is read for --output-format json, not sys.argv, and the
+    # console moves to stderr before main runs, so an early error is JSON.
+    monkeypatch.setattr(console, "stderr", False)
+    monkeypatch.setattr(sys, "argv", ["run-rag"])
+    seen: list[bool] = []
+
+    @exits_on_sigterm
+    def main(argv: list[str]) -> int:
+        seen.append(console.stderr)
+        raise SystemExit(2)
+
+    with pytest.raises(SystemExit):
+        main(["--output-format", "json"])
+    assert seen == [True]
+    assert json.loads(capsys.readouterr().out) == {"status": "failed", "exit_code": 2}
+
+
+def _run_cli_script(body: str) -> Any:
+    import subprocess
+    import textwrap
+
+    script = textwrap.dedent("""
+        import atexit, logging, logging.handlers, os, signal, sys, threading, time
+        from unified_kg_rag.application.cli.conventions import exits_on_sigterm
+        from unified_kg_rag.shared import observability
+        """) + textwrap.dedent(body)
+    return subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, timeout=60
+    )
+
+
+def test_ctrl_c_ends_the_process_at_once_after_flushing() -> None:
+    # The KeyboardInterrupt path exits at once too (130), and the tracing
+    # backend and buffered log handlers are flushed before it does.
+    import time
+
+    started = time.time()
+    result = _run_cli_script("""
+        class Backend:
+            def shutdown(self):
+                print("tracing flushed", flush=True)
+
+        observability.install(Backend())
+        target = logging.StreamHandler(sys.stdout)
+        logging.getLogger("t").addHandler(
+            logging.handlers.MemoryHandler(100, flushLevel=100, target=target)
+        )
+
+        @exits_on_sigterm
+        def main():
+            logging.getLogger("t").warning("buffered log line")
+            threading.Thread(target=time.sleep, args=(30,)).start()
+            raise KeyboardInterrupt
+
+        main()
+        """)
+    assert result.returncode == 130
+    assert time.time() - started < 20
+    assert "tracing flushed" in result.stdout
+    assert "buffered log line" in result.stdout
+
+
+def test_a_failed_cli_exits_normally() -> None:
+    # Only a signal's exit code (above 128) ends the process at once: an
+    # ordinary failure (exit 1) still runs the interpreter's exit handlers.
+    result = _run_cli_script("""
+        atexit.register(lambda: print("exit handlers ran", flush=True))
+
+        @exits_on_sigterm
+        def main():
+            raise SystemExit(1)
+
+        main()
+        """)
+    assert result.returncode == 1
+    assert "exit handlers ran" in result.stdout

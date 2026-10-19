@@ -93,3 +93,43 @@ def test_matcher_passed_to_pool_via_initializer_not_per_task(mocker) -> None:
     assert all(
         len(args) == 1 and isinstance(args[0], str) for args in captured["submit_args"]
     )
+
+
+@pytest.mark.parametrize("threshold", [0.3, 0.5, 0.85])
+@pytest.mark.parametrize("num_perm", [64, 128])
+def test_the_cached_lsh_layout_is_datasketchs_own(
+    threshold: float, num_perm: int
+) -> None:
+    from datasketch import MinHashLSH
+
+    from unified_kg_rag.domain.ingestion.base_resolver import _lsh_params
+
+    lsh = MinHashLSH(threshold=threshold, num_perm=num_perm)
+    assert _lsh_params(threshold, num_perm) == (lsh.b, lsh.r)
+
+
+def test_matchers_derive_the_lsh_layout_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    # datasketch's layout search costs ~20 ms; every matcher repeated it.
+    from datasketch import lsh as lsh_module
+
+    from unified_kg_rag.domain.ingestion import base_resolver
+
+    calls: list[tuple] = []
+    real = lsh_module._optimal_param
+
+    def counted(*args):  # type: ignore[no-untyped-def]
+        calls.append(args)
+        return real(*args)
+
+    monkeypatch.setattr(lsh_module, "_optimal_param", counted)
+    base_resolver._lsh_params.cache_clear()
+    try:
+        for _ in range(3):
+            base_resolver.FuzzyMatcher(
+                ["Acme", "Acme Inc"],
+                resolution_method=base_resolver.ResolutionMethod.MINHASH,
+                similarity_threshold=0.42,
+            )
+    finally:
+        base_resolver._lsh_params.cache_clear()
+    assert len(calls) == 1

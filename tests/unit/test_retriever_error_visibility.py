@@ -507,7 +507,8 @@ async def test_a_search_discarded_after_the_probe_logs_no_error(
 
     assert results == []
     # (opensearch-py itself still logs each 4xx as a one-line WARNING.)
-    assert [r for r in caplog.records if r.levelno >= logging.ERROR] == []
+    # Only this package's records: another library's (asyncio's, from a
+    # loop closing under load) is no sign of the regression.
     assert not [
         r
         for r in caplog.records
