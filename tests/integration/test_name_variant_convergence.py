@@ -1018,8 +1018,8 @@ def test_a_strip_note_is_one_record_whatever_the_removed_units(
 ) -> None:
     # Removing d1.txt and d2.txt (two text units) merges the two spellings.
     # The note is written once for the suffix, not once per removed unit
-    # (20,000 units of a 3,000-edge note were 2.4 GB), and names entities
-    # and edges only.
+    # (20,000 units of a 3,000-edge note were 2.4 GB), and names the two
+    # merged entities and the edge the merge dropped.
     runs = [
         {
             "d1.txt": "Initech trade goods 3.",
@@ -1042,5 +1042,88 @@ def test_a_strip_note_is_one_record_whatever_the_removed_units(
     assert [list(records) for records in notes] == [["pending-strip"]]
     (note,) = notes[0].values()
     assert set(note) == {"entity_ids", "relationship_ids"}
-    assert note["entity_ids"]
+    assert len(note["entity_ids"]) == 2
+    assert len(note["relationship_ids"]) == 1
+    assert incremental == full
+
+
+@pytest.mark.parametrize(
+    "die_at",
+    [
+        pytest.param(
+            ("upsert_entities", 1, True, SQLiteGraphIndexer),
+            id="after-the-graph-entities",
+        ),
+        pytest.param(("upsert_entities", 1, False), id="before-the-vector-entities"),
+        pytest.param(
+            ("delete_document_artifacts", 2, False), id="before-deleting-the-old-ids"
+        ),
+    ],
+)
+def test_a_resumed_removal_that_merged_and_split_matches_a_full_build(
+    tmp_path: Path, die_at: tuple[Any, ...]
+) -> None:
+    # Removing d2.txt merges "Acme Ltd" into "ACME Inc" and splits "Acme" off
+    # it. The resumed removal strips the merged entities again; stripping the
+    # split-off part and its origin again too (as #379 noted them) left
+    # "Acme owes Acme Inc" with the wrong subject.
+    runs = [
+        {
+            "d3.txt": "Buyer and Acme Ltd and ACME Inc trade cash 3. Buyer trade "
+            "parts 1. Acme and Acme Inc trade cash 2.",
+            "d2.txt": "Acme Ltd trade parts 2. Initech Corp trade parts 2.",
+        },
+        {
+            "d3.txt": "Buyer and Acme Ltd and ACME Inc trade cash 3. Buyer trade "
+            "parts 1. Acme and Acme Inc trade cash 2."
+        },
+    ]
+
+    full = _state(tmp_path / "full", [runs[-1]])
+    incremental = _state(tmp_path / "inc", runs, die_in=1, die_at=die_at)
+
+    assert incremental == full
+
+
+@pytest.mark.parametrize(
+    "die_at",
+    [
+        pytest.param(("upsert_entities", 1, False), id="before-the-vector-entities"),
+        pytest.param(
+            ("upsert_entities", 2, True, SQLiteGraphIndexer),
+            id="after-the-graph-entities",
+        ),
+        pytest.param(
+            ("delete_document_artifacts", 2, False), id="before-deleting-the-old-ids"
+        ),
+    ],
+)
+def test_a_resumed_removal_finishes_the_edges_it_re_keyed(
+    tmp_path: Path, die_at: tuple[Any, ...]
+) -> None:
+    # Removing r3.txt (d6.txt comes in) re-keys and drops edges of the
+    # "Acme" spellings that need not cite r3.txt's units. Killed before
+    # their old ids were deleted, the resumed removal finds those edges
+    # through its note only.
+    d1 = "Buyer and Depot and Acme Ltd trade parts 3. Acme trade goods 1."
+    d7 = "Acme Inc and Acme LLC trade cash 3."
+    runs = [
+        {"d7.txt": d7},
+        {
+            "d7.txt": d7,
+            "d1.txt": d1,
+            "r3.txt": "Depot trade cash 1. Acme Inc and Buyer and Acme Ltd trade "
+            "cash 2.",
+        },
+        {
+            "d7.txt": d7,
+            "d1.txt": d1,
+            "d6.txt": "Depot and Acme Corp trade parts 2. Acme Inc and Acme Corp "
+            "trade goods 1.",
+        },
+    ]
+
+    full = _state(tmp_path / "full", [runs[-1]], gleaning=True)
+    incremental = _state(tmp_path / "inc", runs, die_in=2, die_at=die_at, gleaning=True)
+
     assert incremental == full

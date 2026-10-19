@@ -1605,41 +1605,35 @@ class IndexingManager:
             self._derived_entities.setdefault(suffix, {}).update(
                 {e.id: e for e in new_entities}
             )
-            if derived.id_remap or derived.split_from or derived.dropped:
-                # Its old ids need not cite the removed text units (another
-                # spelling merged in): once the items are written, a retry
-                # finds them through this note only. The entities on both
-                # sides of a merge or split are noted (their edges follow
-                # them), and the edges re-keyed or dropped; no claim (the
-                # claims about the noted entities follow them).
-                entity_ids_now = {e.id for e in derived.entities}
-                edge_ids_now = {r.id for r in derived.relationships}
-                claim_ids_now = {c.id for c in derived.claims}
+            entity_ids_now = {e.id for e in derived.entities}
+            edge_ids_now = {r.id for r in derived.relationships}
+            claim_ids_now = {c.id for c in derived.claims}
+            merged = {
+                i
+                for pair in derived.id_remap.items()
+                if pair[1] in entity_ids_now
+                for i in pair
+            }
+            # The old ids of the edges re-keyed into a derived edge, and of
+            # those dropped: no claim.
+            retired_edges = {
+                old for old, new in derived.id_remap.items() if new in edge_ids_now
+            } | {i for i in derived.dropped if i not in claim_ids_now}
+            if merged or retired_edges:
+                # Their old ids need not cite the removed text units (another
+                # spelling merged in, or an edge re-pointed at it): once the
+                # items are written, a retry finds them through this note
+                # only, and strips them again. Noted: the entities on both
+                # sides of a merge and the edges re-keyed or dropped. Not a
+                # split's part and origin: a split keeps the stored id, and
+                # stripping them again on a retry gave a claim the wrong
+                # subject.
                 doing = "Noting the pending strip"
                 self._note_pending_strip(
                     suffix,
+                    sorted(merged | _noted(earlier_notes or {}, "entity_ids")),
                     sorted(
-                        {
-                            *(
-                                i
-                                for pair in derived.id_remap.items()
-                                if pair[1] in entity_ids_now
-                                for i in pair
-                            ),
-                            *(i for pair in derived.split_from.items() for i in pair),
-                            *_noted(earlier_notes or {}, "entity_ids"),
-                        }
-                    ),
-                    sorted(
-                        {
-                            *(
-                                old
-                                for old, new in derived.id_remap.items()
-                                if new in edge_ids_now
-                            ),
-                            *(i for i in derived.dropped if i not in claim_ids_now),
-                            *_noted(earlier_notes or {}, "relationship_ids"),
-                        }
+                        retired_edges | _noted(earlier_notes or {}, "relationship_ids")
                     ),
                 )
                 noted = True

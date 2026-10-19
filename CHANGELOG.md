@@ -1286,6 +1286,13 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Incremental indexing: a removal that both merges and splits spellings
+  ("Acme Ltd" into "ACME Inc", "Acme" split off) and is killed between its
+  writes and the deletion of the old ids is resumed to a full build's
+  result. Its note also named the split-off spelling and its origin, and
+  stripping those again gave a claim the wrong subject (8 of 32 crash
+  points); the note now names the merged entities and the re-keyed or
+  dropped edges only (#PR).
 - The Neptune edge rewrite (#377) looks each endpoint vertex up once; it
   looked the target up twice, to check it and to add the edge (#PR).
 - The incremental community walk tells a hub by a neighbour count the graph
