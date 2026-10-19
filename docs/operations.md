@@ -675,7 +675,7 @@ model or credential error fails a query rather than answering from no context.
 | Message (abridged) | Meaning | Action |
 |---|---|---|
 | `No indices found for suffix '<suffix>' ...` | Nothing was ingested under that suffix | Ingest, or query the corpus's suffix |
-| `InvalidFilterError: Unknown filter key(s) ...` / `... has no value (None)` / `... lists N values ...` | No store the strategy reads declares the filter key; a filter value is `None` (alone or in a list: OpenSearch rejects a `terms` query naming null); or a list filter holds more values than one `terms` query takes (`index.max_terms_count`, default 65,536) | Use a key the message lists; drop the `None` or give the value to match; narrow the list (or raise `max_terms_count` in `indexing.opensearch.index_settings` and reindex) |
+| `InvalidFilterError: Unknown filter key(s) ...` / `... has no value (None)` / `... range bound of None` / `... not a scalar` / `... lists N values ...` | No store the strategy reads declares the filter key; a filter value is `None` (alone, in a list or as a range bound: OpenSearch rejects such a query); a list holds a list or mapping; or a list filter holds more values than one `terms` query takes (`index.max_terms_count`, default 65,536) | Use a key the message lists; drop the `None` or give the value to match; list strings, numbers or booleans; narrow the list (or raise `max_terms_count` in `indexing.opensearch.index_settings` and reindex) |
 | LightRAG `mix` / `hybrid` returns nothing | No relationship index, or no keywords extracted | Check the relationships index exists; short queries fall back to the raw query only under `raw_query_fallback_max_len` |
 
 ### Local mode
