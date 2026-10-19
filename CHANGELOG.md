@@ -1315,13 +1315,13 @@ changed once with the full-config keys (#332).
   a filtered expansion's entities no longer scans a hub's whole fan-out on
   Gremlin (server traversers bounded per vertex; a 90,000-edge hub: 382 to
   192 ms) nor the label's whole edge index on SQLite (500,000 edges: 210 to
-  18 ms a call) (#PR).
+  18 ms a call) (#387).
 - Filtered graph expansion without a relationships index
   (`build_relationship_vector_index: false`, or the index missing at query
   time) no longer keeps the seeds alone: no walked edge could pass, so a
   filtered local or DRIFT query silently dropped every expanded entity. The
   entities-index check alone then decides, as before #381; a missing index
-  is logged (#PR).
+  is logged (#387).
 - Incremental indexing: a removal that both merges and splits spellings
   ("Acme Ltd" into "ACME Inc", "Acme" split off) and is killed between its
   writes and the deletion of the old ids is resumed to a full build's
