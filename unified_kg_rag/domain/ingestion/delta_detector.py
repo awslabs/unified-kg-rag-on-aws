@@ -367,16 +367,23 @@ def retired_scope_groups(
                 "source scope is empty"
             )
         if own in normalized:
-            # A bare value that is this run's directory may still name
-            # another corpus's source_scope: retiring that reading on a
-            # guess deleted the other corpus.
-            hint = (
-                f" As a name, {value!r} may also be another corpus's "
-                "source_scope; to retire that scope, run from a working "
-                f"directory where {value!r} is not this run's directory."
-                if ambiguous
-                else ""
-            )
+            # A bare value is a name (its first reading) and a path: the
+            # other reading may be another corpus, so it is never retired on
+            # a guess; the hint names the explicit form for it.
+            hint = ""
+            if ambiguous and normalized[0] == own:
+                hint = (
+                    f" To retire the directory {value!r} instead, give it as "
+                    f"'./{value.strip()}'."
+                )
+            elif ambiguous:
+                hint = (
+                    f" As a name, {value!r} may also be another corpus's "
+                    "source_scope; to retire that scope, run from a working "
+                    f"directory where {value!r} is not this run's directory, "
+                    "with the same configuration (the same stores and "
+                    "doc-status registry, e.g. the same --config-path)."
+                )
             raise ConfigurationError(
                 "indexing.retire_source_scopes / --retire-source-scope: "
                 f"{value!r} is this run's own source scope. Retiring it would "

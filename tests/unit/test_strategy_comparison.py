@@ -369,6 +369,19 @@ class TestMusique:
         assert musique._file_name("ＡＢ", taken) == "ＡＢ.txt"
         assert musique._file_name("ab", taken) == "ab (2).txt"
 
+    def test_the_full_file_pairs_an_id_with_its_unanswerable_twin(
+        self, tmp_path: Path
+    ) -> None:
+        # Before, musique_full_v1.0_dev.jsonl was refused as repeating every
+        # id: it carries each question once answerable, once not.
+        source = tmp_path / "full.jsonl"
+        answerable = _musique_line("2hop__1_2", [0], ["Vendor", "Buyer"])
+        twin = json.loads(answerable)
+        twin["answerable"] = False
+        source.write_text(f"{answerable}\n{json.dumps(twin)}\n", encoding="utf-8")
+        counts = musique.prepare(source, tmp_path / "out")
+        assert counts["questions"] == 1
+
     def test_limit_samples_with_the_seed_and_refuses_a_used_corpus(
         self, tmp_path: Path
     ) -> None:

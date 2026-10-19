@@ -185,10 +185,15 @@ class OTelTracerBackend:
             except Exception as e:
                 otel_span.set_attribute(ERROR_TYPE, type(e).__name__)
                 raise
-            except (KeyboardInterrupt, SystemExit) as e:
-                # start_as_current_span leaves these (BaseException) UNSET:
-                # an interrupted query or stage would export as a success.
-                if not isinstance(e, SystemExit) or e.code not in (0, None):
+            except BaseException as e:
+                # start_as_current_span leaves a BaseException UNSET, so an
+                # interrupted (KeyboardInterrupt, SIGTERM's SystemExit) or
+                # cancelled (asyncio.CancelledError: a query coroutine on
+                # Ctrl-C, or a host cancelling ainvoke) span would export as
+                # a success. Not an error: a closed generator, a clean exit.
+                if not isinstance(e, GeneratorExit) and not (
+                    isinstance(e, SystemExit) and e.code in (0, None)
+                ):
                     otel_span.set_attribute(ERROR_TYPE, type(e).__name__)
                     otel_span.set_status(Status(StatusCode.ERROR, type(e).__name__))
                 raise

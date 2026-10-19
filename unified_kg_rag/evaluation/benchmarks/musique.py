@@ -91,8 +91,10 @@ def _items(source: Path) -> Iterator[dict[str, Any]]:
                     "'answerable' and a 'paragraphs' list of objects with a "
                     "string 'paragraph_text')"
                 )
-            if "id" in item:
+            if item.get("answerable", True):
                 # Query ids key the results: a repeated one would merge two.
+                # Only answerable items become queries: the full files pair
+                # every question with an unanswerable twin of the same id.
                 if str(item["id"]) in seen:
                     raise InvalidBenchmarkDataError(
                         f"{source}:{number} repeats the id {item['id']!r}"

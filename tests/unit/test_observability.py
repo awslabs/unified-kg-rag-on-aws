@@ -290,6 +290,39 @@ def test_an_interrupted_span_is_an_error(tracing: Tracing, stop) -> None:
     assert _attrs(span)["error.type"] == stop.__name__
 
 
+def test_a_cancelled_span_is_an_error(tracing: Tracing) -> None:
+    # Before, a query coroutine cancelled on Ctrl-C/SIGTERM (or by a host
+    # cancelling ainvoke) exported its span as UNSET.
+    exporter = tracing()
+
+    async def query() -> None:
+        with observability.span("kg_rag.query"):
+            await asyncio.sleep(10)
+
+    async def main() -> None:
+        task = asyncio.create_task(query())
+        await asyncio.sleep(0.05)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(main())
+    span = _one(exporter, "kg_rag.query")
+    assert span.status.status_code == StatusCode.ERROR
+    assert _attrs(span)["error.type"] == "CancelledError"
+
+
+@pytest.mark.parametrize("stop", [GeneratorExit, SystemExit])
+def test_a_closed_generator_or_clean_exit_is_not_an_error(
+    tracing: Tracing, stop
+) -> None:
+    exporter = tracing()
+    with pytest.raises(stop):
+        with observability.span("kg_rag.query"):
+            raise stop() if stop is GeneratorExit else stop(0)
+    assert _one(exporter, "kg_rag.query").status.status_code == StatusCode.UNSET
+
+
 def test_span_records_namespaced_attributes_and_escaping_errors(
     tracing: Tracing,
 ) -> None:
