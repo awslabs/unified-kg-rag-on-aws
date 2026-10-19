@@ -434,6 +434,45 @@ def test_a_lineage_update_clears_the_filter_keys_an_item_lost(
     ]
 
 
+def test_pruning_communities_keeps_the_text_units_filters(
+    harness: StoreHarness,
+) -> None:
+    # Regression: the prune of deleted communities' ids wrote the units it
+    # built with no attributes through the filter-clearing update, nulling
+    # every stored filter key: an unchanged document's units dropped out of
+    # filtered retrieval for good, and later derivations lost the filters.
+    h = harness
+    h.initialize()
+    units = [
+        u.model_copy(update={"community_ids": ["c-gone", "c-kept"]})
+        for u in _text_units()
+    ]
+    assert h.vector_indexer.index_text_units(units).failed_items == 0
+    stats = h.vector_indexer.prune_text_unit_communities(["c-gone"], suffix=_SUFFIX)
+    assert stats.failed_items == 0, stats.errors
+    o = _prefixes(h)
+    results = _search(
+        h,
+        *(
+            _query(
+                "", o.text_units_index_prefix, search_type=SearchType.LEXICAL, filters=f
+            )
+            for f in (
+                {"attr_category": "logistics"},
+                {"attributes.filters.category": "contract"},
+                {"community_ids": "c-gone"},
+                {"community_ids": "c-kept"},
+            )
+        ),
+    )
+    assert [sorted(r.source for r in hits) for hits in results] == [
+        ["t2"],
+        ["t1"],
+        [],
+        ["t1", "t2", "t3"],
+    ]
+
+
 def test_untranslated_korean_corpus_has_lexical_recall(harness: StoreHarness) -> None:
     # A Korean corpus with a Korean target is never translated, so only the
     # ``text`` field carries it, with the source-language analyzer (nori, or

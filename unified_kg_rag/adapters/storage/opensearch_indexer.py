@@ -726,8 +726,14 @@ class OpenSearchIndexer(VectorIndexer):
                 prefix, sorted(found), suffix, fields=["id", "community_ids"]
             )
         ]
+        # ``community_ids`` only: these units are built without their
+        # attributes, and writing their (absent) filters would null every
+        # stored filter key of an unchanged document's units.
         return self._update_fields(
-            units, prefix, lambda u: {"community_ids": list(u.community_ids or [])}
+            units,
+            prefix,
+            lambda u: {"community_ids": list(u.community_ids or [])},
+            with_filters=False,
         )
 
     def read_text_unit_attributes(
@@ -950,6 +956,7 @@ class OpenSearchIndexer(VectorIndexer):
             lambda c: {
                 "text_unit_ids": list(c.text_unit_ids or []),
             },
+            with_filters=True,
         )
 
     def upsert_text_units(self, text_units: list[TextUnit]) -> IndexingStats:
@@ -970,6 +977,7 @@ class OpenSearchIndexer(VectorIndexer):
                 "text_unit_ids": list(e.text_unit_ids or []),
                 "rank": e.rank if e.rank is not None else 1.0,
             },
+            with_filters=True,
         )
 
     def update_relationship_lineage(
@@ -985,6 +993,7 @@ class OpenSearchIndexer(VectorIndexer):
                 "weight": r.weight if r.weight is not None else 1.0,
                 "rank": r.rank if r.rank is not None else 1.0,
             },
+            with_filters=True,
         )
 
     def _update_fields(
@@ -992,12 +1001,18 @@ class OpenSearchIndexer(VectorIndexer):
         items: list[Any],
         alias_prefix: str,
         fields: Callable[[Any], dict[str, Any]],
+        *,
+        with_filters: bool,
     ) -> IndexingStats:
-        """Partially update ``items`` by id in their suffix's live index,
-        ``fields`` plus the items' document filters (``_filter_update``).
+        """Partially update ``items`` by id in their suffix's live index:
+        ``fields``, and with ``with_filters`` the items' document filters
+        (``_filter_update``), which clears the stored keys an item lacks.
 
-        A suffix without a live index, or an item without a document, has
-        nothing to update.
+        ``with_filters`` only for items that carry their current filters (a
+        lineage update's derived entities, relationships and claims); an
+        item built for a field-only update has no filters to write, and
+        writing them would null the stored ones. A suffix without a live
+        index, or an item without a document, has nothing to update.
         """
         stats = IndexingStats(total_items=len(items))
         for suffix, chunk in self._group_items_by_suffix(items).items():
@@ -1007,22 +1022,30 @@ class OpenSearchIndexer(VectorIndexer):
                 if not index_name:
                     stats.add_success(len(chunk))
                     continue
-                stored = {
-                    source["id"]: source
-                    for source in self._read_sources(
-                        alias_prefix,
-                        [item.id for item in chunk],
-                        suffix,
-                        fields=[f"{ATTRIBUTE_KEY_PREFIX}*", "attributes"],
-                    )
-                }
+                stored = (
+                    {
+                        source["id"]: source
+                        for source in self._read_sources(
+                            alias_prefix,
+                            [item.id for item in chunk],
+                            suffix,
+                            fields=[f"{ATTRIBUTE_KEY_PREFIX}*", "attributes"],
+                        )
+                    }
+                    if with_filters
+                    else {}
+                )
                 response = self.opensearch_client.bulk_update(
                     index_name,
                     [
                         {
                             "id": item.id,
                             **fields(item),
-                            **self._filter_update(item, stored.get(item.id) or {}),
+                            **(
+                                self._filter_update(item, stored.get(item.id) or {})
+                                if with_filters
+                                else {}
+                            ),
                         }
                         for item in chunk
                     ],
