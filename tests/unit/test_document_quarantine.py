@@ -473,3 +473,29 @@ def test_a_run_that_lost_its_lease_closes_its_attempts_unless_another_holds_it(
     assert (harness.store.lease_holder("ns") or ("",))[0] == (
         "other" if holder == "another run" else ""
     )
+
+
+def test_a_quarantined_document_restored_after_an_interrupted_removal() -> None:
+    # c.txt's edit keeps killing the run: it is quarantined with its indexed
+    # version kept. Deleting it is killed after the vector copies went. Back
+    # with the edit, it was read as unchanged and kept a record listing text
+    # units the stores no longer held; now it is quarantined again at once
+    # (no further death) with nothing of it left.
+    harness = IncrementalRun()
+    indexed = {**_A, **_C}
+    harness.run(indexed)
+    edited = {**_A, "/c/c.txt": [[("Seller", "Bank", 1)]]}
+    harness.crash_on = lambda paths: "/c/c.txt" in paths
+    for _ in range(3):
+        assert harness.run(edited)
+    harness.run(edited)
+    assert _record_of(harness, "/c/c.txt", edited).status is DocStatus.QUARANTINED
+    assert harness.state() == expected_state(indexed)
+
+    assert harness.run(_A, interrupt="mid_removal", k=2)
+    harness.run(edited)
+
+    record = _record_of(harness, "/c/c.txt", edited)
+    assert (record.status, record.text_unit_ids) == (DocStatus.QUARANTINED, [])
+    assert harness.extracted == []
+    assert harness.state() == expected_state(_A)

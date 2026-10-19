@@ -33,6 +33,7 @@ from unified_kg_rag.domain.models import (
     DocumentDelta,
     DocumentLineage,
 )
+from unified_kg_rag.ports import IndexingStats
 
 pytestmark = pytest.mark.unit
 
@@ -119,6 +120,54 @@ def test_crash_after_writes_then_new_docs_removed_leaves_no_orphans() -> None:
     corpus = FOLLOW_UPS["new_docs_removed"]
     harness.run(corpus)
     _assert_converged(harness, corpus)
+
+
+def test_deleted_docs_restored_after_an_interrupted_removal_are_reindexed() -> None:
+    # R1 deletes d and g; the run dies after the removal deleted the vector
+    # copies and before the graph ones. Restored unchanged, d and g were read
+    # as unchanged (their records still said PROCESSED) and their text
+    # units, vector entities and claims stayed lost.
+    harness = IncrementalRun()
+    harness.run(R0)
+
+    assert harness.run(R1, interrupt="mid_removal", k=2)
+    corpus = {**R1, "/c/d.txt": R0["/c/d.txt"], "/c/g.txt": R0["/c/g.txt"]}
+    harness.run(corpus)
+
+    assert {"/c/d.txt", "/c/g.txt"} <= set(harness.extracted)
+    _assert_converged(harness, corpus)
+
+
+def test_a_deleted_doc_restored_after_a_failed_removal_is_reindexed() -> None:
+    # Removing d deletes its vector copies, then the graph delete fails: the
+    # removal reports it and keeps d's record. d restored unchanged must be
+    # indexed again, not read as unchanged over its deleted copies.
+    harness = IncrementalRun()
+    before: Corpus = {
+        "/c/a.txt": [[("Vendor", "Depot", 1)]],
+        "/c/d.txt": [[("Buyer", "Bank", 1)]],
+    }
+    harness.run(before)
+
+    def failing(ids: list[str], suffix: str | None = None) -> IndexingStats:
+        stats = IndexingStats(total_items=len(ids))
+        stats.add_error("timed out", count=len(ids))
+        return stats
+
+    inc = IncrementalIndexer(harness.store, harness.manager)
+    delta, _ = detect_delta([document("/c/a.txt", before["/c/a.txt"])], inc.doc_status)
+    original = harness.graph.delete_by_id
+    harness.graph.delete_by_id = failing  # type: ignore[method-assign]
+    try:
+        assert inc.remove_changed_and_deleted(delta) is False
+    finally:
+        harness.graph.delete_by_id = original  # type: ignore[method-assign]
+    record = harness.store.get(delta.deleted[0])
+    assert record is not None and record.status is DocStatus.PENDING
+
+    harness.run(before)
+    assert harness.extracted == ["/c/d.txt"]
+    _assert_converged(harness, before)
 
 
 @pytest.mark.parametrize("k", [1, 2, 3, 4])

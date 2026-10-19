@@ -38,6 +38,7 @@ from tests.integration.test_embedded_e2e import (
 )
 from unified_kg_rag.adapters.storage.opensearch_indexer import OpenSearchIndexer
 from unified_kg_rag.adapters.storage.sqlite_graph_indexer import SQLiteGraphIndexer
+from unified_kg_rag.application.storage.indexing_manager import IndexingManager
 from unified_kg_rag.domain.models import PipelineStageStatus
 
 pytestmark = [pytest.mark.integration, pytest.mark.usefixtures("no_aws")]
@@ -56,6 +57,7 @@ NAMES = (
     "Acme Ltd",
     "Acme LLC",
     "Acme",
+    "ACME",
 )
 TYPES = {"goods": "ORGANIZATION", "parts": "PERSON", "cash": "LOCATION"}
 
@@ -156,10 +158,12 @@ def _state(
     die_at: tuple[Any, ...] = ("upsert_claims", 1, False),
     gleaning: bool = False,
     suffix: str | None = None,
+    resume: bool = True,
 ) -> dict[str, list[tuple]]:
     """The stored entities, edges and claims after indexing ``corpora`` one
     after the other (run ``repeat`` twice under its pipeline id; run
-    ``die_in`` killed at ``die_at``, then resumed under its id).
+    ``die_in`` killed at ``die_at``, then resumed under its id, or, without
+    ``resume``, followed by the next corpus).
 
     ``die_at`` is a method, the call that dies (1 = the first), whether
     that call completes before the run dies and, optionally, the class
@@ -191,6 +195,8 @@ def _state(
                 pytest.raises(_Died),
             ):
                 _ingest(config, providers, source, tmp / f"run-{run}")
+            if not resume:
+                continue
         for _ in range(2 if run == repeat else 1):
             context = _ingest(config, providers, source, tmp / f"run-{run}")
             assert context.status is PipelineStageStatus.COMPLETED, _errors(context)
@@ -648,8 +654,6 @@ def test_a_spelling_re_keyed_into_another_is_not_a_split_origin(
     # edges derived again, its claims followed), but not when the derivation
     # re-keyed it into the derived entity: that costs reads and leaves the
     # result as it is.
-    from unified_kg_rag.application.storage.indexing_manager import IndexingManager
-
     derive = mocker.spy(IndexingManager, "derive")
 
     _state(tmp_path, runs)
@@ -847,3 +851,117 @@ def test_a_finished_removal_deletes_its_strip_note(
     }
     assert notes
     assert notes <= {key for call in deleted.call_args_list for key in call.args[1]}
+
+
+def test_a_document_restored_after_an_interrupted_removal_is_indexed_again(
+    tmp_path: Path,
+) -> None:
+    # The second run deletes a.txt and is killed once the removal deleted its
+    # vector copies. a.txt restored unchanged was read as unchanged (its
+    # record still said PROCESSED): its text units, vector entities and
+    # claims were lost, and the store probe failed every later run with
+    # "the vector store does not hold" its text units.
+    a = "Acme and Buyer trade goods 1."
+    runs = [{"a.txt": a}, {"b.txt": "Depot trade cash 1."}]
+    restored = {**runs[1], "a.txt": a}
+
+    full = _state(tmp_path / "full", [restored])
+    incremental = _state(
+        tmp_path / "inc",
+        [*runs, restored],
+        die_in=1,
+        die_at=("delete_document_artifacts", 1, True),
+        resume=False,
+    )
+
+    assert incremental == full
+
+
+@pytest.mark.parametrize(
+    ("runs", "die_at", "gleaning"),
+    [
+        pytest.param(
+            [
+                {
+                    "d6.txt": "Buyer and Acme Corp and Acme Ltd trade goods 1. Acme "
+                    "Ltd trade cash 1.",
+                    "d2.txt": "Buyer trade goods 2.",
+                },
+                {
+                    "d2.txt": "Buyer trade goods 2. Acme and Depot trade parts 1.",
+                    "r0.txt": "Buyer and Acme Corp and Acme Ltd trade goods 1. Acme "
+                    "Ltd trade cash 1.",
+                    "d1.txt": "Acme Inc and Acme and Acme Ltd trade cash 3. Depot "
+                    "and Acme Corp and Acme LLC trade goods 3.",
+                },
+            ],
+            ("upsert_entities", 1, False, SQLiteGraphIndexer),
+            True,
+            id="a-moved-document",
+        ),
+        pytest.param(
+            [
+                {"a.txt": "Buyer trade goods 2."},
+                {
+                    "a.txt": "Buyer trade goods 2. Acme and Depot trade goods 1.",
+                    "b.txt": "Buyer and Acme Corp trade goods 1.",
+                    "c.txt": "Acme and Acme Corp trade goods 3.",
+                },
+            ],
+            ("upsert_entities", 1, False, SQLiteGraphIndexer),
+            False,
+            id="an-edited-document",
+        ),
+    ],
+)
+def test_a_resumed_run_derives_the_claims_its_removal_re_derived(
+    tmp_path: Path,
+    runs: list[dict[str, str]],
+    die_at: tuple[Any, ...],
+    gleaning: bool,
+) -> None:
+    # Killed after the delta's claims were written and before its entities,
+    # the run is resumed. Its removal strips the killed run's claim of a
+    # delta unit and derives it against a graph without the delta's
+    # entities, under an id the delta does not write: the commit kept that
+    # copy next to its own, a duplicate claim.
+    full = _state(tmp_path / "full", [runs[-1]], gleaning=gleaning)
+    incremental = _state(
+        tmp_path / "inc", runs, die_in=1, die_at=die_at, gleaning=gleaning
+    )
+
+    assert incremental == full
+
+
+def test_a_removal_resumed_with_a_note_derives_the_claims_it_re_keyed(
+    tmp_path: Path,
+) -> None:
+    # The third run's removal merges spellings, notes them and re-keys a
+    # claim onto a noted entity, and is killed once the claims were
+    # stripped. The claim then cites no removed unit: the next run (an
+    # edited corpus) removed the units again without finding it, and the
+    # orphan stayed next to the claim a full build derives.
+    d3 = "Acme LLC trade parts 3. Acme LLC and Acme Corp and Acme Ltd trade cash 2."
+    d0 = "ACME and Buyer and Acme Ltd trade parts 3. ACME Inc and Buyer trade parts 1."
+    runs = [
+        {"d2.txt": "Acme Corp trade parts 3."},
+        {"d2.txt": "ACME Inc trade parts 3.", "d3.txt": d3, "d0.txt": d0},
+        {"d2.txt": "Acme Ltd trade parts 3.", "d3.txt": d3, "d0.txt": d0},
+        {
+            "d2.txt": "Acme Ltd trade parts 3.",
+            "d3.txt": d3,
+            "d0.txt": d0.replace("and Acme Ltd", "and Acme Corp"),
+        },
+    ]
+
+    full = _state(tmp_path / "full", [runs[-1]], gleaning=True)
+    incremental = _state(
+        tmp_path / "inc",
+        runs,
+        die_in=2,
+        die_at=("_remove_text_units_from_claims", 1, True, IndexingManager),
+        gleaning=True,
+        resume=False,
+    )
+
+    assert incremental == full

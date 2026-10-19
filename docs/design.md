@@ -470,7 +470,8 @@ unless noted.
    before anything is written.
 3. **Stale cleanup** (`remove_changed_and_deleted`). The text units of changed
    and deleted documents are removed in one pass per suffix (step 5), so an
-   artifact only they state goes too.
+   artifact only they state goes too. Deleted documents are first recorded
+   `PENDING`, so one restored before its removal finished reads changed.
 4. **Delta upsert** (`commit`). The stored entities and relationships the
    delta touches (found by compact name key, every stored name with fuzzy
    matching on) and the stored edges of its entities are read back, the delta

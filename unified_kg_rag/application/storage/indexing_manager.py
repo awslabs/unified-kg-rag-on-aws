@@ -78,6 +78,16 @@ def _pending_strip_keys(text_unit_ids: Iterable[str]) -> list[str]:
     return [f"{_PENDING_STRIP}{unit}" for unit in sorted(set(text_unit_ids))]
 
 
+def _noted(notes: Mapping[str, Mapping[str, Any]], field: str) -> set[str]:
+    """The ids the strip notes ``notes`` list under ``field``."""
+    return {
+        i
+        for note in notes.values()
+        for i in note.get(field) or []
+        if isinstance(i, str)
+    }
+
+
 def _other_spellings_of_parts(
     split_from: Mapping[str, str], derived: Mapping[str, Entity]
 ) -> list[str]:
@@ -633,7 +643,9 @@ class IndexingManager:
 
         The stored claims about an entity the graph merge re-keyed are
         derived too, so they follow its new id (ids follow the current name,
-        see ``derivation``).
+        see ``derivation``), and so are those citing a delta text unit (a
+        resumed run's removal derived the killed run's claims of the delta
+        against a graph without the delta's entities).
         """
         if not (claims or self._rekeyed or self._split_from or self._renamed):
             return claims
@@ -650,10 +662,26 @@ class IndexingManager:
                 sorted({c.id for c in group}), suffix=suffix
             )
             group = merge_claims(stored, group) if stored else group
+            units = [u for u in text_units if BaseIndexer.get_suffix(u) == suffix]
             # The stored claims about an entity the graph merge re-keyed
-            # follow it (see merge_with_existing_graph).
+            # follow it (see merge_with_existing_graph), and those citing a
+            # delta text unit are derived with the delta's: a resumed
+            # removal may have derived one the killed run wrote under an id
+            # this delta does not write.
+            citing = (
+                self._vector_citing(
+                    self.config.indexing.opensearch.claims_index_prefix,
+                    [u.id for u in units],
+                    suffix,
+                )
+                if units
+                else {}
+            )
             about = sorted(
-                set(self._claims_about(suffix, self._rederived_entity_ids(suffix)))
+                (
+                    set(self._claims_about(suffix, self._rederived_entity_ids(suffix)))
+                    | set(citing)
+                )
                 - {c.id for c in group}
             )
             for claim in self.opensearch_indexer.read_claims(about, suffix=suffix):
@@ -668,13 +696,7 @@ class IndexingManager:
                 # Nothing stored: the delta claims are the full build's.
                 merged.extend(group)
                 continue
-            merged.extend(
-                self._derive_claims(
-                    suffix,
-                    group,
-                    [u for u in text_units if BaseIndexer.get_suffix(u) == suffix],
-                )
-            )
+            merged.extend(self._derive_claims(suffix, group, units))
         return merged if claims is not None or merged else claims
 
     def _merge_suffix(
@@ -1941,6 +1963,9 @@ class IndexingManager:
                 if resumed
                 else {}
             )
+            # A claim the earlier strip re-keyed onto a noted entity cites no
+            # removed unit: it is found through its subject or object.
+            noted_claims = self._claims_about(suffix, _noted(notes, "entity_ids"))
         except Exception as e:  # noqa: BLE001 - reported as failed items
             logger.error("Finding the removed text units' items failed: %s", e)
             stats = IndexingStats(total_items=len(text_unit_ids))
@@ -1982,20 +2007,15 @@ class IndexingManager:
             }
         )
         if notes:
-
-            def noted(field: str) -> set[str]:
-                return {
-                    i
-                    for note in notes.values()
-                    for i in note.get(field) or []
-                    if isinstance(i, str)
-                }
-
             shared_entities = sorted(
-                (set(shared_entities) | noted("entity_ids")) - set(doomed)
+                (set(shared_entities) | _noted(notes, "entity_ids")) - set(doomed)
             )
             shared_relationships = sorted(
-                (set(shared_relationships) | noted("relationship_ids")) - set(doomed)
+                (set(shared_relationships) | _noted(notes, "relationship_ids"))
+                - set(doomed)
+            )
+            shared_claims = sorted(
+                (set(shared_claims) | set(noted_claims)) - set(doomed)
             )
         logger.info(
             "Removing %d artifacts of %d text units in '%s'; stripping %d "

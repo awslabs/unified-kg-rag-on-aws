@@ -1286,6 +1286,24 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- A document deleted from the corpus and restored before its removal
+  finished (the removal failed partway, or the run was killed after deleting
+  its vector copies) is indexed again. Its registry record still said
+  `PROCESSED`, so it was read as unchanged and its text units, entity and
+  relationship vectors and claims were lost for good, and the store probe
+  then failed every later run with "the vector store does not hold" its text
+  units. Deleted documents are now recorded `PENDING` before their removal,
+  like changed ones (#383).
+- A run resumed after being killed between writing the delta's claims and
+  its entities no longer keeps a duplicate claim: its removal derived the
+  killed run's claim of a delta text unit against a graph without the
+  delta's entities, under an id the delta does not write. The commit now
+  also derives the stored claims citing a delta text unit (#383).
+- A removal resumed after its strip had merged spellings now also derives
+  the stored claims about the entities its note names: a claim the killed
+  strip re-keyed onto one of them cites no removed text unit, so it was
+  never found again and stayed as an orphan next to the claim a full build
+  derives (#383).
 - The error for a bare `--retire-source-scope` value whose reading is the
   run's own scope gives the right way out: `./<value>` when the own scope is
   the name, and, when it is the run's own directory, running from another
