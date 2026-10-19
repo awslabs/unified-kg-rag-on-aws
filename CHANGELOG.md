@@ -1294,6 +1294,11 @@ changed once with the full-config keys (#332).
   then failed every later run with "the vector store does not hold" its text
   units. Deleted documents are now recorded `PENDING` before their removal,
   like changed ones (#PR).
+- A run resumed after being killed between writing the delta's claims and
+  its entities no longer keeps a duplicate claim: its removal derived the
+  killed run's claim of a delta text unit against a graph without the
+  delta's entities, under an id the delta does not write. The commit now
+  also derives the stored claims citing a delta text unit (#PR).
 - The error for a bare `--retire-source-scope` value whose reading is the
   run's own scope gives the right way out: `./<value>` when the own scope is
   the name, and, when it is the run's own directory, running from another

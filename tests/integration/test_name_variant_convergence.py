@@ -875,3 +875,59 @@ def test_a_document_restored_after_an_interrupted_removal_is_indexed_again(
     )
 
     assert incremental == full
+
+
+@pytest.mark.parametrize(
+    ("runs", "die_at", "gleaning"),
+    [
+        pytest.param(
+            [
+                {
+                    "d6.txt": "Buyer and Acme Corp and Acme Ltd trade goods 1. Acme "
+                    "Ltd trade cash 1.",
+                    "d2.txt": "Buyer trade goods 2.",
+                },
+                {
+                    "d2.txt": "Buyer trade goods 2. Acme and Depot trade parts 1.",
+                    "r0.txt": "Buyer and Acme Corp and Acme Ltd trade goods 1. Acme "
+                    "Ltd trade cash 1.",
+                    "d1.txt": "Acme Inc and Acme and Acme Ltd trade cash 3. Depot "
+                    "and Acme Corp and Acme LLC trade goods 3.",
+                },
+            ],
+            ("upsert_entities", 1, False, SQLiteGraphIndexer),
+            True,
+            id="a-moved-document",
+        ),
+        pytest.param(
+            [
+                {"a.txt": "Buyer trade goods 2."},
+                {
+                    "a.txt": "Buyer trade goods 2. Acme and Depot trade goods 1.",
+                    "b.txt": "Buyer and Acme Corp trade goods 1.",
+                    "c.txt": "Acme and Acme Corp trade goods 3.",
+                },
+            ],
+            ("upsert_entities", 1, False, SQLiteGraphIndexer),
+            False,
+            id="an-edited-document",
+        ),
+    ],
+)
+def test_a_resumed_run_derives_the_claims_its_removal_re_derived(
+    tmp_path: Path,
+    runs: list[dict[str, str]],
+    die_at: tuple[Any, ...],
+    gleaning: bool,
+) -> None:
+    # Killed after the delta's claims were written and before its entities,
+    # the run is resumed. Its removal strips the killed run's claim of a
+    # delta unit and derives it against a graph without the delta's
+    # entities, under an id the delta does not write: the commit kept that
+    # copy next to its own, a duplicate claim.
+    full = _state(tmp_path / "full", [runs[-1]], gleaning=gleaning)
+    incremental = _state(
+        tmp_path / "inc", runs, die_in=1, die_at=die_at, gleaning=gleaning
+    )
+
+    assert incremental == full
