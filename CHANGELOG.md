@@ -1807,6 +1807,13 @@ changed once with the full-config keys (#332).
   5,000 edges: 5,000 edges read, now 64). `unclustered_stored_entities`
   counts the stored entities without a community the walk reached, a lower
   bound (#368).
+- That walk also stops at a hub when another delta component, one that
+  can never reach `min_community_size`, is walked in the same run: a hub's
+  edges are read a batch at a time only while a component walking through
+  it is short of the size, and each component's size is counted as it
+  grows instead of rebuilt per batch. A hub of 50,000 edges next to such a
+  component: 782 reads of all 50,000 edges in 8.7 s, now one read of 64 in
+  0.15 s (#PR).
 - Incremental runs over several spellings of one name no longer depend on
   `PYTHONHASHSEED`: a stored entity's candidates were collected over its
   keys (a set), and a tie between equally good ones went to whichever came

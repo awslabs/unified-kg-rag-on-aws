@@ -1296,8 +1296,27 @@ def _components_reaching(
     def grown(k: int) -> set[str]:
         return members[k] | {same(b) for n in frontier[k] for b in neighbors.get(n, ())}
 
-    # Edges are read a batch at a time and the hop stops once every open
-    # component reaches min_size: a hub's whole neighbourhood is not read.
+    def add(edges: Iterable[Relationship], suffix: str) -> list[tuple[str, str]]:
+        """Record the kept ``edges``; returns their (node, neighbour) pairs."""
+        added = []
+        for edge in edges:
+            if not kept(edge):
+                continue
+            for a, b in (
+                (edge.source_id, edge.target_id),
+                (edge.target_id, edge.source_id),
+            ):
+                if a in neighbors:
+                    neighbors[a].add(b)
+                    suffix_of.setdefault(b, suffix)
+                    added.append((a, b))
+        return added
+
+    # A hop reads the edges of its entities of at most ``step`` neighbours
+    # at once. A hub's are read a batch at a time, only while a component
+    # walking through it has not reached min_size (counted as it grows), so
+    # neither a component that reached it nor one that cannot reach it
+    # reads a hub's whole neighbourhood.
     step = max(min_size, _COMPONENT_EDGE_BATCH)
     while open_:
         hop = set().union(*(frontier[k] for k in open_)) - neighbors.keys()
@@ -1306,21 +1325,33 @@ def _components_reaching(
             for b in neighbors[node]:
                 suffix_of.setdefault(b, suffix_of[node])
         for suffix, group in by_suffix(hop).items():
-            ids = graph.find_incident_relationship_ids(group, suffix=suffix)
+            degree = graph.read_neighbor_ids(group, suffix=suffix)
+            hubs = sorted(n for n in group if len(degree.get(n, ())) > step)
+            small = [n for n in group if n not in set(hubs)]
+            ids = (
+                graph.find_incident_relationship_ids(small, suffix=suffix)
+                if small
+                else []
+            )
             for start in range(0, len(ids), step):
-                batch = ids[start : start + step]
-                for edge in graph.read_relationships(batch, suffix=suffix):
-                    if not kept(edge):
-                        continue
-                    for a, b in (
-                        (edge.source_id, edge.target_id),
-                        (edge.target_id, edge.source_id),
-                    ):
-                        if a in neighbors:
-                            neighbors[a].add(b)
-                            suffix_of.setdefault(b, suffix)
-                if all(len(grown(k)) >= min_size for k in open_):
-                    break
+                add(
+                    graph.read_relationships(ids[start : start + step], suffix=suffix),
+                    suffix,
+                )
+            for hub in hubs:
+                owners = [k for k in sorted(open_) if hub in frontier[k]]
+                seen = {k: grown(k) for k in owners}
+                ids = graph.find_incident_relationship_ids([hub], suffix=suffix)
+                for start in range(0, len(ids), step):
+                    if all(len(seen[k]) >= min_size for k in owners):
+                        break
+                    edges = graph.read_relationships(
+                        ids[start : start + step], suffix=suffix
+                    )
+                    for a, b in add(edges, suffix):
+                        for k in owners:
+                            if a in frontier[k]:
+                                seen[k].add(same(b))
         for k in sorted(open_):
             new = grown(k) - members[k]
             members[k] |= new

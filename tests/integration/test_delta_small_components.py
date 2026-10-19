@@ -190,10 +190,19 @@ def test_a_deleted_community_leaves_no_id_on_its_surviving_members(
 no_aws = e2e.no_aws
 
 
-def test_the_walk_stops_at_min_size_on_a_hub(tmp_path: Path, mocker) -> None:
+@pytest.mark.parametrize(
+    "lone",
+    [[], [{"lone-a", "lone-b"}]],
+    ids=["hub-only", "with-a-component-that-cannot-reach-min-size"],
+)
+def test_the_walk_stops_at_min_size_on_a_hub(
+    tmp_path: Path, mocker, lone: list[set[str]]
+) -> None:
     # A delta component linked to a hub of 500 stored neighbours reaches
     # min_community_size within the hub's first edges: the walk reads a
-    # batch of them, not the hub's whole neighbourhood.
+    # batch of them, not the hub's whole neighbourhood, also when another
+    # delta component that can never reach it is walked alongside (the walk
+    # used to read on until every component had reached it).
     from unified_kg_rag.application.ingestion import pipeline_stages as ps
     from unified_kg_rag.domain.models import Entity, Relationship
 
@@ -221,7 +230,7 @@ def test_the_walk_stops_at_min_size_on_a_hub(tmp_path: Path, mocker) -> None:
         )
         read = mocker.spy(graph, "read_relationships")
 
-        found, _ = ps._components_reaching(graph, [{"hub", "new"}], {}, set(), 3)
+        found, _ = ps._components_reaching(graph, [{"hub", "new"}, *lone], {}, set(), 3)
 
         assert found == {"hub", "new"}
         assert sum(len(call.args[0]) for call in read.call_args_list) <= 64
