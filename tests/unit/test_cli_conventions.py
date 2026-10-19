@@ -668,3 +668,39 @@ def test_a_json_run_that_exits_with_an_error_prints_a_failed_status(
         "status": "failed",
         "exit_code": code,
     }
+
+
+def test_a_stopped_cli_leaves_no_pool_worker_running() -> None:
+    # Old behaviour: os._exit left the abandoned process pool's workers
+    # running on (a local kill; a container stops them with the task).
+    import subprocess
+    import textwrap
+    import time
+
+    script = textwrap.dedent("""
+        import os, signal, threading, time
+        from concurrent.futures import ProcessPoolExecutor
+        from unified_kg_rag.application.cli.conventions import exits_on_sigterm
+        from unified_kg_rag.shared.utils.concurrency import shut_down_after
+
+        @exits_on_sigterm
+        def main():
+            with shut_down_after(ProcessPoolExecutor(max_workers=2)) as ex:
+                futures = [ex.submit(time.sleep, 30) for _ in range(4)]
+                time.sleep(1)
+                print(" ".join(str(p) for p in ex._processes), flush=True)
+                os.kill(os.getpid(), signal.SIGTERM)
+                futures[0].result()
+
+        main()
+    """)
+    result = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, timeout=60
+    )
+    assert result.returncode == 143
+    workers = [int(pid) for pid in result.stdout.split()]
+    assert len(workers) == 2
+    time.sleep(0.5)
+    for pid in workers:
+        with pytest.raises(ProcessLookupError):
+            os.kill(pid, 0)

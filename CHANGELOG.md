@@ -1279,6 +1279,8 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- A CLI stopped by a signal ends its process pool's worker processes
+  before it exits, so a local `kill` leaves none running (#PR).
 - A stop during entity resolution or MinHash deduplication cancels the
   process pool's queued tasks every time: #367 relied on the pool's
   manager thread reading a flag through a weak reference to the pool,
