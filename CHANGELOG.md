@@ -1299,7 +1299,7 @@ changed once with the full-config keys (#332).
   one request, and the LightRAG lineage check stops once the chunk stream
   can be filled. A range bound of `None` and a list item that is not a
   scalar are rejected (`InvalidFilterError`), as OpenSearch rejects them
-  (#PR).
+  (#381).
 - Incremental indexing: a removal whose strip merges two spellings of a
   name ("Initech" left stated only where "Initech Corp" is) and is killed
   after the merged entity is written, before the other spelling's old id is
@@ -3364,7 +3364,7 @@ changed once with the full-config keys (#332).
   are read from the graph and checked by id in the relationships index,
   one ids-only request; a vertex a failing and a passing path both reach is
   kept, and its `Path:` follows the passing one. Unfiltered queries are
-  unchanged (#PR).
+  unchanged (#381).
 - Removing a deleted community's id from the text units that name it no
   longer clears their document filters: the prune wrote the units it built
   without attributes through the lineage update, which since #370 nulls the
