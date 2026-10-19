@@ -342,6 +342,30 @@ class NeptuneIndexer(GraphIndexer):
         except Exception as e:
             raise AWSServiceError(f"Neptune read_neighbor_ids failed: {e}") from e
 
+    def count_neighbors(
+        self, entity_ids: list[str], suffix: str | None = None
+    ) -> dict[str, int]:
+        """Count the entities each entity is related to, in the store (see
+        :meth:`read_neighbor_ids`; no ids are returned). Raises
+        :class:`AWSServiceError` when the read fails."""
+        if not entity_ids:
+            return {}
+        entity_label = self._get_label(self.neptune_config.entity_label_prefix, suffix)
+        try:
+            rows = self._read_batches(
+                entity_ids,
+                lambda g, batch: g.V()
+                .hasLabel(entity_label)
+                .has("id", P.within(batch))
+                .project("id", "count")
+                .by("id")
+                .by(__.both().hasLabel(entity_label).values("id").dedup().count()),
+                "count_neighbors",
+            )
+            return {str(row["id"]): int(row["count"]) for row in rows}
+        except Exception as e:
+            raise AWSServiceError(f"Neptune count_neighbors failed: {e}") from e
+
     def read_entity_names(self, suffix: str | None = None) -> list[tuple[str, str]]:
         """Project ``(id, name)`` for all existing entities in the suffix's label.
 
@@ -562,23 +586,26 @@ class NeptuneIndexer(GraphIndexer):
         (the only sign of an edge not written).
         """
 
-        def target() -> GraphTraversal:
-            return __.V().hasLabel(entity_label).has("id", rel.target_id)
-
         edge = (
             g.E()
             .has("id", rel.id)
             .where(__.outV().hasLabel(entity_label))
             .fold()
             .as_("stored")
-            # Both endpoints first: without them nothing is dropped either.
+            # Both endpoints first, each looked up once: without them nothing
+            # is dropped either.
             .V()
             .hasLabel(entity_label)
             .has("id", rel.source_id)
-            .filter_(target())
+            .as_("source")
+            .V()
+            .hasLabel(entity_label)
+            .has("id", rel.target_id)
+            .as_("target")
             .sideEffect(__.select("stored").unfold().drop())
             .addE(relationship_label(rel))
-            .to(target())
+            .from_("source")
+            .to("target")
             .property("id", rel.id)
         )
         props = relationship_properties(rel, self.neptune_config.property_max_length)
@@ -677,7 +704,10 @@ class NeptuneIndexer(GraphIndexer):
                         results=True,
                     ):
                         return None
-                    return f"source entity '{rel.source_id}' not found"
+                    return (
+                        f"source entity '{rel.source_id}' or target entity "
+                        f"'{rel.target_id}' not found"
+                    )
                 except NamespaceLeaseError:
                     raise
                 except Exception as e:

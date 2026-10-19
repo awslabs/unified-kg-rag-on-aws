@@ -1286,6 +1286,18 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Incremental indexing: a removal that both merges and splits spellings
+  ("Acme Ltd" into "ACME Inc", "Acme" split off) and is killed between its
+  writes and the deletion of the old ids is resumed to a full build's
+  result. Its note also named the split-off spelling and its origin, and
+  stripping those again gave a claim the wrong subject (8 of 32 crash
+  points); the note now names the merged entities and the re-keyed or
+  dropped edges only (#384).
+- The Neptune edge rewrite (#377) looks each endpoint vertex up once; it
+  looked the target up twice, to check it and to add the edge (#384).
+- The incremental community walk tells a hub by a neighbour count the graph
+  store computes (`GraphIndexer.count_neighbors`, on Neptune and SQLite),
+  not by reading every neighbour id of the hop's entities (#384).
 - A document deleted from the corpus and restored before its removal
   finished (the removal failed partway, or the run was killed after deleting
   its vector copies) is indexed again. Its registry record still said
@@ -1331,9 +1343,12 @@ changed once with the full-config keys (#332).
   deleted, is finished by the resumed run. Neither spelling cites the
   removed text units any more, so the resumed removal found nothing to do
   and the other spelling stayed with its edges; the strip now notes the
-  items it merges in the extraction store (`pending-strip#<text unit id>`)
+  items it merges in one record of the extraction store (`pending-strip`)
   until their old ids are deleted. 5 of 24 crash points of one such removal
-  diverged from a full build; none do now (#379).
+  diverged from a full build; none do now (#379). #379 wrote that note in
+  full under every removed text unit: removing 20,000 text units with a
+  3,000-edge note wrote 20,000 records (2.4 GB) on every merging removal,
+  not only after a crash; it is now one record of 0.1 MB (#384).
 - Incremental indexing: when a spelling splits off a stored entity, the
   stored claims naming that spelling follow it even when they were resolved
   to another entity of the same name key ("Depot owes Acme Ltd" stayed on

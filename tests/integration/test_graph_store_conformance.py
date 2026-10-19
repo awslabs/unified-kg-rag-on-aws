@@ -314,6 +314,9 @@ def test_neighbor_incident_and_name_reads(harness: StoreHarness) -> None:
         "b": ["a"],
     }
     assert graph.read_neighbor_ids(["a"], suffix=tenant) == {"a": ["x"]}
+    # The count is the length of the neighbour list, unread entities absent.
+    assert graph.count_neighbors(["a", "ghost", "b"]) == {"a": 3, "b": 1}
+    assert graph.count_neighbors(["a"], suffix=tenant) == {"a": 1}
     assert graph.find_incident_relationship_ids(["b"], "default") == ["a-b"]
     assert graph.find_incident_relationship_ids(["a"], suffix=tenant) == ["s-r"]
     assert sorted(graph.read_entity_names()) == [("a", "A"), ("b", "B"), ("c", "C")]

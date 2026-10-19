@@ -85,6 +85,25 @@ def _dying(
     return dying
 
 
+def _failing(owner: type, method: str) -> Callable[..., Any]:
+    """``owner.<method>`` whose first call writes nothing and reports every
+    item failed."""
+    original = getattr(owner, method)
+    calls = {"n": 0}
+
+    def failing(self: Any, items: Any, *args: Any, **kwargs: Any) -> Any:
+        from unified_kg_rag.ports.indexer import IndexingStats
+
+        calls["n"] += 1
+        if calls["n"] != 1:
+            return original(self, items, *args, **kwargs)
+        stats = IndexingStats(total_items=len(items))
+        stats.add_error("store down", count=len(items))
+        return stats
+
+    return failing
+
+
 def _names_in(text: str) -> list[str]:
     found, rest = [], text
     for name in sorted(NAMES, key=len, reverse=True):
@@ -159,6 +178,7 @@ def _state(
     gleaning: bool = False,
     suffix: str | None = None,
     resume: bool = True,
+    fail_resumed_at: tuple[Any, ...] | None = None,
 ) -> dict[str, list[tuple]]:
     """The stored entities, edges and claims after indexing ``corpora`` one
     after the other (run ``repeat`` twice under its pipeline id; run
@@ -167,7 +187,9 @@ def _state(
 
     ``die_at`` is a method, the call that dies (1 = the first), whether
     that call completes before the run dies and, optionally, the class
-    (default the vector store's)."""
+    (default the vector store's). ``fail_resumed_at`` (a method and its
+    class) makes the resumed run's first call of it report every item
+    failed; that run fails and is resumed once more."""
     config = _config(tmp / "stores", tmp / "viz")
     config.processing.claim_extraction.enabled = True
     config.processing.gleaning.enabled = gleaning
@@ -197,6 +219,11 @@ def _state(
                 _ingest(config, providers, source, tmp / f"run-{run}")
             if not resume:
                 continue
+            if fail_resumed_at:
+                method, owner = fail_resumed_at
+                with patch.object(owner, method, _failing(owner, method)):
+                    context = _ingest(config, providers, source, tmp / f"run-{run}")
+                assert context.status is not PipelineStageStatus.COMPLETED
         for _ in range(2 if run == repeat else 1):
             context = _ingest(config, providers, source, tmp / f"run-{run}")
             assert context.status is PipelineStageStatus.COMPLETED, _errors(context)
@@ -789,14 +816,26 @@ def test_a_stale_edge_on_a_third_spelling_is_moved(tmp_path: Path) -> None:
         ),
     ],
 )
+@pytest.mark.parametrize(
+    "fail_resumed_at",
+    [
+        pytest.param(None, id="resumed-once"),
+        pytest.param(
+            ("upsert_entities", SQLiteGraphIndexer), id="resumed-run-fails-again"
+        ),
+    ],
+)
 def test_a_resumed_removal_finishes_the_merge_it_started(
-    tmp_path: Path, die_at: tuple[Any, ...]
+    tmp_path: Path,
+    die_at: tuple[Any, ...],
+    fail_resumed_at: tuple[Any, ...] | None,
 ) -> None:
     # Removing d1.txt leaves "Initech" stated only where "Initech Corp" is,
     # and the strip merges the two. Killed once "Initech" was written and
     # before the old "Initech Corp" was deleted, the resumed removal found
     # nothing citing d1.txt's unit (neither spelling does any more) and
-    # "Initech Corp" stayed with its edge.
+    # "Initech Corp" stayed with its edge. A resumed run whose strip fails
+    # again keeps the note for the next.
     runs = [
         {
             "d1.txt": "Initech trade goods 3.",
@@ -806,7 +845,14 @@ def test_a_resumed_removal_finishes_the_merge_it_started(
     ]
 
     full = _state(tmp_path / "full", [runs[-1]], gleaning=True)
-    incremental = _state(tmp_path / "inc", runs, die_in=1, die_at=die_at, gleaning=True)
+    incremental = _state(
+        tmp_path / "inc",
+        runs,
+        die_in=1,
+        die_at=die_at,
+        gleaning=True,
+        fail_resumed_at=fail_resumed_at,
+    )
 
     assert "Initech Corp" not in {e[1] for e in full["entities"]}
     assert incremental == full
@@ -847,7 +893,7 @@ def test_a_finished_removal_deletes_its_strip_note(
         key
         for call in written.call_args_list
         for key in call.args[1]
-        if key.startswith("pending-strip#")
+        if key.startswith("pending-strip")
     }
     assert notes
     assert notes <= {key for call in deleted.call_args_list for key in call.args[1]}
@@ -963,5 +1009,121 @@ def test_a_removal_resumed_with_a_note_derives_the_claims_it_re_keyed(
         gleaning=True,
         resume=False,
     )
+
+    assert incremental == full
+
+
+def test_a_strip_note_is_one_record_whatever_the_removed_units(
+    tmp_path: Path, mocker: Any
+) -> None:
+    # Removing d1.txt and d2.txt (two text units) merges the two spellings.
+    # The note is written once for the suffix, not once per removed unit
+    # (20,000 units of a 3,000-edge note were 2.4 GB), and names the two
+    # merged entities and the edge the merge dropped.
+    runs = [
+        {
+            "d1.txt": "Initech trade goods 3.",
+            "d2.txt": "Initech trade goods 4.",
+            "d5.txt": "Initech Corp and Initech trade cash 2.",
+        },
+        {"d5.txt": "Initech Corp and Initech trade cash 2."},
+    ]
+    written = mocker.spy(OpenSearchIndexer, "write_extraction_records")
+
+    full = _state(tmp_path / "full", [runs[-1]])
+    written.reset_mock()
+    incremental = _state(tmp_path / "inc", runs)
+
+    notes = [
+        call.args[1]
+        for call in written.call_args_list
+        if any(key.startswith("pending-strip") for key in call.args[1])
+    ]
+    assert [list(records) for records in notes] == [["pending-strip"]]
+    (note,) = notes[0].values()
+    assert set(note) == {"entity_ids", "relationship_ids"}
+    assert len(note["entity_ids"]) == 2
+    assert len(note["relationship_ids"]) == 1
+    assert incremental == full
+
+
+@pytest.mark.parametrize(
+    "die_at",
+    [
+        pytest.param(
+            ("upsert_entities", 1, True, SQLiteGraphIndexer),
+            id="after-the-graph-entities",
+        ),
+        pytest.param(("upsert_entities", 1, False), id="before-the-vector-entities"),
+        pytest.param(
+            ("delete_document_artifacts", 2, False), id="before-deleting-the-old-ids"
+        ),
+    ],
+)
+def test_a_resumed_removal_that_merged_and_split_matches_a_full_build(
+    tmp_path: Path, die_at: tuple[Any, ...]
+) -> None:
+    # Removing d2.txt merges "Acme Ltd" into "ACME Inc" and splits "Acme" off
+    # it. The resumed removal strips the merged entities again; stripping the
+    # split-off part and its origin again too (as #379 noted them) left
+    # "Acme owes Acme Inc" with the wrong subject.
+    runs = [
+        {
+            "d3.txt": "Buyer and Acme Ltd and ACME Inc trade cash 3. Buyer trade "
+            "parts 1. Acme and Acme Inc trade cash 2.",
+            "d2.txt": "Acme Ltd trade parts 2. Initech Corp trade parts 2.",
+        },
+        {
+            "d3.txt": "Buyer and Acme Ltd and ACME Inc trade cash 3. Buyer trade "
+            "parts 1. Acme and Acme Inc trade cash 2."
+        },
+    ]
+
+    full = _state(tmp_path / "full", [runs[-1]])
+    incremental = _state(tmp_path / "inc", runs, die_in=1, die_at=die_at)
+
+    assert incremental == full
+
+
+@pytest.mark.parametrize(
+    "die_at",
+    [
+        pytest.param(("upsert_entities", 1, False), id="before-the-vector-entities"),
+        pytest.param(
+            ("upsert_entities", 2, True, SQLiteGraphIndexer),
+            id="after-the-graph-entities",
+        ),
+        pytest.param(
+            ("delete_document_artifacts", 2, False), id="before-deleting-the-old-ids"
+        ),
+    ],
+)
+def test_a_resumed_removal_finishes_the_edges_it_re_keyed(
+    tmp_path: Path, die_at: tuple[Any, ...]
+) -> None:
+    # Removing r3.txt (d6.txt comes in) re-keys and drops edges of the
+    # "Acme" spellings that need not cite r3.txt's units. Killed before
+    # their old ids were deleted, the resumed removal finds those edges
+    # through its note only.
+    d1 = "Buyer and Depot and Acme Ltd trade parts 3. Acme trade goods 1."
+    d7 = "Acme Inc and Acme LLC trade cash 3."
+    runs = [
+        {"d7.txt": d7},
+        {
+            "d7.txt": d7,
+            "d1.txt": d1,
+            "r3.txt": "Depot trade cash 1. Acme Inc and Buyer and Acme Ltd trade "
+            "cash 2.",
+        },
+        {
+            "d7.txt": d7,
+            "d1.txt": d1,
+            "d6.txt": "Depot and Acme Corp trade parts 2. Acme Inc and Acme Corp "
+            "trade goods 1.",
+        },
+    ]
+
+    full = _state(tmp_path / "full", [runs[-1]], gleaning=True)
+    incremental = _state(tmp_path / "inc", runs, die_in=2, die_at=die_at, gleaning=True)
 
     assert incremental == full

@@ -429,7 +429,7 @@ def test_a_strip_note_that_cannot_be_written_stops_the_strip(mocker) -> None:
     mocker.patch.object(vector, "write_extraction_records", return_value=failed)
 
     with pytest.raises(DataProcessingError):
-        manager._note_pending_strip("default", ["t1"], ["e"], [])
+        manager._note_pending_strip("default", ["e"], [])
 
 
 def test_a_strip_note_left_behind_only_logs(mocker, caplog) -> None:
@@ -440,7 +440,7 @@ def test_a_strip_note_left_behind_only_logs(mocker, caplog) -> None:
         vector, "delete_extraction_records", side_effect=RuntimeError("store down")
     )
 
-    manager._clear_pending_strip("default", ["t1"])
+    manager._clear_pending_strip("default")
 
     assert "Deleting the strip notes" in caplog.text
 

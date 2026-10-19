@@ -465,6 +465,33 @@ class SQLiteGraphIndexer(GraphIndexer):
             i: sorted(neighbors[i]) for i in dict.fromkeys(entity_ids) if i in neighbors
         }
 
+    def count_neighbors(
+        self, entity_ids: list[str], suffix: str | None = None
+    ) -> dict[str, int]:
+        """``{id: how many entities it is related to}`` for the stored
+        entities, counted by SQLite (see :meth:`read_neighbor_ids`)."""
+        if not entity_ids:
+            return {}
+        label = self._entity_label(suffix)
+        with self.store.read("count neighbours") as connection:
+            stored = self.store.vertex_maps(connection, label, entity_ids)
+            counts: dict[str, int] = dict.fromkeys(stored, 0)
+            for batch in batches(list(stored)):
+                marks = placeholders(batch)
+                rows = connection.execute(
+                    "SELECT node, COUNT(DISTINCT other) FROM ("
+                    "SELECT source_id AS node, target_id AS other FROM edges "
+                    f"WHERE label = ? AND source_id IN ({marks}) "
+                    "UNION ALL "
+                    "SELECT target_id, source_id FROM edges "
+                    f"WHERE label = ? AND target_id IN ({marks})"
+                    ") GROUP BY node",
+                    [label, *batch, label, *batch],
+                ).fetchall()
+                for node, count in rows:
+                    counts[node] = int(count)
+        return {i: counts[i] for i in dict.fromkeys(entity_ids) if i in counts}
+
     def find_ids_citing(
         self,
         text_unit_ids: list[str],

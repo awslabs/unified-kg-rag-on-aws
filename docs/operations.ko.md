@@ -110,7 +110,7 @@ reset 동안 벡터 질의는 새 인덱스로 하나씩 바뀔 때까지 이전
 | 단계 체크포인트(로컬) | `<--cache-directory>/<pipeline_id>/`(기본값 `cache/`) | 재개할 때 재사용 |
 | 단계 체크포인트(S3) | `s3://<bucket>/<--s3-prefix>/<pipeline_id>/`(기본값 `pipeline-runs`) | `--s3-sync`일 때 단계마다, 그리고 SIGTERM을 받으면 올리므로 새 태스크가 이어서 재개함. 다운로드나 마지막 업로드가 실패하면 `CacheSyncError`로 실행이 실패함. 단계마다 또는 멈출 때 올리는 업로드가 실패하면 경고만 남기고(다음 업로드가 다시 시도), 쓰기 임대를 잃은 뒤 멈추면 올리지 않음. `cache.ttl_seconds`가 아니라 버킷 수명 주기로 만료 |
 | LLM 응답 캐시 | `<stage checkpoint dir>/llm-cache/` | 같은 파이프라인 ID로 다시 실행할 때 재사용. `cache.llm_responses.enabled: false`로 끄고, `--force-rebuild`는 무시함 |
-| 추출 저장소 | `graphrag-extraction-records-<suffix>`(`indexing.opensearch.extraction_records_index_prefix`) | 저장된 텍스트 단위가 가리키는 동안 이후 실행이 재사용하는 청크별 추출 결과와, 문서 제거가 끝날 때까지 남겨 두는 기록(`pending-strip#<text unit id>`, 재개한 제거가 필요로 함). `clear`와 `--force-rebuild`는 유지하며, 통째로 버리려면 성공한 실행 뒤에만 인덱스를 삭제하거나 이어서 `indexing.reset: true`로 실행 |
+| 추출 저장소 | `graphrag-extraction-records-<suffix>`(`indexing.opensearch.extraction_records_index_prefix`) | 저장된 텍스트 단위가 가리키는 동안 이후 실행이 재사용하는 청크별 추출 결과와, 문서 제거가 끝날 때까지 남겨 두는 기록(`pending-strip`, 재개한 제거가 필요로 함). `clear`와 `--force-rebuild`는 유지하며, 통째로 버리려면 성공한 실행 뒤에만 인덱스를 삭제하거나 이어서 `indexing.reset: true`로 실행 |
 | 임베딩 캐시 | `s3://<aws.s3.bucket_name>/embedding-cache/cache.json` | `indexing.opensearch.persist_embedding_cache: true`일 때만 |
 | 시각화 데이터 | `graph.visualization.outputs_directory`가 없으면 `<cache directory>/<pipeline_id>/visualization/` | 단계 캐시와 함께 동기화(`.json`만) |
 

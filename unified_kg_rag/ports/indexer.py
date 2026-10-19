@@ -356,6 +356,21 @@ class GraphIndexer(BaseIndexer):
         """
         return {}
 
+    def count_neighbors(
+        self, entity_ids: list[str], suffix: str | None = None
+    ) -> dict[str, int]:
+        """Return ``{entity id: how many entities it is related to}`` (the
+        length of its :meth:`read_neighbor_ids` list) for the stored ones.
+
+        The incremental community walk tells hubs by it without reading
+        their neighbours. Default counts :meth:`read_neighbor_ids`; adapters
+        override it with a count the store computes, and raise when the read
+        fails.
+        """
+        return {
+            i: len(n) for i, n in self.read_neighbor_ids(entity_ids, suffix).items()
+        }
+
     @abstractmethod
     def delete_by_id(self, ids: list[str], suffix: str | None = None) -> IndexingStats:
         """Delete vertices/edges by id (for removed/changed documents).

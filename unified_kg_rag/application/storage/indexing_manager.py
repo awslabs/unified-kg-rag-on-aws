@@ -67,15 +67,17 @@ logger = get_logger(__name__)
 # A graph item whose description the cross-run merge reads back.
 _Described = TypeVar("_Described", Entity, Relationship)
 
-# Extraction-store key prefix under which a removal's strip notes, per
-# removed text unit, the stored items it merges or re-keys until their old
-# ids are deleted (record keys are ``fingerprint:hash``: no clash).
-_PENDING_STRIP = "pending-strip#"
+# Extraction-store key of a suffix's strip note: the stored items a
+# removal's strip merges or re-keys, kept until their old ids are deleted
+# (record keys are ``fingerprint:hash``: no clash). #379 wrote the note
+# under every removed text unit (``pending-strip#<text unit id>``); a
+# resumed removal still reads those.
+_PENDING_STRIP = "pending-strip"
 
 
-def _pending_strip_keys(text_unit_ids: Iterable[str]) -> list[str]:
-    """The extraction-store keys of the strip notes of ``text_unit_ids``."""
-    return [f"{_PENDING_STRIP}{unit}" for unit in sorted(set(text_unit_ids))]
+def _legacy_pending_strip_keys(text_unit_ids: Iterable[str]) -> list[str]:
+    """The keys #379 wrote the strip note of ``text_unit_ids`` under."""
+    return [f"{_PENDING_STRIP}#{unit}" for unit in sorted(set(text_unit_ids))]
 
 
 def _noted(notes: Mapping[str, Mapping[str, Any]], field: str) -> set[str]:
@@ -153,10 +155,9 @@ def _edges_of_written_entities(
     stats of those held back.
 
     An edge whose endpoint's write failed is not written: a re-keyed
-    entity's edges would be re-pointed at a vertex that is not there, and a
-    graph store replaces an edge by dropping its stored copy first. The held
-    back edges count as failed, so their documents are written again. A
-    failure that names no entity holds back every edge.
+    entity's edges would be re-pointed at a vertex that is not there. The
+    held back edges count as failed, so their documents are written again.
+    A failure that names no entity holds back every edge.
     """
     if not relationships or entity_stats is None or not entity_stats.failed_items:
         return relationships, None
@@ -1446,6 +1447,7 @@ class IndexingManager:
         text_unit_ids: list[str],
         claim_ids: Sequence[str] = (),
         community_ids: Collection[str] = (),
+        earlier_notes: Mapping[str, Mapping[str, Any]] | None = None,
     ) -> dict[str, IndexingStats]:
         """Strip removed text units from kept entities/relationships/claims of a
         suffix, and derive their content again from the text units left.
@@ -1470,51 +1472,58 @@ class IndexingManager:
 
         A failed read is reported as failed items, so the caller keeps the
         documents' registry rows and retries the removal.
+
+        A strip that merges or re-keys notes its items first
+        (:meth:`_note_pending_strip`), with those of the ``earlier_notes``
+        (``{key: note}``) of a strip a retry finishes; the notes are deleted
+        once the old ids are.
         """
-        results = self._strip_shared(
+        earlier_notes = earlier_notes or {}
+        results, noted = self._strip_shared(
             suffix,
             entity_ids=entity_ids,
             relationship_ids=relationship_ids,
             text_unit_ids=text_unit_ids,
             claim_ids=claim_ids,
             community_ids=community_ids,
+            earlier_notes=earlier_notes,
         )
         # A note is kept until the old ids are deleted (a retry needs it).
-        noted = results.pop(f"pending_strip_{suffix}", None) is not None
         if any(stats.failed_items for stats in results.values() if stats):
             self.discard_retired_ids()
             return results
         results = {**results, **self.delete_retired_ids()}
-        if noted and not any(s.failed_items for s in results.values() if s):
-            self._clear_pending_strip(suffix, text_unit_ids)
+        if (noted or earlier_notes) and not any(
+            s.failed_items for s in results.values() if s
+        ):
+            self._clear_pending_strip(suffix, earlier_notes)
         return results
 
     def _note_pending_strip(
-        self,
-        suffix: str,
-        text_unit_ids: Sequence[str],
-        entity_ids: list[str],
-        relationship_ids: list[str],
+        self, suffix: str, entity_ids: list[str], relationship_ids: list[str]
     ) -> None:
-        """Note, under each removed text unit, the stored items a strip
-        merges or re-keys (the store keeps it until :meth:`_clear_pending_strip`),
+        """Note the stored items a strip merges or re-keys, in one record of
+        ``suffix``'s extraction store (kept until :meth:`_clear_pending_strip`),
         so a retry of the removal strips them again (:meth:`remove_text_units`).
         Raises when the write fails, before the strip writes anything."""
         note = {"entity_ids": entity_ids, "relationship_ids": relationship_ids}
         stats = self.opensearch_indexer.write_extraction_records(
-            dict.fromkeys(_pending_strip_keys(text_unit_ids), note), suffix=suffix
+            {_PENDING_STRIP: note}, suffix=suffix
         )
         if stats.failed_items:
             raise DataProcessingError(
                 f"Noting the pending strip of '{suffix}' failed: {stats.errors[:1]}"
             )
 
-    def _clear_pending_strip(self, suffix: str, text_unit_ids: Sequence[str]) -> None:
-        """Delete the notes of :meth:`_note_pending_strip` (best-effort: one
-        left only makes a retry strip the items again)."""
+    def _clear_pending_strip(
+        self, suffix: str, earlier_notes: Collection[str] = ()
+    ) -> None:
+        """Delete the note of :meth:`_note_pending_strip` and the
+        ``earlier_notes`` keys (best-effort: one left only makes a retry strip
+        the items again)."""
         try:
             self.opensearch_indexer.delete_extraction_records(
-                _pending_strip_keys(text_unit_ids), suffix=suffix
+                sorted({_PENDING_STRIP, *earlier_notes}), suffix=suffix
             )
         except NamespaceLeaseError:
             raise
@@ -1530,10 +1539,15 @@ class IndexingManager:
         text_unit_ids: list[str],
         claim_ids: Sequence[str] = (),
         community_ids: Collection[str] = (),
-    ) -> dict[str, IndexingStats]:
+        earlier_notes: Mapping[str, Mapping[str, Any]] | None = None,
+    ) -> tuple[dict[str, IndexingStats], bool]:
         """:meth:`remove_text_units_from_shared` before the old ids of the
-        re-keyed items are deleted."""
+        re-keyed items are deleted, and whether it noted them
+        (:meth:`_note_pending_strip`; with the ``earlier_notes`` items, so
+        the note it replaces is not lost)."""
         results: dict[str, IndexingStats] = {}
+        noted = False
+        doing = "Reading shared artifacts"
         try:
             entities = (
                 self.neptune_indexer.read_entities(entity_ids, suffix=suffix)
@@ -1591,40 +1605,39 @@ class IndexingManager:
             self._derived_entities.setdefault(suffix, {}).update(
                 {e.id: e for e in new_entities}
             )
-            if derived.id_remap or derived.split_from or derived.dropped:
-                # Its old ids need not cite the removed text units (another
-                # spelling merged in): once the items are written, a retry
-                # finds them through this note only. The entities on both
-                # sides of a merge or split are noted (their edges follow
-                # them), and the edges re-keyed or dropped.
-                derived_ids = {e.id for e in derived.entities}
+            entity_ids_now = {e.id for e in derived.entities}
+            edge_ids_now = {r.id for r in derived.relationships}
+            claim_ids_now = {c.id for c in derived.claims}
+            merged = {
+                i
+                for pair in derived.id_remap.items()
+                if pair[1] in entity_ids_now
+                for i in pair
+            }
+            # The old ids of the edges re-keyed into a derived edge, and of
+            # those dropped: no claim.
+            retired_edges = {
+                old for old, new in derived.id_remap.items() if new in edge_ids_now
+            } | {i for i in derived.dropped if i not in claim_ids_now}
+            if merged or retired_edges:
+                # Their old ids need not cite the removed text units (another
+                # spelling merged in, or an edge re-pointed at it): once the
+                # items are written, a retry finds them through this note
+                # only, and strips them again. Noted: the entities on both
+                # sides of a merge and the edges re-keyed or dropped. Not a
+                # split's part and origin: a split keeps the stored id, and
+                # stripping them again on a retry gave a claim the wrong
+                # subject.
+                doing = "Noting the pending strip"
                 self._note_pending_strip(
                     suffix,
-                    text_unit_ids,
+                    sorted(merged | _noted(earlier_notes or {}, "entity_ids")),
                     sorted(
-                        {
-                            *(
-                                i
-                                for pair in derived.id_remap.items()
-                                if pair[1] in derived_ids
-                                for i in pair
-                            ),
-                            *(i for pair in derived.split_from.items() for i in pair),
-                        }
-                    ),
-                    sorted(
-                        {
-                            *(
-                                old
-                                for old, new in derived.id_remap.items()
-                                if new not in derived_ids
-                            ),
-                            *derived.dropped,
-                        }
+                        retired_edges | _noted(earlier_notes or {}, "relationship_ids")
                     ),
                 )
-                # Tells remove_text_units_from_shared to delete the note.
-                results[f"pending_strip_{suffix}"] = IndexingStats()
+                noted = True
+            doing = "Reading the claims of re-keyed entities"
             # The stored claims about a re-keyed, split or renamed entity
             # follow it.
             renamed = self._note_renamed(suffix, derived.entities, entities)
@@ -1646,10 +1659,10 @@ class IndexingManager:
                 }
             )
         except Exception as e:  # noqa: BLE001 - reported as failed items
-            logger.error("Reading shared artifacts in '%s' failed: %s", suffix, e)
+            logger.error("%s in '%s' failed: %s", doing, suffix, e)
             stats = IndexingStats(total_items=len(entity_ids) + len(relationship_ids))
             stats.add_error(str(e), count=stats.total_items)
-            return {**results, f"neptune_read_{suffix}": stats}
+            return {**results, f"neptune_read_{suffix}": stats}, noted
         if claim_ids:
             results.update(
                 self._remove_text_units_from_claims(
@@ -1657,7 +1670,7 @@ class IndexingManager:
                 )
             )
         if not new_entities and not new_relationships:
-            return results
+            return results, noted
         logger.info(
             "Removing %d text units from %d shared entities and %d shared "
             "relationships in '%s'",
@@ -1741,7 +1754,7 @@ class IndexingManager:
         for phase in phases:
             check_write_fence()
             results.update(self._run_indexing_phase(phase))
-        return results
+        return results, noted
 
     def _remove_text_units_from_claims(
         self, suffix: str, claim_ids: list[str], text_unit_ids: list[str]
@@ -1953,15 +1966,16 @@ class IndexingManager:
                 ).values()
                 for key in attribute_record_keys(attributes).values()
             )
-            # What an earlier strip of these units merged or re-keyed and
-            # may not have finished (see _note_pending_strip): the items
-            # need not cite the units any more.
-            notes = (
-                vector.read_extraction_records(
-                    _pending_strip_keys(text_unit_ids), suffix=suffix
-                )
-                if resumed
-                else {}
+            # What an earlier strip merged or re-keyed and may not have
+            # finished (see _note_pending_strip): the items need not cite the
+            # removed units any more. Read on every removal (one record): a
+            # retry need not remove the same units.
+            notes = vector.read_extraction_records(
+                [
+                    _PENDING_STRIP,
+                    *(_legacy_pending_strip_keys(text_unit_ids) if resumed else []),
+                ],
+                suffix=suffix,
             )
             # A claim the earlier strip re-keyed onto a noted entity cites no
             # removed unit: it is found through its subject or object.
@@ -2048,11 +2062,12 @@ class IndexingManager:
                     text_unit_ids=text_unit_ids,
                     claim_ids=shared_claims,
                     community_ids=deleted_communities,
+                    earlier_notes=notes,
                 )
             )
-        if notes and not any(s.failed_items for s in results.values() if s):
-            # Stripped again, or gone: the earlier strip is finished.
-            self._clear_pending_strip(suffix, text_unit_ids)
+        elif notes and not any(s.failed_items for s in results.values() if s):
+            # The noted items are gone: the earlier strip is finished.
+            self._clear_pending_strip(suffix, notes)
         return results
 
     def _vector_citing(

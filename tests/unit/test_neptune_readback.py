@@ -325,8 +325,21 @@ def test_neighbor_ids_read_back_per_entity_in_the_suffix_label(indexer) -> None:
     assert ("hasLabel", ("Entity-tenant-a",)) in _flatten_steps(steps)
 
 
+def test_neighbor_counts_are_read_without_the_ids(indexer) -> None:
+    steps = _serve(indexer, [{"id": "e-hub", "count": 5000}])
+
+    counts = indexer.count_neighbors(["e-hub"], suffix="tenant-a")
+
+    assert counts == {"e-hub": 5000}
+    flat = _flatten_steps(steps)
+    assert ("hasLabel", ("Entity-tenant-a",)) in flat
+    assert ("count", ()) in flat
+    assert ("fold", ()) not in flat
+
+
 @pytest.mark.parametrize(
-    "read", ["read_entities", "read_relationships", "read_neighbor_ids"]
+    "read",
+    ["read_entities", "read_relationships", "read_neighbor_ids", "count_neighbors"],
 )
 def test_a_failed_read_raises_instead_of_reading_as_not_stored(indexer, read) -> None:
     # An empty result means "not stored": the merge would overwrite the stored
