@@ -827,9 +827,8 @@ changed once with the full-config keys (#332).
 - Graph expansion checks its expanded entities against the entities index
   (one ids-only request for the vertex ids under the document filters)
   instead of their text units: an entity document carries the filters of
-  every document it comes from, and lineage updates keep them current. An
-  attribute probe's outcome is reused for 30 s, so the sub-searches of one
-  query probe an index once (DRIFT on a hub corpus: 31 probes to 11) (#370).
+  every document it comes from, and lineage updates keep them current
+  (#370).
 - A claim whose subject or object matches several entities equally well
   (spelling or legal-form variants: "Acme Inc" against "Acme" and "Acme
   Corp") binds to the one its own text unit states, then to the smallest
@@ -1345,7 +1344,9 @@ changed once with the full-config keys (#332).
   that kept failing in between lost the rest for good (edges rewritten for
   their rank or names only, and removal strips, are not found again by a
   retry), leaving endpoint ranks one low. Each edge's drop and add are now
-  one request, which Neptune runs as one transaction (#377).
+  one request, which Neptune runs as one transaction; a write resent after
+  a lost response drops and adds again, so it never leaves a second
+  parallel edge with the same id (#252, #377).
 - The six `indexing.opensearch.*_index_prefix` settings and the two
   `indexing.neptune.*_label_prefix` settings are checked when the config
   loads (an index prefix: lowercase letters, digits, `-`, `_`, not starting
@@ -1359,21 +1360,26 @@ changed once with the full-config keys (#332).
   which a pool held in a local had often lost, and then every queued task
   still ran (#372).
 - Under a filter on text units (a document filter, or `n_tokens`), local
-  and mix fetch the content of only the chunks they keep: an ids-only check
-  finds the first ranked chunks that pass, where #370 fetched every ranked
-  chunk's text to cut afterwards. On a 1,500-chunk hub, local fetched 1,504
+  and mix fill their entity-linked chunk quota with chunks that pass it and
+  fetch the content of only the chunks they keep: the ranked chunk ids were
+  cut to the quota before the filter, so failing ids took slots that passing
+  chunks further down never got (local with a two-chunk quota kept one of
+  two), and #370's fix fetched every ranked chunk's text to cut afterwards;
+  an ids-only check now finds the first ranked chunks that pass. On a 1,500-chunk hub, local fetched 1,504
   chunks (57.5k characters) for a 20-chunk quota, now 20 (733); DRIFT 5,067
   (188k) now 400 (11k), for the same context. A filter on text units other
   than a document filter (`n_tokens`) fills the quota too, and mix's per-hit
-  chunk slots go to chunks that pass (#373).
+  chunk slots go to chunks that pass (#370, #373).
 - Graph expansion under two or more document filter keys keeps an expanded
   entity only when one of its text units passes all of them: entity
   documents union their documents' values per key, so an entity of a
   `{category: x, grp: a}` and a `{category: y, grp: b}` document passed
   `category:x grp:b` (#373).
-- An attribute probe's outcome is kept for the query only, not 30 s by
-  alias: right after an ingestion or reset in the same process a filtered
-  query returned nothing until the entry expired (#373).
+- An attribute probe's outcome is shared by the sub-searches of one query,
+  so they probe an index once (DRIFT on a hub corpus: 31 probes to 11), and
+  kept for that query only: #370 kept it 30 s by alias, so right after an
+  ingestion or reset in the same process a filtered query returned nothing
+  until the entry expired (#370, #373).
 - A filter value of `None` is rejected (`InvalidFilterError`): OpenSearch
   rejects a `terms` query naming null, and the embedded engine matched it
   against cleared filter fields (#373).
@@ -1455,12 +1461,6 @@ changed once with the full-config keys (#332).
   absolute path. Values are now resolved by the run, so config entries get
   the same treatment as the flag, and a value with no records warns once
   (#366).
-- Under a document filter, local and mix fill their entity-linked chunk
-  quota with chunks that pass it: the ranked chunk ids were cut to the
-  quota before the filter, so failing ids took slots that passing chunks
-  further down never got (local with a two-chunk quota kept one of two; a
-  hub entity's DRIFT context three of five). The fetch asks for up to one
-  request's ids and cuts after, still one request (#370).
 - An entity-attribute filter (`attributes.role:buyer`) filters the entities
   index only, as the user guide states: every index declared the whole
   `attributes.` prefix, so it emptied the text units, relationships, claims
@@ -2821,9 +2821,6 @@ changed once with the full-config keys (#332).
 - A failed Neptune delete batch is counted as one failure per id in it, with
   the ids, instead of a single failure with none, so the failure rate and the
   logs of a document removal reflect what was not deleted (#252).
-- A Neptune relationship write that is retried after a lost response no
-  longer adds a second parallel edge with the same id: the edge write looks
-  the edge up first (`fold().coalesce(unfold(), addE(...))`) (#252).
 - An incremental run that only deletes documents (nothing new or changed to
   extract) now checks the live OpenSearch indices of its configured
   `document_parsing.index_value` before writing; it checked the `default`
