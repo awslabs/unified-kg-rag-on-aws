@@ -67,11 +67,7 @@ def _g():
 def _edge_row(indexer, rel: Relationship) -> dict[str, Any]:
     """The projected row Gremlin returns for the edge the indexer writes."""
     written = indexer._build_add_edge_traversal(_g(), rel, _ENTITY_LABEL)
-    # The addE branch of the fold().coalesce(unfold(), addE) upsert.
-    coalesce = next(
-        step for step in written.bytecode.step_instructions if step[0] == "coalesce"
-    )
-    steps = coalesce[-1].step_instructions
+    steps = written.bytecode.step_instructions
     add_e = next(i for i, step in enumerate(steps) if step[0] == "addE")
     props: dict[str, Any] = {}
     for step in steps[add_e + 1 :]:
