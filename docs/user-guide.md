@@ -878,7 +878,9 @@ steps on Neptune. Each store accepts the fields its indexer writes:
   property (`attr_role`), applied where present (a vertex without it passes),
   but the entities-index check above still applies: `attr_role:buyer` selects
   nothing unless documents carry a `role` filter. Every other key is strict
-  on both stores.
+  on both stores. The check applies to the expanded entities, not to the
+  vertices between a seed and them: an expanded entity's `Path:` line can
+  name an intermediate entity that fails the filter.
 
 **Filters are not an access-control boundary**: a store that does not declare
 a key returns its content unfiltered, and an entity, relationship or

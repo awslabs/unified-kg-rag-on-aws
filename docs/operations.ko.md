@@ -633,7 +633,7 @@ Langfuse에는 `langfuse.observation.type`(모델 호출은 `generation`, `embed
 | 메시지(요약) | 의미 | 조치 |
 |---|---|---|
 | `No indices found for suffix '<suffix>' ...` | 그 접미사로 수집한 데이터가 없음 | 수집하거나 코퍼스의 접미사로 질의 |
-| `InvalidFilterError` | 전략이 읽는 어떤 저장소도 그 필터 키를 선언하지 않음 | 메시지에 나온 키를 씀 |
+| `InvalidFilterError: Unknown filter key(s) ...` / `... has no value (None)` / `... lists N values ...` | 전략이 읽는 어떤 저장소도 그 필터 키를 선언하지 않음, 필터 값이 `None`임(단독이든 목록 안이든. OpenSearch는 null을 담은 `terms` 질의를 거부함), 또는 목록 필터의 값이 `terms` 질의 하나가 받는 수(`index.max_terms_count`, 기본값 65,536)보다 많음 | 메시지에 나온 키를 씀, `None`을 빼거나 일치시킬 값을 줌, 목록을 줄임(또는 `indexing.opensearch.index_settings`에서 `max_terms_count`를 올리고 다시 인덱싱) |
 | LightRAG `mix` / `hybrid` 결과가 없음 | 관계 인덱스가 없거나 키워드를 추출하지 못함 | 관계 인덱스가 있는지 확인. 짧은 질의는 `raw_query_fallback_max_len` 이하일 때만 원래 질의를 씀 |
 
 ### 로컬 모드

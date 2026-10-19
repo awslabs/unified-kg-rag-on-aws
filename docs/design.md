@@ -710,7 +710,10 @@ budget and answer. `RAGInput.search_strategy` picks the methodology.
 - **Graph expansion** is part of `local` and `drift`, and opt-in for `mix` /
   `hybrid` (`search.lightrag_search.enable_graph_expansion`). Strategies find
   the seed entities in the vector store and pass their ids to the graph
-  retriever, which expands from those ids only.
+  retriever, which expands from those ids only. Limitation: under a
+  document filter the expanded entities are checked, not the vertices
+  between them, so an entity's `Path:` line can name an intermediate
+  entity that fails the filter.
 - **One index, both methodologies (deliberate extension).** Ingestion builds
   the union of what both need (MS GraphRAG builds no relationship vector
   index, LightRAG no communities). A LightRAG-only deployment can set
