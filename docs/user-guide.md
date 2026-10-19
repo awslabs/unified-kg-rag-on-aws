@@ -1375,7 +1375,11 @@ CC BY 4.0; Trivedi et al., TACL 2022) into a corpus and a `run-eval` dataset.
 Nothing of it is in this repository: by default it downloads the answerable
 dev split (2,417 questions) from a pinned revision of a public mirror and
 checks its SHA-256; `--data-path` reads a local `musique_ans_v1.0_*.jsonl`
-instead. It writes `corpus/` (one text file per distinct paragraph; each
+instead. A full file (`musique_full_v1.0_*.jsonl`) is read too, but its
+answerable half is not MuSiQue-Ans (other paragraphs and answer aliases):
+its rows are labelled `metadata.benchmark: musique-full-answerable` instead
+of `musique`, with a WARNING that the scores are not comparable to MuSiQue-Ans
+results. It writes `corpus/` (one text file per distinct paragraph; each
 question brings 2-4 supporting paragraphs and up to 18 distractors) and
 `eval_data.json` (`answer`, `answer_aliases`, the supporting paragraphs as
 `reference_sources`, the hop count as `category`). A `corpus/` that is not

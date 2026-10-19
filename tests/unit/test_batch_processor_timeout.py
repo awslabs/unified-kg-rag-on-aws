@@ -289,3 +289,37 @@ def test_bedrock_read_timeout_outlasts_the_call_timeout() -> None:
     # re-send on a read timeout was then abandoned by the call timeout.
     call_timeout = BatchProcessor.model_fields["call_timeout_seconds"].default
     assert BaseBedrockModelFactory.BOTO_READ_TIMEOUT > call_timeout
+
+
+def test_cancelling_an_async_batch_cancels_its_items() -> None:
+    # Before, the items kept running (and a cancelled one was retried) after
+    # the caller was cancelled: a timed-out evaluation went on answering the
+    # whole dataset in the background.
+    calls = Counter()
+
+    async def work(item: dict) -> int:
+        calls["started"] += 1
+        await asyncio.sleep(0.5)
+        calls["finished"] += 1
+        return item["i"]
+
+    async def main() -> None:
+        processor = BatchProcessor(max_concurrency=2)
+        task = asyncio.create_task(
+            processor.aexecute_with_fallback(
+                list(range(10)),
+                lambda batch: [{"i": i} for i in batch],
+                work,
+                "T",
+                show_progress=False,
+            )
+        )
+        await asyncio.sleep(0.1)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        await asyncio.sleep(0.8)
+        assert len(asyncio.all_tasks()) == 1  # only main
+
+    asyncio.run(main())
+    assert calls == Counter(started=2)

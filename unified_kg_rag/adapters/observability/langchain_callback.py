@@ -16,8 +16,8 @@ call can outlive the caller's ``bind_identity`` block, still groups with its
 session.
 
 A cancelled ``ainvoke`` / ``agenerate`` gets no callback from LangChain
-(``astream`` reports it through ``on_llm_error``), so its span is never ended
-or exported.
+(``astream`` reports it through ``on_llm_error``): its span is ended as an
+error when the task that started the call finishes with the span still open.
 
 Prompt and completion text (``gen_ai.input.messages`` /
 ``gen_ai.output.messages``) is recorded only when
@@ -29,6 +29,7 @@ OpenTelemetry itself, so it costs one check per callback when tracing is off.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import threading
 from collections.abc import Mapping, Sequence
@@ -143,6 +144,9 @@ class GenAITracingCallbackHandler(BaseCallbackHandler):
         self.max_tokens = max_tokens
         self.temperature = temperature
         self._spans: dict[UUID, SpanHandle] = {}
+        # The task an async call runs in and the done-callback that ends its
+        # span if no end callback came (a cancelled call gets none).
+        self._watches: dict[UUID, tuple[asyncio.Task[Any], Any]] = {}
         self._lock = threading.Lock()
 
     def on_chat_model_start(
@@ -175,12 +179,44 @@ class GenAITracingCallbackHandler(BaseCallbackHandler):
             {key: value for key, value in attributes.items() if value is not None},
             kind="client",
         )
+        try:
+            task = asyncio.current_task()
+        except RuntimeError:  # a sync call, on no event loop
+            task = None
         with self._lock:
             self._spans[run_id] = span
+            if task is not None:
 
-    def on_llm_end(self, response: LLMResult, *, run_id: UUID, **kwargs: Any) -> None:
+                def _abandoned(done: asyncio.Task[Any], run_id: UUID = run_id) -> None:
+                    self._end_abandoned(run_id, done)
+
+                task.add_done_callback(_abandoned)
+                self._watches[run_id] = (task, _abandoned)
+
+    def _pop(self, run_id: UUID) -> SpanHandle | None:
         with self._lock:
             span = self._spans.pop(run_id, None)
+            watch = self._watches.pop(run_id, None)
+        if watch is not None:
+            task, callback = watch
+            task.remove_done_callback(callback)
+        return span
+
+    def _end_abandoned(self, run_id: UUID, task: asyncio.Task[Any]) -> None:
+        """End a span its call left open: the task finished without an end
+        callback (cancelled, or the call's error was swallowed)."""
+        with self._lock:
+            span = self._spans.pop(run_id, None)
+            self._watches.pop(run_id, None)
+        if span is None:
+            return
+        reason = "CancelledError" if task.cancelled() else "NoEndCallback"
+        span.set_attribute(ERROR_TYPE, reason)
+        span.set_error(reason)
+        span.end()
+
+    def on_llm_end(self, response: LLMResult, *, run_id: UUID, **kwargs: Any) -> None:
+        span = self._pop(run_id)
         if span is None:
             return
         span.set_attributes(self._response_attributes(response))
@@ -189,8 +225,7 @@ class GenAITracingCallbackHandler(BaseCallbackHandler):
     def on_llm_error(
         self, error: BaseException, *, run_id: UUID, **kwargs: Any
     ) -> None:
-        with self._lock:
-            span = self._spans.pop(run_id, None)
+        span = self._pop(run_id)
         if span is None:
             return
         if isinstance(error, GeneratorExit):

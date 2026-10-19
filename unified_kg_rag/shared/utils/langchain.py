@@ -25,7 +25,10 @@ from tqdm.asyncio import tqdm as async_tqdm
 from unified_kg_rag.shared import get_logger, observability
 from unified_kg_rag.shared.exceptions import LLMOutputTruncatedError
 from unified_kg_rag.shared.utils.common import text_digest
-from unified_kg_rag.shared.utils.concurrency import ContextThreadPoolExecutor
+from unified_kg_rag.shared.utils.concurrency import (
+    ContextThreadPoolExecutor,
+    cancel_on_exit,
+)
 
 if TYPE_CHECKING:
     from unified_kg_rag.domain.models.config import ProcessingConfig
@@ -354,7 +357,9 @@ class BatchProcessor(BaseModel):
         return results
 
     def _is_retryable(self, exc: BaseException) -> bool:
-        if isinstance(exc, _BatchAbandoned):
+        # A cancelled call (or Ctrl-C) is a stop, not a failure: retrying it
+        # started the work again after the caller had given up.
+        if not isinstance(exc, Exception) or isinstance(exc, _BatchAbandoned):
             return False
         # The same input hits the same output-token limit again.
         if isinstance(exc, LLMOutputTruncatedError):
@@ -479,11 +484,13 @@ class BatchProcessor(BaseModel):
             progress.update()
             return result
 
-        results: list[Any] = await async_tqdm.gather(
-            *(process_one(single_input) for single_input in inputs),
-            desc=f"Processing: {task_name}",
-            disable=None if show_progress else True,
-        )
+        tasks = [asyncio.ensure_future(process_one(i)) for i in inputs]
+        async with cancel_on_exit(tasks):
+            results: list[Any] = await async_tqdm.gather(
+                *tasks,
+                desc=f"Processing: {task_name}",
+                disable=None if show_progress else True,
+            )
         return self._completed(task_name, results)
 
 

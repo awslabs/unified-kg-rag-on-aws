@@ -16,6 +16,7 @@ from unified_kg_rag.domain.models import (
     EvaluatorType,
 )
 from unified_kg_rag.shared import get_logger
+from unified_kg_rag.shared.utils.concurrency import cancel_on_exit
 
 logger = get_logger(__name__)
 
@@ -136,20 +137,22 @@ class BaseGraphRAGEvaluator:
             disable=None if self.show_progress else True,
         )
 
-        for future in progress_bar:
-            original_index, report, error = await future
-            query_id = queries[original_index].query_id
+        async with cancel_on_exit(tasks):
+            for future in progress_bar:
+                original_index, report, error = await future
+                query_id = queries[original_index].query_id
 
-            if error:
-                # Scoring runs after every answer is generated, so an error
-                # here is recorded as failed metrics (and counted against
-                # --max-failure-rate) instead of discarding the run.
-                logger.error("Failed to evaluate query '%s': %s", query_id, error)
-                final_reports[original_index] = self._create_empty_report(
-                    query_id, reason=f"Evaluation failed: {error}"
-                )
-            else:
-                final_reports[original_index] = report
+                if error:
+                    # Scoring runs after every answer is generated, so an
+                    # error here is recorded as failed metrics (and counted
+                    # against --max-failure-rate) instead of discarding the
+                    # run.
+                    logger.error("Failed to evaluate query '%s': %s", query_id, error)
+                    final_reports[original_index] = self._create_empty_report(
+                        query_id, reason=f"Evaluation failed: {error}"
+                    )
+                else:
+                    final_reports[original_index] = report
 
         return [report for report in final_reports if report is not None]
 

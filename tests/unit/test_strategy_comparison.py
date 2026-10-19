@@ -370,7 +370,7 @@ class TestMusique:
         assert musique._file_name("ab", taken) == "ab (2).txt"
 
     def test_the_full_file_pairs_an_id_with_its_unanswerable_twin(
-        self, tmp_path: Path
+        self, tmp_path: Path, caplog
     ) -> None:
         # Before, musique_full_v1.0_dev.jsonl was refused as repeating every
         # id: it carries each question once answerable, once not.
@@ -381,6 +381,17 @@ class TestMusique:
         source.write_text(f"{answerable}\n{json.dumps(twin)}\n", encoding="utf-8")
         counts = musique.prepare(source, tmp_path / "out")
         assert counts["questions"] == 1
+        # Its answerable half is not MuSiQue-Ans: labelled apart (before,
+        # "musique"), with a WARNING that the scores are not comparable.
+        data = json.loads((tmp_path / "out" / "eval_data.json").read_text())
+        assert data[0]["metadata"]["benchmark"] == "musique-full-answerable"
+        assert "not comparable to MuSiQue-Ans" in caplog.text
+
+        # A MuSiQue-Ans file (answerable items only) keeps its name.
+        source.write_text(f"{answerable}\n", encoding="utf-8")
+        musique.prepare(source, tmp_path / "ans")
+        data = json.loads((tmp_path / "ans" / "eval_data.json").read_text())
+        assert data[0]["metadata"]["benchmark"] == "musique"
 
     def test_limit_samples_with_the_seed_and_refuses_a_used_corpus(
         self, tmp_path: Path

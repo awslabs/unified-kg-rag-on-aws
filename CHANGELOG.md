@@ -1286,6 +1286,21 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Tracing: a cancelled model call (`ainvoke` / `agenerate`, which gets no
+  end callback from LangChain) ends its `chat <model>` span as `ERROR`
+  (`error.type: CancelledError`) when its task finishes, instead of leaving
+  it open in the tracing handler, never exported and held in memory (#386).
+- `prepare-benchmark musique` labels the rows built from a full file
+  `metadata.benchmark: musique-full-answerable` instead of `musique`, and
+  logs a WARNING: the answerable half of the full file has other paragraphs
+  and answer aliases than MuSiQue-Ans, so its scores are not comparable to
+  MuSiQue-Ans results (#386).
+- Cancelling a batch cancels its items: an interrupted, timed-out or
+  host-cancelled `run-eval` / `EvaluationManager` call no longer keeps
+  answering (and judging) the rest of the dataset in the background, and a
+  cancelled item is no longer retried. The batch processor and the evaluators
+  awaited their items through `as_completed`, which leaves them running when
+  the caller is cancelled (#386).
 - Incremental indexing: a removal that both merges and splits spellings
   ("Acme Ltd" into "ACME Inc", "Acme" split off) and is killed between its
   writes and the deletion of the old ids is resumed to a full build's
@@ -1331,10 +1346,12 @@ changed once with the full-config keys (#332).
   the name, and, when it is the run's own directory, running from another
   working directory with the same configuration (`--config-path`, so the same
   stores and registry) (#380).
-- `prepare-benchmark musique` accepts the official full file
+- `prepare-benchmark musique` reads the official full file
   (`musique_full_v1.0_dev.jsonl`) again: it carries each question once
   answerable and once not under the same id, which the repeated-id check
-  refused; only answerable items are checked for repeated ids now (#380).
+  refused; only answerable items are checked for repeated ids now. Its
+  answerable half is a different benchmark from MuSiQue-Ans, labelled
+  `musique-full-answerable` (#380, #PR).
 - Tracing: a span whose coroutine is cancelled (`asyncio.CancelledError`:
   `kg_rag.query` / `kg_rag.batch` on Ctrl-C or SIGTERM, or a host cancelling
   `ainvoke`) also exports as `ERROR` with `error.type`; #374 covered only
