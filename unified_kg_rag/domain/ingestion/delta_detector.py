@@ -427,7 +427,7 @@ def retire_source_scopes(
         by_scope = {
             scope: [
                 doc_id
-                for variant in _stored_spellings(scope, delta.stored_scopes)
+                for variant in _stored_scope_spellings(scope, delta.stored_scopes)
                 if variant != own_scope
                 for doc_id in doc_status.diff({}, scope=variant).deleted
             ]
@@ -468,7 +468,7 @@ def retire_source_scopes(
     return added
 
 
-def _stored_spellings(retired: str, stored_scopes: Iterable[str]) -> list[str]:
+def _stored_scope_spellings(retired: str, stored_scopes: Iterable[str]) -> list[str]:
     """``retired`` and every stored scope of its namespace whose source scope
     normalizes to the same value."""
     namespace = scope_namespace(retired)
@@ -515,7 +515,7 @@ def other_local_scopes(
         *(
             spelling
             for value in retired
-            for spelling in _stored_spellings(value, delta.stored_scopes)
+            for spelling in _stored_scope_spellings(value, delta.stored_scopes)
         ),
     }
     return sorted(
