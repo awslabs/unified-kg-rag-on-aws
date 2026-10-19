@@ -1345,8 +1345,10 @@ changed once with the full-config keys (#332).
   once, before a write the stopped run had already sent. A run stopped (or
   failing) during its own takeover wait hands that wait on: it puts the
   lease back expired at the previous holder's expiry. A lease released
-  between the takeover's read and its acquire no longer makes it wait
-  (#PR).
+  between the takeover's read and its acquire no longer makes it wait, and
+  the wait holds the first write only: a stage start no longer waits, so
+  the stages before the first registry or store write (parsing) run
+  meanwhile (#PR).
 - The write-ahead `PENDING` record of a deleted document has
   `failure_count` 0, as every `PENDING` record (#PR).
 - Incremental indexing: a removal that both merges and splits spellings

@@ -300,3 +300,23 @@ def test_a_run_stopped_during_its_takeover_wait_hands_the_wait_on(
     assert holder[1] == pytest.approx(a_expiry, abs=0.5)
     with NamespaceLease(store, "ns", 60) as c:
         assert c.writes_from == pytest.approx(b.writes_from, abs=0.5)
+
+
+def test_a_stage_start_does_not_wait_for_the_takeover(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A stage start checks the lease but writes nothing: the takeover wait
+    # holds the first write, not parsing or extraction.
+    from unified_kg_rag.shared.write_fence import check_fences_held
+
+    _short_requests(monkeypatch, 30)
+    store = FakeDocStatusStore()
+    store.leases["ns"] = ("dead-run", time.time() - 1)
+    with NamespaceLease(store, "ns", 60) as lease:
+        started = time.time()
+        check_fences_held()
+        assert time.time() - started < 0.5
+        assert lease.writes_from > time.time()
+        lease._lose("taken")
+        with pytest.raises(NamespaceLeaseError):
+            check_fences_held()  # a lost lease still stops it

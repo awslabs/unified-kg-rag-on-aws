@@ -293,8 +293,9 @@ class NamespaceLease:
         )
 
     def check(self) -> None:
-        """Raise :class:`NamespaceLeaseError` if the lease was lost, or has
-        less than a third of its term left (no renewal succeeded since).
+        """Before a write: raise :class:`NamespaceLeaseError` if the lease was
+        lost, or has less than a third of its term left (no renewal
+        succeeded since).
 
         After a takeover of an expired lease, wait first until the previous
         holder's writes have all landed (``writes_from``, see the module
@@ -305,6 +306,12 @@ class NamespaceLease:
                 self.interrupt()
             if self._stop.wait(min(left, _TAKEOVER_POLL_SECONDS)):
                 break
+        self.check_held()
+
+    def check_held(self) -> None:
+        """:meth:`check` without the takeover wait: for a point that writes
+        nothing (a stage start), which need not wait for the previous
+        holder's late writes."""
         if self._lost is None and self._expiring():
             self._lost = "it nearly expired before a renewal succeeded"
         if self._lost is not None:

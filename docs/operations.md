@@ -303,7 +303,8 @@ other run ended.
   writes are fenced per attempt too). A run that takes over a lease that
   expired rather than was released (its holder died or froze, or was
   stopped: a stopped run leaves its lease expired, as requests may still
-  be in flight) therefore holds its first write until then, with a WARNING
+  be in flight) therefore holds its first write (not the stages before it,
+  such as parsing) until then, with a WARNING
   (`Took over the expired write lease ... the first write waits until ...`):
   up to about 3 minutes (180 s plus a 5 s margin) after the old lease
   expired. A SIGTERM ends the wait. A process frozen for longer than that,
