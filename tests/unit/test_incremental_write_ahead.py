@@ -396,3 +396,38 @@ def test_removal_of_in_flight_documents_uses_their_stored_records() -> None:
     assert inc.remove_obsolete_artifacts([changed, deleted])
 
     assert manager.removed == {"default": ["t-w", "t-y"]}
+
+
+def test_a_deleted_documents_write_ahead_resets_its_failure_count() -> None:
+    # A PENDING record has failure_count 0 (it is no failure of its own);
+    # the write-ahead of a deleted document kept the stored count.
+    harness = IncrementalRun()
+    before: Corpus = {
+        "/c/a.txt": [[("Vendor", "Depot", 1)]],
+        "/c/d.txt": [[("Buyer", "Bank", 1)]],
+    }
+    harness.run(before)
+    d_id = document_doc_id(document("/c/d.txt", before["/c/d.txt"]))
+    stored = harness.store.get(d_id)
+    assert stored is not None
+    harness.store.put(
+        stored.model_copy(update={"status": DocStatus.FAILED, "failure_count": 2})
+    )
+
+    def failing(ids: list[str], suffix: str | None = None) -> IndexingStats:
+        stats = IndexingStats(total_items=len(ids))
+        stats.add_error("timed out", count=len(ids))
+        return stats
+
+    inc = IncrementalIndexer(harness.store, harness.manager)
+    delta, _ = detect_delta([document("/c/a.txt", before["/c/a.txt"])], inc.doc_status)
+    assert delta.deleted == [d_id]
+    original = harness.graph.delete_by_id
+    harness.graph.delete_by_id = failing  # type: ignore[method-assign]
+    try:
+        assert inc.remove_changed_and_deleted(delta) is False
+    finally:
+        harness.graph.delete_by_id = original  # type: ignore[method-assign]
+    record = harness.store.get(d_id)
+    assert record is not None
+    assert (record.status, record.failure_count) == (DocStatus.PENDING, 0)

@@ -819,13 +819,16 @@ class IncrementalIndexer:
             return True
         # Deleted documents are written ahead too: one restored before its
         # removal finished (it failed, or the run died) then reads changed,
-        # not unchanged over the artifacts the removal already deleted.
+        # not unchanged over the artifacts the removal already deleted. Not
+        # _pending_record: that moves a record into the run's scope, and a
+        # deleted document may be a retired scope's.
         pending = [
             record.model_copy(
                 update={
                     "content_hash": PENDING_CONTENT_HASH,
                     "status": DocStatus.PENDING,
                     "error_info": _WRITE_AHEAD_INFO,
+                    "failure_count": 0,
                 }
             )
             for record in self.doc_status.get_many(delta.deleted).values()

@@ -466,10 +466,14 @@ class SQLiteGraphIndexer(GraphIndexer):
         }
 
     def count_neighbors(
-        self, entity_ids: list[str], suffix: str | None = None
+        self,
+        entity_ids: list[str],
+        suffix: str | None = None,
+        at_most: int | None = None,
     ) -> dict[str, int]:
         """``{id: how many entities it is related to}`` for the stored
-        entities, counted by SQLite (see :meth:`read_neighbor_ids`)."""
+        entities, counted by SQLite (see :meth:`read_neighbor_ids`) and
+        capped at ``at_most``."""
         if not entity_ids:
             return {}
         label = self._entity_label(suffix)
@@ -489,7 +493,9 @@ class SQLiteGraphIndexer(GraphIndexer):
                     [label, *batch, label, *batch],
                 ).fetchall()
                 for node, count in rows:
-                    counts[node] = int(count)
+                    counts[node] = (
+                        int(count) if at_most is None else min(int(count), at_most)
+                    )
         return {i: counts[i] for i in dict.fromkeys(entity_ids) if i in counts}
 
     def find_ids_citing(

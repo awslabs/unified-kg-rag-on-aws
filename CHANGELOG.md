@@ -624,6 +624,10 @@ changed once with the full-config keys (#332).
   stores gets the embedded SQLite stores (#273): add
   `providers.graph.kind: gremlin` and `providers.vector.kind: opensearch` to
   keep the containers.
+- An index a pre-#383 build wrote, where a deleted document was restored
+  while its removal was unfinished, fails with `... whose text units the
+  vector store does not hold`: delete that one document's registry record
+  (the next run indexes it again) rather than rebuilding everything (#383).
 - Document filters: rebuild once with `indexing.reset: true` an index
   that an incremental run wrote with document removals before #370 (it
   keeps the removed documents' filter values on every entity, relationship
@@ -819,6 +823,11 @@ changed once with the full-config keys (#332).
   fused order. Reported by @vibhupb (#83) (#284).
 
 ### Changed
+- `GraphIndexer.count_neighbors` takes `at_most` and stops counting there
+  (Neptune `limit` before `count`): the community walk only asks whether an
+  entity has more neighbours than its step. A Neptune edge write no longer
+  reads its batch's endpoints first; the edge rewrite looks both up itself
+  and leaves the stored edge when one is missing (#PR).
 - A global-search map phase whose every call timed out raises
   `LanguageModelTimeoutError` (a `LanguageModelError` and still a
   `TimeoutError`), and `degraded_error` names it; `run-eval`'s invalid
@@ -1338,6 +1347,8 @@ changed once with the full-config keys (#332).
   lease back expired at the previous holder's expiry. A lease released
   between the takeover's read and its acquire no longer makes it wait
   (#PR).
+- The write-ahead `PENDING` record of a deleted document has
+  `failure_count` 0, as every `PENDING` record (#PR).
 - Incremental indexing: a removal that both merges and splits spellings
   ("Acme Ltd" into "ACME Inc", "Acme" split off) and is killed between its
   writes and the deletion of the old ids is resumed to a full build's

@@ -171,9 +171,10 @@ curl -X PUT "https://<OpenSearch endpoint>/_all/_settings" \
 
 인덱싱 도중 멈춘 증분 실행(태스크 종료, 저장소나 레지스트리 연결 불가, 실패 한도
 초과)은 손으로 고칠 필요 없이 다시 실행하면 됩니다. 인덱싱은 먼저 새 문서와 바뀐
-문서를 이전·새 텍스트 단위와 함께 `PENDING`으로 기록하고, 쓰기가 끝난 뒤에야
-`PROCESSED`나 `FAILED`로 바꿉니다. 그래서 다음 실행은 코퍼스에 남은 `PENDING` 문서를
-다시 추출하고, 사라진 문서에 쓰인 내용은 지웁니다
+문서를 이전·새 텍스트 단위와 함께, 삭제된 문서는 제거하기 전에 `PENDING`으로 기록하고,
+쓰기가 끝난 뒤에야 `PROCESSED`나 `FAILED`로 바꿉니다(삭제된 문서는 레코드를 지움). 그래서
+다음 실행은 코퍼스에 남은 `PENDING` 문서를, 그사이 되살린 삭제 문서까지 다시 추출하고,
+사라진 문서에 쓰인 내용은 지웁니다
 ([설계 §5.3](./design.ko.md#53-크래시-복구선기록-프로토콜)).
 
 - **`PENDING` 레코드는 그대로 두세요**(`status` `pending`, `content_hash` `pending`).
@@ -639,7 +640,7 @@ Langfuse에는 `langfuse.observation.type`(모델 호출은 `generation`, `embed
 | `NamespaceLeaseError: This run lost the write lease ...` | 갱신이 계속 실패해 임대가 만료됐거나 다른 실행이 가져감 | 다른 실행이 끝난 뒤 다시 실행하고 레지스트리 연결을 확인 |
 | `ConfigurationError: Doc-status registry: DynamoDB table '...' has the key schema ... of an earlier release` | `doc_id`만으로 키를 잡은 테이블 | `aws.dynamodb.table_name`을 새 테이블(또는 스택의 새 테이블)로 바꾸고 `indexing.reset: true`로 한 번 실행([증분 실행](#증분-실행)) |
 | `ConfigurationError: The OpenSearch index '...' records no embedding settings ...` | 이전 릴리스가 만든 인덱스 | `indexing.reset: true`로 한 번 실행 |
-| `The doc-status registry lists indexed documents of this namespace whose entities the graph store does not hold`(또는 `whose text units the vector store does not hold`) | 레지스트리가 기록한 내용을 저장소가 잃음(재시작한 Gremlin Server, `down -v`, 복원한 그래프, 삭제된 인덱스, 옮긴 `vector.sqlite3`) | `indexing.reset: true`로 다시 실행하거나 네임스페이스의 레코드를 삭제. 로컬에서는 저장소 파일 세 개를 함께 지우거나 옮긴 파일을 되돌림 |
+| `The doc-status registry lists indexed documents of this namespace whose entities the graph store does not hold`(또는 `whose text units the vector store does not hold`) | 레지스트리가 기록한 내용을 저장소가 잃음(재시작한 Gremlin Server, `down -v`, 복원한 그래프, 삭제된 인덱스, 옮긴 `vector.sqlite3`), 또는 #383 이전 빌드가 쓴 인덱스에서 제거가 끝나기 전에 삭제 문서를 되살림 | `indexing.reset: true`로 다시 실행하거나 네임스페이스의 레코드를 삭제. 로컬에서는 저장소 파일 세 개를 함께 지우거나 옮긴 파일을 되돌림. 되살린 문서는 그 문서의 레지스트리 레코드 하나만 지우면 다음 실행이 다시 인덱싱함 |
 
 ### 질의
 

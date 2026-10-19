@@ -175,9 +175,10 @@ share it.
 An incremental run that stops inside indexing (killed task, unreachable store
 or registry, tripped failure gate) needs no repair: re-run. Indexing first
 records every new and changed document `PENDING` with its old and new text
-units, and marks it `PROCESSED` or `FAILED` only after the writes, so the next
-run re-extracts each `PENDING` document still in the corpus and removes what
-was written for one that is gone
+units, and every deleted one before its removal, and marks it `PROCESSED` or
+`FAILED` (or drops a deleted one's record) only after the writes, so the next
+run re-extracts each `PENDING` document still in the corpus, a deleted one
+restored meanwhile included, and removes what was written for one that is gone
 ([Design §5.3](./design.md#53-crash-recovery-write-ahead-protocol)).
 
 - **Leave `PENDING` records alone** (`status` `pending`, `content_hash`
@@ -686,7 +687,7 @@ model or credential error fails a query rather than answering from no context.
 | `NamespaceLeaseError: This run lost the write lease ...` | Renewals failed until the lease expired, or another run took it | Re-run after the other run; check the registry is reachable |
 | `ConfigurationError: Doc-status registry: DynamoDB table '...' has the key schema ... of an earlier release` | A table keyed by `doc_id` alone | Point `aws.dynamodb.table_name` at a new table (or the stack's), and run once with `indexing.reset: true` ([Incremental runs](#incremental-runs)) |
 | `ConfigurationError: The OpenSearch index '...' records no embedding settings ...` | An earlier release built the index | Run once with `indexing.reset: true` |
-| `The doc-status registry lists indexed documents of this namespace whose entities the graph store does not hold` (or `whose text units the vector store does not hold`) | A store lost what the registry records (a restarted Gremlin Server, `down -v`, a restored graph, deleted indices, a moved `vector.sqlite3`) | Re-run with `indexing.reset: true`, or delete the namespace's records; locally delete the three store files together or restore the moved one |
+| `The doc-status registry lists indexed documents of this namespace whose entities the graph store does not hold` (or `whose text units the vector store does not hold`) | A store lost what the registry records (a restarted Gremlin Server, `down -v`, a restored graph, deleted indices, a moved `vector.sqlite3`), or, in an index a pre-#383 build wrote, a deleted document was restored while its removal was unfinished | Re-run with `indexing.reset: true`, or delete the namespace's records; locally delete the three store files together or restore the moved one. For the restored document, deleting that one document's registry record is enough: the next run indexes it again |
 
 ### Queries
 

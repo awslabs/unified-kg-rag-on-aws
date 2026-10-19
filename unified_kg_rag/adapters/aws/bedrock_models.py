@@ -119,8 +119,9 @@ _LANGUAGE_MODEL_INFO: dict[str, LanguageModelInfo] = {
     # Haiku 5.5 also thinks by default but, unlike Sonnet/Opus 5.5, accepts
     # thinking disabled; it takes no budget_tokens and its tokenizer counts
     # ~30% more tokens than Haiku 4.5 for the same text. It supports Converse
-    # (so ConverseStream), but langchain-aws 1.8.0's streaming allowlist lacks
-    # "claude-haiku-5", hence the explicit supports_streaming.
+    # (so ConverseStream). langchain-aws 1.9.0 streams "claude-haiku-5"; the
+    # 1.8.x the dependency range still allows does not, hence the explicit
+    # supports_streaming.
     LanguageModelId.CLAUDE_V5_5_HAIKU: LanguageModelInfo(
         supports_streaming=True,
         context_window_size=1000000,

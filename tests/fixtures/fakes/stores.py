@@ -345,10 +345,14 @@ class FakeGraphStore:
         return {i: sorted(ids) for i, ids in neighbors.items()}
 
     def count_neighbors(
-        self, entity_ids: list[str], suffix: str | None = None
+        self,
+        entity_ids: list[str],
+        suffix: str | None = None,
+        at_most: int | None = None,
     ) -> dict[str, int]:
         return {
-            i: len(n) for i, n in self.read_neighbor_ids(entity_ids, suffix).items()
+            i: len(n) if at_most is None else min(len(n), at_most)
+            for i, n in self.read_neighbor_ids(entity_ids, suffix).items()
         }
 
     def find_incident_relationship_ids(

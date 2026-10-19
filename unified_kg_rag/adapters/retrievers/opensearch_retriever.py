@@ -812,7 +812,7 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         return clauses
 
     def _check_filter_values(self, filters: dict[str, Any] | None) -> None:
-        """Reject a list filter longer than one ``terms`` query may be.
+        """Reject a filter value OpenSearch would answer with a 400.
 
         A ``terms`` query is one clause however many values it holds, so a
         long id list needs no splitting; the limit is the index's

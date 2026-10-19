@@ -1327,7 +1327,7 @@ def _components_reaching(
             for b in neighbors[node]:
                 suffix_of.setdefault(b, suffix_of[node])
         for suffix, group in by_suffix(hop).items():
-            degree = graph.count_neighbors(group, suffix=suffix)
+            degree = graph.count_neighbors(group, suffix=suffix, at_most=step + 1)
             hubs = sorted(n for n in group if degree.get(n, 0) > step)
             hub_set = set(hubs)
             small = [n for n in group if n not in hub_set]
