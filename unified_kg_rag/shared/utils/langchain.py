@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
 import concurrent.futures
+import functools
+import inspect
 import math
 import re
 import threading
@@ -375,16 +377,41 @@ class BatchProcessor(BaseModel):
         if abandoned is not None:
             stop = stop | tenacity.stop_when_event_set(abandoned)
             options["sleep"] = abandoned.wait
-        decorator: Callable = tenacity.retry(
-            retry=tenacity.retry_if_exception(self._is_retryable),
-            wait=tenacity.wait_random_exponential(
+        policy: dict[str, Any] = {
+            "retry": tenacity.retry_if_exception(self._is_retryable),
+            "wait": tenacity.wait_random_exponential(
                 multiplier=self.retry_multiplier, max=self.retry_max_wait
             ),
-            stop=stop,
-            before_sleep=self._create_retry_log_callback(operation_name),
-            reraise=True,
-            **options,
-        )
+            "stop": stop,
+            "before_sleep": self._create_retry_log_callback(operation_name),
+            "reraise": True,
+        }
+        # Not tenacity.retry: its wrapper keeps one statistics dict for every
+        # call of the wrapped function and clears it on each call (tenacity
+        # 9.2), so a worker about to back off read another's cleared stats
+        # (KeyError 'idle_for', not retried: the item failed). Each call runs
+        # on a copy of the policy, with statistics of its own (in a thread or
+        # a coroutine alike).
+        retrying = tenacity.Retrying(**policy, **options)
+        aretrying = tenacity.AsyncRetrying(**policy)
+
+        def decorator(func: Callable) -> Callable:
+            if inspect.iscoroutinefunction(func) or inspect.iscoroutinefunction(
+                getattr(func, "__call__", None)  # noqa: B004 - async callables
+            ):
+
+                @functools.wraps(func)
+                async def acall(*args: Any, **kwargs: Any) -> Any:
+                    return await aretrying.copy()(func, *args, **kwargs)
+
+                return acall
+
+            @functools.wraps(func)
+            def call(*args: Any, **kwargs: Any) -> Any:
+                return retrying.copy()(func, *args, **kwargs)
+
+            return call
+
         return decorator
 
     @staticmethod
