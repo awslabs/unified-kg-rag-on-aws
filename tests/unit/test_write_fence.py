@@ -497,7 +497,10 @@ def test_a_stopped_run_uploads_its_checkpoint_before_releasing_the_lease(
     with pytest.raises(PipelineInterrupted):
         pipe.run(tmp_path, pipeline_id="pid")
     assert held_during_upload == [True]
-    assert not store.leases
+    # A stop gives the lease up as expired (its requests may be in flight),
+    # so the next run waits for them; it is no longer held.
+    ((owner, expires_at),) = store.leases.values()
+    assert expires_at <= time.time()
 
 
 def test_a_lost_lease_stops_the_deletion_of_retired_ids() -> None:

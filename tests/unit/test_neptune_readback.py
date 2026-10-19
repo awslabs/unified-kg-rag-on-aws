@@ -348,3 +348,13 @@ def test_a_failed_read_raises_instead_of_reading_as_not_stored(indexer, read) ->
 
     with pytest.raises(AWSServiceError, match="connection reset"):
         getattr(indexer, read)(["x"])
+
+
+def test_a_capped_neighbor_count_stops_at_the_cap(indexer) -> None:
+    # The community walk only asks whether an entity has more than `step`
+    # neighbours: Neptune stops counting a hub there.
+    steps = _serve(indexer, [{"id": "e-hub", "count": 129}])
+
+    indexer.count_neighbors(["e-hub"], suffix="tenant-a", at_most=129)
+
+    assert ("limit", (129,)) in _flatten_steps(steps)

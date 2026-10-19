@@ -171,9 +171,10 @@ curl -X PUT "https://<OpenSearch endpoint>/_all/_settings" \
 
 인덱싱 도중 멈춘 증분 실행(태스크 종료, 저장소나 레지스트리 연결 불가, 실패 한도
 초과)은 손으로 고칠 필요 없이 다시 실행하면 됩니다. 인덱싱은 먼저 새 문서와 바뀐
-문서를 이전·새 텍스트 단위와 함께 `PENDING`으로 기록하고, 쓰기가 끝난 뒤에야
-`PROCESSED`나 `FAILED`로 바꿉니다. 그래서 다음 실행은 코퍼스에 남은 `PENDING` 문서를
-다시 추출하고, 사라진 문서에 쓰인 내용은 지웁니다
+문서를 이전·새 텍스트 단위와 함께, 삭제된 문서는 제거하기 전에 `PENDING`으로 기록하고,
+쓰기가 끝난 뒤에야 `PROCESSED`나 `FAILED`로 바꿉니다(삭제된 문서는 레코드를 지움). 그래서
+다음 실행은 코퍼스에 남은 `PENDING` 문서를, 그사이 되살린 삭제 문서까지 다시 추출하고,
+사라진 문서에 쓰인 내용은 지웁니다
 ([설계 §5.3](./design.ko.md#53-크래시-복구선기록-프로토콜)).
 
 - **`PENDING` 레코드는 그대로 두세요**(`status` `pending`, `content_hash` `pending`).
@@ -273,10 +274,12 @@ NamespaceLeaseError: Index namespace '<namespace>' is being written by
   쓰기 시도(재시도 포함)는 먼저 임대를 확인하고, 마지막으로 성공한 갱신 뒤 남은 기간이
   3분의 1 미만이면 멈춥니다. `lease_seconds`는 가장 긴 쓰기 요청(180초)의 세 배 이상으로
   두세요(더 짧으면 WARNING을 남김) ([설계 §5.6](./design.ko.md#56-동시성)).
-- **죽은 실행의 임대를 넘겨받을 때.** 쓰기 차단을 이미 지난 쓰기는 임대가 만료된 뒤에
+- **죽거나 중지된 실행의 임대를 넘겨받을 때.** 쓰기 차단을 이미 지난 쓰기는 임대가 만료된 뒤에
   도착할 수 있지만(프로세스가 멈췄거나 요청이 느림), 그 만료 시각에 가장 긴 요청 시간을 더한
-  시각보다 늦지는 않습니다. 그래서 놓은 것이 아니라 만료된 임대를(보유자가 죽었거나 멈춤)
-  넘겨받은 실행은 그때까지 첫 쓰기를 미루고 WARNING
+  시각보다 늦지는 않습니다(레지스트리 쓰기도 시도마다 확인함). 그래서 놓은 것이 아니라 만료된
+  임대를(보유자가 죽었거나 멈췄거나 중지됨. 중지된 실행은 보낸 요청이 아직 남아 있을 수 있어
+  임대를 만료된 상태로 둠) 넘겨받은 실행은 그때까지 첫 쓰기를 미루고(그 앞의 파싱 같은 단계는
+  그대로 진행) WARNING
   (`Took over the expired write lease ... the first write waits until ...`)을 남깁니다.
   이전 임대가 만료된 뒤 최대 약 3분(180초에 5초 여유)입니다. SIGTERM을 받으면 기다리기를
   멈춥니다. 요청을 이미 만든 채 그보다 오래 멈춘 프로세스는 여전히 새 보유자 뒤에 쓸 수
@@ -638,7 +641,7 @@ Langfuse에는 `langfuse.observation.type`(모델 호출은 `generation`, `embed
 | `NamespaceLeaseError: This run lost the write lease ...` | 갱신이 계속 실패해 임대가 만료됐거나 다른 실행이 가져감 | 다른 실행이 끝난 뒤 다시 실행하고 레지스트리 연결을 확인 |
 | `ConfigurationError: Doc-status registry: DynamoDB table '...' has the key schema ... of an earlier release` | `doc_id`만으로 키를 잡은 테이블 | `aws.dynamodb.table_name`을 새 테이블(또는 스택의 새 테이블)로 바꾸고 `indexing.reset: true`로 한 번 실행([증분 실행](#증분-실행)) |
 | `ConfigurationError: The OpenSearch index '...' records no embedding settings ...` | 이전 릴리스가 만든 인덱스 | `indexing.reset: true`로 한 번 실행 |
-| `The doc-status registry lists indexed documents of this namespace whose entities the graph store does not hold`(또는 `whose text units the vector store does not hold`) | 레지스트리가 기록한 내용을 저장소가 잃음(재시작한 Gremlin Server, `down -v`, 복원한 그래프, 삭제된 인덱스, 옮긴 `vector.sqlite3`) | `indexing.reset: true`로 다시 실행하거나 네임스페이스의 레코드를 삭제. 로컬에서는 저장소 파일 세 개를 함께 지우거나 옮긴 파일을 되돌림 |
+| `The doc-status registry lists indexed documents of this namespace whose entities the graph store does not hold`(또는 `whose text units the vector store does not hold`) | 레지스트리가 기록한 내용을 저장소가 잃음(재시작한 Gremlin Server, `down -v`, 복원한 그래프, 삭제된 인덱스, 옮긴 `vector.sqlite3`), 또는 #383 이전 빌드가 쓴 인덱스에서 제거가 끝나기 전에 삭제 문서를 되살림 | `indexing.reset: true`로 다시 실행하거나 네임스페이스의 레코드를 삭제. 로컬에서는 저장소 파일 세 개를 함께 지우거나 옮긴 파일을 되돌림. 되살린 문서는 그 문서의 레지스트리 레코드 하나만 지우면 다음 실행이 다시 인덱싱함 |
 
 ### 질의
 

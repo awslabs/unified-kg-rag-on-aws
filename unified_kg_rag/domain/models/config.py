@@ -1871,9 +1871,12 @@ class NeptuneIndexingConfig(BaseModel):
             "Neptune write batches (and relationship edges, one per request) "
             "submitted concurrently; the Gremlin connection pool grows to at "
             "least this. Above 1, batches touching the same vertices can raise"
-            " ConcurrentModificationException; the retry recovers, but the "
-            "conflicts can make a large run slower than sequential writes, so "
-            "measure before raising it."
+            " ConcurrentModificationException. On Neptune (one transaction "
+            "per request) the retry recovers, but the conflicts can make a "
+            "large run slower than sequential writes, so measure before "
+            "raising it. A local Gremlin Server has no transactions: a "
+            "retried edge rewrite can leave a duplicate edge (3,025 edges "
+            "for 3,000 ids in one measurement), so keep it at 1 there."
         ),
     )
     max_attempts: int = Field(

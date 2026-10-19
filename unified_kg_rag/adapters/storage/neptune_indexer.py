@@ -343,10 +343,14 @@ class NeptuneIndexer(GraphIndexer):
             raise AWSServiceError(f"Neptune read_neighbor_ids failed: {e}") from e
 
     def count_neighbors(
-        self, entity_ids: list[str], suffix: str | None = None
+        self,
+        entity_ids: list[str],
+        suffix: str | None = None,
+        at_most: int | None = None,
     ) -> dict[str, int]:
         """Count the entities each entity is related to, in the store (see
-        :meth:`read_neighbor_ids`; no ids are returned). Raises
+        :meth:`read_neighbor_ids`; no ids are returned), stopping at
+        ``at_most`` (a hub's neighbours are not all counted). Raises
         :class:`AWSServiceError` when the read fails."""
         if not entity_ids:
             return {}
@@ -359,7 +363,16 @@ class NeptuneIndexer(GraphIndexer):
                 .has("id", P.within(batch))
                 .project("id", "count")
                 .by("id")
-                .by(__.both().hasLabel(entity_label).values("id").dedup().count()),
+                .by(
+                    __.both().hasLabel(entity_label).values("id").dedup().count()
+                    if at_most is None
+                    else __.both()
+                    .hasLabel(entity_label)
+                    .values("id")
+                    .dedup()
+                    .limit(at_most)
+                    .count()
+                ),
                 "count_neighbors",
             )
             return {str(row["id"]): int(row["count"]) for row in rows}
@@ -617,12 +630,12 @@ class NeptuneIndexer(GraphIndexer):
     def _write_relationships(self, relationships: list[Relationship]) -> IndexingStats:
         """Write relationship edges one small traversal per edge (idempotent).
 
-        For each suffix group: read which endpoint vertices are stored (in
-        batches), then rewrite each edge whose endpoints are, as its own
-        traversal (``_build_add_edge_traversal``: the old copy dropped and the
-        new one added in one request), ``index_concurrency`` at a time. A
-        failed write counts as failed and leaves the stored edge as it was;
-        it does not abort the others. Emits a progress log every
+        For each suffix group: rewrite each edge as its own traversal
+        (``_build_add_edge_traversal``: both endpoints looked up, the old copy
+        dropped and the new one added in one request), ``index_concurrency``
+        at a time. An edge whose endpoint is not stored, and a failed write,
+        count as failed and leave the stored edge as it was; neither aborts
+        the others. Emits a progress log every
         ``_PROGRESS_LOG_EVERY`` edges so a large run is distinguishable from
         a hang.
         """
@@ -643,55 +656,11 @@ class NeptuneIndexer(GraphIndexer):
                 "Indexing %s relationships for '%s'...", len(rels), entity_label
             )
 
-            # An edge whose endpoint vertex is missing is not written: its
-            # stored copy (the edge an unchanged document states, before a
-            # re-key re-pointed it) stays.
-            writable: list[Relationship] = []
-            for batch in self._batch_iterator(rels):
-                ends = sorted(
-                    {end for rel in batch for end in (rel.source_id, rel.target_id)}
-                )
-
-                def stored_ends(
-                    g: GraphTraversalSource,
-                    entity_label: str = entity_label,
-                    ends: list[str] = ends,
-                ) -> GraphTraversal:
-                    return (
-                        g.V()
-                        .hasLabel(entity_label)
-                        .has("id", P.within(ends))
-                        .values("id")
-                    )
-
-                try:
-                    present = set(
-                        self._execute_with_retries(
-                            stored_ends, "Reading edge endpoints", results=True
-                        )
-                    )
-                except NamespaceLeaseError:
-                    raise
-                except Exception as exc:
-                    stats.add_error(
-                        f"reading edge endpoints failed: {exc}",
-                        len(batch),
-                        ids=[rel.id for rel in batch],
-                    )
-                    logger.warning("Failed reading an edge batch's endpoints: %s", exc)
-                    continue
-                found: list[Relationship] = []
-                for rel in batch:
-                    if rel.source_id in present and rel.target_id in present:
-                        found.append(rel)
-                        continue
-                    stats.add_error("endpoint entity not found", ids=[rel.id])
-                    logger.warning(
-                        "Relationship '%s' not written: an endpoint entity is "
-                        "not stored",
-                        rel.id,
-                    )
-                writable.extend(found)
+            # An edge whose endpoint vertex is missing is not written (the
+            # traversal finds both before it drops anything): its stored copy
+            # (the edge an unchanged document states, before a re-key
+            # re-pointed it) stays.
+            writable = rels
 
             def write(
                 rel: Relationship, entity_label: str = entity_label

@@ -624,6 +624,10 @@ changed once with the full-config keys (#332).
   stores gets the embedded SQLite stores (#273): add
   `providers.graph.kind: gremlin` and `providers.vector.kind: opensearch` to
   keep the containers.
+- An index a pre-#383 build wrote, where a deleted document was restored
+  while its removal was unfinished, fails with `... whose text units the
+  vector store does not hold`: delete that one document's registry record
+  (the next run indexes it again) rather than rebuilding everything (#383).
 - Document filters: rebuild once with `indexing.reset: true` an index
   that an incremental run wrote with document removals before #370 (it
   keeps the removed documents' filter values on every entity, relationship
@@ -819,6 +823,11 @@ changed once with the full-config keys (#332).
   fused order. Reported by @vibhupb (#83) (#284).
 
 ### Changed
+- `GraphIndexer.count_neighbors` takes `at_most` and stops counting there
+  (Neptune `limit` before `count`): the community walk only asks whether an
+  entity has more neighbours than its step. A Neptune edge write no longer
+  reads its batch's endpoints first; the edge rewrite looks both up itself
+  and leaves the stored edge when one is missing (#388).
 - A global-search map phase whose every call timed out raises
   `LanguageModelTimeoutError` (a `LanguageModelError` and still a
   `TimeoutError`), and `degraded_error` names it; `run-eval`'s invalid
@@ -1322,6 +1331,26 @@ changed once with the full-config keys (#332).
   filtered local or DRIFT query silently dropped every expanded entity. The
   entities-index check alone then decides, as before #381; a missing index
   is logged (#387).
+- DynamoDB registry writes check the write fence before every request
+  attempt (each `BatchWriteItem` of 25 records, each re-send of
+  unprocessed items, each botocore retry), not once per call, and each
+  attempt is bounded (10 s connect, 60 s read): a run that lost its lease
+  went on writing the registry for up to ~10 minutes after its check, over
+  the records of the run that took the lease, past the takeover wait (8 of
+  10 requests of one call after the loss). The takeover wait counts one
+  registry attempt in the longest request (#388).
+- A stopped run gives its lease up as expired (owner kept) instead of
+  releasing it, so the next run waits for the stopped run's requests still
+  in flight, as after a crash: it released it, and the next run wrote at
+  once, before a write the stopped run had already sent. A run stopped (or
+  failing) during its own takeover wait hands that wait on: it puts the
+  lease back expired at the previous holder's expiry. A lease released
+  between the takeover's read and its acquire no longer makes it wait, and
+  the wait holds the first write only: a stage start no longer waits, so
+  the stages before the first registry or store write (parsing) run
+  meanwhile (#388).
+- The write-ahead `PENDING` record of a deleted document has
+  `failure_count` 0, as every `PENDING` record (#388).
 - Incremental indexing: a removal that both merges and splits spellings
   ("Acme Ltd" into "ACME Inc", "Acme" split off) and is killed between its
   writes and the deletion of the old ids is resumed to a full build's

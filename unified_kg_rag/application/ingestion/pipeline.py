@@ -86,6 +86,7 @@ from unified_kg_rag.shared.utils.cache_keys import (
 )
 from unified_kg_rag.shared.utils.document_identity import config_registry_namespace
 from unified_kg_rag.shared.write_fence import (
+    check_fences_held,
     check_write_fence,
     install_write_fence,
     remove_write_fence,
@@ -1362,8 +1363,9 @@ class DataIngestionPipeline:
             else:
                 logger.info("Executing stage: '%s'", stage.name)
                 # A run whose lease was lost meanwhile (in a long stage that
-                # does not write) stops here, not at its next write.
-                check_write_fence()
+                # does not write) stops here, not at its next write. Not the
+                # takeover wait: a stage that writes nothing need not wait.
+                check_fences_held()
                 result = self._execute_stage(stage, context)
                 self._emit_stage_metrics(context, stage.name)
                 with self._checkpoint_write():

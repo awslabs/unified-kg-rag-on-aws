@@ -69,15 +69,8 @@ _Described = TypeVar("_Described", Entity, Relationship)
 
 # Extraction-store key of a suffix's strip note: the stored items a
 # removal's strip merges or re-keys, kept until their old ids are deleted
-# (record keys are ``fingerprint:hash``: no clash). #379 wrote the note
-# under every removed text unit (``pending-strip#<text unit id>``); a
-# resumed removal still reads those.
+# (record keys are ``fingerprint:hash``: no clash).
 _PENDING_STRIP = "pending-strip"
-
-
-def _legacy_pending_strip_keys(text_unit_ids: Iterable[str]) -> list[str]:
-    """The keys #379 wrote the strip note of ``text_unit_ids`` under."""
-    return [f"{_PENDING_STRIP}#{unit}" for unit in sorted(set(text_unit_ids))]
 
 
 def _noted(notes: Mapping[str, Mapping[str, Any]], field: str) -> set[str]:
@@ -1629,12 +1622,11 @@ class IndexingManager:
                 # stripping them again on a retry gave a claim the wrong
                 # subject.
                 doing = "Noting the pending strip"
+                earlier = earlier_notes or {}
                 self._note_pending_strip(
                     suffix,
-                    sorted(merged | _noted(earlier_notes or {}, "entity_ids")),
-                    sorted(
-                        retired_edges | _noted(earlier_notes or {}, "relationship_ids")
-                    ),
+                    sorted(merged | _noted(earlier, "entity_ids")),
+                    sorted(retired_edges | _noted(earlier, "relationship_ids")),
                 )
                 noted = True
             doing = "Reading the claims of re-keyed entities"
@@ -1970,13 +1962,7 @@ class IndexingManager:
             # finished (see _note_pending_strip): the items need not cite the
             # removed units any more. Read on every removal (one record): a
             # retry need not remove the same units.
-            notes = vector.read_extraction_records(
-                [
-                    _PENDING_STRIP,
-                    *(_legacy_pending_strip_keys(text_unit_ids) if resumed else []),
-                ],
-                suffix=suffix,
-            )
+            notes = vector.read_extraction_records([_PENDING_STRIP], suffix=suffix)
             # A claim the earlier strip re-keyed onto a noted entity cites no
             # removed unit: it is found through its subject or object.
             noted_claims = self._claims_about(suffix, _noted(notes, "entity_ids"))

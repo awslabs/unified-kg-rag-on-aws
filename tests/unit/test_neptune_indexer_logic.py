@@ -796,28 +796,16 @@ def test_an_edge_whose_endpoint_is_missing_keeps_its_stored_copy(
 ) -> None:
     # Regression: the edges were dropped by id before the write found the
     # endpoint missing, so an edge re-pointed at a re-keyed entity whose write
-    # failed was lost, though an unchanged document still states it. Only an
-    # edge whose endpoints are stored is rewritten (its drop is part of it).
-    rewritten: list[str] = []
-
-    class _Query:
-        def __init__(self) -> None:
-            self.steps: list[tuple[str, tuple]] = []
-
-        def __getattr__(self, name: str):
-            def step(*args, **kwargs):
-                self.steps.append((name, args))
-                return self
-
-            return step
+    # failed was lost, though an unchanged document still states it. The
+    # rewrite looks both endpoints up before its drop (on the server: see
+    # test_local_stores), and an empty answer counts the edge as failed.
+    from gremlin_python.process.anonymous_traversal import traversal
+    from gremlin_python.structure.graph import Graph
 
     def execute(build, operation, *, results=False, **kwargs):
-        query = build(_Query())
-        if operation == "Reading edge endpoints":
-            return ["a", "b"]
         assert operation == "Relationship indexing"
-        rewritten.append(next(args for name, args in query.steps if name == "has")[1])
-        return ["written"]
+        written = build(traversal().withGraph(Graph()))
+        return [] if "gone" in repr(written.bytecode) else ["written"]
 
     mocker.patch.object(indexer, "_execute_with_retries", side_effect=execute)
     kept = Relationship(id="r1", source_id="a", target_id="b")
@@ -825,9 +813,9 @@ def test_an_edge_whose_endpoint_is_missing_keeps_its_stored_copy(
 
     stats = indexer.upsert_relationships([kept, repointed])
 
-    assert rewritten == ["r1"]
     assert (stats.successful_items, stats.failed_items) == (1, 1)
     assert stats.failed_ids == ["r2"]
+    assert any("'gone' not found" in e for e in stats.errors)
 
 
 def test_member_drop_retries_after_a_lost_connection(indexer, mocker) -> None:

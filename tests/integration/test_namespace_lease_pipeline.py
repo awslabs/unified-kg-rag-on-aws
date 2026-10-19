@@ -36,13 +36,11 @@ def test_a_leased_namespace_stops_a_run_before_it_writes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import unified_kg_rag.application.ingestion.namespace_lease as lease_mod
-    from unified_kg_rag.shared import write_fence
 
     # A takeover of an expired lease waits for the late writes of its holder
     # (up to its expiry plus the longest request): shorten that here.
-    monkeypatch.setattr(write_fence, "INGESTION_REQUEST_TIMEOUT_SECONDS", 0.3)
-    monkeypatch.setattr(write_fence, "INDEXING_REQUEST_TIMEOUT_SECONDS", 0.3)
     monkeypatch.setattr(lease_mod, "_TAKEOVER_MARGIN_SECONDS", 0.1)
+    monkeypatch.setattr(lease_mod, "longest_write_request_seconds", lambda: 0.3)
     config = _config(tmp_path / "stores", tmp_path / "viz")
     providers = _providers(
         config, FakeOllama(e2e._respond, ANSWER, DIM), FakeCrossEncoder("r")
