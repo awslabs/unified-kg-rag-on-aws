@@ -3295,6 +3295,15 @@ changed once with the full-config keys (#332).
   instead of frozen dataclasses; they were never instantiated (#300).
 
 ### Security
+- Removing a deleted community's id from the text units that name it no
+  longer clears their document filters: the prune wrote the units it built
+  without attributes through the lineage update, which since #370 nulls the
+  stored filter keys an item lacks, so an unchanged document's units dropped
+  out of filtered retrieval for good and later derivations took the filters
+  off their entities, relationships and claims. The prune writes
+  `community_ids` only; the filter-clearing update applies to lineage
+  updates of entities, relationships and claims alone. Indexes an affected
+  incremental run wrote need a rebuild (`indexing.reset: true`) (#PR).
 - A claim keeps its documents' filters across incremental runs: a stored
   claim read back for a merge or a removal came back without them, and
   claim derivation never took them from its text units, so a claim an
