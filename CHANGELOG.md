@@ -1279,6 +1279,12 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Tracing: a span whose coroutine is cancelled (`asyncio.CancelledError`:
+  `kg_rag.query` / `kg_rag.batch` on Ctrl-C or SIGTERM, or a host cancelling
+  `ainvoke`) also exports as `ERROR` with `error.type`; #374 covered only
+  `KeyboardInterrupt` and `SystemExit`, which never reach a span inside the
+  event loop. A closed generator and a clean `SystemExit(0)` stay `UNSET`
+  (#PR).
 - Incremental indexing: a removal whose strip merges two spellings of a
   name ("Initech" left stated only where "Initech Corp" is) and is killed
   after the merged entity is written, before the other spelling's old id is
