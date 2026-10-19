@@ -376,6 +376,20 @@ def _state(
             ],
             id="a-removed-documents-claim-goes-with-it",
         ),
+        pytest.param(
+            [
+                {
+                    "d3.txt": "Depot and Acme Ltd and Acme Inc trade cash 2. Buyer "
+                    "and Acme trade goods 3. Acme trade cash 1."
+                },
+                {
+                    "d3.txt": "Depot and Acme Ltd and Acme Inc trade cash 2. Buyer "
+                    "and Acme trade goods 3. Acme trade cash 1.",
+                    "d7.txt": "Acme and Buyer and Acme Inc trade parts 1.",
+                },
+            ],
+            id="a-claim-follows-its-spelling-split-off-another-entity",
+        ),
     ],
 )
 def test_incremental_runs_over_two_spellings_match_a_full_build(
