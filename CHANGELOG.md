@@ -1283,17 +1283,17 @@ changed once with the full-config keys (#332).
   run's own scope gives the right way out: `./<value>` when the own scope is
   the name, and, when it is the run's own directory, running from another
   working directory with the same configuration (`--config-path`, so the same
-  stores and registry) (#PR).
+  stores and registry) (#380).
 - `prepare-benchmark musique` accepts the official full file
   (`musique_full_v1.0_dev.jsonl`) again: it carries each question once
   answerable and once not under the same id, which the repeated-id check
-  refused; only answerable items are checked for repeated ids now (#PR).
+  refused; only answerable items are checked for repeated ids now (#380).
 - Tracing: a span whose coroutine is cancelled (`asyncio.CancelledError`:
   `kg_rag.query` / `kg_rag.batch` on Ctrl-C or SIGTERM, or a host cancelling
   `ainvoke`) also exports as `ERROR` with `error.type`; #374 covered only
   `KeyboardInterrupt` and `SystemExit`, which never reach a span inside the
   event loop. A closed generator and a clean `SystemExit(0)` stay `UNSET`
-  (#PR).
+  (#380).
 - Incremental indexing: a removal whose strip merges two spellings of a
   name ("Initech" left stated only where "Initech Corp" is) and is killed
   after the merged entity is written, before the other spelling's old id is
