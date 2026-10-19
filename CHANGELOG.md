@@ -624,6 +624,14 @@ changed once with the full-config keys (#332).
   stores gets the embedded SQLite stores (#273): add
   `providers.graph.kind: gremlin` and `providers.vector.kind: opensearch` to
   keep the containers.
+- Document filters: rebuild once with `indexing.reset: true` an index
+  that an incremental run wrote with document removals before #370 (it
+  keeps the removed documents' filter values on every entity, relationship
+  and claim not rewritten since, so their filters still match those
+  documents; from #370 on a dropped filter key is stored as null, which
+  matches no filter) (#372), or between #370 and #376 with a removal that
+  pruned a community (the kept text units of that community lost their
+  document filters and dropped out of filtered retrieval) (#376).
 
 ### Added
 - `ModelPurpose` is exported from `unified_kg_rag`, so custom code can pass
@@ -3390,11 +3398,6 @@ changed once with the full-config keys (#332).
   update (also an edge rewritten for its rank only) reads the stored filter
   fields and sets the ones the item lost to null, on OpenSearch and the
   embedded engine alike (#370).
-- Upgrading: an index that saw document removals before #370 keeps the
-  removed documents' filter values on every entity, relationship and claim
-  not rewritten since, so their filters still match those documents.
-  Rebuild it once with `indexing.reset: true` to clear them. From #370 on,
-  a dropped filter key is stored as null, which matches no filter (#372).
 - ragas no longer sends usage telemetry from `run-eval`: the evaluators
   package sets `RAGAS_DO_NOT_TRACK=true` unless it is already set (set it
   to `false` to opt back in) (#361).

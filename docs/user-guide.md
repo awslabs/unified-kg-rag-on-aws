@@ -858,7 +858,10 @@ steps on Neptune. Each store accepts the fields its indexer writes:
   gives is stored as null, which matches no filter. An index that saw
   removals before this was fixed (#370) keeps the removed documents' values
   on items not rewritten since, so its filters still match them, until it
-  is rebuilt (`indexing.reset: true`).
+  is rebuilt (`indexing.reset: true`). An index an incremental run wrote
+  after that fix but before #376, with a removal that pruned a community,
+  lost the document filters of the text units it kept, which then match no
+  filter: rebuild it too.
 - `attr_<key>` and `attributes.filters.<key>` name document attributes. A
   graph store holds none, so graph expansion keeps an expanded entity (the
   seeds aside) only when its entities-index document, which carries the
