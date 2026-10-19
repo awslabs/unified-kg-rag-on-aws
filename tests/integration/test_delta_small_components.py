@@ -392,3 +392,82 @@ def test_the_walk_starts_from_another_spelling_of_a_delta_entity(
 
     assert found == component
     assert kept_apart == set()
+
+
+def _walk(tmp_path: Path, stored, edges, components, neighbors, delta, min_size):
+    """``_components_reaching`` over a graph of ``stored`` and ``edges``."""
+    from unified_kg_rag.application.ingestion import pipeline_stages as ps
+
+    _, providers = _setup(tmp_path, None)
+    graph = providers.build_graph_indexer()
+    try:
+        graph.initialize()
+        graph.upsert_entities(stored)
+        graph.upsert_relationships(edges)
+        return ps._components_reaching(
+            graph, components, {}, set(), min_size, neighbors, delta
+        )
+    finally:
+        graph.close()
+
+
+def _entity(entity_id: str, name: str, unit: str = "t1"):
+    from unified_kg_rag.domain.models import Entity
+
+    return Entity(id=entity_id, name=name, type="ORGANIZATION", text_unit_ids=[unit])
+
+
+def _edge(edge_id: str, source: str, target: str):
+    from unified_kg_rag.domain.models import Relationship
+
+    return Relationship(
+        id=edge_id, source_id=source, target_id=target, text_unit_ids=["t1"]
+    )
+
+
+def test_a_stored_spelling_of_a_delta_entity_counts_once(tmp_path: Path) -> None:
+    # "Acme Inc" - Buyer is stored; the delta pair is "Acme Corp" - Buyer. A
+    # full build merges the two spellings: the component is the one Acme and
+    # Buyer, two entities, short of three (three if Acme counted under both
+    # ids).
+    found, _ = _walk(
+        tmp_path,
+        [_entity("e-inc", "Acme Inc"), _entity("e-buyer", "Buyer")],
+        [_edge("r1", "e-inc", "e-buyer")],
+        [{"e-corp", "e-buyer"}],
+        {"e-corp": {"e-buyer"}, "e-buyer": {"e-corp"}},
+        [_entity("e-corp", "Acme Corp", "t2"), _entity("e-buyer", "Buyer", "t2")],
+        3,
+    )
+
+    assert found == set()
+
+
+def test_the_walk_goes_on_from_a_stored_spelling_of_a_delta_entity(
+    tmp_path: Path,
+) -> None:
+    # The delta has the pairs Xenon - Ypsilon and "Zeta Corp" - Wolf. Stored
+    # are Ypsilon - "Zeta Inc" - Quux, and a full build merges the two Zetas:
+    # one component of Xenon, Ypsilon, Zeta, Wolf and Quux. Reaching "Zeta
+    # Inc" from Ypsilon, the walk goes on from the delta entity it is a
+    # spelling of too, or it misses Wolf.
+    found, _ = _walk(
+        tmp_path,
+        [
+            _entity("y", "Ypsilon"),
+            _entity("zs", "Zeta Inc"),
+            _entity("q", "Quux"),
+        ],
+        [_edge("r1", "y", "zs"), _edge("r2", "zs", "q")],
+        [{"x", "y"}, {"z", "w"}],
+        {"x": {"y"}, "y": {"x"}, "z": {"w"}, "w": {"z"}},
+        [
+            _entity("x", "Xenon", "t2"),
+            _entity("y", "Ypsilon", "t2"),
+            _entity("z", "Zeta Corp", "t2"),
+            _entity("w", "Wolf", "t2"),
+        ],
+        5,
+    )
+
+    assert found == {"x", "y", "z", "w"}

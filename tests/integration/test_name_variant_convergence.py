@@ -217,6 +217,7 @@ def _state(
                 hit["_source"]["object_name"],
                 hit["_source"]["status"],
                 hit["_source"]["description"],
+                tuple(sorted(hit["_source"].get("text_unit_ids") or [])),
             )
             for hit in claims
         ),
@@ -347,6 +348,89 @@ def _state(
                 },
             ],
             id="a-claim-names-an-entity-renamed-under-its-id",
+        ),
+        pytest.param(
+            [
+                {
+                    "r6.txt": "ACME Inc trade cash 2. Initech and Buyer and ACME Inc "
+                    "trade cash 2."
+                },
+                {
+                    "r6.txt": "ACME Inc trade cash 2. Initech and Buyer and ACME Inc "
+                    "trade cash 2.",
+                    "d1.txt": "Buyer and Acme Inc trade cash 3.",
+                },
+            ],
+            id="a-claim-names-an-entity-a-delta-renamed-under-its-id",
+        ),
+        pytest.param(
+            [
+                {
+                    "r6.txt": "ACME Inc trade cash 2. Initech and Buyer and ACME Inc "
+                    "trade cash 2."
+                },
+                {
+                    "r6.txt": "ACME Inc trade cash 2. Initech and Buyer and ACME Inc "
+                    "trade cash 2.",
+                    "a0.txt": "Acme Inc trade cash 3.",
+                },
+            ],
+            id="a-claim-names-an-entity-a-delta-without-claims-renamed",
+        ),
+        pytest.param(
+            [
+                {"d0.txt": "Acme Ltd and Acme Corp and Buyer trade cash 2."},
+                {
+                    "d0.txt": "Acme Ltd and Acme Corp and Buyer trade cash 2.",
+                    "d3.txt": "Acme Corp and Acme trade cash 1. Acme Ltd trade "
+                    "parts 1.",
+                },
+            ],
+            id="a-claim-cites-the-units-its-statements-are-in",
+        ),
+        pytest.param(
+            [
+                {"d0.txt": "Acme Ltd and Acme Corp and Buyer trade cash 2."},
+                {
+                    "d0.txt": "Acme Ltd and Acme Corp and Buyer trade cash 2.",
+                    "d6.txt": "Acme Ltd and Depot trade goods 1. Acme trade goods 2.",
+                    "d3.txt": "Acme Corp and Acme trade cash 1. Acme Ltd trade "
+                    "parts 1.",
+                },
+                {
+                    "d0.txt": "Acme LLC and Acme Corp and Buyer trade cash 2.",
+                    "d6.txt": "Acme Ltd and Depot trade goods 1. Acme trade goods 2.",
+                },
+            ],
+            id="a-removed-documents-claim-goes-with-it",
+        ),
+        pytest.param(
+            [
+                {
+                    "d3.txt": "Depot and Acme Ltd and Acme Inc trade cash 2. Buyer "
+                    "and Acme trade goods 3. Acme trade cash 1."
+                },
+                {
+                    "d3.txt": "Depot and Acme Ltd and Acme Inc trade cash 2. Buyer "
+                    "and Acme trade goods 3. Acme trade cash 1.",
+                    "d7.txt": "Acme and Buyer and Acme Inc trade parts 1.",
+                },
+            ],
+            id="a-claim-follows-its-spelling-split-off-another-entity",
+        ),
+        pytest.param(
+            [
+                {
+                    "d3.txt": "Buyer and Acme Ltd and ACME Inc trade cash 3. Buyer "
+                    "trade parts 1. Acme and Acme Inc trade cash 2.",
+                    "d2.txt": "Acme Ltd trade parts 2. Initech Corp trade parts 2.",
+                },
+                {
+                    "d3.txt": "Buyer and Acme Ltd and ACME Inc trade cash 3. Buyer "
+                    "trade parts 1. Acme and Acme Inc trade cash 2."
+                },
+            ],
+            id="a-claim-follows-its-spelling-a-removal-splits-off",
         ),
     ],
 )
@@ -664,3 +748,102 @@ def test_an_edge_the_derivation_drops_is_not_rewritten_as_a_stored_one(
 
     assert not any("deals with" in (e[3] or "") for e in full["edges"])
     assert incremental == full
+
+
+def test_a_stale_edge_on_a_third_spelling_is_moved(tmp_path: Path) -> None:
+    # d6.txt splits the stored spellings of "Acme" apart. An edge stating
+    # "Buyer" and "Acme Corp" was left on "ACME Inc": it cites a unit of
+    # another spelling than the part split off "ACME Inc", so that split was
+    # not taken for half-written and the edge stayed where a full build has
+    # none.
+    r2 = (
+        "ACME Inc and Buyer trade goods 3. ACME Inc and Acme Corp trade parts 2. "
+        "Acme and Acme Ltd and Depot trade cash 3."
+    )
+    first = {"d4.txt": "Acme LLC trade parts 3.", "r2.txt": r2}
+    runs = [
+        first,
+        {**first, "d6.txt": "Buyer and Acme LLC and Acme Corp trade cash 3."},
+    ]
+
+    full = _state(tmp_path / "full", [runs[-1]], gleaning=True)
+    incremental = _state(tmp_path / "inc", runs, gleaning=True)
+
+    assert incremental == full
+
+
+@pytest.mark.parametrize(
+    "die_at",
+    [
+        pytest.param(("upsert_entities", 1, True), id="after-the-vector-entities"),
+        pytest.param(
+            ("upsert_entities", 1, True, SQLiteGraphIndexer),
+            id="after-the-graph-entities",
+        ),
+        pytest.param(
+            ("delete_document_artifacts", 2, False), id="before-deleting-the-old-id"
+        ),
+    ],
+)
+def test_a_resumed_removal_finishes_the_merge_it_started(
+    tmp_path: Path, die_at: tuple[Any, ...]
+) -> None:
+    # Removing d1.txt leaves "Initech" stated only where "Initech Corp" is,
+    # and the strip merges the two. Killed once "Initech" was written and
+    # before the old "Initech Corp" was deleted, the resumed removal found
+    # nothing citing d1.txt's unit (neither spelling does any more) and
+    # "Initech Corp" stayed with its edge.
+    runs = [
+        {
+            "d1.txt": "Initech trade goods 3.",
+            "d5.txt": "Initech Corp and Initech trade cash 2.",
+        },
+        {"d5.txt": "Initech Corp and Initech trade cash 2."},
+    ]
+
+    full = _state(tmp_path / "full", [runs[-1]], gleaning=True)
+    incremental = _state(tmp_path / "inc", runs, die_in=1, die_at=die_at, gleaning=True)
+
+    assert "Initech Corp" not in {e[1] for e in full["entities"]}
+    assert incremental == full
+
+
+@pytest.mark.parametrize(
+    "die_at",
+    [
+        pytest.param(None, id="uninterrupted"),
+        pytest.param(
+            ("delete_extraction_records", 1, False), id="killed-before-deleting-it"
+        ),
+    ],
+)
+def test_a_finished_removal_deletes_its_strip_note(
+    tmp_path: Path, mocker: Any, die_at: tuple[Any, ...] | None
+) -> None:
+    # The note a merging strip leaves for a retry goes once the old ids are
+    # deleted: a finished removal leaves none in the extraction store, also
+    # when the run that merged was killed before deleting it (the resumed
+    # removal has nothing left to merge, and deletes it).
+    runs = [
+        {
+            "d1.txt": "Initech trade goods 3.",
+            "d5.txt": "Initech Corp and Initech trade cash 2.",
+        },
+        {"d5.txt": "Initech Corp and Initech trade cash 2."},
+    ]
+    written = mocker.spy(OpenSearchIndexer, "write_extraction_records")
+    deleted = mocker.spy(OpenSearchIndexer, "delete_extraction_records")
+
+    if die_at:
+        _state(tmp_path, runs, die_in=1, die_at=die_at)
+    else:
+        _state(tmp_path, runs)
+
+    notes = {
+        key
+        for call in written.call_args_list
+        for key in call.args[1]
+        if key.startswith("pending-strip#")
+    }
+    assert notes
+    assert notes <= {key for call in deleted.call_args_list for key in call.args[1]}

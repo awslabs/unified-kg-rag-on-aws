@@ -58,7 +58,7 @@ from unified_kg_rag.ports.indexer import (
     IndexingStats,
     VectorIndexer,
 )
-from unified_kg_rag.shared import NamespaceLeaseError, get_logger
+from unified_kg_rag.shared import DataProcessingError, NamespaceLeaseError, get_logger
 from unified_kg_rag.shared.utils.concurrency import ContextThreadPoolExecutor
 from unified_kg_rag.shared.write_fence import check_write_fence
 
@@ -66,6 +66,30 @@ logger = get_logger(__name__)
 
 # A graph item whose description the cross-run merge reads back.
 _Described = TypeVar("_Described", Entity, Relationship)
+
+# Extraction-store key prefix under which a removal's strip notes, per
+# removed text unit, the stored items it merges or re-keys until their old
+# ids are deleted (record keys are ``fingerprint:hash``: no clash).
+_PENDING_STRIP = "pending-strip#"
+
+
+def _pending_strip_keys(text_unit_ids: Iterable[str]) -> list[str]:
+    """The extraction-store keys of the strip notes of ``text_unit_ids``."""
+    return [f"{_PENDING_STRIP}{unit}" for unit in sorted(set(text_unit_ids))]
+
+
+def _other_spellings_of_parts(
+    split_from: Mapping[str, str], derived: Mapping[str, Entity]
+) -> list[str]:
+    """The ids of the ``derived`` entities (by id) sharing a
+    ``compact_name_key`` with a part of ``split_from``, the parts excepted:
+    a stored claim naming a part's spelling may be on one of them."""
+    keys = {compact_name_key(derived[p].name) for p in split_from if p in derived}
+    return sorted(
+        i
+        for i, e in derived.items()
+        if i not in split_from and compact_name_key(e.name) in keys
+    )
 
 
 def _vector_content(item: Entity | Relationship) -> tuple[Any, ...]:
@@ -979,12 +1003,31 @@ class IndexingManager:
         edges: Sequence[Relationship],
     ) -> dict[str, str]:
         """The ``{part: whole}`` of ``spellings`` whose whole holds an edge
-        among ``edges``, or a stored claim, that cites a unit of the part:
-        what a split a killed run left half-written leaves behind."""
+        among ``edges``, or a stored claim, that cites a unit of a derived
+        spelling of its name (the part's or another's: a whole may hold a
+        third spelling's statement): what a split a killed run left
+        half-written leaves behind."""
         units_of = {e.id: set(e.text_unit_ids or []) for e in derived}
+        key_of = {e.id: compact_name_key(e.name) for e in derived}
+        parts_by_key: dict[str, list[str]] = defaultdict(list)
+        for part in spellings:
+            parts_by_key[key_of.get(part, "")].append(part)
+
+        def stated(part: str, whole: str) -> set[str]:
+            # The units of every part of its name but the whole itself (a
+            # spelling a full build keeps apart is a part too: its own
+            # edges and claims cite its own units).
+            return set().union(
+                *(
+                    units_of.get(other, set())
+                    for other in parts_by_key[key_of.get(part, "")]
+                    if other != whole
+                )
+            )
+
         left: dict[str, str] = {}
         for part, whole in spellings.items():
-            units = units_of.get(part, set())
+            units = stated(part, whole)
             if any(
                 whole in (r.source_id, r.target_id)
                 and units.intersection(r.text_unit_ids or [])
@@ -995,7 +1038,7 @@ class IndexingManager:
         if pending:
             prefix = self.config.indexing.opensearch.claims_index_prefix
             for part, whole in pending.items():
-                part_units = sorted(units_of.get(part, set()))
+                part_units = sorted(stated(part, whole))
                 citing = (
                     self.opensearch_indexer.find_documents(
                         prefix, "text_unit_ids", part_units, suffix
@@ -1256,11 +1299,17 @@ class IndexingManager:
 
     def _rederived_entity_ids(self, suffix: str) -> list[str]:
         """The stored entity ids whose claims this run derives again: the
-        re-keyed ones, those an entity was split off and those renamed."""
+        re-keyed ones, those an entity was split off, the other spellings
+        of a split-off entity's name this run derived (a claim naming the
+        part may resolve to one of them) and those renamed."""
+        split_from = self._split_from.get(suffix, {})
         return sorted(
             {
                 *self._rekeyed.get(suffix, {}),
-                *self._split_from.get(suffix, {}).values(),
+                *split_from.values(),
+                *_other_spellings_of_parts(
+                    split_from, self._derived_entities.get(suffix, {})
+                ),
                 *self._renamed.get(suffix, set()),
             }
         )
@@ -1408,10 +1457,47 @@ class IndexingManager:
             claim_ids=claim_ids,
             community_ids=community_ids,
         )
+        # A note is kept until the old ids are deleted (a retry needs it).
+        noted = results.pop(f"pending_strip_{suffix}", None) is not None
         if any(stats.failed_items for stats in results.values() if stats):
             self.discard_retired_ids()
             return results
-        return {**results, **self.delete_retired_ids()}
+        results = {**results, **self.delete_retired_ids()}
+        if noted and not any(s.failed_items for s in results.values() if s):
+            self._clear_pending_strip(suffix, text_unit_ids)
+        return results
+
+    def _note_pending_strip(
+        self,
+        suffix: str,
+        text_unit_ids: Sequence[str],
+        entity_ids: list[str],
+        relationship_ids: list[str],
+    ) -> None:
+        """Note, under each removed text unit, the stored items a strip
+        merges or re-keys (the store keeps it until :meth:`_clear_pending_strip`),
+        so a retry of the removal strips them again (:meth:`remove_text_units`).
+        Raises when the write fails, before the strip writes anything."""
+        note = {"entity_ids": entity_ids, "relationship_ids": relationship_ids}
+        stats = self.opensearch_indexer.write_extraction_records(
+            dict.fromkeys(_pending_strip_keys(text_unit_ids), note), suffix=suffix
+        )
+        if stats.failed_items:
+            raise DataProcessingError(
+                f"Noting the pending strip of '{suffix}' failed: {stats.errors[:1]}"
+            )
+
+    def _clear_pending_strip(self, suffix: str, text_unit_ids: Sequence[str]) -> None:
+        """Delete the notes of :meth:`_note_pending_strip` (best-effort: one
+        left only makes a retry strip the items again)."""
+        try:
+            self.opensearch_indexer.delete_extraction_records(
+                _pending_strip_keys(text_unit_ids), suffix=suffix
+            )
+        except NamespaceLeaseError:
+            raise
+        except Exception as e:  # noqa: BLE001 - a leftover note is harmless
+            logger.warning("Deleting the strip notes of '%s' failed: %s", suffix, e)
 
     def _strip_shared(
         self,
@@ -1483,6 +1569,40 @@ class IndexingManager:
             self._derived_entities.setdefault(suffix, {}).update(
                 {e.id: e for e in new_entities}
             )
+            if derived.id_remap or derived.split_from or derived.dropped:
+                # Its old ids need not cite the removed text units (another
+                # spelling merged in): once the items are written, a retry
+                # finds them through this note only. The entities on both
+                # sides of a merge or split are noted (their edges follow
+                # them), and the edges re-keyed or dropped.
+                derived_ids = {e.id for e in derived.entities}
+                self._note_pending_strip(
+                    suffix,
+                    text_unit_ids,
+                    sorted(
+                        {
+                            *(
+                                i
+                                for pair in derived.id_remap.items()
+                                if pair[1] in derived_ids
+                                for i in pair
+                            ),
+                            *(i for pair in derived.split_from.items() for i in pair),
+                        }
+                    ),
+                    sorted(
+                        {
+                            *(
+                                old
+                                for old, new in derived.id_remap.items()
+                                if new not in derived_ids
+                            ),
+                            *derived.dropped,
+                        }
+                    ),
+                )
+                # Tells remove_text_units_from_shared to delete the note.
+                results[f"pending_strip_{suffix}"] = IndexingStats()
             # The stored claims about a re-keyed, split or renamed entity
             # follow it.
             renamed = self._note_renamed(suffix, derived.entities, entities)
@@ -1491,7 +1611,15 @@ class IndexingManager:
                     *claim_ids,
                     *self._claims_about(
                         suffix,
-                        [*derived.id_remap, *derived.split_from.values(), *renamed],
+                        [
+                            *derived.id_remap,
+                            *derived.split_from.values(),
+                            *_other_spellings_of_parts(
+                                derived.split_from,
+                                {e.id: e for e in derived.entities},
+                            ),
+                            *renamed,
+                        ],
                     ),
                 }
             )
@@ -1803,6 +1931,16 @@ class IndexingManager:
                 ).values()
                 for key in attribute_record_keys(attributes).values()
             )
+            # What an earlier strip of these units merged or re-keyed and
+            # may not have finished (see _note_pending_strip): the items
+            # need not cite the units any more.
+            notes = (
+                vector.read_extraction_records(
+                    _pending_strip_keys(text_unit_ids), suffix=suffix
+                )
+                if resumed
+                else {}
+            )
         except Exception as e:  # noqa: BLE001 - reported as failed items
             logger.error("Finding the removed text units' items failed: %s", e)
             stats = IndexingStats(total_items=len(text_unit_ids))
@@ -1843,6 +1981,22 @@ class IndexingManager:
                 *(i for i, units in reports.items() if gone(units)),
             }
         )
+        if notes:
+
+            def noted(field: str) -> set[str]:
+                return {
+                    i
+                    for note in notes.values()
+                    for i in note.get(field) or []
+                    if isinstance(i, str)
+                }
+
+            shared_entities = sorted(
+                (set(shared_entities) | noted("entity_ids")) - set(doomed)
+            )
+            shared_relationships = sorted(
+                (set(shared_relationships) | noted("relationship_ids")) - set(doomed)
+            )
         logger.info(
             "Removing %d artifacts of %d text units in '%s'; stripping %d "
             "shared entities, %d relationships and %d claims",
@@ -1876,6 +2030,9 @@ class IndexingManager:
                     community_ids=deleted_communities,
                 )
             )
+        if notes and not any(s.failed_items for s in results.values() if s):
+            # Stripped again, or gone: the earlier strip is finished.
+            self._clear_pending_strip(suffix, text_unit_ids)
         return results
 
     def _vector_citing(
