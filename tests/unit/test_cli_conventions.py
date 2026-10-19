@@ -560,6 +560,14 @@ def test_prepare_benchmark_ctrl_c_exits_130_without_a_traceback(
         ' "answer_aliases": "a"}',
         '{"id": "x", "question": "q", "answer": "a", "paragraphs": [],'
         ' "answer_aliases": [1]}',
+        # Before, these reached eval_data.json or were silently accepted.
+        '{"id": "x", "question": "  ", "answer": "a", "paragraphs": []}',
+        '{"id": "x", "question": "q", "answer": "a", "paragraphs": [],'
+        ' "answerable": "false"}',
+        '{"id": "x", "question": "q", "answer": "a",'
+        ' "paragraphs": [{"title": "T", "paragraph_text": 3}]}',
+        '{"id": "x", "question": "q", "answer": "a", "paragraphs": []}\n'
+        '{"id": "x", "question": "q2", "answer": "b", "paragraphs": []}',
     ],
 )
 def test_a_malformed_musique_item_is_a_usage_error(tmp_path: Path, line: str) -> None:

@@ -1310,6 +1310,10 @@ changed once with the full-config keys (#332).
 - A filter value of `None` is rejected (`InvalidFilterError`): OpenSearch
   rejects a `terms` query naming null, and the embedded engine matched it
   against cleared filter fields (#373).
+- `prepare-benchmark musique` also refuses an empty `question`, a repeated
+  `id`, an `answerable` that is not a boolean (`"false"` used to count as
+  answerable) and a non-string `paragraph_text`, as a usage error (exit 2)
+  (#PR).
 - `run-rag` / `run-eval --suffix` is validated like
   `processing.document_parsing.index_value` when the command line is parsed:
   an invalid suffix is a usage error (exit 2) instead of failing every query

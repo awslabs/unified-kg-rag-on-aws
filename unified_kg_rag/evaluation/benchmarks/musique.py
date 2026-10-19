@@ -72,6 +72,7 @@ class InvalidBenchmarkDataError(EvaluationException):
 
 
 def _items(source: Path) -> Iterator[dict[str, Any]]:
+    seen: set[str] = set()
     with source.open(encoding="utf-8") as lines:
         for number, line in enumerate(lines, 1):
             if not line.strip():
@@ -85,27 +86,41 @@ def _items(source: Path) -> Iterator[dict[str, Any]]:
             if not _is_item(item):
                 raise InvalidBenchmarkDataError(
                     f"{source}:{number} is not a MuSiQue item (an object with "
-                    "an 'id', string 'question' and 'answer', a list of string "
-                    "'answer_aliases' and a 'paragraphs' list of objects)"
+                    "an 'id', a non-empty string 'question', a string "
+                    "'answer', a list of string 'answer_aliases', a boolean "
+                    "'answerable' and a 'paragraphs' list of objects with a "
+                    "string 'paragraph_text')"
                 )
+            if "id" in item:
+                # Query ids key the results: a repeated one would merge two.
+                if str(item["id"]) in seen:
+                    raise InvalidBenchmarkDataError(
+                        f"{source}:{number} repeats the id {item['id']!r}"
+                    )
+                seen.add(str(item["id"]))
             yield item
 
 
 def _is_item(item: Any) -> bool:
-    if not isinstance(item, dict):
+    if not isinstance(item, dict) or not isinstance(item.get("answerable", True), bool):
         return False
     if item.get("answerable", True) is False:
         return True  # skipped by prepare; the full files carry them
     paragraphs = item.get("paragraphs")
     aliases = item.get("answer_aliases") or []
+    question = item.get("question")
     return (
         "id" in item
-        and isinstance(item.get("question"), str)
+        and isinstance(question, str)
+        and bool(question.strip())
         and isinstance(item.get("answer"), str)
         and isinstance(aliases, list)
         and all(isinstance(alias, str) for alias in aliases)
         and isinstance(paragraphs, list)
-        and all(isinstance(p, dict) for p in paragraphs)
+        and all(
+            isinstance(p, dict) and isinstance(p.get("paragraph_text", ""), str)
+            for p in paragraphs
+        )
     )
 
 
