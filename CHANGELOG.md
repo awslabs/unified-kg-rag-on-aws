@@ -1286,6 +1286,12 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Cancelling a batch cancels its items: an interrupted, timed-out or
+  host-cancelled `run-eval` / `EvaluationManager` call no longer keeps
+  answering (and judging) the rest of the dataset in the background, and a
+  cancelled item is no longer retried. The batch processor and the evaluators
+  awaited their items through `as_completed`, which leaves them running when
+  the caller is cancelled (#PR).
 - Incremental indexing: a removal that both merges and splits spellings
   ("Acme Ltd" into "ACME Inc", "Acme" split off) and is killed between its
   writes and the deletion of the old ids is resumed to a full build's

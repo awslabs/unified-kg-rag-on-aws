@@ -58,6 +58,7 @@ from unified_kg_rag.shared.utils import (
     safe_float_parse,
     text_digest,
 )
+from unified_kg_rag.shared.utils.concurrency import cancel_on_exit
 
 logger = get_logger(__name__)
 
@@ -96,13 +97,8 @@ async def _gather_or_cancel(coroutines: Iterable[Awaitable[_T]]) -> list[_T]:
     their LLM calls kept spending after the query had already failed.
     """
     tasks = [asyncio.ensure_future(c) for c in coroutines]
-    try:
+    async with cancel_on_exit(tasks):
         return list(await asyncio.gather(*tasks))
-    except BaseException:
-        for task in tasks:
-            task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
-        raise
 
 
 def _follow_ups(payload: dict[str, Any]) -> list[str]:

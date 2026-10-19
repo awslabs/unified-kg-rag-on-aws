@@ -325,3 +325,46 @@ def test_judge_model_uses_configured_judge_effort(mocker) -> None:
     factory = bedrock_module.BedrockLanguageModelFactory.return_value
     _, kwargs = factory.get_model.call_args
     assert kwargs["effort"] == Config().evaluation.judge_effort == "low"
+
+
+def test_cancelling_an_evaluator_batch_cancels_its_queries() -> None:
+    # Before, the per-query judge tasks (awaited through as_completed) kept
+    # running after the evaluation was cancelled.
+    import asyncio
+
+    from unified_kg_rag.adapters.evaluators.base import BaseGraphRAGEvaluator
+    from unified_kg_rag.domain.models import (
+        Config,
+        EvaluationQuery,
+        EvaluationResult,
+        EvaluatorType,
+    )
+
+    finished: list[str] = []
+
+    class _Slow(BaseGraphRAGEvaluator):
+        async def aevaluate_single(self, query, result, ground_truth, **kwargs):
+            await asyncio.sleep(0.5)
+            finished.append(query.query_id)
+
+    evaluator = _Slow(Config(), EvaluatorType.LANGCHAIN, show_progress=False)
+    queries = [EvaluationQuery(query_id=f"q{i}", question="?") for i in range(4)]
+    results = [
+        EvaluationResult(
+            query_id=q.query_id, question="?", generated_answer="a", ground_truth=""
+        )
+        for q in queries
+    ]
+
+    async def main() -> None:
+        task = asyncio.create_task(
+            evaluator.aevaluate_batch(queries, results, [""] * len(queries))
+        )
+        await asyncio.sleep(0.1)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        await asyncio.sleep(0.8)
+
+    asyncio.run(main())
+    assert finished == []

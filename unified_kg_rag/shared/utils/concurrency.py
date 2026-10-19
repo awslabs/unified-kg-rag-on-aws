@@ -1,20 +1,41 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Thread pools that keep the submitter's ``contextvars``."""
+"""Thread pools that keep the submitter's ``contextvars``, and asyncio tasks
+cancelled with the block that awaits them."""
 
 from __future__ import annotations
 
+import asyncio
 import contextvars
 import functools
-from collections.abc import Callable, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator, Sequence
 from concurrent.futures import Executor, Future, ThreadPoolExecutor
-from contextlib import contextmanager
+from contextlib import asynccontextmanager, contextmanager
 from types import TracebackType
 from typing import Any, Literal, ParamSpec, TypeVar
 
 _P = ParamSpec("_P")
 _T = TypeVar("_T")
 _E = TypeVar("_E", bound=Executor)
+
+
+@asynccontextmanager
+async def cancel_on_exit(tasks: Sequence[asyncio.Future[Any]]) -> AsyncIterator[None]:
+    """Cancel ``tasks`` and wait for them when the block raises.
+
+    For blocks that await tasks through ``asyncio.as_completed`` (or tqdm's
+    gather, built on it) or that stop at the first error: unlike a plain
+    ``asyncio.gather``, those leave the tasks running when the awaiting task
+    is cancelled (Ctrl-C, a timeout, a host cancelling the call), so they
+    kept spending and their spans never ended.
+    """
+    try:
+        yield
+    except BaseException:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        raise
 
 
 @contextmanager
