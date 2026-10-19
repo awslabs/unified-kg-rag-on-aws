@@ -979,12 +979,31 @@ class IndexingManager:
         edges: Sequence[Relationship],
     ) -> dict[str, str]:
         """The ``{part: whole}`` of ``spellings`` whose whole holds an edge
-        among ``edges``, or a stored claim, that cites a unit of the part:
-        what a split a killed run left half-written leaves behind."""
+        among ``edges``, or a stored claim, that cites a unit of a derived
+        spelling of its name (the part's or another's: a whole may hold a
+        third spelling's statement): what a split a killed run left
+        half-written leaves behind."""
         units_of = {e.id: set(e.text_unit_ids or []) for e in derived}
+        key_of = {e.id: compact_name_key(e.name) for e in derived}
+        parts_by_key: dict[str, list[str]] = defaultdict(list)
+        for part in spellings:
+            parts_by_key[key_of.get(part, "")].append(part)
+
+        def stated(part: str, whole: str) -> set[str]:
+            # The units of every part of its name but the whole itself (a
+            # spelling a full build keeps apart is a part too: its own
+            # edges and claims cite its own units).
+            return set().union(
+                *(
+                    units_of.get(other, set())
+                    for other in parts_by_key[key_of.get(part, "")]
+                    if other != whole
+                )
+            )
+
         left: dict[str, str] = {}
         for part, whole in spellings.items():
-            units = units_of.get(part, set())
+            units = stated(part, whole)
             if any(
                 whole in (r.source_id, r.target_id)
                 and units.intersection(r.text_unit_ids or [])
@@ -995,7 +1014,7 @@ class IndexingManager:
         if pending:
             prefix = self.config.indexing.opensearch.claims_index_prefix
             for part, whole in pending.items():
-                part_units = sorted(units_of.get(part, set()))
+                part_units = sorted(stated(part, whole))
                 citing = (
                     self.opensearch_indexer.find_documents(
                         prefix, "text_unit_ids", part_units, suffix

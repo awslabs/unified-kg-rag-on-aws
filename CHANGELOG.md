@@ -1279,6 +1279,11 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Incremental indexing finishes a spelling split a killed run left
+  half-written also when the stored spelling holds an edge or claim of a
+  third spelling of the name (one citing that spelling's units, none of the
+  split-off part's); #368 checked only the part's own units, and the stale
+  edge stayed (#PR).
 - Incremental indexing: a claim matched to a statement of another spelling
   of its subject or object (the two are one entity in a full build) cites
   the text units that statement is in, as a full build's does, instead of

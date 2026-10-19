@@ -692,3 +692,25 @@ def test_an_edge_the_derivation_drops_is_not_rewritten_as_a_stored_one(
 
     assert not any("deals with" in (e[3] or "") for e in full["edges"])
     assert incremental == full
+
+
+def test_a_stale_edge_on_a_third_spelling_is_moved(tmp_path: Path) -> None:
+    # d6.txt splits the stored spellings of "Acme" apart. An edge stating
+    # "Buyer" and "Acme Corp" was left on "ACME Inc": it cites a unit of
+    # another spelling than the part split off "ACME Inc", so that split was
+    # not taken for half-written and the edge stayed where a full build has
+    # none.
+    r2 = (
+        "ACME Inc and Buyer trade goods 3. ACME Inc and Acme Corp trade parts 2. "
+        "Acme and Acme Ltd and Depot trade cash 3."
+    )
+    first = {"d4.txt": "Acme LLC trade parts 3.", "r2.txt": r2}
+    runs = [
+        first,
+        {**first, "d6.txt": "Buyer and Acme LLC and Acme Corp trade cash 3."},
+    ]
+
+    full = _state(tmp_path / "full", [runs[-1]], gleaning=True)
+    incremental = _state(tmp_path / "inc", runs, gleaning=True)
+
+    assert incremental == full
