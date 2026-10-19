@@ -821,7 +821,7 @@ changed once with the full-config keys (#332).
   instead of their text units: an entity document carries the filters of
   every document it comes from, and lineage updates keep them current. An
   attribute probe's outcome is reused for 30 s, so the sub-searches of one
-  query probe an index once (DRIFT on a hub corpus: 31 probes to 11) (#PR).
+  query probe an index once (DRIFT on a hub corpus: 31 probes to 11) (#370).
 - A claim whose subject or object matches several entities equally well
   (spelling or legal-form variants: "Acme Inc" against "Acme" and "Acme
   Corp") binds to the one its own text unit states, then to the smallest
@@ -1346,13 +1346,13 @@ changed once with the full-config keys (#332).
   quota before the filter, so failing ids took slots that passing chunks
   further down never got (local with a two-chunk quota kept one of two; a
   hub entity's DRIFT context three of five). The fetch asks for up to one
-  request's ids and cuts after, still one request (#PR).
+  request's ids and cuts after, still one request (#370).
 - An entity-attribute filter (`attributes.role:buyer`) filters the entities
   index only, as the user guide states: every index declared the whole
   `attributes.` prefix, so it emptied the text units, relationships, claims
   and reports and local, mix and hybrid answered from entities alone. The
   other indexes declare `attributes.filters.<key>` (and `attr_<key>`) only,
-  and drop other `attributes.<path>` keys as they drop `type` (#PR).
+  and drop other `attributes.<path>` keys as they drop `type` (#370).
 - Ctrl-C (or a `SystemExit`) during indexing no longer lets the worker
   threads it leaves running write after the run released its lease, when
   another run may hold it: a released lease fails their next write, and
@@ -3248,7 +3248,7 @@ changed once with the full-config keys (#332).
   own document's filter) and a removal kept the removed document's values.
   Claims now read back their stored filters and take their text units'
   filters when derived, as relationships do; incremental runs match a full
-  build on both stores (#PR).
+  build on both stores (#370).
 - A removed document's filter keys stop matching the entities,
   relationships and claims that outlive it: their lineage update is a
   partial update, which kept every field it did not name, so with
@@ -3256,7 +3256,7 @@ changed once with the full-config keys (#332).
   still returned `contract.txt`'s content through local and mix. A lineage
   update (also an edge rewritten for its rank only) reads the stored filter
   fields and sets the ones the item lost to null, on OpenSearch and the
-  embedded engine alike (#PR).
+  embedded engine alike (#370).
 - ragas no longer sends usage telemetry from `run-eval`: the evaluators
   package sets `RAGAS_DO_NOT_TRACK=true` unless it is already set (set it
   to `false` to opt back in) (#361).
