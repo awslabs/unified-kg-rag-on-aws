@@ -52,8 +52,9 @@ def shut_down_after(executor: _E) -> Iterator[_E]:
     block submitted are cancelled here, one by one: ``cancel_futures`` only
     sets a flag the pool's manager thread reads through a weak reference to
     the executor, so an executor collected first (the caller held it in a
-    local) cancelled nothing. ``ContextThreadPoolExecutor``'s own block
-    already behaves like this.
+    local) cancelled nothing. Unlike ``ContextThreadPoolExecutor``'s block,
+    it does not wait for running tasks on an error either: process-pool
+    tasks write nothing.
     """
     submitted: list[Future[Any]] = []
     submit = executor.submit

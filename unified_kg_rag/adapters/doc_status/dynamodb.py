@@ -37,6 +37,11 @@ from unified_kg_rag.shared import (
     get_logger,
 )
 from unified_kg_rag.shared.utils.document_identity import doc_id_namespace
+from unified_kg_rag.shared.write_fence import (
+    REGISTRY_CONNECT_TIMEOUT_SECONDS,
+    REGISTRY_READ_TIMEOUT_SECONDS,
+    check_write_fence,
+)
 
 if TYPE_CHECKING:
     from types_boto3_dynamodb import DynamoDBClient
@@ -64,7 +69,17 @@ _MAX_ITEM_BYTES = 400 * 1024
 # (ThrottlingException, ProvisionedThroughputExceededException,
 # RequestLimitExceeded) and transient 5xx/connection errors. Ten attempts ride
 # out a throttling burst; an error that outlasts them fails the run.
-_RETRY_CONFIG = BotoConfig(retries={"mode": "standard", "total_max_attempts": 10})
+# Each attempt is bounded (write_fence.REGISTRY_*_TIMEOUT_SECONDS), and each
+# attempt of a write checks the run's write fence first (_fence_writes), so a
+# write of a run that lost its lease lands no later than one attempt after.
+_RETRY_CONFIG = BotoConfig(
+    connect_timeout=REGISTRY_CONNECT_TIMEOUT_SECONDS,
+    read_timeout=REGISTRY_READ_TIMEOUT_SECONDS,
+    retries={"mode": "standard", "total_max_attempts": 10},
+)
+# The registry writes: every attempt of each (botocore's retries and the
+# re-sends of unprocessed batch items included) checks the write fence.
+_FENCED_OPERATIONS = ("PutItem", "BatchWriteItem", "DeleteItem")
 # The lease requests answer fast or not at all: a renewal stuck in retries
 # (10 attempts of 60 s by default) would outlive the lease it renews. A
 # renewal that fails is retried by the next heartbeat.
@@ -102,6 +117,25 @@ _THROTTLING_CODES = frozenset(
 )
 
 
+def _fence_write_request(**_: Any) -> None:
+    """botocore ``before-send`` hook of the registry writes: raise if the run
+    lost its write lease (or was stopped) before this attempt goes out. It
+    runs in the calling thread, whose context holds the run's fences."""
+    check_write_fence()
+
+
+def fence_registry_writes(client: DynamoDBClient) -> None:
+    """Check the write fence before every attempt of ``client``'s registry
+    writes (``_FENCED_OPERATIONS``): a ``put_many`` sends a request per 25
+    records and re-sends unprocessed items, and botocore retries each, all
+    after the caller's one check. First among the ``before-send`` handlers,
+    so nothing answers the request before the fence was checked."""
+    for operation in _FENCED_OPERATIONS:
+        client.meta.events.register_first(
+            f"before-send.dynamodb.{operation}", _fence_write_request
+        )
+
+
 class DynamoDBDocStatusStore:
     """DynamoDB-backed implementation of :class:`DocStatusPort`."""
 
@@ -127,6 +161,7 @@ class DynamoDBDocStatusStore:
                     self._ensure_table(client)
             with self._registry_errors("describe the table"):
                 self._check_key_schema(client)
+            fence_registry_writes(client)
             self._client = client
         return self._client
 

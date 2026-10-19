@@ -40,12 +40,17 @@ a run whose lease expired has landed by that expiry plus the longest
 request. A run that takes over an *expired* lease (its holder died or
 froze rather than released it) therefore holds its first write until
 then (``check``), so a late write of the previous holder lands before
-this run's writes, which overwrite it, rather than after them. A released
-lease needs no wait.
+this run's writes, which overwrite it, rather than after them. A run that
+is stopped gives its lease up the same way, as expired (its pools do not
+wait for the requests in flight on a stop); a run that ended or failed
+releases it, and a released lease needs no wait. The registry writes
+(DynamoDB) are fenced per attempt too, and one attempt counts in the
+longest request.
 """
 
 from __future__ import annotations
 
+import functools
 import os
 import socket
 import threading
@@ -83,12 +88,14 @@ _TAKEOVER_POLL_SECONDS = 1.0
 
 
 def longest_write_request_seconds() -> float:
-    """The longest single store request of the indexing path (the Neptune and
-    OpenSearch indexing request timeouts); indexing.lease_seconds should be
-    at least three times it."""
+    """The longest single write request attempt of the indexing path (the
+    Neptune and OpenSearch indexing request timeouts, one DynamoDB registry
+    attempt); indexing.lease_seconds should be at least three times it."""
     return max(
         write_fence.INGESTION_REQUEST_TIMEOUT_SECONDS,
         write_fence.INDEXING_REQUEST_TIMEOUT_SECONDS,
+        write_fence.REGISTRY_CONNECT_TIMEOUT_SECONDS
+        + write_fence.REGISTRY_READ_TIMEOUT_SECONDS,
     )
 
 
@@ -121,6 +128,10 @@ class NamespaceLease:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._token: Token[tuple[WriteFence, ...]] | None = None
+        # How the run gives the lease up when it ends (set by __exit__).
+        self._give_up: Callable[[], None] = self._release
+        # The expiry of the expired lease this run took over (see __enter__).
+        self._previous_expiry = 0.0
 
     def __enter__(self) -> NamespaceLease:
         # Read first: a lease that is still there but expired was not
@@ -140,7 +151,10 @@ class NamespaceLease:
         logger.info(
             "Holding the write lease of namespace '%s' (%s)", self.namespace, self.owner
         )
-        if previous is not None and previous[0] != self.owner:
+        # A lease still live when read was released before the acquire (its
+        # run ended cleanly): no late writes to wait for.
+        if previous is not None and previous[0] != self.owner and previous[1] <= sent:
+            self._previous_expiry = previous[1]
             self.writes_from = (
                 previous[1] + longest_write_request_seconds() + _TAKEOVER_MARGIN_SECONDS
             )
@@ -170,19 +184,50 @@ class NamespaceLease:
         if self._token is not None:
             remove_write_fence(self._token)
             self._token = None
-        # Worker threads a stop or a failure left running (their pool does
-        # not wait for them) still check this lease through their copy of
-        # the run's context: they must fail once it is released, before
-        # another run can take it.
+        # Worker threads a stop left running (their pool does not wait for
+        # them on a stop) still check this lease through their copy of the
+        # run's context: they must fail once it is given up, before another
+        # run can take it.
         held, self._lost = self._lost is None, "the run ended and released it"
+        # A stop (SIGTERM's PipelineInterrupted, Ctrl-C, SystemExit) may leave
+        # writes past the fence in flight: give the lease up as expired
+        # (owner kept), so the next run waits for them as after a crash (see
+        # __enter__). A run that ended or failed has none left (its pools
+        # waited) and releases it.
+        # A run that ends during its takeover wait (stopped, or failed before
+        # writing) hands the wait on: the lease goes back expired at the
+        # previous holder's expiry, so the next run waits as long.
+        stopped = exc_type is not None and issubclass(
+            exc_type, (KeyboardInterrupt, SystemExit)
+        )
+        if self.writes_from > time.time():
+            self._give_up = functools.partial(self._expire, self._previous_expiry)
+        elif stopped:
+            self._give_up = functools.partial(self._expire, time.time())
+        else:
+            self._give_up = self._release
         self._stop.set()
         if self._thread is not None:
             # A renewal in flight may hang on an unreachable registry: the
-            # run does not wait for it (the heartbeat releases what it
+            # run does not wait for it (the heartbeat gives up what it
             # renews once stopped).
             self._thread.join(_HEARTBEAT_JOIN_SECONDS)
         if held:
-            self._release()
+            self._give_up()
+
+    def _expire(self, at: float) -> None:
+        """Give the lease up as expired at ``at`` (epoch seconds, not after
+        now), keeping this run as its owner."""
+        try:
+            self.store.try_acquire_lease(self.namespace, self.owner, at - time.time())
+        except Exception as e:  # noqa: BLE001 - it expires by itself
+            logger.warning(
+                "Expiring the lease of namespace '%s' failed (%s); it "
+                "expires within %gs",
+                self.namespace,
+                e,
+                self.seconds,
+            )
 
     def _release(self) -> None:
         try:
@@ -229,8 +274,8 @@ class NamespaceLease:
             self._renewed_at = sent
             if self._stop.is_set():
                 # The run ended while this renewal was in flight, and may
-                # have released the lease already: release it again.
-                self._release()
+                # have given the lease up already: give it up again.
+                self._give_up()
                 return
 
     def _expiring(self) -> bool:

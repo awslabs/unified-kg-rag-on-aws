@@ -125,6 +125,18 @@ def _scratch_working_directory(
 
 
 @pytest.fixture(autouse=True)
+def _no_takeover_wait(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A takeover of an expired lease waits up to ~3 minutes for the late
+    writes of its holder (``namespace_lease``), and a stop leaves its lease
+    expired: tests that stop a run and run again need no such wait. The
+    tests of the wait itself set a short bound."""
+    from unified_kg_rag.application.ingestion import namespace_lease
+
+    monkeypatch.setattr(namespace_lease, "longest_write_request_seconds", lambda: 0.0)
+    monkeypatch.setattr(namespace_lease, "_TAKEOVER_MARGIN_SECONDS", 0.0)
+
+
+@pytest.fixture(autouse=True)
 def _cli_stops_raise(monkeypatch: pytest.MonkeyPatch) -> None:
     """A stopped CLI raises its SystemExit instead of ending the process
     (``conventions._exit_stopped``), so the suite survives it."""

@@ -1322,6 +1322,22 @@ changed once with the full-config keys (#332).
   filtered local or DRIFT query silently dropped every expanded entity. The
   entities-index check alone then decides, as before #381; a missing index
   is logged (#387).
+- DynamoDB registry writes check the write fence before every request
+  attempt (each `BatchWriteItem` of 25 records, each re-send of
+  unprocessed items, each botocore retry), not once per call, and each
+  attempt is bounded (10 s connect, 60 s read): a run that lost its lease
+  went on writing the registry for up to ~10 minutes after its check, over
+  the records of the run that took the lease, past the takeover wait (8 of
+  10 requests of one call after the loss). The takeover wait counts one
+  registry attempt in the longest request (#PR).
+- A stopped run gives its lease up as expired (owner kept) instead of
+  releasing it, so the next run waits for the stopped run's requests still
+  in flight, as after a crash: it released it, and the next run wrote at
+  once, before a write the stopped run had already sent. A run stopped (or
+  failing) during its own takeover wait hands that wait on: it puts the
+  lease back expired at the previous holder's expiry. A lease released
+  between the takeover's read and its acquire no longer makes it wait
+  (#PR).
 - Incremental indexing: a removal that both merges and splits spellings
   ("Acme Ltd" into "ACME Inc", "Acme" split off) and is killed between its
   writes and the deletion of the old ids is resumed to a full build's

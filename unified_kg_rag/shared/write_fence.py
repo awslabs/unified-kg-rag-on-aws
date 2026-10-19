@@ -30,6 +30,8 @@ from typing import Protocol
 __all__ = [
     "INDEXING_REQUEST_TIMEOUT_SECONDS",
     "INGESTION_REQUEST_TIMEOUT_SECONDS",
+    "REGISTRY_CONNECT_TIMEOUT_SECONDS",
+    "REGISTRY_READ_TIMEOUT_SECONDS",
     "WriteFence",
     "check_write_fence",
     "install_write_fence",
@@ -48,6 +50,11 @@ __all__ = [
 INGESTION_REQUEST_TIMEOUT_SECONDS = 180.0
 # The per-request timeout of the OpenSearch indexing (sync) client.
 INDEXING_REQUEST_TIMEOUT_SECONDS = 180.0
+# The bounds of one attempt of a DynamoDB registry request (botocore's
+# defaults are 60 s each). Every attempt of a registry write checks the fence
+# first, so one attempt is the most a fenced write can be late by.
+REGISTRY_CONNECT_TIMEOUT_SECONDS = 10.0
+REGISTRY_READ_TIMEOUT_SECONDS = 60.0
 
 
 class WriteFence(Protocol):

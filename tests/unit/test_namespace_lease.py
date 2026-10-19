@@ -14,7 +14,10 @@ import pytest
 
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from tests.fixtures.incremental_runs import IncrementalRun
-from unified_kg_rag.application.ingestion.namespace_lease import NamespaceLease
+from unified_kg_rag.application.ingestion.namespace_lease import (
+    NamespaceLease,
+    longest_write_request_seconds,
+)
 from unified_kg_rag.shared import NamespaceLeaseError
 from unified_kg_rag.shared.write_fence import check_write_fence
 
@@ -140,8 +143,14 @@ def _short_requests(monkeypatch: pytest.MonkeyPatch, seconds: float) -> None:
 
     monkeypatch.setattr(write_fence, "INGESTION_REQUEST_TIMEOUT_SECONDS", seconds)
     monkeypatch.setattr(write_fence, "INDEXING_REQUEST_TIMEOUT_SECONDS", seconds)
+    monkeypatch.setattr(write_fence, "REGISTRY_CONNECT_TIMEOUT_SECONDS", 0.0)
+    monkeypatch.setattr(write_fence, "REGISTRY_READ_TIMEOUT_SECONDS", seconds)
     monkeypatch.setattr(lease_mod, "_TAKEOVER_MARGIN_SECONDS", 0.1)
     monkeypatch.setattr(lease_mod, "_TAKEOVER_POLL_SECONDS", 0.05)
+    # The real bound (the test session turns the wait off, see conftest).
+    monkeypatch.setattr(
+        lease_mod, "longest_write_request_seconds", longest_write_request_seconds
+    )
 
 
 def test_a_takeover_of_an_expired_lease_waits_for_late_writes(
@@ -222,3 +231,72 @@ def test_a_late_write_of_a_dead_holder_lands_before_the_new_holders_writes(
         value.append("fresh")
     writer.join()
     assert value == ["stale", "fresh"]
+
+
+@pytest.mark.parametrize(
+    ("ending", "expired"),
+    [(None, False), (RuntimeError, False), (KeyboardInterrupt, True)],
+)
+def test_a_stopped_run_gives_its_lease_up_as_expired(
+    monkeypatch: pytest.MonkeyPatch, ending: type[BaseException] | None, expired: bool
+) -> None:
+    # Regression: a stopped run released its lease while requests already
+    # past the fence were in flight (its pools do not wait on a stop), so
+    # the next run took a released lease and wrote at once, before them.
+    # Now a stop leaves the lease expired, owner kept, and the next run
+    # waits as after a crash; an ended or failed run still releases it.
+    _short_requests(monkeypatch, 30)
+    store = FakeDocStatusStore()
+    try:
+        with NamespaceLease(store, "ns", 60):
+            if ending is not None:
+                raise ending
+    except BaseException:  # noqa: BLE001 - the ending under test
+        pass
+    holder = store.lease_holder("ns")
+    assert (holder is not None) == expired
+    with NamespaceLease(store, "ns", 60) as nxt:
+        assert (nxt.writes_from > time.time()) == expired
+
+
+def test_a_lease_released_between_the_read_and_the_acquire_needs_no_wait(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Regression: the lease was read live, then its run released it before
+    # the acquire; the takeover still waited a full term plus the bound.
+    _short_requests(monkeypatch, 30)
+    store = FakeDocStatusStore()
+    store.leases["ns"] = ("ending-run", time.time() + 60)
+    read = store.lease_holder
+
+    def read_then_release(namespace: str):  # type: ignore[no-untyped-def]
+        holder = read(namespace)
+        store.release_lease(namespace, "ending-run")
+        return holder
+
+    monkeypatch.setattr(store, "lease_holder", read_then_release)
+    with NamespaceLease(store, "ns", 60) as lease:
+        assert lease.writes_from == 0.0
+
+
+def test_a_run_stopped_during_its_takeover_wait_hands_the_wait_on(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Regression: B, waiting for the late writes of A (who froze), was
+    # stopped and released the lease; C then took a released lease, wrote at
+    # once, and A's late write landed after C's. B now puts the lease back
+    # expired at A's expiry, so C waits until the same time.
+    from unified_kg_rag.shared import PipelineInterrupted
+
+    _short_requests(monkeypatch, 30)
+    store = FakeDocStatusStore()
+    a_expiry = time.time() - 1
+    store.leases["ns"] = ("frozen-run-a", a_expiry)
+    with pytest.raises(PipelineInterrupted):
+        with NamespaceLease(store, "ns", 60) as b:
+            raise PipelineInterrupted(15)  # stopped while waiting
+    holder = store.lease_holder("ns")
+    assert holder is not None and holder[0] == b.owner
+    assert holder[1] == pytest.approx(a_expiry, abs=0.5)
+    with NamespaceLease(store, "ns", 60) as c:
+        assert c.writes_from == pytest.approx(b.writes_from, abs=0.5)

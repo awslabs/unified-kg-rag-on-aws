@@ -336,3 +336,98 @@ def test_lease_requests_use_short_timeouts_and_few_attempts(
     assert config.retries["total_max_attempts"] == 3
     assert ddb_store.try_acquire_lease("ns", "run-a", 60)
     assert not ddb_store.try_acquire_lease("ns", "run-b", 60)
+
+
+class _FenceAfter:
+    """A write fence that lets ``allowed`` checks through, then fails."""
+
+    def __init__(self, allowed: int) -> None:
+        self.allowed = allowed
+        self.checks = 0
+
+    def check(self) -> None:
+        from unified_kg_rag.shared import NamespaceLeaseError
+
+        self.checks += 1
+        if self.checks > self.allowed:
+            raise NamespaceLeaseError("lost")
+
+
+def test_every_batch_write_request_checks_the_fence(
+    ddb_store: DynamoDBDocStatusStore,
+) -> None:
+    # Regression: put_many sent a BatchWriteItem per 25 records after the
+    # caller's one check, so a run that lost its lease meanwhile went on
+    # writing the registry (with botocore's retries, up to ~10 minutes
+    # later) over the records of the run that holds it now.
+    from unified_kg_rag.shared import NamespaceLeaseError
+    from unified_kg_rag.shared.write_fence import (
+        install_write_fence,
+        remove_write_fence,
+    )
+
+    records = [
+        DocStatusRecord(doc_id=f"default#d{i:03d}", content_hash="h")
+        for i in range(100)
+    ]
+    token = install_write_fence(_FenceAfter(allowed=1))
+    try:
+        with pytest.raises(NamespaceLeaseError):
+            ddb_store.put_many(records)
+        with pytest.raises(NamespaceLeaseError):
+            ddb_store.put(records[0])
+        with pytest.raises(NamespaceLeaseError):
+            ddb_store.delete(records[0].doc_id)
+    finally:
+        remove_write_fence(token)
+    # Only the first request (25 records) went out; the lease requests and
+    # the reads are not fenced.
+    assert len(ddb_store.list_all()) == 25
+
+
+def test_a_retried_registry_write_checks_the_fence_per_attempt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # botocore retries a write that got no answer; each attempt must check
+    # the fence, not only the first.
+    from botocore.awsrequest import AWSResponse
+    from botocore.config import Config as BotoConfig
+
+    from unified_kg_rag.shared import NamespaceLeaseError
+    from unified_kg_rag.shared.write_fence import (
+        install_write_fence,
+        remove_write_fence,
+    )
+
+    client = boto3.Session(
+        aws_access_key_id="x", aws_secret_access_key="x", region_name="us-east-1"
+    ).client(
+        "dynamodb",
+        config=BotoConfig(retries={"mode": "standard", "total_max_attempts": 5}),
+    )
+
+    class _Body:
+        def stream(self, **_: object):  # type: ignore[no-untyped-def]
+            yield b'{"__type": "InternalServerError", "message": "busy"}'
+
+    sent: list[int] = []
+
+    def server_error(**_: object) -> AWSResponse:
+        sent.append(1)  # the attempt reached the wire
+        return AWSResponse("https://dynamodb", 500, {}, _Body())
+
+    client.meta.events.register("before-send.dynamodb.PutItem", server_error)
+    monkeypatch.setattr(
+        "botocore.retries.standard.ExponentialBackoff.delay_amount",
+        lambda *a, **k: 0,
+    )
+    dynamodb_module.fence_registry_writes(client)
+    fence = _FenceAfter(allowed=2)
+    token = install_write_fence(fence)
+    try:
+        with pytest.raises(NamespaceLeaseError):
+            client.put_item(TableName="t", Item={"namespace": {"S": "x"}})
+    finally:
+        remove_write_fence(token)
+    # Two attempts went out (and were retried); the third was stopped.
+    assert (fence.checks, len(sent)) == (3, 2)

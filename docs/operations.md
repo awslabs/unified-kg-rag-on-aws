@@ -296,11 +296,13 @@ other run ended.
   renewal. Keep `lease_seconds` at least three times the longest write
   request (180 s; less logs a WARNING)
   ([Design §5.6](./design.md#56-concurrency)).
-- **Takeover after a crash.** A write already past the fence can land after
-  the lease expired (its process was frozen, or the request was slow), but
-  no later than that expiry plus the longest request. A run that takes over
-  a lease that expired rather than was released (its holder died or froze)
-  therefore holds its first write until then, with a WARNING
+- **Takeover after a crash or a stop.** A write already past the fence can
+  land after the lease expired (its process was frozen, or the request was
+  slow), but no later than that expiry plus the longest request (registry
+  writes are fenced per attempt too). A run that takes over a lease that
+  expired rather than was released (its holder died or froze, or was
+  stopped: a stopped run leaves its lease expired, as requests may still
+  be in flight) therefore holds its first write until then, with a WARNING
   (`Took over the expired write lease ... the first write waits until ...`):
   up to about 3 minutes (180 s plus a 5 s margin) after the old lease
   expired. A SIGTERM ends the wait. A process frozen for longer than that,

@@ -293,8 +293,9 @@ class BatchProcessor(BaseModel):
         results: list[Any] = [BATCH_ITEM_FAILED] * len(inputs)
         progress = ProgressLogger(task_name, len(inputs))
         # The block cancels the queued items of a batch that is being
-        # abandoned (a stop, Ctrl-C, an error) and does not wait for the
-        # running calls: a stop must not wait for a model call in flight.
+        # abandoned. On a stop (Ctrl-C, SIGTERM) it does not wait for the
+        # running calls (a stop must not wait for a model call in flight); on
+        # an error it waits for them (see ContextThreadPoolExecutor).
         with ContextThreadPoolExecutor(
             max_workers=min(self.max_concurrency, len(inputs))
         ) as executor:
