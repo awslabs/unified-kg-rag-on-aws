@@ -1017,11 +1017,13 @@ host's corpus), so the old content stays indexed. Either:
   path resolved like `--source-directory`. A bare value (`old`) is a name or a
   relative path: the reading that has records is retired, and when both do
   the run stops before any write (give `./old` or an absolute path). Naming
-  the run's own scope fails before the registry is read, a bare value that
-  is also the run's own directory included (as a name it could be another
-  corpus's `source_scope`: to retire that name, run from a working directory
-  where it is not the run's directory); a scope without records logs a
-  WARNING.
+  the run's own scope fails before the registry is read, a bare value one of
+  whose readings is the run's own included: when the own scope is its name,
+  give the directory as `./<value>`; when it is the run's own directory, the
+  name could be another corpus's `source_scope`, so retire that name from a
+  working directory where the value is not the run's directory, with the
+  same configuration (the same stores and registry, e.g. the same
+  `--config-path`). A scope without records logs a WARNING.
 
 A local run with the default scope and new documents logs a WARNING naming the
 other local source directories with records in its suffix; it deletes

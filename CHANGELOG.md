@@ -1279,6 +1279,11 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- The error for a bare `--retire-source-scope` value whose reading is the
+  run's own scope gives the right way out: `./<value>` when the own scope is
+  the name, and, when it is the run's own directory, running from another
+  working directory with the same configuration (`--config-path`, so the same
+  stores and registry) (#PR).
 - `prepare-benchmark musique` accepts the official full file
   (`musique_full_v1.0_dev.jsonl`) again: it carries each question once
   answerable and once not under the same id, which the repeated-id check

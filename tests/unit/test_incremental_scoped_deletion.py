@@ -662,3 +662,17 @@ def test_a_bare_value_naming_the_runs_own_directory_is_refused(
     with pytest.raises(ConfigurationError, match="own source scope") as exc:
         retired_scope_groups(["docs"], own, "default", retired_scope_readings)
     assert "another corpus's source_scope" in str(exc.value)
+    # Kept on the same stores: another config would open another registry.
+    assert "--config-path" in str(exc.value)
+
+
+def test_a_bare_value_that_is_the_runs_own_name_points_to_dot_slash(
+    tmp_path: Path, monkeypatch
+) -> None:
+    # The run's own scope is the name reading (source_scope: docs): the
+    # directory reading is spelled ./docs, not "run elsewhere" as before.
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(ConfigurationError, match="own source scope") as exc:
+        retired_scope_groups(["docs"], "docs", "default", retired_scope_readings)
+    assert "'./docs'" in str(exc.value)
+    assert "working directory" not in str(exc.value)
