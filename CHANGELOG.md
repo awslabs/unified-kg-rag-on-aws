@@ -1286,6 +1286,14 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- A document deleted from the corpus and restored before its removal
+  finished (the removal failed partway, or the run was killed after deleting
+  its vector copies) is indexed again. Its registry record still said
+  `PROCESSED`, so it was read as unchanged and its text units, entity and
+  relationship vectors and claims were lost for good, and the store probe
+  then failed every later run with "the vector store does not hold" its text
+  units. Deleted documents are now recorded `PENDING` before their removal,
+  like changed ones (#PR).
 - The error for a bare `--retire-source-scope` value whose reading is the
   run's own scope gives the right way out: `./<value>` when the own scope is
   the name, and, when it is the run's own directory, running from another

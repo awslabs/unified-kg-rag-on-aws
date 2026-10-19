@@ -156,10 +156,12 @@ def _state(
     die_at: tuple[Any, ...] = ("upsert_claims", 1, False),
     gleaning: bool = False,
     suffix: str | None = None,
+    resume: bool = True,
 ) -> dict[str, list[tuple]]:
     """The stored entities, edges and claims after indexing ``corpora`` one
     after the other (run ``repeat`` twice under its pipeline id; run
-    ``die_in`` killed at ``die_at``, then resumed under its id).
+    ``die_in`` killed at ``die_at``, then resumed under its id, or, without
+    ``resume``, followed by the next corpus).
 
     ``die_at`` is a method, the call that dies (1 = the first), whether
     that call completes before the run dies and, optionally, the class
@@ -191,6 +193,8 @@ def _state(
                 pytest.raises(_Died),
             ):
                 _ingest(config, providers, source, tmp / f"run-{run}")
+            if not resume:
+                continue
         for _ in range(2 if run == repeat else 1):
             context = _ingest(config, providers, source, tmp / f"run-{run}")
             assert context.status is PipelineStageStatus.COMPLETED, _errors(context)
@@ -847,3 +851,27 @@ def test_a_finished_removal_deletes_its_strip_note(
     }
     assert notes
     assert notes <= {key for call in deleted.call_args_list for key in call.args[1]}
+
+
+def test_a_document_restored_after_an_interrupted_removal_is_indexed_again(
+    tmp_path: Path,
+) -> None:
+    # The second run deletes a.txt and is killed once the removal deleted its
+    # vector copies. a.txt restored unchanged was read as unchanged (its
+    # record still said PROCESSED): its text units, vector entities and
+    # claims were lost, and the store probe failed every later run with
+    # "the vector store does not hold" its text units.
+    a = "Acme and Buyer trade goods 1."
+    runs = [{"a.txt": a}, {"b.txt": "Depot trade cash 1."}]
+    restored = {**runs[1], "a.txt": a}
+
+    full = _state(tmp_path / "full", [restored])
+    incremental = _state(
+        tmp_path / "inc",
+        [*runs, restored],
+        die_in=1,
+        die_at=("delete_document_artifacts", 1, True),
+        resume=False,
+    )
+
+    assert incremental == full

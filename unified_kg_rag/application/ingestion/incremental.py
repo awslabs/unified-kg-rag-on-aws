@@ -781,7 +781,9 @@ class IncrementalIndexer:
         changed and one deleted document; planning the two sets separately
         would treat each as a survivor of the other.
 
-        The deleted documents' registry records are deleted only when the
+        The deleted documents are first recorded PENDING (their text units
+        kept), so one restored before the removal finished reads changed and
+        is indexed again. Their records are deleted only when the
         removal fully succeeded: deleting them first would strand the
         still-live artifacts with no lineage to clean them up. Returns False
         on a partial failure. The caller MUST NOT :meth:`commit` changed
@@ -815,6 +817,23 @@ class IncrementalIndexer:
             check_write_fence()
             self._record_quarantined(delta.quarantined, kept)
             return True
+        # Deleted documents are written ahead too: one restored before its
+        # removal finished (it failed, or the run died) then reads changed,
+        # not unchanged over the artifacts the removal already deleted.
+        pending = [
+            record.model_copy(
+                update={
+                    "content_hash": PENDING_CONTENT_HASH,
+                    "status": DocStatus.PENDING,
+                    "error_info": _WRITE_AHEAD_INFO,
+                }
+            )
+            for record in self.doc_status.get_many(delta.deleted).values()
+            if record.status is not DocStatus.PENDING
+        ]
+        if pending:
+            check_write_fence()
+            self.doc_status.put_many(pending)
         if not self.remove_obsolete_artifacts(doc_ids):
             if delta.deleted or delta.quarantined:
                 logger.warning(
