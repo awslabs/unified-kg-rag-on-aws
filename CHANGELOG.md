@@ -1279,6 +1279,13 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Neptune no longer loses relationship edges when a run is interrupted
+  while it writes them: a batch's stored edges were dropped by one request
+  and re-added one request each, so a kill, a stop, a lost lease or a write
+  that kept failing in between lost the rest for good (edges rewritten for
+  their rank or names only, and removal strips, are not found again by a
+  retry), leaving endpoint ranks one low. Each edge's drop and add are now
+  one request, which Neptune runs as one transaction (#PR).
 - The six `indexing.opensearch.*_index_prefix` settings and the two
   `indexing.neptune.*_label_prefix` settings are checked when the config
   loads (an index prefix: lowercase letters, digits, `-`, `_`, not starting

@@ -795,8 +795,9 @@ def test_an_edge_whose_endpoint_is_missing_keeps_its_stored_copy(
 ) -> None:
     # Regression: the edges were dropped by id before the write found the
     # endpoint missing, so an edge re-pointed at a re-keyed entity whose write
-    # failed was lost, though an unchanged document still states it.
-    dropped: list[str] = []
+    # failed was lost, though an unchanged document still states it. Only an
+    # edge whose endpoints are stored is rewritten (its drop is part of it).
+    rewritten: list[str] = []
 
     class _Query:
         def __init__(self) -> None:
@@ -813,10 +814,8 @@ def test_an_edge_whose_endpoint_is_missing_keeps_its_stored_copy(
         query = build(_Query())
         if operation == "Reading edge endpoints":
             return ["a", "b"]
-        if operation == "Dropping existing edges":
-            within = next(args for name, args in query.steps if name == "has")
-            dropped.extend(within[1].value)
-            return []
+        assert operation == "Relationship indexing"
+        rewritten.append(next(args for name, args in query.steps if name == "has")[1])
         return ["written"]
 
     mocker.patch.object(indexer, "_execute_with_retries", side_effect=execute)
@@ -825,7 +824,7 @@ def test_an_edge_whose_endpoint_is_missing_keeps_its_stored_copy(
 
     stats = indexer.upsert_relationships([kept, repointed])
 
-    assert dropped == ["r1"]
+    assert rewritten == ["r1"]
     assert (stats.successful_items, stats.failed_items) == (1, 1)
     assert stats.failed_ids == ["r2"]
 

@@ -218,6 +218,90 @@ def test_graph_writes_retried_after_a_lost_response_add_nothing_twice(
     assert counts() == (2, 1, 1)
 
 
+def _stored_edges(graph_indexer: NeptuneIndexer) -> list[tuple[str, str, str]]:
+    g = graph_indexer.neptune_client.g
+    entity = graph_indexer._get_label("Entity", _SUFFIX)
+    from gremlin_python.process.graph_traversal import __
+
+    rows = (
+        g.V()
+        .hasLabel(entity)
+        .outE()
+        .project("id", "source", "target")
+        .by("id")
+        .by(__.outV().values("id"))
+        .by(__.inV().values("id"))
+        .toList()
+    )
+    return sorted((r["id"], r["source"], r["target"]) for r in rows)
+
+
+def test_an_interrupted_edge_rewrite_keeps_every_stored_edge(
+    graph_indexer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Regression: the stored edges of a batch were dropped by one request and
+    # re-added one request each, so a run killed (or stopped, or whose lease
+    # was lost) after the first re-add lost the others for good.
+    from unified_kg_rag.adapters.storage import neptune_indexer as module
+
+    graph_indexer.clear([_SUFFIX])
+    graph_indexer.index_entities(_entities())
+    graph_indexer.index_relationships(_relationships())
+    before = _stored_edges(graph_indexer)
+    assert len(before) == 2
+
+    class _Killed(BaseException):
+        pass
+
+    real = module.NeptuneIndexer._execute_with_retries
+    writes = {"n": 0}
+
+    def killed_after_one_write(self, build, operation_name, **kwargs):  # type: ignore[no-untyped-def]
+        if operation_name == "Relationship indexing":
+            writes["n"] += 1
+            if writes["n"] == 2:
+                raise _Killed
+        return real(self, build, operation_name, **kwargs)
+
+    monkeypatch.setattr(
+        module.NeptuneIndexer, "_execute_with_retries", killed_after_one_write
+    )
+    monkeypatch.setattr(graph_indexer.neptune_config, "index_concurrency", 1)
+    with pytest.raises(_Killed):
+        graph_indexer.upsert_relationships(
+            [r.model_copy(update={"rank": 7}) for r in _relationships()]
+        )
+    assert _stored_edges(graph_indexer) == before
+
+
+def test_an_edge_rewrite_replaces_its_stored_copy_once(graph_indexer) -> None:
+    # The drop of the stored copy and the add of the new one are one request:
+    # re-pointed or resent, the edge is stored once; with an endpoint gone,
+    # nothing is dropped.
+    from unified_kg_rag.adapters.storage.neptune_indexer import run_traversal
+
+    graph_indexer.clear([_SUFFIX])
+    graph_indexer.index_entities(_entities())
+    graph_indexer.index_relationships(_relationships()[:1])
+    label = graph_indexer._get_label("Entity", _SUFFIX)
+    supplies = _relationships()[0]
+
+    def rewrite(rel: Relationship) -> list:
+        return run_traversal(
+            graph_indexer.neptune_client,
+            lambda g: graph_indexer._build_add_edge_traversal(g, rel, label),
+            results=True,
+        )
+
+    repointed = supplies.model_copy(update={"target_id": "e-depot"})
+    assert rewrite(repointed)
+    assert rewrite(repointed)  # a resend after a lost response
+    assert _stored_edges(graph_indexer) == [("r-supplies", "e-vendor", "e-depot")]
+
+    assert rewrite(supplies.model_copy(update={"target_id": "gone"})) == []
+    assert _stored_edges(graph_indexer) == [("r-supplies", "e-vendor", "e-depot")]
+
+
 def test_a_rebuild_in_place_on_gremlin_sweeps_only_what_it_did_not_write(
     graph_indexer,
 ) -> None:

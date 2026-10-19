@@ -534,58 +534,70 @@ class NeptuneIndexer(GraphIndexer):
     def _build_add_edge_traversal(
         self, g: GraphTraversalSource, rel: Relationship, entity_label: str
     ) -> GraphTraversal:
-        """Build a single ``addE`` traversal for one relationship.
+        """Build the one traversal that rewrites one relationship's edge.
 
-        Written per-edge on purpose. Fanning many edges out of one root via
-        ``sideEffect`` (the previous shape) makes Neptune evaluate a single giant
-        traversal whose per-edge cost is ~2 orders of magnitude higher than a
-        small standalone traversal (measured ~1.7 s/edge vs ~7 ms/edge on a real
-        cluster), so a real corpus's tens of thousands of edges effectively never
-        finished. Each edge as its own traversal keeps the cost linear.
+        It drops the edge's stored copies (edges with its id whose source
+        vertex carries ``entity_label``: relationship ids are
+        suffix-independent, so another tenant's identical edge is left
+        alone) and adds the edge, in the same request. Neptune runs a
+        request as one transaction, so the edge is replaced or left as it
+        was: with the drop a request of its own, a run interrupted between
+        the two (a kill, a stop, a lost lease, a write that kept failing)
+        lost the stored edge for good, as nothing finds it again to rewrite
+        it. A retry after a lost response drops and adds again: still one
+        edge.
+
+        Written per edge on purpose. Fanning many edges out of one root via
+        ``sideEffect`` makes Neptune evaluate a single giant traversal whose
+        per-edge cost is ~2 orders of magnitude higher than a small
+        standalone traversal (measured ~1.7 s/edge vs ~7 ms/edge on a real
+        cluster), so a real corpus's tens of thousands of edges effectively
+        never finished. Each edge as its own traversal keeps the cost linear.
 
         Edge properties take no cardinality (Neptune rejects it) and hold one
         value each, so ``relationship_properties`` serializes lists to JSON.
 
-        Idempotent (``fold().coalesce(unfold(), addE)``): the caller dropped
-        the edge first, so the existing edge is found only when a retry
-        follows a write whose response was lost; adding it again would leave
-        two parallel edges with one id.
+        Both endpoint vertices are looked up before the drop, so an edge
+        whose endpoint is gone keeps its stored copy and the result is empty
+        (the only sign of an edge not written).
         """
-        add_edge = (
-            __.V()
-            .hasLabel(entity_label)
-            .has("id", rel.source_id)
-            .addE(relationship_label(rel))
-            .to(__.V().hasLabel(entity_label).has("id", rel.target_id))
-            .property("id", rel.id)
-        )
-        props = relationship_properties(rel, self.neptune_config.property_max_length)
-        for key, value in props.items():
-            add_edge.property(key, value)
-        self._tagged(add_edge)
-        # Return the edge's id: with no source vertex addE gets no traverser
-        # and raises nothing (a missing target does raise), so an empty result
-        # is the only sign of a dropped edge.
-        return cast(
-            GraphTraversal,
+
+        def target() -> GraphTraversal:
+            return __.V().hasLabel(entity_label).has("id", rel.target_id)
+
+        edge = (
             g.E()
             .has("id", rel.id)
             .where(__.outV().hasLabel(entity_label))
             .fold()
-            .coalesce(__.unfold(), add_edge)
-            .id_(),
+            .as_("stored")
+            # Both endpoints first: without them nothing is dropped either.
+            .V()
+            .hasLabel(entity_label)
+            .has("id", rel.source_id)
+            .filter_(target())
+            .sideEffect(__.select("stored").unfold().drop())
+            .addE(relationship_label(rel))
+            .to(target())
+            .property("id", rel.id)
         )
+        props = relationship_properties(rel, self.neptune_config.property_max_length)
+        for key, value in props.items():
+            edge.property(key, value)
+        self._tagged(edge)
+        return cast(GraphTraversal, edge.id_())
 
     def _write_relationships(self, relationships: list[Relationship]) -> IndexingStats:
         """Write relationship edges one small traversal per edge (idempotent).
 
-        For each suffix group: drop existing edges by id in batches (so re-runs
-        don't duplicate parallel edges), then add each edge as its own
-        traversal, ``index_concurrency`` at a time. An edge whose drop failed
-        is not re-added (that would duplicate it) and counts as failed, as does
-        a single failed write; neither aborts the others. Emits a progress log
-        every ``_PROGRESS_LOG_EVERY`` edges so a large run is distinguishable
-        from a hang.
+        For each suffix group: read which endpoint vertices are stored (in
+        batches), then rewrite each edge whose endpoints are, as its own
+        traversal (``_build_add_edge_traversal``: the old copy dropped and the
+        new one added in one request), ``index_concurrency`` at a time. A
+        failed write counts as failed and leaves the stored edge as it was;
+        it does not abort the others. Emits a progress log every
+        ``_PROGRESS_LOG_EVERY`` edges so a large run is distinguishable from
+        a hang.
         """
         if not relationships:
             return IndexingStats()
@@ -604,17 +616,9 @@ class NeptuneIndexer(GraphIndexer):
                 "Indexing %s relationships for '%s'...", len(rels), entity_label
             )
 
-            # Drop existing edges by id first (batched) for idempotency. Edges
-            # are not removed by the entity label-clear, so without this a re-run
-            # would create duplicate parallel edges with the same id. Relationship
-            # ids are suffix-independent (the same "Vendor -> Buyer" edge has the
-            # same id in every tenant), so the drop is scoped to edges whose
-            # source vertex carries THIS suffix's entity label (the scope
-            # delete_by_id uses); unscoped, indexing one tenant would drop
-            # another tenant's identical edges.
-            # An edge whose endpoint vertex is missing is neither dropped nor
-            # written: its stored copy (the edge an unchanged document
-            # states, before a re-key re-pointed it) stays.
+            # An edge whose endpoint vertex is missing is not written: its
+            # stored copy (the edge an unchanged document states, before a
+            # re-key re-pointed it) stays.
             writable: list[Relationship] = []
             for batch in self._batch_iterator(rels):
                 ends = sorted(
@@ -660,33 +664,7 @@ class NeptuneIndexer(GraphIndexer):
                         "not stored",
                         rel.id,
                     )
-                if not found:
-                    continue
-
-                def drop_edges(
-                    g: GraphTraversalSource,
-                    entity_label: str = entity_label,
-                    ids: list[str] = [rel.id for rel in found],  # noqa: B006
-                ) -> GraphTraversal:
-                    return (
-                        g.E()
-                        .has("id", P.within(ids))
-                        .where(__.outV().hasLabel(entity_label))
-                        .drop()
-                    )
-
-                try:
-                    self._execute_with_retries(drop_edges, "Dropping existing edges")
-                    writable.extend(found)
-                except NamespaceLeaseError:
-                    raise
-                except Exception as exc:
-                    stats.add_error(
-                        f"dropping existing edges failed: {exc}",
-                        len(found),
-                        ids=[rel.id for rel in found],
-                    )
-                    logger.warning("Failed dropping existing edge batch: %s", exc)
+                writable.extend(found)
 
             def write(
                 rel: Relationship, entity_label: str = entity_label

@@ -112,35 +112,6 @@ def test_write_relationships_counts_an_edge_without_source_as_failed(
     assert stats.failed_ids == ["r2"]
 
 
-def test_an_edge_whose_drop_failed_is_not_re_added(indexer, mocker) -> None:
-    # Re-adding next to the old edge would duplicate it: the batch fails.
-    indexer.neptune_config.batch_size = 1
-    g = mocker.MagicMock()
-    built = mocker.patch.object(indexer, "_build_add_edge_traversal")
-    drops: list[str] = []
-
-    rels = [
-        Relationship(id="r1", source_id="e1", target_id="e2"),
-        Relationship(id="r2", source_id="e2", target_id="e3"),
-    ]
-
-    def execute(build, op, **_kwargs):
-        if (ends := _stored_ends(op, rels)) is not None:
-            return ends
-        if op == "Dropping existing edges":
-            drops.append(op)
-            if len(drops) == 1:  # the first batch's drop fails its retries
-                raise RuntimeError("drop timed out")
-        return [build(g)]
-
-    mocker.patch.object(indexer, "_execute_with_retries", side_effect=execute)
-
-    stats = indexer.upsert_relationships(rels)
-
-    assert [c.args[1].id for c in built.call_args_list] == ["r2"]
-    assert (stats.successful_items, stats.failed_ids) == (1, ["r1"])
-
-
 def test_edges_are_written_index_concurrency_at_a_time(indexer, mocker) -> None:
     import threading
 
@@ -178,9 +149,11 @@ def test_add_edge_traversal_returns_the_edge_id(indexer) -> None:
     assert calls[-1] == "id_"
 
 
-def test_add_edge_traversal_returns_the_stored_edge_on_a_retry(indexer) -> None:
-    # A retry after a write whose response was lost must not add a second
-    # edge with the same id: the traversal looks the edge up first.
+def test_the_edge_rewrite_drops_and_adds_in_one_traversal(indexer) -> None:
+    # Regression: the stored copy was dropped by a request of its own, so an
+    # interruption before the edge's write (a kill, a stop, a lost lease, a
+    # failing write) lost the edge for good. The drop is now a side effect of
+    # the request that adds the edge, after both endpoints were found.
     from gremlin_python.process.anonymous_traversal import traversal
     from gremlin_python.structure.graph import Graph
 
@@ -190,18 +163,24 @@ def test_add_edge_traversal_returns_the_stored_edge_on_a_retry(indexer) -> None:
         "Entity-default",
     )
     steps = written.bytecode.step_instructions
-    assert [step[0] for step in steps] == [
+    names = [step[0] for step in steps]
+    assert names[:10] == [
         "E",
         "has",
         "where",
         "fold",
-        "coalesce",
-        "id",
+        "as",
+        "V",
+        "hasLabel",
+        "has",
+        "filter",
+        "sideEffect",
     ]
-    assert steps[1][1:] == ["id", "r1"]
-    unfold, add_edge = steps[4][1:]
-    assert [step[0] for step in unfold.step_instructions] == ["unfold"]
-    assert "addE" in [step[0] for step in add_edge.step_instructions]
+    assert steps[1][1:] == ["id", "r1"] and steps[7][1:] == ["id", "e1"]
+    drop = steps[9][1]
+    assert [step[0] for step in drop.step_instructions] == ["select", "unfold", "drop"]
+    assert names.index("addE") > names.index("sideEffect")
+    assert names[-1] == "id"
 
 
 def test_write_relationships_empty_input_returns_empty_stats(indexer) -> None:
@@ -217,11 +196,7 @@ def _edge_property_steps(indexer, rel: Relationship) -> list[list]:
 
     g = traversal().withGraph(Graph())
     written = indexer._build_add_edge_traversal(g, rel, "Entity-default")
-    # The addE branch of the fold().coalesce(unfold(), addE) upsert.
-    coalesce = next(
-        step for step in written.bytecode.step_instructions if step[0] == "coalesce"
-    )
-    steps = coalesce[-1].step_instructions
+    steps = written.bytecode.step_instructions
     add_e = next(i for i, step in enumerate(steps) if step[0] == "addE")
     return [step for step in steps[add_e + 1 :] if step[0] == "property"]
 
@@ -303,51 +278,26 @@ def test_delete_by_id_without_a_suffix_is_scoped_to_the_default(indexer) -> None
     ), labels
 
 
-def test_relationship_pre_drop_is_scoped_to_the_suffix(indexer, mocker) -> None:
-    # Relationship ids are suffix-independent, so the idempotency pre-drop must
-    # only match edges whose source vertex carries THIS suffix's entity label;
-    # an unscoped g.E().has("id", ...) would drop tenant B's identical edge when
-    # tenant A is indexed. The scope mirrors delete_by_id: where(outV().hasLabel).
-    from unified_kg_rag.domain.models import Constants
+def test_relationship_pre_drop_is_scoped_to_the_suffix(indexer) -> None:
+    # Relationship ids are suffix-independent, so the rewrite's drop must
+    # only match edges whose source vertex carries THIS suffix's entity
+    # label; an unscoped g.E().has("id", ...) would drop tenant B's identical
+    # edge when tenant A is indexed. The scope mirrors delete_by_id.
+    from gremlin_python.process.anonymous_traversal import traversal
+    from gremlin_python.structure.graph import Graph
 
-    steps: list[tuple[str, tuple]] = []
-
-    class Recorder:
-        def __getattr__(self, name):
-            def _step(*args, **kwargs):
-                steps.append((name, args))
-                return self
-
-            return _step
-
-    indexer.neptune_client.g = Recorder()
-    rels = [
-        Relationship(
-            id="r1",
-            source_id="e1",
-            target_id="e2",
-            attributes={Constants.INDEX.value: "tenant-a"},
-        )
-    ]
-    mocker.patch.object(
-        indexer,
-        "_execute_with_retries",
-        side_effect=lambda build, op, **kw: (
-            _stored_ends(op, rels) or [build(indexer.neptune_client.g)]
-        ),
+    written = indexer._build_add_edge_traversal(
+        traversal().withGraph(Graph()),
+        Relationship(id="r1", source_id="e1", target_id="e2"),
+        "Entity-tenant-a",
     )
-    mocker.patch.object(indexer, "_build_add_edge_traversal")
-
-    indexer.upsert_relationships(rels)
-
-    names = [name for name, _ in steps]
-    # The edge drop is filtered by an endpoint-vertex label before drop().
-    assert names.index("where") < names.index("drop")
-    where_args = next(args for name, args in steps if name == "where")
-    # The anonymous where() traversal is outV().hasLabel(<this suffix's label>).
-    rendered = repr(where_args[0].bytecode)
-    assert "outV" in rendered
-    assert "Entity-tenant-a" in rendered
+    steps = written.bytecode.step_instructions
+    where = next(step for step in steps if step[0] == "where")
+    rendered = repr(where[1])
+    assert "outV" in rendered and "Entity-tenant-a" in rendered
+    assert [step[0] for step in steps].index("where") < [
+        step[0] for step in steps
+    ].index("sideEffect")
 
 
 def test_a_failed_delete_batch_counts_each_of_its_ids(indexer, mocker) -> None:
