@@ -390,3 +390,43 @@ async def test_a_redrawn_path_moves_the_score_to_its_distance_band(
     d = next(r for r in kept if r.source == "D")
     # Redrawn S -> B -> D: still two hops, same band and place in it.
     assert d.score == pytest.approx(1 / 4 + 0.75 * (1 / 3 - 1 / 4))
+
+
+async def test_a_failed_edge_read_keeps_the_seeds_only(config: Config) -> None:
+    class _Failing(_Graph):
+        async def aedges_among(self, ids: list[str], suffix: str | None) -> Any:
+            raise RuntimeError("graph read failed")
+
+    strategy = _strategy(config, _Failing(), _Document(config))
+    kept = await strategy._expand_via_graph(
+        SearchQuery(query="q", filters={"attr_grp": "a"}), ["S"]
+    )
+    assert [r.source for r in kept] == ["S"]
+
+
+async def test_an_edge_stored_towards_the_seed_is_walked(config: Config) -> None:
+    # Edge direction is the extractor's: S-B stored as B -> S still connects.
+    edges = [
+        ("r-sa", "S", "A"),
+        ("r-sb", "B", "S"),
+        ("r-ad", "A", "D"),
+        ("r-bd", "D", "B"),
+        ("r-ac", "A", "C"),
+    ]
+    strategy = _strategy(config, _Graph(edges), _Document(config))
+    kept = await strategy._expand_via_graph(
+        SearchQuery(query="q", filters={"attr_grp": "a"}), ["S"]
+    )
+    assert [r.source for r in kept] == ["S", "B", "D"]
+
+
+async def test_the_redrawn_path_does_not_name_the_excluded_walk(
+    config: Config,
+) -> None:
+    strategy = _strategy(config, _Graph(), _Document(config))
+    kept = await strategy._expand_via_graph(
+        SearchQuery(query="q", filters={"attr_grp": "a"}), ["S"]
+    )
+    d = {r.source: r for r in kept}["D"]
+    assert d.content.count("Path: ") == 1
+    assert "A" not in d.content.split("Path: ")[1]

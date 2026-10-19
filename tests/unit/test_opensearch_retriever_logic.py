@@ -769,6 +769,72 @@ async def test_a_probe_waiter_shares_a_failure_and_survives_a_cancelled_owner(
         assert len(calls) == 2
 
 
+async def test_a_failed_probe_is_asked_again(retriever, config, mocker) -> None:
+    prefix = config.indexing.opensearch.community_reports_index_prefix
+
+    class _Blip(_Client):
+        probes = 0
+
+        async def asearch(self, **request) -> dict:
+            if request["body"].get("_source") is False:
+                self.probes += 1
+                if self.probes == 1:
+                    raise RuntimeError("transient blip")
+                return {"hits": {"hits": [{"_id": "cr1"}]}}
+            return await super().asearch(**request)
+
+    client = _Blip({prefix: [("cr1", 1.0)]})
+    object.__setattr__(retriever, "_opensearch_client", client)
+    mocker.patch.object(
+        OpenSearchRetriever, "_get_query_vector", mocker.AsyncMock(return_value=[0.1])
+    )
+    mocker.patch.object(OpenSearchRetriever, "_check_embedding_settings")
+
+    async def search(text: str) -> list:
+        return await retriever.aretrieve(
+            SearchQuery(
+                query=text,
+                search_type=SearchType.VECTOR,
+                index_prefixes=[prefix],
+                filters={"attr_category": "a"},
+            )
+        )
+
+    with query_scope():
+        await search("first")
+        second = await search("second")
+    assert client.probes == 2
+    assert [r.source for r in second] == ["cr1"]
+
+
+async def test_a_cancelled_probe_waiter_leaves_the_probe_in_flight(retriever) -> None:
+    alias = "reports-default"
+    probe = {"size": 1, "query": {"match_all": {}}, "_source": False}
+    release = asyncio.Event()
+    calls: list[str] = []
+
+    async def search(alias_: str, body: dict) -> Any:
+        calls.append(alias_)
+        await release.wait()
+        return [{"_id": "cr1"}]
+
+    object.__setattr__(retriever, "_search", search)
+    with query_scope():
+        owner = asyncio.ensure_future(retriever._probe(alias, probe))
+        await asyncio.sleep(0)
+        waiter = asyncio.ensure_future(retriever._probe(alias, probe))
+        other = asyncio.ensure_future(retriever._probe(alias, probe))
+        await asyncio.sleep(0)
+        waiter.cancel()  # shielded: the shared probe goes on
+        await asyncio.sleep(0)
+        release.set()
+        assert await owner == [{"_id": "cr1"}]
+        assert await other is True
+        with pytest.raises(asyncio.CancelledError):
+            await waiter
+    assert len(calls) == 1
+
+
 async def test_index_sweep_takes_each_index_in_turn(retriever, config, mocker) -> None:
     # Raw scores of two indices do not compare (here the entity index's sum of
     # two kNN scores tops every text hit); the sweep keeps each index's best.
