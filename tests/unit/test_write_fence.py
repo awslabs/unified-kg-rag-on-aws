@@ -775,14 +775,11 @@ def _slow_minhash(item: tuple[int, str], **_: Any) -> None:
 
 
 class _RecordingProcessPool(ProcessPoolExecutor):
-    """A real process pool that keeps the futures it hands out."""
+    """A real process pool that records the futures it hands out, and keeps
+    no reference to itself: the code under test holds its pool in a local,
+    which is collected once the block raised."""
 
-    pools: list[_RecordingProcessPool] = []
-
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
-        self.futures: list[concurrent.futures.Future[Any]] = []
-        self.pools.append(self)
+    futures: list[concurrent.futures.Future[Any]] = []
 
     def submit(self, fn: Any, /, *args: Any, **kwargs: Any) -> Any:
         future = super().submit(fn, *args, **kwargs)
@@ -805,22 +802,22 @@ def _stopped_after(seconds: float, block: Any) -> None:
 
 
 def _assert_queued_tasks_cancelled(workers: int) -> None:
-    (pool,) = _RecordingProcessPool.pools
-    _RecordingProcessPool.pools = []
-    try:
-        ran = sum(f.done() and not f.cancelled() for f in pool.futures)
-        # Only the running tasks and the few the pool already handed to its
-        # workers' queue are not cancellable; the pool's manager thread
-        # cancels the rest once it wakes (the old code ran them all).
-        expected = len(pool.futures) - ran - 2 * workers - 1
-        deadline = time.time() + 3
-        while time.time() < deadline and (
-            sum(f.cancelled() for f in pool.futures) < expected
-        ):
-            time.sleep(0.05)
-        assert sum(f.cancelled() for f in pool.futures) >= max(expected, 1)
-    finally:
-        pool.shutdown(wait=True, cancel_futures=True)
+    import gc
+
+    futures, _RecordingProcessPool.futures = _RecordingProcessPool.futures, []
+    gc.collect()  # the pool is gone; its manager thread reads it weakly
+    ran = sum(f.done() and not f.cancelled() for f in futures)
+    # Only the running tasks and the few the pool already handed to its
+    # workers' queue are not cancellable (the old code cancelled none: it
+    # relied on the manager thread reading the collected pool's flag).
+    expected = len(futures) - ran - 2 * workers - 1
+    deadline = time.time() + 3
+    while time.time() < deadline and sum(f.cancelled() for f in futures) < expected:
+        time.sleep(0.05)
+    assert sum(f.cancelled() for f in futures) >= max(expected, 1)
+    # The running ones end on their own; none is left pending.
+    concurrent.futures.wait(futures, timeout=10)
+    assert all(f.done() for f in futures)
 
 
 def test_a_stop_cancels_the_queued_tasks_of_the_resolver_process_pool(

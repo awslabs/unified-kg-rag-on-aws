@@ -1279,6 +1279,11 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- A stop during entity resolution or MinHash deduplication cancels the
+  process pool's queued tasks every time: #367 relied on the pool's
+  manager thread reading a flag through a weak reference to the pool,
+  which a pool held in a local had often lost, and then every queued task
+  still ran (#PR).
 - The first model calls of a batch (ingestion stages, global search's map)
   no longer fail at random with "dictionary changed size during
   iteration": the worker threads share one chain, and LangChain caches each
