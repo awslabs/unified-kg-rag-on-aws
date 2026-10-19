@@ -3269,6 +3269,11 @@ changed once with the full-config keys (#332).
   update (also an edge rewritten for its rank only) reads the stored filter
   fields and sets the ones the item lost to null, on OpenSearch and the
   embedded engine alike (#370).
+- Upgrading: an index that saw document removals before #370 keeps the
+  removed documents' filter values on every entity, relationship and claim
+  not rewritten since, so their filters still match those documents.
+  Rebuild it once with `indexing.reset: true` to clear them. From #370 on,
+  a dropped filter key is stored as null, which matches no filter (#PR).
 - ragas no longer sends usage telemetry from `run-eval`: the evaluators
   package sets `RAGAS_DO_NOT_TRACK=true` unless it is already set (set it
   to `false` to opt back in) (#361).
