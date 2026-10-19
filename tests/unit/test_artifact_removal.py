@@ -525,3 +525,24 @@ def test_a_deleted_community_leaves_a_kept_text_unit_naming_it() -> None:
 
     assert graph.ids("communities") == set()
     assert vector.data["text_units"]["t2"].community_ids == []
+
+
+def test_a_removal_clears_a_note_whose_items_are_gone(mocker) -> None:
+    # An earlier strip's note names an item this removal deletes outright
+    # (it cites only the removed unit), so nothing is left to strip: the
+    # note is deleted here, or it would stay, and be re-read, for good.
+    manager, graph, vector = _manager()
+    vector.upsert_text_units([TextUnit(id="t1", text="...", document_ids=["d"])])
+    entity = Entity(id="e-x", name="X", text_unit_ids=["t1"])
+    graph.upsert_entities([entity])
+    vector.upsert_entities([entity])
+    note = {"entity_ids": ["e-x"], "relationship_ids": []}
+    vector.write_extraction_records({"pending-strip": note}, suffix="default")
+    read = mocker.spy(vector, "read_extraction_records")
+
+    manager.remove_text_units("default", ["t1"])
+
+    # Every removal reads the note, a first one as well as a retry.
+    assert any(call.args[0] == ["pending-strip"] for call in read.call_args_list)
+    assert vector.read_extraction_records(["pending-strip"], suffix="default") == {}
+    assert "e-x" not in graph.ids("entities")

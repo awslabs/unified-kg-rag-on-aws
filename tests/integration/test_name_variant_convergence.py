@@ -1127,3 +1127,41 @@ def test_a_resumed_removal_finishes_the_edges_it_re_keyed(
     incremental = _state(tmp_path / "inc", runs, die_in=2, die_at=die_at, gleaning=True)
 
     assert incremental == full
+
+
+def test_a_strip_note_carries_over_the_items_of_an_earlier_note(
+    tmp_path: Path, mocker: Any
+) -> None:
+    # A strip that merges while an earlier strip's note is still stored (the
+    # earlier one was killed) notes the earlier items too: its note replaces
+    # the stored one, and a retry must still finish both.
+    runs = [
+        {
+            "d1.txt": "Initech trade goods 3.",
+            "d2.txt": "Initech trade goods 4.",
+            "d5.txt": "Initech Corp and Initech trade cash 2.",
+        },
+        {"d5.txt": "Initech Corp and Initech trade cash 2."},
+    ]
+    earlier = {"entity_ids": ["e-earlier"], "relationship_ids": ["r-earlier"]}
+    read = OpenSearchIndexer.read_extraction_records
+
+    def with_earlier_note(self, keys, suffix=None):  # type: ignore[no-untyped-def]
+        found = read(self, keys, suffix=suffix)
+        if "pending-strip" in keys and "pending-strip" not in found:
+            found["pending-strip"] = dict(earlier)
+        return found
+
+    mocker.patch.object(OpenSearchIndexer, "read_extraction_records", with_earlier_note)
+    written = mocker.spy(OpenSearchIndexer, "write_extraction_records")
+
+    _state(tmp_path / "inc", runs)
+
+    notes = [
+        call.args[1]["pending-strip"]
+        for call in written.call_args_list
+        if "pending-strip" in call.args[1]
+    ]
+    assert notes, "the merging removal wrote no note"
+    assert "e-earlier" in notes[0]["entity_ids"]
+    assert "r-earlier" in notes[0]["relationship_ids"]
