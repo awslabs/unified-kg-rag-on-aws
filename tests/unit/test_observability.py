@@ -63,7 +63,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.evaluation import EvaluationManager
 from unified_kg_rag.evaluation.evaluation_manager import GraphAwareEvaluator
-from unified_kg_rag.shared import ConfigurationError, observability
+from unified_kg_rag.shared import ConfigurationError, PipelineInterrupted, observability
 from unified_kg_rag.shared.logging import _SHARED_PROCESSORS, add_trace_ids
 from unified_kg_rag.shared.utils.concurrency import ContextThreadPoolExecutor
 from unified_kg_rag.shared.utils.langchain import BatchProcessor
@@ -275,6 +275,19 @@ def test_attribute_values_are_coerced() -> None:
 
 
 # --- port behaviour -----------------------------------------------------------
+
+
+@pytest.mark.parametrize("stop", [KeyboardInterrupt, SystemExit, PipelineInterrupted])
+def test_an_interrupted_span_is_an_error(tracing: Tracing, stop) -> None:
+    # Before, an interrupt left the span UNSET, so a stopped query exported
+    # as a success.
+    exporter = tracing()
+    with pytest.raises(stop):
+        with observability.span("kg_rag.query"):
+            raise stop(15) if stop is not KeyboardInterrupt else stop()
+    span = _one(exporter, "kg_rag.query")
+    assert span.status.status_code == StatusCode.ERROR
+    assert _attrs(span)["error.type"] == stop.__name__
 
 
 def test_span_records_namespaced_attributes_and_escaping_errors(

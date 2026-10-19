@@ -1310,6 +1310,9 @@ changed once with the full-config keys (#332).
 - A filter value of `None` is rejected (`InvalidFilterError`): OpenSearch
   rejects a `terms` query naming null, and the embedded engine matched it
   against cleared filter fields (#373).
+- Tracing: a span left by Ctrl-C, SIGTERM or a pipeline stop
+  (`KeyboardInterrupt`, `SystemExit`, `PipelineInterrupted`) now exports with
+  status `ERROR` and `error.type`, instead of `UNSET` like a success (#PR).
 - `prepare-benchmark musique` also refuses an empty `question`, a repeated
   `id`, an `answerable` that is not a boolean (`"false"` used to count as
   answerable) and a non-string `paragraph_text`, as a usage error (exit 2)
