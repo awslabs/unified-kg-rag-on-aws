@@ -167,37 +167,39 @@ class LocalSearchStrategy(BaseSearchStrategy):
             "..." if len(expanded_entity_ids) > 5 else "",
         )
 
-        # Fusion keeps at most the text quota of them: fetch no more (more
-        # under a document filter, which drops some: ``_candidate_limit``).
+        # Fusion keeps at most the text quota of them: fetch no more (the
+        # first that pass, under a filter on text units).
         text_quota = self._per_type_quota(query.top_k)[SectionType.TEXT.value]
-        text_unit_ids = self._rank_text_unit_ids(filtered_entity_nodes)[
-            : self._candidate_limit(query, text_quota)
-        ]
+        ranked_unit_ids = self._rank_text_unit_ids(filtered_entity_nodes)
         logger.debug(
             "Found %s text units: '%s%s'",
-            len(text_unit_ids),
-            ", ".join(text_unit_ids[:5]),
-            "..." if len(text_unit_ids) > 5 else "",
+            len(ranked_unit_ids),
+            ", ".join(ranked_unit_ids[:5]),
+            "..." if len(ranked_unit_ids) > 5 else "",
         )
+
+        async def text_units_of_quota() -> dict[str, list[RetrievalResult]]:
+            chosen = await self._passing_ranked_units(
+                query, ranked_unit_ids, text_quota
+            )
+            return await self._retrieve_documents(
+                chosen, query.suffix, filters=query.filters
+            )
 
         # Both lookups depend only on the expansion, so they run together.
         text_units, bridge_relationships = await asyncio.gather(
-            self._retrieve_documents(
-                text_unit_ids, query.suffix, filters=query.filters
-            ),
+            text_units_of_quota(),
             self._retrieve_bridge_relationships(
                 query, list(dict.fromkeys(candidate_entity_ids + expanded_entity_ids))
             ),
         )
-        if "text_units" in text_units:
-            text_units["text_units"] = text_units["text_units"][:text_quota]
         all_results = {"graph_entities": filtered_entity_nodes, **text_units}
         if bridge_relationships:
             all_results["bridge_relationships"] = bridge_relationships
         stats = {
             "candidate_entity_count": len(candidate_entity_ids),
             "expanded_entity_count": len(expanded_entity_ids),
-            "text_unit_count": min(len(text_unit_ids), text_quota),
+            "text_unit_count": len(text_units.get("text_units", [])),
         }
         return all_results, stats
 

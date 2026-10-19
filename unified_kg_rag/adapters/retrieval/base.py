@@ -2,6 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
 from abc import ABC, abstractmethod
+from collections.abc import Iterable, Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Any, ClassVar
 
 from langchain_core.callbacks import (
@@ -22,6 +25,7 @@ from unified_kg_rag.adapters.storage.filter_schema import (
     FilterFields,
     document_filters,
     id_batch_size,
+    opensearch_filter_fields,
 )
 from unified_kg_rag.adapters.store_errors import is_fatal_retrieval_error
 from unified_kg_rag.domain.models import (
@@ -40,6 +44,33 @@ logger = get_logger(__name__)
 # Source ids recorded per retrieval span; the hit count is always complete.
 _MAX_SPAN_SOURCE_IDS = 50
 
+# What one query has learned about its stores (``query_scope``).
+_QUERY_SCOPE: ContextVar[dict[str, Any] | None] = ContextVar(
+    "kg_rag_query_scope", default=None
+)
+
+
+@contextmanager
+def query_scope() -> Iterator[dict[str, Any]]:
+    """A store-lookup memo for the sub-searches of one query.
+
+    ``GraphRAGChain`` opens one per query; a retriever may keep what it
+    learned there (``OpenSearchRetriever``'s attribute probes) and must not
+    keep it past the query, so an ingestion or reset in the same process is
+    seen by the next one. The memo is shared by every task the query spawns.
+    """
+    memo: dict[str, Any] = {}
+    token = _QUERY_SCOPE.set(memo)
+    try:
+        yield memo
+    finally:
+        _QUERY_SCOPE.reset(token)
+
+
+def current_query_scope() -> dict[str, Any] | None:
+    """The memo of the query in progress (``query_scope``), if any."""
+    return _QUERY_SCOPE.get()
+
 
 def _retrieval_attributes(results: list[RetrievalResult]) -> dict[str, Any]:
     by_type: dict[str, int] = {}
@@ -55,6 +86,12 @@ def _retrieval_attributes(results: list[RetrievalResult]) -> dict[str, Any]:
     for result_type, count in by_type.items():
         attributes[f"kg_rag.hits.{result_type}"] = count
     return attributes
+
+
+def _text_unit_ids(result: RetrievalResult) -> list[str]:
+    """The ``text_unit_ids`` a result cites (a graph store unwraps one to a str)."""
+    ids = (result.metadata or {}).get("text_unit_ids") or []
+    return [str(ids)] if isinstance(ids, str) else [str(i) for i in ids]
 
 
 class BaseGraphRAGRetriever(BaseRetriever, ABC):
@@ -211,48 +248,43 @@ class BaseSearchStrategy(ABC):
                 span.set_attributes(_retrieval_attributes(results))
             return results
 
-    async def _vouch_by_entities_index(
-        self, query: SearchQuery, results: list[RetrievalResult], seeds: set[str]
-    ) -> list[RetrievalResult]:
-        """Graph-expansion ``results`` without the vertices whose entity does
-        not pass the document filters.
+    async def _ids_passing(
+        self,
+        query: SearchQuery,
+        prefix: str,
+        ids: Iterable[str],
+        filters: dict[str, Any],
+        *,
+        enough: int | None = None,
+    ) -> set[str]:
+        """The ``ids`` of ``prefix``'s index that pass ``filters``.
 
-        Graph vertices hold no document attribute (``document_filters``), so
-        a graph store cannot apply one. The entities index does: an entity
-        document carries the filters of every document it was extracted from
-        (kept current by lineage updates), so it passes when one of them
-        does. Each vertex other than the ``seeds`` (the entities index
-        matched those already) is checked there by id, fetching ids only, in
-        batches one request can hold (``id_batch_size``). A vertex the index
-        does not match, and every vertex left when a fetch fails, is dropped
-        (fail-closed); a failed fetch marks the span degraded.
+        Ids only come back, in batches one request can hold
+        (``id_batch_size``), in the order given; with ``enough`` the batches
+        stop once that many passed. A failed request ends the check with what
+        passed so far (the caller treats the rest as failing: fail-closed)
+        and marks the span degraded.
         """
-        filters = document_filters(query.filters)
         retriever = self.document_retriever
-        if not filters or retriever is None:
-            return results
-        ids = list(
-            dict.fromkeys(str(r.source) for r in results if r.source not in seeds)
-        )
-        if not ids:
-            return results
+        ordered = list(dict.fromkeys(ids))
         passed: set[str] = set()
+        if retriever is None or not ordered:
+            return passed
         batch = id_batch_size(self.config.indexing.opensearch.index_settings)
         with observability.span(
             "kg_rag.retrieve",
             retriever=type(retriever).__name__,
             label="Attribute filter check",
+            index=prefix,
         ) as span:
-            for start in range(0, len(ids), batch):
-                chunk = ids[start : start + batch]
+            for start in range(0, len(ordered), batch):
+                chunk = ordered[start : start + batch]
                 check = SearchQuery(
                     query="",
                     search_type=SearchType.LEXICAL,
                     top_k=len(chunk),
                     retrieval_multiplier=1,
-                    index_prefixes=[
-                        self.config.indexing.opensearch.entities_index_prefix
-                    ],
+                    index_prefixes=[prefix],
                     suffix=query.suffix,
                     filters={**filters, "id": chunk},
                     source_fields=[],
@@ -263,14 +295,94 @@ class BaseSearchStrategy(ABC):
                     if is_fatal_retrieval_error(e):
                         raise
                     logger.warning(
-                        "%s: the attribute filter check failed; dropping the "
-                        "expanded entities it could not vouch for: %s",
+                        "%s: the attribute filter check on '%s' failed; what it "
+                        "could not check counts as failing: %s",
                         type(self).__name__,
+                        prefix,
                         e,
                     )
                     span.record_exception(e)
                     span.set_attributes({"kg_rag.degraded": True})
                     break
+                if enough is not None and len(passed) >= enough:
+                    break
+        return passed
+
+    def _text_unit_filters(self, filters: dict[str, Any] | None) -> dict[str, Any]:
+        """The keys of ``filters`` that narrow the text units (every key the
+        text-units index declares but ``id``): document filters, ``n_tokens``
+        ranges and the like."""
+        declared = opensearch_filter_fields(
+            *self.config.processing.translation.translated_languages
+        )["text_units"]
+        return {
+            k: v
+            for k, v in (filters or {}).items()
+            if k != "id" and declared.declares(k)
+        }
+
+    async def _passing_ranked_units(
+        self, query: SearchQuery, ranked: list[str], quota: int
+    ) -> list[str]:
+        """The first ``quota`` of ``ranked`` text unit ids that pass the
+        caller's filters, in rank order.
+
+        Cutting the ranked ids to the quota before a filtered fetch left the
+        slots of failing ids empty; fetching every ranked unit's content to
+        cut afterwards cost a hub's whole lineage. Under a filter on text
+        units, an ids-only check walks the ranked ids until ``quota`` pass,
+        and only those are fetched with their content.
+        """
+        filters = self._text_unit_filters(query.filters)
+        if not filters:
+            return ranked[:quota]
+        passed = await self._ids_passing(
+            query,
+            self.config.indexing.opensearch.text_units_index_prefix,
+            ranked,
+            filters,
+            enough=quota,
+        )
+        return [unit for unit in ranked if unit in passed][:quota]
+
+    async def _vouch_by_entities_index(
+        self, query: SearchQuery, results: list[RetrievalResult], seeds: set[str]
+    ) -> list[RetrievalResult]:
+        """Graph-expansion ``results`` without the vertices that do not pass
+        the document filters.
+
+        Graph vertices hold no document attribute (``document_filters``), so
+        a graph store cannot apply one. The entities index does: an entity
+        document carries the filters of every document it comes from, so it
+        passes when one of them does, and each vertex other than the
+        ``seeds`` is checked there by id (``_ids_passing``). Those values are
+        unioned per key, though, so under two or more keys an entity of two
+        documents that each pass one key would pass while none passes both:
+        its survivors are then also checked by their text units, each of
+        which belongs to one document. Seeds, relationships and reports
+        match each key independently (see the user guide).
+        """
+        filters = document_filters(query.filters)
+        if not filters:
+            return results
+        o = self.config.indexing.opensearch
+        others = [r for r in results if r.source not in seeds]
+        passed = await self._ids_passing(
+            query, o.entities_index_prefix, (str(r.source) for r in others), filters
+        )
+        if len(filters) > 1:
+            units = {
+                str(r.source): _text_unit_ids(r)
+                for r in others
+                if str(r.source) in passed
+            }
+            vouched = await self._ids_passing(
+                query,
+                o.text_units_index_prefix,
+                (u for ids in units.values() for u in ids),
+                filters,
+            )
+            passed = {v for v, ids in units.items() if vouched.intersection(ids)}
         kept = [r for r in results if r.source in seeds or str(r.source) in passed]
         if len(kept) < len(results):
             logger.debug(
@@ -391,21 +503,6 @@ class BaseSearchStrategy(ABC):
         return await self._vouch_by_entities_index(
             query, expanded, {str(s) for s in seed_entity_ids}
         )
-
-    def _candidate_limit(self, query: SearchQuery, quota: int) -> int:
-        """How many ranked ids to fetch by id for ``quota`` slots.
-
-        Under a document filter the store drops the ids that fail it, so
-        cutting the ranked ids to the quota first left the slots of failing
-        ids empty while passing ones further down went unasked. Such a fetch
-        asks for as many as one request holds instead (still one request);
-        the caller restores the rank order and cuts to the quota.
-        """
-        if document_filters(query.filters):
-            return max(
-                quota, id_batch_size(self.config.indexing.opensearch.index_settings)
-            )
-        return quota
 
     def _incident_fetch_limit(self) -> int:
         """How many incident edges to request per endpoint side.

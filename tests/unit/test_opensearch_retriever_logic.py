@@ -16,6 +16,7 @@ from collections import OrderedDict
 
 import pytest
 
+from unified_kg_rag.adapters.retrieval.base import query_scope
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
 from unified_kg_rag.adapters.retrievers.opensearch_retriever import OpenSearchRetriever
 from unified_kg_rag.domain.models import Config, SearchQuery, SearchType
@@ -33,7 +34,6 @@ def retriever(config: Config) -> OpenSearchRetriever:
     object.__setattr__(inst, "_opensearch_config", config.indexing.opensearch)
     object.__setattr__(inst, "_max_size", config.indexing.opensearch.max_query_size)
     object.__setattr__(inst, "_max_result_window", 10000)
-    object.__setattr__(inst, "_probe_outcomes", OrderedDict())
     object.__setattr__(inst, "_field_mappings", inst._initialize_field_mappings())
     object.__setattr__(
         inst, "_index_filter_fields", inst._initialize_index_filter_fields()
@@ -668,7 +668,8 @@ async def test_an_attribute_probe_is_reused_by_the_next_sub_search(
         OpenSearchRetriever, "_get_query_vector", mocker.AsyncMock(return_value=[0.1])
     )
     mocker.patch.object(OpenSearchRetriever, "_check_embedding_settings")
-    for text in ("first", "second", "third"):
+
+    async def search(text: str) -> None:
         await retriever.aretrieve(
             SearchQuery(
                 query=text,
@@ -677,7 +678,17 @@ async def test_an_attribute_probe_is_reused_by_the_next_sub_search(
                 filters={"attr_category": "a"},
             )
         )
+
+    with query_scope():
+        for text in ("first", "second", "third"):
+            await search(text)
     assert client.probes == 1
+    # Regression: a 30 s cache keyed by alias answered the next query with
+    # the empty outcome from before an ingestion; each query probes afresh.
+    with query_scope():
+        await search("next query")
+    await search("no query scope")
+    assert client.probes == 3
 
 
 async def test_index_sweep_takes_each_index_in_turn(retriever, config, mocker) -> None:
@@ -910,7 +921,6 @@ class _CountingEmbedder:
 async def test_query_embeddings_are_cached_per_text(retriever) -> None:
     # Local search embeds the same entity-focus text for several indices; it
     # must hit the embedding model once.
-    from collections import OrderedDict
 
     from unified_kg_rag.domain.models import SearchType
 
@@ -933,7 +943,6 @@ async def test_concurrent_sub_queries_share_one_embedding_call(retriever) -> Non
     # Sub-queries of one search run concurrently: all but the first used to
     # miss the cache (filled only after the await) and embed again.
     import asyncio
-    from collections import OrderedDict
 
     from unified_kg_rag.domain.models import SearchType
 
@@ -968,7 +977,6 @@ async def test_failed_embedding_with_every_waiter_cancelled_is_not_logged(
     # "Task exception was never retrieved" when the task was collected.
     import asyncio
     import gc
-    from collections import OrderedDict
 
     from unified_kg_rag.domain.models import SearchType
 
@@ -1007,7 +1015,6 @@ async def test_failed_embedding_with_every_waiter_cancelled_is_not_logged(
 
 
 async def test_query_embedding_cache_is_bounded(retriever, monkeypatch) -> None:
-    from collections import OrderedDict
 
     from unified_kg_rag.domain.models import SearchType
 
