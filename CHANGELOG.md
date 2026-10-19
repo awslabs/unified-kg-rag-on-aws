@@ -1279,6 +1279,10 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- `prepare-benchmark musique` accepts the official full file
+  (`musique_full_v1.0_dev.jsonl`) again: it carries each question once
+  answerable and once not under the same id, which the repeated-id check
+  refused; only answerable items are checked for repeated ids now (#PR).
 - Tracing: a span whose coroutine is cancelled (`asyncio.CancelledError`:
   `kg_rag.query` / `kg_rag.batch` on Ctrl-C or SIGTERM, or a host cancelling
   `ainvoke`) also exports as `ERROR` with `error.type`; #374 covered only
