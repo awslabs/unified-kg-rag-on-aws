@@ -31,6 +31,17 @@ The registry's own records are not fenced by the store: DynamoDB cannot
 condition a ``BatchWriteItem`` (the batched registry writes) on another
 item, and the Neptune and OpenSearch writes cannot be conditioned on the
 registry at all, so the margin above is the fence for every write.
+
+A request that passed the fence can still land after the lease expired:
+its process was frozen (a paused VM or container, a stopped process)
+between the check and the write, or the request took long. Each attempt
+of a request is bounded by the store's request timeout, so every write of
+a run whose lease expired has landed by that expiry plus the longest
+request. A run that takes over an *expired* lease (its holder died or
+froze rather than released it) therefore holds its first write until
+then (``check``), so a late write of the previous holder lands before
+this run's writes, which overwrite it, rather than after them. A released
+lease needs no wait.
 """
 
 from __future__ import annotations
@@ -40,12 +51,13 @@ import socket
 import threading
 import time
 import uuid
+from collections.abc import Callable
 from contextvars import Token
 from datetime import datetime, timezone
 from types import TracebackType
 from typing import TYPE_CHECKING
 
-from unified_kg_rag.shared import NamespaceLeaseError, get_logger
+from unified_kg_rag.shared import NamespaceLeaseError, get_logger, write_fence
 from unified_kg_rag.shared.write_fence import (
     WriteFence,
     install_write_fence,
@@ -63,6 +75,21 @@ logger = get_logger(__name__)
 _RENEWALS_PER_TERM = 6
 # How long the end of a run waits for a renewal in flight.
 _HEARTBEAT_JOIN_SECONDS = 5.0
+# Added to the takeover wait (see the module docstring) for clock skew
+# between the hosts of the two runs.
+_TAKEOVER_MARGIN_SECONDS = 5.0
+# How often a takeover wait checks whether the run was stopped.
+_TAKEOVER_POLL_SECONDS = 1.0
+
+
+def longest_write_request_seconds() -> float:
+    """The longest single store request of the indexing path (the Neptune and
+    OpenSearch indexing request timeouts); indexing.lease_seconds should be
+    at least three times it."""
+    return max(
+        write_fence.INGESTION_REQUEST_TIMEOUT_SECONDS,
+        write_fence.INDEXING_REQUEST_TIMEOUT_SECONDS,
+    )
 
 
 def _when(epoch: float) -> str:
@@ -72,10 +99,22 @@ def _when(epoch: float) -> str:
 class NamespaceLease:
     """Hold ``namespace``'s write lease in ``store`` for a ``with`` block."""
 
-    def __init__(self, store: DocStatusPort, namespace: str, seconds: float) -> None:
+    def __init__(
+        self,
+        store: DocStatusPort,
+        namespace: str,
+        seconds: float,
+        interrupt: Callable[[], None] | None = None,
+    ) -> None:
+        """``interrupt`` raises when the run is to stop; a takeover wait
+        calls it (see ``check``)."""
         self.store = store
         self.namespace = namespace
         self.seconds = seconds
+        self.interrupt = interrupt
+        # Before this time (epoch seconds) no write: a takeover of an
+        # expired lease waits for the previous holder's late writes.
+        self.writes_from = 0.0
         self.owner = f"{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex[:8]}"
         self._renewed_at = 0.0
         self._lost: str | None = None
@@ -84,6 +123,9 @@ class NamespaceLease:
         self._token: Token[tuple[WriteFence, ...]] | None = None
 
     def __enter__(self) -> NamespaceLease:
+        # Read first: a lease that is still there but expired was not
+        # released (the holder died or froze), so its writes may be late.
+        previous = self.store.lease_holder(self.namespace)
         sent = time.time()
         if not self.store.try_acquire_lease(self.namespace, self.owner, self.seconds):
             holder = self.store.lease_holder(self.namespace)
@@ -98,6 +140,20 @@ class NamespaceLease:
         logger.info(
             "Holding the write lease of namespace '%s' (%s)", self.namespace, self.owner
         )
+        if previous is not None and previous[0] != self.owner:
+            self.writes_from = (
+                previous[1] + longest_write_request_seconds() + _TAKEOVER_MARGIN_SECONDS
+            )
+            if self.writes_from > sent:
+                logger.warning(
+                    "Took over the expired write lease of namespace '%s' from %s: "
+                    "the first write waits until %s (%.0fs) for any write of that "
+                    "run still in flight",
+                    self.namespace,
+                    previous[0],
+                    _when(self.writes_from),
+                    self.writes_from - sent,
+                )
         self._thread = threading.Thread(
             target=self._heartbeat, name=f"lease-{self.namespace}", daemon=True
         )
@@ -193,7 +249,17 @@ class NamespaceLease:
 
     def check(self) -> None:
         """Raise :class:`NamespaceLeaseError` if the lease was lost, or has
-        less than a third of its term left (no renewal succeeded since)."""
+        less than a third of its term left (no renewal succeeded since).
+
+        After a takeover of an expired lease, wait first until the previous
+        holder's writes have all landed (``writes_from``, see the module
+        docstring), calling ``interrupt`` (a stop raises) and ending at once
+        if the run ended."""
+        while (left := self.writes_from - time.time()) > 0:
+            if self.interrupt is not None:
+                self.interrupt()
+            if self._stop.wait(min(left, _TAKEOVER_POLL_SECONDS)):
+                break
         if self._lost is None and self._expiring():
             self._lost = "it nearly expired before a renewal succeeded"
         if self._lost is not None:

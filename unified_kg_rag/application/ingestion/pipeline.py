@@ -26,7 +26,10 @@ from unified_kg_rag.application.ingestion.incremental import (
     open_attempts,
     retired_scope_readings,
 )
-from unified_kg_rag.application.ingestion.namespace_lease import NamespaceLease
+from unified_kg_rag.application.ingestion.namespace_lease import (
+    NamespaceLease,
+    longest_write_request_seconds,
+)
 from unified_kg_rag.application.ingestion.pipeline_stages import (
     ClaimExtractionStage,
     ClaimResolutionStage,
@@ -68,7 +71,6 @@ from unified_kg_rag.shared import (
     PipelineStateManager,
     get_logger,
     observability,
-    write_fence,
 )
 from unified_kg_rag.shared.cache_manager import CacheManager, CacheStrategy
 from unified_kg_rag.shared.metrics import MetricsSink, NullMetricsSink
@@ -103,16 +105,6 @@ _STALE_DELTA = (
     "often enough to isolate the document that kills them)"
 )
 T = TypeVar("T", bound=BaseModel)
-
-
-def _longest_write_request_seconds() -> float:
-    """The longest single store request of the indexing path (the Neptune and
-    OpenSearch indexing request timeouts); indexing.lease_seconds should be
-    at least three times it (see namespace_lease)."""
-    return max(
-        write_fence.INGESTION_REQUEST_TIMEOUT_SECONDS,
-        write_fence.INDEXING_REQUEST_TIMEOUT_SECONDS,
-    )
 
 
 class _StopFence:
@@ -772,7 +764,7 @@ class DataIngestionPipeline:
             self.config.indexing, self.config.processing.document_parsing.index_value
         )
         seconds = self.config.indexing.lease_seconds
-        longest = _longest_write_request_seconds()
+        longest = longest_write_request_seconds()
         if seconds < 3 * longest:
             logger.warning(
                 "indexing.lease_seconds (%gs) is under three times the longest "
@@ -781,7 +773,15 @@ class DataIngestionPipeline:
                 seconds,
                 longest,
             )
-        return NamespaceLease(self._doc_status, namespace, seconds)
+        return NamespaceLease(
+            self._doc_status, namespace, seconds, interrupt=self._raise_if_stopping
+        )
+
+    def _raise_if_stopping(self) -> None:
+        """Raise ``PipelineInterrupted`` once a stop was requested (a takeover
+        wait of the lease calls it, in any thread)."""
+        if self._stop_signal is not None:
+            raise PipelineInterrupted(self._stop_signal)
 
     def _open_llm_response_cache(self, pipeline_id: str) -> None:
         """Serve this run's ingestion model calls from the responses earlier

@@ -296,6 +296,22 @@ other run ended.
   renewal. Keep `lease_seconds` at least three times the longest write
   request (180 s; less logs a WARNING)
   ([Design §5.6](./design.md#56-concurrency)).
+- **Takeover after a crash.** A write already past the fence can land after
+  the lease expired (its process was frozen, or the request was slow), but
+  no later than that expiry plus the longest request. A run that takes over
+  a lease that expired rather than was released (its holder died or froze)
+  therefore holds its first write until then, with a WARNING
+  (`Took over the expired write lease ... the first write waits until ...`):
+  up to about 3 minutes (180 s plus a 5 s margin) after the old lease
+  expired. A SIGTERM ends the wait. A process frozen for longer than that,
+  with a request already built, can still write after the new holder; only
+  a write fenced by the store itself would rule that out. With DynamoDB, an
+  expired lease item its TTL already deleted reads as released (TTL
+  deletion usually takes much longer than 3 minutes).
+- **Errors in library use.** A failed indexing phase waits for the store
+  requests its threads already sent before it raises, so a caller that runs
+  again in the same process does not race them; a stop (SIGTERM, Ctrl-C)
+  does not wait, as the process ends.
 - **Checkpoints.** A run downloads its S3 checkpoint only once it holds the
   lease; a stopped run uploads its checkpoint before releasing it, one that
   lost the lease uploads none.

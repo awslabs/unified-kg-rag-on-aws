@@ -33,8 +33,16 @@ no_aws = e2e.no_aws
 
 
 def test_a_leased_namespace_stops_a_run_before_it_writes(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    import unified_kg_rag.application.ingestion.namespace_lease as lease_mod
+    from unified_kg_rag.shared import write_fence
+
+    # A takeover of an expired lease waits for the late writes of its holder
+    # (up to its expiry plus the longest request): shorten that here.
+    monkeypatch.setattr(write_fence, "INGESTION_REQUEST_TIMEOUT_SECONDS", 0.3)
+    monkeypatch.setattr(write_fence, "INDEXING_REQUEST_TIMEOUT_SECONDS", 0.3)
+    monkeypatch.setattr(lease_mod, "_TAKEOVER_MARGIN_SECONDS", 0.1)
     config = _config(tmp_path / "stores", tmp_path / "viz")
     providers = _providers(
         config, FakeOllama(e2e._respond, ANSWER, DIM), FakeCrossEncoder("r")
@@ -55,8 +63,11 @@ def test_a_leased_namespace_stops_a_run_before_it_writes(
     assert context.status is PipelineStageStatus.COMPLETED, _errors(context)
     assert len(registry.list_all()) == 1
     assert registry.lease_holder("default") is None
-    # An expired lease does not block either.
+    # An expired lease does not block either; the run's first write waits
+    # until the dead run's writes have landed.
     registry.try_acquire_lease("default", "dead-run", 0.1)
     time.sleep(0.2)
+    started = time.time()
     context = _ingest(config, providers, source, tmp_path / "run-3")
     assert context.status is PipelineStageStatus.COMPLETED, _errors(context)
+    assert time.time() - started >= 0.2

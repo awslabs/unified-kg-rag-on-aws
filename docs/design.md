@@ -684,6 +684,11 @@ second run fails with `NamespaceLeaseError` before it reads or writes.
   writes while it unwinds.
 - **No conditional writes.** `BatchWriteItem` takes no condition and store
   writes cannot be conditioned on the registry, so the margin is the fence.
+- **Takeover wait.** A write past the fence lands by the holder's expiry plus
+  the longest request (its attempts are bounded by the request timeout), so
+  a run that takes over an expired, unreleased lease holds its first write
+  until then; a frozen process that sends a built request later than that is
+  the one case the margin cannot cover.
 - **Checkpoint.** The lease is taken before the S3 checkpoint is downloaded
   and released only after a stopped run uploaded it.
 

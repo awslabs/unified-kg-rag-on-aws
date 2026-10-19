@@ -1298,6 +1298,13 @@ changed once with the full-config keys (#332).
 - The incremental community walk tells a hub by a neighbour count the graph
   store computes (`GraphIndexer.count_neighbors`, on Neptune and SQLite),
   not by reading every neighbour id of the hop's entities (#384).
+- A run that takes over a namespace lease that expired (its holder died or
+  froze) holds its first write until the old expiry plus the longest store
+  request: a frozen run's write already past its fence landed after the new
+  run committed, overwrote it with stale data, and the registry, showing
+  the documents PROCESSED, never repaired it (2 of 10 concurrent-run
+  trials). A released lease needs no wait; a takeover after a crash can
+  delay the first write by up to about 3 minutes (#PR).
 - A document deleted from the corpus and restored before its removal
   finished (the removal failed partway, or the run was killed after deleting
   its vector copies) is indexed again. Its registry record still said
