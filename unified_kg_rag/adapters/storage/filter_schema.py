@@ -57,6 +57,30 @@ class FilterFields:
 DOCUMENT_FILTERS_PREFIX = f"{ATTRIBUTES_OBJECT_PREFIX}{Constants.FILTERS.value}."
 
 
+DEFAULT_MAX_TERMS_COUNT = 65536
+DEFAULT_MAX_RESULT_WINDOW = 10000
+
+
+def index_setting(settings: dict[str, Any], name: str, default: int) -> int:
+    """``settings[name]``, also when written ``index.<name>``.
+
+    OpenSearch takes either spelling of an index setting.
+    """
+    return int(settings.get(name, settings.get(f"index.{name}", default)))
+
+
+def id_batch_size(settings: dict[str, Any]) -> int:
+    """Ids one fetch by id can name: OpenSearch's ``max_terms_count`` per
+    ``terms`` clause and ``max_result_window`` hits."""
+    return max(
+        1,
+        min(
+            index_setting(settings, "max_terms_count", DEFAULT_MAX_TERMS_COUNT),
+            index_setting(settings, "max_result_window", DEFAULT_MAX_RESULT_WINDOW),
+        ),
+    )
+
+
 def document_filters(filters: dict[str, Any] | None) -> dict[str, Any]:
     """The document attribute keys of ``filters``: ``attr_<key>`` and
     ``attributes.filters.<key>``, an entry of the documents' ``filters``

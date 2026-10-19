@@ -855,11 +855,14 @@ steps on Neptune. Each store accepts the fields its indexer writes:
   (`indexing.reset: true`).
 - `attr_<key>` and `attributes.filters.<key>` name document attributes. A
   graph store holds none, so graph expansion keeps an expanded entity (the
-  seeds aside) only when one of its text units passes them. Other
+  seeds aside) only when its entities-index document, which carries the
+  filters of every document the entity comes from, passes them. Under a
+  document filter, local and mix also fill their chunk quota with the
+  entity-linked chunks that pass, not the top-ranked ones only. Other
   `attributes.<path>` keys name an item's own attributes and apply to the
   entities index only. On Neptune, `attr_<key>` is also an entity vertex
   property (`attr_role`), applied where present (a vertex without it passes),
-  but the text-unit check above still applies: `attr_role:buyer` selects
+  but the entities-index check above still applies: `attr_role:buyer` selects
   nothing unless documents carry a `role` filter. Every other key is strict
   on both stores.
 

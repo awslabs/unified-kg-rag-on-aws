@@ -816,6 +816,12 @@ changed once with the full-config keys (#332).
   `TimeoutError`), and `degraded_error` names it; `run-eval`'s invalid
   dataset and `run-visualization`'s invalid data errors are
   `DataProcessingError`s (#367).
+- Graph expansion checks its expanded entities against the entities index
+  (one ids-only request for the vertex ids under the document filters)
+  instead of their text units: an entity document carries the filters of
+  every document it comes from, and lineage updates keep them current. An
+  attribute probe's outcome is reused for 30 s, so the sub-searches of one
+  query probe an index once (DRIFT on a hub corpus: 31 probes to 11) (#PR).
 - A claim whose subject or object matches several entities equally well
   (spelling or legal-form variants: "Acme Inc" against "Acme" and "Acme
   Corp") binds to the one its own text unit states, then to the smallest
@@ -1335,6 +1341,12 @@ changed once with the full-config keys (#332).
   absolute path. Values are now resolved by the run, so config entries get
   the same treatment as the flag, and a value with no records warns once
   (#366).
+- Under a document filter, local and mix fill their entity-linked chunk
+  quota with chunks that pass it: the ranked chunk ids were cut to the
+  quota before the filter, so failing ids took slots that passing chunks
+  further down never got (local with a two-chunk quota kept one of two; a
+  hub entity's DRIFT context three of five). The fetch asks for up to one
+  request's ids and cuts after, still one request (#PR).
 - An entity-attribute filter (`attributes.role:buyer`) filters the entities
   index only, as the user guide states: every index declared the whole
   `attributes.` prefix, so it emptied the text units, relationships, claims

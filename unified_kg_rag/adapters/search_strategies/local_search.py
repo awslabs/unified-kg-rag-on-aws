@@ -167,9 +167,11 @@ class LocalSearchStrategy(BaseSearchStrategy):
             "..." if len(expanded_entity_ids) > 5 else "",
         )
 
-        # Fusion keeps at most the text quota of them: fetch no more.
+        # Fusion keeps at most the text quota of them: fetch no more (more
+        # under a document filter, which drops some: ``_candidate_limit``).
+        text_quota = self._per_type_quota(query.top_k)[SectionType.TEXT.value]
         text_unit_ids = self._rank_text_unit_ids(filtered_entity_nodes)[
-            : self._per_type_quota(query.top_k)[SectionType.TEXT.value]
+            : self._candidate_limit(query, text_quota)
         ]
         logger.debug(
             "Found %s text units: '%s%s'",
@@ -187,13 +189,15 @@ class LocalSearchStrategy(BaseSearchStrategy):
                 query, list(dict.fromkeys(candidate_entity_ids + expanded_entity_ids))
             ),
         )
+        if "text_units" in text_units:
+            text_units["text_units"] = text_units["text_units"][:text_quota]
         all_results = {"graph_entities": filtered_entity_nodes, **text_units}
         if bridge_relationships:
             all_results["bridge_relationships"] = bridge_relationships
         stats = {
             "candidate_entity_count": len(candidate_entity_ids),
             "expanded_entity_count": len(expanded_entity_ids),
-            "text_unit_count": len(text_unit_ids),
+            "text_unit_count": min(len(text_unit_ids), text_quota),
         }
         return all_results, stats
 

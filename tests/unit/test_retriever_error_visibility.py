@@ -18,6 +18,7 @@ import socket
 import threading
 import time
 import weakref
+from collections import OrderedDict
 from collections.abc import Iterator
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -768,6 +769,7 @@ def _opensearch_retriever(config: Config) -> OpenSearchRetriever:
     object.__setattr__(inst, "_opensearch_config", config.indexing.opensearch)
     object.__setattr__(inst, "_max_size", config.indexing.opensearch.max_query_size)
     object.__setattr__(inst, "_max_result_window", 10000)
+    object.__setattr__(inst, "_probe_outcomes", OrderedDict())
     object.__setattr__(inst, "_field_mappings", inst._initialize_field_mappings())
     object.__setattr__(
         inst,
