@@ -20,6 +20,7 @@ from pydantic import (
     PrivateAttr,
     SecretStr,
     StringConstraints,
+    ValidationInfo,
     field_validator,
     model_validator,
 )
@@ -1850,13 +1851,13 @@ class NeptuneIndexingConfig(BaseModel):
         default="Entity",
         min_length=1,
         max_length=100,
-        description="Prefix for entity node labels in Neptune",
+        description="Prefix for entity node labels in Neptune (letters, digits, '-', '_')",
     )
     community_label_prefix: str = Field(
         default="Community",
         min_length=1,
         max_length=100,
-        description="Prefix for community node labels in Neptune",
+        description="Prefix for community node labels in Neptune (letters, digits, '-', '_')",
     )
     batch_size: int = Field(
         default=100,
@@ -1941,6 +1942,20 @@ class NeptuneIndexingConfig(BaseModel):
             "every traversed entity is kept, with no cut after ranking."
         ),
     )
+
+    @field_validator("entity_label_prefix", "community_label_prefix")
+    @classmethod
+    def _check_label_prefix(cls, value: str, info: ValidationInfo) -> str:
+        # Part of every graph label (capitalized, see store_names.graph_label):
+        # the index-name rule, in either case.
+        try:
+            validate_safe_name(value.lower(), str(info.field_name))
+        except ValueError:
+            raise ValueError(
+                f"Invalid {info.field_name} '{value}': only letters, digits, "
+                "hyphens, and underscores are allowed."
+            ) from None
+        return value
 
 
 class OpenSearchIndexingConfig(BaseModel):
@@ -2073,6 +2088,24 @@ class OpenSearchIndexingConfig(BaseModel):
             "read at query time."
         ),
     )
+
+    @field_validator(
+        "text_units_index_prefix",
+        "entities_index_prefix",
+        "community_reports_index_prefix",
+        "relationships_index_prefix",
+        "claims_index_prefix",
+        "extraction_records_index_prefix",
+    )
+    @classmethod
+    def _check_index_prefix(cls, value: str, info: ValidationInfo) -> str:
+        # Starts every index name: fail at config load, not at indexing after
+        # the extraction was paid for. OpenSearch also rejects a name that
+        # starts with '-' or '_'.
+        validate_safe_name(value, str(info.field_name))
+        if value[0] in "-_":
+            raise ValueError(f"{info.field_name} must not start with '-' or '_'")
+        return value
 
 
 class IndexingConfig(BaseModel):

@@ -1279,6 +1279,11 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- The six `indexing.opensearch.*_index_prefix` settings and the two
+  `indexing.neptune.*_label_prefix` settings are checked when the config
+  loads (an index prefix: lowercase letters, digits, `-`, `_`, not starting
+  with `-` or `_`; a label prefix: the same in either case), instead of
+  failing every run at indexing (#PR).
 - A CLI stopped by a signal ends its process pool's worker processes
   before it exits, so a local `kill` leaves none running (#PR).
 - A stop during entity resolution or MinHash deduplication cancels the
