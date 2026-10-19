@@ -23,7 +23,10 @@ import time
 from abc import abstractmethod
 from typing import Any, ClassVar
 
-from unified_kg_rag.adapters.retrieval.base import BaseGraphRAGRetriever
+from unified_kg_rag.adapters.retrieval.base import (
+    BaseGraphRAGRetriever,
+    entity_content,
+)
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
 from unified_kg_rag.adapters.storage.filter_schema import (
     NEPTUNE_FILTER_FIELDS,
@@ -279,15 +282,10 @@ class GraphExpansionRetriever(BaseGraphRAGRetriever):
     def _build_content(
         node_data: dict[str, Any], path_data: list[dict[str, Any]]
     ) -> str:
-        content_parts = [
-            f"Entity: {node_data.get('name', 'Unknown')}",
-            f"Description: {node_data.get('description', 'N/A')}",
-        ]
-        path_names = [p.get("name", [""])[0] for p in path_data if isinstance(p, dict)]
-        if path_names:
-            content_parts.append(f"Path: {' -> '.join(filter(None, path_names))}")
-
-        return "\n".join(content_parts)
+        return entity_content(
+            node_data,
+            [p.get("name", [""])[0] for p in path_data if isinstance(p, dict)],
+        )
 
     @staticmethod
     def _calculate_relevance(

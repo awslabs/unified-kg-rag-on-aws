@@ -550,8 +550,22 @@ async def test_a_filter_without_a_value_is_rejected(config: Config, value) -> No
         ({"gte": None, "lte": 3}, "range bound"),
         ([["a"], "b"], "not a scalar"),
         ([{"x": 1}], "not a scalar"),
+        ({"gte": {"x": 1}}, "not a scalar"),
+        (("a", "b"), "not a scalar"),
+        (float("nan"), "NaN"),
+        ({"lte": float("nan")}, "NaN"),
+        ({}, "empty range"),
     ],
-    ids=["none-bound", "nested-list", "mapping-item"],
+    ids=[
+        "none-bound",
+        "nested-list",
+        "mapping-item",
+        "mapping-bound",
+        "tuple",
+        "nan",
+        "nan-bound",
+        "empty-range",
+    ],
 )
 async def test_a_malformed_filter_value_is_rejected(
     config: Config, value: Any, message: str
@@ -559,3 +573,10 @@ async def test_a_malformed_filter_value_is_rejected(
     # OpenSearch answers these with a 400; the embedded engine matched them.
     with pytest.raises(InvalidFilterError, match=message):
         await _search_all(config, {"n_tokens": value})
+
+
+def test_a_malformed_filter_fails_before_any_model_call() -> None:
+    # The value check ran at retrieval only, after the query rewrite and
+    # entity extraction had been paid for.
+    with pytest.raises(InvalidFilterError, match="empty range"):
+        GraphRAGChain._prepare_invoke({"query": "q", "filters": {"n_tokens": {}}})

@@ -35,6 +35,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from unified_kg_rag.domain.models import Constants
+from unified_kg_rag.shared.exceptions import InvalidFilterError
 
 ATTRIBUTE_KEY_PREFIX = f"{Constants.ATTRIBUTE_PREFIX.value}_"
 ATTRIBUTES_OBJECT_PREFIX = "attributes."
@@ -80,6 +81,61 @@ def id_batch_size(settings: dict[str, Any]) -> int:
             index_setting(settings, "max_result_window", DEFAULT_MAX_RESULT_WINDOW),
         ),
     )
+
+
+_SCALARS = (str, int, float, bool)
+
+
+def check_filter_values(filters: dict[str, Any] | None) -> None:
+    """Reject filter values a search engine would refuse or misread.
+
+    A value is a scalar (a ``term``), a list of scalars (``terms``) or a
+    mapping of range bounds (``range``: ``gt``/``gte``/``lt``/``lte`` to a
+    scalar). ``None`` and NaN anywhere, a tuple or set, a nested list or
+    mapping, and an empty range are rejected: OpenSearch answers them with a
+    400 and the embedded engine would match them instead (a null field,
+    say). Checked when a query is given, before any model call, and again by
+    the retriever.
+
+    Raises:
+        InvalidFilterError: A value is malformed.
+    """
+
+    def bad(value: Any) -> str | None:
+        if value is None:
+            return "has no value (None)"
+        if isinstance(value, float) and value != value:
+            return "is NaN"
+        if not isinstance(value, _SCALARS):
+            return "is not a scalar (a string, number or boolean)"
+        return None
+
+    for key, value in (filters or {}).items():
+        reason: str | None
+        if value is None:
+            reason = "has no value (None); give the value to match"
+        elif isinstance(value, list):
+            reason = next(
+                (f"lists a value that {r}" for r in map(bad, value) if r), None
+            )
+        elif isinstance(value, dict):
+            if not value:
+                reason = "is an empty range; give gt, gte, lt or lte"
+            elif any(v is None for v in value.values()):
+                reason = "has a range bound of None; drop the bound or give its value"
+            else:
+                reason = next(
+                    (
+                        f"has a range bound that {r}"
+                        for r in map(bad, value.values())
+                        if r
+                    ),
+                    None,
+                )
+        else:
+            reason = bad(value)
+        if reason:
+            raise InvalidFilterError(f"Filter '{key}' {reason}.")
 
 
 def document_filters(filters: dict[str, Any] | None) -> dict[str, Any]:

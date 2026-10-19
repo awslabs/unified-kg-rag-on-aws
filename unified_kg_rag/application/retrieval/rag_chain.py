@@ -55,7 +55,10 @@ from unified_kg_rag.adapters.search_strategies import (  # noqa: F401
     LocalSearchStrategy,
     SimpleSearchStrategy,
 )
-from unified_kg_rag.adapters.storage.filter_schema import union_filter_fields
+from unified_kg_rag.adapters.storage.filter_schema import (
+    check_filter_values,
+    union_filter_fields,
+)
 from unified_kg_rag.application.bootstrap import build_providers, build_query_guard
 from unified_kg_rag.application.observability import configure_observability
 from unified_kg_rag.domain.models import (
@@ -1681,6 +1684,8 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             RAGInput(**inputs) if isinstance(inputs, dict) else inputs.model_copy()
         )
 
+        # Malformed filter values fail now, before any model call.
+        check_filter_values(rag_input.filters)
         if rag_input.use_memory and not rag_input.conversation_id:
             rag_input.conversation_id = str(uuid.uuid4())
 

@@ -1301,6 +1301,25 @@ changed once with the full-config keys (#332).
   cancelled item is no longer retried. The batch processor and the evaluators
   awaited their items through `as_completed`, which leaves them running when
   the caller is cancelled (#386).
+- The filtered chunk check counts passing chunks in rank order: a chunk a
+  query already knew to pass was counted wherever it ranked, so higher-ranked
+  chunks went unchecked and lower-ranked ones took their slots (DRIFT: up to
+  3 of 20 chunks in 4 of 20 follow-ups). LightRAG's linked-chunk check runs
+  per hit, up to `related_chunk_number` passing chunks each, instead of
+  stopping on the first hub hit and excluding every other hit's chunks (5
+  chunks over 11 hits, now the stream's 20). A concurrent attribute probe
+  waiter gets the owner's failure, and a cancelled owner no longer leaves
+  it to skip the index. Malformed filter values (`None`, NaN, a tuple, a
+  nested list or mapping, an empty range) fail when the query is given,
+  before any model call, the same on both engines. Reading the edges among
+  a filtered expansion's entities no longer scans a hub's whole fan-out on
+  Gremlin (a 90,000-edge hub: 382 to 194 ms) or SQLite (#PR).
+- Filtered graph expansion without a relationships index
+  (`build_relationship_vector_index: false`, or the index missing at query
+  time) no longer keeps the seeds alone: no walked edge could pass, so a
+  filtered local or DRIFT query silently dropped every expanded entity. The
+  entities-index check alone then decides, as before #381; a missing index
+  is logged (#PR).
 - Incremental indexing: a removal that both merges and splits spellings
   ("Acme Ltd" into "ACME Inc", "Acme" split off) and is killed between its
   writes and the deletion of the old ids is resumed to a full build's
@@ -3426,8 +3445,8 @@ changed once with the full-config keys (#332).
   index of the passing documents alone, filtered local had 4 of 10
   entities and 5 of 15 chunks it should not (3 of 10 relationships on
   OpenSearch and Gremlin), now none. The edges among the expanded entities
-  are read from the graph and checked by id in the relationships index,
-  one ids-only request; a vertex a failing and a passing path both reach is
+  are read from the graph and checked by id in the relationships index
+  (ids only, batched by `id_batch_size`); a vertex a failing and a passing path both reach is
   kept, and its `Path:` follows the passing one. Unfiltered queries are
   unchanged (#381).
 - Removing a deleted community's id from the text units that name it no

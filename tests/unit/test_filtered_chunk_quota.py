@@ -130,4 +130,35 @@ async def test_mix_fills_the_linked_chunk_stream_with_chunks_that_pass(
     chunks = [r.source for r in linked["lightrag_linked_chunks"]]
     assert chunks == (["u1", "u3", "u5"] if filtered else _UNITS[:3])
     assert store.fetches == [chunks]
-    assert store.checks == ([_UNITS] if filtered else [])
+    # The hit's lineage is checked until its three slots pass: the rest of a
+    # long lineage is never asked.
+    assert store.checks == (
+        [["u0", "u1", "u2"], ["u3", "u4"], ["u5"]] if filtered else []
+    )
+
+
+async def test_mix_checks_every_hits_lineage_not_only_the_first(
+    config: Config,
+) -> None:
+    # Regression: the lineage check stopped once the stream's worth of chunks
+    # passed, all of them the first (hub) hit's, and excluded every other
+    # hit's chunks unchecked: 5 chunks over 11 hits instead of 20 over 38.
+    config.search.lightrag_search.chunk_stream_top_k = 4
+    config.search.lightrag_search.related_chunk_number = 2
+    units_prefix = config.indexing.opensearch.text_units_index_prefix
+    store = _Store(units_prefix, [])
+    strategy: Any = get_strategy_spec(SearchStrategy.MIX).strategy_class(
+        config=config, retrievers={RetrieverRole.DOCUMENT.value: store}
+    )
+    hub = _entity("hub", [f"u{i}" for i in range(1, 40, 2)])  # 20 passing
+    others = [_entity("x", ["u41", "u43"]), _entity("y", ["u45", "u47"])]
+
+    linked = await strategy._retrieve_linked_chunks(
+        SearchQuery(query="q", top_k=4, filters={"attr_grp": "a"}),
+        [hub, *others],
+        [],
+    )
+
+    chunks = [r.source for r in linked["lightrag_linked_chunks"]]
+    assert {"u41", "u45"} & set(chunks), chunks
+    assert len(chunks) == 4

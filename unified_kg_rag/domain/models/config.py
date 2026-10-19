@@ -1986,7 +1986,11 @@ class OpenSearchIndexingConfig(BaseModel):
             "relationship section and bridge relationships, and simple and "
             "drift search it with the other indexes; only global does without "
             "it. false skips the relationship embeddings at the cost of those."
-            " The Neptune relationship edges are indexed either way."
+            " The Neptune relationship edges are indexed either way. Without "
+            "it, graph expansion under a document filter cannot check the "
+            "edges it walks: an expanded entity is kept when its entity "
+            "document passes the filter, also when only excluded documents "
+            "connect it."
         ),
     )
     relationships_index_prefix: str = Field(

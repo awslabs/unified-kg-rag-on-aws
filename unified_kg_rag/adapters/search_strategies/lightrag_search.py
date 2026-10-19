@@ -583,24 +583,9 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
         limit = self._chunk_stream_top_k(query.top_k)
         exclude = set(exclude or ())
         if filters := self._text_unit_filters(query.filters):
-            # The per-hit slots go to chunks that pass a filter on text units:
-            # the lineage is checked first, ids only, and the failing chunks
-            # excluded like the vector stream's.
-            lineage = [
-                unit
-                for unit_ids in self._lineages([*entity_results, *relationship_results])
-                for unit in unit_ids
-                if unit not in exclude
-            ]
-            # Enough to fill the stream: the slots go to the first that pass.
-            passed = await self._ids_passing(
-                query,
-                self._os_config.text_units_index_prefix,
-                lineage,
-                filters,
-                enough=limit,
+            exclude |= await self._failing_lineage_units(
+                query, [*entity_results, *relationship_results], filters, exclude
             )
-            exclude |= set(lineage) - passed
         chunk_ids = self._collect_linked_chunk_ids(
             entity_results,
             relationship_results,
@@ -623,6 +608,47 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
         if not results:
             return {}
         return {"lightrag_linked_chunks": self._restore_rank(results, chunk_ids)}
+
+    async def _failing_lineage_units(
+        self,
+        query: SearchQuery,
+        hits: list[RetrievalResult],
+        filters: dict[str, Any],
+        exclude: set[str],
+    ) -> set[str]:
+        """The lineage chunks of ``hits`` that fail a filter on text units.
+
+        Each hit gets at most ``related_chunk_number`` chunks, so each hit's
+        lineage is checked (ids only) until that many of its chunks pass or
+        it runs out, all hits in one request a round: the slots go to chunks
+        that pass, and a hub hit's long lineage neither costs a whole check
+        nor, stopping it, leaves the other hits unchecked. Chunks not checked
+        are past every hit's slots.
+        """
+        cap = self._lightrag_config.related_chunk_number
+        lineages = [
+            [unit for unit in lineage if unit not in exclude]
+            for lineage in self._lineages(hits)
+        ]
+        positions = [0] * len(lineages)
+        passed: set[str] = set()
+        checked: set[str] = set()
+        prefix = self._os_config.text_units_index_prefix
+        while True:
+            ask: list[str] = []
+            for k, lineage in enumerate(lineages):
+                have = sum(1 for u in lineage[: positions[k]] if u in passed)
+                take = lineage[positions[k] : positions[k] + max(0, cap - have)]
+                positions[k] += len(take)
+                ask.extend(u for u in take if u not in checked)
+            if not ask:
+                return checked - passed
+            known = len(checked)
+            passed |= await self._ids_passing(
+                query, prefix, ask, filters, checked=checked
+            )
+            if len(checked) == known:  # the check failed: fail-closed
+                return checked - passed | set(ask)
 
     @staticmethod
     def _relationship_endpoint_ids(
