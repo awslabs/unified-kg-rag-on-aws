@@ -78,6 +78,20 @@ def _pending_strip_keys(text_unit_ids: Iterable[str]) -> list[str]:
     return [f"{_PENDING_STRIP}{unit}" for unit in sorted(set(text_unit_ids))]
 
 
+def _other_spellings_of_parts(
+    split_from: Mapping[str, str], derived: Mapping[str, Entity]
+) -> list[str]:
+    """The ids of the ``derived`` entities (by id) sharing a
+    ``compact_name_key`` with a part of ``split_from``, the parts excepted:
+    a stored claim naming a part's spelling may be on one of them."""
+    keys = {compact_name_key(derived[p].name) for p in split_from if p in derived}
+    return sorted(
+        i
+        for i, e in derived.items()
+        if i not in split_from and compact_name_key(e.name) in keys
+    )
+
+
 def _vector_content(item: Entity | Relationship) -> tuple[Any, ...]:
     """What the vector store holds of an item besides its description,
     lineage and rank."""
@@ -1289,18 +1303,12 @@ class IndexingManager:
         of a split-off entity's name this run derived (a claim naming the
         part may resolve to one of them) and those renamed."""
         split_from = self._split_from.get(suffix, {})
-        derived = self._derived_entities.get(suffix, {})
-        part_keys = {
-            compact_name_key(derived[p].name) for p in split_from if p in derived
-        }
         return sorted(
             {
                 *self._rekeyed.get(suffix, {}),
                 *split_from.values(),
-                *(
-                    i
-                    for i, e in derived.items()
-                    if i not in split_from and compact_name_key(e.name) in part_keys
+                *_other_spellings_of_parts(
+                    split_from, self._derived_entities.get(suffix, {})
                 ),
                 *self._renamed.get(suffix, set()),
             }
@@ -1603,7 +1611,15 @@ class IndexingManager:
                     *claim_ids,
                     *self._claims_about(
                         suffix,
-                        [*derived.id_remap, *derived.split_from.values(), *renamed],
+                        [
+                            *derived.id_remap,
+                            *derived.split_from.values(),
+                            *_other_spellings_of_parts(
+                                derived.split_from,
+                                {e.id: e for e in derived.entities},
+                            ),
+                            *renamed,
+                        ],
                     ),
                 }
             )

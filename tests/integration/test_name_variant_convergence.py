@@ -418,6 +418,20 @@ def _state(
             ],
             id="a-claim-follows-its-spelling-split-off-another-entity",
         ),
+        pytest.param(
+            [
+                {
+                    "d3.txt": "Buyer and Acme Ltd and ACME Inc trade cash 3. Buyer "
+                    "trade parts 1. Acme and Acme Inc trade cash 2.",
+                    "d2.txt": "Acme Ltd trade parts 2. Initech Corp trade parts 2.",
+                },
+                {
+                    "d3.txt": "Buyer and Acme Ltd and ACME Inc trade cash 3. Buyer "
+                    "trade parts 1. Acme and Acme Inc trade cash 2."
+                },
+            ],
+            id="a-claim-follows-its-spelling-a-removal-splits-off",
+        ),
     ],
 )
 def test_incremental_runs_over_two_spellings_match_a_full_build(

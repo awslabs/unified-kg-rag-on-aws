@@ -1291,7 +1291,8 @@ changed once with the full-config keys (#332).
 - Incremental indexing: when a spelling splits off a stored entity, the
   stored claims naming that spelling follow it even when they were resolved
   to another entity of the same name key ("Depot owes Acme Ltd" stayed on
-  "Acme" after "Acme Ltd" split off "Acme Inc") (#PR).
+  "Acme" after "Acme Ltd" split off "Acme Inc"); likewise when removing a
+  document splits the spelling off (#PR).
 - Incremental indexing finishes a spelling split a killed run left
   half-written also when the stored spelling holds an edge or claim of a
   third spelling of the name (one citing that spelling's units, none of the
