@@ -1304,10 +1304,10 @@ changed once with the full-config keys (#332).
   run committed, overwrote it with stale data, and the registry, showing
   the documents PROCESSED, never repaired it (2 of 10 concurrent-run
   trials). A released lease needs no wait; a takeover after a crash can
-  delay the first write by up to about 3 minutes (#PR).
+  delay the first write by up to about 3 minutes (#385).
 - A failed indexing phase (an error, not a stop) waits for the store
   requests its threads already sent before it raises, so in library use a
-  caller that runs again does not race them (#PR).
+  caller that runs again does not race them (#385).
 - A document deleted from the corpus and restored before its removal
   finished (the removal failed partway, or the run was killed after deleting
   its vector copies) is indexed again. Its registry record still said
