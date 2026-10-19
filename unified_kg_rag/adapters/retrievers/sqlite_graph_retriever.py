@@ -117,6 +117,12 @@ class SQLiteGraphRetriever(GraphExpansionRetriever):
     async def aclose(self) -> None:
         await asyncio.to_thread(self._store.close)
 
+    async def aedges_among(
+        self, vertex_ids: list[str], suffix: str | None
+    ) -> list[tuple[str, str, str]] | None:
+        label = self._get_label(self._neptune_config.entity_label_prefix, suffix)
+        return await asyncio.to_thread(self._store.edges_among, label, vertex_ids)
+
     async def _traverse(
         self, seed_ids: list[Any], query: SearchQuery
     ) -> list[dict[str, Any]]:

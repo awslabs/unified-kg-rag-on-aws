@@ -542,3 +542,20 @@ async def test_a_filter_without_a_value_is_rejected(config: Config, value) -> No
     # engine matched it against null fields (a cleared filter key).
     with pytest.raises(InvalidFilterError, match="has no value"):
         await _search_all(config, {"attr_category": value})
+
+
+@pytest.mark.parametrize(
+    ("value", "message"),
+    [
+        ({"gte": None, "lte": 3}, "range bound"),
+        ([["a"], "b"], "not a scalar"),
+        ([{"x": 1}], "not a scalar"),
+    ],
+    ids=["none-bound", "nested-list", "mapping-item"],
+)
+async def test_a_malformed_filter_value_is_rejected(
+    config: Config, value: Any, message: str
+) -> None:
+    # OpenSearch answers these with a 400; the embedded engine matched them.
+    with pytest.raises(InvalidFilterError, match=message):
+        await _search_all(config, {"n_tokens": value})

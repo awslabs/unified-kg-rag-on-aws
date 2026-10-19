@@ -202,3 +202,26 @@ async def test_aclose_drops_cached_strategies() -> None:
     await chain.aclose()
     assert chain._strategy_cache == {}
     assert chain._retriever_cache == {}
+
+
+async def test_each_search_runs_in_a_query_scope_of_its_own() -> None:
+    # What a query learns about its stores (attribute probes, filter checks)
+    # is kept for that query only: the next one sees an ingestion in between.
+    from unified_kg_rag.adapters.retrieval.base import current_query_scope
+
+    chain = _chain()
+    instance = chain._get_strategy_instance(SearchStrategy.SIMPLE)
+    seen: list[Any] = []
+    search = instance.asearch
+
+    async def recording(query: Any, config: Any = None) -> Any:
+        seen.append(current_query_scope())
+        return await search(query, config)
+
+    instance.asearch = recording  # type: ignore[method-assign]
+    await chain._search_step(_state("first", SearchStrategy.SIMPLE))
+    await chain._search_step(_state("second", SearchStrategy.SIMPLE))
+    assert all(scope is not None for scope in seen)
+    assert seen[0] is not seen[1]
+    assert current_query_scope() is None
+    chain.close()

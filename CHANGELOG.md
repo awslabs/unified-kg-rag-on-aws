@@ -1294,6 +1294,12 @@ changed once with the full-config keys (#332).
   `KeyboardInterrupt` and `SystemExit`, which never reach a span inside the
   event loop. A closed generator and a clean `SystemExit(0)` stay `UNSET`
   (#380).
+- A query asks each id's filter outcome once (DRIFT's follow-ups checked the
+  same chunks and edges again), concurrent identical attribute probes share
+  one request, and the LightRAG lineage check stops once the chunk stream
+  can be filled. A range bound of `None` and a list item that is not a
+  scalar are rejected (`InvalidFilterError`), as OpenSearch rejects them
+  (#381).
 - Incremental indexing: a removal whose strip merges two spellings of a
   name ("Initech" left stated only where "Initech Corp" is) and is killed
   after the merged entity is written, before the other spelling's old id is
@@ -3348,6 +3354,17 @@ changed once with the full-config keys (#332).
   instead of frozen dataclasses; they were never instantiated (#300).
 
 ### Security
+- Graph expansion under a document filter keeps an expanded entity only
+  when a walk over relationships that pass the filter reaches it from a
+  seed: the walk crossed every edge, so entities (and through them chunks)
+  that only excluded documents connect entered the context. Against an
+  index of the passing documents alone, filtered local had 4 of 10
+  entities and 5 of 15 chunks it should not (3 of 10 relationships on
+  OpenSearch and Gremlin), now none. The edges among the expanded entities
+  are read from the graph and checked by id in the relationships index,
+  one ids-only request; a vertex a failing and a passing path both reach is
+  kept, and its `Path:` follows the passing one. Unfiltered queries are
+  unchanged (#381).
 - Removing a deleted community's id from the text units that name it no
   longer clears their document filters: the prune wrote the units it built
   without attributes through the lineage update, which since #370 nulls the
