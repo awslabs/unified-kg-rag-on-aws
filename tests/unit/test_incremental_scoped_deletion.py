@@ -42,7 +42,6 @@ from unified_kg_rag.domain.ingestion.delta_detector import (
     other_local_scopes,
     retire_source_scopes,
     retired_scope_groups,
-    validate_retired_scopes,
 )
 from unified_kg_rag.domain.models import (
     Config,
@@ -449,7 +448,7 @@ def test_a_retired_scope_is_deleted_and_nothing_else(registry) -> None:
 def test_a_retired_scope_matches_every_stored_spelling_of_it(registry) -> None:
     # A configured source_scope is stored as given, so a local path can be
     # stored with a trailing or a repeated slash; the retire value is
-    # normalized (validate_retired_scopes).
+    # normalized (retired_scope_groups).
     document = _scoped_document("a.txt", "Vendor ships goods.")
     for doc_id, scope in (
         ("slash", f"{_OLD_SCOPE}/"),
@@ -491,18 +490,29 @@ def test_retiring_the_runs_own_scope_fails_before_any_read(scope, retired) -> No
         detect_delta([], store, scope=scope, retired_scopes=retired)
 
 
+def _retired_scopes(retired: list[str], source_scope: str, namespace: str) -> list[str]:
+    """The registry scopes of ``retired`` taken as given, in order."""
+    return list(
+        dict.fromkeys(
+            scope
+            for group in retired_scope_groups(retired, source_scope, namespace)
+            for scope in group.scopes
+        )
+    )
+
+
 @pytest.mark.parametrize(
     "own", ["/corpora/new", "/corpora/new/", "/corpora//new", " /corpora/new "]
 )
-def test_validate_retired_scopes_rejects_the_own_source_scope(own) -> None:
+def test_retired_scopes_reject_the_own_source_scope(own) -> None:
     with pytest.raises(ConfigurationError, match="own source scope"):
-        validate_retired_scopes(["/corpora/old", own], "/corpora/new", "default")
+        _retired_scopes(["/corpora/old", own], "/corpora/new", "default")
 
 
-def test_validate_retired_scopes_normalizes_paths_and_s3_uris() -> None:
+def test_retired_scopes_normalize_paths_and_s3_uris() -> None:
     # An s3:// URI loses its trailing slash like a path (aws s3 sync reads
     # both spellings as one folder); other URIs and names are kept.
-    assert validate_retired_scopes(
+    assert _retired_scopes(
         [
             "/corpora/old/",
             "/corpora/old",
@@ -520,11 +530,11 @@ def test_validate_retired_scopes_normalizes_paths_and_s3_uris() -> None:
         "tenant-a|corpus-a",
     ]
     with pytest.raises(ConfigurationError, match="own source scope"):
-        validate_retired_scopes(["s3://bucket/new/"], "s3://bucket/new/", "t")
+        _retired_scopes(["s3://bucket/new/"], "s3://bucket/new/", "t")
     with pytest.raises(ConfigurationError, match="own source scope"):
-        validate_retired_scopes(["s3://bucket/new"], "s3://bucket/new/", "t")
+        _retired_scopes(["s3://bucket/new"], "s3://bucket/new/", "t")
     with pytest.raises(ConfigurationError, match="empty"):
-        validate_retired_scopes(["  "], "/corpora/new", "default")
+        _retired_scopes(["  "], "/corpora/new", "default")
 
 
 def test_other_local_scopes_names_only_local_directories_of_the_namespace() -> None:

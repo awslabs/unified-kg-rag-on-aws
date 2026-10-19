@@ -397,3 +397,34 @@ def test_an_index_name_part_that_opensearch_rejects_fails_at_load(
         Config.model_validate(data)
     ok = json.loads(json.dumps(section).replace("{}", "tenant_b-2"))
     Config.model_validate(ok)
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "text_units_index_prefix",
+        "entities_index_prefix",
+        "community_reports_index_prefix",
+        "relationships_index_prefix",
+        "claims_index_prefix",
+        "extraction_records_index_prefix",
+    ],
+)
+@pytest.mark.parametrize("value", ["Graph", "a.b", "x*", "_hidden", "-dash"])
+def test_an_index_prefix_that_opensearch_rejects_fails_at_load(
+    field: str, value: str
+) -> None:
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError, match=field):
+        Config.model_validate({"indexing": {"opensearch": {field: value}}})
+    Config.model_validate({"indexing": {"opensearch": {field: "my-prefix_2"}}})
+
+
+@pytest.mark.parametrize("field", ["entity_label_prefix", "community_label_prefix"])
+def test_a_graph_label_prefix_is_checked_at_load(field: str) -> None:
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError, match="only letters, digits"):
+        Config.model_validate({"indexing": {"neptune": {field: "Bad Label"}}})
+    Config.model_validate({"indexing": {"neptune": {field: "Custom_Entity-2"}}})

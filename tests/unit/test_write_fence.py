@@ -30,10 +30,7 @@ import unified_kg_rag.application.ingestion.namespace_lease as lease_mod
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from tests.fixtures.fakes.stores import FakeGraphStore, FakeVectorStore
 from unified_kg_rag.adapters.aws.opensearch import OpenSearchClient
-from unified_kg_rag.application.ingestion.namespace_lease import (
-    NamespaceLease,
-    check_lease,
-)
+from unified_kg_rag.application.ingestion.namespace_lease import NamespaceLease
 from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
 from unified_kg_rag.application.storage.indexing_manager import IndexingManager
 from unified_kg_rag.domain.models import (
@@ -44,6 +41,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.shared import NamespaceLeaseError, PipelineInterrupted
 from unified_kg_rag.shared.write_fence import (
+    check_write_fence,
     install_write_fence,
     remove_write_fence,
 )
@@ -76,7 +74,7 @@ class _SlowStore(FakeDocStatusStore):
 
 def test_the_run_stops_writing_while_it_still_holds_the_lease() -> None:
     # Old behaviour: the renewal time was taken when a slow renewal answered,
-    # and check_lease passed until a full term after that, so it still passed
+    # and check_write_fence passed until a full term after that, so it still passed
     # once the store had expired the lease and another run could take it.
     store = _SlowStore()
     with NamespaceLease(store, "ns", 1.2) as lease:
@@ -89,7 +87,7 @@ def test_the_run_stops_writing_while_it_still_holds_the_lease() -> None:
         deadline = time.time() + 5
         while time.time() < deadline:
             try:
-                check_lease()
+                check_write_fence()
             except NamespaceLeaseError:
                 break
             time.sleep(0.01)
@@ -775,14 +773,11 @@ def _slow_minhash(item: tuple[int, str], **_: Any) -> None:
 
 
 class _RecordingProcessPool(ProcessPoolExecutor):
-    """A real process pool that keeps the futures it hands out."""
+    """A real process pool that records the futures it hands out, and keeps
+    no reference to itself: the code under test holds its pool in a local,
+    which is collected once the block raised."""
 
-    pools: list[_RecordingProcessPool] = []
-
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
-        self.futures: list[concurrent.futures.Future[Any]] = []
-        self.pools.append(self)
+    futures: list[concurrent.futures.Future[Any]] = []
 
     def submit(self, fn: Any, /, *args: Any, **kwargs: Any) -> Any:
         future = super().submit(fn, *args, **kwargs)
@@ -805,22 +800,22 @@ def _stopped_after(seconds: float, block: Any) -> None:
 
 
 def _assert_queued_tasks_cancelled(workers: int) -> None:
-    (pool,) = _RecordingProcessPool.pools
-    _RecordingProcessPool.pools = []
-    try:
-        ran = sum(f.done() and not f.cancelled() for f in pool.futures)
-        # Only the running tasks and the few the pool already handed to its
-        # workers' queue are not cancellable; the pool's manager thread
-        # cancels the rest once it wakes (the old code ran them all).
-        expected = len(pool.futures) - ran - 2 * workers - 1
-        deadline = time.time() + 3
-        while time.time() < deadline and (
-            sum(f.cancelled() for f in pool.futures) < expected
-        ):
-            time.sleep(0.05)
-        assert sum(f.cancelled() for f in pool.futures) >= max(expected, 1)
-    finally:
-        pool.shutdown(wait=True, cancel_futures=True)
+    import gc
+
+    futures, _RecordingProcessPool.futures = _RecordingProcessPool.futures, []
+    gc.collect()  # the pool is gone; its manager thread reads it weakly
+    ran = sum(f.done() and not f.cancelled() for f in futures)
+    # Only the running tasks and the few the pool already handed to its
+    # workers' queue are not cancellable (the old code cancelled none: it
+    # relied on the manager thread reading the collected pool's flag).
+    expected = len(futures) - ran - 2 * workers - 1
+    deadline = time.time() + 3
+    while time.time() < deadline and sum(f.cancelled() for f in futures) < expected:
+        time.sleep(0.05)
+    assert sum(f.cancelled() for f in futures) >= max(expected, 1)
+    # The running ones end on their own; none is left pending.
+    concurrent.futures.wait(futures, timeout=10)
+    assert all(f.done() for f in futures)
 
 
 def test_a_stop_cancels_the_queued_tasks_of_the_resolver_process_pool(

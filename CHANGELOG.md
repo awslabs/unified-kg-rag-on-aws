@@ -1279,6 +1279,18 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- The six `indexing.opensearch.*_index_prefix` settings and the two
+  `indexing.neptune.*_label_prefix` settings are checked when the config
+  loads (an index prefix: lowercase letters, digits, `-`, `_`, not starting
+  with `-` or `_`; a label prefix: the same in either case), instead of
+  failing every run at indexing (#372).
+- A CLI stopped by a signal ends its process pool's worker processes
+  before it exits, so a local `kill` leaves none running (#372).
+- A stop during entity resolution or MinHash deduplication cancels the
+  process pool's queued tasks every time: #367 relied on the pool's
+  manager thread reading a flag through a weak reference to the pool,
+  which a pool held in a local had often lost, and then every queued task
+  still ran (#372).
 - The first model calls of a batch (ingestion stages, global search's map)
   no longer fail at random with "dictionary changed size during
   iteration": the worker threads share one chain, and LangChain caches each
@@ -3257,6 +3269,11 @@ changed once with the full-config keys (#332).
   update (also an edge rewritten for its rank only) reads the stored filter
   fields and sets the ones the item lost to null, on OpenSearch and the
   embedded engine alike (#370).
+- Upgrading: an index that saw document removals before #370 keeps the
+  removed documents' filter values on every entity, relationship and claim
+  not rewritten since, so their filters still match those documents.
+  Rebuild it once with `indexing.reset: true` to clear them. From #370 on,
+  a dropped filter key is stored as null, which matches no filter (#372).
 - ragas no longer sends usage telemetry from `run-eval`: the evaluators
   package sets `RAGAS_DO_NOT_TRACK=true` unless it is already set (set it
   to `false` to opt back in) (#361).

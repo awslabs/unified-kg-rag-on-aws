@@ -51,7 +51,6 @@ from unified_kg_rag.application.ingestion.incremental import (
     run_incremental_indexer,
     warn_about_unapplied_retired_scopes,
 )
-from unified_kg_rag.application.ingestion.namespace_lease import check_lease
 from unified_kg_rag.application.storage.indexing_manager import IndexingManager
 from unified_kg_rag.domain.ingestion.base_resolver import (
     compact_name_key,
@@ -107,6 +106,7 @@ from unified_kg_rag.shared.utils.cache_keys import (
     unit_record_fingerprint,
 )
 from unified_kg_rag.shared.utils.document_identity import store_namespace_tag
+from unified_kg_rag.shared.write_fence import check_write_fence
 
 if TYPE_CHECKING:
     from unified_kg_rag.ports import DocStatusPort
@@ -1682,13 +1682,14 @@ class IndexingStage(_RegistryStage):
         self, context: PipelineContext
     ) -> tuple[int, int, dict[str, Any] | None]:
         if self.config.indexing.reset:
-            check_lease()
+            check_write_fence()
             # The stores are not cleared first: the full build below writes
             # new vector indices and swaps their aliases, and rewrites the
             # graph in place before dropping what it did not write
-            # (GraphIndexer.begin_rebuild), so the suffix keeps serving its
-            # previous content until the rebuild replaced it. The registry
-            # keeps its records until the rebuild recorded the corpus (below).
+            # (GraphIndexer.begin_rebuild), so the suffix is never empty
+            # meanwhile (queries read rewritten items next to the previous
+            # ones not reached yet). The registry keeps its records until
+            # the rebuild recorded the corpus (below).
 
         self.indexing_manager.initialize()
         self.indexing_manager.underived_items = 0

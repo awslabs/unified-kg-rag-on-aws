@@ -26,10 +26,7 @@ from unified_kg_rag.application.ingestion.incremental import (
     open_attempts,
     retired_scope_readings,
 )
-from unified_kg_rag.application.ingestion.namespace_lease import (
-    NamespaceLease,
-    check_lease,
-)
+from unified_kg_rag.application.ingestion.namespace_lease import NamespaceLease
 from unified_kg_rag.application.ingestion.pipeline_stages import (
     ClaimExtractionStage,
     ClaimResolutionStage,
@@ -86,7 +83,11 @@ from unified_kg_rag.shared.utils.cache_keys import (
     extraction_settings,
 )
 from unified_kg_rag.shared.utils.document_identity import config_registry_namespace
-from unified_kg_rag.shared.write_fence import install_write_fence, remove_write_fence
+from unified_kg_rag.shared.write_fence import (
+    check_write_fence,
+    install_write_fence,
+    remove_write_fence,
+)
 
 if TYPE_CHECKING:
     import boto3
@@ -842,7 +843,7 @@ class DataIngestionPipeline:
         if self._checkpoint_id is None:
             return
         try:
-            check_lease()
+            check_write_fence()
         except NamespaceLeaseError as e:
             # Another run may write this pipeline's checkpoint now.
             logger.warning(
@@ -1045,7 +1046,7 @@ class DataIngestionPipeline:
         if direction == "upload":
             # A run that lost its lease must not replace the checkpoint the
             # run holding it now may write.
-            check_lease()
+            check_write_fence()
         try:
             if direction == "upload":
                 if self.llm_response_cache is not None:
@@ -1362,7 +1363,7 @@ class DataIngestionPipeline:
                 logger.info("Executing stage: '%s'", stage.name)
                 # A run whose lease was lost meanwhile (in a long stage that
                 # does not write) stops here, not at its next write.
-                check_lease()
+                check_write_fence()
                 result = self._execute_stage(stage, context)
                 self._emit_stage_metrics(context, stage.name)
                 with self._checkpoint_write():

@@ -548,8 +548,8 @@ Configuration settings for Neptune graph database indexing
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `entity_label_prefix` | string (min length 1) | `"Entity"` | Prefix for entity node labels in Neptune |
-| `community_label_prefix` | string (min length 1) | `"Community"` | Prefix for community node labels in Neptune |
+| `entity_label_prefix` | string (min length 1) | `"Entity"` | Prefix for entity node labels in Neptune (letters, digits, '-', '_') |
+| `community_label_prefix` | string (min length 1) | `"Community"` | Prefix for community node labels in Neptune (letters, digits, '-', '_') |
 | `batch_size` | integer (≥ 1) | `100` | Items per Neptune write batch. |
 | `index_concurrency` | integer (≥ 1) | `1` | Neptune write batches (and relationship edges, one per request) submitted concurrently; the Gremlin connection pool grows to at least this. Above 1, batches touching the same vertices can raise ConcurrentModificationException; the retry recovers, but the conflicts can make a large run slower than sequential writes, so measure before raising it. |
 | `max_attempts` | integer (≥ 1) | `4` | Attempts per Neptune indexer request (writes, read-backs, drops and label clears), including the first, with full-jitter exponential backoff (the wait after attempt n is random between 0 and retry_delay_seconds * 2^(n-1) seconds). Errors a retry cannot fix (malformed query, access denied, bad parameter, read-only violation) fail on the first attempt. 1 disables the retry. |

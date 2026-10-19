@@ -28,10 +28,12 @@ import argparse
 import functools
 import json
 import logging
+import multiprocessing
 import os
 import signal
 import sys
 import threading
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, NoReturn, ParamSpec, TypeVar
@@ -52,6 +54,8 @@ _json = {"enabled": False, "printed": False}
 # Whether a stopped CLI ends its process at once (see _exit_stopped); the
 # test suite turns it off to see the SystemExit.
 _exit_at_once = {"enabled": True}
+# How long a stopped CLI waits for its terminated worker processes to end.
+_CHILD_EXIT_SECONDS = 1.0
 
 
 def usage_error(message: str) -> NoReturn:
@@ -162,10 +166,22 @@ def _exit_stopped(exit_code: int) -> None:
     keeping the stopped process alive (past ECS's stop timeout, so it was
     killed) for as long as they take. The ``finally`` blocks of the run have
     run by now; the logs, the tracing backend and stdout are flushed, then
-    the process exits without joining those threads.
+    the process exits without joining those threads. The worker processes of
+    an abandoned process pool are terminated first: a container stops them
+    with the task, but a local ``kill`` would leave them running on.
     """
     if not _exit_at_once["enabled"]:
         return
+    # A pool worker inherits the CLI's SIGTERM handler, and the pool's task
+    # wrapper catches the SystemExit it raises: kill what SIGTERM left.
+    children = multiprocessing.active_children()
+    for child in children:
+        child.terminate()
+    deadline = time.monotonic() + _CHILD_EXIT_SECONDS
+    for child in children:
+        child.join(max(0.0, deadline - time.monotonic()))
+        if child.is_alive():
+            child.kill()
     observability.uninstall()
     logging.shutdown()
     sys.stdout.flush()

@@ -10,7 +10,7 @@ from collections.abc import Callable, Iterator
 from concurrent.futures import Executor, Future, ThreadPoolExecutor
 from contextlib import contextmanager
 from types import TracebackType
-from typing import Literal, ParamSpec, TypeVar
+from typing import Any, Literal, ParamSpec, TypeVar
 
 _P = ParamSpec("_P")
 _T = TypeVar("_T")
@@ -27,14 +27,31 @@ def shut_down_after(executor: _E) -> Iterator[_E]:
     For a ``ProcessPoolExecutor``, used instead of its own ``with`` block:
     that block's exit shuts it down with ``wait=True``, which runs every
     queued task first, and resets an earlier ``cancel_futures=True``, so
-    the queued tasks also hold up the interpreter's exit.
-    ``ContextThreadPoolExecutor``'s own block already behaves like this.
+    the queued tasks also hold up the interpreter's exit. The futures the
+    block submitted are cancelled here, one by one: ``cancel_futures`` only
+    sets a flag the pool's manager thread reads through a weak reference to
+    the executor, so an executor collected first (the caller held it in a
+    local) cancelled nothing. ``ContextThreadPoolExecutor``'s own block
+    already behaves like this.
     """
+    submitted: list[Future[Any]] = []
+    submit = executor.submit
+
+    def tracked(fn: Callable[..., Any], /, *args: Any, **kwargs: Any) -> Future[Any]:
+        future = submit(fn, *args, **kwargs)
+        submitted.append(future)
+        return future
+
+    executor.submit = tracked  # type: ignore[method-assign]
     try:
         yield executor
     except BaseException:
+        for future in submitted:
+            future.cancel()  # a no-op once it runs
         executor.shutdown(wait=False, cancel_futures=True)
         raise
+    finally:
+        del executor.submit
     executor.shutdown()
 
 

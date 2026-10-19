@@ -32,7 +32,6 @@ from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from unified_kg_rag.application.ingestion.namespace_lease import check_lease
 from unified_kg_rag.domain.ingestion.attempts import (
     closed_attempt,
     opened_attempt,
@@ -98,6 +97,7 @@ from unified_kg_rag.shared.utils.document_identity import (
     normalize_source_scope,
     relative_source_path,
 )
+from unified_kg_rag.shared.write_fence import check_write_fence
 
 if TYPE_CHECKING:
     from unified_kg_rag.application.storage.indexing_manager import IndexingManager
@@ -379,7 +379,7 @@ class IncrementalIndexer:
         rebuild opens none, so a rebuild that dies never counts toward
         quarantine.
         """
-        check_lease()
+        check_write_fence()
         planned = {lineage.doc_id: lineage for lineage in lineages}
         doc_ids = list(dict.fromkeys([*delta.to_process, *planned]))
         if not doc_ids:
@@ -459,7 +459,7 @@ class IncrementalIndexer:
         before deleting the registry record — otherwise a transient failure
         would orphan the artifacts (record gone, artifacts still live).
         """
-        check_lease()
+        check_write_fence()
         if not doc_ids:
             return True
         stored = self.doc_status.get_many(
@@ -529,7 +529,7 @@ class IncrementalIndexer:
         the docs are recorded, the extraction records only removed text units
         named are deleted (``IndexingManager.collect_extraction_records``).
         """
-        check_lease()
+        check_write_fence()
         merged = self.indexing_manager.merge_with_existing_graph(
             entities, relationships, text_units or ()
         )
@@ -656,7 +656,7 @@ class IncrementalIndexer:
         owns an artifact whose write failed is recorded FAILED (see
         :meth:`_documents_with_failed_writes`), so the next run rewrites it.
         """
-        check_lease()
+        check_write_fence()
         if self._delta_writes_succeeded(results):
             write_failed = self._documents_with_failed_writes(
                 lineages, results, owners or {}
@@ -812,7 +812,7 @@ class IncrementalIndexer:
             )
         )
         if not doc_ids:
-            check_lease()
+            check_write_fence()
             self._record_quarantined(delta.quarantined, kept)
             return True
         if not self.remove_obsolete_artifacts(doc_ids):
@@ -824,7 +824,7 @@ class IncrementalIndexer:
                     len(delta.deleted) + len(delta.quarantined),
                 )
             return False
-        check_lease()
+        check_write_fence()
         self._delete_records(delta.deleted)
         self._record_quarantined(delta.quarantined, kept)
         return True
@@ -1293,7 +1293,7 @@ def open_attempts(
     text units of a stored record are kept: the diff, the failure count and
     the removal read them as before. One batched read and write.
     """
-    check_lease()
+    check_write_fence()
     batch = delta.to_process
     if not batch:
         return
@@ -1330,7 +1330,7 @@ def close_attempts(
     open, so only deaths count toward quarantine. Records the run committed
     are new and have none. Returns how many it closed.
     """
-    check_lease()
+    check_write_fence()
     stored = store.get_many(delta.to_process)
     still_open = [
         closed_attempt(record)
@@ -1465,14 +1465,14 @@ def clear_registry_namespaces(
     later incremental run remove what its document's file no longer holds,
     so the reset fails here rather than leave the registry out of step.
     """
-    check_lease()
+    check_write_fence()
     store = doc_status()
     kept = set(keep)
     cleared = 0
     for namespace in sorted(namespaces):
         for record in store.list_namespace(namespace):
             if record.doc_id not in kept:
-                check_lease()
+                check_write_fence()
                 store.delete(record.doc_id)
                 cleared += 1
     logger.info(

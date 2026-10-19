@@ -853,6 +853,12 @@ steps on Neptune. Each store accepts the fields its indexer writes:
   before relationships and claims carried their documents' filters returns
   none of them under an attribute filter until it is rebuilt
   (`indexing.reset: true`).
+- A document's removal clears its filter values from the entities,
+  relationships and claims that outlive it: a key no remaining document
+  gives is stored as null, which matches no filter. An index that saw
+  removals before this was fixed (#370) keeps the removed documents' values
+  on items not rewritten since, so its filters still match them, until it
+  is rebuilt (`indexing.reset: true`).
 - `attr_<key>` and `attributes.filters.<key>` name document attributes. A
   graph store holds none, so graph expansion keeps an expanded entity (the
   seeds aside) only when its entities-index document, which carries the
@@ -1552,6 +1558,8 @@ Every CLI (`run-ingestion`, `run-rag`, `run-eval`, `run-visualization`,
 | `2` | Usage or configuration error: a bad flag, a missing or invalid input (a `run-eval` dataset, a `run-visualization` data file, a `prepare-benchmark` data file), an invalid config file or override, an unset store endpoint (all before any work), or, outside `run-ingestion`, a `ConfigurationError` found while running |
 | `130` | Interrupted with Ctrl-C (SIGINT) |
 | `143` | Stopped by SIGTERM (ECS `StopTask`, a Step Functions timeout); `run-ingestion` checkpoints its finished stages first, and `run-eval` uploads the finished runs' results to an `s3://` output (or keeps them locally and logs the path) |
+
+A run stopped with `130` or `143` ends its process at once: model calls in flight are abandoned rather than waited for, the logs, tracing and stdout are flushed first, and a process pool's workers are ended with it.
 
 Flags must be spelled out in full: a prefix such as `--output` is rejected.
 
