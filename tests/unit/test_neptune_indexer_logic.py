@@ -742,6 +742,7 @@ _READS = {
         1,
     ),
     "read_neighbor_ids": ([{"id": "e1", "neighbors": ["e2"]}], 1),
+    "count_neighbors": ([{"id": "e1", "count": 1}], 1),
     "find_incident_relationship_ids": (["r1"], 1),
 }
 

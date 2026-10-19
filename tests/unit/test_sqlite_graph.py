@@ -297,6 +297,8 @@ def test_neighbor_and_incident_reads(indexer: SQLiteGraphIndexer) -> None:
         "b": ["a"],
     }
     assert indexer.read_neighbor_ids(["a"], suffix="s1") == {"a": ["x"]}
+    assert indexer.count_neighbors(["a", "ghost", "b"]) == {"a": 3, "b": 1}
+    assert indexer.count_neighbors(["a"], suffix="s1") == {"a": 1}
     assert indexer.find_incident_relationship_ids(["b"]) == ["a-b"]
     assert indexer.find_incident_relationship_ids(["a"], suffix="s1") == ["s-r"]
     # No suffix is the default suffix, not every suffix.

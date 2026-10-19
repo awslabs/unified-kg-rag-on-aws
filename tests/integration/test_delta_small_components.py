@@ -229,11 +229,14 @@ def test_the_walk_stops_at_min_size_on_a_hub(
             ]
         )
         read = mocker.spy(graph, "read_relationships")
+        neighbor_ids = mocker.spy(graph, "read_neighbor_ids")
 
         found, _ = ps._components_reaching(graph, [{"hub", "new"}, *lone], {}, set(), 3)
 
         assert found == {"hub", "new"}
         assert sum(len(call.args[0]) for call in read.call_args_list) <= 64
+        # Hubs are told by a count: the hub's neighbour ids are not read.
+        assert neighbor_ids.call_count == 0
     finally:
         graph.close()
 

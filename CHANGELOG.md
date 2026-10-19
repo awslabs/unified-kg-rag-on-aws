@@ -1286,6 +1286,9 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- The incremental community walk tells a hub by a neighbour count the graph
+  store computes (`GraphIndexer.count_neighbors`, on Neptune and SQLite),
+  not by reading every neighbour id of the hop's entities (#PR).
 - A document deleted from the corpus and restored before its removal
   finished (the removal failed partway, or the run was killed after deleting
   its vector copies) is indexed again. Its registry record still said

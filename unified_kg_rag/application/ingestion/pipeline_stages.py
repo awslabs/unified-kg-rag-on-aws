@@ -1313,10 +1313,12 @@ def _components_reaching(
         return added
 
     # A hop reads the edges of its entities of at most ``step`` neighbours
-    # at once. A hub's are read a batch at a time, only while a component
-    # walking through it has not reached min_size (counted as it grows), so
-    # neither a component that reached it nor one that cannot reach it
-    # reads a hub's whole neighbourhood.
+    # at once. A hub's are read a batch at a time, and only while one of
+    # the components walking through it (its owners, their sizes counted as
+    # the batches come in) has not reached min_size: a component that
+    # reached it stops the reads, and one that does not walk through the hub
+    # never drives them. An owner that cannot reach min_size still reads the
+    # hub's whole neighbourhood.
     step = max(min_size, _COMPONENT_EDGE_BATCH)
     while open_:
         hop = set().union(*(frontier[k] for k in open_)) - neighbors.keys()
@@ -1325,9 +1327,10 @@ def _components_reaching(
             for b in neighbors[node]:
                 suffix_of.setdefault(b, suffix_of[node])
         for suffix, group in by_suffix(hop).items():
-            degree = graph.read_neighbor_ids(group, suffix=suffix)
-            hubs = sorted(n for n in group if len(degree.get(n, ())) > step)
-            small = [n for n in group if n not in set(hubs)]
+            degree = graph.count_neighbors(group, suffix=suffix)
+            hubs = sorted(n for n in group if degree.get(n, 0) > step)
+            hub_set = set(hubs)
+            small = [n for n in group if n not in hub_set]
             ids = (
                 graph.find_incident_relationship_ids(small, suffix=suffix)
                 if small

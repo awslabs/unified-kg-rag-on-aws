@@ -344,6 +344,13 @@ class FakeGraphStore:
                     neighbors[a].add(b)
         return {i: sorted(ids) for i, ids in neighbors.items()}
 
+    def count_neighbors(
+        self, entity_ids: list[str], suffix: str | None = None
+    ) -> dict[str, int]:
+        return {
+            i: len(n) for i, n in self.read_neighbor_ids(entity_ids, suffix).items()
+        }
+
     def find_incident_relationship_ids(
         self, entity_ids: list[str], suffix: str | None = None
     ) -> list[str]:
