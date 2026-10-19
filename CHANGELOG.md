@@ -3303,7 +3303,7 @@ changed once with the full-config keys (#332).
   off their entities, relationships and claims. The prune writes
   `community_ids` only; the filter-clearing update applies to lineage
   updates of entities, relationships and claims alone. Indexes an affected
-  incremental run wrote need a rebuild (`indexing.reset: true`) (#PR).
+  incremental run wrote need a rebuild (`indexing.reset: true`) (#376).
 - A claim keeps its documents' filters across incremental runs: a stored
   claim read back for a merge or a removal came back without them, and
   claim derivation never took them from its text units, so a claim an
