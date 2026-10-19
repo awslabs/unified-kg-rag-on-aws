@@ -217,6 +217,7 @@ def _state(
                 hit["_source"]["object_name"],
                 hit["_source"]["status"],
                 hit["_source"]["description"],
+                tuple(sorted(hit["_source"].get("text_unit_ids") or [])),
             )
             for hit in claims
         ),
@@ -347,6 +348,33 @@ def _state(
                 },
             ],
             id="a-claim-names-an-entity-renamed-under-its-id",
+        ),
+        pytest.param(
+            [
+                {"d0.txt": "Acme Ltd and Acme Corp and Buyer trade cash 2."},
+                {
+                    "d0.txt": "Acme Ltd and Acme Corp and Buyer trade cash 2.",
+                    "d3.txt": "Acme Corp and Acme trade cash 1. Acme Ltd trade "
+                    "parts 1.",
+                },
+            ],
+            id="a-claim-cites-the-units-its-statements-are-in",
+        ),
+        pytest.param(
+            [
+                {"d0.txt": "Acme Ltd and Acme Corp and Buyer trade cash 2."},
+                {
+                    "d0.txt": "Acme Ltd and Acme Corp and Buyer trade cash 2.",
+                    "d6.txt": "Acme Ltd and Depot trade goods 1. Acme trade goods 2.",
+                    "d3.txt": "Acme Corp and Acme trade cash 1. Acme Ltd trade "
+                    "parts 1.",
+                },
+                {
+                    "d0.txt": "Acme LLC and Acme Corp and Buyer trade cash 2.",
+                    "d6.txt": "Acme Ltd and Depot trade goods 1. Acme trade goods 2.",
+                },
+            ],
+            id="a-removed-documents-claim-goes-with-it",
         ),
     ],
 )

@@ -573,6 +573,11 @@ def derive(
                         "status": match_claim.status,
                         "description": match_claim.description,
                         "source_text": match_claim.source_text,
+                        # The units its statements are in now: a given claim
+                        # may hold another spelling's statement merged in.
+                        "text_unit_ids": _ordered_units(
+                            claim.text_unit_ids or [], match_claim.text_unit_ids or []
+                        ),
                         # Its text units' placement and document filters, as
                         # a relationship's: a stored claim's are a superset
                         # after a removal (or none, read back without them).

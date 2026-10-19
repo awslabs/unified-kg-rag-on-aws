@@ -1279,6 +1279,12 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Incremental indexing: a claim matched to a statement of another spelling
+  of its subject or object (the two are one entity in a full build) cites
+  the text units that statement is in, as a full build's does, instead of
+  the units the stored claim cited; a removed document's claim text no
+  longer survives on such a claim. Two fuzz configurations over four and
+  six spellings ended so in 12 and 20 of 300 sequences; none do now (#PR).
 - A model call that failed once could fail its item for good when other
   items of the batch were retrying too: tenacity's retry wrapper shares one
   statistics dict across threads and clears it on each call, so a worker
