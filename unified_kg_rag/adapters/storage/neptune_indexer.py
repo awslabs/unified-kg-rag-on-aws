@@ -704,7 +704,10 @@ class NeptuneIndexer(GraphIndexer):
                         results=True,
                     ):
                         return None
-                    return f"source entity '{rel.source_id}' not found"
+                    return (
+                        f"source entity '{rel.source_id}' or target entity "
+                        f"'{rel.target_id}' not found"
+                    )
                 except NamespaceLeaseError:
                     raise
                 except Exception as e:

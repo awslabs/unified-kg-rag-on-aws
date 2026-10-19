@@ -155,10 +155,9 @@ def _edges_of_written_entities(
     stats of those held back.
 
     An edge whose endpoint's write failed is not written: a re-keyed
-    entity's edges would be re-pointed at a vertex that is not there, and a
-    graph store replaces an edge by dropping its stored copy first. The held
-    back edges count as failed, so their documents are written again. A
-    failure that names no entity holds back every edge.
+    entity's edges would be re-pointed at a vertex that is not there. The
+    held back edges count as failed, so their documents are written again.
+    A failure that names no entity holds back every edge.
     """
     if not relationships or entity_stats is None or not entity_stats.failed_items:
         return relationships, None

@@ -110,6 +110,8 @@ def test_write_relationships_counts_an_edge_without_source_as_failed(
     assert stats.successful_items == 2
     assert stats.failed_items == 1
     assert stats.failed_ids == ["r2"]
+    # Either endpoint may be the one gone: the error names both.
+    assert any("'missing'" in e and "'e3'" in e for e in stats.errors)
 
 
 def test_edges_are_written_index_concurrency_at_a_time(indexer, mocker) -> None:
