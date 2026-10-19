@@ -164,7 +164,7 @@ def test_the_edge_rewrite_drops_and_adds_in_one_traversal(indexer) -> None:
     )
     steps = written.bytecode.step_instructions
     names = [step[0] for step in steps]
-    assert names[:10] == [
+    assert names[:14] == [
         "E",
         "has",
         "where",
@@ -173,13 +173,21 @@ def test_the_edge_rewrite_drops_and_adds_in_one_traversal(indexer) -> None:
         "V",
         "hasLabel",
         "has",
-        "filter",
+        "as",
+        "V",
+        "hasLabel",
+        "has",
+        "as",
         "sideEffect",
     ]
-    assert steps[1][1:] == ["id", "r1"] and steps[7][1:] == ["id", "e1"]
-    drop = steps[9][1]
+    assert steps[1][1:] == ["id", "r1"]
+    assert steps[7][1:] == ["id", "e1"] and steps[11][1:] == ["id", "e2"]
+    drop = steps[13][1]
     assert [step[0] for step in drop.step_instructions] == ["select", "unfold", "drop"]
     assert names.index("addE") > names.index("sideEffect")
+    # Each endpoint is looked up once: the edge goes between the two found.
+    assert names.count("V") == 2
+    assert [s[1:] for s in steps if s[0] in ("from", "to")] == [["source"], ["target"]]
     assert names[-1] == "id"
 
 

@@ -1286,6 +1286,8 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- The Neptune edge rewrite (#377) looks each endpoint vertex up once; it
+  looked the target up twice, to check it and to add the edge (#PR).
 - The incremental community walk tells a hub by a neighbour count the graph
   store computes (`GraphIndexer.count_neighbors`, on Neptune and SQLite),
   not by reading every neighbour id of the hop's entities (#PR).

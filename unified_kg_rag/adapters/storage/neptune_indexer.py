@@ -586,23 +586,26 @@ class NeptuneIndexer(GraphIndexer):
         (the only sign of an edge not written).
         """
 
-        def target() -> GraphTraversal:
-            return __.V().hasLabel(entity_label).has("id", rel.target_id)
-
         edge = (
             g.E()
             .has("id", rel.id)
             .where(__.outV().hasLabel(entity_label))
             .fold()
             .as_("stored")
-            # Both endpoints first: without them nothing is dropped either.
+            # Both endpoints first, each looked up once: without them nothing
+            # is dropped either.
             .V()
             .hasLabel(entity_label)
             .has("id", rel.source_id)
-            .filter_(target())
+            .as_("source")
+            .V()
+            .hasLabel(entity_label)
+            .has("id", rel.target_id)
+            .as_("target")
             .sideEffect(__.select("stored").unfold().drop())
             .addE(relationship_label(rel))
-            .to(target())
+            .from_("source")
+            .to("target")
             .property("id", rel.id)
         )
         props = relationship_properties(rel, self.neptune_config.property_max_length)
