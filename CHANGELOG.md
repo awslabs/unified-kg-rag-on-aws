@@ -1285,7 +1285,7 @@ changed once with the full-config keys (#332).
   that kept failing in between lost the rest for good (edges rewritten for
   their rank or names only, and removal strips, are not found again by a
   retry), leaving endpoint ranks one low. Each edge's drop and add are now
-  one request, which Neptune runs as one transaction (#PR).
+  one request, which Neptune runs as one transaction (#377).
 - The six `indexing.opensearch.*_index_prefix` settings and the two
   `indexing.neptune.*_label_prefix` settings are checked when the config
   loads (an index prefix: lowercase letters, digits, `-`, `_`, not starting
