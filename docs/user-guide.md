@@ -864,6 +864,9 @@ steps on Neptune. Each store accepts the fields its indexer writes:
   seeds aside) only when its entities-index document, which carries the
   filters of every document the entity comes from, passes them; under two or
   more keys, one of its text units (one document's) must also pass them all.
+  It must also be reached from a seed, within `max_hops`, over relationships
+  that pass the filter (an edge only excluded documents state is not
+  walked), and its `Path:` follows those relationships.
   Under a filter on text units, local and mix also fill their chunk quota
   with the entity-linked chunks that pass, not the top-ranked ones only.
   Other

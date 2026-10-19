@@ -592,8 +592,13 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
                 for unit in unit_ids
                 if unit not in exclude
             ]
+            # Enough to fill the stream: the slots go to the first that pass.
             passed = await self._ids_passing(
-                query, self._os_config.text_units_index_prefix, lineage, filters
+                query,
+                self._os_config.text_units_index_prefix,
+                lineage,
+                filters,
+                enough=limit,
             )
             exclude |= set(lineage) - passed
         chunk_ids = self._collect_linked_chunk_ids(

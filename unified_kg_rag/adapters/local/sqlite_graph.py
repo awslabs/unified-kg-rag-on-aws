@@ -247,6 +247,24 @@ class SQLiteGraphStore:
                 counts[vertex_id] = counts.get(vertex_id, 0) + 1
         return counts
 
+    def edges_among(self, label: str, ids: Iterable[str]) -> list[tuple[str, str, str]]:
+        """``(edge id, source id, target id)`` of ``label``'s edges both of
+        whose endpoints are among ``ids``."""
+        wanted = list(dict.fromkeys(str(i) for i in ids))
+        among = set(wanted)
+        edges: list[tuple[str, str, str]] = []
+        with self.read("read the edges among vertices") as connection:
+            for batch in batches(wanted):
+                rows = connection.execute(
+                    "SELECT id, source_id, target_id FROM edges WHERE label = ? "
+                    f"AND source_id IN ({placeholders(batch)}) ORDER BY id",
+                    [label, *batch],
+                ).fetchall()
+                edges.extend(
+                    (str(e), str(a), str(b)) for e, a, b in rows if str(b) in among
+                )
+        return edges
+
     def traverse(
         self,
         label: str,

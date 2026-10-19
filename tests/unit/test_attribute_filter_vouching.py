@@ -61,6 +61,9 @@ class _Store:
         self.entities_suffix = entities_suffix
         self.queries: list[SearchQuery] = []
 
+    async def aedges_among(self, vertex_ids: list[str], suffix: str | None) -> None:
+        return None  # a graph that cannot tell: the entity check alone decides
+
     async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
         self.queries.append(query)
         units_prefix = self.entities_prefix.replace("entities", "text-units")

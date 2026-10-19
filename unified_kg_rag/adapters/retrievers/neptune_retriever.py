@@ -222,6 +222,43 @@ class NeptuneRetriever(GraphExpansionRetriever):
 
         return await self._execute_traversal(build)
 
+    async def aedges_among(
+        self, vertex_ids: list[str], suffix: str | None
+    ) -> list[tuple[str, str, str]] | None:
+        """See ``BaseGraphRAGRetriever.aedges_among``: each edge comes back
+        from both endpoints, once kept."""
+        if not vertex_ids:
+            return []
+        label = self._get_label(self._neptune_config.entity_label_prefix, suffix)
+        ids = list(dict.fromkeys(str(i) for i in vertex_ids))
+
+        def build(g: GraphTraversalSource) -> Traversal:
+            return (
+                g.V()
+                .hasLabel(label)
+                .has("id", P.within(ids))
+                .as_("a")
+                .outE()
+                .as_("e")
+                .inV()
+                .hasLabel(label)
+                .has("id", P.within(ids))
+                .as_("b")
+                .select("e", "a", "b")
+                .by(__.values("id"))
+                .by(__.values("id"))
+                .by(__.values("id"))
+            )
+
+        rows = await self._execute_traversal(build)
+        return sorted(
+            {
+                (str(r["e"]), str(r["a"]), str(r["b"]))
+                for r in rows
+                if isinstance(r, dict)
+            }
+        )
+
     @staticmethod
     def _with_projection(
         traversal: GraphTraversal, degree_label: str | None = None

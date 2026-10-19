@@ -1,6 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
+import json
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
@@ -147,6 +148,15 @@ class BaseGraphRAGRetriever(BaseRetriever, ABC):
         """
         return None
 
+    async def aedges_among(
+        self, vertex_ids: list[str], suffix: str | None
+    ) -> list[tuple[str, str, str]] | None:
+        """``(relationship id, endpoint, endpoint)`` of every stored edge both
+        of whose endpoints are among ``vertex_ids``, for a graph backend.
+        ``None`` (the default, for a retriever without a graph) when the
+        backend cannot tell."""
+        return None
+
     async def aread_build_record(self, suffix: str | None) -> dict[str, Any] | None:
         """The build record ingestion wrote on ``suffix``'s index
         (``VectorIndexer.record_build``), read by ``run-eval`` into its run
@@ -263,12 +273,21 @@ class BaseSearchStrategy(ABC):
         (``id_batch_size``), in the order given; with ``enough`` the batches
         stop once that many passed. A failed request ends the check with what
         passed so far (the caller treats the rest as failing: fail-closed)
-        and marks the span degraded.
+        and marks the span degraded. Within a query (``query_scope``) each
+        id's outcome is asked once: DRIFT's follow-ups check the same units.
         """
         retriever = self.document_retriever
         ordered = list(dict.fromkeys(ids))
-        passed: set[str] = set()
         if retriever is None or not ordered:
+            return set()
+        memo = current_query_scope()
+        key = "passing\n" + json.dumps(
+            [prefix, query.suffix, filters], sort_keys=True, default=str
+        )
+        known: dict[str, bool] = memo.setdefault(key, {}) if memo is not None else {}
+        passed = {i for i in ordered if known.get(i)}
+        ordered = [i for i in ordered if i not in known]
+        if not ordered or (enough is not None and len(passed) >= enough):
             return passed
         batch = id_batch_size(self.config.indexing.opensearch.index_settings)
         with observability.span(
@@ -290,7 +309,7 @@ class BaseSearchStrategy(ABC):
                     source_fields=[],
                 )
                 try:
-                    passed |= {str(h.source) for h in await retriever.aretrieve(check)}
+                    found = {str(h.source) for h in await retriever.aretrieve(check)}
                 except Exception as e:
                     if is_fatal_retrieval_error(e):
                         raise
@@ -304,6 +323,8 @@ class BaseSearchStrategy(ABC):
                     span.record_exception(e)
                     span.set_attributes({"kg_rag.degraded": True})
                     break
+                passed |= found
+                known.update((i, i in found) for i in chunk)
                 if enough is not None and len(passed) >= enough:
                     break
         return passed
@@ -500,8 +521,112 @@ class BaseSearchStrategy(ABC):
         expanded = await self._safe_aretrieve(
             self.graph_retriever, search_query, "graph expansion"
         )
-        return await self._vouch_by_entities_index(
-            query, expanded, {str(s) for s in seed_entity_ids}
+        seeds = {str(s) for s in seed_entity_ids}
+        expanded = await self._vouch_by_entities_index(query, expanded, seeds)
+        return await self._reached_by_passing_edges(query, expanded, seeds)
+
+    async def _reached_by_passing_edges(
+        self, query: SearchQuery, results: list[RetrievalResult], seeds: set[str]
+    ) -> list[RetrievalResult]:
+        """Graph-expansion ``results`` reached from a seed over edges that pass
+        the document filters.
+
+        The walk crosses every edge, and an edge only excluded documents state
+        brought in entities (and through them chunks) that an index of the
+        passing documents alone never reaches: about a third of a filtered
+        local search's on a two-group corpus. Under a document filter the
+        edges among the expanded entities and seeds are read from the graph,
+        those the relationships index passes (ids only) kept, and an entity
+        kept only when a breadth-first walk over them reaches it from a seed
+        within ``max_hops``; its ``Path:`` is redrawn along that walk. A
+        vertex reached by both a failing and a passing path is kept. Without
+        a document filter nothing changes and nothing is asked.
+        """
+        filters = document_filters(query.filters)
+        graph = self.graph_retriever
+        if (
+            not filters
+            or graph is None
+            or not any(r.source not in seeds for r in results)
+        ):
+            return results
+        by_id = {str(r.source): r for r in results}
+        try:
+            edges = await graph.aedges_among(sorted(by_id), query.suffix)
+        except Exception as e:
+            if is_fatal_retrieval_error(e):
+                raise
+            logger.warning(
+                "%s: reading the edges among the expanded entities failed; "
+                "keeping the seeds only: %s",
+                type(self).__name__,
+                e,
+            )
+            edges = []
+        if edges is None:  # The backend cannot tell: the entity check stands.
+            return results
+        passed = await self._ids_passing(
+            query,
+            self.config.indexing.opensearch.relationships_index_prefix,
+            (edge for edge, _, _ in edges),
+            filters,
+        )
+        neighbours: dict[str, set[str]] = {}
+        for edge, a, b in edges:
+            if edge in passed:
+                neighbours.setdefault(a, set()).add(b)
+                neighbours.setdefault(b, set()).add(a)
+        parent: dict[str, str | None] = {s: None for s in by_id if s in seeds}
+        frontier = sorted(parent)
+        for _ in range(self.config.indexing.neptune.max_hops):
+            reached: list[str] = []
+            for vertex in frontier:
+                for neighbour in sorted(neighbours.get(vertex, ())):
+                    if neighbour not in parent:
+                        parent[neighbour] = vertex
+                        reached.append(neighbour)
+            frontier = reached
+        kept: list[RetrievalResult] = []
+        for result in results:
+            vertex = str(result.source)
+            if vertex not in parent:
+                continue
+            if parent[vertex] is not None:
+                result = self._with_path(result, vertex, parent, by_id)
+            kept.append(result)
+        if len(kept) < len(results):
+            logger.debug(
+                "Document filters dropped %s of %s expanded entities reached "
+                "only over excluded edges",
+                len(results) - len(kept),
+                len(results),
+            )
+        return kept
+
+    @staticmethod
+    def _with_path(
+        result: RetrievalResult,
+        vertex: str,
+        parent: dict[str, str | None],
+        by_id: dict[str, RetrievalResult],
+    ) -> RetrievalResult:
+        """``result`` with its ``Path:`` line drawn along ``parent`` (seed
+        first), the walk over passing edges."""
+        chain: list[str] = []
+        current: str | None = vertex
+        while current is not None:
+            chain.append(current)
+            current = parent[current]
+        names = [
+            str((by_id[v].metadata or {}).get("name") or v) for v in reversed(chain)
+        ]
+        lines = [
+            line
+            for line in result.content.splitlines()
+            if not line.startswith("Path: ")
+        ]
+        return result.model_copy(
+            update={"content": "\n".join([*lines, f"Path: {' -> '.join(names)}"])}
         )
 
     def _incident_fetch_limit(self) -> int:

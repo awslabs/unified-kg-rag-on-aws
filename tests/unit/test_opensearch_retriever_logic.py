@@ -691,6 +691,44 @@ async def test_an_attribute_probe_is_reused_by_the_next_sub_search(
     assert client.probes == 3
 
 
+async def test_concurrent_identical_probes_share_one_request(
+    retriever, config, mocker
+) -> None:
+    prefix = config.indexing.opensearch.community_reports_index_prefix
+
+    class _Slow(_Client):
+        probes = 0
+
+        async def asearch(self, **request) -> dict:
+            if request["body"].get("_source") is False:
+                self.probes += 1
+                await asyncio.sleep(0.01)
+                return {"hits": {"hits": [{"_id": "cr1"}]}}
+            return await super().asearch(**request)
+
+    client = _Slow({prefix: [("cr1", 1.0)]})
+    object.__setattr__(retriever, "_opensearch_client", client)
+    mocker.patch.object(
+        OpenSearchRetriever, "_get_query_vector", mocker.AsyncMock(return_value=[0.1])
+    )
+    mocker.patch.object(OpenSearchRetriever, "_check_embedding_settings")
+
+    async def search(text: str) -> list:
+        return await retriever.aretrieve(
+            SearchQuery(
+                query=text,
+                search_type=SearchType.VECTOR,
+                index_prefixes=[prefix],
+                filters={"attr_category": "a"},
+            )
+        )
+
+    with query_scope():
+        results = await asyncio.gather(*(search(f"q{i}") for i in range(4)))
+    assert client.probes == 1
+    assert all(results)
+
+
 async def test_index_sweep_takes_each_index_in_turn(retriever, config, mocker) -> None:
     # Raw scores of two indices do not compare (here the entity index's sum of
     # two kNN scores tops every text hit); the sweep keeps each index's best.
