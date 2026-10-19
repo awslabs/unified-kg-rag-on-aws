@@ -1310,6 +1310,11 @@ changed once with the full-config keys (#332).
 - A filter value of `None` is rejected (`InvalidFilterError`): OpenSearch
   rejects a `terms` query naming null, and the embedded engine matched it
   against cleared filter fields (#373).
+- A bare `--retire-source-scope` value that is also the run's own directory
+  (`docs` over `./docs`) is refused as the run's own scope again, instead of
+  dropping that reading and retiring another corpus configured with
+  `source_scope: docs` (exit 0, a WARNING only); the error says how to
+  retire such a name (#PR).
 - The first model calls of a batch (ingestion stages, global search's map)
   no longer fail at random with "dictionary changed size during
   iteration": the worker threads share one chain, and LangChain caches each

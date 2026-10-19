@@ -647,3 +647,18 @@ def test_a_bare_value_without_records_warns_once(
     assert retire_source_scopes(store, delta, groups, "default|/corpora/new") == 0
     assert caplog.text.count("has no doc-status records") == 1
     assert "'corpus-b'" in caplog.text
+
+
+def test_a_bare_value_naming_the_runs_own_directory_is_refused(
+    tmp_path: Path, monkeypatch
+) -> None:
+    # Before, the own-directory reading was dropped and the name reading
+    # kept, so `--retire-source-scope docs` run over ./docs deleted another
+    # corpus configured with source_scope "docs" (exit 0, a WARNING only).
+    (tmp_path / "docs").mkdir()
+    monkeypatch.chdir(tmp_path)
+    own = (tmp_path / "docs").resolve().as_posix()
+
+    with pytest.raises(ConfigurationError, match="own source scope") as exc:
+        retired_scope_groups(["docs"], own, "default", retired_scope_readings)
+    assert "another corpus's source_scope" in str(exc.value)

@@ -1016,8 +1016,12 @@ host's corpus), so the old content stays indexed. Either:
   `source_scope`, `s3://` URIs included; a non-URI value is also tried as a
   path resolved like `--source-directory`. A bare value (`old`) is a name or a
   relative path: the reading that has records is retired, and when both do
-  the run stops before any write (give `./old` or an absolute path). Naming the run's own scope fails
-  before the registry is read; a scope without records logs a WARNING.
+  the run stops before any write (give `./old` or an absolute path). Naming
+  the run's own scope fails before the registry is read, a bare value that
+  is also the run's own directory included (as a name it could be another
+  corpus's `source_scope`: to retire that name, run from a working directory
+  where it is not the run's directory); a scope without records logs a
+  WARNING.
 
 A local run with the default scope and new documents logs a WARNING naming the
 other local source directories with records in its suffix; it deletes
