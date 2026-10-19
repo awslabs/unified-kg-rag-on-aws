@@ -767,11 +767,11 @@ run-rag --query "..." --verbose --filters attr_category:research type:person \
 
 | 저장소 | 필터 가능한 필드 |
 |---|---|
-| 텍스트 단위 | `id`, `text`, `translated_text_<language>`, `community_ids`, `n_tokens`, `attr_<key>`, `attributes.<path>` |
+| 텍스트 단위 | `id`, `text`, `translated_text_<language>`, `community_ids`, `n_tokens`, `attr_<key>`, `attributes.filters.<key>` |
 | 엔티티 | `id`, `name`, `name.keyword`, `description`, `type`, `rank`, `confidence`, `text_unit_ids`, `attr_<key>`, `attributes.<path>` |
 | 관계 | `id`, `source_id`, `target_id`, `source_name`, `target_name`, `description`, `weight`, `rank`, `text_unit_ids`, `attr_<key>`, `attributes.filters.<key>` |
 | 주장 | `id`, `subject_id`, `object_id`, `subject_name`, `object_name`, `type`, `status`, `description`, `source_text`, `text_unit_ids`, `attr_<key>`, `attributes.filters.<key>` |
-| 커뮤니티 리포트 | `id`, `community_id`, `name`, `summary`, `full_content`, `rank`, `rating`, `text_unit_ids`, `document_ids`, `level`, `depth`, `max_cut_depth`, `parent_community_id`, `child_community_ids`, `attr_<key>`, `attributes.<path>` |
+| 커뮤니티 리포트 | `id`, `community_id`, `name`, `summary`, `full_content`, `rank`, `rating`, `text_unit_ids`, `document_ids`, `level`, `depth`, `max_cut_depth`, `parent_community_id`, `child_community_ids`, `attr_<key>`, `attributes.filters.<key>` |
 | Neptune 엔티티 정점 | `id`, `name`, `type`, `description`, `rank`, `confidence`, `text_unit_ids`, `community_ids`, `attr_<key>`(있는 경우) |
 | Neptune 커뮤니티 정점 | `id`, `name`, `level`, `parent`, `size`, `period`, `children` |
 
@@ -794,10 +794,12 @@ run-rag --query "..." --verbose --filters attr_category:research type:person \
   다시 빌드할 때까지(`indexing.reset: true`) 속성 필터를 건 질의에서 관계와 주장을 하나도
   돌려주지 않습니다.
 - `attr_<key>`와 `attributes.filters.<key>`는 문서 속성입니다. 그래프 저장소에는 이것이
-  없으므로 그래프 확장은 시드를 제외한 확장 엔티티를 텍스트 단위 중 하나라도 이를 통과한
-  경우에만 남깁니다. 그 밖의 `attributes.<path>` 키는 항목 자체의 속성이며 엔티티 인덱스에만
+  없으므로 그래프 확장은 시드를 제외한 확장 엔티티를, 그 엔티티가 나온 모든 문서의 필터를
+  가진 엔티티 인덱스 문서가 이를 통과한 경우에만 남깁니다. 문서 필터를 걸면 local과 mix는
+  상위 순위 청크만이 아니라 엔티티와 연결된 청크 중 필터를 통과한 것으로 청크 할당량을
+  채웁니다. 그 밖의 `attributes.<path>` 키는 항목 자체의 속성이며 엔티티 인덱스에만
   적용됩니다. Neptune에서 `attr_<key>`는 엔티티 정점 속성(`attr_role`)이기도 해서 "있는 경우"
-  기준으로 적용되지만(그 속성이 없는 정점은 통과) 위의 텍스트 단위 확인도 적용되므로, 문서에
+  기준으로 적용되지만(그 속성이 없는 정점은 통과) 위의 엔티티 인덱스 확인도 적용되므로, 문서에
   `role` 필터가 없으면 `attr_role:buyer`는 아무것도 고르지 않습니다. 그 밖의 키는 두 저장소
   모두 엄격하게 적용합니다.
 

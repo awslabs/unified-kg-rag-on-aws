@@ -12,6 +12,7 @@ attributes the methods touch are set.
 from __future__ import annotations
 
 import asyncio
+from collections import OrderedDict
 
 import pytest
 
@@ -32,6 +33,7 @@ def retriever(config: Config) -> OpenSearchRetriever:
     object.__setattr__(inst, "_opensearch_config", config.indexing.opensearch)
     object.__setattr__(inst, "_max_size", config.indexing.opensearch.max_query_size)
     object.__setattr__(inst, "_max_result_window", 10000)
+    object.__setattr__(inst, "_probe_outcomes", OrderedDict())
     object.__setattr__(inst, "_field_mappings", inst._initialize_field_mappings())
     object.__setattr__(
         inst, "_index_filter_fields", inst._initialize_index_filter_fields()
@@ -590,7 +592,7 @@ async def test_hybrid_ranking_does_not_depend_on_the_hits_asked_for(
     [
         # No document has the attribute: the probe discards the searches.
         (SearchType.HYBRID, {"attr_category": "a"}, True),
-        (SearchType.VECTOR, {"attributes.category": "a"}, True),
+        (SearchType.VECTOR, {"attributes.filters.category": "a"}, True),
         # A lexical filter on an unmapped field matches nothing, unprobed.
         (SearchType.LEXICAL, {"attr_category": "a"}, False),
         # Declared fields are always mapped: no probe.
@@ -642,6 +644,40 @@ async def test_attribute_filter_probe_runs_alongside_the_searches(
         assert client.in_flight_at_probe == searches
     else:
         assert len(client.requests) == searches
+
+
+async def test_an_attribute_probe_is_reused_by_the_next_sub_search(
+    retriever, config, mocker
+) -> None:
+    # The sub-searches of one query (DRIFT's follow-ups) probed the same
+    # index with the same filters, one request each.
+    prefix = config.indexing.opensearch.community_reports_index_prefix
+
+    class _Counting(_Client):
+        probes = 0
+
+        async def asearch(self, **request) -> dict:
+            if request["body"].get("_source") is False:
+                self.probes += 1
+                return {"hits": {"hits": [{"_id": "cr1"}]}}
+            return await super().asearch(**request)
+
+    client = _Counting({prefix: [("cr1", 1.0)]})
+    object.__setattr__(retriever, "_opensearch_client", client)
+    mocker.patch.object(
+        OpenSearchRetriever, "_get_query_vector", mocker.AsyncMock(return_value=[0.1])
+    )
+    mocker.patch.object(OpenSearchRetriever, "_check_embedding_settings")
+    for text in ("first", "second", "third"):
+        await retriever.aretrieve(
+            SearchQuery(
+                query=text,
+                search_type=SearchType.VECTOR,
+                index_prefixes=[prefix],
+                filters={"attr_category": "a"},
+            )
+        )
+    assert client.probes == 1
 
 
 async def test_index_sweep_takes_each_index_in_turn(retriever, config, mocker) -> None:
@@ -993,7 +1029,7 @@ async def test_query_embedding_cache_is_bounded(retriever, monkeypatch) -> None:
 
 @pytest.mark.parametrize("key", ["max_result_window", "index.max_result_window"])
 def test_index_setting_reads_either_spelling(key) -> None:
-    from unified_kg_rag.adapters.retrievers.opensearch_retriever import _index_setting
+    from unified_kg_rag.adapters.storage.filter_schema import index_setting
 
-    assert _index_setting({key: "500"}, "max_result_window", 10000) == 500
-    assert _index_setting({}, "max_result_window", 10000) == 10000
+    assert index_setting({key: "500"}, "max_result_window", 10000) == 500
+    assert index_setting({}, "max_result_window", 10000) == 10000

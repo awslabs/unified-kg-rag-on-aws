@@ -823,11 +823,11 @@ steps on Neptune. Each store accepts the fields its indexer writes:
 
 | Store | Filterable fields |
 |---|---|
-| Text units | `id`, `text`, `translated_text_<language>`, `community_ids`, `n_tokens`, `attr_<key>`, `attributes.<path>` |
+| Text units | `id`, `text`, `translated_text_<language>`, `community_ids`, `n_tokens`, `attr_<key>`, `attributes.filters.<key>` |
 | Entities | `id`, `name`, `name.keyword`, `description`, `type`, `rank`, `confidence`, `text_unit_ids`, `attr_<key>`, `attributes.<path>` |
 | Relationships | `id`, `source_id`, `target_id`, `source_name`, `target_name`, `description`, `weight`, `rank`, `text_unit_ids`, `attr_<key>`, `attributes.filters.<key>` |
 | Claims | `id`, `subject_id`, `object_id`, `subject_name`, `object_name`, `type`, `status`, `description`, `source_text`, `text_unit_ids`, `attr_<key>`, `attributes.filters.<key>` |
-| Community reports | `id`, `community_id`, `name`, `summary`, `full_content`, `rank`, `rating`, `text_unit_ids`, `document_ids`, `level`, `depth`, `max_cut_depth`, `parent_community_id`, `child_community_ids`, `attr_<key>`, `attributes.<path>` |
+| Community reports | `id`, `community_id`, `name`, `summary`, `full_content`, `rank`, `rating`, `text_unit_ids`, `document_ids`, `level`, `depth`, `max_cut_depth`, `parent_community_id`, `child_community_ids`, `attr_<key>`, `attributes.filters.<key>` |
 | Neptune entity vertices | `id`, `name`, `type`, `description`, `rank`, `confidence`, `text_unit_ids`, `community_ids`, `attr_<key>` (where present) |
 | Neptune community vertices | `id`, `name`, `level`, `parent`, `size`, `period`, `children` |
 
@@ -855,11 +855,14 @@ steps on Neptune. Each store accepts the fields its indexer writes:
   (`indexing.reset: true`).
 - `attr_<key>` and `attributes.filters.<key>` name document attributes. A
   graph store holds none, so graph expansion keeps an expanded entity (the
-  seeds aside) only when one of its text units passes them. Other
+  seeds aside) only when its entities-index document, which carries the
+  filters of every document the entity comes from, passes them. Under a
+  document filter, local and mix also fill their chunk quota with the
+  entity-linked chunks that pass, not the top-ranked ones only. Other
   `attributes.<path>` keys name an item's own attributes and apply to the
   entities index only. On Neptune, `attr_<key>` is also an entity vertex
   property (`attr_role`), applied where present (a vertex without it passes),
-  but the text-unit check above still applies: `attr_role:buyer` selects
+  but the entities-index check above still applies: `attr_role:buyer` selects
   nothing unless documents carry a `role` filter. Every other key is strict
   on both stores.
 

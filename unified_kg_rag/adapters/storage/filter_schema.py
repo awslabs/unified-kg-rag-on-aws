@@ -13,8 +13,11 @@ On OpenSearch, dynamically mapped document fields are declared by prefix on
 the indexes whose documents carry them: ``attr_<key>`` (one per entry of an
 item's ``filters`` attribute) and ``attributes.<path>`` (the dynamic
 ``attributes`` object; relationships and claims hold only its ``filters``).
-Every index declares both, so an index whose documents lack the field
-returns nothing for that filter rather than being searched unfiltered.
+Every index declares ``attr_<key>`` and ``attributes.filters.<key>`` (the
+documents' filters), so an index whose documents lack such a field returns
+nothing for that filter rather than being searched unfiltered. Only the
+entities index declares the rest of ``attributes.<path>`` (an entity's own
+attributes); the other indexes drop such a key, as they drop ``type``.
 Graph vertices hold no document filters: strategies check graph expansion
 against the text units (``BaseSearchStrategy._vouch_by_text_units``).
 
@@ -54,6 +57,30 @@ class FilterFields:
 DOCUMENT_FILTERS_PREFIX = f"{ATTRIBUTES_OBJECT_PREFIX}{Constants.FILTERS.value}."
 
 
+DEFAULT_MAX_TERMS_COUNT = 65536
+DEFAULT_MAX_RESULT_WINDOW = 10000
+
+
+def index_setting(settings: dict[str, Any], name: str, default: int) -> int:
+    """``settings[name]``, also when written ``index.<name>``.
+
+    OpenSearch takes either spelling of an index setting.
+    """
+    return int(settings.get(name, settings.get(f"index.{name}", default)))
+
+
+def id_batch_size(settings: dict[str, Any]) -> int:
+    """Ids one fetch by id can name: OpenSearch's ``max_terms_count`` per
+    ``terms`` clause and ``max_result_window`` hits."""
+    return max(
+        1,
+        min(
+            index_setting(settings, "max_terms_count", DEFAULT_MAX_TERMS_COUNT),
+            index_setting(settings, "max_result_window", DEFAULT_MAX_RESULT_WINDOW),
+        ),
+    )
+
+
 def document_filters(filters: dict[str, Any] | None) -> dict[str, Any]:
     """The document attribute keys of ``filters``: ``attr_<key>`` and
     ``attributes.filters.<key>``, an entry of the documents' ``filters``
@@ -76,7 +103,14 @@ def union_filter_fields(items: Iterable[FilterFields]) -> FilterFields:
     return FilterFields(frozenset(fields), frozenset(prefixes))
 
 
-_OPENSEARCH_ATTRIBUTE_PREFIXES = frozenset(
+# Document filters (``document_filters``): every index carries them.
+_OPENSEARCH_DOCUMENT_PREFIXES = frozenset(
+    {ATTRIBUTE_KEY_PREFIX, DOCUMENT_FILTERS_PREFIX}
+)
+# Entities also carry their own attributes (``attributes.role``), which no
+# other index holds: such a key leaves the other indexes unfiltered, as
+# ``type`` does, instead of emptying them.
+_OPENSEARCH_ENTITY_PREFIXES = frozenset(
     {ATTRIBUTE_KEY_PREFIX, ATTRIBUTES_OBJECT_PREFIX}
 )
 
@@ -93,7 +127,7 @@ def opensearch_filter_fields(
     return {
         "text_units": FilterFields(
             frozenset({"id", "text", *translated, "community_ids", "n_tokens"}),
-            _OPENSEARCH_ATTRIBUTE_PREFIXES,
+            _OPENSEARCH_DOCUMENT_PREFIXES,
         ),
         "entities": FilterFields(
             frozenset(
@@ -108,7 +142,7 @@ def opensearch_filter_fields(
                     "text_unit_ids",
                 }
             ),
-            _OPENSEARCH_ATTRIBUTE_PREFIXES,
+            _OPENSEARCH_ENTITY_PREFIXES,
         ),
         "relationships": FilterFields(
             frozenset(
@@ -124,7 +158,7 @@ def opensearch_filter_fields(
                     "text_unit_ids",
                 }
             ),
-            _OPENSEARCH_ATTRIBUTE_PREFIXES,
+            _OPENSEARCH_DOCUMENT_PREFIXES,
         ),
         "claims": FilterFields(
             frozenset(
@@ -141,7 +175,7 @@ def opensearch_filter_fields(
                     "text_unit_ids",
                 }
             ),
-            _OPENSEARCH_ATTRIBUTE_PREFIXES,
+            _OPENSEARCH_DOCUMENT_PREFIXES,
         ),
         "community_reports": FilterFields(
             frozenset(
@@ -162,7 +196,7 @@ def opensearch_filter_fields(
                     "child_community_ids",
                 }
             ),
-            _OPENSEARCH_ATTRIBUTE_PREFIXES,
+            _OPENSEARCH_DOCUMENT_PREFIXES,
         ),
     }
 

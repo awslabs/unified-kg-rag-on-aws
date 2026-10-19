@@ -580,10 +580,11 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
         # steps — `related_chunk_number` (5) chunks per matched entity/relationship, then
         # a truncation of the combined pool to `chunk_top_k` — so with 40 KG hits its
         # pool is far larger than a flat top_k=10 before the final cut.
+        limit = self._chunk_stream_top_k(query.top_k)
         chunk_ids = self._collect_linked_chunk_ids(
             entity_results,
             relationship_results,
-            limit=self._chunk_stream_top_k(query.top_k),
+            limit=self._candidate_limit(query, limit),
             exclude=exclude,
         )
         if not chunk_ids:
@@ -601,7 +602,9 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
         )
         if not results:
             return {}
-        return {"lightrag_linked_chunks": self._restore_rank(results, chunk_ids)}
+        return {
+            "lightrag_linked_chunks": self._restore_rank(results, chunk_ids)[:limit]
+        }
 
     @staticmethod
     def _relationship_endpoint_ids(

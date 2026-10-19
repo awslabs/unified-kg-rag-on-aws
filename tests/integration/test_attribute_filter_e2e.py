@@ -103,22 +103,141 @@ def test_a_filter_keeps_only_the_matching_documents_content(
         assert filtered.search_results.results, strategy
 
 
-def _stored_relationship_filters(config: Any, providers: Any) -> dict[str, Any]:
-    prefix = config.indexing.opensearch.relationships_index_prefix
-    return {
-        f"{h['_source']['source_name']}-{h['_source']['target_name']}": h[
-            "_source"
-        ].get("attr_category")
-        for h in e2e._stored(config, providers, prefix)
-    }
+def _stored_filters(config: Any, providers: Any) -> dict[str, Any]:
+    """Each stored entity, relationship and claim's document filters (both
+    fields; a null field matches no filter, so it counts as absent)."""
+    o = config.indexing.opensearch
+    stored: dict[str, Any] = {}
+    for kind, prefix, name in (
+        ("entity", o.entities_index_prefix, ("name",)),
+        ("relationship", o.relationships_index_prefix, ("source_name", "target_name")),
+        ("claim", o.claims_index_prefix, ("subject_name", "object_name")),
+    ):
+        for hit in e2e._stored(config, providers, prefix):
+            source = hit["_source"]
+            label = "-".join(str(source.get(n)) for n in name)
+            attr = {
+                k: v
+                for k, v in source.items()
+                if k.startswith("attr_") and v is not None
+            }
+            nested = {
+                k: v
+                for k, v in (
+                    (source.get("attributes") or {}).get("filters") or {}
+                ).items()
+                if v is not None
+            }
+            assert attr == {f"attr_{k}": v for k, v in nested.items()}, (kind, label)
+            stored[f"{kind} {label}"] = nested
+    return stored
 
 
+# One relationship and one claim (Acme -> Buyer) both documents state.
+_CONTRACT = "Acme supplies Buyer."
+_LOGISTICS = "Acme ships to Buyer."
+
+
+@pytest.mark.parametrize(
+    ("kept", "after"),
+    [
+        ({"category": "contract"}, {"category": "contract"}),  # a key dropped
+        ({}, {}),  # no filters left
+    ],
+    ids=["key-dropped", "no-filters-left"],
+)
 def test_incremental_runs_keep_relationship_filters_current(
-    tmp_path: Path,
+    tmp_path: Path, kept: dict[str, Any], after: dict[str, Any]
 ) -> None:
-    # The relationship index carries its documents' filters, so the store
-    # applies an attribute filter itself: an edge both documents state
-    # carries both values, and one document's removal narrows them.
+    # The entity, relationship and claim indexes carry their documents'
+    # filters, so the store applies an attribute filter itself: an item both
+    # documents state carries both values, a document's removal narrows them
+    # (a lineage update, which must clear the keys only it had), and a claim
+    # merged with an unfiltered document's keeps the filtered one's.
+    from tests.integration import test_claim_convergence as claims
+
+    def respond(system: str, human: str) -> str:
+        # Extraction with claims, as the claim convergence tests; query-time
+        # prompts as the embedded end-to-end test.
+        if "knowledge graph extraction expert" in system or (
+            "claim extraction specialist" in system
+        ):
+            return claims._respond(system, human)
+        return e2e._respond(system, human)
+
+    config = e2e._config(tmp_path / "stores", tmp_path / "viz")
+    config.processing.claim_extraction.enabled = True
+    server = FakeOllama(respond, e2e.ANSWER, e2e.DIM)
+    providers = e2e._providers(
+        config, server, e2e.FakeCrossEncoder("synthetic-reranker")
+    )
+    source = tmp_path / "corpus"
+    source.mkdir()
+    per_file = {
+        "contract": kept,
+        "logistics": {"category": "logistics", "clearance": "secret"},
+    }
+    create = BaseChunker._create_text_unit
+
+    def with_filters(self: BaseChunker, chunk_text: str, document: Any, *a: Any) -> Any:
+        if filters := per_file[Path(document.file_name).stem]:
+            document.metadata["filters"] = dict(filters)
+        return create(self, chunk_text, document, *a)
+
+    labels = (
+        "entity Acme",
+        "entity Buyer",
+        "relationship Acme-Buyer",
+        "claim Acme-Buyer",
+    )
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(BaseChunker, "_create_text_unit", with_filters)
+        (source / "logistics.txt").write_text(_LOGISTICS)
+        context = e2e._ingest(config, providers, source, tmp_path / "run-1")
+        assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+        # The other document joins: a claim merged into the stored one keeps
+        # its filters (they were read back without them).
+        (source / "contract.txt").write_text(_CONTRACT)
+        context = e2e._ingest(config, providers, source, tmp_path / "run-2")
+        assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+        both = {
+            k: sorted(
+                {*([v] if isinstance(v, str) else v), *([kept[k]] if k in kept else [])}
+            )
+            for k, v in per_file["logistics"].items()
+        }
+        both = {k: v[0] if len(v) == 1 else v for k, v in both.items()}
+        stored = _stored_filters(config, providers)
+        assert {label: stored[label] for label in labels} == dict.fromkeys(labels, both)
+
+        (source / "logistics.txt").unlink()
+        context = e2e._ingest(config, providers, source, tmp_path / "run-3")
+        assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    stored = _stored_filters(config, providers)
+    assert {label: stored[label] for label in labels} == dict.fromkeys(labels, after)
+    rag = GraphRAGChain(config, providers=providers)
+    try:
+        for strategy in (SearchStrategy.LOCAL, SearchStrategy.MIX):
+            for filters in (
+                {"attr_category": "logistics"},
+                {"attr_clearance": "secret"},
+            ):
+                out = _ask(rag, strategy, filters)
+                assert out.sources == [], (strategy, filters)
+    finally:
+        rag.close()
+
+
+@pytest.mark.parametrize(
+    "kept", [{"category": "contract"}, {}], ids=["other-filters", "no-filters"]
+)
+def test_a_removed_documents_filter_keys_stop_matching(
+    tmp_path: Path, kept: dict[str, Any]
+) -> None:
+    # Regression: the lineage update after a removal is a partial update,
+    # which kept the removed document's ``clearance`` on the entities and
+    # the relationship, so a ``clearance:secret`` filter still returned the
+    # remaining document's content.
     config = e2e._config(tmp_path / "stores", tmp_path / "viz")
     server = FakeOllama(e2e._respond, e2e.ANSWER, e2e.DIM)
     providers = e2e._providers(
@@ -128,32 +247,28 @@ def test_incremental_runs_keep_relationship_filters_current(
     source.mkdir()
     (source / "contract.txt").write_text("Vendor supplies widgets to Buyer.")
     (source / "logistics.txt").write_text("Vendor ships widgets for Buyer.")
+    per_file = {
+        "contract": kept,
+        "logistics": {"category": "logistics", "clearance": "secret"},
+    }
     create = BaseChunker._create_text_unit
 
-    def with_category(
-        self: BaseChunker, chunk_text: str, document: Any, *a: Any
-    ) -> Any:
-        document.metadata["filters"] = {"category": Path(document.file_name).stem}
+    def with_filters(self: BaseChunker, chunk_text: str, document: Any, *a: Any) -> Any:
+        if filters := per_file[Path(document.file_name).stem]:
+            document.metadata["filters"] = dict(filters)
         return create(self, chunk_text, document, *a)
 
     with pytest.MonkeyPatch.context() as patch:
-        patch.setattr(BaseChunker, "_create_text_unit", with_category)
+        patch.setattr(BaseChunker, "_create_text_unit", with_filters)
         context = e2e._ingest(config, providers, source, tmp_path / "run-1")
         assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
-        assert _stored_relationship_filters(config, providers) == {
-            "Vendor-Buyer": ["contract", "logistics"]
-        }
-
         (source / "logistics.txt").unlink()
         context = e2e._ingest(config, providers, source, tmp_path / "run-2")
         assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
-    assert _stored_relationship_filters(config, providers) == {
-        "Vendor-Buyer": "contract"
-    }
     rag = GraphRAGChain(config, providers=providers)
     try:
         for strategy in (SearchStrategy.LOCAL, SearchStrategy.MIX):
-            out = _ask(rag, strategy, {"attr_category": "logistics"})
-            assert out.sources == [], strategy
+            for key in ("attr_clearance", "attributes.filters.clearance"):
+                assert _ask(rag, strategy, {key: "secret"}).sources == [], strategy
     finally:
         rag.close()

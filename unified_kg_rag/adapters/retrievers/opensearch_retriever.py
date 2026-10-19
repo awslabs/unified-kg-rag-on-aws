@@ -1,6 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
+import json
 import time
 from collections import OrderedDict
 from collections.abc import Coroutine, Sequence
@@ -17,7 +18,10 @@ from unified_kg_rag.adapters.storage.embedding_settings import (
     stored_embedding_settings,
 )
 from unified_kg_rag.adapters.storage.filter_schema import (
+    DEFAULT_MAX_RESULT_WINDOW,
+    DEFAULT_MAX_TERMS_COUNT,
     FilterFields,
+    index_setting,
     opensearch_filter_fields,
     union_filter_fields,
 )
@@ -57,12 +61,15 @@ from unified_kg_rag.shared.utils.scripts import (
 
 logger = get_logger(__name__)
 
+# How long an attribute probe's outcome is reused, and how many are kept.
+_PROBE_TTL_SECONDS = 30.0
+_PROBE_CACHE_SIZE = 256
+
 # OpenSearch's kNN rejection of a query vector of another dimension than the
 # index's (the reason of a 400).
 _INVALID_DIMENSION_MARKER = "query vector has invalid dimension"
 # OpenSearch's default index.max_terms_count: the most values one terms query
 # may hold.
-_DEFAULT_MAX_TERMS_COUNT = 65536
 # How much of a query the lexical (multi_match) side searches for. Lucene
 # allows 1,024 clauses per query (indices.query.bool.max_clause_count), and a
 # multi_match makes one per analyzed term per field, so a long question failed
@@ -108,14 +115,6 @@ def _lexical_query_text(text: str, max_terms: int) -> tuple[str, int]:
     return text, terms
 
 
-def _index_setting(settings: dict[str, Any], name: str, default: int) -> int:
-    """``settings[name]``, also when written ``index.<name>``.
-
-    OpenSearch takes either spelling of an index setting.
-    """
-    return int(settings.get(name, settings.get(f"index.{name}", default)))
-
-
 async def _discard(tasks: Sequence[asyncio.Future[Any]]) -> None:
     """Cancel ``tasks`` and wait for them, ignoring how they ended."""
     for task in tasks:
@@ -153,8 +152,10 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         # Hard ceiling on hits per query (OpenSearch index.max_result_window
         # default). Fetch-by-id size may be floored up to the terms-filter size
         # but never beyond this, since the index is created with the default.
-        self._max_result_window = _index_setting(
-            self._opensearch_config.index_settings, "max_result_window", 10000
+        self._max_result_window = index_setting(
+            self._opensearch_config.index_settings,
+            "max_result_window",
+            DEFAULT_MAX_RESULT_WINDOW,
         )
         self._embedding_factory = embedding_factory
         # Queries embed with the model and dimension the indexer embeds with
@@ -172,6 +173,10 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         # Whether skipping the check for want of permission was logged.
         self._embedding_check_denied_logged = False
         self._query_embedding_cache: OrderedDict[str, list[float]] = OrderedDict()
+        # Recent attribute-probe outcomes by (alias, probe): the sub-searches
+        # of one query (DRIFT's follow-ups above all) probe the same index
+        # with the same filters, a request each (``_probe``).
+        self._probe_outcomes: OrderedDict[str, tuple[float, bool]] = OrderedDict()
         # One embedding call per text in flight: concurrent sub-queries of one
         # search share it instead of each missing the cache.
         self._pending_embeddings: dict[str, asyncio.Future[list[float]]] = {}
@@ -823,10 +828,10 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         Raises:
             InvalidFilterError: A list filter has more values than that.
         """
-        limit = _index_setting(
+        limit = index_setting(
             self._opensearch_config.index_settings,
             "max_terms_count",
-            _DEFAULT_MAX_TERMS_COUNT,
+            DEFAULT_MAX_TERMS_COUNT,
         )
         for key, value in (filters or {}).items():
             if isinstance(value, list) and len(value) > limit:
@@ -857,7 +862,7 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         searches = [asyncio.ensure_future(self._search(alias, b)) for b in bodies]
         if probe is not None:
             try:
-                found = await self._search(alias, probe)
+                found = await self._probe(alias, probe)
             except BaseException:
                 await _discard(searches)
                 raise
@@ -881,6 +886,28 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         if len(responses) == 1:
             return [self._parse_hit(hit) for hit in responses[0]]
         return self._fuse(responses, size)
+
+    async def _probe(
+        self, alias: str, probe: dict[str, Any]
+    ) -> list[dict[str, Any]] | Exception | bool:
+        """``probe``'s hits on ``alias``, or a recent outcome of the same probe.
+
+        Outcomes are kept ``_PROBE_TTL_SECONDS``: long enough for the
+        sub-searches of one query, short enough that a document an
+        ingestion adds is probed again soon. A failed probe is not kept.
+        """
+        key = f"{alias}\n{json.dumps(probe, sort_keys=True, default=str)}"
+        now = time.monotonic()
+        kept = self._probe_outcomes.get(key)
+        if kept is not None and now - kept[0] < _PROBE_TTL_SECONDS:
+            return kept[1]
+        found = await self._search(alias, probe)
+        if not isinstance(found, Exception):
+            self._probe_outcomes[key] = (now, bool(found))
+            self._probe_outcomes.move_to_end(key)
+            while len(self._probe_outcomes) > _PROBE_CACHE_SIZE:
+                self._probe_outcomes.popitem(last=False)
+        return found
 
     def _fuse(
         self, sub_hits: list[list[dict[str, Any]]], size: int

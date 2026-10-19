@@ -573,6 +573,10 @@ def derive(
                         "status": match_claim.status,
                         "description": match_claim.description,
                         "source_text": match_claim.source_text,
+                        # Its text units' placement and document filters, as
+                        # a relationship's: a stored claim's are a superset
+                        # after a removal (or none, read back without them).
+                        "attributes": dict(match_claim.attributes or {}),
                         "subject_name": names.get(
                             match_claim.subject_id, match_claim.subject_name
                         ),

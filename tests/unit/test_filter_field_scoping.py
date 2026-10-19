@@ -203,6 +203,30 @@ async def test_attribute_key_filters_only_attribute_bearing_indexes(
         assert fields(name) == {"attr_category"}, name
 
 
+async def test_an_entity_attribute_key_filters_only_the_entities_index(
+    config: Config,
+) -> None:
+    # Regression: every index declared the whole ``attributes.`` prefix, so
+    # an entity's own attribute (``attributes.role``) emptied the text
+    # units, relationships, claims and reports. Like ``type``, it applies
+    # where it exists; document filters apply everywhere.
+    p = _prefixes(config)
+    retriever, client = await _search_all(config, {"attributes.role": "buyer"})
+
+    def fields(name: str) -> set[str]:
+        return _filtered_fields(client.searches[_alias(retriever, p[name])])
+
+    assert fields("entities") == {"attributes.role"}
+    for name in ("text_units", "relationships", "claims", "reports"):
+        assert fields(name) == set(), name
+
+    retriever, client = await _search_all(
+        config, {"attributes.filters.category": "research"}
+    )
+    for name in ("text_units", "entities", "relationships", "claims", "reports"):
+        assert fields(name) == {"attributes.filters.category"}, name
+
+
 async def test_declared_key_filters_only_declaring_indexes(config: Config) -> None:
     # ``type`` is declared on entities and claims only.
     p = _prefixes(config)
