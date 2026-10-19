@@ -103,11 +103,21 @@ def test_a_batch_that_is_not_abandoned_still_retries() -> None:
 
 
 @pytest.mark.usefixtures("sigint_raises")
-def test_an_abandoned_batch_cuts_a_backoff_wait_short() -> None:
+def test_an_abandoned_batch_cuts_a_backoff_wait_short(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     # The backoff waits on the abandonment flag, not in time.sleep: an item
     # backing off when the batch is abandoned ends at once, not after the
-    # wait (here up to a minute).
+    # wait (here a minute).
     import time
+
+    import tenacity
+
+    # A fixed backoff: a random one sometimes drew under the 0.3 s below, and
+    # the second attempt ran before the interrupt.
+    monkeypatch.setattr(
+        tenacity, "wait_random_exponential", lambda **_: tenacity.wait_fixed(60)
+    )
 
     calls: list[threading.Thread] = []
     failed = threading.Event()

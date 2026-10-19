@@ -431,3 +431,34 @@ def test_a_deleted_documents_write_ahead_resets_its_failure_count() -> None:
     record = harness.store.get(d_id)
     assert record is not None
     assert (record.status, record.failure_count) == (DocStatus.PENDING, 0)
+
+
+def test_a_lost_lease_writes_no_deleted_document_ahead() -> None:
+    # The deleted documents' write-ahead is a registry write: a run that
+    # lost its lease must not record them PENDING over the new holder's.
+    from unified_kg_rag.shared import NamespaceLeaseError
+    from unified_kg_rag.shared.write_fence import (
+        install_write_fence,
+        remove_write_fence,
+    )
+
+    class _Lost:
+        def check(self) -> None:
+            raise NamespaceLeaseError("lost")
+
+    harness = IncrementalRun()
+    before: Corpus = {
+        "/c/a.txt": [[("Vendor", "Depot", 1)]],
+        "/c/d.txt": [[("Buyer", "Bank", 1)]],
+    }
+    harness.run(before)
+    inc = IncrementalIndexer(harness.store, harness.manager)
+    delta, _ = detect_delta([document("/c/a.txt", before["/c/a.txt"])], inc.doc_status)
+    token = install_write_fence(_Lost())
+    try:
+        with pytest.raises(NamespaceLeaseError):
+            inc.remove_changed_and_deleted(delta)
+    finally:
+        remove_write_fence(token)
+    record = harness.store.get(delta.deleted[0])
+    assert record is not None and record.status is DocStatus.PROCESSED

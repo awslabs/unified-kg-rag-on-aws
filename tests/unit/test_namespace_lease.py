@@ -320,3 +320,51 @@ def test_a_stage_start_does_not_wait_for_the_takeover(
         lease._lose("taken")
         with pytest.raises(NamespaceLeaseError):
             check_fences_held()  # a lost lease still stops it
+
+
+def test_a_takeover_wait_ends_when_the_run_ends(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A worker thread waiting for the takeover when its run ends (the lease
+    # is given up) stops waiting at once and fails its write.
+    import threading
+
+    _short_requests(monkeypatch, 30)
+    store = FakeDocStatusStore()
+    store.leases["ns"] = ("dead-run", time.time() - 1)
+    outcome: list[BaseException] = []
+
+    def write(lease: NamespaceLease) -> None:
+        try:
+            lease.check()
+        except BaseException as e:  # noqa: BLE001 - collected
+            outcome.append(e)
+
+    with NamespaceLease(store, "ns", 60) as lease:
+        worker = threading.Thread(target=write, args=(lease,))
+        worker.start()
+        time.sleep(0.2)
+    worker.join(timeout=2)
+    assert not worker.is_alive()
+    assert [type(e) for e in outcome] == [NamespaceLeaseError]
+
+
+def test_the_pipeline_lease_ends_a_takeover_wait_on_a_stop() -> None:
+    # The pipeline passes its stop to the lease (interrupt), so a SIGTERM
+    # also ends a worker thread's takeover wait.
+    import signal
+
+    from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
+    from unified_kg_rag.domain.models import Config
+    from unified_kg_rag.shared import PipelineInterrupted
+
+    pipe = object.__new__(DataIngestionPipeline)
+    pipe.config = Config()
+    pipe._doc_status = FakeDocStatusStore()
+    pipe._stop_signal = None
+    lease = pipe._namespace_lease()
+    assert isinstance(lease, NamespaceLease) and lease.interrupt is not None
+    lease.interrupt()  # no stop requested: nothing happens
+    pipe._stop_signal = signal.SIGTERM
+    with pytest.raises(PipelineInterrupted):
+        lease.interrupt()
