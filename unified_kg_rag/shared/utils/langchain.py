@@ -396,9 +396,7 @@ class BatchProcessor(BaseModel):
         aretrying = tenacity.AsyncRetrying(**policy)
 
         def decorator(func: Callable) -> Callable:
-            if inspect.iscoroutinefunction(func) or inspect.iscoroutinefunction(
-                getattr(func, "__call__", None)  # noqa: B004 - async callables
-            ):
+            if inspect.iscoroutinefunction(func):
 
                 @functools.wraps(func)
                 async def acall(*args: Any, **kwargs: Any) -> Any:

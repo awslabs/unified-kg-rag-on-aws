@@ -276,7 +276,7 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             if query_vector is not None:
                 await self._check_embedding_settings(index_prefixes, query.suffix)
 
-            self._check_terms_filter_sizes(query.filters)
+            self._check_filter_values(query.filters)
             search_tasks = self._create_search_tasks(
                 query, search_type, index_prefixes, query_vector
             )
@@ -810,7 +810,7 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
 
         return clauses
 
-    def _check_terms_filter_sizes(self, filters: dict[str, Any] | None) -> None:
+    def _check_filter_values(self, filters: dict[str, Any] | None) -> None:
         """Reject a list filter longer than one ``terms`` query may be.
 
         A ``terms`` query is one clause however many values it holds, so a

@@ -110,7 +110,7 @@ reset 동안 벡터 질의는 새 인덱스로 하나씩 바뀔 때까지 이전
 | 단계 체크포인트(로컬) | `<--cache-directory>/<pipeline_id>/`(기본값 `cache/`) | 재개할 때 재사용 |
 | 단계 체크포인트(S3) | `s3://<bucket>/<--s3-prefix>/<pipeline_id>/`(기본값 `pipeline-runs`) | `--s3-sync`일 때 단계마다, 그리고 SIGTERM을 받으면 올리므로 새 태스크가 이어서 재개함. 다운로드나 마지막 업로드가 실패하면 `CacheSyncError`로 실행이 실패함. 단계마다 또는 멈출 때 올리는 업로드가 실패하면 경고만 남기고(다음 업로드가 다시 시도), 쓰기 임대를 잃은 뒤 멈추면 올리지 않음. `cache.ttl_seconds`가 아니라 버킷 수명 주기로 만료 |
 | LLM 응답 캐시 | `<stage checkpoint dir>/llm-cache/` | 같은 파이프라인 ID로 다시 실행할 때 재사용. `cache.llm_responses.enabled: false`로 끄고, `--force-rebuild`는 무시함 |
-| 추출 저장소 | `graphrag-extraction-records-<suffix>`(`indexing.opensearch.extraction_records_index_prefix`) | 저장된 텍스트 단위가 가리키는 동안 이후 실행이 재사용하는 청크별 추출 결과. `clear`와 `--force-rebuild`는 유지하며, 통째로 버리려면 인덱스를 삭제 |
+| 추출 저장소 | `graphrag-extraction-records-<suffix>`(`indexing.opensearch.extraction_records_index_prefix`) | 저장된 텍스트 단위가 가리키는 동안 이후 실행이 재사용하는 청크별 추출 결과와, 문서 제거가 끝날 때까지 남겨 두는 기록(`pending-strip#<text unit id>`, 재개한 제거가 필요로 함). `clear`와 `--force-rebuild`는 유지하며, 통째로 버리려면 성공한 실행 뒤에만 인덱스를 삭제하거나 이어서 `indexing.reset: true`로 실행 |
 | 임베딩 캐시 | `s3://<aws.s3.bucket_name>/embedding-cache/cache.json` | `indexing.opensearch.persist_embedding_cache: true`일 때만 |
 | 시각화 데이터 | `graph.visualization.outputs_directory`가 없으면 `<cache directory>/<pipeline_id>/visualization/` | 단계 캐시와 함께 동기화(`.json`만) |
 
@@ -633,7 +633,7 @@ Langfuse에는 `langfuse.observation.type`(모델 호출은 `generation`, `embed
 | 메시지(요약) | 의미 | 조치 |
 |---|---|---|
 | `No indices found for suffix '<suffix>' ...` | 그 접미사로 수집한 데이터가 없음 | 수집하거나 코퍼스의 접미사로 질의 |
-| `InvalidFilterError` | 전략이 읽는 어떤 저장소도 그 필터 키를 선언하지 않음 | 메시지에 나온 키를 씀 |
+| `InvalidFilterError: Unknown filter key(s) ...` / `... has no value (None)` / `... range bound of None` / `... not a scalar` / `... lists N values ...` | 전략이 읽는 어떤 저장소도 그 필터 키를 선언하지 않음, 필터 값이 `None`임(단독, 목록 안, 범위 경계 모두. OpenSearch는 그런 질의를 거부함), 목록 안에 목록이나 매핑이 있음, 또는 목록 필터의 값이 `terms` 질의 하나가 받는 수(`index.max_terms_count`, 기본값 65,536)보다 많음 | 메시지에 나온 키를 씀, `None`을 빼거나 일치시킬 값을 줌, 문자열·숫자·불리언만 나열함, 목록을 줄임(또는 `indexing.opensearch.index_settings`에서 `max_terms_count`를 올리고 다시 인덱싱) |
 | LightRAG `mix` / `hybrid` 결과가 없음 | 관계 인덱스가 없거나 키워드를 추출하지 못함 | 관계 인덱스가 있는지 확인. 짧은 질의는 `raw_query_fallback_max_len` 이하일 때만 원래 질의를 씀 |
 
 ### 로컬 모드

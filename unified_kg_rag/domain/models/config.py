@@ -1963,19 +1963,19 @@ class OpenSearchIndexingConfig(BaseModel):
         default="graphrag-text-units",
         min_length=1,
         max_length=100,
-        description="Index name prefix for text unit documents",
+        description="Index name prefix for text unit documents (lowercase letters, digits, '-' and '_', not starting with '-' or '_')",
     )
     entities_index_prefix: str = Field(
         default="graphrag-entities",
         min_length=1,
         max_length=100,
-        description="Index name prefix for entity documents",
+        description="Index name prefix for entity documents (lowercase letters, digits, '-' and '_', not starting with '-' or '_')",
     )
     community_reports_index_prefix: str = Field(
         default="graphrag-community-reports",
         min_length=1,
         max_length=100,
-        description="Index name prefix for community report documents",
+        description="Index name prefix for community report documents (lowercase letters, digits, '-' and '_', not starting with '-' or '_')",
     )
     build_relationship_vector_index: bool = Field(
         default=True,
@@ -1993,13 +1993,13 @@ class OpenSearchIndexingConfig(BaseModel):
         default="graphrag-relationships",
         min_length=1,
         max_length=100,
-        description="Index name prefix for relationship documents (LightRAG global retrieval)",
+        description="Index name prefix for relationship documents (LightRAG global retrieval) (lowercase letters, digits, '-' and '_', not starting with '-' or '_')",
     )
     claims_index_prefix: str = Field(
         default="graphrag-claims",
         min_length=1,
         max_length=100,
-        description="Index name prefix for claim (covariate) documents",
+        description="Index name prefix for claim (covariate) documents (lowercase letters, digits, '-' and '_', not starting with '-' or '_')",
     )
     extraction_records_index_prefix: str = Field(
         default="graphrag-extraction-records",
@@ -2009,7 +2009,11 @@ class OpenSearchIndexingConfig(BaseModel):
         "unit's extracted entities, relationships and claims, keyed by its "
         "text and the extraction settings, so an unchanged chunk is not "
         "extracted again (no embeddings). A full build or reset keeps only "
-        "the records its text units name",
+        "the records its text units name. It also holds the notes a "
+        "removal keeps until it finished (pending-strip#<text unit id>), "
+        "which a resumed removal needs: delete the index only after a run "
+        "that succeeded, or run indexing.reset next. Lowercase letters, "
+        "digits, '-' and '_', not starting with '-' or '_'",
     )
     default_analyzer: str = Field(
         default="standard",

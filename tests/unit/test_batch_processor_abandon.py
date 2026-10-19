@@ -100,3 +100,42 @@ def test_a_batch_that_is_not_abandoned_still_retries() -> None:
     )
     assert results == [BATCH_ITEM_FAILED]
     assert len(calls) == 3
+
+
+@pytest.mark.usefixtures("sigint_raises")
+def test_an_abandoned_batch_cuts_a_backoff_wait_short() -> None:
+    # The backoff waits on the abandonment flag, not in time.sleep: an item
+    # backing off when the batch is abandoned ends at once, not after the
+    # wait (here up to a minute).
+    import time
+
+    calls: list[threading.Thread] = []
+    failed = threading.Event()
+
+    def fails(_: dict[str, Any]) -> Any:
+        calls.append(threading.current_thread())
+        failed.set()
+        raise OutputParserException("malformed")
+
+    def interrupt_during_the_backoff() -> None:
+        failed.wait(10)
+        time.sleep(0.3)  # the item is backing off now
+        os.kill(os.getpid(), signal.SIGINT)
+
+    processor = BatchProcessor(
+        max_concurrency=1,
+        max_attempts=3,
+        retry_multiplier=60.0,
+        retry_max_wait=60,
+        call_timeout_seconds=0,
+    )
+    threading.Thread(target=interrupt_during_the_backoff).start()
+    with pytest.raises(KeyboardInterrupt):
+        processor.execute_with_fallback(
+            [{"x": 1}], lambda items: items, fails, "task", show_progress=False
+        )
+    started = time.time()
+    calls[0].join(timeout=10)
+    assert not calls[0].is_alive()
+    assert time.time() - started < 5
+    assert len(calls) == 1
