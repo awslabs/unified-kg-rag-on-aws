@@ -417,6 +417,34 @@ def test_a_third_spellings_statement_on_a_whole_marks_a_leftover_split(
     assert left == {"e-inc": "e-whole"}
 
 
+def test_a_strip_note_that_cannot_be_written_stops_the_strip(mocker) -> None:
+    # Without its note a retry could not finish the merge: the strip fails
+    # (its removal is retried) rather than write the merged items.
+    from unified_kg_rag.ports.indexer import IndexingStats
+    from unified_kg_rag.shared import DataProcessingError
+
+    manager, _, vector = _manager()
+    failed = IndexingStats(total_items=1)
+    failed.add_error("store down", count=1)
+    mocker.patch.object(vector, "write_extraction_records", return_value=failed)
+
+    with pytest.raises(DataProcessingError):
+        manager._note_pending_strip("default", ["t1"], ["e"], [])
+
+
+def test_a_strip_note_left_behind_only_logs(mocker, caplog) -> None:
+    # Deleting the note is best-effort: one left makes a retry strip the
+    # noted items again, which changes nothing.
+    manager, _, vector = _manager()
+    mocker.patch.object(
+        vector, "delete_extraction_records", side_effect=RuntimeError("store down")
+    )
+
+    manager._clear_pending_strip("default", ["t1"])
+
+    assert "Deleting the strip notes" in caplog.text
+
+
 def test_only_a_deleted_communitys_id_leaves_a_stripped_entity() -> None:
     # Removing t1 deletes "c-only" (it cites no other unit) and keeps
     # "c-both": the stripped entity drops the one id, not both.

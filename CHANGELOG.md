@@ -1279,6 +1279,15 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Incremental indexing: a removal whose strip merges two spellings of a
+  name ("Initech" left stated only where "Initech Corp" is) and is killed
+  after the merged entity is written, before the other spelling's old id is
+  deleted, is finished by the resumed run. Neither spelling cites the
+  removed text units any more, so the resumed removal found nothing to do
+  and the other spelling stayed with its edges; the strip now notes the
+  items it merges in the extraction store (`pending-strip#<text unit id>`)
+  until their old ids are deleted. 5 of 24 crash points of one such removal
+  diverged from a full build; none do now (#PR).
 - Incremental indexing: when a spelling splits off a stored entity, the
   stored claims naming that spelling follow it even when they were resolved
   to another entity of the same name key ("Depot owes Acme Ltd" stayed on
