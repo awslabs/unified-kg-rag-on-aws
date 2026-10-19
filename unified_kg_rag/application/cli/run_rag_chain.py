@@ -554,7 +554,7 @@ class RAGChainRunner:
         console.print("  new            - Start a new conversation")
         console.print("  help           - Show this help message")
         console.print(
-            "  set-filter <k:v> - Add/update filter (e.g., set-filter type:PERSON)"
+            "  set-filter <k:v> - Add/update filter (e.g., set-filter type:person)"
         )
         console.print("  clear-filters  - Remove all filters")
         console.print("  show-config    - Display current configuration")

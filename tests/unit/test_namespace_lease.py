@@ -14,11 +14,9 @@ import pytest
 
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from tests.fixtures.incremental_runs import IncrementalRun
-from unified_kg_rag.application.ingestion.namespace_lease import (
-    NamespaceLease,
-    check_lease,
-)
+from unified_kg_rag.application.ingestion.namespace_lease import NamespaceLease
 from unified_kg_rag.shared import NamespaceLeaseError
+from unified_kg_rag.shared.write_fence import check_write_fence
 
 pytestmark = pytest.mark.unit
 
@@ -47,7 +45,7 @@ def test_the_heartbeat_renews_the_lease() -> None:
         # Renewed every 0.1 s: still held, so another run is refused.
         assert store.lease_holder("ns")[0] == lease.owner
         assert not store.try_acquire_lease("ns", "intruder", 60)
-        check_lease()
+        check_write_fence()
 
 
 def test_a_run_that_lost_its_lease_stops_before_writing() -> None:
@@ -57,10 +55,10 @@ def test_a_run_that_lost_its_lease_stops_before_writing() -> None:
         store.leases["ns"] = ("intruder", time.time() + 60)
         time.sleep(0.25)
         with pytest.raises(NamespaceLeaseError, match="lost the write lease"):
-            check_lease()
+            check_write_fence()
     # The lost lease is not released over the new holder.
     assert store.lease_holder("ns")[0] == "intruder"
-    check_lease()  # outside a leased run: no-op
+    check_write_fence()  # outside a leased run: no-op
 
 
 def test_failed_renewals_lose_the_lease_once_it_expired(monkeypatch) -> None:
@@ -73,7 +71,7 @@ def test_failed_renewals_lose_the_lease_once_it_expired(monkeypatch) -> None:
         monkeypatch.setattr(store, "try_acquire_lease", unreachable)
         time.sleep(0.45)
         with pytest.raises(NamespaceLeaseError, match="expired"):
-            check_lease()
+            check_write_fence()
 
 
 def test_incremental_writes_check_the_lease() -> None:

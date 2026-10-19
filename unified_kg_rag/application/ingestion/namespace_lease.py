@@ -48,7 +48,6 @@ from typing import TYPE_CHECKING
 from unified_kg_rag.shared import NamespaceLeaseError, get_logger
 from unified_kg_rag.shared.write_fence import (
     WriteFence,
-    check_write_fence,
     install_write_fence,
     remove_write_fence,
 )
@@ -64,15 +63,6 @@ logger = get_logger(__name__)
 _RENEWALS_PER_TERM = 6
 # How long the end of a run waits for a renewal in flight.
 _HEARTBEAT_JOIN_SECONDS = 5.0
-
-
-def check_lease() -> None:
-    """Raise if this run may not write any more: :class:`NamespaceLeaseError`
-    once its lease was lost, is about to expire or was released, and
-    ``PipelineInterrupted`` in a worker thread once a stop was requested.
-    An alias of :func:`~unified_kg_rag.shared.write_fence.check_write_fence`,
-    which asks every fence of the context (no-op outside a fenced run)."""
-    check_write_fence()
 
 
 def _when(epoch: float) -> str:

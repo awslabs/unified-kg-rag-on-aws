@@ -13,6 +13,7 @@ from unified_kg_rag.adapters.storage.embedding_settings import (
     resolve_embedding_dimension,
     stored_embedding_settings,
 )
+from unified_kg_rag.adapters.storage.filter_schema import ATTRIBUTE_KEY_PREFIX
 from unified_kg_rag.adapters.storage.search_engine import SearchEngineClient
 from unified_kg_rag.domain.ingestion.community_hierarchy import max_cut_depth
 from unified_kg_rag.domain.ingestion.contributions import RECORD_KEYS_ATTRIBUTE
@@ -1012,7 +1013,7 @@ class OpenSearchIndexer(VectorIndexer):
                         alias_prefix,
                         [item.id for item in chunk],
                         suffix,
-                        fields=[f"{Constants.ATTRIBUTE_PREFIX.value}_*", "attributes"],
+                        fields=[f"{ATTRIBUTE_KEY_PREFIX}*", "attributes"],
                     )
                 }
                 response = self.opensearch_client.bulk_update(
@@ -1176,7 +1177,7 @@ class OpenSearchIndexer(VectorIndexer):
         if not isinstance(filters, dict) or not filters:
             return {}
         doc: dict[str, Any] = {
-            f"{Constants.ATTRIBUTE_PREFIX.value}_{key}": value
+            f"{ATTRIBUTE_KEY_PREFIX}{key}": value
             for key, value in filters.items()
             if value is not None
         }
@@ -1194,9 +1195,8 @@ class OpenSearchIndexer(VectorIndexer):
         null, which no ``term`` filter matches.
         """
         update = cls._document_filter_properties(item)
-        prefix = f"{Constants.ATTRIBUTE_PREFIX.value}_"
         for key in stored:
-            if key.startswith(prefix) and key not in update:
+            if key.startswith(ATTRIBUTE_KEY_PREFIX) and key not in update:
                 update[key] = None
         key = Constants.FILTERS.value
         old = (stored.get("attributes") or {}).get(key)
@@ -1206,17 +1206,12 @@ class OpenSearchIndexer(VectorIndexer):
             update["attributes"] = {key: {**new, **dropped}}
         return update
 
-    @staticmethod
-    def _prepare_common_doc_properties(item: Any) -> dict[str, Any]:
-        doc = {"id": item.id}
-
-        if hasattr(item, "attributes") and item.attributes:
+    @classmethod
+    def _prepare_common_doc_properties(cls, item: Any) -> dict[str, Any]:
+        """``id``, the whole ``attributes`` and the document filter fields."""
+        doc: dict[str, Any] = {"id": item.id, **cls._document_filter_properties(item)}
+        if getattr(item, "attributes", None):
             doc["attributes"] = item.attributes
-            if filters := item.attributes.get(Constants.FILTERS.value, {}):
-                for key, value in filters.items():
-                    if value is not None:
-                        doc[f"{Constants.ATTRIBUTE_PREFIX.value}_{key}"] = value
-
         return doc
 
     def _index_item_type(

@@ -86,7 +86,6 @@ __all__ = [
     "retire_source_scopes",
     "retired_scope_groups",
     "scope_namespace",
-    "validate_retired_scopes",
 ]
 
 if TYPE_CHECKING:
@@ -379,20 +378,6 @@ def retired_scope_groups(
             RetiredScope(value.strip(), scopes, ambiguous and len(scopes) > 1)
         )
     return groups
-
-
-def validate_retired_scopes(
-    retired: Iterable[str], source_scope: str, namespace: str
-) -> list[str]:
-    """The registry scopes of the ``retired`` values taken as given (see
-    :func:`retired_scope_groups`)."""
-    return list(
-        dict.fromkeys(
-            scope
-            for group in retired_scope_groups(retired, source_scope, namespace)
-            for scope in group.scopes
-        )
-    )
 
 
 def _groups(retired_scopes: Iterable[str | RetiredScope]) -> list[RetiredScope]:

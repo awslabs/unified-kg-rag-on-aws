@@ -30,10 +30,7 @@ import unified_kg_rag.application.ingestion.namespace_lease as lease_mod
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from tests.fixtures.fakes.stores import FakeGraphStore, FakeVectorStore
 from unified_kg_rag.adapters.aws.opensearch import OpenSearchClient
-from unified_kg_rag.application.ingestion.namespace_lease import (
-    NamespaceLease,
-    check_lease,
-)
+from unified_kg_rag.application.ingestion.namespace_lease import NamespaceLease
 from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
 from unified_kg_rag.application.storage.indexing_manager import IndexingManager
 from unified_kg_rag.domain.models import (
@@ -44,6 +41,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.shared import NamespaceLeaseError, PipelineInterrupted
 from unified_kg_rag.shared.write_fence import (
+    check_write_fence,
     install_write_fence,
     remove_write_fence,
 )
@@ -76,7 +74,7 @@ class _SlowStore(FakeDocStatusStore):
 
 def test_the_run_stops_writing_while_it_still_holds_the_lease() -> None:
     # Old behaviour: the renewal time was taken when a slow renewal answered,
-    # and check_lease passed until a full term after that, so it still passed
+    # and check_write_fence passed until a full term after that, so it still passed
     # once the store had expired the lease and another run could take it.
     store = _SlowStore()
     with NamespaceLease(store, "ns", 1.2) as lease:
@@ -89,7 +87,7 @@ def test_the_run_stops_writing_while_it_still_holds_the_lease() -> None:
         deadline = time.time() + 5
         while time.time() < deadline:
             try:
-                check_lease()
+                check_write_fence()
             except NamespaceLeaseError:
                 break
             time.sleep(0.01)
