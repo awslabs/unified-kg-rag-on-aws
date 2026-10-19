@@ -1289,18 +1289,18 @@ changed once with the full-config keys (#332).
 - Tracing: a cancelled model call (`ainvoke` / `agenerate`, which gets no
   end callback from LangChain) ends its `chat <model>` span as `ERROR`
   (`error.type: CancelledError`) when its task finishes, instead of leaving
-  it open in the tracing handler, never exported and held in memory (#PR).
+  it open in the tracing handler, never exported and held in memory (#386).
 - `prepare-benchmark musique` labels the rows built from a full file
   `metadata.benchmark: musique-full-answerable` instead of `musique`, and
   logs a WARNING: the answerable half of the full file has other paragraphs
   and answer aliases than MuSiQue-Ans, so its scores are not comparable to
-  MuSiQue-Ans results (#PR).
+  MuSiQue-Ans results (#386).
 - Cancelling a batch cancels its items: an interrupted, timed-out or
   host-cancelled `run-eval` / `EvaluationManager` call no longer keeps
   answering (and judging) the rest of the dataset in the background, and a
   cancelled item is no longer retried. The batch processor and the evaluators
   awaited their items through `as_completed`, which leaves them running when
-  the caller is cancelled (#PR).
+  the caller is cancelled (#386).
 - Incremental indexing: a removal that both merges and splits spellings
   ("Acme Ltd" into "ACME Inc", "Acme" split off) and is killed between its
   writes and the deletion of the old ids is resumed to a full build's
