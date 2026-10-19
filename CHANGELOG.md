@@ -1317,7 +1317,7 @@ changed once with the full-config keys (#332).
   a vertex filter leaves out of the results (`{grp: a, type: person}`: 4 of
   6 entities, now 6); under two or more filter keys an edge must be stated
   by one passing document, as an entity must; and a redrawn `Path:` moves
-  the entity's score to that path's distance band (#PR).
+  the entity's score to that path's distance band (#389).
 - The filtered chunk check counts passing chunks in rank order: a chunk a
   query already knew to pass was counted wherever it ranked, so higher-ranked
   chunks went unchecked and lower-ranked ones took their slots (DRIFT: up to
