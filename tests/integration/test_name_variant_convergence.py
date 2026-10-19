@@ -351,6 +351,34 @@ def _state(
         ),
         pytest.param(
             [
+                {
+                    "r6.txt": "ACME Inc trade cash 2. Initech and Buyer and ACME Inc "
+                    "trade cash 2."
+                },
+                {
+                    "r6.txt": "ACME Inc trade cash 2. Initech and Buyer and ACME Inc "
+                    "trade cash 2.",
+                    "d1.txt": "Buyer and Acme Inc trade cash 3.",
+                },
+            ],
+            id="a-claim-names-an-entity-a-delta-renamed-under-its-id",
+        ),
+        pytest.param(
+            [
+                {
+                    "r6.txt": "ACME Inc trade cash 2. Initech and Buyer and ACME Inc "
+                    "trade cash 2."
+                },
+                {
+                    "r6.txt": "ACME Inc trade cash 2. Initech and Buyer and ACME Inc "
+                    "trade cash 2.",
+                    "a0.txt": "Acme Inc trade cash 3.",
+                },
+            ],
+            id="a-claim-names-an-entity-a-delta-without-claims-renamed",
+        ),
+        pytest.param(
+            [
                 {"d0.txt": "Acme Ltd and Acme Corp and Buyer trade cash 2."},
                 {
                     "d0.txt": "Acme Ltd and Acme Corp and Buyer trade cash 2.",
