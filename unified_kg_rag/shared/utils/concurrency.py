@@ -68,11 +68,15 @@ class ContextThreadPoolExecutor(ThreadPoolExecutor):
     pickled to another process, and a worker process has its own logging and
     contextvars anyway.
 
-    A ``with`` block that raises (a task's error re-raised, a lost write lease,
-    or ``PipelineInterrupted`` from a stop request) cancels the queued tasks
-    and does not wait for the running ones: they end at their next write
-    fence check (``shared.write_fence``), so a stop is not held up until
-    every task of the block finished.
+    A ``with`` block that raises cancels the queued tasks. On a stop (a
+    ``BaseException`` that is not an ``Exception``: ``PipelineInterrupted``,
+    Ctrl-C, ``SystemExit``) it does not wait for the running ones: they end
+    at their next write fence check (``shared.write_fence``), so a stop is
+    not held up until every task of the block finished, and the process
+    ends. On an error (a task's error re-raised, a lost write lease) it
+    waits for them, so a write a running task already sent has landed when
+    the error reaches the caller, who may run again in this process (the
+    next run's writes would otherwise race it).
     """
 
     def __exit__(
@@ -81,7 +85,8 @@ class ContextThreadPoolExecutor(ThreadPoolExecutor):
         exc_val: BaseException | None,
         exc_tb: TracebackType | None,
     ) -> Literal[False]:
-        self.shutdown(wait=exc_type is None, cancel_futures=exc_type is not None)
+        stopping = exc_type is not None and not issubclass(exc_type, Exception)
+        self.shutdown(wait=not stopping, cancel_futures=exc_type is not None)
         return False
 
     def submit(

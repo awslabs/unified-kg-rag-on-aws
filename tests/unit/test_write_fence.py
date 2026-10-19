@@ -955,7 +955,7 @@ def test_a_worker_checks_both_the_stop_and_the_lease_fence(
     ]
 
 
-def test_a_raising_pool_block_does_not_wait_for_its_running_tasks() -> None:
+def test_a_stopped_pool_block_does_not_wait_for_its_running_tasks() -> None:
     from unified_kg_rag.shared.utils.concurrency import ContextThreadPoolExecutor
 
     release = threading.Event()
@@ -967,12 +967,37 @@ def test_a_raising_pool_block_does_not_wait_for_its_running_tasks() -> None:
 
     began = time.time()
     try:
-        with pytest.raises(RuntimeError):
+        with pytest.raises(PipelineInterrupted):
             with ContextThreadPoolExecutor(max_workers=1) as pool:
                 future = pool.submit(task)
                 started.wait(5)
-                raise RuntimeError("phase failed")
+                raise PipelineInterrupted(signal.SIGTERM)
         assert time.time() - began < 2
         assert not future.done()
     finally:
         release.set()
+
+
+def test_a_failed_pool_block_waits_for_its_running_tasks() -> None:
+    # Old behaviour: an error did not wait either, so in library use a write
+    # a running task had already sent could land after the error reached
+    # the caller, and after the writes of the caller's next run.
+    from unified_kg_rag.shared.utils.concurrency import ContextThreadPoolExecutor
+
+    started = threading.Event()
+    landed: list[float] = []
+
+    def task() -> None:
+        started.set()
+        time.sleep(0.5)
+        landed.append(time.time())
+
+    with pytest.raises(RuntimeError):
+        with ContextThreadPoolExecutor(max_workers=1) as pool:
+            pool.submit(task)
+            queued = pool.submit(task)
+            started.wait(5)
+            raise RuntimeError("phase failed")
+    returned = time.time()
+    assert len(landed) == 1 and landed[0] <= returned
+    assert queued.cancelled()
