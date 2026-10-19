@@ -250,12 +250,15 @@ class NeptuneRetriever(GraphExpansionRetriever):
                 g.V()
                 .hasLabel(label)
                 .has("id", P.within(ids))
-                .project("v", "edges")
+                .project("v", "scanned", "edges")
                 .by(__.values("id"))
+                .by(__.local(__.bothE().limit(cap + 1).count()))
                 .by(
+                    # Only the edges to the other vertices leave the server.
                     __.local(
                         __.bothE()
                         .limit(cap + 1)
+                        .where(__.otherV().has("id", P.within(ids)))
                         .project("e", "a", "b")
                         .by(__.values("id"))
                         .by(__.outV().values("id"))
@@ -271,7 +274,7 @@ class NeptuneRetriever(GraphExpansionRetriever):
             if not isinstance(row, dict):
                 continue
             found = row.get("edges") or []
-            if len(found) > cap:
+            if int(row.get("scanned") or 0) > cap:
                 big.append(str(row["v"]))
             edges |= {
                 (str(e["e"]), str(e["a"]), str(e["b"]))

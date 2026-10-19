@@ -1313,7 +1313,9 @@ changed once with the full-config keys (#332).
   nested list or mapping, an empty range) fail when the query is given,
   before any model call, the same on both engines. Reading the edges among
   a filtered expansion's entities no longer scans a hub's whole fan-out on
-  Gremlin (a 90,000-edge hub: 382 to 194 ms) or SQLite (#PR).
+  Gremlin (server traversers bounded per vertex; a 90,000-edge hub: 382 to
+  192 ms) nor the label's whole edge index on SQLite (500,000 edges: 210 to
+  18 ms a call) (#PR).
 - Filtered graph expansion without a relationships index
   (`build_relationship_vector_index: false`, or the index missing at query
   time) no longer keeps the seeds alone: no walked edge could pass, so a
