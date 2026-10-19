@@ -494,9 +494,9 @@ unless noted.
    weight recomputed and its content derived again from the text units left.
    A strip that merges or re-keys items (another spelling of a stripped
    entity's name, which need not cite the removed text units) first notes
-   them in the extraction store under each removed text unit
-   (`pending-strip#<text unit id>`) and deletes the note once their old ids
-   are gone, so a resumed removal strips them again.
+   them in one record of the suffix's extraction store (`pending-strip`,
+   with the items of a note a retry finishes) and deletes it once their old
+   ids are gone; every removal reads it, so a resumed one strips them again.
    A community or report goes once none of its text units is stored. A failed
    removal keeps the deleted documents' records for a retry and fails the
    stage (before the commit when the delta has changed documents).

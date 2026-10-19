@@ -847,7 +847,7 @@ def test_a_finished_removal_deletes_its_strip_note(
         key
         for call in written.call_args_list
         for key in call.args[1]
-        if key.startswith("pending-strip#")
+        if key.startswith("pending-strip")
     }
     assert notes
     assert notes <= {key for call in deleted.call_args_list for key in call.args[1]}
@@ -964,4 +964,37 @@ def test_a_removal_resumed_with_a_note_derives_the_claims_it_re_keyed(
         resume=False,
     )
 
+    assert incremental == full
+
+
+def test_a_strip_note_is_one_record_whatever_the_removed_units(
+    tmp_path: Path, mocker: Any
+) -> None:
+    # Removing d1.txt and d2.txt (two text units) merges the two spellings.
+    # The note is written once for the suffix, not once per removed unit
+    # (20,000 units of a 3,000-edge note were 2.4 GB), and names entities
+    # and edges only.
+    runs = [
+        {
+            "d1.txt": "Initech trade goods 3.",
+            "d2.txt": "Initech trade goods 4.",
+            "d5.txt": "Initech Corp and Initech trade cash 2.",
+        },
+        {"d5.txt": "Initech Corp and Initech trade cash 2."},
+    ]
+    written = mocker.spy(OpenSearchIndexer, "write_extraction_records")
+
+    full = _state(tmp_path / "full", [runs[-1]])
+    written.reset_mock()
+    incremental = _state(tmp_path / "inc", runs)
+
+    notes = [
+        call.args[1]
+        for call in written.call_args_list
+        if any(key.startswith("pending-strip") for key in call.args[1])
+    ]
+    assert [list(records) for records in notes] == [["pending-strip"]]
+    (note,) = notes[0].values()
+    assert set(note) == {"entity_ids", "relationship_ids"}
+    assert note["entity_ids"]
     assert incremental == full
