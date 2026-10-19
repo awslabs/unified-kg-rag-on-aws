@@ -85,6 +85,25 @@ def _dying(
     return dying
 
 
+def _failing(owner: type, method: str) -> Callable[..., Any]:
+    """``owner.<method>`` whose first call writes nothing and reports every
+    item failed."""
+    original = getattr(owner, method)
+    calls = {"n": 0}
+
+    def failing(self: Any, items: Any, *args: Any, **kwargs: Any) -> Any:
+        from unified_kg_rag.ports.indexer import IndexingStats
+
+        calls["n"] += 1
+        if calls["n"] != 1:
+            return original(self, items, *args, **kwargs)
+        stats = IndexingStats(total_items=len(items))
+        stats.add_error("store down", count=len(items))
+        return stats
+
+    return failing
+
+
 def _names_in(text: str) -> list[str]:
     found, rest = [], text
     for name in sorted(NAMES, key=len, reverse=True):
@@ -159,6 +178,7 @@ def _state(
     gleaning: bool = False,
     suffix: str | None = None,
     resume: bool = True,
+    fail_resumed_at: tuple[Any, ...] | None = None,
 ) -> dict[str, list[tuple]]:
     """The stored entities, edges and claims after indexing ``corpora`` one
     after the other (run ``repeat`` twice under its pipeline id; run
@@ -167,7 +187,9 @@ def _state(
 
     ``die_at`` is a method, the call that dies (1 = the first), whether
     that call completes before the run dies and, optionally, the class
-    (default the vector store's)."""
+    (default the vector store's). ``fail_resumed_at`` (a method and its
+    class) makes the resumed run's first call of it report every item
+    failed; that run fails and is resumed once more."""
     config = _config(tmp / "stores", tmp / "viz")
     config.processing.claim_extraction.enabled = True
     config.processing.gleaning.enabled = gleaning
@@ -197,6 +219,11 @@ def _state(
                 _ingest(config, providers, source, tmp / f"run-{run}")
             if not resume:
                 continue
+            if fail_resumed_at:
+                method, owner = fail_resumed_at
+                with patch.object(owner, method, _failing(owner, method)):
+                    context = _ingest(config, providers, source, tmp / f"run-{run}")
+                assert context.status is not PipelineStageStatus.COMPLETED
         for _ in range(2 if run == repeat else 1):
             context = _ingest(config, providers, source, tmp / f"run-{run}")
             assert context.status is PipelineStageStatus.COMPLETED, _errors(context)
@@ -789,14 +816,26 @@ def test_a_stale_edge_on_a_third_spelling_is_moved(tmp_path: Path) -> None:
         ),
     ],
 )
+@pytest.mark.parametrize(
+    "fail_resumed_at",
+    [
+        pytest.param(None, id="resumed-once"),
+        pytest.param(
+            ("upsert_entities", SQLiteGraphIndexer), id="resumed-run-fails-again"
+        ),
+    ],
+)
 def test_a_resumed_removal_finishes_the_merge_it_started(
-    tmp_path: Path, die_at: tuple[Any, ...]
+    tmp_path: Path,
+    die_at: tuple[Any, ...],
+    fail_resumed_at: tuple[Any, ...] | None,
 ) -> None:
     # Removing d1.txt leaves "Initech" stated only where "Initech Corp" is,
     # and the strip merges the two. Killed once "Initech" was written and
     # before the old "Initech Corp" was deleted, the resumed removal found
     # nothing citing d1.txt's unit (neither spelling does any more) and
-    # "Initech Corp" stayed with its edge.
+    # "Initech Corp" stayed with its edge. A resumed run whose strip fails
+    # again keeps the note for the next.
     runs = [
         {
             "d1.txt": "Initech trade goods 3.",
@@ -806,7 +845,14 @@ def test_a_resumed_removal_finishes_the_merge_it_started(
     ]
 
     full = _state(tmp_path / "full", [runs[-1]], gleaning=True)
-    incremental = _state(tmp_path / "inc", runs, die_in=1, die_at=die_at, gleaning=True)
+    incremental = _state(
+        tmp_path / "inc",
+        runs,
+        die_in=1,
+        die_at=die_at,
+        gleaning=True,
+        fail_resumed_at=fail_resumed_at,
+    )
 
     assert "Initech Corp" not in {e[1] for e in full["entities"]}
     assert incremental == full
