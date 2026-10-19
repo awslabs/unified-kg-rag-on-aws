@@ -474,3 +474,50 @@ def test_the_walk_goes_on_from_a_stored_spelling_of_a_delta_entity(
     )
 
     assert found == {"x", "y", "z", "w"}
+
+
+def test_a_hubs_edge_back_to_a_stored_spelling_is_not_a_new_member(
+    tmp_path: Path,
+) -> None:
+    # Delta: "Acme Corp" alone. Stored: "Acme Inc" - Hub, and 70 more edges
+    # of Hub, of which only the last cites a kept text unit (the others cite
+    # removed ones). The whole graph's component is Acme, Hub and Xeno:
+    # three. Hub's first batch holds its edge back to "Acme Inc" (Acme, a
+    # member already) and 63 removed edges: two members so far, so the walk
+    # goes on to the next batch.
+    from unified_kg_rag.application.ingestion import pipeline_stages as ps
+
+    _, providers = _setup(tmp_path, None)
+    graph = providers.build_graph_indexer()
+    try:
+        graph.initialize()
+        graph.upsert_entities(
+            [
+                _entity("s", "Acme Inc"),
+                _entity("h", "Hub"),
+                _entity("x", "Xeno"),
+                *(_entity(f"o{i:02d}", f"Other {i}") for i in range(70)),
+            ]
+        )
+        edges = [_edge("a-s", "h", "s")]
+        edges += [
+            _edge(f"b{i:02d}", "h", f"o{i:02d}").model_copy(
+                update={"text_unit_ids": ["gone"]}
+            )
+            for i in range(70)
+        ]
+        edges.append(_edge("z", "h", "x"))
+        graph.upsert_relationships(edges)
+        found, _ = ps._components_reaching(
+            graph,
+            [{"d"}],
+            {},
+            {"gone"},
+            3,
+            {},
+            [_entity("d", "Acme Corp", "t2")],
+        )
+    finally:
+        graph.close()
+
+    assert found == {"d"}
