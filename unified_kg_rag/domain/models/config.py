@@ -2211,7 +2211,10 @@ class IndexingConfig(BaseModel):
         "last renewal, so keep it at least three times the longest store "
         "write request (180 s; a run under 540 s logs a WARNING); a run that "
         "dies stops renewing, so its lease expires (and another run can "
-        "start) at most this long after.",
+        "start) at most this long after. A stopped run (SIGTERM, Ctrl-C) "
+        "gives it up expired, so the next run holds its first write about "
+        "185 s for the stopped run's requests in flight (with every store "
+        "embedded it releases it instead).",
     )
     retire_source_scopes: list[str] = Field(
         default_factory=list,

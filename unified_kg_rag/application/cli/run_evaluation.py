@@ -267,6 +267,11 @@ class EvaluationRunner:
             f"Successful: [green]{summary.successful_evaluations}[/green]\n"
             f"Failed: [red]{summary.failed_evaluations}[/red]\n"
         )
+        if labels := summary.benchmarks:
+            # Which benchmark was scored: musique-full-answerable is not
+            # comparable to MuSiQue-Ans.
+            named = ", ".join(f"{name} ({count})" for name, count in labels.items())
+            summary_text += f"Benchmark: [bold]{named}[/bold]\n"
         if blocked := summary.guardrail_blocked_counts:
             # Scored on the blocked message: a low score may be the guardrail.
             per_text = ", ".join(f"{text} {count}" for text, count in blocked.items())
@@ -573,6 +578,7 @@ class EvaluationRunner:
                                 "total_queries",
                                 "successful_evaluations",
                                 "failed_evaluations",
+                                "benchmarks",
                                 "average_response_time",
                                 "metric_statistics",
                                 "metric_outcomes",

@@ -95,7 +95,8 @@ def main(argv: list[str] | None = None) -> None:
         console.print(f"[red]Error: {e}[/red]")
         sys.exit(EXIT_FAILURE)
     console.print(
-        f"[green]MuSiQue ({musique.LICENSE}): {counts['questions']} questions, "
+        f"[green]MuSiQue ({musique.LICENSE}), labelled '{counts['benchmark']}': "
+        f"{counts['questions']} questions, "
         f"{counts['paragraphs']} paragraphs written to "
         f"'{args.output_directory}'.[/green]\n"
         f"Cite: {musique.CITATION}"

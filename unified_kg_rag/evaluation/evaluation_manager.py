@@ -853,9 +853,23 @@ class EvaluationManager:
             grouped_statistics=self._calculate_grouped_statistics(
                 queries, results, reports
             ),
+            benchmarks=self.benchmarks_of(queries),
             evaluation_start_time=start_time,
             evaluation_end_time=end_time,
             configuration=self.config.evaluation.model_dump(),
+        )
+
+    @staticmethod
+    def benchmarks_of(queries: list[EvaluationQuery]) -> dict[str, int]:
+        """Queries per ``metadata.benchmark`` label (rows without one: none)."""
+        return dict(
+            sorted(
+                Counter(
+                    str(q.metadata["benchmark"])
+                    for q in queries
+                    if q.metadata.get("benchmark")
+                ).items()
+            )
         )
 
     @classmethod
@@ -951,6 +965,9 @@ class EvaluationManager:
         dataset: dict[str, Any] = {}
         if queries is not None:
             dataset["num_queries"] = len(queries)
+            # The benchmark the rows were prepared from (prepare-benchmark's
+            # metadata.benchmark), so a summary says which one it scored.
+            dataset["benchmarks"] = self.benchmarks_of(queries)
         if eval_data_path is not None:
             path = Path(eval_data_path)
             content = path.read_bytes()

@@ -354,7 +354,11 @@ aws logs tail /graphrag/tasks --region "$REGION" --follow
   stop at their next request), so a timed-out execution resumes at the stage
   that was running. Of the uploads, only the final one fails the run; a
   failed per-stage or on-stop upload only warns, and a stop after a lost
-  lease skips it. If the corpus changed in between,
+  lease skips it. A stopped task leaves its write lease expired (its last
+  store requests may still land), so the resumed execution holds its first
+  write until about 185 s after that lease expired, with a WARNING
+  (`Took over the expired write lease ...`); the stopped task's log says
+  until when. If the corpus changed in between,
   the task fails its integrity check; use a new `pipeline_id` to rebuild.
 - **Buckets.** The task role reads and writes the cache bucket only
   (`-c corpus_bucket_name=<bucket>` for another corpus bucket). In `private`

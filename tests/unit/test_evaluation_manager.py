@@ -1124,6 +1124,23 @@ class TestComparability:
 
 
 class TestAbstention:
+    async def test_the_summary_and_manifest_name_the_benchmark(
+        self, config: Config
+    ) -> None:
+        # Before, only the per-row metadata said which benchmark was scored:
+        # a musique-full-answerable run summarized like a MuSiQue-Ans one.
+        label = {"benchmark": "musique-full-answerable"}
+        _, _, summary = await self._run(
+            config,
+            [("A?", "Vendor.", {}, label), ("B?", "Vendor.", {}, label)],
+        )
+        assert summary.benchmarks == {"musique-full-answerable": 2}
+        assert summary.run_manifest["dataset"]["benchmarks"] == {
+            "musique-full-answerable": 2
+        }
+        _, _, summary = await self._run(config, [("A?", "Vendor.", {}, {})])
+        assert summary.benchmarks == {}
+
     async def _run(self, config: Config, items: list[tuple[str, str, dict, dict]]):
         """items: (question, answer, chain metadata, query metadata)."""
         config.evaluation.enabled_evaluators = [EvaluatorType.ANSWER_MATCH]

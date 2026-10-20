@@ -122,3 +122,39 @@ def test_shut_down_after_does_not_wait_for_running_tasks_on_error() -> None:
         assert queued.cancelled() and not future.done()
     finally:
         release.set()
+
+
+@pytest.mark.parametrize(
+    ("raised", "waits"),
+    [(KeyboardInterrupt, False), (SystemExit, False), (GeneratorExit, True)],
+)
+def test_the_pool_skips_its_wait_on_the_leases_stop_only(
+    raised: type[BaseException], waits: bool
+) -> None:
+    # One stop rule (is_stop) with the write lease: the pool skips waiting
+    # for its workers exactly when the lease is given up expired for their
+    # writes in flight. Before, any non-Exception skipped the wait, and the
+    # lease released (no wait for the next run) over writes still running.
+    import threading
+
+    from unified_kg_rag.shared.utils.concurrency import is_stop
+
+    assert is_stop(raised) is not waits
+    release, started = threading.Event(), threading.Event()
+
+    def running() -> None:
+        started.set()
+        release.wait(10)
+
+    timer = threading.Timer(1.0, release.set)
+    timer.start()
+    try:
+        with pytest.raises(raised):
+            with ContextThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(running)
+                started.wait(5)
+                raise raised()
+        assert future.done() is waits
+    finally:
+        release.set()
+        timer.cancel()

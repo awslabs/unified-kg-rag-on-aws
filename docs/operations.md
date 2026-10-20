@@ -307,7 +307,11 @@ other run ended.
   such as parsing) until then, with a WARNING
   (`Took over the expired write lease ... the first write waits until ...`):
   up to about 3 minutes (180 s plus a 5 s margin) after the old lease
-  expired. A SIGTERM ends the wait. A process frozen for longer than that,
+  expired. The stopped run's own message says until when (`the next run on
+  its namespace waits until ...`). A SIGTERM ends the wait. With every
+  store embedded (`backend: local`, SQLite) a stopped run releases its
+  lease, as its writes end with its process, and a takeover waits at most
+  one store write (`search.store_timeout_seconds`). A process frozen for longer than that,
   with a request already built, can still write after the new holder; only
   a write fenced by the store itself would rule that out. With DynamoDB, an
   expired lease item its TTL already deleted reads as released (TTL
@@ -317,8 +321,9 @@ other run ended.
   again in the same process does not race them; a stop (SIGTERM, Ctrl-C)
   does not wait, as the process ends.
 - **Checkpoints.** A run downloads its S3 checkpoint only once it holds the
-  lease; a stopped run uploads its checkpoint before releasing it, one that
-  lost the lease uploads none.
+  lease; a stopped run uploads its checkpoint before giving the lease up
+  (even during its takeover wait, which holds back only store and registry
+  writes), one that lost the lease uploads none.
 - **Where the lease lives.** DynamoDB item `namespace` = `<namespace>`,
   `doc_id` = `#lease` (`lease_owner`, `lease_expires_at`, the table's TTL
   attribute); SQLite: the namespace's row of `leases`. Delete it by hand only

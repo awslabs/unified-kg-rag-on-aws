@@ -58,6 +58,7 @@ from unified_kg_rag.domain.models import (
     PipelineStageType,
     validate_path_segment,
 )
+from unified_kg_rag.domain.models.provider_config import SQLITE
 from unified_kg_rag.ports import DocStatusPort, GraphIndexer, VectorIndexer
 from unified_kg_rag.shared import (
     CacheSyncError,
@@ -87,7 +88,6 @@ from unified_kg_rag.shared.utils.cache_keys import (
 from unified_kg_rag.shared.utils.document_identity import config_registry_namespace
 from unified_kg_rag.shared.write_fence import (
     check_fences_held,
-    check_write_fence,
     install_write_fence,
     remove_write_fence,
 )
@@ -123,6 +123,9 @@ class _StopFence:
         signum = self._pipeline._stop_signal
         if signum is not None and threading.current_thread() is not self._run_thread:
             raise PipelineInterrupted(signum)
+
+    # Nothing to hold back: the same check where nothing is written.
+    check_held = check
 
 
 class DataIngestionPipeline:
@@ -781,9 +784,31 @@ class DataIngestionPipeline:
                 seconds,
                 longest,
             )
-        return NamespaceLease(
-            self._doc_status, namespace, seconds, interrupt=self._raise_if_stopping
+        providers = self.config.providers
+        self._lease = NamespaceLease(
+            self._doc_status,
+            namespace,
+            seconds,
+            interrupt=self._raise_if_stopping,
+            in_process_write_seconds=self.config.search.store_timeout_seconds,
+            in_process_stores=all(
+                kind == SQLITE
+                for kind in (
+                    providers.graph.kind,
+                    providers.vector.kind,
+                    providers.doc_status.kind,
+                )
+            ),
         )
+        return self._lease
+
+    @property
+    def next_run_writes_from(self) -> float:
+        """After a run: when the next run on its namespace may write first
+        (epoch seconds; 0 when at once). A stopped run with writes possibly
+        in flight makes the next run wait (see ``namespace_lease``)."""
+        lease = getattr(self, "_lease", None)
+        return lease.next_writes_from if lease is not None else 0.0
 
     def _raise_if_stopping(self) -> None:
         """Raise ``PipelineInterrupted`` once a stop was requested (a takeover
@@ -851,7 +876,9 @@ class DataIngestionPipeline:
         if self._checkpoint_id is None:
             return
         try:
-            check_write_fence()
+            # Held, not waited for: a stop during the takeover wait must not
+            # lose the finished stages (a checkpoint is no store write).
+            check_fences_held()
         except NamespaceLeaseError as e:
             # Another run may write this pipeline's checkpoint now.
             logger.warning(
@@ -1053,8 +1080,9 @@ class DataIngestionPipeline:
 
         if direction == "upload":
             # A run that lost its lease must not replace the checkpoint the
-            # run holding it now may write.
-            check_write_fence()
+            # run holding it now may write. Held, not waited for (no store
+            # write): the takeover wait would hold every stage's checkpoint.
+            check_fences_held()
         try:
             if direction == "upload":
                 if self.llm_response_cache is not None:

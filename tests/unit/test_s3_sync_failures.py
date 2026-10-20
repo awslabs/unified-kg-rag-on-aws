@@ -331,6 +331,7 @@ def test_cli_exits_128_plus_the_signal_on_a_stop(mocker) -> None:
 
     runner = mocker.MagicMock()
     runner.run.side_effect = PipelineInterrupted(signal.SIGTERM)
+    runner.pipeline.next_run_writes_from = 0.0  # the next run need not wait
     mocker.patch.object(cli, "CommandLineInterface")
     mocker.patch.object(cli, "IngestionPipelineRunner", return_value=runner)
     with pytest.raises(SystemExit) as exc:

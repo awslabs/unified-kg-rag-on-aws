@@ -69,3 +69,37 @@ def test_a_leased_namespace_stops_a_run_before_it_writes(
     context = _ingest(config, providers, source, tmp_path / "run-3")
     assert context.status is PipelineStageStatus.COMPLETED, _errors(context)
     assert time.time() - started >= 0.2
+
+
+def test_a_stopped_local_run_lets_the_next_one_write_at_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The embedded stores are written in the run's process: a stop leaves no
+    # write in flight, so it releases the lease (after a Ctrl-C the next
+    # local run stalled ~3 minutes in document_loading).
+    import unified_kg_rag.application.ingestion.namespace_lease as lease_mod
+    from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
+    from unified_kg_rag.shared import PipelineInterrupted
+
+    monkeypatch.setattr(lease_mod, "longest_write_request_seconds", lambda: 180.0)
+    config = _config(tmp_path / "stores", tmp_path / "viz")
+    providers = _providers(
+        config, FakeOllama(e2e._respond, ANSWER, DIM), FakeCrossEncoder("r")
+    )
+    source = tmp_path / "corpus"
+    source.mkdir()
+    (source / "a.txt").write_text("Vendor supplies Buyer.")
+    registry = providers.build_doc_status()
+
+    def stopped(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        raise PipelineInterrupted(15)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(DataIngestionPipeline, "_execute_pipeline", stopped)
+        with pytest.raises(PipelineInterrupted):
+            _ingest(config, providers, source, tmp_path / "run-1")
+    assert registry.lease_holder("default") is None
+    started = time.time()
+    context = _ingest(config, providers, source, tmp_path / "run-2")
+    assert context.status is PipelineStageStatus.COMPLETED, _errors(context)
+    assert time.time() - started < 60

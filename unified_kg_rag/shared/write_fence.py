@@ -62,7 +62,13 @@ class WriteFence(Protocol):
     """Anything that can tell whether the run may still write."""
 
     def check(self) -> None:
-        """Raise when the run must not write any more."""
+        """Raise when the run must not write any more (before a write)."""
+        ...
+
+    def check_held(self) -> None:
+        """Raise when the run must stop, at a point that writes nothing:
+        :meth:`check` without anything that holds the run's first write
+        back (a fence without it is asked :meth:`check`)."""
         ...
 
 

@@ -806,7 +806,9 @@ run-rag --query "..." --verbose --filters attr_category:research type:person \
   텍스트 단위(한 문서의 것) 중 하나도 모든 키를 통과해야 합니다. 또한 필터를 통과한 관계만
   따라 시드에서 `max_hops` 안에 닿아야 하며(제외된 문서만 진술한 관계는 따라가지 않음),
   `Path:`도 그 관계를 따릅니다. 문서 필터가 있으면 걷기 범위를 네 배로 넓히고 이 확인을 마친 뒤에
-  자르며, 정점 필터(`type`)가 결과에서 뺀 엔티티도 거쳐 갑니다. 텍스트 단위에 걸리는 필터가
+  자르며, 정점 필터(`type`)가 결과에서 뺀 엔티티도 거쳐 갑니다. 관계는 관계 인덱스에서
+  확인하므로, 그 인덱스가 없으면(`indexing.opensearch.build_relationship_vector_index: false`,
+  또는 질의 시점에 인덱스가 없어 WARNING을 남김) 엔티티 인덱스 확인만으로 정합니다. 텍스트 단위에 걸리는 필터가
   있으면 local과 mix는 상위 순위 청크만이 아니라 엔티티와 연결된 청크 중 필터를 통과한 것으로
   청크 할당량을 채웁니다. 그 밖의 `attributes.<path>` 키는 항목 자체의 속성이며 엔티티 인덱스에만
   적용됩니다. Neptune에서 `attr_<key>`는 엔티티 정점 속성(`attr_role`)이기도 해서 "있는 경우"
@@ -1245,7 +1247,9 @@ run-eval --data-path s3://my-bucket/eval/my_eval_data.json \
 `musique_ans_v1.0_*.jsonl`을 대신 읽을 수 있습니다. 전체 파일(`musique_full_v1.0_*.jsonl`)도
 읽지만 그 답변 가능한 절반은 MuSiQue-Ans가 아니므로(단락과 답변 별칭이 다름) 행에
 `musique` 대신 `metadata.benchmark: musique-full-answerable`을 붙이고, 점수를 MuSiQue-Ans
-결과와 비교할 수 없다는 WARNING을 남깁니다. `corpus/`(서로 다른 단락마다 텍스트
+결과와 비교할 수 없다는 WARNING을 남깁니다. 이 레이블은 출력(콘솔과
+`--output-format json`)에 나오며, `run-eval`은 요약(`benchmarks`)과 실행 매니페스트
+(`dataset.benchmarks`)에 레이블별 질문 수를 남깁니다. `corpus/`(서로 다른 단락마다 텍스트
 파일 하나. 질문마다 근거 단락 2-4개와 방해 단락 최대 18개)와 `eval_data.json`(`answer`,
 `answer_aliases`, 근거 단락인 `reference_sources`, 홉 수인 `category`)을 씁니다.
 `corpus/`가 비어 있지 않으면 아무것도 내려받기 전에 사용 오류(종료 코드 2)로 끝납니다.
@@ -1558,7 +1562,8 @@ finally:
 - **가벼운 수집은 쓸 수 있는 전략을 제한합니다.** 커뮤니티 탐지를 끄면
   (`graph.community_detection.enabled: false`) `global`과 `drift`가 쓸 리포트가 없고,
   관계 벡터 인덱스를 끄면(`indexing.opensearch.build_relationship_vector_index: false`)
-  `mix`와 `hybrid`가 고수준 키워드를, `local`이 관계 섹션을 쓰지 못합니다.
+  `mix`와 `hybrid`가 고수준 키워드를, `local`이 관계 섹션을 쓰지 못하고, 문서 필터가 걸린 그래프
+  확장은 엔티티에 닿는 관계가 아니라 엔티티 인덱스 확인만으로 엔티티를 남깁니다.
 - **증분 인덱싱은 근사치입니다**(§5). 증분 실행은 다시 군집화하지 않고 커뮤니티를
   덧붙이며, 엔티티가 현재 이름의 id를 받은 뒤에도 저장된 커뮤니티와 리포트에는 이전
   id가 남습니다. 둘 다 전체 재구축(`indexing.reset: true`)으로 갱신됩니다. DynamoDB에서는

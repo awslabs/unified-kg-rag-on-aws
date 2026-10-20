@@ -689,13 +689,28 @@ second run fails with `NamespaceLeaseError` before it reads or writes.
   writes while it unwinds.
 - **No conditional writes.** `BatchWriteItem` takes no condition and store
   writes cannot be conditioned on the registry, so the margin is the fence.
+  The DynamoDB registry checks it before every attempt of a write request
+  (a botocore before-send hook), not once per call, so its re-sends and
+  retries stop with the lease too; SQLite writes are one local transaction
+  right after the check.
 - **Takeover wait.** A write past the fence lands by the holder's expiry plus
   the longest request (its attempts are bounded by the request timeout), so
   a run that takes over an expired, unreleased lease holds its first write
-  until then; a frozen process that sends a built request later than that is
-  the one case the margin cannot cover.
+  (not its reads) until then; a frozen process that sends a built request
+  later than that is the one case the margin cannot cover.
+- **Giving the lease up.** A run that ended or failed released it (its pools
+  waited for their writes), and the next run writes at once. A stopped run
+  (SIGTERM or Ctrl-C) leaves it expired, owner kept, since its pools do not
+  wait for the requests in flight: the next run waits as after a crash, and
+  the stop message says until when. With every store embedded (SQLite) the
+  stopped process takes its writes with it, so the lease is released, and a
+  takeover waits at most one store write (`search.store_timeout_seconds`). A
+  run that ends during its own takeover wait hands the wait on: the lease
+  goes back expired at the previous holder's expiry.
 - **Checkpoint.** The lease is taken before the S3 checkpoint is downloaded
-  and released only after a stopped run uploaded it.
+  and given up only after a stopped run uploaded it; the upload checks the
+  lease is held (`check_fences_held`), not the takeover wait, so a run
+  stopped during the wait still keeps its checkpoint.
 
 Without the registry nothing locks, and concurrent runs on one suffix race on
 its aliases and labels ([runbook](./operations.md#concurrent-runs)).

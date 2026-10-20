@@ -291,6 +291,18 @@ def test_an_expired_lease_can_be_taken(store: DocStatusPort) -> None:
     assert store.lease_holder("ns")[0] == "run-b"
 
 
+def test_a_lease_given_up_as_expired_keeps_its_owner(store: DocStatusPort) -> None:
+    # The port contract the takeover wait relies on: seconds <= 0 expires
+    # the lease (in the past, owner kept), lease_holder still returns it,
+    # and another run can take it.
+    assert store.try_acquire_lease("ns", "run-a", 60)
+    assert store.try_acquire_lease("ns", "run-a", -5)
+    holder = store.lease_holder("ns")
+    assert holder is not None
+    assert holder[0] == "run-a" and holder[1] <= time.time() - 4
+    assert store.try_acquire_lease("ns", "run-b", 60)
+
+
 def test_a_lease_is_no_record(store: DocStatusPort) -> None:
     store.put(_record("ns#d1", scope="ns|corpus"))
     store.try_acquire_lease("ns", "run-a", 60)

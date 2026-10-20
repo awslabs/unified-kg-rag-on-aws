@@ -4,7 +4,7 @@ import asyncio
 import json
 import time
 from collections import OrderedDict
-from collections.abc import Coroutine, Sequence
+from collections.abc import Coroutine
 from itertools import zip_longest
 from typing import Any, ClassVar
 
@@ -58,6 +58,7 @@ from unified_kg_rag.shared.utils import (
     strip_embedding_fields,
     text_digest,
 )
+from unified_kg_rag.shared.utils.concurrency import discard
 from unified_kg_rag.shared.utils.scripts import (
     has_dense_script,
     is_dense_script_char,
@@ -111,13 +112,6 @@ def _lexical_query_text(text: str, max_terms: int) -> tuple[str, int]:
         if terms > max_terms:
             return text[:i].rstrip(), max_terms
     return text, terms
-
-
-async def _discard(tasks: Sequence[asyncio.Future[Any]]) -> None:
-    """Cancel ``tasks`` and wait for them, ignoring how they ended."""
-    for task in tasks:
-        task.cancel()
-    await asyncio.gather(*tasks, return_exceptions=True)
 
 
 class OpenSearchRetriever(BaseGraphRAGRetriever):
@@ -863,10 +857,10 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             try:
                 found = await self._probe(alias, probe)
             except BaseException:
-                await _discard(searches)
+                await discard(searches)
                 raise
             if isinstance(found, Exception) or not found:
-                await _discard(searches)
+                await discard(searches)
             if isinstance(found, Exception):
                 return await self._degraded_search(alias, suffix, found)
             if not found:

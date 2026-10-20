@@ -872,7 +872,10 @@ steps on Neptune. Each store accepts the fields its indexer writes:
   walked), and its `Path:` follows those relationships. The walk under a
   document filter goes four times wider and is cut after these checks, and
   it passes through entities a vertex filter (`type`) leaves out of the
-  results.
+  results. The relationships are checked in the relationships index, so
+  without it (`indexing.opensearch.build_relationship_vector_index: false`,
+  or the index missing at query time, logged as a WARNING) the
+  entities-index check alone decides.
   Under a filter on text units, local and mix also fill their chunk quota
   with the entity-linked chunks that pass, not the top-ranked ones only.
   Other
@@ -1382,7 +1385,9 @@ instead. A full file (`musique_full_v1.0_*.jsonl`) is read too, but its
 answerable half is not MuSiQue-Ans (other paragraphs and answer aliases):
 its rows are labelled `metadata.benchmark: musique-full-answerable` instead
 of `musique`, with a WARNING that the scores are not comparable to MuSiQue-Ans
-results. It writes `corpus/` (one text file per distinct paragraph; each
+results. The label is in its output (console and `--output-format json`),
+and `run-eval` counts it in the summary (`benchmarks`) and the run manifest
+(`dataset.benchmarks`). It writes `corpus/` (one text file per distinct paragraph; each
 question brings 2-4 supporting paragraphs and up to 18 distractors) and
 `eval_data.json` (`answer`, `answer_aliases`, the supporting paragraphs as
 `reference_sources`, the hop count as `category`). A `corpus/` that is not
@@ -1722,7 +1727,9 @@ Extensions import from the package root too: the ports (`LLMFactoryPort`,
   (`graph.community_detection.enabled: false`) `global` and `drift` have no
   reports; without the relationship vector index
   (`indexing.opensearch.build_relationship_vector_index: false`) `mix` and
-  `hybrid` lose high-level keywords and `local` its relationship section.
+  `hybrid` lose high-level keywords, `local` its relationship section, and
+  graph expansion under a document filter keeps entities on the
+  entities-index check alone, not on the relationships that reach them.
 - **Incremental indexing approximates** (§5): delta runs append communities
   instead of re-clustering, and stored communities and reports keep an
   entity's old id after it took its current name's; a full rebuild
