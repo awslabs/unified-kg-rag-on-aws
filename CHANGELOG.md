@@ -1381,6 +1381,12 @@ changed once with the full-config keys (#332).
   deleted a valid claim. The commit forgets them whatever stops it, and
   every indexing run starts without them; a stored commit note still
   finishes a killed commit's split on the next run (#394).
+- A pipeline run again after a run that failed before its commit (library
+  use) no longer counts that run's kept community reports in its
+  `community_drift.outdated_reports` (which can recommend a rebuild) or
+  collects its extraction-record keys: every indexing run starts without
+  them too. A commit note's vector-only entity with an empty description is
+  found and retired like any other (#PR).
 - Tracing: the `kg_rag.ingestion.run` span of a stopped or crashed run
   carries `kg_rag.pipeline_id` too (the id to resume with); it was set only
   from a returned context. The operations runbook now says a model call

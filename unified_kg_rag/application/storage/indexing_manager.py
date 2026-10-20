@@ -871,8 +871,8 @@ class IndexingManager:
                     )
                 }
                 vector_entities = set(
-                    self.opensearch_indexer.read_entity_descriptions(
-                        sorted(noted - in_graph), suffix=suffix
+                    self.opensearch_indexer.read_vector_copies(
+                        "entities", sorted(noted - in_graph), suffix=suffix
                     )
                     if noted - in_graph
                     else {}
@@ -1635,9 +1635,14 @@ class IndexingManager:
             state.clear()
 
     def reset_run_state(self) -> None:
-        """Start a run with no state left from an earlier one (see
-        :meth:`discard_retired_ids`)."""
+        """Start a run with no state left from an earlier one: what its
+        derivations decided (see :meth:`discard_retired_ids`), and what its
+        removals found for after the commit, the community reports they kept
+        and the extraction-record keys of their text units (an earlier run
+        that failed before its commit measured or collected them)."""
         self.discard_retired_ids()
+        self.outdated_reports.clear()
+        self._removed_record_keys.clear()
 
     def _write_note(self, key: str, suffix: str, note: dict[str, Any]) -> None:
         """Write the note ``key`` (one extraction-store record of ``suffix``).

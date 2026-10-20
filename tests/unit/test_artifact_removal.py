@@ -691,6 +691,39 @@ def test_a_deleted_community_leaves_a_kept_text_unit_naming_it() -> None:
     assert vector.data["text_units"]["t2"].community_ids == []
 
 
+def test_a_strip_that_notes_again_keeps_the_earlier_notes_claims(mocker) -> None:
+    # A retry's strip re-keys "e-old" and replaces the earlier note: the
+    # claims the earlier one named (a split's, which nothing else finds)
+    # stay in it.
+    from unified_kg_rag.domain.ingestion.derivation import Derived
+
+    manager, graph, vector = _manager()
+    stored = Entity(id="e-old", name="Acme", text_unit_ids=["t1", "t2"])
+    graph.upsert_entities([stored])
+    vector.upsert_entities([stored])
+    mocker.patch.object(
+        manager,
+        "derive",
+        return_value=Derived(
+            entities=[Entity(id="e-new", name="ACME", text_unit_ids=["t1"])],
+            id_remap={"e-old": "e-new"},
+        ),
+    )
+    note = mocker.spy(manager, "_note_pending_strip")
+
+    manager.remove_text_units_from_shared(
+        "default",
+        entity_ids=["e-old"],
+        relationship_ids=[],
+        text_unit_ids=["t2"],
+        earlier_note={"entity_ids": [], "claim_ids": ["c-split"]},
+    )
+
+    _, entity_ids, _, claim_ids = note.call_args.args
+    assert entity_ids == ["e-new", "e-old"]
+    assert claim_ids == ["c-split"]
+
+
 def test_a_removal_clears_a_note_whose_items_are_gone(mocker) -> None:
     # An earlier strip's note names an item this removal deletes outright
     # (it cites only the removed unit), so nothing is left to strip: the
