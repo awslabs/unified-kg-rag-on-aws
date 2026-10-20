@@ -304,6 +304,8 @@ def test_a_run_stopped_during_its_takeover_wait_hands_the_wait_on(
     holder = store.lease_holder("ns")
     assert holder is not None and holder[0] == b.owner
     assert holder[1] == pytest.approx(a_expiry, abs=0.5)
+    # What B's stop message and JSON status give as C's first write time.
+    assert b.next_writes_from == b.writes_from
     with NamespaceLease(store, "ns", 60) as c:
         assert c.writes_from == pytest.approx(b.writes_from, abs=0.5)
 
