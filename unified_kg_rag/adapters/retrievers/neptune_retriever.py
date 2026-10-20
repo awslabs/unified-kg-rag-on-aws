@@ -27,10 +27,6 @@ from unified_kg_rag.shared import StoreConnectionError, get_logger
 
 logger = get_logger(__name__)
 
-# Incident edges ``aedges_among`` reads per vertex before relying on the
-# other endpoint (a hub's edges to the walked vertices come from their side).
-_EDGE_SCAN_CAP = 1000
-
 
 class NeptuneRetriever(GraphExpansionRetriever):
     """Graph expansion from seed entities over Neptune (Gremlin).
@@ -226,89 +222,6 @@ class NeptuneRetriever(GraphExpansionRetriever):
 
         return await self._execute_traversal(build)
 
-    async def aedges_among(
-        self, vertex_ids: list[str], suffix: str | None
-    ) -> list[tuple[str, str, str]] | None:
-        """See ``BaseGraphRAGRetriever.aedges_among``.
-
-        Every edge among the vertices is incident to two of them, so each
-        vertex's incident edges are read only up to ``_EDGE_SCAN_CAP``: a hub
-        among them (thousands of edges) is not scanned whole, its edges to
-        the other vertices come back from their side. Only an edge between
-        two vertices over the cap needs a full scan, done for those vertices
-        alone.
-        """
-        if not vertex_ids:
-            return []
-        label = self._get_label(self._neptune_config.entity_label_prefix, suffix)
-        ids = list(dict.fromkeys(str(i) for i in vertex_ids))
-        among = set(ids)
-        cap = _EDGE_SCAN_CAP
-
-        def incident(g: GraphTraversalSource) -> Traversal:
-            return (
-                g.V()
-                .hasLabel(label)
-                .has("id", P.within(ids))
-                .project("v", "scanned", "edges")
-                .by(__.values("id"))
-                .by(__.local(__.bothE().limit(cap + 1).count()))
-                .by(
-                    # Only the edges to the other vertices leave the server.
-                    __.local(
-                        __.bothE()
-                        .limit(cap + 1)
-                        .where(__.otherV().has("id", P.within(ids)))
-                        .project("e", "a", "b")
-                        .by(__.values("id"))
-                        .by(__.outV().values("id"))
-                        .by(__.inV().values("id"))
-                        .fold()
-                    )
-                )
-            )
-
-        edges: set[tuple[str, str, str]] = set()
-        big: list[str] = []
-        for row in await self._execute_traversal(incident):
-            if not isinstance(row, dict):
-                continue
-            found = row.get("edges") or []
-            if int(row.get("scanned") or 0) > cap:
-                big.append(str(row["v"]))
-            edges |= {
-                (str(e["e"]), str(e["a"]), str(e["b"]))
-                for e in found
-                if str(e["a"]) in among and str(e["b"]) in among
-            }
-        if len(big) > 1:
-            # Two vertices over the cap: an edge between them may be in
-            # neither's first ``cap`` edges.
-
-            def between(g: GraphTraversalSource) -> Traversal:
-                return (
-                    g.V()
-                    .hasLabel(label)
-                    .has("id", P.within(big))
-                    .as_("a")
-                    .outE()
-                    .as_("e")
-                    .inV()
-                    .has("id", P.within(big))
-                    .as_("b")
-                    .select("e", "a", "b")
-                    .by(__.values("id"))
-                    .by(__.values("id"))
-                    .by(__.values("id"))
-                )
-
-            edges |= {
-                (str(r["e"]), str(r["a"]), str(r["b"]))
-                for r in await self._execute_traversal(between)
-                if isinstance(r, dict)
-            }
-        return sorted(edges)
-
     @staticmethod
     def _with_projection(
         traversal: GraphTraversal, degree_label: str | None = None
@@ -323,7 +236,7 @@ class NeptuneRetriever(GraphExpansionRetriever):
         projected = (
             traversal.project(*keys)
             .by(__.value_map("id", "name", "description", "rank", "text_unit_ids"))
-            .by(__.path().by(__.value_map("id", "name")))
+            .by(__.path().by(__.value_map("name")))
             .by(__.label())
         )
         if degree_label is not None:

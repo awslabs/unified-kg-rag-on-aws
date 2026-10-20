@@ -28,6 +28,13 @@ from unified_kg_rag.domain.retrieval.strategy_registry import get_strategy_spec
 pytestmark = pytest.mark.unit
 
 
+@pytest.fixture(autouse=True)
+def _graph_walk(config: Config) -> None:
+    """These tests pin the graph walk's entity check: the path without a
+    relationships index (with one, filtered expansion walks that index)."""
+    config.indexing.opensearch.build_relationship_vector_index = False
+
+
 def _hit(
     source: str, kind: str = "entity", units: list[str] | None = None
 ) -> RetrievalResult:
@@ -60,9 +67,6 @@ class _Store:
         self.fail = fail
         self.entities_suffix = entities_suffix
         self.queries: list[SearchQuery] = []
-
-    async def aedges_among(self, vertex_ids: list[str], suffix: str | None) -> None:
-        return None  # a graph that cannot tell: the entity check alone decides
 
     async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
         self.queries.append(query)

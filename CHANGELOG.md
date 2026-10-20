@@ -1316,6 +1316,28 @@ changed once with the full-config keys (#332).
   NoEndCallback` whenever the task that started the call finished first,
   which a streamed call's always does; only a cancelled task now ends a span
   that is still open (#393).
+- Graph expansion under a document filter walks the relationships that pass
+  it, one hop at a time over the relationships index, instead of the graph.
+  The graph walk's per-vertex cap and cut ran before the checks, so on a hub
+  entities only excluded documents connect took the slots: a 1,522-degree
+  hub kept 2 (embedded stores) or 4 (OpenSearch and Gremlin Server) of the
+  10 entities an index of the passing documents alone keeps, a 222-degree
+  one 4 or 8, now 10 on both. #389 also walked four times wider under any
+  document filter: on 1,000 documents, DRIFT under a 20% filter read 19 MB
+  from the graph store and 14 MB from the search store, now 24 MB from the
+  search store alone, in 92 more requests. Without a relationships index
+  (`build_relationship_vector_index: false`) the graph walk and its entity
+  check still apply (#396).
+- The filter check keeps a cursor over the ids instead of rescanning the
+  rest of them per batch, which was quadratic in their number (#396).
+- A document filter's range takes only `gt`, `gte`, `lt` and `lte`: another
+  key (`{"from": 1}`) is rejected before any model call instead of reaching
+  the stores (#396).
+- LightRAG's linked-chunk check under a selective filter makes two requests
+  instead of one per round of a few ids: each hit's first
+  `related_chunk_number` chunks, then the whole rest of the lineage of the
+  hits still short. Under a one-document filter on 1,000 documents, mix
+  made 211 search requests, now 13 (p50 478 to 38 ms on OpenSearch) (#396).
 - Incremental indexing: a commit that splits spellings apart (or re-keys
   or rewires entities) and is killed partway is finished by the next run.
   Those decisions lived in memory only: the next run derived from the half
@@ -1369,8 +1391,8 @@ changed once with the full-config keys (#332).
   cancelled (#386). RAGAS judging stops too (#393).
 - Filtered graph expansion fills its slots as an index of the passing
   documents does: the walk goes four times wider and is cut after the
-  document-filter checks, not before (on a 1,500-degree hub, 6 of 10
-  entities and 12 of 14 chunks, now 10 and 14); it passes through entities
+  document-filter checks, not before (this fell short on hubs: see the
+  relationships-index walk above); it passes through entities
   a vertex filter leaves out of the results (`{grp: a, type: person}`: 4 of
   6 entities, now 6); under two or more filter keys an edge must be stated
   by one passing document, as an entity must; and a redrawn `Path:` moves

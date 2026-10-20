@@ -10,7 +10,6 @@ expansion over the SQLite graph, Gremlin Server and Neptune; see
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -795,76 +794,6 @@ def test_graph_expansion_budget_caps_each_seed_breadth_first(
     wide = [r.source for r in across_hops]
     assert len(wide) == 13, wide
     assert set(wide[1:9]) == set(near) and set(wide[9:]) <= set(far), wide
-
-
-def test_the_graph_lists_the_edges_among_vertices(harness: StoreHarness) -> None:
-    # Graph expansion under a document filter checks the edges among the
-    # entities it reached against the relationships index, by their ids.
-    entities = [Entity(id=i, name=i.upper(), type="ORG") for i in ("a", "b", "c", "d")]
-    relationships = [
-        Relationship(id="ab", source_id="a", target_id="b", description="a-b"),
-        Relationship(
-            id="ab2", source_id="b", target_id="a", type="PAYS", description="b-a"
-        ),
-        Relationship(id="ac", source_id="a", target_id="c", description="a-c"),
-        Relationship(id="cd", source_id="c", target_id="d", description="c-d"),
-    ]
-    assert harness.graph_indexer.index_entities(entities).failed_items == 0
-    assert harness.graph_indexer.index_relationships(relationships).failed_items == 0
-    build = harness.graph_retriever
-    assert build is not None
-
-    async def run() -> Any:
-        retriever = build()
-        try:
-            return await retriever.aedges_among(["a", "b", "c"], _SUFFIX)
-        finally:
-            await retriever.aclose()
-
-    edges = asyncio.run(run())
-    assert sorted(edges) == [("ab", "a", "b"), ("ab2", "b", "a"), ("ac", "a", "c")]
-
-
-@pytest.mark.timeout(600)
-def test_the_edges_among_vertices_include_a_hubs_past_the_scan_cap(
-    harness: StoreHarness,
-) -> None:
-    # Gremlin reads at most 1,000 incident edges per vertex: a hub's edges to
-    # the walked vertices come back from their side, and two vertices over
-    # the cap get a scan of their own, so no walked edge is missed.
-    leaves = [f"n{i}" for i in range(1100)]
-    entities = [Entity(id=i, name=i.upper(), type="ORG") for i in ("h1", "h2", *leaves)]
-    relationships = (
-        [
-            Relationship(id=f"a{i}", source_id="h1", target_id=v, description="x")
-            for i, v in enumerate(leaves)
-        ]
-        + [
-            Relationship(id=f"b{i}", source_id=v, target_id="h2", description="y")
-            for i, v in enumerate(leaves)
-        ]
-        + [Relationship(id="hh", source_id="h2", target_id="h1", description="z")]
-    )
-    assert harness.graph_indexer.index_entities(entities).failed_items == 0
-    assert harness.graph_indexer.index_relationships(relationships).failed_items == 0
-    build = harness.graph_retriever
-    assert build is not None
-    walked = ["h1", "h2", "n5", "n1099"]
-
-    async def run() -> Any:
-        retriever = build()
-        try:
-            return await retriever.aedges_among(walked, _SUFFIX)
-        finally:
-            await retriever.aclose()
-
-    assert sorted(asyncio.run(run())) == [
-        ("a1099", "h1", "n1099"),
-        ("a5", "h1", "n5"),
-        ("b1099", "n1099", "h2"),
-        ("b5", "n5", "h2"),
-        ("hh", "h2", "h1"),
-    ]
 
 
 def test_graph_expansion_filters_and_is_deterministic(harness: StoreHarness) -> None:
