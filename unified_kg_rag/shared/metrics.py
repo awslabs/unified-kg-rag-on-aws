@@ -138,4 +138,4 @@ class CloudWatchEMFSink:
             **dims,
             **numeric,
         }
-        self._emf_logger.info(json.dumps(emf))
+        self._emf_logger.info("%s", json.dumps(emf))

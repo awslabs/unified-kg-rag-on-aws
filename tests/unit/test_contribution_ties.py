@@ -12,8 +12,9 @@ import pytest
 from unified_kg_rag.domain.ingestion.contributions import (
     merge_claim_contributions,
     merge_entity_contributions,
+    merge_relationship_contributions,
 )
-from unified_kg_rag.domain.models import Claim, Entity
+from unified_kg_rag.domain.models import Claim, Entity, Relationship
 
 pytestmark = pytest.mark.unit
 
@@ -119,3 +120,42 @@ def test_resolved_claims_do_not_depend_on_their_order(order: tuple[int, ...]) ->
     assert (merged.type, merged.object_name) == ("PAYS", "USD 100")
     assert merged.description == "A fee.\nAcme pays 100."
     assert merged.source_text == "A fee.\nAcme pays 100."
+
+
+@pytest.mark.parametrize("name", ["{Seller}", "{0}", "{}", "Map{K,V}", "100%"])
+def test_statements_of_a_name_with_braces_merge(name: str) -> None:
+    # The merge's debug message named the item inside a str.format template,
+    # so a brace in a name raised (KeyError / IndexError) whatever the log
+    # level, and the unit failed on every run.
+    entities = [
+        Entity(id="e", name=name, type="ROLE", text_unit_ids=[f"t{n}"])
+        for n in range(2)
+    ]
+    relationships = [
+        Relationship(
+            id="r",
+            source_id="e",
+            target_id="f",
+            source_name=name,
+            target_name="Buyer",
+            type=name,
+            text_unit_ids=[f"t{n}"],
+        )
+        for n in range(2)
+    ]
+    claims = [
+        Claim(
+            id="c",
+            subject_id="",
+            subject_name=name,
+            object_id="",
+            object_name=name,
+            type="LEGAL",
+            text_unit_ids=[f"t{n}"],
+        )
+        for n in range(2)
+    ]
+
+    assert [e.name for e in merge_entity_contributions(entities)] == [name]
+    assert len(merge_relationship_contributions(relationships)) == 1
+    assert len(merge_claim_contributions(claims)) == 1

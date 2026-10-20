@@ -311,7 +311,7 @@ class PipelineStage(ABC):
                     f"Stage '{self.name}' received 0 inputs but requires input "
                     f"to function. {self._empty_input_hint()}"
                 )
-                logger.error(error_msg)
+                logger.error("%s", error_msg)
                 raise PipelineStageError(error_msg)
             logger.info("Stage '%s' had no input to process", self.name)
             return
@@ -322,7 +322,7 @@ class PipelineStage(ABC):
                 f"{input_count} inputs but produced 0 outputs. Check the stage "
                 f"configuration and input data quality."
             )
-            logger.error(error_msg)
+            logger.error("%s", error_msg)
             raise PipelineStageError(error_msg)
 
         if output_count == 0:

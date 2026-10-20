@@ -441,7 +441,7 @@ class BaseProcessor:
         item_name: str,
         field_mergers: dict[str, Callable[[list[Any]], Any]],
         frequency_fields: list[str] | None = None,
-        log_message_formatter: Callable[[T], str] | None = None,
+        describe_item: Callable[[T], str] | None = None,
     ) -> list[T]:
         """Merge items by id into the first of each id (mutated).
 
@@ -498,9 +498,14 @@ class BaseProcessor:
         for item_id, count in merge_counts.items():
             if count > 1:
                 total_merges += count - 1
-                if log_message_formatter:
-                    item = merged_items_map[item_id]
-                    logger.debug(log_message_formatter(item).format(count=count))
+                if describe_item:
+                    # An argument, not the format: the item's names and types
+                    # may hold braces or percent signs ('{Seller}').
+                    logger.debug(
+                        "%s merged %s instances",
+                        describe_item(merged_items_map[item_id]),
+                        count,
+                    )
 
         if total_merges > 0:
             logger.info(

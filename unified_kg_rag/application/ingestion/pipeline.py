@@ -1942,7 +1942,7 @@ class DataIngestionPipeline:
         logger.info("=" * 60)
         logger.info("PIPELINE SUMMARY")
         logger.info("=" * 60)
-        logger.info(summary)
+        logger.info("%s", summary)
 
     def verify_pipeline_metadata(self, pipeline_id: str) -> bool:
         logger.info("Verifying pipeline metadata for: %s", pipeline_id)

@@ -84,7 +84,7 @@ def merge_entity_contributions(entities: list[Entity]) -> list[Entity]:
         item_name="Entity",
         field_mergers=field_mergers,
         frequency_fields=["type"],
-        log_message_formatter=lambda e: f"Entity '{e.name}' merged {{count}} instances",
+        describe_item=lambda e: f"Entity '{e.name}'",
     )
     for entity in merged:
         if names := spellings.get(entity.id or ""):
@@ -111,9 +111,8 @@ def merge_relationship_contributions(
         items=relationships,
         item_name="Relationship",
         field_mergers=field_mergers,
-        log_message_formatter=lambda r: (
-            f"Relationship '{r.source_name}' -> '{r.target_name}' "
-            f"(type: '{r.type}') merged {{count}} instances"
+        describe_item=lambda r: (
+            f"Relationship '{r.source_name}' -> '{r.target_name}' (type: '{r.type}')"
         ),
     )
     for rel in merged:
@@ -145,9 +144,8 @@ def merge_claim_contributions(claims: list[Claim]) -> list[Claim]:
         item_name="Claim",
         field_mergers=field_mergers,
         frequency_fields=["type", "status"],
-        log_message_formatter=lambda c: (
-            f"Claim '{c.subject_name}' -> '{c.object_name}' "
-            f"(type: '{c.type}') merged {{count}} instances"
+        describe_item=lambda c: (
+            f"Claim '{c.subject_name}' -> '{c.object_name}' (type: '{c.type}')"
         ),
     )
 

@@ -250,7 +250,7 @@ def _wrap_transport_error(
     """
     reason = error_reason(exc)
     msg = f"{context}: status={exc.status_code}, error={reason}"
-    logger.log(log_level, msg, exc_info=True)
+    logger.log(log_level, "%s", msg, exc_info=True)
     if isinstance(exc, ConnectionTimeout):
         return StoreTimeoutError(msg)
     if isinstance(exc, OpenSearchConnectionError):
@@ -283,7 +283,7 @@ def _handle_opensearch_errors(func: Callable) -> Callable:
             raise
         except Exception as e:
             msg = f"Unexpected error in '{func.__name__}': {e}"
-            logger.exception(msg)
+            logger.exception("%s", msg)
             raise AWSServiceError(msg) from e
 
     return wrapper
@@ -310,7 +310,7 @@ def _handle_async_opensearch_errors(func: Callable) -> Callable:
             raise
         except Exception as e:
             msg = f"Unexpected async error in '{func.__name__}': {e}"
-            logger.exception(msg)
+            logger.exception("%s", msg)
             raise AWSServiceError(msg) from e
 
     return async_wrapper
