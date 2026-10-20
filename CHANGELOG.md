@@ -1295,6 +1295,11 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Incremental indexing: adding a document that re-points an edge onto two
+  entities a stored edge of the same type already joins under another id
+  no longer leaves both. The stored one, citing nothing the written edge
+  does not, is the same edge under an earlier id and is deleted, as a full
+  build has one edge there (#PR).
 - Tracing: a cancelled model call (`ainvoke` / `agenerate`, which gets no
   end callback from LangChain) ends its `chat <model>` span as `ERROR`
   (`error.type: CancelledError`) when its task finishes, instead of leaving

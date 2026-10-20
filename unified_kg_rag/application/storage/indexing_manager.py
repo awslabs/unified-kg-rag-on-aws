@@ -35,6 +35,7 @@ from unified_kg_rag.domain.ingestion.merge import (
     merge_entities,
     merge_relationships,
     relationship_id_remap,
+    relationship_key,
     remove_claim_text_units,
     remove_text_units,
 )
@@ -1188,9 +1189,25 @@ class IndexingManager:
             )
             for r in stored_extra
         ]
+        # A stored edge of a written edge's key (endpoints and type, as the
+        # merge matches them) under another id, citing no unit the written
+        # one does not, is that edge under an earlier id (the derivation
+        # re-pointed the written one onto these endpoints): a full build has
+        # one edge, so it goes with the retired ids.
+        written_by_key = {
+            relationship_key(r.source_id, r.target_id, r): r for r in relationships
+        }
+        duplicates = {
+            r.id
+            for r in extra
+            if (w := written_by_key.get(relationship_key(r.source_id, r.target_id, r)))
+            is not None
+            and w.id != r.id
+            and set(r.text_unit_ids or []) <= set(w.text_unit_ids or [])
+        }
         # An edge between two entities the re-key merged is a self-loop a
         # full build does not draw: it goes with the retired ids.
-        loops = {r.id for r in extra if r.source_id == r.target_id}
+        loops = {r.id for r in extra if r.source_id == r.target_id} | duplicates
         if loops:
             self._dropped.setdefault(suffix, set()).update(loops)
             extra = [r for r in extra if r.id not in loops]

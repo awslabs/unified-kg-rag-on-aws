@@ -23,6 +23,7 @@ from typing import Any
 from unittest.mock import patch
 
 import pytest
+from opensearchpy.exceptions import NotFoundError
 
 from tests.fixtures.fakes.model_servers import FakeOllama
 from tests.integration import test_embedded_e2e as e2e
@@ -236,6 +237,12 @@ def _state(
     finally:
         graph.close()
     claims = _stored(config, providers, config.indexing.opensearch.claims_index_prefix)
+    try:
+        vector_edges = _stored(
+            config, providers, config.indexing.opensearch.relationships_index_prefix
+        )
+    except NotFoundError:  # no edge was ever written
+        vector_edges = []
     return {
         "entities": sorted(
             (e.id, e.name, e.type, len(e.text_unit_ids or []), e.description)
@@ -253,6 +260,16 @@ def _state(
                 tuple(sorted(hit["_source"].get("text_unit_ids") or [])),
             )
             for hit in claims
+        ),
+        # The vector copies of the edges: their own names and lineage.
+        "vector_edges": sorted(
+            (
+                hit["_source"].get("source_name"),
+                hit["_source"].get("target_name"),
+                hit["_source"].get("description"),
+                tuple(sorted(hit["_source"].get("text_unit_ids") or [])),
+            )
+            for hit in vector_edges
         ),
     }
 
@@ -1165,3 +1182,33 @@ def test_a_strip_note_carries_over_the_items_of_an_earlier_note(
     assert notes, "the merging removal wrote no note"
     assert "e-earlier" in notes[0]["entity_ids"]
     assert "r-earlier" in notes[0]["relationship_ids"]
+
+
+# Sequences the cycle-45 fuzz found (each diverged from a full build).
+RUNS_DUPKEY = [
+    {
+        "d0.txt": "Buyer and Acme Inc trade goods 1. Acme LLC and Acme Corp trade goods 2. Depot and Acme Inc trade cash 2.",
+        "d6.txt": "Acme and Acme Corp and Acme Inc trade goods 1. Acme LLC and Depot and Acme trade cash 2. Acme Inc trade goods 2.",
+        "d1.txt": "Acme LLC and Depot trade goods 1.",
+    },
+    {
+        "d0.txt": "Buyer and Acme Inc trade goods 1. Acme LLC and Acme Corp trade goods 2. Depot and Acme Inc trade cash 2.",
+        "d6.txt": "Acme and Acme Corp and Acme Inc trade goods 1. Acme LLC and Depot and Acme trade cash 2. Acme Inc trade goods 2.",
+        "d1.txt": "Acme LLC and Depot trade goods 1.",
+        "d4.txt": "Acme Corp trade cash 1. Depot and Acme and Acme Ltd trade cash 3.",
+    },
+]
+
+
+def test_an_added_document_leaves_no_duplicate_of_a_re_pointed_edge(
+    tmp_path: Path,
+) -> None:
+    # Adding d4.txt re-points an edge onto endpoints a stored edge of the
+    # same type already joins under another id. A full build has one edge
+    # there; the stored one, citing nothing the written one does not, stayed.
+    runs = RUNS_DUPKEY
+
+    full = _state(tmp_path / "full", [runs[-1]])
+    incremental = _state(tmp_path / "inc", runs)
+
+    assert incremental == full
