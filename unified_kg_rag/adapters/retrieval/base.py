@@ -706,8 +706,7 @@ class BaseSearchStrategy(ABC):
         caller falls back to the graph walk.
         """
         retriever = self.document_retriever
-        if retriever is None:
-            return None
+        assert retriever is not None  # the caller walks the graph without one
         o = self.config.indexing.opensearch
         neptune = self.config.indexing.neptune
         filters = document_filters(query.filters)
