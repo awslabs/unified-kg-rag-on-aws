@@ -2016,9 +2016,10 @@ class OpenSearchIndexingConfig(BaseModel):
         "unit's extracted entities, relationships and claims, keyed by its "
         "text and the extraction settings, so an unchanged chunk is not "
         "extracted again (no embeddings). A full build or reset keeps only "
-        "the records its text units name. It also holds the note a "
-        "removal keeps until it finished (pending-strip), which a resumed "
-        "removal needs: delete the index only after a run "
+        "the records its text units name. It also holds the notes a "
+        "removal (pending-strip) or a commit (pending-commit) keeps until "
+        "it finished, which a resumed run needs: delete the index only "
+        "after a run "
         "that succeeded, or run indexing.reset next. Lowercase letters, "
         "digits, '-' and '_', not starting with '-' or '_'",
     )

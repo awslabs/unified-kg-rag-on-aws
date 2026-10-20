@@ -1345,3 +1345,99 @@ def test_vector_copies_a_killed_run_left_without_graph_copies_go(
     )
 
     assert incremental == full
+
+
+RUNS_COMMIT_SPLIT_CLAIM = [
+    {"d7.txt": "Acme Inc and Acme LLC trade cash 3."},
+    {
+        "d7.txt": "Acme Inc and Acme LLC trade cash 3.",
+        "d1.txt": "Buyer and Depot and Acme Ltd trade parts 3. Acme trade goods 1.",
+        "r3.txt": "Depot trade cash 1. Acme Inc and Buyer and Acme Ltd trade cash 2.",
+    },
+    {
+        "d7.txt": "Acme Inc and Acme LLC trade cash 3.",
+        "d1.txt": "Buyer and Depot and Acme Ltd trade parts 3. Acme trade goods 1.",
+        "d6.txt": "Depot and Acme Corp trade parts 2. Acme Inc and Acme Corp trade goods 1.",
+    },
+]
+RUNS_COMMIT_SPLIT_EDGE = [
+    {"d0.txt": "Acme Ltd trade parts 1. Buyer and Depot and Acme Inc trade goods 2."},
+    {
+        "d0.txt": "Acme Ltd trade parts 1. Buyer and Depot and Acme Inc trade goods 2. Acme Inc and Depot trade cash 2.",
+        "d3.txt": "Acme Inc and Depot and Buyer trade parts 2.",
+        "d1.txt": "Acme Inc and Acme Corp trade goods 2.",
+    },
+    {
+        "d0.txt": "Acme Ltd trade parts 1. Buyer and Depot and Acme Inc trade goods 2. Acme Inc and Depot trade cash 2.",
+        "d3.txt": "Acme Inc and Depot and Buyer trade parts 2.",
+        "d5.txt": "Depot and Acme Corp trade cash 3.",
+        "r1.txt": "Acme Inc and Acme Corp trade goods 2.",
+    },
+]
+
+
+@pytest.mark.parametrize(
+    ("runs", "die_at", "gleaning"),
+    [
+        pytest.param(
+            RUNS_COMMIT_SPLIT_CLAIM,
+            ("upsert_claims", 1, False),
+            False,
+            id="killed-before-the-claims",
+        ),
+        pytest.param(
+            RUNS_COMMIT_SPLIT_EDGE,
+            ("upsert_text_units", 1, False),
+            True,
+            id="killed-before-the-text-units",
+        ),
+    ],
+)
+def test_a_resumed_commit_finishes_the_split_it_started(
+    tmp_path: Path, runs: list[dict[str, str]], die_at: tuple[Any, ...], gleaning: bool
+) -> None:
+    # The last run's commit splits spellings apart and re-points their edges
+    # and claims. Killed partway, the resumed run derived from the half
+    # written stored state, which no longer called for a split: the claim
+    # stayed a self-claim, or an edge stayed on the spelling it was split
+    # from. The commit notes what it splits, re-keys and rewires before its
+    # first write.
+    full = _state(tmp_path / "full", [runs[-1]], gleaning=gleaning)
+    incremental = _state(
+        tmp_path / "inc", runs, die_in=len(runs) - 1, die_at=die_at, gleaning=gleaning
+    )
+
+    assert incremental == full
+
+
+def test_a_finished_commit_deletes_its_note(tmp_path: Path, mocker: Any) -> None:
+    # The note a splitting commit writes before its first write goes once
+    # the old ids are deleted.
+    runs = RUNS_COMMIT_SPLIT_CLAIM
+    written = mocker.spy(OpenSearchIndexer, "write_extraction_records")
+    deleted = mocker.spy(OpenSearchIndexer, "delete_extraction_records")
+
+    _state(tmp_path, runs)
+
+    noted = [
+        call for call in written.call_args_list if "pending-commit" in call.args[1]
+    ]
+    assert noted
+    assert any("pending-commit" in call.args[1] for call in deleted.call_args_list)
+
+
+def test_a_resumed_commit_that_fails_again_keeps_its_note(tmp_path: Path) -> None:
+    # The resumed commit's claim write fails: the run fails, the note stays,
+    # and the next run still finishes the split.
+    runs = RUNS_COMMIT_SPLIT_CLAIM
+
+    full = _state(tmp_path / "full", [runs[-1]])
+    incremental = _state(
+        tmp_path / "inc",
+        runs,
+        die_in=len(runs) - 1,
+        die_at=("upsert_claims", 1, False),
+        fail_resumed_at=("upsert_claims", OpenSearchIndexer),
+    )
+
+    assert incremental == full

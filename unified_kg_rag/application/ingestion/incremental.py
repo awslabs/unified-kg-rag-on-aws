@@ -543,6 +543,9 @@ class IncrementalIndexer:
         claims = self.indexing_manager.merge_with_stored_claims(
             claims, text_units or ()
         )
+        # The merge's split and re-key decisions are in memory only: noted
+        # before the first write, so a killed commit's successor finishes them.
+        self.indexing_manager.note_pending_commit()
         results = self.indexing_manager.index_delta(
             text_units=text_units,
             entities=entities,
@@ -561,6 +564,8 @@ class IncrementalIndexer:
             # new one (the next run that touches it re-keys it again).
             retired = self.indexing_manager.delete_retired_ids()
             failed = sum(stats.failed_items for stats in retired.values())
+            if not failed:
+                self.indexing_manager.clear_pending_commit()
             if failed:
                 logger.warning(
                     "Deleting %d re-keyed items' old ids failed; their old "

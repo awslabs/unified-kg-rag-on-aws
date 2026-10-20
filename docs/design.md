@@ -479,7 +479,12 @@ unless noted.
    (§5.4); delta claims merge with the stored claims of the same id. Neptune
    writes with an idempotent `coalesce(unfold, addV)` upsert, OpenSearch by id
    into the live alias index; old ids of re-keyed items are deleted only after
-   the writes succeeded.
+   the writes succeeded. Before the first write the commit notes the
+   entities it splits, re-keys or rewires in one record of the suffix's
+   extraction store (`pending-commit`), deleted once the old ids are: those
+   decisions live in memory only, and the next commit of the suffix derives
+   the noted entities, their stored edges and the claims about them again,
+   so a killed commit's half-written split is finished.
 5. **Deletion propagation** (`IndexingManager.remove_text_units`). The stores
    are asked what cites the removed text units (`GraphIndexer.find_ids_citing`
    for entities, `VectorIndexer.find_documents`); edges are found among the

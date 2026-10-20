@@ -101,6 +101,12 @@ class _RecordingManager:
     def merge_with_stored_claims(self, claims, text_units=()):
         return claims
 
+    def note_pending_commit(self) -> None:
+        return None
+
+    def clear_pending_commit(self) -> None:
+        return None
+
     def index_delta(self, **kwargs: Any) -> dict[str, IndexingStats]:
         self.calls.append(("index_delta", kwargs))
         written = len(kwargs.get("entities") or [])
