@@ -1295,6 +1295,11 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Incremental indexing: a copy that only the vector store holds (a killed
+  run wrote it and never got to the graph write) is deleted when a later
+  removal reaches it, with the vector copies of the edges at such an
+  entity, instead of staying with its stale lineage and filters. Only a
+  graph store that reads items back tells such copies apart (#PR).
 - Incremental indexing: when spellings split apart, the stored claims
   about a split-off part are derived again too, not only those about the
   entity it split from; a stored claim already naming the part kept a

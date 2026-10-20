@@ -98,6 +98,12 @@ def _other_spellings_of_parts(
     )
 
 
+def _reads_back(graph: GraphIndexer) -> bool:
+    """Whether ``graph`` reads stored entities back (the port's default
+    reads nothing, so every id would look absent)."""
+    return getattr(type(graph), "read_entities", None) is not GraphIndexer.read_entities
+
+
 def _vector_content(item: Entity | Relationship) -> tuple[Any, ...]:
     """What the vector store holds of an item besides its description,
     lineage and rank."""
@@ -250,6 +256,9 @@ class IndexingManager:
         # ``Derived.dropped``, copies under a folded delta id): deleted with
         # the retired ids.
         self._dropped: dict[str, set[str]] = {}
+        # Per suffix: the retired entities only the vector store held (see
+        # _strip_shared), whose edges delete_documents finds there.
+        self._vector_only: dict[str, set[str]] = {}
         # The stored community reports a removal kept although they cite a
         # removed text unit (see community_drift).
         self.outdated_reports: set[str] = set()
@@ -1375,8 +1384,10 @@ class IndexingManager:
             )
             for suffix in self._rekeyed.keys() | self._dropped.keys()
         }
+        vector_only = dict(self._vector_only)
         self._rekeyed.clear()
         self._dropped.clear()
+        self._vector_only.clear()
         self._split_from.clear()
         self._renamed.clear()
         self._fresh.clear()
@@ -1387,13 +1398,14 @@ class IndexingManager:
                 "Deleting %d items re-keyed to follow their current name",
                 sum(len(ids) for ids in retired.values()),
             )
-        return self.delete_documents(retired)
+        return self.delete_documents(retired, vector_only)
 
     def discard_retired_ids(self) -> None:
         """Keep the re-keyed items' old ids (their writes failed: deleting
         them would lose the items)."""
         self._rekeyed.clear()
         self._dropped.clear()
+        self._vector_only.clear()
         self._split_from.clear()
         self._renamed.clear()
         self._fresh.clear()
@@ -1571,6 +1583,17 @@ class IndexingManager:
                 if relationship_ids
                 else []
             )
+            # A shared id a graph store with read-back does not hold is a
+            # vector copy whose graph write an interrupted run never made:
+            # nothing strips it, so it goes with the retired ids (with the
+            # vector edges at it, see delete_documents).
+            if _reads_back(self.neptune_indexer):
+                vector_only = set(entity_ids) - {e.id for e in entities}
+                if vector_only:
+                    self._vector_only.setdefault(suffix, set()).update(vector_only)
+                vector_only |= set(relationship_ids) - {r.id for r in relationships}
+                if vector_only:
+                    self._dropped.setdefault(suffix, set()).update(vector_only)
             # An edge is derived with its endpoints (the resolved entities map
             # to them). They cite the removed units too, unless a killed run
             # stripped them and left the edge (re-keyed, not yet deleted).
@@ -2046,7 +2069,14 @@ class IndexingManager:
             len(shared_relationships),
             len(shared_claims),
         )
-        results = self.delete_documents({suffix: doomed})
+        # An entity only the vector store holds (an interrupted run never
+        # wrote its graph copy) has its edges there only.
+        vector_only = (
+            {i for i, units in cited.items() if exclusive(units) and i not in found}
+            if found is not None and _reads_back(graph)
+            else set()
+        )
+        results = self.delete_documents({suffix: doomed}, {suffix: vector_only})
         if any(stats.failed_items for stats in results.values() if stats):
             # Strip nothing until the removed text units are gone: a retry
             # tells a removal that got further by their missing copies.
@@ -2074,6 +2104,24 @@ class IndexingManager:
             # The noted items are gone: the earlier strip is finished.
             self._clear_pending_strip(suffix, notes)
         return results
+
+    def _vector_incident_relationship_ids(
+        self, entity_ids: list[str], suffix: str
+    ) -> list[str]:
+        """Ids of the relationship documents of ``suffix`` with an endpoint
+        among ``entity_ids`` (``[]`` for a backend that cannot tell)."""
+        if not entity_ids:
+            return []
+        prefix = self.config.indexing.opensearch.relationships_index_prefix
+        found: set[str] = set()
+        for field in ("source_id", "target_id"):
+            found.update(
+                self.opensearch_indexer.find_documents(
+                    prefix, field, entity_ids, suffix
+                )
+                or {}
+            )
+        return sorted(found)
 
     def _vector_citing(
         self, alias_prefix: str, text_unit_ids: list[str], suffix: str
@@ -2141,12 +2189,16 @@ class IndexingManager:
         return results
 
     def delete_documents(
-        self, ids_by_suffix: dict[str, list[str]]
+        self,
+        ids_by_suffix: dict[str, list[str]],
+        vector_only: Mapping[str, Collection[str]] | None = None,
     ) -> dict[str, IndexingStats]:
         """Delete artifacts for removed documents from both stores by id.
 
         ``ids_by_suffix`` maps a tenant/version suffix to the entity/relationship/
-        text-unit/community ids that belonged only to deleted documents.
+        text-unit/community ids that belonged only to deleted documents;
+        ``vector_only`` (by suffix) the entities among them that only the
+        vector store holds, whose edges are found in its relationship index.
         """
         results: dict[str, IndexingStats] = {}
         for suffix, ids in ids_by_suffix.items():
@@ -2162,6 +2214,17 @@ class IndexingManager:
             try:
                 incident_rel_ids = self.neptune_indexer.find_incident_relationship_ids(
                     ids, suffix=suffix
+                )
+                # And the edges at a vector-only entity (see _strip_shared):
+                # their graph copies never were either.
+                incident_rel_ids = sorted(
+                    {
+                        *incident_rel_ids,
+                        *self._vector_incident_relationship_ids(
+                            sorted(set((vector_only or {}).get(suffix, ())) & set(ids)),
+                            suffix,
+                        ),
+                    }
                 )
             except Exception as e:  # noqa: BLE001 - reported as failed items
                 # Deleting without them would orphan their vector documents

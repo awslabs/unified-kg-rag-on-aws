@@ -1205,6 +1205,27 @@ RUNS_SPLITPART = [
         "d1.txt": "Acme Ltd and ACME Inc and Acme trade cash 3.",
     },
 ]
+RUNS_VECTOR_ONLY = [
+    {"d5.txt": "Acme Inc and Initech Corp and ACME Inc trade goods 2."},
+    {
+        "d5.txt": "Acme Inc and Initech Corp and ACME Inc trade goods 2.",
+        "d1.txt": "Initech Corp trade parts 1. Acme Inc and Acme Corp and Initech Corp Corp trade parts 3.",
+        "d7.txt": "Acme trade cash 3.",
+    },
+    {
+        "d5.txt": "Acme Inc and Initech Corp and ACME Inc trade goods 2.",
+        "d1.txt": "Initech Corp trade parts 1. Acme Inc and Acme Corp and Initech Corp Corp trade parts 3.",
+        "d7.txt": "Acme trade cash 3.",
+        "d0.txt": "Buyer and Initech Corp and Acme trade parts 2. Acme and Buyer and Acme trade parts 3.",
+    },
+    {
+        "d5.txt": "Acme Inc and Initech Corp and ACME Inc trade goods 2.",
+        "d1.txt": "Initech Corp trade parts 1. Acme Inc and Acme Corp and Initech Corp Corp trade parts 3.",
+        "d7.txt": "Acme trade cash 3.",
+        "d0.txt": "Buyer and Initech Corp and Acme trade parts 2. Acme and Buyer and Acme trade parts 3.",
+        "d2.txt": "Buyer and Initech Corp trade parts 2. Acme Inc trade parts 1.",
+    },
+]
 
 
 def test_an_added_document_leaves_no_duplicate_of_a_re_pointed_edge(
@@ -1229,5 +1250,26 @@ def test_a_claim_about_a_split_off_part_is_derived_again(tmp_path: Path) -> None
 
     full = _state(tmp_path / "full", [runs[-1]], gleaning=True)
     incremental = _state(tmp_path / "inc", runs, gleaning=True)
+
+    assert incremental == full
+
+
+def test_vector_copies_a_killed_run_left_without_graph_copies_go(
+    tmp_path: Path,
+) -> None:
+    # Run 2 is killed at its first vector entity write; the next run, on
+    # an edited corpus, kept the vector copy of an edge the graph store did
+    # not hold (nothing strips a copy the graph cannot read back).
+    runs = RUNS_VECTOR_ONLY
+
+    full = _state(tmp_path / "full", [runs[-1]], gleaning=True)
+    incremental = _state(
+        tmp_path / "inc",
+        runs,
+        die_in=2,
+        die_at=("upsert_entities", 1, False),
+        gleaning=True,
+        resume=False,
+    )
 
     assert incremental == full

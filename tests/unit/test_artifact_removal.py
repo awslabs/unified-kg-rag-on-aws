@@ -445,6 +445,56 @@ def test_a_strip_note_left_behind_only_logs(mocker, caplog) -> None:
     assert "Deleting the strip notes" in caplog.text
 
 
+def test_a_removed_vector_only_entity_takes_its_vector_edges() -> None:
+    # A killed run wrote an entity and its edge to the vector store only.
+    # Removing the entity's text unit deletes it; the graph knows no edge at
+    # it, so the edge (citing a kept unit too) is found in the vector store.
+    from unified_kg_rag.domain.models import Relationship
+
+    manager, graph, vector = _manager()
+    vector.upsert_text_units(
+        [TextUnit(id=unit, text="...", document_ids=["d"]) for unit in ("t1", "t2")]
+    )
+    graph.upsert_entities([Entity(id="kept", name="Kept", text_unit_ids=["t2"])])
+    vector.upsert_entities(
+        [
+            Entity(id="gone", name="Gone", text_unit_ids=["t1"]),
+            Entity(id="kept", name="Kept", text_unit_ids=["t2"]),
+        ]
+    )
+    vector.upsert_relationships(
+        [
+            Relationship(
+                id="r",
+                source_id="kept",
+                target_id="gone",
+                source_name="Kept",
+                target_name="Gone",
+                text_unit_ids=["t2"],
+            )
+        ]
+    )
+
+    manager.remove_text_units("default", ["t1"])
+
+    assert "r" not in vector.data.get("relationships", {})
+
+
+def test_a_graph_store_without_read_back_is_not_taken_for_missing_copies() -> None:
+    # The port's read_entities reads nothing back: every shared id would
+    # look like a copy only the vector store holds, and be deleted.
+    from unified_kg_rag.application.storage.indexing_manager import _reads_back
+    from unified_kg_rag.ports.indexer import GraphIndexer
+
+    class NoReadBack(GraphIndexer):
+        pass
+
+    NoReadBack.__abstractmethods__ = frozenset()
+
+    assert _reads_back(FakeGraphStore())
+    assert not _reads_back(NoReadBack.__new__(NoReadBack))
+
+
 def test_only_a_deleted_communitys_id_leaves_a_stripped_entity() -> None:
     # Removing t1 deletes "c-only" (it cites no other unit) and keeps
     # "c-both": the stripped entity drops the one id, not both.
