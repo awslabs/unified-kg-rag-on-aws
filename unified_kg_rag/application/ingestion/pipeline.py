@@ -518,7 +518,14 @@ class DataIngestionPipeline:
         with observability.span(
             "kg_rag.ingestion.run", resume_from_stage=resume_from_stage
         ) as span:
-            context = self._run(source_directory, pipeline_id, resume_from_stage)
+            self.pipeline_id = None
+            try:
+                context = self._run(source_directory, pipeline_id, resume_from_stage)
+            finally:
+                # Also on a stop or a crash: the id the run resumes with
+                # (_run sets it; read past mypy's narrowing to None above).
+                if resolved := getattr(self, "pipeline_id", None):
+                    span.set_attribute("kg_rag.pipeline_id", resolved)
             span.set_attributes(
                 {
                     "kg_rag.pipeline_id": context.pipeline_id,

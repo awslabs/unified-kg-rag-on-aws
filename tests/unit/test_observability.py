@@ -401,6 +401,29 @@ def _stage(
     return _Stage()
 
 
+@pytest.mark.parametrize("stop", [PipelineInterrupted(15), RuntimeError("boom")])
+def test_a_stopped_or_crashed_ingestion_run_span_names_its_pipeline(
+    tracing: Tracing, stop: BaseException
+) -> None:
+    # Before, kg_rag.pipeline_id was set only from a returned context, so a
+    # stopped or crashed run's trace did not say which run to resume.
+    from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
+
+    exporter = tracing()
+    pipeline = object.__new__(DataIngestionPipeline)
+
+    def _run(*_: Any) -> PipelineContext:
+        pipeline.pipeline_id = "p-2"
+        raise stop
+
+    pipeline._run = _run  # type: ignore[method-assign]
+    with pytest.raises(type(stop)):
+        pipeline.run(".")
+    run = _one(exporter, "kg_rag.ingestion.run")
+    assert _attrs(run)["kg_rag.pipeline_id"] == "p-2"
+    assert run.status.status_code == StatusCode.ERROR
+
+
 def test_ingestion_run_and_stage_spans(tracing: Tracing) -> None:
     from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
 
@@ -572,12 +595,12 @@ async def test_query_span_tree_carries_counts_and_ids_not_content(
             assert "What does Vendor supply" not in str(value)
 
 
-def _simple_chain() -> GraphRAGChain:
+def _simple_chain(model_factory: Any = None) -> GraphRAGChain:
     config = Config()
     config.search.reranking.enabled = False
     chain = GraphRAGChain(
         config=config,
-        model_factory=_FakeModelFactory(),
+        model_factory=model_factory or _FakeModelFactory(),
         memory_manager=_FakeMemoryManager(),  # type: ignore[arg-type]
         retriever_builders={
             RetrieverRole.DOCUMENT: _FakeRetriever,  # type: ignore[dict-item]
@@ -626,6 +649,64 @@ async def test_streamed_query_span_carries_only_the_redacted_query(
     query = _attrs(_one(exporter, "kg_rag.query"))
     assert query["input.value"] == "What does [REDACTED] supply?"
     assert "output.value" not in query
+
+
+class _TracedModelFactory(_FakeModelFactory):
+    def get_model(self, model_id: Any, **kwargs: Any) -> Any:
+        return GenericFakeChatModel(
+            messages=itertools.repeat(AIMessage(content="Vendor ships 120 units.")),
+            callbacks=[GenAITracingCallbackHandler("vendor.model-v1")],
+        )
+
+
+def _traced_chain() -> GraphRAGChain:
+    return _simple_chain(_TracedModelFactory())
+
+
+def _assert_streamed_model_span_ended_ok(exporter: InMemorySpanExporter) -> None:
+    span = _one(exporter, "chat vendor.model-v1")
+    attrs = _attrs(span)
+    assert span.status.status_code != StatusCode.ERROR
+    assert "error.type" not in attrs
+    assert json.loads(attrs["gen_ai.output.messages"])[0]["parts"][0]["content"] == (
+        "Vendor ships 120 units."
+    )
+
+
+@pytest.mark.parametrize("per_task", [False, True], ids=["astream", "anext_per_task"])
+async def test_a_streamed_answer_ends_its_model_span_ok(
+    tracing: Tracing, per_task: bool
+) -> None:
+    # Before (#386), the task that started the model call ended before the
+    # stream did, and its done-callback exported the span as ERROR
+    # NoEndCallback, without the answer.
+    exporter = tracing(capture_content=True)
+    chain = _traced_chain()
+    try:
+        stream = chain.astream(_SIMPLE_QUERY).__aiter__()
+        chunks = []
+        while True:
+            try:
+                step = stream.__anext__()
+                chunks.append(
+                    await (asyncio.create_task(step) if per_task else step)  # type: ignore[arg-type]
+                )
+            except StopAsyncIteration:
+                break
+    finally:
+        await chain.aclose()
+    assert "".join(chunks) == "Vendor ships 120 units."
+    _assert_streamed_model_span_ended_ok(exporter)
+
+
+def test_a_sync_streamed_answer_ends_its_model_span_ok(tracing: Tracing) -> None:
+    exporter = tracing(capture_content=True)
+    chain = _traced_chain()
+    try:
+        assert "".join(chain.stream(_SIMPLE_QUERY)) == "Vendor ships 120 units."
+    finally:
+        chain.close()
+    _assert_streamed_model_span_ended_ok(exporter)
 
 
 async def test_query_span_has_no_input_or_output_without_capture(
