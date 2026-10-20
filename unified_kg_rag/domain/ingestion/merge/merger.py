@@ -378,11 +378,11 @@ def merge_claims(old: list[Claim], delta: list[Claim]) -> list[Claim]:
     stored claim's id. As in the full-build ``ClaimResolver`` merge, the
     descriptions and source texts are unioned (stored first) and the text
     units are the sorted union. The status is the stored one when it has
-    one. ``ClaimResolver`` takes the most common status of a group (the first
-    on a tie), which for one stored and one delta claim is the same rule; the
-    stored claim keeps no per-status counts, though, so over three or more
-    documents the two can differ (stored ``SUSPECTED`` stays when two later
-    documents say ``TRUE``). The attributes are unioned with the document
+    one. ``ClaimResolver`` takes the most common status of a group (the
+    smallest on a tie), and the stored claim keeps no per-status counts, so
+    the two can differ: a stored ``TRUE`` stays when one delta document says
+    ``FALSE`` (a tie), and a stored ``SUSPECTED`` when two later documents
+    say ``TRUE``. The attributes are unioned with the document
     ``filters`` of both (see ``merge_attributes``). Every other field is the
     delta's. Returns the delta claims, merged.
     """

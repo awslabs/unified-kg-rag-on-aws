@@ -15,7 +15,7 @@ extracted twice.
 
 from __future__ import annotations
 
-from collections import defaultdict
+from collections import Counter, defaultdict
 from collections.abc import Callable, Iterable
 from typing import Any
 
@@ -59,9 +59,10 @@ def merge_entity_contributions(entities: list[Entity]) -> list[Entity]:
     """Merge entity statements by id (mutates the first of each id).
 
     Descriptions are unioned line by line, text units and document filters
-    unioned, the confidence is the max (monotonic in evidence) and the type
-    the most frequent of the statements (the smallest on a tie, whatever
-    the order of the statements).
+    unioned, the confidence is the max (monotonic in evidence), and the type
+    and the name (the ids' names differ in case only) the most frequent of
+    the statements (the smallest on a tie, whatever the order of the
+    statements).
     """
     field_mergers: dict[str, Callable[[list[Any]], Any]] = {
         "description": merge_descriptions,
@@ -71,13 +72,21 @@ def merge_entity_contributions(entities: list[Entity]) -> list[Entity]:
         ),
         "attributes": union_all_document_filters,
     }
-    return BaseProcessor._merge_items(
+    spellings: dict[str, Counter[str]] = defaultdict(Counter)
+    for entity in entities:
+        if entity.id is not None and entity.name:
+            spellings[entity.id][entity.name] += 1
+    merged = BaseProcessor._merge_items(
         items=entities,
         item_name="Entity",
         field_mergers=field_mergers,
         frequency_fields=["type"],
         log_message_formatter=lambda e: f"Entity '{e.name}' merged {{count}} instances",
     )
+    for entity in merged:
+        if names := spellings.get(entity.id or ""):
+            entity.name = min(names, key=lambda n: (-names[n], n))
+    return merged
 
 
 def merge_relationship_contributions(
@@ -140,10 +149,9 @@ def merge_contributions(
     Inputs are not mutated. Every relationship endpoint becomes an entity
     citing the relationship's text units (a stub when no unit lists it, see
     ``cite_relationship_endpoints``). The records are merged in text-unit id
-    order, so where a merge keeps the first statement (the display spelling
-    of a name, a type tie) the result does not depend on which records were
-    extracted together: an incremental run that merges a subset of them
-    makes the same choice.
+    order, so where a merge keeps the first statement the result does not
+    depend on which records were extracted together: an incremental run
+    that merges a subset of them makes the same choice.
     """
     records = sorted(records, key=lambda record: record.text_unit_id)
     entities = merge_entity_contributions(

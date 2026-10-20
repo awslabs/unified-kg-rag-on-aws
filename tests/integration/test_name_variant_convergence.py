@@ -1240,6 +1240,7 @@ RUNS_RENAME = [
     {
         "r6.txt": "ACME Inc trade cash 2. Initech and Buyer and ACME Inc trade cash 2.",
         "d1.txt": "Buyer and Acme Inc trade cash 3.",
+        "d2.txt": "Acme Inc trade goods 1.",
     },
     {"r6.txt": "ACME Inc trade cash 2. Initech and Buyer and ACME Inc trade cash 2."},
 ]
@@ -1331,10 +1332,11 @@ def test_a_claim_about_a_split_off_part_is_derived_again(tmp_path: Path) -> None
 def test_a_rename_killed_before_the_vector_edges_renames_them_on_retry(
     tmp_path: Path,
 ) -> None:
-    # Removing d1.txt renames an entity under its id ("Acme Inc" to "ACME
-    # Inc"). Killed after the graph edges took the new name and before
-    # their vector copies did, the retry compared the derived names with the
-    # graph copy only and left the vector copies under the old name.
+    # Removing d1.txt and d2.txt renames an entity under its id ("Acme
+    # Inc" to "ACME Inc"). Killed after the graph edges took the new name
+    # and before their vector copies did, the retry compared the derived
+    # names with the graph copy only and left the vector copies under the
+    # old name.
     runs = RUNS_RENAME
 
     full = _state(tmp_path / "full", [runs[-1]], gleaning=True)

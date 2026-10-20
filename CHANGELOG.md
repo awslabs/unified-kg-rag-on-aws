@@ -830,6 +830,15 @@ changed once with the full-config keys (#332).
   documents build different graphs (and an incremental run diverge from a
   full build). A rebuild can change the type of an entity whose statements
   tie (#398).
+- Full builds: the name an entity is shown under (its statements' names
+  differ in case only, e.g. `Acme` and `ACME`) is the most frequent of
+  them, the smallest on a tie, and claim resolution's status tie is the
+  smallest status too; both kept the first statement's. The text units'
+  order differs between namespaces of the same text, so 49 of 120 sampled
+  corpora built a different name or claim status under another
+  `additional_suffix`. A rebuild can change the shown name of such an
+  entity (and of its edges and claims) and the status of a tied claim
+  (#PR).
 - `GraphIndexer.count_neighbors` takes `at_most` and stops counting there
   (Neptune `limit` before `count`): the community walk only asks whether an
   entity has more neighbours than its step. A Neptune edge write no longer
