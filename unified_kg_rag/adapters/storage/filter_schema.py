@@ -127,8 +127,6 @@ def check_filter_values(filters: dict[str, Any] | None) -> None:
                     f"has a range bound '{unknown[0]}'; a range takes gt, gte, "
                     "lt and lte"
                 )
-            elif any(v is None for v in value.values()):
-                reason = "has a range bound of None; drop the bound or give its value"
             else:
                 reason = next(
                     (
