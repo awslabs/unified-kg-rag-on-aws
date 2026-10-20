@@ -10,6 +10,7 @@ from pydantic import BaseModel
 
 from unified_kg_rag.domain.ingestion.base_processor import merge_attributes
 from unified_kg_rag.domain.ingestion.base_resolver import BaseResolver, FuzzyMatcher
+from unified_kg_rag.domain.ingestion.descriptions import by_frequency
 from unified_kg_rag.domain.models import Claim, Entity
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.utils import entity_key, generate_stable_id
@@ -285,20 +286,24 @@ class ClaimResolver(BaseResolver):
             subject_id=primary_claim.subject_id,
             subject_name=primary_claim.subject_name,
             object_id=primary_claim.object_id,
-            object_name=primary_claim.object_name,
-            type=primary_claim.type,
+            # The most frequent value, the smallest on a tie, and descriptions
+            # in that order: the claims' order differs between namespaces.
+            object_name=self._get_most_common_value([c.object_name for c in claims])
+            or primary_claim.object_name,
+            type=self._get_most_common_value([c.type for c in claims])
+            or primary_claim.type,
             status=self._get_most_common_value([c.status for c in claims if c.status]),
             start_date=primary_claim.start_date,
             end_date=primary_claim.end_date,
             description=self._merge_descriptions(
-                [c.description for c in claims if c.description]
+                by_frequency(c.description for c in claims)
             ),
             description_embedding=primary_claim.description_embedding,
             text_unit_ids=self._merge_lists(
                 [c.text_unit_ids for c in claims if c.text_unit_ids]
             ),
             source_text=self._merge_descriptions(
-                [c.source_text for c in claims if c.source_text]
+                by_frequency(c.source_text for c in claims)
             ),
             attributes=merge_attributes([c.attributes for c in claims]),
             # Leave created_at None when unknown (see graph_resolver) so the

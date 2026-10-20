@@ -1151,25 +1151,45 @@ class _ReportingLock:
         self.lock.release()
 
 
+@pytest.mark.parametrize("store_kind", ["graph", "engine"])
 def test_an_embedded_write_waiting_for_the_lock_rechecks_the_fence(
-    tmp_path: Path,
+    tmp_path: Path, store_kind: str
 ) -> None:
     # A write that passed the fence and then waited for the database lock
     # while the run gave its lease up must not write once it gets the lock:
     # the fence is checked again once the lock is held.
+    from unified_kg_rag.adapters.local.search_engine import SQLiteSearchEngine
     from unified_kg_rag.adapters.storage.sqlite_graph_indexer import (
         SQLiteGraphIndexer,
     )
 
-    indexer = SQLiteGraphIndexer(Config(), tmp_path / "graph.sqlite3")
     lock = _ReportingLock()
-    indexer.store._lock = lock  # type: ignore[assignment]
+    graph = SQLiteGraphIndexer(Config(), tmp_path / "graph.sqlite3")
+    engine = SQLiteSearchEngine(tmp_path / "vectors.sqlite3")
+    engine.create_index("docs-1", {"mappings": {"properties": {}}})
+    if store_kind == "graph":
+        graph.store._lock = lock  # type: ignore[assignment]
+    else:
+        engine._lock = lock  # type: ignore[assignment]
+
+    def write_one() -> None:
+        if store_kind == "graph":
+            graph.upsert_entities([Entity(id="e1", name="E1")])
+        else:
+            engine.bulk_index("docs-1", [{"id": "d1", "text": "t"}])
+
+    def written() -> bool:
+        if store_kind == "graph":
+            return graph.read_entities(["e1"]) != []
+        hits = engine.search(index="docs-1", body={"query": {"match_all": {}}})
+        return bool(hits["hits"]["hits"])
+
     store = FakeDocStatusStore()
     errors: list[BaseException] = []
 
     def write() -> None:
         try:
-            indexer.upsert_entities([Entity(id="e1", name="E1")])
+            write_one()
         except BaseException as e:  # noqa: BLE001 - asserted below
             errors.append(e)
 
@@ -1182,4 +1202,4 @@ def test_an_embedded_write_waiting_for_the_lock_rechecks_the_fence(
             assert lock.waiting.wait(5)
     worker.join(5)
     assert [type(e) for e in errors] == [NamespaceLeaseError]
-    assert indexer.read_entities(["e1"]) == []
+    assert not written()

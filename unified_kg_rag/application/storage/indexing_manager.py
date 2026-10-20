@@ -595,8 +595,8 @@ class IndexingManager:
         stored: set[str] = set()
         for suffix, group in self._group_by_suffix(candidates).items():
             stored |= set(
-                vector.read_relationship_descriptions(
-                    [r.id for r in group], suffix=suffix
+                vector.read_vector_copies(
+                    "relationships", [r.id for r in group], suffix=suffix
                 )
             )
         partial = [r for r in candidates if r.id in stored]

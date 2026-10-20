@@ -18,9 +18,12 @@ documents' filters), so an index whose documents lack such a field returns
 nothing for that filter rather than being searched unfiltered. Only the
 entities index declares the rest of ``attributes.<path>`` (an entity's own
 attributes); the other indexes drop such a key, as they drop ``type``.
-Graph vertices hold no document filters: strategies check graph expansion
-against the entities index, and under two or more keys also against the
-survivors' text units (``BaseSearchStrategy._vouch_by_entities_index``).
+Graph vertices hold no document filters: under one, strategies expand over
+the relationships index instead
+(``BaseSearchStrategy._expand_over_passing_relationships``), or, without that
+index, check the graph walk against the entities index
+(``BaseSearchStrategy._vouch_by_entities_index``); under two or more keys
+both also check the survivors' text units.
 
 Neptune entity vertices carry ``attr_<key>`` for the entity's raw top-level
 attributes (e.g. ``attr_role`` from LLM extraction); document attribute filters

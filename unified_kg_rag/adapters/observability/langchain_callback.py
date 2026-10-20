@@ -18,10 +18,10 @@ session.
 A cancelled ``ainvoke`` / ``agenerate`` gets no callback from LangChain
 (``astream`` reports it through ``on_llm_error``): its span is ended as an
 error (``CancelledError``) when the task that started the call is cancelled
-with the span still open, or ends with it open and no token streamed: a call
-cut off by ``asyncio.wait_for`` / ``asyncio.timeout``, whose task carries on
-(the span then ends with that task). A streamed call ends later, in whichever
-task consumes the stream.
+with the span still open, or ends with it open and no token streamed in that
+task: a call cut off by ``asyncio.wait_for`` / ``asyncio.timeout``, whose task
+carries on (the span then ends with that task). A streamed call ends later, in
+whichever task consumes the stream.
 
 Prompt and completion text (``gen_ai.input.messages`` /
 ``gen_ai.output.messages``) is recorded only when
@@ -211,7 +211,15 @@ class GenAITracingCallbackHandler(BaseCallbackHandler):
         return span
 
     def on_llm_new_token(self, token: Any, *, run_id: UUID, **kwargs: Any) -> None:
-        if run_id in self._watches and run_id not in self._streamed:
+        # Only a token in the task that started the call marks a stream: an
+        # ``ainvoke`` runs its generation in a child task, so a model that
+        # streams inside ``_agenerate`` (ChatOllama) is still a plain call.
+        watch = self._watches.get(run_id)
+        try:
+            task = asyncio.current_task()
+        except RuntimeError:  # a sync stream, on no event loop
+            return
+        if watch is not None and watch[0] is task and run_id not in self._streamed:
             with self._lock:
                 self._streamed.add(run_id)
 

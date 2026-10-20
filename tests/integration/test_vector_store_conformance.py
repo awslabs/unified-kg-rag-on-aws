@@ -604,6 +604,35 @@ def test_find_documents_reads_past_ten_thousand_matches(harness: StoreHarness) -
     assert len(found) == 10_001
 
 
+def test_index_settings_reach_the_index(harness: StoreHarness) -> None:
+    # Retrieval sizes a fetch by id by index_settings.max_result_window: the
+    # index must be created with it. Only three keys reached the index, so a
+    # raised window made every such search rejected.
+    if harness.kind == "fake":
+        pytest.skip("the fake keeps no index settings")
+    window = 20_000
+
+    def raise_window(config: Config) -> None:
+        config.indexing.opensearch.index_settings = {
+            **config.indexing.opensearch.index_settings,
+            "max_result_window": window,
+        }
+
+    raised = harness.derive(raise_window)
+    suffix = harness.suffix("window")
+    _write(raised, "entities", "index", _entities(suffix))
+    indexer = raised.vector_indexer
+    alias = indexer._get_name(
+        raised.config.indexing.opensearch.entities_index_prefix, suffix
+    )
+
+    response = indexer.opensearch_client.search(
+        index=alias, body={"size": window, "query": {"match_all": {}}}
+    )
+
+    assert len(response["hits"]["hits"]) == 3
+
+
 def test_text_unit_attributes_round_trip_in_a_suffix(harness: StoreHarness) -> None:
     indexer = harness.vector_indexer
     tenant = harness.suffix("tenant")

@@ -75,3 +75,47 @@ def test_a_tied_claim_status_is_the_smallest(order: tuple[str, str]) -> None:
     (merged,) = merge_claim_contributions(claims)
 
     assert merged.status == "suspected"
+
+
+def _claim_statements(order: tuple[int, ...]) -> list[Claim]:
+    # Two spellings of one literal object and claim type, tied.
+    stated = [("PAYS", "USD 100", "Acme pays 100."), ("Pays", "usd 100", "A fee.")]
+    return [
+        Claim(
+            id="c",
+            subject_id="e",
+            subject_name="Acme",
+            object_name=stated[n][1],
+            type=stated[n][0],
+            description=stated[n][2],
+            source_text=stated[n][2],
+            text_unit_ids=[f"t{n}"],
+        )
+        for n in order
+    ]
+
+
+@pytest.mark.parametrize("order", [(0, 1), (1, 0)])
+def test_merged_claim_statements_do_not_depend_on_their_order(
+    order: tuple[int, ...],
+) -> None:
+    # The object name and the descriptions' order were the first statement's.
+    (merged,) = merge_claim_contributions(_claim_statements(order))
+
+    assert merged.object_name == "USD 100"
+    assert merged.description == "A fee.\nAcme pays 100."
+    assert merged.source_text == "A fee.\nAcme pays 100."
+
+
+@pytest.mark.parametrize("order", [(0, 1), (1, 0)])
+def test_resolved_claims_do_not_depend_on_their_order(order: tuple[int, ...]) -> None:
+    # Claim resolution kept the first claim's type and object name and its
+    # description first.
+    from unified_kg_rag.domain.ingestion.claim_resolver import ClaimResolver
+
+    resolver = object.__new__(ClaimResolver)
+    merged = resolver._merge_claims(_claim_statements(order))
+
+    assert (merged.type, merged.object_name) == ("PAYS", "USD 100")
+    assert merged.description == "A fee.\nAcme pays 100."
+    assert merged.source_text == "A fee.\nAcme pays 100."

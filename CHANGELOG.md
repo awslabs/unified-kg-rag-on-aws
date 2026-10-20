@@ -823,6 +823,13 @@ changed once with the full-config keys (#332).
   fused order. Reported by @vibhupb (#83) (#284).
 
 ### Changed
+- Claims: a merged claim's type and object name (a literal's spellings,
+  `USD 100` and `usd 100`) are the most frequent of its statements', the
+  smallest on a tie, and its description and source-text lines come in
+  that order; claim resolution kept the first claim's, and both merges put
+  the first claim's description first. The order of the claims differs
+  between namespaces of the same text. A rebuild can change the shown type,
+  object name or description order of such a claim (#404).
 - Full builds: an entity's type, or a claim's type or status, that its
   statements state equally often is the smallest of those values, not the
   one in the earliest text unit. The order of the text units differs
@@ -1311,6 +1318,26 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Incremental indexing: a stored edge with no description that a run
+  rewrites for its rank only is updated in place too; it was taken for a
+  missing vector copy and embedded again (#404).
+- Ingestion: the check whether every store is embedded no longer closes a
+  remote `vector_indexer` / `graph_indexer` passed to
+  `DataIngestionPipeline`: it is the instance every stage then writes with
+  (#404).
+- OpenSearch: every `indexing.opensearch.index_settings` key reaches the
+  indices the package creates; only `number_of_shards`,
+  `number_of_replicas` and `refresh_interval` did. Retrieval sizes its
+  fetches by id by `max_result_window` and `max_terms_count` from the same
+  map, so raising them made every such search rejected (and a filtered
+  query fail closed) on an index still at OpenSearch's defaults. Reindex
+  for a changed setting to apply (#404).
+- Tracing: a timed-out call to a model that streams inside `ainvoke`
+  (ChatOllama) ends its span as `ERROR CancelledError` too. Its first token
+  marked the call as streamed, so a RAGAS judge call timed out after it kept
+  its span open in the handler and never exported it. Only a token in the
+  task that started the call counts as streaming now; `ainvoke` generates
+  in a child task (#404).
 - Embedded stores: the SQLite graph store's and search engine's write
   transactions check the run's write fence, before they wait for the
   database's lock and again once they hold it. A stopped run with every

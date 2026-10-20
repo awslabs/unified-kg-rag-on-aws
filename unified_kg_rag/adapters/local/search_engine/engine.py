@@ -952,7 +952,7 @@ class SQLiteSearchEngine:
         score: float,
         size: int,
         excludes: _SourceFilter | None,
-        track: bool | int = True,
+        track: bool | int,
     ) -> dict[str, Any]:
         """Answer an id lookup from SQL, without loading the index."""
         wanted = sorted(set(ids))
@@ -1038,7 +1038,7 @@ class SQLiteSearchEngine:
     def _response(
         hits: list[tuple[str, str, float, dict[str, Any] | None]],
         total: int,
-        track: bool | int = True,
+        track: bool | int,
     ) -> dict[str, Any]:
         """The response body; ``hits.total`` as OpenSearch counts it under
         ``track_total_hits`` (``True``: exact; a number: counted up to it,
