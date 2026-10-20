@@ -1930,19 +1930,23 @@ class NeptuneIndexingConfig(BaseModel):
             "seeds (seeds first) and, at the same distance, by this "
             "importance: 'rank' (the indexed entity rank, its degree), "
             "'degree' (the entity's edges counted at query time, as MS "
-            "GraphRAG ranks entities) or 'none' (a neutral 0.5 for every "
-            "entity, so expansion ranks by distance alone)."
+            "GraphRAG ranks entities; read as 'rank' under a document filter, "
+            "whose walk runs over the search store) or 'none' (a neutral 0.5 "
+            "for every entity, so expansion ranks by distance alone)."
         ),
     )
     traversal_fetch_multiplier: int = Field(
         default=3,
         ge=1,
         description=(
-            "Graph expansion fetches top_k * retrieval_multiplier * this many "
-            "entities besides the seeds, split evenly across the seeds, ranks "
-            "them by relevance, then keeps every seed plus the top "
-            "top_k * retrieval_multiplier of the others. 1 = no over-fetch: "
-            "every traversed entity is kept, with no cut after ranking."
+            "Graph expansion (the graph walk, or under a document filter the "
+            "walk over the relationships index) reaches up to top_k * "
+            "retrieval_multiplier * this many entities besides the seeds, "
+            "split evenly across the seeds (each seed reaches at most its "
+            "share), ranks them by relevance, then keeps every seed plus the "
+            "top top_k * retrieval_multiplier of the others. 1 = no "
+            "over-fetch: every reached entity is kept, with no cut after "
+            "ranking."
         ),
     )
 

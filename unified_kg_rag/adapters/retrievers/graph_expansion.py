@@ -25,8 +25,10 @@ from typing import Any, ClassVar
 
 from unified_kg_rag.adapters.retrieval.base import (
     BaseGraphRAGRetriever,
+    as_float,
     entity_content,
     graph_relevance,
+    rank_expanded,
 )
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
 from unified_kg_rag.adapters.storage.filter_schema import (
@@ -175,7 +177,7 @@ class GraphExpansionRetriever(BaseGraphRAGRetriever):
         if importance_key is not None:
             max_importance = max(
                 (
-                    self._as_float(self._node_data(item).get(importance_key)) or 0.0
+                    as_float(self._node_data(item).get(importance_key)) or 0.0
                     for item in traversal_results
                 ),
                 default=0.0,
@@ -205,14 +207,15 @@ class GraphExpansionRetriever(BaseGraphRAGRetriever):
             if kept is None or (result.score or 0.0) > (kept.score or 0.0):
                 best[node_id] = result
 
-        results = sorted(best.values(), key=lambda x: x.score or 0.0, reverse=True)
-        if self._neptune_config.traversal_fetch_multiplier > 1:
-            results = self._cut_entities(
-                results,
-                query.top_k * query.retrieval_multiplier,
-                seed_ids={str(s) for s in seed_ids},
-            )
-        return results
+        return rank_expanded(
+            best.values(),
+            {str(s) for s in seed_ids},
+            (
+                query.top_k * query.retrieval_multiplier
+                if self._neptune_config.traversal_fetch_multiplier > 1
+                else None
+            ),
+        )
 
     def _entity_importance_key(self) -> str | None:
         """The node property graph expansion reads as entity importance."""
@@ -225,38 +228,6 @@ class GraphExpansionRetriever(BaseGraphRAGRetriever):
         if "degree" in item:
             node_data["degree"] = item["degree"]
         return node_data
-
-    @staticmethod
-    def _as_float(value: Any) -> float | None:
-        try:
-            return float(value) if value is not None else None
-        except (TypeError, ValueError):
-            return None
-
-    @staticmethod
-    def _cut_entities(
-        ranked: list[RetrievalResult],
-        limit: int,
-        seed_ids: set[str] | frozenset[str] = frozenset(),
-    ) -> list[RetrievalResult]:
-        """Keep the seeds plus the ``limit`` best-ranked other entities.
-
-        The entity traversal over-fetches (``traversal_fetch_multiplier``) so the
-        cut happens here, after relevance ranking, instead of in emit order.
-        Seeds are never cut and do not use up the ``limit``: they are what the
-        query matched, and counting them would leave the expansion no room
-        whenever the caller passes ``limit`` or more seeds (local search passes
-        ``top_k`` without an entity focus).
-        """
-        kept: list[RetrievalResult] = []
-        expanded = 0
-        for result in ranked:
-            if result.source not in seed_ids:
-                if expanded >= limit:
-                    continue
-                expanded += 1
-            kept.append(result)
-        return kept
 
     def _create_retrieval_result(
         self,
@@ -314,11 +285,7 @@ class GraphExpansionRetriever(BaseGraphRAGRetriever):
         expansion passes the whole question, which never occurs inside a node
         name.)
         """
-        raw = (
-            GraphExpansionRetriever._as_float(node.get(importance_key))
-            if importance_key is not None
-            else None
-        )
+        raw = as_float(node.get(importance_key)) if importance_key is not None else None
         return graph_relevance(
             len(path) or 1,
             raw / max_importance if raw is not None and max_importance > 0 else 0.5,

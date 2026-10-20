@@ -744,6 +744,20 @@ budget and answer. `RAGInput.search_strategy` picks the methodology.
   `hybrid` (`search.lightrag_search.enable_graph_expansion`). Strategies find
   the seed entities in the vector store and pass their ids to the graph
   retriever, which expands from those ids only.
+- **Under a document filter, expansion runs on the search store.** A graph
+  holds no document attribute, so the walk goes over the relationships
+  index instead (`BaseSearchStrategy._expand_over_passing_relationships`):
+  each hop asks for the passing edges incident to the frontier, two requests
+  (source and target side; plus one text-unit check under two or more
+  keys), cached per query, and one entities-index read at the end. It
+  keeps the graph walk's bounds (`max_hops`, `max_results_per_hop`, the
+  budget split per seed) and scoring, but `degree` importance reads as
+  `rank` (the index holds no degree). A side returns at most
+  `max_query_size` edges, best first; when a page is full the vertices still
+  short of their share are asked again on their own. An index built before
+  relationships carried document filters passes no edge, so expansion keeps
+  the seeds only until it is rebuilt; without the relationships index the
+  graph walk runs, checked against the entities index.
 - **One index, both methodologies (deliberate extension).** Ingestion builds
   the union of what both need (MS GraphRAG builds no relationship vector
   index, LightRAG no communities). A LightRAG-only deployment can set

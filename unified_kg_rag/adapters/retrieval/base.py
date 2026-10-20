@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
 import json
+import math
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
@@ -101,14 +102,31 @@ def _retrieval_attributes(results: list[RetrievalResult]) -> dict[str, Any]:
     return attributes
 
 
-def _cut_expanded(
-    results: list[RetrievalResult], limit: int, seeds: set[str]
+def as_float(value: Any) -> float | None:
+    """``value`` as a float; ``None`` when it is absent or not a number."""
+    try:
+        return float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def rank_expanded(
+    results: Iterable[RetrievalResult], seeds: set[str], limit: int | None = None
 ) -> list[RetrievalResult]:
-    """The seeds plus the ``limit`` best other entities, by score (the cut
-    ``GraphExpansionRetriever`` makes)."""
+    """Graph-expansion ``results`` best first: by score, then by id, so equal
+    scores do not come out in the order a store happened to return them.
+    With ``limit``, the seeds plus the ``limit`` best other entities: the
+    expansion over-fetches (``traversal_fetch_multiplier``) so the cut
+    follows relevance, not traversal order. Seeds are never cut and do not
+    use up the ``limit``: they are what the query matched, and local search
+    passes ``top_k`` of them without an entity focus. The one cut both the
+    graph walk (``GraphExpansionRetriever``) and the filtered walk make."""
+    ranked = sorted(results, key=lambda r: (-(r.score or 0.0), str(r.source)))
+    if limit is None:
+        return ranked
     kept: list[RetrievalResult] = []
     others = 0
-    for result in sorted(results, key=lambda r: r.score or 0.0, reverse=True):
+    for result in ranked:
         if str(result.source) not in seeds:
             if others >= limit:
                 continue
@@ -274,6 +292,7 @@ class BaseSearchStrategy(ABC):
         retriever: BaseGraphRAGRetriever,
         query: SearchQuery,
         label: str,
+        failures: list[Exception] | None = None,
     ) -> list[RetrievalResult]:
         """Run one sub-retrieval, re-raising fatal errors and degrading the rest.
 
@@ -283,7 +302,8 @@ class BaseSearchStrategy(ABC):
         see `is_fatal_retrieval_error`) propagate so a broken deployment is not
         reported as "no results"; anything else (one request the store failed)
         is logged under ``label`` and degrades to an empty list so one failing
-        section does not sink the whole search.
+        section does not sink the whole search. ``failures`` collects what was
+        absorbed, for a caller that must not keep a degraded result.
         """
         with observability.span(
             "kg_rag.retrieve",
@@ -305,6 +325,8 @@ class BaseSearchStrategy(ABC):
                 )
                 span.record_exception(e)
                 span.set_attributes({"kg_rag.degraded": True, "kg_rag.hits": 0})
+                if failures is not None:
+                    failures.append(e)
                 return []
             # Hit counts and source ids only: never the retrieved text.
             if observability.is_enabled():
@@ -478,18 +500,15 @@ class BaseSearchStrategy(ABC):
             query, o.entities_index_prefix, (str(r.source) for r in others), filters
         )
         if len(filters) > 1:
-            units = {
-                str(r.source): _text_unit_ids(r)
-                for r in others
-                if str(r.source) in passed
-            }
-            vouched = await self._ids_passing(
+            passed = await self._one_text_unit_passes(
                 query,
-                o.text_units_index_prefix,
-                (u for ids in units.values() for u in ids),
+                {
+                    str(r.source): _text_unit_ids(r)
+                    for r in others
+                    if str(r.source) in passed
+                },
                 filters,
             )
-            passed = {v for v, ids in units.items() if vouched.intersection(ids)}
         kept = [r for r in results if r.source in seeds or str(r.source) in passed]
         if len(kept) < len(results):
             logger.debug(
@@ -498,6 +517,26 @@ class BaseSearchStrategy(ABC):
                 len(results),
             )
         return kept
+
+    async def _one_text_unit_passes(
+        self, query: SearchQuery, units: dict[str, list[str]], filters: dict[str, Any]
+    ) -> set[str]:
+        """The keys of ``units`` (an item's text unit ids) with a text unit
+        that passes ``filters``.
+
+        An entity or edge document unions its documents' values per key, so
+        under two or more keys it can pass while no document passes them all;
+        a text unit is one document's. All their units are checked at once.
+        """
+        if not units:
+            return set()
+        passed = await self._ids_passing(
+            query,
+            self.config.indexing.opensearch.text_units_index_prefix,
+            (u for ids in units.values() for u in ids),
+            filters,
+        )
+        return {key for key, ids in units.items() if passed.intersection(ids)}
 
     def _new_rerank_trace(self) -> RerankTrace:
         """The per-query rerank record ``asearch`` passes to ``_fuse_and_rerank``
@@ -635,73 +674,103 @@ class BaseSearchStrategy(ABC):
         what only excluded documents state (a 1,522-degree hub kept 0-4
         entities where an index of the passing documents alone keeps 10).
         Each hop instead asks the relationships index for the passing edges
-        incident to the frontier (two requests, best first by rank and
-        weight); under two or more keys an edge also needs one passing
-        document, by its text units. The walk keeps the graph walk's bounds:
-        ``max_hops``, ``max_results_per_hop`` new neighbours per vertex a
-        hop and ``top_k * retrieval_multiplier * traversal_fetch_multiplier``
-        vertices in all. The reached entities are read from the entities
-        index under the caller's filters (a vertex filter such as ``type``
-        keeps only its entities, the walk goes through the others), scored
-        by distance and importance as the graph walk does, and cut to
+        incident to the frontier (``_incident_relationships``: best first by
+        rank, weight and id); under two or more keys an edge also needs one
+        passing document, by its text units. The walk keeps the graph walk's
+        bounds: ``max_hops``, ``max_results_per_hop`` new neighbours per
+        vertex a hop and ``top_k * retrieval_multiplier *
+        traversal_fetch_multiplier`` vertices in all, split evenly across the
+        seeds (each seed reaches at most its share), so a hub seed cannot use
+        up the others' budget. A page of edges that comes back full holds the
+        busiest vertices' best edges only: the vertices still short of their
+        share are asked again on their own. The reached entities are read
+        from the entities index under the caller's filters (a vertex filter
+        such as ``type`` keeps only its entities, the walk goes through the
+        others), scored by distance and importance as the graph walk does
+        (``degree`` reads as ``rank``: the index holds no degree), and cut to
         ``top_k * retrieval_multiplier``; ``Path:`` follows the walk.
 
         ``None`` when the relationships index is missing at query time: the
         caller falls back to the graph walk.
         """
+        retriever = self.document_retriever
+        if retriever is None:
+            return None
         o = self.config.indexing.opensearch
         neptune = self.config.indexing.neptune
         filters = document_filters(query.filters)
         limit = query.top_k * query.retrieval_multiplier
         budget = limit * max(1, neptune.traversal_fetch_multiplier)
+        share = math.ceil(budget / len(seeds))
+        # Text units only decide an edge under two or more keys.
+        fields = [
+            f for f in _WALK_EDGE_FIELDS if len(filters) > 1 or f != "text_unit_ids"
+        ]
         parent: dict[str, str | None] = dict.fromkeys(seeds)
+        root = {seed: seed for seed in seeds}
+        taken = dict.fromkeys(seeds, 0)
         names: dict[str, str] = {}
         frontier = list(seeds)
+        per_vertex: dict[str, int] = {}  # new neighbours per vertex this hop
+
+        def open_(vertex: str) -> bool:
+            return (
+                per_vertex.get(vertex, 0) < neptune.max_results_per_hop
+                and taken[root[vertex]] < share
+            )
+
         for hop in range(neptune.max_hops):
             if not frontier or len(parent) - len(seeds) >= budget:
                 break
-            edges = await self._fetch_incident_relationships(
-                query, frontier, source_fields=list(_WALK_EDGE_FIELDS)
-            )
-            if hop == 0 and not edges and self.document_retriever is not None:
-                exists = await self.document_retriever.ahas_index(
-                    o.relationships_index_prefix, query.suffix
-                )
-                if exists is False:
-                    logger.warning(
-                        "%s: no relationships index for suffix '%s'; graph "
-                        "expansion under document filters walks the graph",
-                        type(self).__name__,
-                        query.suffix,
-                    )
-                    return None
-            if len(filters) > 1 and edges:
-                edges = await self._edges_one_document_passes(query, edges, filters)
-            in_frontier = set(frontier)
-            per_vertex: dict[str, int] = {}
+            per_vertex.clear()
             reached: list[str] = []
-            for edge in edges:
-                metadata = edge.metadata or {}
-                ends = (
-                    (str(metadata.get("source_id")), metadata.get("source_name")),
-                    (str(metadata.get("target_id")), metadata.get("target_name")),
-                )
-                for (vertex, _), (other, _) in (ends, ends[::-1]):
-                    if vertex not in in_frontier or other in parent:
-                        continue
-                    if per_vertex.get(vertex, 0) >= neptune.max_results_per_hop:
-                        continue
-                    if len(parent) - len(seeds) >= budget:
-                        break
-                    parent[other] = vertex
-                    per_vertex[vertex] = per_vertex.get(vertex, 0) + 1
-                    reached.append(other)
-                for vertex, name in ends:
-                    if name:
-                        names.setdefault(vertex, str(name))
+            pending = frontier
+            while pending:
+                edges, full = await self._incident_relationships(query, pending, fields)
+                if hop == 0 and pending is frontier and not edges:
+                    exists = await retriever.ahas_index(
+                        o.relationships_index_prefix, query.suffix
+                    )
+                    if exists is False:
+                        logger.warning(
+                            "%s: no relationships index for suffix '%s'; graph "
+                            "expansion under document filters walks the graph",
+                            type(self).__name__,
+                            query.suffix,
+                        )
+                        return None
+                if len(filters) > 1 and edges:
+                    edges = await self._edges_one_document_passes(query, edges, filters)
+                asked = set(pending)
+                for edge in edges:
+                    metadata = edge.metadata or {}
+                    ends = (
+                        (str(metadata.get("source_id")), metadata.get("source_name")),
+                        (str(metadata.get("target_id")), metadata.get("target_name")),
+                    )
+                    for (vertex, _), (other, _) in (ends, ends[::-1]):
+                        if vertex not in asked or other in parent or not open_(vertex):
+                            continue
+                        if len(parent) - len(seeds) >= budget:
+                            break
+                        parent[other], root[other] = vertex, root[vertex]
+                        taken[root[vertex]] += 1
+                        per_vertex[vertex] = per_vertex.get(vertex, 0) + 1
+                        reached.append(other)
+                    for vertex, name in ends:
+                        if name:
+                            names.setdefault(vertex, str(name))
+                still_open = [vertex for vertex in pending if open_(vertex)]
+                if (
+                    not full
+                    or len(still_open) == len(pending)  # the same page again
+                    or len(parent) - len(seeds) >= budget
+                ):
+                    break
+                pending = still_open
             frontier = reached
         entities = await self._safe_aretrieve(
-            self.document_retriever,  # type: ignore[arg-type]
+            retriever,
             SearchQuery(
                 query="",
                 search_type=SearchType.LEXICAL,
@@ -713,25 +782,28 @@ class BaseSearchStrategy(ABC):
             ),
             "Filtered graph expansion entities",
         )
+        seed_set = set(seeds)
         if len(filters) > 1:
-            # Entities union their documents' values per key, as edges do.
-            entities = await self._vouch_by_entities_index(
-                query, entities, {str(s) for s in seeds}
+            # The read applied each key on its own (an entity unions its
+            # documents' values, as an edge does): one document must pass all.
+            vouched = await self._one_text_unit_passes(
+                query,
+                {
+                    str(e.source): _text_unit_ids(e)
+                    for e in entities
+                    if str(e.source) not in seed_set
+                },
+                filters,
             )
-        importance_key = (
-            None
-            if neptune.entity_importance_source == "none"
-            else "rank"  # the index holds no degree: rank is the degree
-        )
+            entities = [e for e in entities if str(e.source) in seed_set | vouched]
+        with_importance = neptune.entity_importance_source != "none"
 
         def importance(result: RetrievalResult) -> float | None:
-            if importance_key is None:
-                return None
-            value = (result.metadata or {}).get(importance_key)
-            try:
-                return float(value) if value is not None else None
-            except (TypeError, ValueError):
-                return None
+            return (
+                as_float((result.metadata or {}).get("rank"))
+                if with_importance
+                else None
+            )
 
         top = max((importance(r) or 0.0 for r in entities), default=0.0)
         results: list[RetrievalResult] = []
@@ -766,7 +838,7 @@ class BaseSearchStrategy(ABC):
                     }
                 )
             )
-        return _cut_expanded(results, limit, set(seeds))
+        return rank_expanded(results, seed_set, limit)
 
     async def _edges_one_document_passes(
         self, query: SearchQuery, edges: list[RetrievalResult], filters: dict[str, Any]
@@ -777,13 +849,12 @@ class BaseSearchStrategy(ABC):
         ``{category: x, grp: a}`` and a ``{category: y, grp: b}`` document
         passes ``category:x grp:b``. Checked by the edges' text units (one
         document each), as the entity check is."""
-        vouched = await self._ids_passing(
+        vouched = await self._one_text_unit_passes(
             query,
-            self.config.indexing.opensearch.text_units_index_prefix,
-            (u for edge in edges for u in _text_unit_ids(edge)),
+            {self._relationship_identity(e): _text_unit_ids(e) for e in edges},
             filters,
         )
-        return [e for e in edges if vouched.intersection(_text_unit_ids(e))]
+        return [e for e in edges if self._relationship_identity(e) in vouched]
 
     def _incident_fetch_limit(self) -> int:
         """How many incident edges to request per endpoint side.
@@ -811,96 +882,155 @@ class BaseSearchStrategy(ABC):
         entity_ids: list[str],
         known_relationships: list[RetrievalResult] | None = None,
         bridge_first: bool = False,
-        source_fields: list[str] | None = None,
     ) -> list[RetrievalResult]:
         """Every relationship incident to ``entity_ids``, deduped and ordered
-        (only ``source_fields`` of each when given).
+        (``_incident_relationships``) without those the caller already holds
+        (``known_relationships``, by relationship id), so an edge is not paid
+        for twice. With ``bridge_first`` the edges whose BOTH endpoints are in
+        ``entity_ids`` — the bridges that connect two retrieved entities,
+        i.e. the hops of a multi-hop chain — come before edges that leave the
+        set.
+        """
+        edges, _ = await self._incident_relationships(query, entity_ids)
+        known = {self._relationship_identity(r) for r in known_relationships or []}
+        edges = [e for e in edges if self._relationship_identity(e) not in known]
+        if bridge_first:
+            in_set = set(entity_ids)
+            # Stable: each group keeps the (rank, weight, id) order.
+            edges.sort(
+                key=lambda r: not (
+                    str((r.metadata or {}).get("source_id")) in in_set
+                    and str((r.metadata or {}).get("target_id")) in in_set
+                )
+            )
+        return edges
+
+    async def _incident_relationships(
+        self,
+        query: SearchQuery,
+        entity_ids: list[str],
+        source_fields: list[str] | None = None,
+    ) -> tuple[list[RetrievalResult], bool]:
+        """The relationships incident to ``entity_ids`` (only
+        ``source_fields`` of each when given), and whether a page came back
+        full (the edges past it were dropped).
 
         The relationships index stores its endpoints as `source_id`/`target_id`
         keywords, but `_build_filter_clauses` ANDs every filter, so
-        `source_id OR target_id` needs two queries. Edges are deduped by
-        relationship id (also against ``known_relationships``) and
-        ordered by `(rank, weight)` descending, as upstream LightRAG's
-        `_find_most_related_edges_from_entities` does. With ``bridge_first``
-        the edges whose BOTH endpoints are in ``entity_ids`` — the bridges
-        that connect two retrieved entities, i.e. the hops of a multi-hop
-        chain — come before edges that leave the set.
+        `source_id OR target_id` needs two requests. Edges are deduped by
+        relationship id and ordered by `(rank, weight)` descending, as
+        upstream LightRAG's `_find_most_related_edges_from_entities` does,
+        then by id, so equal edges do not follow the order of the two
+        requests. Within a query (``query_scope``) the same edges are asked
+        once (DRIFT's follow-ups expand the same seeds); a concurrent caller
+        waits for the request in flight. A failed request is not kept.
         """
         retriever = self.document_retriever
         if not retriever or not entity_ids:
-            return []
-
-        page = self._incident_fetch_limit()
-        relationships_prefix = (
-            self.config.indexing.opensearch.relationships_index_prefix
+            return [], False
+        memo = current_query_scope()
+        key = "incident\n" + json.dumps(
+            [query.suffix, query.filters, sorted(set(entity_ids)), source_fields],
+            sort_keys=True,
+            default=str,
         )
-
-        async def _by_endpoint(field: str) -> list[RetrievalResult]:
-            search_query = SearchQuery(
-                query="",
-                search_type=SearchType.LEXICAL,
-                top_k=page,
-                index_prefixes=[relationships_prefix],
-                suffix=query.suffix,
-                filters=self._scoped_filters(query, **{field: entity_ids}),
-                source_fields=source_fields,
-            )
-            side = await self._safe_aretrieve(
-                retriever, search_query, f"Incident relationship retrieval ({field})"
-            )
-            # A text-less search is ordered by (rank, weight) server-side (the
-            # retriever's importance sort), so a full page holds the best edges.
-            # Still, the count cap bound and edges were dropped — upstream drops
-            # none. Say so rather than let a silent truncation read as "all edges".
-            if len(side) >= page:
-                logger.warning(
-                    "Incident-edge fetch on %s hit the %s-hit page cap; the "
-                    "lowest-ranked edges are dropped (upstream truncates by "
-                    "tokens only)",
-                    field,
-                    page,
+        if memo is not None:
+            if (pending := memo.get(key)) is not None:
+                shared = await asyncio.shield(pending)
+                if shared is not None:
+                    return list(shared[0]), shared[1]
+            else:
+                outcome: asyncio.Future[Any] = (
+                    asyncio.get_running_loop().create_future()
                 )
-            return side
+                memo[key] = outcome
+                try:
+                    edges, full, failed = await self._ask_incident(
+                        query, entity_ids, source_fields
+                    )
+                except BaseException:
+                    del memo[key]
+                    outcome.set_result(None)  # the waiters ask for themselves
+                    raise
+                if failed:
+                    del memo[key]
+                    outcome.set_result(None)
+                else:
+                    outcome.set_result((edges, full))
+                return list(edges), full
+        edges, full, _ = await self._ask_incident(query, entity_ids, source_fields)
+        return edges, full
 
-        sides = await asyncio.gather(
-            _by_endpoint("source_id"), _by_endpoint("target_id")
-        )
+    async def _ask_incident(
+        self,
+        query: SearchQuery,
+        entity_ids: list[str],
+        source_fields: list[str] | None,
+    ) -> tuple[list[RetrievalResult], bool, bool]:
+        """``_incident_relationships``' two requests: the edges, whether a
+        page came back full and whether a request failed."""
+        retriever = self.document_retriever
+        assert retriever is not None
+        page = self._incident_fetch_limit()
+        failures: list[Exception] = []
+
+        async def by_endpoint(field: str) -> list[RetrievalResult]:
+            return await self._safe_aretrieve(
+                retriever,
+                SearchQuery(
+                    query="",
+                    search_type=SearchType.LEXICAL,
+                    top_k=page,
+                    index_prefixes=[
+                        self.config.indexing.opensearch.relationships_index_prefix
+                    ],
+                    suffix=query.suffix,
+                    filters=self._scoped_filters(query, **{field: entity_ids}),
+                    source_fields=source_fields,
+                ),
+                f"Incident relationship retrieval ({field})",
+                failures,
+            )
+
+        sides = await asyncio.gather(by_endpoint("source_id"), by_endpoint("target_id"))
+        # A text-less search is ordered by (rank, weight) server-side (the
+        # retriever's importance sort), so a full page holds the best edges.
+        # Still, the count cap bound and edges were dropped — upstream drops
+        # none. Say so (once a query: DRIFT asks again and again) rather than
+        # let a silent truncation read as "all edges".
+        full = any(len(side) >= page for side in sides)
+        if full:
+            memo = current_query_scope()
+            warned = memo is not None and "incident page cap" in memo
+            (logger.debug if warned else logger.warning)(
+                "Incident-edge fetch hit the %s-hit page cap; the lowest-ranked "
+                "edges are dropped (upstream truncates by tokens only)",
+                page,
+            )
+            if memo is not None:
+                memo["incident page cap"] = True
 
         # Dedup by relationship id, so an edge reachable from both of its
-        # endpoints is carried once and an edge the caller already holds is not
-        # paid for twice. Upstream dedups by the undirected endpoint pair
-        # (`tuple(sorted(e))`) because its graph holds one edge per pair; ours
-        # keeps typed, directed edges, and a pair key dropped every edge between
-        # two entities but the first ("supplies" and "invoices" alike).
-        seen = {self._relationship_identity(r) for r in (known_relationships or [])}
-        deduped: list[RetrievalResult] = []
-        for result in [r for side in sides for r in side]:
-            identity = self._relationship_identity(result)
-            if identity in seen:
-                continue
-            seen.add(identity)
-            deduped.append(result)
+        # endpoints is carried once. Upstream dedups by the undirected endpoint
+        # pair (`tuple(sorted(e))`) because its graph holds one edge per pair;
+        # ours keeps typed, directed edges, and a pair key dropped every edge
+        # between two entities but the first ("supplies" and "invoices" alike).
+        deduped = list(
+            {self._relationship_identity(r): r for side in sides for r in side}.values()
+        )
 
-        in_set = set(entity_ids)
-
-        def _order(r: RetrievalResult) -> tuple[float, ...]:
+        def order(r: RetrievalResult) -> tuple[float, float, str]:
             metadata = r.metadata or {}
-            key = (
-                float(metadata.get("rank") or 0.0),
-                float(metadata.get("weight") or 0.0),
+            return (
+                -(as_float(metadata.get("rank")) or 0.0),
+                -(as_float(metadata.get("weight")) or 0.0),
+                self._relationship_identity(r),
             )
-            if not bridge_first:
-                return key
-            bridge = (
-                str(metadata.get("source_id")) in in_set
-                and str(metadata.get("target_id")) in in_set
-            )
-            return (float(bridge), *key)
 
         # Upstream orders these by (rank, weight) descending — degree first, so the
         # hub edges that carry a multi-hop chain outrank incidental leaf edges.
-        deduped.sort(key=_order, reverse=True)
-        return deduped
+        deduped.sort(key=order)
+        return deduped, full, bool(failures)
 
     @staticmethod
     def _restore_rank(

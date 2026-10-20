@@ -170,6 +170,17 @@ def test_process_traversal_results_dedups_by_id(retriever) -> None:
     assert results[0].score >= results[1].score
 
 
+def test_process_traversal_results_orders_equal_scores_by_id(retriever) -> None:
+    # Equal scores came out in traversal order; by id, the graph walk and
+    # the filtered walk over the search store break ties alike.
+    items = [
+        {"node": {"id": [eid], "name": [eid]}, "path": [], "node_type": "Entity"}
+        for eid in ("e3", "e1", "e2")
+    ]
+    results = retriever._process_traversal_results(items, SearchQuery(query="q"))
+    assert [r.source for r in results] == ["e1", "e2", "e3"]
+
+
 def test_process_traversal_results_skips_missing_id(retriever) -> None:
     query = SearchQuery(query="x")
     items = [{"node": {"name": ["NoId"]}, "path": [], "node_type": "Entity-default"}]
