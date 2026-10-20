@@ -751,16 +751,17 @@ budget and answer. `RAGInput.search_strategy` picks the methodology.
 - **Under a document filter, expansion runs on the search store.** A graph
   holds no document attribute, so the walk goes over the relationships
   index instead (`BaseSearchStrategy._expand_over_passing_relationships`):
-  each hop asks for the passing edges incident to the frontier, two requests
-  (source and target side; plus one text-unit check under two or more
-  keys), cached per query, and one entities-index read at the end (and,
-  under two or more keys, a second text-unit check of the entities it
-  reached). It
-  keeps the graph walk's bounds (`max_hops`, `max_results_per_hop`, the
-  budget split per seed) and scoring, but `degree` importance reads as
-  `rank` (the index holds no degree). A side returns at most
-  `max_query_size` edges, best first; when a page is full the vertices still
-  short of their share are asked again on their own. An index built before
+  each hop asks for the passing edges incident to the frontier vertices
+  whose seed is short of its share, two requests (source and target side;
+  plus one text-unit check under two or more keys), cached per query, and
+  one entities-index read at the end (and, under two or more keys, a
+  second text-unit check of the entities it reached). It keeps the graph walk's bounds
+  (`max_hops`, `max_results_per_hop`, the budget split per seed, each seed
+  at most its share) and scoring, but `degree` importance reads as `rank`
+  (the index holds no degree). A side returns at most `max_query_size`
+  edges, best first; when a page is full, each vertex still open is asked
+  once more on its own, concurrently, at the full side: a hop costs two
+  requests, plus one per open vertex when a page is full, in two rounds. An index built before
   relationships carried document filters passes no edge, so expansion keeps
   the seeds only until it is rebuilt; without the relationships index the
   graph walk runs, checked against the entities index.

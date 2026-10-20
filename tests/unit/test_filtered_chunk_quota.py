@@ -283,3 +283,26 @@ async def test_mix_fills_the_slots_a_subset_index_fills(case: str) -> None:
         for h in hits
     ]
     assert await linked(hits, {"attr_grp": "a"}) == await linked(subset, None)
+
+
+async def test_slots_on_unchecked_chunks_cost_a_request_a_round(config: Config) -> None:
+    # Regression: a slot moved past the checked chunks (e1's first five are
+    # e0's, so its slots go to the rest) was checked chunk by chunk: 400
+    # failing chunks cost about 80 rounds. The whole unchecked rest of that
+    # hit's lineage is now asked at once.
+    config.search.lightrag_search.chunk_stream_top_k = 20
+    config.search.lightrag_search.related_chunk_number = 5
+    store = _Store(config.indexing.opensearch.text_units_index_prefix, [])
+    strategy: Any = get_strategy_spec(SearchStrategy.MIX).strategy_class(
+        config=config, retrievers={RetrieverRole.DOCUMENT.value: store}
+    )
+    shared = [f"u{i}" for i in (1, 3, 5, 7, 9)]
+    failing = [f"u{i}" for i in range(10, 810, 2)]  # 400 even ids
+    hits = [_entity("e0", shared), _entity("e1", [*shared, *failing, "u811"])]
+    out = await strategy._retrieve_linked_chunks(
+        SearchQuery(query="q", top_k=10, filters={"attr_grp": "a"}), hits, []
+    )
+    assert sorted(r.source for r in out["lightrag_linked_chunks"]) == sorted(
+        [*shared, "u811"]
+    )
+    assert len(store.checks) <= 3

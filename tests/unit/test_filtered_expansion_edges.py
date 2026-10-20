@@ -458,6 +458,94 @@ async def test_the_budget_is_split_across_the_seeds(config: Config) -> None:
     assert sorted(_paths(kept)) == ["A", "B", "va0", "vb0"]
 
 
+async def test_every_seed_reaches_its_share(config: Config) -> None:
+    # Regression: the shares round up but one global budget capped the
+    # total, so with 21 seeds (share 2 of 30) the last 6 by edge rank
+    # reached nothing. The shares bound the total, as on the graph walk.
+    edges = [
+        (f"e{j:02d}-{i}", f"S{j:02d}", f"V{j:02d}-{i}", 100.0 - j)
+        for j in range(21)
+        for i in range(5)
+    ]
+    index = _Index(config, edges=edges, passing={e[0] for e in edges})
+    seeds = [f"S{j:02d}" for j in range(21)]
+    await _strategy(config, _Graph(), index)._expand_via_graph(
+        SearchQuery(query="q", top_k=10, filters={"attr_grp": "a"}), seeds
+    )
+    o = config.indexing.opensearch
+    (reached,) = [f["id"] for p, f in index.calls if p == o.entities_index_prefix]
+    for seed in seeds:
+        assert len([v for v in reached if v.startswith(f"V{seed[1:]}-")]) == 2
+
+
+async def test_a_full_page_asks_each_open_vertex_once_more(config: Config) -> None:
+    # Regression: a full page was asked again for the still-open vertices
+    # together, round after round, each round closing about one hub (20
+    # hubs: 30 sequential requests, and L's neighbour never reached). Each
+    # open vertex is now asked once more on its own, all at once, at the
+    # full end only: one more round.
+    edges = [
+        (f"m{j:02d}-{i:03d}", f"M{j:02d}", f"V{j:02d}-{i:03d}", 100.0)
+        for j in range(20)
+        for i in range(120)
+    ]
+    edges.append(("l0", "L", "LX", 1.0))
+    index = _Index(config, edges=edges, passing={e[0] for e in edges})
+    seeds = [f"M{j:02d}" for j in range(20)] + ["L"]
+    config.indexing.neptune.max_hops = 1
+    kept = await _strategy(config, _Graph(), index)._expand_via_graph(
+        SearchQuery(query="q", top_k=10, filters={"attr_grp": "a"}), seeds
+    )
+    o = config.indexing.opensearch
+    (reached,) = [f["id"] for p, f in index.calls if p == o.entities_index_prefix]
+    assert "LX" in reached and len(reached) == 21 + 2 * 20 + 1
+    asks = _relationship_calls(config, index)
+    # One request per end, then one per vertex still open at the full end
+    # (the source side): the first page closed one hub of the 20.
+    assert len(asks) == 2 + 20
+    assert all(len(f["source_id"]) == 1 for f in asks[2:])
+    assert len(kept) == 21 + 10  # the seeds and the cut
+
+
+async def test_a_closed_seeds_vertices_are_not_asked(config: Config) -> None:
+    # Before a hop the frontier keeps only the vertices whose seed is short
+    # of its share: a1 belongs to A, which took its one (B found nothing,
+    # so the budget of 2 was not spent and a1 was asked at hop 2).
+    config.indexing.neptune.traversal_fetch_multiplier = 1
+    edges = [("r1", "A", "a1", 2.0), ("r2", "a1", "a2", 1.0)]
+    index = _Index(config, edges=edges, passing={e[0] for e in edges})
+    await _strategy(config, _Graph(), index)._expand_via_graph(
+        SearchQuery(query="q", top_k=2, filters={"attr_grp": "a"}), ["A", "B"]
+    )
+    calls = _relationship_calls(config, index)
+    assert len(calls) == 2  # hop 1 only
+    assert all(
+        sorted(f.get("source_id", f.get("target_id"))) == ["A", "B"] for f in calls
+    )
+
+
+async def test_two_keys_do_not_let_a_hubs_failing_edges_starve_a_seed(
+    config: Config,
+) -> None:
+    # Regression: the hub's 150 edges pass the relationships index (each key
+    # by another document) but no document passes both; they filled the
+    # page, closed nothing, and the "same page again" guard stopped before
+    # S2 was asked: X was never reached.
+    hub = [(f"h{i:03d}", "H", f"N{i:03d}", 100.0) for i in range(150)]
+    edges = [*hub, ("s2", "S2", "X", 1.0)]
+    index = _Index(
+        config,
+        edges=edges,
+        passing={e[0] for e in edges},
+        units_passing={"u-s2", "u-X", "u-S2", "u-H"},
+    )
+    kept = await _strategy(config, _Graph(), index)._expand_via_graph(
+        SearchQuery(query="q", filters={"attr_grp": "a", "attr_category": "x"}),
+        ["H", "S2"],
+    )
+    assert _paths(kept)["X"] == "S2 -> X"
+
+
 async def test_a_query_asks_for_a_frontiers_edges_once(config: Config) -> None:
     # DRIFT's follow-ups expand the same seeds again, concurrently too: the
     # same frontier's edges are fetched once a query, the request in flight
