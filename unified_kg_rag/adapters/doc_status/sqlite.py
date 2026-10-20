@@ -26,6 +26,7 @@ import time
 from collections.abc import Iterable, Iterator
 from contextlib import AbstractContextManager, contextmanager
 from pathlib import Path
+from typing import ClassVar
 
 from unified_kg_rag.adapters.local.sqlite_util import (
     connect,
@@ -82,6 +83,9 @@ _BATCH = 500
 
 class SQLiteDocStatusStore:
     """SQLite-backed implementation of :class:`DocStatusPort`."""
+
+    # Written in this process (see DataIngestionPipeline._stores_in_process).
+    in_process: ClassVar[bool] = True
 
     def __init__(self, config: Config, path: str | Path | None = None) -> None:
         """Args:

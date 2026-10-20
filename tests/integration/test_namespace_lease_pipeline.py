@@ -11,6 +11,7 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
+import httpx
 import pytest
 
 from tests.fixtures.fakes.model_servers import FakeOllama
@@ -103,3 +104,94 @@ def test_a_stopped_local_run_lets_the_next_one_write_at_once(
     context = _ingest(config, providers, source, tmp_path / "run-2")
     assert context.status is PipelineStageStatus.COMPLETED, _errors(context)
     assert time.time() - started < 60
+
+
+class _RemoteStore:
+    """A stand-in for a store written over the network (no ``in_process``)."""
+
+    closed = False
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def _pipeline(tmp_path: Path, **injected: object):  # type: ignore[no-untyped-def]
+    """A pipeline on the embedded config, with ``injected`` stores
+    (``doc_status``, ``graph_indexer_factory``, ``vector_indexer_factory``)."""
+    from unified_kg_rag.adapters.local.embeddings import OllamaEmbeddingFactory
+    from unified_kg_rag.adapters.local.models import OllamaLanguageModelFactory
+    from unified_kg_rag.adapters.local.rerank import CrossEncoderRerankFactory
+    from unified_kg_rag.application.bootstrap import build_providers
+    from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
+    from unified_kg_rag.domain.models import PipelineConfig
+
+    config = _config(tmp_path / "stores", tmp_path / "viz")
+    config.search.store_timeout_seconds = 7.0
+    transport = httpx.MockTransport(FakeOllama(e2e._respond, ANSWER, DIM))
+    providers = build_providers(
+        config,
+        llm_factory=OllamaLanguageModelFactory(config, transport=transport),
+        embedding_factory=OllamaEmbeddingFactory(config, transport=transport),
+        rerank_factory=CrossEncoderRerankFactory(
+            config, loader=lambda *_, **__: FakeCrossEncoder("r")
+        ),
+        **injected,  # type: ignore[arg-type]
+    )
+    return DataIngestionPipeline(
+        config,
+        PipelineConfig(local_directory=tmp_path / "cache"),
+        source_directory=tmp_path,
+        providers=providers,
+    )
+
+
+def test_a_run_on_embedded_stores_holds_an_in_process_lease(tmp_path: Path) -> None:
+    lease = _pipeline(tmp_path)._namespace_lease()
+    assert lease.in_process_stores is True
+    # A takeover waits one embedded write (the stores' busy timeout).
+    assert lease.in_process_write_seconds == 7.0
+
+
+@pytest.mark.parametrize("remote", ["registry", "graph", "vector"])
+def test_one_injected_remote_store_makes_the_lease_remote(
+    tmp_path: Path, remote: str
+) -> None:
+    # Old behaviour: the rule read the configured kinds (all sqlite here),
+    # so an injected remote store was taken for an embedded one, and a stop
+    # released the lease with that store's requests still in flight.
+    from tests.fixtures.fakes.doc_status import FakeDocStatusStore
+
+    store = _RemoteStore()
+    injected: dict[str, object] = {
+        "registry": {"doc_status": FakeDocStatusStore()},
+        "graph": {"graph_indexer_factory": lambda: store},
+        "vector": {"vector_indexer_factory": lambda: store},
+    }[remote]
+    lease = _pipeline(tmp_path, **injected)._namespace_lease()
+    assert lease.in_process_stores is False
+    assert store.closed is (remote != "registry")
+
+
+def test_a_stopped_run_with_a_remote_store_leaves_its_lease_expired(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Mixed stores: the remote one may still have a write in flight, so a
+    # stop gives the lease up expired (owner kept) and the next run waits.
+    import unified_kg_rag.application.ingestion.namespace_lease as lease_mod
+    from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
+    from unified_kg_rag.shared import PipelineInterrupted
+
+    monkeypatch.setattr(lease_mod, "longest_write_request_seconds", lambda: 180.0)
+    pipeline = _pipeline(tmp_path, graph_indexer_factory=_RemoteStore)
+    (tmp_path / "a.txt").write_text("Vendor supplies Buyer.")
+
+    def stopped(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        raise PipelineInterrupted(15)
+
+    monkeypatch.setattr(DataIngestionPipeline, "_execute_pipeline", stopped)
+    with pytest.raises(PipelineInterrupted):
+        pipeline.run(tmp_path, pipeline_id="run-1")
+    assert pipeline._doc_status is not None
+    holder = pipeline._doc_status.lease_holder("default")
+    assert holder is not None and holder[1] <= time.time()
+    assert pipeline.next_run_writes_from > time.time() + 60

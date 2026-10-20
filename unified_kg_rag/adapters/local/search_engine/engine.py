@@ -47,7 +47,7 @@ from collections.abc import Iterator
 from contextlib import AbstractContextManager, contextmanager
 from fnmatch import fnmatchcase
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import numpy as np
 from opensearchpy.exceptions import NotFoundError
@@ -259,6 +259,9 @@ def _validate_mappings(body: dict[str, Any]) -> None:
 
 class SQLiteSearchEngine:
     """The ``SearchEngineClient`` of an embedded SQLite file (see the module doc)."""
+
+    # Written in this process (see DataIngestionPipeline._stores_in_process).
+    in_process: ClassVar[bool] = True
 
     def __init__(self, path: str | Path, *, timeout_seconds: float = 30.0) -> None:
         """Args:

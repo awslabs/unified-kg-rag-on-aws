@@ -1308,6 +1308,11 @@ changed once with the full-config keys (#332).
   store embedded releases its lease, but the pool workers the stop left
   running kept writing for the seconds the process took to exit, after the
   next run could take the lease; they now fail at their next write (#PR).
+- Whether every store a run writes is embedded (a stop then releases the
+  lease instead of leaving it expired) is told by the adapters the run
+  builds, not by the configured kinds: a remote store injected into an
+  otherwise embedded setup made a stop release the lease with that store's
+  requests still in flight (#PR).
 - `run-ingestion --output-format json`: the status of a stopped run says
   from when the next run on its namespace may write
   (`next_run_writes_from`) when it must wait for this run's writes still in

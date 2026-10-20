@@ -160,6 +160,11 @@ class OpenSearchIndexer(VectorIndexer):
         """Release the search-engine client's connections (best-effort)."""
         self.opensearch_client.close()
 
+    @property
+    def in_process(self) -> bool:
+        """Whether its search engine is embedded in this process (SQLite)."""
+        return getattr(self.opensearch_client, "in_process", False) is True
+
     def _index_prefixes(self) -> list[str]:
         return [spec.alias_prefix for spec in self._specs()]
 

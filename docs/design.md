@@ -709,8 +709,9 @@ second run fails with `NamespaceLeaseError` before it reads or writes.
   waited for their writes), and the next run writes at once. A stopped run
   (SIGTERM or Ctrl-C) leaves it expired, owner kept, since its pools do not
   wait for the requests in flight: the next run waits as after a crash, and
-  the stop message says until when. With every store embedded (SQLite) the
-  lease is released: a worker the stop left running fails at its next write
+  the stop message says until when. With every store embedded (SQLite; told
+  by the adapters the run builds, so an injected remote store counts as
+  remote) the lease is released: a worker the stop left running fails at its next write
   transaction, and one already holding the database's lock commits before
   the next run can write that store; a takeover waits at most one store
   write (`search.store_timeout_seconds`). A

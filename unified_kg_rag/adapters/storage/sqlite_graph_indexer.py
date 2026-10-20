@@ -17,7 +17,7 @@ import sqlite3
 import uuid
 from collections.abc import Collection
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 from unified_kg_rag.adapters.local.sqlite_graph import (
     SQLiteGraphStore,
@@ -67,6 +67,9 @@ class SQLiteGraphIndexer(GraphIndexer):
     the database refuses raises (``SQLiteGraphStore``) rather than counting
     its items as failed.
     """
+
+    # Written in this process (see DataIngestionPipeline._stores_in_process).
+    in_process: ClassVar[bool] = True
 
     def __init__(
         self,
