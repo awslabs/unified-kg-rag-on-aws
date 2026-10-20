@@ -1422,20 +1422,20 @@ changed once with the full-config keys (#332).
   next local run stall about 3 minutes in `document_loading`, though the
   stopped process takes its in-process writes with it. On the AWS stores
   the stop message (console and log) now says until when the next run on
-  the namespace waits before its first write (#PR).
+  the namespace waits before its first write (#395).
 - A run stopped during its takeover wait uploads its S3 checkpoint: the
   upload checked the takeover wait too, so it failed and the stopped run
-  lost its checkpoint. It checks only that the lease is held now (#PR).
+  lost its checkpoint. It checks only that the lease is held now (#395).
 - Worker pools and the write lease share one stop rule (`is_stop`:
   `KeyboardInterrupt`, `SystemExit`, which SIGTERM's `PipelineInterrupted`
   is): a pool skips waiting for its workers exactly when the lease is given
-  up expired for their writes in flight (#PR).
+  up expired for their writes in flight (#395).
 - `prepare-benchmark` prints the benchmark label (`musique` or
   `musique-full-answerable`) on the console and in `--output-format json`,
   and `run-eval` counts the labels of its queries in the summary
   (`benchmarks`, also in the per-strategy summaries) and the run manifest
   (`dataset.benchmarks`): only the per-row metadata said which benchmark a
-  run scored (#PR).
+  run scored (#395).
 - Incremental indexing: a removal that both merges and splits spellings
   ("Acme Ltd" into "ACME Inc", "Acme" split off) and is killed between its
   writes and the deletion of the old ids is resumed to a full build's
