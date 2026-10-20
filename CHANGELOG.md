@@ -1298,17 +1298,17 @@ changed once with the full-config keys (#332).
 - Tracing: the `kg_rag.ingestion.run` span of a stopped or crashed run
   carries `kg_rag.pipeline_id` too (the id to resume with); it was set only
   from a returned context. The operations runbook now says a model call
-  cancelled during `ainvoke` ends its span as `ERROR CancelledError` (#PR).
+  cancelled during `ainvoke` ends its span as `ERROR CancelledError` (#393).
 - A cancelled or timed-out evaluation stops RAGAS judging: it ran in a
   thread nothing could stop, so the RAGAS partition was judged to the end
   (168 judge calls after a timeout in a 12-question run). RAGAS now runs
   through its cancellable executor, and the judge it binds to ragas'
-  shared metric objects is unbound after each run (#PR).
+  shared metric objects is unbound after each run (#393).
 - Tracing: a streamed answer's `chat <model>` span exports normally again,
   with its tokens and output. #386 ended a model span as `ERROR
   NoEndCallback` whenever the task that started the call finished first,
   which a streamed call's always does; only a cancelled task now ends a span
-  that is still open (#PR).
+  that is still open (#393).
 - Incremental indexing: a commit that splits spellings apart (or re-keys
   or rewires entities) and is killed partway is finished by the next run.
   Those decisions lived in memory only: the next run derived from the half
@@ -1359,7 +1359,7 @@ changed once with the full-config keys (#332).
   LLM-free evaluators, in the background, and a cancelled item is no longer
   retried. The batch processor and the evaluators awaited their items
   through `as_completed`, which leaves them running when the caller is
-  cancelled (#386). RAGAS judging stops too (#PR).
+  cancelled (#386). RAGAS judging stops too (#393).
 - Filtered graph expansion fills its slots as an index of the passing
   documents does: the walk goes four times wider and is cut after the
   document-filter checks, not before (on a 1,500-degree hub, 6 of 10
