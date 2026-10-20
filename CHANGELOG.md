@@ -1486,7 +1486,7 @@ changed once with the full-config keys (#332).
   answerable and once not under the same id, which the repeated-id check
   refused; only answerable items are checked for repeated ids now. Its
   answerable half is a different benchmark from MuSiQue-Ans, labelled
-  `musique-full-answerable` (#380, #PR).
+  `musique-full-answerable` (#380, #386).
 - Tracing: a span whose coroutine is cancelled (`asyncio.CancelledError`:
   `kg_rag.query` / `kg_rag.batch` on Ctrl-C or SIGTERM, or a host cancelling
   `ainvoke`) also exports as `ERROR` with `error.type`; #374 covered only
@@ -3600,7 +3600,7 @@ changed once with the full-config keys (#332).
   their documents' filters and OpenSearch applies the filter (a document's
   removal narrows them); graph expansion keeps an expanded entity other
   than the seeds only when one of its text units passes the filter, checked
-  by an ids-only fetch in batches one request holds (#354, #PR).
+  by an ids-only fetch in batches one request holds (#354, #360).
 - A community report's document filters (`attr_<key>`, `attributes.filters.*`)
   are the union of its own text units' document filters. Every report copied
   the attributes of the graph's first entity, so an attribute filter kept or
