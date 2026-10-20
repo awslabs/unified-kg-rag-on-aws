@@ -1295,6 +1295,16 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Incremental indexing: a commit that splits spellings apart (or re-keys
+  or rewires entities) and is killed partway is finished by the next run.
+  Those decisions lived in memory only: the next run derived from the half
+  written stored state, which no longer called for the split, and kept a
+  claim as a self-claim or an edge on the spelling it was split from. The
+  commit now notes the entities in one record of the extraction store
+  (`pending-commit`) before its first write; the next commit of the suffix
+  derives them, their stored edges and the claims about them again, and
+  the note goes once the old ids are deleted. In a split crash sweep, 14 of
+  1,284 crash points diverged from a full build; none do now (#392).
 - Incremental indexing: a removal that renames an entity and is killed
   after the graph took its edges' new names, before their vector copies
   did, renames the vector copies on retry. The strip writes the vector

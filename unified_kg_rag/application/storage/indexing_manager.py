@@ -72,6 +72,10 @@ _Described = TypeVar("_Described", Entity, Relationship)
 # removal's strip merges or re-keys, kept until their old ids are deleted
 # (record keys are ``fingerprint:hash``: no clash).
 _PENDING_STRIP = "pending-strip"
+# Extraction-store key of a suffix's commit note: the stored entities an
+# incremental commit splits, re-keys or rewires, written before its first
+# write and deleted once the old ids are (see note_pending_commit).
+_PENDING_COMMIT = "pending-commit"
 
 
 def _noted(notes: Mapping[str, Mapping[str, Any]], field: str) -> set[str]:
@@ -259,6 +263,13 @@ class IndexingManager:
         # Per suffix: the retired entities only the vector store held (see
         # _strip_shared), whose edges delete_documents finds there.
         self._vector_only: dict[str, set[str]] = {}
+        # Per suffix: the entities a commit's derivation split, re-keyed
+        # (old and new ids) or rewired, for its write-ahead note.
+        self._commit_entities: dict[str, set[str]] = {}
+        # Per suffix: the entities an earlier commit's note names (see
+        # note_pending_commit), and the suffixes this run noted.
+        self._commit_noted: dict[str, set[str]] = {}
+        self._commit_notes: set[str] = set()
         # The stored community reports a removal kept although they cite a
         # removed text unit (see community_drift).
         self.outdated_reports: set[str] = set()
@@ -651,7 +662,13 @@ class IndexingManager:
         resumed run's removal derived the killed run's claims of the delta
         against a graph without the delta's entities).
         """
-        if not (claims or self._rekeyed or self._split_from or self._renamed):
+        if not (
+            claims
+            or self._rekeyed
+            or self._split_from
+            or self._renamed
+            or self._commit_noted
+        ):
             return claims
         groups = self._group_by_suffix(claims or [])
         merged: list[Claim] = []
@@ -660,6 +677,7 @@ class IndexingManager:
             | self._rekeyed.keys()
             | self._split_from.keys()
             | self._renamed.keys()
+            | self._commit_noted.keys()
         ):
             group = groups.get(suffix, [])
             stored = self.opensearch_indexer.read_claims(
@@ -719,6 +737,11 @@ class IndexingManager:
         merged_entities = entities
         existing: list[Entity] = []
         entity_id_remap: dict[str, str] = {}
+        # What an earlier commit of this suffix split, re-keyed or rewired
+        # and may not have written in full (see note_pending_commit): the
+        # stored entities and their edges are derived again with the delta,
+        # and the claims about them follow.
+        noted = self._read_commit_note(suffix)
         if entities:
             # The full build also merges names that differ only by legal form
             # or spacing (and by similarity with fuzzy_entity_resolution);
@@ -727,7 +750,8 @@ class IndexingManager:
             name_matcher, matched_ids = self._match_stored_names(suffix, entities)
             existing = self._with_full_descriptions(
                 self.neptune_indexer.read_entities(
-                    sorted({e.id for e in entities} | matched_ids), suffix=suffix
+                    sorted({e.id for e in entities} | matched_ids | noted),
+                    suffix=suffix,
                 ),
                 self.opensearch_indexer.read_entity_descriptions,
                 suffix,
@@ -736,6 +760,13 @@ class IndexingManager:
                 merged_entities, entity_id_remap = merge_entities(
                     existing, entities, fuzzy_matcher=name_matcher
                 )
+        elif noted:
+            existing = self._with_full_descriptions(
+                self.neptune_indexer.read_entities(sorted(noted), suffix=suffix),
+                self.opensearch_indexer.read_entity_descriptions,
+                suffix,
+            )
+            merged_entities = list(existing)
         merged_relationships = relationships
         existing_rels: list[Relationship] = []
         relationship_remap: dict[str, str] = {}
@@ -789,6 +820,60 @@ class IndexingManager:
                 merged_relationships = [
                     r for r in merged_relationships if r.id in written
                 ]
+        if noted:
+            # The noted entities' stored edges: a killed commit may not have
+            # re-pointed them.
+            held = {r.id for r in merged_relationships}
+            noted_edges = self.neptune_indexer.read_relationships(
+                sorted(
+                    set(
+                        self.neptune_indexer.find_incident_relationship_ids(
+                            sorted(noted), suffix=suffix
+                        )
+                    )
+                    - held
+                ),
+                suffix=suffix,
+            )
+            if noted_edges:
+                noted_edges = self._with_full_descriptions(
+                    noted_edges,
+                    self.opensearch_indexer.read_relationship_descriptions,
+                    suffix,
+                )
+                existing_rels = [*existing_rels, *noted_edges]
+                # Their other endpoints too: a re-pointed edge changes their
+                # rank.
+                known = {e.id for e in merged_entities or []}
+                ends = {
+                    entity_id_remap.get(i, i)
+                    for r in noted_edges
+                    for i in (r.source_id, r.target_id)
+                } - known
+                if ends:
+                    others = self._with_full_descriptions(
+                        self.neptune_indexer.read_entities(sorted(ends), suffix=suffix),
+                        self.opensearch_indexer.read_entity_descriptions,
+                        suffix,
+                    )
+                    existing = [*existing, *others]
+                    merged_entities = [*(merged_entities or []), *others]
+                merged_relationships = [
+                    *(merged_relationships or []),
+                    *(
+                        r.model_copy(
+                            update={
+                                "source_id": entity_id_remap.get(
+                                    r.source_id, r.source_id
+                                ),
+                                "target_id": entity_id_remap.get(
+                                    r.target_id, r.target_id
+                                ),
+                            }
+                        )
+                        for r in noted_edges
+                    ),
+                ]
         if merged_entities is not entities and merged_relationships:
             # Merged with stored entities: an edge re-pointed at one, or at one
             # whose stored name differs from the delta's, must name it as the
@@ -809,6 +894,14 @@ class IndexingManager:
             )
         rekey = derived.id_remap
         self._note_renamed(suffix, derived.entities, existing)
+        derived_ids = {e.id for e in derived.entities}
+        decided = {
+            *(i for pair in rekey.items() if pair[1] in derived_ids for i in pair),
+            *(i for pair in derived.split_from.items() for i in pair),
+            *derived.rewired,
+        }
+        if decided:
+            self._commit_entities.setdefault(suffix, set()).update(decided)
 
         def final_id(delta_id: str, merged_into: Mapping[str, str]) -> str:
             """The id a delta item ends under: the stored one it merged into
@@ -839,7 +932,9 @@ class IndexingManager:
             stored_entities=[*existing, *entities],
             stored_relationships=[*existing_rels, *relationships],
             rekey=rekey,
-            rewired=set(derived.rewired),
+            # The noted entities' stored edges are all among the edges given
+            # (read with them): their stored links do not count either.
+            rewired=set(derived.rewired) | noted,
             dropped=derived.dropped,
         )
         # A delta id the merge folded into a stored item of another id has no
@@ -1355,6 +1450,7 @@ class IndexingManager:
                     split_from, self._derived_entities.get(suffix, {})
                 ),
                 *self._renamed.get(suffix, set()),
+                *self._commit_noted.get(suffix, set()),
             }
         )
 
@@ -1388,6 +1484,8 @@ class IndexingManager:
         self._rekeyed.clear()
         self._dropped.clear()
         self._vector_only.clear()
+        self._commit_entities.clear()
+        self._commit_noted.clear()
         self._split_from.clear()
         self._renamed.clear()
         self._fresh.clear()
@@ -1400,12 +1498,71 @@ class IndexingManager:
             )
         return self.delete_documents(retired, vector_only)
 
+    def _read_commit_note(self, suffix: str) -> set[str]:
+        """The entities an earlier commit's note of ``suffix`` names (see
+        :meth:`note_pending_commit`), recorded so their claims follow. A
+        failed read raises (see merge_with_existing_graph)."""
+        note = self.opensearch_indexer.read_extraction_records(
+            [_PENDING_COMMIT], suffix=suffix
+        ).get(_PENDING_COMMIT)
+        ids = {i for i in (note or {}).get("entity_ids") or [] if isinstance(i, str)}
+        if note is not None:
+            self._commit_notes.add(suffix)
+        if ids:
+            self._commit_noted.setdefault(suffix, set()).update(ids)
+        return ids
+
+    def note_pending_commit(self) -> None:
+        """Note, per suffix, the stored entities this commit's derivation
+        split, re-keyed or rewired (with those of an earlier note it
+        finishes), before its first write. Those decisions live in memory
+        only: a run killed between the writes leaves the stored state half
+        changed, and the next run, deriving from it, would not split or
+        re-key them again, so their stored edges and claims would stay as
+        they were. The next commit of the suffix derives them again
+        (:meth:`_merge_suffix`). Raises when a write fails, before anything
+        is written."""
+        for suffix in sorted(self._commit_entities.keys() | self._commit_noted.keys()):
+            ids = {
+                *self._commit_entities.get(suffix, set()),
+                *self._commit_noted.get(suffix, set()),
+            }
+            if not ids:
+                continue
+            stats = self.opensearch_indexer.write_extraction_records(
+                {_PENDING_COMMIT: {"entity_ids": sorted(ids)}}, suffix=suffix
+            )
+            if stats.failed_items:
+                raise DataProcessingError(
+                    f"Noting the pending commit of '{suffix}' failed: "
+                    f"{stats.errors[:1]}"
+                )
+            self._commit_notes.add(suffix)
+
+    def clear_pending_commit(self) -> None:
+        """Delete the commit notes of the suffixes this run noted or read
+        (best-effort: one left only makes the next commit derive the
+        entities again)."""
+        for suffix in sorted(self._commit_notes):
+            try:
+                self.opensearch_indexer.delete_extraction_records(
+                    [_PENDING_COMMIT], suffix=suffix
+                )
+            except NamespaceLeaseError:
+                raise
+            except Exception as e:  # noqa: BLE001 - a leftover note is harmless
+                logger.warning("Deleting the commit note of '%s' failed: %s", suffix, e)
+        self._commit_notes.clear()
+
     def discard_retired_ids(self) -> None:
         """Keep the re-keyed items' old ids (their writes failed: deleting
         them would lose the items)."""
         self._rekeyed.clear()
         self._dropped.clear()
         self._vector_only.clear()
+        self._commit_entities.clear()
+        self._commit_noted.clear()
+        self._commit_notes.clear()
         self._split_from.clear()
         self._renamed.clear()
         self._fresh.clear()
