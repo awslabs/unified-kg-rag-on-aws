@@ -149,7 +149,7 @@ def test_get_many_retries_unprocessed_keys(
 ) -> None:
     for doc_id in ("a", "b", "c"):
         ddb_store.put(DocStatusRecord(doc_id=doc_id, content_hash="h"))
-    monkeypatch.setattr(dynamodb_module.time, "sleep", lambda _: None)
+    monkeypatch.setattr(dynamodb_module, "_sleep", lambda _: None)
     batch_get = ddb_store.client.batch_get_item
     requests: list[list[str]] = []
 
@@ -174,7 +174,7 @@ def test_get_many_fails_when_keys_stay_unprocessed(
     ddb_store: DynamoDBDocStatusStore, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     ddb_store.put(DocStatusRecord(doc_id="a", content_hash="h"))
-    monkeypatch.setattr(dynamodb_module.time, "sleep", lambda _: None)
+    monkeypatch.setattr(dynamodb_module, "_sleep", lambda _: None)
 
     def never(**kwargs):
         return {"Responses": {}, "UnprocessedKeys": kwargs["RequestItems"]}
@@ -230,7 +230,7 @@ def test_put_many_writes_in_batches_of_25_and_last_record_wins(
 def test_put_many_retries_unprocessed_items(
     ddb_store: DynamoDBDocStatusStore, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(dynamodb_module.time, "sleep", lambda _: None)
+    monkeypatch.setattr(dynamodb_module, "_sleep", lambda _: None)
     batch_write = ddb_store.client.batch_write_item
     requests: list[list[str]] = []
 
@@ -258,7 +258,7 @@ def test_put_many_retries_unprocessed_items(
 def test_put_many_fails_when_items_stay_unprocessed(
     ddb_store: DynamoDBDocStatusStore, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(dynamodb_module.time, "sleep", lambda _: None)
+    monkeypatch.setattr(dynamodb_module, "_sleep", lambda _: None)
 
     def never(**kwargs):
         return {"UnprocessedItems": kwargs["RequestItems"]}
