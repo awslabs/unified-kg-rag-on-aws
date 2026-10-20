@@ -303,15 +303,24 @@ def test_vector_search_recall_against_exact_knn(tmp_path: Path) -> None:
         TextUnit(id=f"u{i:05d}", text=" ".join(rng.choices(words, k=12)))
         for i in range(10_000)
     ]
-    queries = [" ".join(rng.choices(words, k=4)) for _ in range(30)]
+    queries = [" ".join(rng.choices(words, k=4)) for _ in range(90)]
     with _indexed_pair(tmp_path, units, "standard") as (sqlite, container):
-        exact = _search(sqlite, SearchType.VECTOR, queries)
+        exact = _search(sqlite, SearchType.VECTOR, queries, _TOP * 5)
         approximate = _search(container, SearchType.VECTOR, queries)
-    found = sum(
-        len({r.source for r in ours} & {r.source for r in theirs})
-        for ours, theirs in zip(exact, approximate, strict=True)
-    )
-    assert found / (_TOP * len(queries)) >= 0.98
+    # Tie-aware: most of these queries tie at the 10th place (12-word texts
+    # over 400 words embed alike), and each store breaks a tie by its own
+    # document order, which the concurrent bulk writes vary from run to run
+    # (about 1 run in 16 fell under the plain 0.98 that way). A hit scoring
+    # the exact 10th score is as near as the exact 10th, so it counts.
+    # Counted so, k = ef_search found 900 of 900 in every run tried and
+    # k = 10 879-887 (about 98 %): 90 queries and 0.995 keep both clear of
+    # the bound.
+    found = 0
+    for ours, theirs in zip(exact, approximate, strict=True):
+        scores = {str(r.source): r.score or 0.0 for r in ours}
+        tenth = (ours[_TOP - 1].score or 0.0) - 1e-6
+        found += sum(scores.get(str(r.source), -1.0) >= tenth for r in theirs[:_TOP])
+    assert found / (_TOP * len(queries)) >= 0.995
 
 
 def test_hybrid_keeps_the_last_lexical_hit(tmp_path: Path) -> None:

@@ -95,7 +95,9 @@ def test_evaluator_subclass_with_only_the_async_method_is_accepted() -> None:
 def test_dynamodb_batch_backoff_waits_only_between_requests(mocker) -> None:
     from unified_kg_rag.adapters.doc_status import dynamodb
 
-    sleep = mocker.patch.object(dynamodb.time, "sleep")
+    # The module's own sleep: dynamodb.time is the time module, and stubbing
+    # its sleep stubbed every thread's (the lease heartbeats of other tests).
+    sleep = mocker.patch.object(dynamodb, "_sleep")
     dynamodb._backoff_before(0)
     sleep.assert_not_called()
     dynamodb._backoff_before(3)

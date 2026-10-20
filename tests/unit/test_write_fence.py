@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import contextvars
+import os
 import signal
 import threading
 import time
@@ -788,17 +789,38 @@ class _RecordingProcessPool(ProcessPoolExecutor):
         return future
 
 
-def _stopped_after(seconds: float, block: Any) -> None:
+def _stopped_once_running(block: Any, total: int) -> None:
+    """Run ``block`` and stop it (SIGTERM's ``PipelineInterrupted``) once its
+    pool has all ``total`` tasks and finished one: on a loaded host the pool's
+    processes may take longer to start than any fixed delay."""
+
     def stop(signum: int, _: Any) -> None:
         raise PipelineInterrupted(signum)
 
+    def running() -> bool:
+        futures = _RecordingProcessPool.futures
+        return len(futures) >= total and any(f.done() for f in futures)
+
+    ended = threading.Event()
+
+    def watch() -> None:
+        deadline = time.time() + 60
+        while not ended.is_set() and time.time() < deadline:
+            if running():
+                os.kill(os.getpid(), signal.SIGALRM)
+                return
+            time.sleep(0.01)
+
+    _RecordingProcessPool.futures = []
     previous = signal.signal(signal.SIGALRM, stop)
+    watcher = threading.Thread(target=watch, daemon=True)
     try:
-        signal.setitimer(signal.ITIMER_REAL, seconds)
+        watcher.start()
         with pytest.raises(PipelineInterrupted):
             block()
     finally:
-        signal.setitimer(signal.ITIMER_REAL, 0)
+        ended.set()
+        watcher.join()
         signal.signal(signal.SIGALRM, previous)
 
 
@@ -812,12 +834,14 @@ def _assert_queued_tasks_cancelled(workers: int) -> None:
     # workers' queue are not cancellable (the old code cancelled none: it
     # relied on the manager thread reading the collected pool's flag).
     expected = len(futures) - ran - 2 * workers - 1
-    deadline = time.time() + 3
+    # Polled until then, not timed: the cancellation runs in the pool's
+    # manager thread.
+    deadline = time.time() + 30
     while time.time() < deadline and sum(f.cancelled() for f in futures) < expected:
         time.sleep(0.05)
     assert sum(f.cancelled() for f in futures) >= max(expected, 1)
     # The running ones end on their own; none is left pending.
-    concurrent.futures.wait(futures, timeout=10)
+    concurrent.futures.wait(futures, timeout=60)
     assert all(f.done() for f in futures)
 
 
@@ -837,7 +861,7 @@ def test_a_stop_cancels_the_queued_tasks_of_the_resolver_process_pool(
         for _ in resolver._match_in_pool(MagicMock(), [f"n{i}" for i in range(40)]):
             pass
 
-    _stopped_after(0.5, resolve)
+    _stopped_once_running(resolve, total=40)
     _assert_queued_tasks_cancelled(workers=2)
 
 
@@ -861,7 +885,7 @@ def test_a_stop_cancels_the_queued_tasks_of_the_dedup_process_pool(
         for i in range(40)
     ]
 
-    _stopped_after(0.5, lambda: loader._compute_minhashes(docs))
+    _stopped_once_running(lambda: loader._compute_minhashes(docs), total=40)
     _assert_queued_tasks_cancelled(workers=2)
 
 
