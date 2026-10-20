@@ -156,7 +156,7 @@ def check_output_directory(output_dir: Path) -> None:
 
 def prepare(
     source: Path, output_dir: Path, *, limit: int | None = None, seed: int = 0
-) -> dict[str, int]:
+) -> dict[str, Any]:
     """Write ``corpus/`` and ``eval_data.json`` for (a sample of) ``source``.
 
     ``limit`` questions are drawn with ``seed`` (all when ``None``);
@@ -216,4 +216,4 @@ def prepare(
     (output_dir / "eval_data.json").write_text(
         json.dumps(dataset, ensure_ascii=False, indent=2), "utf-8"
     )
-    return {"questions": len(dataset), "paragraphs": len(files)}
+    return {"benchmark": benchmark, "questions": len(dataset), "paragraphs": len(files)}

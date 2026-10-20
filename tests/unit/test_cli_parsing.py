@@ -448,6 +448,21 @@ def test_eval_metric_failures_count_against_budget(outcomes, budget, expected) -
     assert bool(run_evaluation.failure_budget_breaches(summary, budget)) is expected
 
 
+def test_eval_summary_names_the_benchmark(capsys) -> None:
+    # A musique-full-answerable run is not comparable to a MuSiQue-Ans one:
+    # the printed summary says which was scored.
+    summary = EvaluationSummary(
+        total_queries=2,
+        successful_evaluations=2,
+        failed_evaluations=0,
+        benchmarks={"musique-full-answerable": 2},
+        evaluation_start_time=datetime(2026, 1, 1),
+        evaluation_end_time=datetime(2026, 1, 1),
+    )
+    run_evaluation.EvaluationRunner._print_summary(summary, 1.0)
+    assert "Benchmark: musique-full-answerable (2)" in capsys.readouterr().out
+
+
 class _DictChain:
     def __init__(self, error: bool) -> None:
         self.error = error

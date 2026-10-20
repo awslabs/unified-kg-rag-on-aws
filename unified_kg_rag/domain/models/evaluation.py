@@ -320,6 +320,15 @@ class EvaluationSummary(BaseModel):
             "'output': 1}; empty when it blocked none."
         ),
     )
+    benchmarks: dict[str, int] = Field(
+        default_factory=dict,
+        description=(
+            "Queries per benchmark label (EvaluationQuery.metadata.benchmark, "
+            "as prepare-benchmark writes it), e.g. {'musique': 100}; empty "
+            "when no query carries one. A 'musique-full-answerable' run is "
+            "not comparable to a 'musique' (MuSiQue-Ans) one."
+        ),
+    )
     run_manifest: dict[str, Any] = Field(
         default_factory=dict,
         description=(

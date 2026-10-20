@@ -327,7 +327,11 @@ class TestMusique:
     def test_prepare_writes_corpus_and_dataset(self, tmp_path: Path) -> None:
         out = tmp_path / "bench"
         counts = musique.prepare(self._source(tmp_path), out)
-        assert counts == {"questions": 2, "paragraphs": 6}
+        assert counts == {
+            "benchmark": "musique-full-answerable",
+            "questions": 2,
+            "paragraphs": 6,
+        }
         files = sorted(p.name for p in (out / "corpus").iterdir())
         assert files == [
             "A B.txt",
@@ -381,6 +385,7 @@ class TestMusique:
         source.write_text(f"{answerable}\n{json.dumps(twin)}\n", encoding="utf-8")
         counts = musique.prepare(source, tmp_path / "out")
         assert counts["questions"] == 1
+        assert counts["benchmark"] == "musique-full-answerable"
         # Its answerable half is not MuSiQue-Ans: labelled apart (before,
         # "musique"), with a WARNING that the scores are not comparable.
         data = json.loads((tmp_path / "out" / "eval_data.json").read_text())
@@ -436,9 +441,15 @@ def test_prepare_benchmark_cli(tmp_path: Path, capsys) -> None:
             str(tmp_path / "b"),
             "--data-path",
             str(source),
+            "--output-format",
+            "json",
         ]
     )
     assert (tmp_path / "b" / "eval_data.json").is_file()
+    # The label the rows carry, on stdout (--json) and on the console.
+    out = capsys.readouterr()
+    assert json.loads(out.out)["benchmark"] == "musique-full-answerable"
+    assert "labelled 'musique-full-answerable'" in " ".join(out.err.split())
     with pytest.raises(SystemExit) as exit_info:  # corpus/ is no longer empty
         prepare_benchmark.main(
             [

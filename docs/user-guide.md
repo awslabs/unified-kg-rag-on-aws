@@ -1382,7 +1382,9 @@ instead. A full file (`musique_full_v1.0_*.jsonl`) is read too, but its
 answerable half is not MuSiQue-Ans (other paragraphs and answer aliases):
 its rows are labelled `metadata.benchmark: musique-full-answerable` instead
 of `musique`, with a WARNING that the scores are not comparable to MuSiQue-Ans
-results. It writes `corpus/` (one text file per distinct paragraph; each
+results. The label is in its output (console and `--output-format json`),
+and `run-eval` counts it in the summary (`benchmarks`) and the run manifest
+(`dataset.benchmarks`). It writes `corpus/` (one text file per distinct paragraph; each
 question brings 2-4 supporting paragraphs and up to 18 distractors) and
 `eval_data.json` (`answer`, `answer_aliases`, the supporting paragraphs as
 `reference_sources`, the hop count as `category`). A `corpus/` that is not
