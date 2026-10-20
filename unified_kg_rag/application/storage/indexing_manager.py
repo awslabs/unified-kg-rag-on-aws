@@ -625,7 +625,25 @@ class IndexingManager:
         merged_entities: list[Entity] = []
         merged_relationships: list[Relationship] = []
         id_remap_by_suffix: dict[str, dict[str, str]] = {}
-        for suffix in sorted(entity_groups.keys() | relationship_groups.keys()):
+        # A suffix this run touches without a delta (it only removed there)
+        # still finishes a killed commit's note, and deletes it.
+        delta_suffixes = entity_groups.keys() | relationship_groups.keys()
+        noted_only = {
+            suffix
+            for suffix in sorted(
+                {
+                    self.config.processing.document_parsing.index_value
+                    or Constants.DEFAULT_SUFFIX.value,
+                    *self._removed_record_keys,
+                }
+                - delta_suffixes
+            )
+            if _PENDING_COMMIT
+            in self.opensearch_indexer.read_extraction_records(
+                [_PENDING_COMMIT], suffix=suffix
+            )
+        }
+        for suffix in sorted(delta_suffixes | noted_only):
             suffix_entities, suffix_relationships, id_remap = self._merge_suffix(
                 suffix,
                 entity_groups.get(suffix, []),
@@ -817,19 +835,42 @@ class IndexingManager:
                 merged_relationships = [
                     r for r in merged_relationships if r.id in written
                 ]
+        # The vector copies of the noted entities and their edges the graph
+        # does not hold: a commit killed after its vector writes and before
+        # its graph writes left them, and nothing else finds them.
+        vector_orphans: set[str] = set()
         if noted:
             # The noted entities' stored edges: a killed commit may not have
             # re-pointed them.
-            held = {r.id for r in merged_relationships}
-            noted_edges = self.neptune_indexer.read_relationships(
-                sorted(
-                    set(
-                        self.neptune_indexer.find_incident_relationship_ids(
-                            sorted(noted), suffix=suffix
-                        )
+            held = {r.id for r in merged_relationships or []}
+            graph_incident = set(
+                self.neptune_indexer.find_incident_relationship_ids(
+                    sorted(noted), suffix=suffix
+                )
+            )
+            if _reads_back(self.neptune_indexer):
+                in_graph = {
+                    e.id
+                    for e in self.neptune_indexer.read_entities(
+                        sorted(noted), suffix=suffix
                     )
+                }
+                vector_entities = set(
+                    self.opensearch_indexer.read_entity_descriptions(
+                        sorted(noted - in_graph), suffix=suffix
+                    )
+                    if noted - in_graph
+                    else {}
+                )
+                if vector_entities:
+                    self._vector_only.setdefault(suffix, set()).update(vector_entities)
+                vector_orphans = vector_entities | (
+                    set(self._vector_incident_relationship_ids(sorted(noted), suffix))
+                    - graph_incident
                     - held
-                ),
+                )
+            noted_edges = self.neptune_indexer.read_relationships(
+                sorted(graph_incident - held),
                 suffix=suffix,
             )
             if noted_edges:
@@ -840,12 +881,11 @@ class IndexingManager:
                 )
                 existing_rels = [*existing_rels, *noted_edges]
                 # Their other endpoints too: a re-pointed edge changes their
-                # rank.
+                # rank. (Stored edges join stored ids, which the entity merge
+                # keeps: no delta id remaps one.)
                 known = {e.id for e in merged_entities or []}
                 ends = {
-                    entity_id_remap.get(i, i)
-                    for r in noted_edges
-                    for i in (r.source_id, r.target_id)
+                    i for r in noted_edges for i in (r.source_id, r.target_id)
                 } - known
                 if ends:
                     others = self._with_full_descriptions(
@@ -855,22 +895,7 @@ class IndexingManager:
                     )
                     existing = [*existing, *others]
                     merged_entities = [*(merged_entities or []), *others]
-                merged_relationships = [
-                    *(merged_relationships or []),
-                    *(
-                        r.model_copy(
-                            update={
-                                "source_id": entity_id_remap.get(
-                                    r.source_id, r.source_id
-                                ),
-                                "target_id": entity_id_remap.get(
-                                    r.target_id, r.target_id
-                                ),
-                            }
-                        )
-                        for r in noted_edges
-                    ),
-                ]
+                merged_relationships = [*(merged_relationships or []), *noted_edges]
         if merged_entities is not entities and merged_relationships:
             # Merged with stored entities: an edge re-pointed at one, or at one
             # whose stored name differs from the delta's, must name it as the
@@ -949,7 +974,9 @@ class IndexingManager:
             suffix,
             rekey,
             derived.split_from,
-            [i for i in derived.dropped if i not in written] + folded,
+            [i for i in derived.dropped if i not in written]
+            + folded
+            + sorted(vector_orphans - written),
         )
         self._derived_entities.setdefault(suffix, {}).update(
             {e.id: e for e in merged_entities}
@@ -1303,7 +1330,6 @@ class IndexingManager:
             for r in extra
             if (w := written_by_key.get(relationship_key(r.source_id, r.target_id, r)))
             is not None
-            and w.id != r.id
             and set(r.text_unit_ids or []) <= set(w.text_unit_ids or [])
         }
         # An edge between two entities the re-key merged is a self-loop a
@@ -1434,18 +1460,23 @@ class IndexingManager:
     def _rederived_entity_ids(self, suffix: str) -> list[str]:
         """The stored entity ids whose claims this run derives again: the
         re-keyed ones, those an entity was split off and the parts split off
-        them (a stored claim may name a part already), the other spellings
-        of a split-off entity's name this run derived (a claim naming the
-        part may resolve to one of them) and those renamed."""
+        them (a stored claim may name a part already), those renamed, and the
+        other spellings this run derived of a split-off, re-keyed or renamed
+        entity's name (a claim naming it may sit on one of them)."""
         split_from = self._split_from.get(suffix, {})
+        derived = self._derived_entities.get(suffix, {})
+        changed = {
+            *split_from,
+            *self._rekeyed.get(suffix, {}).values(),
+            *self._renamed.get(suffix, set()),
+        }
+        keys = {compact_name_key(derived[i].name) for i in changed if i in derived}
         return sorted(
             {
                 *self._rekeyed.get(suffix, {}),
                 *split_from.values(),
                 *split_from,
-                *_other_spellings_of_parts(
-                    split_from, self._derived_entities.get(suffix, {})
-                ),
+                *(i for i, e in derived.items() if compact_name_key(e.name) in keys),
                 *self._renamed.get(suffix, set()),
                 *self._noted_commit_entities.get(suffix, set()),
             }
@@ -1694,16 +1725,26 @@ class IndexingManager:
         return results
 
     def _note_pending_strip(
-        self, suffix: str, entity_ids: list[str], relationship_ids: list[str]
+        self,
+        suffix: str,
+        entity_ids: list[str],
+        relationship_ids: list[str],
+        claim_ids: list[str] | None = None,
     ) -> None:
         """Note the stored items a strip merges or re-keys, in one record of
         ``suffix``'s extraction store (kept until :meth:`_clear_pending_strip`),
-        so a retry of the removal strips them again (:meth:`remove_text_units`).
+        so a retry of the removal strips them again (:meth:`remove_text_units`),
+        with the ``claim_ids`` about the entities it splits (a split keeps the
+        stored id, so a retry would not find them).
         Raises when the write fails, before the strip writes anything."""
         self._write_note(
             _PENDING_STRIP,
             suffix,
-            {"entity_ids": entity_ids, "relationship_ids": relationship_ids},
+            {
+                "entity_ids": entity_ids,
+                "relationship_ids": relationship_ids,
+                "claim_ids": claim_ids or [],
+            },
         )
 
     def _clear_pending_strip(self, suffix: str) -> None:
@@ -1811,13 +1852,25 @@ class IndexingManager:
             retired_edges = {
                 old for old, new in derived.id_remap.items() if new in edge_ids_now
             } | {i for i in derived.dropped if i not in claim_ids_now}
-            if merged or retired_edges:
+            # The stored claims about a split's part and origin: a retry
+            # cannot tell them (the split kept the stored id).
+            split_claims = (
+                set(
+                    self._claims_about(
+                        suffix, [*derived.split_from, *derived.split_from.values()]
+                    )
+                )
+                if derived.split_from
+                else set()
+            )
+            if merged or retired_edges or split_claims:
                 # Their old ids need not cite the removed text units (another
                 # spelling merged in, or an edge re-pointed at it): once the
                 # items are written, a retry finds them through this note
                 # only, and strips them again. Noted: the entities on both
-                # sides of a merge and the edges re-keyed or dropped. Not a
-                # split's part and origin: a split keeps the stored id, and
+                # sides of a merge, the edges re-keyed or dropped and the
+                # claims about a split's entities. Not a split's part and
+                # origin themselves: a split keeps the stored id, and
                 # stripping them again on a retry gave a claim the wrong
                 # subject.
                 doing = "Noting the pending strip"
@@ -1825,15 +1878,28 @@ class IndexingManager:
                     suffix,
                     sorted(merged | _note_ids(earlier_note, "entity_ids")),
                     sorted(retired_edges | _note_ids(earlier_note, "relationship_ids")),
+                    sorted(split_claims | _note_ids(earlier_note, "claim_ids")),
                 )
                 noted = True
             doing = "Reading the claims of re-keyed entities"
             # The stored claims about a re-keyed, split or renamed entity
             # follow it.
             renamed = self._note_renamed(suffix, derived.entities, entities)
+            # And those about the other stored spellings of their names: a
+            # claim naming one may resolve to the changed entity now.
+            changed = {*derived.id_remap.values(), *renamed, *derived.split_from}
+            family_keys = sorted(
+                {compact_name_key(e.name) for e in derived.entities if e.id in changed}
+            )
+            family = (
+                self.neptune_indexer.find_entity_ids_by_name_key(family_keys, suffix)
+                if family_keys
+                else None
+            ) or []
             claim_ids = sorted(
                 {
                     *claim_ids,
+                    *split_claims,
                     *self._claims_about(
                         suffix,
                         [
@@ -1844,6 +1910,7 @@ class IndexingManager:
                                 {e.id: e for e in derived.entities},
                             ),
                             *renamed,
+                            *family,
                         ],
                     ),
                 }
@@ -2184,7 +2251,12 @@ class IndexingManager:
             )
             # A claim the earlier strip re-keyed onto a noted entity cites no
             # removed unit: it is found through its subject or object.
-            noted_claims = self._claims_about(suffix, _note_ids(note, "entity_ids"))
+            noted_claims = sorted(
+                {
+                    *self._claims_about(suffix, _note_ids(note, "entity_ids")),
+                    *_note_ids(note, "claim_ids"),
+                }
+            )
         except Exception as e:  # noqa: BLE001 - reported as failed items
             logger.error("Finding the removed text units' items failed: %s", e)
             stats = IndexingStats(total_items=len(text_unit_ids))

@@ -237,6 +237,9 @@ def _state(
     finally:
         graph.close()
     claims = _stored(config, providers, config.indexing.opensearch.claims_index_prefix)
+    vector_entities = _stored(
+        config, providers, config.indexing.opensearch.entities_index_prefix
+    )
     try:
         vector_edges = _stored(
             config, providers, config.indexing.opensearch.relationships_index_prefix
@@ -261,7 +264,16 @@ def _state(
             )
             for hit in claims
         ),
-        # The vector copies of the edges: their own names and lineage.
+        # The vector copies of the entities and edges: their own names and
+        # lineage.
+        "vector_entities": sorted(
+            (
+                hit["_id"],
+                hit["_source"].get("name"),
+                tuple(sorted(hit["_source"].get("text_unit_ids") or [])),
+            )
+            for hit in vector_entities
+        ),
         "vector_edges": sorted(
             (
                 hit["_source"].get("source_name"),
@@ -496,16 +508,16 @@ def test_incremental_runs_over_two_spellings_match_a_full_build(
 def test_running_a_finished_pipeline_id_again_changes_nothing(
     tmp_path: Path,
 ) -> None:
-    statement = "Initech Corp and Buyer and Acme trade cash 1."
-    first = "Depot and Initech trade parts 1. Initech Corp trade cash 3."
-    second = f"{first} Initech and Buyer trade cash 2."
+    statement = "Initech Corp and Buyer and Acme trade parts 1."
+    first = "Depot and Initech trade goods 1. Initech Corp trade parts 3."
+    second = f"{first} Initech and Buyer trade parts 2."
     runs = [
         {"d5.txt": statement, "d6.txt": first},
         {"d6.txt": second, "r5.txt": statement},
         {
             "d6.txt": second,
             "r5.txt": statement,
-            "d5.txt": "Buyer and Initech and " "Depot trade goods 2.",
+            "d5.txt": "Buyer and Initech and " "Depot trade cash 2.",
         },
     ]
     full = _state(tmp_path / "full", [runs[-1]])
@@ -617,13 +629,13 @@ def test_a_resumed_merge_keeps_a_gleaned_edge_on_the_spelling_it_names(
     # the resumed run left the edge gleaning adds for "Initech Corp" (d1.txt)
     # on "Initech": the stored "Initech" no longer held the other spelling's
     # key, so the edge had no derived entity to follow.
-    d1 = "Initech Corp and Initech trade cash 1. Depot and Buyer trade parts 1."
+    d1 = "Initech Corp and Initech trade parts 1. Depot and Buyer trade cash 1."
     d7 = "Depot and Initech Corp and Buyer trade goods 1."
     runs = [
-        {"d1.txt": "Initech trade parts 2."},
-        {"d1.txt": d1, "d5.txt": "Buyer trade cash 2."},
-        {"d1.txt": d1, "d5.txt": "Buyer trade cash 2.", "d7.txt": d7},
-        {"d1.txt": d1, "d5.txt": "Buyer trade cash 2.", "r0.txt": d7},
+        {"d1.txt": "Initech trade cash 2."},
+        {"d1.txt": d1, "d5.txt": "Buyer trade parts 2."},
+        {"d1.txt": d1, "d5.txt": "Buyer trade parts 2.", "d7.txt": d7},
+        {"d1.txt": d1, "d5.txt": "Buyer trade parts 2.", "r0.txt": d7},
     ]
 
     full = _state(tmp_path / "full", [runs[-1]], gleaning=True)
@@ -856,9 +868,9 @@ def test_a_resumed_removal_finishes_the_merge_it_started(
     runs = [
         {
             "d1.txt": "Initech trade goods 3.",
-            "d5.txt": "Initech Corp and Initech trade cash 2.",
+            "d5.txt": "Initech Corp and Initech trade parts 2.",
         },
-        {"d5.txt": "Initech Corp and Initech trade cash 2."},
+        {"d5.txt": "Initech Corp and Initech trade parts 2."},
     ]
 
     full = _state(tmp_path / "full", [runs[-1]], gleaning=True)
@@ -894,9 +906,9 @@ def test_a_finished_removal_deletes_its_strip_note(
     runs = [
         {
             "d1.txt": "Initech trade goods 3.",
-            "d5.txt": "Initech Corp and Initech trade cash 2.",
+            "d5.txt": "Initech Corp and Initech trade parts 2.",
         },
-        {"d5.txt": "Initech Corp and Initech trade cash 2."},
+        {"d5.txt": "Initech Corp and Initech trade parts 2."},
     ]
     written = mocker.spy(OpenSearchIndexer, "write_extraction_records")
     deleted = mocker.spy(OpenSearchIndexer, "delete_extraction_records")
@@ -1041,9 +1053,9 @@ def test_a_strip_note_is_one_record_whatever_the_removed_units(
         {
             "d1.txt": "Initech trade goods 3.",
             "d2.txt": "Initech trade goods 4.",
-            "d5.txt": "Initech Corp and Initech trade cash 2.",
+            "d5.txt": "Initech Corp and Initech trade parts 2.",
         },
-        {"d5.txt": "Initech Corp and Initech trade cash 2."},
+        {"d5.txt": "Initech Corp and Initech trade parts 2."},
     ]
     written = mocker.spy(OpenSearchIndexer, "write_extraction_records")
 
@@ -1058,7 +1070,7 @@ def test_a_strip_note_is_one_record_whatever_the_removed_units(
     ]
     assert [list(records) for records in notes] == [["pending-strip"]]
     (note,) = notes[0].values()
-    assert set(note) == {"entity_ids", "relationship_ids"}
+    assert set(note) == {"entity_ids", "relationship_ids", "claim_ids"}
     assert len(note["entity_ids"]) == 2
     assert len(note["relationship_ids"]) == 1
     assert incremental == full
@@ -1081,18 +1093,18 @@ def test_a_resumed_removal_that_merged_and_split_matches_a_full_build(
     tmp_path: Path, die_at: tuple[Any, ...]
 ) -> None:
     # Removing d2.txt merges "Acme Ltd" into "ACME Inc" and splits "Acme" off
-    # it. The resumed removal strips the merged entities again; stripping the
-    # split-off part and its origin again too (as #379 noted them) left
-    # "Acme owes Acme Inc" with the wrong subject.
+    # it. Killed partway, the resumed removal strips the merged entities
+    # again from its note, and derives the claims about the split's
+    # entities again (also noted).
     runs = [
         {
-            "d3.txt": "Buyer and Acme Ltd and ACME Inc trade cash 3. Buyer trade "
-            "parts 1. Acme and Acme Inc trade cash 2.",
-            "d2.txt": "Acme Ltd trade parts 2. Initech Corp trade parts 2.",
+            "d3.txt": "Buyer and Acme Ltd and ACME Inc trade parts 3. Buyer trade "
+            "goods 1. Acme and Acme Inc trade parts 2.",
+            "d2.txt": "Acme Ltd trade goods 2. Initech Corp trade goods 2.",
         },
         {
-            "d3.txt": "Buyer and Acme Ltd and ACME Inc trade cash 3. Buyer trade "
-            "parts 1. Acme and Acme Inc trade cash 2."
+            "d3.txt": "Buyer and Acme Ltd and ACME Inc trade parts 3. Buyer trade "
+            "goods 1. Acme and Acme Inc trade parts 2."
         },
     ]
 
@@ -1439,5 +1451,221 @@ def test_a_resumed_commit_that_fails_again_keeps_its_note(tmp_path: Path) -> Non
         die_at=("upsert_claims", 1, False),
         fail_resumed_at=("upsert_claims", OpenSearchIndexer),
     )
+
+    assert incremental == full
+
+
+NOTE_COMMIT = "pending-commit"
+
+
+def test_a_killed_commit_is_finished_by_a_run_that_only_deletes(
+    tmp_path: Path, mocker: Any
+) -> None:
+    # The run after the killed commit only removes a document: there is no
+    # delta for the suffix, and the note is read, finished and deleted all
+    # the same.
+    runs = RUNS_COMMIT_SPLIT_CLAIM
+    last = {k: v for k, v in runs[-1].items() if k != "d6.txt"}
+    deleted = mocker.spy(OpenSearchIndexer, "delete_extraction_records")
+
+    full = _state(tmp_path / "full", [last])
+    deleted.reset_mock()
+    incremental = _state(
+        tmp_path / "inc",
+        [*runs, last],
+        die_in=len(runs) - 1,
+        die_at=("upsert_claims", 1, False),
+        resume=False,
+    )
+
+    assert incremental == full
+    assert any(NOTE_COMMIT in call.args[1] for call in deleted.call_args_list)
+
+
+RUNS_VECTOR_ORPHAN_EDGE = [
+    {"a.txt": "Acme Corp and Acme trade goods 2."},
+    {"a.txt": "Acme Corp and Acme trade goods 2.", "b.txt": "Acme trade cash 2."},
+    {"a.txt": "Acme Corp and Acme trade goods 2."},
+]
+RUNS_VECTOR_ORPHAN_ENTITY = [
+    {"d0.txt": "Depot and Acme Ltd and Acme trade goods 1."},
+    {
+        "d0.txt": "Depot and Acme Ltd and Acme trade goods 1.",
+        "d5.txt": "Acme Inc Inc and Acme Inc trade cash 3.",
+    },
+    {
+        "d0.txt": "Depot and Acme Ltd and Acme trade goods 1.",
+        "d5.txt": "Acme Corp Inc and Acme Corp trade cash 3.",
+        "d6.txt": "Acme Inc and Acme LLC trade cash 2. Acme Corp and ACME trade cash 1.",
+    },
+    {
+        "d0.txt": "Depot and Acme Ltd and Acme trade goods 1.",
+        "r7.txt": "Acme Inc and Acme LLC trade cash 2. Acme Corp and ACME trade cash 1.",
+    },
+]
+
+
+@pytest.mark.parametrize(
+    ("runs", "die_in", "die_at"),
+    [
+        pytest.param(
+            RUNS_VECTOR_ORPHAN_EDGE,
+            1,
+            ("upsert_relationships", 1, False, SQLiteGraphIndexer),
+            id="an-edge",
+        ),
+        pytest.param(
+            RUNS_VECTOR_ORPHAN_ENTITY,
+            2,
+            ("upsert_entities", 1, False, SQLiteGraphIndexer),
+            id="an-entity",
+        ),
+    ],
+)
+def test_a_killed_commits_vector_only_copies_go_with_its_note(
+    tmp_path: Path, runs: list[dict[str, str]], die_in: int, die_at: tuple[Any, ...]
+) -> None:
+    # Killed between its vector and its graph writes, the commit left a
+    # vector copy the graph never held; the next run, on another corpus, no
+    # longer derives the item. The commit note names its entities: the next
+    # commit retires the noted copies the graph does not hold (with the
+    # vector edges at them), as nothing else finds them.
+    full = _state(tmp_path / "full", [runs[-1]], gleaning=True)
+    incremental = _state(
+        tmp_path / "inc",
+        runs,
+        die_in=die_in,
+        die_at=die_at,
+        gleaning=True,
+        resume=False,
+    )
+
+    assert incremental == full
+
+
+RUNS_SIBLING_CLAIM = [
+    {
+        "d2.txt": "Acme Inc and Acme Ltd and Acme trade cash 3. Acme Ltd and Acme Corp and Acme trade goods 3.",
+        "d5.txt": "Acme Ltd and Acme LLC and Buyer trade cash 1. Acme Inc and Acme Ltd and Depot trade goods 3.",
+    },
+    {
+        "d2.txt": "Acme Inc and Acme Ltd and Acme trade cash 3. Acme Ltd and Acme Corp and Acme trade goods 3."
+    },
+]
+
+
+def test_a_removal_derives_the_claims_on_a_changed_entitys_spellings_again(
+    tmp_path: Path,
+) -> None:
+    # The removal re-keys or renames an entity: a stored claim on another
+    # stored spelling of its name may resolve to it now, so the claims about
+    # every spelling of its name key are derived again (no crash needed).
+    runs = RUNS_SIBLING_CLAIM
+
+    full = _state(tmp_path / "full", [runs[-1]], gleaning=True)
+    incremental = _state(tmp_path / "inc", runs, gleaning=True)
+
+    assert incremental == full
+
+
+def test_a_commit_killed_twice_carries_the_first_notes_ids(
+    tmp_path: Path, mocker: Any
+) -> None:
+    # Killed after its note, then failing again on the retry, the commit's
+    # successors still name what the first one decided: the retry derives
+    # from a stored state that no longer calls for the split, so only the
+    # carried note keeps those entities.
+    runs = RUNS_COMMIT_SPLIT_CLAIM
+    written = mocker.spy(OpenSearchIndexer, "write_extraction_records")
+
+    full = _state(tmp_path / "full", [runs[-1]])
+    written.reset_mock()
+    incremental = _state(
+        tmp_path / "inc",
+        runs,
+        die_in=len(runs) - 1,
+        die_at=("upsert_claims", 1, False),
+        fail_resumed_at=("upsert_claims", OpenSearchIndexer),
+    )
+
+    notes = [
+        set(call.args[1][NOTE_COMMIT]["entity_ids"])
+        for call in written.call_args_list
+        if NOTE_COMMIT in call.args[1]
+    ]
+    assert len(notes) >= 2
+    assert all(notes[0] <= later for later in notes[1:])
+    assert incremental == full
+
+
+RUNS_SIBLING_CLAIM_COMMIT = [
+    {
+        "d1.txt": "Depot and Acme Corp trade goods 3. Acme Corp trade cash 3.",
+        "d4.txt": "Acme Corp and Acme Inc and Depot trade cash 3.",
+    },
+    {
+        "d1.txt": "Depot and Acme Corp trade goods 3. Acme Corp trade cash 3.",
+        "d4.txt": "Acme Corp and Acme Inc and Depot trade cash 3.",
+        "d0.txt": "Acme Ltd and Acme Inc and Acme LLC trade goods 1.",
+    },
+    {
+        "d1.txt": "Depot and Acme Ltd trade goods 3. Acme Ltd trade cash 3.",
+        "d4.txt": "Acme Corp and Acme Inc and Depot trade cash 3.",
+        "d0.txt": "Acme Ltd and Acme Inc and Acme LLC trade goods 1.",
+    },
+]
+
+
+def test_a_commit_derives_the_claims_on_a_re_keyed_entitys_spellings_again(
+    tmp_path: Path,
+) -> None:
+    # The last commit re-keys "Acme LLC" to "Acme Ltd" (d1.txt now names it).
+    # d0.txt's claim "Acme Ltd owes Acme Inc" had resolved to "Acme Inc", the
+    # smallest of the tied spellings, and merged with its self-claim; now
+    # "Acme Ltd" is an entity of its own, so the claims on the other stored
+    # spellings of the re-keyed entity's name are derived again.
+    runs = RUNS_SIBLING_CLAIM_COMMIT
+
+    full = _state(tmp_path / "full", [runs[-1]], gleaning=True)
+    incremental = _state(tmp_path / "inc", runs, gleaning=True)
+
+    assert incremental == full
+
+
+RUNS_SIBLING_CLAIM_SPLIT = [
+    {
+        "d5.txt": "Depot and Acme Corp and Acme Ltd trade goods 2.",
+        "d6.txt": "Acme Corp trade parts 3.",
+    },
+    {
+        "d5.txt": "Depot and Acme Corp and Acme Ltd trade cash 2.",
+        "d6.txt": "Acme Corp trade parts 3.",
+        "d7.txt": "Acme Ltd and Acme trade parts 3.",
+    },
+    {
+        "d5.txt": "Depot and Acme Corp and Acme Ltd trade cash 2. Acme Inc and Acme LLC trade cash 2.",
+        "d6.txt": "Acme Corp trade parts 3.",
+        "d7.txt": "Acme Ltd and Acme trade parts 3.",
+    },
+    {
+        "d5.txt": "Depot and Acme Corp and Acme Ltd trade cash 2. Acme Inc and Acme LLC trade cash 2.",
+        "d6.txt": "Acme LLC and Acme Ltd trade parts 2.",
+        "d7.txt": "Acme Ltd and Acme trade parts 3.",
+    },
+]
+
+
+def test_a_commit_derives_the_claims_on_a_split_parts_spellings_again(
+    tmp_path: Path,
+) -> None:
+    # The last commit splits "Acme LLC" off and re-keys the entity it split
+    # from into "Acme Ltd": the stored claim "Depot owes Acme Corp" on "Acme
+    # Ltd" resolves to "Acme LLC" in a full build, so the claims on every
+    # spelling of the part's name, the re-keyed one included, are derived
+    # again.
+    runs = RUNS_SIBLING_CLAIM_SPLIT
+
+    full = _state(tmp_path / "full", [runs[-1]], gleaning=True)
+    incremental = _state(tmp_path / "inc", runs, gleaning=True)
 
     assert incremental == full

@@ -758,34 +758,54 @@ class OpenSearchIndexer(VectorIndexer):
         suffix: str | None = None,
     ) -> dict[str, list[str]] | None:
         """Documents whose keyword ``field`` holds any of ``values``, with
-        their ``text_unit_ids`` (see the port). A batch that matches more
-        documents than one search returns raises rather than drop some."""
+        their ``text_unit_ids`` (see the port). A batch matching more
+        documents than one search returns is read in pages, in id order."""
         alias_name = self._get_name(alias_prefix, suffix)
         if not values or not self.opensearch_client.get_index_name_by_alias(alias_name):
             return {}
         found: dict[str, list[str]] = {}
-        for start in range(0, len(values), _FIND_BATCH_SIZE):
-            batch = values[start : start + _FIND_BATCH_SIZE]
+
+        def search(filters: list[dict[str, Any]], **extra: Any) -> list[Any]:
             response = self.opensearch_client.search(
                 index=alias_name,
                 body={
                     "size": _FIND_WINDOW,
-                    "query": {"bool": {"filter": [{"terms": {field: batch}}]}},
-                    "_source": {"includes": ["text_unit_ids"]},
+                    "query": {"bool": {"filter": filters}},
+                    "_source": {"includes": ["id", "text_unit_ids"]},
+                    **extra,
                 },
             )
             hits = response.get("hits", {})
-            documents = hits.get("hits", [])
+            documents = list(hits.get("hits", []))
             total = hits.get("total", {})
             count = (
                 total.get("value", len(documents)) if isinstance(total, dict) else total
             )
-            if count > len(documents):
-                raise DataProcessingError(
-                    f"{count} documents of '{alias_name}' match {len(batch)} "
-                    f"values of '{field}', more than one search returns "
-                    f"({_FIND_WINDOW})"
-                )
+            # More documents than one search returns: sort, and the caller
+            # pages through them by id.
+            return documents if count <= len(documents) else [None, *documents]
+
+        for start in range(0, len(values), _FIND_BATCH_SIZE):
+            terms = {"terms": {field: values[start : start + _FIND_BATCH_SIZE]}}
+            documents = search([terms])
+            if documents and documents[0] is None:
+                # A hub: read every match a window at a time, in id order.
+                documents, after = [], None
+                while True:
+                    filters: list[dict[str, Any]] = [terms]
+                    if after is not None:
+                        filters.append({"range": {"id": {"gt": after}}})
+                    page = [
+                        d
+                        for d in search(filters, sort=[{"id": {"order": "asc"}}])
+                        if d is not None
+                    ]
+                    documents.extend(page)
+                    if len(page) < _FIND_WINDOW:
+                        break
+                    after = str(
+                        (page[-1].get("_source") or {}).get("id") or page[-1]["_id"]
+                    )
             for hit in documents:
                 source = hit.get("_source") or {}
                 found[hit["_id"]] = list(source.get("text_unit_ids") or [])

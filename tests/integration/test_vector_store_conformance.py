@@ -515,6 +515,33 @@ def test_find_documents_matches_a_keyword_field_in_a_suffix(
     )
 
 
+def test_find_documents_reads_more_matches_than_one_search_returns(
+    harness: StoreHarness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A hub's edges outnumber one search's window: they are read in pages
+    # (the lookup used to raise, failing the run for good).
+    from unified_kg_rag.adapters.storage import opensearch_indexer
+
+    monkeypatch.setattr(opensearch_indexer, "_FIND_WINDOW", 2)
+    indexer = harness.vector_indexer
+    prefixes = harness.config.indexing.opensearch
+    claims = [
+        claim.model_copy(update={"id": f"cl-hub-{n}"})
+        for n in range(5)
+        for claim in _claims(None)[:1]
+    ]
+    _write(harness, "claims", "upsert", claims)
+    wanted = sorted({u for c in claims for u in c.text_unit_ids or []})
+
+    found = indexer.find_documents(
+        prefixes.claims_index_prefix, "text_unit_ids", wanted, "default"
+    )
+
+    assert {i: sorted(units) for i, units in found.items()} == {
+        c.id: sorted(c.text_unit_ids or []) for c in claims
+    }
+
+
 def test_text_unit_attributes_round_trip_in_a_suffix(harness: StoreHarness) -> None:
     indexer = harness.vector_indexer
     tenant = harness.suffix("tenant")

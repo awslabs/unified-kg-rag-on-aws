@@ -484,7 +484,10 @@ unless noted.
    extraction store (`pending-commit`), deleted once the old ids are: those
    decisions live in memory only, and the next commit of the suffix derives
    the noted entities, their stored edges and the claims about them again,
-   so a killed commit's half-written split is finished.
+   so a killed commit's half-written split is finished. It also retires
+   the noted entities' copies only the vector store holds, with the vector
+   edges at them (the killed commit got to its vector writes only), and a
+   run that only removes in the suffix reads the note all the same.
 5. **Deletion propagation** (`IndexingManager.remove_text_units`). The stores
    are asked what cites the removed text units (`GraphIndexer.find_ids_citing`
    for entities, `VectorIndexer.find_documents`); edges are found among the
@@ -500,9 +503,12 @@ unless noted.
    A strip that merges or re-keys items (another spelling of a stripped
    entity's name, which need not cite the removed text units) first notes
    the entities on both sides of the merge and the edges it re-keyed or
-   dropped in one record of the suffix's extraction store (`pending-strip`,
-   with those of a note a retry finishes) and deletes it once their old ids
-   are gone; every removal reads it, so a resumed one strips them again.
+   dropped, and the claims about a split's entities, in one record of the
+   suffix's extraction store (`pending-strip`, with those of a note a retry
+   finishes) and deletes it once their old ids are gone; every removal reads
+   it, so a resumed one strips them again. The claims about the other stored
+   spellings of a re-keyed, renamed or split entity's name are derived again
+   too: one may resolve to it now.
    A community or report goes once none of its text units is stored. A failed
    removal keeps the deleted documents' records for a retry and fails the
    stage (before the commit when the delta has changed documents).

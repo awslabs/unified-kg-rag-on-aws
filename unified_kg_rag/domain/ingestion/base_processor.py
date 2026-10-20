@@ -489,8 +489,10 @@ class BaseProcessor:
                 counts: dict[str, int] = defaultdict(int)
                 for i in group:
                     counts[(getattr(i, field, "") or "").lower()] += 1
-                # The first value on a tie (dicts keep insertion order).
-                setattr(first, field, max(counts, key=lambda k: counts[k]))
+                # The most frequent value, the smallest on a tie: the order
+                # of the group (of the text units) differs between corpora
+                # and namespaces of the same text.
+                setattr(first, field, min(counts, key=lambda k: (-counts[k], k)))
 
         total_merges = 0
         for item_id, count in merge_counts.items():
