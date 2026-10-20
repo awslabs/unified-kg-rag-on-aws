@@ -14,7 +14,7 @@ from __future__ import annotations
 import copy
 import json
 from collections.abc import Collection
-from typing import Any
+from typing import Any, Literal
 
 from unified_kg_rag.adapters.storage.neptune_codec import (
     NAME_KEY_PROPERTY,
@@ -551,6 +551,38 @@ class FakeVectorStore(_Recorder):
         self, ids: list[str], suffix: str | None = None
     ) -> dict[str, str]:
         return self._descriptions("relationships", ids, suffix)
+
+    def read_vector_copies(
+        self,
+        kind: Literal["entities", "relationships"],
+        ids: list[str],
+        suffix: str | None = None,
+    ) -> dict[str, dict[str, Any]]:
+        # The fields an OpenSearch document of the item holds (defaults as
+        # the adapter writes them).
+        wanted = suffix or Constants.DEFAULT_SUFFIX.value
+        bucket = self.data.get(kind, {})
+        out: dict[str, dict[str, Any]] = {}
+        for i in ids:
+            item = bucket.get(i)
+            if item is None or BaseIndexer.get_suffix(item) != wanted:
+                continue
+            if kind == "entities":
+                confidence = item.confidence
+                fields = {
+                    "name": item.name or "",
+                    "type": item.type or "",
+                    "confidence": confidence if confidence is not None else 1.0,
+                }
+            else:
+                fields = {
+                    "source_id": item.source_id,
+                    "target_id": item.target_id,
+                    "source_name": item.source_name or "",
+                    "target_name": item.target_name or "",
+                }
+            out[i] = {"id": i, **fields, "description": item.description or ""}
+        return out
 
     def read_extraction_records(
         self, keys: list[str], suffix: str | None = None

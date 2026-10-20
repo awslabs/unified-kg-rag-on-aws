@@ -407,7 +407,8 @@ class BaseResolver(ABC):
         non_empty_values = [v for v in values if v]
         if not non_empty_values:
             return ""
-        return Counter(non_empty_values).most_common(1)[0][0]
+        counts = Counter(non_empty_values)
+        return min(counts, key=lambda v: (-counts[v], v))
 
     @staticmethod
     def _merge_descriptions(descriptions: list[str]) -> str:

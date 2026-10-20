@@ -104,12 +104,27 @@ def _reads_back(graph: GraphIndexer) -> bool:
     return getattr(type(graph), "read_entities", None) is not GraphIndexer.read_entities
 
 
-def _vector_content(item: Entity | Relationship) -> tuple[Any, ...]:
+def _vector_content(item: Entity | Relationship) -> dict[str, Any]:
     """What the vector store holds of an item besides its description,
-    lineage and rank."""
+    lineage and rank, by field (see ``read_vector_copies``)."""
     if isinstance(item, Entity):
-        return item.name, item.type, item.confidence
-    return item.source_name, item.target_name, item.type
+        return {
+            "name": item.name or "",
+            "type": item.type or "",
+            "confidence": item.confidence if item.confidence is not None else 1.0,
+        }
+    return {
+        "source_id": item.source_id,
+        "target_id": item.target_id,
+        "source_name": item.source_name or "",
+        "target_name": item.target_name or "",
+    }
+
+
+def _vector_stale(item: Entity | Relationship, stored: Mapping[str, Any]) -> bool:
+    """Whether the stored vector copy of ``item`` differs from it in
+    :func:`_vector_content`."""
+    return any(stored.get(k) != v for k, v in _vector_content(item).items())
 
 
 def _claim_text(claim: Claim) -> tuple[Any, ...]:
@@ -856,8 +871,8 @@ class IndexingManager:
                     )
                 }
                 vector_entities = set(
-                    self.opensearch_indexer.read_entity_descriptions(
-                        sorted(noted - in_graph), suffix=suffix
+                    self.opensearch_indexer.read_vector_copies(
+                        "entities", sorted(noted - in_graph), suffix=suffix
                     )
                     if noted - in_graph
                     else {}
@@ -915,9 +930,12 @@ class IndexingManager:
                 relationships=list(merged_relationships),
             )
         rekey = derived.id_remap
-        self._note_renamed(suffix, derived.entities, existing)
+        renamed = self._note_renamed(suffix, derived.entities, existing)
         derived_ids = {e.id for e in derived.entities}
         decided = {
+            # A rename too: a run killed between the stores leaves the
+            # vector copies of its edges and claims ahead of the graph's.
+            *renamed,
             *(i for pair in rekey.items() if pair[1] in derived_ids for i in pair),
             *(i for pair in derived.split_from.items() for i in pair),
             *derived.rewired,
@@ -1354,12 +1372,39 @@ class IndexingManager:
             return r.source_id, r.target_id, r.source_name, r.target_name, r.rank
 
         before = {r.id: shown(r) for r in stored_extra}
-        extra = [r for r in extra if before[r.id] != shown(r)]
+        # And with their vector copies, where an endpoint's name or id
+        # changed: a commit killed between its vector and graph edge writes
+        # (or a strip before the graph edges came first) left the vector
+        # copies ahead, and a derivation back to the graph copy's names must
+        # still rewrite them.
+        stored_names: dict[str | None, str | None] = {}
+        for e in stored_entities:  # the stored copy, before a delta's of its id
+            stored_names.setdefault(e.id, e.name)
+        moved = {e.id for e in entities if stored_names.get(e.id) != e.name}
+        vector_copy = (
+            self.opensearch_indexer.read_vector_copies(
+                "relationships",
+                [r.id for r in extra if {r.source_id, r.target_id} & moved],
+                suffix=suffix,
+            )
+            if moved and self.config.indexing.opensearch.build_relationship_vector_index
+            else {}
+        )
+        stale = {
+            r.id
+            for r in extra
+            if r.id in vector_copy and _vector_stale(r, vector_copy[r.id])
+        }
+        extra = [r for r in extra if before[r.id] != shown(r) or r.id in stale]
         if not extra:
             return entities, relationships
         # Only the rank changed (a neighbour's degree): the vector copy is
         # updated in place, not embedded again (_upsert_vector_relationships).
-        self._rank_only.update(r.id for r in extra if before[r.id][:4] == shown(r)[:4])
+        self._rank_only.update(
+            r.id
+            for r in extra
+            if before[r.id][:4] == shown(r)[:4] and r.id not in stale
+        )
         extra = self._with_full_descriptions(
             extra, self.opensearch_indexer.read_relationship_descriptions, suffix
         )
@@ -1590,9 +1635,14 @@ class IndexingManager:
             state.clear()
 
     def reset_run_state(self) -> None:
-        """Start a run with no state left from an earlier one (see
-        :meth:`discard_retired_ids`)."""
+        """Start a run with no state left from an earlier one: what its
+        derivations decided (see :meth:`discard_retired_ids`), and what its
+        removals found for after the commit, the community reports they kept
+        and the extraction-record keys of their text units (an earlier run
+        that failed before its commit measured or collected them)."""
         self.discard_retired_ids()
+        self.outdated_reports.clear()
+        self._removed_record_keys.clear()
 
     def _write_note(self, key: str, suffix: str, note: dict[str, Any]) -> None:
         """Write the note ``key`` (one extraction-store record of ``suffix``).
@@ -1936,25 +1986,27 @@ class IndexingManager:
             len(relationships),
             suffix,
         )
-        # The vector store re-embeds only what changed: the content the
-        # graph copy had (name, type, confidence) and the description the
-        # vector copy holds (an earlier strip may have reached only the graph).
-        graph_copy = {e.id: _vector_content(e) for e in entities} | {
-            r.id: _vector_content(r) for r in relationships
-        }
-        vector_text = {
-            **self.opensearch_indexer.read_entity_descriptions(
-                [e.id for e in new_entities], suffix=suffix
+        # The vector store re-embeds only what changed: compared with the
+        # vector copies themselves (name, type, confidence or endpoints, and
+        # description), so a strip interrupted between the stores is repaired
+        # whichever store it reached.
+        graph_copy = {e.id for e in entities} | {r.id for r in relationships}
+        vector_copy = {
+            **self.opensearch_indexer.read_vector_copies(
+                "entities", [e.id for e in new_entities], suffix=suffix
             ),
-            **self.opensearch_indexer.read_relationship_descriptions(
-                [r.id for r in new_relationships], suffix=suffix
+            **self.opensearch_indexer.read_vector_copies(
+                "relationships", [r.id for r in new_relationships], suffix=suffix
             ),
         }
 
         def unchanged(item: Entity | Relationship) -> bool:
-            return graph_copy.get(item.id) == _vector_content(item) and (
-                vector_text.get(item.id) or None
-            ) == (item.description or None)
+            stored = vector_copy.get(item.id)
+            return (
+                stored is not None
+                and not _vector_stale(item, stored)
+                and (stored.get("description") or None) == (item.description or None)
+            )
 
         # Written so an interruption never hides an edge still citing a
         # removed text unit: a retry finds the edges through the entities
@@ -1976,10 +2028,9 @@ class IndexingManager:
         }
         rekeyed = [e for e in new_entities if e.id in first]
         kept = [e for e in new_entities if e.id not in first]
-        # The vector copies of the edges come before their graph copies: the
-        # graph copy is what a retry compares the derived names with
-        # (``unchanged``), so it must not get ahead of them (a rename killed
-        # in between left the vector copies under the old name for good).
+        # The graph copies of the edges come before their vector copies: a
+        # run killed in between leaves no vector edge without a graph edge,
+        # and a vector copy behind is rewritten (``unchanged``, ``_finish``).
         graph_edge_tasks = [
             IndexingTask(
                 self.neptune_indexer.upsert_relationships,
@@ -2009,8 +2060,8 @@ class IndexingManager:
                     "neptune_rekeyed_entities",
                 )
             ],
-            relationship_tasks,
             graph_edge_tasks,
+            relationship_tasks,
             [
                 IndexingTask(
                     self.neptune_indexer.upsert_entities, [kept], "neptune_entities"

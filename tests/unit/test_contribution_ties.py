@@ -41,6 +41,22 @@ def test_the_most_frequent_type_still_wins() -> None:
     assert merged.type == "person"
 
 
+@pytest.mark.parametrize(
+    "names", [("Acme", "ACME"), ("ACME", "Acme"), ("ACME", "Acme", "Acme")]
+)
+def test_a_name_is_its_most_frequent_spelling_the_smallest_on_a_tie(
+    names: tuple[str, ...],
+) -> None:
+    entities = [
+        Entity(id="e", name=name, text_unit_ids=[f"t{n}"])
+        for n, name in enumerate(names)
+    ]
+
+    (merged,) = merge_entity_contributions(entities)
+
+    assert merged.name == ("Acme" if len(names) == 3 else "ACME")
+
+
 @pytest.mark.parametrize("order", [("TRUE", "SUSPECTED"), ("SUSPECTED", "TRUE")])
 def test_a_tied_claim_status_is_the_smallest(order: tuple[str, str]) -> None:
     claims = [

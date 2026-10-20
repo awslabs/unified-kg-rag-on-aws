@@ -136,6 +136,116 @@ def test_retiring_the_old_ids_forgets_the_noted_entities() -> None:
     assert manager._noted_commit_entities == {}
 
 
+def _with_run_state(manager: IndexingManager) -> IndexingManager:
+    """``manager`` holding something in every per-run field."""
+    by_suffix = {
+        "_rekeyed": {"e1": "e2"},
+        "_split_from": {"e1": "e2"},
+        "_derived_entities": {"e1": _entity("e1", "Acme")},
+        **dict.fromkeys(
+            (
+                "_commit_entities",
+                "_noted_commit_entities",
+                "_renamed",
+                "_dropped",
+                "_vector_only",
+                "_removed_record_keys",
+            ),
+            {"e1"},
+        ),
+    }
+    for field, value in by_suffix.items():
+        getattr(manager, field)["default"] = value
+    for field in ("_fresh", "_rank_only", "_commit_note_suffixes", "outdated_reports"):
+        getattr(manager, field).add("default")
+    return manager
+
+
+_DECISIONS = (
+    "_rekeyed",
+    "_split_from",
+    "_commit_entities",
+    "_noted_commit_entities",
+    "_renamed",
+    "_dropped",
+    "_vector_only",
+    "_derived_entities",
+    "_fresh",
+    "_rank_only",
+)
+
+
+@pytest.mark.parametrize("end", ["delete_retired_ids", "discard_retired_ids"])
+def test_a_commit_ends_without_its_derivation_decisions(end: str) -> None:
+    # Whichever way it ends; the removals' findings stay for the commit's
+    # drift measure and record collection.
+    manager = _with_run_state(_manager()[0])
+
+    getattr(manager, end)()
+
+    assert {f: getattr(manager, f) for f in _DECISIONS} == {
+        f: type(getattr(manager, f))() for f in _DECISIONS
+    }
+    assert manager.outdated_reports == {"default"}
+    assert manager._removed_record_keys == {"default": {"e1"}}
+    # A discarded commit's note is not deleted (a retry finishes from it).
+    assert manager._commit_note_suffixes == (
+        {"default"} if end == "delete_retired_ids" else set()
+    )
+
+
+def test_a_run_starts_without_anything_an_earlier_run_left() -> None:
+    manager = _with_run_state(_manager()[0])
+
+    manager.reset_run_state()
+
+    for field in (*_DECISIONS, "_commit_note_suffixes", "outdated_reports"):
+        assert not getattr(manager, field), field
+    assert manager._removed_record_keys == {}
+
+
+def test_a_suffix_the_run_only_removed_in_reads_its_commit_note() -> None:
+    # No delta in "tenant" (not the run's own suffix either): the removal's
+    # record keys name it, so the commit still finishes the note there.
+    manager, _, vector = _manager()
+    vector.write_extraction_records({NOTE: {"entity_ids": ["e1"]}}, suffix="tenant")
+    manager._removed_record_keys["tenant"] = {"record-1"}
+
+    manager.merge_with_existing_graph(None, None)
+
+    assert manager._noted_commit_entities == {"tenant": {"e1"}}
+    assert manager._commit_note_suffixes == {"tenant"}
+
+
+def test_a_noted_vector_only_entity_and_edge_both_go() -> None:
+    # A killed commit wrote "e-v" and the edge "r-v" from the noted "e1" to it
+    # to the vector store only; "r-g" has its graph copy too.
+    manager, graph, vector = _manager()
+    e1, e2, ev = _entity("e1", "Acme"), _entity("e2", "Buyer"), _entity("e-v", "Depot")
+    edges = [
+        Relationship(
+            id=f"r-{end}",
+            source_id="e1",
+            target_id=target.id,
+            source_name="Acme",
+            target_name=target.name,
+            text_unit_ids=["t1"],
+        )
+        for end, target in (("g", e2), ("v", ev))
+    ]
+    graph.upsert_entities([e1, e2])
+    graph.upsert_relationships(edges[:1])
+    vector.upsert_entities([e1, e2, ev])
+    vector.upsert_relationships(edges)
+    vector.write_extraction_records({NOTE: {"entity_ids": ["e1", "e-v"]}})
+
+    manager.merge_with_existing_graph(None, None)
+
+    assert manager._vector_only == {"default": {"e-v"}}
+    assert manager._dropped["default"] >= {"e-v", "r-v"}
+    assert "r-g" not in manager._dropped["default"]
+
+
 def test_clearing_the_note_stops_on_a_lost_lease(mocker) -> None:
     manager, _, vector = _manager()
     manager._commit_note_suffixes.add("default")

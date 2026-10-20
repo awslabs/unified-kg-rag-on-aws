@@ -312,6 +312,25 @@ class TestMergeClaims:
         )
         assert merged.status == "TRUE"
 
+    @pytest.mark.parametrize("order", [("TRUE", "FALSE"), ("FALSE", "TRUE")])
+    def test_merge_status_tie_is_the_smallest(self, order: tuple[str, str]) -> None:
+        # Not the first claim's: the claims' order follows the text units,
+        # which differs between namespaces of the same text.
+        claims = [
+            Claim(
+                id=f"c{n}",
+                subject_id="e1",
+                subject_name="A",
+                object_id="e2",
+                object_name="B",
+                type="WORKS_AT",
+                status=status,
+            )
+            for n, status in enumerate(order)
+        ]
+
+        assert _resolver()._merge_claims(claims).status == "FALSE"
+
     def test_merge_with_all_none_optional_fields(self) -> None:
         # None description/status/text_units/source_text/attributes must not crash;
         # they collapse to empty defaults.

@@ -393,6 +393,38 @@ def test_description_reads_are_scoped_to_a_suffix(harness: StoreHarness) -> None
     assert indexer.read_entity_descriptions(["e-depot"]) == {}
 
 
+def test_vector_copy_reads_hold_the_compared_fields(harness: StoreHarness) -> None:
+    # What an incremental write compares with the derived items (see
+    # VectorIndexer.read_vector_copies), scoped to a suffix.
+    indexer = harness.vector_indexer
+    tenant = harness.suffix("tenant")
+    _write(harness, "relationships", "upsert", _relationships(tenant))
+    _write(harness, "entities", "upsert", _entities(tenant))
+
+    assert indexer.read_vector_copies(
+        "entities", ["e-depot", "e-missing"], suffix=tenant
+    ) == {
+        "e-depot": {
+            "id": "e-depot",
+            "name": "Depot",
+            "type": "LOCATION",
+            "confidence": 1.0,
+            "description": "Depot stores widgets",
+        }
+    }
+    assert indexer.read_vector_copies("relationships", ["r-ships"], suffix=tenant) == {
+        "r-ships": {
+            "id": "r-ships",
+            "source_id": "e-vendor",
+            "target_id": "e-depot",
+            "source_name": "Vendor",
+            "target_name": "Depot",
+            "description": "Vendor ships widgets from Depot",
+        }
+    }
+    assert indexer.read_vector_copies("entities", ["e-depot"]) == {}
+
+
 def test_text_unit_id_reads_are_scoped_to_a_suffix(harness: StoreHarness) -> None:
     # The incremental probe that the vector store still holds the registry's
     # documents: [] without a live index, the stored ids with one.
