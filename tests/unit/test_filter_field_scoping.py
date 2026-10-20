@@ -555,6 +555,7 @@ async def test_a_filter_without_a_value_is_rejected(config: Config, value) -> No
         (float("nan"), "NaN"),
         ({"lte": float("nan")}, "NaN"),
         ({}, "empty range"),
+        ({"from": 1}, "range bound 'from'"),
     ],
     ids=[
         "none-bound",
@@ -565,6 +566,7 @@ async def test_a_filter_without_a_value_is_rejected(config: Config, value) -> No
         "nan",
         "nan-bound",
         "empty-range",
+        "unknown-bound",
     ],
 )
 async def test_a_malformed_filter_value_is_rejected(

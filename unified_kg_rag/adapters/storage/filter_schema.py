@@ -84,6 +84,7 @@ def id_batch_size(settings: dict[str, Any]) -> int:
 
 
 _SCALARS = (str, int, float, bool)
+_RANGE_BOUNDS = frozenset({"gt", "gte", "lt", "lte"})
 
 
 def check_filter_values(filters: dict[str, Any] | None) -> None:
@@ -121,6 +122,11 @@ def check_filter_values(filters: dict[str, Any] | None) -> None:
         elif isinstance(value, dict):
             if not value:
                 reason = "is an empty range; give gt, gte, lt or lte"
+            elif unknown := sorted(set(value) - _RANGE_BOUNDS):
+                reason = (
+                    f"has a range bound '{unknown[0]}'; a range takes gt, gte, "
+                    "lt and lte"
+                )
             elif any(v is None for v in value.values()):
                 reason = "has a range bound of None; drop the bound or give its value"
             else:

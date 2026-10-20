@@ -1330,6 +1330,9 @@ changed once with the full-config keys (#332).
   check still apply (#PR).
 - The filter check keeps a cursor over the ids instead of rescanning the
   rest of them per batch, which was quadratic in their number (#PR).
+- A document filter's range takes only `gt`, `gte`, `lt` and `lte`: another
+  key (`{"from": 1}`) is rejected before any model call instead of reaching
+  the stores (#PR).
 - LightRAG's linked-chunk check under a selective filter makes two requests
   instead of one per round of a few ids: each hit's first
   `related_chunk_number` chunks, then the whole rest of the lineage of the
