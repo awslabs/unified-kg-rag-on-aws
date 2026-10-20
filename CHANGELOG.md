@@ -1393,12 +1393,12 @@ changed once with the full-config keys (#332).
   expansion kept 0 of the graph walk's 10 entities (2 of 10 on a
   200-degree hub), now 4 (the rest differ among equally ranked
   neighbours: the graph walk takes them in storage order, the filtered
-  walk by edge rank) (#PR).
+  walk by edge rank) (#400).
 - Equal graph-expansion scores are ordered by entity id and equal edges by
   relationship id, so ties no longer follow the order a store returned
   them in: against an index of the passing documents alone, the filtered
   walk on OpenSearch kept 5-9 of the same 10 entities on hub corpora, now
-  all 10 (#PR).
+  all 10 (#400).
 - Filtered expansion costs less: the edges of a frontier are fetched once a
   query (DRIFT's follow-ups expand the same seeds again; a concurrent
   request in flight is shared, a failed one is not kept); text units are
@@ -1408,15 +1408,15 @@ changed once with the full-config keys (#332).
   embedded search engine answers a `_source` filter once per field name a
   search instead of per field of every hit. On 1,000 embedded documents,
   DRIFT under a 20% filter took 1.77 s of CPU, now 1.32 s (unfiltered
-  0.91 to 0.64 s) (#PR).
+  0.91 to 0.64 s) (#400).
 - The incident-edge page-cap warning is logged once a query (DRIFT logged
-  it about 20 times), later ones at DEBUG (#PR).
+  it about 20 times), later ones at DEBUG (#400).
 - LightRAG's linked chunks under a filter on text units fill the slots an
   index of the passing chunks alone fills: the selection keeps a chunk on
   its first citing hit only and polling hands a short hit's slots to the
   others, so slots landed on chunks the check had not asked and the
   filtered fetch then dropped. The chunks selected are now checked until
-  every one is known (#PR).
+  every one is known (#400).
 - Incremental indexing: a commit that splits spellings apart (or re-keys
   or rewires entities) and is killed partway is finished by the next run.
   Those decisions lived in memory only: the next run derived from the half
