@@ -1332,7 +1332,8 @@ class IndexingManager:
 
     def _rederived_entity_ids(self, suffix: str) -> list[str]:
         """The stored entity ids whose claims this run derives again: the
-        re-keyed ones, those an entity was split off, the other spellings
+        re-keyed ones, those an entity was split off and the parts split off
+        them (a stored claim may name a part already), the other spellings
         of a split-off entity's name this run derived (a claim naming the
         part may resolve to one of them) and those renamed."""
         split_from = self._split_from.get(suffix, {})
@@ -1340,6 +1341,7 @@ class IndexingManager:
             {
                 *self._rekeyed.get(suffix, {}),
                 *split_from.values(),
+                *split_from,
                 *_other_spellings_of_parts(
                     split_from, self._derived_entities.get(suffix, {})
                 ),

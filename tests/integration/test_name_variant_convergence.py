@@ -1198,6 +1198,13 @@ RUNS_DUPKEY = [
         "d4.txt": "Acme Corp trade cash 1. Depot and Acme and Acme Ltd trade cash 3.",
     },
 ]
+RUNS_SPLITPART = [
+    {"d0.txt": "Acme Ltd and Acme and Acme Corp trade parts 1."},
+    {
+        "d0.txt": "Acme Ltd and Acme and Acme Corp trade parts 1.",
+        "d1.txt": "Acme Ltd and ACME Inc and Acme trade cash 3.",
+    },
+]
 
 
 def test_an_added_document_leaves_no_duplicate_of_a_re_pointed_edge(
@@ -1210,5 +1217,17 @@ def test_an_added_document_leaves_no_duplicate_of_a_re_pointed_edge(
 
     full = _state(tmp_path / "full", [runs[-1]])
     incremental = _state(tmp_path / "inc", runs)
+
+    assert incremental == full
+
+
+def test_a_claim_about_a_split_off_part_is_derived_again(tmp_path: Path) -> None:
+    # Adding d1.txt splits spellings apart. A stored claim already naming
+    # the part's id (the spelling it states) was not derived again and kept
+    # a stale self-claim.
+    runs = RUNS_SPLITPART
+
+    full = _state(tmp_path / "full", [runs[-1]], gleaning=True)
+    incremental = _state(tmp_path / "inc", runs, gleaning=True)
 
     assert incremental == full

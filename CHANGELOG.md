@@ -1295,6 +1295,10 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Incremental indexing: when spellings split apart, the stored claims
+  about a split-off part are derived again too, not only those about the
+  entity it split from; a stored claim already naming the part kept a
+  stale self-claim (#PR).
 - Incremental indexing: adding a document that re-points an edge onto two
   entities a stored edge of the same type already joins under another id
   no longer leaves both. The stored one, citing nothing the written edge
