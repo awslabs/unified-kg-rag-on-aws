@@ -11,9 +11,11 @@ released at the end of the run. Worker threads inherit the fences through
 ``ContextThreadPoolExecutor``. The registry writes of the incremental path,
 the indexing manager's phases and the store adapters' requests call
 :func:`check_write_fence` first: a Neptune write batch, edge write or drop,
-and every attempt of an OpenSearch indexing-client request but a GET or HEAD
+every attempt of an OpenSearch indexing-client request but a GET or HEAD
 (the bulk writes, index and alias changes, and also the POST searches and
-reads of the indexing path). A run that may not write any more then stops at
+reads of the indexing path), and every write transaction of the embedded
+SQLite graph store and search engine (again once it holds the database's
+write lock, see ``SQLiteGraphStore.transaction``). A run that may not write any more then stops at
 its next request instead of writing over the run that holds the lease now.
 Fences stack: the check asks each one, the innermost (the lease) first.
 Outside a fenced run (the direct APIs) it does nothing.

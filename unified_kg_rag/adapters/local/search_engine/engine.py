@@ -75,6 +75,7 @@ from unified_kg_rag.shared.exceptions import (
     StoreConfigurationError,
     StoreTimeoutError,
 )
+from unified_kg_rag.shared.write_fence import check_fences_held, check_write_fence
 
 logger = get_logger(__name__)
 
@@ -322,11 +323,14 @@ class SQLiteSearchEngine:
 
     @contextmanager
     def _transaction(self, operation: str) -> Iterator[sqlite3.Connection]:
+        """A write transaction, fenced as ``SQLiteGraphStore.transaction``."""
+        check_write_fence()
         with (
             self._lock,
             self._errors(operation),
             write_transaction(self.connection) as connection,
         ):
+            check_fences_held()
             yield connection
 
     @contextmanager

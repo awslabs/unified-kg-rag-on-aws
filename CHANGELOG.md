@@ -1302,6 +1302,12 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Embedded stores: the SQLite graph store's and search engine's write
+  transactions check the run's write fence, before they wait for the
+  database's lock and again once they hold it. A stopped run with every
+  store embedded releases its lease, but the pool workers the stop left
+  running kept writing for the seconds the process took to exit, after the
+  next run could take the lease; they now fail at their next write (#PR).
 - `run-ingestion --output-format json`: the status of a stopped run says
   from when the next run on its namespace may write
   (`next_run_writes_from`) when it must wait for this run's writes still in
