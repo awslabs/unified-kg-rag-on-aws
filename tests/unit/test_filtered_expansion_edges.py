@@ -266,6 +266,87 @@ async def test_the_walk_is_cut_to_the_expansion_limit(config: Config) -> None:
     assert len(kept) == 5  # the seed and top_k others
 
 
+class _Ranked(_Index):
+    """Entities with their own rank and indexed name."""
+
+    def __init__(self, config: Config, ranks: dict[str, float], **kwargs: Any) -> None:
+        super().__init__(config, **kwargs)
+        self.ranks = ranks
+        self.names: dict[str, str] = {}
+
+    async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
+        results = await super().aretrieve(query)
+        if (query.index_prefixes or [""])[0] != self.o.entities_index_prefix:
+            return results
+        out = []
+        for r in results:
+            r = _entity(str(r.source), self.ranks.get(str(r.source), 0.0))
+            if name := self.names.get(str(r.source)):
+                r.metadata["name"] = name
+            out.append(r)
+        return out
+
+
+async def test_the_score_band_follows_the_walks_distance_and_rank(
+    config: Config,
+) -> None:
+    # A vertex n hops out scores in (1/(n+2), 1/(n+1)], its rank over the
+    # highest rank read placing it inside the band, as the graph walk
+    # scores (graph_relevance): B one hop out at half the top rank, D two
+    # hops out at a quarter.
+    index = _Ranked(config, {"S": 4.0, "B": 2.0, "D": 1.0})
+    by_id = {r.source: r for r in await _expand(config, index, {"attr_grp": "a"})}
+    assert by_id["B"].score == pytest.approx(1 / 3 + (1 / 2 - 1 / 3) * 0.75)
+    assert by_id["D"].score == pytest.approx(1 / 4 + (1 / 3 - 1 / 4) * 0.625)
+
+    # No importance source: the middle of each band.
+    config.indexing.neptune.entity_importance_source = "none"
+    by_id = {r.source: r for r in await _expand(config, index, {"attr_grp": "a"})}
+    assert by_id["D"].score == pytest.approx(1 / 4 + (1 / 3 - 1 / 4) * 0.75)
+
+
+async def test_a_paths_last_name_is_the_entitys_own(config: Config) -> None:
+    # The entities index names the reached entity; an edge's endpoint name
+    # (the relationships index's copy) names only the vertices before it.
+    index = _Ranked(config, {})
+    index.names = {"D": "Depot Inc"}
+    kept = await _expand(config, index, {"attr_grp": "a"})
+    assert _paths(kept)["D"] == "S -> B -> Depot Inc"
+
+
+async def test_the_walk_stops_at_its_vertex_budget(config: Config) -> None:
+    # top_k * retrieval_multiplier * traversal_fetch_multiplier vertices in
+    # all: no further vertex is taken, and no further hop is asked for.
+    config.indexing.neptune.traversal_fetch_multiplier = 1
+    config.indexing.neptune.max_results_per_hop = 10
+    config.indexing.neptune.max_hops = 3
+    edges = [(f"r{i}", "S", f"v{i}", float(10 - i)) for i in range(5)]
+    edges += [("r-far", "v0", "far", 1.0)]
+    index = _Index(config, edges=edges, passing={e[0] for e in edges})
+    strategy = _strategy(config, _Graph(), index)
+    await strategy._expand_via_graph(
+        SearchQuery(query="q", top_k=2, filters={"attr_grp": "a"}), ["S"]
+    )
+    o = config.indexing.opensearch
+    (entity_ids,) = [
+        f["id"] for prefix, f in index.calls if prefix == o.entities_index_prefix
+    ]
+    assert sorted(entity_ids) == ["S", "v0", "v1"]
+    hops = [f for prefix, f in index.calls if prefix == o.relationships_index_prefix]
+    assert len(hops) == 2  # one hop: its two requests (source and target side)
+
+
+async def test_two_keys_need_one_document_passing_a_reached_entity(
+    config: Config,
+) -> None:
+    # Both edges have a text unit passing both keys, D none: the entities
+    # index unions D's documents' values per key, so D is checked by its
+    # text units too.
+    index = _Index(config, units_passing={"u-r-sb", "u-r-bd", "u-S", "u-B"})
+    kept = await _expand(config, index, {"attr_grp": "a", "attr_category": "x"})
+    assert sorted(_paths(kept)) == ["B", "S"]
+
+
 # --------------------------------------------------------------------------- #
 # The filter check
 # --------------------------------------------------------------------------- #

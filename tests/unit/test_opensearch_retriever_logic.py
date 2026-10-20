@@ -1184,3 +1184,30 @@ def test_index_setting_reads_either_spelling(key) -> None:
 
     assert index_setting({key: "500"}, "max_result_window", 10000) == 500
     assert index_setting({}, "max_result_window", 10000) == 10000
+
+
+async def test_has_index_says_yes_no_or_cannot_tell(retriever, config) -> None:
+    # Asked by the filtered expansion before it falls back to the graph walk:
+    # a missing index is False, an unexpected error "cannot tell" (None, so
+    # the caller keeps its path), a store that cannot be reached fails.
+    from unified_kg_rag.shared.exceptions import StoreConnectionError
+
+    asked: list[str] = []
+    answers: list[Any] = [1, 0, RuntimeError("odd"), StoreConnectionError("down")]
+
+    class _Client:
+        async def aindex_exists(self, name: str) -> Any:
+            asked.append(name)
+            answer = answers.pop(0)
+            if isinstance(answer, Exception):
+                raise answer
+            return answer
+
+    object.__setattr__(retriever, "_opensearch_client", _Client())
+    prefix = config.indexing.opensearch.relationships_index_prefix
+    assert await retriever.ahas_index(prefix, "s1") is True
+    assert await retriever.ahas_index(prefix, "s1") is False
+    assert await retriever.ahas_index(prefix, "s1") is None
+    with pytest.raises(StoreConnectionError):
+        await retriever.ahas_index(prefix, "s1")
+    assert len(set(asked)) == 1 and prefix in asked[0] and "s1" in asked[0]

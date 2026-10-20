@@ -184,3 +184,62 @@ async def test_a_selective_filter_on_a_hub_lineage_costs_two_checks(
     )
     assert {r.source for r in linked["lightrag_linked_chunks"]} == {"u499", "u2001"}
     assert len(store.checks) == 2
+
+
+async def test_a_memoized_lineage_keeps_its_passing_chunks(config: Config) -> None:
+    # Within a query (DRIFT's follow-ups) the second lineage check finds
+    # every unit's outcome memoized and asks nothing: the units counted from
+    # the memo must still count as checked, or the hit keeps none of them.
+    from unified_kg_rag.adapters.retrieval.base import query_scope
+
+    config.search.lightrag_search.chunk_stream_top_k = 3
+    config.search.lightrag_search.related_chunk_number = 3
+    store = _Store(config.indexing.opensearch.text_units_index_prefix, [])
+    strategy: Any = get_strategy_spec(SearchStrategy.MIX).strategy_class(
+        config=config, retrievers={RetrieverRole.DOCUMENT.value: store}
+    )
+    query = SearchQuery(query="q", top_k=3, filters={"attr_grp": "a"})
+    with query_scope():
+        first = await strategy._retrieve_linked_chunks(
+            query, [_entity("e0", _UNITS)], []
+        )
+        second = await strategy._retrieve_linked_chunks(
+            query, [_entity("e0", _UNITS)], []
+        )
+    expected = ["u1", "u3", "u5"]
+    assert [r.source for r in first["lightrag_linked_chunks"]] == expected
+    assert [r.source for r in second.get("lightrag_linked_chunks", [])] == expected
+
+
+@pytest.mark.parametrize("failing_round", [1, 2])
+async def test_a_failed_lineage_check_excludes_what_it_asked(
+    config: Config, failing_round: int
+) -> None:
+    # Fail-closed: the chunks a failed check asked about count as failing
+    # and take no slot. The slots go to the next chunks of the lineage,
+    # fetched under the filter (which the fetch applies too).
+    config.search.lightrag_search.chunk_stream_top_k = 3
+    config.search.lightrag_search.related_chunk_number = 3
+
+    class _Failing(_Store):
+        async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
+            if query.source_fields == [] and len(self.checks) + 1 == failing_round:
+                self.checks.append(list((query.filters or {})["id"]))
+                raise RuntimeError("store hiccup")
+            return await super().aretrieve(query)
+
+    store = _Failing(config.indexing.opensearch.text_units_index_prefix, [])
+    strategy: Any = get_strategy_spec(SearchStrategy.MIX).strategy_class(
+        config=config, retrievers={RetrieverRole.DOCUMENT.value: store}
+    )
+    query = SearchQuery(query="q", top_k=3, filters={"attr_grp": "a"})
+    sections = await strategy._retrieve_linked_chunks(
+        query, [_entity("e0", _UNITS)], []
+    )
+    # Round 1 asks u0-u2 (u1 passes, the hit is short); round 2 the rest.
+    assert store.checks == [_UNITS[:3], _UNITS[3:]][:failing_round]
+    if failing_round == 1:
+        assert store.fetches == [["u3", "u4", "u5"]]
+    else:
+        assert store.fetches == [["u1"]]
+        assert [r.source for r in sections["lightrag_linked_chunks"]] == ["u1"]
