@@ -378,7 +378,7 @@ class TestAevaluateBatch:
         assert dd["contexts"] == [["ctx one"]]
         assert dd["ground_truth"] == ["truth"]
         # Faithfulness metric object selected.
-        assert captured["metrics"] == [
+        assert [type(m) for m in captured["metrics"]] == [
             rg_module.RagasEvaluator.RAGAS_METRICS[EvaluationMetricType.FAITHFULNESS]
         ]
         assert reports[0].metrics[0].value == 0.9
@@ -402,7 +402,7 @@ class TestAevaluateBatch:
                 return pd.DataFrame({**self.columns, "user_input": ["q"]})
 
         def fake_evaluate(*, dataset, metrics, **kwargs):
-            runs.append((metrics, dataset["contexts"]))
+            runs.append(([type(m) for m in metrics], dataset["contexts"]))
             name = metrics[0].name
             return _FakeRagasResult({name: [0.5 if name == "faithfulness" else 0.25]})
 
@@ -510,7 +510,7 @@ class TestAevaluateBatch:
         _patch_evaluate(mocker, fake_evaluate)
         mocker.patch.object(rg_module.Dataset, "from_dict", side_effect=lambda d: d)
         reports = await ev.aevaluate_batch([_query()], [_result()], [""])
-        assert captured["metrics"] == [
+        assert [type(m) for m in captured["metrics"]] == [
             rg_module.RagasEvaluator.RAGAS_METRICS[EvaluationMetricType.FAITHFULNESS]
         ]
         assert reports[0].metadata["skipped_metrics"] == {
@@ -541,7 +541,7 @@ class TestAevaluateBatch:
                 return self.frame
 
         def fake_evaluate(*, dataset, metrics, **kwargs):
-            runs.append((dataset["question"], metrics))
+            runs.append((dataset["question"], [type(m) for m in metrics]))
             return _FakeRagasResult(dataset, metrics)
 
         _patch_evaluate(mocker, fake_evaluate)
@@ -969,19 +969,17 @@ class TestCancellation:
             await task
         assert executor.cancelled
 
-    async def test_the_judge_is_unbound_from_the_metrics_after_a_run(
-        self, mocker
-    ) -> None:
-        # evaluate(return_executor=True) leaves the judge bound to ragas'
-        # module-level metric objects; the next evaluator in the process
-        # would have judged with it.
+    async def test_each_run_judges_with_its_own_metric_objects(self, mocker) -> None:
+        # evaluate() binds the judge to the metric objects it is given. Before,
+        # those were ragas' module-level ones, bound for the run and unbound
+        # after it, so two evaluations in one process could bind or unbind
+        # each other's judge.
+        from ragas.metrics import faithfulness
+
         ev, _ = _make_evaluator(
             mocker, ragas_metrics=[EvaluationMetricType.FAITHFULNESS]
         )
-        metric = rg_module.RagasEvaluator.RAGAS_METRICS[
-            EvaluationMetricType.FAITHFULNESS
-        ]
-        mocker.patch.object(metric, "llm", None)
+        seen: list[object] = []
 
         class _Result:
             def to_pandas(self):
@@ -990,10 +988,14 @@ class TestCancellation:
         def fake_evaluate(*, metrics, **_):
             for m in metrics:
                 m.llm = "judge"
+            seen.extend(metrics)
             return _Result()
 
         _patch_evaluate(mocker, fake_evaluate)
         mocker.patch.object(rg_module.Dataset, "from_dict", side_effect=lambda d: d)
-        reports = await ev.aevaluate_batch([_query()], [_result()], ["truth"])
-        assert [m.value for m in reports[0].metrics] == [1.0]
-        assert metric.llm is None
+        for _ in range(2):
+            reports = await ev.aevaluate_batch([_query()], [_result()], ["truth"])
+            assert [m.value for m in reports[0].metrics] == [1.0]
+        assert len(seen) == 2 and seen[0] is not seen[1]
+        assert all(m is not faithfulness for m in seen)
+        assert faithfulness.llm is None

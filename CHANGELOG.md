@@ -1302,6 +1302,11 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Evaluation: each RAGAS run judges with its own metric objects instead of
+  binding the judge to ragas' module-level ones and unbinding it after the
+  run. Two evaluations running at once in one process (through the library)
+  could judge with each other's model, or lose the judge mid-run when the
+  other finished. Scores are unchanged (#PR).
 - Tracing: a model call cut off by `asyncio.wait_for` or `asyncio.timeout`
   (how RAGAS applies `ragas_timeout`) ends its span as `ERROR
   CancelledError` again. The timeout cancels the call but not its task, and

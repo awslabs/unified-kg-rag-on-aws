@@ -12,12 +12,13 @@ from ragas import evaluate
 from ragas.executor import Executor
 from ragas.llms.base import LangchainLLMWrapper
 from ragas.metrics import (
-    answer_correctness,
-    answer_relevancy,
-    context_precision,
-    context_recall,
-    faithfulness,
+    AnswerCorrectness,
+    AnswerRelevancy,
+    ContextPrecision,
+    ContextRecall,
+    Faithfulness,
 )
+from ragas.metrics.base import Metric
 from ragas.run_config import RunConfig
 
 from unified_kg_rag.adapters.evaluators.base import (
@@ -49,13 +50,16 @@ logger = get_logger(__name__)
 
 class RagasEvaluator(BaseGraphRAGEvaluator):
     BUFFER_TOKENS: ClassVar[int] = 128
-    # Each metric's score column in the RAGAS frame is its ``name``.
-    RAGAS_METRICS = {
-        EvaluationMetricType.ANSWER_CORRECTNESS: answer_correctness,
-        EvaluationMetricType.ANSWER_RELEVANCY: answer_relevancy,
-        EvaluationMetricType.CONTEXT_PRECISION: context_precision,
-        EvaluationMetricType.CONTEXT_RECALL: context_recall,
-        EvaluationMetricType.FAITHFULNESS: faithfulness,
+    # Each metric's score column in the RAGAS frame is its ``name``. Every
+    # run judges with its own instances: evaluate() binds the judge to the
+    # metric objects it is given, so ragas' shared module-level ones would
+    # carry one run's judge into another.
+    RAGAS_METRICS: ClassVar[dict[EvaluationMetricType, type[Metric]]] = {
+        EvaluationMetricType.ANSWER_CORRECTNESS: AnswerCorrectness,
+        EvaluationMetricType.ANSWER_RELEVANCY: AnswerRelevancy,
+        EvaluationMetricType.CONTEXT_PRECISION: ContextPrecision,
+        EvaluationMetricType.CONTEXT_RECALL: ContextRecall,
+        EvaluationMetricType.FAITHFULNESS: Faithfulness,
     }
 
     # Metrics whose RAGAS implementation reads the `reference` column. Scoring
@@ -406,7 +410,7 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
                         results,
                         [ctx for ctx, _ in contexts],
                         ground_truths,
-                        [self.RAGAS_METRICS[m] for m in m_types],
+                        [self.RAGAS_METRICS[m]() for m in m_types],
                     )
                 )
             except Exception as e:
@@ -433,7 +437,7 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
         results: list[EvaluationResult],
         contexts: list[list[str]],
         ground_truths: list[str],
-        metrics: list[Any],
+        metrics: list[Metric],
     ) -> pd.DataFrame:
         eval_dataset = Dataset.from_dict(
             {
@@ -443,40 +447,28 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
                 "ground_truth": ground_truths,
             }
         )
-        # evaluate() binds the judge to the (module-level) metrics it is given
-        # and, with return_executor, never unbinds it: restore them after.
-        unbound = [
-            (metric, attr)
-            for metric in metrics
-            for attr in ("llm", "embeddings", "answer_similarity")
-            if hasattr(metric, attr) and getattr(metric, attr) is None
-        ]
+        # The executor, not the result: a thread running the judge calls
+        # cannot be cancelled, but the executor can, so a cancelled or
+        # timed-out evaluation stops judging instead of finishing the run.
+        executor = cast(
+            Executor,
+            await asyncio.to_thread(
+                evaluate,
+                dataset=eval_dataset,
+                metrics=metrics,
+                llm=self.ragas_llm or self.llm,
+                embeddings=self.embeddings,
+                raise_exceptions=False,
+                run_config=self._build_run_config(),
+                show_progress=self.show_progress,
+                return_executor=True,
+            ),
+        )
         try:
-            # The executor, not the result: a thread running the judge calls
-            # cannot be cancelled, but the executor can, so a cancelled or
-            # timed-out evaluation stops judging instead of finishing the run.
-            executor = cast(
-                Executor,
-                await asyncio.to_thread(
-                    evaluate,
-                    dataset=eval_dataset,
-                    metrics=metrics,
-                    llm=self.ragas_llm or self.llm,
-                    embeddings=self.embeddings,
-                    raise_exceptions=False,
-                    run_config=self._build_run_config(),
-                    show_progress=self.show_progress,
-                    return_executor=True,
-                ),
-            )
-            try:
-                scores = await asyncio.to_thread(executor.results)
-            except BaseException:
-                executor.cancel()
-                raise
-        finally:
-            for metric, attr in unbound:
-                setattr(metric, attr, None)
+            scores = await asyncio.to_thread(executor.results)
+        except BaseException:
+            executor.cancel()
+            raise
         if not scores:
             raise EvaluationException("RAGAS returned no scores")
         # One row per query, one score column per metric, in submission
