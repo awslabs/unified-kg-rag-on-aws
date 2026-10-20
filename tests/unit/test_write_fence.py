@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import contextvars
+import os
 import signal
 import threading
 import time
@@ -788,17 +789,38 @@ class _RecordingProcessPool(ProcessPoolExecutor):
         return future
 
 
-def _stopped_after(seconds: float, block: Any) -> None:
+def _stopped_once_running(block: Any, total: int) -> None:
+    """Run ``block`` and stop it (SIGTERM's ``PipelineInterrupted``) once its
+    pool has all ``total`` tasks and finished one: on a loaded host the pool's
+    processes may take longer to start than any fixed delay."""
+
     def stop(signum: int, _: Any) -> None:
         raise PipelineInterrupted(signum)
 
+    def running() -> bool:
+        futures = _RecordingProcessPool.futures
+        return len(futures) >= total and any(f.done() for f in futures)
+
+    ended = threading.Event()
+
+    def watch() -> None:
+        deadline = time.time() + 60
+        while not ended.is_set() and time.time() < deadline:
+            if running():
+                os.kill(os.getpid(), signal.SIGALRM)
+                return
+            time.sleep(0.01)
+
+    _RecordingProcessPool.futures = []
     previous = signal.signal(signal.SIGALRM, stop)
+    watcher = threading.Thread(target=watch, daemon=True)
     try:
-        signal.setitimer(signal.ITIMER_REAL, seconds)
+        watcher.start()
         with pytest.raises(PipelineInterrupted):
             block()
     finally:
-        signal.setitimer(signal.ITIMER_REAL, 0)
+        ended.set()
+        watcher.join()
         signal.signal(signal.SIGALRM, previous)
 
 
@@ -812,12 +834,14 @@ def _assert_queued_tasks_cancelled(workers: int) -> None:
     # workers' queue are not cancellable (the old code cancelled none: it
     # relied on the manager thread reading the collected pool's flag).
     expected = len(futures) - ran - 2 * workers - 1
-    deadline = time.time() + 3
+    # Polled until then, not timed: the cancellation runs in the pool's
+    # manager thread.
+    deadline = time.time() + 30
     while time.time() < deadline and sum(f.cancelled() for f in futures) < expected:
         time.sleep(0.05)
     assert sum(f.cancelled() for f in futures) >= max(expected, 1)
     # The running ones end on their own; none is left pending.
-    concurrent.futures.wait(futures, timeout=10)
+    concurrent.futures.wait(futures, timeout=60)
     assert all(f.done() for f in futures)
 
 
@@ -837,7 +861,7 @@ def test_a_stop_cancels_the_queued_tasks_of_the_resolver_process_pool(
         for _ in resolver._match_in_pool(MagicMock(), [f"n{i}" for i in range(40)]):
             pass
 
-    _stopped_after(0.5, resolve)
+    _stopped_once_running(resolve, total=40)
     _assert_queued_tasks_cancelled(workers=2)
 
 
@@ -861,7 +885,7 @@ def test_a_stop_cancels_the_queued_tasks_of_the_dedup_process_pool(
         for i in range(40)
     ]
 
-    _stopped_after(0.5, lambda: loader._compute_minhashes(docs))
+    _stopped_once_running(lambda: loader._compute_minhashes(docs), total=40)
     _assert_queued_tasks_cancelled(workers=2)
 
 
@@ -1026,3 +1050,35 @@ def test_a_stopped_runs_checkpoint_upload_does_not_wait_for_the_takeover(
         pipe._checkpoint_on_stop()
     assert time.time() - started < 2
     pipe.s3_cache_manager.sync_pipeline_to_s3.assert_called_once()
+
+
+def test_a_stage_start_does_not_wait_for_the_takeover(
+    mocker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A stage start checks that the lease is held, not the takeover wait:
+    # the stages before the first write (parsing) run during the wait.
+    monkeypatch.setattr(lease_mod, "longest_write_request_seconds", lambda: 30.0)
+    store = FakeDocStatusStore()
+    store.leases["ns"] = ("dead-run", time.time() - 1)
+    pipe = _stopping_pipeline()
+    pipe.stages = [SimpleNamespace(name="loading"), SimpleNamespace(name="parsing")]
+    pipe.s3_cache_manager = None
+    pipe.cache_manager = mocker.MagicMock()
+    pipe.llm_response_cache = None
+    executed: list[str] = []
+    mocker.patch.object(
+        pipe,
+        "_execute_stage",
+        side_effect=lambda stage, context: executed.append(stage.name)
+        or SimpleNamespace(status=None),
+    )
+    mocker.patch.object(pipe, "_emit_stage_metrics")
+    mocker.patch.object(pipe, "_should_stop_pipeline", return_value=False)
+    mocker.patch.object(pipe, "_start_index", return_value=0)
+    context = SimpleNamespace(stage_results=[], pipeline_id="pid")
+    with NamespaceLease(store, "ns", 60) as lease:
+        assert lease.writes_from > time.time() + 20
+        started = time.time()
+        pipe._execute_pipeline_stages(context, None)  # type: ignore[arg-type]
+        assert time.time() - started < 2
+    assert executed == ["loading", "parsing"]

@@ -98,6 +98,9 @@ _BATCH_GET_MAX_DELAY = 2.0
 # BatchWriteItem writes at most 25 items per request; unprocessed items are
 # re-sent with the same backoff and attempt limit as BatchGetItem.
 _BATCH_WRITE_SIZE = 25
+# The backoff's sleep, a name of this module so a test can stub it without
+# stubbing every thread's time.sleep.
+_sleep = time.sleep
 
 _MISSING_TABLE_CODES = frozenset({"ResourceNotFoundException"})
 _ACCESS_CODES = frozenset(
@@ -660,7 +663,7 @@ def _backoff_before(attempt: int) -> None:
     """Wait before re-sending a batch's unprocessed items (none before the
     first request)."""
     if attempt:
-        time.sleep(min(_BATCH_GET_MAX_DELAY, _BATCH_GET_BASE_DELAY * 2**attempt))
+        _sleep(min(_BATCH_GET_MAX_DELAY, _BATCH_GET_BASE_DELAY * 2**attempt))
 
 
 def _key(doc_id: str) -> dict[str, Any]:

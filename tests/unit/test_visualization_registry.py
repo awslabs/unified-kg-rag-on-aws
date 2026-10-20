@@ -147,8 +147,15 @@ class TestDimensionalityReducer:
         )
 
     def test_tsne_produces_2d_layout(self) -> None:
+        # One OpenMP/BLAS thread: on a loaded host (the suite in parallel
+        # with other jobs) t-SNE's thread pool oversubscribed the cores and
+        # ran past the 120 s test timeout (83 s alone). OMP_NUM_THREADS is
+        # read when the libraries load, so the limit is set at run time.
+        from threadpoolctl import threadpool_limits
+
         reducer = DimensionalityReducer({"tsne": {"perplexity": 5}})
-        out = reducer.reduce_dimensions(_embeddings(20), method="tsne")
+        with threadpool_limits(limits=1):
+            out = reducer.reduce_dimensions(_embeddings(20), method="tsne")
         assert len(out) == 20
         assert all(len(coord) == 2 for coord in out.values())
 

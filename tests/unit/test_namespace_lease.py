@@ -235,7 +235,13 @@ def test_a_late_write_of_a_dead_holder_lands_before_the_new_holders_writes(
 
 @pytest.mark.parametrize(
     ("ending", "expired"),
-    [(None, False), (RuntimeError, False), (KeyboardInterrupt, True)],
+    [
+        (None, False),
+        (RuntimeError, False),
+        (GeneratorExit, False),  # not a stop: the pools waited for their writes
+        (KeyboardInterrupt, True),
+        (SystemExit, True),  # sys.exit() in a signal handler or a host
+    ],
 )
 def test_a_stopped_run_gives_its_lease_up_as_expired(
     monkeypatch: pytest.MonkeyPatch, ending: type[BaseException] | None, expired: bool
@@ -411,3 +417,33 @@ def test_an_in_process_takeover_waits_one_in_process_write(
         store, "ns", 60, in_process_stores=True, in_process_write_seconds=2
     ) as lease:
         assert lease.writes_from == pytest.approx(expiry + 2 + 0.1, abs=0.01)
+
+
+def test_a_renewal_landing_after_a_stop_leaves_the_lease_expired(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The run stops while a renewal is in flight; the end of the run gives
+    # up waiting for it and expires the lease (a stop's writes may still be
+    # in flight). The renewal then lands and renews the lease: the heartbeat
+    # must give it up the same way, as expired, not release it (a released
+    # lease lets the next run write at once, before the stopped run's
+    # writes still in flight).
+    import unified_kg_rag.application.ingestion.namespace_lease as lease_mod
+
+    monkeypatch.setattr(lease_mod, "_HEARTBEAT_JOIN_SECONDS", 0.05)
+    store = _FrozenRenewal()
+    with pytest.raises(KeyboardInterrupt):
+        with NamespaceLease(store, "ns", 3.0):
+            store.delay = 1.0  # the first renewal, sent at 0.5 s, lands at 1.5 s
+            time.sleep(0.7)
+            raise KeyboardInterrupt
+    stopped = time.time()
+    # The acquire, the stop's expire, the late renewal, then the heartbeat
+    # giving that renewal up.
+    deadline = stopped + 5
+    while store.renewals < 4 and time.time() < deadline:
+        time.sleep(0.05)
+    assert store.renewals >= 3  # the late renewal landed
+    holder = store.lease_holder("ns")
+    assert holder is not None, "released, not expired"
+    assert holder[1] <= stopped
