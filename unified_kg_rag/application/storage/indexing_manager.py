@@ -1330,7 +1330,6 @@ class IndexingManager:
             for r in extra
             if (w := written_by_key.get(relationship_key(r.source_id, r.target_id, r)))
             is not None
-            and w.id != r.id
             and set(r.text_unit_ids or []) <= set(w.text_unit_ids or [])
         }
         # An edge between two entities the re-key merged is a self-loop a

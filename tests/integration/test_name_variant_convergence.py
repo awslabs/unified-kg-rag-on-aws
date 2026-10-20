@@ -1566,3 +1566,33 @@ def test_a_removal_derives_the_claims_on_a_changed_entitys_spellings_again(
     incremental = _state(tmp_path / "inc", runs, gleaning=True)
 
     assert incremental == full
+
+
+def test_a_commit_killed_twice_carries_the_first_notes_ids(
+    tmp_path: Path, mocker: Any
+) -> None:
+    # Killed after its note, then failing again on the retry, the commit's
+    # successors still name what the first one decided: the retry derives
+    # from a stored state that no longer calls for the split, so only the
+    # carried note keeps those entities.
+    runs = RUNS_COMMIT_SPLIT_CLAIM
+    written = mocker.spy(OpenSearchIndexer, "write_extraction_records")
+
+    full = _state(tmp_path / "full", [runs[-1]])
+    written.reset_mock()
+    incremental = _state(
+        tmp_path / "inc",
+        runs,
+        die_in=len(runs) - 1,
+        die_at=("upsert_claims", 1, False),
+        fail_resumed_at=("upsert_claims", OpenSearchIndexer),
+    )
+
+    notes = [
+        set(call.args[1][NOTE_COMMIT]["entity_ids"])
+        for call in written.call_args_list
+        if NOTE_COMMIT in call.args[1]
+    ]
+    assert len(notes) >= 2
+    assert all(notes[0] <= later for later in notes[1:])
+    assert incremental == full

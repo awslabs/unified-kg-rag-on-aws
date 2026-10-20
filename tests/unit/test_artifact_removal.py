@@ -495,6 +495,120 @@ def test_a_graph_store_without_read_back_is_not_taken_for_missing_copies() -> No
     assert not _reads_back(NoReadBack.__new__(NoReadBack))
 
 
+@pytest.mark.parametrize(
+    ("stored_units", "retired"),
+    [
+        pytest.param(["t1"], True, id="citing-nothing-more"),
+        pytest.param(["t1", "t9"], False, id="citing-another-unit"),
+    ],
+)
+def test_a_stored_edge_of_a_written_edges_key_is_retired_only_if_it_adds_nothing(
+    stored_units: list[str], retired: bool
+) -> None:
+    # A stored edge between the same entities with the same type under
+    # another id is the written edge under an earlier id, unless it cites a
+    # unit the written one does not (another statement a full build keeps).
+    from unified_kg_rag.domain.models import Relationship
+
+    manager, graph, _ = _manager()
+    entities = [
+        Entity(id="a", name="A", type="ORGANIZATION", text_unit_ids=["t1", "t9"]),
+        Entity(id="b", name="B", type="ORGANIZATION", text_unit_ids=["t1", "t9"]),
+    ]
+    graph.upsert_entities(entities)
+    graph.upsert_relationships(
+        [
+            Relationship(
+                id="r-stored",
+                source_id="a",
+                target_id="b",
+                source_name="A",
+                target_name="B",
+                type="SUPPLIES",
+                text_unit_ids=stored_units,
+            )
+        ]
+    )
+    written = Relationship(
+        id="r-written",
+        source_id="a",
+        target_id="b",
+        source_name="A",
+        target_name="B",
+        type="supplies",
+        text_unit_ids=["t1"],
+    )
+
+    manager._finish("default", entities, [written])
+
+    assert ("r-stored" in manager._dropped.get("default", set())) is retired
+
+
+def test_a_retired_vector_only_entity_takes_its_vector_edges() -> None:
+    # A killed run wrote an entity and its edge to the vector store only. A
+    # removal finds the entity by a removed unit, but it cites a kept one
+    # too: the strip retires it (the graph holds no copy to strip), and the
+    # edge at it (citing the kept unit) goes with it, found in the vector
+    # store.
+    from unified_kg_rag.domain.models import Relationship
+
+    manager, graph, vector = _manager()
+    vector.upsert_text_units(
+        [TextUnit(id=unit, text="...", document_ids=["d"]) for unit in ("t1", "t2")]
+    )
+    graph.upsert_entities([Entity(id="kept", name="Kept", text_unit_ids=["t2"])])
+    vector.upsert_entities(
+        [
+            Entity(id="partly", name="Partly", text_unit_ids=["t1", "t2"]),
+            Entity(id="kept", name="Kept", text_unit_ids=["t2"]),
+        ]
+    )
+    vector.upsert_relationships(
+        [
+            Relationship(
+                id="r",
+                source_id="kept",
+                target_id="partly",
+                source_name="Kept",
+                target_name="Partly",
+                text_unit_ids=["t2"],
+            )
+        ]
+    )
+
+    manager.remove_text_units("default", ["t1"])
+
+    assert "partly" not in vector.data.get("entities", {})
+    assert "r" not in vector.data.get("relationships", {})
+
+
+def test_a_stripped_entity_that_gains_units_is_written_before_its_edges(
+    mocker,
+) -> None:
+    # Another spelling's statement merged into a stripped entity: the
+    # re-pointed edges hang on it, so it is written with the re-keyed ones,
+    # before them (written last, a run killed in between left the edges on
+    # a vertex citing only removed units).
+    from unified_kg_rag.domain.ingestion.derivation import Derived
+
+    manager, graph, vector = _manager()
+    vector.upsert_text_units(
+        [TextUnit(id=unit, text="...", document_ids=["d"]) for unit in ("t0", "t1")]
+    )
+    graph.upsert_entities([Entity(id="e", name="E", text_unit_ids=["t0", "t1"])])
+    gained = Entity(id="e", name="E", text_unit_ids=["t1", "t2"])
+    mocker.patch.object(manager, "derive", return_value=Derived(entities=[gained]))
+    phases = mocker.spy(manager, "_run_indexing_phase")
+
+    manager.remove_text_units_from_shared(
+        "default", entity_ids=["e"], relationship_ids=[], text_unit_ids=["t0"]
+    )
+
+    (first,) = phases.call_args_list[0].args[0]
+    assert first.key == "neptune_rekeyed_entities"
+    assert [e.id for e in first.args[0]] == ["e"]
+
+
 def test_only_a_deleted_communitys_id_leaves_a_stripped_entity() -> None:
     # Removing t1 deletes "c-only" (it cites no other unit) and keeps
     # "c-both": the stripped entity drops the one id, not both.
