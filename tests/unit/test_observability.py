@@ -401,6 +401,29 @@ def _stage(
     return _Stage()
 
 
+@pytest.mark.parametrize("stop", [PipelineInterrupted(15), RuntimeError("boom")])
+def test_a_stopped_or_crashed_ingestion_run_span_names_its_pipeline(
+    tracing: Tracing, stop: BaseException
+) -> None:
+    # Before, kg_rag.pipeline_id was set only from a returned context, so a
+    # stopped or crashed run's trace did not say which run to resume.
+    from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
+
+    exporter = tracing()
+    pipeline = object.__new__(DataIngestionPipeline)
+
+    def _run(*_: Any) -> PipelineContext:
+        pipeline.pipeline_id = "p-2"
+        raise stop
+
+    pipeline._run = _run  # type: ignore[method-assign]
+    with pytest.raises(type(stop)):
+        pipeline.run(".")
+    run = _one(exporter, "kg_rag.ingestion.run")
+    assert _attrs(run)["kg_rag.pipeline_id"] == "p-2"
+    assert run.status.status_code == StatusCode.ERROR
+
+
 def test_ingestion_run_and_stage_spans(tracing: Tracing) -> None:
     from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
 

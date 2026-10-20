@@ -555,8 +555,9 @@ Langfuse에는 `langfuse.observation.type`(모델 호출은 `generation`, `embed
   실행 메타데이터에서 `session.id` / `user.id`를 가져오므로 같은 세션으로 묶입니다.
 - 비동기 배치 경로는 청크가 아니라 배치마다 스팬을 하나 기록합니다.
 - `ainvoke` 도중 취소된 모델 호출(예: `asyncio.wait_for` 시간 초과)은 LangChain이
-  콜백을 호출하지 않으므로 모델 스팬이 남지 않습니다. 호출자가 스트림을 중간에 그만
-  읽으면 그 스팬은 정상 종료됩니다.
+  콜백을 호출하지 않으며, 그 모델 스팬은 태스크가 취소될 때 `ERROR`(`error.type:
+  CancelledError`)로 종료됩니다. 호출자가 스트림을 중간에 그만 읽으면 그 스팬은 정상
+  종료됩니다.
 - `otlp`, `langfuse`, `phoenix`에서는 프로세스가 처음 설치한 백엔드가 OpenTelemetry
   전역 트레이서 공급자도 되는데, 전역 공급자는 한 번만 설정할 수 있습니다. 나중에 다른
   설정으로 다시 구성하면 패키지의 스팬은 새 익스포터로 가지만, 다른 라이브러리가 전역

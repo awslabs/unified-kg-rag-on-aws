@@ -1295,6 +1295,10 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Tracing: the `kg_rag.ingestion.run` span of a stopped or crashed run
+  carries `kg_rag.pipeline_id` too (the id to resume with); it was set only
+  from a returned context. The operations runbook now says a model call
+  cancelled during `ainvoke` ends its span as `ERROR CancelledError` (#PR).
 - A cancelled or timed-out evaluation stops RAGAS judging: it ran in a
   thread nothing could stop, so the RAGAS partition was judged to the end
   (168 judge calls after a timeout in a 12-question run). RAGAS now runs

@@ -596,7 +596,8 @@ Known limits:
   still groups with its session.
 - The async batch path records one span per batch, not per chunk.
 - A model call cancelled during `ainvoke` (for example by `asyncio.wait_for`)
-  leaves no model span: LangChain reports no callback for it. A stream the
+  gets no LangChain callback; its model span is ended as `ERROR`
+  (`error.type: CancelledError`) when its task is cancelled. A stream the
   caller stops reading early ends its span normally.
 - With `otlp`, `langfuse` or `phoenix` the first backend the process installs
   also becomes OpenTelemetry's global tracer provider, which can be set only
