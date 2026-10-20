@@ -13,7 +13,11 @@ from unified_kg_rag.adapters.storage.embedding_settings import (
     resolve_embedding_dimension,
     stored_embedding_settings,
 )
-from unified_kg_rag.adapters.storage.filter_schema import ATTRIBUTE_KEY_PREFIX
+from unified_kg_rag.adapters.storage.filter_schema import (
+    ATTRIBUTE_KEY_PREFIX,
+    DEFAULT_MAX_RESULT_WINDOW,
+    index_setting,
+)
 from unified_kg_rag.adapters.storage.search_engine import SearchEngineClient
 from unified_kg_rag.domain.ingestion.community_hierarchy import max_cut_depth
 from unified_kg_rag.domain.ingestion.contributions import RECORD_KEYS_ATTRIBUTE
@@ -60,7 +64,15 @@ _WRITE_SLICE_SIZE = _EMBED_BATCH_SIZE * _EMBED_WORKERS
 _READ_BATCH_SIZE = 1000
 # Values per terms search of find_documents, and the hits one returns.
 _FIND_BATCH_SIZE = 100
-_FIND_WINDOW = 10000
+_FIND_WINDOW = DEFAULT_MAX_RESULT_WINDOW
+# Index settings an index gets when index_settings leaves them out.
+# refresh_interval trades search-visibility latency for indexing throughput;
+# raising it (e.g. "30s" or "-1") speeds bulk loads.
+_INDEX_SETTING_DEFAULTS: dict[str, Any] = {
+    "number_of_shards": 1,
+    "number_of_replicas": 0,
+    "refresh_interval": "1s",
+}
 # The index prefix (config field) and stored fields of read_vector_copies.
 _VECTOR_COPY_FIELDS = {
     "entities": (
@@ -797,6 +809,14 @@ class OpenSearchIndexer(VectorIndexer):
         alias_name = self._get_name(alias_prefix, suffix)
         if not values or not self.opensearch_client.get_index_name_by_alias(alias_name):
             return {}
+        window = min(
+            _FIND_WINDOW,
+            index_setting(
+                self.opensearch_config.index_settings,
+                "max_result_window",
+                DEFAULT_MAX_RESULT_WINDOW,
+            ),
+        )
         found: dict[str, list[str]] = {}
         for start in range(0, len(values), _FIND_BATCH_SIZE):
             terms = {"terms": {field: values[start : start + _FIND_BATCH_SIZE]}}
@@ -808,7 +828,7 @@ class OpenSearchIndexer(VectorIndexer):
                 response = self.opensearch_client.search(
                     index=alias_name,
                     body={
-                        "size": _FIND_WINDOW,
+                        "size": window,
                         "query": {"bool": {"filter": filters}},
                         "sort": [{"id": {"order": "asc"}}],
                         "_source": {"includes": ["id", "text_unit_ids"]},
@@ -819,7 +839,7 @@ class OpenSearchIndexer(VectorIndexer):
                 for hit in page:
                     source = hit.get("_source") or {}
                     found[hit["_id"]] = list(source.get("text_unit_ids") or [])
-                if len(page) < _FIND_WINDOW:
+                if len(page) < window:
                     break
                 after = str(
                     (page[-1].get("_source") or {}).get("id") or page[-1]["_id"]
@@ -1657,19 +1677,17 @@ class OpenSearchIndexer(VectorIndexer):
         return stats
 
     def _get_base_mapping(self, properties: dict[str, Any]) -> dict[str, Any]:
+        # Every index_settings key reaches the index: retrieval sizes its
+        # fetches by max_result_window / max_terms_count from the same map.
+        # OpenSearch rejects a setting it does not know when the index is
+        # created. The knn keys follow vector_search.
+        settings = dict(self.opensearch_config.index_settings)
+        for name, default in _INDEX_SETTING_DEFAULTS.items():
+            if name not in settings and f"index.{name}" not in settings:
+                settings[name] = default
         return {
             "settings": {
-                "number_of_shards": self.opensearch_config.index_settings.get(
-                    "number_of_shards", 1
-                ),
-                "number_of_replicas": self.opensearch_config.index_settings.get(
-                    "number_of_replicas", 0
-                ),
-                # refresh_interval trades search-visibility latency for indexing
-                # throughput; raising it (e.g. "30s" or "-1") speeds bulk loads.
-                "refresh_interval": self.opensearch_config.index_settings.get(
-                    "refresh_interval", "1s"
-                ),
+                **settings,
                 "index.knn": True,
                 "index.knn.algo_param.ef_search": self.opensearch_config.vector_search.get(
                     "ef_search", 100

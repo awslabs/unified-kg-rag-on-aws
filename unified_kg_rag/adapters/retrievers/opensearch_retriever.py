@@ -141,9 +141,9 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         # Private attributes: this is a pydantic model, which rejects
         # undeclared public attributes.
         self._max_size = self._opensearch_config.max_query_size
-        # Hard ceiling on hits per query (OpenSearch index.max_result_window
-        # default). Fetch-by-id size may be floored up to the terms-filter size
-        # but never beyond this, since the index is created with the default.
+        # Hard ceiling on hits per query: the index's max_result_window, which
+        # the indexer creates it with. Fetch-by-id size may be floored up to the
+        # terms-filter size but never beyond this.
         self._max_result_window = index_setting(
             self._opensearch_config.index_settings,
             "max_result_window",

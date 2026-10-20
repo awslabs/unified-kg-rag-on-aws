@@ -2071,11 +2071,17 @@ class OpenSearchIndexingConfig(BaseModel):
             "refresh_interval": "1s",
         },
         description=(
-            "OpenSearch settings of the indices this package creates "
-            "(number_of_shards, number_of_replicas, refresh_interval, ...); "
-            "they apply to indices created afterwards. Raise refresh_interval "
+            "OpenSearch index settings of the indices this package creates "
+            "(number_of_shards, number_of_replicas, refresh_interval, "
+            "max_result_window, max_terms_count, ...); every key is passed to "
+            "index creation (OpenSearch rejects one it does not know; the "
+            "embedded engine applies only max_result_window) and applies to "
+            "indices created afterwards, so reindex after changing it. "
+            "Retrieval sizes its fetches by max_result_window and "
+            "max_terms_count. Raise refresh_interval "
             '(or set "-1") for faster bulk loads, then reset it for live '
-            "querying. Setting the key replaces the whole map."
+            "querying. Setting the key replaces the whole map; a left-out "
+            "shard, replica or refresh setting is 1, 0 or 1s."
         ),
     )
     vector_search: dict[str, Any] = Field(

@@ -1311,6 +1311,13 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- OpenSearch: every `indexing.opensearch.index_settings` key reaches the
+  indices the package creates; only `number_of_shards`,
+  `number_of_replicas` and `refresh_interval` did. Retrieval sizes its
+  fetches by id by `max_result_window` and `max_terms_count` from the same
+  map, so raising them made every such search rejected (and a filtered
+  query fail closed) on an index still at OpenSearch's defaults. Reindex
+  for a changed setting to apply (#PR).
 - Tracing: a timed-out call to a model that streams inside `ainvoke`
   (ChatOllama) ends its span as `ERROR CancelledError` too. Its first token
   marked the call as streamed, so a RAGAS judge call timed out after it kept
