@@ -25,6 +25,7 @@ from typing import Any, ClassVar
 
 from unified_kg_rag.adapters.retrieval.base import (
     BaseGraphRAGRetriever,
+    distance_band,
     entity_content,
 )
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
@@ -320,7 +321,6 @@ class GraphExpansionRetriever(BaseGraphRAGRetriever):
         expansion passes the whole question, which never occurs inside a node
         name.)
         """
-        length = len(path) or 1
         raw = (
             GraphExpansionRetriever._as_float(node.get(importance_key))
             if importance_key is not None
@@ -330,7 +330,7 @@ class GraphExpansionRetriever(BaseGraphRAGRetriever):
             raw / max_importance if raw is not None and max_importance > 0 else 0.5
         )
         importance = min(max(importance, 0.0), 1.0)
-        near, far = 1.0 / length, 1.0 / (length + 1)
+        far, near = distance_band(len(path))
         # (1 + importance) / 2 keeps the band's lower edge open, so the most
         # important node one hop farther out never ties the least important one.
         return far + (near - far) * (1.0 + importance) / 2.0

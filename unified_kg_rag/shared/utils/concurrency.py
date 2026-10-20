@@ -44,10 +44,15 @@ async def cancel_on_exit(tasks: Sequence[asyncio.Future[Any]]) -> AsyncIterator[
     try:
         yield
     except BaseException:
-        for task in tasks:
-            task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
+        await discard(tasks)
         raise
+
+
+async def discard(tasks: Sequence[asyncio.Future[Any]]) -> None:
+    """Cancel ``tasks`` and wait for them, ignoring how they ended."""
+    for task in tasks:
+        task.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
 
 
 @contextmanager

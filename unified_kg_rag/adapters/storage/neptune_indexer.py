@@ -355,6 +355,11 @@ class NeptuneIndexer(GraphIndexer):
         if not entity_ids:
             return {}
         entity_label = self._get_label(self.neptune_config.entity_label_prefix, suffix)
+
+        def neighbors() -> GraphTraversal:
+            distinct = __.both().hasLabel(entity_label).values("id").dedup()
+            return distinct if at_most is None else distinct.limit(at_most)
+
         try:
             rows = self._read_batches(
                 entity_ids,
@@ -363,16 +368,7 @@ class NeptuneIndexer(GraphIndexer):
                 .has("id", P.within(batch))
                 .project("id", "count")
                 .by("id")
-                .by(
-                    __.both().hasLabel(entity_label).values("id").dedup().count()
-                    if at_most is None
-                    else __.both()
-                    .hasLabel(entity_label)
-                    .values("id")
-                    .dedup()
-                    .limit(at_most)
-                    .count()
-                ),
+                .by(neighbors().count()),
                 "count_neighbors",
             )
             return {str(row["id"]): int(row["count"]) for row in rows}
@@ -660,8 +656,6 @@ class NeptuneIndexer(GraphIndexer):
             # traversal finds both before it drops anything): its stored copy
             # (the edge an unchanged document states, before a re-key
             # re-pointed it) stays.
-            writable = rels
-
             def write(
                 rel: Relationship, entity_label: str = entity_label
             ) -> str | None:
@@ -682,10 +676,10 @@ class NeptuneIndexer(GraphIndexer):
                 except Exception as e:
                     return str(e)
 
-            workers = max(1, min(self.neptune_config.index_concurrency, len(writable)))
+            workers = max(1, min(self.neptune_config.index_concurrency, len(rels)))
             with ContextThreadPoolExecutor(max_workers=workers) as executor:
                 for index, (rel, error) in enumerate(
-                    zip(writable, executor.map(write, writable), strict=True),
+                    zip(rels, executor.map(write, rels), strict=True),
                     start=1,
                 ):
                     if error is None:
@@ -699,7 +693,7 @@ class NeptuneIndexer(GraphIndexer):
                         logger.info(
                             "  ...%s/%s relationships written for '%s'",
                             index,
-                            len(writable),
+                            len(rels),
                             entity_label,
                         )
 

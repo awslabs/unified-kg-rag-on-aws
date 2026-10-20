@@ -110,7 +110,7 @@ def _cut_expanded(
     return kept
 
 
-def _distance_band(length: int) -> tuple[float, float]:
+def distance_band(length: int) -> tuple[float, float]:
     """The score band of a vertex ``length - 1`` hops out (see
     ``GraphExpansionRetriever._calculate_relevance``): ``(far, near]``."""
     length = max(length, 1)
@@ -730,8 +730,8 @@ class BaseSearchStrategy(ABC):
             current = parent[current]
         path = [names.get(v, v) for v in reversed(chain)]
         old = len((result.metadata or {}).get("_path") or []) or len(path)
-        far, near = _distance_band(old)
-        new_far, new_near = _distance_band(len(path))
+        far, near = distance_band(old)
+        new_far, new_near = distance_band(len(path))
         score = result.score or 0.0
         within = (score - far) / (near - far) if near > far else 0.5
         within = min(max(within, 0.0), 1.0)
