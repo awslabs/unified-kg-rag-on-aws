@@ -1831,6 +1831,8 @@ class IndexingManager:
         the note it replaces is not lost)."""
         results: dict[str, IndexingStats] = {}
         noted = False
+        # The note's ids (written once, before the first write: see note()).
+        note_ids: tuple[set[str], set[str], set[str]] | None = None
         doing = "Reading shared artifacts"
         try:
             entities = (
@@ -1935,14 +1937,7 @@ class IndexingManager:
                 # origin themselves: a split keeps the stored id, and
                 # stripping them again on a retry gave a claim the wrong
                 # subject.
-                doing = "Noting the pending strip"
-                self._note_pending_strip(
-                    suffix,
-                    sorted(merged | _note_ids(earlier_note, "entity_ids")),
-                    sorted(retired_edges | _note_ids(earlier_note, "relationship_ids")),
-                    sorted(split_claims | _note_ids(earlier_note, "claim_ids")),
-                )
-                noted = True
+                note_ids = (merged, retired_edges, split_claims)
             doing = "Reading the claims of re-keyed entities"
             # The stored claims about a re-keyed, split or renamed entity
             # follow it.
@@ -1982,12 +1977,38 @@ class IndexingManager:
             stats = IndexingStats(total_items=len(entity_ids) + len(relationship_ids))
             stats.add_error(str(e), count=stats.total_items)
             return {**results, f"neptune_read_{suffix}": stats}, noted
+
+        def note(new_claims: set[str]) -> None:
+            # Once, before the first write. With the claims derived under new
+            # ids (their subject or object split, re-keyed or renamed): they
+            # cite kept text units and are written before the entities, so a
+            # strip killed in between leaves them to a retry that may not
+            # derive them again.
+            nonlocal noted, note_ids
+            if noted or (note_ids is None and not new_claims):
+                return
+            entities_, edges_, claims_ = note_ids or (set(), set(), set())
+            self._note_pending_strip(
+                suffix,
+                sorted(entities_ | _note_ids(earlier_note, "entity_ids")),
+                sorted(edges_ | _note_ids(earlier_note, "relationship_ids")),
+                sorted(claims_ | new_claims | _note_ids(earlier_note, "claim_ids")),
+            )
+            noted = True
+
         if claim_ids:
             results.update(
                 self._remove_text_units_from_claims(
-                    suffix, list(claim_ids), text_unit_ids
+                    suffix, list(claim_ids), text_unit_ids, note=note
                 )
             )
+        try:
+            note(set())
+        except Exception as e:  # noqa: BLE001 - reported as failed items
+            logger.error("Noting the pending strip in '%s' failed: %s", suffix, e)
+            stats = IndexingStats(total_items=len(entity_ids) + len(relationship_ids))
+            stats.add_error(str(e), count=stats.total_items)
+            return {**results, f"neptune_read_{suffix}": stats}, noted
         if not new_entities and not new_relationships:
             return results, noted
         logger.info(
@@ -2096,7 +2117,11 @@ class IndexingManager:
         return results, noted
 
     def _remove_text_units_from_claims(
-        self, suffix: str, claim_ids: list[str], text_unit_ids: list[str]
+        self,
+        suffix: str,
+        claim_ids: list[str],
+        text_unit_ids: list[str],
+        note: Callable[[set[str]], None] | None = None,
     ) -> dict[str, IndexingStats]:
         try:
             claims = self.opensearch_indexer.read_claims(claim_ids, suffix=suffix)
@@ -2114,6 +2139,9 @@ class IndexingManager:
             if not claims:
                 return {}
             derived = self._derive_claims(suffix, claims, removed=text_unit_ids)
+            if note is not None:
+                # Before the first claim write; raises when the note fails.
+                note({d.id for d in derived} - {c.id for c in claims})
         except Exception as e:  # noqa: BLE001 - reported as failed items
             logger.error("Reading shared claims in '%s' failed: %s", suffix, e)
             stats = IndexingStats(total_items=len(claim_ids))

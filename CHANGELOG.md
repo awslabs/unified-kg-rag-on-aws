@@ -1535,6 +1535,14 @@ changed once with the full-config keys (#332).
   #398 they were held apart from it, so a spelling a full build keeps
   separate (another type) took the derived one's statements, and an
   uninterrupted incremental run diverged from a full build (#PR).
+- Incremental indexing: a removal killed right after it rewrote the
+  claims of a split, re-keyed or renamed entity leaves no claim behind.
+  The strip derives those claims under new ids and writes them before the
+  entities, but noted only the entities, edges and stored claims, so a
+  next run whose corpus no longer called for the split never found the new
+  claims again. The pending-strip note is now written once the claims are
+  derived, before the first write, with their new ids, also when the
+  strip re-keys nothing else (#PR).
 - Incremental indexing: a commit that splits spellings apart (or re-keys
   or rewires entities) and is killed partway is finished by the next run.
   Those decisions lived in memory only: the next run derived from the half

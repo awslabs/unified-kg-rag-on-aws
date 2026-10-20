@@ -1767,3 +1767,46 @@ def test_an_endpoint_joining_later_is_derived_with_its_other_spellings(
     incremental = _state(tmp_path / "inc", runs)
 
     assert incremental == full
+
+
+def test_a_strip_killed_after_its_claim_writes_leaves_no_claim_behind(
+    tmp_path: Path,
+) -> None:
+    # The removal splits "Acme Corp" off "ACME": the strip derives the
+    # claims about them under new ids and writes them before the entities.
+    # Killed right after, then the corpus edited so the next strip splits
+    # nothing: the claims derived under the split must be in the strip's
+    # note, or nothing finds them again.
+    runs = [
+        {
+            "d4.txt": "Buyer trade goods 3. Buyer and Acme LLC trade parts 1.",
+            "d2.txt": "Depot trade parts 3.",
+        },
+        {
+            "d4.txt": "Buyer trade goods 3. Buyer and Acme LLC trade parts 1.",
+            "d2.txt": "Buyer and Acme Corp trade goods 2.",
+            "d5.txt": "Depot and Acme trade goods 2. Depot and ACME Inc trade cash 3.",
+            "d7.txt": "Acme Corp and ACME trade parts 3.",
+        },
+        {
+            "d2.txt": "Buyer and Acme Corp trade goods 2.",
+            "d7.txt": "Acme Corp and ACME trade parts 3.",
+            "d4.txt": "Depot and Buyer and ACME Inc trade cash 2.",
+        },
+        {
+            "d7.txt": "Acme Corp and ACME trade parts 3.",
+            "d4.txt": "Acme and Acme LLC trade parts 1. Buyer and ACME trade cash 1.",
+        },
+    ]
+
+    full = _state(tmp_path / "full", [runs[-1]], gleaning=True)
+    incremental = _state(
+        tmp_path / "inc",
+        runs,
+        die_in=2,
+        die_at=("upsert_claims", 1, True),
+        resume=False,
+        gleaning=True,
+    )
+
+    assert incremental == full
