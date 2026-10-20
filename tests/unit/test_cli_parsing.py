@@ -463,6 +463,23 @@ def test_eval_summary_names_the_benchmark(capsys) -> None:
     assert "Benchmark: musique-full-answerable (2)" in capsys.readouterr().out
 
 
+def test_eval_comparison_names_the_benchmark(capsys) -> None:
+    # A multi-strategy run prints the comparison table, not each summary:
+    # before, it did not say which benchmark the strategies were scored on.
+    stats = {"mean": 0.5}
+    comparison = {
+        "baseline": "local",
+        "strategies": {
+            name: {"metrics": {"answer_match/f1": stats}, "routed_strategies": {}}
+            for name in ("local", "mix")
+        },
+        "deltas_vs_baseline": {"mix": {}},
+        "run_manifest": {"dataset": {"benchmarks": {"musique-full-answerable": 2}}},
+    }
+    run_evaluation.EvaluationRunner._print_comparison(comparison, 1.0)
+    assert "Benchmark: musique-full-answerable (2)" in capsys.readouterr().out
+
+
 class _DictChain:
     def __init__(self, error: bool) -> None:
         self.error = error

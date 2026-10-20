@@ -1302,6 +1302,9 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- `run-eval` with several strategies or repeats names the benchmark the
+  dataset was prepared from under the comparison table, as a single run's
+  summary does; it printed no label (#PR).
 - Evaluation: each RAGAS run judges with its own metric objects instead of
   binding the judge to ragas' module-level ones and unbinding it after the
   run. Two evaluations running at once in one process (through the library)

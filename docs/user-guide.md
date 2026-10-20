@@ -1386,7 +1386,8 @@ answerable half is not MuSiQue-Ans (other paragraphs and answer aliases):
 its rows are labelled `metadata.benchmark: musique-full-answerable` instead
 of `musique`, with a WARNING that the scores are not comparable to MuSiQue-Ans
 results. The label is in its output (console and `--output-format json`),
-and `run-eval` counts it in the summary (`benchmarks`) and the run manifest
+and `run-eval` counts it in the summary (`benchmarks`, also printed under a
+comparison of several strategies or repeats) and the run manifest
 (`dataset.benchmarks`). It writes `corpus/` (one text file per distinct paragraph; each
 question brings 2-4 supporting paragraphs and up to 18 distractors) and
 `eval_data.json` (`answer`, `answer_aliases`, the supporting paragraphs as
